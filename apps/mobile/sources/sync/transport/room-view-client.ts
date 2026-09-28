@@ -171,6 +171,11 @@ class MonolithRoomViewClient {
   }
 }
 
+/** A push can begin this read before the Room identity/relay setup completes. */
+export function readPushedMonolithRoom(roomId: string): Promise<RoomView> {
+  return new MonolithRoomViewClient().room(roomId);
+}
+
 /** Stable read seam: OTA config chooses the monolith or untouched relay reader. */
 export class RoomViewClient {
   private readonly implementation: LegacyRoomViewClient | MonolithRoomViewClient;

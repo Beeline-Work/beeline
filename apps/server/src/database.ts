@@ -7,6 +7,7 @@ import { INSTITUTIONAL_HISTORY_MAX_AGE_DAYS } from '@beeline/api-contract/daemon
 import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { uniqueAgentHandle } from '@beeline/api-contract/phone';
+import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
 import { upgradeGrantPolicy, withdrawSupersededGrantAsks } from './grant-policy-upgrade.js';
 import { backfillRegistryApps } from './app-connections.js';
 import {
@@ -14,7 +15,9 @@ import {
   syncTopLevelSharedRoomRoles,
 } from './membership-join.js';
 import { POSTGRES_LIVE_SCHEMA } from './postgres-live.js';
+import { retryMigrationStep, splitMigrationStatements } from './migration-retry.js';
 import { Pool, type PoolClient, type PoolConfig, type QueryResultRow } from 'pg';
+import { QueryProfiler } from './query-profile.js';
 
 export const APP_STATEMENT_TIMEOUT_MS = 5_000;
 export const APP_POOL_WAIT_TIMEOUT_MS = 2_000;
@@ -22,15 +25,18 @@ export const ENRICHMENT_STATEMENT_TIMEOUT_MS = 750;
 export const ENRICHMENT_POOL_WAIT_TIMEOUT_MS = 500;
 export const HEALTH_STATEMENT_TIMEOUT_MS = 2_000;
 export const HEALTH_POOL_WAIT_TIMEOUT_MS = 1_000;
+export const MIGRATION_LOCK_TIMEOUT_MS = 1_000;
+export const MIGRATION_STATEMENT_TIMEOUT_MS = 10 * 60_000;
 export const APP_DATABASE_NAME = 'beeline_app';
 export const ENRICHMENT_DATABASE_NAME = 'beeline_enrichment';
 export const LONG_RUNNING_DATABASE_NAME = 'beeline_long_running';
 export const DIAGNOSTICS_DATABASE_NAME = 'beeline_diagnostics';
+export const MIGRATION_DATABASE_NAME = 'beeline_migration';
 
 export function postgresPoolConfig(
   connectionString: string,
   maximumConnections: number,
-  mode: 'app' | 'enrichment' | 'long-running' | 'diagnostics' = 'app',
+  mode: 'app' | 'enrichment' | 'long-running' | 'diagnostics' | 'migration' = 'app',
 ): PoolConfig {
   return {
     connectionString,
@@ -47,6 +53,8 @@ export function postgresPoolConfig(
           ? LONG_RUNNING_DATABASE_NAME
           : mode === 'diagnostics'
             ? DIAGNOSTICS_DATABASE_NAME
+            : mode === 'migration'
+              ? MIGRATION_DATABASE_NAME
             : APP_DATABASE_NAME,
     ...(mode === 'app'
       ? {
@@ -63,16 +71,22 @@ export function postgresPoolConfig(
               statement_timeout: HEALTH_STATEMENT_TIMEOUT_MS,
               connectionTimeoutMillis: HEALTH_POOL_WAIT_TIMEOUT_MS,
             }
-          : {
+          : mode === 'migration'
+            ? {
+                connectionTimeoutMillis: APP_POOL_WAIT_TIMEOUT_MS,
+                options: `-c lock_timeout=${MIGRATION_LOCK_TIMEOUT_MS}ms -c statement_timeout=${MIGRATION_STATEMENT_TIMEOUT_MS}ms`,
+              }
+            : {
               connectionTimeoutMillis: APP_POOL_WAIT_TIMEOUT_MS,
             }),
   };
 }
 
-const TRANSIENT_CONNECTION_CODES = new Set(['57P01', '08006', '08003', '08000']);
+const TRANSIENT_CONNECTION_CODES = new Set(['57P01', '57P03', '53300', '08006', '08003', '08000', 'ETIMEDOUT']);
 const TRANSIENT_CONNECTION_MESSAGE =
-  /Connection terminated|ECONNRESET|server closed the connection|terminating connection/i;
+  /Connection terminated|ECONNRESET|server closed the connection|terminating connection|timeout exceeded when trying to connect/i;
 const RETRY_DELAYS_MS = [100, 300, 700];
+const SCHEMA_RETRY_DELAYS_MS = [1_000, 2_000, 5_000];
 
 export function isTransientDatabaseConnectionError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
@@ -104,6 +118,7 @@ export interface SqlDatabase {
   ): Promise<QueryResult<Row>>;
   transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T>;
   poolCounts?(): { total: number; idle: number; waiting: number };
+  poolTelemetry?(): PoolTelemetry;
   /** Age of the oldest query this process still has in flight, or null when it
    *  has none. Measured here rather than read from `pg_stat_activity`, which
    *  needs `pg_read_all_stats`: without it Postgres blanks `state` on every
@@ -111,7 +126,26 @@ export interface SqlDatabase {
    *  the field was permanently null in production — a monitor that could not
    *  fail. This one is scoped to this process's own pool and says so. */
   oldestActiveQueryAgeMs?(): Promise<number | null>;
+  queryProfiles?(): ReturnType<QueryProfiler['snapshot']>;
+  /** Fires once after an app-pool failure is followed by a successful read.
+   * Live subscribers use it to retry discovery without closing their socket. */
+  onRecovery?(listener: () => void): () => void;
 }
+
+export interface PoolTelemetry {
+  checkouts: number;
+  checkoutFailures: number;
+  statementTimeouts: number;
+  deadlocks: number;
+  waitMs: number;
+  maxWaitMs: number;
+  activeMs: number;
+  maxActiveMs: number;
+  /** Cumulative checkout waits at or below 1, 10, 100, 500, 2000 ms, then above. */
+  waitBuckets: readonly number[];
+}
+
+const WAIT_BUCKETS_MS = [1, 10, 100, 500, 2_000];
 
 export interface ClosableDatabase extends SqlDatabase {
   close(): Promise<void>;
@@ -139,49 +173,117 @@ export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   `);
 }
 
-export async function assertSchemaCurrent(database: SqlDatabase): Promise<void> {
-  try {
-    const result = await database.query<{ version: number }>(
-      `SELECT version FROM beeline_schema_state WHERE singleton=true`,
-    );
+export async function assertSchemaCurrent(database: SqlDatabase, wait: Pause = pause): Promise<void> {
+  for (let attempt = 0; ; attempt += 1) {
+    let result: QueryResult<{ version: number }>;
+    try {
+      result = await database.query<{ version: number }>(
+        `SELECT version FROM beeline_schema_state WHERE singleton=true`,
+      );
+    } catch (error) {
+      if (isTransientDatabaseConnectionError(error)) {
+        await wait(SCHEMA_RETRY_DELAYS_MS[Math.min(attempt, SCHEMA_RETRY_DELAYS_MS.length - 1)]!);
+        continue;
+      }
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `database schema is not ready for this server image (${detail}); run the release migration step`,
+        { cause: error },
+      );
+    }
     const version = result.rows[0]?.version;
     if (version !== REQUIRED_SCHEMA_VERSION) {
       throw new Error(
-        `expected schema version ${REQUIRED_SCHEMA_VERSION}, found ${version ?? 'no marker'}`,
+        `database schema is not ready for this server image (expected schema version ${REQUIRED_SCHEMA_VERSION}, found ${version ?? 'no marker'}); run the release migration step`,
       );
     }
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `database schema is not ready for this server image (${detail}); run the release migration step`,
-      { cause: error },
-    );
+    return;
   }
 }
 
 export class PostgresDatabase implements ClosableDatabase {
   readonly #pool: Pool;
+  readonly #profiler = new QueryProfiler();
   readonly #pause: Pause;
   /** Start time of every query this process currently has in flight, keyed by
    *  a monotonic ticket so identical concurrent statements cannot collide. */
   readonly #inFlight = new Map<number, number>();
+  readonly #recoveryListeners = new Set<() => void>();
+  #unavailable = false;
   #nextTicket = 0;
+  readonly #telemetry = {
+    checkouts: 0, checkoutFailures: 0, statementTimeouts: 0, deadlocks: 0,
+    waitMs: 0, maxWaitMs: 0,
+    activeMs: 0, maxActiveMs: 0, waitBuckets: [0, 0, 0, 0, 0, 0],
+  };
 
-  async #timed<T>(work: () => Promise<T>): Promise<T> {
+  poolTelemetry(): PoolTelemetry {
+    return { ...this.#telemetry, waitBuckets: [...this.#telemetry.waitBuckets] };
+  }
+
+  #recordWait(durationMs: number): void {
+    this.#telemetry.checkouts++;
+    this.#telemetry.waitMs += durationMs;
+    this.#telemetry.maxWaitMs = Math.max(this.#telemetry.maxWaitMs, durationMs);
+    const bucket = WAIT_BUCKETS_MS.findIndex((bound) => durationMs <= bound);
+    this.#telemetry.waitBuckets[bucket < 0 ? WAIT_BUCKETS_MS.length : bucket]!++;
+  }
+
+  #recordActive(durationMs: number): void {
+    this.#telemetry.activeMs += durationMs;
+    this.#telemetry.maxActiveMs = Math.max(this.#telemetry.maxActiveMs, durationMs);
+  }
+
+  onRecovery(listener: () => void): () => void {
+    this.#recoveryListeners.add(listener);
+    return () => this.#recoveryListeners.delete(listener);
+  }
+
+  #noteFailure(error: unknown): void {
+    const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
+    if (code === '57014') this.#telemetry.statementTimeouts++;
+    if (code === '40P01') this.#telemetry.deadlocks++;
+    if (isTransientDatabaseConnectionError(error) || code === '57014' || code === '53300')
+      this.#unavailable = true;
+  }
+
+  #noteSuccess(): void {
+    if (!this.#unavailable) return;
+    this.#unavailable = false;
+    for (const listener of this.#recoveryListeners) {
+      try {
+        listener();
+      } catch (error) {
+        console.error('postgres recovery listener failed', error);
+      }
+    }
+  }
+
+  async #timed<T>(sql: string, work: () => Promise<T>): Promise<T> {
     const ticket = this.#nextTicket++;
-    this.#inFlight.set(ticket, Date.now());
+    const startedAt = Date.now();
+    this.#inFlight.set(ticket, startedAt);
+    let error: unknown;
     try {
       return await work();
+    } catch (caught) {
+      error = caught;
+      throw caught;
     } finally {
       this.#inFlight.delete(ticket);
+      this.#profiler.record(sql, Date.now() - startedAt, error);
     }
+  }
+
+  queryProfiles() {
+    return this.#profiler.snapshot();
   }
 
   constructor(
     connectionString: string,
     maximumConnections = 5,
     options: PostgresDatabaseOptions & {
-      mode?: 'app' | 'enrichment' | 'long-running' | 'diagnostics';
+      mode?: 'app' | 'enrichment' | 'long-running' | 'diagnostics' | 'migration';
     } = {},
   ) {
     this.#pool =
@@ -212,13 +314,27 @@ export class PostgresDatabase implements ClosableDatabase {
     sql: string,
     values: unknown[] = [],
   ): Promise<QueryResult<Row>> {
-    const raw = await this.#timed(() =>
-      this.#retryTransientConnection(() =>
-        values.length ? this.#pool.query<Row>(sql, values) : this.#pool.query<Row>(sql),
-      ),
-    );
-    const result = Array.isArray(raw) ? raw.at(-1) : raw;
-    return { rows: result?.rows ?? [], rowCount: result?.rowCount ?? result?.rows.length ?? 0 };
+    try {
+      const raw = await this.#timed(sql, () =>
+        this.#retryTransientConnection(async () => {
+          const { client, release } = await this.#connectCheckedOut();
+          try {
+            const result = values.length ? await client.query<Row>(sql, values) : await client.query<Row>(sql);
+            release();
+            return result;
+          } catch (error) {
+            release(error instanceof Error ? error : new Error('query failed'));
+            throw error;
+          }
+        }),
+      );
+      this.#noteSuccess();
+      const result = Array.isArray(raw) ? raw.at(-1) : raw;
+      return { rows: result?.rows ?? [], rowCount: result?.rowCount ?? result?.rows.length ?? 0 };
+    } catch (error) {
+      this.#noteFailure(error);
+      throw error;
+    }
   }
 
   // pg-pool removes its idle error listener while a client is checked out, so
@@ -230,7 +346,16 @@ export class PostgresDatabase implements ClosableDatabase {
     client: PoolClient;
     release: (error?: Error) => void;
   }> {
-    const client = await this.#pool.connect();
+    const startedAt = performance.now();
+    let client: PoolClient;
+    try {
+      client = await this.#pool.connect();
+    } catch (error) {
+      this.#telemetry.checkoutFailures++;
+      throw error;
+    }
+    this.#recordWait(performance.now() - startedAt);
+    const acquiredAt = performance.now();
     let released = false;
     const onError = (error: Error) => {
       console.error('postgres checked-out client error', error);
@@ -239,6 +364,7 @@ export class PostgresDatabase implements ClosableDatabase {
     const release = (error?: Error) => {
       if (released) return;
       released = true;
+      this.#recordActive(performance.now() - acquiredAt);
       client.removeListener('error', onError);
       try {
         client.release(error);
@@ -259,7 +385,7 @@ export class PostgresDatabase implements ClosableDatabase {
           sql: string,
           values: unknown[] = [],
         ) => {
-          const raw = await this.#timed(() =>
+          const raw = await this.#timed(sql, () =>
             values.length ? client.query<Row>(sql, values) : client.query<Row>(sql),
           );
           const result = Array.isArray(raw) ? raw.at(-1) : raw;
@@ -275,6 +401,7 @@ export class PostgresDatabase implements ClosableDatabase {
       await client.query('COMMIT');
       return result;
     } catch (error) {
+      this.#noteFailure(error);
       if (isTransientDatabaseConnectionError(error))
         releaseError = error instanceof Error ? error : new Error('transaction connection failed');
       try {
@@ -292,10 +419,29 @@ export class PostgresDatabase implements ClosableDatabase {
 
   async connectDedicated(): Promise<PoolClient> {
     return this.#retryTransientConnection(async () => {
-      const client = await this.#pool.connect();
-      client.on('error', (error) => {
+      const startedAt = performance.now();
+      let client: PoolClient;
+      try {
+        client = await this.#pool.connect();
+      } catch (error) {
+        this.#telemetry.checkoutFailures++;
+        throw error;
+      }
+      this.#recordWait(performance.now() - startedAt);
+      const acquiredAt = performance.now();
+      const onError = (error: Error) => {
         console.error('dedicated postgres client error', error);
-      });
+      };
+      client.on('error', onError);
+      const release = client.release.bind(client);
+      let released = false;
+      client.release = ((destroy?: boolean | Error) => {
+        if (released) return;
+        released = true;
+        this.#recordActive(performance.now() - acquiredAt);
+        client.removeListener('error', onError);
+        release(destroy);
+      }) as PoolClient['release'];
       return client;
     });
   }
@@ -2021,27 +2167,40 @@ CREATE INDEX IF NOT EXISTS wallet_transactions_wallet_idx
   ON wallet_transactions(identity_id, created_at DESC);
 `;
 
-export async function migrate(database: SqlDatabase): Promise<void> {
-  await database.query(SCHEMA);
-  await database.query(
+export async function migrate(
+  database: SqlDatabase,
+  options: { deferData?: boolean } = {},
+): Promise<void> {
+  const ddl = (name: string, sql: string) =>
+    retryMigrationStep(name, async () => { await database.query(sql); });
+  const ddlScript = async (name: string, sql: string) => {
+    const statements = splitMigrationStatements(sql);
+    for (const [index, statement] of statements.entries())
+      await ddl(`${name} ${index + 1}/${statements.length}`, statement);
+  };
+  await ddlScript('server schema', SCHEMA);
+  await ddl('wallet delegation',
     `ALTER TABLE wallet_bindings ADD COLUMN IF NOT EXISTS delegation_standing boolean NOT NULL DEFAULT false`,
   );
-  await database.query(AGENT_COMMAND_SCHEMA);
-  await database.query(
-    `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_room_cursor_idx ON messages (room_id,
+  await ddlScript('agent command schema', AGENT_COMMAND_SCHEMA);
+  await retryMigrationStep('message cursor index', () => createIndexConcurrently(
+    database, 'messages_room_cursor_idx',
+    `CREATE INDEX CONCURRENTLY messages_room_cursor_idx ON messages (room_id,
      (${MESSAGE_CURSOR_MS_SQL}), id)`,
-  );
-  await database.query(
-    `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_live_activity_idx
+  ));
+  await retryMigrationStep('live activity index', () => createIndexConcurrently(
+    database, 'messages_live_activity_idx',
+    `CREATE INDEX CONCURRENTLY messages_live_activity_idx
      ON messages(room_id,author_id,created_at DESC,id DESC)
      WHERE presentation='activity' AND durable_fact IS NULL`,
-  );
-  await database.query(
-    `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_unread_cursor_idx
+  ));
+  await retryMigrationStep('unread cursor index', () => createIndexConcurrently(
+    database, 'messages_unread_cursor_idx',
+    `CREATE INDEX CONCURRENTLY messages_unread_cursor_idx
      ON messages(room_id,created_at,id) INCLUDE(author_id)
      WHERE presentation<>'activity' AND card_type IS DISTINCT FROM 'grant-decision'
        AND card_type IS DISTINCT FROM 'connector-offer-decision'`,
-  );
+  ));
   // Without this the drained backfill's first probe is a full heap read of the
   // busiest table on EVERY release, including every release that has nothing
   // left to fill. It is not empty once the backfill converges and is not meant
@@ -2049,55 +2208,73 @@ export async function migrate(database: SqlDatabase): Promise<void> {
   // which is every pre-window row the backfill deliberately skips below. The
   // drain reads newest-first and stops at the window edge, so those entries are
   // never visited — they are exactly what makes a converged probe free.
-  await createIndexConcurrently(
+  await retryMigrationStep('search backfill index', () => createIndexConcurrently(
     database,
     'messages_search_document_backfill_idx',
     `CREATE INDEX CONCURRENTLY messages_search_document_backfill_idx
      ON messages(created_at DESC)
      WHERE search_document IS NULL AND presentation='message'`,
-  );
-  const searchDocuments = await backfillMessageSearchDocuments(database);
-  if (searchDocuments)
-    console.log(`backfillMessageSearchDocuments: filled ${searchDocuments} message row(s)`);
-  await createIndexConcurrently(
+  ));
+  await retryMigrationStep('search document index', () => createIndexConcurrently(
     database,
     'messages_search_document_idx',
     `CREATE INDEX CONCURRENTLY messages_search_document_idx
      ON messages USING GIN(search_document)
      WHERE deleted_at IS NULL AND presentation='message'`,
-  );
+  ));
   // The Needs-you tray finds undecided grant cards without reading transcripts.
-  await database.query(
-    `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_grant_request_idx
+  await retryMigrationStep('grant request index', () => createIndexConcurrently(
+    database, 'messages_grant_request_idx',
+    `CREATE INDEX CONCURRENTLY messages_grant_request_idx
      ON messages(room_id,created_at DESC) WHERE card_type='grant-request'`,
-  );
-  await database.query(POSTGRES_LIVE_SCHEMA);
-  await backfillCornerOwners(database);
-  await backfillInheritedCornerMemberships(database);
-  const blockers = await reconcileCornerMergeBlockers(database);
+  ));
+  await ddlScript('live notification schema', POSTGRES_LIVE_SCHEMA);
+  if (!options.deferData) await migrateData(database);
+}
+
+/** Idempotent data work runs after both schema owners have expanded. Each step
+ * commits separately, so retrying a release resumes completed work. */
+export async function migrateData(database: SqlDatabase): Promise<void> {
+  const dataStep = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
+    let result!: T;
+    await retryMigrationStep(name, async () => {
+      result = await run();
+    });
+    return result;
+  };
+  const searchDocuments = await backfillMessageSearchDocuments(database, 200, true);
+  if (searchDocuments)
+    console.log(`backfillMessageSearchDocuments: filled ${searchDocuments} message row(s)`);
+  await dataStep('corner owner backfill', () => backfillCornerOwners(database));
+  await dataStep('inherited corner memberships', () => backfillInheritedCornerMemberships(database));
+  const blockers = await dataStep('corner merge blockers', () =>
+    reconcileCornerMergeBlockers(database));
   if (blockers)
     console.log(`reconcileCornerMergeBlockers: dispatched ${blockers} implementer command(s)`);
-  const reviewers = await reconcileConfiguredCornerReviewers(database);
+  const reviewers = await dataStep('corner reviewers', () =>
+    reconcileConfiguredCornerReviewers(database));
   console.log(
     `reconcileConfiguredCornerReviewers: restored ${reviewers.subscriptions} subscription(s), dispatched ${reviewers.commands} review(s)`,
   );
-  const syncedRoomRoles = await syncTopLevelSharedRoomRoles(database);
+  const syncedRoomRoles = await dataStep('top-level Room roles', () =>
+    syncTopLevelSharedRoomRoles(database));
   console.log(`syncTopLevelSharedRoomRoles: updated ${syncedRoomRoles} stale Room role(s)`);
-  await backfillSystemEventKinds(database);
-  await database.query(
+  await dataStep('system event kinds', () => backfillSystemEventKinds(database));
+  await dataStep('system identity avatar', () => database.query(
     `UPDATE identities SET avatar='/v1/connectors/logo/system.svg',updated_at=now()
      WHERE id=$1 AND avatar IS DISTINCT FROM '/v1/connectors/logo/system.svg'`,
     [SYSTEM_IDENTITY_ID],
-  );
+  ));
   // The shared Welcome Workspace is no longer reseeded at boot; a release-
   // owned step retires it (welcome-retirement.ts, run from index.ts).
-  await backfillInstitutionalMemoryRollout(database);
+  await dataStep('institutional rollout', () => backfillInstitutionalMemoryRollout(database));
   await backfillAgentHandles(database);
-  await backfillYoloModeDefault(database);
-  await backfillConnectorMachineId(database);
-  await backfillRegistryApps(database);
-  await upgradeGrantPolicy(database);
-  const withdrawn = await withdrawSupersededGrantAsks(database);
+  await dataStep('yolo default', () => backfillYoloModeDefault(database));
+  await dataStep('connector machine IDs', () => backfillConnectorMachineId(database));
+  await dataStep('registry apps', () => backfillRegistryApps(database));
+  await dataStep('grant policy', () => upgradeGrantPolicy(database));
+  const withdrawn = await dataStep('superseded grant asks', () =>
+    withdrawSupersededGrantAsks(database));
   if (withdrawn) console.log(`withdrawSupersededGrantAsks: withdrew ${withdrawn} pending ask(s)`);
 }
 
@@ -2109,28 +2286,38 @@ export const MESSAGE_SEARCH_BACKFILL_BATCH = 2_000;
  * Only rows `searchInstitutionalHistory` can ever return are filled: it matches
  * `presentation='message'` inside INSTITUTIONAL_HISTORY_MAX_AGE_DAYS, and a row
  * older than that window today can never re-enter it, so a document for one is
- * work with no reader. That is what keeps this off the release's critical path
- * — the alternative rewrites the busiest table in full behind the release gate.
- * Batches are bounded by the partial index each UPDATE empties, so no statement
- * holds the table for longer than one batch.
+ * work with no reader. The release data stage keeps this work out of DDL
+ * retries and commits each batch before starting the next. The partial index
+ * makes a converged probe cheap even when older rows remain unfilled.
  */
 export async function backfillMessageSearchDocuments(
   database: SqlDatabase,
   batchSize = MESSAGE_SEARCH_BACKFILL_BATCH,
+  bounded = false,
 ): Promise<number> {
   let filled = 0;
   for (;;) {
-    const updated = await database.query(
-      `UPDATE messages SET search_document=${messageSearchDocumentSql('')}
+    let updated: { rowCount: number } | undefined;
+    await retryMigrationStep('message search backfill batch', async () => {
+      const run = (db: SqlDatabase) => db.query(
+        `UPDATE messages SET search_document=${messageSearchDocumentSql('')}
        WHERE id IN (
          SELECT id FROM messages
          WHERE search_document IS NULL AND presentation='message'
            AND created_at>=now()-$1*interval '1 day'
          ORDER BY created_at DESC LIMIT $2)`,
-      [INSTITUTIONAL_HISTORY_MAX_AGE_DAYS, batchSize],
-    );
-    filled += updated.rowCount;
-    if (updated.rowCount < batchSize) return filled;
+        [INSTITUTIONAL_HISTORY_MAX_AGE_DAYS, batchSize],
+      );
+      updated = bounded
+        ? await database.transaction(async (transaction) => {
+            await transaction.query(`SET LOCAL statement_timeout='10000ms'`);
+            await transaction.query(`SET LOCAL lock_timeout='500ms'`);
+            return run(transaction);
+          })
+        : await run(database);
+    });
+    filled += updated!.rowCount;
+    if (updated!.rowCount < batchSize) return filled;
   }
 }
 
@@ -2158,15 +2345,38 @@ async function createIndexConcurrently(
 
 /** Backfill machine_id on legacy workspace_connectors rows. */
 export async function backfillConnectorMachineId(database: SqlDatabase): Promise<number> {
-  const result = await database.query(
+  const changed = await boundedMigrationUpdate(database, 'connector machine IDs',
     `UPDATE workspace_connectors c SET machine_id=COALESCE(
        (SELECT a.machine_id FROM agents a WHERE a.agent_id=c.helper_agent_id),
        c.helper_agent_id
-     ) WHERE c.machine_id IS NULL`,
+     ) WHERE c.id IN (SELECT id FROM workspace_connectors
+       WHERE machine_id IS NULL ORDER BY id LIMIT $1)`,
   );
-  if (result.rowCount > 0)
-    console.log(`backfillConnectorMachineId: set ${result.rowCount} connector machine_id(s)`);
-  return result.rowCount;
+  if (changed > 0)
+    console.log(`backfillConnectorMachineId: set ${changed} connector machine_id(s)`);
+  return changed;
+}
+
+async function boundedMigrationUpdate(
+  database: SqlDatabase,
+  name: string,
+  sql: string,
+  values: unknown[] = [],
+  batchSize = 200,
+): Promise<number> {
+  let changed = 0;
+  for (;;) {
+    let count = 0;
+    await retryMigrationStep(name, async () => {
+      count = (await database.transaction(async (transaction) => {
+        await transaction.query(`SET LOCAL statement_timeout='10000ms'`);
+        await transaction.query(`SET LOCAL lock_timeout='500ms'`);
+        return transaction.query(sql, [...values, batchSize]);
+      })).rowCount;
+    });
+    changed += count;
+    if (count < batchSize) return changed;
+  }
 }
 
 /**
@@ -2176,64 +2386,54 @@ export async function backfillConnectorMachineId(database: SqlDatabase): Promise
  * inside either roster receive deterministic numeric suffixes.
  */
 export async function backfillAgentHandles(database: SqlDatabase): Promise<number> {
-  return database.transaction(async (transaction) => {
-    await transaction.query(`SELECT id FROM workspaces ORDER BY id FOR UPDATE`);
-    const rows = await transaction.query<{
-      id: string;
-      kind: 'human' | 'agent';
-      name: string;
-      handle: string | null;
-    }>(
-      `SELECT id,kind,name,handle FROM identities
-       ORDER BY CASE kind WHEN 'human' THEN 0 ELSE 1 END,created_at,id`,
-    );
-    const memberships = await transaction.query<{ workspace_id: string; identity_id: string }>(
-      `SELECT workspace_id,identity_id FROM memberships
-       WHERE room_id IS NULL AND removed_at IS NULL ORDER BY workspace_id,identity_id`,
-    );
-    const workspacesByIdentity = new Map<string, string[]>();
-    for (const membership of memberships.rows) {
-      const workspaces = workspacesByIdentity.get(membership.identity_id) ?? [];
-      workspaces.push(membership.workspace_id);
-      workspacesByIdentity.set(membership.identity_id, workspaces);
-    }
-    const takenByWorkspace = new Map<string, Set<string>>();
-    const unscopedTaken = new Set<string>();
-    for (const row of rows.rows) {
-      if (row.kind !== 'human' || !row.handle) continue;
-      for (const workspaceId of workspacesByIdentity.get(row.id) ?? []) {
-        const taken = takenByWorkspace.get(workspaceId) ?? new Set<string>();
-        taken.add(row.handle.toLowerCase());
-        takenByWorkspace.set(workspaceId, taken);
-      }
-    }
-    let changed = 0;
-    for (const row of rows.rows) {
-      if (row.kind !== 'agent') continue;
-      const workspaceIds = workspacesByIdentity.get(row.id) ?? [];
-      const taken = workspaceIds.length
-        ? workspaceIds.flatMap((workspaceId) => [...(takenByWorkspace.get(workspaceId) ?? [])])
-        : [...unscopedTaken];
-      const handle = uniqueAgentHandle(row.name, taken);
-      if (workspaceIds.length) {
-        for (const workspaceId of workspaceIds) {
-          const workspaceTaken = takenByWorkspace.get(workspaceId) ?? new Set<string>();
-          workspaceTaken.add(handle.toLowerCase());
-          takenByWorkspace.set(workspaceId, workspaceTaken);
-        }
-      } else {
-        unscopedTaken.add(handle.toLowerCase());
-      }
-      if (row.handle === handle) continue;
-      const updated = await transaction.query(
-        `UPDATE identities SET handle=$2,updated_at=now() WHERE id=$1 AND handle IS DISTINCT FROM $2`,
-        [row.id, handle],
-      );
-      changed += updated.rowCount;
-    }
-    console.log(`backfillAgentHandles: assigned ${changed} name-derived agent handle(s)`);
-    return changed;
-  });
+  const agents = await database.query<{ id: string; created_at: Date }>(
+    `SELECT id,created_at FROM identities WHERE kind='agent' ORDER BY created_at,id`,
+  );
+  let changed = 0;
+  for (const agent of agents.rows) {
+    let updated = 0;
+    await retryMigrationStep(`agent handle ${agent.id}`, async () => {
+      updated = await database.transaction(async (transaction) => {
+        await transaction.query(`SET LOCAL statement_timeout='10000ms'`);
+        await transaction.query(`SET LOCAL lock_timeout='500ms'`);
+        // Use the same allocation lock as live pairing/renaming, and lock only
+        // this identity's Workspaces. A legacy global FOR UPDATE held every
+        // Workspace row until the entire population had been rewritten.
+        const workspaceIds = await lockIdentityHandleWorkspaces(transaction, agent.id);
+        const current = (await transaction.query<{ name: string; handle: string | null }>(
+          `SELECT name,handle FROM identities WHERE id=$1 FOR UPDATE`, [agent.id],
+        )).rows[0];
+        if (!current) return 0;
+        const taken = workspaceIds.length
+          ? await transaction.query<{ handle: string }>(
+              `SELECT DISTINCT identity.handle FROM memberships member
+               JOIN identities identity ON identity.id=member.identity_id
+               WHERE member.workspace_id=ANY($1::uuid[]) AND member.room_id IS NULL
+                 AND member.removed_at IS NULL AND identity.id<>$2 AND identity.handle IS NOT NULL
+                 AND (identity.kind='human' OR (identity.kind='agent' AND
+                   (identity.created_at,identity.id)<($3::timestamptz,$2)))`,
+              [workspaceIds, agent.id, agent.created_at],
+            )
+          : await transaction.query<{ handle: string }>(
+              `SELECT identity.handle FROM identities identity WHERE identity.kind='agent'
+                 AND identity.handle IS NOT NULL AND (identity.created_at,identity.id)<($2::timestamptz,$1)
+                 AND NOT EXISTS (SELECT 1 FROM memberships member WHERE member.identity_id=identity.id
+                   AND member.room_id IS NULL AND member.removed_at IS NULL)`,
+              [agent.id, agent.created_at],
+            );
+        const handle = uniqueAgentHandle(current.name, taken.rows.map((row) => row.handle));
+        if (current.handle === handle) return 0;
+        const updated = await transaction.query(
+          `UPDATE identities SET handle=$2,updated_at=now() WHERE id=$1 AND handle IS DISTINCT FROM $2`,
+          [agent.id, handle],
+        );
+        return updated.rowCount;
+      });
+    });
+    changed += updated;
+  }
+  console.log(`backfillAgentHandles: assigned ${changed} name-derived agent handle(s)`);
+  return changed;
 }
 
 /**
@@ -2268,9 +2468,12 @@ export async function backfillInstitutionalMemoryRollout(database: SqlDatabase):
  * and logs exactly how many rows it touched so a deploy's logs carry the count.
  */
 export async function backfillYoloModeDefault(database: SqlDatabase): Promise<number> {
-  const result = await database.query(`UPDATE agents SET yolo_mode = true WHERE yolo_mode = false`);
-  console.log(`backfillYoloModeDefault: flipped ${result.rowCount} agent row(s) to yolo_mode=true`);
-  return result.rowCount;
+  const changed = await boundedMigrationUpdate(database, 'yolo default',
+    `UPDATE agents SET yolo_mode=true WHERE agent_id IN (
+       SELECT agent_id FROM agents WHERE yolo_mode=false ORDER BY agent_id LIMIT $1)`,
+  );
+  console.log(`backfillYoloModeDefault: flipped ${changed} agent row(s) to yolo_mode=true`);
+  return changed;
 }
 
 /**
@@ -2280,9 +2483,10 @@ export async function backfillYoloModeDefault(database: SqlDatabase): Promise<nu
  * that already happened. Idempotent through the `IS NULL` guard.
  */
 export async function backfillSystemEventKinds(database: SqlDatabase): Promise<void> {
-  await database.query(
+  await boundedMigrationUpdate(database, 'system event kinds',
     `UPDATE messages SET system_event = system_event || jsonb_build_object('kind','schedule-ran')
-     WHERE system_event->>'verb' = $1 AND system_event->>'kind' IS NULL`,
+     WHERE id IN (SELECT id FROM messages WHERE system_event->>'verb'=$1
+       AND system_event->>'kind' IS NULL ORDER BY id LIMIT $2)`,
     [SCHEDULE_RAN_VERB],
   );
 }

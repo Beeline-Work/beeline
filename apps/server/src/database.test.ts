@@ -17,9 +17,14 @@ import {
   ENRICHMENT_POOL_WAIT_TIMEOUT_MS,
   ENRICHMENT_STATEMENT_TIMEOUT_MS,
   postgresPoolConfig,
+  REQUIRED_SCHEMA_VERSION,
   markSchemaCurrent,
+  migrateData,
   PostgresDatabase,
   HEALTH_POOL_WAIT_TIMEOUT_MS,
+  MIGRATION_LOCK_TIMEOUT_MS,
+  MIGRATION_STATEMENT_TIMEOUT_MS,
+  isTransientDatabaseConnectionError,
   type SqlDatabase,
 } from './database.js';
 import { backfillInheritedCornerMemberships } from './membership-join.js';
@@ -79,6 +84,55 @@ function poolHandingOut(clients: unknown[]) {
   return { query: vi.fn(), on: vi.fn(), connect, end: vi.fn() } as unknown as Pool;
 }
 
+function poolWithQuery(query: ReturnType<typeof vi.fn>): Pool {
+  const connect = vi.fn(async () => {
+    const client = stubClient();
+    client.query = query;
+    return client;
+  });
+  return { query: vi.fn(), on: vi.fn(), connect, end: vi.fn() } as unknown as Pool;
+}
+
+describe('pool checkout telemetry', () => {
+  it('separates queued checkout time from checked-out query time and releases on failure', async () => {
+    const client = stubClient();
+    let grant!: (client: typeof client) => void;
+    const checkout = new Promise<typeof client>((resolve) => { grant = resolve; });
+    const pool = {
+      connect: vi.fn().mockReturnValueOnce(checkout).mockResolvedValue(client),
+      on: vi.fn(), end: vi.fn(),
+    } as unknown as Pool;
+    const database = new PostgresDatabase('', 1, { pool });
+    const first = database.query('SELECT 1');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    grant(client);
+    await first;
+    const afterFirst = database.poolTelemetry();
+    expect(afterFirst.checkouts).toBe(1);
+    expect(afterFirst.waitMs).toBeGreaterThanOrEqual(15);
+    expect(afterFirst.waitBuckets.reduce((sum, count) => sum + count, 0)).toBe(1);
+    expect(client.release).toHaveBeenCalledOnce();
+
+    client.query.mockRejectedValueOnce(Object.assign(new Error('statement timeout'), { code: '57014' }));
+    await expect(database.query('BROKEN')).rejects.toThrow('statement timeout');
+    const afterFailure = database.poolTelemetry();
+    expect(afterFailure.checkouts).toBe(2);
+    expect(afterFailure.statementTimeouts).toBe(1);
+    expect(afterFailure.activeMs).toBeGreaterThanOrEqual(afterFirst.activeMs);
+    expect(client.release).toHaveBeenCalledTimes(2);
+  });
+
+  it('counts failed checkout attempts independently of successful checkouts', async () => {
+    const pool = {
+      connect: vi.fn().mockRejectedValue(new Error('pool exhausted')),
+      on: vi.fn(), end: vi.fn(),
+    } as unknown as Pool;
+    const database = new PostgresDatabase('', 1, { pool });
+    await expect(database.query('SELECT 1')).rejects.toThrow('pool exhausted');
+    expect(database.poolTelemetry()).toMatchObject({ checkouts: 0, checkoutFailures: 1 });
+  });
+});
+
 describe('a terminated checked-out connection never wedges the pool', () => {
   it('frees a checked-out transaction client that errors while no query is pending, and the pool recovers', async () => {
     const dying = stubClient();
@@ -111,21 +165,37 @@ describe('a terminated checked-out connection never wedges the pool', () => {
   });
 
   it('releases and recovers when a pool query hits a terminated connection', async () => {
-    const pool = {
-      query: vi
+    const pool = poolWithQuery(vi
         .fn()
         .mockRejectedValueOnce(TERMINATED())
-        .mockResolvedValueOnce(result([{ answer: 2 }])),
-      on: vi.fn(),
-      connect: vi.fn(),
-      end: vi.fn(),
-    } as unknown as Pool;
+        .mockResolvedValueOnce(result([{ answer: 2 }])));
     const database = new PostgresDatabase('', 5, { pool, pause: async () => {} });
 
     await expect(database.query<{ answer: number }>('SELECT 2')).resolves.toEqual(
       result([{ answer: 2 }]),
     );
-    expect(pool.query).toHaveBeenCalledTimes(2);
+    expect(database.queryProfiles().top).toMatchObject([{ calls: 1, errors: 0 }]);
+    expect(pool.connect).toHaveBeenCalledTimes(2);
+  });
+
+  it('announces recovery once after a failed pool read succeeds later', async () => {
+    const pool = poolWithQuery(vi.fn()
+        .mockRejectedValueOnce(TERMINATED())
+        .mockRejectedValueOnce(TERMINATED())
+        .mockRejectedValueOnce(TERMINATED())
+        .mockRejectedValueOnce(TERMINATED())
+        .mockResolvedValue(result([{ answer: 2 }])));
+    const database = new PostgresDatabase('', 2, { pool, pause: async () => {} });
+    const recovered = vi.fn();
+    const release = database.onRecovery(recovered);
+
+    await expect(database.query('SELECT 1')).rejects.toThrow(/Connection terminated/);
+    expect(recovered).not.toHaveBeenCalled();
+    await expect(database.query('SELECT 2')).resolves.toEqual(result([{ answer: 2 }]));
+    expect(recovered).toHaveBeenCalledOnce();
+    await database.query('SELECT 3');
+    expect(recovered).toHaveBeenCalledOnce();
+    release();
   });
 
   it('bounds every pool acquisition and keeps half-open connections from hanging silently', () => {
@@ -137,10 +207,42 @@ describe('a terminated checked-out connection never wedges the pool', () => {
       connectionTimeoutMillis: HEALTH_POOL_WAIT_TIMEOUT_MS,
       keepAlive: true,
     });
+    expect(postgresPoolConfig('postgres://app', 1, 'migration')).toMatchObject({
+      application_name: 'beeline_migration',
+      options: `-c lock_timeout=${MIGRATION_LOCK_TIMEOUT_MS}ms -c statement_timeout=${MIGRATION_STATEMENT_TIMEOUT_MS}ms`,
+    });
+  });
+
+  it('retries server startup and connection saturation responses', () => {
+    expect(isTransientDatabaseConnectionError({ code: '57P03' })).toBe(true);
+    expect(isTransientDatabaseConnectionError({ code: '53300' })).toBe(true);
   });
 });
 
 describe('message search vectors', () => {
+  it('keeps release schema and resumable data work separate without losing historical search', async () => {
+    const database = new PgliteDatabase();
+    try {
+      await migrate(database);
+      const workspace = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
+      const room = 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb';
+      const author = 'a'.repeat(64);
+      await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Author')`, [author]);
+      await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'History')`, [workspace]);
+      await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [room, workspace]);
+      await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('legacy-search',$1,$2,'historical phrase')`, [room, author]);
+      await database.query(`UPDATE messages SET search_document=NULL WHERE id='legacy-search'`);
+      await migrate(database, { deferData: true });
+      expect((await database.query(`SELECT search_document FROM messages WHERE id='legacy-search'`)).rows[0]).toEqual({ search_document: null });
+      await migrateData(database);
+      expect((await database.query<{ matched: boolean }>(
+        `SELECT search_document @@ websearch_to_tsquery('simple','historical phrase') matched
+         FROM messages WHERE id='legacy-search'`,
+      )).rows[0]?.matched).toBe(true);
+    } finally {
+      await database.close();
+    }
+  });
   it('maintains new writes by trigger and fills history in bounded batches', async () => {
     const database = new PgliteDatabase();
     await migrate(database);
@@ -444,6 +546,18 @@ describe('institutional cascades', () => {
 });
 
 describe('release-owned schema readiness', () => {
+  it('waits through transient pool checkout timeouts without mistaking them for a schema mismatch', async () => {
+    const query = vi.fn()
+      .mockRejectedValueOnce(new Error('timeout exceeded when trying to connect'))
+      .mockRejectedValueOnce(new Error('Connection terminated due to connection timeout'))
+      .mockResolvedValueOnce(result([{ version: REQUIRED_SCHEMA_VERSION }]));
+    const wait = vi.fn().mockResolvedValue(undefined);
+
+    await expect(assertSchemaCurrent({ query, transaction: vi.fn() }, wait)).resolves.toBeUndefined();
+    expect(wait.mock.calls).toEqual([[1_000], [2_000]]);
+    expect(query).toHaveBeenCalledTimes(3);
+  });
+
   it('fails boot clearly until the release migration writes its final marker', async () => {
     const database = new PgliteDatabase();
     await expect(assertSchemaCurrent(database)).rejects.toThrow(
@@ -481,7 +595,7 @@ describe('PostgresDatabase reconnects', () => {
       .fn()
       .mockRejectedValueOnce(new Error('Connection terminated unexpectedly'))
       .mockResolvedValueOnce(result([{ answer: 1 }]));
-    const pool = { query, on: vi.fn(), connect: vi.fn(), end: vi.fn() } as unknown as Pool;
+    const pool = poolWithQuery(query);
     const database = new PostgresDatabase('', 5, { pool, pause: async () => {} });
 
     await expect(database.query<{ answer: number }>('SELECT 1')).resolves.toEqual(
@@ -491,10 +605,19 @@ describe('PostgresDatabase reconnects', () => {
     expect(pool.on).toHaveBeenCalledWith('error', expect.any(Function));
   });
 
+  it('retries pool checkout timeouts and stops after its bounded request attempts', async () => {
+    const timeout = new Error('timeout exceeded when trying to connect');
+    const pool = { query: vi.fn(), on: vi.fn(), connect: vi.fn().mockRejectedValue(timeout), end: vi.fn() } as unknown as Pool;
+    const database = new PostgresDatabase('', 5, { pool, pause: async () => {} });
+
+    await expect(database.query('SELECT 1')).rejects.toBe(timeout);
+    expect(pool.connect).toHaveBeenCalledTimes(4);
+  });
+
   it('does not retry non-connection errors', async () => {
     const uniqueViolation = Object.assign(new Error('duplicate key'), { code: '23505' });
     const query = vi.fn().mockRejectedValue(uniqueViolation);
-    const pool = { query, on: vi.fn(), connect: vi.fn(), end: vi.fn() } as unknown as Pool;
+    const pool = poolWithQuery(query);
     const database = new PostgresDatabase('', 5, { pool, pause: async () => {} });
 
     await expect(database.query('SELECT 1')).rejects.toBe(uniqueViolation);
@@ -543,6 +666,12 @@ describe('PostgresDatabase reconnects', () => {
     expect(client.listenerCount('error')).toBe(1);
     expect(() => dedicated.emit('error', error)).not.toThrow();
     expect(errorLog).toHaveBeenCalledWith('dedicated postgres client error', error);
+    dedicated.release();
+    expect(client.listenerCount('error')).toBe(0);
+    const reused = await database.connectDedicated();
+    expect(reused.listenerCount('error')).toBe(1);
+    reused.release();
+    expect(client.listenerCount('error')).toBe(0);
   });
 });
 

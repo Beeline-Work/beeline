@@ -94,20 +94,40 @@ describe('PRODUCTION-CORPUS width-shaped room-list', () => {
     const measurement = await hotReads.awaitResult('room-list');
     assertHotRead(measurement);
 
-    const started = performance.now();
-    const view = await phone.readChats(WORKSPACE, VIEWER);
-    const elapsedMs = performance.now() - started;
-    expect(view.chats.length).toBe(ROOM_COUNT);
-    expect(view.watchFilters[0]?.['#h']?.length).toBe(ROOM_COUNT);
-    expect(elapsedMs).toBeLessThanOrEqual(HOT_READ_BUDGETS_MS['room-list']);
+    const samples = await sampleRoomList(phone);
+    expect(median(samples)).toBeLessThanOrEqual(HOT_READ_BUDGETS_MS['room-list']);
     console.log(
       JSON.stringify({
         path: 'width-room-list',
         rooms: ROOM_COUNT,
-        elapsedMs: Math.round(elapsedMs),
+        medianMs: Math.round(median(samples)),
+        samplesMs: samples.map(Math.round),
         budgetMs: HOT_READ_BUDGETS_MS['room-list'],
         explainP95Ms: Math.round(measurement.p95Ms),
-        watchFilterRooms: view.watchFilters[0]?.['#h']?.length ?? 0,
+        watchFilterRooms: ROOM_COUNT,
+      }),
+    );
+  });
+
+  it('tolerates one stalled query but rejects a sustained slow room-list query', async () => {
+    hotReads.delayRoomListQueries(1, 120);
+    const single = await sampleRoomList(phone, 1);
+    expect(single[0]).toBeGreaterThan(HOT_READ_BUDGETS_MS['room-list']);
+
+    hotReads.delayRoomListQueries(1, 120);
+    const oneStall = await sampleRoomList(phone);
+    expect(median(oneStall)).toBeLessThanOrEqual(HOT_READ_BUDGETS_MS['room-list']);
+
+    hotReads.delayRoomListQueries(5, 120);
+    const sustainedSlow = await sampleRoomList(phone);
+    expect(median(sustainedSlow)).toBeGreaterThan(HOT_READ_BUDGETS_MS['room-list']);
+    console.log(
+      JSON.stringify({
+        path: 'width-room-list-injected-query-delay',
+        delayMs: 120,
+        oldSingleMs: Math.round(single[0]!),
+        oneStallMs: oneStall.map(Math.round),
+        sustainedSlowMs: sustainedSlow.map(Math.round),
       }),
     );
   });
@@ -140,14 +160,38 @@ const matchers: ReadonlyArray<readonly [HotReadName, (sql: string) => boolean]> 
     'room-view',
     (sql) => sql.includes('WITH authorized_room AS') && sql.includes('transcript_rows AS'),
   ],
-  ['room-list', (sql) => sql.includes('peer_activity_at') && sql.includes('FROM rooms r')],
+  ['room-list', (sql) => sql.includes('SELECT r.*') && sql.includes('peer_activity_at')],
 ];
+
+async function sampleRoomList(phone: PhoneService, count = 5): Promise<number[]> {
+  const samples: number[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const started = performance.now();
+    const view = await phone.readChats(WORKSPACE, VIEWER);
+    samples.push(performance.now() - started);
+    expect(view?.chats.length).toBe(ROOM_COUNT);
+    expect(view?.watchFilters[0]?.['#h']?.length).toBe(ROOM_COUNT);
+  }
+  return samples;
+}
+
+function median(samples: readonly number[]): number {
+  const sorted = [...samples].sort((left, right) => left - right);
+  return sorted[Math.floor(sorted.length / 2)] ?? Number.POSITIVE_INFINITY;
+}
 
 class HotReadDatabase implements SqlDatabase {
   readonly results = new Map<HotReadName, HotReadResult>();
   readonly pending = new Map<HotReadName, Promise<HotReadResult>>();
+  private delayedRoomListQueries = 0;
+  private roomListDelayMs = 0;
 
   constructor(private readonly database: SqlDatabase) {}
+
+  delayRoomListQueries(count: number, ms: number): void {
+    this.delayedRoomListQueries = count;
+    this.roomListDelayMs = ms;
+  }
 
   async awaitResult(name: HotReadName): Promise<HotReadResult> {
     const ready = this.results.get(name);
@@ -169,6 +213,10 @@ class HotReadDatabase implements SqlDatabase {
       });
       this.pending.set(match[0], measurement);
       await measurement;
+    }
+    if (match?.[0] === 'room-list' && this.delayedRoomListQueries > 0) {
+      this.delayedRoomListQueries -= 1;
+      await new Promise((resolve) => setTimeout(resolve, this.roomListDelayMs));
     }
     return this.database.query<Row>(sql, values);
   }

@@ -54,7 +54,7 @@ import { WorkspaceActionsMenu } from '@/components/buzz/WorkspaceActionsMenu';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { BuzzRigTransport } from '@/sync/transport';
-import { isDraftFrame } from '@/sync/transport/live-frames';
+import { isCornerStatusFrame, isDraftFrame } from '@/sync/transport/live-frames';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { useIsDesktop } from '@/utils/responsive';
@@ -451,7 +451,7 @@ export default function BuzzChannels() {
               if (needsRead && deckVisible()) chatsRefresh?.signal();
               return;
             }
-            if (isDraftFrame(event)) return;
+            if (isDraftFrame(event) || isCornerStatusFrame(event)) return;
             // A committed-row invalidation announces the delta that follows it.
             if (live?.type === 'invalidate' && live.deliveryId) return;
             if (deckVisible()) chatsRefresh?.signal();

@@ -27,6 +27,68 @@ function runtimeAt(root: string): AgentRuntimeRecord {
 }
 
 describe('RoomRuntimeCoordinator live membership apply', () => {
+  it('finishes an active turn before restarting for a repository revision', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-revision-mid-turn-'));
+    roots.push(root);
+    let revision = 'first';
+    let busy = true;
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getDaemonBootstrap') return { workspaceIds: ['workspace'],
+        rooms: [{ roomId: 'room-1', archived: false, repositoryRevision: revision }] };
+      if (name === 'listRoomCorners') return { corners: [] };
+      return {};
+    });
+    const coordinator = new RoomRuntimeCoordinator(runtimeAt(root), join(root, 'agent.json'),
+      { workspaceRoot: root } as never, { daemonApi: {
+        execute, setRoomsChangedListener: vi.fn(),
+      } as unknown as DaemonApiClient });
+    const internal = coordinator as unknown as {
+      running: Map<string, unknown>;
+      notePoll(roomId: string): void;
+      stopRunning(roomId: string, room: unknown): Promise<void>;
+      startRoom(roomId: string): Promise<void>;
+    };
+    internal.running.set('room-1', {
+      body: { isBusy: () => busy, requestReconciliation: vi.fn() },
+      controller: new AbortController(), promise: Promise.resolve(),
+      lastPollAt: 0, backoffUntil: 0, recovering: false,
+    });
+    const stop = vi.spyOn(internal, 'stopRunning').mockImplementation(async () => {
+      internal.running.delete('room-1');
+    });
+    const start = vi.spyOn(internal, 'startRoom').mockResolvedValue();
+    try {
+      await coordinator.reconcile();
+      revision = 'second';
+      await coordinator.reconcile();
+      expect(stop).not.toHaveBeenCalled();
+      busy = false;
+      internal.notePoll('room-1');
+      await vi.waitFor(() => expect(start).toHaveBeenCalledWith('room-1'));
+      expect(stop).toHaveBeenCalledOnce();
+    } finally {
+      await coordinator.shutdown();
+    }
+  });
+  it('keeps a capable live socket after a discovery read fault and retains old-server fallback', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-discovery-recovery-'));
+    roots.push(root);
+    const reconnectLive = vi.fn();
+    const supportsDiscoveryWake = vi.fn(() => true);
+    const coordinator = new RoomRuntimeCoordinator(runtimeAt(root), join(root, 'agent.json'),
+      { workspaceRoot: root } as never, { daemonApi: {
+        reconnectLive, supportsDiscoveryWake, setRoomsChangedListener: vi.fn(),
+      } as unknown as DaemonApiClient });
+    try {
+      coordinator.reconnectAfterFailure();
+      expect(reconnectLive).not.toHaveBeenCalled();
+      supportsDiscoveryWake.mockReturnValue(false);
+      coordinator.reconnectAfterFailure();
+      expect(reconnectLive).toHaveBeenCalledOnce();
+    } finally {
+      await coordinator.shutdown();
+    }
+  });
   it('starts a Room from a membership push without listing corners', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-live-room-'));
     roots.push(root);
@@ -190,7 +252,7 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
     }
   });
 
-  it('starts a Room once when two membership pushes race its checkout', async () => {
+  it('starts a Room once when two membership pushes arrive before checkout', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-live-race-'));
     roots.push(root);
     let repositoryReads = 0;
@@ -224,7 +286,8 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
         coordinator.applyMembershipEvent({ roomId: 'room-1' }),
       ]);
       await vi.waitFor(() => expect(coordinator.activeRoomIds()).toContain('room-1'));
-      expect(repositoryReads).toBe(1);
+      expect(repositoryReads).toBe(0);
+      expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(1);
     } finally {
       await coordinator.shutdown();
     }
@@ -294,7 +357,7 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
     }
   });
 
-  it('serves a pushed Room when its repository lookup fails', async () => {
+  it('serves a pushed Room before a repository lookup can fail', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-live-failed-apply-'));
     roots.push(root);
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -327,7 +390,7 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
       membership?.({ roomId: 'room-1' });
       await vi.waitFor(() => expect(coordinator.activeRoomIds()).toContain('room-1'));
       expect(coordinator.needsFastReconcile()).toBe(false);
-      expect(execute).toHaveBeenCalledWith('getRoomRepositoryState', { roomId: 'room-1' });
+      expect(execute).not.toHaveBeenCalledWith('getRoomRepositoryState', { roomId: 'room-1' });
     } finally {
       await coordinator.shutdown();
       vi.restoreAllMocks();
@@ -375,11 +438,6 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
       checkoutStarted = started;
     });
     const execute = vi.fn(async (name: string) => {
-      if (name === 'getRoomRepositoryState') {
-        checkoutStarted();
-        await checkoutGate;
-        return { resolution: 'none' };
-      }
       if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
       if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
       if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
@@ -402,6 +460,11 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
         } as unknown as DaemonApiClient,
       },
     );
+    vi.spyOn(coordinator as never, 'grantRunnerEndpoint').mockImplementation(async () => {
+      checkoutStarted();
+      await checkoutGate;
+      return undefined;
+    });
     // A pushed apply runs outside the run loop's signal, so a Room whose start
     // is in flight when shutdown begins must still be stopped by it.
     membership?.({ roomId: 'room-1' });
@@ -418,7 +481,7 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
     // And a push arriving after shutdown starts nothing at all.
     membership?.({ roomId: 'room-2' });
     await new Promise((resolveTick) => setTimeout(resolveTick, 0));
-    expect(execute).not.toHaveBeenCalledWith('getRoomRepositoryState', { roomId: 'room-2' });
+    expect(execute).not.toHaveBeenCalledWith('getAgentCommands', { roomId: 'room-2' });
   });
 
   it('bounds the wait for a stalled pushed apply and drops what it started', async () => {
@@ -433,11 +496,6 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
       checkoutStarted = started;
     });
     const execute = vi.fn(async (name: string) => {
-      if (name === 'getRoomRepositoryState') {
-        checkoutStarted();
-        await checkoutGate;
-        return { resolution: 'none' };
-      }
       if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
       if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
       if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
@@ -461,9 +519,13 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
         } as unknown as DaemonApiClient,
       },
     );
-    // A checkout that clones for minutes (or stalls on a black-holed fetch)
-    // must not hold shutdown past the drain deadline the managed update runs
-    // on — and the Room it was starting must still never end up running.
+    vi.spyOn(coordinator as never, 'grantRunnerEndpoint').mockImplementation(async () => {
+      checkoutStarted();
+      await checkoutGate;
+      return undefined;
+    });
+    // A stalled local endpoint start must not hold shutdown past the drain
+    // deadline, and the Room it was starting must never end up running.
     membership?.({ roomId: 'room-1' });
     await startInFlight;
     await coordinator.shutdown();

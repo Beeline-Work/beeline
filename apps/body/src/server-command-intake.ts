@@ -86,6 +86,7 @@ export async function runServerCommandIntake(options: {
   canStartTurn?: () => boolean;
   onWake?: (wake: (() => void) | undefined) => void;
   onPoll?: () => void;
+  onSubscriptionState?: (connected: boolean) => void;
   onError?: (error: unknown) => void;
   onEnter?: (command: AgentCommand) => void;
   onLeave?: (command: AgentCommand) => void;
@@ -130,6 +131,7 @@ export async function runServerCommandIntake(options: {
     undefined,
     undefined,
     (connected, capabilities) => {
+      options.onSubscriptionState?.(connected && capabilities?.pushIntake === true);
       if (!connected) return;
       if (capabilities?.pushIntake !== true) {
         options.onError?.(new Error('server push intake is required; refusing timer-free intake'));
@@ -210,7 +212,10 @@ export async function runServerCommandIntake(options: {
         const aborted = () => done(false);
         wake = done;
         signal?.addEventListener('abort', aborted, { once: true });
-        if (
+        // `closed()` and command claims can yield after shutdown has already
+        // aborted the signal, before this listener is installed.
+        if (signal?.aborted) done(false);
+        else if (
           !busy &&
           [...pending.values()].some(
             (command) =>

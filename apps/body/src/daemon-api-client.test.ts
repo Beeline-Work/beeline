@@ -15,6 +15,7 @@ import {
   writeRuntimeRecord,
   type AgentRuntimeRecord,
 } from './runtime.js';
+import type { HostReadBudget } from './host-read-budget.js';
 
 const roots: string[] = [];
 
@@ -124,6 +125,7 @@ describe('DaemonApiClient', () => {
       expect(init?.headers).toEqual({
         authorization: `Bearer bdt_${'y'.repeat(43)}`,
         'content-type': 'application/json',
+        'x-beeline-helper-version': 'v0.0.0',
       });
       return Response.json({ workspaceIds: [runtime.communityId], rooms: [] });
     });
@@ -178,6 +180,56 @@ describe('DaemonApiClient', () => {
     await expect(
       client.execute('getDaemonBootstrap', { agentId: 'b'.repeat(64) }),
     ).rejects.toMatchObject<Partial<DaemonApiError>>({ status: 503, retryable: true });
+  });
+
+  it('reports its release on every operation and live connection, and reacts to both force-update signals', async () => {
+    FakeWebSocket.instances.length = 0;
+    const request = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      Response.json({ error: 'update_required', minVersion: 'v0.0.70' }, { status: 426 }),
+    );
+    const client = new DaemonApiClient('https://server.example', 'token', 'agent', request,
+      ((url, protocols) => new FakeWebSocket(url, protocols)) as DaemonWebSocketFactory);
+    client.setHelperIdentity({ releaseVersion: 'v0.0.69', sourceSha: 'abc1234' });
+    const force = vi.fn();
+    client.setForceUpdateListener(force);
+    await expect(client.execute('getDaemonBootstrap', { agentId: 'agent' }))
+      .rejects.toMatchObject({ status: 426, code: 'update_required', minVersion: 'v0.0.70' });
+    expect(request.mock.calls[0]?.[1]?.headers).toEqual(expect.objectContaining({
+      'x-beeline-helper-version': 'v0.0.69',
+    }));
+    expect(force).toHaveBeenCalledWith('v0.0.70');
+    const release = client.liveSubscribe('room');
+    const socket = FakeWebSocket.instances[0]!;
+    expect(socket.url).toBe('wss://server.example/v1/phone/live?helperVersion=v0.0.69&sourceSha=abc1234');
+    socket.message({ type: 'force-update', minVersion: 'v0.0.71' });
+    expect(force).toHaveBeenCalledWith('v0.0.71');
+    release();
+  });
+
+  it('exposes the server Retry-After delay on a retryable overload', async () => {
+    const client = new DaemonApiClient('http://127.0.0.1:43123', 'token', 'a'.repeat(64),
+      async () => Response.json({ error: 'overloaded' },
+        { status: 429, headers: { 'retry-after': '2' } }));
+    await expect(client.execute('getDaemonBootstrap', { agentId: client.agentId }))
+      .rejects.toMatchObject({ status: 429, retryable: true, retryAfterMs: 2_000 });
+  });
+
+  it('aborts a hung operation at its deadline without retiring the agent', async () => {
+    vi.useFakeTimers();
+    const budget = { acquire: async () => async () => undefined,
+      metrics: () => ({ waiting: 0, active: 0, totalWaitMs: 0 }) } as unknown as HostReadBudget;
+    const request: typeof fetch = async (_url, init) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+    });
+    const client = new DaemonApiClient('http://127.0.0.1:43123', 'token', 'a'.repeat(64),
+      request, undefined, budget);
+    const operation = client.execute('getDaemonBootstrap', { agentId: client.agentId });
+    const failed = expect(operation).rejects.toMatchObject({
+      status: 408, retryable: true, code: 'deadline_exceeded',
+    });
+    await vi.advanceTimersByTimeAsync(30_000);
+    await failed;
+    expect(client.metrics()).toMatchObject({ inFlight: 0, timeouts: 1 });
   });
 
   it('reconnects the one live socket by cursor and de-duplicates replayed ids', async () => {
@@ -267,6 +319,29 @@ describe('DaemonApiClient', () => {
     expect(configChanged).toHaveBeenCalledOnce();
     release();
     vi.useRealTimers();
+  });
+
+  it('uses server recovery wakes only after the subscribed capability is acknowledged', () => {
+    FakeWebSocket.instances.length = 0;
+    const client = new DaemonApiClient('http://127.0.0.1:43123', 'token', 'b'.repeat(64),
+      fetch, ((url, protocols) => new FakeWebSocket(url, protocols)) as DaemonWebSocketFactory);
+    const discovery = vi.fn();
+    client.setRoomsChangedListener(discovery);
+    const release = client.liveSubscribe('room-1');
+    const socket = FakeWebSocket.instances[0]!;
+    socket.open();
+    expect(client.supportsDiscoveryWake()).toBe(false);
+    socket.message({ type: 'hello', protocolMin: 1, protocolMax: 1,
+      capabilities: { discoveryWake: true, pushIntake: true } });
+    expect(client.supportsDiscoveryWake()).toBe(true);
+    socket.message({ type: 'subscribed', roomId: 'room-1', capabilities: { discoveryWake: true } });
+    expect(client.supportsDiscoveryWake()).toBe(true);
+    socket.message({ type: 'discovery-wake', reason: 'database-recovered' });
+    expect(discovery).toHaveBeenCalledTimes(2); // open recovery and DB recovery
+    socket.close();
+    expect(client.supportsDiscoveryWake()).toBe(false);
+    release();
+    client.closeLive();
   });
 
   it('delivers a hiccup-restart push to the one registered listener', async () => {

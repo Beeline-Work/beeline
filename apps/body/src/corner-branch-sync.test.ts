@@ -62,6 +62,51 @@ async function remoteWithCornerBranch(): Promise<{ remote: string; scratch: stri
 }
 
 describe('a helper joining a corner it did not open', () => {
+  it('skips archived history with no local worktree before any restore read', async () => {
+    const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-history-'));
+    roots.push(supervisorRoot);
+    const identity = identityFromKey('11'.repeat(32), 'Bee');
+    const execute = vi.fn(async () => {
+      throw new Error('archive history must not reach the server');
+    });
+    const coordinator = new RoomRuntimeCoordinator(
+      {
+        agent: {
+          name: 'Bee',
+          publicKey: identity.publicKey,
+          secretKeyHex: Buffer.from(identity.secretKey).toString('hex'),
+        },
+        rooms: [],
+        communityId: 'workspace',
+        supervisorRoot,
+        transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
+      } as unknown as AgentRuntimeRecord,
+      resolve(supervisorRoot, 'agent.json'),
+      { workspaceRoot: supervisorRoot } as never,
+      { daemonApi: { execute } as unknown as DaemonApiClient },
+    );
+    const recovery = coordinator as unknown as {
+      sweepArchivedCornerWorktrees(
+        corners: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>,
+      ): Promise<void>;
+    };
+    const history = new Map(
+      Array.from(
+        { length: 446 },
+        (_, index) =>
+          [
+            `corner-${index}`,
+            { cornerId: `corner-${index}`, parentRoomId: 'room-parent' },
+          ] as const,
+      ),
+    );
+
+    await recovery.sweepArchivedCornerWorktrees(history);
+
+    expect(execute).not.toHaveBeenCalled();
+    await coordinator.shutdown();
+  });
+
   it('deletes its worktree and exact local and remote branches on close', async () => {
     const { remote } = await remoteWithCornerBranch();
     const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-close-'));
@@ -238,87 +283,113 @@ describe('a helper joining a corner it did not open', () => {
     await expect(access(worktree.path)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('sweeps an archived worktree that predates the current process', async () => {
-    const { remote } = await remoteWithCornerBranch();
-    const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-stale-'));
-    roots.push(supervisorRoot);
-    const worktree = await materializeCornerWorktree({
-      cornerId: 'corner-stale',
-      remote,
-      targetBranch: 'main',
-      featureBranch: FEATURE,
-      token: 'unused',
-      supervisorRoot,
-      committer: { name: 'Helper', publicKey: 'a'.repeat(64) },
-    });
-    const identity = identityFromKey('11'.repeat(32), 'Bee');
-    const execute = vi.fn(async (name: string) => {
-      if (name === 'getCornerRestoreState') {
-        return {
-          cornerId: 'corner-stale',
-          featureBranch: FEATURE,
-          lifecycle: {
-            lifecycle: 'done',
-            checks: 'passing',
-            pr: {
-              number: 1,
-              url: 'https://github.com/example/repo/pull/1',
-              title: 'Done',
-              targetBranch: 'main',
-              headSha: 'a'.repeat(40),
-              mergedAt: '2026-09-25T00:00:00Z',
-            },
-          },
-        };
-      }
-      if (name === 'getRoomRepositoryState') {
-        return {
-          resolution: 'repository',
-          key: 'example/repo',
-          remote,
-          targetBranch: 'main',
-        };
-      }
-      if (name === 'getRoomGitHubToken') return { token: 'unused', expiresAt: Date.now() + 60_000 };
-      return {};
-    });
-    const coordinator = new RoomRuntimeCoordinator(
-      {
-        agent: {
-          name: 'Bee',
-          publicKey: identity.publicKey,
-          secretKeyHex: Buffer.from(identity.secretKey).toString('hex'),
-        },
-        rooms: [],
-        communityId: 'workspace',
+  it.each([
+    { protocol: 'old server archive list', listed: true, metadata: false, cleanup: true },
+    { protocol: 'new server restore tombstone', listed: false, metadata: true, cleanup: true },
+    {
+      protocol: 'stale archived list',
+      listed: true,
+      metadata: true,
+      archived: false,
+      cleanup: false,
+    },
+    { protocol: 'no archive proof', listed: false, metadata: false, cleanup: false },
+  ])(
+    'recovers an old worktree with $protocol',
+    async ({ listed, metadata, cleanup, ...scenario }) => {
+      const { remote } = await remoteWithCornerBranch();
+      const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-stale-'));
+      roots.push(supervisorRoot);
+      const worktree = await materializeCornerWorktree({
+        cornerId: 'corner-stale',
+        remote,
+        targetBranch: 'main',
+        featureBranch: FEATURE,
+        token: 'unused',
         supervisorRoot,
-        transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
-      } as unknown as AgentRuntimeRecord,
-      resolve(supervisorRoot, 'agent.json'),
-      { workspaceRoot: supervisorRoot } as never,
-      { daemonApi: { execute } as unknown as DaemonApiClient },
-    );
-    const recovery = coordinator as unknown as {
-      sweepArchivedCornerWorktrees(
-        corners: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>,
-      ): Promise<void>;
-    };
+        committer: { name: 'Helper', publicKey: 'a'.repeat(64) },
+      });
+      const identity = identityFromKey('11'.repeat(32), 'Bee');
+      const execute = vi.fn(async (name: string) => {
+        if (name === 'getCornerRestoreState') {
+          return {
+            cornerId: 'corner-stale',
+            ...(metadata
+              ? { archived: scenario.archived ?? true, parentRoomId: 'room-parent' }
+              : {}),
+            featureBranch: FEATURE,
+            lifecycle: {
+              lifecycle: 'done',
+              checks: 'passing',
+              pr: {
+                number: 1,
+                url: 'https://github.com/example/repo/pull/1',
+                title: 'Done',
+                targetBranch: 'main',
+                headSha: 'a'.repeat(40),
+                mergedAt: '2026-09-25T00:00:00Z',
+              },
+            },
+          };
+        }
+        if (name === 'getRoomRepositoryState') {
+          return {
+            resolution: 'repository',
+            key: 'example/repo',
+            remote,
+            targetBranch: 'main',
+          };
+        }
+        if (name === 'getRoomGitHubToken')
+          return { token: 'unused', expiresAt: Date.now() + 60_000 };
+        return {};
+      });
+      const coordinator = new RoomRuntimeCoordinator(
+        {
+          agent: {
+            name: 'Bee',
+            publicKey: identity.publicKey,
+            secretKeyHex: Buffer.from(identity.secretKey).toString('hex'),
+          },
+          rooms: [],
+          communityId: 'workspace',
+          supervisorRoot,
+          transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
+        } as unknown as AgentRuntimeRecord,
+        resolve(supervisorRoot, 'agent.json'),
+        { workspaceRoot: supervisorRoot } as never,
+        { daemonApi: { execute } as unknown as DaemonApiClient },
+      );
+      const recovery = coordinator as unknown as {
+        sweepArchivedCornerWorktrees(
+          corners: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>,
+        ): Promise<void>;
+      };
 
-    await recovery.sweepArchivedCornerWorktrees(
-      new Map([['corner-stale', { cornerId: 'corner-stale', parentRoomId: 'room-parent' }]]),
-    );
+      await recovery.sweepArchivedCornerWorktrees(
+        listed
+          ? new Map([['corner-stale', { cornerId: 'corner-stale', parentRoomId: 'room-parent' }]])
+          : new Map(),
+      );
 
-    await expect(access(worktree.path)).rejects.toMatchObject({ code: 'ENOENT' });
-    expect(execute).toHaveBeenCalledWith('postCornerRemoteState', {
-      cornerId: 'corner-stale',
-      branch: FEATURE,
-      state: 'gone',
-      checks: 'unknown',
-    });
-    await coordinator.shutdown();
-  });
+      if (cleanup) {
+        await expect(access(worktree.path)).rejects.toMatchObject({ code: 'ENOENT' });
+        expect(execute).toHaveBeenCalledWith('postCornerRemoteState', {
+          cornerId: 'corner-stale',
+          branch: FEATURE,
+          state: 'gone',
+          checks: 'unknown',
+        });
+      } else {
+        await expect(access(worktree.path)).resolves.toBeUndefined();
+        expect(execute).not.toHaveBeenCalledWith('getRoomRepositoryState', expect.anything());
+      }
+      await coordinator.shutdown();
+    },
+  );
 
   it('refuses a stale corner directory linked to the wrong repository cache', async () => {
+    let now = 10_000;
     const [{ remote }, { remote: wrongRemote }] = await Promise.all([
       remoteWithCornerBranch(),
       remoteWithCornerBranch(),
@@ -363,18 +434,22 @@ describe('a helper joining a corner it did not open', () => {
       } as unknown as AgentRuntimeRecord,
       resolve(supervisorRoot, 'agent.json'),
       { workspaceRoot: supervisorRoot } as never,
-      { daemonApi: { execute } as unknown as DaemonApiClient },
+      { daemonApi: { execute } as unknown as DaemonApiClient, now: () => now },
     );
     const recovery = coordinator as unknown as {
       sweepArchivedCornerWorktrees(
         corners: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>,
       ): Promise<void>;
     };
-    await recovery.sweepArchivedCornerWorktrees(
-      new Map([
-        ['corner-wrong-repo', { cornerId: 'corner-wrong-repo', parentRoomId: 'room-parent' }],
-      ]),
-    );
+    const archived = new Map([
+      ['corner-wrong-repo', { cornerId: 'corner-wrong-repo', parentRoomId: 'room-parent' }],
+    ]);
+    await recovery.sweepArchivedCornerWorktrees(archived);
+    await recovery.sweepArchivedCornerWorktrees(archived);
+    expect(execute).toHaveBeenCalledTimes(2);
+    now += 2_001;
+    await recovery.sweepArchivedCornerWorktrees(archived);
+    expect(execute).toHaveBeenCalledTimes(4);
 
     await expect(access(worktree.path)).resolves.toBeUndefined();
     // A stale checkout is background cleanup. It must not turn every failed

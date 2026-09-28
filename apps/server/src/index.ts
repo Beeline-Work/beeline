@@ -1,5 +1,6 @@
-import { assertSchemaCurrent, markSchemaCurrent, migrate, PostgresDatabase } from './database.js';
-import { retryOnDeadlock } from './migration-retry.js';
+import { assertSchemaCurrent, markSchemaCurrent, migrate, migrateData, PostgresDatabase } from './database.js';
+import { retryMigrationStep } from './migration-retry.js';
+import { databaseConnectionBudget } from './database-budget.js';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import { TokenAuth, verifierFromEnvironment } from './auth.js';
 import { PhoneService } from './phone-service.js';
@@ -7,6 +8,7 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import {
   BackgroundLeader,
+  BackgroundJobRunner,
   createPushTestSender,
   MediaExpiryLoop,
   PushDeliveryLoop,
@@ -44,12 +46,15 @@ function required(name: string) {
 }
 
 async function runReleaseMigration(): Promise<void> {
-  const database = new PostgresDatabase(required('MIGRATION_DATABASE_URL'), 1);
+  const database = new PostgresDatabase(required('MIGRATION_DATABASE_URL'), 1, {
+    mode: 'migration',
+  });
   try {
-    await retryOnDeadlock(async () => {
-      await migrate(database);
+    await migrate(database, { deferData: true });
+    await retryMigrationStep('auth schema', async () => {
       await new AuthStore(database as unknown as TransactionalDatabase).migrate();
     });
+    await migrateData(database);
     // Armed only by the release owner, once the create-or-join onboarding is
     // live on every supported client (docs/welcome-retirement.md).
     const greeterAgentId = process.env.BEELINE_RETIRE_WELCOME_GREETER_ID?.trim();
@@ -59,7 +64,7 @@ async function runReleaseMigration(): Promise<void> {
     }
     // This is deliberately last: boot may proceed only after both schema owners
     // and every data backfill completed successfully.
-    await markSchemaCurrent(database);
+    await retryMigrationStep('schema marker', () => markSchemaCurrent(database));
     console.log('[migration] server and auth schemas are current');
   } finally {
     await database.close();
@@ -68,19 +73,33 @@ async function runReleaseMigration(): Promise<void> {
 
 async function main() {
   const connectionString = required('DATABASE_URL');
+  const healthDatabase = new PostgresDatabase(connectionString, 1, { mode: 'diagnostics' });
+  let budget: ReturnType<typeof databaseConnectionBudget>;
+  try {
+    const capacity = await healthDatabase.query<{ max_connections: string }>('SHOW max_connections');
+    budget = databaseConnectionBudget(
+      Number(capacity.rows[0]?.max_connections),
+      Number(process.env.BEELINE_SERVER_MACHINES ?? '2'),
+      Number(process.env.DATABASE_POOL_MAX ?? '5'),
+    );
+  } catch (error) {
+    await healthDatabase.close();
+    throw error;
+  }
   const database = new PostgresDatabase(
     connectionString,
-    Number(process.env.DATABASE_POOL_MAX ?? '5'),
+    budget.app,
   );
   try {
     await assertSchemaCurrent(database);
   } catch (error) {
     await database.close();
+    await healthDatabase.close();
     throw error;
   }
-  const enrichmentDatabase = new PostgresDatabase(connectionString, 2, { mode: 'enrichment' });
-  const healthDatabase = new PostgresDatabase(connectionString, 1, { mode: 'diagnostics' });
-  const jobsDatabase = new PostgresDatabase(connectionString, 2, { mode: 'long-running' });
+  const enrichmentDatabase = new PostgresDatabase(connectionString, budget.enrichment, { mode: 'enrichment' });
+  const jobsDatabase = new PostgresDatabase(connectionString, budget.jobs, { mode: 'long-running' });
+  console.log(`[database] connection budget ${JSON.stringify(budget)}`);
   const publicOrigin =
     process.env.PUBLIC_ORIGIN ?? `http://127.0.0.1:${process.env.PORT ?? '8080'}`;
   const live = new LiveHub();
@@ -274,11 +293,18 @@ async function main() {
       ? { secret: process.env.BEELINE_RELEASE_NOTIFY_SECRET }
       : {}),
   });
+  const backgroundJobs = new BackgroundJobRunner();
   const server = createBeelineServer({
     database,
+    databaseBudget: budget,
+    enrichmentDatabase,
+    jobsDatabase,
+    databasePools: { app: database, enrichment: enrichmentDatabase, diagnostics: healthDatabase, jobs: jobsDatabase },
     googleOAuth,
     registryMcpOAuth,
     healthDatabase,
+    backgroundHealth: () => backgroundJobs.snapshot(),
+    liveBridgeHealth: () => liveListener.projectionHealth(),
     auth,
     phone,
     daemon,
@@ -309,38 +335,28 @@ async function main() {
   const leader = new BackgroundLeader(
     jobsDatabase,
     async () => {
-      if (push) await push.runIfDue();
-      await schedules.runOnce();
-      await choiceExpiry.runOnce();
+      if (push) await backgroundJobs.run('push', () => push.runIfDue());
+      await backgroundJobs.run('schedules', () => schedules.runOnce());
+      await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
       const now = Date.now();
       if (now - lastReconciliationAt >= reconciliationMs) {
         lastReconciliationAt = now;
-        await mediaExpiry.runOnce(now);
-        await runMaintenance(jobsDatabase);
-        try {
-          await runInstitutionalCuratorCycle(jobsDatabase, institutionalMemory, new Date(now), {
+        await backgroundJobs.run('media-expiry', () => mediaExpiry.runOnce(now));
+        await backgroundJobs.run('maintenance', () => runMaintenance(jobsDatabase));
+        await backgroundJobs.run('institutional-curator', () =>
+          runInstitutionalCuratorCycle(jobsDatabase, institutionalMemory, new Date(now), {
             ...(institutionalAnchors ? { anchors: institutionalAnchors } : {}),
-          });
-        } catch (error) {
-          console.error('[server] institutional curator cycle failed:', error);
-        }
+          }));
         if (githubJobs) {
-          try {
-            await githubJobs.refreshUnknownMergeability();
-          } catch (error) {
-            console.error('[server] mergeability refresh failed:', error);
-          }
-          try {
-            await githubJobs.reconcileMergedCorners();
-          } catch (error) {
-            console.error('[server] merged corner reconciliation failed:', error);
-          }
+          await backgroundJobs.run('github-mergeability', () => githubJobs.refreshUnknownMergeability());
+          await backgroundJobs.run('github-merged-corners', () => githubJobs.reconcileMergedCorners());
         }
       }
-      const nextDue = await schedules.nextDueAt();
+      const nextDue = await backgroundJobs.run('schedule-next-due', () => schedules.nextDueAt());
       return Math.min(
         reconciliationMs,
-        ...(nextDue ? [Math.max(0, nextDue.getTime() - Date.now())] : []),
+        ...(nextDue.ok && nextDue.value
+          ? [Math.max(0, nextDue.value.getTime() - Date.now())] : []),
         ...(push ? [push.millisecondsUntilNextRun()] : []),
       );
     },
@@ -377,7 +393,9 @@ async function main() {
 }
 
 async function runWelcomeRetirementPreflight(): Promise<void> {
-  const database = new PostgresDatabase(required('MIGRATION_DATABASE_URL'), 1);
+  const database = new PostgresDatabase(required('MIGRATION_DATABASE_URL'), 1, {
+    mode: 'long-running',
+  });
   try {
     console.log(JSON.stringify(await welcomeRetirementPreflight(database), null, 2));
   } finally {

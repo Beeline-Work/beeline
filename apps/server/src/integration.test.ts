@@ -3164,6 +3164,31 @@ describe('monolith integration', () => {
     expect(oldestPage.nextBefore).toBeUndefined();
   });
 
+  it('restarts history from the current tail when a cached cursor was deleted', async () => {
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'deleted-history-cursor',
+      name: 'Deleted cursor history',
+      objective: 'Recover older transcript rows.',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    const earlierId = 'a'.repeat(64);
+    const deletedId = 'b'.repeat(64);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES($1,$3,$4,'Earlier row','2040-01-01T00:00:00Z'),
+             ($2,$3,$4,'Cached boundary','2040-01-02T00:00:00Z')`,
+      [earlierId, deletedId, cornerId, HUMAN],
+    );
+    await database.query(`DELETE FROM messages WHERE id=$1`, [deletedId]);
+
+    const page = (await (
+      await request(`/v1/phone/rooms/${cornerId}/history?before=2209075200,${deletedId}`)
+    ).json()) as RoomHistoryView;
+    expect(page.messages.map((message) => message.id)).toContain(earlierId);
+  });
+
   it('rejects durable output activity in a top-level Room', async () => {
     expect(
       (
@@ -5173,6 +5198,11 @@ describe('monolith integration', () => {
     });
     expect(created.status).toBe(200);
     const { cornerId } = (await created.json()) as { cornerId: string };
+    expect(await (await daemonOperation('getCornerRestoreState', { cornerId })).json()).toMatchObject({
+      cornerId,
+      parentRoomId: ROOM,
+      archived: false,
+    });
     const mediaId = '66666666-6666-4666-8666-666666666666';
     const clipDigest = createHash('sha256').update('video-bytes').digest('hex');
     await objectStorage.putObject(
@@ -5206,6 +5236,12 @@ describe('monolith integration', () => {
     ).toBe(200);
 
     expect((await daemonOperation('archiveCorner', { cornerId })).status).toBe(200);
+    expect(await (await daemonOperation('getCornerRestoreState', { cornerId })).json()).toMatchObject({
+      cornerId,
+      parentRoomId: ROOM,
+      archived: true,
+      closeRequested: true,
+    });
     expect(
       (
         await database.query<{

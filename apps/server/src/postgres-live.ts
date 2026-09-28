@@ -97,7 +97,9 @@ BEGIN
         'table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', COALESCE(NEW.room_id, OLD.room_id),
         'agentId', COALESCE(NEW.agent_id, OLD.agent_id),
-        'requestId', COALESCE(NEW.request_id, OLD.request_id)
+        'requestId', COALESCE(NEW.request_id, OLD.request_id),
+        'cornerParentId', CASE WHEN TG_OP <> 'UPDATE' OR NEW.status IS DISTINCT FROM OLD.status
+          THEN (SELECT parent_id FROM rooms WHERE id = COALESCE(NEW.room_id, OLD.room_id)) END
       );
     WHEN 'rooms' THEN
       payload = jsonb_build_object(
@@ -157,7 +159,11 @@ BEGIN
         'closeRequested', COALESCE(NEW.close_requested, OLD.close_requested, false),
         'lane', COALESCE(NEW.lane, OLD.lane),
         'laneChanged', CASE WHEN TG_OP = 'UPDATE'
-          THEN NEW.lane IS DISTINCT FROM OLD.lane ELSE false END
+          THEN NEW.lane IS DISTINCT FROM OLD.lane ELSE false END,
+        'cornerParentId', CASE WHEN TG_OP <> 'UPDATE'
+            OR NEW.lifecycle IS DISTINCT FROM OLD.lifecycle
+            OR NEW.close_requested IS DISTINCT FROM OLD.close_requested
+          THEN (SELECT parent_id FROM rooms WHERE id = COALESCE(NEW.corner_id, OLD.corner_id)) END
       );
     WHEN 'permission_authority' THEN
       payload = jsonb_build_object(
@@ -270,6 +276,8 @@ interface LiveNotificationPayload {
   closeRequested?: boolean;
   lane?: string;
   laneChanged?: boolean;
+  /** Parent Room of a corner whose list status inputs (turn status, lifecycle, close) changed. */
+  cornerParentId?: string;
   pending?: boolean;
   repositoryChanged?: boolean;
   installationId?: string;
@@ -315,6 +323,9 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
         : {}),
       ...(typeof parsed.lane === 'string' ? { lane: parsed.lane } : {}),
       ...(typeof parsed.laneChanged === 'boolean' ? { laneChanged: parsed.laneChanged } : {}),
+      ...(typeof parsed.cornerParentId === 'string'
+        ? { cornerParentId: parsed.cornerParentId }
+        : {}),
       ...(typeof parsed.pending === 'boolean' ? { pending: parsed.pending } : {}),
       ...(typeof parsed.repositoryChanged === 'boolean'
         ? { repositoryChanged: parsed.repositoryChanged } : {}),
@@ -341,6 +352,20 @@ const wait = (milliseconds: number) =>
 export class PostgresLiveListener {
   private stopped = false;
   private active?: LivePgClient;
+  private connected = false;
+  private readonly projectionQueue: Array<{ raw: string; queuedAt: number; key?: string }> = [];
+  private activeProjections = 0;
+  private readonly activeProjectionSince = new Map<number, number>();
+  private nextProjectionTicket = 0;
+  private droppedProjections = 0;
+  private deliveredProjections = 0;
+  private failedProjections = 0;
+  private lastNotificationAt: number | null = null;
+  private lastDeliveredAt: number | null = null;
+  private lastDeliveryAgeMs: number | null = null;
+  private maxDeliveryAgeMs = 0;
+  private readonly deliveryAgeBuckets = [0, 0, 0, 0, 0, 0];
+  private needsProjectionResync = false;
   private readonly memoryDue = new Map<string, { roomId: string; dueAt: number }>();
   private memoryDueTimer?: NodeJS.Timeout;
   private readonly registryDue = new Map<string, { connectorId: string; dueAt: number }>();
@@ -435,6 +460,87 @@ export class PostgresLiveListener {
     private readonly retryDelayMs = 1_000,
   ) {}
 
+  projectionHealth() {
+    const oldestActive = this.activeProjectionSince.size
+      ? Math.min(...this.activeProjectionSince.values()) : undefined;
+    return {
+      connected: this.connected,
+      active: this.activeProjections,
+      queued: this.projectionQueue.length,
+      oldestActiveAgeMs: oldestActive === undefined
+        ? null : Math.max(0, Date.now() - oldestActive),
+      oldestQueuedAgeMs: this.projectionQueue[0]
+        ? Math.max(0, Date.now() - this.projectionQueue[0].queuedAt) : null,
+      dropped: this.droppedProjections,
+      delivered: this.deliveredProjections,
+      failed: this.failedProjections,
+      lastNotificationAt: this.lastNotificationAt,
+      lastDeliveredAt: this.lastDeliveredAt,
+      lastDeliveryAgeMs: this.lastDeliveryAgeMs,
+      maxDeliveryAgeMs: this.maxDeliveryAgeMs,
+      /** Cumulative receipt-to-projection ages <=10, 50, 100, 500, 2000 ms, then above. */
+      deliveryAgeBuckets: [...this.deliveryAgeBuckets],
+      resyncPending: this.needsProjectionResync,
+    };
+  }
+
+  private enqueueProjection(raw: string | undefined): void {
+    if (this.stopped || !raw) return;
+    this.lastNotificationAt = Date.now();
+    const payload = decodePayload(raw);
+    if (!payload) return;
+    // These notifications only ask a helper to refresh the latest state or
+    // drain durable pending operations; the newest one supersedes earlier ones.
+    const key = (payload.table === 'agent_config' || payload.table === 'connector_assignment') &&
+        payload.agentId
+      ? `${payload.table}:${payload.agentId}`
+      : (payload.table === 'github_installations' && payload.installationId) ||
+          (payload.table === 'github_repositories' && payload.repositoryId)
+        ? `${payload.table}:${payload.installationId ?? payload.repositoryId}`
+        : undefined;
+    if (key) {
+      const queued = this.projectionQueue.find((item) => item.key === key);
+      if (queued) { queued.raw = raw; return; }
+    }
+    if (this.projectionQueue.length >= 512) {
+      this.droppedProjections++;
+      this.needsProjectionResync = true;
+      return;
+    }
+    this.projectionQueue.push({ raw, queuedAt: Date.now(), ...(key ? { key } : {}) });
+    this.drainProjections();
+  }
+
+  private drainProjections(): void {
+    while (!this.stopped && this.activeProjections < 2 && this.projectionQueue.length) {
+      const next = this.projectionQueue.shift()!;
+      this.activeProjections++;
+      const ticket = this.nextProjectionTicket++;
+      this.activeProjectionSince.set(ticket, next.queuedAt);
+      void this.rebroadcast(next.raw).then(() => {
+        const now = Date.now();
+        const duration = Math.max(0, now - next.queuedAt);
+        this.deliveredProjections++;
+        this.lastDeliveredAt = now;
+        this.lastDeliveryAgeMs = duration;
+        this.maxDeliveryAgeMs = Math.max(this.maxDeliveryAgeMs, duration);
+        const bucket = [10, 50, 100, 500, 2_000].findIndex((bound) => duration <= bound);
+        this.deliveryAgeBuckets[bucket < 0 ? 5 : bucket]!++;
+      }).catch((error) => {
+        this.failedProjections++;
+        console.error('[live-listener] notification failed', error);
+      }).finally(() => {
+        this.activeProjectionSince.delete(ticket);
+        this.activeProjections--;
+        if (this.projectionQueue.length) this.drainProjections();
+        else if (!this.stopped && this.activeProjections === 0 && this.needsProjectionResync) {
+          this.needsProjectionResync = false;
+          this.live.resync();
+        }
+      });
+    }
+  }
+
   static forConnectionString(
     connectionString: string,
     database: SqlDatabase,
@@ -457,9 +563,7 @@ export class PostgresLiveListener {
       this.active = client;
       client.on('notification', (message) => {
         if (message.channel !== POSTGRES_LIVE_CHANNEL) return;
-        void this.rebroadcast(message.payload).catch((error) =>
-          console.error('[live-listener] notification failed', error),
-        );
+        this.enqueueProjection(message.payload);
       });
       client.on('error', (error) => {
         console.error('[live-listener] connection failed', error.message);
@@ -469,6 +573,7 @@ export class PostgresLiveListener {
       try {
         await client.connect();
         await client.query(`LISTEN ${POSTGRES_LIVE_CHANNEL}`);
+        this.connected = true;
         console.log('[live-listener] connected');
         await this.restoreMemoryDue();
         await this.restoreRegistryDue();
@@ -480,6 +585,7 @@ export class PostgresLiveListener {
           error instanceof Error ? error.message : String(error),
         );
       } finally {
+        this.connected = false;
         if (this.active === client) this.active = undefined;
         await client.end().catch(() => undefined);
       }
@@ -489,6 +595,7 @@ export class PostgresLiveListener {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.projectionQueue.length = 0;
     if (this.memoryDueTimer) clearTimeout(this.memoryDueTimer);
     if (this.registryDueTimer) clearTimeout(this.registryDueTimer);
     await this.active?.end().catch(() => undefined);
@@ -658,5 +765,15 @@ export class PostgresLiveListener {
         : {}),
     };
     this.live.publish(event);
+    // The parent's corner list reads a corner's status from these rows, but
+    // their notifications name only the corner. One reason-only hint tells a
+    // list watching the parent to re-read; nothing else acts on it.
+    if (payload.cornerParentId) {
+      this.live.publish({
+        type: 'invalidate',
+        roomId: payload.cornerParentId,
+        reason: 'corner-status',
+      });
+    }
   }
 }

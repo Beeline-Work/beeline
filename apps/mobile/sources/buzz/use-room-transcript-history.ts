@@ -12,7 +12,7 @@ export type TranscriptHistoryStatus = 'idle' | 'loading' | 'error' | 'complete';
 type HistoryClient = {
   history(
     roomId: string,
-    before: { readonly createdAt: number; readonly id: string },
+    before?: { readonly createdAt: number; readonly id: string },
   ): Promise<RoomHistoryView>;
 };
 
@@ -38,8 +38,19 @@ export function useRoomTranscriptHistory({
   const statusRef = useRef<TranscriptHistoryStatus>('idle');
   const requestVersionRef = useRef(0);
   const previousRoomIdRef = useRef(roomId);
+  const completedTailIdRef = useRef<string | null>(null);
 
   cursorRef.current = retainRoomHistoryCursor(cursorRef.current, roomId, tailMessages);
+  if (
+    statusRef.current === 'complete' &&
+    completedTailIdRef.current !== (tailMessages?.[0]?.id ?? null)
+  ) {
+    cursorRef.current = retainRoomHistoryCursor(null, roomId, tailMessages);
+    statusRef.current = 'idle';
+  }
+  useEffect(() => {
+    if (status === 'complete' && statusRef.current === 'idle') setStatus('idle');
+  }, [status, tailMessages]);
 
   const updateStatus = useCallback((next: TranscriptHistoryStatus) => {
     statusRef.current = next;
@@ -49,6 +60,7 @@ export function useRoomTranscriptHistory({
   const reset = useCallback(() => {
     requestVersionRef.current += 1;
     cursorRef.current = null;
+    completedTailIdRef.current = null;
     loadingRef.current = false;
     visibleCountRef.current = initialVisibleCount;
     setOlderPages([]);
@@ -69,7 +81,12 @@ export function useRoomTranscriptHistory({
 
   const requestOlder = useCallback(
     (residentRowCount: number, retry: boolean) => {
-      if (loadingRef.current || (statusRef.current === 'error' && !retry)) return;
+      if (
+        loadingRef.current ||
+        statusRef.current === 'complete' ||
+        (statusRef.current === 'error' && !retry)
+      )
+        return;
       if (visibleCountRef.current < residentRowCount) {
         const next = Math.min(residentRowCount, visibleCountRef.current + 30);
         visibleCountRef.current = next;
@@ -78,10 +95,6 @@ export function useRoomTranscriptHistory({
       }
 
       const cursor = cursorRef.current;
-      if (!cursor?.before) {
-        if (tailMessages) updateStatus('complete');
-        return;
-      }
       if (!roomClient || !enabled) return;
 
       const requestedRoomId = roomId;
@@ -89,11 +102,11 @@ export function useRoomTranscriptHistory({
       loadingRef.current = true;
       updateStatus('loading');
       void roomClient
-        .history(requestedRoomId, cursor.before)
+        .history(requestedRoomId, cursor?.before ?? undefined)
         .then((page) => {
           if (
             requestVersionRef.current !== requestVersion ||
-            cursorRef.current?.roomId !== requestedRoomId
+            previousRoomIdRef.current !== requestedRoomId
           )
             return;
           cursorRef.current = advanceRoomHistoryCursor(requestedRoomId, page);
@@ -104,12 +117,18 @@ export function useRoomTranscriptHistory({
             visibleCountRef.current += fresh.length;
             setVisibleMessageCount(visibleCountRef.current);
           }
-          updateStatus(page.nextBefore ? 'idle' : 'complete');
+          if (page.nextBefore) {
+            completedTailIdRef.current = null;
+            updateStatus('idle');
+          } else {
+            completedTailIdRef.current = tailMessages?.[0]?.id ?? null;
+            updateStatus('complete');
+          }
         })
         .catch(() => {
           if (
             requestVersionRef.current === requestVersion &&
-            cursorRef.current?.roomId === requestedRoomId
+            previousRoomIdRef.current === requestedRoomId
           )
             updateStatus('error');
         })
@@ -133,5 +152,13 @@ export function useRoomTranscriptHistory({
     setVisibleMessageCount(visibleCountRef.current);
   }, []);
 
-  return { olderPages, visibleMessageCount, status, loadOlder, retry, revealThrough, reset };
+  return {
+    olderPages,
+    visibleMessageCount,
+    status: previousRoomIdRef.current === roomId ? statusRef.current : 'idle',
+    loadOlder,
+    retry,
+    revealThrough,
+    reset,
+  };
 }

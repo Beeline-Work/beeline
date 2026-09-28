@@ -364,6 +364,30 @@ export class DaemonService {
           await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
             turnSilenceLockKey(scopedRoom, String(requestId), authenticatedAgentId),
           ]);
+          if (candidate.reasonKind === 'update-interrupted') {
+            // The helper keeps this receipt durably until it hears 200. If the
+            // first 200 was lost, accept its replay after the command was
+            // requeued without writing another Room line or touching the new
+            // generation's claim.
+            const alreadyRequeued = await db.query(
+              `SELECT 1 FROM agent_commands command
+               JOIN agent_turns turn ON turn.room_id=command.room_id
+                 AND turn.agent_id=command.agent_id AND turn.request_id=command.turn_request_id
+               JOIN messages line ON line.room_id=command.room_id
+                 AND line.card_type='turn-failed'
+                 AND line.card->>'requestId'=command.turn_request_id
+                 AND line.card->>'agentId'=command.agent_id
+                 AND line.card->>'silenceKind'='update-interrupted'
+               WHERE command.room_id=$1 AND command.agent_id=$2
+                 AND command.turn_request_id=$3 AND command.action IN ('input','resume')
+                 AND command.state='pending' AND turn.status='failed'
+                 AND turn.generation_id IS NOT DISTINCT FROM $4
+               LIMIT 1`,
+              [scopedRoom, authenticatedAgentId, requestId, candidate.generationId ?? null],
+            );
+            if (alreadyRequeued.rowCount)
+              return this.writeResult({ updateRequeued: true }) as Output<Name>;
+          }
         }
         if (
           name === 'postAgentTurnReceipt' &&
@@ -510,9 +534,10 @@ export class DaemonService {
             );
           else if (
             candidate.status === 'failed' &&
-            (result as { hiccupRestart?: boolean }).hiccupRestart
+            ((result as { hiccupRestart?: boolean; updateRequeued?: boolean }).hiccupRestart ||
+              (result as { updateRequeued?: boolean }).updateRequeued)
           ) {
-            // noteFirstSilence already reopened this command for re-delivery.
+            // noteFirstSilence already reopened this exact command for re-delivery.
           } else if (
             candidate.status === 'failed' &&
             command.state === 'pending' &&
@@ -2542,6 +2567,8 @@ export class DaemonService {
       : [];
     const row = (
       await this.database.query<{
+        parent_room_id: string;
+        archived: boolean;
         objective: string;
         title: string;
         kind: 'agent' | 'human';
@@ -2554,7 +2581,8 @@ export class DaemonService {
         pull_request_number: number | null;
         approval_head_sha: string | null;
       }>(
-        `SELECT fact.objective,room.name title,fact.kind,fact.feature_branch,fact.request_id,fact.close_requested,fact.lifecycle,
+        `SELECT room.parent_id parent_room_id,room.archived_at IS NOT NULL archived,
+           fact.objective,room.name title,fact.kind,fact.feature_branch,fact.request_id,fact.close_requested,fact.lifecycle,
            fact.lane,requester.handle requester_handle,
            approval.pull_request_number,approval.head_sha approval_head_sha
          FROM corner_facts fact
@@ -2569,6 +2597,7 @@ export class DaemonService {
     ).rows[0];
     return {
       cornerId,
+      ...(row ? { archived: row.archived, parentRoomId: row.parent_room_id } : {}),
       objective: row?.objective ?? '',
       ...(brief ? { brief } : {}),
       ...(brief
@@ -3543,7 +3572,7 @@ export class DaemonService {
         ? input.toolCalls!
         : null;
     let committedTurn: CommittedTurnLiveRow | undefined;
-    let silence: { hiccupRestart: boolean; attempt: number } | undefined;
+    let silence: { hiccupRestart: boolean; updateRequeued: boolean; attempt: number } | undefined;
     await this.database.transaction(async (database) => {
       if (input.heartbeat) {
         committedTurn = (
@@ -3673,7 +3702,11 @@ export class DaemonService {
       ...(committedTurn ? { committedRow: { type: 'turn' as const, row: committedTurn } } : {}),
     });
     return this.writeResult(
-      silence?.hiccupRestart ? { hiccupRestart: true, hiccupAttempt: silence.attempt } : undefined,
+      silence?.hiccupRestart
+        ? { hiccupRestart: true, hiccupAttempt: silence.attempt }
+        : silence?.updateRequeued
+          ? { updateRequeued: true }
+          : undefined,
     );
   }
   /**
@@ -6249,7 +6282,11 @@ export class DaemonService {
     const opener = corner.rows[0]?.owner_agent_id;
     if (corner.rowCount && opener !== agentId) throw new Error('daemon corner access denied');
   }
-  private writeResult(extra?: { hiccupRestart?: boolean; hiccupAttempt?: number }) {
+  private writeResult(extra?: {
+    hiccupRestart?: boolean;
+    hiccupAttempt?: number;
+    updateRequeued?: boolean;
+  }) {
     return { id: id(), createdAt: Math.floor(Date.now() / 1000), ...extra };
   }
 }

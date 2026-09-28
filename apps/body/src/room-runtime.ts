@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
-import { mkdir, realpath, rm } from 'node:fs/promises';
+import { mkdir, readdir, realpath, rm } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { BodyConfig } from './config.js';
@@ -13,6 +13,7 @@ import {
 import {
   isStandingWorkspaceConfigurationFault,
   type CornerRestoreResult,
+  type RoomGitHubTokenResult,
   type RoomRepositoryStateResult,
 } from '@beeline/api-contract/daemon';
 import { GrantCommandRunner, GrantRunnerServer, type GrantRunnerEndpoint } from './grant-runner.js';
@@ -22,6 +23,7 @@ import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
 import { openRouterRoutingCacheDir } from './openrouter-routing.js';
 import { turnTraceDirectory } from './turn-trace.js';
 import { distillTurnFailureReason } from './turn-failure-reason.js';
+import { SurfaceHealth, type SurfaceHealthState } from './surface-health.js';
 import type { AgentRuntimeRecord, RoomRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
 import { seedWarmNodeModules, warmNodeModulesStoreDir } from './warm-node-modules.js';
@@ -371,6 +373,18 @@ export async function discoverCornerWorktree(
   return { path, gitCommonDir };
 }
 
+/** The local worktree root is small even when the server has years of archived corners. */
+export async function localCornerWorktreeIds(supervisorRoot: string): Promise<Set<string>> {
+  const root = resolve(supervisorRoot, 'beeline', 'corners');
+  const entries = await readdir(root, { withFileTypes: true }).catch(
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return [];
+      throw error;
+    },
+  );
+  return new Set(entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name));
+}
+
 interface CornerScratch {
   path: string;
   cornerId: string;
@@ -522,8 +536,16 @@ export async function removeCornerScratchWorkspace(input: {
 export class RoomRuntimeCoordinator {
   private readonly runtime: AgentRuntimeRecord;
   private readonly running = new Map<string, RunningRoom>();
+  private readonly surfaceHealth = new SurfaceHealth();
   /** Close/reconcile leftovers retried until local and remote refs are gone. */
   private readonly pendingCornerReaps = new Map<string, CornerWorktree>();
+  /** Idle corners listen for durable commands without obtaining a token or checkout. */
+  private readonly idleCornerSubscriptions = new Map<string, () => void>();
+  private readonly pendingCornerCommands = new Set<string>();
+  /** Enumerated once; later materialization and removal keep it current. */
+  private localWorktreeIds?: Promise<Set<string>>;
+  /** Event-driven cleanup retries stay scoped to the failed local corner. */
+  private readonly archiveCleanupFaults = new Map<string, { failures: number; retryAt: number }>();
   private readonly startingCorners = new Set<string>();
   /**
    * Rooms whose start is in flight. `running` is not set until the checkout
@@ -554,6 +576,15 @@ export class RoomRuntimeCoordinator {
   private workspaceRemovalConfirmations = 0;
   private readonly roomRemovalConfirmations = new Map<string, number>();
   private readonly repositoryRevisions = new Map<string, string>();
+  /** A revision discovered mid-turn retires the Room only after that turn ends. */
+  private readonly deferredRepositoryRestarts = new Set<string>();
+  private readonly repositoryStateCache = new Map<
+    string,
+    { value: RoomRepositoryStateResult; until: number }
+  >();
+  private readonly repositoryStateFlights = new Map<string, Promise<RoomRepositoryStateResult>>();
+  private readonly tokenCache = new Map<string, RoomGitHubTokenResult>();
+  private readonly tokenFlights = new Map<string, Promise<RoomGitHubTokenResult>>();
   private confirmationPending = false;
   private restartRequested = false;
   /** Unscoped agent-directed discovery wakes (#1369), counted instead of
@@ -600,6 +631,7 @@ export class RoomRuntimeCoordinator {
     // heartbeat as before.
     this.options.daemonApi.setRoomsChangedListener?.((event) => {
       if (event?.repositoryChanged) {
+        if (event.roomId) this.invalidateParentRepository(event.roomId);
         this.wakeDiscovery();
         return;
       }
@@ -667,7 +699,11 @@ export class RoomRuntimeCoordinator {
   }
 
   reconnectAfterFailure(): void {
-    this.options.daemonApi.reconnectLive?.();
+    // New servers emit a discovery wake when their DB listener recovers.
+    // Older servers lack that guarantee, so retain socket reconnect recovery
+    // until they leave the rolling fleet.
+    if (!this.options.daemonApi.supportsDiscoveryWake?.())
+      this.options.daemonApi.reconnectLive?.();
   }
 
   private wakeDiscovery(): void {
@@ -677,6 +713,18 @@ export class RoomRuntimeCoordinator {
 
   activeRoomCount(): number {
     return this.running.size;
+  }
+
+  surfaceHealthSnapshot(): SurfaceHealthState[] {
+    return this.surfaceHealth.snapshot();
+  }
+
+  surfaceHealthSummary(): string {
+    return this.surfaceHealth.summary();
+  }
+
+  hasUnreadySurfaces(): boolean {
+    return this.surfaceHealth.hasUnready();
   }
 
   /**
@@ -716,6 +764,9 @@ export class RoomRuntimeCoordinator {
 
   quiesceForUpdateIfIdle(): boolean {
     if (!this.isWorkspaceIdle()) return false;
+    // A host restart may be staggered after this idle proof. Keep new
+    // commands from starting while the old process waits for its slot.
+    this.restartRequested = true;
     for (const room of this.running.values()) room.controller.abort();
     return true;
   }
@@ -763,8 +814,13 @@ export class RoomRuntimeCoordinator {
       const previous = this.repositoryRevisions.get(room.roomId);
       this.repositoryRevisions.set(room.roomId, revision);
       if (previous === undefined || previous === revision) continue;
+      this.invalidateParentRepository(room.roomId);
       const running = this.running.get(room.roomId);
-      if (running) await this.stopRunning(room.roomId, running);
+      if (running?.body.isBusy()) {
+        this.deferredRepositoryRestarts.add(room.roomId);
+      } else if (running) {
+        await this.stopRunning(room.roomId, running);
+      }
       // A restored App grant can also clear a corner's previous standing
       // checkout fault; those corners retry in this same reconciliation pass.
       for (const [cornerId, parentId] of this.monolithCornerParents)
@@ -811,9 +867,15 @@ export class RoomRuntimeCoordinator {
         );
       }
     });
+    for (const roomId of desiredTopRooms) this.surfaceHealth.discover(roomId, 'room');
+    for (const cornerId of desiredCorners.keys()) this.surfaceHealth.discover(cornerId, 'corner');
     for (const channelId of desired) this.roomRemovalConfirmations.delete(channelId);
     await this.retryPendingCornerReaps(desired);
-    await this.sweepArchivedCornerWorktrees(archivedCorners);
+    await this.sweepArchivedCornerWorktrees(archivedCorners, desired);
+    for (const cornerId of this.idleCornerSubscriptions.keys()) {
+      if (desired.has(cornerId)) continue;
+      this.unwatchCorner(cornerId);
+    }
     for (const [channelId, running] of [...this.running]) {
       if (desired.has(channelId)) continue;
       const confirmations = (this.roomRemovalConfirmations.get(channelId) ?? 0) + 1;
@@ -825,6 +887,7 @@ export class RoomRuntimeCoordinator {
       await this.stopRunning(channelId, running);
       this.roomRemovalConfirmations.delete(channelId);
     }
+    this.surfaceHealth.retain(new Set([...desired, ...this.running.keys()]));
     await mapWithConcurrency(desiredTopRooms, ROOM_JOIN_CONCURRENCY, async (roomId) => {
       if (this.running.has(roomId)) return;
       try {
@@ -842,7 +905,7 @@ export class RoomRuntimeCoordinator {
       [...desiredCorners.values()],
       ROOM_JOIN_CONCURRENCY,
       async (corner) => {
-        if (!this.running.has(corner.cornerId)) await this.startCorner(corner);
+        if (!this.running.has(corner.cornerId)) await this.watchCorner(corner);
       },
     );
     for (const [roomId, running] of this.running)
@@ -891,19 +954,26 @@ export class RoomRuntimeCoordinator {
       return;
     }
     if (event.removed === true) {
+      this.unwatchCorner(roomId);
       const running = this.running.get(roomId);
       if (running) await this.stopRunning(roomId, running);
       this.monolithCornerParents.delete(roomId);
+      this.surfaceHealth.remove(roomId);
       return;
     }
     // Inheriting a Room membership writes one row per corner under it, archived
     // ones included, and the reviewer projection rewrites every row again. An
     // archived Room or corner is nothing to start, so the event is dropped here
     // rather than after a restore read per row.
-    if (event.archived === true) return;
+    if (event.archived === true) {
+      this.unwatchCorner(roomId);
+      this.surfaceHealth.remove(roomId);
+      return;
+    }
     this.roomRemovalConfirmations.delete(roomId);
     if (this.running.has(roomId) || this.startingCorners.has(roomId)) return;
     if (event.parentRoomId) {
+      this.surfaceHealth.discover(roomId, 'corner');
       this.monolithCornerParents.set(roomId, event.parentRoomId);
       // The opener rides the same row that announces the corner. Without it
       // nobody is the opener, so the initial `working` state — the only write
@@ -914,18 +984,14 @@ export class RoomRuntimeCoordinator {
         this.wakeDiscovery();
         return;
       }
-      await this.startCorner({
+      await this.watchCorner({
         cornerId: roomId,
         parentRoomId: event.parentRoomId,
         openedBy: event.openedBy,
       });
-      // `startCorner` reports its own failures and resolves either way, so a
-      // transient token or clone fault leaves nothing running and nothing
-      // scheduled. Arm the fast reconcile the pushed Room path already gets
-      // from its throw, so the retry is now rather than a heartbeat away.
-      if (!this.running.has(roomId)) this.wakeDiscovery();
       return;
     }
+    this.surfaceHealth.discover(roomId, 'room');
     await this.startRoom(roomId);
   }
 
@@ -946,6 +1012,7 @@ export class RoomRuntimeCoordinator {
   }
 
   private async stopRunning(channelId: string, running: RunningRoom): Promise<void> {
+    this.deferredRepositoryRestarts.delete(channelId);
     running.controller.abort();
     await running.promise.catch(() => undefined);
     try {
@@ -1003,9 +1070,13 @@ export class RoomRuntimeCoordinator {
 
   private async startRoom(roomId: string): Promise<void> {
     if (this.running.has(roomId) || this.startingRooms.has(roomId)) return;
+    this.surfaceHealth.discover(roomId, 'room');
     this.startingRooms.add(roomId);
     try {
       await this.startRoomOnce(roomId);
+    } catch (error) {
+      this.surfaceHealth.degraded(roomId, 'Room intake failed to start');
+      throw error;
     } finally {
       this.startingRooms.delete(roomId);
     }
@@ -1013,12 +1084,9 @@ export class RoomRuntimeCoordinator {
 
   private async startRoomOnce(roomId: string): Promise<void> {
     const controller = new AbortController();
-    // Repository inspection is enrichment. A missing first commit or App grant
-    // must not prevent the Room's chat loop from accepting its first command.
-    const cwd = await this.materializeRoomCheckout(roomId).catch((error) => {
-      console.warn(`[thin-core] Room ${roomId} checkout unavailable:`, error);
-      return this.roomRoot(roomId);
-    });
+    // The turn loop refreshes checkout before activation. Idle Rooms can
+    // subscribe to durable commands without fetching a token or running Git.
+    const cwd = this.roomRoot(roomId);
     const grantRunnerEndpoint = await this.grantRunnerEndpoint();
     const startedAt = this.now();
     const loop = new MonolithRoomTurnLoop({
@@ -1038,6 +1106,8 @@ export class RoomRuntimeCoordinator {
         failure: (retryInMs) => this.noteFailure(roomId, retryInMs),
         presence: () => undefined,
       },
+      onSubscriptionState: (connected) => this.surfaceHealth.subscribed(roomId, connected),
+      onIntakeError: () => this.surfaceHealth.degraded(roomId, 'Room command intake failed'),
       onCornerOpened: () => {
         this.confirmationPending = true;
       },
@@ -1047,7 +1117,10 @@ export class RoomRuntimeCoordinator {
     const promise = loop
       .run()
       .catch((error) => {
-        if (!controller.signal.aborted) console.error(`[thin-core] Room ${roomId} failed:`, error);
+        if (!controller.signal.aborted) {
+          this.surfaceHealth.degraded(roomId, 'Room command loop exited');
+          console.error(`[thin-core] Room ${roomId} failed:`, error);
+        }
       })
       .finally(() => {
         if (this.running.get(roomId)?.body === loop) this.running.delete(roomId);
@@ -1082,7 +1155,7 @@ export class RoomRuntimeCoordinator {
     roomId: string,
     repository?: RoomRepositoryStateResult,
   ): Promise<string> {
-    repository ??= await this.options.daemonApi.execute('getRoomRepositoryState', { roomId });
+    repository ??= await this.parentRepositoryState(roomId);
     if (repository.resolution !== 'repository' || !repository.remote) return this.roomRoot(roomId);
 
     const remote = roomCheckoutRemote(repository.remote);
@@ -1095,7 +1168,7 @@ export class RoomRuntimeCoordinator {
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
 
     const token = remote.startsWith('https://github.com/')
-      ? await this.options.daemonApi.execute('getRoomGitHubToken', { roomId })
+      ? await this.parentRepositoryToken(roomId)
       : undefined;
     const env = token ? githubGitEnv(token.token) : process.env;
     if (!existsSync(resolve(path, '.git'))) {
@@ -1145,7 +1218,7 @@ export class RoomRuntimeCoordinator {
     roomId: string,
   ): Promise<{ cwd: string; branch?: string; commit?: string }> {
     try {
-      const repository = await this.options.daemonApi.execute('getRoomRepositoryState', { roomId });
+      const repository = await this.parentRepositoryState(roomId);
       if (repository.resolution !== 'repository' || !repository.remote)
         return { cwd: this.roomRoot(roomId) };
       const branch = repository.targetBranch || 'main';
@@ -1161,14 +1234,13 @@ export class RoomRuntimeCoordinator {
 
   private async startCorner(corner: DesiredCorner): Promise<void> {
     if (this.running.has(corner.cornerId) || this.startingCorners.has(corner.cornerId)) return;
+    this.surfaceHealth.discover(corner.cornerId, 'corner');
     this.startingCorners.add(corner.cornerId);
     let configKey: string | undefined;
     try {
       const [restore, repository] = await Promise.all([
         this.options.daemonApi.execute('getCornerRestoreState', { cornerId: corner.cornerId }),
-        this.options.daemonApi.execute('getRoomRepositoryState', {
-          roomId: corner.parentRoomId,
-        }),
+        this.parentRepositoryState(corner.parentRoomId),
       ]);
       const objective =
         (restore.objective ?? '').trim() ||
@@ -1253,6 +1325,8 @@ export class RoomRuntimeCoordinator {
         signal: controller.signal,
         onPoll: () => this.notePoll(corner.cornerId),
         onFailure: (retryInMs) => this.noteFailure(corner.cornerId, retryInMs),
+        onSubscriptionState: (connected) => this.surfaceHealth.subscribed(corner.cornerId, connected),
+        onIntakeError: () => this.surfaceHealth.degraded(corner.cornerId, 'corner command intake failed'),
         onCloseRequested: () =>
           worktree
             ? this.reapCornerWorktree({
@@ -1274,6 +1348,7 @@ export class RoomRuntimeCoordinator {
         .run()
         .catch((error) => {
           if (!controller.signal.aborted) {
+            this.surfaceHealth.degraded(corner.cornerId, 'corner command loop exited');
             console.error(`[thin-core] corner ${corner.cornerId} failed:`, error);
           }
         })
@@ -1315,6 +1390,7 @@ export class RoomRuntimeCoordinator {
           : `[thin-core] serving no-code corner ${corner.cornerId} at ${workspacePath}`,
       );
     } catch (error) {
+      this.surfaceHealth.degraded(corner.cornerId, 'corner failed to start');
       console.error(`[thin-core] failed to start corner ${corner.cornerId}:`, error);
       // Keep the pending command available for the next reconciliation. A
       // temporary token lookup must not turn into a human repair request.
@@ -1328,14 +1404,108 @@ export class RoomRuntimeCoordinator {
     }
   }
 
+  private async watchCorner(corner: DesiredCorner): Promise<void> {
+    const cornerId = corner.cornerId;
+    if (this.running.has(cornerId)) return;
+    if (this.idleCornerSubscriptions.has(cornerId)) {
+      if (this.pendingCornerCommands.has(cornerId)) await this.activateWatchedCorner(corner);
+      return;
+    }
+    if (!this.options.daemonApi.liveSubscribe) {
+      await this.startCorner(corner);
+      if (!this.running.has(cornerId)) this.wakeDiscovery();
+      return;
+    }
+    this.idleCornerSubscriptions.set(cornerId, () => undefined);
+    const release = this.options.daemonApi.liveSubscribe(
+      cornerId,
+      undefined,
+      undefined,
+      (connected, capabilities) => {
+        if (connected && capabilities?.pushIntake !== true) {
+          // A rolling old server cannot deliver command snapshots; retain
+          // the pre-lazy startup path until it can.
+          this.pendingCornerCommands.add(cornerId);
+          void this.activateWatchedCorner(corner, true);
+        }
+      },
+      undefined,
+      (commands) => {
+        if (!commands.length) return;
+        this.pendingCornerCommands.add(cornerId);
+        void this.activateWatchedCorner(corner, true);
+      },
+    );
+    this.idleCornerSubscriptions.set(cornerId, release);
+    if (this.pendingCornerCommands.has(cornerId)) await this.activateWatchedCorner(corner);
+  }
+
+  private unwatchCorner(cornerId: string): void {
+    this.idleCornerSubscriptions.get(cornerId)?.();
+    this.idleCornerSubscriptions.delete(cornerId);
+    this.pendingCornerCommands.delete(cornerId);
+  }
+
+  private async activateWatchedCorner(corner: DesiredCorner, wakeOnFailure = false): Promise<void> {
+    if (this.stopped || !this.idleCornerSubscriptions.has(corner.cornerId)) return;
+    await this.startCorner(corner);
+    if (this.running.has(corner.cornerId)) {
+      this.unwatchCorner(corner.cornerId);
+    } else if (wakeOnFailure) {
+      this.wakeDiscovery();
+    }
+  }
+
   private async cornerRepositoryToken(
     roomId: string,
   ): Promise<{ token: string; expiresAt: number }> {
     try {
-      return await this.options.daemonApi.execute('getRoomGitHubToken', { roomId });
+      return await this.parentRepositoryToken(roomId);
     } catch (error) {
       if (error instanceof DaemonApiError && !error.retryable) throw error;
       throw new CornerCredentialLookupError(error);
+    }
+  }
+
+  private invalidateParentRepository(roomId: string): void {
+    this.repositoryStateCache.delete(roomId);
+    this.repositoryStateFlights.delete(roomId);
+    this.tokenCache.delete(roomId);
+    this.tokenFlights.delete(roomId);
+  }
+
+  private async parentRepositoryState(roomId: string): Promise<RoomRepositoryStateResult> {
+    const cached = this.repositoryStateCache.get(roomId);
+    if (cached && cached.until > this.now()) return cached.value;
+    const existing = this.repositoryStateFlights.get(roomId);
+    if (existing) return existing;
+    const flight = this.options.daemonApi.execute('getRoomRepositoryState', { roomId });
+    this.repositoryStateFlights.set(roomId, flight);
+    try {
+      const value = await flight;
+      if (this.repositoryStateFlights.get(roomId) === flight)
+        this.repositoryStateCache.set(roomId, { value, until: this.now() + 5_000 });
+      return value;
+    } finally {
+      if (this.repositoryStateFlights.get(roomId) === flight)
+        this.repositoryStateFlights.delete(roomId);
+    }
+  }
+
+  private async parentRepositoryToken(roomId: string): Promise<RoomGitHubTokenResult> {
+    const cached = this.tokenCache.get(roomId);
+    if (cached && cached.expiresAt - 10_000 > this.now()) return cached;
+    const existing = this.tokenFlights.get(roomId);
+    if (existing) return existing;
+    const flight = this.options.daemonApi.execute('getRoomGitHubToken', { roomId });
+    this.tokenFlights.set(roomId, flight);
+    try {
+      const value = await flight;
+      if (this.tokenFlights.get(roomId) === flight && value.expiresAt - 10_000 > this.now())
+        this.tokenCache.set(roomId, value);
+      return value;
+    } finally {
+      if (this.tokenFlights.get(roomId) === flight) this.tokenFlights.delete(roomId);
     }
   }
 
@@ -1383,10 +1553,28 @@ export class RoomRuntimeCoordinator {
     featureBranch: string;
     token: string;
   }): Promise<{ path: string; gitCommonDir: string }> {
-    return materializeCornerWorktree({
+    const worktree = await materializeCornerWorktree({
       ...input,
       supervisorRoot: this.runtime.supervisorRoot,
       committer: { name: this.agent.name, publicKey: this.agent.publicKey },
+    });
+    (await this.getLocalWorktreeIds()).add(input.cornerId);
+    return worktree;
+  }
+
+  private getLocalWorktreeIds(): Promise<Set<string>> {
+    return (this.localWorktreeIds ??= localCornerWorktreeIds(this.runtime.supervisorRoot));
+  }
+
+  private archiveCleanupDue(cornerId: string): boolean {
+    return (this.archiveCleanupFaults.get(cornerId)?.retryAt ?? 0) <= this.now();
+  }
+
+  private deferArchiveCleanup(cornerId: string): void {
+    const failures = Math.min((this.archiveCleanupFaults.get(cornerId)?.failures ?? 0) + 1, 9);
+    this.archiveCleanupFaults.set(cornerId, {
+      failures,
+      retryAt: this.now() + Math.min(1_000 * 2 ** failures, 5 * 60_000),
     });
   }
 
@@ -1396,9 +1584,11 @@ export class RoomRuntimeCoordinator {
         this.pendingCornerReaps.delete(cornerId);
         continue;
       }
+      if (!this.archiveCleanupDue(cornerId)) continue;
       try {
         await this.reapCornerWorktree(worktree);
       } catch (error) {
+        this.deferArchiveCleanup(cornerId);
         console.error(`[thin-core] corner ${cornerId} branch cleanup retry failed:`, error);
         // Cleanup retries ride the normal reconciliation heartbeat. Re-arming
         // fast discovery here repeats every Room and archived-corner read.
@@ -1413,23 +1603,41 @@ export class RoomRuntimeCoordinator {
    */
   private async sweepArchivedCornerWorktrees(
     corners: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>,
+    desired: ReadonlySet<string> = new Set(),
   ): Promise<void> {
-    for (const corner of corners.values()) {
-      if (this.running.has(corner.cornerId) || this.pendingCornerReaps.has(corner.cornerId)) {
+    const localIds = await this.getLocalWorktreeIds();
+    for (const cornerId of [...localIds]) {
+      if (
+        desired.has(cornerId) ||
+        this.running.has(cornerId) ||
+        this.pendingCornerReaps.has(cornerId)
+      )
         continue;
-      }
+      if (!this.archiveCleanupDue(cornerId)) continue;
+      let corner = corners.get(cornerId);
       let discovered: DiscoveredCornerWorktree | undefined;
       try {
-        discovered = await discoverCornerWorktree(this.runtime.supervisorRoot, corner.cornerId);
-        if (!discovered) continue;
-        const [restore, repository] = await Promise.all([
-          this.options.daemonApi.execute('getCornerRestoreState', {
-            cornerId: corner.cornerId,
-          }),
-          this.options.daemonApi.execute('getRoomRepositoryState', {
-            roomId: corner.parentRoomId,
-          }),
-        ]);
+        discovered = await discoverCornerWorktree(this.runtime.supervisorRoot, cornerId);
+        if (!discovered) {
+          localIds.delete(cornerId);
+          continue;
+        }
+        const restore = (await this.options.daemonApi.execute('getCornerRestoreState', {
+          cornerId,
+        })) as CornerRestoreResult & { archived?: boolean; parentRoomId?: string };
+        // An old server names archived corners in listRoomCorners but omits
+        // these restore fields. A new server can omit them from the active-only
+        // list; cleanup then requires its explicit archive and parent facts.
+        if (restore.archived === false) continue;
+        if (!corner) {
+          if (restore.archived !== true || !restore.parentRoomId) continue;
+          corner = { cornerId, parentRoomId: restore.parentRoomId };
+        } else if (restore.parentRoomId && restore.parentRoomId !== corner.parentRoomId) {
+          throw new Error(`archived corner ${cornerId} parent Room changed during cleanup`);
+        }
+        const repository = await this.options.daemonApi.execute('getRoomRepositoryState', {
+          roomId: corner.parentRoomId,
+        });
         if (repository.resolution !== 'repository' || !repository.remote) {
           throw new Error(`archived corner ${corner.cornerId} has no authoritative repository`);
         }
@@ -1451,9 +1659,10 @@ export class RoomRuntimeCoordinator {
           token: '',
           recovered: true,
         });
-        console.log(`[thin-core] swept archived corner worktree ${corner.cornerId}`);
+        console.log(`[thin-core] swept archived corner worktree ${cornerId}`);
       } catch (error) {
-        console.error(`[thin-core] archived corner ${corner.cornerId} cleanup deferred:`, error);
+        this.deferArchiveCleanup(cornerId);
+        console.error(`[thin-core] archived corner ${cornerId} cleanup deferred:`, error);
         // The checkout remains for the next heartbeat. A stale or unsafe
         // checkout cannot require another full discovery immediately.
       }
@@ -1482,6 +1691,8 @@ export class RoomRuntimeCoordinator {
       ).token;
       await removeCornerWorktreeAndBranches({ ...worktree, token }, { preserveRemoteBranch });
       this.pendingCornerReaps.delete(worktree.cornerId);
+      this.archiveCleanupFaults.delete(worktree.cornerId);
+      (await this.getLocalWorktreeIds()).delete(worktree.cornerId);
       // `gone` asserts the remote branch is gone, so a preserved branch must
       // not post it: the corner's own GitHub facts still own its lifecycle.
       if (!preserveRemoteBranch) {
@@ -1522,10 +1733,20 @@ export class RoomRuntimeCoordinator {
   }
 
   private notePoll(roomId: string): void {
+    this.surfaceHealth.intakeReady(roomId);
     const room = this.running.get(roomId);
     if (!room) return;
     room.lastPollAt = this.now();
     room.backoffUntil = 0;
+    if (this.deferredRepositoryRestarts.has(roomId) && !room.body.isBusy()) {
+      this.deferredRepositoryRestarts.delete(roomId);
+      void this.stopRunning(roomId, room)
+        .then(() => this.stopped ? undefined : this.startRoom(roomId))
+        .catch((error) => {
+          console.error(`[thin-core] failed to restart Room ${roomId} after repository change:`, error);
+          this.wakeDiscovery();
+        });
+    }
     if (this.isWorkspaceIdle()) this.interactiveIdleListener?.();
   }
 
@@ -1557,6 +1778,7 @@ export class RoomRuntimeCoordinator {
     // Refuse further pushes, then wait — to the deadline, never past it — for
     // the in-flight apply, so whatever it started is in the snapshot below.
     this.stopped = true;
+    for (const cornerId of this.idleCornerSubscriptions.keys()) this.unwatchCorner(cornerId);
     this.options.daemonApi.closeLive?.();
     this.pendingMembershipEvents.clear();
     const deadlineAt = Math.min(

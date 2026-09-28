@@ -87,6 +87,104 @@ describe('Postgres live fanout', () => {
     vi.restoreAllMocks();
   });
 
+  it('bounds notification DB projections and coalesces a repeated repository wake', async () => {
+    let releaseReads!: () => void;
+    const readBarrier = new Promise<void>((resolve) => { releaseReads = resolve; });
+    let active = 0;
+    let peak = 0;
+    let repositoryReads = 0;
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes('FROM rooms WHERE repository_key')) {
+        active++;
+        peak = Math.max(peak, active);
+        await readBarrier;
+        active--;
+        repositoryReads++;
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const client = new EventEmitter() as EventEmitter & LivePgClient;
+    let listening = false;
+    client.connect = async () => undefined;
+    client.query = async () => { listening = true; };
+    client.end = async () => { client.emit('end'); };
+    const live = new LiveHub();
+    const listener = new PostgresLiveListener(
+      { query, transaction: vi.fn() }, live, () => client, 1,
+    );
+    listeners.push(listener);
+    const running = listener.run();
+    await eventually(() => listening);
+    for (let index = 0; index < 15; index++)
+      client.emit('notification', { channel: POSTGRES_LIVE_CHANNEL, payload: JSON.stringify({
+        table: 'github_repositories', operation: 'UPDATE', roomId: ROOM,
+        repositoryId: String(index),
+      }) });
+    expect(listener.projectionHealth()).toMatchObject({
+      connected: true, active: 2, queued: 13, delivered: 0, failed: 0,
+    });
+    expect(listener.projectionHealth().oldestActiveAgeMs).not.toBeNull();
+    expect(listener.projectionHealth().oldestQueuedAgeMs).not.toBeNull();
+    client.emit('notification', { channel: POSTGRES_LIVE_CHANNEL, payload: JSON.stringify({
+      table: 'github_repositories', operation: 'UPDATE', roomId: ROOM, repositoryId: '5',
+    }) });
+    expect(listener.projectionHealth().queued).toBe(13);
+    releaseReads();
+    await eventually(() => repositoryReads === 15);
+    expect(peak).toBe(2);
+    expect(listener.projectionHealth()).toMatchObject({
+      active: 0, queued: 0, dropped: 0, delivered: 15, failed: 0,
+      oldestActiveAgeMs: null, oldestQueuedAgeMs: null,
+    });
+    const health = listener.projectionHealth();
+    expect(health.lastNotificationAt).not.toBeNull();
+    expect(health.lastDeliveredAt).toBeGreaterThanOrEqual(health.lastNotificationAt!);
+    expect(health.lastDeliveryAgeMs).not.toBeNull();
+    expect(listener.projectionHealth().deliveryAgeBuckets.reduce((sum, count) => sum + count, 0))
+      .toBe(15);
+    await listener.stop();
+    await running;
+    expect(listener.projectionHealth().connected).toBe(false);
+  });
+
+  it('sends one recovery resync after a saturated notification backlog drains', async () => {
+    let releaseReads!: () => void;
+    const readBarrier = new Promise<void>((resolve) => { releaseReads = resolve; });
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes('FROM rooms WHERE repository_key')) await readBarrier;
+      return { rows: [], rowCount: 0 };
+    });
+    const client = new EventEmitter() as EventEmitter & LivePgClient;
+    let listening = false;
+    client.connect = async () => undefined;
+    client.query = async () => { listening = true; };
+    client.end = async () => { client.emit('end'); };
+    const live = new LiveHub();
+    const resync = vi.fn();
+    live.subscribeResync(resync);
+    const listener = new PostgresLiveListener(
+      { query, transaction: vi.fn() }, live, () => client, 1,
+    );
+    listeners.push(listener);
+    const running = listener.run();
+    await eventually(() => listening && resync.mock.calls.length === 1);
+    resync.mockClear();
+    for (let index = 0; index < 520; index++)
+      client.emit('notification', { channel: POSTGRES_LIVE_CHANNEL, payload: JSON.stringify({
+        table: 'github_repositories', operation: 'UPDATE', roomId: ROOM,
+        repositoryId: String(index),
+      }) });
+    expect(listener.projectionHealth()).toMatchObject({
+      active: 2, queued: 512, dropped: 6, resyncPending: true,
+    });
+    releaseReads();
+    await eventually(() => listener.projectionHealth().active === 0 &&
+      listener.projectionHealth().queued === 0);
+    expect(resync).toHaveBeenCalledOnce();
+    await listener.stop();
+    await running;
+  });
+
   it('fans a committed write from server A to a subscriber on server B', async () => {
     const liveA = new LiveHub();
     const liveB = new LiveHub();
@@ -412,6 +510,69 @@ describe('Postgres live fanout', () => {
           event.targetAgentId === latecomer &&
           event.archived === true,
       ),
+    );
+  });
+
+  it('nudges the parent Room only when a corner status input changes', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const parent: LiveEvent[] = [];
+    live.subscribe(ROOM, (event) => parent.push(event));
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+
+    const corner = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    const agent = 'e'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [agent]);
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'fix')`,
+      [corner, WORKSPACE, ROOM, AUTHOR],
+    );
+    await database.query(
+      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lane) VALUES($1,$2,'fix it','code')`,
+      [corner, agent],
+    );
+    const nudges = () =>
+      parent.filter((event) => event.type === 'invalidate' && event.reason === 'corner-status');
+    await eventually(() => nudges().length === 1);
+    parent.length = 0;
+
+    await database.query(
+      `INSERT INTO agent_turns(room_id,request_id,agent_id,status) VALUES($1,'r1',$2,'working')`,
+      [corner, agent],
+    );
+    await eventually(() => nudges().length === 1);
+    // A heartbeat that only restamps the running turn changes no status.
+    await database.query(
+      `UPDATE agent_turns SET created_at=now() WHERE room_id=$1 AND request_id='r1'`,
+      [corner],
+    );
+    await database.query(
+      `UPDATE agent_turns SET status='complete' WHERE room_id=$1 AND request_id='r1'`,
+      [corner],
+    );
+    await eventually(() => nudges().length === 2);
+    await database.query(
+      `UPDATE corner_facts SET lifecycle='{"lifecycle":"pr-open","checks":"pending"}'::jsonb
+       WHERE corner_id=$1`,
+      [corner],
+    );
+    await eventually(() => nudges().length === 3);
+    // A top-level Room's own turn has no parent to nudge.
+    await database.query(
+      `INSERT INTO agent_turns(room_id,request_id,agent_id,status) VALUES($1,'r2',$2,'working')`,
+      [ROOM, agent],
+    );
+    await eventually(() =>
+      parent.some(
+        (event) => event.type === 'invalidate' && event.reason === 'postgres:agent_turns',
+      ),
+    );
+    expect(nudges()).toHaveLength(3);
+    expect(nudges()).toEqual(
+      Array(3).fill({ type: 'invalidate', roomId: ROOM, reason: 'corner-status' }),
     );
   });
 

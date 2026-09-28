@@ -105,6 +105,111 @@ describe('first-silence notice', () => {
     });
   });
 
+  it('requeues the exact interrupted command without spending a hiccup attempt or restarting the helper', async () => {
+    const requestId = 'e'.repeat(64);
+    const command = await ask(database, requestId);
+    const daemon = new DaemonService(database, new LiveHub());
+    const receipt = {
+      roomId: ROOM,
+      requestId,
+      generationId: 'g1',
+      status: 'failed' as const,
+      reason: 'helper updated while the turn was running',
+      reasonKind: 'update-interrupted' as const,
+    };
+    const result = await daemon.execute('postAgentTurnReceipt', receipt, AGENT);
+    expect(result).toMatchObject({ updateRequeued: true });
+    expect(result.hiccupRestart).toBeUndefined();
+    expect(await failureLine(database, requestId)).toEqual({
+      text: '@candy was interrupted by an update · her request is queued to resume.',
+      silence: 'update-interrupted',
+      state: 'failed',
+    });
+    expect(await commandState(database, command.id)).toEqual({
+      state: 'pending',
+      hiccup_attempts: 0,
+      generation_id: null,
+    });
+    expect(await daemon.execute('postAgentTurnReceipt', receipt, AGENT)).toMatchObject({
+      updateRequeued: true,
+    });
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='turn-failed' AND card->>'requestId'=$2`,
+          [ROOM, requestId],
+        )
+      ).rows,
+    ).toHaveLength(1);
+    await claimAgentCommand(database, ROOM, AGENT, command.id, 'g2');
+    expect((await commandState(database, command.id))?.state).toBe('claimed');
+  });
+
+  it('restates a presence failure in place when the updated helper replays a generation-free receipt', async () => {
+    const requestId = 'f'.repeat(64);
+    const command = await ask(database, requestId);
+    const live = new LiveHub();
+    await noteFirstSilence(database, live, {
+      roomId: ROOM,
+      requestId,
+      agentId: AGENT,
+      generationId: 'g1',
+      reason: 'the turn stalled',
+    });
+    const original = (
+      await database.query<{ id: string }>(
+        `SELECT id FROM messages WHERE room_id=$1 AND card_type='turn-failed'
+         AND card->>'requestId'=$2`,
+        [ROOM, requestId],
+      )
+    ).rows[0]!;
+    // An install can exceed the usual recent-line coalescing window. The
+    // journaled receipt still names the same failed turn, so it must update
+    // that line rather than post another one.
+    await database.query(`UPDATE messages SET created_at=now()-interval '11 minutes' WHERE id=$1`, [
+      original.id,
+    ]);
+    expect(await commandState(database, command.id)).toMatchObject({
+      state: 'pending',
+      hiccup_attempts: 1,
+      generation_id: null,
+    });
+
+    const daemon = new DaemonService(database, live);
+    const receipt = {
+      roomId: ROOM,
+      requestId,
+      status: 'failed' as const,
+      reason: 'helper updated while the turn was running',
+      reasonKind: 'update-interrupted' as const,
+    };
+    expect(await daemon.execute('postAgentTurnReceipt', receipt, AGENT)).toMatchObject({
+      updateRequeued: true,
+    });
+    expect(await failureLine(database, requestId)).toEqual({
+      text: '@candy was interrupted by an update · her request is queued to resume.',
+      silence: 'update-interrupted',
+      state: 'failed',
+    });
+    expect(await commandState(database, command.id)).toMatchObject({
+      state: 'pending',
+      hiccup_attempts: 1,
+      generation_id: null,
+    });
+    expect(await daemon.execute('postAgentTurnReceipt', receipt, AGENT)).toMatchObject({
+      updateRequeued: true,
+    });
+    expect(
+      (
+        await database.query<{ id: string }>(
+          `SELECT id FROM messages WHERE room_id=$1 AND card_type='turn-failed'
+           AND card->>'requestId'=$2`,
+          [ROOM, requestId],
+        )
+      ).rows,
+    ).toEqual([{ id: original.id }]);
+  });
+
   it('maps each standing condition to its approved line and does not restart', async () => {
     const cases = [
       {

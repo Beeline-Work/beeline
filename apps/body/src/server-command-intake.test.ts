@@ -34,10 +34,30 @@ function socketApi(execute: ReturnType<typeof vi.fn>) {
     }),
   } as unknown as DaemonApiClient;
   return { api, connected: () => state?.(true, { pushIntake: true, connectionPresence: true }),
-    disconnected: () => state?.(false), push: (rows: AgentCommand[]) => commands?.(rows) };
+    disconnected: () => state?.(false),
+    unsupported: () => state?.(true, { pushIntake: false, connectionPresence: true }),
+    push: (rows: AgentCommand[]) => commands?.(rows) };
 }
 
 describe('command intake mechanics', () => {
+  it('reports push subscription loss and recovery without reading the server on disconnect', async () => {
+    const abort = new AbortController();
+    const execute = vi.fn(async (name: string) => name === 'getAgentCommands'
+      ? { commandProtocol: 1, commands: [] } : { id: 'ok' });
+    const socket = socketApi(execute);
+    const states: boolean[] = [];
+    const running = runServerCommandIntake({ api: socket.api, roomId: 'room', agentId: 'agent',
+      context: await context(), signal: abort.signal, run: vi.fn(), stop: vi.fn(),
+      onSubscriptionState: (connected) => states.push(connected) });
+    await vi.waitFor(() => expect(socket.api.liveSubscribe).toHaveBeenCalledOnce());
+    socket.connected();
+    socket.disconnected();
+    socket.unsupported();
+    expect(states).toEqual([true, false, false]);
+    expect(execute.mock.calls.map(([name]) => name)).toEqual(['getAgentCommands']);
+    abort.abort();
+    await running;
+  });
   it('refuses an older server without reading shared traffic', async () => {
     const execute = vi.fn(async () => ({ items: [command().source] }));
     await expect(runServerCommandIntake({ api: { execute } as unknown as DaemonApiClient,
@@ -89,6 +109,19 @@ describe('command intake mechanics', () => {
     expect(run).toHaveBeenCalledOnce();
     expect(socket.api.liveSubscribe).toHaveBeenCalledWith('room', undefined, undefined,
       expect.any(Function), presence, expect.any(Function));
+  });
+  it('exits when shutdown aborts during an asynchronous closed check', async () => {
+    const abort = new AbortController();
+    const execute = vi.fn(async () => ({ commandProtocol: 1, commands: [] }));
+    const socket = socketApi(execute);
+    const closed = vi.fn(async () => {
+      abort.abort();
+      return false;
+    });
+    await runServerCommandIntake({ api: socket.api, roomId: 'room', agentId: 'agent',
+      context: await context(), signal: abort.signal, closed, run: vi.fn(), stop: vi.fn() });
+    expect(closed).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledTimes(1);
   });
   it('processes a pushed stop while an input is running', async () => {
     const abort = new AbortController();

@@ -566,6 +566,10 @@ export type CornerListResult = {
 };
 export type CornerRestoreResult = {
   readonly cornerId: string;
+  /** Present on servers that expose archived corners to active-only discovery helpers. */
+  readonly archived?: boolean;
+  /** Parent Room retained after archival so a helper can locate its local worktree. */
+  readonly parentRoomId?: string;
   /** Immutable objective from the authoritative corner fact. */
   readonly objective: string;
   /** Current immutable assignment, absent on corners opened before briefs. */
@@ -709,6 +713,8 @@ export type WriteResult = {
   /** Set on a failed hiccup receipt the helper should exit so systemd restarts it. */
   readonly hiccupRestart?: boolean;
   readonly hiccupAttempt?: number;
+  /** The interrupted command was requeued for the updated helper; no process restart is needed. */
+  readonly updateRequeued?: boolean;
 };
 export type PostRoomMessageResult = WriteResult;
 export type ReactToRoomMessageInput = RoomInput & {
@@ -787,6 +793,7 @@ export type PostTurnReceiptInput = AgentRoomInput & {
     | 'not-signed-in'
     | 'workspace-failure'
     | 'helper-out-of-date'
+    | 'update-interrupted'
     | 'offline'
     | 'model-selection-unavailable';
 };

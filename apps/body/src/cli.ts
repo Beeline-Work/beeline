@@ -102,6 +102,7 @@ import {
   ManagedUpdateDrain,
   attemptFailureText,
   gateManagedSuccessor,
+  managedRestartStaggerMs,
   ManagedUpdateHandoff,
   rollbackFailedSuccessor,
   runningRuntimeProbeIds,
@@ -339,6 +340,10 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
     loadedReleaseIdentity = await readInstalledBundleIdentity(layout);
     config.daemonReleaseVersion = loadedReleaseIdentity?.version;
     config.daemonSourceSha = loadedReleaseIdentity?.commit;
+    daemonApi.setHelperIdentity({
+      releaseVersion: loadedReleaseIdentity?.version,
+      sourceSha: loadedReleaseIdentity?.commit,
+    });
     update = await ManagedUpdateHandoff.create(layout, runtimeDir, Date.now, {
       requiredProbeIds: [...(await runningRuntimeProbeIds(process.env)), runtime.agent.publicKey],
     });
@@ -393,8 +398,12 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   // Socket-idle is healthy. Keep systemd's local watchdog alive without a
   // discovery tick or any daemon API read.
   let lastCoreStatus = 'starting';
-  const stopWatchdog = startLocalWatchdog(notifier,
-    () => `loaded_release=${loadedRelease ?? 'development'}; ${lastCoreStatus}`);
+  let currentCore: ThinDaemonCore | undefined;
+  const stopWatchdog = startLocalWatchdog(
+    notifier,
+    () =>
+      `loaded_release=${loadedRelease ?? 'development'}; ${currentCore?.healthStatus() ?? lastCoreStatus}`,
+  );
 
   let ready = false;
   let connectorLoop: ConnectorAssignmentLoop | undefined;
@@ -482,6 +491,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
         });
       },
     });
+    currentCore = core;
     // Busy means a turn is executing right now. An idle helper restarts on the
     // tick that arms the update; a busy one when its current work finishes.
     const updateDrain = update
@@ -491,6 +501,12 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
           activeTurnCount: () => core.activeTurnCount(),
           restart: async ({ desiredRelease, drainDeadlineAt }) => {
             core.setDrainDeadlineAt(drainDeadlineAt);
+            const staggerMs = managedRestartStaggerMs(
+              runtime.agent.publicKey,
+              desiredRelease,
+              drainDeadlineAt,
+            );
+            if (staggerMs > 0) await new Promise((resolve) => setTimeout(resolve, staggerMs));
             stoppingStatus =
               `update pending, converging; loaded_release=${loadedRelease ?? 'unknown'}; ` +
               `desired_release=${desiredRelease}; ` +
@@ -621,7 +637,8 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
         // readiness or the Room loop.
         void readMachineId(process.env)
           .then(({ machineId, machineName }) =>
-            daemonApi.execute('postAgentMachineReport', { machineId, machineName }))
+            daemonApi.execute('postAgentMachineReport', { machineId, machineName }),
+          )
           .then(() => institutionalMemoryWorker?.wake())
           .catch((error) => console.warn('[body] machine report failed:', error));
         // The connector work queue drains on the live Connect push.

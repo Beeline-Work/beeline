@@ -18,6 +18,7 @@ export class ThinDaemonCore {
   private readonly roomRuntime: RoomRuntimeCoordinator;
   private pendingDiscovery = false;
   private discoveryWaiter?: () => void;
+  private discoveryStatus = 'starting';
 
   constructor(
     runtime: AgentRuntimeRecord,
@@ -59,6 +60,14 @@ export class ThinDaemonCore {
   activeRoomIds(): string[] {
     return this.roomRuntime.activeRoomIds();
   }
+  surfaceHealthSnapshot() {
+    return this.roomRuntime.surfaceHealthSnapshot();
+  }
+  healthStatus(): string {
+    const count = this.roomRuntime.activeRoomCount();
+    return `${this.discoveryStatus || (this.roomRuntime.hasUnreadySurfaces() ? 'degraded' : 'healthy')}; ` +
+      `${count} Room${count === 1 ? '' : 's'} active; ${this.roomRuntime.surfaceHealthSummary()}`;
+  }
   setInteractiveIdleListener(listener: () => void): void {
     this.roomRuntime.setInteractiveIdleListener(listener);
   }
@@ -86,7 +95,6 @@ export class ThinDaemonCore {
       onProgress?: (status: string) => void | Promise<void>;
     } = {},
   ): Promise<'aborted' | 'agent-removed'> {
-    let degraded = 'starting';
     await opts.onEstablished?.();
     try {
       while (!opts.signal?.aborted) {
@@ -94,18 +102,14 @@ export class ThinDaemonCore {
         try {
           const membership = await this.roomRuntime.reconcile();
           if (membership === 'not-member') return 'agent-removed';
-          degraded = membership === 'unknown' ? 'monolith membership degraded' : '';
+          this.discoveryStatus = membership === 'unknown' ? 'monolith membership degraded' : '';
         } catch (error) {
           if (isAgentRemovedError(error)) return 'agent-removed';
-          console.error('[thin-core] discovery failed; waiting for socket reconnect:', error);
-          degraded = `monolith discovery degraded: ${error instanceof Error ? error.message : String(error)}`;
+          console.error('[thin-core] discovery failed; waiting for live recovery:', error);
+          this.discoveryStatus = `monolith discovery degraded: ${error instanceof Error ? error.message : String(error)}`;
           this.roomRuntime.reconnectAfterFailure();
         }
-        await opts.onProgress?.(
-          degraded ||
-            `healthy; ${this.roomRuntime.activeRoomCount()} ` +
-              `Room${this.roomRuntime.activeRoomCount() === 1 ? '' : 's'} active`,
-        );
+        await opts.onProgress?.(this.healthStatus());
         if (!this.pendingDiscovery) await this.waitForDiscovery(opts.signal);
       }
       return 'aborted';

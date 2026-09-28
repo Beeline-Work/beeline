@@ -348,6 +348,8 @@ export interface MonolithRoomTurnOptions {
   api: DaemonApiClient;
   scheduler: SessionScheduler;
   health: MonolithRoomTurnHealth;
+  onSubscriptionState?: (connected: boolean) => void;
+  onIntakeError?: (error: unknown) => void;
   signal?: AbortSignal;
   pollMs?: number;
   createAcpClient?: (options: ConstructorParameters<typeof AcpClient>[0]) => AcpClient;
@@ -1637,7 +1639,11 @@ export class MonolithRoomTurnLoop {
           this.wakeIntake = wake;
         },
         onPoll: () => this.options.health.poll(),
-        onError: (error) => console.error('[thin-core] Room command failed', error),
+        onSubscriptionState: this.options.onSubscriptionState,
+        onError: (error) => {
+          this.options.onIntakeError?.(error);
+          console.error('[thin-core] Room command failed', error);
+        },
         onEnter: (command) => this.squireRelay.activate(command, this.commandContext.generationId),
         onLeave: (command) =>
           this.squireRelay.deactivate(

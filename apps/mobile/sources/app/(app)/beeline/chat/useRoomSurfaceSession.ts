@@ -51,6 +51,7 @@ import {
 } from '@/buzz/agent-presence';
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 import { scheduleAnimationFrame } from '@/buzz/host-scheduler';
+import { takePrefetchedPushRoom } from '@/push/push-room-prefetch';
 
 const OUTBOX_CONFIRMATION_TIMEOUT_MS = 15_000;
 /** A socket that never answers must not hold the open's one Room read. */
@@ -454,6 +455,8 @@ export function useRoomSurfaceSession({
     let decoder: LiveOverlayDecoder | undefined;
     let pendingOverlayEvents: Parameters<LiveOverlayDecoder['decode']>[0][] = [];
     let watchGeneration = 0;
+    let readRacedAhead = false;
+    let watchStarted = false;
     /** Ends the watch's handshake wait when the reader leaves before it. */
     let abandonHandshakeWait: (() => void) | undefined;
     let hasPainted = false;
@@ -626,7 +629,6 @@ export function useRoomSurfaceSession({
     const installWatch = async (): Promise<void> => {
       const generation = ++watchGeneration;
       let handshakeSeen = false;
-      let readRacedAhead = false;
       let listenReady: (() => void) | undefined;
       const handshake = new Promise<void>((resolve) => {
         listenReady = resolve;
@@ -727,6 +729,8 @@ export function useRoomSurfaceSession({
               return;
             }
             if (live.type === 'invalidate') {
+              // A child corner's list status: this Room's own read does not change.
+              if (live.reason === 'corner-status') return;
               if (live.trace) {
                 const received = {
                   ...live.trace,
@@ -981,6 +985,9 @@ export function useRoomSurfaceSession({
         if (paintedCache) enrichView(paintedCache, identity.publicKey, relayUrl, false);
         if (cancelled) return;
 
+        let openingPrefetch = notificationResponseId
+          ? takePrefetchedPushRoom(notificationResponseId, channelId)
+          : null;
         scheduler = new SurfaceRefreshScheduler({
           fetch: async () => {
             const traces = pendingReadTraces;
@@ -989,7 +996,11 @@ export function useRoomSurfaceSession({
             markRoomOpen('room-read-start');
             turnDeltasDuringRead = [];
             try {
-              const view = await nextRoomClient.room(channelId);
+              const prefetched = openingPrefetch;
+              openingPrefetch = null;
+              const view = await (prefetched
+                ? prefetched.catch(() => nextRoomClient.room(channelId))
+                : nextRoomClient.room(channelId));
               logLiveTrace('room-read-end', traces);
               markRoomOpen('room-read-end', view.messages.at(-1)?.id);
               markRoomOpenWeight(view);
@@ -1017,6 +1028,21 @@ export function useRoomSurfaceSession({
               relayUrl,
               true,
             );
+            if (notificationResponseId && !watchStarted) {
+              watchStarted = true;
+              readRacedAhead = true;
+              // A push needs its fresh Room answer on screen first. Installing
+              // the live watch during that GET delayed the response until the
+              // subscribe completed on Android. The first subscribed frame
+              // forces a covering read for writes in the read/watch gap.
+              void yieldToPaint().then(() => {
+                if (cancelled) return;
+                markRoomOpen('watch-install');
+                void installWatch().catch((error) => {
+                  if (!cancelled) setHydrationError(`Live updates unavailable. ${String(error)}`);
+                });
+              });
+            }
             if (missedLive) nextTransport.reconnectLive();
             if (!view.parent && !reopenedChat) {
               reopenedChat = true;
@@ -1064,11 +1090,22 @@ export function useRoomSurfaceSession({
             } else {
               setHydrationError(`Offline — showing the last saved response. ${String(error)}`);
             }
+            if (notificationResponseId && !terminal && !watchStarted) {
+              watchStarted = true;
+              readRacedAhead = true;
+              markRoomOpen('watch-install');
+              void installWatch().catch(() => undefined);
+            }
           },
         });
         schedulerRef.current = scheduler;
-        markRoomOpen('watch-install');
-        await scheduler.startAfter(installWatch());
+        if (notificationResponseId) {
+          scheduler.refreshNow();
+          await scheduler.startAfter(Promise.resolve());
+        } else {
+          markRoomOpen('watch-install');
+          await scheduler.startAfter(installWatch());
+        }
         markRoomOpen('watch-ready');
       } catch (error) {
         if (cancelled) return;

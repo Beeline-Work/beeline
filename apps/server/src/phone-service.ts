@@ -1808,7 +1808,17 @@ export class PhoneService {
     before?: { createdAt: number; id: string },
   ): Promise<RoomHistoryView | null> {
     if (!(await this.hasRoomAccess(roomId, viewerId))) return null;
-    const rows = await this.messageRows(roomId, before, 31);
+    let rows = await this.messageRows(roomId, before, 31);
+    if (before && rows.length === 0) {
+      // A cached cursor can point to a message deleted since the Room read.
+      // The cursor subquery then matches nothing; an empty result is not proof
+      // that this Room has no older history. Restart from the current tail.
+      const cursor = await this.database.query<{ id: string }>(
+        `SELECT id FROM messages WHERE room_id=$1 AND id=$2`,
+        [roomId, before.id],
+      );
+      if (!cursor.rowCount) rows = await this.messageRows(roomId, undefined, 31);
+    }
     const page = rows.slice(0, 30);
     await this.enrichMessageBookmarks(page, viewerId);
     const tail = page.at(-1);

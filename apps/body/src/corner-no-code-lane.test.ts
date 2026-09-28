@@ -191,6 +191,7 @@ it('retires a running no-code session and restarts the same corner with a real b
   const remote = join(fixture, 'remote.git');
   await git('git', ['init', '-b', 'main', seed]);
   await writeFile(join(seed, 'widget.txt'), 'before\n');
+  await writeFile(join(seed, '.gitignore'), '.env\nnode_modules/\n');
   await git('git', ['-C', seed, 'add', '.']);
   await git('git', [
     '-C',
@@ -217,6 +218,9 @@ it('retires a running no-code session and restarts the same corner with a real b
 
     const featureBranch = `feature/corner-${CORNER.replaceAll('-', '').slice(0, 12)}`;
     await writeFile(join(scratch, 'pending.txt'), 'written before promotion\n');
+    await writeFile(join(scratch, '.env'), 'LOCAL_ONLY=example\n');
+    await mkdir(join(scratch, 'node_modules'), { recursive: true });
+    await writeFile(join(scratch, 'node_modules', 'local.txt'), 'needed locally\n');
     await staged.database.query(`UPDATE corner_facts SET lane='code' WHERE corner_id=$1`, [CORNER]);
     await staged.coordinator.applyCornerRestart(CORNER);
     expect(staged.coordinator.activeRoomIds()).not.toContain(CORNER);
@@ -235,10 +239,14 @@ it('retires a running no-code session and restarts the same corner with a real b
     expect(staged.token).toHaveBeenCalledWith(ROOM);
     expect(existsSync(join(worktree, 'widget.txt'))).toBe(true);
     expect(existsSync(join(worktree, 'pending.txt'))).toBe(true);
+    expect(existsSync(join(worktree, '.env'))).toBe(true);
+    expect(existsSync(join(worktree, 'node_modules', 'local.txt'))).toBe(true);
     expect((await git('git', ['-C', worktree, 'show', 'HEAD:pending.txt'])).stdout).toBe(
       'written before promotion\n',
     );
     expect((await git('git', ['-C', worktree, 'rev-list', '--count', 'origin/main..HEAD'])).stdout.trim()).toBe('1');
+    await expect(git('git', ['-C', worktree, 'cat-file', '-e', 'HEAD:.env'])).rejects.toThrow();
+    await expect(git('git', ['-C', worktree, 'cat-file', '-e', 'HEAD:node_modules/local.txt'])).rejects.toThrow();
     expect(existsSync(scratch)).toBe(false);
     expect((await git('git', ['-C', worktree, 'branch', '--show-current'])).stdout.trim()).toBe(
       featureBranch,

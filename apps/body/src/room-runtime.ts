@@ -1302,7 +1302,20 @@ export class RoomRuntimeCoordinator {
               force: true,
             });
           if (entries.length) {
-            await execFileAsync('git', ['-C', worktree.path, 'add', '-f', '-A', '--', ...entries]);
+            const stageable: string[] = [];
+            for (const entry of entries) {
+              const ignored = await execFileAsync('git', [
+                '-C', worktree.path, 'check-ignore', '-q', '--', entry,
+              ]).then(() => true, (error: { code?: number }) => {
+                if (error.code === 1) return false;
+                throw error;
+              });
+              if (!ignored) stageable.push(entry);
+            }
+            // Git's ordinary ignore rules are the commit boundary. Ignored
+            // scratch files still live in the worktree for the resumed agent.
+            if (stageable.length)
+              await execFileAsync('git', ['-C', worktree.path, 'add', '-A', '--', ...stageable]);
             const changed = await execFileAsync('git', ['-C', worktree.path, 'diff', '--cached', '--quiet'])
               .then(() => false, (error: { code?: number }) => {
                 if (error.code === 1) return true;

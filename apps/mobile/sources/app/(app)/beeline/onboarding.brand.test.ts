@@ -133,7 +133,7 @@ describe('onboarding — canonical brand treatment', () => {
     expect(period.props.style.fontFamily).toBe('SpaceGrotesk-SemiBold');
   });
 
-  it('sets the canonical brand family on the login title, tagline, and buttons', async () => {
+  it('renders the original sign-in tagline and full GitHub action', async () => {
     let tree!: ReactTestRenderer;
     await act(async () => {
       tree = create(React.createElement(BuzzOnboarding));
@@ -153,15 +153,19 @@ describe('onboarding — canonical brand treatment', () => {
 
     const tagline = byTestID('onboarding-tagline');
     expect(tagline).toHaveLength(1);
-    expect(tagline[0].props.children).toBe('A Workspace for people and agents.');
-    expect(tagline[0].props.style.fontFamily).toBe(beelineThemes.obsidian.type.body.fontFamily);
-    expect(tagline[0].props.style.fontSize).toBe(16);
+    expect(tagline[0].props.children).toBe('workspace for all intelligence');
+    expect(tagline[0].props.style.fontFamily).toBe(beelineThemes.obsidian.proseRegular);
+    expect(tagline[0].props.style.fontSize).toBe(14);
+    expect(tagline[0].props.style.lineHeight).toBe(20);
 
-    // The GitHub call to action is the onboarding primary.
+    // A rendered login action must keep its complete label and original button treatment.
     const signIn = tree.root.findAll(
       (node: any) => node.props?.testID === 'onboarding-github-sign-in',
     );
-    expect(signIn.map((node: any) => node.type)).toContain('OnboardingButton');
+    expect(signIn.map((node: any) => node.type)).toContain('MonoButton');
+    expect(signIn.find((node: any) => node.type === 'MonoButton')?.props.label).toBe(
+      'Continue with GitHub',
+    );
 
     // Every login-screen button label rides the canonical family through
     // MonoButton's labelStyle override.
@@ -188,12 +192,12 @@ describe('onboarding — canonical brand source assertions', () => {
     const titleBlock = src.slice(src.indexOf('  title: {'), src.indexOf('titlePeriod:'));
     expect(titleBlock).toContain('groknight.proseSemibold');
     expect(titleBlock).not.toContain('Typography.logo()');
-    // The tagline and the auth notice body use the theme type roles.
+    // The tagline and the auth notice body keep the original canonical prose family.
     expect(src).toMatch(
-      /subtitle: \{\s*\.\.\.Typography\.default\(\),\s*\.\.\.groknight\.type\.body/,
+      /subtitle: \{\s*\.\.\.Typography\.default\(\),\s*fontFamily: groknight\.proseRegular/,
     );
     expect(src).toMatch(
-      /noticeText: \{\s*\.\.\.Typography\.default\(\),\s*\.\.\.groknight\.type\.meta/,
+      /noticeText: \{\s*\.\.\.Typography\.default\(\),\s*fontFamily: groknight\.proseRegular/,
     );
   });
 

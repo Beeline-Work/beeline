@@ -118,3 +118,17 @@ export const ACCESS_NOTICE_WINDOW_MS = 10 * 60_000;
 export function accessNoticeBucket(now: number): number {
   return Math.floor(now / ACCESS_NOTICE_WINDOW_MS);
 }
+
+/**
+ * How long an unreachable mention stays queued before the Room is told the
+ * helper could not read it.
+ *
+ * A helper restart, an update, or a brief socket drop is not an answer: the
+ * mention is still durably queued (`agent_commands`), so the terminal
+ * `did not answer · its helper is offline` line waits this long and is dropped
+ * the moment the helper reconnects or answers. It matches
+ * `AGENT_REACHABLE_HORIZON_MS` so "the helper came back" and "the notice is
+ * due" are read from the same 90-second window. A truly offline helper still
+ * gets the line; a restarting one does not.
+ */
+export const AGENT_MENTION_NOTICE_GRACE_MS = AGENT_REACHABLE_HORIZON_MS;

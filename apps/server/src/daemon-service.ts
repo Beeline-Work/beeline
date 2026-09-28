@@ -180,14 +180,47 @@ function registryMcpRouteName(serverName: string, connectorId: string): string {
   return `registry-${slug || 'mcp'}-${connectorId.slice(0, 8)}`;
 }
 
-/** A durable silence line stays in the transcript; a later answer does not rewrite it. */
+/**
+ * A durable silence line stays in the transcript; a later answer does not
+ * rewrite it. The one line that DOES yield is the deferred mention notice: it
+ * says a mention could not be read, so when the helper finally answers that
+ * exact mention the line is withdrawn rather than left to contradict the reply.
+ * Only a notice this turn's own source message produced is touched.
+ */
 async function settleTurnFailureLine(
-  _database: SqlDatabase,
-  _roomId: string,
-  _requestId: string,
-  _agentId: string,
-) {
-  return;
+  database: SqlDatabase,
+  live: LiveHub,
+  roomId: string,
+  requestId: string,
+  agentId: string,
+): Promise<void> {
+  const withdrawn = await database.query<{ notice_id: string | null }>(
+    `DELETE FROM pending_mention_notices
+     WHERE room_id=$1 AND agent_id=$2 AND source_message_id=$3
+     RETURNING notice_id`,
+    [roomId, agentId, requestId],
+  );
+  const noticeIds = [
+    ...new Set(
+      withdrawn.rows.map((row) => row.notice_id).filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  for (const noticeId of noticeIds) {
+    // Another unanswered mention in the same window shares this one line; it
+    // stays until the last of them is answered.
+    const shared = await database.query(
+      `SELECT 1 FROM pending_mention_notices WHERE notice_id=$1 LIMIT 1`,
+      [noticeId],
+    );
+    if (shared.rowCount) continue;
+    const removed = await database.query(
+      `DELETE FROM messages
+       WHERE id=$1 AND room_id=$2 AND presentation='system' AND author_id=$3`,
+      [noticeId, roomId, agentId],
+    );
+    if (removed.rowCount)
+      live.publish({ type: 'invalidate', roomId, reason: 'postgres:messages' });
+  }
 }
 /**
  * Corner operations that stay with the opener. Membership authorizes every
@@ -3215,7 +3248,13 @@ export class DaemonService {
           [input.roomId, input.requestId, agentId, input.generationId],
         );
         if (settled.rowCount)
-          await settleTurnFailureLine(database, input.roomId, input.requestId, agentId);
+          await settleTurnFailureLine(
+            database,
+            this.live,
+            input.roomId,
+            input.requestId,
+            agentId,
+          );
       }
       const values = [
         messageId,
@@ -3374,6 +3413,18 @@ export class DaemonService {
              DELETE FROM live_outputs output USING completed
              WHERE output.room_id=$2 AND output.agent_id=$3 AND output.turn_id=$6
                AND output.kind IN ('draft','thought')
+           ), notice_rows AS (
+             DELETE FROM pending_mention_notices notice USING writable
+             WHERE notice.room_id=$2 AND notice.agent_id=$3 AND notice.source_message_id=$6
+             RETURNING notice.notice_id
+           ), withdrawn_notice AS (
+             DELETE FROM messages message USING notice_rows
+             WHERE message.id=notice_rows.notice_id AND message.room_id=$2
+               AND message.author_id=$3
+               AND NOT EXISTS(SELECT 1 FROM pending_mention_notices other
+                 WHERE other.notice_id=notice_rows.notice_id
+                   AND other.source_message_id<>$6)
+             RETURNING message.id
            ), inserted_public AS (
              SELECT inserted.*,author.kind author_kind,author.name author_name,
                author.handle author_handle,author.avatar author_avatar,author.face_id author_face,
@@ -3681,7 +3732,13 @@ export class DaemonService {
            WHERE room_id=$1 AND agent_id=$2 AND turn_id=$3 AND kind IN ('draft','thought')`,
           [input.roomId, agentId, input.requestId],
         );
-        await settleTurnFailureLine(database, input.roomId, input.requestId, agentId);
+        await settleTurnFailureLine(
+          database,
+          this.live,
+          input.roomId,
+          input.requestId,
+          agentId,
+        );
         if (input.completionKind === 'no-reply') {
           const agent = (
             await database.query<{ name: string }>(

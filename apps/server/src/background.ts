@@ -570,6 +570,11 @@ export async function runMaintenance(database: SqlDatabase): Promise<void> {
   await database.query(
     `DELETE FROM daemon_token_exchanges WHERE expires_at<now()-interval '1 day'`,
   );
+  // A deferred mention notice is spent once written or withdrawn; its row has
+  // no further use after the source message and the notice are both long gone.
+  await database.query(
+    `DELETE FROM pending_mention_notices WHERE due_at<now()-interval '30 days'`,
+  );
 }
 
 /**

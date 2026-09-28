@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { FACE_NAMES, FACE_SOULS, isFaceId, type FaceId } from '@beeline/api-contract/phone';
+import { AGENT_MENTION_NOTICE_GRACE_MS } from '@beeline/api-contract/agent-access';
 import { migrate } from './database.js';
 import { upgradeGrantPolicy } from './grant-policy-upgrade.js';
 import { MemoryObjectStorage, PgliteDatabase } from './test-support.js';
@@ -2350,13 +2351,13 @@ describe('monolith integration', () => {
       { roomId: ROOM },
       daemonToken,
     );
-    // The send writes the refusal for the offline helper right after the
-    // message that caused it, stamped strictly past its cause's second — so
-    // the conversation read ends with the consequence, never above its cause.
+    // The helper is unreachable right now, but the mention is still durably
+    // queued, so the send writes no premature did-not-answer line. The message
+    // that caused it stands last.
     const conversationItems = ((await conversation.json()) as { items: Array<{ body: string }> })
       .items;
-    expect(conversationItems.at(-1)?.body).toContain('@bee did not answer @owner');
-    expect(conversationItems.at(-2)?.body).toBe('@bee What is your soul?');
+    expect(conversationItems.at(-1)?.body).toBe('@bee What is your soul?');
+    expect(conversationItems.some((item) => item.body.includes('did not answer'))).toBe(false);
     const delivered = next(socket, 'message-delta');
     const reply = await daemonOperation(
       'postRoomMessage',
@@ -3833,14 +3834,25 @@ describe('monolith integration', () => {
       text: '@peer Please take over.',
     });
     expect(sent.status).toBe(200);
+    // An unreachable helper leaves the mention queued with no immediate line.
     const notices = await database.query<{ text: string }>(
       `SELECT text FROM messages WHERE room_id=$1 AND presentation='system'`,
       [ROOM],
     );
-    expect(notices.rows.map((row) => row.text)).toContainEqual(
+    expect(notices.rows).toEqual([]);
+    // Only after the grace window with the helper still gone does its line
+    // appear — and still nothing for the parent author the reply did not tag.
+    await new PhoneService(database, origin).flushPendingMentionNotices(
+      Date.now() + AGENT_MENTION_NOTICE_GRACE_MS + 1_000,
+    );
+    const flushed = await database.query<{ text: string }>(
+      `SELECT text FROM messages WHERE room_id=$1 AND presentation='system'`,
+      [ROOM],
+    );
+    expect(flushed.rows.map((row) => row.text)).toContainEqual(
       expect.stringContaining('@peer did not answer'),
     );
-    expect(notices.rows.map((row) => row.text)).not.toContainEqual(
+    expect(flushed.rows.map((row) => row.text)).not.toContainEqual(
       expect.stringContaining('Bee did not answer'),
     );
   });

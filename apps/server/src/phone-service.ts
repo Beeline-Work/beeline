@@ -76,6 +76,7 @@ import {
   type ConnectorOfferStatus,
 } from '@beeline/api-contract/connector-offers';
 import {
+  AGENT_MENTION_NOTICE_GRACE_MS,
   AGENT_REACHABLE_HORIZON_MS,
   MAX_ACCESS_ALLOWLIST_ENTRIES,
   agentAccessPolicyRecord,
@@ -385,6 +386,16 @@ interface RoomScheduleRow {
 
 function hash(value: string): string {
   return createHash('sha256').update(value).digest('hex');
+}
+/** The id of one window's access notice, shared by the immediate and deferred paths. */
+function mentionNoticeId(
+  roomId: string,
+  agentId: string,
+  senderId: string,
+  reason: string,
+  bucket: number,
+): string {
+  return hash(`access-notice|${roomId}|${agentId}|${senderId}|${reason}|${bucket}`);
 }
 function token(prefix: string): string {
   return `${prefix}_${randomBytes(32).toString('base64url')}`;
@@ -3954,6 +3965,11 @@ export class PhoneService {
         JSON.stringify(await deletedMessageEvent(database, row.deleted_by, row.author_id)),
       ]);
       await tombstoneInstitutionalMemoryForMessage(database, input.messageId);
+      // A deleted mention has no words left for a helper to answer, so its
+      // deferred offline notice is dropped with it rather than written later.
+      await database.query(`DELETE FROM pending_mention_notices WHERE source_message_id=$1`, [
+        input.messageId,
+      ]);
     });
   }
 
@@ -4249,22 +4265,199 @@ export class PhoneService {
       for (const agent of agents.rows) {
         const phrase = this.unansweredMentionPhrase(agent, sender, senderId);
         if (!phrase) continue;
-        await systemLine(this.database, {
+        // An unreachable helper is the ONLY reason a mention can still be
+        // answered later: the durable `agent_commands` row is waiting for it.
+        // A restart, an update or a brief socket drop must not be read as
+        // "did not answer", so the terminal line waits out the grace window
+        // and is withdrawn if the helper answers first. Every other reason
+        // (policy refusal, a corner the agent never joined) cannot change, so
+        // it is inscribed now.
+        if (phrase.reason === 'unreachable' && afterMessageId) {
+          await this.deferMentionNotice({
+            roomId,
+            agentId: agent.agent_id,
+            senderId,
+            sourceMessageId: afterMessageId,
+            reason: phrase.reason,
+          });
+          continue;
+        }
+        await this.writeMentionNotice({
           roomId,
-          id: createHash('sha256')
-            .update(
-              `access-notice|${roomId}|${agent.agent_id}|${senderId}|${phrase.reason}|${bucket}`,
-            )
-            .digest('hex'),
-          subject: { kind: 'agent', id: agent.agent_id, name: agent.agent_name },
-          verb: phrase.verb,
-          ...(phrase.object ? { object: phrase.object } : {}),
-          consequence: phrase.consequence,
+          id: mentionNoticeId(roomId, agent.agent_id, senderId, phrase.reason, bucket),
+          agentId: agent.agent_id,
+          agentName: agent.agent_name,
+          phrase,
           afterMessageId,
         });
       }
     } catch (error) {
       console.error('[server] could not inscribe an unanswered mention:', error);
+    }
+  }
+
+  /**
+   * One durable deferred notice for a mention whose helper is unreachable now.
+   * The row is the queue; `flushPendingMentionNotices` turns it into a line
+   * once the grace window has passed with the helper still gone.
+   */
+  private async deferMentionNotice(input: {
+    readonly roomId: string;
+    readonly agentId: string;
+    readonly senderId: string;
+    readonly sourceMessageId: string;
+    readonly reason: string;
+  }): Promise<void> {
+    await this.database.query(
+      `INSERT INTO pending_mention_notices(
+         room_id,agent_id,sender_id,source_message_id,reason,due_at
+       ) VALUES($1,$2,$3,$4,$5,now()+($6::double precision / 1000) * interval '1 second')
+       ON CONFLICT(room_id,agent_id,source_message_id,reason) DO NOTHING`,
+      [
+        input.roomId,
+        input.agentId,
+        input.senderId,
+        input.sourceMessageId,
+        input.reason,
+        AGENT_MENTION_NOTICE_GRACE_MS,
+      ],
+    );
+  }
+
+  private async writeMentionNotice(input: {
+    readonly roomId: string;
+    readonly id: string;
+    readonly agentId: string;
+    readonly agentName: string;
+    readonly phrase: {
+      readonly reason: string;
+      readonly verb: string;
+      readonly consequence: string;
+      readonly object?: { text: string; id: string };
+    };
+    readonly afterMessageId?: string;
+  }): Promise<void> {
+    await systemLine(this.database, {
+      roomId: input.roomId,
+      id: input.id,
+      subject: { kind: 'agent', id: input.agentId, name: input.agentName },
+      verb: input.phrase.verb,
+      ...(input.phrase.object ? { object: input.phrase.object } : {}),
+      consequence: input.phrase.consequence,
+      afterMessageId: input.afterMessageId,
+    });
+  }
+
+  /**
+   * Turn every deferred notice whose grace window has passed into its terminal
+   * line, and drop the deferrals whose helper came back or whose mention is no
+   * longer explained by the current facts. Returns how many lines were written.
+   *
+   * This is the ONE place an uncleanly-offline helper's mention becomes
+   * `did not answer · its helper is offline`. It reads the same reachability
+   * truth the send path does — the newest `live_outputs kind='presence'` row,
+   * `online` and no older than `AGENT_REACHABLE_HORIZON_MS` — so a helper that
+   * reconnected inside the grace window is never called offline.
+   */
+  async flushPendingMentionNotices(now = Date.now()): Promise<number> {
+    try {
+      const due = await this.database.query<{
+        room_id: string;
+        agent_id: string;
+        sender_id: string;
+        source_message_id: string;
+        reason: string;
+        agent_name: string;
+        agent_handle: string | null;
+        access_policy: unknown;
+        owner_id: string | null;
+        owner_handle: string | null;
+        member: boolean;
+        corner: boolean;
+        reachable: boolean;
+        sender_kind: 'human' | 'agent';
+        sender_handle: string | null;
+      }>(
+        // The source-message guard drops a deferral whose message was later
+        // deleted outright: there is nobody left to answer, but the writer
+        // already retracted the words, so the Room owes no explanation.
+        `SELECT d.room_id,d.agent_id,d.sender_id,d.source_message_id,d.reason,
+                COALESCE(NULLIF(agent.name,''),'The agent') agent_name,
+                agent.handle agent_handle,
+                a.access_policy,a.owner_id,owner.handle owner_handle,
+                EXISTS(SELECT 1 FROM rooms room
+                  WHERE room.id=d.room_id AND room.parent_id IS NOT NULL) corner,
+                EXISTS(SELECT 1 FROM memberships membership
+                  WHERE membership.room_id=d.room_id AND membership.identity_id=d.agent_id
+                    AND membership.removed_at IS NULL) member,
+                COALESCE((SELECT lo.body->>'status'='online'
+                    AND lo.updated_at >= now()-make_interval(secs => $2::double precision / 1000)
+                  FROM live_outputs lo
+                  WHERE lo.agent_id=d.agent_id AND lo.kind='presence'
+                  ORDER BY lo.updated_at DESC LIMIT 1),false) reachable,
+                sender.kind sender_kind,sender.handle sender_handle
+         FROM pending_mention_notices d
+         JOIN identities agent ON agent.id=d.agent_id
+         JOIN identities sender ON sender.id=d.sender_id
+         LEFT JOIN agents a ON a.agent_id=d.agent_id
+         LEFT JOIN identities owner ON owner.id=a.owner_id
+         JOIN messages source ON source.id=d.source_message_id AND source.deleted_at IS NULL
+         WHERE d.notified_at IS NULL AND d.due_at <= $1`,
+        [new Date(now), AGENT_REACHABLE_HORIZON_MS],
+      );
+      if (!due.rows.length) return 0;
+      const bucket = accessNoticeBucket(now);
+      let written = 0;
+      for (const row of due.rows) {
+        const phrase = this.unansweredMentionPhrase(
+          {
+            agent_id: row.agent_id,
+            agent_name: row.agent_name,
+            agent_handle: row.agent_handle,
+            access_policy: row.access_policy,
+            owner_id: row.owner_id,
+            owner_handle: row.owner_handle,
+            member: row.member,
+            corner: row.corner,
+            reachable: row.reachable,
+          },
+          { kind: row.sender_kind, handle: row.sender_handle },
+          row.sender_id,
+        );
+        if (!phrase) {
+          await this.database.query(
+            `DELETE FROM pending_mention_notices
+             WHERE room_id=$1 AND agent_id=$2 AND source_message_id=$3 AND reason=$4`,
+            [row.room_id, row.agent_id, row.source_message_id, row.reason],
+          );
+          continue;
+        }
+        const noticeId = mentionNoticeId(
+          row.room_id,
+          row.agent_id,
+          row.sender_id,
+          phrase.reason,
+          bucket,
+        );
+        await this.writeMentionNotice({
+          roomId: row.room_id,
+          id: noticeId,
+          agentId: row.agent_id,
+          agentName: row.agent_name,
+          phrase,
+          afterMessageId: row.source_message_id,
+        });
+        await this.database.query(
+          `UPDATE pending_mention_notices SET notice_id=$5,notified_at=now()
+           WHERE room_id=$1 AND agent_id=$2 AND source_message_id=$3 AND reason=$4`,
+          [row.room_id, row.agent_id, row.source_message_id, row.reason, noticeId],
+        );
+        written++;
+      }
+      return written;
+    } catch (error) {
+      console.error('[server] could not flush deferred mention notices:', error);
+      return 0;
     }
   }
 

@@ -343,6 +343,7 @@ async function main() {
         lastReconciliationAt = now;
         await backgroundJobs.run('media-expiry', () => mediaExpiry.runOnce(now));
         await backgroundJobs.run('maintenance', () => runMaintenance(jobsDatabase));
+        await backgroundJobs.run('mention-notices', () => phone.flushPendingMentionNotices(now));
         await backgroundJobs.run('institutional-curator', () =>
           runInstitutionalCuratorCycle(jobsDatabase, institutionalMemory, new Date(now), {
             ...(institutionalAnchors ? { anchors: institutionalAnchors } : {}),

@@ -192,7 +192,7 @@ lines.on('line', async (line) => {
     // The corner's own turn. Its prompt is the only place the lane is stated,
     // so the harness answers the way that prompt tells it to.
     if (systemPrompt.includes('no-code corner with no repository checkout')) {
-      const handle = (systemPrompt.match(/replying with @([a-z0-9-]+)/i) ?? [])[1] ?? 'nobody';
+      const handle = (systemPrompt.match(/Tag @([a-z0-9-]+) once/) ?? [])[1] ?? 'nobody';
       let delivery;
       try {
         delivery = await deliverArtifact();
@@ -619,7 +619,7 @@ it(
     ).toHaveLength(0);
     expect((await database.query(`SELECT 1 FROM corner_merge_approvals`)).rows).toHaveLength(0);
     expect(cornerPrompt.systemPrompt).toContain(
-      'post_artifact everything the assigned intent and criteria require',
+      'create files with write_scratch_file or your own tools, then send them with post_artifact',
     );
     expect(cornerPrompt.systemPrompt).not.toContain('Open the pull request with gh');
     expect(cornerPrompt.systemPrompt).not.toContain('gh pr merge');

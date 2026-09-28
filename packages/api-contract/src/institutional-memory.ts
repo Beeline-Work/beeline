@@ -1,17 +1,122 @@
 /** Institutional-memory extraction, storage, and bounded prompt contract. */
 export const INSTITUTIONAL_MEMORY_PROPOSAL_VERSION = 1 as const;
-export const INSTITUTIONAL_MEMORY_BODY_MAX_BYTES = 4_000;
+/**
+ * A saved item is one short sentence. Rows written before this cap may be
+ * longer (the table still accepts 4,000 bytes); they stay stored and only load
+ * when they fit the turn budget below.
+ */
+export const INSTITUTIONAL_MEMORY_BODY_MAX_BYTES = 200;
+/** Every saved item names 1..6 keywords; only a keyword match loads it. */
+export const INSTITUTIONAL_MEMORY_KEYWORDS_MIN = 1;
+export const INSTITUTIONAL_MEMORY_KEYWORDS_MAX = 6;
+/** Lower-case word, 3..32 characters, the same alphabet request words are split on. */
+export const INSTITUTIONAL_MEMORY_KEYWORD_PATTERN = /^[a-z0-9][a-z0-9_./-]{2,31}$/;
+/** Words too common to mean anything: never a keyword, never a match. */
+export const INSTITUTIONAL_MEMORY_STOPWORDS: ReadonlySet<string> = new Set([
+  'the',
+  'and',
+  'you',
+  'your',
+  'for',
+  'with',
+  'that',
+  'this',
+  'are',
+  'was',
+  'were',
+  'but',
+  'not',
+  'have',
+  'has',
+  'had',
+  'can',
+  'all',
+  'any',
+  'our',
+  'out',
+  'use',
+  'get',
+  'got',
+  'how',
+  'what',
+  'when',
+  'who',
+  'why',
+  'will',
+  'just',
+  'from',
+  'they',
+  'them',
+  'then',
+  'than',
+  'there',
+  'here',
+  'about',
+  'into',
+  'also',
+  'its',
+  "it's",
+  'please',
+  'should',
+  'would',
+  'could',
+  'some',
+  'more',
+  'most',
+  'very',
+  'only',
+  'one',
+  'now',
+  'yes',
+  'okay',
+  'let',
+  'make',
+  'want',
+  'need',
+  'does',
+  'did',
+  'done',
+  'like',
+  'know',
+  'think',
+  'see',
+  'look',
+  'thing',
+  'things',
+  'way',
+]);
+
+/** The words of a request that a keyword can match: lower-case, no stopwords. */
+export function institutionalMemoryRequestWords(
+  ...values: Array<string | null | undefined>
+): Set<string> {
+  return new Set(
+    (
+      values
+        .filter((value): value is string => Boolean(value))
+        .join(' ')
+        .toLocaleLowerCase('en-US')
+        .match(/[a-z0-9][a-z0-9_./-]{2,31}/g) ?? []
+    )
+      .filter((word) => !INSTITUTIONAL_MEMORY_STOPWORDS.has(word))
+      .slice(0, 200),
+  );
+}
+/**
+ * One person's every-turn preferences, stored once as their profile item under
+ * this reserved key and appended to whichever agent answers them. Only that
+ * person or a Workspace owner/admin confirms it; no extractor writes it.
+ */
+export const INSTITUTIONAL_STANDING_PREFERENCE_KEY = 'standing';
+export const INSTITUTIONAL_STANDING_PREFERENCE_MAX_BYTES = 300;
 export const INSTITUTIONAL_MEMORY_CANONICAL_KEY_MAX_LENGTH = 160;
 export const INSTITUTIONAL_MEMORY_RATIONALE_MAX_LENGTH = 500;
 export const INSTITUTIONAL_MEMORY_SOURCE_MESSAGE_MAX = 16;
 export const INSTITUTIONAL_MEMORY_EXTRACTOR_VERSION_MAX_LENGTH = 120;
 export const INSTITUTIONAL_MEMORY_MODEL_MAX_LENGTH = 160;
 export const INSTITUTIONAL_MEMORY_JOB_ERROR_MAX_LENGTH = 1_000;
-export const INSTITUTIONAL_CONTEXT_HARD_MAX_BYTES = 8_000;
-export const INSTITUTIONAL_CONTEXT_WORKSPACE_MAX_BYTES = 2_500;
-export const INSTITUTIONAL_CONTEXT_PROFILE_MAX_BYTES = 3_000;
-export const INSTITUTIONAL_CONTEXT_SKILL_INDEX_MAX_BYTES = 1_800;
-export const INSTITUTIONAL_CONTEXT_WRAPPER_MAX_BYTES = 700;
+/** Everything memory adds to one turn, header included. Standing preferences are separate. */
+export const INSTITUTIONAL_CONTEXT_HARD_MAX_BYTES = 1_000;
 export const INSTITUTIONAL_HISTORY_QUERY_MAX_BYTES = 500;
 export const INSTITUTIONAL_MEMORY_SEARCH_QUERY_MAX_BYTES = 500;
 export const INSTITUTIONAL_MEMORY_SEARCH_RESULT_MAX = 10;
@@ -139,6 +244,7 @@ export interface InstitutionalMemoryProposal {
   readonly subjectIdentityId?: string;
   readonly canonicalKey: string;
   readonly body: string;
+  readonly keywords: readonly string[];
   readonly source: InstitutionalMemoryProposalSource;
   readonly audience: InstitutionalMemoryAudience;
   readonly confidence: number;
@@ -215,6 +321,8 @@ export interface InstitutionalContextSnapshot {
   readonly itemIds: readonly string[];
   readonly totalBytes: number;
   readonly omitted: Readonly<Record<string, number>>;
+  /** The requester's standing preference text, outside the memory budget. */
+  readonly standingPreference?: string;
 }
 
 export interface ProposeInstitutionalMemoryInput {
@@ -225,10 +333,18 @@ export interface ProposeInstitutionalMemoryInput {
   readonly memoryKind: InstitutionalMemoryKind;
   readonly canonicalKey: string;
   readonly body: string;
+  readonly keywords: readonly string[];
   readonly sourceMessageIds: readonly string[];
   readonly correction: boolean;
   readonly confidence: number;
   readonly cas: InstitutionalMemoryProposalCas;
+  /**
+   * Saves `body` as the requester's standing preference instead of a keyword
+   * fact. It must name an answered ask_choice card from this agent in this
+   * Room whose prompt quotes `body` and whose chosen option starts with
+   * "Save", picked by the requester or a Workspace owner/admin.
+   */
+  readonly standingChoiceId?: string;
 }
 
 export interface ProposeInstitutionalMemoryResult {
@@ -379,6 +495,65 @@ function boundedText(value: unknown, label: string, maximum: number, bytes = fal
   return normalized;
 }
 
+const FILLER_OPENINGS =
+  /^(?:the user|user|this user|the requester|requester|it is|it's|note that|please|remember that|keep in mind)\b/i;
+const HEDGES = /\b(?:maybe|perhaps|probably|possibly|might|seems?|i think|apparently|likely)\b/i;
+
+/**
+ * Save-time trim: one terse sentence of fact, no filler opening, no hedge.
+ * The error says what to cut so the proposer can resubmit.
+ */
+export function conciseInstitutionalMemoryBody(value: unknown): string {
+  const body = boundedText(
+    value,
+    `institutional memory body (at most ${INSTITUTIONAL_MEMORY_BODY_MAX_BYTES} bytes)`,
+    INSTITUTIONAL_MEMORY_BODY_MAX_BYTES,
+    true,
+  );
+  if (FILLER_OPENINGS.test(body)) {
+    throw new Error(
+      'institutional memory body must state the fact itself, without a filler opening',
+    );
+  }
+  if (/[.!?;]\s+\S/.test(body) || /\n/.test(body)) {
+    throw new Error('institutional memory body must be one sentence');
+  }
+  if (HEDGES.test(body)) {
+    throw new Error('institutional memory body must not hedge; save only what is known');
+  }
+  return body;
+}
+
+export function institutionalMemoryKeywords(value: unknown): string[] {
+  if (
+    !Array.isArray(value) ||
+    value.length < INSTITUTIONAL_MEMORY_KEYWORDS_MIN ||
+    value.length > INSTITUTIONAL_MEMORY_KEYWORDS_MAX
+  ) {
+    throw new Error(
+      `institutional memory needs ${INSTITUTIONAL_MEMORY_KEYWORDS_MIN} to ${INSTITUTIONAL_MEMORY_KEYWORDS_MAX} keywords`,
+    );
+  }
+  const keywords = value.map((keyword) =>
+    typeof keyword === 'string' ? keyword.trim().toLocaleLowerCase('en-US') : '',
+  );
+  if (
+    keywords.some(
+      (keyword) =>
+        !INSTITUTIONAL_MEMORY_KEYWORD_PATTERN.test(keyword) ||
+        INSTITUTIONAL_MEMORY_STOPWORDS.has(keyword),
+    )
+  ) {
+    throw new Error(
+      'institutional memory keywords are distinctive single lower-case words of 3 to 32 letters, digits, or _./-',
+    );
+  }
+  if (new Set(keywords).size !== keywords.length) {
+    throw new Error('institutional memory keywords must be unique');
+  }
+  return keywords;
+}
+
 /**
  * Strict parser shared by the server boundary and offline fixtures. Unknown
  * fields fail closed so a newer extractor cannot silently bypass an older
@@ -395,6 +570,7 @@ export function parseInstitutionalMemoryProposal(value: unknown): InstitutionalM
       'subjectIdentityId',
       'canonicalKey',
       'body',
+      'keywords',
       'source',
       'audience',
       'confidence',
@@ -463,6 +639,14 @@ export function parseInstitutionalMemoryProposal(value: unknown): InstitutionalM
   ) {
     throw new Error('institutional memory subject classification is invalid');
   }
+  const canonicalKey = boundedText(
+    proposal.canonicalKey,
+    'institutional memory canonical key',
+    INSTITUTIONAL_MEMORY_CANONICAL_KEY_MAX_LENGTH,
+  );
+  if (canonicalKey === INSTITUTIONAL_STANDING_PREFERENCE_KEY) {
+    throw new Error('the standing preference key is reserved for owner-confirmed preferences');
+  }
   const rationale = boundedText(
     classification.rationale,
     'institutional memory classification rationale',
@@ -509,17 +693,9 @@ export function parseInstitutionalMemoryProposal(value: unknown): InstitutionalM
     candidateType: proposal.candidateType,
     memoryKind: proposal.memoryKind,
     ...(subjectIdentityId ? { subjectIdentityId } : {}),
-    canonicalKey: boundedText(
-      proposal.canonicalKey,
-      'institutional memory canonical key',
-      INSTITUTIONAL_MEMORY_CANONICAL_KEY_MAX_LENGTH,
-    ),
-    body: boundedText(
-      proposal.body,
-      'institutional memory body',
-      INSTITUTIONAL_MEMORY_BODY_MAX_BYTES,
-      true,
-    ),
+    canonicalKey,
+    body: conciseInstitutionalMemoryBody(proposal.body),
+    keywords: institutionalMemoryKeywords(proposal.keywords),
     source: { roomId, messageIds },
     audience: proposal.audience,
     confidence: proposal.confidence,
@@ -733,12 +909,14 @@ export function parseInstitutionalCuratorProposal(value: unknown): Institutional
     }
     const body = omitted(action.body)
       ? undefined
-      : boundedText(
-          action.body,
-          'institutional curator body',
-          INSTITUTIONAL_MEMORY_BODY_MAX_BYTES,
-          true,
-        );
+      : action.targetType === 'memory_item'
+        ? conciseInstitutionalMemoryBody(action.body)
+        : boundedText(
+            action.body,
+            'institutional curator body',
+            INSTITUTIONAL_MEMORY_BODY_MAX_BYTES,
+            true,
+          );
     const description = omitted(action.description)
       ? undefined
       : boundedText(

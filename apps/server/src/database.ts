@@ -995,6 +995,16 @@ ALTER TABLE institutional_memory_items
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS created_by_command_id text;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS curated_at timestamptz;
+-- Only a keyword match loads an item into a turn. Rows saved before keywords
+-- existed take theirs from the words of their canonical key.
+ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS keywords text[] NOT NULL DEFAULT '{}';
+UPDATE institutional_memory_items item SET keywords=ARRAY(
+  SELECT DISTINCT word FROM regexp_split_to_table(lower(item.canonical_key),'[^a-z0-9]+') word
+  WHERE length(word) BETWEEN 3 AND 32
+    AND word NOT IN ('the','and','for','with','user','users','requester','prefers','preference',
+                     'preferences','fact','facts','workspace','profile','human')
+  ORDER BY word LIMIT 6
+) WHERE item.keywords='{}' AND item.deleted_at IS NULL AND item.canonical_key<>'standing';
 ALTER TABLE institutional_memory_items DROP CONSTRAINT IF EXISTS institutional_memory_items_body_check;
 ALTER TABLE institutional_memory_items ADD CONSTRAINT institutional_memory_items_body_check CHECK (
   (deleted_at IS NULL AND octet_length(convert_to(body,'UTF8')) BETWEEN 1 AND 4000) OR

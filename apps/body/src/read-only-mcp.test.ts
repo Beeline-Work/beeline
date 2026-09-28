@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { agentToolsFor, cornerCallText } from './read-only-mcp.js';
+import { assembleSessionPrompt } from './prompt-assembly.js';
 
 describe('direct message helper surface', () => {
   it('opens no corners from a direct message', () => {
@@ -164,10 +165,16 @@ it('advertises deliberate corner reads, steers, and questions only in Rooms', ()
   expect(agentToolsFor(true, false, true).map((t) => t.name)).not.toContain('ask_corner');
   expect(agentToolsFor(true, false, true).map((t) => t.name)).not.toContain('get_corner_ask');
   expect(agentToolsFor(true, true).map((t) => t.name)).not.toContain('inspect_corner');
-  expect(readFileSync(new URL('./monolith-room-turn.ts', import.meta.url), 'utf8')).toContain(
-    'For a specific question that needs one answer, use ask_corner.',
-  );
-  const cornerPrompt = readFileSync(new URL('./monolith-corner-turn.ts', import.meta.url), 'utf8');
-  expect(cornerPrompt).not.toContain('report_to_room');
-  expect(cornerPrompt).not.toContain('report the tool reason to the Room');
+  const room = assembleSessionPrompt({ surface: 'room', agentName: 'Bee' }).systemPrompt;
+  expect(room).toContain('ask_corner for one answer');
+  expect(room).toContain('steer_corner to pass Room input down');
+  expect(room).toContain('inspect_corner for status');
+  const dm = assembleSessionPrompt({ surface: 'dm', agentName: 'Bee' }).systemPrompt;
+  expect(dm).not.toContain('ask_corner');
+  expect(dm).not.toContain('steer_corner');
+  for (const source of ['./monolith-corner-turn.ts', './prompt-assembly.ts']) {
+    const cornerPrompt = readFileSync(new URL(source, import.meta.url), 'utf8');
+    expect(cornerPrompt).not.toContain('report_to_room');
+    expect(cornerPrompt).not.toContain('report the tool reason to the Room');
+  }
 });

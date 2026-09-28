@@ -9,7 +9,6 @@ import type { DaemonApiClient } from './daemon-api-client.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SessionScheduler } from './session-scheduler.js';
-import { WARM_TRANSCRIPT_OVERLAP } from './warm-transcript.js';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -224,13 +223,10 @@ describe('monolith Room turn context', () => {
     expect(prompts[2]).toContain('Institutional memory snapshot 3');
 
     expect(systemPrompts[0]).toContain(
-      'Ask one focused question only when an unresolved choice materially changes behavior',
+      'Before opening one, consult beeline-triage and beeline-spec',
     );
     expect(systemPrompts[0]).toContain(
-      'Before opening a corner, consult beeline-triage and beeline-spec',
-    );
-    expect(systemPrompts[0]).toContain(
-      'Pass the typed brief authority contract in open_corner for every repository or research assignment',
+      'call open_corner with a name of at most three words, an objective of at most 24 words, and the typed brief',
     );
 
     for (const prompt of prompts) {
@@ -247,7 +243,7 @@ describe('monolith Room turn context', () => {
 
     // Turn one on a cold session carries the whole final-80 window the Room
     // turn renders, which now ends on the newest row instead of row 200.
-    expect(prompts[0]).toContain('Room conversation so far:');
+    expect(prompts[0]).toContain('Room conversation:');
     expect(prompts[0]).toContain('[message id: row-171]\nCaptain: row 171');
     expect(prompts[0]).toContain('Captain: row 171');
     expect(prompts[0]).toContain('Captain: @greeter answer only the next integer after 10103');
@@ -255,29 +251,25 @@ describe('monolith Room turn context', () => {
     expect(prompts[0]).toContain('first ask');
     expect(prompts[0]).toContain('[message id: ask-1]\nfirst ask');
 
-    // Turn two on the SAME warm session sends only what is new, plus a recency
-    // overlap, and still carries the newest message in full.
-    expect(prompts[1]).toContain('New in the Room since your last turn');
+    // Turn two on the SAME warm session sends only what is new — the
+    // conversation did not move, so no transcript row at all — and still
+    // carries the newest message in full.
+    expect(prompts[1]).not.toContain('Room conversation:');
+    expect(prompts[1]).not.toContain('New in the Room since your last turn');
     expect(prompts[1]).not.toContain('Captain: row 171');
+    expect(prompts[1]).not.toContain('after 10103');
     expect(prompts[1]).toContain('@greeter answer only the next integer after 30303');
-    const overlapRows = conversation.slice(-WARM_TRANSCRIPT_OVERLAP);
-    for (const row of overlapRows) expect(prompts[1]).toContain(`Captain: ${row.body}`);
-    expect(prompts[1]).not.toContain(
-      `Captain: ${CONVERSATION.at(-WARM_TRANSCRIPT_OVERLAP - 1)!.body}`,
-    );
     expect(prompts[1]!.match(/after 30303/g)).toHaveLength(1);
-    expect(prompts[1]!.lastIndexOf('after 30303')).toBeGreaterThan(
-      prompts[1]!.lastIndexOf('after 10103'),
-    );
-    expect(prompts[2]).toContain('Room conversation so far:');
+    // Turn three is a fresh session (the checkout moved), so it replays the window.
+    expect(prompts[2]).toContain('Room conversation:');
     expect(prompts[2]).toContain('Captain: row 171');
     expect(prompts[2]).toContain('third ask after target branch moved');
     expect(prompts[1]!.trimEnd()).toMatch(
-      /Current task selected by the server from Captain:\n\n\[message id: ask-2\]\n@greeter answer only the next integer after 30303$/,
+      /Current task from Captain:\n\n\[message id: ask-2\]\n@greeter answer only the next integer after 30303$/,
     );
     const rendered = (prompt: string) => prompt.match(/Captain: row \d+/g)?.length ?? 0;
     expect(rendered(prompts[0]!)).toBe(79);
-    expect(rendered(prompts[1]!)).toBe(WARM_TRANSCRIPT_OVERLAP - 1);
+    expect(rendered(prompts[1]!)).toBe(0);
     expect(receipts.filter((receipt) => receipt.status === 'complete')).toHaveLength(3);
   }, 20_000);
 });

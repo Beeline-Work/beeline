@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SERVER_EVENT_KINDS } from '@beeline/api-contract/phone';
 import {
-  beelineCapabilityContextForHarness,
-  beelinePrimer,
   BEELINE_REVIEW_SKILL_NAME,
   beelineTriageSkillMarkdown,
   isConfiguredReviewer,
@@ -10,77 +8,95 @@ import {
   beelineReviewSkillMarkdown,
   beelineSpecSkillMarkdown,
 } from './beeline-skill.js';
+import { assembleSessionPrompt, type SessionPromptContext } from './prompt-assembly.js';
+
+/**
+ * The always-on Room rules now live in `prompt-assembly.ts`; the using-beeline
+ * skill keeps only the Room mechanics a model looks up on demand.
+ */
+function sessionPrompt(
+  context: Partial<SessionPromptContext> = {},
+): ReturnType<typeof assembleSessionPrompt> {
+  return assembleSessionPrompt({
+    surface: 'room',
+    agentName: 'Bee',
+    agentCommand: 'claude-agent-acp',
+    ...context,
+  });
+}
+const roomPrompt = (context: Partial<SessionPromptContext> = {}) =>
+  sessionPrompt(context).systemPrompt;
+const dmPrompt = (context: Partial<SessionPromptContext> = {}) =>
+  sessionPrompt({ surface: 'dm', ...context }).systemPrompt;
 
 describe('using-beeline Room guidance', () => {
   it('describes Room mentions and the mounted corner action', () => {
     const markdown = usingBeelineSkillMarkdown('test-release');
-    expect(markdown).toContain('filesystem is read-only');
+    expect(markdown).toContain('These mechanics apply in Rooms and corners.');
     expect(markdown).toContain('beeline-release: test-release');
-    expect(markdown).toContain('@name');
-    expect(markdown).toContain('including another agent');
-    expect(markdown).toContain(
-      'Tag another agent only when you need something from them: a question, a handoff, a task. Never tag to acknowledge, agree, or say you are ready. If nothing is actionable, do not reply.',
-    );
-    expect(markdown).toContain(
-      'Tag the user only when you need a decision or input, or when the task they asked for is finished. Never tag for progress, acknowledgement, or questions the transcript already answers.',
-    );
     expect(markdown).toContain('beeline-agent');
-    expect(markdown).toContain('open_corner');
-    expect(markdown).toContain('beeline-readonly-mcp.search_text');
-    expect(markdown).toContain('beeline-readonly-mcp.read_file');
-    expect(markdown).toContain('If a shell command is refused, say so plainly');
-    expect(markdown).toContain('Use CodeGraph first when it is available');
-    expect(beelinePrimer()).toContain('beeline-agent fetch_image');
-    expect(beelinePrimer()).toContain('embed as a data: URL');
-    // The primer asks for the corner's NAME as well as its objective (C89).
-    expect(beelinePrimer()).toContain(
-      'call beeline-agent open_corner with a name of at most three words and a navigation objective of no more than 24 words',
-    );
-    expect(beelinePrimer()).toContain(
-      'Before opening a corner, consult beeline-triage and beeline-spec',
-    );
+    expect(markdown).toContain('beeline-agent fetch_image');
+    expect(markdown).toContain('embed as a data: URL');
     expect(markdown).not.toContain('close_corner');
     expect(markdown).not.toContain('upgrade_corner_to_code');
     expect(markdown).not.toContain('no action or corner tools');
+
+    // Tagging, the corner action, and read-only inspection are always-on rules.
+    const room = roomPrompt();
+    expect(room).toContain('Every exact @handle you write wakes that member.');
+    expect(room).toContain(
+      'Write one only to hand off work, to ask for a decision or input, or, when nothing else announces it, to tell the person who asked that their task is done; otherwise name people and agents in plain prose.',
+    );
+    expect(room).toContain('If nothing is actionable for you, do not reply.');
+    // The Room asks for the corner's NAME as well as its objective (C89).
+    expect(room).toContain(
+      'call open_corner with a name of at most three words, an objective of at most 24 words, and the typed brief',
+    );
+    expect(room).toContain('Before opening one, consult beeline-triage and beeline-spec');
+    expect(room).toContain('If a shell command is refused, say so plainly');
+    expect(room).toContain(
+      'read code with CodeGraph when available, then beeline-readonly-mcp search_text and read_file',
+    );
+    expect(room).toContain('Consult the using-beeline skill for Room mechanics');
   });
 
   it('tells a model it can subscribe itself, which is the point of the tool', () => {
     // A tool a model never hears about is a tool nobody calls: the welcome
     // agent could not subscribe, and someone edited a database row for it.
-    const primer = beelinePrimer();
-    expect(primer).toContain('beeline-agent subscribe_events');
-    expect(primer).toContain('list_event_subscriptions');
-    expect(primer).toContain('joined');
-    expect(primer).toContain('You do this yourself');
-    expect(primer).toContain('beeline-agent emit_event');
-    expect(usingBeelineSkillMarkdown('test-release')).toContain('subscribe_events');
+    const markdown = usingBeelineSkillMarkdown('test-release');
+    expect(markdown).toContain('beeline-agent subscribe_events');
+    expect(markdown).toContain('list_event_subscriptions');
+    expect(markdown).toContain('joined');
+    expect(markdown).toContain('You do this yourself');
+    expect(markdown).toContain('beeline-agent emit_event');
   });
 
   it('derives the subscribable kinds from SERVER_EVENT_KINDS so the list cannot drift', () => {
-    const primer = beelinePrimer();
+    const markdown = usingBeelineSkillMarkdown('test-release');
     for (const kind of SERVER_EVENT_KINDS) {
-      expect(primer).toContain(kind);
+      expect(markdown).toContain(kind);
     }
-    expect(primer).toContain(
+    expect(markdown).toContain(
       'grant-decided carries the grant id and status and resumes the turn that asked for the grant',
     );
-    expect(primer).toContain('ask_choice');
-    expect(primer).toContain('open_poll');
-    expect(primer).toContain('A plurality is a fact');
+    expect(markdown).toContain('ask_choice');
+    expect(markdown).toContain('open_poll');
+    expect(markdown).toContain('A plurality is a fact');
   });
 
   it('delivers strictly conversational guidance for a direct message', () => {
-    const primer = beelinePrimer(undefined, true);
-    expect(primer).toContain('private direct-message conversation with one person');
-    expect(primer).toContain('no repository binding and no corner can be opened');
-    expect(primer).not.toContain('open_corner');
-    expect(primer).toContain('ask_choice');
-    expect(primer).toContain('open_poll is refused here');
-    expect(primer).not.toContain('@name');
+    const dm = dmPrompt();
+    expect(dm).toContain('private direct message with one person');
+    expect(dm).toContain('reply without tagging');
+    expect(dm).toContain('no repository work and no corners');
+    expect(dm).not.toContain('open_corner');
+    expect(dm).toContain('ask_choice');
+    expect(dm).not.toContain('open_poll');
 
-    const context = beelineCapabilityContextForHarness('codex-acp', undefined, true);
-    expect(context.sessionPrompt).toContain('direct-message conversation');
-    expect(context.sessionPrompt).not.toContain('open_corner');
+    const context = sessionPrompt({ surface: 'dm', agentCommand: 'codex-acp' });
+    expect(context.systemPrompt).toContain('private direct message');
+    expect(context.systemPrompt).not.toContain('open_corner');
+    expect(context.turnPrefix).toBe(context.systemPrompt);
   });
 
   /**
@@ -89,23 +105,24 @@ describe('using-beeline Room guidance', () => {
    * and from calling a refusal silence. The fix line rides the same sentence.
    */
   it('states whether this session can run shell commands, and why not when it cannot', () => {
-    expect(beelinePrimer(undefined, false, { available: true })).toContain(
+    expect(roomPrompt({ shell: { available: true } })).toContain(
       'Shell commands are available in this session',
     );
-    const blocked = beelinePrimer(undefined, false, {
-      available: false,
-      detail: 'bwrap is not on PATH; run `sudo apt-get install -y bubblewrap` and restart.',
+    const blocked = roomPrompt({
+      shell: {
+        available: false,
+        detail: 'bwrap is not on PATH; run `sudo apt-get install -y bubblewrap` and restart.',
+      },
     });
     expect(blocked).toContain('Shell commands are NOT available in this session');
-    expect(blocked).toContain('Say that plainly in your reply');
+    expect(blocked).toContain('say that plainly instead of retrying');
     expect(blocked).toContain('sudo apt-get install -y bubblewrap');
     // A DM runs the same harness under the same sandbox, so it carries the fact too.
-    expect(beelinePrimer(undefined, true, { available: true })).toContain(
+    expect(dmPrompt({ shell: { available: true } })).toContain(
       'Shell commands are available in this session',
     );
     expect(
-      beelineCapabilityContextForHarness('codex-acp', undefined, false, { available: true })
-        .sessionPrompt,
+      sessionPrompt({ agentCommand: 'codex-acp', shell: { available: true } }).turnPrefix,
     ).toContain('Shell commands are available in this session');
   });
 
@@ -115,75 +132,74 @@ describe('using-beeline Room guidance', () => {
    * capability it has or spends every turn retrying a refusal.
    */
   it('claims nothing either way when the harness was not measured', () => {
-    for (const primer of [beelinePrimer(), beelinePrimer(undefined, true)]) {
-      expect(primer).not.toContain('Shell commands are available in this session');
-      expect(primer).not.toContain('Shell commands are NOT available in this session');
+    for (const prompt of [roomPrompt(), dmPrompt()]) {
+      expect(prompt).not.toContain('Shell commands are available in this session');
+      expect(prompt).not.toContain('Shell commands are NOT available in this session');
     }
     // The standing conditional guidance still carries that case.
-    expect(beelinePrimer()).toContain('If a shell command is refused, say so plainly');
+    expect(roomPrompt()).toContain('If a shell command is refused, say so plainly');
   });
 
   it('states the blocked reason as its own bounded sentence', () => {
-    const blocked = beelinePrimer(undefined, false, {
-      available: false,
-      detail: 'A shell cannot run here because this host’s OS sandbox failed its self-test.',
+    const blocked = roomPrompt({
+      shell: {
+        available: false,
+        detail: 'A shell cannot run here because this host’s OS sandbox failed its self-test.',
+      },
     });
     expect(blocked).toContain(
-      'Say that plainly in your reply instead of retrying it. A shell cannot run here because',
+      'say that plainly instead of retrying. Relay this to the person: A shell cannot run here because',
     );
   });
 
   it('no longer claims a scratch file is the only way to write one', () => {
-    for (const primer of [beelinePrimer(), beelinePrimer(undefined, true)]) {
-      expect(primer).not.toContain('this Room has no other way to write one');
-      expect(primer).toContain(
-        'To create a file you can send, call beeline-agent write_scratch_file',
-      );
-    }
+    const markdown = usingBeelineSkillMarkdown('test-release');
+    expect(markdown).not.toContain('this Room has no other way to write one');
+    expect(markdown).toContain(
+      'To create a file you can send, call beeline-agent write_scratch_file',
+    );
   });
 
   it('names the bound repository and branch when the Room has one', () => {
-    const primer = beelinePrimer({ name: 'Beeline-Work/beeline', branch: 'main' });
-    expect(primer).toContain(
-      'This Room is bound to Beeline-Work/beeline (branch main); you have a read-only checkout at the session root.',
+    expect(roomPrompt({ repository: { name: 'Beeline-Work/beeline', branch: 'main' } })).toContain(
+      'The Room is bound to Beeline-Work/beeline (branch main); the read-only checkout is at the session root.',
     );
-    const context = beelineCapabilityContextForHarness('codex-acp', {
-      name: 'acme/widgets',
-      branch: 'trunk',
+    const context = sessionPrompt({
+      agentCommand: 'codex-acp',
+      repository: { name: 'acme/widgets', branch: 'trunk' },
     });
-    expect(context.sessionPrompt).toContain('bound to acme/widgets (branch trunk)');
-    expect(context.compatibilityTurnPrefix).toBe(context.sessionPrompt);
+    expect(context.systemPrompt).toContain('bound to acme/widgets (branch trunk)');
+    expect(context.turnPrefix).toBe(context.systemPrompt);
   });
 
   it('delivers the same Room capabilities through compatibility-only harnesses', () => {
-    const context = beelineCapabilityContextForHarness('codex-acp');
-    expect(context.sessionPrompt).toContain('read-only');
-    expect(context.sessionPrompt).toContain('@name');
-    expect(context.sessionPrompt).toContain('including another agent');
-    expect(context.sessionPrompt).toContain('beeline-agent open_corner');
-    expect(context.sessionPrompt).toContain(
-      'When open_corner succeeds, the server posts the corner card: do not announce or restate the opening.',
+    const context = sessionPrompt({ agentCommand: 'codex-acp' });
+    expect(context.systemPrompt).toContain('read-only');
+    expect(context.systemPrompt).toContain('Every exact @handle you write wakes that member.');
+    expect(context.systemPrompt).toContain('call open_corner');
+    expect(context.systemPrompt).toContain(
+      'When open_corner succeeds the server posts the corner card: do not restate it.',
     );
-    expect(context.sessionPrompt).toContain('An agent may use its own owner’s tools and resources');
-    expect(context.sessionPrompt).toContain('web search is enabled');
-    expect(context.sessionPrompt).toContain(
-      'Tag the user only when you need a decision or input, or when the task they asked for is finished.',
+    expect(context.systemPrompt).toContain("Use your own owner's tools and keys for whoever asks");
+    expect(context.systemPrompt).toContain('Web search is available');
+    expect(context.systemPrompt).toContain(
+      'to ask for a decision or input, or, when nothing else announces it, to tell the person who asked that their task is done',
     );
-    expect(context.compatibilityTurnPrefix).toBe(context.sessionPrompt);
+    expect(context.turnPrefix).toBe(context.systemPrompt);
+    // A harness that honors the session prompt gets no duplicate on every turn.
+    expect(sessionPrompt().turnPrefix).toBe('');
   });
 
-  it('puts every user request on the generic Workbench discovery path in the assembled turn context', () => {
-    for (const directMessage of [false, true]) {
-      const context = beelineCapabilityContextForHarness('codex-acp', undefined, directMessage);
-      expect(context.sessionPrompt).toContain(
-        'For every user request, first call beeline-agent workbench_status to check whether a Workbench connector can solve it',
+  it('points a missing tool at Workbench discovery without a forced check on every request', () => {
+    for (const surface of ['room', 'dm'] as const) {
+      const context = sessionPrompt({ surface, agentCommand: 'codex-acp' });
+      expect(context.systemPrompt).toContain(
+        'When you need a tool you do not have, call workbench_status; offer_connector the tool it lists, otherwise call connect_app for the app.',
       );
-      expect(context.sessionPrompt).toContain(
-        'use an applicable connector when it is already added, or call offer_connector when it is available but not added',
-      );
-      expect(context.sessionPrompt).not.toContain('sign up for an account');
-      expect(context.sessionPrompt).not.toContain('API key or other credential');
-      expect(context.compatibilityTurnPrefix).toBe(context.sessionPrompt);
+      expect(context.systemPrompt).not.toContain('For every user request');
+      expect(context.systemPrompt).not.toContain('sign up for an account');
+      expect(context.systemPrompt).not.toContain('API key or other credential');
+      expect(context.turnPrefix).toBe(context.systemPrompt);
     }
   });
 });
@@ -243,12 +259,8 @@ describe('beeline-triage request skill', () => {
 describe('using-beeline merge ownership', () => {
   const markdown = usingBeelineSkillMarkdown('test-release');
 
-  it("names merging as the author's own step after the reviewer approves", () => {
-    // An implementer that never hears this reads the reviewer skill (if it
-    // can find one) and refuses to merge on the reviewer's rule.
-    expect(markdown).toContain(
-      'merging is your step: once the configured reviewer approves and tags you, you run `gh pr merge` yourself - nothing merges it for you.',
-    );
+  it('leaves merging to the corner session prompt, which owns the merge gate', () => {
+    expect(markdown).not.toContain('gh pr merge');
   });
 
   it('carries no never-merge rule for the implementer', () => {
@@ -264,7 +276,7 @@ describe('using-beeline human instruction ranking', () => {
     const markdown = usingBeelineSkillMarkdown('test-release');
     expect(markdown).toContain('## Conflicting human instructions');
     expect(markdown).toMatch(/your own owner first/i);
-    expect(markdown).toMatch(/workspace'?s master and admins/i);
+    expect(markdown).toMatch(/workspace'?s owner and admins/i);
     expect(markdown).toMatch(/then members/i);
     expect(markdown).toMatch(/higher-tier instruction overrides a lower-tier hold/i);
     expect(markdown).toContain("A human at the same standing cannot clear another human's hold");
@@ -274,7 +286,7 @@ describe('using-beeline human instruction ranking', () => {
     expect(markdown).toContain('workspaceRole=');
     expect(markdown).toContain('agentOwner');
     expect(markdown).toMatch(/Never write field names or field=value syntax/i);
-    expect(beelinePrimer()).not.toContain('## Conflicting human instructions');
+    expect(roomPrompt()).not.toContain('## Conflicting human instructions');
   });
 });
 
@@ -393,7 +405,9 @@ describe('using-beeline "Tools and the Workbench" section', () => {
     );
     expect(markdown).toContain('Tailscale installs its CLI on the selected helper');
     expect(markdown).toContain('tailscale file cp');
-    expect(markdown).toContain("I can/can't reach X on this machine because Y; to fix it, Z.");
+    expect(markdown).toContain(
+      "I can't reach X on this machine because Y; to fix it, Z. Give one explanation, then take or offer Z.",
+    );
   });
 
   // R5: earlier skill text sent the person to Settings → Workbench → Tools
@@ -435,7 +449,9 @@ describe('using-beeline "Tools and the Workbench" section', () => {
   });
 
   it('holds the key-sovereignty rule', () => {
-    expect(markdown).toContain('the agent owner cannot authorize someone else’s resources.');
+    expect(markdown).toContain(
+      "another person's keys need that person's private scoped approval before you use them for anyone else, and your owner cannot authorize them.",
+    );
   });
 });
 

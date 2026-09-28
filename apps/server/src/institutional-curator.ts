@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+  INSTITUTIONAL_MEMORY_KEYWORDS_MAX,
   parseInstitutionalCuratorProposal,
   type InstitutionalCuratorProposal,
   type InstitutionalMemoryJobUsage,
@@ -1115,10 +1116,11 @@ export async function applyInstitutionalCuratorProposal(
         target_commit: string | null;
         path: string | null;
         content_hash: string | null;
+        keywords: string[];
       }>(
         `SELECT id,kind,subject_identity_id,canonical_key,version,state,source_room_id,
                 source_message_id,source_corner_id,audience_kind,confidence,repository,
-                target_commit,path,content_hash
+                target_commit,path,content_hash,keywords
          FROM institutional_memory_items
          WHERE workspace_id=$1 AND id=ANY($2::uuid[]) AND deleted_at IS NULL
            AND state IN ('active','stale')
@@ -1164,8 +1166,9 @@ export async function applyInstitutionalCuratorProposal(
           `INSERT INTO institutional_memory_items
            (id,workspace_id,kind,subject_identity_id,canonical_key,body,state,source_room_id,
             source_message_id,source_corner_id,audience_kind,confidence,version,supersedes_id,
-            created_by_job_id,repository,target_commit,path,content_hash,curated_at)
-           VALUES($1,$2,$3,$4,$5,$6,'active',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,now())`,
+            created_by_job_id,repository,target_commit,path,content_hash,curated_at,keywords)
+           VALUES($1,$2,$3,$4,$5,$6,'active',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,now(),
+                  $19::text[])`,
           [
             nextId,
             input.workspaceId,
@@ -1185,6 +1188,11 @@ export async function applyInstitutionalCuratorProposal(
             current.target_commit,
             current.path,
             current.content_hash,
+            // The merged item answers to every keyword its duplicates did.
+            [...new Set([current, ...rows.rows].flatMap((row) => row.keywords))].slice(
+              0,
+              INSTITUTIONAL_MEMORY_KEYWORDS_MAX,
+            ),
           ],
         );
         await database.query(

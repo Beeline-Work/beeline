@@ -8,11 +8,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import type {
-  CornerBrief,
-  DaemonAttachment,
-  DaemonOperationMap,
-} from '@beeline/api-contract/daemon';
+import type { DaemonAttachment, DaemonOperationMap } from '@beeline/api-contract/daemon';
 import {
   AcpClient,
   isPureRetryNarration,
@@ -30,7 +26,11 @@ import {
   prepareRoomAgentHome,
   repairRoomAgentCredentialLinks,
 } from './agent-home.js';
-import { claimGrantedHostRoutes, grantedHostRouteWires, grantedSquireHostRoute } from './host-mcp-route.js';
+import {
+  claimGrantedHostRoutes,
+  grantedHostRouteWires,
+  grantedSquireHostRoute,
+} from './host-mcp-route.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import { agentCommandCatalogPublisher } from './agent-command-catalog.js';
 import {
@@ -60,7 +60,6 @@ import {
 } from './codegraph.js';
 import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
 import { harnessIdentityLabel } from './cursor-acp-bridge.js';
-import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 import type { BodyConfig } from './config.js';
 import { type DaemonApiClient } from './daemon-api-client.js';
 import {
@@ -81,10 +80,18 @@ import {
 import type { AgentRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
 import {
-  AGENT_PROSE_REFERENCE_RULE,
-  MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE,
-  SOUL_HOUSE_RULE,
-} from './response-directives.js';
+  assembleSessionPrompt,
+  assembleTurnPrompt,
+  CORNER_DELIVERY_NUDGE,
+  CORNER_REVIEWER_SESSION_INSTRUCTION,
+  CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION,
+  CORNER_YOLO_MERGE_NUDGE,
+  cornerReviewerInstruction,
+  cornerSelfReviewerInstruction,
+  roomMentionDirectory,
+  type PromptSurface,
+  type SessionPromptContext,
+} from './prompt-assembly.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 import { WarmTranscript } from './warm-transcript.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
@@ -98,7 +105,6 @@ import {
   sharedPnpmStoreDir,
   warmNodeModulesStoreDir,
 } from './warm-node-modules.js';
-import { roomMentionDirectory } from './monolith-room-turn.js';
 
 type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
 type DaemonActivity = DaemonOperationMap['postAgentActivity']['input']['activity'][number];
@@ -108,127 +114,6 @@ const execFileAsync = promisify(execFile);
 const TOOL_ARGUMENT_MAX_BYTES = 1_200;
 const TOOL_OUTPUT_MAX_BYTES = 3_200;
 const TOOL_PATH_LIMIT = 12;
-
-export function cornerMergeInstruction(yoloMode: boolean, reviewerHandle?: string): string {
-  if (reviewerHandle)
-    return `Commit, push, open the PR, and reply with the URL; do not merge until @${reviewerHandle} has reviewed — you are woken when that review ends, whether or not it tags you — then call pr_checks_status and merge with gh pr merge --squash --match-head-commit <sha> only if the complete gate passes.`;
-  return yoloMode
-    ? 'Yolo is on: when the gate passes, merge this pull request with gh.'
-    : 'Yolo is off: never merge; wait for a human owner to turn yolo on or merge the pull request themselves.';
-}
-
-export function cornerReviewerInstruction(input: {
-  reviewerHandle?: string;
-  agentHandle?: string;
-  authorHandle?: string;
-  openedByAgent: boolean;
-  pullRequestNumber?: number;
-  headSha?: string;
-  briefRevision?: number;
-}): string | undefined {
-  if (
-    !input.reviewerHandle ||
-    !input.agentHandle ||
-    input.openedByAgent ||
-    input.agentHandle.replace(/^@/, '') !== input.reviewerHandle.replace(/^@/, '')
-  )
-    return undefined;
-  const author = input.authorHandle?.replace(/^@/, '') || 'author';
-  const number = input.pullRequestNumber ?? 'N';
-  const headSha = input.headSha ?? '<head sha>';
-  return `Checks are green on PR #${number} at ${headSha}${input.briefRevision ? ` with assigned brief revision ${input.briefRevision}` : ''}. Review it now with the beeline-review skill against that exact head and current assigned brief. FAIL: reply \`@${author}\` with the confirmed findings to fix. PASS: call the approve_merge tool for ${headSha}${input.briefRevision ? ` with briefRevision=${input.briefRevision}` : ''}, then reply \`@${author} approved ${headSha}, merge\`. Never merge yourself. Never say you are holding or waiting for checks.`;
-}
-
-export const CORNER_REVIEWER_SESSION_INSTRUCTION =
-  "You are this Room's configured reviewer. The active turn prompt names the latest stable green PR head. Review and approve only that exact head; if no stable green head is named, end the turn without a verdict. Never merge yourself.";
-
-export const CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION =
-  'There is no stable green PR head for this active reviewer turn. Do not review or call approve_merge. End this turn without a verdict; the next green transition will wake you.';
-
-/**
- * A Room's sole configured reviewer who also opens its own corner has no
- * other reviewer to wait on: `cornerReviewerInstruction` never fires for an
- * opener, so without this the ordinary author instructions would tell this
- * agent to wait for `@<its own handle>` to tag it, a permanent deadlock.
- */
-export function cornerSelfReviewerInstruction(input: {
-  reviewerHandle?: string;
-  agentHandle?: string;
-  openedByAgent: boolean;
-}): string | undefined {
-  if (
-    !input.reviewerHandle ||
-    !input.agentHandle ||
-    !input.openedByAgent ||
-    input.agentHandle.replace(/^@/, '') !== input.reviewerHandle.replace(/^@/, '')
-  )
-    return undefined;
-  return "You are this Room's reviewer, so your own pull request needs no review: do not request one, do not tag any agent for review, and merge yourself with gh once checks pass and no hold exists.";
-}
-
-export const CORNER_AUTHOR_CONTRACT = `The current assigned brief's verbatim human intent and numbered acceptance criteria are the product authority. The short objective is navigation-only text and cannot add, remove, or narrow a requirement.
-Implement every current acceptance criterion and use the brief's file manifest. Record relevant validation stages with record_validation_stage against the current revision and head, citing actual commands or observed behavior. Do not call a missing stage passed.
-When a human correction changes the assignment, read the latest revision and use revise_corner_brief with the complete updated brief and a change description before doing dependent work. A chat reply does not revise the assignment.
-Before any code, write its end-user story in one sentence: "a person who does X sees Y".
-Follow the beeline-triage skill's bugfix execution contract when the verbatim human intent reports a defect.
-Attempt to reproduce it as triage isolated it, using every tool the host offers: emulator, Playwright, browser, test runner. Record what was tried and what was observed. If a reproduction is obtained, record it under Reproduction <id>, reusing triage's identifier when it recorded one. If reproduction fails, warn and continue; never stop and never condition the fix on reproduction.
-Narrow the fix to the authorized intent and current criteria. When a reproduction exists, change only what removes it while satisfying those criteria.
-Before opening the pull request, produce Y against the built change: run the app or affected service from your branch and perform X.
-If no interactive surface is reachable, run the narrowest test or script that exercises the exact user path and prints the observable Y.
-A unit test of an inner function, a log line, or reading the code is not a demonstration.
-The pull request body MUST contain two sections with exactly these headings: ## Reproduced and ## Demonstrated.
-Under ## Reproduced, name Reproduction <id> and give the steps or command and what was observed; write "not obtained" when reproduction failed, or "not a defect report" for feature work.
-Under ## Demonstrated, cite the same identifier and show that reproduction now passing when one exists; when none was obtained, state that plainly and show the regression instead.
-A pull request without both sections is not deliverable and the Room's reviewer will fail it.
-Change only what the verbatim intent and current criteria authorize. No unrequested features, flags, compatibility shims, or refactors.`;
-
-export function renderAssignedCornerBrief(brief: CornerBrief): string {
-  if (brief.legacy || !Array.isArray(brief.intentVerbatim) || !Array.isArray(brief.criteria)) {
-    return `Legacy assigned corner brief ${brief.id} revision ${brief.revision}:\n${brief.content}`;
-  }
-  const intent = brief.intentVerbatim
-    .map((item) => `- [message ${item.sourceMessageId}] ${item.snapshot}`)
-    .join('\n');
-  const criteria = brief.criteria.map((item) => `- ${item.id}: ${item.text}`).join('\n');
-  const nonGoals = brief.nonGoals?.map((item) => `- ${item}`).join('\n') || '(none)';
-  const references =
-    brief.references
-      ?.map(
-        (item) =>
-          `- ${item.label} [${item.authority}]${item.objectId ? ` object ${item.objectId}` : ''}: ${item.description}`,
-      )
-      .join('\n') || '(none)';
-  const basis = brief.approvalBasis;
-  const approval =
-    basis.kind === 'legacy-pre-migration'
-      ? basis.reason
-      : `${basis.kind} by ${basis.approvedBy}, message ${basis.sourceMessageId}: ${basis.snapshot}`;
-  return `Assigned corner brief ${brief.id} revision ${brief.revision} (hash ${brief.revisionHash}; current server revision):
-
-Verbatim human intent — authoritative:
-${intent}
-
-Current acceptance criteria — authoritative:
-${criteria}
-
-Non-goals:
-${nonGoals}
-
-References and authority:
-${references}
-
-Approval basis bound to this revision:
-${approval}
-
-Build spec — implementation guidance:
-${brief.buildSpec}`;
-}
-
-export const CORNER_DELIVERY_NUDGE =
-  'Before ending this turn, inspect the repository state and finish delivering the work: commit and push the intended changes and open the pull request if one does not exist. Decide yourself whether any remaining dirty work belongs to the objective; do not discard it merely to make the worktree clean. The pull request body must carry ## Reproduced and ## Demonstrated; if they are missing, add them before ending the turn.';
-
-export const CORNER_YOLO_MERGE_NUDGE =
-  'Yolo is on. Check the server merge gate with pr_checks_status now and, if checks="passed", held=false, and approvalPending=false, merge this pull request with gh. If checks="unknown", reply in this corner with the tool reason and stop instead of retrying. Otherwise stop without merging.';
 
 function isCornerChecksTurn(trigger: string, restates?: readonly string[]): boolean {
   return Boolean(restates) || /\b(?:passed|failed) a check\b/i.test(trigger);
@@ -600,10 +485,11 @@ export class MonolithCornerTurnLoop {
   /** Identity-only reviewer context; the exact PR head is refreshed inside each active turn. */
   private reviewerInstructionInput?: ReviewerInstructionInput;
   /** The role-specific second-chance instruction for this session. */
-  private cornerTurnEndNudge = CORNER_DELIVERY_NUDGE;
   /** Repository state already given a delivery reminder, until that state changes. */
   private lastDeliveryNudgeState?: string;
-  private turnIdentityInstructions = '';
+  private turnSessionPrefix = '';
+  private sessionSurface: PromptSurface = 'code-corner';
+  private sessionPromptContext?: SessionPromptContext;
   private busy = false;
   private forcedStop = false;
   private activityTail = Promise.resolve();
@@ -641,12 +527,22 @@ export class MonolithCornerTurnLoop {
     this.agent = runtimeIdentity(options.runtime.agent);
     this.commandContext = new CommandExecutionContext(options.config.agentHomeRoot);
     this.squireRelay = new SquireTaskRelay(
-      this.agent.publicKey, options.cornerId, this.commandContext.path,
-      async (call) => (await options.api.execute('authorizeResourceCall', {
-        roomId: call.roomId, requestId: call.requestId, generationId: call.generationId,
-        target: 'squire',
-        ...resourceCallFacts({ method: 'tools/call', params: { name: call.tool, arguments: call.args } }, 'squire'),
-      })).allowed,
+      this.agent.publicKey,
+      options.cornerId,
+      this.commandContext.path,
+      async (call) =>
+        (
+          await options.api.execute('authorizeResourceCall', {
+            roomId: call.roomId,
+            requestId: call.requestId,
+            generationId: call.generationId,
+            target: 'squire',
+            ...resourceCallFacts(
+              { method: 'tools/call', params: { name: call.tool, arguments: call.args } },
+              'squire',
+            ),
+          })
+        ).allowed,
       options.config.operatorHome ?? homedir(),
     );
     this.options = { ...options, api: this.commandContext.bind(options.api) };
@@ -864,12 +760,20 @@ export class MonolithCornerTurnLoop {
     this.reviewerInstructionInput = reviewerInstruction ? reviewerInput : undefined;
     const selfReviewerInstruction =
       this.options.lane === 'research' ? undefined : cornerSelfReviewerInstruction(reviewerInput);
-    this.cornerTurnEndNudge =
-      reviewerInstruction ??
-      selfReviewerInstruction ??
-      (this.options.lane === 'research'
-        ? 'Research hold: keep this corner open. Do not commit, push, or open a pull request until a human explicitly directs that step. Never merge; a human closes this corner.'
-        : cornerMergeInstruction(configuration.yoloMode, configuration.reviewerHandle));
+    this.sessionSurface = !this.options.repository
+      ? 'no-code-corner'
+      : this.options.lane === 'research'
+        ? 'research-corner'
+        : reviewerInstruction
+          ? 'review-corner'
+          : 'code-corner';
+    this.sessionPromptContext = {
+      surface: this.sessionSurface,
+      agentName: self?.name ?? this.agent.name,
+      ...(configuration.reviewerHandle ? { reviewerHandle: configuration.reviewerHandle } : {}),
+      selfReviewer: Boolean(selfReviewerInstruction),
+      yoloMode: configuration.yoloMode,
+    };
     await mkdir(this.options.worktreePath, { recursive: true });
     const selection = {
       model: configuration.model ?? this.options.config.modelSelection?.model,
@@ -888,7 +792,9 @@ export class MonolithCornerTurnLoop {
       ...(grantedSquireHostRoute(mountedHostRoutes, {
         ...hostImportedMcpDeclarations({ operatorHome, agentKind: this.options.config.agentKind }),
         ...registryHostDeclarations,
-      }) ? { relay: await this.squireRelay.listen() } : {}),
+      })
+        ? { relay: await this.squireRelay.listen() }
+        : {}),
     };
     const resourceAuthFile = `${this.commandContext.path}.resource-auth.json`;
     await mkdir(dirname(resourceAuthFile), { recursive: true, mode: 0o700 });
@@ -1117,11 +1023,7 @@ export class MonolithCornerTurnLoop {
       });
       if (codegraph) servers.push(codegraph);
     }
-    const youtube = youtubeMcpServer(
-      this.options.config,
-      googleTokens.youtube,
-      resourceAuthFile,
-    );
+    const youtube = youtubeMcpServer(this.options.config, googleTokens.youtube, resourceAuthFile);
     if (youtube) servers.push(youtube);
     const drive = googleDriveMcpServer(this.options.config, googleTokens.drive, resourceAuthFile);
     if (drive) servers.push(drive);
@@ -1144,77 +1046,29 @@ export class MonolithCornerTurnLoop {
       servers: [...servers, ...grantedRouteServers],
     });
     const persona = configuration.soul ?? self?.soul;
-    const identityInstructions = `Your Beeline identity is ${self?.name ?? this.agent.name}.`;
-    // The house rule stands whether or not a soul does: a Workspace that has
-    // switched seeded souls off still runs its agents under it.
-    const personaInstructions = [
+    const session = assembleSessionPrompt({
+      ...this.sessionPromptContext!,
       ...(persona?.instructions
-        ? [`Human-authored Workspace persona: ${persona.name}. ${persona.instructions}`]
-        : []),
-      SOUL_HOUSE_RULE,
-      AGENT_PROSE_REFERENCE_RULE,
-    ].join('\n');
-    this.turnIdentityInstructions = harnessHonorsSessionSystemPrompt(command)
-      ? ''
-      : [identityInstructions, personaInstructions].filter(Boolean).join('\n\n');
+        ? { soul: { name: persona.name, instructions: persona.instructions } }
+        : {}),
+      agentCommand: command,
+      ...(repository
+        ? {
+            worktree: {
+              featureBranch: repository.featureBranch,
+              targetBranch: repository.targetBranch,
+            },
+          }
+        : {}),
+      ...(this.options.requesterHandle ? { requesterHandle: this.options.requesterHandle } : {}),
+      ...(this.options.agentMayUpgradeCorner ? { agentMayUpgradeCorner: true } : {}),
+    });
+    this.turnSessionPrefix = session.turnPrefix;
     const opened = await this.client.sessionNew({
       cwd: this.options.worktreePath,
       mcpServers: servers,
       mode: 'edit',
-      systemPrompt: [
-        identityInstructions,
-        personaInstructions,
-        ...(repository
-          ? [
-              `You are in an isolated git worktree on ${repository.featureBranch}, targeting ${repository.targetBranch}.`,
-              ...(this.options.lane === 'research'
-                ? [
-                    'This is a research corner with writable repository access. Investigate and edit files as needed. Do not commit, push, or open a pull request until a human explicitly directs that step. Never merge. Leave the corner open; only a human closes it.',
-                  ]
-                : []),
-              ...(this.options.lane === 'research'
-                ? []
-                : [
-                    `Commit and push only ${repository.featureBranch}; never force-push or write to ${repository.targetBranch}. Before pushing, rebase on origin/${repository.featureBranch}; resolve conflicts autonomously, realigning to that remote branch and redoing the objective if needed, then rerun affected tests. Open the pull request with gh.`,
-                  ]),
-              ...(this.options.lane === 'research'
-                ? []
-                : reviewerInstruction
-                  ? [reviewerInstruction]
-                  : [
-                      configuration.reviewerHandle
-                        ? `Once the pull request exists, reply with its full URL and end the turn; do not tag the reviewer, check, or wait for CI.`
-                        : 'Once the pull request exists, reply only with its full URL and end the turn; do not check or wait for CI. On a later checks turn, call pr_checks_status. Merge only when checks="passed", held=false, and approvalPending=false; if checks="unknown", reply in this corner with the tool reason and stop instead of retrying. Only a later explicit human resume clears a hold.',
-                      CORNER_AUTHOR_CONTRACT,
-                      selfReviewerInstruction ??
-                        cornerMergeInstruction(
-                          configuration.yoloMode,
-                          configuration.reviewerHandle,
-                        ),
-                    ]),
-              ...(this.options.lane === 'research'
-                ? []
-                : [
-                    'Do not tag the user when a corner turn finishes: the server posts the merge summary card and its push already cover completion. Tag a human only mid-turn, and only when you need a decision or input.',
-                    'Never restate server check or merge notes. On a checks turn, say nothing unless you merge or push a fix, then use one short line. When asked whether the reviewer was woken, call pr_checks_status and report reviewerWake; do not invent a cause. Never merge while approvalPending is true. When approval is pending, wait to be woken. Never merge another pull request. Never create a schedule to poll pr_checks_status or the merge gate: the green transition wakes the reviewer and the end of that review wakes you, tag or no tag, and tagging any agent other than the configured reviewer cannot clear the gate. If a schedule wakes you in this corner anyway, follow the same rule as a checks turn: say nothing unless you merge, push a fix, or report a genuinely new blocker.',
-                  ]),
-            ]
-          : [
-              'This is a no-code corner with no repository checkout and no GitHub workflow.',
-              "Work in this corner's writable workspace. Use write_scratch_file or ordinary tools to create files, then post_artifact with the path to send them back to the corner.",
-              this.options.agentMayUpgradeCorner
-                ? 'Do not initialize a repository, create a branch, commit, push, open a pull request, or wait for GitHub checks. The one exception is beeline-agent upgrade_corner_to_code: call it only when the human message you are currently answering explicitly asks for code edits in this same corner. That one-way upgrade restarts this same corner with a feature branch and writable checkout, keeps its discussion, and re-delivers that same request in the code session, so end this turn immediately once it succeeds and do not edit this workspace. Never call it from an implied request, an earlier message, or your own initiative.'
-                : 'Do not initialize a repository, create a branch, commit, push, open a pull request, or wait for GitHub checks.',
-              // This lane has no pull request URL and no merge card, so its
-              // attached final reply reports delivery to the requester. The
-              // corner remains open until a human explicitly closes it.
-              this.options.requesterHandle
-                ? `Deliver the result as artifacts: post_artifact everything the assigned intent and criteria require. Finish the turn by replying with @${this.options.requesterHandle} and one line on what you posted. The corner stays open until a human explicitly closes it.`
-                : `Deliver the result as artifacts: post_artifact everything the assigned intent and criteria require. Finish the turn by replying with one line on what you posted. The corner stays open until a human explicitly closes it.`,
-            ]),
-      ]
-        .filter(Boolean)
-        .join('\n\n'),
+      systemPrompt: session.systemPrompt,
     });
     this.sessionId = opened.sessionId;
     this.sessionFingerprint = fingerprint;
@@ -1502,44 +1356,77 @@ export class MonolithCornerTurnLoop {
                   ? { ...requester, name: names.get(requester.pubkey)! }
                   : requester;
               if (requestedBy) this.currentTurn = { requestId, requester: requestedBy };
-              const transcriptRows = conversation.items.slice(-120).map((message) => ({
-                id: message.id,
-                line: [
-                  ...(message.type === 'message' ? [`[message id: ${message.id}]`] : []),
-                  `${names.get(message.authorId) ?? 'Beeline'} [${message.type}]: ${message.body}`,
-                ].join('\n'),
-              }));
+              // The newest message renders once, as the task; activity rows with
+              // no text carry nothing a model can read.
+              const transcriptRows = conversation.items
+                .filter(
+                  (message) =>
+                    message.id !== requestId &&
+                    message.id !== sourceMessageId &&
+                    message.body.trim(),
+                )
+                .slice(-120)
+                .map((message) => ({
+                  id: message.id,
+                  authorId: message.authorId,
+                  line: [
+                    ...(message.type === 'message' ? [`[message id: ${message.id}]`] : []),
+                    `${names.get(message.authorId) ?? 'Beeline'} [${message.type}]: ${message.body}`,
+                  ].join('\n'),
+                }));
               // Built per ATTEMPT, never once per turn: a C92 re-pin runs the
               // same turn against a NEW session id that holds none of this
               // transcript. The objective is outside the window and always
               // renders, warm session or not.
-              const buildPrompt = (): string =>
-                [
-                  this.turnIdentityInstructions,
-                  `Corner navigation summary (not product authority):\n${this.options.objective}`,
-                  restored.brief
-                    ? `${renderAssignedCornerBrief(restored.brief)}\n\nAssigned files:\n${briefFileLines.join('\n') || '(none)'}${missingRequiredBriefFile ? '\nRequired assignment files are unavailable. Pause work that depends on them and report the missing file precisely.' : ''}`
-                    : 'Legacy corner: no assigned brief; use the objective and corner conversation.',
-                  WarmTranscript.render(
-                    this.warmTranscript.select(this.sessionId, transcriptRows),
-                    'Corner transcript:',
-                    'New in the corner since your last turn (the earlier transcript is already in this session):',
-                  ),
-                  roomMentionDirectory(roster, this.agent.publicKey),
-                  institutionalContext.text,
-                  activeReviewerInstruction,
-                  [
-                    ...(sourceMessageId ? [`Reaction target message id: ${sourceMessageId}`] : []),
-                    `Newest trigger:\n${trigger}`,
-                    ...attachmentPromptLines(attachments, delivered, this.acceptsImages()),
-                  ].join('\n'),
-                  this.options.repository
-                    ? 'Continue the current assigned brief. Obey the PR checks and human hold rules in your session instructions.'
-                    : 'Continue the current assigned brief. Attach completed files; only a human can close this corner.',
-                  MAINTAIN_ASSIGNED_IDENTITY_DIRECTIVE,
-                ]
-                  .filter(Boolean)
-                  .join('\n\n');
+              const buildPrompt = (): string => {
+                const transcript = this.warmTranscript.select(
+                  this.sessionId,
+                  transcriptRows,
+                  this.agent.publicKey,
+                );
+                const assembled = assembleTurnPrompt({
+                  surface: this.sessionSurface,
+                  sessionPrefix: this.turnSessionPrefix,
+                  ...(institutionalContext.standingPreference && requestedBy?.name
+                    ? {
+                        standingPreference: {
+                          requesterName: requestedBy.name,
+                          text: institutionalContext.standingPreference,
+                        },
+                      }
+                    : {}),
+                  objective: this.options.objective,
+                  ...(restored.brief
+                    ? {
+                        brief: {
+                          brief: restored.brief,
+                          fileLines: briefFileLines,
+                          missingRequiredFile: missingRequiredBriefFile,
+                        },
+                      }
+                    : {}),
+                  transcript: {
+                    lines: transcript.rows.map((row) => row.line),
+                    sinceLastTurn: transcript.warm,
+                  },
+                  members: roomMentionDirectory(roster, this.agent.publicKey),
+                  memory: institutionalContext.text,
+                  ...(activeReviewerInstruction
+                    ? { reviewerTarget: activeReviewerInstruction }
+                    : {}),
+                  task: {
+                    ...(sourceMessageId ? { reactionTargetId: sourceMessageId } : {}),
+                    body: trigger,
+                    attachmentLines: attachmentPromptLines(
+                      attachments,
+                      delivered,
+                      this.acceptsImages(),
+                    ),
+                  },
+                });
+                trace.notePromptSections(assembled.report);
+                return assembled.text;
+              };
               // Rooms and corners share the provisional draft lane, request-id
               // handoff, and single durable final reply in `turn-stream.ts`.
               // The corner-only work ledger below is independent of that lane.
@@ -1861,7 +1748,7 @@ export class MonolithCornerTurnLoop {
                 // repeated in this focused follow-up.
                 result = await runPrompt(
                   this.reviewerInstructionInput
-                    ? (refreshedReviewerInstruction ?? this.cornerTurnEndNudge)
+                    ? (refreshedReviewerInstruction ?? CORNER_REVIEWER_SESSION_INSTRUCTION)
                     : checksTurn
                       ? CORNER_YOLO_MERGE_NUDGE
                       : CORNER_DELIVERY_NUDGE,

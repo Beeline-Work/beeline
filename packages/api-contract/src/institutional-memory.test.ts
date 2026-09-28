@@ -4,6 +4,7 @@ import {
   parseInstitutionalCuratorProposal,
   parseInstitutionalMergeReviewProposal,
   parseInstitutionalMemoryProposal,
+  institutionalMemoryRequestWords,
 } from './institutional-memory.js';
 
 const workspaceFact = {
@@ -12,6 +13,7 @@ const workspaceFact = {
   memoryKind: 'workspace_fact',
   canonicalKey: 'deploy.release-marker-last',
   body: 'The release migration writes the schema marker last.',
+  keywords: ['release', 'migration', 'marker'],
   source: { roomId: 'room-1', messageIds: ['message-1'] },
   audience: 'workspace',
   confidence: 0.96,
@@ -107,6 +109,31 @@ describe('institutional memory proposal contract', () => {
         body: '🐝'.repeat(INSTITUTIONAL_MEMORY_BODY_MAX_BYTES / 2 + 1),
       }),
     ).toThrow(/body/);
+  });
+
+  it('trims bloat at save time: one terse sentence, 1 to 6 keywords, no reserved key', () => {
+    const rejects = (patch: Record<string, unknown>, pattern: RegExp) =>
+      expect(() => parseInstitutionalMemoryProposal({ ...workspaceFact, ...patch })).toThrow(
+        pattern,
+      );
+    rejects({ body: 'The user prefers short replies.' }, /filler opening/);
+    rejects({ body: 'Deploys run on Friday. Nobody merges after noon.' }, /one sentence/);
+    rejects({ body: 'Deploys probably run on Friday.' }, /hedge/);
+    rejects({ keywords: [] }, /1 to 6 keywords/);
+    rejects({ keywords: ['a', 'b', 'c', 'd', 'e', 'f', 'g'] }, /1 to 6 keywords/);
+    rejects({ keywords: ['the'] }, /distinctive/);
+    rejects({ keywords: ['release', 'release'] }, /unique/);
+    rejects({ canonicalKey: 'standing' }, /reserved/);
+    expect(
+      parseInstitutionalMemoryProposal({ ...workspaceFact, keywords: ['Release', ' Marker '] })
+        .keywords,
+    ).toEqual(['release', 'marker']);
+  });
+
+  it('matches request words without stopwords', () => {
+    expect([
+      ...institutionalMemoryRequestWords('How do you deploy the release migration?'),
+    ]).toEqual(['deploy', 'release', 'migration']);
   });
 });
 

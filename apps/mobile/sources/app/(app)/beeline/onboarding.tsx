@@ -1072,6 +1072,8 @@ export default function BuzzOnboarding() {
 
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
+  const compactProse = { fontSize: 14, lineHeight: 20 };
+  const compactMonoLabel = { fontSize: 11, lineHeight: 15, letterSpacing: 0.8 };
   return {
     container: {
       flex: 1,
@@ -1108,8 +1110,7 @@ const styles = StyleSheet.create((theme) => {
       ...Typography.default(),
       fontFamily: groknight.proseRegular,
       maxWidth: 320,
-      fontSize: 14,
-      lineHeight: 20,
+      ...compactProse,
       color: groknight.textSecondary,
       textAlign: 'center',
     },
@@ -1126,33 +1127,27 @@ const styles = StyleSheet.create((theme) => {
     statusLabel: {
       ...Typography.mono('semiBold'),
       color: groknight.textPrimary,
-      fontSize: 11,
-      lineHeight: 15,
-      letterSpacing: 0.8,
+      ...compactMonoLabel,
       marginBottom: 4,
     },
     noticeText: {
       ...Typography.default(),
       fontFamily: groknight.proseRegular,
       color: groknight.textSecondary,
-      fontSize: 14,
-      lineHeight: 20,
+      ...compactProse,
     },
     importPanel: { width: '100%', maxWidth: 440, alignSelf: 'center', marginBottom: 16 },
     sectionLabel: {
       ...Typography.mono('semiBold'),
       color: groknight.textMuted,
-      fontSize: 11,
-      lineHeight: 15,
-      letterSpacing: 0.8,
+      ...compactMonoLabel,
       marginBottom: 4,
     },
     keyGuide: {
       ...Typography.default(),
       fontFamily: groknight.proseRegular,
       color: groknight.textSecondary,
-      fontSize: 14,
-      lineHeight: 20,
+      ...compactProse,
       marginBottom: 10,
     },
     input: {

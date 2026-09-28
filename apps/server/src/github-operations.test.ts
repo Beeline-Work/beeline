@@ -21,6 +21,114 @@ describe('GitHub phone operations', () => {
     vi.unstubAllGlobals();
     await database.close();
   });
+  it('routes a promoted corner PR and checks by its repository-scoped branch prefix', async () => {
+    const workspace = '11111111-1111-4111-8111-111111111111';
+    const room = '22222222-2222-4222-8222-222222222222';
+    const corner = '33333333-3333-4333-8333-333333333333';
+    const branch = 'feature/corner-333333333333';
+    const headSha = '1'.repeat(40);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+    await database.query(
+      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
+       VALUES(77,$1,'42','owner','User','selected','active')`, [HUMAN],
+    );
+    await database.query(
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch)
+       VALUES(101,77,'owner/widgets','main')`,
+    );
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,created_by,name,repository_remote,github_installation_id)
+       VALUES($1,$2,$3,'General','https://github.com/owner/widgets.git',77)`,
+      [room, workspace, HUMAN],
+    );
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
+       VALUES($1,$2,$3,$4,'Promoted')`, [corner, workspace, room, HUMAN],
+    );
+    await database.query(
+      `INSERT INTO corner_facts(corner_id,objective,lane,feature_branch,lifecycle)
+       VALUES($1,'Promoted work','code','feature/stale','{"checks":"unknown"}')`, [corner],
+    );
+    const app = {
+      installationToken: vi.fn(async () => ({ token: 'room-token' })),
+      readCommitCheckRollup: vi.fn(async () => ({
+        state: 'passed', total: 1, failing: [], checks: [{ name: 'build', status: 'passed' }],
+      })),
+      readPullRequest: vi.fn(async () => ({
+        number: 4, url: 'https://github.com/owner/widgets/pull/4', headSha,
+        headRef: branch, baseRef: 'main', mergeability: 'clean', merged: false,
+      })),
+      readBranchHead: vi.fn(async () => headSha),
+      openPullRequestsForBranch: vi.fn(async () => [4]),
+    } as unknown as GitHubAppClient;
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
+    await operations.processWebhook('pull_request', {
+      action: 'opened', installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
+      pull_request: {
+        number: 4, title: 'Promoted work', html_url: 'https://github.com/owner/widgets/pull/4',
+        head: { ref: branch, sha: headSha }, base: { ref: 'main', sha: '2'.repeat(40) },
+        mergeable_state: 'clean',
+      },
+    });
+    await operations.processWebhook('check_run', {
+      action: 'completed', installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
+      check_run: {
+        name: 'build', status: 'completed', conclusion: 'success', head_sha: headSha,
+        check_suite: { head_branch: branch, head_sha: headSha },
+      },
+    });
+    const fact = (await database.query<{ feature_branch: string; lifecycle: object }>(
+      `SELECT feature_branch,lifecycle FROM corner_facts WHERE corner_id=$1`, [corner],
+    )).rows[0]!;
+    expect(fact.feature_branch).toBe(branch);
+    expect(fact.lifecycle).toMatchObject({ checks: 'passing', pr: { number: 4, headSha } });
+    expect((await database.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card_type='github-event'`, [room])).rowCount).toBe(0);
+    await database.query(
+      `UPDATE corner_facts SET feature_branch=NULL,lifecycle='{"checks":"unknown"}'::jsonb WHERE corner_id=$1`,
+      [corner],
+    );
+    await operations.repairPromotedCornerBranches();
+    expect((await database.query<{ feature_branch: string; lifecycle: object }>(
+      `SELECT feature_branch,lifecycle FROM corner_facts WHERE corner_id=$1`, [corner],
+    )).rows[0]).toMatchObject({
+      feature_branch: branch,
+      lifecycle: { checks: 'passing', pr: { number: 4, headSha } },
+    });
+    const collision = '33333333-3333-4333-8333-444444444444';
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
+       VALUES($1,$2,$3,$4,'Collision')`, [collision, workspace, room, HUMAN],
+    );
+    await database.query(
+      `INSERT INTO corner_facts(corner_id,objective,lane,lifecycle)
+       VALUES($1,'Another corner','code','{"checks":"unknown"}')`, [collision],
+    );
+    await database.query(
+      `UPDATE corner_facts SET feature_branch=NULL,lifecycle='{"checks":"unknown"}'::jsonb WHERE corner_id=$1`,
+      [corner],
+    );
+    await operations.processWebhook('pull_request', {
+      action: 'opened', installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
+      pull_request: {
+        number: 5, title: 'Fork work', html_url: 'https://github.com/owner/widgets/pull/5',
+        head: { ref: branch, sha: headSha, repo: { full_name: 'outsider/widgets' } },
+        base: { ref: 'main' }, mergeable_state: 'clean',
+      },
+    });
+    expect((await database.query<{ feature_branch: string | null }>(
+      `SELECT feature_branch FROM corner_facts WHERE corner_id=$1`, [corner],
+    )).rows[0]?.feature_branch).toBeNull();
+    await operations.processWebhook('push', {
+      installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
+      ref: `refs/heads/${branch}`, after: headSha,
+    });
+    await operations.repairPromotedCornerBranches();
+    expect((await database.query<{ feature_branch: string | null }>(
+      `SELECT feature_branch FROM corner_facts WHERE corner_id=ANY($1::uuid[]) ORDER BY corner_id`,
+      [[corner, collision]],
+    )).rows).toEqual([{ feature_branch: null }, { feature_branch: null }]);
+    expect(app.openPullRequestsForBranch).toHaveBeenCalledTimes(1);
+  });
   it('recovers a missed merge webhook and ignores branch deletion pushes', async () => {
     const workspace = '11111111-1111-4111-8111-111111111111';
     const room = '22222222-2222-4222-8222-222222222222';

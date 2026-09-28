@@ -56,6 +56,22 @@ it('reads the current target branch SHA, including branch names with slashes', a
   );
 });
 
+it('looks up an open PR only under the repository owner and assigned branch', async () => {
+  const fetchMock = vi.fn(async () => new Response(JSON.stringify([
+    { number: 41, head: { repo: { full_name: 'acme/other' } } },
+    { number: 42, head: { repo: { full_name: 'acme/beeline' } } },
+  ]), { status: 200 }));
+  vi.stubGlobal('fetch', fetchMock);
+  const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+  await expect(app.openPullRequestsForBranch(
+    'room-token', 'acme/beeline', 'feature/corner-333333333333',
+  )).resolves.toEqual([42]);
+  const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
+  expect(url.pathname).toBe('/repos/acme/beeline/pulls');
+  expect(url.searchParams.get('head')).toBe('acme:feature/corner-333333333333');
+  expect(url.searchParams.get('state')).toBe('open');
+});
+
 it('retries only unresolved GitHub mergeability answers', () => {
   expect(
     [null, 'unknown', 'clean', 'dirty', 'behind', 'unstable', 'blocked'].map(githubMergeability),

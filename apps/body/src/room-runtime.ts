@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
-import { mkdir, readdir, realpath, rm } from 'node:fs/promises';
+import { cp, mkdir, readdir, realpath, rm } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { BodyConfig } from './config.js';
@@ -92,16 +92,12 @@ export class DiscoveryWakes {
 }
 
 /**
- * A restarted helper must not overwrite the server's GitHub-owned corner facts,
- * and a helper joining a corner it did not open never announces the opening
- * state at all — the lifecycle facts belong to the corner, and they already
- * exist by the time a second agent is addressed in it.
+ * A restarted helper must not overwrite the server's GitHub-owned corner facts.
+ * A promoted corner may first get a code runtime from someone other than its
+ * original opener; branch state depends on the lifecycle, not that identity.
  */
-export function shouldPostInitialCornerWorkingState(
-  restore: CornerRestoreResult,
-  isOpener = true,
-): boolean {
-  return isOpener && !restore.featureBranch && !restore.lifecycle?.branch && !restore.lifecycle?.pr;
+export function shouldPostInitialCornerWorkingState(restore: CornerRestoreResult): boolean {
+  return !restore.lifecycle?.branch && !restore.lifecycle?.pr;
 }
 
 /**
@@ -1015,17 +1011,21 @@ export class RoomRuntimeCoordinator {
       this.wakeDiscovery();
       return;
     }
-    await this.stopRunning(cornerId, running);
+    await this.stopRunning(cornerId, running, true);
     this.wakeDiscovery();
   }
 
-  private async stopRunning(channelId: string, running: RunningRoom): Promise<void> {
+  private async stopRunning(
+    channelId: string,
+    running: RunningRoom,
+    preserveScratch = false,
+  ): Promise<void> {
     this.deferredRepositoryRestarts.delete(channelId);
     running.controller.abort();
     await running.promise.catch(() => undefined);
     try {
       if (running.worktree) await this.reapCornerWorktree(running.worktree);
-      else if (running.scratch) await this.reapCornerScratch(running.scratch);
+      else if (running.scratch && !preserveScratch) await this.reapCornerScratch(running.scratch);
     } catch (error) {
       console.error(`[thin-core] corner ${channelId} cleanup failed; will retry:`, error);
       this.confirmationPending = true;
@@ -1272,6 +1272,9 @@ export class RoomRuntimeCoordinator {
       // does: no worktree is cut, no feature branch is named, and no GitHub
       // token is minted for it.
       const repositoryBacked = repository.resolution === 'repository' && restore.lane !== 'no_code';
+      const scratchPath = resolve(this.roomRoot(corner.cornerId), 'scratch');
+      if (repositoryBacked && existsSync(scratchPath) && !restore.featureBranch)
+        throw new Error('promoted corner has no server-assigned feature branch');
       const targetBranch = repositoryBacked ? repository.targetBranch || 'main' : undefined;
       const featureBranch = repositoryBacked
         ? (restore.featureBranch ??
@@ -1289,10 +1292,33 @@ export class RoomRuntimeCoordinator {
             token: granted!.token,
           })
         : undefined;
+      if (worktree) {
+        if (existsSync(scratchPath)) {
+          const entries = await readdir(scratchPath);
+          if (entries.includes('.git')) throw new Error('corner scratch contains a Git repository');
+          for (const entry of entries)
+            await cp(resolve(scratchPath, entry), resolve(worktree.path, entry), {
+              recursive: true,
+              force: true,
+            });
+          if (entries.length) {
+            await execFileAsync('git', ['-C', worktree.path, 'add', '-f', '-A', '--', ...entries]);
+            const changed = await execFileAsync('git', ['-C', worktree.path, 'diff', '--cached', '--quiet'])
+              .then(() => false, (error: { code?: number }) => {
+                if (error.code === 1) return true;
+                throw error;
+              });
+            if (changed)
+              await execFileAsync('git', [
+                '-C', worktree.path, 'commit', '-m', 'Carry no-code corner files into code branch',
+              ]);
+          }
+          await this.reapCornerScratch({ path: scratchPath, cornerId: corner.cornerId });
+        }
+      }
       const workspacePath = worktree?.path ?? resolve(this.roomRoot(corner.cornerId), 'scratch');
       if (!worktree) await mkdir(workspacePath, { recursive: true, mode: 0o700 });
-      const isOpener = corner.openedBy === this.agent.publicKey;
-      if (worktree && shouldPostInitialCornerWorkingState(restore, isOpener)) {
+      if (worktree && shouldPostInitialCornerWorkingState(restore)) {
         await this.options.daemonApi.execute('postCornerRemoteState', {
           cornerId: corner.cornerId,
           branch: featureBranch!,

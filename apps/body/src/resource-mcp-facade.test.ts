@@ -52,7 +52,10 @@ describe('what the gate learns about one resource call', () => {
           method: 'tools/call',
           params: {
             name: 'use_credential',
-            arguments: { service: 'linear', http: { method: 'POST', url: 'https://api.linear.app/graphql' } },
+            arguments: {
+              service: 'linear',
+              http: { method: 'POST', url: 'https://api.linear.app/graphql' },
+            },
           },
         },
         'squire',
@@ -60,7 +63,10 @@ describe('what the gate learns about one resource call', () => {
     ).toEqual({ operation: 'use_credential', appKeys: ['linear'] });
     expect(
       resourceCallFacts(
-        { method: 'tools/call', params: { name: 'operate_start', arguments: { url: 'https://resend.com' } } },
+        {
+          method: 'tools/call',
+          params: { name: 'operate_start', arguments: { url: 'https://resend.com' } },
+        },
         'squire',
       ),
     ).toEqual({ operation: 'operate_start', appKeys: ['resend'] });
@@ -69,7 +75,10 @@ describe('what the gate learns about one resource call', () => {
   it('never reads app hints off another route, and discovery carries nothing', () => {
     expect(
       resourceCallFacts(
-        { method: 'tools/call', params: { name: 'search', arguments: { url: 'https://linear.app' } } },
+        {
+          method: 'tools/call',
+          params: { name: 'search', arguments: { url: 'https://linear.app' } },
+        },
         'registry-mcp:app.linear/linear',
       ),
     ).toEqual({ operation: 'search' });
@@ -102,9 +111,12 @@ describe('resource MCP transport authorization', () => {
           {
             type: 'text',
             text: JSON.stringify({
+              url: 'https://garden-blooms.test/checkout',
+              request: { url: 'https://garden-blooms.test/api' },
+              script: { url: 'https://garden-blooms.test/shopify.js' },
               status: 'approval_pending',
               approval_id: 'purchase-7',
-              approval_url: 'https://approve.trustysquire.test/approval/purchase-7',
+              approval_url: 'https://trustysquire.ai/vault/pay/purchase-7',
             }),
           },
         ],
@@ -115,9 +127,78 @@ describe('resource MCP transport authorization', () => {
       title: 'Purchase approval',
       detail: 'Noise-cancelling headphones · at Acme · 199.00 USD',
       approvalId: 'purchase-7',
-      approvalUrl: 'https://approve.trustysquire.test/approval/purchase-7',
+      approvalUrl: 'https://trustysquire.ai/vault/pay/purchase-7',
       linkKind: 'approval',
     });
+  });
+
+  it('prefers an approval URL over unrelated operate_network URLs regardless of key order', () => {
+    const approvalUrl = 'https://trustysquire.ai/vault/pay/purchase-7';
+    const request = {
+      id: 7,
+      method: 'tools/call',
+      params: { name: 'operate_network', arguments: {} },
+    };
+    for (const result of [
+      {
+        url: 'https://garden-blooms.test/checkout',
+        request: { url: 'https://garden-blooms.test/api' },
+        script: { url: 'https://garden-blooms.test/shopify.js' },
+        status: 'approval_pending',
+        approval_url: approvalUrl,
+      },
+      {
+        approval_url: approvalUrl,
+        status: 'approval_pending',
+        url: 'https://garden-blooms.test/checkout',
+      },
+      {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              status: 'approval_pending',
+              approval_id: 'purchase-7',
+              approval_url: approvalUrl,
+            }),
+          },
+        ],
+        url: 'https://garden-blooms.test/shopify.js',
+      },
+    ]) {
+      expect(
+        squireApprovalFromMcp(request, { id: 7, result: { structuredContent: result } })
+          ?.approvalUrl,
+      ).toBe(approvalUrl);
+    }
+    expect(
+      squireApprovalFromMcp(request, {
+        id: 7,
+        result: {
+          structuredContent: {
+            status: 'approval_pending',
+            url: 'https://garden-blooms.test/shopify.js',
+          },
+        },
+      }),
+    ).toBeUndefined();
+    expect(
+      squireApprovalFromMcp(request, { id: 7, result: { structuredContent: { url: approvalUrl } } })
+        ?.approvalUrl,
+    ).toBe(approvalUrl);
+  });
+
+  it('formats purchase amounts with the same minor units as the Squire approval page', () => {
+    const cases = [
+      [19_900, 'usd', '199.00 USD'],
+      [23_100, 'jpy', '23100 JPY'],
+      [23_100, 'bhd', '23.100 BHD'],
+    ] as const;
+    for (const [amount_cents, currency, amount] of cases) {
+      expect(
+        squireApprovalCopy('inject_card', { item: 'Flowers', amount_cents, currency }).detail,
+      ).toBe(`Flowers · ${amount}`);
+    }
   });
 
   it('relays passkey and vouch links while keeping credential copy free of secret fields', () => {

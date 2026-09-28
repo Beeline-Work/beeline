@@ -13,11 +13,13 @@ import {
   roomRowAttentionReason,
   roomRowName,
   roomRowPreview,
+  roomRowShowsCornerMark,
   NO_ACTIVITY_PREVIEW,
 } from '@/buzz/room-list-row';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { CornerGlyph } from './CornerGlyph';
 import { PinGlyph } from './PinGlyph';
+import { TourTarget } from './tour/TourTarget';
 
 export function ConversationRow({
   item,
@@ -31,6 +33,7 @@ export function ConversationRow({
   cornersExpanded = false,
   onToggleCorners,
   onLongPressCorners,
+  cornerTip = false,
   testID,
 }: {
   item: ChatListItem;
@@ -45,6 +48,8 @@ export function ConversationRow({
   onToggleCorners?: () => void;
   /** Long-press of the corner glyph opens a new corner in this Room. */
   onLongPressCorners?: () => void;
+  /** This row's corner mark is the corner-mark tip's target. */
+  cornerTip?: boolean;
   testID: string;
 }) {
   const name = roomRowName(item);
@@ -53,7 +58,8 @@ export function ConversationRow({
   const needsYou = Boolean(reason);
   const showReason = item.agentState === 'needs-you' && reason;
   const status = needsYou ? 'needs you' : item.unread ? 'new messages' : null;
-  const hasCorners = !item.directMessage && (item.cornerCount ?? 0) > 0;
+  const hasCorners = roomRowShowsCornerMark(item);
+  const cornerPosition = desktop ? styles.desktopCornerToggle : styles.mobileCornerToggle;
   const cornerRotation = useSharedValue(cornersExpanded ? 1 : 0);
   React.useEffect(() => {
     cornerRotation.value = withTiming(cornersExpanded ? 1 : 0, {
@@ -65,6 +71,26 @@ export function ConversationRow({
   const cornerRotationStyle = useAnimatedStyle(() => ({
     transform: [{ rotate: `${cornerRotation.value * 135}deg` }],
   }));
+  // The corner-mark tip's target wraps the mark in the positioned box, so the
+  // mark itself sits unpositioned inside it.
+  const cornerMark = (
+    <Pressable
+      accessibilityLabel={`${cornersExpanded ? 'Collapse' : 'Expand'} ${item.cornerCount} corners`}
+      accessibilityRole="button"
+      accessibilityState={{ expanded: cornersExpanded }}
+      accessibilityHint={onLongPressCorners ? 'Long press to open a new corner' : undefined}
+      delayLongPress={onLongPressCorners ? 450 : undefined}
+      hitSlop={8}
+      onLongPress={onLongPressCorners}
+      onPress={onToggleCorners}
+      style={cornerTip ? styles.cornerMark : [styles.cornerToggle, cornerPosition]}
+      testID={`${testID}-corners`}
+    >
+      <Animated.View style={cornerRotationStyle}>
+        <CornerGlyph size={13} />
+      </Animated.View>
+    </Pressable>
+  );
 
   return (
     <View
@@ -151,27 +177,14 @@ export function ConversationRow({
           <View style={styles.statusSlot} />
         </View>
       </Pressable>
-      {hasCorners && (
-        <Pressable
-          accessibilityLabel={`${cornersExpanded ? 'Collapse' : 'Expand'} ${item.cornerCount} corners`}
-          accessibilityRole="button"
-          accessibilityState={{ expanded: cornersExpanded }}
-          accessibilityHint={onLongPressCorners ? 'Long press to open a new corner' : undefined}
-          delayLongPress={onLongPressCorners ? 450 : undefined}
-          hitSlop={8}
-          onLongPress={onLongPressCorners}
-          onPress={onToggleCorners}
-          style={[
-            styles.cornerToggle,
-            desktop ? styles.desktopCornerToggle : styles.mobileCornerToggle,
-          ]}
-          testID={`${testID}-corners`}
-        >
-          <Animated.View style={cornerRotationStyle}>
-            <CornerGlyph size={13} />
-          </Animated.View>
-        </Pressable>
-      )}
+      {hasCorners &&
+        (cornerTip ? (
+          <TourTarget style={[styles.cornerToggle, cornerPosition]} tip="cornerMark">
+            {cornerMark}
+          </TourTarget>
+        ) : (
+          cornerMark
+        ))}
     </View>
   );
 }
@@ -248,6 +261,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  cornerMark: { width: 14, height: 14, alignItems: 'center', justifyContent: 'center' },
   desktopCornerToggle: { right: theme.buzz.space.md, bottom: 12 },
   mobileCornerToggle: { right: 14, bottom: 14 },
   selected: {

@@ -27,12 +27,21 @@ export type RoomStarterPrompt = {
     | { readonly kind: 'invite-person' };
 };
 
-const INVITE_PROMPT: RoomStarterPrompt = {
-  lead: 'Invite someone',
-  detail: 'who should see the result',
-  testID: 'starter-invite',
-  action: { kind: 'invite-person' },
-};
+function invitePrompt(workspaceName: string | undefined): RoomStarterPrompt {
+  return {
+    lead: 'Invite someone',
+    detail: `to ${workspaceName?.trim() || 'this Workspace'}`,
+    testID: 'starter-invite',
+    action: { kind: 'invite-person' },
+  };
+}
+
+/** The empty Room's one line under its title: what to do first. */
+export function roomStarterIntro(prompts: readonly RoomStarterPrompt[]): string {
+  return prompts[0]?.action.kind === 'connect-agent'
+    ? 'Connect an agent, then ask it for something here.'
+    : 'Ask an agent, open a corner for a bounded task, or invite a collaborator into this Room.';
+}
 
 export function roomStarterPrompts(input: {
   readonly roomAgent?: { readonly pubkey: string; readonly handle?: string } | null;
@@ -40,8 +49,10 @@ export function roomStarterPrompts(input: {
   readonly workspaceAgentCount: number | null;
   /** Only a Workspace manager may add an existing agent to this Room or invite a person. */
   readonly canManageWorkspace: boolean;
+  /** The Workspace the invite starter names. */
+  readonly workspaceName?: string;
 }): readonly RoomStarterPrompt[] {
-  const invite = input.canManageWorkspace ? [INVITE_PROMPT] : [];
+  const invite = input.canManageWorkspace ? [invitePrompt(input.workspaceName)] : [];
   const handle = input.roomAgent?.handle;
   if (!handle) {
     if (input.workspaceAgentCount === 0)

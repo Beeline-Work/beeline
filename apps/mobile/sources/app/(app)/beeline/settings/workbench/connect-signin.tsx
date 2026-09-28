@@ -106,6 +106,14 @@ export default function ConnectorSignInScreen() {
     router.replace(connectorOfferCompletionRoute(roomId) as unknown as Href);
   }, [roomId]);
 
+  // A failed attempt, or a row with no sign-in page left, has nothing for
+  // this overlay to show: return to the connect screen, which shows Retry.
+  const returnToConnect = useCallback(() => {
+    if (dismissedRef.current) return;
+    dismissedRef.current = true;
+    router.back();
+  }, []);
+
   useEffect(() => {
     if (!workspaceId || returnState) return;
     let live = true;
@@ -118,19 +126,23 @@ export default function ConnectorSignInScreen() {
             if (connectorId === GOOGLE_ACCOUNT_CONNECTOR_ID) dismissGoogleBrowser();
             dismiss();
           }
-          else if (state?.signIn) setCurrentSignIn({
-            url: state.signIn.url,
-            method: state.signIn.method,
-          });
+          else if (state?.signIn &&
+            (connectorId === GOOGLE_ACCOUNT_CONNECTOR_ID ||
+              !state.steps?.some((step) => step.status === 'failed'))) {
+            const { url: next, method: nextMethod } = state.signIn;
+            setCurrentSignIn((shown) =>
+              shown.url === next && shown.method === nextMethod ? shown : { url: next, method: nextMethod });
+          }
           else if (connectorId === GOOGLE_ACCOUNT_CONNECTOR_ID && state) {
             dismissGoogleBrowser();
             dismiss();
           }
+          else if (state) returnToConnect();
         })
         .catch(() => undefined);
     }, SIGN_IN_POLL_MS);
     return () => { live = false; clearInterval(poll); };
-  }, [connectorId, dismiss, returnState, workspaceId]);
+  }, [connectorId, dismiss, returnState, returnToConnect, workspaceId]);
 
   const host = (() => {
     try {

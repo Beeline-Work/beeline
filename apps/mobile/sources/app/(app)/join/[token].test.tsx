@@ -30,7 +30,6 @@ const controls = vi.hoisted(() => ({
   enterWorkspaceRoom: vi.fn(),
   savePendingInvite: vi.fn(),
   clearPendingInvite: vi.fn(),
-  offerProductTour: vi.fn(),
   identity: vi.fn(),
 }));
 
@@ -67,7 +66,6 @@ vi.mock('@/buzz/pending-invite', () => ({
   savePendingInvite: controls.savePendingInvite,
   clearPendingInvite: controls.clearPendingInvite,
 }));
-vi.mock('@/buzz/product-tour', () => ({ offerProductTour: controls.offerProductTour }));
 vi.mock('@/buzz/vocabulary', () => ({ WORKSPACE_LABEL: 'Workspace' }));
 vi.mock('@/components/buzz/MonoHull', async () => {
   const ReactModule = await import('react');
@@ -189,7 +187,6 @@ describe('CommunityInviteJoin', () => {
 
     expect(controls.redeemInvite).toHaveBeenCalledWith('redeemInvite', { token: TOKEN });
     expect(controls.saveActiveCommunityId).toHaveBeenCalledWith('person-1', 'workspace-1');
-    expect(controls.offerProductTour).toHaveBeenCalledWith('person-1');
     expect(controls.enterWorkspaceRoom).toHaveBeenCalledWith('workspace-1', 'general-1');
     expect(controls.runtimeConfig).not.toHaveBeenCalled();
     expect(controls.createBuzzClient).not.toHaveBeenCalled();

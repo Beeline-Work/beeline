@@ -31,7 +31,6 @@ const DRAWN: ReadonlyArray<{ chars: readonly string[]; glyph: string }> = [
  * on the page, not controls, so neither carries the defect this scan is for.
  */
 const PROSE = new Set([
-  'components/buzz/FaceCeremonyStep.tsx',
   'components/buzz/MonoHull.tsx',
   'components/DesktopRoomInspector.tsx',
   'app/(app)/beeline/onboarding.tsx',

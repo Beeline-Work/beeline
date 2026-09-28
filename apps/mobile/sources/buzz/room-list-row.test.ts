@@ -27,6 +27,8 @@ import type { CornerState } from '@beeline/api-contract/phone';
 import { cornerName } from './corners';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import {
+  cornerTipRoomId,
+  roomRowShowsCornerMark,
   displayCornerTitle,
   displayGroupedCornerTitle,
   displayRoomIndexTitle,
@@ -1085,5 +1087,26 @@ describe('fullCornerTitle', () => {
     expect(fullCornerTitle('alpha', 'sub-9f9f9f', 'abcdef0123')).toBe(
       displayCornerTitle('alpha', 'sub-9f9f9f', 'abcdef0123'),
     );
+  });
+});
+
+describe('the corner-mark tip row', () => {
+  const row = (id: string, cornerCount?: number, direct = false) =>
+    ({
+      room: { id, name: id, updatedAt: 1 },
+      ...(cornerCount === undefined ? {} : { cornerCount }),
+      ...(direct ? { directMessage: { peer: { pubkey: id, kind: 'human', name: id } } } : {}),
+    }) as unknown as ChatListItem;
+
+  it('keeps the mark to Rooms with a corner, exactly as before', () => {
+    expect(roomRowShowsCornerMark(row('a'))).toBe(false);
+    expect(roomRowShowsCornerMark(row('b', 0))).toBe(false);
+    expect(roomRowShowsCornerMark(row('c', 2))).toBe(true);
+    expect(roomRowShowsCornerMark(row('d', 2, true))).toBe(false);
+  });
+
+  it('points at the first row that shows the mark, and at nothing when none does', () => {
+    expect(cornerTipRoomId(roomListSections([row('a'), row('b', 1), row('c', 3)]))).toBe('b');
+    expect(cornerTipRoomId(roomListSections([row('a'), row('dm', 1, true)]))).toBeNull();
   });
 });

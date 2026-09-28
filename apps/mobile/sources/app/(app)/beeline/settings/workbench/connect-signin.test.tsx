@@ -17,7 +17,8 @@ const searchParams = vi.hoisted(() => ({
 }));
 const readInstallState = vi.hoisted(() => vi.fn(async () => null as null | {
   connected: boolean;
-  signIn?: { method: 'oauth'; url: string };
+  steps?: { label: string; status: string }[];
+  signIn?: { method: 'oauth' | 'streamed'; url: string } | null;
 }));
 const cancelGoogleSignIn = vi.hoisted(() => vi.fn(async () => true));
 
@@ -172,7 +173,10 @@ describe('ConnectorSignInScreen', () => {
         } as never),
       }),
     });
-    readInstallState.mockImplementation(async () => ({ connected: row.status === 'connected' }));
+    readInstallState.mockImplementation(async () => ({
+      connected: row.status === 'connected', steps: [],
+      signIn: row.signIn ? { method: searchParams.method as 'streamed', url: row.signIn.url } : null,
+    }));
     searchParams.method = 'streamed-page';
     searchParams.url = noVncUrl;
     let renderer: ReactTestRenderer | undefined;
@@ -370,6 +374,47 @@ describe('ConnectorSignInScreen', () => {
       params: { channelId: 'room-2' } });
     expect(storedReturn.size).toBe(0);
     await act(async () => renderer.unmount());
+  });
+
+  it('switches to a newer OAuth link while the overlay stays open', async () => {
+    readInstallState.mockResolvedValue({ connected: false, steps: [],
+      signIn: { method: 'oauth', url: 'https://login.tailscale.com/a/second' } });
+    vi.useFakeTimers();
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+      expect(renderer.root.findByProps({ testID: 'signin-card' })).toBeTruthy();
+      expect(renderer.root.findByProps({ testID: 'signin-header' }).props.meta)
+        .toBe('squire-box · login.tailscale.com');
+      await act(async () => renderer.root.findByProps({ testID: 'signin-open-external' }).props.onPress());
+      expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://login.tailscale.com/a/second');
+      await act(async () => renderer.unmount());
+    } finally { vi.useRealTimers(); }
+  });
+
+  it.each([
+    ['a failed attempt', {
+      connected: false, signIn: { method: 'oauth' as const, url: 'https://login.tailscale.com/old' },
+      steps: [{ label: 'Sign-in', status: 'failed' }],
+    }],
+    ['no sign-in page left', { connected: false, signIn: null, steps: [] }],
+  ])('returns to the connect screen for Retry after %s', async (_case, state) => {
+    readInstallState.mockResolvedValue(state);
+    vi.useFakeTimers();
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+      expect(router.back).toHaveBeenCalledTimes(1);
+      expect(router.replace).not.toHaveBeenCalled();
+      await act(async () => renderer.unmount());
+    } finally {
+      vi.useRealTimers();
+      readInstallState.mockReset();
+      vi.mocked(router.back).mockClear();
+    }
   });
 
   it('names the connector being authenticated', async () => {

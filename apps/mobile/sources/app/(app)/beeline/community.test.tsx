@@ -75,7 +75,7 @@ vi.mock('@/components/buzz/CommunityRail', async () => {
 });
 vi.mock('@/components/buzz/MonoHull', async () => {
   const ReactModule = await import('react');
-  return { BrassButton: (props: any) => ReactModule.createElement('BrassButton', props) };
+  return { OnboardingButton: (props: any) => ReactModule.createElement('OnboardingButton', props) };
 });
 vi.mock('@/components/buzz/SurfaceGlyphLoader', () => ({ SurfaceGlyphLoader: () => null }));
 vi.mock('@/components/buzz/ChevronGlyph', () => ({
@@ -129,6 +129,25 @@ describe('the create-or-join choice', () => {
     expect(
       renderer.root.findAll((node: any) => node.props?.accessibilityLabel === 'Back'),
     ).toHaveLength(0);
+  });
+
+  it('welcomes the person by name and says what each path does', async () => {
+    controls.workspaces.mockResolvedValue({ workspaces: [], viewer: { name: 'Ada' } });
+    const renderer = await render();
+    expect(find(renderer, 'choice-title')[0]!.props.children).toBe('Welcome, Ada');
+    const texts = renderer.root
+      .findAll((node: any) => node.type === 'Text')
+      .map((node: any) => node.props.children);
+    expect(texts).toEqual(
+      expect.arrayContaining([
+        'Start a Workspace, or join one you were invited to.',
+        'Create a Workspace',
+        'You land in #general. Invite people and agents from there.',
+        'Join with an invite link',
+        'Paste the link someone sent you.',
+      ]),
+    );
+    expect(texts).not.toContain('Welcome to Beeline');
   });
 
   it('opens the wizard for Create', async () => {

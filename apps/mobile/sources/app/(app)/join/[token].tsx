@@ -12,7 +12,6 @@ import { saveActiveCommunityId } from '@/buzz/community-storage';
 import { inviteSummary, inviterRoleLabel } from '@/buzz/invite-summary';
 import { enterWorkspaceRoom } from '@/buzz/enter-workspace';
 import { clearPendingInvite, savePendingInvite } from '@/buzz/pending-invite';
-import { offerProductTour } from '@/buzz/product-tour';
 import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { Typography } from '@/constants/Typography';
 import { BrassButton } from '@/components/buzz/MonoHull';
@@ -109,7 +108,6 @@ export default function CommunityInviteJoin() {
     try {
       const redemption = await monolithPhoneOperation('redeemInvite', { token });
       await saveActiveCommunityId(identity.publicKey, redemption.workspaceId);
-      if (redemption.joined) await offerProductTour(identity.publicKey);
       enterWorkspaceRoom(redemption.workspaceId, redemption.roomId);
     } catch (err) {
       joinInFlight.current = false;

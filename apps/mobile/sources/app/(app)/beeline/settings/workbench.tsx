@@ -290,11 +290,9 @@ export default function WorkbenchScreen() {
       {header}
       <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
         <View testID="workbench-connectors">
-          <TourTarget tip="workbench">
-            <Text style={styles.sectionLabel} testID="workbench-tools-head">
-              Tools
-            </Text>
-          </TourTarget>
+          <Text style={styles.sectionLabel} testID="workbench-tools-head">
+            Tools
+          </Text>
           {connectors.map((connector, index) => {
             const instrument = connectorInstrument(
               connector.available ? connector.status : 'soon',
@@ -348,9 +346,8 @@ export default function WorkbenchScreen() {
                 />
               );
             }
-            return (
+            const cell = (
               <ToolDetailsCell
-                key={connector.id}
                 action={canConnect ? 'Connect' : undefined}
                 actionTestID={`workbench-connector-${connector.id}-connect`}
                 detailText={connector.description}
@@ -367,6 +364,15 @@ export default function WorkbenchScreen() {
                 value={instrument.value}
                 valueTone={instrument.valueTone}
               />
+            );
+            // What Trusty Squire does is not visible until it is connected, so
+            // its row carries the one Workbench tip while it is not.
+            return connector.id === 'trusty-squire' && connector.status !== 'connected' ? (
+              <TourTarget key={connector.id} tip="squire">
+                {cell}
+              </TourTarget>
+            ) : (
+              <React.Fragment key={connector.id}>{cell}</React.Fragment>
             );
           })}
         </View>

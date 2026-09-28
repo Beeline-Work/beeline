@@ -2,12 +2,28 @@ import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:
 import type { SqlDatabase } from './database.js';
 import { notifyConnectorAssignment } from './postgres-live.js';
 import { completeGoogleAccountOffers, resetGoogleAccountOffers, type CompletedConnectorOffer } from './connector-offer-completion.js';
+import { defaultConnectorSteps } from './workbench.js';
 import { GOOGLE_TOOL_SCOPES } from '@beeline/api-contract/workbench';
 
 const SCOPES = [
   'openid', 'email',
   ...new Set(Object.values(GOOGLE_TOOL_SCOPES).flat()),
 ];
+
+/** Google's one definite refusal of a stored grant. Every other refresh
+ * failure is transient; `invalid` in this message is what makes the daemon
+ * route answer 400 (not retryable) instead of 503. */
+export const GOOGLE_GRANT_REVOKED = 'Google grant is invalid (invalid_grant); reconnect Google Workspace';
+
+/** Google answered the token endpoint with a refusal, not an outage. */
+class GoogleRefusal extends Error {}
+
+/** Google's status and body for the log. Only error bodies land here, never a
+ * token response. */
+async function googleAnswer(response: Response): Promise<string> {
+  const body = await response.text().catch(() => '');
+  return `HTTP ${response.status} ${body.slice(0, 500)}`;
+}
 
 type GoogleGrant = { accessToken: string; refreshToken: string; expiresAt: number; scopes: string[]; accountEmail?: string };
 type TokenResponse = { access_token?: string; refresh_token?: string; expires_in?: number; scope?: string };
@@ -313,10 +329,21 @@ export class GoogleOAuth {
       [connectorId]);
   }
 
+  /** End every sign-in page nobody finished within its 10 minutes, even when
+   * nobody reopens Workbench, so its tool offers Connect again instead of
+   * `installing` forever. */
+  async expireAttempts(database: SqlDatabase = this.database): Promise<number> {
+    const expired = await database.query<{ connector_id: string }>(
+      `DELETE FROM google_oauth_attempts WHERE expires_at<=now() RETURNING connector_id`);
+    for (const { connector_id } of expired.rows)
+      await this.fail(connector_id, 'Google sign-in expired; retry the connection', database);
+    return expired.rows.length;
+  }
+
   async complete(state: string, code: string): Promise<boolean> {
-    const claimed = await this.database.query<{ connector_id: string }>(
+    const claimed = await this.database.query<{ connector_id: string; expires_at: Date }>(
       `DELETE FROM google_oauth_attempts WHERE state=$1 AND expires_at>now()
-       RETURNING connector_id`,
+       RETURNING connector_id,expires_at`,
       [state],
     );
     const connectorId = claimed.rows[0]?.connector_id;
@@ -338,9 +365,12 @@ export class GoogleOAuth {
           redirect_uri: this.redirectUri, grant_type: 'authorization_code',
         }),
       });
-      if (!response.ok) throw new Error('Google refused the authorization code');
+      if (!response.ok)
+        throw new GoogleRefusal(`Google refused the authorization code: ${await googleAnswer(response)}`);
       const token = await response.json() as TokenResponse;
-      if (!token.access_token || !token.refresh_token) throw new Error('Google returned no renewable grant');
+      if (!token.access_token || !token.refresh_token)
+        throw new GoogleRefusal(`Google returned no renewable grant: HTTP ${response.status} ` +
+          `fields ${Object.keys(token).join(',')}`);
       const granted = new Set((token.scope ?? '').split(' '));
       const userInfo = await this.transport('https://www.googleapis.com/oauth2/v3/userinfo', {
         headers: { authorization: `Bearer ${token.access_token}` },
@@ -359,16 +389,41 @@ export class GoogleOAuth {
          DO UPDATE SET sealed_grant=EXCLUDED.sealed_grant,updated_at=now()`,
         [row.workspace_id, row.owner_identity_id, row.machine_id, this.seal(grant)],
       );
-      await this.database.query(
-        `UPDATE workspace_connectors SET sign_in=NULL,updated_at=now()
+      // One grant covers every Google tool on this machine: re-arm each tool
+      // still waiting or failed so its helper installs it on the new grant.
+      const rearmed = await this.database.query<{ id: string; helper_agent_id: string | null }>(
+        `UPDATE workspace_connectors SET status='installing',status_error=NULL,sign_in=NULL,
+           status_steps=CASE WHEN status='error' THEN $4::jsonb ELSE status_steps END,
+           pairing_generation=pairing_generation+1,updated_at=now()
          WHERE workspace_id=$1 AND owner_identity_id=$2 AND machine_id=$3
-           AND connector_type LIKE 'google-%' AND status='installing'`,
-        [row.workspace_id, row.owner_identity_id, row.machine_id],
+           AND connector_type LIKE 'google-%' AND status IN ('installing','error')
+         RETURNING id,helper_agent_id`,
+        [row.workspace_id, row.owner_identity_id, row.machine_id,
+          JSON.stringify(defaultConnectorSteps())],
       );
-      await notifyConnectorAssignment(this.database, row.helper_agent_id);
+      // Their own sign-in pages are superseded; the sweep must not fail them.
+      await this.database.query(`DELETE FROM google_oauth_attempts WHERE connector_id = ANY($1::uuid[])`,
+        [rearmed.rows.map((rearm) => rearm.id)]);
+      const helpers = new Set([row.helper_agent_id, ...rearmed.rows.map((rearm) => rearm.helper_agent_id)]);
+      for (const helper of helpers) if (helper) await notifyConnectorAssignment(this.database, helper);
       return true;
-    } catch {
-      await this.fail(connectorId, 'Google authorization failed; retry the connection');
+    } catch (error) {
+      console.error(`[google-oauth] callback failed for connector ${connectorId}:`,
+        error instanceof Error ? error.message : String(error));
+      if (error instanceof GoogleRefusal) {
+        await this.fail(connectorId, 'Google authorization failed; retry the connection');
+        return false;
+      }
+      // Not Google's refusal (unreachable, or our own write failed): restore
+      // the attempt so the same sign-in page can finish, and the expiry sweep
+      // still ends it if nobody does.
+      await this.database.query(
+        `INSERT INTO google_oauth_attempts(state,connector_id,expires_at)
+         SELECT $1,$2,$3 WHERE NOT EXISTS
+           (SELECT 1 FROM google_oauth_attempts WHERE connector_id=$2)`,
+        [state, connectorId, claimed.rows[0]!.expires_at],
+      ).catch((restore: unknown) => console.error('[google-oauth] attempt restore failed:',
+        restore instanceof Error ? restore.message : String(restore)));
       return false;
     }
   }
@@ -396,7 +451,13 @@ export class GoogleOAuth {
           refresh_token: grant.refreshToken, grant_type: 'refresh_token',
         }),
       });
-      if (!response.ok) throw new Error('Google refused to refresh the grant; reconnect Google Workspace');
+      if (!response.ok) {
+        const answer = await googleAnswer(response);
+        console.error(`[google-oauth] grant refresh failed for connector ${connectorId}: ${answer}`);
+        // Only a revoked or expired grant is terminal; anything else retries.
+        if (/"error"\s*:\s*"invalid_grant"/.test(answer)) throw new Error(GOOGLE_GRANT_REVOKED);
+        throw new Error(`Google could not refresh the grant (HTTP ${response.status}); retrying`);
+      }
       const token = await response.json() as TokenResponse;
       if (!token.access_token) throw new Error('Google returned no refreshed access token');
       grant = { ...grant, accessToken: token.access_token,

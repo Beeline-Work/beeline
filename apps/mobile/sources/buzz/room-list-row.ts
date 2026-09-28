@@ -29,6 +29,20 @@ export type RoomListSection = {
   data: ChatListItem[];
 };
 
+/** A Room row carries the corner mark only once the Room has an unarchived corner. */
+export function roomRowShowsCornerMark(
+  item: Pick<ChatListItem, 'directMessage' | 'cornerCount'>,
+): boolean {
+  return !item.directMessage && (item.cornerCount ?? 0) > 0;
+}
+
+/** The one row the corner-mark tip points at: the first in the list that shows the mark. */
+export function cornerTipRoomId(sections: readonly RoomListSection[]): string | null {
+  for (const section of sections)
+    for (const item of section.data) if (roomRowShowsCornerMark(item)) return item.room.id;
+  return null;
+}
+
 /** Rooms lead the index; direct messages follow in their own newest-first section. */
 export function roomListSections(chats: readonly ChatListItem[]): RoomListSection[] {
   const visibleChats = chats.filter((item) => !item.closed);

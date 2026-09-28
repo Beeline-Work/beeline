@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { roomStarterPrompts } from './starter-prompts';
+import { roomStarterIntro, roomStarterPrompts } from './starter-prompts';
 
 const MANAGER = { canManageWorkspace: true };
 
@@ -94,9 +94,22 @@ describe('the first Room starter prompts', () => {
     for (const roomAgent of [undefined, { pubkey: 'agent-1', handle: 'scout' }])
       expect(roomStarterPrompts({ ...MANAGER, roomAgent, workspaceAgentCount: 1 }).at(-1)).toEqual({
         lead: 'Invite someone',
-        detail: 'who should see the result',
+        detail: 'to this Workspace',
         testID: 'starter-invite',
         action: { kind: 'invite-person' },
       });
+  });
+
+  it('names the Workspace in the invite starter and leads an agentless Room with Connect', () => {
+    const prompts = roomStarterPrompts({
+      ...MANAGER,
+      workspaceAgentCount: 0,
+      workspaceName: 'Northstar Lab',
+    });
+    expect(prompts.map((prompt) => `${prompt.lead} ${prompt.detail}`)).toEqual([
+      'Connect an agent so this Room has someone to ask',
+      'Invite someone to Northstar Lab',
+    ]);
+    expect(roomStarterIntro(prompts)).toBe('Connect an agent, then ask it for something here.');
   });
 });

@@ -43,10 +43,14 @@ export function subscribeToOnboardingNotices(listener: OnboardingNoticeListener)
   return () => onboardingNoticeListeners.delete(listener);
 }
 
-/** The face ceremony: the sign-in's last step, once the identity exists. */
+/** The You step (name + face): the sign-in's last step, once the identity exists. */
 export interface OnboardingFaceStep {
   seed: string;
   face: string | null;
+  /** The name on record — GitHub's on a first sign-in — pre-filled and editable. */
+  name: string;
+  /** The GitHub login the name came from. */
+  handle?: string;
 }
 
 type OnboardingFaceStepListener = (step: OnboardingFaceStep | null) => void;

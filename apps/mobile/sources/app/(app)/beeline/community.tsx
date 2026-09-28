@@ -12,7 +12,7 @@ import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { Typography } from '@/constants/Typography';
-import { BrassButton } from '@/components/buzz/MonoHull';
+import { OnboardingButton } from '@/components/buzz/MonoHull';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { CHEVRON_BACK_SIZE, CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { RoomGlyph } from '@/components/buzz/RoomGlyph';
@@ -42,6 +42,7 @@ export default function WorkspaceChoice() {
     [workspaceList],
   );
   const hasWorkspaces = communities.length > 0;
+  const viewerName = workspaceList?.viewer.name?.trim() ?? '';
 
   useEffect(() => {
     let cancelled = false;
@@ -126,18 +127,16 @@ export default function WorkspaceChoice() {
               <ChevronGlyph color={theme.buzz.chrome} direction="left" size={CHEVRON_BACK_SIZE} />
             </TouchableOpacity>
           ) : null}
-          <Text style={styles.eyebrow}>Welcome to Beeline</Text>
-          <Text accessibilityRole="header" style={styles.title}>
-            Where are you headed?
+          <Text accessibilityRole="header" style={styles.title} testID="choice-title">
+            {viewerName ? `Welcome, ${viewerName}` : 'Welcome'}
           </Text>
           <Text style={styles.copy}>
-            Start a {WORKSPACE_LABEL.toLowerCase()} for your team, or use an invite you already
-            have.
+            {`Start a ${WORKSPACE_LABEL}, or join one you were invited to.`}
           </Text>
 
           <View style={styles.choices}>
             <ChoiceCard
-              description="Name it, invite your people, connect an agent."
+              description="You land in #general. Invite people and agents from there."
               glyph={<RoomGlyph color={theme.buzz.accent} size={20} />}
               onPress={() => router.push('/beeline/create-workspace' as Href)}
               testID="choice-create"
@@ -170,7 +169,7 @@ export default function WorkspaceChoice() {
                   testID="choice-join-input"
                   value={inviteInput}
                 />
-                <BrassButton
+                <OnboardingButton
                   disabled={!inviteInput.trim()}
                   label="Preview invite"
                   onPress={handleJoin}
@@ -271,16 +270,10 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       justifyContent: 'center',
     },
-    eyebrow: {
-      ...Typography.default(),
-      ...hull.type.sectionHead,
-      color: hull.accent,
-      marginBottom: hull.space.sm,
-    },
     title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
     copy: {
       ...Typography.default(),
-      ...hull.type.body,
+      ...hull.type.meta,
       color: hull.textSecondary,
       marginTop: hull.space.sm,
     },

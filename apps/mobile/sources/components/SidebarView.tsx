@@ -18,14 +18,13 @@ import {
   useRoomListFilter,
 } from '@/buzz/room-list-preferences';
 import { openRoomListCorner } from '@/buzz/room-list-new-corner';
-import { roomListSections, roomRowNeedsAttention } from '@/buzz/room-list-row';
+import { cornerTipRoomId, roomListSections, roomRowNeedsAttention } from '@/buzz/room-list-row';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
 import { ROOMS_LABEL, WORKSPACE_LABEL, WORKSPACES_LABEL } from '@/buzz/vocabulary';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
 import { ConversationRow } from '@/components/buzz/ConversationRow';
-import { MaybeTourTarget } from '@/components/buzz/tour/TourTarget';
 import { DesktopRoomCorners } from '@/components/buzz/DesktopRoomCorners';
 import { DesktopWorkspaceRail } from '@/components/buzz/DesktopWorkspaceRail';
 import { DesktopWorkspaceStrip } from '@/components/buzz/DesktopWorkspaceStrip';
@@ -335,6 +334,7 @@ export const SidebarView = React.memo(function SidebarView() {
     () => roomListSections(filteredChats),
     [filteredChats],
   );
+  const cornerTipRow = cornerTipRoomId(filteredChatSections);
   // A corner route expands its parent. Opening a Room itself leaves its corner
   // list collapsed; the row's corner glyph toggles that list.
   React.useEffect(() => {
@@ -654,35 +654,33 @@ export const SidebarView = React.memo(function SidebarView() {
             ) : (
               filteredChatSections.map((section) => (
                 <React.Fragment key={section.kind}>
-                  <MaybeTourTarget enabled={section.kind === 'rooms' && !viewerIsAgent} tip="rooms">
-                    <RoomListSectionHeader
-                      title={section.kind === 'rooms' ? ROOMS_LABEL : 'Direct messages'}
-                      count={section.kind === 'rooms' ? section.data.length : undefined}
-                      actionTestID={
-                        section.kind === 'rooms' ? 'desktop-new-room' : 'desktop-new-direct-message'
-                      }
-                      actionAccessibilityLabel={
-                        section.kind === 'rooms' ? 'Create a new Room' : 'Start a direct message'
-                      }
-                      onAction={
-                        !workspaceId || viewerIsAgent
+                  <RoomListSectionHeader
+                    title={section.kind === 'rooms' ? ROOMS_LABEL : 'Direct messages'}
+                    count={section.kind === 'rooms' ? section.data.length : undefined}
+                    actionTestID={
+                      section.kind === 'rooms' ? 'desktop-new-room' : 'desktop-new-direct-message'
+                    }
+                    actionAccessibilityLabel={
+                      section.kind === 'rooms' ? 'Create a new Room' : 'Start a direct message'
+                    }
+                    onAction={
+                      !workspaceId || viewerIsAgent
+                        ? undefined
+                        : section.kind === 'rooms' && !canCreateRoom
                           ? undefined
-                          : section.kind === 'rooms' && !canCreateRoom
-                            ? undefined
-                            : () =>
-                                router.push({
-                                  pathname: '/beeline/channels',
-                                  params:
-                                    section.kind === 'rooms'
-                                      ? { communityId: workspaceId, newRoom: String(Date.now()) }
-                                      : {
-                                          communityId: workspaceId,
-                                          newDirectMessage: String(Date.now()),
-                                        },
-                                } as Href)
-                      }
-                    />
-                  </MaybeTourTarget>
+                          : () =>
+                              router.push({
+                                pathname: '/beeline/channels',
+                                params:
+                                  section.kind === 'rooms'
+                                    ? { communityId: workspaceId, newRoom: String(Date.now()) }
+                                    : {
+                                        communityId: workspaceId,
+                                        newDirectMessage: String(Date.now()),
+                                      },
+                              } as Href)
+                    }
+                  />
                   {section.data.map((item) => {
                     const active = activeRoomId === item.room.id;
                     return (
@@ -708,6 +706,7 @@ export const SidebarView = React.memo(function SidebarView() {
                             viewerIsAgent ? undefined : () => void openNewCorner(item.room.id)
                           }
                           onPress={() => openRoom(item.room.id)}
+                          cornerTip={!viewerIsAgent && item.room.id === cornerTipRow}
                           testID={`desktop-room-${item.room.id}`}
                         />
                         {!item.directMessage &&

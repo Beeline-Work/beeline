@@ -1122,6 +1122,67 @@ describe('Room message variant components', () => {
     expect(onReply).not.toHaveBeenCalled();
   });
 
+  it('lets a message someone else wrote carry the swipe tip, posed half-open when it points there', () => {
+    const props = {
+      desktopLayout: false,
+      participantsHydrated: true,
+      viewerPubkey: 'viewer',
+      speakerWorking: false,
+      continued: false,
+      participantHandles: [],
+      channelIndex: { rooms: [], corners: [] },
+      deliveryFailed: false,
+      onChannelReference: vi.fn(),
+      onReply: vi.fn(),
+      onForwardToNewCorner: vi.fn(),
+      onCopy: vi.fn(),
+      onRetry: vi.fn(),
+      onDismiss: vi.fn(),
+    };
+    const theirs = render(<OrdinaryLedgerMessage {...props} message={message({ id: 'tip-row' })} />);
+    const target = theirs.root.find(
+      (node: any) => node.props?.tip === 'swipe' && typeof node.props.children === 'function',
+    );
+    // At rest the swipe is live.
+    expect(theirs.root.findAllByType('Swipeable')).toHaveLength(1);
+    const posed = render(<>{target.props.children(true)}</>);
+    expect(posed.root.findAllByType('Swipeable')).toHaveLength(0);
+    expect(posed.root.findAllByProps({ testID: 'swipe-tip-pose-tip-row' }).length).toBeGreaterThan(
+      0,
+    );
+    expect(
+      posed.root.findAllByProps({ testID: 'corner-swipe-action-tip-row' }).length,
+    ).toBeGreaterThan(0);
+
+    const mine = render(
+      <OrdinaryLedgerMessage {...props} message={message({ id: 'my-row', isUser: true })} />,
+    );
+    expect(mine.root.findAll((node: any) => node.props?.tip === 'swipe')).toHaveLength(0);
+  });
+
+  it('never marks a desktop row as the swipe tip target', () => {
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={message({ id: 'desk-row' })}
+        desktopLayout
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onForwardToNewCorner={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+    expect(renderer.root.findAll((node: any) => node.props?.tip === 'swipe')).toHaveLength(0);
+  });
+
   it('leaves swipe right inert where no new corner can open', () => {
     const renderer = render(
       <OrdinaryLedgerMessage

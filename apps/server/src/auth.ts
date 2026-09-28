@@ -85,8 +85,10 @@ export class TokenAuth {
       );
       const workspaceIds = await lockIdentityHandleWorkspaces(database, id);
       await reassignCollidingAgentHandles(database, id, github.login, workspaceIds);
+      // A name the person edited in Beeline survives later GitHub sign-ins;
+      // only an identity with no name yet takes the GitHub one.
       await database.query(
-        `UPDATE identities SET name=$2,
+        `UPDATE identities SET name=COALESCE(NULLIF(identities.name,''),$2),
            handle=$3,avatar=$4,github_subject=$5,updated_at=$6
          WHERE id=$1`,
         [id, github.name, github.login, github.avatar ?? null, github.subject, this.now()],

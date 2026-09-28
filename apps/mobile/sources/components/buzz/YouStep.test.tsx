@@ -30,7 +30,9 @@ vi.mock('react-native', async () => {
     },
     Easing: { out: (fn: unknown) => fn, cubic: 'cubic' },
     Pressable: host('Pressable'),
+    ScrollView: host('ScrollView'),
     Text: host('Text'),
+    TextInput: host('TextInput'),
     View: host('View'),
   };
 });
@@ -39,14 +41,16 @@ vi.mock('@/constants/Typography', () => ({
 }));
 vi.mock('./MonoHull', async () => {
   const ReactModule = await import('react');
-  return { MonoButton: (props: any) => ReactModule.createElement('MonoButton', props) };
+  return {
+    OnboardingButton: (props: any) => ReactModule.createElement('OnboardingButton', props),
+  };
 });
 vi.mock('./IdentityMark', async () => {
   const ReactModule = await import('react');
   return { IdentityMark: (props: any) => ReactModule.createElement('IdentityMark', props) };
 });
 
-import { FACE_CEREMONY_CROSSFADE_MS, FaceCeremonyStep } from './FaceCeremonyStep';
+import { FACE_CEREMONY_CROSSFADE_MS, YouStep } from './YouStep';
 
 const theme = beelineThemes.obsidian;
 const SEED = 'f'.repeat(64);
@@ -77,13 +81,20 @@ function flat(style: unknown): Record<string, unknown> {
     {},
   );
 }
-async function render(props: Partial<React.ComponentProps<typeof FaceCeremonyStep>> = {}) {
+async function render(props: Partial<React.ComponentProps<typeof YouStep>> = {}) {
   const onConfirm = vi.fn(async () => undefined);
   const onEntered = vi.fn();
   let tree!: ReactTestRenderer;
   await act(async () => {
     tree = create(
-      React.createElement(FaceCeremonyStep, { seed: SEED, onConfirm, onEntered, ...props }),
+      React.createElement(YouStep, {
+        seed: SEED,
+        name: 'Octo Cat',
+        handle: 'octocat',
+        onConfirm,
+        onEntered,
+        ...props,
+      }),
     );
   });
   return { tree, onConfirm, onEntered };
@@ -94,17 +105,19 @@ async function press(node: any) {
   });
 }
 
-describe('FaceCeremonyStep', () => {
-  it('shows "Choose your face." with the brass full stop, the subtitle, and twelve tiles', async () => {
+describe('YouStep', () => {
+  it('asks for name and face on one screen, the name pre-filled from GitHub', async () => {
     const { tree } = await render();
-    const title = host(tree, 'onboarding-face-title');
-    expect(title.props.children[0]).toBe('Choose your face');
-    const period = title.props.children[1];
-    expect(period.props.children).toBe('.');
-    expect(flat(period.props.style).color).toBe(theme.accent);
-    expect(host(tree, 'onboarding-face-subtitle').props.children).toBe(
-      'Animals only. You can change it anytime.',
+    expect(host(tree, 'onboarding-you-title').props.children).toBe('You, in every Workspace');
+    expect(host(tree, 'onboarding-you-meta').props.children).toBe(
+      'People and agents see this name and face. Change either in Settings.',
     );
+    expect(host(tree, 'onboarding-you-name').props.value).toBe('Octo Cat');
+    expect(host(tree, 'onboarding-you-source').props.children).toBe('From GitHub · @octocat');
+    const labels = tree.root
+      .findAll((node: any) => node.type === 'Text')
+      .map((node: any) => node.props.children);
+    expect(labels).toEqual(expect.arrayContaining(['Name', 'Face']));
     for (const face of FACE_IDS) host(tree, `onboarding-face-${face}`);
     const tileIDs = new Set(FACE_IDS.map((face) => `onboarding-face-${face}`));
     const tiles = tree.root.findAll(
@@ -117,6 +130,28 @@ describe('FaceCeremonyStep', () => {
     for (const tile of tiles) {
       expect(tile.children[0].props).toMatchObject({ kind: 'human', seed: SEED });
     }
+    expect(host(tree, 'onboarding-face-confirm').props.label).toBe('Continue');
+  });
+
+  it('saves the edited name and the face the person picked, not the default', async () => {
+    animations.timings.length = 0;
+    const { tree, onConfirm, onEntered } = await render();
+    await act(async () => {
+      host(tree, 'onboarding-you-name').props.onChangeText('Ada');
+    });
+    const other = FACE_IDS.find((face) => face !== defaultFaceForSeed(SEED))!;
+    await press(host(tree, `onboarding-face-${other}`));
+    await press(host(tree, 'onboarding-face-confirm'));
+    expect(onConfirm).toHaveBeenCalledWith({ name: 'Ada', face: other });
+    expect(onEntered).toHaveBeenCalledTimes(1);
+  });
+
+  it('gates Continue on a name', async () => {
+    const { tree } = await render();
+    await act(async () => {
+      host(tree, 'onboarding-you-name').props.onChangeText('   ');
+    });
+    expect(host(tree, 'onboarding-face-confirm').props.disabled).toBe(true);
   });
 
   it('pre-selects the seed default so one tap also works', async () => {
@@ -159,7 +194,7 @@ describe('FaceCeremonyStep', () => {
     expect(host(tree, 'onboarding-face-confirm').props.disabled).toBe(true);
     await press(host(tree, 'onboarding-face-bat'));
     expect(host(tree, 'onboarding-face-confirm').props.disabled).toBe(false);
-    expect(host(tree, 'onboarding-face-confirm').props.label).toBe('Enter Beeline');
+    expect(host(tree, 'onboarding-face-confirm').props.label).toBe('Continue');
   });
 
   it('persists the choice, then crossfades once over 240ms into the app', async () => {
@@ -167,7 +202,7 @@ describe('FaceCeremonyStep', () => {
     const { tree, onConfirm, onEntered } = await render();
     await press(host(tree, 'onboarding-face-heron'));
     await press(host(tree, 'onboarding-face-confirm'));
-    expect(onConfirm).toHaveBeenCalledWith('heron');
+    expect(onConfirm).toHaveBeenCalledWith({ name: 'Octo Cat', face: 'heron' });
     expect(animations.timings).toEqual([{ duration: FACE_CEREMONY_CROSSFADE_MS }]);
     expect(FACE_CEREMONY_CROSSFADE_MS).toBe(240);
     expect(onEntered).toHaveBeenCalledTimes(1);
@@ -180,7 +215,7 @@ describe('FaceCeremonyStep', () => {
   it('keeps the person here with an inline, retryable error when saving fails', async () => {
     animations.timings.length = 0;
     const onConfirm = vi
-      .fn<(face: string) => Promise<void>>()
+      .fn<(choice: { name: string; face: string }) => Promise<void>>()
       .mockRejectedValueOnce(new Error('offline'))
       .mockResolvedValueOnce(undefined);
     const { tree, onEntered } = await render({ onConfirm });

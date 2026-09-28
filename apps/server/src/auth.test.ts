@@ -134,6 +134,26 @@ describe('opaque token ceremony', () => {
       ).rows,
     ).toEqual([{ workspace_id: tubingCrew, identity_id: captain, role: 'owner' }]);
   });
+  it('keeps a name the person edited across later GitHub sign-ins', async () => {
+    let githubName = 'Octo Cat';
+    const auth = new TokenAuth(db, async () => ({
+      subject: 'renamer',
+      login: 'octocat',
+      name: githubName,
+    }));
+    const first = await auth.exchangeGitHubOidc('proof');
+    const nameOf = async () =>
+      (
+        await db.query<{ name: string }>(`SELECT name FROM identities WHERE id=$1`, [
+          first.identityId,
+        ])
+      ).rows[0]?.name;
+    expect(await nameOf()).toBe('Octo Cat');
+    await db.query(`UPDATE identities SET name='Ada' WHERE id=$1`, [first.identityId]);
+    githubName = 'Octo Cat Renamed';
+    await auth.exchangeGitHubOidc('proof-again');
+    expect(await nameOf()).toBe('Ada');
+  });
   it('creates no Workspace or membership for a brand-new identity', async () => {
     const auth = new TokenAuth(db, async () => ({
       subject: 'first-sign-in',

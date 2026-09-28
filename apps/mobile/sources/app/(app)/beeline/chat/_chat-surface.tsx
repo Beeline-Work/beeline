@@ -89,7 +89,7 @@ import { dismissPresentedNotificationsForChannel } from '@/push/presented-notifi
 import { afterInteractions } from '@/buzz/defer-interaction';
 import { scheduleAnimationFrame } from '@/buzz/host-scheduler';
 import { planComposerFill, type ComposerMention } from '@/buzz/composer-fill';
-import { roomStarterPrompts } from '@/buzz/starter-prompts';
+import { roomStarterIntro, roomStarterPrompts } from '@/buzz/starter-prompts';
 import { agentPairingCommand } from '@/buzz/agent-pairing-command';
 import { buildTurnActivity } from '@/buzz/activity-timeline';
 import { cornerObjectiveItems } from '@/buzz/corner-context';
@@ -354,7 +354,6 @@ import { CornerGlyph } from '@/components/buzz/CornerGlyph';
 import { OverflowGlyph } from '@/components/buzz/OverflowGlyph';
 import { RoomReviewerActions } from '@/components/buzz/RoomReviewerActions';
 import { EmptyLedgerState, type EmptyLedgerVariant } from '@/components/buzz/EmptyLedgerState';
-import { ProductTourRoomCue } from '@/components/buzz/tour/TourTarget';
 import { HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
 import { ChannelHeaderTitle } from '@/components/buzz/ChannelHeaderTitle';
 import { HullDialog, HullDialogInput } from '@/components/buzz/HullDialog';
@@ -2035,14 +2034,27 @@ export function BuzzChatSurface({
   const copyPairCommand = useCallback(async (command: string) => {
     await Clipboard.setStringAsync(command);
   }, []);
-  const starterPrompts = useMemo(() => {
+  const starterPromptDefs = useMemo(() => {
     if (emptyLedgerVariant !== 'room' || viewerIsAgent || !roomSurface?.viewer.permissions.send)
       return undefined;
     return roomStarterPrompts({
       roomAgent: firstRoomAgent,
       workspaceAgentCount: workspaceRoster ? workspaceRoster.agents.length : null,
       canManageWorkspace,
-    }).map((prompt) => ({
+      workspaceName: workspaceRoster?.workspace.name,
+    });
+  }, [
+    canManageWorkspace,
+    emptyLedgerVariant,
+    firstRoomAgent,
+    roomSurface?.viewer.permissions.send,
+    viewerIsAgent,
+    workspaceRoster,
+  ]);
+  const starterIntro = starterPromptDefs ? roomStarterIntro(starterPromptDefs) : undefined;
+  const starterPrompts = useMemo(() => {
+    if (!starterPromptDefs) return undefined;
+    return starterPromptDefs.map((prompt) => ({
       lead: prompt.lead,
       detail: prompt.detail,
       testID: prompt.testID,
@@ -2067,17 +2079,7 @@ export function BuzzChatSurface({
           } as never);
       },
     }));
-  }, [
-    activeCommunityId,
-    canManageWorkspace,
-    connectAgent,
-    emptyLedgerVariant,
-    fillComposer,
-    firstRoomAgent,
-    roomSurface?.viewer.permissions.send,
-    viewerIsAgent,
-    workspaceRoster,
-  ]);
+  }, [activeCommunityId, connectAgent, fillComposer, starterPromptDefs]);
   // The transcript is the composer's "outside": a tap on it puts the keyboard
   // away, the same as a drag (keyboardDismissMode on the list below). Kept
   // dependency-free so it never re-creates renderItem — see the memo note on
@@ -5473,9 +5475,6 @@ export function BuzzChatSurface({
       viewerAvatarUrl={personProfileByPubkey.get(userPubkey)?.avatar}
     >
       <View style={styles.desktopConversationFrame}>
-        <ProductTourRoomCue
-          ready={Boolean(roomSurface) && !isCorner && !isDirectMessage && !viewerIsAgent}
-        />
         <View style={styles.container}>
           {/* Header. No surface of its own — the chrome sits on the same
             obsidian as the transcript, parted only by a hairline. */}
@@ -5724,10 +5723,11 @@ export function BuzzChatSurface({
                   <View style={styles.emptyState}>
                     <EmptyLedgerState
                       variant={emptyLedgerVariant}
-                      name={isDirectMessage ? displayRoomName : undefined}
+                      name={isDirectMessage ? displayRoomName : isCorner ? undefined : roomName}
                       objective={isCorner ? cornerObjectiveText : undefined}
                       onPress={focusComposer}
                       starterPrompts={starterPrompts}
+                      starterIntro={starterIntro}
                     />
                   </View>
                 ) : (
@@ -5895,10 +5895,11 @@ export function BuzzChatSurface({
               <View style={styles.emptyState}>
                 <EmptyLedgerState
                   variant={emptyLedgerVariant}
-                  name={isDirectMessage ? displayRoomName : undefined}
+                  name={isDirectMessage ? displayRoomName : isCorner ? undefined : roomName}
                   objective={isCorner ? cornerObjectiveText : undefined}
                   onPress={focusComposer}
                   starterPrompts={starterPrompts}
+                  starterIntro={starterIntro}
                 />
               </View>
             }

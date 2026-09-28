@@ -6319,6 +6319,8 @@ export class DaemonService {
     roomId: string,
     agentId: string,
   ): Promise<{ cornerReviewer: boolean; isCorner: boolean }> {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(roomId))
+      throw new Error('daemon room access denied');
     const result = await this.database.query<{ corner_reviewer: boolean; is_corner: boolean }>(
       `SELECT EXISTS(
          SELECT 1 FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id

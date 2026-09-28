@@ -34,4 +34,14 @@ describe('daemon room access', () => {
     expect(query.mock.calls.filter(([sql]) => sql.includes('FROM memberships WHERE room_id=$1')))
       .toHaveLength(1);
   });
+  it('denies a malformed Room id before the UUID access query', async () => {
+    const query = vi.fn(async () => {
+      throw Object.assign(new Error('invalid input syntax for type uuid'), { code: '22P02' });
+    });
+    const daemon = new DaemonService({ query } as unknown as SqlDatabase, new LiveHub());
+
+    await expect(daemon.execute('getCornerRestoreState', { cornerId: 'not-a-uuid' }, AGENT))
+      .rejects.toThrow('daemon room access denied');
+    expect(query).not.toHaveBeenCalled();
+  });
 });

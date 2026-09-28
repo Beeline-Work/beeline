@@ -127,6 +127,7 @@ describe('pool checkout telemetry', () => {
     const checkout = new Promise<typeof client>((resolve) => { grant = resolve; });
     const pool = {
       connect: vi.fn().mockReturnValueOnce(checkout).mockResolvedValue(client),
+      waitingCount: 1,
       on: vi.fn(), end: vi.fn(),
     } as unknown as Pool;
     const database = new PostgresDatabase('', 1, { pool });
@@ -138,6 +139,10 @@ describe('pool checkout telemetry', () => {
     expect(afterFirst.checkouts).toBe(1);
     expect(afterFirst.waitMs).toBeGreaterThanOrEqual(15);
     expect(afterFirst.waitBuckets.reduce((sum, count) => sum + count, 0)).toBe(1);
+    expect(database.queryWindow()).toMatchObject({
+      queryCount: 1, checkoutCount: 1, waiterP95: 1,
+    });
+    expect(database.queryWindow().waitP95Ms).toBeGreaterThanOrEqual(15);
     expect(client.release).toHaveBeenCalledOnce();
 
     client.query.mockRejectedValueOnce(Object.assign(new Error('statement timeout'), { code: '57014' }));

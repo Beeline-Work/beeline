@@ -1012,6 +1012,7 @@ export function useRoomSurfaceSession({
               return view;
             } catch (error) {
               logLiveTrace('room-read-error', traces);
+              markRoomOpen('room-read-error');
               turnDeltasDuringRead = undefined;
               throw error;
             }

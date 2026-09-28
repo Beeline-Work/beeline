@@ -419,7 +419,8 @@ describe('using-beeline "Tools and the Workbench" section', () => {
     expect(markdown).toContain(
       'Then call offer_connector with the connectorType and one short reason',
     );
-    expect(markdown).toContain('Only that person or a Workspace admin can accept it');
+    expect(markdown).toContain('For Google, only your human owner can accept and sign in');
+    expect(markdown).toContain('Offer Google only when answering your owner');
     expect(markdown).toContain('Your turn pauses on the card');
     expect(markdown).not.toContain('Settings → Workbench → Tools');
     expect(markdown).not.toContain('tell the person exactly where to go');

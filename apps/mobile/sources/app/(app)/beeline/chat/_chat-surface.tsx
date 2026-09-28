@@ -2638,11 +2638,12 @@ export function BuzzChatSurface({
     },
     [loadOlderTranscriptMessages, observeTailPinned],
   );
-  // Pinned? Native offset 0 is the visual bottom of the inverted list. The
-  // throttled `onScroll` is not the last word: iOS drops ticks inside the
-  // throttle window and sends the resting offset only with drag-end and
-  // momentum-end, so a scroll that settles on the newest row inside that
-  // window left the jump chevron and its badge up over the tail.
+  // Pinned? Native offset 0 is the visual bottom of the inverted list. iOS
+  // drops `onScroll` ticks inside the throttle window and never sends the
+  // resting offset as one; only momentum-end (or drag-end with no momentum)
+  // carries it. With a 100 ms window, a scroll that settled on the newest row
+  // left both this reading and the list's viewability report short of the
+  // tail, so the jump chevron and its badge stayed up over the newest row.
   const observePhoneTailOffset = useCallback(
     (offsetY: number) => {
       isPinnedToTailRef.current = offsetY <= TAIL_PIN_THRESHOLD;
@@ -5754,7 +5755,10 @@ export function BuzzChatSurface({
             onScroll={(event) => {
               observePhoneTailOffset(event.nativeEvent.contentOffset.y);
             }}
-            scrollEventThrottle={100}
+            // One frame, the list's own default. A wider window leaves the
+            // viewability report (which settles the badge and the unread
+            // line) on an offset the list has already scrolled past.
+            scrollEventThrottle={16}
             onViewableItemsChanged={observeVisibleTranscriptMessages}
             onScrollBeginDrag={() => {
               dragEndSequenceRef.current += 1;
@@ -5762,7 +5766,6 @@ export function BuzzChatSurface({
               allowOlderHistoryRef.current = true;
             }}
             onScrollEndDrag={(event) => {
-              observePhoneTailOffset(event.nativeEvent.contentOffset.y);
               // Drag-end precedes momentum-begin. Missing optional velocity is
               // not proof that the gesture stopped: keep the guard armed for
               // the event turn, so momentum-begin can claim it before a
@@ -5772,7 +5775,12 @@ export function BuzzChatSurface({
               if (velocity !== undefined) {
                 const hasMomentum = Math.abs(velocity) > 0.01;
                 userDraggingRef.current = hasMomentum;
-                if (!hasMomentum) resumePendingNewMessageLanding();
+                if (!hasMomentum) {
+                  // No momentum follows, so this is where the list rests. With
+                  // momentum it is an in-flight offset; momentum-end rests it.
+                  observePhoneTailOffset(event.nativeEvent.contentOffset.y);
+                  resumePendingNewMessageLanding();
+                }
                 return;
               }
               userDraggingRef.current = true;

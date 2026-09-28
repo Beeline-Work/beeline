@@ -1,5 +1,6 @@
 import type { CornerBrief, DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
+import { boundRoomTaskBody, budgetTranscript } from './transcript-budget.js';
 
 /**
  * The ONE place Beeline prompt text is written and assembled.
@@ -597,6 +598,8 @@ export function roomMentionDirectory(roster: WorkspaceRoster, selfId: string): s
 
 export interface TurnPromptContext {
   readonly surface: PromptSurface;
+  /** Actual selected model window when known; conservative default otherwise. */
+  readonly modelContextTokens?: number;
   /** `AssembledSessionPrompt.turnPrefix`. */
   readonly sessionPrefix?: string;
   readonly standingPreference?: { readonly requesterName: string; readonly text: string };
@@ -793,7 +796,32 @@ export function assembleTurnPrompt(context: TurnPromptContext): {
   readonly text: string;
   readonly report: readonly SectionReport[];
 } {
-  const entries = applicable(TURN_SECTIONS, context);
+  const boundedContext = ROOMS.includes(context.surface)
+    ? {
+        ...context,
+        task: {
+          ...context.task,
+          body: boundRoomTaskBody(context.task.body, context.modelContextTokens),
+        },
+      }
+    : context;
+  const withoutTranscript = applicable(TURN_SECTIONS, {
+    ...boundedContext,
+    transcript: undefined,
+  });
+  const otherBytes = withoutTranscript.reduce(
+    (sum, entry) => sum + Buffer.byteLength(entry.text) + 2,
+    0,
+  );
+  const lines = budgetTranscript(
+    boundedContext.transcript?.lines ?? [],
+    boundedContext.modelContextTokens,
+    otherBytes,
+  );
+  const entries = applicable(TURN_SECTIONS, {
+    ...boundedContext,
+    transcript: boundedContext.transcript ? { ...boundedContext.transcript, lines } : undefined,
+  });
   return {
     text: entries.map((entry) => entry.text).join('\n\n'),
     report: entries.map(({ section, text }) => ({

@@ -795,6 +795,11 @@ export class DaemonService {
           input as Input<'getRoomConversation'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'getRoomMessage':
+        return (await this.roomMessage(
+          input as Input<'getRoomMessage'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
       case 'getCornerAsk':
         return (await this.getCornerAsk(
           input as Input<'getCornerAsk'>,
@@ -2376,6 +2381,34 @@ export class DaemonService {
       ...(cursor ? { cursor } : {}),
       ...(savedNarration ? { savedNarration } : {}),
       ...(closeRequested !== undefined ? { closeRequested } : {}),
+    };
+  }
+
+  private async roomMessage(input: Input<'getRoomMessage'>, agentId: string) {
+    await this.access(input.roomId, agentId);
+    if (!input.messageId || input.messageId.length > 128) throw new Error('invalid message id');
+    const offset = input.offset ?? 0;
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000_000)
+      throw new Error('invalid message offset');
+    const row = (
+      await this.database.query<{ body: string; total: number; attachments: DaemonAttachment[] }>(
+        `SELECT substring(text FROM $3::integer + 1 FOR 4000) body,
+                char_length(text) total, attachments
+         FROM messages WHERE room_id=$1 AND id=$2 AND presentation='message'`,
+        [input.roomId, input.messageId, offset],
+      )
+    ).rows[0];
+    if (!row) throw new Error('message not found in this Room');
+    if (offset > row.total) throw new Error('offset exceeds message body');
+    const nextOffset = offset + [...row.body].length;
+    return {
+      messageId: input.messageId,
+      body: row.body,
+      attachments: markExpiredAttachments(
+        row.attachments ?? [],
+        await this.expiredMediaIds(row.attachments ?? []),
+      ),
+      ...(nextOffset < row.total ? { nextOffset } : {}),
     };
   }
 
@@ -6519,6 +6552,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getWorkspaceRoster: true,
   getRoomInbox: true,
   getRoomConversation: true,
+  getRoomMessage: true,
   getCornerAsk: true,
   getRoomAuthority: true,
   getPermissionAuthority: true,

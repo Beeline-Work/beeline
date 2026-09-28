@@ -36,6 +36,7 @@ import {
   compareVersions,
   parseUpdateManifest,
 } from './self-update-manifest.js';
+import { forceInstallMinimum, versionAtLeast } from './managed-update.js';
 
 const tempDirs: string[] = [];
 async function tempDir(prefix: string): Promise<string> {
@@ -327,6 +328,26 @@ describe('self-update end to end against a local fixture manifest', () => {
     await writeFile(join(binDir, 'beeline'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
     return { root, layout: beelineInstallLayout({ BEELINE_LIB_DIR: libDir })! };
   }
+
+  it('installs a published server minimum under the shared lock while a turn may be active', async () => {
+    const { layout } = await makeLegacyInstall('a'.repeat(40), 'v0.0.68');
+    const target = await buildFixtureBundle('b'.repeat(40), 'v0.0.69');
+    const manifestUrl = serveManifest(target);
+    const releaseId = await forceInstallMinimum({
+      layout,
+      minVersion: 'v0.0.69',
+      env: { BEELINE_LIB_DIR: layout.libDir, BEELINE_UPDATE_MANIFEST_URL: manifestUrl,
+        BEELINE_SYSTEMD_USER: '0' },
+      requiredProbeIds: ['agent-b', 'agent-a'],
+    });
+    expect(await activeReleaseId(layout)).toBe(releaseId);
+    expect((await readInstalledBundleIdentity(layout))?.version).toBe('v0.0.69');
+    expect(await readUpdateAttempt(layout)).toMatchObject({
+      releaseId, forcedMinimum: 'v0.0.69', requiredProbeIds: ['agent-a', 'agent-b'],
+    });
+    expect(versionAtLeast('v0.0.69', 'v0.0.69')).toBe(true);
+    expect(versionAtLeast('v0.0.9', 'v0.0.10')).toBe(false);
+  });
 
   it('detects, downloads, verifies, and swaps atomically once work is idle', async () => {
     const v2 = await buildFixtureBundle('c2newer', '1.1.0');

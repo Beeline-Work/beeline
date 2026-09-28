@@ -193,6 +193,7 @@ export class DaemonApiClient {
   private cornerRestartListener?: (roomId: string) => void;
   private helperReleaseListener?: (release: { version: string; sha: string }) => void;
   private forceUpdateListener?: (minVersion: string) => void;
+  private forceUpdatePending = false;
   private helperIdentity: { releaseVersion: string; sourceSha?: string } = {
     releaseVersion: 'v0.0.0',
   };
@@ -244,6 +245,15 @@ export class DaemonApiClient {
   /** A new server can wake discovery after its DB listener recovers. */
   supportsDiscoveryWake(): boolean {
     return this.discoveryWakeSupported;
+  }
+
+  private requestForceUpdate(minVersion: string): void {
+    if (this.forceUpdatePending) return;
+    this.forceUpdatePending = true;
+    clearTimeout(this.liveReconnect);
+    this.liveReconnect = undefined;
+    this.forceUpdateListener?.(minVersion);
+    this.liveSocket?.close();
   }
 
   /** Add one Room to this agent's shared live socket. */
@@ -396,7 +406,7 @@ export class DaemonApiClient {
       if (!response.ok) {
         const error = await responseError(response);
         if (error.status === 426 && error.code === 'update_required' && error.minVersion)
-          this.forceUpdateListener?.(error.minVersion);
+          this.requestForceUpdate(error.minVersion);
         throw error;
       }
       output = (await response.json()) as Output<Name>;
@@ -426,7 +436,7 @@ export class DaemonApiClient {
   }
 
   private ensureLiveSocket(): void {
-    if (this.liveSocket || (!this.liveRooms.size && !this.roomsChangedListener)) return;
+    if (this.forceUpdatePending || this.liveSocket || (!this.liveRooms.size && !this.roomsChangedListener)) return;
     const liveUrl = new URL('/v1/phone/live', this.baseUrl);
     liveUrl.protocol = liveUrl.protocol === 'https:' ? 'wss:' : 'ws:';
     liveUrl.searchParams.set('helperVersion', this.helperIdentity.releaseVersion);
@@ -435,6 +445,28 @@ export class DaemonApiClient {
       `bearer.${this.daemonToken}`,
     ]);
     this.liveSocket = socket;
+    socket.on?.('unexpected-response', (_request, response) => {
+      if (response.statusCode !== 426) return;
+      // A daemon opening after the minimum was raised is refused before any
+      // WebSocket frame can arrive. Suppress reconnect while its short JSON
+      // body supplies the same force-update signal as a live push.
+      this.forceUpdatePending = true;
+      clearTimeout(this.liveReconnect);
+      this.liveReconnect = undefined;
+      let body = '';
+      response.on('data', (chunk: Buffer) => {
+        if (body.length < 1024) body += chunk.toString('utf8').slice(0, 1024 - body.length);
+      });
+      response.on('end', () => {
+        try {
+          const refusal = JSON.parse(body) as { error?: unknown; minVersion?: unknown };
+          if (refusal.error === 'update_required' && typeof refusal.minVersion === 'string')
+            this.forceUpdateListener?.(refusal.minVersion);
+        } catch {
+          // A malformed refusal cannot authorize an install.
+        }
+      });
+    });
     socket.onopen = () => {
       this.liveOpenedAt = Date.now();
       this.discoveryWakeSupported = false;
@@ -457,7 +489,7 @@ export class DaemonApiClient {
       if (!value || typeof value !== 'object') return;
       const event = value as Record<string, unknown>;
       if (event.type === 'force-update' && typeof event.minVersion === 'string') {
-        this.forceUpdateListener?.(event.minVersion);
+        this.requestForceUpdate(event.minVersion);
         return;
       }
       if (event.type === 'hello' && event.protocolMin === 1 && event.protocolMax === 1) {
@@ -559,6 +591,7 @@ export class DaemonApiClient {
       this.liveSocket = undefined;
       this.discoveryWakeSupported = false;
       for (const room of this.liveRooms.values()) room.onState?.(false);
+      if (this.forceUpdatePending) return;
       if (!this.liveRooms.size && !this.roomsChangedListener) return;
       const delay = this.liveReconnectDelayMs;
       this.liveReconnectDelayMs = Date.now() - this.liveOpenedAt >= STABLE_SOCKET_MS

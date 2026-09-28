@@ -23,6 +23,7 @@ import { convergeTrustySquireBrokerService } from './systemd.js';
 import type { UpdateFunctionalProbeResult } from './update-functional-probe.js';
 import { UpdateFunctionalProbeError } from './update-functional-probe.js';
 import { queueUpdateRollbackAlert } from './update-rollback-alert.js';
+import { withAdapterInstallLock } from './adapter-install-lock.js';
 
 export const UPDATE_CONVERGENCE_SLO_MS = 10 * 60_000;
 export const DEFAULT_UPDATE_INTERVAL_MS = 30_000;
@@ -88,6 +89,75 @@ export async function withInstallLock<T>(
   } finally {
     await rm(lock, { recursive: true, force: true });
   }
+}
+
+/** A server minimum is a push, so its release install never waits for idle ticks. */
+export async function forceInstallMinimum(input: {
+  layout: BeelineInstallLayout;
+  minVersion: string;
+  env?: NodeJS.ProcessEnv;
+  fetchImpl?: typeof fetch;
+  requiredProbeIds?: string[];
+}): Promise<string> {
+  const env = input.env ?? process.env;
+  return withInstallLock(input.layout, async () => {
+    const active = await activeReleaseId(input.layout);
+    const installed = await readInstalledBundleIdentity(input.layout);
+    if (installed?.version && versionAtLeast(installed.version, input.minVersion) && active)
+      return active;
+    const manager = new SelfUpdateManager({
+      layout: input.layout,
+      env,
+      isIdle: () => true,
+      stageOnly: true,
+      ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
+    });
+    await manager.checkAndApply({ force: true });
+    const state = await readUpdateState(input.layout);
+    const staged = state.stagedReleaseId;
+    if (!staged) throw new Error(`published helper release is below required ${input.minVersion}`);
+    const target = await readInstalledBundleIdentity({
+      ...input.layout,
+      libDir: resolve(input.layout.releasesRoot, staged),
+    });
+    if (!target?.version || !versionAtLeast(target.version, input.minVersion))
+      throw new Error(`published helper ${target?.version ?? 'unknown'} is below required ${input.minVersion}`);
+    return withAdapterInstallLock(async () => {
+      const { previousReleaseId } = await activateRelease(input.layout, staged);
+      const now = Date.now();
+      await writeUpdateAttempt(input.layout, {
+        version: 1,
+        from: installed ?? {},
+        to: target,
+        releaseId: staged,
+        previousReleaseId,
+        appliedAt: now,
+        confirmBy: now + UPDATE_CONVERGENCE_SLO_MS,
+        status: 'pending',
+        forcedMinimum: input.minVersion,
+        ...(input.requiredProbeIds?.length
+          ? { requiredProbeIds: [...new Set(input.requiredProbeIds)].sort(), confirmedProbeIds: [] }
+          : {}),
+      });
+      const { stagedReleaseId: _stagedReleaseId, ...withoutStagedRelease } = state;
+      await writeUpdateState(input.layout, withoutStagedRelease);
+      return staged;
+    }, env);
+  }, { waitMs: UPDATE_CONVERGENCE_SLO_MS });
+}
+
+export function versionAtLeast(actual: string, minimum: string): boolean {
+  const parse = (value: string): number[] | undefined => {
+    const parts = /^v(\d+)\.(\d+)\.(\d+)$/.exec(value)?.slice(1).map(Number);
+    return parts?.every(Number.isSafeInteger) ? parts : undefined;
+  };
+  const left = parse(actual);
+  const right = parse(minimum);
+  if (!left || !right) return false;
+  for (let index = 0; index < 3; index++) {
+    if (left[index]! !== right[index]!) return left[index]! > right[index]!;
+  }
+  return true;
 }
 
 /** Pull-based update handoff: called only from completed thin-core ticks. */
@@ -643,6 +713,7 @@ export async function proveLoadedReleaseReady(
 export type ManagedSuccessorGateResult =
   | { kind: 'passed'; proof: UpdateFunctionalProbeResult }
   | { kind: 'agent-unavailable'; error: UpdateFunctionalProbeError }
+  | { kind: 'agent-failed'; error: unknown }
   | { kind: 'failed'; error: unknown; rolledBack: boolean };
 
 async function recordUnavailableProbe(input: {
@@ -747,6 +818,13 @@ export async function gateManagedSuccessor(input: {
     }
     return { kind: 'passed', proof };
   } catch (error) {
+    const attempt = await readUpdateAttempt(input.layout);
+    if (attempt?.forcedMinimum && attempt.releaseId === input.loadedRelease) {
+      // A server minimum is host authority. A broken model or agent-local
+      // configuration must not roll the shared machine back below that floor.
+      await recordUnavailableProbe(input);
+      return { kind: 'agent-failed', error };
+    }
     if (
       error instanceof UpdateFunctionalProbeError &&
       error.reason === 'model-unavailable' &&
@@ -775,6 +853,7 @@ export async function rollbackFailedSuccessor(
   return withInstallLock(layout, async () => {
     const attempt = await readUpdateAttempt(layout);
     if (!attempt || attempt.status !== 'pending') return false;
+    if (attempt.forcedMinimum) return false;
     const attribution = cause.probeId ? { revertedBy: cause.probeId } : {};
     if (!attempt.previousReleaseId) {
       await replaceUpdateAttempt(layout, {

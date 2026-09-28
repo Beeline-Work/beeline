@@ -1,5 +1,6 @@
 import { readHarnessTurnUsage } from './turn-usage.js';
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
+import type { InterruptedTurn } from './force-update-journal.js';
 import { SquireTaskRelay } from './squire-task-relay.js';
 import { resourceCallFacts } from './resource-mcp-facade.js';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -525,8 +526,19 @@ export class MonolithRoomTurnLoop {
   }
 
   async prepareForForcedUpdateRestart(): Promise<void> {
-    // Routine updates quiesce intake and let an accepted turn drain. They do
-    // not alter the turn's receipt or inject an update diagnostic into chat.
+    // Ordinary managed updates keep their existing idle/drain behavior.
+  }
+
+  interruptForServerMinimum(): InterruptedTurn | undefined {
+    const active = this.activeTurn;
+    if (!active || active.cancelled) return undefined;
+    active.cancelled = true;
+    if (this.client && this.sessionId) this.client.sessionCancel(this.sessionId);
+    return {
+      roomId: this.options.roomId,
+      requestId: active.item.id,
+      generationId: this.commandContext.generationId,
+    };
   }
 
   async forceRecoverRoom(): Promise<void> {

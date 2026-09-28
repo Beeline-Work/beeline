@@ -51,9 +51,11 @@ async function daemonDoor(
       attachments: [],
     },
   ],
-): Promise<{ origin: string; calls: Record<string, unknown>[] }> {
+): Promise<{ origin: string; calls: Record<string, unknown>[]; helperVersions: string[] }> {
   const calls: Record<string, unknown>[] = [];
+  const helperVersions: string[] = [];
   const server = createServer((request, response) => {
+    helperVersions.push(String(request.headers['x-beeline-helper-version'] ?? ''));
     const chunks: Buffer[] = [];
     request.on('data', (chunk: Buffer) => chunks.push(chunk));
     request.on('end', () => {
@@ -104,7 +106,8 @@ async function daemonDoor(
   });
   servers.push(server);
   await new Promise((ready) => server.listen(0, '127.0.0.1', () => ready(undefined)));
-  return { origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, calls };
+  return { origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, calls,
+    helperVersions };
 }
 
 /** One `tools/call` against the real server process, over real stdio. */
@@ -137,6 +140,7 @@ async function callTool(
       BEELINE_MCP_SURFACE: 'agent',
       BEELINE_DAEMON_BASE_URL: origin,
       BEELINE_DAEMON_TOKEN: 'daemon-token',
+      BEELINE_HELPER_VERSION: 'v0.0.69',
       BEELINE_DAEMON_ROOM_ID: ROOM,
       BEELINE_DAEMON_CORNER_ID: options.cornerId ?? '',
       BEELINE_CORNER_AGENT_CLOSE: options.agentMayCloseCorner ? '1' : '',
@@ -257,6 +261,8 @@ describe('open_corner over the grok wire', () => {
     // The server creates the objective command inside createCorner.
     expect(door.calls.some((call) => call.operation === 'postRoomMessage')).toBe(false);
     expect(created).toMatchObject({ requestId: 'command-request', generationId: 'g1' });
+    expect(door.helperVersions.length).toBeGreaterThan(0);
+    expect(door.helperVersions.every((version) => version === 'v0.0.69')).toBe(true);
   }, 30_000);
 
   it('opens a chat-only corner without inventing repository fields', async () => {

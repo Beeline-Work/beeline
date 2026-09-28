@@ -20,6 +20,7 @@ import { GrantCommandRunner, GrantRunnerServer, type GrantRunnerEndpoint } from 
 import { ConnectorUsageRecorder } from './connector-runner.js';
 import { MonolithCornerTurnLoop } from './monolith-corner-turn.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
+import type { InterruptedTurn } from './force-update-journal.js';
 import { openRouterRoutingCacheDir } from './openrouter-routing.js';
 import { turnTraceDirectory } from './turn-trace.js';
 import { distillTurnFailureReason } from './turn-failure-reason.js';
@@ -299,6 +300,7 @@ type RoomLeaf = Pick<
   MonolithRoomTurnLoop | MonolithCornerTurnLoop,
   | 'isBusy'
   | 'prepareForForcedUpdateRestart'
+  | 'interruptForServerMinimum'
   | 'requestReconciliation'
   | 'refreshPersonaForSoulUpdate'
   | 'forceRecoverRoom'
@@ -779,12 +781,18 @@ export class RoomRuntimeCoordinator {
 
   async prepareForForcedUpdateRestart(): Promise<void> {
     const rooms = [...this.running.values()];
-    await Promise.allSettled(
-      rooms
-        .filter((room) => room.body.isBusy())
-        .map((room) => room.body.prepareForForcedUpdateRestart()),
-    );
+    await Promise.allSettled(rooms.filter((room) => room.body.isBusy())
+      .map((room) => room.body.prepareForForcedUpdateRestart()));
     for (const room of rooms) room.controller.abort();
+  }
+
+  interruptForServerMinimum(): InterruptedTurn[] {
+    this.restartRequested = true;
+    const rooms = [...this.running.values()];
+    const turns = rooms.map((room) => room.body.interruptForServerMinimum())
+      .filter((turn): turn is InterruptedTurn => turn !== undefined);
+    for (const room of rooms) room.controller.abort();
+    return turns;
   }
 
   async reconcile(): Promise<WorkspaceMembershipStatus> {

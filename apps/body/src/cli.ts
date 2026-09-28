@@ -55,7 +55,9 @@ import {
 } from './institutional-memory-shadow-worker.js';
 import { ThinDaemonCore } from './thin-core.js';
 import { DEFAULT_DRAIN_DEADLINE_MS } from './room-runtime.js';
-import { activateDaemonTransport } from './daemon-api-client.js';
+import { activateDaemonTransport, DaemonApiError } from './daemon-api-client.js';
+import { reportInterruptedTurns } from './force-update-journal.js';
+import { ForceUpdateCoordinator } from './force-update.js';
 import { hiccupBackoffMs } from '@beeline/api-contract/daemon';
 import {
   clearDaemonPidRecordIfPid,
@@ -104,6 +106,7 @@ import {
   gateManagedSuccessor,
   managedRestartStaggerMs,
   ManagedUpdateHandoff,
+  forceInstallMinimum,
   rollbackFailedSuccessor,
   runningRuntimeProbeIds,
   runManagedUpdateWorker,
@@ -492,12 +495,51 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
       },
     });
     currentCore = core;
+    const forceUpdate = layout ? new ForceUpdateCoordinator({
+      loadedVersion: loadedReleaseIdentity?.version,
+      runtimeDir,
+      interrupt: () => {
+        core.setDrainDeadlineAt(Date.now() + 60_000);
+        return core.interruptForServerMinimum();
+      },
+      install: async (minVersion) => {
+        stoppingStatus = `server requires helper ${minVersion}; installing published release`;
+        await notifier.progress(stoppingStatus);
+        return forceInstallMinimum({
+          layout,
+          minVersion,
+          requiredProbeIds: await runningRuntimeProbeIds(process.env),
+        });
+      },
+      restart: async (desiredRelease) => {
+        const deadlineAt = Date.now() + DEFAULT_DRAIN_DEADLINE_MS;
+        const staggerMs = managedRestartStaggerMs(
+          runtime.agent.publicKey, desiredRelease, deadlineAt,
+        );
+        if (staggerMs > 0) await new Promise((resolve) => setTimeout(resolve, staggerMs));
+        stoppingStatus = `server minimum installed; restarting onto ${desiredRelease}`;
+        await notifier.stopping(stoppingStatus);
+        controller.abort();
+      },
+      failed: (error) => {
+        console.error('[thin-core] forced helper update failed:', error);
+        controller.abort();
+      },
+    }) : undefined;
+    daemonApi.setForceUpdateListener((minVersion) => {
+      if (!forceUpdate) {
+        console.error('[thin-core] server requires a published helper, but this process has no install layout');
+        controller.abort();
+        return;
+      }
+      forceUpdate.request(minVersion);
+    });
     // Busy means a turn is executing right now. An idle helper restarts on the
     // tick that arms the update; a busy one when its current work finishes.
     const updateDrain = update
       ? new ManagedUpdateDrain({
           update,
-          quiesceIfIdle: () => core.quiesceForUpdateIfIdle(),
+          quiesceIfIdle: () => !forceUpdate?.active && core.quiesceForUpdateIfIdle(),
           activeTurnCount: () => core.activeTurnCount(),
           restart: async ({ desiredRelease, drainDeadlineAt }) => {
             core.setDrainDeadlineAt(drainDeadlineAt);
@@ -586,6 +628,13 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
             successorRolledBack = gate.rolledBack;
             throw gate.error;
           }
+          if (gate.kind === 'agent-failed') {
+            if (!config.modelUnavailable)
+              config.modelUnavailable = modelUnavailableState(
+                config.modelSelection ?? runtime.modelSelection ?? {}, gate.error,
+              );
+            console.warn('[thin-core] server-minimum release retained; this agent probe failed:', gate.error);
+          }
           if (gate.kind === 'agent-unavailable') {
             if (!config.modelUnavailable) {
               config.modelUnavailable = modelUnavailableState(
@@ -596,7 +645,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
             console.warn(
               `[thin-core] new release retained; this agent's selected model is unavailable: ${gate.error.message}`,
             );
-          } else {
+          } else if (gate.kind === 'passed') {
             functionalProof = gate.proof;
           }
           pendingSuccessor = false;
@@ -612,6 +661,16 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
                   ? ` (model answer unavailable: ${functionalProof.modelAnswerReason})`
                   : ''),
             );
+        }
+        try {
+          await reportInterruptedTurns(runtimeDir, daemonApi, runtime.agent.publicKey);
+        } catch (error) {
+          if (error instanceof DaemonApiError && error.status === 426 &&
+              error.code === 'update_required' && forceUpdate?.pending) {
+            await forceUpdate.pending;
+            return;
+          }
+          throw error;
         }
         await clearDaemonStartFailures(runtimeDir);
         await writeDaemonReleaseStatus(runtimeDir, runtime.agent.publicKey, loadedReleaseIdentity);

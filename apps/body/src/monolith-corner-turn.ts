@@ -1,5 +1,6 @@
 import { readHarnessTurnUsage } from './turn-usage.js';
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
+import type { InterruptedTurn } from './force-update-journal.js';
 import { SquireTaskRelay } from './squire-task-relay.js';
 import { resourceCallFacts } from './resource-mcp-facade.js';
 import { execFile } from 'node:child_process';
@@ -579,6 +580,19 @@ export class MonolithCornerTurnLoop {
 
   async prepareForForcedUpdateRestart(): Promise<void> {
     this.forcedStop = true;
+  }
+
+  interruptForServerMinimum(): InterruptedTurn | undefined {
+    this.forcedStop = true;
+    const current = this.currentTurn;
+    if (!current) return undefined;
+    this.stoppedTurns.add(current.requestId);
+    if (this.client && this.sessionId) this.client.sessionCancel(this.sessionId);
+    return {
+      roomId: this.options.cornerId,
+      requestId: current.requestId,
+      generationId: this.commandContext.generationId,
+    };
   }
 
   async forceRecoverRoom(): Promise<void> {

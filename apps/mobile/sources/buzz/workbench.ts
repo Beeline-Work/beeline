@@ -269,8 +269,8 @@ export type GoogleEntryState = 'connected' | 'installing' | 'error' | 'repair' |
 export function googleEntryState(connectors: readonly WorkbenchConnector[]): GoogleEntryState {
   const tools = googleEntryTools(connectors);
   if (tools.length && tools.every((tool) => tool.status === 'connected')) return 'connected';
-  if (tools.some((tool) => tool.status === 'installing')) return 'installing';
   if (tools.some((tool) => tool.status === 'error')) return 'error';
+  if (tools.some((tool) => tool.status === 'installing')) return 'installing';
   if (tools.some((tool) => tool.status === 'connected')) return 'repair';
   return 'connect';
 }

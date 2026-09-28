@@ -34,10 +34,30 @@ function socketApi(execute: ReturnType<typeof vi.fn>) {
     }),
   } as unknown as DaemonApiClient;
   return { api, connected: () => state?.(true, { pushIntake: true, connectionPresence: true }),
-    disconnected: () => state?.(false), push: (rows: AgentCommand[]) => commands?.(rows) };
+    disconnected: () => state?.(false),
+    unsupported: () => state?.(true, { pushIntake: false, connectionPresence: true }),
+    push: (rows: AgentCommand[]) => commands?.(rows) };
 }
 
 describe('command intake mechanics', () => {
+  it('reports push subscription loss and recovery without reading the server on disconnect', async () => {
+    const abort = new AbortController();
+    const execute = vi.fn(async (name: string) => name === 'getAgentCommands'
+      ? { commandProtocol: 1, commands: [] } : { id: 'ok' });
+    const socket = socketApi(execute);
+    const states: boolean[] = [];
+    const running = runServerCommandIntake({ api: socket.api, roomId: 'room', agentId: 'agent',
+      context: await context(), signal: abort.signal, run: vi.fn(), stop: vi.fn(),
+      onSubscriptionState: (connected) => states.push(connected) });
+    await vi.waitFor(() => expect(socket.api.liveSubscribe).toHaveBeenCalledOnce());
+    socket.connected();
+    socket.disconnected();
+    socket.unsupported();
+    expect(states).toEqual([true, false, false]);
+    expect(execute.mock.calls.map(([name]) => name)).toEqual(['getAgentCommands']);
+    abort.abort();
+    await running;
+  });
   it('refuses an older server without reading shared traffic', async () => {
     const execute = vi.fn(async () => ({ items: [command().source] }));
     await expect(runServerCommandIntake({ api: { execute } as unknown as DaemonApiClient,

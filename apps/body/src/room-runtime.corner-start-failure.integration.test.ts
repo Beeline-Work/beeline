@@ -101,6 +101,12 @@ describe('corner-start standing faults against the real server', () => {
     };
     await start.startCorner({ cornerId: CORNER, parentRoomId: ROOM });
     await start.startCorner({ cornerId: CORNER, parentRoomId: ROOM });
+    expect(coordinator.surfaceHealthSnapshot()).toContainEqual({
+      id: CORNER,
+      kind: 'corner',
+      stage: 'degraded',
+      reason: 'corner failed to start',
+    });
     error.mockRestore();
     await coordinator.shutdown();
 

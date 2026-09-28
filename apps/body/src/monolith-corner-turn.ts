@@ -537,6 +537,8 @@ export interface MonolithCornerTurnOptions {
   closePollMs?: number;
   onPoll(): void;
   onFailure(retryInMs: number): void;
+  onSubscriptionState?: (connected: boolean) => void;
+  onIntakeError?: (error: unknown) => void;
   onCloseRequested(): Promise<void>;
   /** The server now reports a different lane than this session was started for. */
   onLaneChanged?: () => void;
@@ -2104,7 +2106,11 @@ export class MonolithCornerTurnLoop {
           this.wakeIntake = wake;
         },
         onPoll: () => this.options.onPoll(),
-        onError: (error) => console.error('[thin-core] corner command failed', error),
+        onSubscriptionState: this.options.onSubscriptionState,
+        onError: (error) => {
+          this.options.onIntakeError?.(error);
+          console.error('[thin-core] corner command failed', error);
+        },
         onEnter: (command) => this.squireRelay.activate(command, this.commandContext.generationId),
         onLeave: (command) => this.squireRelay.deactivate(command.turnRequestId),
         stop: (requestId) => this.stopTurn(requestId),

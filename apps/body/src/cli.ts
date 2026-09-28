@@ -398,9 +398,11 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   // Socket-idle is healthy. Keep systemd's local watchdog alive without a
   // discovery tick or any daemon API read.
   let lastCoreStatus = 'starting';
+  let currentCore: ThinDaemonCore | undefined;
   const stopWatchdog = startLocalWatchdog(
     notifier,
-    () => `loaded_release=${loadedRelease ?? 'development'}; ${lastCoreStatus}`,
+    () =>
+      `loaded_release=${loadedRelease ?? 'development'}; ${currentCore?.healthStatus() ?? lastCoreStatus}`,
   );
 
   let ready = false;
@@ -489,6 +491,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
         });
       },
     });
+    currentCore = core;
     // Busy means a turn is executing right now. An idle helper restarts on the
     // tick that arms the update; a busy one when its current work finishes.
     const updateDrain = update

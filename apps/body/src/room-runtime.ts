@@ -23,6 +23,7 @@ import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
 import { openRouterRoutingCacheDir } from './openrouter-routing.js';
 import { turnTraceDirectory } from './turn-trace.js';
 import { distillTurnFailureReason } from './turn-failure-reason.js';
+import { SurfaceHealth, type SurfaceHealthState } from './surface-health.js';
 import type { AgentRuntimeRecord, RoomRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
 import { seedWarmNodeModules, warmNodeModulesStoreDir } from './warm-node-modules.js';
@@ -523,6 +524,7 @@ export async function removeCornerScratchWorkspace(input: {
 export class RoomRuntimeCoordinator {
   private readonly runtime: AgentRuntimeRecord;
   private readonly running = new Map<string, RunningRoom>();
+  private readonly surfaceHealth = new SurfaceHealth();
   /** Close/reconcile leftovers retried until local and remote refs are gone. */
   private readonly pendingCornerReaps = new Map<string, CornerWorktree>();
   /** Idle corners listen for durable commands without obtaining a token or checkout. */
@@ -691,6 +693,18 @@ export class RoomRuntimeCoordinator {
     return this.running.size;
   }
 
+  surfaceHealthSnapshot(): SurfaceHealthState[] {
+    return this.surfaceHealth.snapshot();
+  }
+
+  surfaceHealthSummary(): string {
+    return this.surfaceHealth.summary();
+  }
+
+  hasUnreadySurfaces(): boolean {
+    return this.surfaceHealth.hasUnready();
+  }
+
   /**
    * The session scheduler's capacity, read-only, beside the turn traces
    * (`turn-trace.ts` embeds the same snapshot in every record). A turn that
@@ -827,6 +841,8 @@ export class RoomRuntimeCoordinator {
         );
       }
     });
+    for (const roomId of desiredTopRooms) this.surfaceHealth.discover(roomId, 'room');
+    for (const cornerId of desiredCorners.keys()) this.surfaceHealth.discover(cornerId, 'corner');
     for (const channelId of desired) this.roomRemovalConfirmations.delete(channelId);
     await this.retryPendingCornerReaps(desired);
     await this.sweepArchivedCornerWorktrees(archivedCorners);
@@ -845,6 +861,7 @@ export class RoomRuntimeCoordinator {
       await this.stopRunning(channelId, running);
       this.roomRemovalConfirmations.delete(channelId);
     }
+    this.surfaceHealth.retain(new Set([...desired, ...this.running.keys()]));
     await mapWithConcurrency(desiredTopRooms, ROOM_JOIN_CONCURRENCY, async (roomId) => {
       if (this.running.has(roomId)) return;
       try {
@@ -915,6 +932,7 @@ export class RoomRuntimeCoordinator {
       const running = this.running.get(roomId);
       if (running) await this.stopRunning(roomId, running);
       this.monolithCornerParents.delete(roomId);
+      this.surfaceHealth.remove(roomId);
       return;
     }
     // Inheriting a Room membership writes one row per corner under it, archived
@@ -923,11 +941,13 @@ export class RoomRuntimeCoordinator {
     // rather than after a restore read per row.
     if (event.archived === true) {
       this.unwatchCorner(roomId);
+      this.surfaceHealth.remove(roomId);
       return;
     }
     this.roomRemovalConfirmations.delete(roomId);
     if (this.running.has(roomId) || this.startingCorners.has(roomId)) return;
     if (event.parentRoomId) {
+      this.surfaceHealth.discover(roomId, 'corner');
       this.monolithCornerParents.set(roomId, event.parentRoomId);
       // The opener rides the same row that announces the corner. Without it
       // nobody is the opener, so the initial `working` state — the only write
@@ -945,6 +965,7 @@ export class RoomRuntimeCoordinator {
       });
       return;
     }
+    this.surfaceHealth.discover(roomId, 'room');
     await this.startRoom(roomId);
   }
 
@@ -1022,9 +1043,13 @@ export class RoomRuntimeCoordinator {
 
   private async startRoom(roomId: string): Promise<void> {
     if (this.running.has(roomId) || this.startingRooms.has(roomId)) return;
+    this.surfaceHealth.discover(roomId, 'room');
     this.startingRooms.add(roomId);
     try {
       await this.startRoomOnce(roomId);
+    } catch (error) {
+      this.surfaceHealth.degraded(roomId, 'Room intake failed to start');
+      throw error;
     } finally {
       this.startingRooms.delete(roomId);
     }
@@ -1054,6 +1079,8 @@ export class RoomRuntimeCoordinator {
         failure: (retryInMs) => this.noteFailure(roomId, retryInMs),
         presence: () => undefined,
       },
+      onSubscriptionState: (connected) => this.surfaceHealth.subscribed(roomId, connected),
+      onIntakeError: () => this.surfaceHealth.degraded(roomId, 'Room command intake failed'),
       onCornerOpened: () => {
         this.confirmationPending = true;
       },
@@ -1063,7 +1090,10 @@ export class RoomRuntimeCoordinator {
     const promise = loop
       .run()
       .catch((error) => {
-        if (!controller.signal.aborted) console.error(`[thin-core] Room ${roomId} failed:`, error);
+        if (!controller.signal.aborted) {
+          this.surfaceHealth.degraded(roomId, 'Room command loop exited');
+          console.error(`[thin-core] Room ${roomId} failed:`, error);
+        }
       })
       .finally(() => {
         if (this.running.get(roomId)?.body === loop) this.running.delete(roomId);
@@ -1177,6 +1207,7 @@ export class RoomRuntimeCoordinator {
 
   private async startCorner(corner: DesiredCorner): Promise<void> {
     if (this.running.has(corner.cornerId) || this.startingCorners.has(corner.cornerId)) return;
+    this.surfaceHealth.discover(corner.cornerId, 'corner');
     this.startingCorners.add(corner.cornerId);
     let configKey: string | undefined;
     try {
@@ -1267,6 +1298,8 @@ export class RoomRuntimeCoordinator {
         signal: controller.signal,
         onPoll: () => this.notePoll(corner.cornerId),
         onFailure: (retryInMs) => this.noteFailure(corner.cornerId, retryInMs),
+        onSubscriptionState: (connected) => this.surfaceHealth.subscribed(corner.cornerId, connected),
+        onIntakeError: () => this.surfaceHealth.degraded(corner.cornerId, 'corner command intake failed'),
         onCloseRequested: () =>
           worktree
             ? this.reapCornerWorktree({
@@ -1288,6 +1321,7 @@ export class RoomRuntimeCoordinator {
         .run()
         .catch((error) => {
           if (!controller.signal.aborted) {
+            this.surfaceHealth.degraded(corner.cornerId, 'corner command loop exited');
             console.error(`[thin-core] corner ${corner.cornerId} failed:`, error);
           }
         })
@@ -1329,6 +1363,7 @@ export class RoomRuntimeCoordinator {
           : `[thin-core] serving no-code corner ${corner.cornerId} at ${workspacePath}`,
       );
     } catch (error) {
+      this.surfaceHealth.degraded(corner.cornerId, 'corner failed to start');
       console.error(`[thin-core] failed to start corner ${corner.cornerId}:`, error);
       // Keep the pending command available for the next reconciliation. A
       // temporary token lookup must not turn into a human repair request.
@@ -1630,6 +1665,7 @@ export class RoomRuntimeCoordinator {
   }
 
   private notePoll(roomId: string): void {
+    this.surfaceHealth.intakeReady(roomId);
     const room = this.running.get(roomId);
     if (!room) return;
     room.lastPollAt = this.now();

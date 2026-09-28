@@ -86,6 +86,7 @@ export async function runServerCommandIntake(options: {
   canStartTurn?: () => boolean;
   onWake?: (wake: (() => void) | undefined) => void;
   onPoll?: () => void;
+  onSubscriptionState?: (connected: boolean) => void;
   onError?: (error: unknown) => void;
   onEnter?: (command: AgentCommand) => void;
   onLeave?: (command: AgentCommand) => void;
@@ -130,6 +131,7 @@ export async function runServerCommandIntake(options: {
     undefined,
     undefined,
     (connected, capabilities) => {
+      options.onSubscriptionState?.(connected && capabilities?.pushIntake === true);
       if (!connected) return;
       if (capabilities?.pushIntake !== true) {
         options.onError?.(new Error('server push intake is required; refusing timer-free intake'));

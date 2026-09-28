@@ -22,7 +22,11 @@ function command(taskId: string, requestId: string): AgentCommand {
   };
 }
 
-function fixture(contextFile = '/tmp/context', authorize = async () => true) {
+function fixture(
+  contextFile = '/tmp/context',
+  authorize = async () => true,
+  respond?: (method: string, params: { name?: string }) => Promise<unknown>,
+) {
   let spawns = 0;
   let exits = 0;
   let callbacks: { onSpawn: (pid: number) => void; onExit: (pid: number, code: number) => void } | undefined;
@@ -33,6 +37,7 @@ function fixture(contextFile = '/tmp/context', authorize = async () => true) {
     return {
       pid: 2000 + spawns,
       requestMcp: vi.fn(async (method: string, params: { name?: string }) => {
+        if (respond) return respond(method, params);
         if (method === 'tools/list') return { tools: [{ name: 'operate_start' }, { name: 'operate_observe' }] };
         if (params.name === 'operate_start') return { content: [{ type: 'text', text: '{"sessionId":"browser-1"}' }] };
         return { content: [{ type: 'text', text: 'page observed' }] };
@@ -61,7 +66,7 @@ async function request(
 }
 
 describe('helper-owned Squire task relay', () => {
-  it('keeps one MCP connection through two calls and two turns across Pi and Codex routes', async () => {
+  it('keeps one MCP connection through calls, a turn boundary, and a new task in the same conversation', async () => {
     const logs: string[] = [];
     vi.spyOn(console, 'info').mockImplementation((...parts) => { logs.push(parts.join(' ')); });
     const { relay, stats } = fixture();
@@ -73,72 +78,178 @@ describe('helper-owned Squire task relay', () => {
     expect(launch.env.BEELINE_SQUIRE_RELAY_URL).toBe(endpoint.url);
     expect(launch.env.BEELINE_TURN_CONTEXT_FILE).toBe('/tmp/context');
     expect(launch.env).not.toHaveProperty('TRUSTY_SQUIRE_BROKER_SOCKET');
+    expect(launch.env).not.toHaveProperty('TRUSTY_SQUIRE_PROFILE_DIR');
+    expect(launch.env).not.toHaveProperty('TRUSTY_SQUIRE_AGENT_IDENTITY');
     const pi = piMcpBridgeSource([codex]);
     expect(pi).toContain('BEELINE_SQUIRE_RELAY_URL');
     relay.activate(command('root', 'turn-one'), 'generation');
     expect((await request(relay, 'root', 'turn-one', 'tools/list')).status).toBe(200);
     expect((await request(relay, 'root', 'turn-one', 'tools/call', { name: 'operate_start' })).status).toBe(200);
     vi.useFakeTimers();
-    relay.deactivate('turn-one', 'grant-decision');
+    relay.deactivate('turn-one');
     await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS - 1);
-    relay.activate(command('root', 'turn-two'), 'generation');
+    relay.activate(command('next-root', 'turn-two'), 'generation');
     await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS);
     expect(stats().exits).toBe(0);
     vi.useRealTimers();
-    expect((await request(relay, 'root', 'turn-two', 'initialize')).status).toBe(200);
-    expect((await request(relay, 'root', 'turn-two', 'tools/call', {
+    expect((await request(relay, 'next-root', 'turn-two', 'initialize')).status).toBe(200);
+    expect((await request(relay, 'next-root', 'turn-two', 'tools/call', {
       name: 'operate_observe', arguments: { sessionId: 'browser-1' },
+    })).status).toBe(200);
+    expect((await request(relay, 'next-root', 'turn-two', 'tools/call', {
+      name: 'operate_scroll', arguments: { sessionId: 'browser-1', direction: 'down' },
+    })).status).toBe(200);
+    expect((await request(relay, 'next-root', 'turn-two', 'tools/call', {
+      name: 'inject_card', arguments: { sessionId: 'browser-1' },
     })).status).toBe(200);
     expect(stats().spawns).toBe(1);
     expect((await request(relay, 'root', 'turn-one', 'tools/call', { name: 'operate_observe' })).status).toBe(400);
     const calls = logs.filter((line) => line.includes('"event":"call-start"'))
-      .map((line) => JSON.parse(line.slice(line.indexOf('{'))) as { mcpConnectionId: string; requestId: string });
+      .map((line) => JSON.parse(line.slice(line.indexOf('{'))) as {
+        agentId: string; taskId: string; conversationId: string;
+        mcpConnectionId: string; requestId: string; pid: number | null; ppid: number;
+      });
     expect(new Set(calls.map((call) => call.mcpConnectionId)).size).toBe(1);
     expect(new Set(calls.map((call) => call.requestId))).toEqual(new Set(['turn-one', 'turn-two']));
+    expect(new Set(calls.map((call) => call.taskId))).toEqual(new Set(['root', 'next-root']));
+    expect(calls.every((call) => call.agentId === 'agent' && call.conversationId === 'room' &&
+      typeof call.ppid === 'number')).toBe(true);
     expect(logs.join('\n')).not.toContain('browser-1');
   });
 
-  it('closes a terminal root immediately without waiting for another task', async () => {
+  it('keeps a connection through a long approval wait, then closes after decision and idle timeout', async () => {
     const logs: string[] = [];
     vi.spyOn(console, 'info').mockImplementation((...parts) => { logs.push(parts.join(' ')); });
     const { relay, stats } = fixture();
     relay.activate(command('finished', 'turn-one'), 'generation');
     await request(relay, 'finished', 'turn-one', 'tools/call', { name: 'operate_start' });
-    relay.deactivate('turn-one');
+    vi.useFakeTimers();
+    relay.deactivate('turn-one', 'turn-one');
+    await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS * 2);
+    expect(stats().exits).toBe(0);
+    relay.activate(command('approval-resume', 'turn-two'), 'generation');
+    vi.useRealTimers();
+    const resumed = await request(relay, 'approval-resume', 'turn-two', 'tools/call', {
+      name: 'operate_observe', arguments: { sessionId: 'browser-1' },
+    });
+    expect(resumed.status).toBe(200);
+    vi.useFakeTimers();
+    relay.deactivate('turn-two');
+    await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS);
     expect(stats().exits).toBe(1);
-    expect(logs.join('\n')).toContain('"reason":"task-complete"');
-    relay.activate(command('finished', 'turn-two'), 'generation');
-    const stale = await request(relay, 'finished', 'turn-two', 'tools/call', {
+    expect(logs.join('\n')).toContain('"reason":"conversation-idle"');
+    relay.activate(command('later', 'turn-three'), 'generation');
+    vi.useRealTimers();
+    const stale = await request(relay, 'later', 'turn-three', 'tools/call', {
       name: 'operate_observe', arguments: { sessionId: 'browser-1' },
     });
     expect(stale.status).toBe(400);
     expect(stale.body.error).toMatch(/no longer owned/);
   });
 
-  it('bounds a paused root if its explicit continuation never arrives', async () => {
+  it('keeps an inject_card approval session through a long idle human wait', async () => {
+    let cardCalls = 0;
+    const { relay, stats } = fixture('/tmp/context', async () => true, async (_method, params) => {
+      if (params.name === 'operate_start')
+        return { content: [{ type: 'text', text: '{"sessionId":"browser-1"}' }] };
+      if (params.name === 'inject_card') {
+        cardCalls += 1;
+        return { content: [{ type: 'text', text: JSON.stringify({
+          status: cardCalls === 1 ? 'approval_pending' : 'card_injected',
+          approval_id: 'buy-1', session_id: 'browser-1',
+          approval_url: 'https://trustysquire.ai/vault/pay/buy-1',
+        }) }] };
+      }
+      return { content: [{ type: 'text', text: 'ok' }] };
+    });
+    relay.activate(command('first', 'turn-one'), 'generation');
+    await request(relay, 'first', 'turn-one', 'tools/call', { name: 'operate_start' });
+    expect((await request(relay, 'first', 'turn-one', 'tools/call', {
+      name: 'inject_card', arguments: { sessionId: 'browser-1' },
+    })).status).toBe(200);
+    vi.useFakeTimers();
+    relay.deactivate('turn-one');
+    await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS * 2);
+    expect(stats().exits).toBe(0);
+    relay.activate(command('next', 'turn-two'), 'generation');
+    vi.useRealTimers();
+    expect((await request(relay, 'next', 'turn-two', 'tools/call', {
+      name: 'operate_observe', arguments: { sessionId: 'browser-1' },
+    })).status).toBe(200);
+    expect((await request(relay, 'next', 'turn-two', 'tools/call', {
+      name: 'inject_card', arguments: { sessionId: 'browser-1', approval_id: 'buy-1' },
+    })).status).toBe(200);
+    vi.useFakeTimers();
+    relay.deactivate('turn-two');
+    await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS);
+    expect(stats().exits).toBe(1);
+  });
+
+  it('releases a pending Squire approval hold when its request is cancelled', async () => {
+    const { relay, stats } = fixture('/tmp/context', async () => true, async (_method, params) =>
+      params.name === 'operate_start'
+        ? { content: [{ type: 'text', text: '{"sessionId":"browser-1"}' }] }
+        : { content: [{ type: 'text', text: JSON.stringify({
+          status: 'approval_pending', session_id: 'browser-1', approval_id: 'buy-1',
+          approval_url: 'https://trustysquire.ai/vault/pay/buy-1',
+        }) }] },
+    );
+    relay.activate(command('first', 'turn-one'), 'generation');
+    await request(relay, 'first', 'turn-one', 'tools/call', { name: 'operate_start' });
+    await request(relay, 'first', 'turn-one', 'tools/call', {
+      name: 'inject_card', arguments: { sessionId: 'browser-1' },
+    });
+    vi.useFakeTimers();
+    relay.deactivate('turn-one');
+    relay.cancel('turn-one');
+    await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS);
+    expect(stats().exits).toBe(1);
+  });
+
+  it('keeps an open approval through an unrelated turn and bounds it after cancellation', async () => {
+    const { relay, stats } = fixture();
+    relay.activate(command('first', 'turn-one'), 'generation');
+    await request(relay, 'first', 'turn-one', 'tools/call', { name: 'operate_start' });
+    vi.useFakeTimers();
+    relay.deactivate('turn-one', 'turn-one');
+    relay.activate(command('other', 'turn-other'), 'generation');
+    relay.deactivate('turn-other', 'turn-one');
+    await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS * 2);
+    expect(stats().exits).toBe(0);
+    relay.cancel('turn-one');
+    await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS);
+    expect(stats().exits).toBe(1);
+  });
+
+  it('bounds an idle conversation when no continuation arrives', async () => {
     const { relay, stats } = fixture();
     relay.activate(command('paused', 'turn-one'), 'generation');
     await request(relay, 'paused', 'turn-one', 'tools/call', { name: 'operate_start' });
     vi.useFakeTimers();
-    relay.deactivate('turn-one', 'grant-decision');
+    relay.deactivate('turn-one');
     await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS - 1);
     expect(stats().exits).toBe(0);
     await vi.advanceTimersByTimeAsync(1);
     expect(stats().exits).toBe(1);
   });
 
-  it('cancellation closes the connection; the next task and helper cannot reuse its session', async () => {
+  it('cancellation rejects the old turn but preserves its session for the next turn', async () => {
     const { relay, stats } = fixture();
     relay.activate(command('first', 'turn-one'), 'generation');
     await request(relay, 'first', 'turn-one', 'tools/call', { name: 'operate_start' });
     relay.cancel('turn-one');
-    expect(stats().exits).toBe(1);
+    expect(stats().exits).toBe(0);
     relay.activate(command('second', 'turn-two'), 'generation');
-    const stale = await request(relay, 'second', 'turn-two', 'tools/call', {
+    const stale = await request(relay, 'first', 'turn-one', 'tools/call', {
       name: 'operate_observe', arguments: { sessionId: 'browser-1' },
     });
     expect(stale.status).toBe(400);
-    expect(stale.body.error).toMatch(/no longer owned/);
+    expect((await request(relay, 'second', 'turn-two', 'tools/call', {
+      name: 'operate_observe', arguments: { sessionId: 'browser-1' },
+    })).status).toBe(200);
+    expect(stats().spawns).toBe(1);
+    relay.close();
+    expect(stats().exits).toBe(1);
     const replacement = fixture().relay;
     replacement.activate(command('first', 'turn-three'), 'generation');
     expect((await request(replacement, 'first', 'turn-three', 'tools/call', {
@@ -146,16 +257,48 @@ describe('helper-owned Squire task relay', () => {
     })).status).toBe(400);
   });
 
-  it('closes the old root before a different task becomes active', async () => {
+  it('retains a session when a different task becomes active and rejects the old task context', async () => {
     const { relay, stats } = fixture();
     relay.activate(command('first', 'turn-one'), 'generation');
     await request(relay, 'first', 'turn-one', 'tools/call', { name: 'operate_start' });
-    relay.deactivate('turn-one', 'grant-decision');
+    relay.deactivate('turn-one');
     relay.activate(command('second', 'turn-two'), 'generation');
-    expect(stats().exits).toBe(1);
+    expect(stats().exits).toBe(0);
     expect((await request(relay, 'first', 'turn-one', 'tools/call', {
       name: 'operate_observe', arguments: { sessionId: 'browser-1' },
     })).status).toBe(400);
+    expect((await request(relay, 'second', 'turn-two', 'tools/call', {
+      name: 'operate_observe', arguments: { sessionId: 'browser-1' },
+    })).status).toBe(200);
+  });
+
+  it('does not give an in-flight old turn response to the next turn', async () => {
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    let release!: (value: unknown) => void;
+    const { relay, stats } = fixture('/tmp/context', async () => true, async (_method, params) => {
+      if (params.name === 'operate_start')
+        return { content: [{ type: 'text', text: '{"sessionId":"browser-1"}' }] };
+      if (params.name === 'operate_observe') {
+        entered();
+        return new Promise<unknown>((resolve) => { release = resolve; });
+      }
+      return { content: [{ type: 'text', text: 'page observed' }] };
+    });
+    relay.activate(command('first', 'turn-one'), 'generation');
+    await request(relay, 'first', 'turn-one', 'tools/call', { name: 'operate_start' });
+    const oldCall = request(relay, 'first', 'turn-one', 'tools/call', {
+      name: 'operate_observe', arguments: { sessionId: 'browser-1' },
+    });
+    await started;
+    relay.deactivate('turn-one');
+    relay.activate(command('second', 'turn-two'), 'generation');
+    release({ content: [{ type: 'text', text: 'old page' }] });
+    expect((await oldCall).status).toBe(400);
+    expect((await request(relay, 'second', 'turn-two', 'tools/call', {
+      name: 'operate_scroll', arguments: { sessionId: 'browser-1' },
+    })).status).toBe(200);
+    expect(stats()).toEqual({ spawns: 1, exits: 0 });
   });
 
   it('requires an explicit operate_start after the Squire child dies', async () => {
@@ -163,11 +306,55 @@ describe('helper-owned Squire task relay', () => {
     relay.activate(command('root', 'turn-one'), 'generation');
     await request(relay, 'root', 'turn-one', 'tools/call', { name: 'operate_start' });
     die();
+    const gone = await request(relay, 'root', 'turn-one', 'tools/call', {
+      name: 'operate_observe', arguments: { sessionId: 'browser-1' },
+    });
+    expect(gone.status).toBe(400);
+    expect(gone.body.error).toMatch(/connection died.*session is gone/);
+    expect((await request(relay, 'root', 'turn-one', 'tools/call', { name: 'operate_start' })).status).toBe(200);
+    expect(stats().spawns).toBe(2);
+  });
+
+  it('reports a stale lease as a gone session and requires a fresh start', async () => {
+    const { relay, stats } = fixture('/tmp/context', async () => true, async (_method, params) =>
+      params.name === 'operate_start'
+        ? { content: [{ type: 'text', text: '{"sessionId":"browser-1"}' }] }
+        : { isError: true, content: [{ type: 'text', text: JSON.stringify({
+          error: { code: 'stale_lease', message: 'Session is not owned by this MCP connection' },
+        }) }] },
+    );
+    relay.activate(command('root', 'turn-one'), 'generation');
+    await request(relay, 'root', 'turn-one', 'tools/call', { name: 'operate_start' });
+    const stale = await request(relay, 'root', 'turn-one', 'tools/call', {
+      name: 'operate_observe', arguments: { sessionId: 'browser-1' },
+    });
+    expect(stale.status).toBe(200);
+    expect(stale.body.result).toMatchObject({
+      isError: true,
+      content: [{ text: expect.stringContaining('browser session is gone; call operate_start') }],
+    });
+    const refused = await request(relay, 'root', 'turn-one', 'tools/call', {
+      name: 'operate_scroll', arguments: { sessionId: 'browser-1' },
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.body.error).toMatch(/no longer owned/);
+    expect((await request(relay, 'root', 'turn-one', 'tools/call', {
+      name: 'operate_start',
+    })).status).toBe(200);
+    expect(stats().spawns).toBe(1);
+  });
+
+  it('forgets a session after explicit operate_finish without closing the MCP connection', async () => {
+    const { relay, stats } = fixture();
+    relay.activate(command('root', 'turn-one'), 'generation');
+    await request(relay, 'root', 'turn-one', 'tools/call', { name: 'operate_start' });
+    expect((await request(relay, 'root', 'turn-one', 'tools/call', {
+      name: 'operate_finish', arguments: { sessionId: 'browser-1' },
+    })).status).toBe(200);
     expect((await request(relay, 'root', 'turn-one', 'tools/call', {
       name: 'operate_observe', arguments: { sessionId: 'browser-1' },
     })).status).toBe(400);
-    expect((await request(relay, 'root', 'turn-one', 'tools/call', { name: 'operate_start' })).status).toBe(200);
-    expect(stats().spawns).toBe(2);
+    expect(stats()).toEqual({ spawns: 1, exits: 0 });
   });
 
   it('enforces the grant at the relay even when the caller bypasses the stdio facade', async () => {
@@ -195,15 +382,17 @@ describe('helper-owned Squire task relay', () => {
       .toThrow(/scope/);
   });
 
-  it('routes separate real stdio facade processes through the same task connection', async () => {
+  it('routes separate real stdio facade processes through one conversation connection', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'squire-task-proxy-'));
     const contextFile = join(dir, 'turn.json');
     const { relay, stats } = fixture(contextFile);
     try {
       const endpoint = await relay.listen();
-      const invoke = async (turn: string, name: string, args: Record<string, unknown> = {}) => {
+      const invoke = async (
+        turn: string, taskId: string, name: string, args: Record<string, unknown> = {},
+      ) => {
         await writeFile(contextFile, JSON.stringify({
-          roomId: 'room', requestId: turn, taskId: 'root', generationId: 'generation',
+          roomId: 'room', requestId: turn, taskId, generationId: 'generation',
         }));
         const child = spawn(process.execPath, [
           '--import', 'tsx', fileURLToPath(new URL('./squire-facade.ts', import.meta.url)),
@@ -232,10 +421,15 @@ describe('helper-owned Squire task relay', () => {
         }
       };
       relay.activate(command('root', 'turn-one'), 'generation');
-      expect(await invoke('turn-one', 'operate_start')).toHaveProperty('result');
-      relay.deactivate('turn-one', 'grant-decision');
-      relay.activate(command('root', 'turn-two'), 'generation');
-      expect(await invoke('turn-two', 'operate_observe', { sessionId: 'browser-1' })).toHaveProperty('result');
+      expect(await invoke('turn-one', 'root', 'operate_start')).toHaveProperty('result');
+      relay.deactivate('turn-one');
+      relay.activate(command('next-root', 'turn-two'), 'generation');
+      expect(await invoke('turn-two', 'next-root', 'operate_observe', {
+        sessionId: 'browser-1',
+      })).toHaveProperty('result');
+      expect(await invoke('turn-two', 'next-root', 'inject_card', {
+        sessionId: 'browser-1',
+      })).toHaveProperty('result');
       expect(stats().spawns).toBe(1);
     } finally {
       await rm(dir, { recursive: true, force: true });

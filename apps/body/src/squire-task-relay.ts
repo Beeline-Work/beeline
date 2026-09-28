@@ -1,8 +1,8 @@
 /**
- * The helper owns Squire's MCP process for a server-command root. ACP children
+ * The helper owns Squire's MCP process for an agent's Room/DM/corner. ACP children
  * (including Pi's generated bridge) speak to this loopback relay instead of
- * spawning their own Squire server. A root may resume across ACP replacements;
- * another root in the same Room cannot inherit its browser sessions.
+ * spawning their own Squire server. Turns and ACP replacements share one
+ * connection; each call still requires the current server-command authority.
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
@@ -11,11 +11,12 @@ import { createInterface } from 'node:readline';
 import { homedir } from 'node:os';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import { StdioSquireMcpClient } from './squire-mcp-client.js';
+import { squireApprovalFromMcp } from './resource-mcp-facade.js';
 
 type TurnKey = { roomId: string; requestId: string; taskId: string; generationId: string };
 type RelayRequest = TurnKey & { method: string; params?: Record<string, unknown> };
 export type SquireTaskCall = TurnKey & { tool: string; args: Record<string, unknown> };
-/** A turn paused on a grant may resume; abandon its idle connection after this bound. */
+/** Close an unused conversation connection after this bound. */
 export const SQUIRE_TASK_IDLE_LEASE_MS = 15 * 60_000;
 
 function sessionIds(value: unknown, depth = 0): string[] {
@@ -40,12 +41,40 @@ function redactedSessionId(id: string | undefined): string | null {
   return id ? createHash('sha256').update(id).digest('hex').slice(0, 16) : null;
 }
 
+function staleLeaseResult(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const result = value as { isError?: unknown; content?: unknown };
+  if (result.isError !== true || !Array.isArray(result.content)) return false;
+  const text = result.content.find((entry: unknown) =>
+    entry && typeof entry === 'object' && (entry as { type?: unknown }).type === 'text',
+  )?.text;
+  if (!text) return false;
+  try {
+    const body = JSON.parse(text) as { error?: { code?: unknown } };
+    return body.error?.code === 'stale_lease';
+  } catch { return false; }
+}
+
+function resultStatus(value: unknown, depth = 0): string | undefined {
+  if (depth > 8 || !value) return undefined;
+  if (typeof value === 'string') {
+    if (value.length > 100_000 || !value.trimStart().startsWith('{')) return undefined;
+    try { return resultStatus(JSON.parse(value), depth + 1); } catch { return undefined; }
+  }
+  if (Array.isArray(value)) return value.map((item) => resultStatus(item, depth + 1)).find(Boolean);
+  if (typeof value !== 'object') return undefined;
+  const item = value as Record<string, unknown>;
+  if (typeof item.status === 'string') return item.status;
+  return Object.values(item).map((entry) => resultStatus(entry, depth + 1)).find(Boolean);
+}
+
 type TaskConnection = {
   taskId: string;
   lastRequestId: string;
   connectionId: string;
   client: StdioSquireMcpClient;
   sessions: Set<string>;
+  pendingApprovals: Map<string, { requestId: string; sessionIds: Set<string> }>;
   tools?: unknown;
   dead: boolean;
 };
@@ -57,6 +86,7 @@ export class SquireTaskRelay {
   private active?: TurnKey;
   private task?: TaskConnection;
   private leaseTimer?: ReturnType<typeof setTimeout>;
+  private approvalRequestId?: string;
   private closed = false;
   private callTail: Promise<void> = Promise.resolve();
 
@@ -113,42 +143,56 @@ export class SquireTaskRelay {
       throw new Error('Squire task scope does not match the server command');
     if (this.leaseTimer) clearTimeout(this.leaseTimer);
     this.leaseTimer = undefined;
-    if (this.task && this.task.taskId !== command.rootCommandId) this.retire('task-ended');
     this.active = {
       roomId: command.roomId,
       requestId: command.turnRequestId,
       taskId: command.rootCommandId,
       generationId,
     };
-    if (this.task) this.task.lastRequestId = command.turnRequestId;
+    if (this.task) {
+      this.task.taskId = command.rootCommandId;
+      this.task.lastRequestId = command.turnRequestId;
+    }
   }
 
-  deactivate(requestId: string, continuation: 'grant-decision' | null = null): void {
+  deactivate(requestId: string, approvalRequestId?: string): void {
     if (this.active?.requestId !== requestId) return;
-    const taskId = this.active.taskId;
     this.active = undefined;
-    if (!this.task || this.task.taskId !== taskId) return;
-    if (continuation !== 'grant-decision') {
-      this.retire('task-complete');
-      return;
-    }
+    this.approvalRequestId = approvalRequestId;
+    // A human approval is an open continuation, however long the card waits.
+    if (approvalRequestId) return;
+    this.scheduleIdle();
+  }
+
+  private scheduleIdle(): void {
+    if (this.leaseTimer) clearTimeout(this.leaseTimer);
+    this.leaseTimer = undefined;
+    if (!this.task || this.approvalRequestId || this.task.pendingApprovals.size) return;
+    const task = this.task;
     this.leaseTimer = setTimeout(() => {
       this.leaseTimer = undefined;
-      if (!this.active && this.task?.taskId === taskId) this.retire('task-lease-expired');
+      if (!this.active && !this.approvalRequestId && !task.pendingApprovals.size &&
+          this.task === task) this.retire('conversation-idle');
     }, SQUIRE_TASK_IDLE_LEASE_MS);
     this.leaseTimer.unref?.();
   }
 
   cancel(requestId: string): void {
-    if (this.active?.requestId !== requestId) return;
-    this.active = undefined;
-    this.retire('cancelled');
+    if (this.active?.requestId !== requestId && this.approvalRequestId !== requestId &&
+        ![...(this.task?.pendingApprovals.values() ?? [])].some((approval) =>
+          approval.requestId === requestId)) return;
+    if (this.active?.requestId === requestId) this.active = undefined;
+    if (this.approvalRequestId === requestId) this.approvalRequestId = undefined;
+    for (const [id, approval] of this.task?.pendingApprovals ?? [])
+      if (approval.requestId === requestId) this.task?.pendingApprovals.delete(id);
+    if (!this.active && !this.approvalRequestId) this.scheduleIdle();
   }
 
   close(): void {
     if (this.closed) return;
     this.closed = true;
     this.active = undefined;
+    this.approvalRequestId = undefined;
     this.retire('helper-exit');
     this.server?.close();
   }
@@ -156,7 +200,7 @@ export class SquireTaskRelay {
   private log(event: string, task: TaskConnection, extra: Record<string, unknown> = {}): void {
     const { sessionId, ...details } = extra;
     console.info('[squire-task]', JSON.stringify({
-      event, agentId: this.agentId, taskId: task.taskId,
+      event, agentId: this.agentId, conversationId: this.roomId, taskId: task.taskId,
       requestId: this.active?.requestId ?? task.lastRequestId,
       squireSessionId: sessionId ?? null,
       mcpConnectionId: task.connectionId,
@@ -169,7 +213,7 @@ export class SquireTaskRelay {
     if (this.task) return this.task;
     const task = {
       taskId, lastRequestId: this.active?.requestId ?? '',
-      connectionId: randomUUID(), sessions: new Set<string>(), dead: false,
+      connectionId: randomUUID(), sessions: new Set<string>(), pendingApprovals: new Map(), dead: false,
     } as TaskConnection;
     task.client = this.makeClient({
       onSpawn: (pid) => this.log('relay-spawn', task, { pid }),
@@ -178,6 +222,7 @@ export class SquireTaskRelay {
         this.log('relay-exit', task, { pid, exitCode: code,
           sessionId: redactedSessionId(task.sessions.values().next().value) });
         task.sessions.clear();
+        task.pendingApprovals.clear();
       },
     });
     this.task = task;
@@ -192,6 +237,7 @@ export class SquireTaskRelay {
       sessionId: redactedSessionId(this.task.sessions.values().next().value) });
     this.task.client.close();
     this.task.sessions.clear();
+    this.task.pendingApprovals.clear();
     this.task = undefined;
   }
 
@@ -228,10 +274,14 @@ export class SquireTaskRelay {
       this.log('call-end', task, { method: input.method, source: 'cached' });
       return task.tools;
     }
+    if (input.method === 'tools/call' && task.dead && toolName !== 'operate_start') {
+      this.log('call-refused', task, { reason: 'connection-died' });
+      throw new Error('Squire MCP connection died and its browser session is gone; call operate_start');
+    }
     if (input.method === 'tools/call' && (!safeToolName ||
         requestedIds.some((id) => !task.sessions.has(id)))) {
       this.log('call-refused', task, { reason: 'session-not-owned' });
-      throw new Error('Squire browser session is no longer owned by this task; call operate_start');
+      throw new Error('Squire browser session is no longer owned by this conversation; call operate_start');
     }
     if (input.method === 'tools/call' && !(await this.authorize({
       ...active, tool: safeToolName!,
@@ -256,7 +306,42 @@ export class SquireTaskRelay {
           this.active?.requestId !== active.requestId)
         throw new Error('Squire task ended while the call was running');
       if (input.method === 'tools/list') task.tools = result;
-      for (const id of sessionIds(result)) task.sessions.add(id);
+      if (staleLeaseResult(result)) {
+        for (const id of requestedIds) task.sessions.delete(id);
+        this.releasePendingApprovals(task, requestedIds);
+        this.log('call-error', task, { method: input.method, tool: safeToolName ?? null,
+          reason: 'stale-lease', sessionId: redactedSessionId(requestedIds[0]) });
+        return { isError: true, content: [{ type: 'text', text: JSON.stringify({
+          error: { code: 'stale_lease', message: 'Squire browser session is gone; call operate_start for a fresh session' },
+        }) }] };
+      }
+      if (safeToolName === 'operate_finish' &&
+          !(result && typeof result === 'object' && (result as { isError?: unknown }).isError === true)) {
+        for (const id of requestedIds) task.sessions.delete(id);
+        this.releasePendingApprovals(task, requestedIds);
+      } else {
+        for (const id of sessionIds(result)) task.sessions.add(id);
+      }
+      const approval = input.method === 'tools/call' && squireApprovalFromMcp(
+        { id: 1, method: input.method, params: input.params }, { id: 1, result },
+      );
+      if (approval) {
+        const ids = requestedIds.length ? requestedIds : [...task.sessions];
+        const approvalKey = createHash('sha256')
+          .update(approval.approvalId ?? approval.approvalUrl).digest('hex');
+        const status = resultStatus(result);
+        // inject_card returns approval_pending; operate_drive wraps it as pending_approval.
+        const pending = status === 'approval_pending' || status === 'pending_approval';
+        if (pending && ids.length) {
+          task.pendingApprovals.set(approvalKey, {
+            requestId: active.requestId, sessionIds: new Set(ids),
+          });
+          this.log('approval-pending', task, { tool: safeToolName ?? null,
+            sessionId: redactedSessionId(ids[0]) });
+        } else if (!pending) {
+          task.pendingApprovals.delete(approvalKey);
+        }
+      }
       this.log('call-end', task, { method: input.method, tool: safeToolName ?? null,
         sessionId: redactedSessionId(requestedIds[0] ?? sessionIds(result)[0] ?? task.sessions.values().next().value) });
       return result;
@@ -264,11 +349,21 @@ export class SquireTaskRelay {
       if (error instanceof Error && /timed out/.test(error.message)) {
         task.dead = true;
         task.sessions.clear();
+        task.pendingApprovals.clear();
         task.client.close();
       }
       this.log('call-error', task, { method: input.method, tool: safeToolName ?? null,
         sessionId: redactedSessionId(requestedIds[0] ?? task.sessions.values().next().value) });
+      if (task.dead)
+        throw new Error('Squire MCP connection died and its browser session is gone; call operate_start');
       throw error;
+    }
+  }
+
+  private releasePendingApprovals(task: TaskConnection, sessionIdsToRelease: string[]): void {
+    for (const [id, approval] of task.pendingApprovals) {
+      for (const sessionId of sessionIdsToRelease) approval.sessionIds.delete(sessionId);
+      if (!approval.sessionIds.size) task.pendingApprovals.delete(id);
     }
   }
 }

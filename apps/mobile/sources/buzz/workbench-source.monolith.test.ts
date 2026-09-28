@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({
   calls: [] as { op: string; input: Record<string, unknown> }[],
   readWorkbenchOutput: {} as Record<string, unknown>,
+  googleSignInOutput: null as null | { connected: boolean; authorizationUrl?: string },
 }));
 
 vi.mock('@/sync/transport/monolith-operation', () => ({
@@ -10,6 +11,9 @@ vi.mock('@/sync/transport/monolith-operation', () => ({
     state.calls.push({ op, input });
     if (op === 'readWorkbench') return state.readWorkbenchOutput;
     if (op === 'pairConnector') return { connectorId: 'conn-1' };
+    if (op === 'beginGoogleSignIn') return { authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth?state=one' };
+    if (op === 'readGoogleSignIn') return state.googleSignInOutput ??
+      { connected: false, authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth?state=one' };
     return {};
   },
 }));
@@ -80,6 +84,58 @@ describe('MonolithWorkbenchSource pairConnector — the ONE Google entry', () =>
       'trusty-squire',
     );
     expect(state.calls.some((call) => call.op === 'readWorkbench')).toBe(false);
+  });
+});
+
+describe('MonolithWorkbenchSource direct Google consent', () => {
+  afterEach(() => { state.calls.length = 0; state.googleSignInOutput = null; });
+
+  it('keeps Gmail top-up on sign-in while Calendar is already granted', async () => {
+    const source = new MonolithWorkbenchSource();
+    const input = { workspaceId: 'ws1', connectorId: 'google-account' };
+    state.googleSignInOutput = { connected: true,
+      authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth?state=gmail-top-up' };
+    expect(await source.readInstallState(input)).toMatchObject({
+      connected: false, signIn: { url: state.googleSignInOutput.authorizationUrl },
+    });
+    state.googleSignInOutput = { connected: true };
+    expect(await source.readInstallState(input)).toMatchObject({ connected: true, signIn: null });
+    // Cancelling the top-up also returns to the already-connected Calendar state.
+    state.googleSignInOutput = { connected: true,
+      authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth?state=retry' };
+    expect((await source.readInstallState(input))?.connected).toBe(false);
+    state.googleSignInOutput = { connected: true };
+    expect((await source.readInstallState(input))?.connected).toBe(true);
+  });
+
+  it('keeps a connected legacy Gmail row visible beside a direct Calendar grant', async () => {
+    state.readWorkbenchOutput = { ...workbenchDto([{ connectorType: 'google-gmail', status: 'connected' }]),
+      googleAccount: { connected: true, connectedTypes: ['google-calendar'], pending: false } };
+    const view = await new MonolithWorkbenchSource().readWorkbench({ workspaceId: 'ws1', viewerId: 'owner' });
+    expect(view.connectors.find(row => row.id === 'google-gmail')?.status).toBe('connected');
+    expect(view.connectors.find(row => row.id === 'google-calendar')?.status).toBe('connected');
+    await new MonolithWorkbenchSource().disconnectConnector({ workspaceId: 'ws1', connectorId: 'google-gmail' });
+    expect(state.calls.at(-1)).toEqual({ op: 'unpairConnector',
+      input: { workspaceId: 'ws1', connectorId: 'conn-google-gmail' } });
+    await new MonolithWorkbenchSource().disconnectConnector({ workspaceId: 'ws1', connectorId: 'google-calendar' });
+    expect(state.calls.at(-1)).toEqual({ op: 'disconnectGoogleSignIn', input: {} });
+  });
+
+  it('begins and polls owner consent without reading or pairing a helper', async () => {
+    state.readWorkbenchOutput = { ...workbenchDto([]), googleAccount: { connected: false,
+      connectedTypes: [], pending: false } };
+    const source = new MonolithWorkbenchSource();
+    const view = await source.readWorkbench({ workspaceId: 'ws1', viewerId: 'owner' });
+    expect(view.connectors.filter(row => row.id.startsWith('google-')).map(row => row.status))
+      .toEqual(['disconnected', 'disconnected', 'disconnected', 'disconnected']);
+    const started = await source.beginGoogleSignIn({ workspaceId: 'ws1', connectorType: 'google-calendar' });
+    expect(new URL(started.authorizationUrl).host).toBe('accounts.google.com');
+    expect(await source.readInstallState({ workspaceId: 'ws1', connectorId: 'google-account' }))
+      .toMatchObject({ connected: false, signIn: { method: 'oauth' } });
+    expect(state.calls.map(call => call.op)).toEqual([
+      'readWorkbench', 'beginGoogleSignIn', 'readGoogleSignIn',
+    ]);
+    expect(state.calls[1]?.input).toEqual({ connectorType: 'google-calendar' });
   });
 });
 

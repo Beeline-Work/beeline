@@ -7,6 +7,7 @@ import type { GrantRunnerEndpoint } from './grant-runner.js';
 import { BEELINE_AGENT_MCP_SERVER_NAME, READ_ONLY_MCP_SERVER_NAME } from './read-only-policy.js';
 import { YOUTUBE_MCP_SERVER_NAME, YOUTUBE_MCP_SURFACE } from './youtube-mcp.js';
 import { GOOGLE_DRIVE_MCP_SERVER_NAME, GOOGLE_DRIVE_MCP_SURFACE } from './google-drive-mcp.js';
+import { GOOGLE_PERSONAL_MCP_SERVER_NAME, GOOGLE_PERSONAL_MCP_SURFACE } from './google-personal-mcp.js';
 import { rewriteHostMcpDeclaration } from './host-mcp-route.js';
 
 export function googleDriveMcpServer(
@@ -24,6 +25,25 @@ export function googleDriveMcpServer(
       { name: 'BEELINE_GOOGLE_DRIVE_ACCESS_TOKEN', value: accessToken },
     ],
   };
+  if (!resourceAuthFile) return server;
+  const route = rewriteHostMcpDeclaration(server.name, {
+    command: server.command, args: server.args,
+    env: Object.fromEntries((server.env ?? []).map(entry => [entry.name, entry.value])),
+  }, config.operatorHome ?? '', resourceAuthFile);
+  return { name: server.name, command: String(route.command), args: route.args as string[],
+    env: Object.entries(route.env as Record<string, string>).map(([name,value]) => ({name,value})) };
+}
+
+export function googlePersonalMcpServer(config: BodyConfig,
+  tokens: { calendar?: string; gmail?: string }, resourceAuthFile?: string): McpServerWire | undefined {
+  if ((!tokens.calendar && !tokens.gmail) || !config.readonlyMcpCommand) return undefined;
+  const server: McpServerWire = { name: GOOGLE_PERSONAL_MCP_SERVER_NAME,
+    command: config.readonlyMcpCommand, args: [...(config.readonlyMcpArgs ?? [])],
+    env: [
+      { name: 'BEELINE_MCP_SURFACE', value: GOOGLE_PERSONAL_MCP_SURFACE },
+      { name: 'BEELINE_GOOGLE_CALENDAR_ACCESS_TOKEN', value: tokens.calendar ?? '' },
+      { name: 'BEELINE_GOOGLE_GMAIL_ACCESS_TOKEN', value: tokens.gmail ?? '' },
+    ] };
   if (!resourceAuthFile) return server;
   const route = rewriteHostMcpDeclaration(server.name, {
     command: server.command, args: server.args,

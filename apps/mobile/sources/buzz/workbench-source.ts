@@ -18,6 +18,7 @@ import {
   resolveGoogleConnectTarget,
 } from './workbench';
 import type { PhoneOperationMap } from '@beeline/api-contract/phone';
+import { GOOGLE_ACCOUNT_CONNECTOR_ID } from '@beeline/api-contract/workbench';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 
 /**
@@ -43,6 +44,9 @@ export interface WorkbenchSource {
     connectorId: string;
     helperId: string;
   }): Promise<{ connectorId: string }>;
+  cancelGoogleSignIn(input: { connectorId: string; state?: string }): Promise<boolean>;
+  beginGoogleSignIn(input: { workspaceId: string;
+    connectorType: 'google-gmail' | 'google-calendar' | 'google-drive' | 'google-youtube' }): Promise<{ authorizationUrl: string }>;
   readInstallState(input: {
     workspaceId: string;
     connectorId: string;
@@ -177,6 +181,23 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
               status: dto.wallet ? ('connected' as const) : ('disconnected' as const),
             };
           }
+          if (entry.connectorType.startsWith('google-') && dto.googleAccount) {
+            const row = dto.connectors.find(candidate => candidate.connectorType === entry.connectorType);
+            if (dto.googleAccount.connected || dto.googleAccount.pending) {
+              return { ...toConnector({ connectorType: entry.connectorType, name: entry.name,
+                available: true, row }), available: true,
+                sharedGoogleAccount: dto.googleAccount.connectedTypes.includes(entry.connectorType),
+                status: dto.googleAccount.connectedTypes.includes(entry.connectorType)
+                  || row?.status.status === 'connected'
+                  ? 'connected' as const : dto.googleAccount.pending ? 'installing' as const
+                    : 'disconnected' as const,
+                errorMessage: undefined };
+            }
+            return { ...toConnector({ connectorType: entry.connectorType, name: entry.name,
+              available: true, row }), available: true,
+              status: row?.status.status === 'connected' ? 'connected' as const : 'disconnected' as const,
+              errorMessage: undefined };
+          }
           return toConnector({
             connectorType: entry.connectorType,
             name: entry.name,
@@ -233,10 +254,26 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
     return { connectorId: result.connectorId };
   }
 
+  async cancelGoogleSignIn(input: { connectorId: string; state?: string }): Promise<boolean> {
+    return (await monolithPhoneOperation('cancelGoogleSignIn', input)).cancelled;
+  }
+
+  async beginGoogleSignIn(input: { workspaceId: string;
+    connectorType: 'google-gmail' | 'google-calendar' | 'google-drive' | 'google-youtube' }): Promise<{ authorizationUrl: string }> {
+    return monolithPhoneOperation('beginGoogleSignIn', { connectorType: input.connectorType });
+  }
+
   async readInstallState(input: {
     workspaceId: string;
     connectorId: string;
   }): Promise<ConnectorInstallState | null> {
+    if (input.connectorId === GOOGLE_ACCOUNT_CONNECTOR_ID) {
+      const state = await monolithPhoneOperation('readGoogleSignIn', {});
+      // A previously granted tool does not complete a newly pending top-up.
+      return { connectorId: input.connectorId, steps: [],
+        connected: state.connected && !state.authorizationUrl,
+        signIn: state.authorizationUrl ? { method: 'oauth', url: state.authorizationUrl } : null };
+    }
     const dto = await monolithPhoneOperation('readWorkbench', { workspaceId: input.workspaceId });
     // `pairConnector` returns the ROW's id, and the connect screen polls with
     // exactly that; the sign-in overlay still polls by connector type. Match
@@ -321,6 +358,12 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
 
   async disconnectConnector(input: { workspaceId: string; connectorId: string }): Promise<void> {
     const dto = await monolithPhoneOperation('readWorkbench', { workspaceId: input.workspaceId });
+    if (input.connectorId === GOOGLE_ACCOUNT_CONNECTOR_ID ||
+        (input.connectorId.startsWith('google-') &&
+          dto.googleAccount?.connectedTypes.includes(input.connectorId))) {
+      await monolithPhoneOperation('disconnectGoogleSignIn', {});
+      return;
+    }
     const row = dto.connectors.find(
       (candidate) =>
         candidate.connectorId === input.connectorId ||

@@ -467,7 +467,7 @@ describe('the ONE Google entry', () => {
         tool('google-drive'),
         tool('google-youtube'),
       ]),
-    ).toBe('installing');
+    ).toBe('error');
     expect(
       googleEntryState(
         catalog.map((c) =>
@@ -479,6 +479,12 @@ describe('the ONE Google entry', () => {
 
   it('resolves the connect target to the first unconnected tool in canonical order', () => {
     expect(resolveGoogleConnectTarget(catalog)).toBe('google-gmail');
+    expect(resolveGoogleConnectTarget([
+      tool('google-gmail', 'installing'),
+      tool('google-calendar', 'error'),
+      tool('google-drive'),
+      tool('google-youtube'),
+    ])).toBe('google-calendar');
     expect(
       resolveGoogleConnectTarget([
         tool('google-gmail', 'connected'),
@@ -504,6 +510,17 @@ describe('the ONE Google entry', () => {
     ];
     expect(googleEntryState(failed)).toBe('error');
     expect(googleEntryConnector(failed)?.errorMessage).toBe('scope refused');
+  });
+
+  it('offers Connect for the group and each Google tool after any OAuth failure', () => {
+    for (const failedId of ['google-gmail', 'google-calendar', 'google-drive', 'google-youtube']) {
+      const failed = catalog.map((item) => item.id === failedId
+        ? { ...item, status: 'error' as const, errorMessage: 'Google sign-in was cancelled' }
+        : item);
+      expect(connectorInstrument(googleEntryConnector(failed)?.status, failedId).connect).toBe(true);
+      expect(connectorInstrument('error', failedId).connect).toBe(true);
+      expect(resolveGoogleConnectTarget(failed)).toBe(failedId);
+    }
   });
 });
 

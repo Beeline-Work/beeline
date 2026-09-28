@@ -8,6 +8,7 @@ import {
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { CORNER_VALIDATION_STAGES, currentCornerBrief } from './corner-brief.js';
 import type { GoogleOAuth } from './google-oauth.js';
+import { GOOGLE_ACCOUNT_CONNECTOR_ID } from '@beeline/api-contract/workbench';
 import { storeWorkspaceAvatar } from './durable-avatar.js';
 import { queueLatestReleasePush } from './release-push-catchup.js';
 import { requireRoomSlug, reserveRoomName } from './room-names.js';
@@ -155,6 +156,7 @@ import {
   connectorAdapter,
   connectorRequesterRole,
   faviconDomain,
+  GOOGLE_TOOL_SCOPES,
   isGoogleToolConnectorKind,
 } from '@beeline/api-contract/workbench';
 import type {
@@ -3462,6 +3464,25 @@ export class PhoneService {
           input as Input<'pairConnector'>,
           viewerId,
         )) as Output<Name>;
+      case 'cancelGoogleSignIn':
+        return { cancelled: (input as Input<'cancelGoogleSignIn'>).connectorId === GOOGLE_ACCOUNT_CONNECTOR_ID
+          ? await this.googleOAuth?.cancelAccount(viewerId,
+              (input as Input<'cancelGoogleSignIn'>).state) ?? false
+          : await this.googleOAuth?.cancelConnector(
+              (input as Input<'cancelGoogleSignIn'>).connectorId, viewerId) ?? false } as Output<Name>;
+      case 'beginGoogleSignIn':
+        await this.viewerWorkbenchWorkspace(viewerId);
+        if (!this.googleOAuth) throw new Error('Google OAuth is unavailable');
+        return { authorizationUrl: await this.googleOAuth.beginAccount(viewerId,
+          (input as Input<'beginGoogleSignIn'>).connectorType) } as Output<Name>;
+      case 'readGoogleSignIn':
+        await this.viewerWorkbenchWorkspace(viewerId);
+        return (await this.googleOAuth?.accountStatus(viewerId)
+          ?? { connected: false, connectedTypes: [] }) as Output<Name>;
+      case 'disconnectGoogleSignIn':
+        await this.viewerWorkbenchWorkspace(viewerId);
+        await this.googleOAuth?.disconnectAccount(viewerId);
+        return undefined as Output<Name>;
       case 'unpairConnector':
         await this.unpairConnector(input as Input<'unpairConnector'>, viewerId);
         return undefined as Output<Name>;
@@ -5923,14 +5944,9 @@ export class PhoneService {
    * Workspace manager, who already owns Workspace configuration. Nobody else
    * can act on the card, whatever the phone shows.
    *
-   * Starting the ceremony is configuration, not authority: it pairs the connector on the
-   * OFFERING agent's machine through the very row the Workbench page's own
-   * Connect writes (`armConnectorPairing`). Adapted kinds still require the
-   * acceptor to own that helper, so a foreign Workbench cannot inherit its
-   * vault. Every later credential use goes through the connector's unchanged
-   * receipts and approvals, and the vault stays write-only. The card remains
-   * `connecting`; the helper's connected report settles it and emits the hidden
-   * resume line.
+   * Google consent is owned by the agent's human owner and settles directly
+   * from the OAuth callback. Other connectors still pair on the offering
+   * agent's machine; their helper report settles the card and resumes the turn.
    */
   private async acceptConnectorOffer(
     input: Input<'acceptConnectorOffer'>,
@@ -5973,6 +5989,31 @@ export class PhoneService {
     await this.requireWorkspaceMember(offer.workspace_id, viewerId);
     if (offer.status === 'connecting' && offer.accepted_by !== viewerId)
       throw new Error('connector offer conflict: sign-in is already in progress');
+    if (isGoogleToolConnectorKind(connectorType)) {
+      const agentOwner = (await this.database.query<{ owner_id: string }>(
+        `SELECT owner_id FROM agents WHERE agent_id=$1`, [offer.agent_id])).rows[0]?.owner_id;
+      if (agentOwner !== viewerId)
+        throw new Error('Google Workspace access denied: only this agent’s owner can connect it');
+      if (!this.googleOAuth) throw new Error('Google OAuth is unavailable');
+      const authorizationUrl = await this.googleOAuth.beginAccount(viewerId,
+        connectorType as keyof typeof GOOGLE_TOOL_SCOPES);
+      const acceptor = await this.requireIdentity(viewerId);
+      await this.database.transaction(async (database) => {
+        const updated = await database.query<{ accepted_at: Date }>(
+          `UPDATE connector_offers SET status='connecting',accepted_by=$2,
+             accepted_at=COALESCE(accepted_at,now())
+           WHERE id::text=$1 AND status IN ('pending','connecting') RETURNING accepted_at`,
+          [input.offerId, viewerId]);
+        if (!updated.rows[0]) throw new Error('connector offer conflict: already accepted');
+        await this.markConnectorOfferConnecting(database, {
+          roomId: offer.room_id, offerId: input.offerId, acceptedBy: acceptor,
+          acceptedAt: updated.rows[0].accepted_at,
+          connectorId: GOOGLE_ACCOUNT_CONNECTOR_ID,
+        });
+      });
+      return { offerId: input.offerId, status: 'connecting', roomId: offer.room_id,
+        connectorId: GOOGLE_ACCOUNT_CONNECTOR_ID, authorizationUrl };
+    }
     // The helper is the offering agent's machine; it must still be here to install.
     const helper = await this.database.query(
       `SELECT 1 FROM agents a
@@ -6858,6 +6899,8 @@ export class PhoneService {
     input: Input<'readWorkbench'>,
     viewerId: string,
   ): Promise<Output<'readWorkbench'>> {
+    await this.googleOAuth?.expirePending(viewerId);
+    const googleAccount = await this.googleOAuth?.accountStatus(viewerId);
     if (input.refreshVault) {
       const refreshes = await this.database.transaction(async (database) => {
         const rows = (
@@ -6995,6 +7038,11 @@ export class PhoneService {
     ).rows[0];
     return {
       workspaceId: input.workspaceId,
+      ...(googleAccount ? { googleAccount: {
+        connected: googleAccount.connected,
+        pending: Boolean(googleAccount.authorizationUrl),
+        connectedTypes: googleAccount.connectedTypes,
+      } } : {}),
       catalog: connectorCatalog().map((entry) =>
         isGoogleToolConnectorKind(entry.connectorType) && !this.googleOAuth
           ? { ...entry, available: false }
@@ -7279,8 +7327,7 @@ export class PhoneService {
        SET helper_agent_id=EXCLUDED.helper_agent_id,
            status='installing',
            status_steps=EXCLUDED.status_steps,
-           status_error=CASE WHEN EXCLUDED.connector_type LIKE 'google-%'
-             THEN workspace_connectors.status_error ELSE NULL END,
+           status_error=NULL,
            pending_ops='[]'::jsonb,
            connected_at=NULL,
            sign_in=NULL,
@@ -8369,6 +8416,10 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'reportRunningUpdate',
   'readWorkbench',
   'pairConnector',
+  'cancelGoogleSignIn',
+  'beginGoogleSignIn',
+  'readGoogleSignIn',
+  'disconnectGoogleSignIn',
   'unpairConnector',
   'connectWorkbenchApp',
   'disconnectWorkbenchApp',

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GOOGLE_TOOL_SCOPES } from '@beeline/api-contract/workbench';
 import { callGoogleDriveTool } from './google-drive-mcp.js';
 import { roomGoogleToolFingerprint, roomGoogleToolTokens } from './room-google-grant.js';
-import { googleDriveMcpServer } from './room-session.js';
+import { googleDriveMcpServer, googlePersonalMcpServer } from './room-session.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -41,10 +41,27 @@ describe('Room Google tools after Workbench connection', () => {
     expect(roomGoogleToolFingerprint(renewed)).not.toEqual(roomGoogleToolFingerprint(connected));
   });
 
-  it('requires the Drive scope and a connected Google product; YouTube stays separate', async () => {
+  it('mounts Gmail with its scopes while Drive still needs its own scope', async () => {
     const api = { execute: async () => ({ status: 'ready', connectedTypes: ['google-gmail'],
       credentials: { accessToken: 'token', scopes: GOOGLE_TOOL_SCOPES['google-gmail'] } }) };
-    expect(await roomGoogleToolTokens(api as never, 'room-1')).toEqual({});
+    const tokens = await roomGoogleToolTokens(api as never, 'room-1');
+    expect(tokens).toEqual({ gmail: 'token' });
+    expect(googlePersonalMcpServer({ readonlyMcpCommand: '/bin/beeline-mcp' } as never,
+      tokens)).toMatchObject({ name: 'google-personal' });
+  });
+
+  it('keeps a legacy Gmail token alongside a direct Calendar connection', async () => {
+    const api = { execute: async () => ({ status: 'ready',
+      connectedTypes: ['google-calendar', 'google-gmail'],
+      credentials: { accessToken: 'calendar-token', scopes: GOOGLE_TOOL_SCOPES['google-calendar'] },
+      credentialsByType: {
+        'google-calendar': { accessToken: 'calendar-token', scopes: GOOGLE_TOOL_SCOPES['google-calendar'] },
+        'google-gmail': { accessToken: 'gmail-token', scopes: GOOGLE_TOOL_SCOPES['google-gmail'] },
+      },
+    }) };
+    expect(await roomGoogleToolTokens(api as never, 'room-1')).toEqual({
+      calendar: 'calendar-token', gmail: 'gmail-token',
+    });
   });
 
   it('drops a YouTube mount on the next turn after that product is unpaired', async () => {

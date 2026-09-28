@@ -55,6 +55,7 @@ import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import {
   beelineAgentMcpServer,
   googleDriveMcpServer,
+  googlePersonalMcpServer,
   readOnlyMcpServer,
   youtubeMcpServer,
 } from './room-session.js';
@@ -920,6 +921,8 @@ export class MonolithRoomTurnLoop {
     if (youtube) servers.push(youtube);
     const drive = googleDriveMcpServer(this.options.config, googleTokens.drive, resourceAuthFile);
     if (drive) servers.push(drive);
+    const personal = googlePersonalMcpServer(this.options.config, googleTokens, resourceAuthFile);
+    if (personal) servers.push(personal);
     const hostDeclarations = hostImportedMcpDeclarations({
       operatorHome,
       agentKind: this.options.config.agentKind,

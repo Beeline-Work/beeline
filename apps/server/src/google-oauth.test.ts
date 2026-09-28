@@ -51,10 +51,9 @@ it('pairs one product with its own OAuth sign-in and leaves siblings uninstalled
   const denied = await database.query<{ status: string; status_error: string; sign_in: unknown;
     status_steps: { label: string; status: string; reason: string }[] }>(
     `SELECT status,status_error,sign_in,status_steps FROM workspace_connectors WHERE id=$1`, [paired.connectorId]);
-  expect(denied.rows[0]).toMatchObject({ status: 'error',
-    status_error: 'Google authorization was denied', sign_in: null });
-  expect(denied.rows[0]!.status_steps).toEqual([{ label: 'Google sign-in',
-    status: 'failed', reason: 'Google authorization was denied' }]);
+  expect(denied.rows[0]).toMatchObject({ status: 'disconnected',
+    status_error: null, sign_in: null });
+  expect(denied.rows[0]!.status_steps).toEqual([]);
   await phone.pairConnector({ workspaceId: WORKSPACE,
     connectorType: 'google-gmail', helperAgentId: HELPER }, OWNER);
   const retry = await database.query<{ sign_in: { url: string }; status: string }>(
@@ -63,9 +62,136 @@ it('pairs one product with its own OAuth sign-in and leaves siblings uninstalled
   expect(new URL(retry.rows[0]!.sign_in.url).searchParams.get('state')).not.toBe(state);
   const pending = await database.query<{ status_error: string }>(
     `SELECT status_error FROM workspace_connectors WHERE id=$1`, [paired.connectorId]);
-  expect(pending.rows[0]!.status_error).toBe('Google authorization was denied');
+  expect(pending.rows[0]!.status_error).toBeNull();
 });
 afterEach(async () => database.close());
+
+it('returns every Google tool to retryable Connect after denial, exchange failure, cancellation, and abandonment', async () => {
+  const transport = vi.fn(async () => new Response('{"error":"invalid_grant"}', { status: 400 })) as typeof fetch;
+  const oauth = new GoogleOAuth(database, 'client-id', 'client-secret',
+    'https://beeline.example', randomBytes(32).toString('base64'), transport);
+  const phone = new PhoneService(database, 'https://beeline.example', undefined,
+    undefined, undefined, false, database, undefined, oauth);
+  const kinds = ['google-gmail', 'google-calendar', 'google-drive', 'google-youtube'] as const;
+  for (const kind of kinds) {
+    for (const outcome of ['denied', 'failed', 'cancelled', 'abandoned'] as const) {
+      const paired = await phone.pairConnector({ workspaceId: WORKSPACE,
+        connectorType: kind, helperAgentId: HELPER }, OWNER);
+      const pending = await database.query<{ sign_in: { url: string } }>(
+        `SELECT sign_in FROM workspace_connectors WHERE id=$1`, [paired.connectorId]);
+      const state = new URL(pending.rows[0]!.sign_in.url).searchParams.get('state')!;
+      if (outcome === 'denied') expect(await oauth.cancel(state)).toBe(true);
+      else if (outcome === 'failed') expect(await oauth.complete(state, 'bad-code')).toBe(false);
+      else if (outcome === 'cancelled') {
+        expect(await oauth.cancelConnector(paired.connectorId, 'c'.repeat(64))).toBe(false);
+        expect(await oauth.cancelConnector(paired.connectorId, OWNER)).toBe(true);
+      } else {
+        await database.query(
+          `UPDATE google_oauth_attempts SET expires_at=now()-interval '1 second' WHERE state=$1`,
+          [state],
+        );
+      }
+      const view = await phone.readWorkbench({ workspaceId: WORKSPACE }, OWNER);
+      const row = view.connectors.find((entry) => entry.connectorId === paired.connectorId)!;
+      expect(row.status.status, `${kind} ${outcome}`).toBe('disconnected');
+      expect(row.status.errorMessage, `${kind} ${outcome}`).toBeUndefined();
+      expect(row.status.signIn, `${kind} ${outcome}`).toBeUndefined();
+      const retry = await phone.pairConnector({ workspaceId: WORKSPACE,
+        connectorType: kind, helperAgentId: HELPER }, OWNER);
+      expect(retry.connectorId).toBe(paired.connectorId);
+      const fresh = await database.query<{ sign_in: { url: string } }>(
+        `SELECT sign_in FROM workspace_connectors WHERE id=$1`, [paired.connectorId]);
+      expect(new URL(fresh.rows[0]!.sign_in.url).searchParams.get('state')).not.toBe(state);
+    }
+  }
+  expect(transport).toHaveBeenCalledTimes(kinds.length);
+});
+
+it('starts account consent without a helper and clears denied, failed, cancelled, and abandoned browser attempts', async () => {
+  const transport = vi.fn(async () => new Response('{"error":"invalid_grant"}', { status: 400 })) as typeof fetch;
+  const oauth = new GoogleOAuth(database, 'client-id', 'client-secret',
+    'https://beeline.example', randomBytes(32).toString('base64'), transport);
+  for (const outcome of ['denied', 'failed', 'cancelled', 'abandoned'] as const) {
+    const url = new URL(await oauth.beginAccount(OWNER, 'google-calendar'));
+    expect(url.host).toBe('accounts.google.com');
+    expect(url.searchParams.get('redirect_uri')).toBe('https://beeline.example/v1/google/oauth/callback');
+    expect(url.searchParams.get('scope')).toContain('calendar.readonly');
+    expect(url.searchParams.get('scope')).not.toContain('gmail.');
+    expect(url.searchParams.get('scope')).not.toContain('yt-analytics');
+    const state = url.searchParams.get('state')!;
+    expect((await oauth.accountStatus(OWNER)).authorizationUrl).toBe(url.toString());
+    if (outcome === 'denied') expect(await oauth.cancelAccountState(state)).toBe(true);
+    if (outcome === 'failed') expect(await oauth.completeAccount(state, 'bad-code')).toEqual({ completed: false, offers: [] });
+    if (outcome === 'cancelled') expect(await oauth.cancelAccount(OWNER)).toBe(true);
+    if (outcome === 'abandoned') {
+      await database.query(`UPDATE google_oauth_accounts SET expires_at=now()-interval '1 second'
+        WHERE owner_identity_id=$1`, [OWNER]);
+    }
+    expect(await oauth.accountStatus(OWNER)).toEqual({ connected: false, connectedTypes: [] });
+    const retry = new URL(await oauth.beginAccount(OWNER, 'google-calendar'));
+    expect(retry.searchParams.get('state')).not.toBe(state);
+    expect(await oauth.cancelAccount(OWNER)).toBe(true);
+  }
+  expect(transport).toHaveBeenCalledOnce();
+});
+
+it('seals a helper-free account grant and exposes only the access token to the owner', async () => {
+  const transport = vi.fn(async (url: string | URL | Request, init?: RequestInit) =>
+    new Response(JSON.stringify(String(url).endsWith('/token') ? {
+      access_token: 'owner-token', refresh_token: 'owner-refresh', expires_in: 3600,
+      scope: ['openid', 'email', 'https://www.googleapis.com/auth/calendar.readonly',
+        ...(String(init?.body).includes('good-code-2')
+          ? ['https://www.googleapis.com/auth/gmail.readonly'] : [])].join(' '),
+    } : { email: 'owner@example.test' }), { status: 200 })) as typeof fetch;
+  const oauth = new GoogleOAuth(database, 'client-id', 'client-secret',
+    'https://beeline.example', randomBytes(32).toString('base64'), transport);
+  const firstUrl = new URL(await oauth.beginAccount(OWNER, 'google-calendar'));
+  expect(firstUrl.searchParams.get('scope')).not.toContain('gmail.');
+  const state = firstUrl.searchParams.get('state')!;
+  expect(await oauth.completeAccount(state, 'good-code')).toEqual({ completed: true, offers: [] });
+  expect(await oauth.accountStatus(OWNER)).toMatchObject({ connected: true,
+    connectedTypes: ['google-calendar'] });
+  const secondUrl = new URL(await oauth.beginAccount(OWNER, 'google-gmail'));
+  expect(secondUrl.searchParams.get('scope')).toContain('calendar.readonly');
+  expect(secondUrl.searchParams.get('scope')).toContain('gmail.readonly');
+  expect(secondUrl.searchParams.get('scope')).not.toContain('yt-analytics');
+  expect(await oauth.accountStatus(OWNER)).toMatchObject({ connected: true,
+    connectedTypes: ['google-calendar'], authorizationUrl: secondUrl.toString() });
+  expect(await oauth.completeAccount(secondUrl.searchParams.get('state')!, 'good-code-2'))
+    .toEqual({ completed: true, offers: [] });
+  expect(await oauth.accountStatus(OWNER)).toEqual({ connected: true,
+    connectedTypes: ['google-gmail', 'google-calendar'] });
+  expect(await oauth.grantForOwner(OWNER)).toMatchObject({ accessToken: 'owner-token' });
+  expect(await oauth.grantForOwner('c'.repeat(64))).toBeNull();
+});
+
+it('does not restore a disconnected account when an access-token refresh finishes later', async () => {
+  let releaseRefresh!: () => void;
+  let refreshStarted!: () => void;
+  const started = new Promise<void>(resolve => { refreshStarted = resolve; });
+  const refresh = new Promise<void>(resolve => { releaseRefresh = resolve; });
+  let tokenCalls = 0;
+  const transport = vi.fn(async (url: string | URL | Request) => {
+    if (!String(url).endsWith('/token'))
+      return new Response('{"email":"owner@example.test"}', { status: 200 });
+    tokenCalls++;
+    if (tokenCalls === 2) { refreshStarted(); await refresh; }
+    return new Response(JSON.stringify({ access_token: `token-${tokenCalls}`,
+      ...(tokenCalls === 1 ? { refresh_token: 'refresh' } : {}),
+      expires_in: tokenCalls === 1 ? 0 : 3600,
+      scope: 'openid email https://www.googleapis.com/auth/calendar.readonly' }), { status: 200 });
+  }) as typeof fetch;
+  const oauth = new GoogleOAuth(database, 'client-id', 'client-secret',
+    'https://beeline.example', randomBytes(32).toString('base64'), transport);
+  const state = new URL(await oauth.beginAccount(OWNER, 'google-calendar')).searchParams.get('state')!;
+  expect((await oauth.completeAccount(state, 'code'))?.completed).toBe(true);
+  const pending = oauth.grantForOwner(OWNER);
+  await started;
+  await oauth.disconnectAccount(OWNER);
+  releaseRefresh();
+  expect(await pending).toBeNull();
+  expect(await oauth.accountStatus(OWNER)).toMatchObject({ connected: false, connectedTypes: [] });
+});
 
 it('withholds credentials when a stored connector no longer belongs to its helper owner', async () => {
   const transport = vi.fn(async (url: string | URL | Request) =>
@@ -201,7 +327,7 @@ it('withholds an old machine grant from the retried tool until fresh OAuth compl
     connectorType: 'google-gmail', helperAgentId: HELPER }, OWNER);
   const retry = await database.query<{ sign_in: { url: string }; status_error: string }>(
     `SELECT sign_in,status_error FROM workspace_connectors WHERE id=$1`, [CONNECTOR]);
-  expect(retry.rows[0]!.status_error).toBe('Gmail permission denied');
+  expect(retry.rows[0]!.status_error).toBeNull();
   expect(await oauth.grantForHelper(CONNECTOR, HELPER)).toBeNull();
 
   const retryState = new URL(retry.rows[0]!.sign_in.url).searchParams.get('state')!;
@@ -211,5 +337,5 @@ it('withholds an old machine grant from the retried tool until fresh OAuth compl
   });
   const after = await database.query<{ status_error: string }>(
     `SELECT status_error FROM workspace_connectors WHERE id=$1`, [CONNECTOR]);
-  expect(after.rows[0]!.status_error).toBe('Gmail permission denied');
+  expect(after.rows[0]!.status_error).toBeNull();
 });

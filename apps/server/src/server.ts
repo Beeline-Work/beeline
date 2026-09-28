@@ -1022,9 +1022,20 @@ async function route(
       json(response, 400, { error: 'Google authorization was not completed' });
       return;
     }
-    const completed = code
-      ? await options.googleOAuth.complete(state, code)
-      : (await options.googleOAuth.cancel(state), false);
+    const account = code
+      ? await options.googleOAuth.completeAccount(state, code)
+      : await options.googleOAuth.cancelAccountState(state);
+    const completed = account !== null
+      ? (typeof account === 'boolean' ? false : account.completed)
+      : code
+        ? await options.googleOAuth.complete(state, code)
+        : (await options.googleOAuth.cancel(state), false);
+    if (account && typeof account !== 'boolean') {
+      for (const offer of account.offers) {
+        options.live.publish({ type: 'invalidate', roomId: offer.roomId,
+          reason: 'connector-offer', agentId: offer.agentId });
+      }
+    }
     response.writeHead(completed ? 200 : 400, {
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'no-store',
@@ -1032,7 +1043,7 @@ async function route(
     });
     response.end(
       code && completed
-      ? '<p>Google sign-in completed. Return to Beeline while the helper verifies the tool.</p>'
+      ? '<p>Google sign-in completed. Return to Beeline to use the connected tool.</p>'
         : '<p>Google sign-in did not complete. Return to Beeline and retry.</p>',
     );
     return;

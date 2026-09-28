@@ -245,13 +245,14 @@ export default function WorkbenchScreen() {
       <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
         <View testID="workbench-connectors">
           <Text style={styles.sectionLabel} testID="workbench-tools-head">
-            Tools
+            TOOLS
           </Text>
           {connectors.filter(connector => !connector.id.startsWith('google-') && connector.id !== 'tailscale').map(connector => {
             const instrument = connectorInstrument(connector.available ? connector.status : 'soon', connector.id);
             const canConnect = instrument.connect && connector.available;
             const isWallet = connector.id === 'wallet';
             return <ToolDetailsCell
+              appBoard
               key={connector.id}
               action={canConnect ? (isWallet && walletConnecting ? 'Connecting' : 'Connect') : undefined}
               actionDisabled={isWallet && walletConnecting}
@@ -265,7 +266,7 @@ export default function WorkbenchScreen() {
                 disabled: disconnectingId === connector.id,
                 onPress: entry.action === 'disconnect' ? () => void disconnectConnector(connector.id) : () => connectConnector(connector.id),
               }))}
-              leading={<View style={[styles.toolMark, isWallet ? styles.walletMark : styles.squireMark]}><Text style={styles.toolMarkText}>{isWallet ? 'C' : '{ }'}</Text></View>}
+              leading={<View style={[styles.toolMark, isWallet ? styles.walletMark : styles.squireMark]}><Text style={[styles.toolMarkText, !isWallet && styles.squireMarkText]}>{isWallet ? 'C' : '{ }'}</Text></View>}
               onAction={canConnect ? isWallet ? () => void connectWallet() : () => connectConnector(connector.id) : undefined}
               onToggle={isWallet && connector.status === 'connected' ? openWallet : undefined}
               testID={`workbench-connector-${connector.id}`}
@@ -277,7 +278,7 @@ export default function WorkbenchScreen() {
         </View>
         <View testID="workbench-apps">
           <Text style={styles.sectionLabel} testID="workbench-apps-head">
-            Apps
+            APPS
           </Text>
           {apps.map(app => <WorkbenchIndexRow key={app.id} leading={<AppMark name={app.name} domain={app.domain} />} onPress={() => router.push({ pathname: '/beeline/settings/workbench/app', params: { workspaceId, viewerId, appId: app.id } } as unknown as Href)} testID={`workbench-app-${app.key}`} title={app.name} value={appInstrument(app.status).value} />)}
           <WorkbenchIndexRow onPress={openConnectApp} testID="workbench-connect-app" title="Connect an app" action />
@@ -285,7 +286,7 @@ export default function WorkbenchScreen() {
         </View>
         {connections.length > 0 ? <View testID="workbench-connections">
           <Text style={styles.sectionLabel} testID="workbench-keys-head">
-            Keys
+            KEYS
           </Text>
           {connections.map((connection) => {
               const instrument = connectionInstrument(connection.state);
@@ -346,15 +347,16 @@ const styles = StyleSheet.create((theme) => {
       paddingBottom: hull.space.xxl,
     },
     sectionLabel: { ...Typography.mono(), fontSize: 12, letterSpacing: 3, color: board.quiet, paddingBottom: 6 },
-    appsNote: { ...Typography.default(), marginTop: 18, fontSize: 13, lineHeight: 19, color: board.quiet },
+    appsNote: { ...Typography.ledger(), marginTop: 18, fontSize: 13, lineHeight: 19, color: board.quiet },
     indexRow: { minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: board.border },
-    rowTitle: { ...Typography.default(), flex: 1, fontSize: 18, color: board.ink },
+    rowTitle: { ...Typography.ledger(), flex: 1, fontSize: 18, color: board.ink },
     rowAction: { color: board.brass },
-    rowValue: { ...Typography.default(), fontSize: 15, color: board.quiet },
+    rowValue: { ...Typography.ledger(), fontSize: 15, color: board.quiet },
     toolMark: { width: 36, height: 36, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
     squireMark: { backgroundColor: '#141210' },
     walletMark: { backgroundColor: '#1652F0' },
     toolMarkText: { ...Typography.mono(), fontSize: 12, color: '#FFFFFF' },
+    squireMarkText: { color: '#9AA7FF' },
     centered: {
       flex: 1,
       alignItems: 'center',

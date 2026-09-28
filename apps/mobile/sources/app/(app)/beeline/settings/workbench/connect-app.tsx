@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import Svg, { Circle, Path } from 'react-native-svg';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Typography } from '@/constants/Typography';
@@ -60,7 +61,7 @@ export default function ConnectAppScreen() {
     <ScrollView keyboardShouldPersistTaps="handled">
       <View style={styles.searchWrap}>
         <View style={styles.search}>
-          <Text style={styles.searchIcon}>⌕</Text>
+          <Svg width={18} height={18} viewBox="0 0 24 24" fill="none"><Circle cx={11} cy={11} r={7} stroke={styles.placeholder.color} strokeWidth={2} /><Path d="M20 20l-3.5-3.5" stroke={styles.placeholder.color} strokeWidth={2} strokeLinecap="round" /></Svg>
           <TextInput accessibilityLabel="Search apps" testID="connect-app-input" autoCapitalize="none" autoCorrect={false} placeholder="Search 1,500+ apps" placeholderTextColor={styles.placeholder.color} value={query} onChangeText={setQuery} style={styles.input} />
         </View>
       </View>
@@ -86,16 +87,15 @@ const styles = StyleSheet.create(theme => {
   screen: { flex: 1, backgroundColor: board.canvas },
   searchWrap: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 6 },
   search: { flexDirection: 'row', alignItems: 'center', gap: 10, height: 48, paddingHorizontal: 14, borderWidth: 1, borderColor: board.strongBorder, borderRadius: 12, backgroundColor: board.tile },
-  searchIcon: { ...Typography.default(), fontSize: 25, color: board.quiet },
-  input: { ...Typography.default(), flex: 1, fontSize: 16, color: board.ink, paddingVertical: 0 },
+  input: { ...Typography.ledger(), flex: 1, fontSize: 16, color: board.ink, paddingVertical: 0 },
   placeholder: { color: board.quiet },
   section: { ...Typography.mono(), paddingHorizontal: 20, paddingTop: 12, paddingBottom: 4, fontSize: 12, letterSpacing: 3, color: board.quiet },
   list: { paddingHorizontal: 20 },
   row: { minHeight: 54, flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: board.border },
-  name: { ...Typography.default(), flex: 1, fontSize: 17, color: board.ink },
-  connected: { ...Typography.default(), fontSize: 14, color: board.quiet },
+  name: { ...Typography.ledger(), flex: 1, fontSize: 17, color: board.ink },
+  connected: { ...Typography.ledger(), fontSize: 14, color: board.quiet },
   button: { minHeight: 36, paddingHorizontal: 14, justifyContent: 'center', borderRadius: 9, backgroundColor: board.ink },
-  buttonText: { ...Typography.default(), fontSize: 14, color: board.canvas },
+  buttonText: { ...Typography.ledger(), fontSize: 14, color: board.canvas },
   error: { ...Typography.default(), margin: 20, color: theme.buzz.dialogDanger },
   };
 });

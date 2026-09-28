@@ -54,7 +54,7 @@ const objectService = new ObjectService(
 );
 
 const auth = new TokenAuth(database, async (proof) => {
-  const login = proof === 'proof' ? 'lunchboxfortwo' : proof;
+  const login = proof === 'proof' ? (process.env.AUDIT_COMPOSIO_BOARDS === '1' ? 'lunchbox' : 'lunchboxfortwo') : proof;
   return { subject: login, login, name: login === 'lunchboxfortwo' ? 'Alan' : login };
 });
 
@@ -89,6 +89,15 @@ const phone = new PhoneService(
   false,
   database,
   objectService,
+  undefined,
+  undefined,
+  process.env.AUDIT_COMPOSIO_BOARDS === '1' ? {
+    supportsOAuth: async (toolkit: string) => ['gmail', 'googlecalendar', 'slack'].includes(toolkit),
+    account: async () => true,
+    link: async () => ({ url: 'https://app.composio.dev/connect/fixture', accountId: 'ca_fixture', expiresAt: new Date(Date.now() + 600_000) }),
+    completeAuth: async () => ({ accountId: 'ca_fixture', toolkit: 'slack' }),
+    deleteAccount: async () => undefined,
+  } as never : undefined,
 );
 const live = new LiveHub();
 const daemon = new DaemonService(database, live, async () => ({
@@ -553,6 +562,62 @@ if (process.env.AUDIT_WORKBENCH_APPS === '1') {
        VALUES($1,$2,$3,$4,$5,'registry-mcp',$6)`,
       [uuid(), appIds.linear, AGENT_NIGLET, ROOM, VIEWER, operation],
     );
+}
+
+// Four approved app boards, backed by real phone reads and explicitly synthetic
+// provider state. This does not use a person's live account or provider key.
+if (process.env.AUDIT_COMPOSIO_BOARDS === '1') {
+  const boardStage = process.env.AUDIT_COMPOSIO_STAGE ?? 'connected';
+  await database.query(`UPDATE workspaces SET name='Tubing Crew' WHERE id=$1`, [WORKSPACE]);
+  await database.query(`UPDATE identities SET handle='lunchbox' WHERE id=$1`, [VIEWER]);
+  await database.query(`UPDATE rooms SET name='launch' WHERE id=$1`, [ROOM_QUIET]);
+  await database.query(`UPDATE identities SET name='Monarch',handle='monarch' WHERE id=$1`, [AGENT_SOL]);
+  await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+    VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING`, [WORKSPACE, ROOM_QUIET, AGENT_SOL]);
+  const squire = uuid();
+  await database.query(`INSERT INTO workspace_connectors(id,workspace_id,owner_identity_id,
+    connector_type,helper_agent_id,machine_id,status,connected_at,signed_in_as)
+    VALUES($1,$2,$3,'trusty-squire',$4,$4,'connected',now(),'lunchbox')`,
+    [squire, WORKSPACE, VIEWER, AGENT_SOL]);
+  await database.query(`INSERT INTO workspace_connectors(id,workspace_id,owner_identity_id,
+    connector_type,helper_agent_id,machine_id,status,connected_at)
+    VALUES($1,$2,$3,'wallet',$4,$4,'connected',now())`,
+    [uuid(), WORKSPACE, VIEWER, AGENT_SOL]);
+  await database.query(`INSERT INTO wallet_bindings(identity_id,workspace_id,cdp_user_id,eoa_address)
+    VALUES($1,$2,'synthetic-board-wallet','0x0000000000000000000000000000000000000001')`,
+    [VIEWER, WORKSPACE]);
+  const boardApps: [string, string, string][] = [
+    ['gmail', 'Gmail', 'gmail.com'],
+    ['google-calendar', 'Google Calendar', 'calendar.google.com'],
+    ['slack', 'Slack', 'slack.com'],
+  ];
+  const appIds: Record<string, string> = {};
+  for (const [key, name, domain] of boardApps) {
+    appIds[key] = uuid();
+    await database.query(`INSERT INTO workspace_apps(id,workspace_id,owner_identity_id,
+      app_key,display_name,domain,transport,route,machine_id,composio_account_id)
+      VALUES($1,$2,$3,$4,$5,$6,'composio','composio',$7,$8)`,
+      [appIds[key], WORKSPACE, VIEWER, key, name, domain, AGENT_SOL,
+        key === 'slack' && boardStage === 'pending' ? null : `ca_${key}`]);
+  }
+  if (boardStage !== 'pending') await database.query(`INSERT INTO workspace_app_usage(id,app_id,agent_id,room_id,
+    requester_id,transport,operation,created_at)
+    VALUES($1,$2,$3,$4,$5,'composio','post_message',CURRENT_DATE + interval '14 hours 3 minutes')`,
+    [uuid(), appIds.slack, AGENT_SOL, ROOM_QUIET, VIEWER]);
+  if (boardStage !== 'connected') await database.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,created_at)
+    VALUES($1,$2,$3,'@monarch post the launch notes to #announcements in Slack','message',now() - interval '3 minutes'),
+          ($4,$2,$5,'Slack isn’t connected yet.','message',now() - interval '2 minutes')`,
+    [messageId('app-board-request'), ROOM_QUIET, VIEWER, messageId('app-board-agent'), AGENT_SOL]);
+  if (boardStage !== 'connected') await database.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card,created_at)
+    VALUES($1,$2,$3,'','card','app-sign-in',$4::jsonb,now() - interval '1 minute')`,
+    [messageId('app-board-card'), ROOM_QUIET, SYSTEM_IDENTITY_ID, JSON.stringify({
+      appId: appIds.slack, appKey: 'slack', name: 'Slack', ownerId: VIEWER,
+      agentId: AGENT_SOL, status: boardStage === 'after' ? 'connected' : 'pending',
+      continuation: 'Monarch posts the notes right after.', commandId: null,
+    })]);
+  if (boardStage === 'after') await database.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,created_at)
+    VALUES($1,$2,$3,'Posted the launch notes to #announcements.','message',now())`,
+    [messageId('app-board-after'), ROOM_QUIET, AGENT_SOL]);
 }
 
 const session = JSON.stringify(

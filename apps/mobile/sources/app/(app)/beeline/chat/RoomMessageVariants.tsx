@@ -468,10 +468,9 @@ export function AppSignInCard({ message, agentName, canConnect, onConnect, busy 
   const app = message.appSignIn!;
   if (app.status === 'connected') return <Text style={appSignInStyles.settled}>{app.name.toUpperCase()} CONNECTED · {agentName.toUpperCase()} CONTINUES</Text>;
   return <View style={appSignInStyles.wrap} testID={`app-sign-in-${app.appKey}`}>
-    <Text style={appSignInStyles.intro}>{app.name} isn’t connected yet.</Text>
     <View style={appSignInStyles.card}>
-      <View style={appSignInStyles.heading}><AppMark name={app.name} domain={appDomain(app.name)} size={30} /><Text style={appSignInStyles.title}>Connect {app.name}</Text></View>
-      <Text style={appSignInStyles.detail}>Sign in once. {agentName} continues the request right after.</Text>
+      <View style={appSignInStyles.heading}><AppMark name={app.name} domain={appDomain(app.name)} size={30} white /><Text style={appSignInStyles.title}>Connect {app.name}</Text></View>
+      <Text style={appSignInStyles.detail}>Sign in once. {app.continuation ?? `${agentName} continues the request right after.`}</Text>
       {canConnect ? <Pressable accessibilityRole="button" disabled={busy} onPress={onConnect} style={appSignInStyles.button} testID={`app-sign-in-${app.appKey}-connect`}><Text style={appSignInStyles.buttonText}>{busy ? 'Connecting' : `Connect ${app.name}`}</Text></Pressable> : <Text style={appSignInStyles.detail}>Waiting for the account owner to connect {app.name}.</Text>}
     </View>
   </View>;
@@ -481,13 +480,12 @@ const appSignInStyles = StyleSheet.create(theme => {
   const board = appBoardColors(theme.buzz);
   return {
   wrap: { gap: 8, marginVertical: 8 },
-  intro: { ...Typography.default(), fontSize: 16, lineHeight: 23, color: board.ink },
-  card: { borderWidth: 1, borderColor: board.strongBorder, borderRadius: 14, padding: 14, gap: 12, backgroundColor: board.card },
+  card: { borderWidth: 1, borderColor: board.cardBorder, borderRadius: 14, padding: 14, gap: 12, backgroundColor: board.card },
   heading: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  title: { ...Typography.default(), fontSize: 17, color: board.ink },
-  detail: { ...Typography.default(), fontSize: 14, lineHeight: 20, color: board.secondary },
+  title: { ...Typography.ledger(), fontSize: 17, color: board.ink },
+  detail: { ...Typography.ledger(), fontSize: 14, lineHeight: 20, color: board.secondary },
   button: { alignSelf: 'flex-start', minHeight: 44, paddingHorizontal: 18, borderRadius: 10, justifyContent: 'center', backgroundColor: board.ink },
-  buttonText: { ...Typography.default(), fontSize: 15, color: board.canvas },
+  buttonText: { ...Typography.ledger(), fontSize: 15, color: board.canvas },
   settled: { ...Typography.mono(), fontSize: 11, letterSpacing: 1, color: board.quiet, marginVertical: 8 },
   };
 });

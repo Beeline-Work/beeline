@@ -279,6 +279,7 @@ export type RoomViewMessage = {
     readonly name: string;
     readonly ownerId: string;
     readonly agentId: string;
+    readonly continuation?: string;
     readonly status: 'pending' | 'connected';
     readonly continuation?: string;
   };

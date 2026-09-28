@@ -2666,10 +2666,12 @@ describe('Room message variant components', () => {
 
     it('renders the route-neutral app card for its exact owner and waits for server settlement', () => {
       const onConnect = vi.fn();
-      const signIn = message({ appSignIn: { appId: 'app-slack', appKey: 'slack', name: 'Slack', ownerId: 'zeke', agentId: 'monarch', status: 'pending' } });
+      const signIn = message({ appSignIn: { appId: 'app-slack', appKey: 'slack', name: 'Slack', ownerId: 'zeke', agentId: 'monarch', status: 'pending', continuation: 'Monarch posts the notes right after.' } });
       const pendingCard = render(<AppSignInCard message={signIn} agentName="Monarch" canConnect onConnect={onConnect} busy={false} />);
-      expect(JSON.stringify(pendingCard.toJSON())).toContain('isn’t connected yet.');
-      expect(JSON.stringify(pendingCard.toJSON())).toContain('continues the request right after.');
+      expect(JSON.stringify(pendingCard.toJSON())).toContain('Connect Slack');
+      expect(JSON.stringify(pendingCard.toJSON())).toContain('posts the notes right after.');
+      const fallback = render(<AppSignInCard message={message({ appSignIn: { ...signIn.appSignIn!, continuation: undefined } })} agentName="Monarch" canConnect onConnect={onConnect} busy={false} />);
+      expect(JSON.stringify(fallback.toJSON())).toContain('continues the request right after.');
       act(() => pendingCard.root.findByProps({ testID: 'app-sign-in-slack-connect' }).props.onPress());
       expect(onConnect).toHaveBeenCalledTimes(1);
       const waiting = render(<AppSignInCard message={signIn} agentName="Monarch" canConnect={false} onConnect={onConnect} busy={false} />);

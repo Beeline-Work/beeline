@@ -714,8 +714,6 @@ function appRouteLabel(transport: WorkbenchApp['transport']): string {
       return 'App sign-in';
     case 'registry-mcp':
       return 'Official MCP server';
-    case 'composio':
-      return 'Managed sign-in';
     case 'squire-api':
       return 'Trusty Squire · API key';
     case 'squire-browser':

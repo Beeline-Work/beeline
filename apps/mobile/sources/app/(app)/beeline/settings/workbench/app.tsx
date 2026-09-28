@@ -52,9 +52,9 @@ export default function AppDetailScreen() {
   };
 
   const lastUsed = app?.lastUse
-    ? `Last used by ${app.lastUse.agentName} in ${app.lastUse.roomName.startsWith('#') ? '' : '#'}${app.lastUse.roomName}, ${new Date(app.lastUse.usedAt * 1000).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}.`
+    ? `Last used by ${app.lastUse.agentName} in ${app.lastUse.roomName.startsWith('#') ? '' : '#'}${app.lastUse.roomName}, ${new Date(app.lastUse.usedAt * 1000).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}.`
     : app?.lastUsedAt
-      ? `Last used ${new Date(app.lastUsedAt * 1000).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}.`
+      ? `Last used ${new Date(app.lastUsedAt * 1000).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}.`
       : 'Not used yet.';
 
   return <View style={[styles.screen, { paddingTop: insets.top }]} testID="app-detail-screen">
@@ -84,14 +84,14 @@ const styles = StyleSheet.create(theme => {
   content: { paddingHorizontal: 20, paddingVertical: 24, gap: 18 },
   identity: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   identityCopy: { gap: 2 },
-  status: { ...Typography.default(), fontSize: 18, color: board.ink },
-  account: { ...Typography.default(), fontSize: 14, color: board.quiet },
-  permission: { ...Typography.default(), fontSize: 15, lineHeight: 22, color: board.secondary },
-  lastUsed: { ...Typography.default(), fontSize: 13, lineHeight: 19, color: board.quiet },
+  status: { ...Typography.ledger(), fontSize: 18, color: board.ink },
+  account: { ...Typography.ledger(), fontSize: 14, color: board.quiet },
+  permission: { ...Typography.ledger(), fontSize: 15, lineHeight: 22, color: board.secondary },
+  lastUsed: { ...Typography.ledger(), fontSize: 13, lineHeight: 19, color: board.quiet },
   outline: { alignSelf: 'flex-start', minHeight: 44, paddingHorizontal: 18, justifyContent: 'center', borderRadius: 10, borderWidth: 2, borderColor: board.ink },
-  outlineText: { ...Typography.default(), fontSize: 15, color: board.ink },
+  outlineText: { ...Typography.ledger(), fontSize: 15, color: board.ink },
   ink: { alignSelf: 'flex-start', minHeight: 44, paddingHorizontal: 18, justifyContent: 'center', borderRadius: 10, backgroundColor: board.ink },
-  inkText: { ...Typography.default(), fontSize: 15, color: board.canvas },
+  inkText: { ...Typography.ledger(), fontSize: 15, color: board.canvas },
   error: { ...Typography.default(), color: theme.buzz.dialogDanger },
   };
 });

@@ -19,7 +19,6 @@ import {
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { CornerGlyph } from './CornerGlyph';
 import { PinGlyph } from './PinGlyph';
-import { useTourTarget } from './tour/TourTarget';
 
 export function ConversationRow({
   item,
@@ -33,7 +32,6 @@ export function ConversationRow({
   cornersExpanded = false,
   onToggleCorners,
   onLongPressCorners,
-  cornerTip = false,
   testID,
 }: {
   item: ChatListItem;
@@ -48,8 +46,6 @@ export function ConversationRow({
   onToggleCorners?: () => void;
   /** Long-press of the corner glyph opens a new corner in this Room. */
   onLongPressCorners?: () => void;
-  /** This row's corner mark is the corner-mark tip's target. */
-  cornerTip?: boolean;
   testID: string;
 }) {
   const name = roomRowName(item);
@@ -59,7 +55,6 @@ export function ConversationRow({
   const showReason = item.agentState === 'needs-you' && reason;
   const status = needsYou ? 'needs you' : item.unread ? 'new messages' : null;
   const hasCorners = roomRowShowsCornerMark(item);
-  const cornerTarget = useTourTarget('cornerMark', cornerTip && hasCorners);
   const cornerPosition = desktop ? styles.desktopCornerToggle : styles.mobileCornerToggle;
   const cornerRotation = useSharedValue(cornersExpanded ? 1 : 0);
   React.useEffect(() => {
@@ -84,8 +79,6 @@ export function ConversationRow({
       hitSlop={8}
       onLongPress={onLongPressCorners}
       onPress={onToggleCorners}
-      onLayout={cornerTarget.onLayout}
-      ref={cornerTarget.ref}
       style={[styles.cornerToggle, cornerPosition]}
       testID={`${testID}-corners`}
     >

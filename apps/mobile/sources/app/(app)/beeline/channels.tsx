@@ -28,7 +28,8 @@ import {
   useRoomListFilter,
 } from '@/buzz/room-list-preferences';
 import { openRoomListCorner } from '@/buzz/room-list-new-corner';
-import { cornerTipRoomId, roomListSections, roomRowName } from '@/buzz/room-list-row';
+import { roomListSections, roomRowName } from '@/buzz/room-list-row';
+import { readWelcomeCards } from '@/buzz/welcome-cards';
 import { leaveRoomWithConfirmation } from '@/buzz/room-leave';
 import { validRoomSlug } from '@/buzz/room-name';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
@@ -52,6 +53,7 @@ import { RoomDeckLoadingView } from '@/components/buzz/RoomDeckLoadingView';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { RoomListToolbar } from '@/components/buzz/RoomListToolbar';
 import { WorkspaceActionsMenu } from '@/components/buzz/WorkspaceActionsMenu';
+import { WelcomeCards } from '@/components/buzz/WelcomeCards';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { BuzzRigTransport } from '@/sync/transport';
@@ -184,6 +186,7 @@ export default function BuzzChannels() {
   // Only a live read (never a cached one) may say "you have no Workspace".
   const [workspacesConfirmed, setWorkspacesConfirmed] = useState(false);
   const [chatList, setChatList] = useState<ChatListView | null>(null);
+  const [welcomeDue, setWelcomeDue] = useState(false);
   const needsYouCount = useNeedsYouCount(chatList?.workspace.id, chatList);
   const [workspaceDetail, setWorkspaceDetail] = useState<WorkspaceView | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -228,6 +231,15 @@ export default function BuzzChannels() {
   const activeCommunity =
     communities.find((entry) => entry.communityId === activeCommunityId) ?? null;
   const viewerIsAgent = chatList?.viewer.kind === 'agent';
+  useEffect(() => {
+    if (!identity?.publicKey || !chatList || chatList.viewer.pubkey !== identity.publicKey || viewerIsAgent) return;
+    let active = true;
+    setWelcomeDue(false);
+    void readWelcomeCards().then((view) => {
+      if (active) setWelcomeDue(view.due);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [identity?.publicKey, Boolean(chatList), viewerIsAgent]);
   const canManageWorkspace =
     chatList?.workspace.role === 'owner' || chatList?.workspace.role === 'admin';
   const [query, setQuery] = useState('');
@@ -252,7 +264,6 @@ export default function BuzzChannels() {
     () => roomListSections(filterConversations(chatList?.chats ?? [], query, filter, pinned)),
     [chatList?.chats, query, filter, pinned],
   );
-  const cornerTipRow = cornerTipRoomId(chatSections);
   useEffect(() => {
     setQuery('');
   }, [activeCommunityId]);
@@ -882,6 +893,7 @@ export default function BuzzChannels() {
       viewerAvatarUrl={chatList.viewer.avatar}
       viewerFace={chatList.viewer.face}
     >
+      <WelcomeCards key={identity?.publicKey} visible={welcomeDue} onDone={() => setWelcomeDue(false)} />
       <View
         style={[styles.container, { paddingTop: insets.top }]}
         testID={refreshing ? 'room-list-refreshing' : 'room-list-idle'}
@@ -1084,7 +1096,6 @@ export default function BuzzChannels() {
                     onLongPressCorners={
                       viewerIsAgent ? undefined : () => void openNewCorner(item.room.id)
                     }
-                    cornerTip={!viewerIsAgent && item.room.id === cornerTipRow}
                     testID={`room-${item.room.id}`}
                   />
                 </View>

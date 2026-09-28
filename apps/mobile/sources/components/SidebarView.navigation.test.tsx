@@ -134,7 +134,6 @@ vi.mock('expo-haptics', () => ({
   NotificationFeedbackType: { Success: 'success', Error: 'error' },
 }));
 vi.mock('@/buzz/room-list-row', () => ({
-  cornerTipRoomId: vi.fn(() => null),
   roomRowShowsCornerMark: (item: any) => !item.directMessage && (item.cornerCount ?? 0) > 0,
   displayGroupedCornerTitle: vi.fn(() => ''),
   NO_ACTIVITY_PREVIEW: 'No activity',

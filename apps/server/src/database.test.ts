@@ -37,7 +37,7 @@ function result<Row>(rows: Row[]) {
 
 const TERMINATED = () => new Error('Connection terminated unexpectedly');
 
-it('keeps old tour state completed while new identities inherit an eligible state', async () => {
+it('excludes existing accounts while new identities inherit welcome eligibility', async () => {
   const database = new PgliteDatabase();
   try {
     const oldId = 'a'.repeat(64);
@@ -51,13 +51,13 @@ it('keeps old tour state completed while new identities inherit an eligible stat
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Old')`, [oldId]);
     await migrate(database);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','New')`, [newId]);
-    const rows = await database.query<{ id: string; tour_seen_tips: string[] | null }>(
-      `SELECT id,tour_seen_tips FROM identities WHERE id=ANY($1::text[]) ORDER BY id`,
+    const rows = await database.query<{ id: string; welcome_cards_due: boolean | null }>(
+      `SELECT id,welcome_cards_due FROM identities WHERE id=ANY($1::text[]) ORDER BY id`,
       [[oldId, newId]],
     );
     expect(rows.rows).toEqual([
-      { id: oldId, tour_seen_tips: null },
-      { id: newId, tour_seen_tips: [] },
+      { id: oldId, welcome_cards_due: null },
+      { id: newId, welcome_cards_due: true },
     ]);
   } finally {
     await database.close();

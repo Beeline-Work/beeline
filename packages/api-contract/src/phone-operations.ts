@@ -40,8 +40,8 @@ import type {
 export const HUMAN_CORNER_TITLE_MAX_LENGTH = 120;
 
 export type PhoneOperationMap = {
-  readProductTour: { input: Record<string, never>; output: ProductTourView };
-  updateProductTour: { input: { readonly tip: ProductTourTip | 'replay' }; output: ProductTourView };
+  readWelcomeCards: { input: Record<string, never>; output: WelcomeCardsView };
+  completeWelcomeCards: { input: Record<string, never>; output: WelcomeCardsView };
   sendRoomMessage: { input: SendRoomMessageInput; output: AgentMessageWriteResult };
   sendRoomReply: { input: SendRoomReplyInput; output: AgentMessageWriteResult };
   reactToMessage: { input: ReactToMessageInput; output: void };
@@ -173,12 +173,7 @@ export type PhoneOperationMap = {
   readWalletHistory: { input: ReadWalletHistoryInput; output: WalletHistoryResult };
 };
 
-export const PRODUCT_TOUR_TIPS = ['swipe', 'cornerMark', 'squire'] as const;
-export type ProductTourTip = (typeof PRODUCT_TOUR_TIPS)[number];
-export type ProductTourView = {
-  readonly version: 2;
-  readonly seenTips: readonly ProductTourTip[];
-};
+export type WelcomeCardsView = { readonly due: boolean };
 
 export type {
   CreateWalletInput,

@@ -18,7 +18,7 @@ import {
   useRoomListFilter,
 } from '@/buzz/room-list-preferences';
 import { openRoomListCorner } from '@/buzz/room-list-new-corner';
-import { cornerTipRoomId, roomListSections, roomRowNeedsAttention } from '@/buzz/room-list-row';
+import { roomListSections, roomRowNeedsAttention } from '@/buzz/room-list-row';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
 import { ROOMS_LABEL, WORKSPACE_LABEL, WORKSPACES_LABEL } from '@/buzz/vocabulary';
@@ -334,7 +334,6 @@ export const SidebarView = React.memo(function SidebarView() {
     () => roomListSections(filteredChats),
     [filteredChats],
   );
-  const cornerTipRow = cornerTipRoomId(filteredChatSections);
   // A corner route expands its parent. Opening a Room itself leaves its corner
   // list collapsed; the row's corner glyph toggles that list.
   React.useEffect(() => {
@@ -706,7 +705,6 @@ export const SidebarView = React.memo(function SidebarView() {
                             viewerIsAgent ? undefined : () => void openNewCorner(item.room.id)
                           }
                           onPress={() => openRoom(item.room.id)}
-                          cornerTip={!viewerIsAgent && item.room.id === cornerTipRow}
                           testID={`desktop-room-${item.room.id}`}
                         />
                         {!item.directMessage &&

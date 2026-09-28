@@ -27,7 +27,6 @@ import type { CornerState } from '@beeline/api-contract/phone';
 import { cornerName } from './corners';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import {
-  cornerTipRoomId,
   roomRowShowsCornerMark,
   displayCornerTitle,
   displayGroupedCornerTitle,
@@ -1105,8 +1104,5 @@ describe('the corner-mark tip row', () => {
     expect(roomRowShowsCornerMark(row('d', 2, true))).toBe(false);
   });
 
-  it('points at the first row that shows the mark, and at nothing when none does', () => {
-    expect(cornerTipRoomId(roomListSections([row('a'), row('b', 1), row('c', 3)]))).toBe('b');
-    expect(cornerTipRoomId(roomListSections([row('a'), row('dm', 1, true)]))).toBeNull();
-  });
+
 });

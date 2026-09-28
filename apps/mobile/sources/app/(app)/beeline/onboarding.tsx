@@ -77,12 +77,7 @@ import {
 } from '@/buzz/person-name';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { BeelineMark } from '@/components/buzz/BeelineMark';
-import {
-  HullSurface,
-  MonoButton,
-  OnboardingButton,
-  PixelGateReveal,
-} from '@/components/buzz/MonoHull';
+import { HullSurface, MonoButton, PixelGateReveal } from '@/components/buzz/MonoHull';
 import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
 import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
@@ -956,7 +951,7 @@ export default function BuzzOnboarding() {
           beeline<Text style={styles.titlePeriod}>.</Text>
         </Text>
         <Text style={styles.subtitle} testID="onboarding-tagline">
-          A Workspace for people and agents.
+          workspace for all intelligence
         </Text>
       </View>
 
@@ -1028,7 +1023,8 @@ export default function BuzzOnboarding() {
               Rooms, and repository approvals follow this account — agents and people you work with
               keep working with you, no re-invites.
             </Text>
-            <OnboardingButton
+            <MonoButton
+              labelStyle={styles.buttonLabel}
               label="Replace device key"
               loading={loadingAction === 'recover'}
               onPress={() => void handleReplaceDeviceKey()}
@@ -1037,14 +1033,16 @@ export default function BuzzOnboarding() {
             />
           </View>
         ) : !showAdvanced && canRetryBind ? (
-          <OnboardingButton
+          <MonoButton
+            labelStyle={styles.buttonLabel}
             label="Retry device bind"
             loading={loadingAction === 'bind'}
             onPress={() => pendingBind.current && void finishPendingBind(pendingBind.current)}
             disabled={loading}
           />
         ) : !showAdvanced && canSignIn ? (
-          <OnboardingButton
+          <MonoButton
+            labelStyle={styles.buttonLabel}
             label={signInLabel}
             testID="onboarding-github-sign-in"
             loading={
@@ -1108,8 +1106,10 @@ const styles = StyleSheet.create((theme) => {
     buttonLabel: { fontFamily: groknight.proseSemibold },
     subtitle: {
       ...Typography.default(),
-      ...groknight.type.body,
+      fontFamily: groknight.proseRegular,
       maxWidth: 320,
+      fontSize: 14,
+      lineHeight: 20,
       color: groknight.textSecondary,
       textAlign: 'center',
     },
@@ -1124,15 +1124,19 @@ const styles = StyleSheet.create((theme) => {
       marginBottom: 16,
     },
     statusLabel: {
-      ...Typography.default(),
-      ...groknight.type.sectionHead,
+      ...Typography.mono('semiBold'),
       color: groknight.textPrimary,
+      fontSize: 11,
+      lineHeight: 15,
+      letterSpacing: 0.8,
       marginBottom: 4,
     },
     noticeText: {
       ...Typography.default(),
-      ...groknight.type.meta,
+      fontFamily: groknight.proseRegular,
       color: groknight.textSecondary,
+      fontSize: 14,
+      lineHeight: 20,
     },
     importPanel: { width: '100%', maxWidth: 440, alignSelf: 'center', marginBottom: 16 },
     sectionLabel: {

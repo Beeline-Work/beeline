@@ -8,6 +8,7 @@ import { ChevronGlyph } from './ChevronGlyph';
 import { CornerGlyph } from './CornerGlyph';
 import { HullModal } from './HullDialog';
 import { welcomeBrandMarks } from './welcome-brand-marks';
+import { WelcomeToolMark } from './WelcomeToolMark';
 import { completeWelcomeCards } from '@/buzz/welcome-cards';
 
 const INK = '#1C1712';
@@ -129,7 +130,7 @@ function RoomScene() {
         />
         <SampleEntry
           name="Monarch"
-          role="AGENT · claude-opus-5.5"
+          role="claude-opus-5.5"
           text="Done. The sheet is in Drive: signups-last-week"
           stamp="09:13"
           seed={'2'.repeat(64)}
@@ -137,7 +138,7 @@ function RoomScene() {
         <SampleEntry
           name="Speedy"
           role="AGENT · gpt-6-sol"
-          text="@dani I flagged the dip."
+          text="@dani I flagged the two days that dipped."
           stamp="09:14"
           seed={'3'.repeat(64)}
         />
@@ -184,13 +185,11 @@ function CornerScene() {
         />
       </View>
       <View style={scene.cornerRow}>
-        <Text style={scene.rowCaption}>IN #APP, ONE ROW</Text>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8 }}>
-          <Text style={scene.rowName} numberOfLines={1}>
-            #app/Sign-in retry · Opened by Speedy
-          </Text>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+          <Text style={scene.rowCaption}>IN #APP, ONE ROW</Text>
           <Text style={scene.rowStatus}>REVIEW ●</Text>
         </View>
+        <Text style={scene.rowName}>#app/Sign-in retry · Opened by Speedy</Text>
       </View>
     </View>
   );
@@ -225,7 +224,7 @@ function ToolsScene() {
     <View style={scene.tools} testID="welcome-tools-scene">
       {TOOL_NAMES.map((name) => (
         <View key={name} style={scene.toolCell} accessibilityLabel={name}>
-          <SvgXml xml={welcomeBrandMarks[name]} width={30} height={30} />
+          <WelcomeToolMark name={name} />
         </View>
       ))}
     </View>
@@ -238,7 +237,7 @@ export function WelcomeCards({ visible, onDone }: { visible: boolean; onDone: ()
   const [error, setError] = useState<string | null>(null);
   const { height, width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  const sceneHeight = Math.min(index < 2 ? 440 : 430, Math.max(270, height * 0.51));
+  const sceneHeight = Math.min(index < 2 ? 480 : 430, Math.max(270, height * 0.57));
   const next = async () => {
     if (index < 3) {
       setIndex(index + 1);

@@ -271,6 +271,35 @@ export async function materializeCornerWorktree(input: {
   return { path, gitCommonDir };
 }
 
+async function cornerScratchFiles(root: string): Promise<string[]> {
+  const files: string[] = [];
+  const visit = async (directory: string, prefix: string): Promise<void> => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const name = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) await visit(resolve(directory, entry.name), name);
+      else files.push(name);
+    }
+  };
+  await visit(root, '');
+  return files;
+}
+
+async function ignoredGitPaths(worktree: string, paths: readonly string[]): Promise<Set<string>> {
+  if (!paths.length) return new Set();
+  return new Promise((resolve, reject) => {
+    const child = execFile(
+      'git', ['-C', worktree, 'check-ignore', '-z', '--stdin'],
+      { maxBuffer: 16 * 1024 * 1024 },
+      (error, stdout) => {
+        if (error && (error as Error & { code?: number }).code !== 1) reject(error);
+        else resolve(new Set(stdout.split('\0').filter(Boolean)));
+      },
+    );
+    child.stdin?.on('error', reject);
+    child.stdin?.end(`${paths.join('\0')}\0`);
+  });
+}
+
 export function reconcileRetryMs(error: unknown, pollMs: number): number {
   const match = String(error).match(/retry in\s+(\d+)s/i);
   return match ? Math.max(pollMs, (Number(match[1]) + 1) * 1_000) : pollMs;
@@ -1296,26 +1325,25 @@ export class RoomRuntimeCoordinator {
         if (existsSync(scratchPath)) {
           const entries = await readdir(scratchPath);
           if (entries.includes('.git')) throw new Error('corner scratch contains a Git repository');
+          const files = await cornerScratchFiles(scratchPath);
+          // Read the repository's original exclusions before a scratch
+          // .gitignore can replace them in the worktree.
+          const baselineIgnored = await ignoredGitPaths(worktree.path, files);
           for (const entry of entries)
             await cp(resolve(scratchPath, entry), resolve(worktree.path, entry), {
               recursive: true,
               force: true,
             });
           if (entries.length) {
-            const stageable: string[] = [];
-            for (const entry of entries) {
-              const ignored = await execFileAsync('git', [
-                '-C', worktree.path, 'check-ignore', '-q', '--', entry,
-              ]).then(() => true, (error: { code?: number }) => {
-                if (error.code === 1) return false;
-                throw error;
-              });
-              if (!ignored) stageable.push(entry);
-            }
-            // Git's ordinary ignore rules are the commit boundary. Ignored
-            // scratch files still live in the worktree for the resumed agent.
-            if (stageable.length)
-              await execFileAsync('git', ['-C', worktree.path, 'add', '-A', '--', ...stageable]);
+            const scratchIgnored = await ignoredGitPaths(worktree.path, files);
+            const stageable = files.filter((file) =>
+              !baselineIgnored.has(file) && !scratchIgnored.has(file));
+            // Both sets of ordinary Git rules guard the commit. All ignored
+            // files still live in the worktree for the resumed agent.
+            for (let offset = 0; offset < stageable.length; offset += 256)
+              await execFileAsync('git', [
+                '-C', worktree.path, 'add', '-A', '--', ...stageable.slice(offset, offset + 256),
+              ]);
             const changed = await execFileAsync('git', ['-C', worktree.path, 'diff', '--cached', '--quiet'])
               .then(() => false, (error: { code?: number }) => {
                 if (error.code === 1) return true;

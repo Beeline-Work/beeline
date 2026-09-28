@@ -218,6 +218,8 @@ it('retires a running no-code session and restarts the same corner with a real b
 
     const featureBranch = `feature/corner-${CORNER.replaceAll('-', '').slice(0, 12)}`;
     await writeFile(join(scratch, 'pending.txt'), 'written before promotion\n');
+    // A scratch rule must not remove the repository's baseline exclusions.
+    await writeFile(join(scratch, '.gitignore'), '');
     await writeFile(join(scratch, '.env'), 'LOCAL_ONLY=example\n');
     await mkdir(join(scratch, 'node_modules'), { recursive: true });
     await writeFile(join(scratch, 'node_modules', 'local.txt'), 'needed locally\n');

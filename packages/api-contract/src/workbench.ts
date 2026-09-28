@@ -49,21 +49,6 @@ export const CONNECTABLE_CONNECTOR_KINDS: readonly ConnectorKind[] = [
   'tailscale',
 ];
 
-/** Scope authority for the four independent Google product installs. */
-export const GOOGLE_TOOL_SCOPES = {
-  'google-gmail': [
-    'https://www.googleapis.com/auth/gmail.readonly',
-  ],
-  'google-calendar': [
-    'https://www.googleapis.com/auth/calendar.readonly',
-  ],
-  'google-drive': ['https://www.googleapis.com/auth/drive.readonly'],
-  'google-youtube': [
-    'https://www.googleapis.com/auth/youtube.readonly',
-    'https://www.googleapis.com/auth/yt-analytics.readonly',
-  ],
-} as const;
-
 export type WorkbenchConnectorView = {
   readonly connectorId: string;
   readonly connectorType: ConnectorKind;

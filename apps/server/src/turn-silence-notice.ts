@@ -146,14 +146,15 @@ async function inscribeSilence(
     await database.query<{ id: string }>(
       `SELECT id FROM messages WHERE room_id=$1 AND card_type='turn-failed'
          AND card->>'requestId'=$2 AND card->>'agentId'=$3 AND card->>'state'='failed'
-         AND created_at>now()-interval '10 minutes'
+         AND ($4::boolean OR created_at>now()-interval '10 minutes')
        ORDER BY created_at DESC,id DESC LIMIT 1`,
-      [input.roomId, input.requestId, input.agentId],
+      [input.roomId, input.requestId, input.agentId, classified.kind === 'update-interrupted'],
     )
   ).rows[0];
   const givingUp = classified.kind === 'hiccup' && canIncrement && attempt >= 3;
   if (recent) {
-    if (restart || givingUp) await restateSystemLine(database, recent.id, systemPhrase, card);
+    if (restart || givingUp || classified.kind === 'update-interrupted')
+      await restateSystemLine(database, recent.id, systemPhrase, card);
   } else {
     await systemLine(database, {
       roomId: input.roomId,
@@ -187,10 +188,11 @@ async function inscribeSilence(
         hiccupAttempt: attempt,
       });
     }
-  } else if (classified.kind === 'update-interrupted' && command?.state === 'claimed') {
-    // The old process has already stopped. Requeue exactly its original command
-    // with the same request and provenance, without spending a hiccup attempt.
-    updateRequeued = await reopenCommand(
+  } else if (classified.kind === 'update-interrupted' && command) {
+    // Presence may have already reopened this exact command while the helper
+    // was installing. Its generation-free receipt still replaces the generic
+    // failure line and confirms that the original request is pending.
+    updateRequeued = command.state === 'pending' || await reopenCommand(
       database,
       live,
       input.roomId,

@@ -1158,7 +1158,7 @@ it.each(['absent', 'stale', 'offline'] as const)(
   },
 );
 
-it('still presents an offline notice without dropping the durable command', async () => {
+it('keeps a mention queued without a premature offline notice during restart', async () => {
   await db.query(`UPDATE live_outputs SET body='{"status":"offline"}' WHERE agent_id=$1`, [A]);
   const source = await send('@hoots are you there?');
   expect(await commands()).toHaveLength(1);
@@ -1169,9 +1169,16 @@ it('still presents an offline notice without dropping the durable command', asyn
         [R],
       )
     ).rowCount,
-  ).toBeGreaterThan(0);
+  ).toBe(0);
   expect((await db.query(`SELECT 1 FROM messages WHERE id=$1`, [source.messageId])).rowCount).toBe(
     1,
+  );
+  await db.query(`UPDATE live_outputs SET body='{"status":"online"}' WHERE agent_id=$1`, [A]);
+  const [command] = await commands();
+  await claim(command!, 'reconnected');
+  await result(command!, 'I am here.', 'reconnected');
+  expect((await phone.readRoom(R, H))?.messages).toContainEqual(
+    expect.objectContaining({ text: 'I am here.' }),
   );
 });
 it('selects exactly one winner when two generations claim a pending command together', async () => {

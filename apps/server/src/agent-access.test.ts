@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
 import { PgliteDatabase } from './test-support.js';
@@ -6,6 +6,7 @@ import { PhoneService, ACCESS_POLICY_AUTHORITY_MESSAGE } from './phone-service.j
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import { AGENT_MENTION_NOTICE_GRACE_MS } from '@beeline/api-contract/agent-access';
 
 const OWNER = 'a'.repeat(64);
 const OUTSIDER = 'b'.repeat(64);
@@ -199,29 +200,125 @@ describe('who may address an agent', () => {
     }
   });
 
-  it('says a mention went unread when the helper is not there', async () => {
+  it('says a mention went unread only after the grace window, not while the helper restarts', async () => {
     const database = await fixture();
     try {
       const phone = new PhoneService(database, 'http://local.test');
       // Permitted sender, no helper: silence would be indistinguishable from a
-      // refusal, so the Room carries the other fact instead.
+      // refusal, so the Room eventually carries the other fact — but only once
+      // the grace window has passed, because a helper restart is not an answer.
       await send(phone, OUTSIDER, '1', '@greeter yo');
-      expect(await lines(database)).toEqual([
-        expect.objectContaining({
-          author_id: AGENT,
-          text: '@greeter did not answer @bananaman614305 · its helper is offline',
-        }),
-      ]);
+      expect(await lines(database)).toEqual([]);
 
-      // Old evidence is no longer enough to claim the helper can read this mention.
+      // Stale online evidence is not reachability either: the notice still waits.
       await reportPresence(database, 'online', 600);
-      await send(phone, OWNER, '2', '@greeter status');
+      await send(phone, OWNER, '2', '@greeter tell me more');
+      expect(await lines(database)).toEqual([]);
+
+      // Past the grace window with the helper still gone, both mentions become
+      // the terminal line, one per sender-window.
+      await phone.flushPendingMentionNotices(Date.now() + AGENT_MENTION_NOTICE_GRACE_MS + 1_000);
+      expect(await lines(database)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            author_id: AGENT,
+            text: '@greeter did not answer @bananaman614305 · its helper is offline',
+          }),
+          expect.objectContaining({
+            author_id: AGENT,
+            text: '@greeter did not answer @lunchboxfortwo · its helper is offline',
+          }),
+        ]),
+      );
       expect(await lines(database)).toHaveLength(2);
 
-      // Re-announcing online also emits no unreachable notice.
+      // A fresh heartbeat inside the window means the mention will be read, so
+      // nothing is ever written for it.
       await reportPresence(database, 'online');
       await send(phone, OWNER, '3', '@greeter again');
+      await phone.flushPendingMentionNotices(Date.now() + AGENT_MENTION_NOTICE_GRACE_MS + 1_000);
       expect(await lines(database)).toHaveLength(2);
+    } finally {
+      await database.close();
+    }
+  });
+
+  it('withdraws the offline notice when the helper answers the mention', async () => {
+    const database = await fixture();
+    try {
+      const phone = new PhoneService(database, 'http://local.test');
+      const daemon = new DaemonService(database, new LiveHub());
+      await send(phone, OUTSIDER, '1', '@greeter yo');
+      await phone.flushPendingMentionNotices(Date.now() + AGENT_MENTION_NOTICE_GRACE_MS + 1_000);
+      expect(await lines(database)).toHaveLength(1);
+
+      // The helper reconnects and answers that exact mention: the terminal line
+      // was a claim about THIS message, so it yields to the reply.
+      await reportPresence(database, 'online');
+      const [command] = (
+        await daemon.execute('getAgentCommands', { roomId: ROOM }, AGENT)
+      ).commands;
+      const generationId = 'reconnected';
+      await daemon.execute(
+        'claimAgentCommand',
+        { roomId: ROOM, commandId: command!.id, generationId },
+        AGENT,
+      );
+      await daemon.execute(
+        'postAgentTurnReceipt',
+        { roomId: ROOM, agentId: AGENT, requestId: command!.turnRequestId, generationId, status: 'working' },
+        AGENT,
+      );
+      await daemon.execute(
+        'postRoomMessage',
+        { roomId: ROOM, requestId: command!.turnRequestId, generationId, text: 'I am here.' },
+        AGENT,
+      );
+      expect(await lines(database)).toEqual([]);
+      expect(
+        (
+          await database.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text=$2`, [
+            ROOM,
+            'I am here.',
+          ])
+        ).rowCount,
+      ).toBe(1);
+    } finally {
+      await database.close();
+    }
+  });
+
+  it('never writes a notice for a mention answered while the flush is reading', async () => {
+    const database = await fixture();
+    try {
+      const phone = new PhoneService(database, 'http://local.test');
+      await send(phone, OUTSIDER, '1', '@greeter yo');
+      const sourceMessageId = '1'.repeat(64);
+
+      // Deterministic interleaving: the helper answers the exact mention after
+      // the flush's due read but before it writes — the reply path deletes the
+      // deferral and its line in that window. The flush must not resurrect a
+      // permanent did-not-answer line behind an answer that already arrived.
+      const original = database.query.bind(database);
+      let interposed = false;
+      vi.spyOn(database, 'query').mockImplementation((async (sql: string, values?: unknown[]) => {
+        const result = await original(sql, values);
+        if (!interposed && sql.includes('FROM pending_mention_notices d')) {
+          interposed = true;
+          await original(`DELETE FROM pending_mention_notices WHERE source_message_id=$1`, [
+            sourceMessageId,
+          ]);
+          await original(`DELETE FROM messages WHERE room_id=$1 AND presentation='system'`, [ROOM]);
+        }
+        return result;
+      }) as typeof database.query);
+
+      const written = await phone.flushPendingMentionNotices(
+        Date.now() + AGENT_MENTION_NOTICE_GRACE_MS + 1_000,
+      );
+      expect(interposed).toBe(true);
+      expect(written).toBe(0);
+      expect(await lines(database)).toEqual([]);
     } finally {
       await database.close();
     }

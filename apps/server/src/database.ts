@@ -843,6 +843,29 @@ CREATE TABLE IF NOT EXISTS needs_you_marks (
   cleared_at timestamptz,
   PRIMARY KEY(identity_id,message_id)
 );
+-- A mention to a helper that is unreachable right now stays durably queued
+-- (agent_commands); the Room is told "did not answer - its helper is offline"
+-- only after AGENT_MENTION_NOTICE_GRACE_MS, and that terminal line is
+-- withdrawn when the helper answers. This row is the deferred notice: one per
+-- source message, so a reconnect inside the grace window drops exactly the
+-- mention it belongs to and nothing else. notice_id is set once the line is
+-- written so a later answer can delete it without re-deriving the window
+-- bucket.
+CREATE TABLE IF NOT EXISTS pending_mention_notices (
+  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  agent_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  sender_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  source_message_id text NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  reason text NOT NULL,
+  due_at timestamptz NOT NULL,
+  notice_id text,
+  notified_at timestamptz,
+  PRIMARY KEY(room_id, agent_id, source_message_id, reason)
+);
+CREATE INDEX IF NOT EXISTS pending_mention_notices_due_idx
+  ON pending_mention_notices(due_at) WHERE notified_at IS NULL;
+CREATE INDEX IF NOT EXISTS pending_mention_notices_notice_idx
+  ON pending_mention_notices(notice_id) WHERE notice_id IS NOT NULL;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS agent_hop_count integer NOT NULL DEFAULT 0;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS system_event jsonb;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted_at timestamptz;

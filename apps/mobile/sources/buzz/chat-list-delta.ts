@@ -97,3 +97,58 @@ export function roomsMissedByLive(
     return newer ? [item.room.id] : [];
   });
 }
+
+/**
+ * A read whose unread or corner lookup timed out on the server says nothing
+ * about those facts. Carry each row's last known values instead of painting
+ * every dot and corner count away until the next read.
+ */
+export function keepUnavailableChatFacts(
+  held: ChatListView | null,
+  read: ChatListView,
+): ChatListView {
+  const { unavailable, ...view } = read;
+  if (!unavailable?.length) return read;
+  const heldById = new Map(held?.chats.map((item) => [item.room.id, item]) ?? []);
+  const keepUnread = unavailable.includes('unread');
+  const keepCorners = unavailable.includes('corners');
+  return {
+    ...view,
+    chats: read.chats.map((item) => {
+      const before = heldById.get(item.room.id);
+      if (!before) return item;
+      return {
+        ...item,
+        ...(keepUnread ? { unread: before.unread } : {}),
+        ...(keepCorners
+          ? {
+              ...(before.cornerCount !== undefined ? { cornerCount: before.cornerCount } : {}),
+              ...(before.waitingCornerCount !== undefined
+                ? { waitingCornerCount: before.waitingCornerCount }
+                : {}),
+              ...(before.openCorners ? { openCorners: before.openCorners } : {}),
+            }
+          : {}),
+      };
+    }),
+  };
+}
+
+/**
+ * The deck's watch identity. The server lists Room ids newest-activity first,
+ * so every reorder would otherwise read as a new watch and resubscribe the
+ * whole deck; the set of Rooms, not their order, is what the watch covers.
+ */
+export function chatWatchFiltersKey(filters: ChatListView['watchFilters']): string {
+  return JSON.stringify(
+    filters
+      .map((filter) =>
+        JSON.stringify(
+          Object.entries(filter)
+            .map(([key, values]) => [key, [...(values as readonly (string | number)[])].sort()])
+            .sort(([left], [right]) => String(left).localeCompare(String(right))),
+        ),
+      )
+      .sort(),
+  );
+}

@@ -3,6 +3,8 @@ import type { ChatListItem, ChatListView, RoomViewMessage } from '@beeline/buzz-
 import {
   applyChatListDelta,
   chatListDeltaNeedsRead,
+  chatWatchFiltersKey,
+  keepUnavailableChatFacts,
   roomsMissedByLive,
 } from './chat-list-delta';
 
@@ -132,5 +134,42 @@ describe('chat list deltas', () => {
 
     expect(roomsMissedByLive(held, read, new Set())).toEqual(['a']);
     expect(roomsMissedByLive(held, read, new Set(['a']))).toEqual([]);
+  });
+});
+
+describe('keepUnavailableChatFacts', () => {
+  const held = deck(
+    item('room-a', 10, {
+      unread: true,
+      cornerCount: 1,
+      waitingCornerCount: 1,
+      openCorners: [{ id: 'corner-a', name: 'fix', state: 'waiting' }],
+    }),
+  );
+
+  it('returns a complete read unchanged', () => {
+    const read = deck(item('room-a', 10));
+    expect(keepUnavailableChatFacts(held, read)).toBe(read);
+  });
+
+  it('carries only the facts the server could not read', () => {
+    const read = { ...deck(item('room-a', 12, { cornerCount: 0 })), unavailable: ['unread' as const] };
+    const kept = keepUnavailableChatFacts(held, read);
+    expect(kept.chats[0]).toMatchObject({ unread: true, cornerCount: 0 });
+    expect(kept.chats[0]?.latestMessage?.createdAt).toBe(12);
+    expect('unavailable' in kept).toBe(false);
+  });
+
+  it('leaves a Room it never held as the server sent it', () => {
+    const read = { ...deck(item('room-b', 5)), unavailable: ['unread' as const, 'corners' as const] };
+    expect(keepUnavailableChatFacts(held, read).chats[0]).toEqual(item('room-b', 5));
+  });
+});
+
+describe('chatWatchFiltersKey', () => {
+  it('ignores Room order but not Room membership', () => {
+    const key = chatWatchFiltersKey([{ kinds: [9, 9000], '#h': ['room-a', 'room-b'] }]);
+    expect(chatWatchFiltersKey([{ '#h': ['room-b', 'room-a'], kinds: [9000, 9] }])).toBe(key);
+    expect(chatWatchFiltersKey([{ kinds: [9, 9000], '#h': ['room-a', 'room-c'] }])).not.toBe(key);
   });
 });

@@ -37,6 +37,8 @@ export type LiveWireEvent =
       requestId?: string;
       trace?: LiveWireTrace;
       deliveryId?: string;
+      /** A fallback for an earlier invalidation's delta that could not be read. */
+      reconcilesDelivery?: string;
     }
   | { type: 'subscribed'; roomId: string }
   | {

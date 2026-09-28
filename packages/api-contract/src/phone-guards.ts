@@ -22,6 +22,7 @@ import {
   type AgentYoloView,
   type ChatListCorner,
   type ChatListItem,
+  type ChatListUnavailable,
   type ChatListView,
   type ChatListWorkspace,
   type ChoiceCardView,
@@ -1611,6 +1612,14 @@ export function readChatListView(value: unknown): ChatListView | null {
     chats,
     viewer,
     truncated: typeof item.truncated === 'boolean' ? item.truncated : false,
+    ...field(
+      'unavailable',
+      Array.isArray(item.unavailable)
+        ? item.unavailable.filter(
+            (entry): entry is ChatListUnavailable => entry === 'unread' || entry === 'corners',
+          )
+        : undefined,
+    ),
     watchFilters: readWatchFilters(item.watchFilters),
   };
 }

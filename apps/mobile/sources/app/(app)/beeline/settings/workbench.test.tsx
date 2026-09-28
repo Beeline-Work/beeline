@@ -253,26 +253,6 @@ describe('Workbench settings screen', () => {
     expect(tailscale.props.action).toBe('Connect');
   });
 
-  it('anchors the Trusty Squire tip under its row while Squire is not connected', async () => {
-    const renderer = await render();
-    const targets = renderer.root.findAll(
-      (node: any) => typeof node.type === 'string' && node.props.testID === 'tour-target-squire',
-    );
-    expect(targets).toHaveLength(1);
-    expect(
-      targets[0]!.findAll(
-        (node: any) => node.props.testID === 'workbench-connector-trusty-squire-head',
-      ).length,
-    ).toBeGreaterThan(0);
-    // No other tool row carries a tip.
-    expect(
-      renderer.root.findAll(
-        (node: any) =>
-          typeof node.type === 'string' && String(node.props.testID).startsWith('tour-target-'),
-      ),
-    ).toHaveLength(1);
-  });
-
   it('connects a tool from its row and keeps the accordion for the facts', async () => {
     const renderer = await render();
     const squire = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' });

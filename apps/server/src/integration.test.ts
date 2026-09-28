@@ -271,27 +271,15 @@ describe('monolith integration', () => {
   const phoneToken = async (login: string) => (await auth.exchangeGitHubOidc(login)).accessToken;
   const operation = (name: string, payload: unknown, token = accessToken) =>
     request(`/v1/phone/operations/${name}`, 'POST', payload, token);
-  it('serves tour eligibility and dismissal per human across device sessions', async () => {
-    const other = 'e'.repeat(64);
-    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Fresh')`, [other]);
-    await database.query(`UPDATE identities SET tour_seen_tips=NULL WHERE id=$1`, [HUMAN]);
-    expect(await (await operation('readProductTour', {})).json()).toEqual({
-      version: 2, seenTips: ['swipe', 'cornerMark', 'squire'],
-    });
-    expect(await phone.execute('readProductTour', {}, other)).toEqual({ version: 2, seenTips: [] });
-    expect(await (await operation('updateProductTour', { tip: 'cornerMark' })).json()).toEqual({
-      version: 2, seenTips: ['swipe', 'cornerMark', 'squire'],
-    });
-    await phone.execute('updateProductTour', { tip: 'cornerMark' }, other);
-    expect(await phone.execute('readProductTour', {}, other)).toEqual({
-      version: 2, seenTips: ['cornerMark'],
-    });
-    expect(await phone.execute('readProductTour', {}, HUMAN)).toEqual({
-      version: 2, seenTips: ['swipe', 'cornerMark', 'squire'],
-    });
-    expect(await phone.execute('updateProductTour', { tip: 'replay' }, HUMAN)).toEqual({
-      version: 2, seenTips: [],
-    });
+  it('serves account-scoped welcome eligibility and durable completion', async () => {
+    const fresh = 'e'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Fresh')`, [fresh]);
+    await database.query(`UPDATE identities SET welcome_cards_due=NULL WHERE id=$1`, [HUMAN]);
+    expect(await (await operation('readWelcomeCards', {})).json()).toEqual({ due: false });
+    expect(await phone.execute('readWelcomeCards', {}, fresh)).toEqual({ due: true });
+    expect(await phone.execute('completeWelcomeCards', {}, fresh)).toEqual({ due: false });
+    expect(await phone.execute('readWelcomeCards', {}, fresh)).toEqual({ due: false });
+    expect(await phone.execute('readWelcomeCards', {}, HUMAN)).toEqual({ due: false });
   });
   // These fixtures test projections and lifecycle behavior downstream of intake.
   // Supply an explicit command first. Routing/refusal tests call DaemonService

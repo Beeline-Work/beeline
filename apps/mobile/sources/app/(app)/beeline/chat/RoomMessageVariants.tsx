@@ -53,7 +53,6 @@ import { showPictureActions } from '@/buzz/picture-actions';
 import { ROOM_LABEL, CORNER_LABEL } from '@/buzz/vocabulary';
 import { cornerName } from '@/buzz/corners';
 import { CornerGlyph } from '@/components/buzz/CornerGlyph';
-import { TourTarget } from '@/components/buzz/tour/TourTarget';
 import {
   TRANSCRIPT_BRASS,
   TRANSCRIPT_SETTLE_MS,
@@ -1432,8 +1431,6 @@ function AttachmentCard({
   );
 }
 
-/** How far the swipe tip's row stands open: enough to show the corner action. */
-const SWIPE_TIP_OFFSET = 56;
 
 function SwipeToReply({
   children,
@@ -1446,7 +1443,6 @@ function SwipeToReply({
   onForward,
   onBookmark = () => undefined,
   onSwipeCorner,
-  swipeTip = false,
   bookmarked = false,
   isDesktop,
   replyOnly = false,
@@ -1464,8 +1460,6 @@ function SwipeToReply({
   onBookmark?(): void;
   /** Mobile swipe right — forward the message into a new corner. */
   onSwipeCorner?(): void;
-  /** This row may carry the swipe-to-corner tip; it poses half-open while the tip points at it. */
-  swipeTip?: boolean;
   bookmarked?: boolean;
   isDesktop: boolean;
   replyOnly?: boolean;
@@ -1634,59 +1628,44 @@ function SwipeToReply({
       <Text style={styles.replySwipeLabel}>{CORNER_LABEL.toUpperCase()}</Text>
     </View>
   );
-  // While the swipe tip points at this row it holds the swipe half-open, so the
-  // tip shows the gesture it names rather than describing an unseen one.
-  const swipeRow = (posed: boolean) =>
-    posed ? (
-      <View
-        style={[styles.replySwipeContainer, styles.swipeTipPose]}
-        testID={`swipe-tip-pose-${messageId}`}
-      >
-        {cornerAction(styles.swipeTipAction)}
-        <View style={[styles.replySwipeChildren, styles.swipeTipShift]}>{message}</View>
-      </View>
-    ) : (
-      <Swipeable
-        ref={swipeableRef}
-        // Swipeable's container clips (`overflow: 'hidden'`) at the row's content
-        // edge, where the byline tile sits — and a live agent's gold ring paints
-        // `ALIVE_RING_PAD` outside that tile. The clip box is outset by the ring
-        // gutter and the children padded back by the same amount, so the copy
-        // column never moves and the whole tile, ring included, stays visible.
-        containerStyle={styles.replySwipeContainer}
-        childrenContainerStyle={styles.replySwipeChildren}
-        dragOffsetFromRightEdge={18}
-        friction={1.35}
-        onSwipeableOpen={(direction) => {
-          swipeableRef.current?.close();
-          // Swipeable names the side whose actions opened: a swipe left reveals
-          // the right-side reply action, a swipe right the left-side corner one.
-          if (direction === 'right') onReply();
-          else onSwipeCorner?.();
-        }}
-        overshootLeft={false}
-        overshootRight={false}
-        renderLeftActions={onSwipeCorner ? () => cornerAction() : undefined}
-        renderRightActions={() => (
-          <View
-            accessibilityLabel="Reply to message"
-            style={styles.replySwipeAction}
-            testID={`reply-swipe-action-${messageId}`}
-          >
-            <Text style={styles.replySwipeGlyph}>↩</Text>
-            <Text style={styles.replySwipeLabel}>REPLY</Text>
-          </View>
-        )}
-        testID={`swipe-reply-${messageId}`}
-      >
-        {message}
-      </Swipeable>
-    );
-  return swipeTip && onSwipeCorner ? (
-    <TourTarget tip="swipe">{(active) => swipeRow(active)}</TourTarget>
-  ) : (
-    swipeRow(false)
+  const swipeRow = () => (
+    <Swipeable
+      ref={swipeableRef}
+      // Swipeable's container clips (`overflow: 'hidden'`) at the row's content
+      // edge, where the byline tile sits — and a live agent's gold ring paints
+      // `ALIVE_RING_PAD` outside that tile. The clip box is outset by the ring
+      // gutter and the children padded back by the same amount, so the copy
+      // column never moves and the whole tile, ring included, stays visible.
+      containerStyle={styles.replySwipeContainer}
+      childrenContainerStyle={styles.replySwipeChildren}
+      dragOffsetFromRightEdge={18}
+      friction={1.35}
+      onSwipeableOpen={(direction) => {
+        swipeableRef.current?.close();
+        // Swipeable names the side whose actions opened: a swipe left reveals
+        // the right-side reply action, a swipe right the left-side corner one.
+        if (direction === 'right') onReply();
+        else onSwipeCorner?.();
+      }}
+      overshootLeft={false}
+      overshootRight={false}
+      renderLeftActions={onSwipeCorner ? () => cornerAction() : undefined}
+      renderRightActions={() => (
+        <View
+          accessibilityLabel="Reply to message"
+          style={styles.replySwipeAction}
+          testID={`reply-swipe-action-${messageId}`}
+        >
+          <Text style={styles.replySwipeGlyph}>↩</Text>
+          <Text style={styles.replySwipeLabel}>REPLY</Text>
+        </View>
+      )}
+      testID={`swipe-reply-${messageId}`}
+    >
+      {message}
+    </Swipeable>
   );
+  return swipeRow();
 }
 
 /** Relays have no speaker tile, bubble, reply swipe, or self-message treatment. */
@@ -2339,7 +2318,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       onBookmark={() => onBookmark(message)}
       {...(onForwardToNewCorner && !message.isAgentDraft
         ? // A message someone else wrote can carry the swipe-to-corner tip.
-          { onSwipeCorner: () => onForwardToNewCorner(message), swipeTip: !isOwn }
+          { onSwipeCorner: () => onForwardToNewCorner(message) }
         : {})}
       bookmarked={message.bookmarked}
       isDesktop={desktopLayout}
@@ -2499,15 +2478,6 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.buzz.bgHighlight,
   },
   cornerSwipeGlyph: { color: theme.buzz.accent },
-  swipeTipPose: { overflow: 'hidden' },
-  swipeTipAction: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    left: ALIVE_RING_PAD,
-    width: SWIPE_TIP_OFFSET,
-  },
-  swipeTipShift: { transform: [{ translateX: SWIPE_TIP_OFFSET }] },
   replySwipeGlyph: {
     ...Typography.default('semiBold'),
     color: theme.buzz.textPrimary,

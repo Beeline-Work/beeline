@@ -31,7 +31,6 @@ import { Typography } from '@/constants/Typography';
 import { PixelGateReveal, PixelLoader } from '@/components/buzz/MonoHull';
 import { BeelineMark } from '@/components/buzz/BeelineMark';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
-import { useReplayProductTour } from '@/components/buzz/tour/TourTarget';
 import { BuzzRigTransport } from '@/sync/transport';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import {
@@ -97,7 +96,6 @@ export default function BuzzIdentitySettings() {
   const [confirmSignOut, setConfirmSignOut] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
-  const replayTour = useReplayProductTour();
   const manualUpdateRunning = useRef(false);
   const [manualUpdate, dispatchManualUpdate] = useReducer(
     manualUpdateReducer,
@@ -488,19 +486,6 @@ export default function BuzzIdentitySettings() {
               />
             </View>
           )}
-        </View>
-
-        <View style={styles.section} testID="help-settings">
-          <Text style={styles.sectionLabel}>Help</Text>
-          <SettingsRow
-            accessibilityLabel="Replay tips"
-            chevron="right"
-            description="Swipe to a corner, the corner mark, and Trusty Squire"
-            disabled={!profilePubkey || !replayTour}
-            onPress={() => profilePubkey && void replayTour?.(profilePubkey)}
-            testID="settings-replay-tour"
-            title="Replay tips"
-          />
         </View>
 
         <View style={styles.section} testID="account-settings">

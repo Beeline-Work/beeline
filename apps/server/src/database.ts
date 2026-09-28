@@ -563,10 +563,11 @@ CREATE TABLE IF NOT EXISTS identities (
 );
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS hidden_from_roster boolean NOT NULL DEFAULT false;
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS face_id text NULL;
--- Existing people completed onboarding before this tour shipped. Only
--- identities inserted after the migration inherit the empty (eligible) set.
-ALTER TABLE identities ADD COLUMN IF NOT EXISTS tour_seen_tips text[];
-ALTER TABLE identities ALTER COLUMN tour_seen_tips SET DEFAULT ARRAY[]::text[];
+-- Null excludes every identity present at rollout. New humans inherit true;
+-- completion changes it to false and follows the account across devices.
+ALTER TABLE identities ADD COLUMN IF NOT EXISTS welcome_cards_due boolean;
+ALTER TABLE identities ALTER COLUMN welcome_cards_due SET DEFAULT true;
+ALTER TABLE identities DROP COLUMN IF EXISTS tour_seen_tips;
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS push_level text NOT NULL DEFAULT 'mine';
 -- The 'all' level is retired: its only remaining meaning (member lifecycle)
 -- moved onto 'mine', so every stored 'all' maps to the nearest surviving

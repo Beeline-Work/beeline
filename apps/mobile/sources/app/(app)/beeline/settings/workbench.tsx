@@ -6,7 +6,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Typography } from '@/constants/Typography';
 import { useIsDesktop } from '@/utils/responsive';
 import { PageHeader } from '@/components/buzz/PageHeader';
-import { TourTarget } from '@/components/buzz/tour/TourTarget';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { ToolDetailsCell } from '@/components/buzz/ToolDetailsCell';
 import { NetworkUnavailableState } from '@/components/buzz/NetworkUnavailableState';
@@ -366,15 +365,7 @@ export default function WorkbenchScreen() {
                 valueTone={instrument.valueTone}
               />
             );
-            // What Trusty Squire does is not visible until it is connected, so
-            // its row carries the one Workbench tip while it is not.
-            return connector.id === 'trusty-squire' && connector.status !== 'connected' ? (
-              <TourTarget key={connector.id} tip="squire">
-                {cell}
-              </TourTarget>
-            ) : (
-              <React.Fragment key={connector.id}>{cell}</React.Fragment>
-            );
+            return <React.Fragment key={connector.id}>{cell}</React.Fragment>;
           })}
         </View>
         <View testID="workbench-apps">

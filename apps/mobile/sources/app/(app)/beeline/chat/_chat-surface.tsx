@@ -4560,11 +4560,10 @@ export function BuzzChatSurface({
   }, [handleAddGitHubAccount, handleManageGitHubInstallation, roomRepoAccessIssue, transport]);
 
   /**
-   * Leave this transcript. A corner returns to its explicit opening surface
-   * when one was supplied; otherwise it resolves its parent Room by id. See
-   * `corner-navigation.ts` for why the route directly underneath cannot always
-   * be trusted. A lone transcript replaces itself with the Room list instead
-   * of calling a `router.back()` that silently does nothing.
+   * Leave this transcript. A screen opened from a notification or a list
+   * returns to that list; otherwise it pops to the screen it was opened from.
+   * See `corner-navigation.ts`. A lone transcript replaces itself instead of
+   * calling a `router.back()` that silently does nothing.
    */
   const handleBack = useCallback(() => {
     // Stop the live-draft drain before the stack moves. The scheduler otherwise
@@ -4574,9 +4573,8 @@ export function BuzzChatSurface({
     const routes = (navigation.getState()?.routes ?? []) as ChatStackRoute[];
     const action = chatBackAction(routes, parentChannelId, cornerReturnTarget);
     if (action.type === 'pop') router.dismiss(action.count);
-    // The parent Room was never on this stack (for example, a notification
-    // cold start or an older link without an origin hint). Open it here rather
-    // than popping into whatever happens to be underneath.
+    // A lone corner (for example, an older link without an origin hint) has
+    // nothing to pop to, so open its parent Room.
     else if (action.type === 'open-room') router.replace(roomHref(action.channelId));
     // A corner opened from a Room's corners screen lands back on that screen
     // even when the list is not on the stack — never the parent Room.
@@ -5449,7 +5447,7 @@ export function BuzzChatSurface({
                   isCorner && cornerReturnTarget === 'corners'
                     ? `Back to this ${ROOM_LABEL}’s ${CHANGES_LABEL}`
                     : isCorner && cornerReturnTarget !== 'room-list'
-                      ? `Back to this ${CORNER_LABEL}’s ${ROOM_LABEL}`
+                      ? 'Back'
                       : 'Back to Rooms'
                 }
                 accessibilityRole="button"

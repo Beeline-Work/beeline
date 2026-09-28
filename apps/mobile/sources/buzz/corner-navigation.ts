@@ -1,22 +1,16 @@
 /**
- * Leaving a corner is a lookup, not a stack guess.
+ * Leaving a chat screen returns to where the reader came from.
  *
- * A Room and a Corner are the same Expo Router route (`buzz/chat/[channelId]`),
- * so "the screen underneath" is not reliably the corner's parent Room:
+ * A Room and a Corner are the same Expo Router route (`buzz/chat/[channelId]`).
+ * Back is a stack pop to the screen underneath, with three exceptions:
  *
- * - the Room-list corner dropdown pushes a corner with the Room never on the
- *   stack at all;
- * - a notification uses `router.navigate(..., { dangerouslySingular: true })`,
- *   which lifts the matching chat route out of the middle of the stack and
- *   re-appends it on top — reordering Room and Corner rather than popping, so
- *   a later drill-in can leave a corner sitting *below* its own Room;
- * - a cold notification start can leave the corner as the only route, where a
- *   bare `router.back()` is a silent no-op and the user never leaves.
- *
- * Every one of those ends with the user back inside the corner they tried to
- * leave. `popCountToParentRoom` instead finds the parent Room by id, so the
- * caller pops to exactly that screen — and knows when it has to be created
- * because it genuinely is not on the stack.
+ * - a screen opened from a notification carries `returnTo`: a Room returns to
+ *   the Room list and a corner to its Room's corners list, never whatever the
+ *   notification's `dangerouslySingular` navigate happened to leave beneath it;
+ * - a corner opened from the Room list or the corners list carries `returnTo`
+ *   for that list, so it lands there even when the list is not on the stack;
+ * - a lone screen (a cold start) opens the corner's parent Room or the Room
+ *   list, because a bare `router.back()` there is a silent no-op.
  */
 
 import type { Href, Router } from 'expo-router';
@@ -142,23 +136,6 @@ export function routeCornersRoomId(route: ChatStackRoute | undefined): string | 
   }
 }
 
-/**
- * How many entries to pop so the parent Room is on top, or `null` when it is
- * not on this stack. Searches downward from the top so a Room that was
- * reordered above an older copy still resolves to the nearest one.
- */
-export function popCountToParentRoom(
-  routes: readonly ChatStackRoute[],
-  parentChannelId: string,
-): number | null {
-  if (!parentChannelId) return null;
-  const top = routes.length - 1;
-  for (let index = top - 1; index >= 0; index -= 1) {
-    if (routeChannelId(routes[index]) === parentChannelId) return top - index;
-  }
-  return null;
-}
-
 export type ChatBackAction =
   | { type: 'pop'; count: number }
   | { type: 'open-room'; channelId: string }
@@ -169,25 +146,19 @@ export type ChatBackAction =
 /**
  * What the chat header's back control should do.
  *
- * A corner with an explicit opening surface returns there. Otherwise it
- * resolves to its parent Room — popped to if already on the stack, opened in
- * place if not. A Room falls back to plain stack behaviour, except when
- * consecutive copies of the same Room sit on top — the first back must pop
- * all of them, not land in the Room the reader just left — or when it is the
- * only route, where `router.back()` is a no-op and the Room list is the
- * honest destination.
+ * A screen with an explicit return target goes to that list — popped to if it
+ * is on the stack, opened in place if not. Every other screen pops to the one
+ * it was opened from, skipping consecutive copies of itself so the first back
+ * never lands in the screen the reader just left. A lone screen opens the
+ * corner's parent Room, or the Room list for a Room.
  */
 export function chatBackAction(
   routes: readonly ChatStackRoute[],
   parentChannelId: string | undefined,
   returnTo?: CornerReturnTarget,
 ): ChatBackAction {
-  // A Corner opened from a Room's corners screen returns to that screen —
-  // the parent Room beneath it is the screen it will itself back into, and
-  // that Room's corner dropdown is never skipped. Pop to the corners list
-  // when it is on the stack; open it in place when it is not.
+  const top = routes.length - 1;
   if (returnTo === 'corners' && parentChannelId) {
-    const top = routes.length - 1;
     for (let index = top - 1; index >= 0; index -= 1) {
       if (routeCornersRoomId(routes[index]) === parentChannelId) {
         return { type: 'pop', count: top - index };
@@ -195,29 +166,19 @@ export function chatBackAction(
     }
     return { type: 'open-corners', roomId: parentChannelId };
   }
-  // A Corner opened from the Room list must return to that list. Its parent
-  // Room was never visited, so manufacturing one here both violates Back and
-  // flashes a newly mounted transcript during the replacement transition.
+  // Popping to the list rather than replacing keeps a Room that was never
+  // visited from flashing a newly mounted transcript during the transition.
   if (returnTo === 'room-list') {
-    const top = routes.length - 1;
     for (let index = top - 1; index >= 0; index -= 1) {
       if (routes[index]?.name === 'beeline/channels') return { type: 'pop', count: top - index };
     }
     return { type: 'room-list' };
   }
-  if (parentChannelId) {
-    const count = popCountToParentRoom(routes, parentChannelId);
-    return count === null
-      ? { type: 'open-room', channelId: parentChannelId }
-      : { type: 'pop', count };
+  const selfCount = Math.max(consecutiveTopChannelCount(routes), 1);
+  if (routes.length > selfCount) {
+    return selfCount > 1 ? { type: 'pop', count: selfCount } : { type: 'back' };
   }
-  const duplicateCount = consecutiveTopChannelCount(routes);
-  if (duplicateCount > 1) {
-    return routes.length === duplicateCount
-      ? { type: 'room-list' }
-      : { type: 'pop', count: duplicateCount };
-  }
-  return routes.length > 1 ? { type: 'back' } : { type: 'room-list' };
+  return parentChannelId ? { type: 'open-room', channelId: parentChannelId } : { type: 'room-list' };
 }
 
 /** How many copies of the top channel sit on top of each other. */

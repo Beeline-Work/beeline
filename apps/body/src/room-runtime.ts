@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
-import { mkdir, realpath, rm } from 'node:fs/promises';
+import { mkdir, readdir, realpath, rm } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { BodyConfig } from './config.js';
@@ -373,6 +373,18 @@ export async function discoverCornerWorktree(
   return { path, gitCommonDir };
 }
 
+/** The local worktree root is small even when the server has years of archived corners. */
+export async function localCornerWorktreeIds(supervisorRoot: string): Promise<Set<string>> {
+  const root = resolve(supervisorRoot, 'beeline', 'corners');
+  const entries = await readdir(root, { withFileTypes: true }).catch(
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return [];
+      throw error;
+    },
+  );
+  return new Set(entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name));
+}
+
 interface CornerScratch {
   path: string;
   cornerId: string;
@@ -530,6 +542,10 @@ export class RoomRuntimeCoordinator {
   /** Idle corners listen for durable commands without obtaining a token or checkout. */
   private readonly idleCornerSubscriptions = new Map<string, () => void>();
   private readonly pendingCornerCommands = new Set<string>();
+  /** Enumerated once; later materialization and removal keep it current. */
+  private localWorktreeIds?: Promise<Set<string>>;
+  /** Event-driven cleanup retries stay scoped to the failed local corner. */
+  private readonly archiveCleanupFaults = new Map<string, { failures: number; retryAt: number }>();
   private readonly startingCorners = new Set<string>();
   /**
    * Rooms whose start is in flight. `running` is not set until the checkout
@@ -845,7 +861,7 @@ export class RoomRuntimeCoordinator {
     for (const cornerId of desiredCorners.keys()) this.surfaceHealth.discover(cornerId, 'corner');
     for (const channelId of desired) this.roomRemovalConfirmations.delete(channelId);
     await this.retryPendingCornerReaps(desired);
-    await this.sweepArchivedCornerWorktrees(archivedCorners);
+    await this.sweepArchivedCornerWorktrees(archivedCorners, desired);
     for (const cornerId of this.idleCornerSubscriptions.keys()) {
       if (desired.has(cornerId)) continue;
       this.unwatchCorner(cornerId);
@@ -1526,10 +1542,28 @@ export class RoomRuntimeCoordinator {
     featureBranch: string;
     token: string;
   }): Promise<{ path: string; gitCommonDir: string }> {
-    return materializeCornerWorktree({
+    const worktree = await materializeCornerWorktree({
       ...input,
       supervisorRoot: this.runtime.supervisorRoot,
       committer: { name: this.agent.name, publicKey: this.agent.publicKey },
+    });
+    (await this.getLocalWorktreeIds()).add(input.cornerId);
+    return worktree;
+  }
+
+  private getLocalWorktreeIds(): Promise<Set<string>> {
+    return (this.localWorktreeIds ??= localCornerWorktreeIds(this.runtime.supervisorRoot));
+  }
+
+  private archiveCleanupDue(cornerId: string): boolean {
+    return (this.archiveCleanupFaults.get(cornerId)?.retryAt ?? 0) <= this.now();
+  }
+
+  private deferArchiveCleanup(cornerId: string): void {
+    const failures = Math.min((this.archiveCleanupFaults.get(cornerId)?.failures ?? 0) + 1, 9);
+    this.archiveCleanupFaults.set(cornerId, {
+      failures,
+      retryAt: this.now() + Math.min(1_000 * 2 ** failures, 5 * 60_000),
     });
   }
 
@@ -1539,9 +1573,11 @@ export class RoomRuntimeCoordinator {
         this.pendingCornerReaps.delete(cornerId);
         continue;
       }
+      if (!this.archiveCleanupDue(cornerId)) continue;
       try {
         await this.reapCornerWorktree(worktree);
       } catch (error) {
+        this.deferArchiveCleanup(cornerId);
         console.error(`[thin-core] corner ${cornerId} branch cleanup retry failed:`, error);
         // Cleanup retries ride the normal reconciliation heartbeat. Re-arming
         // fast discovery here repeats every Room and archived-corner read.
@@ -1556,23 +1592,41 @@ export class RoomRuntimeCoordinator {
    */
   private async sweepArchivedCornerWorktrees(
     corners: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>,
+    desired: ReadonlySet<string> = new Set(),
   ): Promise<void> {
-    for (const corner of corners.values()) {
-      if (this.running.has(corner.cornerId) || this.pendingCornerReaps.has(corner.cornerId)) {
+    const localIds = await this.getLocalWorktreeIds();
+    for (const cornerId of [...localIds]) {
+      if (
+        desired.has(cornerId) ||
+        this.running.has(cornerId) ||
+        this.pendingCornerReaps.has(cornerId)
+      )
         continue;
-      }
+      if (!this.archiveCleanupDue(cornerId)) continue;
+      let corner = corners.get(cornerId);
       let discovered: DiscoveredCornerWorktree | undefined;
       try {
-        discovered = await discoverCornerWorktree(this.runtime.supervisorRoot, corner.cornerId);
-        if (!discovered) continue;
-        const [restore, repository] = await Promise.all([
-          this.options.daemonApi.execute('getCornerRestoreState', {
-            cornerId: corner.cornerId,
-          }),
-          this.options.daemonApi.execute('getRoomRepositoryState', {
-            roomId: corner.parentRoomId,
-          }),
-        ]);
+        discovered = await discoverCornerWorktree(this.runtime.supervisorRoot, cornerId);
+        if (!discovered) {
+          localIds.delete(cornerId);
+          continue;
+        }
+        const restore = (await this.options.daemonApi.execute('getCornerRestoreState', {
+          cornerId,
+        })) as CornerRestoreResult & { archived?: boolean; parentRoomId?: string };
+        // An old server names archived corners in listRoomCorners but omits
+        // these restore fields. A new server can omit them from the active-only
+        // list; cleanup then requires its explicit archive and parent facts.
+        if (restore.archived === false) continue;
+        if (!corner) {
+          if (restore.archived !== true || !restore.parentRoomId) continue;
+          corner = { cornerId, parentRoomId: restore.parentRoomId };
+        } else if (restore.parentRoomId && restore.parentRoomId !== corner.parentRoomId) {
+          throw new Error(`archived corner ${cornerId} parent Room changed during cleanup`);
+        }
+        const repository = await this.options.daemonApi.execute('getRoomRepositoryState', {
+          roomId: corner.parentRoomId,
+        });
         if (repository.resolution !== 'repository' || !repository.remote) {
           throw new Error(`archived corner ${corner.cornerId} has no authoritative repository`);
         }
@@ -1594,9 +1648,10 @@ export class RoomRuntimeCoordinator {
           token: '',
           recovered: true,
         });
-        console.log(`[thin-core] swept archived corner worktree ${corner.cornerId}`);
+        console.log(`[thin-core] swept archived corner worktree ${cornerId}`);
       } catch (error) {
-        console.error(`[thin-core] archived corner ${corner.cornerId} cleanup deferred:`, error);
+        this.deferArchiveCleanup(cornerId);
+        console.error(`[thin-core] archived corner ${cornerId} cleanup deferred:`, error);
         // The checkout remains for the next heartbeat. A stale or unsafe
         // checkout cannot require another full discovery immediately.
       }
@@ -1625,6 +1680,8 @@ export class RoomRuntimeCoordinator {
       ).token;
       await removeCornerWorktreeAndBranches({ ...worktree, token }, { preserveRemoteBranch });
       this.pendingCornerReaps.delete(worktree.cornerId);
+      this.archiveCleanupFaults.delete(worktree.cornerId);
+      (await this.getLocalWorktreeIds()).delete(worktree.cornerId);
       // `gone` asserts the remote branch is gone, so a preserved branch must
       // not post it: the corner's own GitHub facts still own its lifecycle.
       if (!preserveRemoteBranch) {

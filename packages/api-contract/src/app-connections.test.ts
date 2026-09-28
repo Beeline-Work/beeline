@@ -33,7 +33,7 @@ describe('app identity', () => {
 
   it('names one grant target per app and keeps the route order fixed', () => {
     expect(appResourceTarget('linear')).toBe('app:linear');
-    expect(APP_ROUTES).toEqual(['workbench', 'registry-mcp', 'squire-api', 'squire-browser']);
+    expect(APP_ROUTES).toEqual(['workbench', 'composio', 'squire-api', 'squire-browser']);
   });
 });
 

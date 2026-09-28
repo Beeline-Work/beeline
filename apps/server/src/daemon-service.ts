@@ -5253,6 +5253,7 @@ export class DaemonService {
       registryServers,
       apps: (await readOwnerApps(this.database, context.owner.pubkey, this.composio)).map(
         (app) => ({
+          appId: app.appId,
           appKey: app.appKey,
           name: app.name,
           transport: app.transport,

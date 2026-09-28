@@ -403,7 +403,10 @@ export async function readOwnerApps(
 ): Promise<WorkbenchAppView[]> {
   const rows = (
     await database.query<
-      AppRow & { helper_name: string | null; use_count: string; last_used_at: Date | null }
+      AppRow & { helper_name: string | null; account_label: string;
+        workspace_name: string; use_count: string; last_used_at: Date | null;
+        last_agent_id: string | null; last_agent_name: string | null;
+        last_room_id: string | null; last_room_name: string | null }
     >(
       `SELECT ${APP_COLUMNS},
               (SELECT COALESCE(MAX(sibling.machine_name),MIN(i.name)) FROM agents sibling
@@ -411,8 +414,21 @@ export async function readOwnerApps(
                 WHERE sibling.owner_id=a.owner_identity_id
                   AND COALESCE(sibling.machine_id,sibling.agent_id)=a.machine_id) helper_name,
               (SELECT COUNT(*) FROM workspace_app_usage u WHERE u.app_id=a.id) use_count,
-              (SELECT MAX(u.created_at) FROM workspace_app_usage u WHERE u.app_id=a.id) last_used_at
+              COALESCE(NULLIF(owner.handle,''),owner.name) account_label,
+              workspace.name workspace_name,
+              last_use.created_at last_used_at,
+              last_use.agent_id last_agent_id,agent.name last_agent_name,
+              last_use.room_id last_room_id,room.name last_room_name
        FROM workspace_apps a
+       JOIN identities owner ON owner.id=a.owner_identity_id
+       JOIN workspaces workspace ON workspace.id=a.workspace_id
+       LEFT JOIN LATERAL (
+         SELECT u.created_at,u.agent_id,u.room_id FROM workspace_app_usage u
+         WHERE u.app_id=a.id AND u.transport='composio'
+         ORDER BY u.created_at DESC,u.id DESC LIMIT 1
+       ) last_use ON true
+       LEFT JOIN identities agent ON agent.id=last_use.agent_id
+       LEFT JOIN rooms room ON room.id=last_use.room_id
        WHERE a.owner_identity_id=$1 AND a.state='active'
        ORDER BY a.created_at, a.app_key`,
       [ownerId],
@@ -435,7 +451,15 @@ export async function readOwnerApps(
       ...(derived.connectionReference
         ? { connectionReference: derived.connectionReference }
         : {}),
+      accountLabel: row.account_label,
+      workspaceName: row.workspace_name,
       useCount: Number(row.use_count),
+      ...(row.last_used_at && row.last_agent_id && row.last_agent_name &&
+        row.last_room_id && row.last_room_name ? { lastUse: {
+          agentId: row.last_agent_id, agentName: row.last_agent_name,
+          roomId: row.last_room_id, roomName: row.last_room_name,
+          usedAt: Math.floor(row.last_used_at.getTime() / 1000),
+        } } : {}),
       ...(row.last_used_at ? { lastUsedAt: Math.floor(row.last_used_at.getTime() / 1000) } : {}),
       createdAt: Math.floor(row.created_at.getTime() / 1000),
     });

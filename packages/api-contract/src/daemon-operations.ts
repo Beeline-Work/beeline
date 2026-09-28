@@ -1207,6 +1207,7 @@ export type AgentWorkbenchView = {
   }[];
   /** The owner's apps (`connect_app`): one entry per app, whatever serves it. */
   readonly apps?: readonly {
+    readonly appId: string;
     readonly appKey: string;
     readonly name: string;
     readonly transport: AppTransport;

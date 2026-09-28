@@ -266,9 +266,15 @@ describe('connect_app', () => {
     )).rows[0]?.card.status).toBe('connected');
     expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1
       AND agent_id=$2 AND reason='app_connected'`, [ROOM, HELPER])).rowCount).toBe(1);
-    expect((await readOwnerApps(database, OWNER, provider))[0]).toMatchObject({
-      appId: first.appId, status: 'connected',
+    const neverUsed = (await readOwnerApps(database, OWNER, provider))[0]!;
+    expect(neverUsed).toMatchObject({
+      appId: first.appId, status: 'connected', accountLabel: 'owner',
+      workspaceName: 'Hive', useCount: 0,
     });
+    expect(neverUsed).not.toHaveProperty('lastUse');
+    expect(neverUsed).not.toHaveProperty('lastUsedAt');
+    expect((await daemon.execute('readAgentWorkbench', { roomId: ROOM }, HELPER)).apps)
+      .toContainEqual(expect.objectContaining({ appId: first.appId, appKey: 'slack' }));
     expect((await daemon.execute('listAppTools', { ...turn, appId: first.appId! }, HELPER)).tools)
       .toHaveLength(1);
     const used = await daemon.execute('executeAppTool', { ...turn, appId: first.appId!,
@@ -279,6 +285,10 @@ describe('connect_app', () => {
     }));
     expect((await database.query(`SELECT 1 FROM workspace_app_usage WHERE app_id=$1`,
       [first.appId])).rowCount).toBe(1);
+    const afterUse = (await readOwnerApps(database, OWNER, provider))[0]!;
+    expect(afterUse).toMatchObject({ useCount: 1,
+      lastUse: { agentId: HELPER, agentName: 'Bee', roomId: ROOM,
+        roomName: 'Tools', usedAt: afterUse.lastUsedAt } });
   });
 
   it('binds sign-in to the returning person and refuses a foreign agent until the app owner approves', async () => {
@@ -288,6 +298,7 @@ describe('connect_app', () => {
       { ...turn, app: 'Slack', reason: 'post the launch notes' }, HELPER);
     const OTHER = 'c'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Other')`, [OTHER]);
+    expect(await readOwnerApps(database, OTHER, provider)).toEqual([]);
     await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`, [WORKSPACE, OTHER, ROOM]);
     const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,

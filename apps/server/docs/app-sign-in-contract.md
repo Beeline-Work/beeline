@@ -38,6 +38,15 @@ return `authorizationUrl` for an immediate sign-in. A later reconnect can use
 from the provider. `disconnectWorkbenchApp` revokes the provider account before
 marking the row disconnected and revokes the app's standing approvals.
 
+Each owner-visible `readWorkbench.apps[]` row supplies `accountLabel` (the
+Beeline person's handle, or name when no handle exists), `workspaceName`, and
+`useCount`. Before a successful managed app tool call, `lastUse` and
+`lastUsedAt` are absent. After one, `lastUse` contains `agentId`, `agentName`,
+`roomId`, `roomName`, and Unix-second `usedAt`; `lastUsedAt` equals that time.
+This comes from the server's post-execution usage row, not provider account
+data. `readAgentWorkbench.apps[]` includes the same stable `appId` so Body can
+call `listAppTools` for the selected app.
+
 Tool discovery and execution remain daemon-only operations (`listAppTools`,
 `executeAppTool`). The phone never receives provider credentials. One app row
 and one `app:<key>` permission target represent the connection. The connected

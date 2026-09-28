@@ -49,17 +49,6 @@ export const CONNECTABLE_CONNECTOR_KINDS: readonly ConnectorKind[] = [
   'tailscale',
 ];
 
-/**
- * The four Google Workspace tool kinds share one OAuth grant on a helper.
- * Pairing and status remain independent per product.
- */
-export const GOOGLE_CONNECTOR_KINDS: readonly ConnectorKind[] = [
-  'google-gmail',
-  'google-calendar',
-  'google-drive',
-  'google-youtube',
-];
-
 /** Scope authority for the four independent Google product installs. */
 export const GOOGLE_TOOL_SCOPES = {
   'google-gmail': [
@@ -74,10 +63,6 @@ export const GOOGLE_TOOL_SCOPES = {
     'https://www.googleapis.com/auth/yt-analytics.readonly',
   ],
 } as const;
-
-export function isGoogleToolConnectorKind(value: ConnectorKind): boolean {
-  return (GOOGLE_CONNECTOR_KINDS as readonly string[]).includes(value);
-}
 
 export type WorkbenchConnectorView = {
   readonly connectorId: string;
@@ -163,7 +148,18 @@ export type WorkbenchAppView = {
   readonly helperId?: string;
   /** The vault key a Squire route holds, when one is bound. */
   readonly connectionReference?: string;
+  /** The connected person's Beeline handle/name, never provider account data. */
+  readonly accountLabel: string;
+  readonly workspaceName: string;
   readonly useCount: number;
+  /** Present only after a successful managed app tool execution. */
+  readonly lastUse?: {
+    readonly agentId: string;
+    readonly agentName: string;
+    readonly roomId: string;
+    readonly roomName: string;
+    readonly usedAt: number;
+  };
   readonly lastUsedAt?: number;
   readonly createdAt: number;
 };

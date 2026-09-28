@@ -367,8 +367,8 @@ const styles = StyleSheet.create((theme) => {
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: hull.border,
     },
-    cancelAction: { minHeight: 44, flex: 1, justifyContent: 'center', alignItems: 'center' },
-    cancelText: { ...Typography.default(), ...hull.type.body, color: hull.chrome },
+    cancelAction: { minHeight: 44, flex: 1, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: hull.buttonSecondaryText, borderRadius: hull.radius },
+    cancelText: { ...Typography.default(), ...hull.type.body, color: hull.buttonSecondaryText },
     primaryAction: {
       minHeight: 44,
       minWidth: 118,
@@ -376,9 +376,9 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       justifyContent: 'center',
       borderRadius: hull.radius,
-      backgroundColor: hull.accent,
+      backgroundColor: hull.buttonPrimaryFill,
     },
     disabledAction: { opacity: 0.42 },
-    primaryActionText: { ...Typography.default('semiBold'), color: hull.textInverted },
+    primaryActionText: { ...Typography.default('semiBold'), color: hull.buttonPrimaryText },
   };
 });

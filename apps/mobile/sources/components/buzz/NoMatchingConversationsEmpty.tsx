@@ -56,9 +56,9 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderWidth: 1,
-    borderColor: theme.buzz.accent,
+    borderColor: theme.buzz.buttonSecondaryText,
     borderRadius: theme.buzz.radius,
   },
-  actionText: { ...theme.buzz.type.meta, color: theme.buzz.accent },
+  actionText: { ...theme.buzz.type.meta, color: theme.buzz.buttonSecondaryText },
   pressed: { backgroundColor: theme.buzz.bgPressed },
 }));

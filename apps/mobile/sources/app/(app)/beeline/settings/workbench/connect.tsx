@@ -447,7 +447,7 @@ const styles = StyleSheet.create((theme) => {
     signInButton: {
       minHeight: hull.layout.row,
       borderWidth: 1,
-      borderColor: hull.accent,
+      borderColor: hull.buttonSecondaryText,
       alignItems: 'center',
       justifyContent: 'center',
       paddingHorizontal: hull.space.md,
@@ -459,16 +459,16 @@ const styles = StyleSheet.create((theme) => {
       color: hull.textMuted,
       textAlign: 'center',
     },
-    signInText: { ...Typography.default(), ...hull.type.body, color: hull.accent },
+    signInText: { ...Typography.default(), ...hull.type.body, color: hull.buttonSecondaryText },
     retryButton: {
       minHeight: hull.layout.row,
       borderWidth: 1,
-      borderColor: hull.border,
+      borderColor: hull.buttonSecondaryText,
       alignItems: 'center',
       justifyContent: 'center',
       paddingHorizontal: hull.space.md,
     },
-    retryText: { ...Typography.default(), ...hull.type.body, color: hull.textMuted },
+    retryText: { ...Typography.default(), ...hull.type.body, color: hull.buttonSecondaryText },
     errorText: { ...Typography.default(), ...hull.type.meta, color: hull.dialogDanger },
   };
 });

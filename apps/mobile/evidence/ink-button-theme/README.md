@@ -34,3 +34,7 @@ The unchanged brass `@` and mention are visible in the last two pairs.
 `button-color.guard.test.ts` also pins the mention, profile `@`, and link
 token to `accent`. The screenshot pass verifies the web renderer; physical
 phone appearance and release remain separate gates.
+
+The Leave and New Room frames also show that their original text-only Cancel
+actions remain text-only. The Workbench Connect pair shows its existing
+outline change from brass to ink without changing its layout.

@@ -366,8 +366,7 @@ export function HullDialog({
                 style={({ pressed }) => [
                   styles.dialogAction,
                   isPrimary && styles.dialogActionPrimary,
-                  !isPrimary && action.variant !== 'destructive' && styles.dialogActionSecondary,
-                  pressed && styles.dialogActionPressed,
+                  pressed && (isPrimary ? styles.dialogActionPrimaryPressed : styles.dialogActionPressed),
                   action.disabled && styles.dialogActionDisabled,
                 ]}
                 testID={action.testID}
@@ -483,8 +482,8 @@ const styles = StyleSheet.create((theme) => {
       borderRadius: hull.radius,
     },
     dialogActionPrimary: { backgroundColor: hull.buttonPrimaryFill },
-    dialogActionSecondary: { borderWidth: 1, borderColor: hull.buttonSecondaryText, backgroundColor: 'transparent' },
-    dialogActionPressed: { opacity: 0.78 },
+    dialogActionPressed: { opacity: 0.78, backgroundColor: hull.bgPressed },
+    dialogActionPrimaryPressed: { opacity: 0.78 },
     dialogActionDisabled: { opacity: 0.42 },
     dialogActionText: {
       ...Typography.mono('semiBold'),

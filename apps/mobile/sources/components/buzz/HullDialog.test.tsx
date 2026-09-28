@@ -179,7 +179,7 @@ describe('Hull dialog family', () => {
     ).toContainEqual({ backgroundColor: hull.buttonPrimaryFill });
     expect(
       hostByTestID(renderer, 'cancel', 'Pressable').props.style({ pressed: false }),
-    ).toContainEqual({ borderWidth: 1, borderColor: hull.buttonSecondaryText, backgroundColor: 'transparent' });
+    ).not.toContainEqual(expect.objectContaining({ borderWidth: 1 }));
     expect(
       hostByTestID(renderer, 'remove', 'Pressable').findByType('Text' as any).props.style,
     ).toContainEqual({ color: hull.dialogDanger });

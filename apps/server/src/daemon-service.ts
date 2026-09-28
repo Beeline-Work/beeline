@@ -6099,6 +6099,18 @@ export class DaemonService {
        WHERE corner_id=$1 AND lane='no_code'`,
       [cornerId, agentId],
     );
+    // GitHub's PR and check events find a corner only by its recorded branch.
+    // The daemon records it on start only when it restarts as the corner's
+    // owner, so an upgraded corner records it here instead.
+    const featureBranch = `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`;
+    await this.database.query(
+      `UPDATE corner_facts
+       SET feature_branch=$2,
+           lifecycle=lifecycle||jsonb_build_object('lifecycle','working','branch',$2::text,'checks','unknown'),
+           updated_at=now()
+       WHERE corner_id=$1 AND feature_branch IS NULL AND NOT lifecycle ? 'pr'`,
+      [cornerId, featureBranch],
+    );
     // A repository corner works from a brief. This one already existed as
     // chat, so its discussion so far is what the brief has to carry, written
     // by the server rather than the agent whose work it authorizes. A corner

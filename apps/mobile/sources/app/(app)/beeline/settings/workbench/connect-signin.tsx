@@ -13,6 +13,7 @@ import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { connectorOfferCompletionRoute } from '@/buzz/connector-offer-ceremony';
 import { GOOGLE_ACCOUNT_CONNECTOR_ID } from '@beeline/api-contract/workbench';
 import { authSessionOptions } from '@/auth/auth-session';
+import { takeAppSignInReturn } from '@/buzz/app-sign-in';
 
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -47,6 +48,28 @@ async function clearGoogleReturn(state?: string) {
  * completed, canceled, or expired attempts do not leave an orphaned session.
  */
 export default function ConnectorSignInScreen() {
+  const params = useLocalSearchParams<{ appSignInSession?: string | string[] }>();
+  const sessionUri = firstParam(params.appSignInSession);
+  return sessionUri ? <AppSignInReturnScreen sessionUri={sessionUri} /> : <LegacyConnectorSignInScreen />;
+}
+
+function AppSignInReturnScreen({ sessionUri }: { sessionUri: string }) {
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    void getWorkbenchSource().completeAppSignIn({ sessionUri }).then(async () => {
+      const destination = await takeAppSignInReturn();
+      if (!live) return;
+      router.replace(destination?.roomId ? connectorOfferCompletionRoute(destination.roomId) as Href : ({ pathname: '/beeline/settings/workbench', params: { workspaceId: destination?.workspaceId ?? '', viewerId: destination?.viewerId ?? '' } } as Href));
+    }).catch(cause => { if (live) setError(cause instanceof Error ? cause.message : 'Sign-in could not be verified'); });
+    return () => { live = false; };
+  }, [sessionUri]);
+  return <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+    {error ? <Text accessibilityRole="alert">{error}</Text> : <ActivityIndicator accessibilityLabel="Completing app sign-in" />}
+  </View>;
+}
+
+function LegacyConnectorSignInScreen() {
   const params = useLocalSearchParams<{
     workspaceId?: string | string[];
     viewerId?: string | string[];

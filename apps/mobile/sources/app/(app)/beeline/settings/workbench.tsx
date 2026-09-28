@@ -1,11 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { AppState, ScrollView, Text, View } from 'react-native';
+import { AppState, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router, useFocusEffect, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Typography } from '@/constants/Typography';
 import { useIsDesktop } from '@/utils/responsive';
-import { PageHeader } from '@/components/buzz/PageHeader';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { ToolDetailsCell } from '@/components/buzz/ToolDetailsCell';
 import { NetworkUnavailableState } from '@/components/buzz/NetworkUnavailableState';
@@ -15,10 +14,11 @@ import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { getWalletSource } from '@/buzz/wallet-source';
 import { resolveWalletWorkspaceId } from '@/buzz/wallet-workspace';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
-import { GoogleEntryRow } from './workbench/GoogleEntryRow';
-import { GOOGLE_ACCOUNT_CONNECTOR_ID } from '@beeline/api-contract/workbench';
+import { AppPageHeader } from '@/components/buzz/AppPageHeader';
+import { AppMark } from '@/components/buzz/AppMark';
+import { appBoardColors } from '@/buzz/app-board-style';
+import { ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import {
-  appDetailLine,
   appInstrument,
   connectionCompany,
   connectionDomainsLine,
@@ -27,9 +27,7 @@ import {
   connectionsForViewer,
   connectorExpandedActions,
   connectorInstrument,
-  isGoogleToolConnectorId,
   keysOutsideApps,
-  type WorkbenchApp,
   type WorkbenchView,
 } from '@/buzz/workbench';
 
@@ -124,17 +122,6 @@ export default function WorkbenchScreen() {
 
   const connectConnector = useCallback(
     async (connectorId: string) => {
-      if (connectorId === 'google' || isGoogleToolConnectorId(connectorId)) {
-        try {
-          const started = await getWorkbenchSource().beginGoogleSignIn({ workspaceId,
-            connectorType: (connectorId === 'google' ? 'google-gmail' : connectorId) as
-              'google-gmail' | 'google-calendar' | 'google-drive' | 'google-youtube' });
-          router.push({ pathname: '/beeline/settings/workbench/connect-signin',
-            params: { workspaceId, viewerId, connectorId: GOOGLE_ACCOUNT_CONNECTOR_ID,
-              connectorName: 'Google Workspace', method: 'oauth', url: started.authorizationUrl } } as Href);
-        } catch { setNetworkFailure('load'); }
-        return;
-      }
       router.push({
         pathname: '/beeline/settings/workbench/connect',
         params: { workspaceId, viewerId, connectorId },
@@ -160,39 +147,12 @@ export default function WorkbenchScreen() {
     [disconnectingId, load, workspaceId],
   );
 
-  const [appWorking, setAppWorking] = useState<string | null>(null);
   const openConnectApp = useCallback(() => {
     router.push({
       pathname: '/beeline/settings/workbench/connect-app',
       params: { workspaceId, viewerId },
     } as unknown as Href);
   }, [workspaceId, viewerId]);
-
-  const appAction = useCallback(
-    async (app: WorkbenchApp, action: 'reconnect' | 'disconnect') => {
-      if (appWorking) return;
-      setAppWorking(app.id);
-      setNetworkFailure(null);
-      try {
-        if (action === 'disconnect') {
-          await getWorkbenchSource().disconnectApp({ workspaceId, appId: app.id });
-        } else if (app.helperId) {
-          await getWorkbenchSource().connectApp({
-            workspaceId,
-            app: app.domain ?? app.key,
-            helperId: app.helperId,
-            reconnect: true,
-          });
-        }
-        await load();
-      } catch {
-        setNetworkFailure('load');
-      } finally {
-        setAppWorking(null);
-      }
-    },
-    [appWorking, load, workspaceId],
-  );
 
   const openWallet = useCallback(async () => {
     try {
@@ -242,14 +202,7 @@ export default function WorkbenchScreen() {
   const loading = view === null && networkFailure === null;
   const screenStyle = [styles.container, { paddingTop: desktop ? 0 : insets.top }];
   const header = (
-    <PageHeader
-      backAccessibilityLabel="Back to Settings"
-      eyebrow="Settings"
-      prominent
-      onBack={desktop ? undefined : () => router.back()}
-      testID="workbench-header"
-      title="Workbench"
-    />
+    <AppPageHeader backLabel="Back to Settings" eyebrow="Settings" title="Workbench" testID="workbench-header" onBack={() => router.back()} />
   );
 
   if (networkFailure) {
@@ -294,148 +247,41 @@ export default function WorkbenchScreen() {
           <Text style={styles.sectionLabel} testID="workbench-tools-head">
             Tools
           </Text>
-          {connectors.map((connector, index) => {
-            const instrument = connectorInstrument(
-              connector.available ? connector.status : 'soon',
-              connector.id,
-            );
+          {connectors.filter(connector => !connector.id.startsWith('google-') && connector.id !== 'tailscale').map(connector => {
+            const instrument = connectorInstrument(connector.available ? connector.status : 'soon', connector.id);
             const canConnect = instrument.connect && connector.available;
-            const extraActions = connectorExpandedActions(instrument).map((entry) => ({
-              label: entry.label,
-              testID: `workbench-connector-${connector.id}-${entry.action}`,
-              tone: entry.action === 'disconnect' ? ('destructive' as const) : ('action' as const),
-              disabled: disconnectingId === connector.id,
-              onPress:
-                entry.action === 'disconnect'
-                  ? () => void disconnectConnector(connector.id)
-                  : () => connectConnector(connector.id),
-            }));
             const isWallet = connector.id === 'wallet';
-            if (isWallet) {
-              return (
-                <ToolDetailsCell
-                  key={connector.id}
-                  action={canConnect ? (walletConnecting ? 'Connecting' : 'Connect') : undefined}
-                  actionDisabled={walletConnecting}
-                  actionTestID="workbench-connector-wallet-connect"
-                  detailText={connector.description}
-                  logoUrl={connectorLogoUrl(connector.id)}
-                  onAction={canConnect ? () => void connectWallet() : undefined}
-                  onToggle={connector.status === 'connected' ? openWallet : undefined}
-                  testID={`workbench-connector-${connector.id}`}
-                  title={connector.name}
-                  value={instrument.value}
-                  valueTone={instrument.valueTone}
-                />
-              );
-            }
-            // The four server tool records render as one account row with one
-            // consent action. Individual products stay out of the picker.
-            if (isGoogleToolConnectorId(connector.id)) {
-              if (connectors.findIndex((entry) => isGoogleToolConnectorId(entry.id)) !== index) {
-                return null;
-              }
-              return (
-                <GoogleEntryRow
-                  key="google"
-                  connectors={connectors}
-                  notice={firstParam(params.googleNotice) === 'incomplete'
-                    ? 'Sign-in didn’t finish. Tap Connect to try again.' : undefined}
-                  onPressConnect={(id) => connectConnector(id)}
-                  onPressDisconnect={(id) => void disconnectConnector(id)}
-                />
-              );
-            }
-            const cell = (
-              <ToolDetailsCell
-                action={canConnect ? 'Connect' : undefined}
-                actionTestID={`workbench-connector-${connector.id}-connect`}
-                detailText={connector.description}
-                logoUrl={connectorLogoUrl(connector.id)}
-                errorText={
-                  connector.status === 'error'
-                    ? (connector.errorMessage ?? 'Connection failed')
-                    : undefined
-                }
-                extraActions={extraActions}
-                onAction={canConnect ? () => connectConnector(connector.id) : undefined}
-                testID={`workbench-connector-${connector.id}`}
-                title={connector.name}
-                value={instrument.value}
-                valueTone={instrument.valueTone}
-              />
-            );
-            return <React.Fragment key={connector.id}>{cell}</React.Fragment>;
+            return <ToolDetailsCell
+              key={connector.id}
+              action={canConnect ? (isWallet && walletConnecting ? 'Connecting' : 'Connect') : undefined}
+              actionDisabled={isWallet && walletConnecting}
+              actionTestID={`workbench-connector-${connector.id}-connect`}
+              detailText={connector.description}
+              errorText={connector.status === 'error' ? connector.errorMessage : undefined}
+              extraActions={connectorExpandedActions(instrument).map(entry => ({
+                label: entry.label,
+                testID: `workbench-connector-${connector.id}-${entry.action}`,
+                tone: entry.action === 'disconnect' ? 'destructive' as const : 'action' as const,
+                disabled: disconnectingId === connector.id,
+                onPress: entry.action === 'disconnect' ? () => void disconnectConnector(connector.id) : () => connectConnector(connector.id),
+              }))}
+              leading={<View style={[styles.toolMark, isWallet ? styles.walletMark : styles.squireMark]}><Text style={styles.toolMarkText}>{isWallet ? 'C' : '{ }'}</Text></View>}
+              onAction={canConnect ? isWallet ? () => void connectWallet() : () => connectConnector(connector.id) : undefined}
+              onToggle={isWallet && connector.status === 'connected' ? openWallet : undefined}
+              testID={`workbench-connector-${connector.id}`}
+              title={isWallet ? 'Wallet' : connector.name}
+              value={instrument.value}
+              valueTone={instrument.valueTone}
+            />;
           })}
         </View>
         <View testID="workbench-apps">
           <Text style={styles.sectionLabel} testID="workbench-apps-head">
             Apps
           </Text>
-          <SettingsRow
-            chevron="right"
-            onPress={openConnectApp}
-            testID="workbench-connect-app"
-            title="Connect an app"
-            tone="action"
-          />
-          {apps.map((app) => {
-            const instrument = appInstrument(app.status);
-            return (
-              <ToolDetailsCell
-                key={app.id}
-                detailText={appDetailLine(app)}
-                errorText={app.status === 'error' ? app.errorMessage : undefined}
-                extraActions={[
-                  // The key a Squire route holds lives on this row, so its
-                  // detail (grants, ledger, revoke) is reached from here.
-                  ...(app.connectionReference
-                    ? [
-                        {
-                          label: 'Key details',
-                          testID: `workbench-app-${app.key}-key`,
-                          tone: 'action' as const,
-                          onPress: () =>
-                            router.push({
-                              pathname: '/beeline/settings/workbench/connection',
-                              params: { workspaceId, viewerId, ref: app.connectionReference },
-                            } as unknown as Href),
-                        },
-                      ]
-                    : []),
-                  ...(app.status === 'error' && app.helperId
-                    ? [
-                        {
-                          label: 'Reconnect',
-                          testID: `workbench-app-${app.key}-reconnect`,
-                          tone: 'action' as const,
-                          disabled: appWorking === app.id,
-                          onPress: () => void appAction(app, 'reconnect'),
-                        },
-                      ]
-                    : []),
-                  {
-                    label: 'Disconnect',
-                    testID: `workbench-app-${app.key}-disconnect`,
-                    tone: 'destructive' as const,
-                    disabled: appWorking === app.id,
-                    onPress: () => void appAction(app, 'disconnect'),
-                  },
-                ]}
-                leading={
-                  <ServiceMark
-                    company={app.name}
-                    domain={app.domain}
-                    testID={`workbench-app-${app.key}-mark`}
-                  />
-                }
-                testID={`workbench-app-${app.key}`}
-                title={app.name}
-                value={instrument.value}
-                valueTone={instrument.valueTone}
-              />
-            );
-          })}
+          {apps.map(app => <WorkbenchIndexRow key={app.id} leading={<AppMark name={app.name} domain={app.domain} />} onPress={() => router.push({ pathname: '/beeline/settings/workbench/app', params: { workspaceId, viewerId, appId: app.id } } as unknown as Href)} testID={`workbench-app-${app.key}`} title={app.name} value={appInstrument(app.status).value} />)}
+          <WorkbenchIndexRow onPress={openConnectApp} testID="workbench-connect-app" title="Connect an app" action />
+          <Text style={styles.appsNote}>Agents can also connect an app for you from a conversation when they need one.</Text>
         </View>
         {connections.length > 0 ? <View testID="workbench-connections">
           <Text style={styles.sectionLabel} testID="workbench-keys-head">
@@ -476,22 +322,39 @@ export default function WorkbenchScreen() {
   );
 }
 
+function WorkbenchIndexRow({ leading, title, value, onPress, testID, action = false }: {
+  leading?: React.ReactNode; title: string; value?: string; onPress?: () => void; testID: string; action?: boolean;
+}) {
+  const body = <>{leading}<Text numberOfLines={1} style={[styles.rowTitle, action && styles.rowAction]}>{title}</Text>{value ? <Text style={styles.rowValue}>{value}</Text> : null}{action ? <ChevronGlyph direction="right" size={18} color={styles.rowValue.color} /> : null}</>;
+  return onPress ? <TouchableOpacity accessibilityRole="button" onPress={onPress} style={styles.indexRow} testID={testID}>{body}</TouchableOpacity> : <View style={styles.indexRow} testID={testID}>{body}</View>;
+}
+
 const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
+  const board = appBoardColors(hull);
   return {
-    container: { flex: 1, backgroundColor: hull.bgTerminal },
+    container: { flex: 1, backgroundColor: board.canvas },
     content: { flex: 1 },
     contentInner: {
-      padding: hull.space.md,
-      gap: hull.layout.sectionGap,
+      paddingHorizontal: 20,
+      gap: 22,
       // Both section heads take the same air above them: the Keys head gets
       // `sectionGap` from the list it follows, so the Tools head takes the
       // screen's own `screenTop` rather than the smaller page padding —
       // which is what made the first head sit tighter than the second.
-      paddingTop: hull.layout.screenTop,
+      paddingTop: 22,
       paddingBottom: hull.space.xxl,
     },
-    sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: hull.textMuted },
+    sectionLabel: { ...Typography.mono(), fontSize: 12, letterSpacing: 3, color: board.quiet, paddingBottom: 6 },
+    appsNote: { ...Typography.default(), marginTop: 18, fontSize: 13, lineHeight: 19, color: board.quiet },
+    indexRow: { minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: board.border },
+    rowTitle: { ...Typography.default(), flex: 1, fontSize: 18, color: board.ink },
+    rowAction: { color: board.brass },
+    rowValue: { ...Typography.default(), fontSize: 15, color: board.quiet },
+    toolMark: { width: 36, height: 36, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+    squireMark: { backgroundColor: '#141210' },
+    walletMark: { backgroundColor: '#1652F0' },
+    toolMarkText: { ...Typography.mono(), fontSize: 12, color: '#FFFFFF' },
     centered: {
       flex: 1,
       alignItems: 'center',

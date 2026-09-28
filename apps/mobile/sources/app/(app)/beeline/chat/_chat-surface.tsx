@@ -112,6 +112,7 @@ import { TurnBandSlot, TurnSettledLine } from '@/components/buzz/TurnProgressLin
 import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
 import { DesktopWorkPaneHandle } from '@/components/DesktopWorkPaneHandle';
 import { openExternalUrl } from '@/utils/open-external-url';
+import { openAppSignIn } from '@/buzz/app-sign-in';
 import { openArtifactInBrowserOrExplain } from '@/buzz/artifact-link';
 import {
   subscribeDesktopArtifact,
@@ -275,6 +276,7 @@ import {
   GrantRequestCard,
   SquireApprovalCard,
   ConnectorOfferCard,
+  AppSignInCard,
   ChoiceCard,
   WalletCards,
   OrdinaryLedgerMessage,
@@ -727,6 +729,7 @@ export function BuzzChatSurface({
   const [permissionActionId, setPermissionActionId] = useState<string | null>(null);
   const [grantActionId, setGrantActionId] = useState<string | null>(null);
   const [connectorOfferActionId, setConnectorOfferActionId] = useState<string | null>(null);
+  const [appSignInActionId, setAppSignInActionId] = useState<string | null>(null);
   const [choiceActionId, setChoiceActionId] = useState<string | null>(null);
   /** Proposal currently being confirmed, and the last refusal/failure text. */
   const [targetBranchActionId, setTargetBranchActionId] = useState<string | null>(null);
@@ -5081,6 +5084,24 @@ export function BuzzChatSurface({
         );
       }
 
+      if (item.appSignIn) {
+        const card = item.appSignIn;
+        const agentName = resolveAgentDisplayIdentity(card.agentId, agentByPubkey.get(card.agentId)).name;
+        return <AppSignInCard
+          message={item}
+          agentName={agentName}
+          canConnect={!viewerIsAgent && cacheViewerPubkey === card.ownerId}
+          busy={appSignInActionId === card.appId}
+          onConnect={() => {
+            if (appSignInActionId || viewerIsAgent || cacheViewerPubkey !== card.ownerId) return;
+            setAppSignInActionId(card.appId);
+            void monolithPhoneOperation('beginAppSignIn', { appId: card.appId })
+              .then(result => openAppSignIn(result.authorizationUrl, { workspaceId: activeCommunityId ?? '', viewerId: cacheViewerPubkey, roomId: decodedId }))
+              .catch(error => Modal.alert('Could not connect app', phoneOperationFailureReason(error)))
+              .finally(() => setAppSignInActionId(null));
+          }}
+        />;
+      }
       if (item.connectorOffer) {
         return (
           <ConnectorOfferCard
@@ -5302,6 +5323,10 @@ export function BuzzChatSurface({
       handleForwardToNewCorner,
       grantActionId,
       connectorOfferActionId,
+      appSignInActionId,
+      activeCommunityId,
+      cacheViewerPubkey,
+      decodedId,
       handleAcceptConnectorOffer,
       openConnectorOfferCeremony,
       openWorkbench,

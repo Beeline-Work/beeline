@@ -97,7 +97,6 @@ export function HumanProfile({
     ((workspace?.viewer.role === 'owner' && member?.role !== 'owner') ||
       (workspace?.viewer.role === 'admin' &&
         (member?.role === 'member' || member?.role === 'spectator')));
-  const canBan = canEditRole;
   const perform = async (action: () => Promise<void>) => {
     if (mutation.current) return;
     mutation.current = true;
@@ -149,19 +148,6 @@ export function HumanProfile({
     window.addEventListener('keydown', escape, true);
     return () => window.removeEventListener('keydown', escape, true);
   }, [dirty, busy, onClose]);
-  const ban = async () => {
-    if (!canBan || !member) return;
-    const confirmed = await Modal.confirm(
-      `Ban ${member.identity.name}?`,
-      'They will lose access to this Workspace and every Room in it. Invites cannot bring them back until a manager lifts the ban.',
-      { cancelText: 'Cancel', confirmText: 'Ban', destructive: true },
-    );
-    if (confirmed)
-      await perform(async () => {
-        await monolithPhoneOperation('banWorkspaceMember', { workspaceId, memberId });
-        onClose();
-      });
-  };
   return (
     <View style={[styles.container, { paddingTop: insets.top }]} testID="human-profile">
       <PageHeader
@@ -283,13 +269,6 @@ export function HumanProfile({
                     );
                   })}
                 </View>
-                <SettingsRow
-                  title="Ban from Workspace"
-                  tone="destructive"
-                  disabled={busy}
-                  testID="ban-person"
-                  onPress={() => void ban()}
-                />
               </View>
             )}
             <Text style={styles.section}>Connected agents</Text>

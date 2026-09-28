@@ -1,4 +1,3 @@
-import { WorkspaceBans } from '@/components/buzz/WorkspaceBans';
 import { AgentProfileView } from '@/components/buzz/AgentProfileView';
 // Members is the canonical combined People + Agents surface. It lives in its
 // own route file: Expo Router routes every default-exporting file under `app/`,
@@ -1348,9 +1347,6 @@ export default function BuzzMembers({
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
         >
-          {canManage && workspaceId && (
-            <WorkspaceBans key={workspaceId} workspaceId={workspaceId} />
-          )}
           <TextInput
             autoCapitalize="none"
             autoCorrect={false}

@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { beelineThemes } from '@/buzz/groknight';
 
 const source = readFileSync(new URL('./members.tsx', import.meta.url), 'utf8');
+const humanProfile = readFileSync(new URL('./human-profile.tsx', import.meta.url), 'utf8');
 const profile = readFileSync(
   new URL('../../../components/buzz/AgentProfileView.tsx', import.meta.url),
   'utf8',
@@ -41,6 +42,17 @@ describe('Members page layout contract', () => {
     expect(source).not.toMatch(/workspace-seeded-souls/);
     expect(source).not.toContain('setWorkspaceSeededSouls');
     expect(source).not.toContain('Seeded souls');
+  });
+
+  it('carries no banning members UI (removed)', () => {
+    // The phone offered two ban surfaces — a Workspace "Banned members"
+    // roster with lift controls, and a "Ban from Workspace" row on a human
+    // profile. Both are gone; server-side ban storage and operations remain.
+    expect(source).not.toContain('WorkspaceBans');
+    expect(source).not.toContain('Banned members');
+    expect(humanProfile).not.toContain('Ban from Workspace');
+    expect(humanProfile).not.toContain('banWorkspaceMember');
+    expect(humanProfile).not.toContain('testID="ban-person"');
   });
 
   it('renders two sections only, People before Agents, with every person inside People (C79)', () => {

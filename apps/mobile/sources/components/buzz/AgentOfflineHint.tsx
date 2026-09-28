@@ -9,7 +9,13 @@ import { Typography } from '@/constants/Typography';
  * form still participates in layout; it only withholds paint until the full
  * Room surface owns the status.
  */
-export function AgentOfflineHint({ hidden = false }: { hidden?: boolean }) {
+export function AgentOfflineHint({
+  hidden = false,
+  state = 'offline',
+}: {
+  hidden?: boolean;
+  state?: 'offline' | 'reconnecting';
+}) {
   return (
     <View
       accessibilityElementsHidden={hidden}
@@ -17,9 +23,16 @@ export function AgentOfflineHint({ hidden = false }: { hidden?: boolean }) {
       style={[styles.hint, hidden && styles.hidden]}
       testID={hidden ? 'room-open-pixel-offline-reserve' : 'agent-offline-hint'}
     >
-      <Text style={styles.title}>□ AGENT OFFLINE</Text>
+      <View style={styles.line}>
+        <View style={styles.dot} />
+        <Text style={styles.title}>
+          {state === 'reconnecting' ? 'CHECKING AGENT CONNECTION' : 'AGENT UNAVAILABLE'}
+        </Text>
+      </View>
       <Text style={styles.text}>
-        Messages stay in this Room and will be answered when the Agent is back.
+        {state === 'reconnecting'
+          ? 'Checking whether the agent is back.'
+          : 'Messages will wait here until the agent returns.'}
       </Text>
     </View>
   );
@@ -29,11 +42,19 @@ const styles = StyleSheet.create((theme) => ({
   hint: {
     minWidth: 0,
     marginBottom: 7,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: theme.buzz.borderStrong,
-    backgroundColor: theme.buzz.bgBase,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  line: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  dot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: theme.buzz.textMuted,
   },
   hidden: {
     opacity: 0,
@@ -41,12 +62,13 @@ const styles = StyleSheet.create((theme) => ({
   title: {
     ...Typography.mono('semiBold'),
     ...theme.buzz.agentOfflineHintTypography.title,
-    color: theme.buzz.textPrimary,
+    color: theme.buzz.textMuted,
   },
   text: {
     ...Typography.default(),
     ...theme.buzz.agentOfflineHintTypography.text,
-    marginTop: 3,
+    marginTop: 2,
+    marginLeft: 12,
     color: theme.buzz.textMuted,
   },
 }));

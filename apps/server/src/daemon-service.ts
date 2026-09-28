@@ -127,6 +127,7 @@ import {
 } from '@beeline/api-contract/connector-offers';
 import {
   AGENT_REACHABLE_HORIZON_MS,
+  isAgentReachable,
   parseAgentAccessPolicy,
   senderMayAddressAgent,
 } from '@beeline/api-contract/agent-access';
@@ -2871,12 +2872,10 @@ export class DaemonService {
     ).rows[0];
     return row
       ? {
-          status:
-            row.body.status === 'online' &&
-            Date.now() - row.updated_at.getTime() < AGENT_REACHABLE_HORIZON_MS
-              ? 'online'
-              : 'offline',
-          observedAt: row.body.observedAt,
+          status: isAgentReachable(row.body.status, row.updated_at.getTime())
+            ? 'online'
+            : 'offline',
+          observedAt: Math.max(row.body.observedAt, Math.floor(row.updated_at.getTime() / 1_000)),
           ...(row.body.releaseVersion ? { releaseVersion: row.body.releaseVersion } : {}),
           ...(row.body.sourceSha ? { sourceSha: row.body.sourceSha } : {}),
         }
@@ -2913,9 +2912,7 @@ export class DaemonService {
       const observedAt = body?.observedAt;
       const state = !body
         ? 'never-seen'
-        : body.status !== 'online' ||
-            !row.updated_at ||
-            Date.now() - row.updated_at.getTime() >= AGENT_REACHABLE_HORIZON_MS
+        : !isAgentReachable(body.status === 'online' ? 'online' : 'offline', row.updated_at?.getTime())
           ? 'offline'
           : 'ready';
       return {

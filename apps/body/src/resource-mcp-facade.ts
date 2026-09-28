@@ -85,6 +85,21 @@ function approvalUrl(value: unknown): string | undefined {
   }
 }
 
+/** Generic URL fields need to identify a Squire approval page themselves. */
+function isSquireApprovalUrl(value: string): boolean {
+  const url = new URL(value);
+  const host = url.hostname;
+  if (
+    !['trustysquire.ai', 'trustysquire.test'].some(
+      (domain) => host === domain || host.endsWith(`.${domain}`),
+    )
+  )
+    return false;
+  return /^\/(?:vault\/(?:pay|fetch|mutate|mutate-card)|approval|passkey|vouch)\/[^/]+\/?$/.test(
+    url.pathname,
+  );
+}
+
 function linkKindFor(key: string, url: string): SquireApprovalLink['linkKind'] {
   const hint = `${key} ${url}`.toLowerCase();
   return hint.includes('passkey') ? 'passkey' : hint.includes('vouch') ? 'vouch' : 'approval';
@@ -115,21 +130,26 @@ function approvalIdIn(value: unknown, depth = 0): string | undefined {
   return undefined;
 }
 
-function approvalLinkIn(value: unknown, depth = 0): SquireApprovalLink | undefined {
+function approvalLinkIn(
+  value: unknown,
+  depth = 0,
+  namedOnly = false,
+): SquireApprovalLink | undefined {
   if (depth > 6) return undefined;
   if (typeof value === 'string') {
     const trimmed = value.trim();
     if (trimmed.length <= 20_000 && /^[{[]/.test(trimmed)) {
       try {
-        return approvalLinkIn(JSON.parse(trimmed), depth + 1);
+        return approvalLinkIn(JSON.parse(trimmed), depth + 1, namedOnly);
       } catch {
         // A prose result may still contain Squire's absolute approval link.
       }
     }
+    if (namedOnly) return undefined;
     const matches = trimmed.match(/https?:\/\/[^\s<>"']+/g) ?? [];
     for (const match of matches) {
       const url = approvalUrl(match.replace(/[),.;]+$/, ''));
-      if (url && /(approv|passkey|vouch)/i.test(url)) {
+      if (url && isSquireApprovalUrl(url)) {
         return { approvalUrl: url, linkKind: linkKindFor('', url) };
       }
     }
@@ -137,16 +157,13 @@ function approvalLinkIn(value: unknown, depth = 0): SquireApprovalLink | undefin
   }
   if (Array.isArray(value)) {
     for (const entry of value) {
-      const found = approvalLinkIn(entry, depth + 1);
+      const found = approvalLinkIn(entry, depth + 1, namedOnly);
       if (found) return found;
     }
     return undefined;
   }
   const item = record(value);
   if (!item) return undefined;
-  const statusHint = Object.values(item)
-    .filter((entry): entry is string => typeof entry === 'string')
-    .join(' ');
   for (const [key, entry] of Object.entries(item)) {
     const normalized = key.replace(/[-_]/g, '').toLowerCase();
     const namedLink = [
@@ -157,21 +174,20 @@ function approvalLinkIn(value: unknown, depth = 0): SquireApprovalLink | undefin
       'passkeylink',
       'vouchlink',
     ].includes(normalized);
-    const genericPendingLink =
-      ['url', 'link'].includes(normalized) && /(approv|passkey|vouch)/i.test(statusHint);
-    if (!namedLink && !genericPendingLink) continue;
+    const genericLink = !namedOnly && ['url', 'link'].includes(normalized);
+    if (!namedLink && !genericLink) continue;
     const url = approvalUrl(entry);
-    if (url) {
+    if (url && (namedLink || isSquireApprovalUrl(url))) {
       const approvalId = approvalIdIn(item);
       return {
         approvalUrl: url,
         ...(approvalId ? { approvalId } : {}),
-        linkKind: linkKindFor(key, `${statusHint} ${url}`),
+        linkKind: linkKindFor(key, url),
       };
     }
   }
   for (const entry of Object.values(item)) {
-    const found = approvalLinkIn(entry, depth + 1);
+    const found = approvalLinkIn(entry, depth + 1, namedOnly);
     if (found)
       return found.approvalId
         ? found
@@ -232,10 +248,22 @@ export function squireApprovalCopy(
     case 'inject_card': {
       const item = stringArg(args, 'item') ?? 'purchase';
       const merchant = stringArg(args, 'merchant');
-      const amount =
-        typeof args.amount_cents === 'number' && Number.isSafeInteger(args.amount_cents)
-          ? `${(args.amount_cents / 100).toFixed(2)} ${String(args.currency ?? '').toUpperCase()}`.trim()
-          : undefined;
+      const currency = String(args.currency ?? '').toUpperCase();
+      let amount: string | undefined;
+      if (typeof args.amount_cents === 'number' && Number.isSafeInteger(args.amount_cents)) {
+        try {
+          const digits = new Intl.NumberFormat(undefined, {
+            style: 'currency',
+            currency,
+          }).resolvedOptions().maximumFractionDigits;
+          amount =
+            digits === undefined
+              ? `${args.amount_cents} ${currency} minor units`
+              : `${(args.amount_cents / 10 ** digits).toFixed(digits)} ${currency}`;
+        } catch {
+          amount = `${args.amount_cents} ${currency} minor units`.trim();
+        }
+      }
       return {
         title: 'Purchase approval',
         detail: [item, merchant ? `at ${merchant}` : undefined, amount].filter(Boolean).join(' · '),
@@ -288,7 +316,7 @@ export function squireApprovalFromMcp(
   const params = record(request.params);
   const tool = shortString(params?.name);
   if (!tool || !('result' in response)) return undefined;
-  const link = approvalLinkIn(response.result);
+  const link = approvalLinkIn(response.result, 0, true) ?? approvalLinkIn(response.result);
   if (!link) return undefined;
   const args = record(params?.arguments) ?? {};
   return { tool, ...squireApprovalCopy(tool, args), ...link };
@@ -318,8 +346,11 @@ async function postSquireApproval(
     return;
   await fetchImpl(new URL('/v1/daemon/operations/postSquireApproval', auth.baseUrl), {
     method: 'POST',
-    headers: { authorization: `Bearer ${auth.daemonToken}`, 'content-type': 'application/json',
-      'x-beeline-helper-version': auth.helperVersion ?? 'v0.0.0' },
+    headers: {
+      authorization: `Bearer ${auth.daemonToken}`,
+      'content-type': 'application/json',
+      'x-beeline-helper-version': auth.helperVersion ?? 'v0.0.0',
+    },
     body: JSON.stringify({ ...context, ...approval, ...(signInUrl ? { signInUrl } : {}) }),
     signal: AbortSignal.timeout(20_000),
   });
@@ -374,8 +405,11 @@ export async function authorizeResourceMessage(
     new URL('/v1/daemon/operations/authorizeResourceCall', auth.baseUrl),
     {
       method: 'POST',
-      headers: { authorization: `Bearer ${auth.daemonToken}`, 'content-type': 'application/json',
-        'x-beeline-helper-version': auth.helperVersion ?? 'v0.0.0' },
+      headers: {
+        authorization: `Bearer ${auth.daemonToken}`,
+        'content-type': 'application/json',
+        'x-beeline-helper-version': auth.helperVersion ?? 'v0.0.0',
+      },
       body: JSON.stringify({
         ...context,
         target,

@@ -2785,6 +2785,54 @@ describe('monolith integration', () => {
     expect(new Set([...earliest, ...recent]).size).toBe(250);
   });
 
+  it('fetches an exact Room message in bounded pages under Room membership', async () => {
+    const messageId = createHash('sha256').update('long-room-message').digest('hex');
+    const body = 'A'.repeat(4_000) + '😀' + 'B'.repeat(4_000);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,attachments)
+       VALUES($1,$2,$3,$4,'message',$5::jsonb)`,
+      [
+        messageId,
+        ROOM,
+        HUMAN,
+        body,
+        JSON.stringify([{ url: 'https://media.example/image.png', mimeType: 'image/png' }]),
+      ],
+    );
+    const first = (await (
+      await daemonOperation('getRoomMessage', {
+        roomId: ROOM,
+        messageId,
+      })
+    ).json()) as { body: string; nextOffset?: number; attachments: Array<{ url: string }> };
+    expect(first.body).toBe(body.slice(0, 4_000));
+    expect(first.nextOffset).toBe(4_000);
+    expect(first.attachments).toEqual([
+      { url: 'https://media.example/image.png', mimeType: 'image/png' },
+    ]);
+    let assembled = first.body;
+    let offset = first.nextOffset;
+    while (offset !== undefined) {
+      const page = (await (
+        await daemonOperation('getRoomMessage', {
+          roomId: ROOM,
+          messageId,
+          offset,
+        })
+      ).json()) as { body: string; nextOffset?: number };
+      assembled += page.body;
+      offset = page.nextOffset;
+    }
+    expect(assembled.length).toBe(body.length);
+    expect(assembled).toContain('😀');
+    expect(assembled === body).toBe(true);
+    const otherRoom = await daemonOperation('getRoomMessage', {
+      roomId: '99999999-9999-4999-8999-999999999999',
+      messageId,
+    });
+    expect(otherRoom.ok).toBe(false);
+  });
+
   it('never reports unread for the viewer’s own latest message', async () => {
     // A live helper is the quiet case: with a fresh presence heartbeat the send
     // writes no unread-mention notice, so the only rows here are the two the

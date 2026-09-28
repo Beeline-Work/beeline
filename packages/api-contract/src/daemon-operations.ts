@@ -150,6 +150,16 @@ export type DaemonOperationMap = {
   getWorkspaceRoster: Operation<WorkspaceRosterInput, WorkspaceRosterResult>;
   getRoomInbox: Operation<RoomCursorInput, RoomInboxResult>;
   getRoomConversation: Operation<RoomConversationInput, RoomConversationResult>;
+  /** One bounded page of an exact Room message, under current membership. */
+  getRoomMessage: Operation<
+    RoomInput & { readonly messageId: string; readonly offset?: number },
+    {
+      readonly messageId: string;
+      readonly body: string;
+      readonly nextOffset?: number;
+      readonly attachments: readonly DaemonAttachment[];
+    }
+  >;
   getCornerAsk: Operation<
     RoomInput & { readonly askId: string },
     {

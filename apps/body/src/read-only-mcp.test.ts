@@ -7,6 +7,7 @@ describe('direct message helper surface', () => {
   it('opens no corners from a direct message', () => {
     const tools = agentToolsFor(true, true);
     const names = tools.map((tool) => tool.name);
+    expect(names).toContain('get_room_message');
     expect(names).toContain('post_artifact');
     expect(names).not.toContain('open_corner');
     expect(names).not.toContain('delegate_to_agent');

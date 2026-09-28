@@ -280,6 +280,12 @@ describe('server readiness', () => {
       roomId: 'room-open',
       reason: 'phone-write',
       messageId: 'posted-message',
+      trace: {
+        id: expect.any(String),
+        startedAt: expect.any(Number),
+        databaseAt: expect.any(Number),
+        emittedAt: expect.any(Number),
+      },
     });
   });
 

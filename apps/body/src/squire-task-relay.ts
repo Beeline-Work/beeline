@@ -1,8 +1,8 @@
 /**
- * The helper owns Squire's MCP process for a server-command root. ACP children
+ * The helper owns Squire's MCP process for an agent's Room/DM/corner. ACP children
  * (including Pi's generated bridge) speak to this loopback relay instead of
- * spawning their own Squire server. A root may resume across ACP replacements;
- * another root in the same Room cannot inherit its browser sessions.
+ * spawning their own Squire server. Turns and ACP replacements share one
+ * connection; each call still requires the current server-command authority.
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
@@ -15,7 +15,7 @@ import { StdioSquireMcpClient } from './squire-mcp-client.js';
 type TurnKey = { roomId: string; requestId: string; taskId: string; generationId: string };
 type RelayRequest = TurnKey & { method: string; params?: Record<string, unknown> };
 export type SquireTaskCall = TurnKey & { tool: string; args: Record<string, unknown> };
-/** A turn paused on a grant may resume; abandon its idle connection after this bound. */
+/** Close an unused conversation connection after this bound. */
 export const SQUIRE_TASK_IDLE_LEASE_MS = 15 * 60_000;
 
 function sessionIds(value: unknown, depth = 0): string[] {
@@ -38,6 +38,20 @@ function sessionIds(value: unknown, depth = 0): string[] {
 
 function redactedSessionId(id: string | undefined): string | null {
   return id ? createHash('sha256').update(id).digest('hex').slice(0, 16) : null;
+}
+
+function staleLeaseResult(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const result = value as { isError?: unknown; content?: unknown };
+  if (result.isError !== true || !Array.isArray(result.content)) return false;
+  const text = result.content.find((entry: unknown) =>
+    entry && typeof entry === 'object' && (entry as { type?: unknown }).type === 'text',
+  )?.text;
+  if (!text) return false;
+  try {
+    const body = JSON.parse(text) as { error?: { code?: unknown } };
+    return body.error?.code === 'stale_lease';
+  } catch { return false; }
 }
 
 type TaskConnection = {
@@ -113,28 +127,31 @@ export class SquireTaskRelay {
       throw new Error('Squire task scope does not match the server command');
     if (this.leaseTimer) clearTimeout(this.leaseTimer);
     this.leaseTimer = undefined;
-    if (this.task && this.task.taskId !== command.rootCommandId) this.retire('task-ended');
     this.active = {
       roomId: command.roomId,
       requestId: command.turnRequestId,
       taskId: command.rootCommandId,
       generationId,
     };
-    if (this.task) this.task.lastRequestId = command.turnRequestId;
+    if (this.task) {
+      this.task.taskId = command.rootCommandId;
+      this.task.lastRequestId = command.turnRequestId;
+    }
   }
 
-  deactivate(requestId: string, continuation: 'grant-decision' | null = null): void {
+  deactivate(requestId: string): void {
     if (this.active?.requestId !== requestId) return;
-    const taskId = this.active.taskId;
     this.active = undefined;
-    if (!this.task || this.task.taskId !== taskId) return;
-    if (continuation !== 'grant-decision') {
-      this.retire('task-complete');
-      return;
-    }
+    this.scheduleIdle();
+  }
+
+  private scheduleIdle(): void {
+    if (this.leaseTimer) clearTimeout(this.leaseTimer);
+    if (!this.task) return;
+    const task = this.task;
     this.leaseTimer = setTimeout(() => {
       this.leaseTimer = undefined;
-      if (!this.active && this.task?.taskId === taskId) this.retire('task-lease-expired');
+      if (!this.active && this.task === task) this.retire('conversation-idle');
     }, SQUIRE_TASK_IDLE_LEASE_MS);
     this.leaseTimer.unref?.();
   }
@@ -142,7 +159,7 @@ export class SquireTaskRelay {
   cancel(requestId: string): void {
     if (this.active?.requestId !== requestId) return;
     this.active = undefined;
-    this.retire('cancelled');
+    this.scheduleIdle();
   }
 
   close(): void {
@@ -156,7 +173,7 @@ export class SquireTaskRelay {
   private log(event: string, task: TaskConnection, extra: Record<string, unknown> = {}): void {
     const { sessionId, ...details } = extra;
     console.info('[squire-task]', JSON.stringify({
-      event, agentId: this.agentId, taskId: task.taskId,
+      event, agentId: this.agentId, conversationId: this.roomId, taskId: task.taskId,
       requestId: this.active?.requestId ?? task.lastRequestId,
       squireSessionId: sessionId ?? null,
       mcpConnectionId: task.connectionId,
@@ -228,10 +245,14 @@ export class SquireTaskRelay {
       this.log('call-end', task, { method: input.method, source: 'cached' });
       return task.tools;
     }
+    if (input.method === 'tools/call' && task.dead && toolName !== 'operate_start') {
+      this.log('call-refused', task, { reason: 'connection-died' });
+      throw new Error('Squire MCP connection died and its browser session is gone; call operate_start');
+    }
     if (input.method === 'tools/call' && (!safeToolName ||
         requestedIds.some((id) => !task.sessions.has(id)))) {
       this.log('call-refused', task, { reason: 'session-not-owned' });
-      throw new Error('Squire browser session is no longer owned by this task; call operate_start');
+      throw new Error('Squire browser session is no longer owned by this conversation; call operate_start');
     }
     if (input.method === 'tools/call' && !(await this.authorize({
       ...active, tool: safeToolName!,
@@ -256,7 +277,20 @@ export class SquireTaskRelay {
           this.active?.requestId !== active.requestId)
         throw new Error('Squire task ended while the call was running');
       if (input.method === 'tools/list') task.tools = result;
-      for (const id of sessionIds(result)) task.sessions.add(id);
+      if (staleLeaseResult(result)) {
+        for (const id of requestedIds) task.sessions.delete(id);
+        this.log('call-error', task, { method: input.method, tool: safeToolName ?? null,
+          reason: 'stale-lease', sessionId: redactedSessionId(requestedIds[0]) });
+        return { isError: true, content: [{ type: 'text', text: JSON.stringify({
+          error: { code: 'stale_lease', message: 'Squire browser session is gone; call operate_start for a fresh session' },
+        }) }] };
+      }
+      if (safeToolName === 'operate_finish' &&
+          !(result && typeof result === 'object' && (result as { isError?: unknown }).isError === true)) {
+        for (const id of requestedIds) task.sessions.delete(id);
+      } else {
+        for (const id of sessionIds(result)) task.sessions.add(id);
+      }
       this.log('call-end', task, { method: input.method, tool: safeToolName ?? null,
         sessionId: redactedSessionId(requestedIds[0] ?? sessionIds(result)[0] ?? task.sessions.values().next().value) });
       return result;
@@ -268,6 +302,8 @@ export class SquireTaskRelay {
       }
       this.log('call-error', task, { method: input.method, tool: safeToolName ?? null,
         sessionId: redactedSessionId(requestedIds[0] ?? task.sessions.values().next().value) });
+      if (task.dead)
+        throw new Error('Squire MCP connection died and its browser session is gone; call operate_start');
       throw error;
     }
   }

@@ -721,8 +721,16 @@ export type ChatListView = {
   readonly chats: readonly ChatListItem[];
   readonly viewer: RoomViewIdentity;
   readonly truncated: boolean;
+  /**
+   * Per-row facts the server could not read this time (a timed-out
+   * enrichment). Each row's value for them is unknown, not empty: `unread`
+   * reads false and the corner fields are absent. Keep the last known values.
+   */
+  readonly unavailable?: readonly ChatListUnavailable[];
   readonly watchFilters: readonly SurfaceWatchFilter[];
 };
+
+export type ChatListUnavailable = 'unread' | 'corners';
 
 export type WorkspaceListView = {
   readonly workspaces: readonly ChatListWorkspace[];

@@ -92,6 +92,6 @@ describe('Room deck bootstrap', () => {
     expect(source).toContain('nextWatchKey !== chatWatchKey');
     expect(source).toContain('cachedChats?.watchFilters ?? []');
     expect(source).not.toContain("'#h': [selectedId]");
-    expect(source).toContain('if (filters.length === 0) return');
+    expect(source).toContain('if (filters.length === 0) {');
   });
 });

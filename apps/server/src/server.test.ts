@@ -7,7 +7,7 @@ import type { TokenAuth } from './auth.js';
 import type { PhoneService } from './phone-service.js';
 import type { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
-import { createBeelineServer, type ServerOptions } from './server.js';
+import { createBeelineServer, maxLiveDbTasks, type ServerOptions } from './server.js';
 import { databaseConnectionBudget } from './database-budget.js';
 
 
@@ -919,31 +919,65 @@ describe('phone committed-row live delivery', () => {
     return { live, roomId, socket, port };
   }
 
+  it('sends only the immediate invalidation for a row that projects no delta', async () => {
+    const { live, roomId, socket } = await connect(
+      vi.fn().mockResolvedValue(null) as PhoneService['readLiveDelta'],
+    );
+    const invalidated = nextSocketMessage(socket, 'invalidate');
+
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'postgres:messages',
+      operation: 'UPDATE',
+      messageId: 'message-hidden',
+    });
+
+    await expect(invalidated).resolves.toMatchObject({ deliveryId: expect.any(String) });
+    await expectNoSocketMessage(socket, 100);
+  });
+
   it.each([
-    ['missing', vi.fn().mockResolvedValue(null)],
+    ['deleted', vi.fn().mockResolvedValue(null)],
     ['failed', vi.fn().mockRejectedValue(new Error('row read failed'))],
   ])(
-    'keeps the immediate authoritative invalidation when the delta read is %s',
+    'follows the immediate invalidation with a fallback when the delta read is %s',
     async (_case, read) => {
       const { live, roomId, socket } = await connect(read as PhoneService['readLiveDelta']);
-      const fallback = nextSocketMessage(socket, 'invalidate');
+      const frames = nextSocketMessages(socket, 2);
 
       live.publish({
         type: 'invalidate',
         roomId,
         reason: 'postgres:messages',
+        operation: 'DELETE',
         messageId: 'message-fallback',
       });
 
-      await expect(fallback).resolves.toMatchObject({
+      const [invalidation, fallback] = await frames;
+      expect(invalidation).toMatchObject({
         type: 'invalidate',
         roomId,
         messageId: 'message-fallback',
         reason: 'postgres:messages',
         deliveryId: expect.any(String),
       });
+      // A deleted row or failed read still reaches a list waiting on the delta.
+      expect(fallback).toMatchObject({
+        type: 'invalidate',
+        roomId,
+        messageId: 'message-fallback',
+        reason: 'delta-fallback:postgres:messages',
+        reconcilesDelivery: invalidation!.deliveryId,
+      });
     },
   );
+
+  it('scales live admission with the app pool and leaves ordinary requests four', () => {
+    expect(maxLiveDbTasks(undefined)).toBe(2);
+    expect(maxLiveDbTasks(5)).toBe(2);
+    expect(maxLiveDbTasks(10)).toBe(6);
+  });
 
   it('turns a named phone-write into a message-delta for an already-open Room', async () => {
     const delta = {

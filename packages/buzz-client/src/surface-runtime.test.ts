@@ -120,6 +120,23 @@ describe('surface liveness scheduler', () => {
     expect(applied).toEqual([2]);
   });
 
+  it('paints the read in flight and then reads once more on a follow-up', async () => {
+    vi.useFakeTimers();
+    const first = deferred<number>();
+    const fetch = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValueOnce(2);
+    const applied: number[] = [];
+    const scheduler = new SurfaceRefreshScheduler({ fetch, apply: (value) => applied.push(value) });
+    await scheduler.startAfter(Promise.resolve());
+    await vi.runOnlyPendingTimersAsync();
+    scheduler.followUp();
+    first.resolve(1);
+    await Promise.resolve();
+    expect(applied).toEqual([1]);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(applied).toEqual([1, 2]);
+  });
+
   it('starts an event-driven refresh without scheduling a timer', async () => {
     const fetch = vi.fn().mockResolvedValue(1);
     const apply = vi.fn();

@@ -170,7 +170,9 @@ BEGIN
         'table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', COALESCE(NEW.room_id, OLD.room_id),
         'agentId', COALESCE(NEW.principal_id, OLD.principal_id),
-        'permissionId', COALESCE(NEW.permission_id, OLD.permission_id)
+        'permissionId', COALESCE(NEW.permission_id, OLD.permission_id),
+        'cornerParentId', CASE WHEN TG_OP <> 'UPDATE' OR NEW.status IS DISTINCT FROM OLD.status
+          THEN (SELECT parent_id FROM rooms WHERE id = COALESCE(NEW.room_id, OLD.room_id)) END
       );
     WHEN 'agent_grants' THEN
       payload = jsonb_build_object(

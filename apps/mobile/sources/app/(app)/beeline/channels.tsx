@@ -6,6 +6,8 @@ import { useGitHubInstallationSession } from '@/auth/github-installation-host';
 import {
   applyChatListDelta,
   chatListDeltaNeedsRead,
+  chatWatchFiltersKey,
+  keepUnavailableChatFacts,
   roomsMissedByLive,
   type ChatListDelta,
 } from '@/buzz/chat-list-delta';
@@ -54,7 +56,7 @@ import { WorkspaceActionsMenu } from '@/components/buzz/WorkspaceActionsMenu';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { BuzzRigTransport } from '@/sync/transport';
-import { isCornerStatusFrame, isDraftFrame } from '@/sync/transport/live-frames';
+import { isDraftFrame } from '@/sync/transport/live-frames';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { useIsDesktop } from '@/utils/responsive';
@@ -293,6 +295,20 @@ export default function BuzzChannels() {
     chatScheduler.current?.force();
   }, []);
 
+  // Frames that arrived while the app was in the background were not acted
+  // on. One read on return covers them; it is never repeated on a timer.
+  useEffect(() => {
+    let backgrounded = AppState.currentState === 'background';
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'background') backgrounded = true;
+      else if (state === 'active' && backgrounded) {
+        backgrounded = false;
+        if (deckFocusedRef.current) chatScheduler.current?.signal();
+      }
+    });
+    return () => subscription.remove();
+  }, []);
+
   const swipeableRefs = useRef<Map<string, Swipeable | null>>(new Map());
 
   const handleCloseChat = useCallback(
@@ -434,12 +450,17 @@ export default function BuzzChannels() {
         let liveReadApplied = false;
         const installChatWatch = async (filters: ChatListView['watchFilters']): Promise<void> => {
           const generation = ++chatWatchGeneration;
-          chatWatchKey = JSON.stringify(filters);
-          unsubscribeChats?.();
+          chatWatchKey = chatWatchFiltersKey(filters);
+          // The previous watch stays live until its replacement is installed,
+          // so a frame for a Room in both sets is never dropped in between.
+          const previous = unsubscribeChats;
           unsubscribeChats = undefined;
           // Cold deck without Room ids must not subscribe the Workspace UUID as
           // #h — canReadRoom refuses it and live invalidation never lands.
-          if (filters.length === 0) return;
+          if (filters.length === 0) {
+            previous?.();
+            return;
+          }
           const stop = await relay.surfaceSubscribe(filters, (event) => {
             const live =
               'monolithLive' in event ? (event as MonolithSurfaceEvent).monolithLive : undefined;
@@ -451,11 +472,14 @@ export default function BuzzChannels() {
               if (needsRead && deckVisible()) chatsRefresh?.signal();
               return;
             }
-            if (isDraftFrame(event) || isCornerStatusFrame(event)) return;
+            // A corner-status hint is a child corner's working/waiting change,
+            // which this deck's rows roll up; it falls through to a read.
+            if (isDraftFrame(event)) return;
             // A committed-row invalidation announces the delta that follows it.
             if (live?.type === 'invalidate' && live.deliveryId) return;
             if (deckVisible()) chatsRefresh?.signal();
           });
+          previous?.();
           if (cancelled || generation !== chatWatchGeneration) {
             stop();
             return;
@@ -479,13 +503,16 @@ export default function BuzzChannels() {
               roomsMissedByLive(heldChats, read, heardRooms).length > 0;
             heardRooms.clear();
             liveReadApplied = true;
-            const value = deltasDuringRead.reduce(applyChatListDelta, read);
+            const value = deltasDuringRead.reduce(
+              applyChatListDelta,
+              keepUnavailableChatFacts(heldChats, read),
+            );
             paintChats(value);
             if (missedLive) nextTransport.reconnectLive();
             setRefreshing(false);
             setError(null);
             void mobileSurfaceCache.write(chatCacheAddress, value, isChatListView);
-            const nextWatchKey = JSON.stringify(value.watchFilters);
+            const nextWatchKey = chatWatchFiltersKey(value.watchFilters);
             if (nextWatchKey !== chatWatchKey) void installChatWatch(value.watchFilters);
           },
           onError: (reason) => {

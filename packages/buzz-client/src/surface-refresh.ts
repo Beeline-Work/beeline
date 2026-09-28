@@ -93,6 +93,18 @@ export class SurfaceRefreshScheduler<T> {
     this.schedule(true);
   }
 
+  /**
+   * Read once more after the current read, which still paints. For a gap the
+   * current read may predate (a watch confirmed while it was in flight), not a
+   * commit it contradicts.
+   */
+  followUp(): void {
+    if (this.disposed) return;
+    this.dirty = true;
+    this.firstDirtyAt ??= this.now();
+    this.schedule(true);
+  }
+
   /** A committed server event reads now, or directly after the current read. */
   refreshNow(): void {
     if (this.disposed) return;

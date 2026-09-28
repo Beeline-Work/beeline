@@ -1304,7 +1304,14 @@ export class PhoneService {
         ),
       ),
     ]);
-    const countsByRoom = chatCornerCounts(cornerStates?.rows ?? []);
+    // A timed-out enrichment is unknown, not empty. Omitting its fields (and
+    // naming unread, which old phones require) lets the phone keep what it
+    // last knew instead of painting no corners and no unread dot.
+    const countsByRoom = cornerStates ? chatCornerCounts(cornerStates.rows) : undefined;
+    const unavailable = [
+      ...(cursors ? [] : ['unread' as const]),
+      ...(cornerStates ? [] : ['corners' as const]),
+    ];
     const presenceByRoom = new Map(presence?.rows.map((item) => [item.room_id, item]) ?? []);
     const cursorByRoom = new Map(cursors?.rows.map((item) => [item.room_id, item]) ?? []);
     for (const room of rooms.rows) {
@@ -1333,7 +1340,9 @@ export class PhoneService {
         ...(row.agents_offline ? { agentsOffline: true } : {}),
         ...(row.closed ? { closed: true } : {}),
         memberCount: Number(row.member_count),
-        ...(countsByRoom.get(row.id) ?? { cornerCount: 0, waitingCornerCount: 0 }),
+        ...(countsByRoom
+          ? (countsByRoom.get(row.id) ?? { cornerCount: 0, waitingCornerCount: 0 })
+          : {}),
         ...(row.latest_id &&
         row.latest_created_at &&
         row.latest_author_id &&
@@ -1420,6 +1429,7 @@ export class PhoneService {
       })),
       viewer: await this.requireIdentity(viewerId),
       truncated: rooms.rows.length > 200,
+      ...(unavailable.length ? { unavailable } : {}),
       watchFilters: rooms.rows.length
         ? [{ kinds: [9, 9000, 9001, 9002, 9007, 9008], '#h': rooms.rows.map((row) => row.id) }]
         : [],
@@ -1479,58 +1489,38 @@ export class PhoneService {
       );
       room.read_cursor = cursor?.rows[0]?.read_cursor ?? null;
     }
-    let allMembers: RoomViewMember[];
-    let latestAgentTurns: RoomView['latestAgentTurns'];
-    let messageResult: { messages: RoomViewMessage[]; toolRows: RoomViewMessage[] };
-    if (topLevelRows) {
-      const rows = topLevelRows;
-      allMembers = this.projectMembers(rows.members, roomId);
-      latestAgentTurns = this.projectAgentTurns(rows.turns);
-      messageResult = this.projectRoomMessages(
-        rows.transcript,
-        rows.activity,
-        [],
-        latestAgentTurns,
-        false,
-        viewerId,
-      );
-    } else {
-      // A corner also reads its parent briefing and lifecycle. Keep its
-      // independent queries concurrent; the top-level live path above is the
-      // high-frequency path whose remote round trips must stay bounded.
-      const latestAgentTurnsPromise = this.latestAgentTurns(roomId);
-      [allMembers, latestAgentTurns, messageResult] = await Promise.all([
-        measured('members', this.members(room.workspace_id, roomId)),
-        measured('turns', latestAgentTurnsPromise),
-        measured('messages', this.roomMessages(roomId, latestAgentTurnsPromise, true, viewerId)),
-      ]);
-    }
-    const members = allMembers.slice(0, ROOM_VIEW_MEMBER_LIMIT);
-    const { messages, toolRows } = messageResult;
-    const parent = room.parent_id
-      ? (
-          await measured(
-            'parent',
-            this.database.query<RoomRow>(`SELECT * FROM rooms WHERE id=$1`, [room.parent_id]),
-          )
-        ).rows[0]
-      : undefined;
-    const facts = room.parent_id
-      ? (
-          await measured(
-            'facts',
-            this.database.query<{
-              plan: RoomView['cornerPlan'] | null;
-              objective: string;
-            }>(`SELECT plan,objective FROM corner_facts WHERE corner_id=$1`, [roomId]),
-          )
-        ).rows[0]
-      : undefined;
-    const cornerBrief = room.parent_id
-      ? await currentCornerBrief(this.database, roomId).catch(() => undefined)
-      : undefined;
-    const cornerBriefHistory = cornerBrief
-      ? await this.database
+    // A corner's reads depend only on its access row, never on each other.
+    // Start every one now so a corner open costs one round trip after access,
+    // not one per query. A top-level Room has no parent and skips them all.
+    const cornerRead = <T>(operation: string, work: () => Promise<T>, absent: T): Promise<T> =>
+      room.parent_id ? measured(operation, work()) : Promise.resolve(absent);
+    const parentPromise = cornerRead(
+      'parent',
+      async () =>
+        (await this.database.query<RoomRow>(`SELECT * FROM rooms WHERE id=$1`, [room.parent_id]))
+          .rows[0],
+      undefined,
+    );
+    const factsPromise = cornerRead(
+      'facts',
+      async () =>
+        (
+          await this.database.query<{
+            plan: RoomView['cornerPlan'] | null;
+            objective: string;
+          }>(`SELECT plan,objective FROM corner_facts WHERE corner_id=$1`, [roomId])
+        ).rows[0],
+      undefined,
+    );
+    const cornerBriefPromise = cornerRead(
+      'brief',
+      () => currentCornerBrief(this.database, roomId).catch(() => undefined),
+      undefined,
+    );
+    const cornerBriefHistoryPromise = cornerRead(
+      'brief-history',
+      () =>
+        this.database
           .query<{
             revision: number;
             revision_hash: string | null;
@@ -1543,99 +1533,80 @@ export class PhoneService {
             [roomId],
           )
           .then((result) => result.rows)
-          .catch(() => [])
-      : [];
-    const cornerValidation = cornerBrief
-      ? await this.database
-          .query<{
-            stage: string;
-            status: string;
-            evidence: string;
-          }>(
-            `SELECT stage.stage,stage.status,stage.evidence FROM corner_validation_stages stage
+          .catch(() => []),
+      [],
+    );
+    const cornerValidationPromise = cornerBriefPromise.then((brief) =>
+      brief
+        ? measured(
+            'validation',
+            this.database
+              .query<{
+                stage: string;
+                status: string;
+                evidence: string;
+              }>(
+                `SELECT stage.stage,stage.status,stage.evidence FROM corner_validation_stages stage
        JOIN corner_facts fact ON fact.corner_id=stage.corner_id
        WHERE stage.corner_id=$1 AND stage.brief_revision=$2
          AND stage.head_sha=COALESCE(fact.lifecycle->'pr'->>'headSha','draft')
        ORDER BY stage.stage`,
-            [roomId, cornerBrief.revision],
+                [roomId, brief.revision],
+              )
+              .then((result) => result.rows)
+              .catch(() => []),
           )
-          .then((result) => result.rows)
-          .catch(() => [])
-      : [];
-    const boundApp = room.parent_id
-      ? (
-          await measured(
-            'bound-app',
-            this.database.query<{
-              id: string;
-              instance_id: string;
-              manifest: unknown;
-              developer_agent_id: string | null;
-              developer_name: string | null;
-              developer_handle: string | null;
-            }>(
-              `SELECT installation.id,binding.instance_id,installation.manifest,
-                      installation.developer_agent_id,developer.name developer_name,
-                      developer.handle developer_handle
-               FROM corner_app_bindings binding
-               JOIN corner_app_installations installation ON installation.id=binding.installation_id
-               LEFT JOIN identities developer ON developer.id=installation.developer_agent_id
-               WHERE binding.corner_id=$1`,
-              [roomId],
-            ),
+        : [],
+    );
+    const boundAppPromise = cornerRead(
+      'bound-app',
+      async () =>
+        (
+          await this.database.query<{
+            id: string;
+            instance_id: string;
+            manifest: unknown;
+            developer_agent_id: string | null;
+            developer_name: string | null;
+            developer_handle: string | null;
+          }>(
+            `SELECT installation.id,binding.instance_id,installation.manifest,
+                    installation.developer_agent_id,developer.name developer_name,
+                    developer.handle developer_handle
+             FROM corner_app_bindings binding
+             JOIN corner_app_installations installation ON installation.id=binding.installation_id
+             LEFT JOIN identities developer ON developer.id=installation.developer_agent_id
+             WHERE binding.corner_id=$1`,
+            [roomId],
           )
-        ).rows[0]
-      : undefined;
-    const boundManifest = readCornerAppManifest(boundApp?.manifest);
-    const cornerApps: CornerAppView[] = room.parent_id
-      ? (
-          await measured(
-            'corner-apps',
-            this.database.query<{
-              definition: unknown;
-              author_agent_id: string;
-              author_name: string;
-              author_handle: string | null;
-              revision: number;
-              updated_at: Date;
-            }>(
-              `SELECT app.definition,app.author_agent_id,author.name author_name,
-                      author.handle author_handle,app.revision,app.updated_at
-               FROM corner_apps app JOIN identities author ON author.id=app.author_agent_id
-               WHERE app.corner_id=$1 ORDER BY app.updated_at DESC,app.slug`,
-              [roomId],
-            ),
+        ).rows[0],
+      undefined,
+    );
+    const cornerAppRowsPromise = cornerRead(
+      'corner-apps',
+      async () =>
+        (
+          await this.database.query<{
+            definition: unknown;
+            author_agent_id: string;
+            author_name: string;
+            author_handle: string | null;
+            revision: number;
+            updated_at: Date;
+          }>(
+            `SELECT app.definition,app.author_agent_id,author.name author_name,
+                    author.handle author_handle,app.revision,app.updated_at
+             FROM corner_apps app JOIN identities author ON author.id=app.author_agent_id
+             WHERE app.corner_id=$1 ORDER BY app.updated_at DESC,app.slug`,
+            [roomId],
           )
-        ).rows.flatMap((row) => {
-          const definition = readCornerAppDefinition(row.definition);
-          return definition
-            ? [
-                {
-                  ...definition,
-                  authorId: row.author_agent_id,
-                  authorName: row.author_name,
-                  ...(row.author_handle ? { authorHandle: row.author_handle } : {}),
-                  revision: row.revision,
-                  updatedAt: unix(row.updated_at),
-                },
-              ]
-            : [];
-        })
-      : [];
-    if (boundManifest?.humanUi?.kind === 'native' && boundApp) {
-      cornerApps.unshift({
-        ...boundManifest.humanUi.definition,
-        ...(boundApp.developer_agent_id ? { authorId: boundApp.developer_agent_id } : {}),
-        authorName: boundApp.developer_name ?? boundManifest.developer,
-        ...(boundApp.developer_handle ? { authorHandle: boundApp.developer_handle } : {}),
-        revision: 1,
-        updatedAt: unix(room.updated_at),
-      });
-    }
-    const plan = facts?.plan;
-    const paintedRoom = roomHeader(room, this.publicOrigin);
-    const briefingRows: MessageRow[] = room.parent_id
-      ? (
+        ).rows,
+      [],
+    );
+    const briefingRowsPromise = cornerRead(
+      'briefing',
+      async () =>
+        (
           await this.database.query<MessageRow>(
             `SELECT m.*,
                i.kind author_kind,i.name author_name,i.handle author_handle,
@@ -1656,9 +1627,70 @@ export class PhoneService {
              ORDER BY m.created_at DESC,m.id ASC LIMIT ${ROOM_VIEW_BRIEFING_LIMIT}`,
             [room.parent_id, room.created_at],
           )
-        ).rows
-      : [];
-    await this.enrichMessageTags(briefingRows);
+        ).rows,
+      [] as MessageRow[],
+    );
+    const cornerLifecyclePromise = cornerRead(
+      'lifecycle',
+      () => this.cornerLifecycle(room.id),
+      undefined,
+    );
+    // One await for every read, so none can reject unobserved behind another.
+    const [
+      [allMembers, latestAgentTurns, messageResult],
+      parent,
+      facts,
+      cornerBrief,
+      cornerBriefHistory,
+      cornerValidation,
+      boundApp,
+      cornerAppRows,
+      briefingRows,
+      cornerLifecycle,
+    ] = await Promise.all([
+      topLevelRows
+        ? this.projectTopLevelRoom(topLevelRows, roomId, viewerId)
+        : this.readCornerMessages(room.workspace_id, roomId, viewerId, measured, briefingRowsPromise),
+      parentPromise,
+      factsPromise,
+      cornerBriefPromise,
+      cornerBriefHistoryPromise,
+      cornerValidationPromise,
+      boundAppPromise,
+      cornerAppRowsPromise,
+      briefingRowsPromise,
+      cornerLifecyclePromise,
+    ]);
+    const members = allMembers.slice(0, ROOM_VIEW_MEMBER_LIMIT);
+    const { messages, toolRows } = messageResult;
+    const boundManifest = readCornerAppManifest(boundApp?.manifest);
+    const cornerApps: CornerAppView[] = cornerAppRows.flatMap((row) => {
+      const definition = readCornerAppDefinition(row.definition);
+      return definition
+        ? [
+            {
+              ...definition,
+              authorId: row.author_agent_id,
+              authorName: row.author_name,
+              ...(row.author_handle ? { authorHandle: row.author_handle } : {}),
+              revision: row.revision,
+              updatedAt: unix(row.updated_at),
+            },
+          ]
+        : [];
+    });
+    if (boundManifest?.humanUi?.kind === 'native' && boundApp) {
+      cornerApps.unshift({
+        ...boundManifest.humanUi.definition,
+        ...(boundApp.developer_agent_id ? { authorId: boundApp.developer_agent_id } : {}),
+        authorName: boundApp.developer_name ?? boundManifest.developer,
+        ...(boundApp.developer_handle ? { authorHandle: boundApp.developer_handle } : {}),
+        revision: 1,
+        updatedAt: unix(room.updated_at),
+      });
+    }
+    const plan = facts?.plan;
+    const paintedRoom = roomHeader(room, this.publicOrigin);
     const briefing = collapsePermissionCards(
       briefingRows.map((row) => projectedMessage(row, this.publicOrigin)).sort(messageOrder),
     );
@@ -1666,9 +1698,6 @@ export class PhoneService {
       'media',
       this.attachmentFacts(messages, toolRows, briefing),
     );
-    const cornerLifecycle = room.parent_id
-      ? await measured('lifecycle', this.cornerLifecycle(room.id))
-      : undefined;
     const projectionStartedAt = performance.now();
     const view: RoomView = {
       room:
@@ -1897,6 +1926,47 @@ export class PhoneService {
       },
       watchFilters: [],
     };
+  }
+
+  private projectTopLevelRoom(
+    rows: TopLevelRoomReadRow,
+    roomId: string,
+    viewerId: string,
+  ): [
+    RoomViewMember[],
+    RoomView['latestAgentTurns'],
+    { messages: RoomViewMessage[]; toolRows: RoomViewMessage[] },
+  ] {
+    const latestAgentTurns = this.projectAgentTurns(rows.turns);
+    return [
+      this.projectMembers(rows.members, roomId),
+      latestAgentTurns,
+      this.projectRoomMessages(rows.transcript, rows.activity, [], latestAgentTurns, false, viewerId),
+    ];
+  }
+
+  private async readCornerMessages(
+    workspaceId: string,
+    roomId: string,
+    viewerId: string,
+    measured: <T>(operation: string, work: Promise<T>) => Promise<T>,
+    briefingRows: Promise<MessageRow[]>,
+  ): Promise<
+    [
+      RoomViewMember[],
+      RoomView['latestAgentTurns'],
+      { messages: RoomViewMessage[]; toolRows: RoomViewMessage[] },
+    ]
+  > {
+    const latestAgentTurnsPromise = this.latestAgentTurns(roomId);
+    return Promise.all([
+      measured('members', this.members(workspaceId, roomId)),
+      measured('turns', latestAgentTurnsPromise),
+      measured(
+        'messages',
+        this.roomMessages(roomId, latestAgentTurnsPromise, true, viewerId, briefingRows),
+      ),
+    ]);
   }
 
   /**
@@ -7989,6 +8059,7 @@ export class PhoneService {
     latestAgentTurns: RoomView['latestAgentTurns'] | Promise<RoomView['latestAgentTurns']>,
     isCorner = false,
     viewerId?: string,
+    alsoTag: Promise<MessageRow[]> = Promise.resolve([]),
   ): Promise<{ messages: RoomViewMessage[]; toolRows: RoomViewMessage[] }> {
     const eligible = `m.id IN (
       (SELECT raw.id FROM legacy_room_events raw WHERE raw.room_id=$1 AND raw.kind=9
@@ -8021,9 +8092,24 @@ export class PhoneService {
          ${reactionIdentitiesSql('m')} reaction_identities,
          '{}'::text[] tagged_ids
        FROM messages m JOIN identities i ON i.id=m.author_id
+       -- Only the displayed agents' current working turns project activity
+       -- (projectRoomMessages); a long corner's settled rows are never read here.
+       JOIN (
+         SELECT agent_id,created_at FROM (
+           SELECT agent_id,status,created_at FROM (
+             SELECT DISTINCT ON(turn.agent_id) turn.agent_id,turn.status,turn.created_at
+             FROM agent_turns turn WHERE turn.room_id=$1
+             ORDER BY turn.agent_id,turn.created_at DESC,turn.request_id DESC
+           ) latest
+           ORDER BY date_trunc('second',created_at) DESC,agent_id ASC
+           LIMIT ${ROOM_VIEW_AGENT_LIMIT}
+         ) projected
+         WHERE projected.status='working'
+       ) turn ON turn.agent_id=m.author_id
+         AND date_trunc('second',m.created_at)>=date_trunc('second',turn.created_at)
        WHERE m.room_id=$1 AND m.presentation='activity' AND m.durable_fact IS NULL
          AND (NOT EXISTS(SELECT 1 FROM legacy_room_events any_legacy WHERE any_legacy.room_id=$1) OR ${eligible})
-       ORDER BY m.created_at DESC,m.id DESC`,
+       ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_MESSAGE_LIMIT}`,
       [roomId],
     );
     const cornerActivityRowsPromise = isCorner
@@ -8043,19 +8129,25 @@ export class PhoneService {
           [roomId],
         )
       : Promise.resolve({ rows: [] as MessageRow[], rowCount: 0 });
-    const [transcriptRows, liveRows, cornerActivityRows, resolvedAgentTurns] = await Promise.all([
-      transcriptRowsPromise,
-      liveRowsPromise,
-      cornerActivityRowsPromise,
-      latestAgentTurns,
+    const [transcriptRows, liveRows, cornerActivityRows, resolvedAgentTurns, extraTagRows] =
+      await Promise.all([
+        transcriptRowsPromise,
+        liveRowsPromise,
+        cornerActivityRowsPromise,
+        latestAgentTurns,
+        alsoTag,
+      ]);
+    // One mention pass covers this Room's transcript and the caller's rows
+    // (a corner's parent briefing); the tag regex is the slow part of a read.
+    await Promise.all([
+      viewerId
+        ? this.enrichMessageBookmarks(
+            [...transcriptRows.rows, ...liveRows.rows, ...cornerActivityRows.rows],
+            viewerId,
+          )
+        : undefined,
+      this.enrichMessageTags([...transcriptRows.rows, ...extraTagRows]),
     ]);
-    if (viewerId) {
-      await this.enrichMessageBookmarks(
-        [...transcriptRows.rows, ...liveRows.rows, ...cornerActivityRows.rows],
-        viewerId,
-      );
-    }
-    await this.enrichMessageTags(transcriptRows.rows);
     return this.projectRoomMessages(
       transcriptRows.rows,
       liveRows.rows,

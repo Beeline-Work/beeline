@@ -6,6 +6,8 @@ import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ThinDaemonCore } from './thin-core.js';
+import { installDaemonStopSignals } from './daemon-shutdown.js';
+import { EventEmitter } from 'node:events';
 import { AcpClient } from './acp.js';
 import {
   removeCornerScratchWorkspace,
@@ -23,6 +25,46 @@ afterEach(async () =>
 );
 
 describe('monolith-only thin daemon', () => {
+  it('does not restart Room or corner intake when SIGTERM arrives during update convergence', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-stop-discovery-'));
+    roots.push(root);
+    const staged = await stageMonolithAgentRuntime({
+      workspaceId: 'workspace', pairedBy: 'human',
+      daemonExchangeToken: `bde_${'d'.repeat(43)}`,
+      agentBinary: '/nonexistent', agentKind: 'codex', agentCommand: '/nonexistent',
+      agentArgs: [], mcpBinary: 'unused',
+      agentIdentity: identityFromKey('11'.repeat(32), 'Bee'),
+      bodyIdentity: identityFromKey('22'.repeat(32), 'Body'), supervisorRoot: root,
+    });
+    let releaseDiscovery!: () => void;
+    const discovery = new Promise<void>((resolve) => { releaseDiscovery = resolve; });
+    let discoveryStarted!: () => void;
+    const started = new Promise<void>((resolve) => { discoveryStarted = resolve; });
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getDaemonBootstrap') {
+        discoveryStarted();
+        await discovery;
+        return { workspaceIds: ['workspace'], rooms: [{ roomId: 'room', archived: false }] };
+      }
+      if (name === 'listRoomCorners') return { corners: [{ cornerId: 'corner', archived: false }] };
+      return {};
+    });
+    const signal = new AbortController();
+    const emitter = new EventEmitter();
+    const disposeStopSignals = installDaemonStopSignals(signal, { emitter });
+    const core = new ThinDaemonCore(staged.runtime, staged.configPath,
+      { workspaceRoot: root } as BodyConfig,
+      { daemonApi: { execute } as unknown as DaemonApiClient });
+    const running = core.run({ signal: signal.signal });
+    await started;
+    expect(core.quiesceForUpdateIfIdle()).toBe(true);
+    emitter.emit('SIGTERM');
+    releaseDiscovery();
+    await expect(running).resolves.toBe('aborted');
+    disposeStopSignals();
+    expect(execute).not.toHaveBeenCalledWith('listRoomCorners', expect.anything());
+    expect(core.activeRoomIds()).toEqual([]);
+  });
   it('deletes only the closed chat-only corner scratch workspace', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-corner-scratch-close-'));
     roots.push(root);

@@ -821,6 +821,7 @@ export class RoomRuntimeCoordinator {
   }
 
   async reconcile(): Promise<WorkspaceMembershipStatus> {
+    if (this.stopped) return 'member';
     this.confirmationPending = false;
     const existingRooms = new Set(this.running.keys());
     // Everything this reconcile reads happens after this point, so every wake
@@ -830,6 +831,7 @@ export class RoomRuntimeCoordinator {
     const bootstrap = await this.options.daemonApi.execute('getDaemonBootstrap', {
       agentId: this.agent.publicKey,
     });
+    if (this.stopped) return 'member';
     if (!bootstrap.workspaceIds.includes(this.runtime.communityId)) {
       this.workspaceRemovalConfirmations += 1;
       if (this.workspaceRemovalConfirmations < REMOVAL_CONFIRMATION_READS) {
@@ -864,6 +866,7 @@ export class RoomRuntimeCoordinator {
     const desiredCorners = new Map<string, DesiredCorner>();
     const archivedCorners = new Map<string, { cornerId: string; parentRoomId: string }>();
     await mapWithConcurrency(topLevelRooms, ROOM_JOIN_CONCURRENCY, async (room) => {
+      if (this.stopped) return;
       try {
         const result = await this.options.daemonApi.execute('listRoomCorners', {
           roomId: room.roomId,
@@ -900,11 +903,14 @@ export class RoomRuntimeCoordinator {
         );
       }
     });
+    if (this.stopped) return 'member';
     for (const roomId of desiredTopRooms) this.surfaceHealth.discover(roomId, 'room');
     for (const cornerId of desiredCorners.keys()) this.surfaceHealth.discover(cornerId, 'corner');
     for (const channelId of desired) this.roomRemovalConfirmations.delete(channelId);
     await this.retryPendingCornerReaps(desired);
+    if (this.stopped) return 'member';
     await this.sweepArchivedCornerWorktrees(archivedCorners, desired);
+    if (this.stopped) return 'member';
     for (const cornerId of this.idleCornerSubscriptions.keys()) {
       if (desired.has(cornerId)) continue;
       this.unwatchCorner(cornerId);
@@ -922,6 +928,7 @@ export class RoomRuntimeCoordinator {
     }
     this.surfaceHealth.retain(new Set([...desired, ...this.running.keys()]));
     await mapWithConcurrency(desiredTopRooms, ROOM_JOIN_CONCURRENCY, async (roomId) => {
+      if (this.stopped) return;
       if (this.running.has(roomId)) return;
       try {
         await this.startRoom(roomId);
@@ -938,6 +945,7 @@ export class RoomRuntimeCoordinator {
       [...desiredCorners.values()],
       ROOM_JOIN_CONCURRENCY,
       async (corner) => {
+        if (this.stopped) return;
         if (!this.running.has(corner.cornerId)) await this.watchCorner(corner);
       },
     );
@@ -981,6 +989,7 @@ export class RoomRuntimeCoordinator {
    * An unscoped wake still uses the slow reconcile as recovery.
    */
   async applyMembershipEvent(event: RoomMembershipChange): Promise<void> {
+    if (this.stopped) return;
     const roomId = event.roomId;
     if (!roomId) {
       this.wakeDiscovery();
@@ -1035,6 +1044,7 @@ export class RoomRuntimeCoordinator {
   /** Retire the scratch runtime. Ordinary desired-state reconciliation starts
    * the same corner id again and re-reads its now-code lane. */
   async applyCornerRestart(cornerId: string): Promise<void> {
+    if (this.stopped) return;
     const running = this.running.get(cornerId);
     if (!running) {
       this.wakeDiscovery();
@@ -1106,6 +1116,7 @@ export class RoomRuntimeCoordinator {
   }
 
   private async startRoom(roomId: string): Promise<void> {
+    if (this.stopped) return;
     if (this.running.has(roomId) || this.startingRooms.has(roomId)) return;
     this.surfaceHealth.discover(roomId, 'room');
     this.startingRooms.add(roomId);
@@ -1270,6 +1281,7 @@ export class RoomRuntimeCoordinator {
   }
 
   private async startCorner(corner: DesiredCorner): Promise<void> {
+    if (this.stopped) return;
     if (this.running.has(corner.cornerId) || this.startingCorners.has(corner.cornerId)) return;
     this.surfaceHealth.discover(corner.cornerId, 'corner');
     this.startingCorners.add(corner.cornerId);
@@ -1480,6 +1492,7 @@ export class RoomRuntimeCoordinator {
   }
 
   private async watchCorner(corner: DesiredCorner): Promise<void> {
+    if (this.stopped) return;
     const cornerId = corner.cornerId;
     if (this.running.has(cornerId)) return;
     if (this.idleCornerSubscriptions.has(cornerId)) {
@@ -1831,6 +1844,7 @@ export class RoomRuntimeCoordinator {
   }
 
   async watchdogTick(): Promise<void> {
+    if (this.stopped) return;
     for (const [roomId, room] of [...this.running]) {
       if (room.recovering || room.body.isBusy()) continue;
       if (this.now() <= Math.max(room.lastPollAt + this.watchdogStaleMs, room.backoffUntil))
@@ -1840,10 +1854,20 @@ export class RoomRuntimeCoordinator {
       await room.promise.catch(() => undefined);
       if (room.worktree) {
         this.confirmationPending = true;
-      } else if (!this.running.has(roomId)) {
+      } else if (!this.stopped && !this.running.has(roomId)) {
         this.startRoom(roomId);
       }
     }
+  }
+
+  beginShutdown(): void {
+    if (this.stopped) return;
+    this.stopped = true;
+    this.restartRequested = true;
+    for (const cornerId of this.idleCornerSubscriptions.keys()) this.unwatchCorner(cornerId);
+    this.options.daemonApi.closeLive?.();
+    this.pendingMembershipEvents.clear();
+    for (const room of this.running.values()) room.controller.abort();
   }
 
   async shutdown(): Promise<void> {
@@ -1852,10 +1876,7 @@ export class RoomRuntimeCoordinator {
     // pass and never be stopped — its live subscription outlives the daemon.
     // Refuse further pushes, then wait — to the deadline, never past it — for
     // the in-flight apply, so whatever it started is in the snapshot below.
-    this.stopped = true;
-    for (const cornerId of this.idleCornerSubscriptions.keys()) this.unwatchCorner(cornerId);
-    this.options.daemonApi.closeLive?.();
-    this.pendingMembershipEvents.clear();
+    this.beginShutdown();
     const deadlineAt = Math.min(
       this.now() + this.drainDeadlineMs,
       this.drainDeadlineAt ?? Number.POSITIVE_INFINITY,

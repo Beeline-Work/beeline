@@ -821,7 +821,7 @@ export interface UpdateAttemptRecord {
   failure?: string;
   /** The probe id of the daemon whose own failure reverted this shared attempt. */
   revertedBy?: string;
-  /** Running agent identities that must each complete a functional probe. */
+  /** Running agent identities captured at activation for update diagnostics. */
   requiredProbeIds?: string[];
   /** Successfully probed identities; updated atomically under the install lock. */
   confirmedProbeIds?: string[];

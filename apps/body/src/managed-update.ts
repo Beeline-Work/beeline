@@ -27,7 +27,9 @@ import { withAdapterInstallLock } from './adapter-install-lock.js';
 
 export const UPDATE_CONVERGENCE_SLO_MS = 10 * 60_000;
 export const DEFAULT_UPDATE_INTERVAL_MS = 30_000;
-export const UPDATE_DRAIN_DEADLINE_MS = UPDATE_CONVERGENCE_SLO_MS - 60_000;
+// Reserve the 90-second service stop ceiling and one minute for successor
+// startup/proof before the shared attempt's confirmation deadline.
+export const UPDATE_DRAIN_DEADLINE_MS = UPDATE_CONVERGENCE_SLO_MS - 150_000;
 export const MAX_HOST_RESTART_STAGGER_MS = 15_000;
 
 /** Stable per-agent spread after intake quiesces, bounded by the handoff deadline. */
@@ -41,7 +43,7 @@ export function managedRestartStaggerMs(
   const spread = digest.readUInt32BE(0) % (MAX_HOST_RESTART_STAGGER_MS + 1);
   return Math.min(spread, Math.max(0, drainDeadlineAt - now));
 }
-const UPDATE_WORKER_DEADLINE_MS = UPDATE_DRAIN_DEADLINE_MS;
+const UPDATE_WORKER_DEADLINE_MS = UPDATE_CONVERGENCE_SLO_MS - 60_000;
 // Must exceed the worker's absolute deadline: a legitimate long archive
 // download must never be mistaken for a dead owner by another agent daemon.
 const LOCK_STALE_MS = UPDATE_WORKER_DEADLINE_MS + 5 * 60_000;
@@ -348,10 +350,8 @@ export class ManagedUpdateHandoff {
         };
         await writeUpdateAttempt(this.#layout, record);
       } else if (this.#requiredProbeIds.length > 0) {
-        // The disposable worker normally captures the whole live fleet, but
-        // each old daemon also contributes its startup snapshot before it
-        // exits. This closes discovery/env races without ever removing a
-        // sibling proof requirement already written by another daemon.
+        // Keep the live-fleet snapshot complete for diagnostics even though
+        // one verified successor is enough to confirm the shared release.
         const requiredProbeIds = [
           ...new Set([...(attempt.requiredProbeIds ?? []), ...this.#requiredProbeIds]),
         ].sort();
@@ -684,12 +684,12 @@ export async function proveLoadedReleaseReady(
     if (!current || current.releaseId !== loadedRelease || current.status !== 'pending')
       return false;
     const confirmed = [...new Set([...(current.confirmedProbeIds ?? []), probeId])].sort();
-    const required = current.requiredProbeIds ?? [probeId];
-    const satisfied = [...confirmed, ...(current.unavailableProbeIds ?? [])];
     await replaceUpdateAttempt(layout, {
       ...current,
       confirmedProbeIds: confirmed,
-      ...(required.every((id) => satisfied.includes(id)) ? { status: 'confirmed' as const } : {}),
+      // One verified successor is sufficient to validate the shared bundle.
+      // A peer still running the old release cannot hold this journal pending.
+      status: 'confirmed',
     });
     return true;
   });

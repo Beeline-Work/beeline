@@ -54,6 +54,7 @@ import {
   institutionalMemoryShadowEnabled,
 } from './institutional-memory-shadow-worker.js';
 import { ThinDaemonCore } from './thin-core.js';
+import { installDaemonStopSignals } from './daemon-shutdown.js';
 import { DEFAULT_DRAIN_DEADLINE_MS } from './room-runtime.js';
 import { activateDaemonTransport, DaemonApiError } from './daemon-api-client.js';
 import { reportInterruptedTurns } from './force-update-journal.js';
@@ -288,9 +289,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
     config.sandboxMaskPaths = [...(config.sandboxMaskPaths ?? []), ...runtime.sandboxMaskPaths];
   }
   const controller = new AbortController();
-  const stop = () => controller.abort();
-  process.once('SIGINT', stop);
-  process.once('SIGTERM', stop);
+  const disposeStopSignals = installDaemonStopSignals(controller);
 
   // The service manager, never this process, owns resurrection and handoff.
   const runtimeDir = dirname(configPath);
@@ -773,6 +772,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
     // Only clear the pid record while it still names THIS process — a
     // self-update handover has already written the replacement's pid there.
     await clearDaemonPidRecordIfPid(configPath, process.pid);
+    disposeStopSignals();
   }
 }
 

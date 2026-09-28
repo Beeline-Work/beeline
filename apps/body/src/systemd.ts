@@ -21,7 +21,7 @@ export const UNKNOWN_AGENT_EXIT_STATUS = 79;
 export const SYSTEMD_UNIT_NAME = 'beeline-agent@.service';
 export const SYSTEMD_COMMAND_TIMEOUT_MS = 15_000;
 /** Unit stop ceiling plus a small window for the successor to enter active. */
-export const SYSTEMD_RESTART_WAIT_MS = 10 * 60_000 + 30_000;
+export const SYSTEMD_RESTART_WAIT_MS = 90_000 + 30_000;
 
 /**
  * The portable supervision contract, rendered as a systemd user template.
@@ -50,7 +50,7 @@ RestartPreventExitStatus=${DAEMON_DISTRESS_EXIT_STATUS} ${DELIBERATE_REMOVAL_EXI
 SuccessExitStatus=${UNKNOWN_AGENT_EXIT_STATUS}
 WatchdogSec=180s
 TimeoutStartSec=90s
-TimeoutStopSec=10min
+TimeoutStopSec=90s
 KillMode=control-group
 UMask=0077
 # A desktop-launched user manager may inherit Ubuntu's unprivileged_userns

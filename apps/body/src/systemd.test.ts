@@ -51,7 +51,7 @@ describe('systemd supervision contract', () => {
     );
     expect(unit).toContain(`SuccessExitStatus=${UNKNOWN_AGENT_EXIT_STATUS}`);
     expect(unit).toContain('WatchdogSec=180s');
-    expect(unit).toContain('TimeoutStopSec=10min');
+    expect(unit).toContain('TimeoutStopSec=90s');
     expect(unit).toContain('KillMode=control-group');
     expect(unit).toContain('ExecStart=%h/.local/bin/beeline daemon --agent %i');
     expect(unit).toContain('Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin');

@@ -80,6 +80,7 @@ import {
   agentAccessPolicyRecord,
   accessNoticeBucket,
   isAgentAccessPolicy,
+  isAgentReachable,
   parseAgentAccessPolicy,
   senderMayAddressAgent,
 } from '@beeline/api-contract/agent-access';
@@ -1446,12 +1447,14 @@ export class PhoneService {
     if (!row.peer_id || !row.peer_kind) return undefined;
     if (row.peer_kind === 'agent' && row.peer_presence_body && row.peer_presence_updated_at) {
       return {
-        status:
-          row.peer_presence_body.status === 'online' &&
-          Date.now() - row.peer_presence_updated_at.getTime() < AGENT_REACHABLE_HORIZON_MS
-            ? 'online'
-            : 'offline',
-        observedAt: Number(row.peer_presence_body.observedAt ?? unix(row.peer_presence_updated_at)),
+        status: isAgentReachable(
+          row.peer_presence_body.status === 'online' ? 'online' : 'offline',
+          row.peer_presence_updated_at.getTime(),
+        ) ? 'online' : 'offline',
+        observedAt: Math.max(
+          Number(row.peer_presence_body.observedAt ?? 0),
+          unix(row.peer_presence_updated_at),
+        ),
       };
     }
     const connection = this.live?.humanPresence(row.peer_id);
@@ -7906,12 +7909,11 @@ export class PhoneService {
       ...(row.presence_body && row.presence_updated_at
         ? {
             presence: {
-              status:
-                row.presence_body.status === 'online' &&
-                Date.now() - row.presence_updated_at.getTime() < AGENT_REACHABLE_HORIZON_MS
-                  ? 'online'
-                  : 'offline',
-              observedAt: row.presence_body.observedAt,
+              status: isAgentReachable(
+                row.presence_body.status,
+                row.presence_updated_at.getTime(),
+              ) ? 'online' : 'offline',
+              observedAt: Math.max(row.presence_body.observedAt, unix(row.presence_updated_at)),
               ...(roomId ? { roomId } : {}),
             },
           }

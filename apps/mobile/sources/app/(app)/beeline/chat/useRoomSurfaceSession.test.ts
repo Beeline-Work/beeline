@@ -568,8 +568,85 @@ describe('useRoomSurfaceSession', () => {
     expect(current.heartbeatPresences['agent-a']).toEqual({
       agentPubkey: 'agent-a',
       status: 'online',
-      observedAt: 1_199_000,
+      observedAt: 1_199,
     });
+    await act(async () => renderer.unmount());
+  });
+
+  it('lets a fresh pushed fact replace an older Room presence in seconds', async () => {
+    const observedAt = Math.floor(Date.now() / 1_000);
+    controls.cached = {
+      ...roomView('room-a'),
+      members: [
+        {
+          identity: { pubkey: 'agent-a', kind: 'agent', name: 'Monarch' },
+          role: 'member',
+          presence: { status: 'offline', observedAt: observedAt - 10 },
+        },
+      ],
+    };
+    let current!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(Harness, {
+          channelId: 'room-a',
+          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
+        }),
+      );
+    });
+    await flushEffects();
+    expect(current.heartbeatPresences['agent-a']?.status).toBe('offline');
+    expect(current.presenceResolved).toBe(false);
+
+    await act(async () => {
+      controls.subscriptions[0]!.emit({ monolithLive: { type: 'subscribed', roomId: 'room-a' } });
+      controls.subscriptions[0]!.emit({ monolithLive: { type: 'subscribed', roomId: 'room-a' } });
+    });
+    expect(current.presenceReconnecting).toBe(true);
+
+    await act(async () => {
+      controls.subscriptions[0]!.emit({
+        monolithLive: {
+          type: 'presence',
+          roomId: 'room-a',
+          agentId: 'agent-a',
+          status: 'online',
+          observedAt,
+        },
+      });
+    });
+    expect(current.heartbeatPresences['agent-a']).toMatchObject({
+      status: 'online',
+      observedAt,
+    });
+    await act(async () =>
+      controls.schedulers[0]!.apply({
+        ...controls.cached!,
+        members: [
+          {
+            ...controls.cached!.members[0]!,
+            presence: { status: 'online', observedAt },
+          },
+        ],
+      }),
+    );
+    expect(current.presenceReconnecting).toBe(false);
+    expect(current.presenceResolved).toBe(true);
+    await act(async () => {
+      controls.subscriptions[0]!.emit({ monolithLive: {
+        type: 'presence', roomId: 'room-a', agentId: 'agent-a',
+        status: 'offline', observedAt: observedAt + 1,
+      } });
+    });
+    expect(current.heartbeatPresences['agent-a']?.status).toBe('offline');
+    await act(async () => {
+      controls.subscriptions[0]!.emit({ monolithLive: {
+        type: 'presence', roomId: 'room-a', agentId: 'agent-a',
+        status: 'online', observedAt: observedAt + 2,
+      } });
+    });
+    expect(current.heartbeatPresences['agent-a']?.status).toBe('online');
     await act(async () => renderer.unmount());
   });
 

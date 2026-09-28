@@ -590,6 +590,7 @@ export function BuzzChatSurface({
     userPubkey,
     heartbeatPresences,
     presenceResolved,
+    presenceReconnecting,
     presenceReconnectGrace,
     presenceNow,
     setPresenceNow,
@@ -5919,7 +5920,9 @@ export function BuzzChatSurface({
                 typing in. The Room's corners door in the header is the one way
                 in; the corner's own state is read there, in the corners list,
                 and on the Room-list row. */}
-              {agentsOffline && <AgentOfflineHint />}
+              {agentsOffline && (
+                <AgentOfflineHint state={presenceReconnecting ? 'reconnecting' : 'offline'} />
+              )}
               {isReadOnlyDirectMessage ? (
                 <View style={[styles.archivedInputBar, readOnlyFooterInset]}>
                   <Text style={styles.archivedInputText}>

@@ -93,6 +93,20 @@ export function senderMayAddressAgent(
  */
 export const AGENT_REACHABLE_HORIZON_MS = 90_000;
 
+/** The same authenticated-evidence verdict used by routing and phone presence. */
+export function isAgentReachable(
+  status: 'online' | 'offline' | undefined,
+  observedAtMs: number | undefined,
+  now = Date.now(),
+): boolean {
+  return (
+    status === 'online' &&
+    observedAtMs !== undefined &&
+    Number.isFinite(observedAtMs) &&
+    now - observedAtMs < AGENT_REACHABLE_HORIZON_MS
+  );
+}
+
 /**
  * A dropped mention is inscribed at most once per bucket per (Room, agent, sender,
  * reason). Bucketing rather than a sliding window keeps the guard stateless: the

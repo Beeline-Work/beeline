@@ -571,18 +571,14 @@ export async function recordAgentEvidence(
        SELECT COALESCE(previous_room,room_id),$1,'presence','presence',
          COALESCE(body,'{}'::jsonb) || jsonb_build_object(
            'status','online',
-           'observedAt',CASE WHEN body->>'status'='offline'
-             THEN GREATEST($3::bigint,COALESCE((body->>'observedAt')::bigint,0)+1)
-             ELSE $3::bigint END,
+           'observedAt',GREATEST($3::bigint,COALESCE((body->>'observedAt')::bigint,0)+1),
            'evidenceNonce',$4::text
          ),clock_timestamp()
        FROM target
        ON CONFLICT(room_id,agent_id,turn_id,kind) DO UPDATE SET
          body=live_outputs.body || jsonb_build_object(
            'status','online',
-           'observedAt',CASE WHEN live_outputs.body->>'status'='offline'
-             THEN GREATEST($3::bigint,COALESCE((live_outputs.body->>'observedAt')::bigint,0)+1)
-             ELSE $3::bigint END,
+           'observedAt',GREATEST($3::bigint,COALESCE((live_outputs.body->>'observedAt')::bigint,0)+1),
            'evidenceNonce',$4::text
          ),updated_at=EXCLUDED.updated_at
        RETURNING 1

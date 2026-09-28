@@ -45,10 +45,9 @@ describe('delivery-driven presence', () => {
   });
   async function body() {
     return (
-      await database.query<{ body: { status: string; expiresAt?: number; lifecycleId: string } }>(
-        `SELECT body FROM live_outputs WHERE agent_id=$1 AND kind='presence' LIMIT 1`,
-        [AGENT],
-      )
+      await database.query<{
+        body: { status: string; observedAt: number; expiresAt?: number; lifecycleId: string };
+      }>(`SELECT body FROM live_outputs WHERE agent_id=$1 AND kind='presence' LIMIT 1`, [AGENT])
     ).rows[0]!.body;
   }
   async function message() {
@@ -161,6 +160,18 @@ describe('delivery-driven presence', () => {
     await vi.advanceTimersByTimeAsync(180_000);
     expect(await body()).toMatchObject({ status: 'online', lifecycleId: 'boot-1' });
     expect((await body()).expiresAt).toBeUndefined();
+  });
+  it('advances pushed evidence on each authenticated refresh, including the same second', async () => {
+    await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-1' });
+    const announced = (await body()).observedAt;
+    await recordAgentEvidence(database, live, ROOM, AGENT);
+    const first = (await body()).observedAt;
+    await recordAgentEvidence(database, live, OTHER, AGENT);
+    const second = (await body()).observedAt;
+    expect(first).toBeGreaterThan(announced);
+    expect(second).toBeGreaterThan(first);
+    expect(live.latestAgentPresence(AGENT, ROOM)?.observedAt).toBe(second);
+    expect(live.latestAgentPresence(AGENT, OTHER)?.observedAt).toBe(second);
   });
   it('uses a turn as delivery proof, then marks an unanswered attempt offline for every viewer', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });

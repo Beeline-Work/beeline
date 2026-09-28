@@ -1,9 +1,10 @@
 /** Agent availability derived from the newest authenticated server evidence. */
 import { TAG_AGENT_PRESENCE } from './kinds.js';
+import { AGENT_REACHABLE_HORIZON_MS, isAgentReachable } from '@beeline/api-contract/agent-access';
 
 /** @deprecated Presence is event-driven; no publisher schedules a heartbeat. */
 export const AGENT_PRESENCE_HEARTBEAT_MS = 45_000;
-export const AGENT_PRESENCE_STALE_MS = 90_000;
+export const AGENT_PRESENCE_STALE_MS = AGENT_REACHABLE_HORIZON_MS;
 
 /** An explicit offline fact ages into dormancy after a day. */
 export const AGENT_PRESENCE_DORMANT_MS = 24 * 60 * 60_000;
@@ -32,6 +33,7 @@ export function agentPresenceKey(channelId: string): string {
 export type AgentPresence = {
   agentPubkey: string;
   status: AgentPresenceStatus;
+  /** Unix seconds on the wire and in RoomView; convert only when comparing with Date.now(). */
   observedAt: number;
 };
 
@@ -42,9 +44,7 @@ export function isAgentPresenceOnline(
   presence: AgentPresence | undefined,
   now = Date.now(),
 ): boolean {
-  return Boolean(
-    presence?.status === 'online' && now - observedAtMs(presence) < AGENT_PRESENCE_STALE_MS,
-  );
+  return isAgentReachable(presence?.status, presence ? observedAtMs(presence) : undefined, now);
 }
 
 export function resolveAgentPresenceTier(

@@ -308,13 +308,12 @@ describe('GitHub callback delivery into onboarding', () => {
     const ceremony = tree.root.findByType('YouStep' as never);
     expect(ceremony.props.seed).toBe(MONOLITH_IDENTITY);
     expect(ceremony.props.currentFace).toBeNull();
-    // The GitHub name is pre-filled; an edit is saved with the chosen face.
-    expect(ceremony.props.name).toBe('Octo Cat');
+    // The actual GitHub handle is shown; this step saves only the chosen face.
     expect(ceremony.props.handle).toBe('octocat');
     await act(async () => {
-      await ceremony.props.onConfirm({ name: 'Ada', face: 'owl' });
+      await ceremony.props.onConfirm({ face: 'owl' });
     });
-    expect(phoneOperation).toHaveBeenCalledWith('updatePersonProfile', { name: 'Ada' });
+    expect(phoneOperation).not.toHaveBeenCalledWith('updatePersonProfile', expect.anything());
     expect(phoneOperation).toHaveBeenCalledWith('updateIdentityFace', { faceId: 'owl' });
     expect(navigation.replace).not.toHaveBeenCalled();
     act(() => ceremony.props.onEntered());

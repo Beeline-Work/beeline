@@ -142,12 +142,15 @@ describe('the create-or-join choice', () => {
       expect.arrayContaining([
         'Start a Workspace, or join one you were invited to.',
         'Create a Workspace',
-        'You land in #general. Invite people and agents from there.',
+        'New workspace for your team',
         'Join with an invite link',
         'Paste the link someone sent you.',
       ]),
     );
     expect(texts).not.toContain('Welcome to Beeline');
+    expect(texts.join(' ')).not.toContain('Already use Beeline?');
+    expect(texts).not.toContain('Account settings');
+    expect(find(renderer, 'choice-settings')).toHaveLength(0);
   });
 
   it('opens the wizard for Create', async () => {

@@ -136,7 +136,7 @@ export default function WorkspaceChoice() {
 
           <View style={styles.choices}>
             <ChoiceCard
-              description="You land in #general. Invite people and agents from there."
+              description="New workspace for your team"
               glyph={<RoomGlyph color={theme.buzz.accent} size={20} />}
               onPress={() => router.push('/beeline/create-workspace' as Href)}
               testID="choice-create"
@@ -183,22 +183,6 @@ export default function WorkspaceChoice() {
             <Text accessibilityRole="alert" style={styles.error} testID="choice-error">
               {error}
             </Text>
-          ) : null}
-          {!hasWorkspaces ? (
-            <>
-              <Text style={styles.footnote}>
-                Already use Beeline? {WORKSPACE_LABEL}s you belong to appear here as soon as someone
-                adds you.
-              </Text>
-              <Pressable
-                accessibilityRole="link"
-                onPress={() => router.push('/beeline/settings' as Href)}
-                style={styles.settingsLink}
-                testID="choice-settings"
-              >
-                <Text style={styles.settingsLinkText}>Account settings</Text>
-              </Pressable>
-            </>
           ) : null}
         </View>
       </ScrollView>
@@ -319,14 +303,6 @@ const styles = StyleSheet.create((theme) => {
       ...hull.type.meta,
       color: hull.dialogDanger,
       marginTop: hull.space.md,
-    },
-    settingsLink: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' },
-    settingsLinkText: { ...Typography.default(), ...hull.type.meta, color: hull.accent },
-    footnote: {
-      ...Typography.default(),
-      ...hull.type.meta,
-      color: hull.ledgerQuiet,
-      marginTop: hull.space.lg,
     },
   };
 });

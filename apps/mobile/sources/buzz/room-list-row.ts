@@ -14,7 +14,6 @@ import {
 import type { CornerState } from '@beeline/api-contract/phone';
 import { isMachinePreview } from '@/buzz/room-list-summary';
 import {
-  isAgentPresenceOnline,
   isRetiredAgentNotice,
   type ChatListItem,
   type RoomViewIdentity,
@@ -296,19 +295,11 @@ export function directMessagePresence(
   const direct = item.directMessage;
   if (!direct) return null;
   const presence = direct.presence;
+  // An agent's presence ages out 90 seconds after its helper's last HTTP
+  // call, so an idle agent waiting on its socket reads as offline. Only a
+  // live turn is shown.
   if (direct.peer.kind === 'agent') {
-    const online = presence
-      ? isAgentPresenceOnline(
-          {
-            agentPubkey: direct.peer.pubkey,
-            status: presence.status,
-            observedAt: presence.observedAt,
-          },
-          nowMs,
-        )
-      : false;
-    if (!online) return { label: 'offline' };
-    return item.agentState === 'working' ? { label: 'working' } : { label: 'idle' };
+    return item.agentState === 'working' ? { label: 'working' } : null;
   }
   if (presence?.status === 'online') return { label: 'online' };
   if (!presence?.observedAt) return null;

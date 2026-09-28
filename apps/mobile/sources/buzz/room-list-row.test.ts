@@ -241,17 +241,15 @@ describe('direct-message presence', () => {
       },
     }) as Pick<ChatListItem, 'directMessage' | 'agentState'>;
 
-  it('reports agent working, idle, and offline states', () => {
+  it('reports an agent only while it is working, never idle or offline', () => {
     const observedAt = Math.floor(NOW / 1000);
     expect(
       directMessagePresence({ ...peer('agent', 'online', observedAt), agentState: 'working' }, NOW),
     ).toEqual({ label: 'working' });
-    expect(directMessagePresence(peer('agent', 'online', observedAt), NOW)).toEqual({
-      label: 'idle',
-    });
-    expect(directMessagePresence(peer('agent', 'offline', observedAt), NOW)).toEqual({
-      label: 'offline',
-    });
+    expect(directMessagePresence(peer('agent', 'online', observedAt), NOW)).toBeNull();
+    expect(directMessagePresence(peer('agent', 'offline', observedAt), NOW)).toBeNull();
+    // An idle helper waiting on its socket has no recent HTTP evidence.
+    expect(directMessagePresence(peer('agent', 'online', observedAt - 120), NOW)).toBeNull();
   });
 
   it('reports person online and formats last-seen buckets', () => {

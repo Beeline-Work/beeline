@@ -94,7 +94,7 @@ describe('first-silence notice', () => {
     );
     expect(result).toMatchObject({ hiccupRestart: true, hiccupAttempt: 1 });
     expect(await failureLine(database, requestId)).toEqual({
-      text: '@candy could not answer · provider error 429 concurrency_limit. Restarting her and resending your message.',
+      text: '@candy could not answer · provider error 429 concurrency_limit. Restarting the agent and resending your message.',
       silence: 'hiccup',
       state: 'failed',
     });
@@ -121,7 +121,7 @@ describe('first-silence notice', () => {
     expect(result).toMatchObject({ updateRequeued: true });
     expect(result.hiccupRestart).toBeUndefined();
     expect(await failureLine(database, requestId)).toEqual({
-      text: '@candy was interrupted by an update · her request is queued to resume.',
+      text: '@candy was interrupted by an update · the request is queued to resume.',
       silence: 'update-interrupted',
       state: 'failed',
     });
@@ -187,7 +187,7 @@ describe('first-silence notice', () => {
       updateRequeued: true,
     });
     expect(await failureLine(database, requestId)).toEqual({
-      text: '@candy was interrupted by an update · her request is queued to resume.',
+      text: '@candy was interrupted by an update · the request is queued to resume.',
       silence: 'update-interrupted',
       state: 'failed',
     });
@@ -216,7 +216,7 @@ describe('first-silence notice', () => {
         requestId: '2'.repeat(64),
         reason: 'model selection unavailable',
         reasonKind: 'wrong-model' as const,
-        text: "@candy could not answer · she's set to a model that isn't available. Pick another in her settings.",
+        text: "@candy could not answer · the selected model isn't available. Pick another in the agent's settings.",
         silence: 'wrong-model',
       },
       {
@@ -224,28 +224,28 @@ describe('first-silence notice', () => {
         reason:
           "You've hit your usage limit. Upgrade to Pro for more usage, or try again at Sep 19th, 2026 4:09 AM.",
         reasonKind: 'allowance-spent' as const,
-        text: '@candy could not answer · her provider allowance is spent until Sep 19th, 2026 4:09 AM. Top up, or move her to another provider.',
+        text: '@candy could not answer · the provider allowance is spent until Sep 19th, 2026 4:09 AM. Top up, or move the agent to another provider.',
         silence: 'allowance-spent',
       },
       {
         requestId: '4'.repeat(64),
         reason: 'ACP error -32000: Authentication required',
         reasonKind: 'not-signed-in' as const,
-        text: "@candy could not answer · she isn't signed in to her provider. Run `beeline connect` on her machine.",
+        text: "@candy could not answer · the helper isn't signed in to the provider. Run `beeline connect` on the helper's machine.",
         silence: 'not-signed-in',
       },
       {
         requestId: '5'.repeat(64),
         reason: 'fatal: repository not found github.com/acme/widgets.git',
         reasonKind: 'workspace-failure' as const,
-        text: "@candy could not answer · she couldn't get a working copy of acme/widgets. Check the repository is reachable.",
+        text: "@candy could not answer · the helper couldn't get a working copy of acme/widgets. Check the repository is reachable.",
         silence: 'workspace-failure',
       },
       {
         requestId: '6'.repeat(64),
         reason: 'server command protocol 1 is required; refusing intake',
         reasonKind: 'helper-out-of-date' as const,
-        text: '@candy could not answer · her helper is out of date. Run `beeline start` on her machine.',
+        text: "@candy could not answer · the helper is out of date. Run `beeline start` on the helper's machine.",
         silence: 'helper-out-of-date',
       },
     ];
@@ -301,7 +301,7 @@ describe('first-silence notice', () => {
 
       expect(result.hiccupRestart).toBeUndefined();
       expect(await failureLine(database, requestId)).toEqual({
-        text: "@candy could not answer \u00b7 she couldn't get a working copy of the repository. Check the repository is reachable.",
+        text: "@candy could not answer \u00b7 the helper couldn't get a working copy of the repository. Check the repository is reachable.",
         silence: 'workspace-failure',
         state: 'failed',
       });
@@ -380,7 +380,7 @@ describe('first-silence notice', () => {
       AGENT,
     );
     expect(await failureLine(database, requestId)).toMatchObject({
-      text: '@candy could not answer · the model ended its turn with no text (stop reason end_turn). Restarting her and resending your message.',
+      text: '@candy could not answer · the model ended its turn with no text (stop reason end_turn). Restarting the agent and resending your message.',
       state: 'failed',
     });
   });
@@ -464,7 +464,7 @@ describe('90-second first silence from presence', () => {
     await presence.observe(ROOM);
     await vi.advanceTimersByTimeAsync(100);
     expect(await failureLine(database, requestId)).toEqual({
-      text: "@candy is offline · her helper isn't running. Run `beeline start` on her machine.",
+      text: "@candy is offline · the helper isn't running. Run `beeline start` on the helper's machine.",
       silence: 'offline',
       state: 'failed',
     });
@@ -531,7 +531,7 @@ describe('90-second first silence from presence', () => {
       expect(await failureLine(database, requestId)).toBeTruthy();
     });
     expect(await failureLine(database, requestId)).toEqual({
-      text: '@candy could not answer · the turn stalled. Restarting her and resending your message.',
+      text: '@candy could not answer · the turn stalled. Restarting the agent and resending your message.',
       silence: 'hiccup',
       state: 'failed',
     });

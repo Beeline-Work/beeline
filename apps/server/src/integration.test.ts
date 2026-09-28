@@ -7526,7 +7526,7 @@ describe('monolith integration', () => {
     expect(first).toEqual([
       expect.objectContaining({
         author_id: AGENT,
-        text: '@bee could not answer · provider error 429 concurrency_limit. Restarting her and resending your message.',
+        text: '@bee could not answer · provider error 429 concurrency_limit. Restarting the agent and resending your message.',
         tagged_ids: [],
         card: { requestId, agentId: AGENT, state: 'failed', silenceKind: 'hiccup' },
       }),
@@ -7544,7 +7544,7 @@ describe('monolith integration', () => {
       expect.objectContaining({
         id: first[0]!.id,
         presentation: 'system',
-        text: '@bee could not answer · provider error 429 concurrency_limit. Restarting her and resending your message.',
+        text: '@bee could not answer · provider error 429 concurrency_limit. Restarting the agent and resending your message.',
       }),
     );
     await daemonOperation('postAgentTurnReceipt', {
@@ -7584,7 +7584,7 @@ describe('monolith integration', () => {
         )
       ).rows[0],
     ).toEqual({
-      text: "@bee could not answer · she's set to a model that isn't available. Pick another in her settings.",
+      text: "@bee could not answer · the selected model isn't available. Pick another in the agent's settings.",
       state: 'complete',
     });
     expect(

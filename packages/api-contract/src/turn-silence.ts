@@ -220,7 +220,7 @@ export function phraseTurnSilence(
       return capLine(
         agent,
         'could not answer',
-        "she's set to a model that isn't available. Pick another in her settings.",
+        "the selected model isn't available. Pick another in the agent's settings.",
       );
     case 'allowance-spent': {
       const until = classified.allowanceUntil?.trim();
@@ -228,35 +228,35 @@ export function phraseTurnSilence(
         agent,
         'could not answer',
         until
-          ? `her provider allowance is spent until ${until}. Top up, or move her to another provider.`
-          : 'her provider allowance is spent. Top up, or move her to another provider.',
+          ? `the provider allowance is spent until ${until}. Top up, or move the agent to another provider.`
+          : 'the provider allowance is spent. Top up, or move the agent to another provider.',
       );
     }
     case 'not-signed-in':
       return capLine(
         agent,
         'could not answer',
-        "she isn't signed in to her provider. Run `beeline connect` on her machine.",
+        "the helper isn't signed in to the provider. Run `beeline connect` on the helper's machine.",
       );
     case 'workspace-failure':
       return capLine(
         agent,
         'could not answer',
-        `she couldn't get a working copy of ${classified.repo ?? 'the repository'}. Check the repository is reachable.`,
+        `the helper couldn't get a working copy of ${classified.repo ?? 'the repository'}. Check the repository is reachable.`,
       );
     case 'helper-out-of-date':
       return capLine(
         agent,
         'could not answer',
-        'her helper is out of date. Run `beeline start` on her machine.',
+        "the helper is out of date. Run `beeline start` on the helper's machine.",
       );
     case 'update-interrupted':
-      return capLine(agent, 'was interrupted by an update', 'her request is queued to resume.');
+      return capLine(agent, 'was interrupted by an update', 'the request is queued to resume.');
     case 'offline':
       return capLine(
         agent,
         'is offline',
-        "her helper isn't running. Run `beeline start` on her machine.",
+        "the helper isn't running. Run `beeline start` on the helper's machine.",
       );
     case 'hiccup': {
       const fault = (classified.fault ?? 'the turn stalled').replace(/\s+/g, ' ').trim();
@@ -264,7 +264,7 @@ export function phraseTurnSilence(
         ? 'Stopped restarting after three tries.'
         : options.restarting === false
           ? undefined
-          : 'Restarting her and resending your message.';
+          : 'Restarting the agent and resending your message.';
       return capLine(agent, 'could not answer', remedy ? `${fault}. ${remedy}` : `${fault}.`);
     }
   }

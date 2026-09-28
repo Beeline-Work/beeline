@@ -120,7 +120,6 @@ function sheet(overrides: Partial<React.ComponentProps<typeof RoomRosterSheet>> 
       onAddMembers={vi.fn()}
       onClose={vi.fn()}
       onRemove={vi.fn()}
-      onlineByPubkey={{ [OX]: true }}
       workingByPubkey={{ [OX]: true }}
       parentChannelId={null}
       personProfileByPubkey={new Map()}
@@ -155,18 +154,18 @@ function render(element: React.ReactElement): ReactTestRenderer {
 }
 
 describe('RoomRosterSheet', () => {
-  it('renders a changed collapsed online verdict through the shared modal boundary', () => {
-    function ChatHarness({ liveEventId, online }: { liveEventId: string; online: boolean }) {
+  it('renders a changed collapsed working verdict through the shared modal boundary', () => {
+    function ChatHarness({ liveEventId, working }: { liveEventId: string; working: boolean }) {
       void liveEventId;
-      return sheet({ members: [ox], onlineByPubkey: { [OX]: online } });
+      return sheet({ members: [ox], workingByPubkey: working ? { [OX]: true } : {} });
     }
 
     let renderer!: ReactTestRenderer;
     act(() => {
-      renderer = create(<ChatHarness liveEventId="agent-draft-1" online />);
+      renderer = create(<ChatHarness liveEventId="agent-draft-1" working />);
     });
     act(() => {
-      renderer.update(<ChatHarness liveEventId="agent-draft-2" online={false} />);
+      renderer.update(<ChatHarness liveEventId="agent-draft-2" working={false} />);
     });
 
     expect(renderSpy).toHaveBeenCalledTimes(2);
@@ -192,7 +191,7 @@ describe('RoomRosterSheet', () => {
       // The gold ring is the only state mark: no status square, no kind word.
       expect(agentRow.findByType('IdentityMark' as any).props.alive).toBe(true);
       expect(texts.flat().join(' ')).not.toMatch(/AGENT|PERSON|ONLINE/);
-      expect(agentRow.props.accessibilityLabel).toBe('@ox, agent, online, at ox');
+      expect(agentRow.props.accessibilityLabel).toBe('@ox, agent, working, at ox');
 
       const personRow = renderer.root
         .findAllByProps({ testID: `room-roster-person-${ANA}` })
@@ -218,34 +217,26 @@ describe('RoomRosterSheet', () => {
     ).toBe('octopus');
   });
 
-  it('rings an agent only while it is working, never for a presence lease alone', () => {
+  it('rings and names an agent only while it is working, never online or offline', () => {
     // C77: Candy's helper renewed its presence lease every few seconds while
     // every turn ended `failed`; the ring pulsed on an agent that could not
-    // answer. The ring reads the working record; accessibility reads presence.
+    // answer. The ring and the accessibility label read the working record.
     const markFor = (renderer: ReactTestRenderer) =>
       renderer.root
         .findAllByProps({ testID: `room-roster-agent-${OX}` })
         .at(-1)!
         .findByType('IdentityMark' as any).props;
-    // Working: ring on.
-    expect(
-      markFor(render(sheet({ onlineByPubkey: { [OX]: true }, workingByPubkey: { [OX]: true } })))
-        .alive,
-    ).toBe(true);
-    // Idle but present (lease live): ring off, accessibility still says online.
-    const idle = render(sheet({ onlineByPubkey: { [OX]: true }, workingByPubkey: {} }));
+    const labelFor = (renderer: ReactTestRenderer) =>
+      renderer.root.findAllByProps({ testID: `room-roster-agent-${OX}` }).at(-1)!.props
+        .accessibilityLabel;
+    // Working: ring on, label says working.
+    const working = render(sheet({ workingByPubkey: { [OX]: true } }));
+    expect(markFor(working).alive).toBe(true);
+    expect(labelFor(working)).toBe('@ox, agent, working, at ox');
+    // Idle: ring off, and no online/offline word.
+    const idle = render(sheet({ workingByPubkey: {} }));
     expect(markFor(idle).alive).toBe(false);
-    expect(
-      idle.root.findAllByProps({ testID: `room-roster-agent-${OX}` }).at(-1)!.props
-        .accessibilityLabel,
-    ).toContain(', online,');
-    // Absent: ring off, accessibility says offline.
-    const absent = render(sheet({ onlineByPubkey: {}, workingByPubkey: {} }));
-    expect(markFor(absent).alive).toBe(false);
-    expect(
-      absent.root.findAllByProps({ testID: `room-roster-agent-${OX}` }).at(-1)!.props
-        .accessibilityLabel,
-    ).toContain(', offline,');
+    expect(labelFor(idle)).toBe('@ox, agent, at ox');
   });
 
   it('keeps remove off the list: an owner opens a row to find its one control', () => {

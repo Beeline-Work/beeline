@@ -62,7 +62,7 @@ function rosterRowNote({
  *
  * The shared HullModal boundary owns the no-flicker guarantee. This additional
  * memo remains a roster-specific CPU fast path: an identity-stable member list
- * and collapsed online verdicts avoid rebuilding a potentially long tree.
+ * and collapsed working verdicts avoid rebuilding a potentially long tree.
  */
 export const RoomRosterSheet = React.memo(function RoomRosterSheet({
   bottomInset,
@@ -76,7 +76,6 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
   onClose,
   onRemove,
   onOpenProfile,
-  onlineByPubkey,
   workingByPubkey,
   parentChannelId,
   personProfileByPubkey,
@@ -97,8 +96,6 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
   onClose: () => void;
   onRemove: (participant: RoomRosterParticipant) => void;
   onOpenProfile?: (participant: RoomRosterParticipant) => void;
-  /** Delivery-availability verdicts: the row's online/offline word only. */
-  onlineByPubkey: Readonly<Record<string, boolean>>;
   /** Agents working right now (`selectWorkingAgents`): the gold ring only. */
   workingByPubkey: Readonly<Record<string, boolean>>;
   parentChannelId: string | null;
@@ -178,8 +175,6 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
             const canRemove = canAddMembers && !isViewer;
             const open = openPubkey === participant.pubkey;
             const removing = membershipActionPubkey === participant.pubkey;
-            const agentOnline =
-              participant.kind === 'agent' && Boolean(onlineByPubkey[participant.pubkey]);
             // The ring means working, never merely present (C77).
             const agentWorking =
               participant.kind === 'agent' && Boolean(workingByPubkey[participant.pubkey]);
@@ -203,7 +198,6 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
                     kind="agent"
                     model={participant.model}
                     name={display?.name ?? participant.name}
-                    online={agentOnline}
                     onPress={() => setOpenPubkey(open ? null : participant.pubkey)}
                     ownerHandle={participant.ownerHandle}
                     pubkey={participant.pubkey}

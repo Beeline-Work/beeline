@@ -313,12 +313,9 @@ import { RoomCatchUpSheet } from '@/components/buzz/RoomCatchUpSheet';
 import { buildCatchUpReport } from '@/buzz/room-catch-up-report';
 import { createTranscriptCardMotionStore } from '@/components/buzz/transcript-card-motion-context';
 import {
-  isAgentPresenceOnlineWithReconnectGrace,
-  isAgentOfflineAfterPresenceResolved,
   isAgentTurnActive,
   nextAgentPresenceTransitionAt,
   nextAgentTurnExpiryAt,
-  onlineVerdicts,
   activeMentionCandidates,
   AGENT_PRESENCE_BACKGROUND_GRACE_MS,
 } from '@/buzz/agent-presence';
@@ -332,7 +329,6 @@ import {
 } from '@/buzz/use-stable';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
-import { AgentOfflineHint } from '@/components/buzz/AgentOfflineHint';
 import { CornerObjectiveLine } from '@/components/buzz/CornerObjectiveLine';
 import { CornerBriefDisclosure } from '@/components/buzz/CornerBriefDisclosure';
 import { CornerStatusLine } from '@/components/buzz/CornerStatusLine';
@@ -588,8 +584,6 @@ export function BuzzChatSurface({
     liveDraftStore,
     userPubkey,
     heartbeatPresences,
-    presenceResolved,
-    presenceReconnecting,
     presenceReconnectGrace,
     presenceNow,
     setPresenceNow,
@@ -1607,41 +1601,6 @@ export function BuzzChatSurface({
   // kind:30078 is the sole delivery-availability truth. Transcript/activity
   // events can describe work, but they never mint or renew availability.
   const agentPresences = heartbeatPresences;
-  const onlineAgentCount = roomAgents.filter((agent) =>
-    isAgentPresenceOnlineWithReconnectGrace(
-      agentPresences[agent.pubkey],
-      presenceNow,
-      presenceReconnectGrace[agent.pubkey],
-    ),
-  ).length;
-  // One flat liveness verdict per agent pubkey for the transcript's byline
-  // rings. renderItem previously read the three raw inputs directly, so every
-  // presence update and every streamed batch recreated the callback and rebuilt
-  // every visible ledger row; a boolean record only changes identity through
-  // `useStable` when a verdict genuinely flips.
-  const speakerPresenceKeys = useMemo(
-    () => [
-      ...new Set([
-        ...roomAgents.map((agent) => agent.pubkey),
-        ...Object.keys(agentPresences),
-        ...Object.keys(presenceReconnectGrace),
-        ...agentByPubkey.keys(),
-      ]),
-    ],
-    [agentByPubkey, agentPresences, presenceReconnectGrace, roomAgents],
-  );
-  const rawSpeakerOnline = useMemo(
-    () => onlineVerdicts(agentPresences, speakerPresenceKeys, presenceNow, presenceReconnectGrace),
-    [agentPresences, presenceNow, presenceReconnectGrace, speakerPresenceKeys],
-  );
-  const speakerOnline = useStable(rawSpeakerOnline, shallowEqualRecord);
-  const knownAgentPresenceCount = roomAgents.filter((agent) => agentPresences[agent.pubkey]).length;
-  const agentsOffline = isAgentOfflineAfterPresenceResolved(
-    presenceResolved,
-    roomAgents.length,
-    knownAgentPresenceCount,
-    onlineAgentCount,
-  );
   const roomMemberByPubkey = useMemo(
     () =>
       new Map<string, (typeof roomMembers)[number]>(
@@ -2090,13 +2049,6 @@ export function BuzzChatSurface({
   const canonicalCornerItem = isCorner && roomSurface
     ? cornerDisplayFromRoomView({ ...roomSurface, latestAgentTurns: activeAgentTurns })
     : undefined;
-  const sessionState = !isCorner
-    ? 'idle'
-    : canonicalCornerItem?.state === 'working'
-      ? 'working'
-      : canonicalCornerItem?.state === 'archived'
-        ? 'done'
-        : 'idle';
   const cornerHeaderDisplay = cornerDisplayState(
     canonicalCornerItem ?? {
       state: isArchived ? 'archived' : 'waiting',
@@ -2111,9 +2063,8 @@ export function BuzzChatSurface({
     () =>
       selectWorkingAgents({
         activeTurnPubkeys: activeAgentTurns.map((turn) => turn.agentPubkey),
-        workingCornerAgentPubkey: sessionState === 'working' ? cornerAgentPubkey : null,
       }),
-    [activeAgentTurns, cornerAgentPubkey, sessionState],
+    [activeAgentTurns],
   );
   const speakerWorking = useStable(rawSpeakerWorking, shallowEqualRecord);
   // The corner header names the corner's OWN agent — the server projection's
@@ -3035,17 +2986,15 @@ export function BuzzChatSurface({
 
   // C97: the fixed chrome below the inverted list changes independently of
   // transcript rows. A send resets the composer's height while retaining the
-  // keyboard and an offline helper mounts its hint; native layout can update
-  // the pinned ref before an effect runs, preserving the old offset as an
-  // empty gap. Capture the verdict in render.
+  // keyboard; native layout can update the pinned ref before an effect runs,
+  // preserving the old offset as an empty gap. Capture the verdict in render.
   //
   // The phone turn line is NOT part of that chrome any more. It is absolute,
   // anchored to the composer's top edge (`room-bottom-chrome`), so it takes
   // no height out of the list whether or not an agent is working and the
   // newest row never moves when it comes or goes.
-  // `bottomChromeLayoutKey` still carries turn/no-turn, but that half is now
-  // a no-op re-pin; the follow it drives is the real thing only for the
-  // offline hint, which still mounts in flow.
+  // `bottomChromeLayoutKey` still carries turn/no-turn, but that is now a
+  // no-op re-pin.
   const keyboardHeight = useKeyboardState((state) => state.height);
   const { progress: keyboardProgress } = useReanimatedKeyboardAnimation();
   const composerBottomInsetStyle = useAnimatedStyle(
@@ -3055,10 +3004,7 @@ export function BuzzChatSurface({
     [insets.bottom],
   );
   const composerFootprint = composerHeight + keyboardHeight;
-  const bottomChromeLayoutKey = [
-    composerAck ? 'turn' : 'no-turn',
-    agentsOffline ? 'offline' : 'online',
-  ].join(':');
+  const bottomChromeLayoutKey = composerAck ? 'turn' : 'no-turn';
   const composerLayoutFollow = useScrollFollowOnLayoutChange({
     footprint: composerFootprint,
     layoutKey: bottomChromeLayoutKey,
@@ -3655,13 +3601,11 @@ export function BuzzChatSurface({
     roomAgents,
     cacheViewerPubkey,
     replyTarget,
-    agentsOffline,
     roomRepoCandidates.length,
     roomRepository,
     cornerAgentPubkey,
     agentPresences,
     presenceNow,
-    presenceResolved,
     presenceReconnectGrace,
     agentByPubkey,
     roomRepositoryResolved,
@@ -5764,7 +5708,6 @@ export function BuzzChatSurface({
               !isArchived && {
                 paddingTop: phoneTranscriptTailPadding({
                   turnChromeVisible: Boolean(composerAck || settledTurn),
-                  pushedChromeVisible: agentsOffline,
                 }),
               },
             ]}
@@ -5969,9 +5912,6 @@ export function BuzzChatSurface({
                 typing in. The Room's corners door in the header is the one way
                 in; the corner's own state is read there, in the corners list,
                 and on the Room-list row. */}
-              {agentsOffline && (
-                <AgentOfflineHint state={presenceReconnecting ? 'reconnecting' : 'offline'} />
-              )}
               {isReadOnlyDirectMessage ? (
                 <View style={[styles.archivedInputBar, readOnlyFooterInset]}>
                   <Text style={styles.archivedInputText}>
@@ -6490,7 +6430,6 @@ export function BuzzChatSurface({
         onClose={closeRoster}
         onRemove={handleRemoveRoomMember}
         onOpenProfile={(participant) => handleOpenProfile(participant.pubkey, participant.kind === 'agent' ? 'agent' : 'human')}
-        onlineByPubkey={speakerOnline}
         workingByPubkey={speakerWorking}
         parentChannelId={parentChannelId ?? null}
         personProfileByPubkey={personProfileByPubkey}

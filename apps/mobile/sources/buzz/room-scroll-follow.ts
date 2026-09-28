@@ -44,14 +44,11 @@ const PHONE_TRANSCRIPT_BASE_TAIL_PADDING = 18 + COMPOSER_TOP_GAP;
  * transcript already leaves below its newest message (`room-bottom-chrome`),
  * so it takes no height from the list and this padding has no part to play.
  *
- * That is why the chrome flags are still taken and still ignored. The
+ * That is why the chrome flag is still taken and still ignored. The
  * signature exists to fail the regression: `room-scroll-follow.test.ts` reads
- * the parameters back to prove no caller has started keying padding on them.
+ * the parameter back to prove no caller has started keying padding on it.
  */
-export function phoneTranscriptTailPadding(_chrome: {
-  turnChromeVisible: boolean;
-  pushedChromeVisible: boolean;
-}): number {
+export function phoneTranscriptTailPadding(_chrome: { turnChromeVisible: boolean }): number {
   return PHONE_TRANSCRIPT_BASE_TAIL_PADDING;
 }
 

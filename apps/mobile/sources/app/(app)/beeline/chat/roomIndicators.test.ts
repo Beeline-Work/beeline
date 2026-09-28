@@ -70,6 +70,13 @@ describe('the turn indicator is the Room’s only line above the composer', () =
     );
   });
 
+  it('rings only the agent with the live turn, never an idle corner owner', () => {
+    // A reviewer's turn in a corner makes the corner "working", but the
+    // corner's own agent is idle: its byline must stay unringed.
+    const ring = memoBody('rawSpeakerWorking');
+    expect(ring).not.toMatch(/corner|sessionState/i);
+  });
+
   it('runs the same thinking indicator for an active turn inside a corner', () => {
     const turn = memoBody('composerAck');
     expect(turn).not.toContain('sessionState');

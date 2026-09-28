@@ -79,24 +79,17 @@ describe('working agents (the gold ring)', () => {
     });
   });
 
-  it('lights the administering agent of a working corner', () => {
-    expect(selectWorkingAgents({ workingCornerAgentPubkey: 'candy' })).toEqual({ candy: true });
-  });
-
-  it('lights nobody when no turn and no corner is live, whatever presence says', () => {
+  it('lights nobody when no turn is live, whatever presence says', () => {
     expect(selectWorkingAgents({})).toEqual({});
-    expect(selectWorkingAgents({ activeTurnPubkeys: [], workingCornerAgentPubkey: null })).toEqual(
-      {},
-    );
+    expect(selectWorkingAgents({ activeTurnPubkeys: [] })).toEqual({});
   });
 
   it('never takes a presence lease as proof', () => {
     // The input shape has no presence field; a caller cannot feed one.
     const keys: (keyof Parameters<typeof selectWorkingAgents>[0])[] = [
       'activeTurnPubkeys',
-      'workingCornerAgentPubkey',
     ];
-    expect(keys).toHaveLength(2);
+    expect(keys).toHaveLength(1);
   });
 });
 

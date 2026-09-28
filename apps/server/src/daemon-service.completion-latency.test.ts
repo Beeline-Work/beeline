@@ -319,7 +319,7 @@ describe('agent reply completion latency', () => {
       ).rows,
     ).toEqual([
       {
-        text: '@agent could not answer · temporary failure. Restarting her and resending your message.',
+        text: '@agent could not answer · temporary failure. Restarting the agent and resending your message.',
         state: 'failed',
       },
     ]);

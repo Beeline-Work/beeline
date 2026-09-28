@@ -276,8 +276,10 @@ typing in — chrome in the one place the product asks for attention. It is
 retired, not dimmed: the door in the header is the way in, the corners list
 answers "what is running", and the Room-list row's own state mark answers it
 from outside. The turn line is now the only thing that hangs above the
-composer. With no offline hint present, it hangs directly on the composer
-with no gap.
+composer, and it hangs directly on the composer with no gap. There is no
+agent-offline footer: presence ages out while an idle agent waits on its
+socket, so it cannot say an agent is down. A mention nobody picks up is
+inscribed in the transcript instead.
 
 **A turn in progress and an open corner are two different facts.** A question
 being answered is transient and has nowhere to go, so it shows as one line with

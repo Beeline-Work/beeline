@@ -502,6 +502,7 @@ export default function TrayScreen() {
         backAccessibilityLabel="Back to Rooms"
         eyebrow={workspaceName ?? 'Workspace'}
         onBack={desktop ? undefined : () => router.back()}
+        prominent
         testID="tray-header"
         title="Tray"
         trailing={`${needs.length} NEED YOU · ${bookmarks.length} SAVED`}

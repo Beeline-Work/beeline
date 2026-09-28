@@ -4,7 +4,7 @@
   "app/(app)/beeline/chat/_chat-surface.tsx": 45,
   "app/(app)/beeline/onboarding.tsx": 16,
   "app/(app)/beeline/settings/schedules.tsx": 5,
-  "app/(app)/changelog.tsx": 5,
+  "app/(app)/changelog.tsx": 2,
   "app/(app)/index.tsx": 2,
   "app/(app)/settings/language.tsx": 1,
   "app/(app)/text-selection.tsx": 7,

@@ -31,7 +31,7 @@ describe('the one page header', () => {
     expect(pageHeader).toContain('theme.buzz.type.bodyStrong');
     expect(pageHeader).toContain('theme.buzz.type.hero');
     expect(pageHeader).toContain('theme.buzz.type.meta');
-    expect(pageHeader).toContain('paddingHorizontal: 12');
+    expect(pageHeader).toContain('paddingHorizontal: theme.buzz.space.sm');
   });
 
   it('is the one header Bookmarks and Workbench render', () => {

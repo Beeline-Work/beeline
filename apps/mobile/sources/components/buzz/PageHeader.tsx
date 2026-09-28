@@ -14,6 +14,10 @@ export interface PageHeaderProps {
   prominent?: boolean;
   /** Count aligned with the title block's trailing edge. */
   trailing?: string;
+  /** What a screen reader says for `trailing`, when the bare text is not enough. */
+  trailingAccessibilityLabel?: string;
+  /** One control after the trailing text, such as a page's add button. */
+  action?: React.ReactNode;
   /** Renders the back control when provided. */
   onBack?: () => void;
   backAccessibilityLabel?: string;
@@ -34,6 +38,8 @@ export function PageHeader({
   eyebrow,
   prominent = false,
   trailing,
+  trailingAccessibilityLabel,
+  action,
   onBack,
   backAccessibilityLabel = 'Back',
   backTestID,
@@ -63,12 +69,21 @@ export function PageHeader({
             {eyebrow}
           </Text>
         ) : null}
-        <Text style={[styles.headerTitle, prominent && styles.headerHero]} testID={titleTestID}>
+        <Text
+          accessibilityRole="header"
+          style={[styles.headerTitle, prominent && styles.headerHero]}
+          testID={titleTestID}
+        >
           {title}
         </Text>
         {meta ? <Text style={styles.headerMeta}>{meta}</Text> : null}
       </View>
-      {trailing ? <Text style={styles.headerTrailing}>{trailing}</Text> : null}
+      {trailing ? (
+        <Text accessibilityLabel={trailingAccessibilityLabel} style={styles.headerTrailing}>
+          {trailing}
+        </Text>
+      ) : null}
+      {action}
     </View>
   );
 }
@@ -80,7 +95,8 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'center',
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.buzz.border,
-    paddingHorizontal: 12,
+    // The Corners page's inset, which every section page now shares.
+    paddingHorizontal: theme.buzz.space.sm,
   },
   headerWithEyebrow: {},
   back: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
@@ -89,5 +105,12 @@ const styles = StyleSheet.create((theme) => ({
   headerTitle: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
   headerHero: { ...theme.buzz.type.hero },
   headerMeta: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet, marginTop: 2 },
-  headerTrailing: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet, marginLeft: 12 },
+  // Reserved and right-aligned so a count ends at the same x for 9 and for 10.
+  headerTrailing: {
+    ...theme.buzz.type.meta,
+    color: theme.buzz.textMuted,
+    minWidth: theme.buzz.space.lg,
+    paddingHorizontal: theme.buzz.space.sm,
+    textAlign: 'right',
+  },
 }));

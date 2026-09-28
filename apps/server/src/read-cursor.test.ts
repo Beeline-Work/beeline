@@ -16,10 +16,8 @@ import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
  * phone writes, the count served beside it, mark-unread putting it back, and
  * the one definition of unread that the cursor and the deck now share.
  *
- * The server STORES readership; it does not do work for it. A read mark
- * therefore costs exactly one write and publishes nothing — no live frame, no
- * invalidation, no refetch on anybody's device. The socket assertions below
- * are what hold that line.
+ * Read marks are reader-scoped live invalidations so another device can
+ * reconcile its dot without notifying other Room members.
  */
 const OWNER = createHash('sha256').update('github:owner').digest('hex');
 const OTHER = createHash('sha256').update('github:recipient').digest('hex');
@@ -128,11 +126,40 @@ describe('the read cursor over the live phone surface', () => {
   const deckRow = async (token = ownerToken) => {
     const view = (await (
       await request(`/v1/phone/workspaces/${WORKSPACE}/chats`, 'GET', undefined, token)
-    ).json()) as { chats: Array<{ room: { id: string }; unread: boolean }> };
+    ).json()) as { chats: Array<{ room: { id: string }; unread: boolean; latestMessage?: { id: string; text: string; createdAt: number } }> };
     return view.chats.find((chat) => chat.room.id === ROOM)!;
   };
 
   const settle = () => new Promise((resolve) => setTimeout(resolve, 150));
+
+  it('chooses the newest visible preview and unread row after newer rows are hidden or deleted', async () => {
+    const visible = MESSAGES[3]!.id;
+    expect((await deckRow()).latestMessage?.id).toBe(visible);
+    await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId: visible });
+    expect((await deckRow()).unread).toBe(false);
+    const deleted = 'de'.padEnd(64, 'e');
+    const hidden = 'fa'.padEnd(64, 'a');
+    const activity = 'ac'.padEnd(64, 'c');
+    for (const [id, presentation, cardType, at] of [
+      [deleted, 'message', null, '2026-09-12 01:00:04.000+00'],
+      [hidden, 'system', 'grant-decision', '2026-09-12 01:00:05.000+00'],
+      [activity, 'activity', null, '2026-09-12 01:00:06.000+00'],
+    ] as const) {
+      await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,created_at)
+         VALUES($1,$2,$3,'hidden', $4,$5,$6)`,
+        [id, ROOM, AGENT, presentation, cardType, at],
+      );
+    }
+    expect((await deckRow()).latestMessage?.id).toBe(deleted);
+    expect((await deckRow()).unread).toBe(true);
+    await database.query(`UPDATE messages SET deleted_at=now(),text='' WHERE id=$1`, [deleted]);
+    const delta = await phone.readLiveDelta(ROOM, OWNER, { type: 'message', messageId: deleted });
+    expect(delta).toMatchObject({ type: 'message-delta', message: { id: deleted, deleted: true } });
+    expect((await deckRow()).latestMessage?.id).toBe(visible);
+    expect((await deckRow()).unread).toBe(false);
+    expect((await cursor())?.unreadCount).toBe(0);
+  });
 
   it('serves the count beside the boundary, and takes it back on mark-unread', async () => {
     expect(await cursor()).toEqual({
@@ -213,11 +240,11 @@ describe('the read cursor over the live phone surface', () => {
     expect((await cursor())?.unreadAgentTurnCount).toBe(0);
   });
 
-  it('costs a read mark nothing on the live lane — no frame, no invalidation', async () => {
-    // Two subscribed sockets: the writer's own, and another member's. A read
-    // mark must reach neither, because either would buy a full Room GET.
+  it('propagates read changes to this reader’s devices only', async () => {
+    // Two sockets for the reader plus another member. Every reader device
+    // receives a reconcile hint; the other member receives none.
     const sockets = await Promise.all(
-      [ownerToken, otherToken].map(async (token) => {
+      [ownerToken, ownerToken, otherToken].map(async (token) => {
         const socket = new WebSocket(`${origin.replace('http', 'ws')}/v1/phone/live`, [
           `bearer.${token}`,
         ]);
@@ -251,8 +278,9 @@ describe('the read cursor over the live phone surface', () => {
       await request(`/v1/phone/rooms/${ROOM}/unread`, 'POST', { messageId: MESSAGES[0]!.id });
       await settle();
 
-      // Nothing at all: not a delta, not an invalidation, on either socket.
-      expect(sockets.map((entry) => entry.frames)).toEqual([[], []]);
+      expect(sockets[0]!.frames.some((frame: any) => frame.type === 'invalidate')).toBe(true);
+      expect(sockets[1]!.frames.some((frame: any) => frame.type === 'invalidate')).toBe(true);
+      expect(sockets[2]!.frames).toEqual([]);
     } finally {
       for (const entry of sockets) entry.socket.close();
     }

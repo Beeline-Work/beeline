@@ -81,6 +81,12 @@ BEGIN
         'messageId', COALESCE(NEW.id, OLD.id),
         'agentId', COALESCE(NEW.author_id, OLD.author_id)
       );
+    WHEN 'room_read_marks' THEN
+      payload = jsonb_build_object(
+        'table', TG_TABLE_NAME, 'operation', TG_OP,
+        'roomId', COALESCE(NEW.room_id, OLD.room_id),
+        'identityId', COALESCE(NEW.identity_id, OLD.identity_id)
+      );
     WHEN 'live_outputs' THEN
       payload = jsonb_build_object(
         'table', TG_TABLE_NAME, 'operation', TG_OP,
@@ -219,7 +225,7 @@ DECLARE table_name text;
 BEGIN
   FOREACH table_name IN ARRAY ARRAY[
     'messages', 'live_outputs', 'agent_turns', 'rooms', 'memberships',
-    'corner_facts', 'permission_authority',
+    'corner_facts', 'permission_authority', 'room_read_marks',
     'agent_grants', 'agent_schedules', 'agent_commands',
     'institutional_memory_jobs', 'github_installations', 'github_repositories',
     'registry_mcp_oauth_attempts'
@@ -746,6 +752,9 @@ export class PostgresLiveListener {
       ...(payload.table === 'agent_commands' ? { targetAgentId: payload.agentId } : {}),
       ...(payload.table === 'memberships' && payload.identityId
         ? { targetAgentId: payload.identityId }
+        : {}),
+      ...(payload.table === 'room_read_marks' && payload.identityId
+        ? { readerId: payload.identityId }
         : {}),
       ...(payload.parentRoomId ? { parentRoomId: payload.parentRoomId } : {}),
       ...(payload.openedBy ? { openedBy: payload.openedBy } : {}),

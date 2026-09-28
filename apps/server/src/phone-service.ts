@@ -134,7 +134,7 @@ import {
   postRoomChoice,
   skipRoomChoice,
 } from './room-choice.js';
-import { unreadMessageSql, VIEWER_READ_CURSOR_SQL } from './read-cursor.js';
+import { unreadMessageSql, visibleChatMessageSql, VIEWER_READ_CURSOR_SQL } from './read-cursor.js';
 import {
   connectorCatalog,
   connectorDisplayName,
@@ -1194,16 +1194,15 @@ export class PhoneService {
               SELECT 1 FROM messages incoming
               WHERE incoming.room_id=r.id
                 AND incoming.author_id IS DISTINCT FROM $2
-                AND incoming.presentation IN ('message','system','card')
+                AND ${visibleChatMessageSql('incoming')}
                 AND incoming.created_at>dismissal.dismissed_at
             )
         )) closed
       FROM rooms r
       JOIN memberships member ON member.room_id=r.id AND member.identity_id=$2 AND member.removed_at IS NULL
       LEFT JOIN LATERAL (
-        SELECT * FROM messages
-        WHERE room_id=r.id AND presentation IN ('message','system','card')
-          AND ${hiddenWakeCardSql()}
+        SELECT * FROM messages message
+        WHERE message.room_id=r.id AND ${visibleChatMessageSql('message')}
         ORDER BY created_at DESC,id DESC LIMIT 1
       ) lm ON true
       LEFT JOIN identities li ON li.id=lm.author_id
@@ -3641,13 +3640,16 @@ export class PhoneService {
     );
     if (!message.rows[0] || !(await this.hasRoomAccess(roomId, viewerId)))
       throw new Error('message not found');
-    await this.database.query(
+    const written = await this.database.query(
       `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
       SELECT $1,$2,message.created_at,$3 FROM messages message WHERE message.id=$3 AND message.room_id=$1
       ON CONFLICT(room_id,identity_id) DO UPDATE SET message_created_at=EXCLUDED.message_created_at,message_id=EXCLUDED.message_id,updated_at=now()
       WHERE (EXCLUDED.message_created_at,EXCLUDED.message_id)>(room_read_marks.message_created_at,room_read_marks.message_id)`,
       [roomId, viewerId, messageIdValue],
     );
+    if (written.rowCount) {
+      this.live?.publish({ type: 'invalidate', roomId, reason: 'read-mark', readerId: viewerId });
+    }
   }
 
   /**
@@ -3687,8 +3689,7 @@ export class PhoneService {
         `SELECT earlier.id,earlier.created_at FROM messages target
          JOIN messages earlier ON earlier.room_id=target.room_id
            AND (earlier.created_at,earlier.id)<(target.created_at,target.id)
-           AND earlier.presentation<>'activity'
-           AND ${hiddenWakeCardSql('earlier')}
+           AND ${visibleChatMessageSql('earlier')}
          WHERE target.id=$1 AND target.room_id=$2
          ORDER BY earlier.created_at DESC,earlier.id DESC LIMIT 1`,
         [messageIdValue, roomId],
@@ -3708,6 +3709,7 @@ export class PhoneService {
         viewerId,
       ]);
     }
+    this.live?.publish({ type: 'invalidate', roomId, reason: 'read-mark', readerId: viewerId });
   }
 
   async uploadMedia(

@@ -5,7 +5,7 @@ import {
   DAEMON_OPERATION_NAMES,
   CORNER_WAKE_TIMEOUT_MS,
 } from './daemon-service.js';
-import { CORNER_WAKE_MIN_INTERVAL_MS } from './corner-wake.js';
+import { CORNER_WAKE_MIN_INTERVAL_MS, wakesCorner } from './corner-wake.js';
 import { LiveHub, type LiveEvent } from './live.js';
 
 const AGENT_ID = '11'.repeat(32);
@@ -28,6 +28,10 @@ function memberDatabase(): SqlDatabase {
 }
 
 describe('corner wake (waitForCornerWake)', () => {
+  it('does not wake a helper for another device’s read mark', () => {
+    expect(wakesCorner({ type: 'invalidate', roomId: CORNER_ID,
+      reason: 'read-mark', readerId: 'human' }, AGENT_ID)).toBe(false);
+  });
   it('resolves as soon as the corner has a live event, not after the timeout', async () => {
     const live = new LiveHub();
     const daemon = new DaemonService(memberDatabase(), live);

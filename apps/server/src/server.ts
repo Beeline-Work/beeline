@@ -825,6 +825,7 @@ export function createBeelineServer(options: ServerOptions): Server {
             releases.set(
               roomId,
               options.live.subscribe(roomId, (event) => {
+                if (event.type === 'invalidate' && event.readerId && event.readerId !== principal.identityId) return;
                 if (event.type === 'draft') streamed.add(event.agentId);
                 if (event.type !== 'invalidate') {
                   if (client.readyState === client.OPEN) sendLive(JSON.stringify(event));

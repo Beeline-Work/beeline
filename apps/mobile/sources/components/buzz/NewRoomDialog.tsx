@@ -367,7 +367,7 @@ const styles = StyleSheet.create((theme) => {
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: hull.border,
     },
-    cancelAction: { minHeight: 44, flex: 1, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: hull.buttonSecondaryText, borderRadius: hull.radius },
+    cancelAction: { minHeight: 44, flex: 1, justifyContent: 'center', alignItems: 'center' },
     cancelText: { ...Typography.default(), ...hull.type.body, color: hull.buttonSecondaryText },
     primaryAction: {
       minHeight: 44,

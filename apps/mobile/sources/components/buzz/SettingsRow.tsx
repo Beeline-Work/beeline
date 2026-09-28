@@ -14,7 +14,7 @@ type SettingsRowTrailingPress = {
 };
 
 /** The compact bordered action control on the trailing axis (board
- *  revision 2's `.cbtn`): one word, brass, boxed — the Connect button a
+ *  revision 2's `.cbtn`): one word, ink, boxed — the Connect button a
  *  tool row carries while it is not connected. Excludes `value`/`action`. */
 export type SettingsRowActionControl = {
   accessibilityLabel?: string;

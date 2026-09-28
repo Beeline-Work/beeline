@@ -299,6 +299,7 @@ async function main() {
     databaseBudget: budget,
     enrichmentDatabase,
     jobsDatabase,
+    databasePools: { app: database, enrichment: enrichmentDatabase, diagnostics: healthDatabase, jobs: jobsDatabase },
     googleOAuth,
     registryMcpOAuth,
     healthDatabase,

@@ -118,6 +118,7 @@ export interface SqlDatabase {
   ): Promise<QueryResult<Row>>;
   transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T>;
   poolCounts?(): { total: number; idle: number; waiting: number };
+  poolTelemetry?(): PoolTelemetry;
   /** Age of the oldest query this process still has in flight, or null when it
    *  has none. Measured here rather than read from `pg_stat_activity`, which
    *  needs `pg_read_all_stats`: without it Postgres blanks `state` on every
@@ -130,6 +131,21 @@ export interface SqlDatabase {
    * Live subscribers use it to retry discovery without closing their socket. */
   onRecovery?(listener: () => void): () => void;
 }
+
+export interface PoolTelemetry {
+  checkouts: number;
+  checkoutFailures: number;
+  statementTimeouts: number;
+  deadlocks: number;
+  waitMs: number;
+  maxWaitMs: number;
+  activeMs: number;
+  maxActiveMs: number;
+  /** Cumulative checkout waits at or below 1, 10, 100, 500, 2000 ms, then above. */
+  waitBuckets: readonly number[];
+}
+
+const WAIT_BUCKETS_MS = [1, 10, 100, 500, 2_000];
 
 export interface ClosableDatabase extends SqlDatabase {
   close(): Promise<void>;
@@ -195,6 +211,28 @@ export class PostgresDatabase implements ClosableDatabase {
   readonly #recoveryListeners = new Set<() => void>();
   #unavailable = false;
   #nextTicket = 0;
+  readonly #telemetry = {
+    checkouts: 0, checkoutFailures: 0, statementTimeouts: 0, deadlocks: 0,
+    waitMs: 0, maxWaitMs: 0,
+    activeMs: 0, maxActiveMs: 0, waitBuckets: [0, 0, 0, 0, 0, 0],
+  };
+
+  poolTelemetry(): PoolTelemetry {
+    return { ...this.#telemetry, waitBuckets: [...this.#telemetry.waitBuckets] };
+  }
+
+  #recordWait(durationMs: number): void {
+    this.#telemetry.checkouts++;
+    this.#telemetry.waitMs += durationMs;
+    this.#telemetry.maxWaitMs = Math.max(this.#telemetry.maxWaitMs, durationMs);
+    const bucket = WAIT_BUCKETS_MS.findIndex((bound) => durationMs <= bound);
+    this.#telemetry.waitBuckets[bucket < 0 ? WAIT_BUCKETS_MS.length : bucket]!++;
+  }
+
+  #recordActive(durationMs: number): void {
+    this.#telemetry.activeMs += durationMs;
+    this.#telemetry.maxActiveMs = Math.max(this.#telemetry.maxActiveMs, durationMs);
+  }
 
   onRecovery(listener: () => void): () => void {
     this.#recoveryListeners.add(listener);
@@ -203,6 +241,8 @@ export class PostgresDatabase implements ClosableDatabase {
 
   #noteFailure(error: unknown): void {
     const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
+    if (code === '57014') this.#telemetry.statementTimeouts++;
+    if (code === '40P01') this.#telemetry.deadlocks++;
     if (isTransientDatabaseConnectionError(error) || code === '57014' || code === '53300')
       this.#unavailable = true;
   }
@@ -276,9 +316,17 @@ export class PostgresDatabase implements ClosableDatabase {
   ): Promise<QueryResult<Row>> {
     try {
       const raw = await this.#timed(sql, () =>
-        this.#retryTransientConnection(() =>
-          values.length ? this.#pool.query<Row>(sql, values) : this.#pool.query<Row>(sql),
-        ),
+        this.#retryTransientConnection(async () => {
+          const { client, release } = await this.#connectCheckedOut();
+          try {
+            const result = values.length ? await client.query<Row>(sql, values) : await client.query<Row>(sql);
+            release();
+            return result;
+          } catch (error) {
+            release(error instanceof Error ? error : new Error('query failed'));
+            throw error;
+          }
+        }),
       );
       this.#noteSuccess();
       const result = Array.isArray(raw) ? raw.at(-1) : raw;
@@ -298,7 +346,16 @@ export class PostgresDatabase implements ClosableDatabase {
     client: PoolClient;
     release: (error?: Error) => void;
   }> {
-    const client = await this.#pool.connect();
+    const startedAt = performance.now();
+    let client: PoolClient;
+    try {
+      client = await this.#pool.connect();
+    } catch (error) {
+      this.#telemetry.checkoutFailures++;
+      throw error;
+    }
+    this.#recordWait(performance.now() - startedAt);
+    const acquiredAt = performance.now();
     let released = false;
     const onError = (error: Error) => {
       console.error('postgres checked-out client error', error);
@@ -307,6 +364,7 @@ export class PostgresDatabase implements ClosableDatabase {
     const release = (error?: Error) => {
       if (released) return;
       released = true;
+      this.#recordActive(performance.now() - acquiredAt);
       client.removeListener('error', onError);
       try {
         client.release(error);
@@ -343,6 +401,7 @@ export class PostgresDatabase implements ClosableDatabase {
       await client.query('COMMIT');
       return result;
     } catch (error) {
+      this.#noteFailure(error);
       if (isTransientDatabaseConnectionError(error))
         releaseError = error instanceof Error ? error : new Error('transaction connection failed');
       try {
@@ -360,13 +419,26 @@ export class PostgresDatabase implements ClosableDatabase {
 
   async connectDedicated(): Promise<PoolClient> {
     return this.#retryTransientConnection(async () => {
-      const client = await this.#pool.connect();
+      const startedAt = performance.now();
+      let client: PoolClient;
+      try {
+        client = await this.#pool.connect();
+      } catch (error) {
+        this.#telemetry.checkoutFailures++;
+        throw error;
+      }
+      this.#recordWait(performance.now() - startedAt);
+      const acquiredAt = performance.now();
       const onError = (error: Error) => {
         console.error('dedicated postgres client error', error);
       };
       client.on('error', onError);
       const release = client.release.bind(client);
+      let released = false;
       client.release = ((destroy?: boolean | Error) => {
+        if (released) return;
+        released = true;
+        this.#recordActive(performance.now() - acquiredAt);
         client.removeListener('error', onError);
         release(destroy);
       }) as PoolClient['release'];

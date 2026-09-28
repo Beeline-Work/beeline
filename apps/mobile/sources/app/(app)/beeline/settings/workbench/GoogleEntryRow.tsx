@@ -57,6 +57,9 @@ export function GoogleEntryRow({
       <SettingsRow
         action={canConnect ? 'Connect' : undefined}
         description={available ? errorText : 'Google connection is unavailable on this Beeline server'}
+        descriptionDetail={available && entry.status !== 'connected'
+          ? 'Google may show an unverified-app warning. Choose Advanced, then Go to Beeline to continue.'
+          : undefined}
         descriptionTone={errorText ? 'danger' : undefined}
         leading={
           <ServiceMark

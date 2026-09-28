@@ -23,6 +23,7 @@ import type {
 } from './wallet.js';
 import type {
   ConnectionDetailView,
+  CancelGoogleSignInInput,
   ConnectWorkbenchAppInput,
   ConnectWorkbenchAppResult,
   DisconnectWorkbenchAppInput,
@@ -144,6 +145,7 @@ export type PhoneOperationMap = {
   reportRunningUpdate: { input: RunningUpdateInput; output: void };
   readWorkbench: { input: ReadWorkbenchInput; output: WorkbenchView };
   pairConnector: { input: PairConnectorInput; output: PairConnectorResult };
+  cancelGoogleSignIn: { input: CancelGoogleSignInInput; output: { cancelled: boolean } };
   unpairConnector: { input: UnpairConnectorInput; output: void };
   /** The one front door for connecting an app from the Workbench. */
   connectWorkbenchApp: { input: ConnectWorkbenchAppInput; output: ConnectWorkbenchAppResult };

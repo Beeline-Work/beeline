@@ -3392,6 +3392,9 @@ export class PhoneService {
           input as Input<'pairConnector'>,
           viewerId,
         )) as Output<Name>;
+      case 'cancelGoogleSignIn':
+        return { cancelled: await this.googleOAuth?.cancelConnector(
+          (input as Input<'cancelGoogleSignIn'>).connectorId, viewerId) ?? false } as Output<Name>;
       case 'unpairConnector':
         await this.unpairConnector(input as Input<'unpairConnector'>, viewerId);
         return undefined as Output<Name>;
@@ -6788,6 +6791,7 @@ export class PhoneService {
     input: Input<'readWorkbench'>,
     viewerId: string,
   ): Promise<Output<'readWorkbench'>> {
+    await this.googleOAuth?.expirePending(viewerId);
     if (input.refreshVault) {
       const refreshes = await this.database.transaction(async (database) => {
         const rows = (
@@ -8277,6 +8281,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'reportRunningUpdate',
   'readWorkbench',
   'pairConnector',
+  'cancelGoogleSignIn',
   'unpairConnector',
   'connectWorkbenchApp',
   'disconnectWorkbenchApp',

@@ -15,6 +15,7 @@ const readInstallState = vi.hoisted(() => vi.fn(async () => null as null | {
   connected: boolean;
   signIn?: { method: 'oauth'; url: string };
 }));
+const cancelGoogleSignIn = vi.hoisted(() => vi.fn(async () => true));
 
 vi.mock('expo-router', () => ({
   router: { back: vi.fn(), replace: vi.fn() },
@@ -22,6 +23,7 @@ vi.mock('expo-router', () => ({
 }));
 
 vi.mock('expo-web-browser', () => ({
+  WebBrowserResultType: { CANCEL: 'cancel', DISMISS: 'dismiss' },
   openAuthSessionAsync: vi.fn(),
   openBrowserAsync: vi.fn(),
 }));
@@ -65,7 +67,7 @@ vi.mock('@/components/buzz/sandbox-webview', async () => {
 });
 
 vi.mock('@/buzz/workbench-source', () => ({
-  getWorkbenchSource: () => ({ readInstallState }),
+  getWorkbenchSource: () => ({ readInstallState, cancelGoogleSignIn }),
 }));
 
 import ConnectorSignInScreen from './connect-signin';
@@ -199,10 +201,42 @@ describe('ConnectorSignInScreen', () => {
     let renderer!: ReactTestRenderer;
     await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); });
     expect(renderer.root.findAllByType('WebView')).toHaveLength(0);
+    expect(renderer.root.findAllByType('Text').some((node: any) =>
+      String(node.props.children).includes('Choose Advanced, then Go to Beeline'))).toBe(true);
     await act(async () => renderer.root.findByProps({ testID: 'signin-open-external' }).props.onPress());
     expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith(searchParams.url);
     await act(async () => renderer.unmount());
     searchParams.connectorName = 'Tailscale';
+    searchParams.url = 'https://login.tailscale.com/a/test';
+  });
+
+  it('cancels only the active Google attempt when the browser is closed', async () => {
+    searchParams.connectorName = 'Gmail';
+    searchParams.url = 'https://accounts.google.com/o/oauth2/v2/auth?state=cancelled';
+    vi.mocked(WebBrowser.openBrowserAsync).mockResolvedValueOnce({ type: WebBrowser.WebBrowserResultType.DISMISS });
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); });
+    await act(async () => renderer.root.findByProps({ testID: 'signin-open-external' }).props.onPress());
+    expect(cancelGoogleSignIn).toHaveBeenCalledWith({ connectorId: 'connector-row-1' });
+    expect(router.back).toHaveBeenCalled();
+    await act(async () => renderer.unmount());
+    vi.mocked(router.back).mockClear();
+    cancelGoogleSignIn.mockClear();
+    searchParams.connectorName = 'Tailscale';
+    searchParams.url = 'https://login.tailscale.com/a/test';
+  });
+
+  it('keeps polling when Google already completed the attempt before the browser closed', async () => {
+    searchParams.url = 'https://accounts.google.com/o/oauth2/v2/auth?state=completed';
+    cancelGoogleSignIn.mockResolvedValueOnce(false);
+    vi.mocked(WebBrowser.openBrowserAsync).mockResolvedValueOnce({ type: WebBrowser.WebBrowserResultType.DISMISS });
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); });
+    await act(async () => renderer.root.findByProps({ testID: 'signin-open-external' }).props.onPress());
+    expect(cancelGoogleSignIn).toHaveBeenCalledWith({ connectorId: 'connector-row-1' });
+    expect(router.back).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
+    cancelGoogleSignIn.mockClear();
     searchParams.url = 'https://login.tailscale.com/a/test';
   });
 

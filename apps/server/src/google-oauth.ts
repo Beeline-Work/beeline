@@ -61,6 +61,26 @@ export class GoogleOAuth {
     return row.rowCount > 0;
   }
 
+  /** An abandoned browser never calls back. Retire only expired attempts owned
+   * by this Workbench viewer so the next read offers Connect again. */
+  async expirePending(ownerId: string): Promise<void> {
+    await this.database.query(
+      `WITH expired AS (
+         DELETE FROM google_oauth_attempts a
+         USING workspace_connectors c
+         WHERE a.connector_id=c.id AND c.owner_identity_id=$1
+           AND c.connector_type LIKE 'google-%' AND a.expires_at<=now()
+         RETURNING a.connector_id
+       )
+       UPDATE workspace_connectors c
+       SET status='error',status_error='Google sign-in expired; retry the connection',
+           status_steps='[{"label":"Google sign-in","status":"failed","reason":"Google sign-in expired; retry the connection"}]'::jsonb,
+           sign_in=NULL,updated_at=now()
+       FROM expired WHERE c.id=expired.connector_id AND c.status='installing'`,
+      [ownerId],
+    );
+  }
+
   private seal(grant: GoogleGrant): string {
     const iv = randomBytes(12);
     const cipher = createCipheriv('aes-256-gcm', this.key, iv);
@@ -76,20 +96,41 @@ export class GoogleOAuth {
   }
 
   async cancel(state: string): Promise<boolean> {
-    const claimed = await this.database.query<{ connector_id: string }>(
-      `DELETE FROM google_oauth_attempts WHERE state=$1 AND expires_at>now()
-       RETURNING connector_id`, [state]);
-    const connectorId = claimed.rows[0]?.connector_id;
-    if (!connectorId) return false;
-    await this.fail(connectorId, 'Google authorization was denied');
-    return true;
+    return this.database.transaction(async (database) => {
+      const claimed = await database.query<{ connector_id: string }>(
+        `DELETE FROM google_oauth_attempts WHERE state=$1 AND expires_at>now()
+         RETURNING connector_id`, [state]);
+      const connectorId = claimed.rows[0]?.connector_id;
+      if (!connectorId) return false;
+      await this.fail(connectorId, 'Google authorization was denied', database);
+      return true;
+    });
   }
 
-  private async fail(connectorId: string, reason: string): Promise<void> {
-    await this.database.query(
+  /** A person closed their own browser before Google returned. A completed
+   * exchange already consumed the attempt, so it is left untouched. */
+  async cancelConnector(connectorId: string, ownerId: string): Promise<boolean> {
+    return this.database.transaction(async (database) => {
+      const claimed = await database.query(
+        `DELETE FROM google_oauth_attempts a USING workspace_connectors c
+         WHERE a.connector_id=c.id AND c.id::text=$1 AND c.owner_identity_id=$2
+           AND c.connector_type LIKE 'google-%' AND c.status='installing'
+         RETURNING a.connector_id`,
+        [connectorId, ownerId],
+      );
+      if (!claimed.rowCount) return false;
+      await this.fail(connectorId, 'Google sign-in was cancelled; retry the connection', database);
+      return true;
+    });
+  }
+
+  private async fail(connectorId: string, reason: string,
+    database: SqlDatabase = this.database): Promise<void> {
+    await database.query(
       `UPDATE workspace_connectors SET status='error',status_error=$2,
          status_steps=$3::jsonb,sign_in=NULL,updated_at=now()
-       WHERE id=$1 AND status='installing'`,
+       WHERE id=$1 AND status='installing'
+         AND NOT EXISTS (SELECT 1 FROM google_oauth_attempts a WHERE a.connector_id=$1::uuid)`,
       [connectorId, reason, JSON.stringify([{ label: 'Google sign-in', status: 'failed', reason }])]);
   }
 

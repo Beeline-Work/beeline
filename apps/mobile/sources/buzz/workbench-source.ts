@@ -43,6 +43,7 @@ export interface WorkbenchSource {
     connectorId: string;
     helperId: string;
   }): Promise<{ connectorId: string }>;
+  cancelGoogleSignIn(input: { connectorId: string }): Promise<boolean>;
   readInstallState(input: {
     workspaceId: string;
     connectorId: string;
@@ -231,6 +232,10 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
       helperAgentId: input.helperId,
     });
     return { connectorId: result.connectorId };
+  }
+
+  async cancelGoogleSignIn(input: { connectorId: string }): Promise<boolean> {
+    return (await monolithPhoneOperation('cancelGoogleSignIn', input)).cancelled;
   }
 
   async readInstallState(input: {

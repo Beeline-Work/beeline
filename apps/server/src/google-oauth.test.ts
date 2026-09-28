@@ -67,6 +67,46 @@ it('pairs one product with its own OAuth sign-in and leaves siblings uninstalled
 });
 afterEach(async () => database.close());
 
+it('returns every Google tool to retryable Connect after denial, exchange failure, cancellation, and abandonment', async () => {
+  const transport = vi.fn(async () => new Response('{"error":"invalid_grant"}', { status: 400 })) as typeof fetch;
+  const oauth = new GoogleOAuth(database, 'client-id', 'client-secret',
+    'https://beeline.example', randomBytes(32).toString('base64'), transport);
+  const phone = new PhoneService(database, 'https://beeline.example', undefined,
+    undefined, undefined, false, database, undefined, oauth);
+  const kinds = ['google-gmail', 'google-calendar', 'google-drive', 'google-youtube'] as const;
+  for (const kind of kinds) {
+    for (const outcome of ['denied', 'failed', 'cancelled', 'abandoned'] as const) {
+      const paired = await phone.pairConnector({ workspaceId: WORKSPACE,
+        connectorType: kind, helperAgentId: HELPER }, OWNER);
+      const pending = await database.query<{ sign_in: { url: string } }>(
+        `SELECT sign_in FROM workspace_connectors WHERE id=$1`, [paired.connectorId]);
+      const state = new URL(pending.rows[0]!.sign_in.url).searchParams.get('state')!;
+      if (outcome === 'denied') expect(await oauth.cancel(state)).toBe(true);
+      else if (outcome === 'failed') expect(await oauth.complete(state, 'bad-code')).toBe(false);
+      else if (outcome === 'cancelled') {
+        expect(await oauth.cancelConnector(paired.connectorId, 'c'.repeat(64))).toBe(false);
+        expect(await oauth.cancelConnector(paired.connectorId, OWNER)).toBe(true);
+      } else {
+        await database.query(
+          `UPDATE google_oauth_attempts SET expires_at=now()-interval '1 second' WHERE state=$1`,
+          [state],
+        );
+      }
+      const view = await phone.readWorkbench({ workspaceId: WORKSPACE }, OWNER);
+      const row = view.connectors.find((entry) => entry.connectorId === paired.connectorId)!;
+      expect(row.status.status, `${kind} ${outcome}`).toBe('error');
+      expect(row.status.signIn, `${kind} ${outcome}`).toBeUndefined();
+      const retry = await phone.pairConnector({ workspaceId: WORKSPACE,
+        connectorType: kind, helperAgentId: HELPER }, OWNER);
+      expect(retry.connectorId).toBe(paired.connectorId);
+      const fresh = await database.query<{ sign_in: { url: string } }>(
+        `SELECT sign_in FROM workspace_connectors WHERE id=$1`, [paired.connectorId]);
+      expect(new URL(fresh.rows[0]!.sign_in.url).searchParams.get('state')).not.toBe(state);
+    }
+  }
+  expect(transport).toHaveBeenCalledTimes(kinds.length);
+});
+
 it('withholds credentials when a stored connector no longer belongs to its helper owner', async () => {
   const transport = vi.fn(async (url: string | URL | Request) =>
     new Response(JSON.stringify(String(url).endsWith('/token') ? {

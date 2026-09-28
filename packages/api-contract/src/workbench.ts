@@ -221,6 +221,9 @@ export type PairConnectorResult = {
   readonly connectorId: string;
   readonly status: ConnectorStatus;
 };
+export type CancelGoogleSignInInput = {
+  readonly connectorId: string;
+};
 /**
  * Workbench → Connect an app. The server resolves and records the route, then
  * hands the sign-in or sign-up to the chosen machine's agent, which completes

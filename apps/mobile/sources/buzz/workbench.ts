@@ -259,16 +259,16 @@ function googleEntryTools(
 }
 
 /** The Google group state across its four tool connectors: fully
- * connected → `connected`; any install in flight → `installing`; any tool
- * error → `error`; SOME connected (a top-up is available) → `repair`; none
+ * connected → `connected`; any tool error → `error`; any install in flight
+ * → `installing`; SOME connected (a top-up is available) → `repair`; none
  * connected → `connect`. */
 export type GoogleEntryState = 'connected' | 'installing' | 'error' | 'repair' | 'connect';
 
 export function googleEntryState(connectors: readonly WorkbenchConnector[]): GoogleEntryState {
   const tools = googleEntryTools(connectors);
   if (tools.length && tools.every((tool) => tool.status === 'connected')) return 'connected';
-  if (tools.some((tool) => tool.status === 'installing')) return 'installing';
   if (tools.some((tool) => tool.status === 'error')) return 'error';
+  if (tools.some((tool) => tool.status === 'installing')) return 'installing';
   if (tools.some((tool) => tool.status === 'connected')) return 'repair';
   return 'connect';
 }
@@ -317,13 +317,17 @@ export function googleToolRows(
   }));
 }
 
-/** The concrete Google tool type the single entry pairs first: the first
- * not-yet-connected tool in canonical order. When every tool is already
+/** The concrete Google tool type the single entry pairs first: a failed tool
+ * before other not-yet-connected tools, then canonical order. When every tool is already
  * connected it re-arms the first — the server re-arms only the requested
  * type and keeps its connected siblings' live grants. */
 export function resolveGoogleConnectTarget(
   connectors: readonly WorkbenchConnector[],
 ): GoogleToolId {
+  for (const id of GOOGLE_CONNECTOR_ORDER) {
+    const tool = connectors.find((connector) => connector.id === id);
+    if (tool?.status === 'error') return id;
+  }
   for (const id of GOOGLE_CONNECTOR_ORDER) {
     const tool = connectors.find((connector) => connector.id === id);
     if (tool && tool.status !== 'connected') return id;

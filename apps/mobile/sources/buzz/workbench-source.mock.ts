@@ -271,6 +271,8 @@ export class MockWorkbenchSource implements WorkbenchSource {
     return { connectorId };
   }
 
+  async cancelGoogleSignIn(): Promise<boolean> { return true; }
+
   async readInstallState(input: {
     workspaceId: string;
     connectorId: string;

@@ -1089,6 +1089,27 @@ describe('workbench connectors', () => {
     expect(kinds?.every((assignment) => assignment.kind === 'install')).toBe(true);
   });
 
+  it('lets only the Google connector owner cancel a pending browser and retry', async () => {
+    const paired = await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE, connectorType: 'google-gmail', helperAgentId: HELPER,
+    }) as { connectorId: string };
+    const input = { connectorId: paired.connectorId };
+    expect(await phoneOperation('cancelGoogleSignIn', input, recipientToken)).toEqual({ cancelled: false });
+    expect(await phoneOperation('cancelGoogleSignIn', input)).toEqual({ cancelled: true });
+    expect(await phoneOperation('cancelGoogleSignIn', input)).toEqual({ cancelled: false });
+    const view = await phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as {
+      connectors: { connectorId: string; status: { status: string; signIn?: unknown } }[];
+    };
+    expect(view.connectors.find((row) => row.connectorId === paired.connectorId)?.status)
+      .toMatchObject({ status: 'error' });
+    expect(view.connectors.find((row) => row.connectorId === paired.connectorId)?.status.signIn)
+      .toBeUndefined();
+    const retry = await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE, connectorType: 'google-gmail', helperAgentId: HELPER,
+    }) as { connectorId: string };
+    expect(retry.connectorId).toBe(paired.connectorId);
+  });
+
   it('serves a connected Gmail grant to its Room agent and denies unrelated Rooms', async () => {
     const roomId = randomUUID();
     await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Google Room')`,

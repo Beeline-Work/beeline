@@ -76,12 +76,6 @@ export default function ConnectorSignInScreen() {
     return () => clearInterval(poll);
   }, [connectorId, dismiss, workspaceId]);
 
-  const openExternally = useCallback(async () => {
-    if (!currentSignIn.url) return;
-    await WebBrowser.openBrowserAsync(currentSignIn.url);
-    setFellBack(true);
-  }, [currentSignIn.url]);
-
   const host = (() => {
     try {
       return new URL(currentSignIn.url).host;
@@ -89,6 +83,28 @@ export default function ConnectorSignInScreen() {
       return '';
     }
   })();
+
+  // Android may return from a Custom Tab with `opened`, not a close result.
+  // Leaving this screen still retires its pending Google attempt.
+  useEffect(() => () => {
+    if (host === 'accounts.google.com') {
+      void getWorkbenchSource().cancelGoogleSignIn({ connectorId }).catch(() => undefined);
+    }
+  }, [connectorId, host]);
+
+  const openExternally = useCallback(async () => {
+    if (!currentSignIn.url) return;
+    const result = await WebBrowser.openBrowserAsync(currentSignIn.url);
+    if (host === 'accounts.google.com' &&
+      (result?.type === 'cancel' || result?.type === 'dismiss')) {
+      const cancelled = await getWorkbenchSource().cancelGoogleSignIn({ connectorId });
+      if (cancelled) {
+        router.back();
+        return;
+      }
+    }
+    setFellBack(true);
+  }, [connectorId, currentSignIn.url, host]);
 
   return (
     <View style={styles.scrim} testID="signin-overlay">
@@ -100,13 +116,23 @@ export default function ConnectorSignInScreen() {
         backAccessibilityLabel="Close sign-in"
         eyebrow="Workbench"
         meta={[machineName, host].filter(Boolean).join(' · ') || undefined}
-        onBack={() => router.back()}
+        onBack={() => {
+          if (host === 'accounts.google.com') {
+            void getWorkbenchSource().cancelGoogleSignIn({ connectorId })
+              .finally(() => router.back());
+          } else router.back();
+        }}
         testID="signin-header"
         title={`Sign in to ${connectorName}`}
       />
       {currentSignIn.method === 'oauth' ? (
         <View style={styles.centered} testID="signin-oauth-browser">
           <Text style={styles.note}>{connectorName} sign-in opens in your browser. Return here after granting access.</Text>
+          {host === 'accounts.google.com' ? (
+            <Text style={styles.note}>
+              Google may show an unverified-app warning. Choose Advanced, then Go to Beeline to continue.
+            </Text>
+          ) : null}
           <TouchableOpacity
             accessibilityRole="button"
             onPress={() => void openExternally()}

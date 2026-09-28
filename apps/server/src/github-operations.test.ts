@@ -433,25 +433,27 @@ describe('GitHub phone operations', () => {
     await refresh();
     expect((await dates()).repository.getTime()).toBeGreaterThan(new Date('2020-01-01').getTime());
   });
-  it('does not refresh an installation for unrelated GitHub webhooks', async () => {
-    await database.query(
-      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
-       VALUES(77,$1,'42','owner','User','selected','active')`,
-      [HUMAN],
-    );
-    const app = {
-      installationAccount: vi.fn(),
-      listRepositories: vi.fn(),
-    } as unknown as GitHubAppClient;
-    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
+  it.each(['workflow_job', 'workflow_run', 'delete'])(
+    'does not refresh an installation for %s webhooks', async (event) => {
+      await database.query(
+        `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
+         VALUES(77,$1,'42','owner','User','selected','active')`,
+        [HUMAN],
+      );
+      const app = {
+        installationAccount: vi.fn(),
+        listRepositories: vi.fn(),
+      } as unknown as GitHubAppClient;
+      const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
 
-    await operations.processWebhook('workflow_run', {
-      action: 'completed', installation: { id: 77 },
-    });
+      await operations.processWebhook(event, {
+        action: 'completed', installation: { id: 77 },
+      });
 
-    expect(app.installationAccount).not.toHaveBeenCalled();
-    expect(app.listRepositories).not.toHaveBeenCalled();
-  });
+      expect(app.installationAccount).not.toHaveBeenCalled();
+      expect(app.listRepositories).not.toHaveBeenCalled();
+    },
+  );
   it('still refreshes the catalog for a repository lifecycle webhook', async () => {
     await database.query(
       `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)

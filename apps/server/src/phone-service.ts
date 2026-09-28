@@ -4282,7 +4282,7 @@ export class PhoneService {
           });
           continue;
         }
-        await this.writeMentionNotice({
+        await this.writeMentionNotice(this.database, {
           roomId,
           id: mentionNoticeId(roomId, agent.agent_id, senderId, phrase.reason, bucket),
           agentId: agent.agent_id,
@@ -4324,20 +4324,23 @@ export class PhoneService {
     );
   }
 
-  private async writeMentionNotice(input: {
-    readonly roomId: string;
-    readonly id: string;
-    readonly agentId: string;
-    readonly agentName: string;
-    readonly phrase: {
-      readonly reason: string;
-      readonly verb: string;
-      readonly consequence: string;
-      readonly object?: { text: string; id: string };
-    };
-    readonly afterMessageId?: string;
-  }): Promise<void> {
-    await systemLine(this.database, {
+  private async writeMentionNotice(
+    database: SqlDatabase,
+    input: {
+      readonly roomId: string;
+      readonly id: string;
+      readonly agentId: string;
+      readonly agentName: string;
+      readonly phrase: {
+        readonly reason: string;
+        readonly verb: string;
+        readonly consequence: string;
+        readonly object?: { text: string; id: string };
+      };
+      readonly afterMessageId?: string;
+    },
+  ): Promise<void> {
+    await systemLine(database, {
       roomId: input.roomId,
       id: input.id,
       subject: { kind: 'agent', id: input.agentId, name: input.agentName },
@@ -4439,20 +4442,35 @@ export class PhoneService {
           phrase.reason,
           bucket,
         );
-        await this.writeMentionNotice({
-          roomId: row.room_id,
-          id: noticeId,
-          agentId: row.agent_id,
-          agentName: row.agent_name,
-          phrase,
-          afterMessageId: row.source_message_id,
+        // The reply path deletes this deferral in the same transaction that
+        // settles the turn. Claim it under a row lock and recheck it before
+        // writing, so a reply that landed after the unlocked SELECT above can
+        // never leave a false permanent `did not answer` line behind it.
+        const claimed = await this.database.transaction(async (tx) => {
+          const still = await tx.query(
+            `SELECT 1 FROM pending_mention_notices
+             WHERE room_id=$1 AND agent_id=$2 AND source_message_id=$3 AND reason=$4
+               AND notified_at IS NULL
+             FOR UPDATE`,
+            [row.room_id, row.agent_id, row.source_message_id, row.reason],
+          );
+          if (!still.rowCount) return false;
+          await this.writeMentionNotice(tx, {
+            roomId: row.room_id,
+            id: noticeId,
+            agentId: row.agent_id,
+            agentName: row.agent_name,
+            phrase,
+            afterMessageId: row.source_message_id,
+          });
+          await tx.query(
+            `UPDATE pending_mention_notices SET notice_id=$5,notified_at=now()
+             WHERE room_id=$1 AND agent_id=$2 AND source_message_id=$3 AND reason=$4`,
+            [row.room_id, row.agent_id, row.source_message_id, row.reason, noticeId],
+          );
+          return true;
         });
-        await this.database.query(
-          `UPDATE pending_mention_notices SET notice_id=$5,notified_at=now()
-           WHERE room_id=$1 AND agent_id=$2 AND source_message_id=$3 AND reason=$4`,
-          [row.room_id, row.agent_id, row.source_message_id, row.reason, noticeId],
-        );
-        written++;
+        if (claimed) written++;
       }
       return written;
     } catch (error) {

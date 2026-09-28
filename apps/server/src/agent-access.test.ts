@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
 import { PgliteDatabase } from './test-support.js';
@@ -283,6 +283,42 @@ describe('who may address an agent', () => {
           ])
         ).rowCount,
       ).toBe(1);
+    } finally {
+      await database.close();
+    }
+  });
+
+  it('never writes a notice for a mention answered while the flush is reading', async () => {
+    const database = await fixture();
+    try {
+      const phone = new PhoneService(database, 'http://local.test');
+      await send(phone, OUTSIDER, '1', '@greeter yo');
+      const sourceMessageId = '1'.repeat(64);
+
+      // Deterministic interleaving: the helper answers the exact mention after
+      // the flush's due read but before it writes — the reply path deletes the
+      // deferral and its line in that window. The flush must not resurrect a
+      // permanent did-not-answer line behind an answer that already arrived.
+      const original = database.query.bind(database);
+      let interposed = false;
+      vi.spyOn(database, 'query').mockImplementation((async (sql: string, values?: unknown[]) => {
+        const result = await original(sql, values);
+        if (!interposed && sql.includes('FROM pending_mention_notices d')) {
+          interposed = true;
+          await original(`DELETE FROM pending_mention_notices WHERE source_message_id=$1`, [
+            sourceMessageId,
+          ]);
+          await original(`DELETE FROM messages WHERE room_id=$1 AND presentation='system'`, [ROOM]);
+        }
+        return result;
+      }) as typeof database.query);
+
+      const written = await phone.flushPendingMentionNotices(
+        Date.now() + AGENT_MENTION_NOTICE_GRACE_MS + 1_000,
+      );
+      expect(interposed).toBe(true);
+      expect(written).toBe(0);
+      expect(await lines(database)).toEqual([]);
     } finally {
       await database.close();
     }

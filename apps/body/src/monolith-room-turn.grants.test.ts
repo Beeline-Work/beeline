@@ -115,6 +115,8 @@ describe('Room turn paused on a grant card', () => {
       target: 'fly deploy -a preview --with FLY_TOKEN',
     });
     let inboxReads = 0;
+    let connectorDelivered = false;
+    let pendingAfterConnector = false;
     let decisionDelivered = false;
     let loop: MonolithRoomTurnLoop | undefined;
     const activity: Array<Record<string, unknown>> = [];
@@ -147,8 +149,26 @@ describe('Room turn paused on a grant card', () => {
             cursor: 'ask-1',
           };
         }
-        // The owner answers only after the daemon has paused the turn on the card.
-        if (!decisionDelivered && loop?.pausedGrantRequestId() === 'ask-1') {
+        if (!connectorDelivered && loop?.pausedGrantRequestId() === 'ask-1') {
+          connectorDelivered = true;
+          return {
+            items: [{
+              id: 'unrelated-connector',
+              fixtureCommandAction: 'resume',
+              fixtureTurnRequestId: 'ask-1',
+              authorId: HUMAN,
+              createdAt: 2,
+              type: 'system',
+              body: 'Captain added an unrelated connector',
+              systemEvent: { kind: 'connector-offer-decided' },
+              attachments: [],
+            }],
+            cursor: 'unrelated-connector',
+          };
+        }
+        // An unrelated connector answer must not release this grant's pending hold.
+        if (connectorDelivered && !decisionDelivered && sessionPrompt.mock.calls.length >= 2) {
+          pendingAfterConnector = loop?.pausedGrantRequestId() === 'ask-1';
           decisionDelivered = true;
           return {
             items: [
@@ -157,7 +177,7 @@ describe('Room turn paused on a grant card', () => {
                 id: 'join-1',
                 fixtureCommand: false,
                 authorId: HUMAN,
-                createdAt: 2,
+                createdAt: 3,
                 type: 'system',
                 body: 'member joined',
                 attachments: [],
@@ -168,7 +188,7 @@ describe('Room turn paused on a grant card', () => {
                 fixtureCommandAction: 'resume',
                 fixtureTurnRequestId: 'ask-1',
                 authorId: HUMAN,
-                createdAt: 3,
+                createdAt: 4,
                 type: 'system',
                 body: decision,
                 systemEvent: { kind: 'grant-decided' },
@@ -221,6 +241,12 @@ describe('Room turn paused on a grant card', () => {
       .mockResolvedValueOnce({
         stopReason: 'end_turn',
         updates: [],
+        agentText: 'The other connector was added.',
+        toolCalls: [],
+      })
+      .mockResolvedValueOnce({
+        stopReason: 'end_turn',
+        updates: [],
         agentText: grantDecision === 'deny' ? 'Permission declined; no command was run.' : 'Deployed the preview.',
         toolCalls: [],
       });
@@ -255,7 +281,8 @@ describe('Room turn paused on a grant card', () => {
       grantRunnerEndpoint: { url: 'http://127.0.0.1:1', token: 'runner-token' },
     });
     const running = loop.run();
-    await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalledTimes(2), { timeout: 5_000 });
+    await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalledTimes(3), { timeout: 5_000 });
+    expect(pendingAfterConnector).toBe(true);
     expect(decisionDelivered).toBe(true);
     await vi.waitFor(() => expect(loop!.pausedGrantRequestId()).toBeUndefined(), {
       timeout: 5_000,
@@ -265,7 +292,7 @@ describe('Room turn paused on a grant card', () => {
     await scheduler.dispose();
 
     // The resumed prompt carries the decision and the resume instruction.
-    const resumed = sessionPrompt.mock.calls[1]![1] as string;
+    const resumed = sessionPrompt.mock.calls[2]![1] as string;
     expect(resumed).toContain(decision);
     expect(resumed).toContain('Resume the paused turn');
 
@@ -273,11 +300,12 @@ describe('Room turn paused on a grant card', () => {
     const authorityReads = execute.mock.calls.filter(([name]) => name === 'getRoomAuthority');
     expect(authorityReads).toHaveLength(0);
     // The plain join line never became a turn.
-    expect(sessionPrompt).toHaveBeenCalledTimes(2);
+    expect(sessionPrompt).toHaveBeenCalledTimes(3);
     // Both turns' ledger rows carry the requester by name.
     expect(
       activity.map((row) => (row.activity as Array<{ requestedBy: unknown }>)[0]!.requestedBy),
     ).toEqual([
+      { pubkey: HUMAN, name: 'Captain' },
       { pubkey: HUMAN, name: 'Captain' },
       { pubkey: HUMAN, name: 'Captain' },
     ]);

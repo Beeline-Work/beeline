@@ -8,7 +8,6 @@ import { homedir, hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { parseGrantDecisionLine } from '@beeline/api-contract/agent-grants';
-import { isResumeKind } from '@beeline/api-contract/phone';
 import {
   SCHEDULE_RAN_VERB,
   SCHEDULE_SCHEDULER_NAME,
@@ -271,11 +270,17 @@ export function inboxItemPromptBody(item: {
  * posted pauses the turn: the person's answer on that card resumes it (a
  * `grant-decided` or `connector-offer-decided` RESUME kind).
  */
-export function pendingGrantToolCall(call: { title?: string; content?: unknown }): boolean {
-  if (!/(?:^|[._:/-])(?:request_grant|offer_connector)$/i.test(call.title ?? '')) return false;
-  return /(?:pending|already offered), card (?:posted|still open)/i.test(
+type PendingCardKind = 'grant' | 'connector';
+function pendingCardKind(call: { title?: string; content?: unknown }): PendingCardKind | undefined {
+  const kind = /(?:^|[._:/-])(request_grant|offer_connector)$/i.exec(call.title ?? '')?.[1];
+  if (!kind || !/(?:pending|already offered), card (?:posted|still open)/i.test(
     typeof call.content === 'string' ? call.content : JSON.stringify(call.content ?? ''),
-  );
+  )) return undefined;
+  return kind.toLowerCase() === 'request_grant' ? 'grant' : 'connector';
+}
+
+export function pendingGrantToolCall(call: { title?: string; content?: unknown }): boolean {
+  return pendingCardKind(call) !== undefined;
 }
 
 /**
@@ -425,6 +430,7 @@ export class MonolithRoomTurnLoop {
   private memberNames = new Map<string, string>();
   /** The request id of the turn that paused on a grant card, until its decision arrives. */
   private pausedOnGrantRequestId?: string;
+  private pausedOnGrantKind?: PendingCardKind;
   /** Operator-local turn traces; built once when the daemon configured a directory. */
   private turnTraceSink?: TurnTraceSink;
 
@@ -1153,7 +1159,10 @@ export class MonolithRoomTurnLoop {
    * the press and the delivery, and the server's own receipt already said so.
    */
   private stopTurn(requestId: string): void {
-    if (this.pausedOnGrantRequestId === requestId) this.pausedOnGrantRequestId = undefined;
+    if (this.pausedOnGrantRequestId === requestId) {
+      this.pausedOnGrantRequestId = undefined;
+      this.pausedOnGrantKind = undefined;
+    }
     this.squireRelay.cancel(requestId);
     for (let index = this.queuedTurns.length - 1; index >= 0; index -= 1)
       if (this.queuedTurns[index]!.id === requestId) this.queuedTurns.splice(index, 1);
@@ -1263,10 +1272,16 @@ export class MonolithRoomTurnLoop {
                 }));
               const command = this.commandContext.current;
               const grantDecision = command?.action === 'resume';
+              const decisionKind = command?.source.systemEvent?.kind;
               const decisionResume = grantDecision &&
-                isResumeKind(command.source.systemEvent?.kind);
+                command.turnRequestId === this.pausedOnGrantRequestId &&
+                ((decisionKind === 'grant-decided' && this.pausedOnGrantKind === 'grant') ||
+                  (decisionKind === 'connector-offer-decided' && this.pausedOnGrantKind === 'connector'));
               const resumedRequestId = decisionResume ? this.pausedOnGrantRequestId : undefined;
-              if (decisionResume) this.pausedOnGrantRequestId = undefined;
+              if (decisionResume) {
+                this.pausedOnGrantRequestId = undefined;
+                this.pausedOnGrantKind = undefined;
+              }
               // Built per ATTEMPT, never once per turn: a C92 re-pin runs the
               // same turn against a NEW session id that holds none of this
               // conversation, so it has to render the whole window again.
@@ -1445,8 +1460,10 @@ export class MonolithRoomTurnLoop {
                 throw new TurnStoppedError('turn stopped by the requester');
               }
               active.phase = 'finishing';
-              if (result.toolCalls.some((call) => pendingGrantToolCall(call))) {
+              const pendingCard = result.toolCalls.map((call) => pendingCardKind(call)).find(Boolean);
+              if (pendingCard) {
                 this.pausedOnGrantRequestId = item.id;
+                this.pausedOnGrantKind = pendingCard;
                 console.log(
                   `[thin-core] monolith Room ${this.options.roomId} turn ${item.id} paused on a grant card`,
                 );

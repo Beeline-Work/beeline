@@ -147,6 +147,65 @@ describe('helper-owned Squire task relay', () => {
     expect(stale.body.error).toMatch(/no longer owned/);
   });
 
+  it('keeps an inject_card approval session through a long idle human wait', async () => {
+    let cardCalls = 0;
+    const { relay, stats } = fixture('/tmp/context', async () => true, async (_method, params) => {
+      if (params.name === 'operate_start')
+        return { content: [{ type: 'text', text: '{"sessionId":"browser-1"}' }] };
+      if (params.name === 'inject_card') {
+        cardCalls += 1;
+        return { content: [{ type: 'text', text: JSON.stringify({
+          status: cardCalls === 1 ? 'approval_pending' : 'card_injected',
+          approval_id: 'buy-1', session_id: 'browser-1',
+          approval_url: 'https://trustysquire.ai/vault/pay/buy-1',
+        }) }] };
+      }
+      return { content: [{ type: 'text', text: 'ok' }] };
+    });
+    relay.activate(command('first', 'turn-one'), 'generation');
+    await request(relay, 'first', 'turn-one', 'tools/call', { name: 'operate_start' });
+    expect((await request(relay, 'first', 'turn-one', 'tools/call', {
+      name: 'inject_card', arguments: { sessionId: 'browser-1' },
+    })).status).toBe(200);
+    vi.useFakeTimers();
+    relay.deactivate('turn-one');
+    await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS * 2);
+    expect(stats().exits).toBe(0);
+    relay.activate(command('next', 'turn-two'), 'generation');
+    vi.useRealTimers();
+    expect((await request(relay, 'next', 'turn-two', 'tools/call', {
+      name: 'operate_observe', arguments: { sessionId: 'browser-1' },
+    })).status).toBe(200);
+    expect((await request(relay, 'next', 'turn-two', 'tools/call', {
+      name: 'inject_card', arguments: { sessionId: 'browser-1', approval_id: 'buy-1' },
+    })).status).toBe(200);
+    vi.useFakeTimers();
+    relay.deactivate('turn-two');
+    await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS);
+    expect(stats().exits).toBe(1);
+  });
+
+  it('releases a pending Squire approval hold when its request is cancelled', async () => {
+    const { relay, stats } = fixture('/tmp/context', async () => true, async (_method, params) =>
+      params.name === 'operate_start'
+        ? { content: [{ type: 'text', text: '{"sessionId":"browser-1"}' }] }
+        : { content: [{ type: 'text', text: JSON.stringify({
+          status: 'approval_pending', session_id: 'browser-1', approval_id: 'buy-1',
+          approval_url: 'https://trustysquire.ai/vault/pay/buy-1',
+        }) }] },
+    );
+    relay.activate(command('first', 'turn-one'), 'generation');
+    await request(relay, 'first', 'turn-one', 'tools/call', { name: 'operate_start' });
+    await request(relay, 'first', 'turn-one', 'tools/call', {
+      name: 'inject_card', arguments: { sessionId: 'browser-1' },
+    });
+    vi.useFakeTimers();
+    relay.deactivate('turn-one');
+    relay.cancel('turn-one');
+    await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS);
+    expect(stats().exits).toBe(1);
+  });
+
   it('keeps an open approval through an unrelated turn and bounds it after cancellation', async () => {
     const { relay, stats } = fixture();
     relay.activate(command('first', 'turn-one'), 'generation');

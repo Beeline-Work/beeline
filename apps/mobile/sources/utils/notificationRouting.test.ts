@@ -176,6 +176,7 @@ describe('navigateToBuzzNotificationResponse', () => {
           channelId: 'room-welcome',
           communityId: 'workspace-default',
           notificationResponseId: 'response-workspace-join',
+          returnTo: 'room-list',
           notificationTarget: 'message',
         },
       },
@@ -257,6 +258,7 @@ describe('navigateToBuzzNotificationResponse', () => {
           channelId: 'room-123',
           notificationMessageId: 'event-1',
           notificationResponseId: 'response-room',
+          returnTo: 'room-list',
           notificationTarget: 'message',
         },
       },
@@ -296,6 +298,7 @@ describe('navigateToBuzzNotificationResponse', () => {
         params: {
           channelId: 'corner-123',
           parent: 'parent-room',
+          returnTo: 'corners',
           notificationMessageId: 'event-456',
           notificationResponseId: 'response-789',
           notificationTarget: 'message',

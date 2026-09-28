@@ -20,6 +20,7 @@ import {
   connectorInstrument,
   connectionGrantPending,
   connectionRevokeOffered,
+  GOOGLE_CONNECTOR_ORDER,
   googleEntryConnector,
   googleEntryState,
   isConnectorIdentityId,
@@ -510,6 +511,22 @@ describe('the ONE Google entry', () => {
     ];
     expect(googleEntryState(failed)).toBe('error');
     expect(googleEntryConnector(failed)?.errorMessage).toBe('scope refused');
+    // The server clears a re-armed row's error, so none is stale: even a
+    // browser-shaped message on a Google row is a Google failure.
+    const browser = failed.map((c) =>
+      c.id === 'google-gmail'
+        ? { ...c, errorMessage: 'another Trusty Squire session is already using the browser' }
+        : c,
+    );
+    expect(googleEntryState(browser)).toBe('error');
+  });
+
+  it('is not an error once a fresh grant re-arms every Google tool', () => {
+    // What the server leaves after Google sign-in completes with three tools
+    // previously failed: all four installing, no status error.
+    const rearmed = GOOGLE_CONNECTOR_ORDER.map((id) => tool(id, 'installing'));
+    expect(googleEntryState(rearmed)).toBe('installing');
+    expect(googleEntryConnector(rearmed)?.errorMessage).toBeUndefined();
   });
 
   it('offers Connect for the group and each Google tool after any OAuth failure', () => {

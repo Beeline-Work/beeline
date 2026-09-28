@@ -80,6 +80,7 @@ vi.mock('@/components/buzz/MonoHull', async () => {
     hairlineDivider: { borderBottomWidth: 1, borderBottomColor: '#4e4e4e' },
     HullSurface: host('HullSurface'),
     MonoButton: host('MonoButton'),
+    OnboardingButton: host('OnboardingButton'),
     PixelGateReveal: host('PixelGateReveal'),
   };
 });
@@ -152,7 +153,15 @@ describe('onboarding — canonical brand treatment', () => {
 
     const tagline = byTestID('onboarding-tagline');
     expect(tagline).toHaveLength(1);
-    expect(tagline[0].props.style.fontFamily).toBe(beelineThemes.obsidian.proseRegular);
+    expect(tagline[0].props.children).toBe('A Workspace for people and agents.');
+    expect(tagline[0].props.style.fontFamily).toBe(beelineThemes.obsidian.type.body.fontFamily);
+    expect(tagline[0].props.style.fontSize).toBe(16);
+
+    // The GitHub call to action is the onboarding primary.
+    const signIn = tree.root.findAll(
+      (node: any) => node.props?.testID === 'onboarding-github-sign-in',
+    );
+    expect(signIn.map((node: any) => node.type)).toContain('OnboardingButton');
 
     // Every login-screen button label rides the canonical family through
     // MonoButton's labelStyle override.
@@ -179,12 +188,12 @@ describe('onboarding — canonical brand source assertions', () => {
     const titleBlock = src.slice(src.indexOf('  title: {'), src.indexOf('titlePeriod:'));
     expect(titleBlock).toContain('groknight.proseSemibold');
     expect(titleBlock).not.toContain('Typography.logo()');
-    // The tagline and the auth notice body keep the canonical prose family.
+    // The tagline and the auth notice body use the theme type roles.
     expect(src).toMatch(
-      /subtitle: \{\s*\.\.\.Typography\.default\(\),\s*fontFamily: groknight\.proseRegular/,
+      /subtitle: \{\s*\.\.\.Typography\.default\(\),\s*\.\.\.groknight\.type\.body/,
     );
     expect(src).toMatch(
-      /noticeText: \{\s*\.\.\.Typography\.default\(\),\s*fontFamily: groknight\.proseRegular/,
+      /noticeText: \{\s*\.\.\.Typography\.default\(\),\s*\.\.\.groknight\.type\.meta/,
     );
   });
 

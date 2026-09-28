@@ -6,11 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 const controls = vi.hoisted(() => ({
   operation: vi.fn(),
   enterWorkspaceRoom: vi.fn(),
-  offerProductTour: vi.fn(),
   saveActiveCommunityId: vi.fn(),
-  setString: vi.fn(async () => undefined),
-  share: vi.fn(async () => undefined),
-  pick: vi.fn(),
 }));
 
 vi.mock('react-native', async () => {
@@ -24,7 +20,6 @@ vi.mock('react-native', async () => {
     TextInput: host('TextInput'),
     TouchableOpacity: host('TouchableOpacity'),
     View: host('View'),
-    Share: { share: controls.share },
   };
 });
 vi.mock('react-native-unistyles', () => ({
@@ -48,27 +43,16 @@ vi.mock('expo-router', () => ({
   router: { push: vi.fn(), replace: vi.fn(), back: vi.fn(), canGoBack: () => true },
 }));
 vi.mock('expo-crypto', () => ({ randomUUID: () => '11111111-2222-4333-8444-555555555555' }));
-vi.mock('expo-clipboard', () => ({ setStringAsync: controls.setString }));
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0 }),
 }));
 vi.mock('@/auth/buzz-identity-storage', () => ({
-  getEffectiveRelayUrl: vi.fn(async () => 'https://server.example'),
   loadBuzzIdentity: vi.fn(async () => ({ publicKey: 'person-1' })),
-}));
-vi.mock('@/buzz/avatar-upload', () => ({ pickAndUploadAvatar: controls.pick }));
-vi.mock('@/buzz/community-invite', () => ({
-  buildCommunityInviteUrl: (token: string) => `https://usebeeline.app/join/${token}`,
-  resolveCommunityInvitePublicOrigin: () => 'https://usebeeline.app',
 }));
 vi.mock('@/buzz/community-storage', () => ({
   saveActiveCommunityId: controls.saveActiveCommunityId,
 }));
 vi.mock('@/buzz/enter-workspace', () => ({ enterWorkspaceRoom: controls.enterWorkspaceRoom }));
-vi.mock('@/buzz/faces', () => ({ defaultFaceForSeed: () => 'owl' }));
-vi.mock('@/buzz/person-name', () => ({ savePreferredPersonName: vi.fn(async () => undefined) }));
-vi.mock('@/buzz/product-tour', () => ({ offerProductTour: controls.offerProductTour }));
-vi.mock('@/buzz/runtime-config', () => ({ getBuzzRuntimeConfig: () => ({}) }));
 vi.mock('@/buzz/vocabulary', () => ({ WORKSPACE_LABEL: 'Workspace' }));
 vi.mock('@/constants/Typography', () => ({
   Typography: { default: () => ({}), mono: () => ({}) },
@@ -76,23 +60,12 @@ vi.mock('@/constants/Typography', () => ({
 vi.mock('@/components/buzz/MonoHull', async () => {
   const ReactModule = await import('react');
   return {
-    BrassButton: (props: any) => ReactModule.createElement('BrassButton', props),
-    MonoButton: (props: any) => ReactModule.createElement('MonoButton', props),
+    OnboardingButton: (props: any) => ReactModule.createElement('OnboardingButton', props),
   };
 });
-vi.mock('@/components/buzz/FaceGrid', async () => {
-  const ReactModule = await import('react');
-  return { FaceGrid: (props: any) => ReactModule.createElement('FaceGrid', props) };
-});
-vi.mock('@/components/buzz/IdentityMark', () => ({ IdentityMark: () => null }));
 vi.mock('@/components/buzz/ChevronGlyph', () => ({
   CHEVRON_BACK_SIZE: 18,
   ChevronGlyph: () => null,
-}));
-vi.mock('@/sync/transport', () => ({
-  BuzzRigTransport: class {
-    ensureClient = async () => ({});
-  },
 }));
 vi.mock('@/sync/transport/monolith-operation', () => ({
   monolithPhoneOperation: controls.operation,
@@ -138,61 +111,59 @@ describe('creating a Workspace', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     controls.operation.mockImplementation(async (name: string) => {
-      if (name === 'getManagedIdentity')
-        return { personId: 'person-1', name: 'Jordan', face: 'fox' };
       if (name === 'createWorkspace') return { id: WORKSPACE, roomId: 'general-1' };
-      if (name === 'createInvite') return { token: 'inv_x', expiresAt: 1 };
-      if (name === 'createAgentPairingCode') return { code: 'AAAA-BBBB', expiresAt: 1 };
       return undefined;
     });
   });
 
-  it('walks name/picture → name/face → crew, then lands in #general with the tour offered', async () => {
+  it('is one step — Name your Workspace — and Create Workspace lands in #general', async () => {
     const renderer = await render();
     expect(find(renderer, 'create-step-workspace')).toHaveLength(1);
+    const texts = renderer.root
+      .findAll((node: any) => node.type === 'Text')
+      .map((node: any) => node.props.children);
+    expect(texts).toEqual(
+      expect.arrayContaining([
+        'Name your Workspace',
+        'Your team, company, or project. Change it in Settings.',
+        'Workspace name',
+      ]),
+    );
+    // No step counter, progress bar, picture prompt, invite or agent command.
+    for (const gone of [
+      'create-progress',
+      'create-workspace-picture',
+      'create-step-profile',
+      'create-step-crew',
+      'create-invite',
+      'create-agent',
+    ])
+      expect(find(renderer, gone)).toHaveLength(0);
+    expect(texts.some((text: unknown) => typeof text === 'string' && /of 3/.test(text))).toBe(
+      false,
+    );
+    const button = find(renderer, 'create-continue')[0]!;
+    expect(button.type).toBe('OnboardingButton');
+    expect(button.props.label).toBe('Create Workspace');
+
     await type(renderer, 'create-workspace-name', 'Northstar Lab');
     await press(renderer, 'create-continue');
     await vi.waitFor(() =>
-      expect(controls.operation).toHaveBeenCalledWith('createWorkspace', {
-        workspaceId: WORKSPACE,
-        name: 'Northstar Lab',
-      }),
+      expect(controls.enterWorkspaceRoom).toHaveBeenCalledWith(WORKSPACE, 'general-1'),
     );
+    expect(controls.operation).toHaveBeenCalledWith('createWorkspace', {
+      workspaceId: WORKSPACE,
+      name: 'Northstar Lab',
+    });
     expect(controls.saveActiveCommunityId).toHaveBeenCalledWith('person-1', WORKSPACE);
-
-    // Step 2 starts from the name and face already on record.
-    expect(find(renderer, 'create-person-name')[0]!.props.value).toBe('Jordan');
-    const grid = renderer.root.findAll((node: any) => node.type === 'FaceGrid')[0]!;
-    expect(grid.props.selected).toBe('fox');
-    await act(async () => grid.props.onSelect('owl'));
-    await type(renderer, 'create-person-name', 'Jordan Lee');
-    await press(renderer, 'create-continue');
-    await vi.waitFor(() =>
-      expect(controls.operation).toHaveBeenCalledWith('updatePersonProfile', {
-        name: 'Jordan Lee',
-      }),
-    );
-    expect(controls.operation).toHaveBeenCalledWith('updateIdentityFace', { faceId: 'owl' });
-
-    expect(find(renderer, 'create-step-crew')).toHaveLength(1);
-    await press(renderer, 'create-invite');
-    await vi.waitFor(() =>
-      expect(controls.setString).toHaveBeenCalledWith('https://usebeeline.app/join/inv_x'),
-    );
-    await press(renderer, 'create-agent');
-    await vi.waitFor(() =>
-      expect(controls.setString).toHaveBeenCalledWith('npx usebeeline connect AAAA-BBBB'),
-    );
-
-    await press(renderer, 'create-finish');
-    await vi.waitFor(() => expect(controls.offerProductTour).toHaveBeenCalledWith('person-1'));
-    expect(controls.enterWorkspaceRoom).toHaveBeenCalledWith(WORKSPACE, 'general-1');
+    // The Workspace step never touches the person's name or face.
+    expect(controls.operation).not.toHaveBeenCalledWith('updatePersonProfile', expect.anything());
+    expect(controls.operation).not.toHaveBeenCalledWith('updateIdentityFace', expect.anything());
   });
 
   it('retries a failed create under the same id, so it can never make two', async () => {
     let calls = 0;
     controls.operation.mockImplementation(async (name: string, input: any) => {
-      if (name === 'getManagedIdentity') return { personId: 'person-1', name: 'Jordan' };
       if (name === 'createWorkspace') {
         calls += 1;
         if (calls === 1) throw new Error('network');
@@ -209,61 +180,12 @@ describe('creating a Workspace', () => {
       .filter(([name]) => name === 'createWorkspace')
       .map(([, input]) => input.workspaceId);
     expect(ids).toEqual([WORKSPACE, WORKSPACE]);
-    expect(find(renderer, 'create-step-profile')).toHaveLength(1);
-  });
-
-  it('writes a name corrected after step 1 was already confirmed', async () => {
-    const renderer = await render();
-    await type(renderer, 'create-workspace-name', 'Northsatr Lab');
-    await press(renderer, 'create-continue');
-    await vi.waitFor(() => expect(find(renderer, 'create-step-profile')).toHaveLength(1));
-    await press(renderer, 'create-back');
-    await type(renderer, 'create-workspace-name', 'Northstar Lab');
-    await press(renderer, 'create-continue');
-    await vi.waitFor(() =>
-      expect(controls.operation).toHaveBeenCalledWith('updateWorkspace', {
-        workspaceId: WORKSPACE,
-        name: 'Northstar Lab',
-      }),
-    );
-    expect(find(renderer, 'create-step-profile')).toHaveLength(1);
-  });
-
-  it('writes the rename again after the first rename failed and the retry changed nothing', async () => {
-    let renames = 0;
-    controls.operation.mockImplementation(async (name: string, input: any) => {
-      if (name === 'getManagedIdentity') return { personId: 'person-1', name: 'Jordan' };
-      if (name === 'createWorkspace') return { id: input.workspaceId, roomId: 'general-1' };
-      if (name === 'updateWorkspace' && typeof input.name === 'string') {
-        renames += 1;
-        if (renames === 1) throw new Error('network');
-        return undefined;
-      }
-      return undefined;
-    });
-    const renderer = await render();
-    await type(renderer, 'create-workspace-name', 'Foo');
-    await press(renderer, 'create-continue');
-    await vi.waitFor(() => expect(find(renderer, 'create-step-profile')).toHaveLength(1));
-    await press(renderer, 'create-back');
-    await type(renderer, 'create-workspace-name', 'Bar');
-    await press(renderer, 'create-continue');
-    await vi.waitFor(() => expect(find(renderer, 'create-error')).toHaveLength(1));
-    // The same name confirmed again: the server still holds "Foo", so the
-    // rename has to be written, not skipped as already done.
-    await press(renderer, 'create-continue');
-    await vi.waitFor(() => expect(renames).toBe(2));
-    expect(controls.operation).toHaveBeenCalledWith('updateWorkspace', {
-      workspaceId: WORKSPACE,
-      name: 'Bar',
-    });
-    expect(find(renderer, 'create-step-profile')).toHaveLength(1);
+    expect(controls.enterWorkspaceRoom).toHaveBeenCalledWith(WORKSPACE, 'general-1');
   });
 
   it('writes a name corrected after a create whose response never arrived', async () => {
     let calls = 0;
     controls.operation.mockImplementation(async (name: string, input: any) => {
-      if (name === 'getManagedIdentity') return { personId: 'person-1', name: 'Jordan' };
       if (name === 'createWorkspace') {
         calls += 1;
         // The server committed the first insert; only the answer was lost.
@@ -283,52 +205,6 @@ describe('creating a Workspace', () => {
         workspaceId: WORKSPACE,
         name: 'Alpha Labs',
       }),
-    );
-    expect(find(renderer, 'create-step-profile')).toHaveLength(1);
-  });
-
-  it('leaves the name alone when step 1 is confirmed again unchanged', async () => {
-    const renderer = await render();
-    await type(renderer, 'create-workspace-name', 'Crew');
-    await press(renderer, 'create-continue');
-    await vi.waitFor(() => expect(find(renderer, 'create-step-profile')).toHaveLength(1));
-    await press(renderer, 'create-back');
-    await press(renderer, 'create-continue');
-    expect(controls.operation).not.toHaveBeenCalledWith('updateWorkspace', expect.anything());
-  });
-
-  it('never blocks setup on a picture that fails to save', async () => {
-    controls.pick.mockResolvedValue('https://server.example/v1/media/pic');
-    controls.operation.mockImplementation(async (name: string) => {
-      if (name === 'getManagedIdentity') return { personId: 'person-1', name: 'Jordan' };
-      if (name === 'createWorkspace') return { id: WORKSPACE, roomId: 'general-1' };
-      if (name === 'updateWorkspace') throw new Error('avatar rejected');
-      return undefined;
-    });
-    const renderer = await render();
-    await press(renderer, 'create-workspace-picture');
-    await type(renderer, 'create-workspace-name', 'Crew');
-    await press(renderer, 'create-continue');
-    await vi.waitFor(() =>
-      expect(controls.operation).toHaveBeenCalledWith('updateWorkspace', {
-        workspaceId: WORKSPACE,
-        avatar: 'https://server.example/v1/media/pic',
-      }),
-    );
-    expect(find(renderer, 'create-step-profile')).toHaveLength(1);
-    expect(find(renderer, 'create-notice')).toHaveLength(1);
-  });
-
-  it('lets the crew step be skipped entirely', async () => {
-    const renderer = await render();
-    await type(renderer, 'create-workspace-name', 'Crew');
-    await press(renderer, 'create-continue');
-    await press(renderer, 'create-continue');
-    // Nothing changed on step 2, so nothing is rewritten.
-    expect(controls.operation).not.toHaveBeenCalledWith('updatePersonProfile', expect.anything());
-    await press(renderer, 'create-skip');
-    await vi.waitFor(() =>
-      expect(controls.operation).not.toHaveBeenCalledWith('createInvite', expect.anything()),
     );
     expect(controls.enterWorkspaceRoom).toHaveBeenCalledWith(WORKSPACE, 'general-1');
   });

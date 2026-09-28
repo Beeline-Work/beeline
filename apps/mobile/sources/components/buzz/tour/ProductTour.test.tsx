@@ -75,33 +75,21 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
 vi.mock('@/constants/Typography', () => ({
   Typography: { default: () => ({}), mono: () => ({}) },
 }));
-vi.mock('@/components/buzz/HullDialog', async () => {
-  const ReactModule = await import('react');
-  return {
-    HullModal: (props: any) =>
-      props.visible ? ReactModule.createElement('HullModal', props, props.children) : null,
-    HullFloatingSurface: (props: any) =>
-      ReactModule.createElement('Surface', props, props.children),
-  };
-});
 vi.mock('@/components/buzz/MonoHull', async () => {
   const ReactModule = await import('react');
   return {
-    PixelGateReveal: (props: any) => ReactModule.createElement('Reveal', props, props.children),
+    OnboardingButton: (props: any) =>
+      ReactModule.createElement('OnboardingButton', props, props.label),
   };
 });
-vi.mock('@/components/buzz/RoomGlyph', () => ({ RoomGlyph: () => null }));
-vi.mock('@/components/buzz/MembersGlyph', () => ({ MembersGlyph: () => null }));
-vi.mock('@/components/buzz/CornerGlyph', () => ({ CornerGlyph: () => null }));
-vi.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 
 import { AccessibilityInfo } from 'react-native';
-import { ProductTourProvider, TOUR_OVERVIEW_CARDS } from './ProductTour';
-import { ProductTourRoomCue, TourTarget } from './TourTarget';
+import { ProductTourProvider, TOUR_TIP_COPY } from './ProductTour';
+import { TourTarget } from './TourTarget';
 import {
-  finishProductTourOverview,
   loadProductTour,
-  offerProductTour,
+  markTourTipSeen,
+  replayProductTour,
   resetProductTourCacheForTests,
 } from '@/buzz/product-tour';
 
@@ -147,7 +135,11 @@ async function press(renderer: ReactTestRenderer, testID: string) {
   for (let i = 0; i < 3; i += 1) await act(async () => undefined);
 }
 
-describe('the product tour', () => {
+function target(tip: 'swipe' | 'cornerMark' | 'squire', label = 'Row') {
+  return React.createElement(TourTarget, { tip, children: React.createElement(label) });
+}
+
+describe('the first-sight tips', () => {
   beforeEach(() => {
     storage.clear();
     resetProductTourCacheForTests();
@@ -155,44 +147,131 @@ describe('the product tour', () => {
     rect.value = { x: 16, y: 120, width: 358, height: 64 };
   });
 
-  it('offers the four cards only after the first Room renders, and Skip ends it on any card', async () => {
-    await offerProductTour('person-1');
-    const idle = await render(React.createElement(ProductTourRoomCue, { ready: false }));
-    expect(byTestId(idle, 'tour-overview')).toHaveLength(0);
-
-    const renderer = await render(React.createElement(ProductTourRoomCue, { ready: true }));
-    expect(byTestId(renderer, 'tour-card-title')[0]!.props.children).toBe(
-      TOUR_OVERVIEW_CARDS[0].title,
+  it('shows a tip the first time its target is on screen, with no counter or overview', async () => {
+    const renderer = await render(target('cornerMark'));
+    const tip = byTestId(renderer, 'tour-tip-cornerMark');
+    expect(tip).toHaveLength(1);
+    expect(tip[0]!.props.accessibilityLabel).toBe(
+      'This Room has corners Tap the mark to see them. Press and hold it to open a new corner in this Room.',
     );
-    await press(renderer, 'tour-next');
-    await press(renderer, 'tour-skip');
     expect(byTestId(renderer, 'tour-overview')).toHaveLength(0);
-    expect((await loadProductTour('person-1')).overview).toBe('skipped');
-  });
-
-  it('walks all four cards to completion', async () => {
-    await offerProductTour('person-1');
-    const renderer = await render(React.createElement(ProductTourRoomCue, { ready: true }));
-    for (const card of TOUR_OVERVIEW_CARDS) {
-      expect(byTestId(renderer, 'tour-card-title')[0]!.props.children).toBe(card.title);
-      await press(renderer, 'tour-next');
-    }
-    expect((await loadProductTour('person-1')).overview).toBe('completed');
-  });
-
-  it('points at a mounted target once, and back dismisses it', async () => {
-    await offerProductTour('person-1');
-    await finishProductTourOverview('person-1', 'skipped');
-    const renderer = await render(
-      React.createElement(TourTarget, { tip: 'rooms', children: React.createElement('Row') }),
+    expect(byTestId(renderer, 'tour-tip-skip')).toHaveLength(0);
+    const texts = renderer.root
+      .findAll((node: any) => node.type === 'Text')
+      .map((node: any) => node.props.children);
+    expect(texts.some((text: unknown) => typeof text === 'string' && / \/ 3$/.test(text))).toBe(
+      false,
     );
-    expect(byTestId(renderer, 'tour-tip-rooms')).toHaveLength(1);
     expect(byTestId(renderer, 'tour-cutout')[0]!.props.style).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ left: 10, top: 114, width: 370, height: 76 }),
       ]),
     );
-    // Screen-reader focus lands on the tip once it is on screen.
+  });
+
+  it('Got it retires the tip for good, and it never comes back', async () => {
+    const renderer = await render(target('swipe'));
+    const done = byTestId(renderer, 'tour-tip-done')[0]!;
+    expect(done.type).toBe('OnboardingButton');
+    expect(done.props.label).toBe('Got it');
+    await press(renderer, 'tour-tip-done');
+    expect(byTestId(renderer, 'tour-tip-swipe')).toHaveLength(0);
+    expect((await loadProductTour('person-1')).seenTips).toEqual(['swipe']);
+    resetProductTourCacheForTests();
+    const again = await render(target('swipe'));
+    expect(byTestId(again, 'tour-spotlight')).toHaveLength(0);
+  });
+
+  it('carries the specified copy for all three tips', () => {
+    expect(TOUR_TIP_COPY.swipe).toEqual({
+      title: 'Swipe right to open a corner',
+      body: "A corner is a side space for one task. Swipe a message right and it's copied into a new corner, ready to send. Swipe left to reply.",
+    });
+    expect(TOUR_TIP_COPY.cornerMark).toEqual({
+      title: 'This Room has corners',
+      body: 'Tap the mark to see them. Press and hold it to open a new corner in this Room.',
+    });
+    expect(TOUR_TIP_COPY.squire).toEqual({
+      title: 'Trusty Squire: sign-ups and keys',
+      body: 'Link Google once. After that, agents can:',
+      bullets: [
+        'sign up for a service for you and save its API key',
+        'use saved keys to call APIs, without ever seeing the key',
+        "sign in to sites with logins you've saved",
+      ],
+      closing: 'Showing a key to anyone needs your passkey.',
+    });
+  });
+
+  it('draws the Trusty Squire bullets and passkey line', async () => {
+    const renderer = await render(target('squire'));
+    const texts = renderer.root
+      .findAll((node: any) => node.type === 'Text')
+      .map((node: any) => node.props.children);
+    for (const line of [...TOUR_TIP_COPY.squire.bullets!, TOUR_TIP_COPY.squire.closing!])
+      expect(texts).toContain(line);
+  });
+
+  it('shows the tips independently, in any order', async () => {
+    await markTourTipSeen('person-1', 'swipe');
+    const renderer = await render(
+      React.createElement('Host', null, target('swipe', 'Message'), target('squire', 'Squire')),
+    );
+    expect(byTestId(renderer, 'tour-tip-swipe')).toHaveLength(0);
+    expect(byTestId(renderer, 'tour-tip-squire')).toHaveLength(1);
+  });
+
+  it('points at the topmost target wholly on screen and tells only that one it is chosen', async () => {
+    const rects: Record<string, { x: number; y: number; width: number; height: number }> = {
+      // Partly above the top edge: not wholly in view.
+      above: { x: 0, y: -20, width: 390, height: 60 },
+      upper: { x: 0, y: 200, width: 390, height: 60 },
+      lower: { x: 0, y: 500, width: 390, height: 60 },
+      // Cut off by the bottom edge (behind the composer): not the one.
+      cut: { x: 0, y: 800, width: 390, height: 120 },
+      below: { x: 0, y: 2000, width: 390, height: 60 },
+    };
+    const posed: Record<string, boolean> = {};
+    const rows = Object.keys(rects).map((name) =>
+      React.createElement(TourTarget, {
+        key: name,
+        tip: 'swipe',
+        children: (active: boolean) => {
+          posed[name] = active;
+          return React.createElement(name);
+        },
+      }),
+    );
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(React.createElement(ProductTourProvider, null, ...rows), {
+        createNodeMock: (element: any) => {
+          const child = element.props?.children;
+          const name = typeof child === 'object' && child ? String(child.type) : '';
+          const rectFor = rects[name] ?? rect.value;
+          return {
+            measureInWindow: (callback: (x: number, y: number, w: number, h: number) => void) =>
+              callback(rectFor.x, rectFor.y, rectFor.width, rectFor.height),
+          };
+        },
+      });
+    });
+    for (let i = 0; i < 6; i += 1) await act(async () => undefined);
+    expect(byTestId(renderer, 'tour-tip-swipe')).toHaveLength(1);
+    expect(byTestId(renderer, 'tour-cutout')[0]!.props.style).toEqual(
+      expect.arrayContaining([expect.objectContaining({ top: 194 })]),
+    );
+    expect(posed).toEqual({ above: false, upper: true, lower: false, cut: false, below: false });
+  });
+
+  it('stops registering targets once their tip is retired', async () => {
+    await markTourTipSeen('person-1', 'swipe');
+    const renderer = await render(target('swipe'));
+    expect(byTestId(renderer, 'tour-spotlight')).toHaveLength(0);
+  });
+
+  it('back dismisses a tip and focus lands on it', async () => {
+    const renderer = await render(target('cornerMark'));
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 80));
     });
@@ -202,34 +281,23 @@ describe('the product tour', () => {
       expect(back.handlers[0]!()).toBe(true);
     });
     for (let i = 0; i < 3; i += 1) await act(async () => undefined);
-    expect(byTestId(renderer, 'tour-tip-rooms')).toHaveLength(0);
-    expect((await loadProductTour('person-1')).seenTips).toEqual(['rooms']);
+    expect(byTestId(renderer, 'tour-tip-cornerMark')).toHaveLength(0);
+    expect((await loadProductTour('person-1')).seenTips).toEqual(['cornerMark']);
   });
 
   it('waits for a target that has not laid out, and never draws an empty overlay', async () => {
-    await offerProductTour('person-1');
-    await finishProductTourOverview('person-1', 'completed');
     rect.value = { x: 0, y: 0, width: 0, height: 0 };
-    const renderer = await render(
-      React.createElement(TourTarget, { tip: 'corner', children: React.createElement('Row') }),
-    );
+    const renderer = await render(target('cornerMark'));
     expect(byTestId(renderer, 'tour-spotlight')).toHaveLength(0);
     expect((await loadProductTour('person-1')).seenTips).toEqual([]);
   });
 
   it('hides a tip when its target unmounts and keeps it due for the next encounter', async () => {
-    await offerProductTour('person-1');
-    await finishProductTourOverview('person-1', 'completed');
     function Screen({ show }: { show: boolean }) {
-      return show
-        ? React.createElement(TourTarget, {
-            tip: 'workbench',
-            children: React.createElement('Row'),
-          })
-        : null;
+      return show ? target('squire') : null;
     }
     const renderer = await render(React.createElement(Screen, { show: true }));
-    expect(byTestId(renderer, 'tour-tip-workbench')).toHaveLength(1);
+    expect(byTestId(renderer, 'tour-tip-squire')).toHaveLength(1);
     await act(async () => {
       renderer.update(
         React.createElement(
@@ -244,20 +312,16 @@ describe('the product tour', () => {
   });
 
   it('keeps a tip while any of its targets is still mounted', async () => {
-    await offerProductTour('person-1');
-    await finishProductTourOverview('person-1', 'completed');
     function Screens({ second }: { second: boolean }) {
       return React.createElement(
         'Host',
         null,
-        React.createElement(TourTarget, { tip: 'rooms', children: React.createElement('Sidebar') }),
-        second
-          ? React.createElement(TourTarget, { tip: 'rooms', children: React.createElement('List') })
-          : null,
+        target('cornerMark', 'Sidebar'),
+        second ? target('cornerMark', 'List') : null,
       );
     }
     const renderer = await render(React.createElement(Screens, { second: true }));
-    expect(byTestId(renderer, 'tour-tip-rooms')).toHaveLength(1);
+    expect(byTestId(renderer, 'tour-tip-cornerMark')).toHaveLength(1);
     await act(async () => {
       renderer.update(
         React.createElement(
@@ -268,24 +332,14 @@ describe('the product tour', () => {
       );
     });
     for (let i = 0; i < 3; i += 1) await act(async () => undefined);
-    expect(byTestId(renderer, 'tour-tip-rooms')).toHaveLength(1);
-    expect((await loadProductTour('person-1')).seenTips).toEqual([]);
+    expect(byTestId(renderer, 'tour-tip-cornerMark')).toHaveLength(1);
   });
 
-  it('lets Skip tips retire every remaining spotlight', async () => {
-    await offerProductTour('person-1');
-    await finishProductTourOverview('person-1', 'completed');
-    const renderer = await render(
-      React.createElement(TourTarget, { tip: 'rooms', children: React.createElement('Row') }),
-    );
-    await press(renderer, 'tour-tip-skip');
-    expect((await loadProductTour('person-1')).seenTips).toEqual(['rooms', 'corner', 'workbench']);
-  });
-
-  it('never shows a spotlight to someone who was never offered the tour', async () => {
-    const renderer = await render(
-      React.createElement(TourTarget, { tip: 'rooms', children: React.createElement('Row') }),
-    );
-    expect(byTestId(renderer, 'tour-spotlight')).toHaveLength(0);
+  it('Replay tips brings every retired tip back', async () => {
+    for (const tip of ['swipe', 'cornerMark', 'squire'] as const)
+      await markTourTipSeen('person-1', tip);
+    await replayProductTour('person-1');
+    const renderer = await render(target('squire'));
+    expect(byTestId(renderer, 'tour-tip-squire')).toHaveLength(1);
   });
 });

@@ -1,5 +1,4 @@
 import React, { useMemo, useState } from 'react';
-import { MaybeTourTarget } from '@/components/buzz/tour/TourTarget';
 import { FlatList, Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router } from 'expo-router';
@@ -218,18 +217,11 @@ export function RoomCornersList({
       ]}
       testID="room-corners-list"
       renderItem={({ item: entry, index }) =>
-        entry.kind === 'row' ? (
-          <MaybeTourTarget
-            enabled={index === data.findIndex((candidate) => candidate.kind === 'row')}
-            tip="corner"
-          >
-            {row(entry.item)}
-          </MaybeTourTarget>
-        ) : (
-          fold(entry.key, entry.label, entry.open, () =>
-            (entry.key === 'mine' ? setMineOpen : setOthersOpen)(!entry.open),
-          )
-        )
+        entry.kind === 'row'
+          ? row(entry.item)
+          : fold(entry.key, entry.label, entry.open, () =>
+              (entry.key === 'mine' ? setMineOpen : setOthersOpen)(!entry.open),
+            )
       }
       ListFooterComponent={
         <View>

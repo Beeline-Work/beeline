@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ConnectorAssignment } from '@beeline/api-contract/daemon';
 import { CEREMONY_EXPIRED, ConnectorAssignmentLoop } from './connector-assignments.js';
+import { DaemonApiError } from './daemon-api-client.js';
 import { installRegistryMcp } from './registry-mcp.js';
 import {
   CONNECT_TIMEOUT_MS,
@@ -972,6 +973,53 @@ describe('ConnectorAssignmentLoop', () => {
     expect(
       calls.filter((call) => call.op === 'installConnector').map((call) => call.input.connectorId),
     ).toEqual(['ready']);
+    loop.stop();
+  });
+
+  it('keeps a Google tool pending when the grant lookup fails transiently', async () => {
+    const assignments: ConnectorAssignment[] = [
+      { kind: 'install', connectorId: 'server-5xx', connectorType: 'google-gmail' },
+      { kind: 'install', connectorId: 'network', connectorType: 'google-calendar' },
+      { kind: 'install', connectorId: 'refused-4xx', connectorType: 'google-drive' },
+      { kind: 'install', connectorId: 'revoked', connectorType: 'google-youtube' },
+    ];
+    const calls: ExecuteCall[] = [];
+    const api = {
+      async execute(op: string, input: Record<string, unknown>) {
+        calls.push({ op, input });
+        if (op === 'getConnectorAssignments') return { assignments };
+        if (op !== 'getGoogleOAuthGrant') return {};
+        if (input.connectorId === 'server-5xx')
+          throw new DaemonApiError('monolith daemon request failed (503: boom)', 503, true, 'boom');
+        if (input.connectorId === 'network') throw new TypeError('fetch failed');
+        if (input.connectorId === 'refused-4xx')
+          throw new DaemonApiError(
+            'monolith daemon request failed (403: nope)',
+            403,
+            false,
+            'nope',
+          );
+        throw new DaemonApiError(
+          'monolith daemon request failed (400: Google grant is invalid (invalid_grant))',
+          400,
+          false,
+          'Google grant is invalid (invalid_grant); reconnect Google Workspace',
+        );
+      },
+    };
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never,
+      agentId: 'agent-1',
+      mcp,
+      googleHome: mkdtempSync(join(tmpdir(), 'google-grant-')),
+    });
+    await loop.runOnce();
+    await settle();
+    const errored = calls
+      .filter((call) => call.op === 'postConnectorStatus' && call.input.errorMessage)
+      .map((call) => call.input.connectorId);
+    expect(errored).toEqual(['revoked']);
+    expect(calls.filter((call) => call.op === 'installConnector')).toEqual([]);
     loop.stop();
   });
 

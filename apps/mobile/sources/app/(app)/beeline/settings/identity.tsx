@@ -493,13 +493,13 @@ export default function BuzzIdentitySettings() {
         <View style={styles.section} testID="help-settings">
           <Text style={styles.sectionLabel}>Help</Text>
           <SettingsRow
-            accessibilityLabel="Replay product tour"
+            accessibilityLabel="Replay tips"
             chevron="right"
-            description="Rooms, corners, and Workbench · about a minute"
+            description="Swipe to a corner, the corner mark, and Trusty Squire"
             disabled={!profilePubkey || !replayTour}
             onPress={() => profilePubkey && void replayTour?.(profilePubkey)}
             testID="settings-replay-tour"
-            title="Replay product tour"
+            title="Replay tips"
           />
         </View>
 

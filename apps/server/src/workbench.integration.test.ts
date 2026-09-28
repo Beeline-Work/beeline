@@ -10,7 +10,7 @@ import { LiveHub } from './live.js';
 import { createBeelineServer } from './server.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { GitHubOperations } from './github-operations.js';
-import { GoogleOAuth } from './google-oauth.js';
+import { GOOGLE_GRANT_REVOKED, GoogleOAuth } from './google-oauth.js';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import {
   applyVaultList,
@@ -1167,6 +1167,26 @@ describe('workbench connectors', () => {
     } finally {
       grant.mockRestore();
       ownerGrant.mockRestore();
+    }
+  });
+
+  it('answers a revoked Google grant as a refusal and every other failure as retryable', async () => {
+    const paired = await phoneOperation('pairConnector', {
+      workspaceId: WORKSPACE, connectorType: 'google-gmail', helperAgentId: HELPER,
+    }) as { connectorId: string };
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const grant = vi.spyOn(GoogleOAuth.prototype, 'grantForHelper')
+      .mockRejectedValueOnce(new Error('Google could not refresh the grant (HTTP 503); retrying'))
+      .mockRejectedValueOnce(new Error(GOOGLE_GRANT_REVOKED));
+    try {
+      const outage = await daemonOperation('getGoogleOAuthGrant', { connectorId: paired.connectorId });
+      expect(outage.status).toBe(503);
+      const revoked = await daemonOperation('getGoogleOAuthGrant', { connectorId: paired.connectorId });
+      expect(revoked.status).toBe(400);
+      expect(revoked.body.error).toContain('invalid_grant');
+    } finally {
+      grant.mockRestore();
+      errors.mockRestore();
     }
   });
 

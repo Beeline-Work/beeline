@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
-import { GoogleOAuth } from './google-oauth.js';
+import { GOOGLE_GRANT_REVOKED, GoogleOAuth } from './google-oauth.js';
 import { PhoneService } from './phone-service.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
@@ -338,4 +338,175 @@ it('withholds an old machine grant from the retried tool until fresh OAuth compl
   const after = await database.query<{ status_error: string }>(
     `SELECT status_error FROM workspace_connectors WHERE id=$1`, [CONNECTOR]);
   expect(after.rows[0]!.status_error).toBeNull();
+});
+
+it('re-arms every Google tool on the machine when a fresh grant lands', async () => {
+  const siblings = ['google-calendar', 'google-drive', 'google-youtube'];
+  for (const [index, type] of siblings.entries())
+    await database.query(
+      `INSERT INTO workspace_connectors(id,workspace_id,owner_identity_id,connector_type,
+        helper_agent_id,machine_id,status,status_error,status_steps,sign_in,pairing_generation)
+       VALUES($1,$2,$3,$4,$5,$5,'error','Google authorization failed; retry the connection',
+        '[{"label":"Google sign-in","status":"failed"}]'::jsonb,$6::jsonb,3)`,
+      [`33333333-3333-4333-8333-33333333333${index}`, WORKSPACE, OWNER, type, HELPER,
+        index === 0 ? JSON.stringify({ method: 'oauth', url: 'https://accounts.google.com/stale' }) : null],
+    );
+  const transport = vi.fn(async (url: string | URL | Request) =>
+    new Response(JSON.stringify(String(url).endsWith('/token') ? {
+      access_token: 'fresh', refresh_token: 'refresh', expires_in: 3600,
+      scope: 'openid email',
+    } : { email: 'owner@example.test' }), { status: 200 })) as typeof fetch;
+  const oauth = new GoogleOAuth(database, 'client-id', 'client-secret',
+    'https://beeline.example', randomBytes(32).toString('base64'), transport);
+  const state = new URL(await oauth.begin(CONNECTOR)).searchParams.get('state')!;
+  const query = vi.spyOn(database, 'query');
+  expect(await oauth.complete(state, 'code')).toBe(true);
+  const notified = query.mock.calls
+    .filter(([sql]) => sql.includes('pg_notify'))
+    .map(([, values]) => JSON.parse(String(values![1])).agentId);
+  query.mockRestore();
+  const rows = await database.query<{ connector_type: string; status: string;
+    status_error: string | null; sign_in: unknown; pairing_generation: number }>(
+    `SELECT connector_type,status,status_error,sign_in,pairing_generation
+     FROM workspace_connectors WHERE workspace_id=$1 ORDER BY connector_type`, [WORKSPACE]);
+  expect(rows.rows).toEqual([
+    { connector_type: 'google-calendar', status: 'installing', status_error: null, sign_in: null, pairing_generation: 4 },
+    { connector_type: 'google-drive', status: 'installing', status_error: null, sign_in: null, pairing_generation: 4 },
+    { connector_type: 'google-gmail', status: 'installing', status_error: null, sign_in: null, pairing_generation: 2 },
+    { connector_type: 'google-youtube', status: 'installing', status_error: null, sign_in: null, pairing_generation: 4 },
+  ]);
+  expect(notified).toContain(HELPER);
+  for (const [index] of siblings.entries())
+    expect(await oauth.grantForHelper(`33333333-3333-4333-8333-33333333333${index}`, HELPER))
+      .toMatchObject({ accessToken: 'fresh' });
+});
+
+it('fails the attempt only when Google refuses the code, and logs why without tokens', async () => {
+  const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    const transport = vi.fn(async () => new Response(
+      JSON.stringify({ error: 'invalid_grant', error_description: 'Bad Request' }),
+      { status: 400 })) as typeof fetch;
+    const oauth = new GoogleOAuth(database, 'client-id', 'client-secret',
+      'https://beeline.example', randomBytes(32).toString('base64'), transport);
+    const state = new URL(await oauth.begin(CONNECTOR)).searchParams.get('state')!;
+    expect(await oauth.complete(state, 'code')).toBe(false);
+    const row = await database.query<{ status: string; status_error: string }>(
+      `SELECT status,status_error FROM workspace_connectors WHERE id=$1`, [CONNECTOR]);
+    // A refusal offers Connect again (#1840).
+    expect(row.rows[0]).toEqual({ status: 'disconnected', status_error: null });
+    const logged = errors.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(logged).toContain('400');
+    expect(logged).toContain('invalid_grant');
+  } finally {
+    errors.mockRestore();
+  }
+});
+
+it('leaves the attempt retryable when our own grant write fails', async () => {
+  const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    const transport = vi.fn(async (url: string | URL | Request) =>
+      new Response(JSON.stringify(String(url).endsWith('/token') ? {
+        access_token: 'ya29.secret', refresh_token: 'refresh.secret', expires_in: 3600,
+        scope: 'openid email',
+      } : { email: 'owner@example.test' }), { status: 200 })) as typeof fetch;
+    const oauth = new GoogleOAuth(database, 'client-id', 'client-secret',
+      'https://beeline.example', randomBytes(32).toString('base64'), transport);
+    const state = new URL(await oauth.begin(CONNECTOR)).searchParams.get('state')!;
+    const original = database.query.bind(database);
+    const query = vi.spyOn(database, 'query').mockImplementation(async (sql, values) => {
+      if (sql.includes('INSERT INTO google_oauth_grants')) throw new Error('connection reset');
+      return original(sql, values);
+    });
+    expect(await oauth.complete(state, 'code')).toBe(false);
+    query.mockRestore();
+    const row = await database.query<{ status: string; status_error: string | null }>(
+      `SELECT status,status_error FROM workspace_connectors WHERE id=$1`, [CONNECTOR]);
+    expect(row.rows[0]).toEqual({ status: 'installing', status_error: null });
+    const logged = errors.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(logged).toContain('connection reset');
+    expect(logged).not.toContain('ya29.secret');
+    expect(logged).not.toContain('refresh.secret');
+    // The same sign-in link can still finish once the write succeeds.
+    expect(await oauth.complete(state, 'code-again')).toBe(true);
+    expect(await oauth.grantForHelper(CONNECTOR, HELPER)).toMatchObject({ accessToken: 'ya29.secret' });
+  } finally {
+    errors.mockRestore();
+  }
+});
+
+it('leaves the attempt retryable when Google cannot be reached', async () => {
+  const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    const transport = vi.fn(async () => { throw new TypeError('fetch failed'); }) as typeof fetch;
+    const oauth = new GoogleOAuth(database, 'client-id', 'client-secret',
+      'https://beeline.example', randomBytes(32).toString('base64'), transport);
+    const state = new URL(await oauth.begin(CONNECTOR)).searchParams.get('state')!;
+    expect(await oauth.complete(state, 'code')).toBe(false);
+    const row = await database.query<{ status: string }>(
+      `SELECT status FROM workspace_connectors WHERE id=$1`, [CONNECTOR]);
+    expect(row.rows[0]!.status).toBe('installing');
+    const attempt = await database.query(
+      `SELECT 1 FROM google_oauth_attempts WHERE state=$1`, [state]);
+    expect(attempt.rows).toHaveLength(1);
+  } finally {
+    errors.mockRestore();
+  }
+});
+
+it('treats only Google invalid_grant as a terminal refresh refusal', async () => {
+  const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+  let refresh: Response = new Response('', { status: 503 });
+  const transport = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    if (String(url).endsWith('/userinfo'))
+      return new Response(JSON.stringify({ email: 'owner@example.test' }), { status: 200 });
+    if (new URLSearchParams(String(init?.body)).get('grant_type') === 'refresh_token') return refresh;
+    return new Response(JSON.stringify({ access_token: 'expired', refresh_token: 'server-refresh',
+      expires_in: 1, scope: 'openid email' }), { status: 200 });
+  }) as typeof fetch;
+  try {
+    const oauth = new GoogleOAuth(database, 'client-id', 'client-secret',
+      'https://beeline.example', randomBytes(32).toString('base64'), transport);
+    const state = new URL(await oauth.begin(CONNECTOR)).searchParams.get('state')!;
+    expect(await oauth.complete(state, 'code')).toBe(true);
+    const outage = await oauth.grantForHelper(CONNECTOR, HELPER).catch((error: Error) => error);
+    expect(outage).toBeInstanceOf(Error);
+    expect((outage as Error).message).not.toMatch(/invalid/);
+    refresh = new Response(JSON.stringify({ error: 'invalid_client' }), { status: 401 });
+    const misconfigured = await oauth.grantForHelper(CONNECTOR, HELPER).catch((error: Error) => error);
+    expect((misconfigured as Error).message).not.toMatch(/invalid/);
+    refresh = new Response(JSON.stringify({ error: 'invalid_grant', error_description: 'Token has been expired or revoked.' }),
+      { status: 400 });
+    await expect(oauth.grantForHelper(CONNECTOR, HELPER)).rejects.toThrow(GOOGLE_GRANT_REVOKED);
+    expect(GOOGLE_GRANT_REVOKED).toContain('invalid_grant');
+  } finally {
+    errors.mockRestore();
+  }
+});
+
+it('sweeps a Google sign-in nobody finished back to Connect, even with Workbench closed', async () => {
+  const oauth = new GoogleOAuth(database, 'client-id', 'client-secret',
+    'https://beeline.example', randomBytes(32).toString('base64'));
+  const phone = new PhoneService(database, 'https://beeline.example', undefined,
+    undefined, undefined, false, database, undefined, oauth);
+  const paired = await phone.pairConnector({ workspaceId: WORKSPACE,
+    connectorType: 'google-gmail', helperAgentId: HELPER }, OWNER);
+  expect(await oauth.expireAttempts()).toBe(0);
+  await database.query(
+    `UPDATE google_oauth_attempts SET expires_at=now()-interval '1 minute' WHERE connector_id=$1`,
+    [paired.connectorId]);
+  expect(await oauth.expireAttempts()).toBe(1);
+  const row = await database.query<{ status: string; status_error: string; sign_in: unknown }>(
+    `SELECT status,status_error,sign_in FROM workspace_connectors WHERE id=$1`, [paired.connectorId]);
+  expect(row.rows[0]).toEqual({ status: 'disconnected', status_error: null, sign_in: null });
+  expect((await database.query(`SELECT 1 FROM google_oauth_attempts`)).rows).toHaveLength(0);
+  // Retry re-arms it with a fresh sign-in page.
+  await phone.pairConnector({ workspaceId: WORKSPACE,
+    connectorType: 'google-gmail', helperAgentId: HELPER }, OWNER);
+  const retried = await database.query<{ status: string; status_error: string | null;
+    sign_in: { method: string } }>(
+    `SELECT status,status_error,sign_in FROM workspace_connectors WHERE id=$1`, [paired.connectorId]);
+  expect(retried.rows[0]).toMatchObject({ status: 'installing', status_error: null,
+    sign_in: { method: 'oauth' } });
 });

@@ -1,29 +1,25 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 /**
- * The product tour's per-identity state: four overview cards offered once,
- * then three first-sight spotlights (Room list, a corner, Workbench), each
- * shown once. Device-local and per identity — a per-viewer convenience, like
- * a remembered filter. Replay from Settings resets both layers together and
- * never touches setup data.
- *
- * The tour is offered only to someone who has just arrived through the
- * create-or-join onboarding (`offerProductTour`) or who asked to replay it.
- * An identity with no stored state has never been offered it, so an existing
- * person updating the app is not interrupted by a tour they did not ask for.
+ * The three first-sight tips, per identity: swipe a message into a corner
+ * (mobile), press and hold a Room's corner mark, and what Trusty Squire does
+ * in Workbench. Each shows once, the first time its target is on screen, in
+ * no fixed order; "Got it" retires it for good. Device-local and per
+ * identity — a per-viewer convenience, like a remembered filter. Replay from
+ * Settings brings all three back and never touches setup data.
  */
-export const TOUR_TIP_IDS = ['rooms', 'corner', 'workbench'] as const;
+export const TOUR_TIP_IDS = ['swipe', 'cornerMark', 'squire'] as const;
 export type TourTipId = (typeof TOUR_TIP_IDS)[number];
-export type TourOverviewStatus = 'none' | 'pending' | 'completed' | 'skipped';
 
 export type ProductTourState = {
-  readonly version: 1;
-  readonly overview: TourOverviewStatus;
+  readonly version: 2;
   readonly seenTips: readonly TourTipId[];
 };
 
-const KEY_PREFIX = '@beeline/product-tour/v1/';
-const EMPTY: ProductTourState = { version: 1, overview: 'none', seenTips: [] };
+// v1 held the retired overview cards and Rooms/corner/Workbench spotlights;
+// none of its tips exist any more, so it is left unread.
+const KEY_PREFIX = '@beeline/product-tour/v2/';
+const EMPTY: ProductTourState = { version: 2, seenTips: [] };
 const listeners = new Map<string, Set<(state: ProductTourState) => void>>();
 const cache = new Map<string, ProductTourState>();
 
@@ -35,14 +31,10 @@ function readState(raw: string | null): ProductTourState {
   if (!raw) return EMPTY;
   try {
     const value = JSON.parse(raw) as Partial<ProductTourState>;
-    const overview: TourOverviewStatus =
-      value.overview === 'pending' || value.overview === 'completed' || value.overview === 'skipped'
-        ? value.overview
-        : 'none';
     const seenTips = Array.isArray(value.seenTips)
       ? TOUR_TIP_IDS.filter((tip) => value.seenTips!.includes(tip))
       : [];
-    return { version: 1, overview, seenTips };
+    return { version: 2, seenTips };
   } catch {
     return EMPTY;
   }
@@ -55,7 +47,7 @@ export async function loadProductTour(pubkey: string): Promise<ProductTourState>
   try {
     state = readState(await AsyncStorage.getItem(key(pubkey)));
   } catch {
-    // Unreadable storage shows no tour rather than a broken one.
+    // Unreadable storage shows the tips again rather than a broken state.
   }
   cache.set(pubkey, state);
   return state;
@@ -72,56 +64,23 @@ async function write(pubkey: string, next: ProductTourState): Promise<ProductTou
   return next;
 }
 
-async function update(
-  pubkey: string,
-  change: (current: ProductTourState) => ProductTourState,
-): Promise<ProductTourState> {
-  return write(pubkey, change(await loadProductTour(pubkey)));
+/** "Got it": this tip never shows again for this person. */
+export async function markTourTipSeen(pubkey: string, tip: TourTipId) {
+  const current = await loadProductTour(pubkey);
+  if (current.seenTips.includes(tip)) return current;
+  return write(pubkey, {
+    version: 2,
+    seenTips: TOUR_TIP_IDS.filter((id) => id === tip || current.seenTips.includes(id)),
+  });
 }
 
-/** Arriving through onboarding: offer the overview on the first Room. */
-export function offerProductTour(pubkey: string) {
-  return update(pubkey, (current) =>
-    current.overview === 'none' ? { ...current, overview: 'pending' } : current,
-  );
-}
-
-export function finishProductTourOverview(pubkey: string, outcome: 'completed' | 'skipped') {
-  return update(pubkey, (current) => ({ ...current, overview: outcome }));
-}
-
-export function markTourTipSeen(pubkey: string, tip: TourTipId) {
-  return update(pubkey, (current) =>
-    current.seenTips.includes(tip)
-      ? current
-      : {
-          ...current,
-          seenTips: TOUR_TIP_IDS.filter((id) => id === tip || current.seenTips.includes(id)),
-        },
-  );
-}
-
-/** "Skip tips": every remaining spotlight counts as seen. */
-export function skipTourTips(pubkey: string) {
-  return update(pubkey, (current) => ({ ...current, seenTips: [...TOUR_TIP_IDS] }));
-}
-
-/** Settings → Replay product tour: both layers again, one coherent sequence. */
+/** Settings → Replay tips: all three are due again. */
 export function replayProductTour(pubkey: string) {
-  return write(pubkey, { version: 1, overview: 'pending', seenTips: [] });
+  return write(pubkey, EMPTY);
 }
 
-/** A spotlight shows only once the overview is behind the person. */
 export function tourTipDue(state: ProductTourState, tip: TourTipId): boolean {
-  return (
-    (state.overview === 'completed' || state.overview === 'skipped') &&
-    !state.seenTips.includes(tip)
-  );
-}
-
-/** Position of a tip in the three-step sequence, for its "1 / 3" counter. */
-export function tourTipPosition(tip: TourTipId): { index: number; total: number } {
-  return { index: TOUR_TIP_IDS.indexOf(tip) + 1, total: TOUR_TIP_IDS.length };
+  return !state.seenTips.includes(tip);
 }
 
 export function subscribeProductTour(

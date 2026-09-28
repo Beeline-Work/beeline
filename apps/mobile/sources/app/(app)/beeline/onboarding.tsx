@@ -77,13 +77,18 @@ import {
 } from '@/buzz/person-name';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { BeelineMark } from '@/components/buzz/BeelineMark';
-import { HullSurface, MonoButton, PixelGateReveal } from '@/components/buzz/MonoHull';
+import {
+  HullSurface,
+  MonoButton,
+  OnboardingButton,
+  PixelGateReveal,
+} from '@/components/buzz/MonoHull';
 import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
 import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
 import { GitHubAccountMismatchError, monolithSession } from '@/auth/monolith-session';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
-import { FaceCeremonyStep } from '@/components/buzz/FaceCeremonyStep';
+import { YouStep } from '@/components/buzz/YouStep';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { t } from '@/text';
 import { isTauri } from '@/utils/isTauri';
@@ -142,20 +147,21 @@ export default function BuzzOnboarding() {
   const [namingIdentity, setNamingIdentity] = useState<Identity | null>(null);
   const [namingClient, setNamingClient] = useState<BuzzClient | null>(null);
   const [nameInput, setNameInput] = useState('');
-  // The face ceremony: published once the monolith identity exists, cleared by
-  // the crossfade into the app. `face` is a face already on record.
+  // The You step (name + face): published once the monolith identity exists,
+  // cleared by the crossfade into the app. `face` is a face already on record.
   const [faceStep, setFaceStep] = useState<OnboardingFaceStep | null>(null);
   const loading = loadingAction !== null;
 
-  // The ceremony reaches whichever onboarding screen is on the page, not only
+  // The You step reaches whichever onboarding screen is on the page, not only
   // the one whose press started the sign-in — the GitHub callback deep link
   // routes a second one over it before the exchange comes back.
   useEffect(() => subscribeToOnboardingFaceStep(setFaceStep), []);
 
   /**
    * After a monolith sign-in the identity exists; before the app opens the
-   * person chooses their face. A person who already chose (a returning
-   * sign-in on a new device) goes straight in — the picker lives in Settings.
+   * person confirms their name and chooses their face. A person who already
+   * chose (a returning sign-in on a new device) goes straight in — both live
+   * in Settings.
    */
   const enterAfterMonolithSignIn = async (identityId: string | undefined) => {
     const seed = identityId || (await monolithSession.identityId().catch(() => null)) || '';
@@ -164,7 +170,12 @@ export default function BuzzOnboarding() {
       router.replace('/beeline/channels');
       return;
     }
-    publishOnboardingFaceStep({ seed, face: null });
+    publishOnboardingFaceStep({
+      seed,
+      face: null,
+      name: hosted?.name ?? '',
+      handle: hosted?.handle,
+    });
   };
 
   const restorePendingBind = async (): Promise<boolean> => {
@@ -740,9 +751,15 @@ export default function BuzzOnboarding() {
         style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
         testID="onboarding-face-ceremony"
       >
-        <FaceCeremonyStep
+        <YouStep
           currentFace={faceStep.face}
-          onConfirm={(face) => monolithPhoneOperation('updateIdentityFace', { faceId: face })}
+          handle={faceStep.handle}
+          name={faceStep.name}
+          onConfirm={async ({ name, face }) => {
+            if (name !== faceStep.name)
+              await monolithPhoneOperation('updatePersonProfile', { name });
+            await monolithPhoneOperation('updateIdentityFace', { faceId: face });
+          }}
           onEntered={() => {
             clearOnboardingFaceStep();
             router.replace('/beeline/channels');
@@ -939,7 +956,7 @@ export default function BuzzOnboarding() {
           beeline<Text style={styles.titlePeriod}>.</Text>
         </Text>
         <Text style={styles.subtitle} testID="onboarding-tagline">
-          workspace for all intelligence
+          A Workspace for people and agents.
         </Text>
       </View>
 
@@ -1011,8 +1028,7 @@ export default function BuzzOnboarding() {
               Rooms, and repository approvals follow this account — agents and people you work with
               keep working with you, no re-invites.
             </Text>
-            <MonoButton
-              labelStyle={styles.buttonLabel}
+            <OnboardingButton
               label="Replace device key"
               loading={loadingAction === 'recover'}
               onPress={() => void handleReplaceDeviceKey()}
@@ -1021,16 +1037,14 @@ export default function BuzzOnboarding() {
             />
           </View>
         ) : !showAdvanced && canRetryBind ? (
-          <MonoButton
-            labelStyle={styles.buttonLabel}
+          <OnboardingButton
             label="Retry device bind"
             loading={loadingAction === 'bind'}
             onPress={() => pendingBind.current && void finishPendingBind(pendingBind.current)}
             disabled={loading}
           />
         ) : !showAdvanced && canSignIn ? (
-          <MonoButton
-            labelStyle={styles.buttonLabel}
+          <OnboardingButton
             label={signInLabel}
             testID="onboarding-github-sign-in"
             loading={
@@ -1094,10 +1108,8 @@ const styles = StyleSheet.create((theme) => {
     buttonLabel: { fontFamily: groknight.proseSemibold },
     subtitle: {
       ...Typography.default(),
-      fontFamily: groknight.proseRegular,
+      ...groknight.type.body,
       maxWidth: 320,
-      fontSize: 14,
-      lineHeight: 20,
       color: groknight.textSecondary,
       textAlign: 'center',
     },
@@ -1112,19 +1124,15 @@ const styles = StyleSheet.create((theme) => {
       marginBottom: 16,
     },
     statusLabel: {
-      ...Typography.mono('semiBold'),
+      ...Typography.default(),
+      ...groknight.type.sectionHead,
       color: groknight.textPrimary,
-      fontSize: 11,
-      lineHeight: 15,
-      letterSpacing: 0.8,
       marginBottom: 4,
     },
     noticeText: {
       ...Typography.default(),
-      fontFamily: groknight.proseRegular,
+      ...groknight.type.meta,
       color: groknight.textSecondary,
-      fontSize: 14,
-      lineHeight: 20,
     },
     importPanel: { width: '100%', maxWidth: 440, alignSelf: 'center', marginBottom: 16 },
     sectionLabel: {

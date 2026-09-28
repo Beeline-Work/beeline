@@ -267,6 +267,39 @@ export function BrassButton({
   );
 }
 
+/**
+ * The onboarding primary: sign-in, You, Create or join, Name the Workspace,
+ * and the tips' "Got it". Obsidian fills it with the action white and ink
+ * text; Bone fills it with dark brass and ink text (a human call, kept at
+ * 3.4:1). Every other primary keeps `BrassButton` / `MonoButton`.
+ */
+export function OnboardingButton({
+  label,
+  loading = false,
+  disabled,
+  style,
+  ...props
+}: BrassButtonProps) {
+  const isDisabled = Boolean(disabled || loading);
+  return (
+    <BrittlePress
+      {...props}
+      accessibilityRole="button"
+      accessibilityState={{ disabled: isDisabled, busy: loading }}
+      disabled={isDisabled}
+      highValue
+      style={[styles.brassButtonFrame, style]}
+    >
+      <View style={[styles.onboardingButton, isDisabled && styles.brassButtonDisabled]}>
+        {loading && <PixelLoader compact />}
+        <Text style={[styles.onboardingButtonText, isDisabled && styles.disabledButtonText]}>
+          {label}
+        </Text>
+      </View>
+    </BrittlePress>
+  );
+}
+
 export function PixelLoader({ compact = false }: { compact?: boolean }) {
   const reducedMotion = useReducedMotion();
   const frame = useSharedValue(0);
@@ -816,6 +849,21 @@ const styles = StyleSheet.create((theme) => {
     },
     brassButtonDisabled: { backgroundColor: groknight.bgRaised },
     brassButtonText: { ...Typography.default(), ...typeRoles.body, color: groknight.textInverted },
+    onboardingButton: {
+      minHeight: 44,
+      paddingHorizontal: 16,
+      borderRadius: 3,
+      backgroundColor: groknight.dark ? groknight.actionFill : groknight.accent,
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexDirection: 'row',
+      gap: 8,
+    },
+    onboardingButtonText: {
+      ...Typography.default(),
+      ...typeRoles.bodyStrong,
+      color: groknight.dark ? groknight.textInverted : groknight.textPrimary,
+    },
     secondaryButtonText: { color: groknight.textSecondary },
     disabledButtonText: { color: groknight.textDisabled },
     pixelLoader: { width: 42, height: 14, flexDirection: 'row', alignItems: 'center', gap: 4 },

@@ -93,6 +93,7 @@ vi.mock('@/components/buzz/MonoHull', async () => {
     hairlineDivider: { borderBottomWidth: 1, borderBottomColor: '#4e4e4e' },
     HullSurface: host('HullSurface'),
     MonoButton: host('MonoButton'),
+    OnboardingButton: host('OnboardingButton'),
     PixelGateReveal: host('PixelGateReveal'),
   };
 });

@@ -28,7 +28,7 @@ import {
   useRoomListFilter,
 } from '@/buzz/room-list-preferences';
 import { openRoomListCorner } from '@/buzz/room-list-new-corner';
-import { roomListSections, roomRowName } from '@/buzz/room-list-row';
+import { cornerTipRoomId, roomListSections, roomRowName } from '@/buzz/room-list-row';
 import { leaveRoomWithConfirmation } from '@/buzz/room-leave';
 import { validRoomSlug } from '@/buzz/room-name';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
@@ -51,7 +51,6 @@ import {
 import { RoomDeckLoadingView } from '@/components/buzz/RoomDeckLoadingView';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { RoomListToolbar } from '@/components/buzz/RoomListToolbar';
-import { MaybeTourTarget } from '@/components/buzz/tour/TourTarget';
 import { WorkspaceActionsMenu } from '@/components/buzz/WorkspaceActionsMenu';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
@@ -253,6 +252,7 @@ export default function BuzzChannels() {
     () => roomListSections(filterConversations(chatList?.chats ?? [], query, filter, pinned)),
     [chatList?.chats, query, filter, pinned],
   );
+  const cornerTipRow = cornerTipRoomId(chatSections);
   useEffect(() => {
     setQuery('');
   }, [activeCommunityId]);
@@ -1062,34 +1062,32 @@ export default function BuzzChannels() {
                   pathname: '/beeline/corners/[roomId]',
                   params: { roomId: item.room.id },
                 } as never);
-              const tourTarget = first && section === chatSections[0] && !viewerIsAgent;
               const row = (
-                <MaybeTourTarget enabled={tourTarget} tip="rooms">
-                  <View
-                    style={[
-                      styles.rowSurface,
-                      first && styles.rowSurfaceFirst,
-                      last && styles.rowSurfaceLast,
-                    ]}
-                  >
-                    <ConversationRow
-                      item={item}
-                      viewer={chatList.viewer.pubkey}
-                      now={ageNow}
-                      onPress={() => {
-                        swipeableRefs.current.get(item.room.id)?.close();
-                        openRoom(item.room.id);
-                      }}
-                      pinned={pinned.includes(item.room.id)}
-                      onPin={() => void togglePin(item.room.id)}
-                      onToggleCorners={openCorners}
-                      onLongPressCorners={
-                        viewerIsAgent ? undefined : () => void openNewCorner(item.room.id)
-                      }
-                      testID={`room-${item.room.id}`}
-                    />
-                  </View>
-                </MaybeTourTarget>
+                <View
+                  style={[
+                    styles.rowSurface,
+                    first && styles.rowSurfaceFirst,
+                    last && styles.rowSurfaceLast,
+                  ]}
+                >
+                  <ConversationRow
+                    item={item}
+                    viewer={chatList.viewer.pubkey}
+                    now={ageNow}
+                    onPress={() => {
+                      swipeableRefs.current.get(item.room.id)?.close();
+                      openRoom(item.room.id);
+                    }}
+                    pinned={pinned.includes(item.room.id)}
+                    onPin={() => void togglePin(item.room.id)}
+                    onToggleCorners={openCorners}
+                    onLongPressCorners={
+                      viewerIsAgent ? undefined : () => void openNewCorner(item.room.id)
+                    }
+                    cornerTip={!viewerIsAgent && item.room.id === cornerTipRow}
+                    testID={`room-${item.room.id}`}
+                  />
+                </View>
               );
               return (
                 <View style={[styles.roomCell, last && styles.roomCellLast]}>

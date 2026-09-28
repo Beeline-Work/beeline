@@ -40,7 +40,7 @@ import {
   type ResolvedGoogleCredentials,
 } from './connector-google.js';
 import { clearYoutubeGrant, isAdaptedYoutube } from './connector-adapters.js';
-import type { DaemonApiClient } from './daemon-api-client.js';
+import { DaemonApiError, type DaemonApiClient } from './daemon-api-client.js';
 import {
   CONNECT_TIMEOUT_MS,
   installSquire,
@@ -267,7 +267,9 @@ export class ConnectorAssignmentLoop {
     }
   }
 
-  /** A failed grant lookup becomes an error for this connector. */
+  /** Only Google's definite refusal (`invalid_grant`) errors this connector.
+   * A 5xx, network failure, or other lookup error leaves it pending so the
+   * next wake with a ready grant installs it. */
   private resolveGoogleCredentials(connectorId: string): Promise<ResolvedGoogleCredentials> {
     return (async () => {
       try {
@@ -279,10 +281,11 @@ export class ConnectorAssignmentLoop {
           return { source: 'beeline', credentials: grant.credentials };
       } catch (error) {
         this.log(`Google grant lookup failed: ${describe(error)}`);
-        return {
-          source: 'error',
-          reason: 'Beeline could not read the Google grant; retry the connection',
-        };
+        if (error instanceof DaemonApiError && !error.retryable && error.code.includes('invalid_grant'))
+          return {
+            source: 'error',
+            reason: 'Google revoked the grant; retry the connection',
+          };
       }
       return { source: 'pending', reason: 'waiting for Google sign-in' };
     })();

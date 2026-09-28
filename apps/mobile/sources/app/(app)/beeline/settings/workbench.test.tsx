@@ -253,6 +253,26 @@ describe('Workbench settings screen', () => {
     expect(tailscale.props.action).toBe('Connect');
   });
 
+  it('anchors the Trusty Squire tip under its row while Squire is not connected', async () => {
+    const renderer = await render();
+    const targets = renderer.root.findAll(
+      (node: any) => typeof node.type === 'string' && node.props.testID === 'tour-target-squire',
+    );
+    expect(targets).toHaveLength(1);
+    expect(
+      targets[0]!.findAll(
+        (node: any) => node.props.testID === 'workbench-connector-trusty-squire-head',
+      ).length,
+    ).toBeGreaterThan(0);
+    // No other tool row carries a tip.
+    expect(
+      renderer.root.findAll(
+        (node: any) =>
+          typeof node.type === 'string' && String(node.props.testID).startsWith('tour-target-'),
+      ),
+    ).toHaveLength(1);
+  });
+
   it('connects a tool from its row and keeps the accordion for the facts', async () => {
     const renderer = await render();
     const squire = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' });
@@ -467,7 +487,9 @@ describe('Workbench settings screen', () => {
     expect(squire.props.descriptionTone).toBe('danger');
   });
 
-  it('does not paint a stale Squire browser error as Google failure', async () => {
+  // The server clears a re-armed Google row's error, so any error left on it
+  // is a live Google failure and paints as one.
+  it('paints an error left on a Google row as a Google failure', async () => {
     const source = new MockWorkbenchSource();
     source.failNextPair('trusty-squire');
     source.failNextPair('google-gmail');
@@ -481,13 +503,12 @@ describe('Workbench settings screen', () => {
     const google = renderer.root.findByProps({ testID: 'google-entry-row' });
     expect(google.props.title).toBe('Google Workspace');
     expect(google.props.action).toBe('Connect');
-    expect(google.props.descriptionTone).toBeUndefined();
-    expect(google.props.description).toBeUndefined();
+    expect(google.props.descriptionTone).toBe('danger');
+    expect(google.props.description).toContain('already using the browser');
     act(() => google.props.onPress());
     const gmail = renderer.root.findByProps({ testID: 'google-tool-google-gmail' });
-    expect(gmail.props.action).toBe('Connect');
-    expect(gmail.props.descriptionTone).toBeUndefined();
-    expect(gmail.props.description).toBeUndefined();
+    expect(gmail.props.descriptionTone).toBe('danger');
+    expect(gmail.props.description).toContain('already using the browser');
   });
 
   it('creates a wallet from Connect and opens the dashboard', async () => {

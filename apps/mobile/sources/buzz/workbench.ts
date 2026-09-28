@@ -250,14 +250,7 @@ function googleEntryTools(
 ): readonly WorkbenchConnector[] {
   return GOOGLE_CONNECTOR_ORDER.map((id) =>
     connectors.find((connector) => connector.id === id),
-  ).filter((tool): tool is WorkbenchConnector => tool !== undefined).map((tool) =>
-    // Older Google rows can carry a Squire browser failure. Google OAuth does
-    // not use that browser, so this is not a Google connection error.
-    tool.status === 'error' &&
-    /Trusty Squire[\s\S]{0,80}browser|browser[\s\S]{0,80}Trusty Squire/i.test(tool.errorMessage ?? '')
-      ? { ...tool, status: 'disconnected', errorMessage: undefined }
-      : tool,
-  );
+  ).filter((tool): tool is WorkbenchConnector => tool !== undefined);
 }
 
 /** The Google group state across its four tool connectors: fully

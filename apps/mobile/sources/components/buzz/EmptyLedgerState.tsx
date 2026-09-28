@@ -22,6 +22,8 @@ type EmptyLedgerStateProps = {
   onPress: () => void;
   /** A Room the viewer can write in, empty: teach by doing (first Room). */
   starterPrompts?: readonly EmptyLedgerStarterPrompt[];
+  /** The line under the starter title (`roomStarterIntro`). */
+  starterIntro?: string;
   testID?: string;
 };
 
@@ -65,6 +67,7 @@ export function EmptyLedgerState({
   objective,
   onPress,
   starterPrompts,
+  starterIntro,
   testID = 'empty-ledger-state',
 }: EmptyLedgerStateProps) {
   const copy = emptyLedgerCopy(variant, name, objective);
@@ -73,9 +76,11 @@ export function EmptyLedgerState({
       <View style={styles.pressable} testID={testID}>
         <View style={styles.content}>
           <RoomGlyph size={28} />
-          <Text style={styles.title}>Start with real work.</Text>
-          <Text style={styles.body}>
-            Ask an agent, open a corner for a bounded task, or invite a collaborator into this Room.
+          <Text style={styles.title} testID="empty-room-title">
+            {name ? `${name} is empty` : 'This Room is empty'}
+          </Text>
+          <Text style={styles.body} testID="empty-room-intro">
+            {starterIntro}
           </Text>
           <View style={styles.prompts}>
             {starterPrompts.map((prompt) => (

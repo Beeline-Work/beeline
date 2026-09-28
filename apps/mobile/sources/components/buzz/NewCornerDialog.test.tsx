@@ -65,12 +65,11 @@ vi.mock('./HullActionSheet', async () => {
 
 import { HUMAN_CORNER_TITLE_MAX_LENGTH, NewCornerDialog } from './NewCornerDialog';
 
-function mount(error?: string, apps: React.ComponentProps<typeof NewCornerDialog>['apps'] = []) {
+function mount(error?: string) {
   const submit = vi.fn();
   const close = vi.fn();
   function Harness() {
     const [title, setTitle] = useState('');
-    const [selectedAppId, setSelectedAppId] = useState<string>();
     return (
       <NewCornerDialog
         visible
@@ -80,9 +79,6 @@ function mount(error?: string, apps: React.ComponentProps<typeof NewCornerDialog
         error={error}
         onCreate={() => submit(title.trim())}
         onClose={close}
-        apps={apps}
-        selectedAppId={selectedAppId}
-        setSelectedAppId={setSelectedAppId}
       />
     );
   }
@@ -99,13 +95,15 @@ describe('NewCornerDialog', () => {
   it('presents through the shared bottom sheet, not a centred dialog', () => {
     const { sheet } = mount();
     expect(sheet().title).toBe('New corner');
-    expect(sheet().subtitle).toBe('A human-owned corner stays open until you close it.');
+    expect(sheet().subtitle).toBeUndefined();
     expect(sheet().visible).toBe(true);
     expect(sheet().dismissOnBackdrop).toBe(true);
   });
 
-  it('requires only a title and submits it', () => {
-    const { host, submit } = mount();
+  it('opens a name-only sheet and submits the entered corner title', () => {
+    const { tree, host, submit } = mount();
+    expect(tree.root.findAllByProps({ testID: 'create-corner-app-field' })).toHaveLength(0);
+    expect(tree.root.findAllByProps({ testID: 'create-corner-app-guide' })).toHaveLength(0);
     expect(host('create-corner-title').props).toMatchObject({
       accessibilityLabel: 'Corner title',
       maxLength: HUMAN_CORNER_TITLE_MAX_LENGTH,
@@ -120,23 +118,5 @@ describe('NewCornerDialog', () => {
   it('keeps a server refusal visible in the sheet', () => {
     const { host } = mount('only the creator can close this corner');
     expect(host('create-corner-error').props.accessibilityRole).toBe('alert');
-  });
-
-  it('offers zero or one installed app without requiring one', () => {
-    const { host } = mount(undefined, [
-      {
-        id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-        manifest: {
-          version: 1,
-          slug: 'release-board',
-          title: 'Release board',
-          developer: 'Bee Labs',
-          humanUi: { kind: 'broker', capability: 'release-board.ui' },
-        },
-      },
-    ]);
-    expect(host('create-corner-app-none').props.accessibilityState.checked).toBe(true);
-    act(() => host('create-corner-app-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa').props.onPress());
-    expect(host('create-corner-app-none').props.accessibilityState.checked).toBe(false);
   });
 });

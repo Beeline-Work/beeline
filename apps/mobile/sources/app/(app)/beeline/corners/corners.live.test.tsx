@@ -9,6 +9,7 @@ const list = vi.hoisted(() => ({
   reads: 0,
   state: 'waiting' as string,
   cached: null as unknown,
+  createCalls: [] as unknown[][],
   subscriptions: [] as Array<{
     filters: readonly { readonly '#h'?: readonly string[] }[];
     emit(event: MonolithSurfaceEvent): void;
@@ -64,6 +65,10 @@ vi.mock('@/sync/transport/monolith-operation', () => ({
 }));
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
+    async createHumanCorner(...args: unknown[]) {
+      list.createCalls.push(args);
+      return 'corner-created';
+    }
     async ensureClient() {
       return {
         surfaceSubscribe: async (
@@ -87,6 +92,7 @@ vi.mock('@/sync/transport/room-view-client', () => ({
 }));
 
 import BuzzCorners from './[roomId]';
+import { router } from 'expo-router';
 
 const viewer = { pubkey: 'viewer', kind: 'human' as const, name: 'Captain' };
 
@@ -158,10 +164,33 @@ beforeEach(() => {
   list.reads = 0;
   list.state = 'waiting';
   list.cached = null;
+  list.createCalls.length = 0;
+  vi.mocked(router.push).mockClear();
   list.subscriptions.length = 0;
 });
 
 describe('Corner list live path', () => {
+  it('creates and opens a named corner from the plus button without an app binding', async () => {
+    const renderer = await mountList();
+    const header = renderer.root.findByType('RoomCornersHeader');
+    await act(async () => header.props.onAdd());
+    let sheet = renderer.root.findByType('NewCornerDialog');
+    expect(sheet.props.visible).toBe(true);
+    expect(sheet.props.apps).toBeUndefined();
+    expect(sheet.props.selectedAppId).toBeUndefined();
+    await act(async () => sheet.props.setTitle(' Release notes '));
+    sheet = renderer.root.findByType('NewCornerDialog');
+    await act(async () => sheet.props.onCreate());
+    expect(list.createCalls).toEqual([['room-a', 'Release notes']]);
+    expect(router.push).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pathname: '/beeline/chat/[channelId]',
+        params: expect.objectContaining({ channelId: 'corner-created' }),
+      }),
+    );
+    expect(renderer.root.findByType('NewCornerDialog').props.visible).toBe(false);
+  });
+
   it('repaints a corner status from the parent Room nudge, without re-entering', async () => {
     const renderer = await mountList();
     expect(paintedStates(renderer)).toEqual(['waiting']);

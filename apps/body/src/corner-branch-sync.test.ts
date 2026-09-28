@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DaemonApiClient } from './daemon-api-client.js';
+import { DaemonApiError, type DaemonApiClient } from './daemon-api-client.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { syncCornerBranch } from './corner-branch-sync.js';
 import {
@@ -457,6 +457,52 @@ describe('a helper joining a corner it did not open', () => {
     expect(coordinator.needsFastReconcile()).toBe(false);
     expect(execute).not.toHaveBeenCalledWith('getRoomGitHubToken', expect.anything());
     await coordinator.shutdown();
+  });
+
+  it('does not keep asking for an unlisted worktree after membership is refused', async () => {
+    let now = 10_000;
+    const { remote } = await remoteWithCornerBranch();
+    const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-removed-'));
+    roots.push(supervisorRoot);
+    await materializeCornerWorktree({
+      cornerId: 'corner-removed', remote, targetBranch: 'main', featureBranch: FEATURE,
+      token: 'unused', supervisorRoot,
+      committer: { name: 'Helper', publicKey: 'a'.repeat(64) },
+    });
+    const identity = identityFromKey('11'.repeat(32), 'Bee');
+    const execute = vi.fn(async () => {
+      throw new DaemonApiError('daemon room access denied', 403, false);
+    });
+    const coordinator = new RoomRuntimeCoordinator(
+      {
+        agent: { name: 'Bee', publicKey: identity.publicKey,
+          secretKeyHex: Buffer.from(identity.secretKey).toString('hex') },
+        rooms: [], communityId: 'workspace', supervisorRoot,
+        transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
+      } as unknown as AgentRuntimeRecord,
+      resolve(supervisorRoot, 'agent.json'),
+      { workspaceRoot: supervisorRoot } as never,
+      { daemonApi: { execute } as unknown as DaemonApiClient, now: () => now },
+    );
+    const recovery = coordinator as unknown as {
+      sweepArchivedCornerWorktrees(
+        corners: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>,
+      ): Promise<void>;
+    };
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      await recovery.sweepArchivedCornerWorktrees(new Map());
+      now += 5 * 60_000;
+      await recovery.sweepArchivedCornerWorktrees(new Map());
+      expect(execute).toHaveBeenCalledTimes(1);
+      await recovery.sweepArchivedCornerWorktrees(new Map([
+        ['corner-removed', { cornerId: 'corner-removed', parentRoomId: 'room-parent' }],
+      ]));
+      expect(execute).toHaveBeenCalledTimes(2);
+    } finally {
+      errors.mockRestore();
+      await coordinator.shutdown();
+    }
   });
 
   it('keeps the exact local ref when remote deletion fails, then retries successfully', async () => {

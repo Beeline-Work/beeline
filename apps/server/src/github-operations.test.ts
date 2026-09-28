@@ -391,6 +391,95 @@ describe('GitHub phone operations', () => {
       { repository_id: 102, active: false },
     ]);
   });
+  it('does not publish repository changes for an identical installation refresh', async () => {
+    await database.query(
+      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status,updated_at)
+       VALUES(77,$1,'42','owner','User','selected','active','2020-01-01')`,
+      [HUMAN],
+    );
+    await database.query(
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch,updated_at)
+       VALUES(101,77,'owner/widgets','main','2020-01-01')`,
+    );
+    let defaultBranch = 'main';
+    const app = {
+      installationAccount: vi.fn(async () => ({
+        id: '42', login: 'owner', type: 'User' as const,
+        repositorySelection: 'selected' as const,
+      })),
+      listRepositories: vi.fn(async () => [{
+        id: 101, installationId: 77, fullName: 'owner/widgets', defaultBranch,
+      }]),
+    } as unknown as GitHubAppClient;
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
+    const refresh = () => operations.processWebhook('installation', {
+      action: 'created', installation: { id: 77 },
+    });
+
+    await refresh();
+    const dates = async () => ({
+      installation: (await database.query<{ updated_at: Date }>(
+        `SELECT updated_at FROM github_installations WHERE installation_id=77`,
+      )).rows[0]!.updated_at,
+      repository: (await database.query<{ updated_at: Date }>(
+        `SELECT updated_at FROM github_repositories WHERE repository_id=101`,
+      )).rows[0]!.updated_at,
+    });
+    expect(await dates()).toEqual({
+      installation: new Date('2020-01-01'), repository: new Date('2020-01-01'),
+    });
+
+    defaultBranch = 'trunk';
+    await refresh();
+    expect((await dates()).repository.getTime()).toBeGreaterThan(new Date('2020-01-01').getTime());
+  });
+  it.each(['workflow_job', 'workflow_run', 'delete'])(
+    'does not refresh an installation for %s webhooks', async (event) => {
+      await database.query(
+        `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
+         VALUES(77,$1,'42','owner','User','selected','active')`,
+        [HUMAN],
+      );
+      const app = {
+        installationAccount: vi.fn(),
+        listRepositories: vi.fn(),
+      } as unknown as GitHubAppClient;
+      const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
+
+      await operations.processWebhook(event, {
+        action: 'completed', installation: { id: 77 },
+      });
+
+      expect(app.installationAccount).not.toHaveBeenCalled();
+      expect(app.listRepositories).not.toHaveBeenCalled();
+    },
+  );
+  it('still refreshes the catalog for a repository lifecycle webhook', async () => {
+    await database.query(
+      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
+       VALUES(77,$1,'42','owner','User','selected','active')`,
+      [HUMAN],
+    );
+    const app = {
+      installationAccount: vi.fn(async () => ({
+        id: '42', login: 'owner', type: 'User' as const,
+        repositorySelection: 'selected' as const,
+      })),
+      listRepositories: vi.fn(async () => [{
+        id: 101, installationId: 77, fullName: 'owner/renamed', defaultBranch: 'main',
+      }]),
+    } as unknown as GitHubAppClient;
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
+
+    await operations.processWebhook('repository', {
+      action: 'renamed', installation: { id: 77 },
+    });
+
+    expect(app.installationAccount).toHaveBeenCalledWith(77);
+    expect((await database.query<{ full_name: string }>(
+      `SELECT full_name FROM github_repositories WHERE repository_id=101`,
+    )).rows[0]?.full_name).toBe('owner/renamed');
+  });
   it('uses the Room exact-repository token to list and dispatch on the stored default branch', async () => {
     const workspace = '11111111-1111-4111-8111-111111111111';
     const room = '22222222-2222-4222-8222-222222222222';

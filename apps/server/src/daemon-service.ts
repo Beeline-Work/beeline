@@ -889,7 +889,6 @@ export class DaemonService {
       case 'getCornerRestoreState':
         return (await this.cornerRestore(
           (input as Input<'getCornerRestoreState'>).cornerId,
-          authenticatedAgentId,
         )) as Output<Name>;
       case 'listCornerBriefRevisions':
         return (await this.listCornerBriefRevisions(
@@ -2590,7 +2589,6 @@ export class DaemonService {
    * where that record is thinnest, so the two derivations must agree.
    */
   private async corners(roomId: string, agentId: string) {
-    await this.access(roomId, agentId);
     const rows = await this.database.query<{
       id: string;
       parent_id: string;
@@ -2627,8 +2625,7 @@ export class DaemonService {
       })),
     };
   }
-  private async cornerRestore(cornerId: string, agentId: string) {
-    await this.access(cornerId, agentId);
+  private async cornerRestore(cornerId: string) {
     const brief = await currentCornerBrief(this.database, cornerId);
     const recordedValidation = brief
       ? (
@@ -6355,6 +6352,8 @@ export class DaemonService {
     roomId: string,
     agentId: string,
   ): Promise<{ cornerReviewer: boolean; isCorner: boolean }> {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(roomId))
+      throw new Error('daemon room access denied');
     const result = await this.database.query<{ corner_reviewer: boolean; is_corner: boolean }>(
       `SELECT EXISTS(
          SELECT 1 FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id

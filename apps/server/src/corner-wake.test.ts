@@ -10,7 +10,7 @@ import { LiveHub, type LiveEvent } from './live.js';
 
 const AGENT_ID = '11'.repeat(32);
 const OTHER_AGENT_ID = '22'.repeat(32);
-const CORNER_ID = 'corner-id';
+const CORNER_ID = '33333333-3333-4333-8333-333333333333';
 
 /** A member of `CORNER_ID`; every other query answers empty. */
 function memberDatabase(): SqlDatabase {

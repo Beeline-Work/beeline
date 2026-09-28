@@ -682,6 +682,7 @@ describe('fresh Room discovery through the live membership wake', () => {
     await vi.waitFor(() =>
       expect(core.surfaceHealthSnapshot().find((surface) => surface.id === ROOM)?.stage).toBe('intake-ready'),
     );
+    expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands').length).toBeGreaterThan(0);
     const subscribe = daemonApi.liveSubscribe.bind(daemonApi);
     let replacementSubscribed = false;
     vi.spyOn(daemonApi, 'liveSubscribe').mockImplementation((roomId, cursor, onItems, onState, presence, onCommands) =>

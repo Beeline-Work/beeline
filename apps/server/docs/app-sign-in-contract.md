@@ -44,3 +44,13 @@ and one `app:<key>` permission target represent the connection. The connected
 person's own agents can execute; another person's agent gets a grant request
 addressed to the connected person and cannot execute until that person
 approves.
+
+## Rollout
+
+The server-only API key enables managed sign-in once the provider's callback
+verifier targets `${PUBLIC_ORIGIN}/v1/apps/oauth/verify`. Deploy the server,
+Body companion, and phone UI changes together. The schema migration disconnects
+first-party Google connector rows and revokes their grants, so those people
+must reconnect each Google product. The new server does not use the old Google
+token tables; they remain for older server images until a later release can
+remove them.

@@ -227,12 +227,9 @@ async function main() {
     publicOrigin,
     mediaExpiryMediaMaximumBytes,
   );
-  // Composio must hold each connection for Beeline's authenticated verifier.
-  // Setting the key alone cannot enable an unverified Connect Link.
-  const composio = process.env.BEELINE_COMPOSIO_API_KEY &&
-    process.env.BEELINE_COMPOSIO_CALLBACK_VERIFIED === 'true'
-      ? new ComposioApps(process.env.BEELINE_COMPOSIO_API_KEY)
-      : undefined;
+  const composio = process.env.BEELINE_COMPOSIO_API_KEY
+    ? new ComposioApps(process.env.BEELINE_COMPOSIO_API_KEY)
+    : undefined;
   const mcpRegistry = new McpRegistryClient();
   const registryMcpOAuth = new RegistryMcpOAuth(database, publicOrigin);
   const mediaExpiry = objectStorage

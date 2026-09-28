@@ -39,15 +39,17 @@ Direct iOS delivery uses APNs token authentication. Set `APNS_KEY_P8_BASE64` to 
 The mounted auth routes also require `PUBLIC_ORIGIN`, `BUZZY_AUTH_TENANTS_JSON`, and the six `BUZZY_AUTH_OIDC_*` values documented in `apps/auth/README.md`. The tenants JSON must contain an entry whose host and origin match `PUBLIC_ORIGIN`; production uses `server.usebeeline.app`.
 
 Managed app sign-in uses a server-only `BEELINE_COMPOSIO_API_KEY`. Configure the
-provider's callback verifier to `${PUBLIC_ORIGIN}/v1/apps/oauth/verify` and set
-`BEELINE_COMPOSIO_CALLBACK_VERIFIED=true` only after that callback is active.
+provider's callback verifier to `${PUBLIC_ORIGIN}/v1/apps/oauth/verify` before
+enabling the API key.
 The verifier sends a single-use session URI to the signed-in phone; the server
 completes it with that person's Beeline identity ID and checks the exact pending
 account and toolkit. The API key, provider credentials, and tool execution stay
 on the server. Each Google Workspace product (Gmail, Calendar, Drive, Docs,
 Sheets) is a separate app connection. Existing first-party Google grants are
 disconnected during schema migration because their OAuth client cannot be
-transferred; people must sign in again through Connect an app.
+transferred; people must sign in again through Connect an app. The new server
+does not use the old token tables. They remain during the rolling update for
+older server images and are removed by a later release migration.
 
 Apps connect through one front door: an agent's `connect_app` or Workbench →
 Connect an app. The server chooses the route in a fixed order — an app already

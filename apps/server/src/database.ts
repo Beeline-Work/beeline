@@ -2243,7 +2243,9 @@ CREATE INDEX IF NOT EXISTS wallet_transactions_wallet_idx
 -- First-party Google Workspace consent is retired. Existing sealed grants
 -- cannot be moved to a different OAuth client, so disconnect the old rows and
 -- require a fresh managed sign-in through Connect an app. Remove pending offer
--- cards with their obsolete action and revoke grants before the token tables go.
+-- cards with their obsolete action and revoke grants. Keep the legacy token
+-- tables through this release so an older server image remains compatible
+-- during a rolling update; a later-release migration can drop them.
 UPDATE agent_grants SET status='revoked',decided_at=now()
   WHERE kind='mcp' AND target LIKE 'google-%'
     AND status IN ('pending','approved','once');
@@ -2261,9 +2263,6 @@ UPDATE workspace_apps SET state='disconnected',updated_at=now()
     WHERE connector_type IN ('google-gmail','google-calendar','google-drive','google-youtube'));
 DELETE FROM workspace_connectors
   WHERE connector_type IN ('google-gmail','google-calendar','google-drive','google-youtube');
-DROP TABLE IF EXISTS google_oauth_attempts;
-DROP TABLE IF EXISTS google_oauth_grants;
-DROP TABLE IF EXISTS google_oauth_accounts;
 `;
 
 export async function migrate(

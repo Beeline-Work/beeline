@@ -370,9 +370,8 @@ const stylesheet = StyleSheet.create((theme) => {
       outlineStyle: 'none',
     } as any,
     /* The picture's seat: square, centred, and rounded parallel to the bezel.
-     * It rounds the picture's own corners; the generated Workspace cypher draws
-     * well inside this box, so it keeps the square silhouette it is meant to
-     * have. Centred in the tile, so the seat does not move when a Workspace
+     * It rounds the picture's own corners; the generated Workspace plate fills
+     * this box the same way, with its own frame following the same curve. Centred in the tile, so the seat does not move when a Workspace
      * becomes current and the tile puts its bezel on. */
     tilePictureSeat: {
       width: TILE_SEAT.pictureSize,

@@ -562,9 +562,8 @@ const styles = StyleSheet.create((theme) => {
       borderColor: 'transparent',
     },
     /* The picture's seat: square, centred, and rounded parallel to the bezel.
-     * It rounds the picture's own corners; the generated Workspace cypher draws
-     * well inside this box, so it keeps the square silhouette it is meant to
-     * have. */
+     * It rounds the picture's own corners; the generated Workspace plate fills
+     * this box the same way, with its own frame following the same curve. */
     tilePictureSeat: {
       width: TILE_SEAT.pictureSize,
       height: TILE_SEAT.pictureSize,

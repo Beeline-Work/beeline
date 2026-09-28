@@ -33,7 +33,8 @@ describe('server readiness', () => {
     );
   });
 
-  async function get(path: string, database: SqlDatabase, extra: Partial<ServerOptions> = {}): Promise<Response> {
+  async function get(path: string, database: SqlDatabase, extra: Partial<ServerOptions> = {},
+    requestInit: RequestInit = {}): Promise<Response> {
     const server = createBeelineServer({
       database,
       auth: {} as TokenAuth,
@@ -46,8 +47,40 @@ describe('server readiness', () => {
     servers.push(server);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as AddressInfo).port;
-    return fetch(`http://127.0.0.1:${port}${path}`);
+    return fetch(`http://127.0.0.1:${port}${path}`, requestInit);
   }
+
+  it.each([
+    { label: 'success', code: '&code=grant', account: { completed: true, offers: [] } },
+    { label: 'denial', code: '', account: true },
+    { label: 'exchange error', code: '&code=bad', account: { completed: false, offers: [] } },
+    { label: 'expired state', code: '&code=expired', account: null },
+  ])('returns the $label Google callback to the Android auth session', async ({ code, account }) => {
+    const googleOAuth = {
+      completeAccount: vi.fn(async () => account),
+      cancelAccountState: vi.fn(async () => account),
+      complete: vi.fn(async () => false),
+      cancel: vi.fn(async () => false),
+    } as unknown as ServerOptions['googleOAuth'];
+    const response = await get(`/v1/google/oauth/callback?state=attempt${code}`,
+      { query: vi.fn(), transaction: vi.fn() }, { googleOAuth },
+      { redirect: 'manual', headers: { 'user-agent': 'Mozilla/5.0 (Linux; Android 16) Chrome/140' } });
+    expect(response.status).toBe(302);
+    expect(response.headers.get('location')).toBe(
+      'beeline://beeline/settings/workbench/connect-signin?oauthReturn=attempt');
+    expect(response.headers.get('cache-control')).toBe('no-store');
+  });
+
+  it('keeps the readable callback page for a desktop browser', async () => {
+    const googleOAuth = {
+      completeAccount: vi.fn(async () => ({ completed: true, offers: [] })),
+    } as unknown as ServerOptions['googleOAuth'];
+    const response = await get('/v1/google/oauth/callback?state=attempt&code=grant',
+      { query: vi.fn(), transaction: vi.fn() }, { googleOAuth }, { redirect: 'manual' });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('location')).toBeNull();
+    expect(await response.text()).toContain('Google sign-in completed');
+  });
 
   it('returns 200 after a successful database query', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 0 });

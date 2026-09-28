@@ -1025,27 +1025,39 @@ async function route(
     const account = code
       ? await options.googleOAuth.completeAccount(state, code)
       : await options.googleOAuth.cancelAccountState(state);
-    const completed = account !== null
-      ? (typeof account === 'boolean' ? false : account.completed)
-      : code
-        ? await options.googleOAuth.complete(state, code)
-        : (await options.googleOAuth.cancel(state), false);
+    const legacyCompleted = account === null && code
+      ? await options.googleOAuth.complete(state, code)
+      : false;
+    if (account === null && !code) await options.googleOAuth.cancel(state);
     if (account && typeof account !== 'boolean') {
       for (const offer of account.offers) {
         options.live.publish({ type: 'invalidate', roomId: offer.roomId,
           reason: 'connector-offer', agentId: offer.agentId });
       }
     }
+    // This response controls navigation only; the state is already settled.
+    // Mobile auth sessions need a deep link to retire their browser task.
+    if (/\b(?:Android|iPhone|iPad|iPod)\b/i.test(request.headers['user-agent'] ?? '')) {
+      const appReturn = new URL('beeline://beeline/settings/workbench/connect-signin');
+      appReturn.searchParams.set('oauthReturn', state);
+      response.writeHead(302, {
+        location: appReturn.toString(),
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+      });
+      response.end();
+      return;
+    }
+    const completed = typeof account === 'object' && account !== null
+      ? account.completed : legacyCompleted;
     response.writeHead(completed ? 200 : 400, {
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'no-store',
       'x-content-type-options': 'nosniff',
     });
-    response.end(
-      code && completed
+    response.end(completed
       ? '<p>Google sign-in completed. Return to Beeline to use the connected tool.</p>'
-        : '<p>Google sign-in did not complete. Return to Beeline and retry.</p>',
-    );
+      : '<p>Google sign-in did not complete. Return to Beeline and retry.</p>');
     return;
   }
   if (method === 'GET' && url.pathname === '/v1/registry-mcp/oauth/callback') {

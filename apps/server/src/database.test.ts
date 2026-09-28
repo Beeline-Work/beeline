@@ -37,6 +37,52 @@ function result<Row>(rows: Row[]) {
 
 const TERMINATED = () => new Error('Connection terminated unexpectedly');
 
+it('retires old Google consent and connector rows without leaving active grants', async () => {
+  const database = new PgliteDatabase();
+  const workspace = '11111111-1111-4111-8111-111111111111';
+  const room = '22222222-2222-4222-8222-222222222222';
+  const connector = '33333333-3333-4333-8333-333333333333';
+  const app = '44444444-4444-4444-8444-444444444444';
+  const grant = '55555555-5555-4555-8555-555555555555';
+  const human = 'a'.repeat(64);
+  const agent = 'b'.repeat(64);
+  try {
+    await migrate(database);
+    await database.query(`INSERT INTO identities(id,kind,name)
+      VALUES($1,'human','Owner'),($2,'agent','Helper')`, [human, agent]);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,created_by,name)
+      VALUES($1,$2,$3,'Tools')`, [room, workspace, human]);
+    await database.query(`INSERT INTO workspace_connectors(id,workspace_id,
+      owner_identity_id,connector_type,helper_agent_id,status)
+      VALUES($1,$2,$3,'google-calendar',$4,'connected')`, [connector, workspace, human, agent]);
+    await database.query(`INSERT INTO workspace_apps(id,workspace_id,owner_identity_id,
+      app_key,display_name,transport,route,connector_id)
+      VALUES($1,$2,$3,'calendar','Calendar','registry-mcp','workbench',$4)`,
+      [app, workspace, human, connector]);
+    await database.query(`INSERT INTO agent_grants(id,agent_id,workspace_id,kind,target,
+      reason,requested_by,room_id,status,app_id)
+      VALUES($1,$2,$3,'mcp','app:calendar','legacy',$4,$5,'approved',$6)`,
+      [grant, agent, workspace, human, room, app]);
+    await database.query(`CREATE TABLE google_oauth_accounts (id text)`);
+    await database.query(`CREATE TABLE google_oauth_grants (id text)`);
+    await database.query(`CREATE TABLE google_oauth_attempts (id text)`);
+    await migrate(database);
+    expect((await database.query<{ state: string; connector_id: string | null }>(
+      `SELECT state,connector_id FROM workspace_apps WHERE id=$1`, [app])).rows)
+      .toEqual([{ state: 'disconnected', connector_id: null }]);
+    expect((await database.query<{ status: string }>(
+      `SELECT status FROM agent_grants WHERE id=$1`, [grant])).rows)
+      .toEqual([{ status: 'revoked' }]);
+    expect((await database.query(`SELECT 1 FROM workspace_connectors WHERE id=$1`,
+      [connector])).rowCount).toBe(0);
+    expect((await database.query<{ tablename: string }>(`SELECT tablename FROM pg_tables WHERE
+      schemaname='public' AND tablename LIKE 'google_oauth_%'`)).rows).toEqual([]);
+  } finally {
+    await database.close();
+  }
+});
+
 it('excludes existing accounts while new identities inherit welcome eligibility', async () => {
   const database = new PgliteDatabase();
   try {

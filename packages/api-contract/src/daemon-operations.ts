@@ -303,6 +303,18 @@ export type DaemonOperationMap = {
   connectMcpServer: Operation<ConnectMcpServerInput, ConnectMcpServerResult>;
   /** The one front door: connect an app by the route the server resolves. */
   connectApp: Operation<ConnectAppInput, ConnectAppResult>;
+  /** Discover server-mediated tools for one connected app; no credentials are returned. */
+  listAppTools: Operation<TurnOutputAuthority & AgentInput & RoomInput & { readonly appId: string;
+    readonly query?: string }, { readonly tools: readonly {
+      readonly slug: string; readonly name: string; readonly description: string;
+      readonly inputParameters: unknown;
+    }[] }>;
+  /** Execute against the exact person's account after a fresh per-call permission decision. */
+  executeAppTool: Operation<TurnOutputAuthority & AgentInput & RoomInput & { readonly appId: string;
+    readonly tool: string; readonly arguments: Record<string, unknown> },
+    | { readonly status: 'executed'; readonly data: unknown }
+    | { readonly status: 'needs_permission'; readonly grantId: string }
+    | { readonly status: 'needs_connection' }>;
   /** R5: the agent offers to add one connector; a card goes to the Room and the turn pauses on it. */
   offerConnector: Operation<OfferConnectorInput, OfferConnectorResult>;
   installConnector: Operation<InstallConnectorInput, WriteResult>;
@@ -1072,6 +1084,8 @@ export type RequestAgentGrantInput = TurnOutputAuthority &
     readonly kind: AgentGrantKind;
     readonly target: string;
     readonly reason: string;
+    /** Server-bound app identity for another person's connected app. */
+    readonly appId?: string;
     /** Optional lifetime in seconds; the grant expires this long after the request. */
     readonly ttlSeconds?: number;
     /**

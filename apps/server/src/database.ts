@@ -166,7 +166,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 9;
+export const REQUIRED_SCHEMA_VERSION = 10;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -2007,13 +2007,10 @@ ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS sign_in jsonb;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS squire_version text;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS signed_in_as text;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS pairing_generation integer NOT NULL DEFAULT 1;
--- Composio is retired: apps connect through the one front door
--- (\`connect_app\`). A persisted Composio row is only a pointer to a session at
--- Composio, and no helper can serve it any more — a surviving \`installing\`
--- row would even reach a new helper as an unknown install — so the row, its
--- synthetic \`composio:<toolkit>\` connections and their receipts go. Every
--- other connector's rows, keys and receipts are untouched, and the retired
--- identity's receipt DMs stay readable (\`RETIRED_CONNECTOR_KINDS\`).
+-- Retire helper-installed Composio connectors from the older integration.
+-- The new managed OAuth route is server-owned in workspace_apps; these helper
+-- rows could otherwise be sent as unknown install assignments. Their old
+-- synthetic connections cascade with the connector.
 DELETE FROM workspace_connectors WHERE connector_type='composio';
 ALTER TABLE workspace_connectors DROP COLUMN IF EXISTS composio_session_id;
 ALTER TABLE workspace_connectors DROP COLUMN IF EXISTS composio_link_toolkit;
@@ -2034,31 +2031,6 @@ ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS install_command_id tex
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_handoff_attempt text;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_squire_relayed_attempt text;
 
-CREATE TABLE IF NOT EXISTS google_oauth_attempts (
-  state text PRIMARY KEY,
-  connector_id uuid NOT NULL REFERENCES workspace_connectors(id) ON DELETE CASCADE,
-  expires_at timestamptz NOT NULL
-);
-CREATE TABLE IF NOT EXISTS google_oauth_grants (
-  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  owner_identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
-  machine_id text NOT NULL,
-  sealed_grant text NOT NULL,
-  updated_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (workspace_id,owner_identity_id,machine_id)
-);
--- Server-owned Google consent belongs to the person, before any helper is
--- selected. Legacy per-machine grants above remain readable for old pairs.
-CREATE TABLE IF NOT EXISTS google_oauth_accounts (
-  owner_identity_id text PRIMARY KEY REFERENCES identities(id) ON DELETE CASCADE,
-  state text UNIQUE,
-  requested_scopes text[] NOT NULL DEFAULT '{}',
-  expires_at timestamptz,
-  claimed_at timestamptz,
-  sealed_grant text,
-  granted_scopes text[] NOT NULL DEFAULT '{}',
-  updated_at timestamptz NOT NULL DEFAULT now()
-);
 CREATE TABLE IF NOT EXISTS registry_mcp_oauth_attempts (
   state text PRIMARY KEY,
   connector_id uuid NOT NULL REFERENCES workspace_connectors(id) ON DELETE CASCADE,
@@ -2168,9 +2140,8 @@ CREATE INDEX IF NOT EXISTS connection_receipts_turn_idx
 ALTER TABLE connection_receipts ADD COLUMN IF NOT EXISTS event_class text;
 
 -- Apps: the one front door (\`app-connections.ts\`). ONE row per app per
--- person, whatever serves it: an official hosted MCP server (its Registry
--- connector row), or Trusty Squire through an API key or the browser. The
--- route decisions and every authorized use are ledgers of their own.
+-- person, served by an existing Workbench connection, managed OAuth, or
+-- Trusty Squire. Route decisions and authorized uses have separate ledgers.
 CREATE TABLE IF NOT EXISTS workspace_apps (
   id uuid PRIMARY KEY,
   workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -2179,10 +2150,12 @@ CREATE TABLE IF NOT EXISTS workspace_apps (
   display_name text NOT NULL,
   domain text,
   transport text NOT NULL
-    CHECK (transport IN ('registry-mcp','squire-api','squire-browser')),
+    CHECK (transport IN ('registry-mcp','composio','squire-api','squire-browser')),
   route text NOT NULL
-    CHECK (route IN ('workbench','registry-mcp','squire-api','squire-browser')),
+    CHECK (route IN ('workbench','registry-mcp','composio','squire-api','squire-browser')),
   connector_id uuid REFERENCES workspace_connectors(id) ON DELETE SET NULL,
+  composio_account_id text,
+  composio_link_expires_at timestamptz,
   machine_id text,
   state text NOT NULL DEFAULT 'active' CHECK (state IN ('active','disconnected')),
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -2191,7 +2164,17 @@ CREATE TABLE IF NOT EXISTS workspace_apps (
   -- permission decision. workspace_id is where its route was last chosen.
   UNIQUE (owner_identity_id, app_key)
 );
+ALTER TABLE workspace_apps ADD COLUMN IF NOT EXISTS composio_account_id text;
+ALTER TABLE workspace_apps ADD COLUMN IF NOT EXISTS composio_link_expires_at timestamptz;
+ALTER TABLE workspace_apps DROP CONSTRAINT IF EXISTS workspace_apps_transport_check;
+ALTER TABLE workspace_apps ADD CONSTRAINT workspace_apps_transport_check
+  CHECK (transport IN ('registry-mcp','composio','squire-api','squire-browser'));
+ALTER TABLE workspace_apps DROP CONSTRAINT IF EXISTS workspace_apps_route_check;
+ALTER TABLE workspace_apps ADD CONSTRAINT workspace_apps_route_check
+  CHECK (route IN ('workbench','registry-mcp','composio','squire-api','squire-browser'));
 CREATE INDEX IF NOT EXISTS workspace_apps_connector_idx ON workspace_apps(connector_id);
+ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS app_id uuid REFERENCES workspace_apps(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS agent_grants_app_idx ON agent_grants(app_id,agent_id,status);
 CREATE TABLE IF NOT EXISTS workspace_app_routes (
   id uuid PRIMARY KEY,
   app_id uuid NOT NULL REFERENCES workspace_apps(id) ON DELETE CASCADE,
@@ -2256,6 +2239,31 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
 );
 CREATE INDEX IF NOT EXISTS wallet_transactions_wallet_idx
   ON wallet_transactions(identity_id, created_at DESC);
+
+-- First-party Google Workspace consent is retired. Existing sealed grants
+-- cannot be moved to a different OAuth client, so disconnect the old rows and
+-- require a fresh managed sign-in through Connect an app. Remove pending offer
+-- cards with their obsolete action and revoke grants before the token tables go.
+UPDATE agent_grants SET status='revoked',decided_at=now()
+  WHERE kind='mcp' AND target LIKE 'google-%'
+    AND status IN ('pending','approved','once');
+UPDATE agent_grants g SET status='revoked',decided_at=now()
+  FROM workspace_apps app JOIN workspace_connectors connector ON connector.id=app.connector_id
+  WHERE g.app_id=app.id AND connector.connector_type IN
+    ('google-gmail','google-calendar','google-drive','google-youtube')
+    AND g.status IN ('pending','approved','once');
+DELETE FROM messages WHERE card_type='connector-offer'
+  AND card->>'connectorType' IN ('google-gmail','google-calendar','google-drive','google-youtube');
+DELETE FROM connector_offers
+  WHERE connector_type IN ('google-gmail','google-calendar','google-drive','google-youtube');
+UPDATE workspace_apps SET state='disconnected',updated_at=now()
+  WHERE connector_id IN (SELECT id FROM workspace_connectors
+    WHERE connector_type IN ('google-gmail','google-calendar','google-drive','google-youtube'));
+DELETE FROM workspace_connectors
+  WHERE connector_type IN ('google-gmail','google-calendar','google-drive','google-youtube');
+DROP TABLE IF EXISTS google_oauth_attempts;
+DROP TABLE IF EXISTS google_oauth_grants;
+DROP TABLE IF EXISTS google_oauth_accounts;
 `;
 
 export async function migrate(

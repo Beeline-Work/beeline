@@ -249,7 +249,8 @@ export async function welcomeRetirementPreflight(database: SqlDatabase) {
       workbenchConnectors: await one(
         `SELECT count(*)::int count FROM workspace_connectors WHERE workspace_id=$1`,
       ),
-      googleGrants: await one(`SELECT count(*)::int count FROM google_oauth_grants WHERE workspace_id=$1`),
+      // The first-party Google grant table was retired in schema v10.
+      googleGrants: 0,
       agentGrants: await one(`SELECT count(*)::int count FROM agent_grants WHERE workspace_id=$1`),
       schedules: await one(`SELECT count(*)::int count FROM agent_schedules WHERE workspace_id=$1`),
     },

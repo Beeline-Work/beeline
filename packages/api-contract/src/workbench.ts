@@ -47,10 +47,6 @@ export function isConnectorKind(value: unknown): value is ConnectorKind {
 export const CONNECTABLE_CONNECTOR_KINDS: readonly ConnectorKind[] = [
   'trusty-squire',
   'tailscale',
-  'google-gmail',
-  'google-calendar',
-  'google-drive',
-  'google-youtube',
 ];
 
 /**
@@ -245,7 +241,14 @@ export type ConnectWorkbenchAppResult = {
   readonly status: AppConnectionStatus;
   readonly transport: AppTransport;
   readonly route?: AppRoute;
+  /** Hosted sign-in page for a managed OAuth route. Open only for the signed-in person. */
+  readonly authorizationUrl?: string;
 };
+/** Redeem the provider verifier's single-use session under the current phone identity. */
+export type CompleteAppSignInInput = { readonly sessionUri: string };
+export type CompleteAppSignInResult = { readonly appId: string };
+export type BeginAppSignInInput = { readonly appId: string };
+export type BeginAppSignInResult = { readonly authorizationUrl: string };
 export type DisconnectWorkbenchAppInput = {
   readonly workspaceId: string;
   readonly appId: string;

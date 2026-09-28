@@ -7,6 +7,7 @@ import { LiveHub } from './live.js';
 import { McpRegistryClient } from './mcp-registry.js';
 import { applyVaultList } from './workbench.js';
 import { readOwnerApps, resolveAppRoute, type AppRouteProbes } from './app-connections.js';
+import type { ComposioApps } from './composio-apps.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
@@ -55,14 +56,14 @@ function fakeRegistry(servers: Record<string, unknown>[], fail = false) {
 describe('the app route order', () => {
   const probes = (overrides: Partial<AppRouteProbes> = {}) => {
     const workbench = vi.fn(async () => undefined);
-    const registry = vi.fn(async () => ({ status: 'none' }) as const);
-    return { workbench, registry, ...overrides } as AppRouteProbes & {
+    const composio = vi.fn(async () => 'none' as const);
+    return { workbench, composio, ...overrides } as AppRouteProbes & {
       workbench: ReturnType<typeof vi.fn>;
-      registry: ReturnType<typeof vi.fn>;
+      composio: ReturnType<typeof vi.fn>;
     };
   };
 
-  it('reuses a connected Workbench connection before asking the Registry', async () => {
+  it('reuses a connected Workbench connection before probing OAuth', async () => {
     const p = probes({
       workbench: vi.fn(
         async () => ({ transport: 'squire-api', reference: 'vault:resend' }) as const,
@@ -70,31 +71,35 @@ describe('the app route order', () => {
     });
     const decision = await resolveAppRoute({ reconnect: false, noApi: false }, p);
     expect(decision).toMatchObject({ kind: 'route', route: 'workbench', transport: 'squire-api' });
-    expect(p.registry).not.toHaveBeenCalled();
+    expect(p.composio).not.toHaveBeenCalled();
   });
 
-  it('takes the official hosted server before Trusty Squire', async () => {
-    const p = probes({
-      registry: vi.fn(async () => ({ status: 'official', manifest: linearServer }) as never),
-    });
-    await expect(resolveAppRoute({ reconnect: false, noApi: false }, p)).resolves.toMatchObject({
-      kind: 'route',
-      route: 'registry-mcp',
-    });
+  it('uses managed OAuth when supported and never probes another path', async () => {
+    const p = probes({ composio: vi.fn(async () => 'supported' as const) });
+    await expect(resolveAppRoute({ reconnect: false, noApi: false }, p))
+      .resolves.toMatchObject({ kind: 'route', route: 'composio', transport: 'composio' });
   });
 
-  it('falls to the Squire API route only when no official server exists', async () => {
+  it('fails closed when OAuth support cannot be checked', async () => {
+    const p = probes({ composio: vi.fn(async () => 'unavailable' as const) });
+    await expect(resolveAppRoute({ reconnect: false, noApi: false }, p))
+      .resolves.toMatchObject({ kind: 'unavailable' });
+  });
+
+  it('fails closed when the server has no OAuth provider configured', async () => {
+    await expect(resolveAppRoute({ reconnect: false, noApi: false }, {
+      workbench: async () => undefined,
+    })).resolves.toMatchObject({ kind: 'unavailable' });
+  });
+
+  it('uses Squire only when managed OAuth is unsupported', async () => {
     await expect(
       resolveAppRoute({ reconnect: false, noApi: false }, probes()),
     ).resolves.toMatchObject({ kind: 'route', route: 'squire-api', transport: 'squire-api' });
   });
 
-  it('never skips past a Registry it could not read', async () => {
-    const p = probes({ registry: vi.fn(async () => ({ status: 'unavailable' }) as const) });
-    await expect(resolveAppRoute({ reconnect: false, noApi: false }, p)).resolves.toMatchObject({
-      kind: 'unavailable',
-    });
-  });
+
+
 
   it('keeps an existing route — even in error — until an explicit reconnect', async () => {
     const existing = { transport: 'registry-mcp', state: 'active', hasCredential: false } as const;
@@ -103,8 +108,8 @@ describe('the app route order', () => {
       { kind: 'keep', transport: 'registry-mcp' },
     );
     expect(p.workbench).not.toHaveBeenCalled();
-    expect(p.registry).not.toHaveBeenCalled();
-    // noApi cannot move a Registry route to the browser.
+    expect(p.composio).not.toHaveBeenCalled();
+    // noApi cannot move a retained legacy route to the browser.
     await expect(
       resolveAppRoute({ existing, reconnect: false, noApi: true }, p),
     ).resolves.toMatchObject({ kind: 'keep', transport: 'registry-mcp' });
@@ -135,7 +140,9 @@ describe('the app route order', () => {
 describe('connect_app', () => {
   let database: PgliteDatabase;
 
-  const daemonWith = (registry: McpRegistryClient) =>
+  const daemonWith = (registry: McpRegistryClient, composio: ComposioApps = {
+    supportsOAuth: async () => false,
+  } as ComposioApps) =>
     new DaemonService(
       database,
       new LiveHub(),
@@ -149,7 +156,31 @@ describe('connect_app', () => {
       undefined,
       { enabled: false },
       registry,
+      undefined,
+      composio,
     );
+
+  function fakeComposio() {
+    let active = false;
+    const provider = {
+      supportsOAuth: vi.fn(async (toolkit: string) => ['slack', 'gmail'].includes(toolkit)),
+      link: vi.fn(async (_person: string, _toolkit: string) => ({
+        url: 'https://app.composio.dev/connect/fixture', accountId: 'ca_fixture',
+        expiresAt: new Date(Date.now() + 600_000),
+      })),
+      account: vi.fn(async (_account: string, person: string) => active && person === OWNER),
+      completeAuth: vi.fn(async (_session: string, person: string) => {
+        if (person !== OWNER) throw new Error('App provider request failed (400)');
+        active = true;
+        return { accountId: 'ca_fixture', toolkit: 'slack' };
+      }),
+      listTools: vi.fn(async () => [{ slug: 'SLACK_POST_MESSAGE', name: 'Post message',
+        description: 'Post to a channel', inputParameters: {} }]),
+      execute: vi.fn(async () => ({ ok: true })),
+      deleteAccount: vi.fn(async () => { active = false; }),
+    };
+    return provider as typeof provider & ComposioApps;
+  }
 
   beforeEach(async () => {
     database = new PgliteDatabase();
@@ -209,48 +240,139 @@ describe('connect_app', () => {
       )
     ).rows;
 
-  it('connects an official hosted server, records the route once, and reuses it', async () => {
-    const registry = fakeRegistry([
-      { ...linearServer, name: 'io.github.someone/linear' },
-      linearServer,
-    ]);
-    const daemon = daemonWith(registry.client);
-    const first = await daemon.execute(
-      'connectApp',
-      { ...turn, app: 'Linear', reason: 'file the bug' },
-      HELPER,
-    );
-    expect(first).toMatchObject({
-      status: 'connecting',
-      app: 'Linear',
-      appKey: 'linear',
-      route: 'registry-mcp',
-      transport: 'registry-mcp',
+  it('posts one route-neutral Room card and resumes the original request after sign-in', async () => {
+    const provider = fakeComposio();
+    const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const first = await daemon.execute('connectApp',
+      { ...turn, app: 'Slack', reason: 'post the launch notes' }, HELPER);
+    expect(first).toMatchObject({ status: 'needs_sign_in', route: 'composio',
+      transport: 'composio' });
+    expect(first).not.toHaveProperty('authorizationUrl');
+    expect(await routes()).toEqual([{ route: 'composio', transport: 'composio' }]);
+    const card = (await database.query<{ card: { appId: string; status: string } }>(
+      `SELECT card FROM messages WHERE room_id=$1 AND card_type='app-sign-in'`, [ROOM],
+    )).rows[0];
+    expect(card?.card).toMatchObject({ appId: first.appId, status: 'pending' });
+    expect(JSON.stringify(card)).not.toContain('composio');
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    const opened = await phone.execute('beginAppSignIn', { appId: first.appId! }, OWNER);
+    expect(opened.authorizationUrl).toBe('https://app.composio.dev/connect/fixture');
+    expect(provider.link).toHaveBeenCalledWith(OWNER, 'slack');
+    await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture' }, OWNER);
+    expect(provider.completeAuth).toHaveBeenCalledWith('session-fixture', OWNER);
+    expect((await database.query<{ card: { status: string } }>(
+      `SELECT card FROM messages WHERE room_id=$1 AND card_type='app-sign-in'`, [ROOM],
+    )).rows[0]?.card.status).toBe('connected');
+    expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1
+      AND agent_id=$2 AND reason='app_connected'`, [ROOM, HELPER])).rowCount).toBe(1);
+    expect((await readOwnerApps(database, OWNER, provider))[0]).toMatchObject({
+      appId: first.appId, status: 'connected',
     });
-    const connector = await database.query<{
-      registry_server_name: string;
-      install_command_id: string;
-    }>(`SELECT registry_server_name,install_command_id FROM workspace_connectors WHERE id=$1`, [
-      (first as { connectorId: string }).connectorId,
-    ]);
-    // The community server of the same name never wins.
-    expect(connector.rows[0]).toEqual({
-      registry_server_name: 'app.linear/linear',
-      install_command_id: COMMAND,
-    });
-    const again = await daemon.execute(
-      'connectApp',
-      { ...turn, app: 'linear.app', reason: 'file the bug' },
-      HELPER,
-    );
-    expect(again).toMatchObject({
-      status: 'connecting',
-      appId: (first as { appId: string }).appId,
-    });
-    expect(again).not.toHaveProperty('route');
-    expect(await routes()).toEqual([{ route: 'registry-mcp', transport: 'registry-mcp' }]);
-    expect((await database.query(`SELECT 1 FROM workspace_apps`)).rowCount).toBe(1);
+    expect((await daemon.execute('listAppTools', { ...turn, appId: first.appId! }, HELPER)).tools)
+      .toHaveLength(1);
+    const used = await daemon.execute('executeAppTool', { ...turn, appId: first.appId!,
+      tool: 'SLACK_POST_MESSAGE', arguments: { text: 'Launch notes' } }, HELPER);
+    expect(used).toEqual({ status: 'executed', data: { ok: true } });
+    expect(provider.execute).toHaveBeenCalledWith(expect.objectContaining({
+      userId: OWNER, accountId: 'ca_fixture', toolkit: 'slack',
+    }));
+    expect((await database.query(`SELECT 1 FROM workspace_app_usage WHERE app_id=$1`,
+      [first.appId])).rowCount).toBe(1);
   });
+
+  it('binds sign-in to the returning person and refuses a foreign agent until the app owner approves', async () => {
+    const provider = fakeComposio();
+    const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const connected = await daemon.execute('connectApp',
+      { ...turn, app: 'Slack', reason: 'post the launch notes' }, HELPER);
+    const OTHER = 'c'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Other')`, [OTHER]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`, [WORKSPACE, OTHER, ROOM]);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    await expect(phone.execute('beginAppSignIn', { appId: connected.appId! }, OTHER))
+      .rejects.toThrow(/unavailable for this person/);
+    await phone.execute('beginAppSignIn', { appId: connected.appId! }, OWNER);
+    await expect(phone.execute('completeAppSignIn', { sessionUri: 'session-fixture' }, OTHER))
+      .rejects.toThrow(/request failed/);
+    expect((await database.query(`SELECT 1 FROM workspace_apps WHERE id=$1 AND
+      composio_link_expires_at IS NOT NULL`, [connected.appId])).rowCount).toBe(1);
+    await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture' }, OWNER);
+
+    await database.query(`UPDATE agents SET owner_id=$1 WHERE agent_id=$2`, [OTHER, HELPER]);
+    const call = { ...turn, appId: connected.appId!, tool: 'SLACK_POST_MESSAGE',
+      arguments: { text: 'Launch notes' } };
+    const first = await daemon.execute('executeAppTool', call, HELPER);
+    expect(first).toMatchObject({ status: 'needs_permission' });
+    expect(provider.execute).not.toHaveBeenCalled();
+    await expect(phone.execute('decideAgentGrant', {
+      grantId: (first as { grantId: string }).grantId, decision: 'always',
+    }, OTHER)).rejects.toThrow(/connected person/);
+    await phone.execute('decideAgentGrant', {
+      grantId: (first as { grantId: string }).grantId, decision: 'deny',
+    }, OWNER);
+    const second = await daemon.execute('executeAppTool', call, HELPER);
+    expect(second).toMatchObject({ status: 'needs_permission' });
+    expect((second as { grantId: string }).grantId).not.toBe((first as { grantId: string }).grantId);
+    expect(provider.execute).not.toHaveBeenCalled();
+    await phone.execute('decideAgentGrant', {
+      grantId: (second as { grantId: string }).grantId, decision: 'always',
+    }, OWNER);
+    expect((await daemon.execute('listAgentGrants', { agentId: HELPER, roomId: ROOM },
+      HELPER)).grants).toContainEqual(expect.objectContaining({
+      grantId: (second as { grantId: string }).grantId, target: 'app:slack',
+    }));
+    await expect(daemon.execute('executeAppTool', call, HELPER))
+      .resolves.toMatchObject({ status: 'executed' });
+    expect(provider.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a connection visible until provider revocation succeeds', async () => {
+    const provider = fakeComposio();
+    const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const connected = await daemon.execute('connectApp',
+      { ...turn, app: 'Slack', reason: 'post the launch notes' }, HELPER);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    await phone.execute('beginAppSignIn', { appId: connected.appId! }, OWNER);
+    await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture' }, OWNER);
+    provider.deleteAccount.mockRejectedValueOnce(new Error('provider unavailable'));
+    await expect(phone.execute('disconnectWorkbenchApp', {
+      workspaceId: WORKSPACE, appId: connected.appId!,
+    }, OWNER)).rejects.toThrow(/provider unavailable/);
+    expect((await readOwnerApps(database, OWNER, provider))[0]?.status).toBe('connected');
+    await phone.execute('disconnectWorkbenchApp', {
+      workspaceId: WORKSPACE, appId: connected.appId!,
+    }, OWNER);
+    expect((await database.query<{ state: string }>(
+      `SELECT state FROM workspace_apps WHERE id=$1`, [connected.appId])).rows[0]?.state)
+      .toBe('disconnected');
+  });
+
+  it('does not execute from a provider account activated before identity verification', async () => {
+    const provider = fakeComposio();
+    const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const connected = await daemon.execute('connectApp',
+      { ...turn, app: 'Slack', reason: 'post the launch notes' }, HELPER);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    await phone.execute('beginAppSignIn', { appId: connected.appId! }, OWNER);
+    // A misconfigured provider project must not make an account usable before
+    // the authenticated phone returns and the server redeems its session.
+    provider.account.mockResolvedValue(true);
+    expect((await readOwnerApps(database, OWNER, provider))[0]?.status).toBe('connecting');
+    await expect(daemon.execute('executeAppTool', { ...turn, appId: connected.appId!,
+      tool: 'SLACK_POST_MESSAGE', arguments: {} }, HELPER))
+      .resolves.toEqual({ status: 'needs_connection' });
+    await expect(daemon.execute('authorizeResourceCall', { ...turn,
+      target: 'squire', appKeys: ['slack'] }, HELPER))
+      .resolves.toEqual({ allowed: false });
+    expect(provider.execute).not.toHaveBeenCalled();
+  });
+
+
 
   it('asks for Trusty Squire before an API route can start, then connects on the vaulted key', async () => {
     const daemon = daemonWith(fakeRegistry([]).client);
@@ -335,132 +457,11 @@ describe('connect_app', () => {
     ]);
   });
 
-  it('does not choose any route while the Registry is unreadable', async () => {
-    await connectSquire();
-    const result = await daemonWith(fakeRegistry([], true).client).execute(
-      'connectApp',
-      { ...turn, app: 'Linear', reason: 'file the bug' },
-      HELPER,
-    );
-    expect(result).toMatchObject({ status: 'unavailable' });
-    expect(await routes()).toEqual([]);
-  });
 
-  it('authorizes every owner app route without a card and records one usage ledger', async () => {
-    await connectSquire();
-    const daemon = daemonWith(fakeRegistry([linearServer]).client);
-    const connected = (await daemon.execute(
-      'connectApp',
-      { ...turn, app: 'Linear', reason: 'file the bug' },
-      HELPER,
-    )) as { connectorId: string; appId: string };
-    await database.query(
-      `UPDATE workspace_connectors SET status='connected',connected_at=now() WHERE id=$1`,
-      [connected.connectorId],
-    );
-    const viaRegistry = await daemon.execute(
-      'authorizeResourceCall',
-      { ...turn, target: 'registry-mcp:app.linear/linear', operation: 'create_issue' },
-      HELPER,
-    );
-    expect(viaRegistry).toMatchObject({ allowed: true });
-    // The same owner app reached through Squire uses its connected route.
-    const viaSquire = await daemon.execute(
-      'authorizeResourceCall',
-      { ...turn, target: 'squire', appKeys: ['linear'], operation: 'use_credential' },
-      HELPER,
-    );
-    expect(viaSquire).toMatchObject({ allowed: true });
-    const grants = await database.query<{ target: string; status: string }>(
-      `SELECT target,status FROM agent_grants`,
-    );
-    expect(grants.rows).toEqual([]);
-    expect(await routes()).toEqual([{ route: 'registry-mcp', transport: 'registry-mcp' }]);
 
-    // Discovery does not count as use.
-    await daemon.execute(
-      'authorizeResourceCall',
-      {
-        ...turn,
-        target: 'registry-mcp:app.linear/linear',
-        consume: false,
-        operation: 'tools/list',
-      },
-      HELPER,
-    );
-    const usage = await database.query<{ operation: string; app_id: string }>(
-      `SELECT operation,app_id FROM workspace_app_usage ORDER BY created_at, operation`,
-    );
-    expect(usage.rows.map((row) => row.operation).sort()).toEqual([
-      'create_issue',
-      'use_credential',
-    ]);
-    expect(new Set(usage.rows.map((row) => row.app_id))).toEqual(new Set([connected.appId]));
-    const [app] = await readOwnerApps(database, OWNER);
-    expect(app).toMatchObject({ status: 'connected', useCount: 2 });
-    // A Squire call for an app nobody connected uses the owner's Squire route.
-    expect(
-      await daemon.execute(
-        'authorizeResourceCall',
-        { ...turn, target: 'squire', appKeys: ['unrelated'] },
-        HELPER,
-      ),
-    ).toMatchObject({ allowed: true });
-    expect(
-      (await database.query(`SELECT 1 FROM agent_grants WHERE target='squire'`)).rowCount,
-    ).toBe(0);
-  });
 
-  it('disconnect refuses app calls and reconnect restores the route', async () => {
-    await connectSquire();
-    const daemon = daemonWith(fakeRegistry([linearServer]).client);
-    const phone = new PhoneService(database, 'http://placeholder');
-    const connected = (await daemon.execute(
-      'connectApp',
-      { ...turn, app: 'Linear', reason: 'file the bug' },
-      HELPER,
-    )) as { connectorId: string; appId: string };
-    await daemon.execute(
-      'authorizeResourceCall',
-      { ...turn, target: 'registry-mcp:app.linear/linear' },
-      HELPER,
-    );
-    await phone.execute(
-      'disconnectWorkbenchApp',
-      { workspaceId: WORKSPACE, appId: connected.appId },
-      OWNER,
-    );
-    expect(
-      (await database.query<{ status: string }>(`SELECT status FROM agent_grants`)).rows,
-    ).toEqual([]);
-    expect(
-      (
-        await database.query<{ status: string }>(
-          `SELECT status FROM workspace_connectors WHERE id=$1`,
-          [connected.connectorId],
-        )
-      ).rows,
-    ).toEqual([{ status: 'disconnected' }]);
-    await expect(
-      daemon.execute(
-        'authorizeResourceCall',
-        { ...turn, target: 'squire', appKeys: ['linear'] },
-        HELPER,
-      ),
-    ).resolves.toEqual({ allowed: false });
-    expect(await readOwnerApps(database, OWNER)).toEqual([]);
-    const reconnected = await daemon.execute(
-      'connectApp',
-      { ...turn, app: 'Linear', reason: 'file the bug' },
-      HELPER,
-    );
-    expect(reconnected).toMatchObject({
-      appId: connected.appId,
-      route: 'registry-mcp',
-      status: 'connecting',
-    });
-    expect(await routes()).toHaveLength(2);
-  });
+
+
 
   it('refuses a Squire call that names a disconnected app or two apps, whatever else it names', async () => {
     const squireId = await connectSquire();
@@ -527,110 +528,7 @@ describe('connect_app', () => {
     expect((await database.query(`SELECT id FROM agent_grants`)).rows).toEqual([]);
   });
 
-  it('keeps one app, one decision and one ledger across the person’s Workspaces', async () => {
-    const OTHER_WORKSPACE = '44444444-4444-4444-8444-444444444444';
-    const OTHER_ROOM = '55555555-5555-4555-8555-555555555555';
-    const OTHER_HELPER = 'c'.repeat(64);
-    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Garden')`, [OTHER_WORKSPACE]);
-    await database.query(
-      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Wasp','wasp')`,
-      [OTHER_HELPER],
-    );
-    await database.query(
-      `INSERT INTO agents(agent_id,owner_id,machine_id,machine_name,yolo_mode)
-       VALUES($1,$2,'machine-one','Owner laptop',false)`,
-      [OTHER_HELPER, OWNER],
-    );
-    await database.query(
-      `INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Garden tools')`,
-      [OTHER_ROOM, OTHER_WORKSPACE, OWNER],
-    );
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,$4,$2,'owner'),($1,$4,$3,'member')`,
-      [OTHER_WORKSPACE, OWNER, OTHER_HELPER, OTHER_ROOM],
-    );
-    await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text) VALUES('garden-source',$1,$2,'Connect Linear')`,
-      [OTHER_ROOM, OWNER],
-    );
-    await database.query(
-      `INSERT INTO agent_commands(
-         id,room_id,agent_id,source_message_id,turn_request_id,action,reason,
-         root_command_id,root_source_message_id,agent_depth,state,generation_id,lease_expires_at
-       ) VALUES('garden-command',$1,$2,'garden-source','garden-request','input','human_tag',
-         'garden-command','garden-source',0,'claimed','garden-generation',now()+interval '10 minutes')`,
-      [OTHER_ROOM, OTHER_HELPER],
-    );
-    const gardenTurn = {
-      roomId: OTHER_ROOM,
-      requestId: 'garden-request',
-      generationId: 'garden-generation',
-    };
-    await connectSquire();
-    const daemon = daemonWith(fakeRegistry([linearServer]).client);
-    const first = (await daemon.execute(
-      'connectApp',
-      { ...turn, app: 'Linear', reason: 'file the bug' },
-      HELPER,
-    )) as { appId: string; connectorId: string };
-    await database.query(
-      `UPDATE workspace_connectors SET status='connected',connected_at=now() WHERE id=$1`,
-      [first.connectorId],
-    );
-    const second = await daemon.execute(
-      'connectApp',
-      { ...gardenTurn, app: 'linear.app', reason: 'triage' },
-      OTHER_HELPER,
-    );
-    expect(second).toMatchObject({ appId: first.appId, status: 'connected' });
-    expect(second).not.toHaveProperty('route');
-    expect(await routes()).toHaveLength(1);
-    expect(
-      (
-        await database.query(
-          `SELECT 1 FROM workspace_connectors WHERE connector_type='registry-mcp'`,
-        )
-      ).rowCount,
-    ).toBe(1);
-    expect(await readOwnerApps(database, OWNER)).toHaveLength(1);
-    const phone = new PhoneService(database, 'http://placeholder');
-    expect((await phone.execute('readWorkbench', { workspaceId: '' }, OWNER)).apps).toHaveLength(1);
-    // The person's server mounts in the other Workspace's Room too, and a call
-    // there is the same app: the same app:<key> decision and the same ledger.
-    const configuration = await daemon.execute(
-      'getAgentConfiguration',
-      { agentId: OTHER_HELPER, roomId: OTHER_ROOM },
-      OTHER_HELPER,
-    );
-    expect(configuration.registryMcpRoutes).toEqual([
-      expect.objectContaining({
-        connectorId: first.connectorId,
-        target: 'registry-mcp:app.linear/linear',
-      }),
-    ]);
-    await daemon.execute(
-      'authorizeResourceCall',
-      { ...gardenTurn, target: 'registry-mcp:app.linear/linear', operation: 'list_issues' },
-      OTHER_HELPER,
-    );
-    const grants = await database.query<{ target: string }>(`SELECT target FROM agent_grants`);
-    expect(grants.rows).toEqual([]);
-    await expect(
-      daemon.execute(
-        'authorizeResourceCall',
-        { ...gardenTurn, target: 'registry-mcp:app.linear/linear', operation: 'list_issues' },
-        OTHER_HELPER,
-      ),
-    ).resolves.toMatchObject({ allowed: true });
-    const [app] = await readOwnerApps(database, OWNER);
-    expect(app).toMatchObject({ appId: first.appId, useCount: 2 });
-    // Disconnecting it once removes the route every Workspace was using.
-    await phone.execute('disconnectWorkbenchApp', { workspaceId: '', appId: first.appId }, OWNER);
-    expect(
-      (await database.query<{ status: string }>(`SELECT status FROM agent_grants`)).rows,
-    ).toEqual([]);
-  });
+
 
   it('lets a person connect from Workbench by handing the sign-in to their agent', async () => {
     await connectSquire();
@@ -645,6 +543,7 @@ describe('connect_app', () => {
       undefined,
       undefined,
       fakeRegistry([]).client,
+      { supportsOAuth: async () => false } as ComposioApps,
     );
     const result = await phone.execute(
       'connectWorkbenchApp',

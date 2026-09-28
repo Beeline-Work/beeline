@@ -26,6 +26,10 @@ import type {
   CancelGoogleSignInInput,
   ConnectWorkbenchAppInput,
   ConnectWorkbenchAppResult,
+  CompleteAppSignInInput,
+  CompleteAppSignInResult,
+  BeginAppSignInInput,
+  BeginAppSignInResult,
   DisconnectWorkbenchAppInput,
   PairConnectorInput,
   PairConnectorResult,
@@ -157,6 +161,8 @@ export type PhoneOperationMap = {
   unpairConnector: { input: UnpairConnectorInput; output: void };
   /** The one front door for connecting an app from the Workbench. */
   connectWorkbenchApp: { input: ConnectWorkbenchAppInput; output: ConnectWorkbenchAppResult };
+  beginAppSignIn: { input: BeginAppSignInInput; output: BeginAppSignInResult };
+  completeAppSignIn: { input: CompleteAppSignInInput; output: CompleteAppSignInResult };
   /** Stop every route of one app and revoke its standing approvals. */
   disconnectWorkbenchApp: { input: DisconnectWorkbenchAppInput; output: void };
   readConnectionDetail: { input: ReadConnectionDetailInput; output: ConnectionDetailView };

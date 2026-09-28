@@ -20,7 +20,6 @@ import type { ReleaseNotifier } from './release-notify.js';
 import { isMediaId } from './media-ttl.js';
 import type { ObjectService } from './object-service.js';
 import { connectorLogo } from './workbench.js';
-import type { GoogleOAuth } from './google-oauth.js';
 import type { RegistryMcpOAuth } from './registry-mcp-oauth.js';
 import { InvitePreviewAccess } from './invite-preview.js';
 import type { ConnectionPresence } from './connection-presence.js';
@@ -87,7 +86,6 @@ export interface ServerOptions {
    *  clear 503. */
   objectService?: ObjectService;
   github?: GitHubServerHooks;
-  googleOAuth?: GoogleOAuth;
   registryMcpOAuth?: RegistryMcpOAuth;
   /** Absent when no review secret is configured; the endpoint then refuses like any wrong secret. */
   review?: ReviewAccess;
@@ -1011,53 +1009,17 @@ async function route(
 ): Promise<void> {
   const url = exactPath(request.url);
   const method = request.method ?? 'GET';
-  if (method === 'GET' && url.pathname === '/v1/google/oauth/callback') {
-    if (!options.googleOAuth) {
-      json(response, 503, { error: 'Google OAuth is unavailable' });
+  if (method === 'GET' && url.pathname === '/v1/apps/oauth/verify') {
+    const sessionUri = url.searchParams.get('session_uri');
+    if (!sessionUri || sessionUri.length > 4096) {
+      json(response, 400, { error: 'Invalid app sign-in session' });
       return;
     }
-    const state = url.searchParams.get('state');
-    const code = url.searchParams.get('code');
-    if (!state) {
-      json(response, 400, { error: 'Google authorization was not completed' });
-      return;
-    }
-    const account = code
-      ? await options.googleOAuth.completeAccount(state, code)
-      : await options.googleOAuth.cancelAccountState(state);
-    const legacyCompleted = account === null && code
-      ? await options.googleOAuth.complete(state, code)
-      : false;
-    if (account === null && !code) await options.googleOAuth.cancel(state);
-    if (account && typeof account !== 'boolean') {
-      for (const offer of account.offers) {
-        options.live.publish({ type: 'invalidate', roomId: offer.roomId,
-          reason: 'connector-offer', agentId: offer.agentId });
-      }
-    }
-    // This response controls navigation only; the state is already settled.
-    // Mobile auth sessions need a deep link to retire their browser task.
-    if (/\b(?:Android|iPhone|iPad|iPod)\b/i.test(request.headers['user-agent'] ?? '')) {
-      const appReturn = new URL('beeline://beeline/settings/workbench/connect-signin');
-      appReturn.searchParams.set('oauthReturn', state);
-      response.writeHead(302, {
-        location: appReturn.toString(),
-        'cache-control': 'no-store',
-        'x-content-type-options': 'nosniff',
-      });
-      response.end();
-      return;
-    }
-    const completed = typeof account === 'object' && account !== null
-      ? account.completed : legacyCompleted;
-    response.writeHead(completed ? 200 : 400, {
-      'content-type': 'text/html; charset=utf-8',
-      'cache-control': 'no-store',
-      'x-content-type-options': 'nosniff',
-    });
-    response.end(completed
-      ? '<p>Google sign-in completed. Return to Beeline to use the connected tool.</p>'
-      : '<p>Google sign-in did not complete. Return to Beeline and retry.</p>');
+    const destination = new URL('beeline://beeline/settings/workbench/connect-signin');
+    destination.searchParams.set('appSignInSession', sessionUri);
+    response.writeHead(302, { location: destination.toString(), 'cache-control': 'no-store',
+      'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff' });
+    response.end();
     return;
   }
   if (method === 'GET' && url.pathname === '/v1/registry-mcp/oauth/callback') {

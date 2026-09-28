@@ -7,8 +7,7 @@
  * (`apps/server/src/app-connections.ts`):
  *
  *   1. `workbench`      — the app is already connected in this Workbench; reuse it.
- *   2. `registry-mcp`   — the app publishes an OFFICIAL hosted MCP server in the
- *                         Registry; connect it through the self-serve Registry flow.
+ *   2. `composio`      — managed OAuth for a supported app, held server-side.
  *   3. `squire-api`     — Trusty Squire signs up / signs in, vaults an API key, and
  *                         the app's API is called through Squire.
  *   4. `squire-browser` — Squire drives the app in a browser, only once the API
@@ -20,12 +19,13 @@
  */
 
 /** What serves a connected app. */
-export const APP_TRANSPORTS = ['registry-mcp', 'squire-api', 'squire-browser'] as const;
+export const APP_TRANSPORTS = ['registry-mcp', 'composio', 'squire-api', 'squire-browser'] as const;
 export type AppTransport = (typeof APP_TRANSPORTS)[number];
 
 /** Every route the resolver can choose, in resolution order. */
-export const APP_ROUTES = ['workbench', ...APP_TRANSPORTS] as const;
-export type AppRoute = (typeof APP_ROUTES)[number];
+export const APP_ROUTES = ['workbench', 'composio', 'squire-api', 'squire-browser'] as const;
+/** registry-mcp remains readable for connected rows created by older releases. */
+export type AppRoute = (typeof APP_ROUTES)[number] | 'registry-mcp';
 
 /** The one derived state a Workbench app row shows. */
 export type AppConnectionStatus = 'connecting' | 'connected' | 'error';

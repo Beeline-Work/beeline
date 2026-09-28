@@ -91,7 +91,7 @@ import {
 } from './system-line.js';
 import { mediaIdFromUrl } from './media-ttl.js';
 import { postRoomChoice } from './room-choice.js';
-import { APP_INPUT_MAX_LENGTH, GOOGLE_TOOL_SCOPES, connectorAdapter } from '@beeline/api-contract/workbench';
+import { APP_INPUT_MAX_LENGTH, appResourceTarget, connectorAdapter } from '@beeline/api-contract/workbench';
 import { McpRegistryClient } from './mcp-registry.js';
 import {
   appGateFor,
@@ -102,6 +102,8 @@ import {
   recordAppUsage,
 } from './app-connections.js';
 import type { RegistryMcpOAuth } from './registry-mcp-oauth.js';
+import type { ComposioApps } from './composio-apps.js';
+import { composioToolkitForApp } from './composio-apps.js';
 import {
   applyVaultList,
   connectorCatalog,
@@ -266,12 +268,13 @@ export class DaemonService {
     private readonly prChecksStatus?: (
       input: Input<'getPrChecksStatus'>,
     ) => Promise<Output<'getPrChecksStatus'>>,
-    private readonly googleOAuth?: import('./google-oauth.js').GoogleOAuth,
+    _legacyProviderSlot?: unknown,
     private readonly institutionalMemoryShadow: InstitutionalMemoryShadowConfig = {
       enabled: false,
     },
     private readonly mcpRegistry: McpRegistryClient = new McpRegistryClient(),
     private readonly registryMcpOAuth?: RegistryMcpOAuth,
+    private readonly composio?: ComposioApps,
   ) {}
 
   /** When each corner last woke, so `CORNER_WAKE_MIN_INTERVAL_MS` can be held. */
@@ -339,6 +342,8 @@ export class DaemonService {
       'offerConnector',
       'connectMcpServer',
       'connectApp',
+      'listAppTools',
+      'executeAppTool',
       'askRoomChoice',
       'openRoomPoll',
       'putCornerApp',
@@ -498,10 +503,11 @@ export class DaemonService {
           this.livePaintDiagnostics,
           this.liveDiagnosticServerInstance,
           this.prChecksStatus,
-          this.googleOAuth,
+          undefined,
           this.institutionalMemoryShadow,
           this.mcpRegistry,
           this.registryMcpOAuth,
+          this.composio,
         );
         const result = await scoped.execute(name, input, authenticatedAgentId);
         if (name === 'requestAgentGrant') {
@@ -1081,65 +1087,9 @@ export class DaemonService {
         )) as Output<Name>;
       case 'getConnectorAssignments':
         return (await this.connectorAssignments(authenticatedAgentId)) as Output<Name>;
-      case 'getGoogleOAuthGrant': {
-        const credentials = await this.googleOAuth?.grantForHelper(
-          (input as Input<'getGoogleOAuthGrant'>).connectorId,
-          authenticatedAgentId,
-        );
-        return (
-          credentials ? { status: 'ready', credentials } : { status: 'pending' }
-        ) as Output<Name>;
-      }
-      case 'getRoomGoogleGrant': {
-        const roomId = (input as Input<'getRoomGoogleGrant'>).roomId;
-        const owner = (await this.database.query<{ owner_id: string }>(
-          `SELECT a.owner_id FROM agents a
-           JOIN rooms r ON r.id=$1
-           JOIN memberships member ON member.room_id=r.id AND member.identity_id=a.agent_id
-             AND member.removed_at IS NULL
-           JOIN memberships owner ON owner.workspace_id=r.workspace_id
-             AND owner.room_id IS NULL AND owner.identity_id=a.owner_id
-             AND owner.removed_at IS NULL
-           WHERE a.agent_id=$2`, [roomId, authenticatedAgentId])).rows[0];
-        const accountGrant = owner
-          ? await this.googleOAuth?.grantForOwner(owner.owner_id) : null;
-        const connected = await this.database.query<{ id: string; connector_type: string }>(
-          `SELECT c.id,c.connector_type FROM workspace_connectors c
-           JOIN rooms r ON r.workspace_id=c.workspace_id AND r.id=$1
-           JOIN agents a ON a.agent_id=$2 AND a.owner_id=c.owner_identity_id
-             AND COALESCE(a.machine_id,a.agent_id)=c.machine_id
-           JOIN memberships m ON m.room_id=r.id AND m.identity_id=$2
-             AND m.removed_at IS NULL
-           JOIN memberships owner ON owner.workspace_id=r.workspace_id
-             AND owner.room_id IS NULL AND owner.identity_id=a.owner_id
-             AND owner.removed_at IS NULL
-           WHERE c.helper_agent_id=$2 AND c.status='connected'
-             AND c.connector_type IN ('google-gmail','google-calendar','google-drive','google-youtube')
-           ORDER BY CASE c.connector_type WHEN 'google-drive' THEN 0 ELSE 1 END
-           `,
-          [roomId, authenticatedAgentId],
-        );
-        const credentialsByType: Record<string, NonNullable<Output<'getRoomGoogleGrant'>['credentials']>> = {};
-        if (accountGrant) {
-          for (const [kind, scopes] of Object.entries(GOOGLE_TOOL_SCOPES)) {
-            if (scopes.every((scope) => accountGrant.scopes.includes(scope))) {
-              credentialsByType[kind] = accountGrant;
-            }
-          }
-        }
-        const legacyGrants = await Promise.all(connected.rows.map(async (row) => ({
-          type: row.connector_type,
-          grant: await this.googleOAuth?.grantForHelper(row.id, authenticatedAgentId),
-        })));
-        for (const { type, grant } of legacyGrants) {
-          if (grant && !credentialsByType[type]) credentialsByType[type] = grant;
-        }
-        const connectedTypes = Object.keys(credentialsByType);
-        const credentials = accountGrant ?? legacyGrants.find(({ grant }) => grant)?.grant;
-        return (credentials ? {
-          status: 'ready', credentials, credentialsByType, connectedTypes,
-        } : { status: 'pending' }) as Output<Name>;
-      }
+      case 'getGoogleOAuthGrant':
+      case 'getRoomGoogleGrant':
+        return { status: 'pending' } as Output<Name>;
       case 'beginRegistryMcpOAuth': {
         if (!this.registryMcpOAuth) throw new Error('Registry MCP OAuth is unavailable');
         return (await this.registryMcpOAuth.begin(
@@ -1290,6 +1240,12 @@ export class DaemonService {
           input as Input<'connectApp'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'listAppTools':
+        return (await this.listAppTools(input as Input<'listAppTools'>,
+          authenticatedAgentId)) as Output<Name>;
+      case 'executeAppTool':
+        return (await this.executeAppTool(input as Input<'executeAppTool'>,
+          authenticatedAgentId)) as Output<Name>;
       case 'offerConnector':
         return (await this.offerConnector(
           input as Input<'offerConnector'>,
@@ -4688,7 +4644,24 @@ export class DaemonService {
     if (!context) throw new Error('agent not found');
     const sourceMessageId = this.authorizedCommand?.root_source_message_id;
     const requesterRow = await this.grantRequester();
-    const owner = {
+    const appOwner = target.startsWith('app:') && input.appId
+      ? (await this.database.query<{ id: string; name: string; handle: string | null;
+          avatar: string | null }>(
+          `SELECT person.id,person.name,person.handle,person.avatar
+           FROM workspace_apps app JOIN identities person ON person.id=app.owner_identity_id
+           WHERE app.id=$1::uuid AND app.app_key=$2 AND app.state='active'
+             AND app.transport='composio'`,
+          [input.appId, target.slice(4)],
+        )).rows[0]
+      : undefined;
+    if (target.startsWith('app:') && !appOwner)
+      throw new Error('Connected app grant requires an active app');
+    const resourceOwnerId = appOwner?.id ?? context.owner_id;
+    const owner = appOwner ? {
+      pubkey: appOwner.id, kind: 'human' as const, name: appOwner.name,
+      ...(appOwner.handle ? { handle: appOwner.handle } : {}),
+      ...(appOwner.avatar ? { avatar: appOwner.avatar } : {}),
+    } : {
       pubkey: context.owner_id,
       kind: 'human' as const,
       name: context.owner_name,
@@ -4715,7 +4688,9 @@ export class DaemonService {
     // Wallet consent and the two command hard stops keep their existing gates.
     const auto =
       escalations.length === 0 &&
-      (kind === 'mcp' && target === 'wallet'
+      (kind === 'mcp' && target.startsWith('app:')
+        ? context.owner_id === resourceOwnerId
+        : kind === 'mcp' && target === 'wallet'
         ? context.yolo_mode && requesterRow.id === context.owner_id
         : true);
     const status = auto ? 'approved' : 'pending';
@@ -4723,11 +4698,11 @@ export class DaemonService {
       const inserted = await database.query<{ created_at: Date; expires_at: Date | null }>(
         `INSERT INTO agent_grants(
            id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status,
-           decided_at,expires_at,auto,script
+           decided_at,expires_at,auto,script,app_id
          ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,
            CASE WHEN $10::boolean THEN now() END,
            CASE WHEN $11::integer IS NULL THEN NULL ELSE now()+make_interval(secs=>$11::integer) END,
-           $10,$12::jsonb)
+           $10,$12::jsonb,$13::uuid)
          RETURNING created_at,expires_at`,
         [
           grantId,
@@ -4742,6 +4717,7 @@ export class DaemonService {
           auto,
           input.ttlSeconds ?? null,
           script ? JSON.stringify(script) : null,
+          appOwner ? input.appId : null,
         ],
       );
       const row = inserted.rows[0]!;
@@ -4761,7 +4737,7 @@ export class DaemonService {
       const member = await database.query(
         `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
          AND identity_id=$2 AND removed_at IS NULL`,
-        [context.workspace_id, context.owner_id],
+        [context.workspace_id, resourceOwnerId],
       );
       if (!member.rowCount) throw new Error('resource owner access denied');
       const resourceRoomId = squireRoute
@@ -4769,16 +4745,16 @@ export class DaemonService {
             database,
             context.workspace_id,
             'trusty-squire',
-            context.owner_id,
+            resourceOwnerId,
           )
         : kind === 'mcp' && target === 'wallet'
           ? await ensureConnectorDirectMessageRoom(
               database,
               context.workspace_id,
               'wallet',
-              context.owner_id,
+              resourceOwnerId,
             )
-          : await ensureSystemDirectMessageRoom(database, context.workspace_id, context.owner_id);
+          : await ensureSystemDirectMessageRoom(database, context.workspace_id, resourceOwnerId);
       if (auto) {
         await systemLine(database, {
           roomId: resourceRoomId,
@@ -4919,7 +4895,10 @@ export class DaemonService {
          ))
          AND (g.kind='repository' OR g.auto OR g.decided_by=(
            SELECT owner_id FROM agents WHERE agent_id=g.agent_id
-         ))
+         ) OR (g.app_id IS NOT NULL AND EXISTS (
+           SELECT 1 FROM workspace_apps app WHERE app.id=g.app_id
+             AND app.state='active' AND g.decided_by=app.owner_identity_id
+         )))
          AND ($2::uuid IS NULL OR g.workspace_id=(SELECT workspace_id FROM rooms WHERE id=$2))
        ORDER BY g.created_at DESC,g.id`,
       [agentId, roomId ?? null],
@@ -5197,32 +5176,20 @@ export class DaemonService {
         [context.workspaceId, context.owner.pubkey],
       )
     ).rows;
-    const googleAccount = (await this.database.query<{ granted_scopes: string[] }>(
-      `SELECT granted_scopes FROM google_oauth_accounts WHERE owner_identity_id=$1
-         AND sealed_grant IS NOT NULL`, [context.owner.pubkey])).rows[0];
     const catalog = connectorCatalog().map((entry) => {
       // The most recently touched row wins; a live one over a disconnected one.
       const rows = paired.filter((row) => row.connector_type === entry.connectorType);
       const row = rows.find((candidate) => candidate.status !== 'disconnected') ?? rows[0];
-      const googleConnected = entry.connectorType.startsWith('google-') && googleAccount &&
-        GOOGLE_TOOL_SCOPES[entry.connectorType as keyof typeof GOOGLE_TOOL_SCOPES]?.every(
-          scope => googleAccount.granted_scopes.includes(scope));
       return {
         connectorType: entry.connectorType,
         name: entry.name,
         purpose: connectorPurpose(entry.connectorType),
-        available:
-          entry.available &&
-          (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth)),
+        available: entry.available,
         offerable:
           entry.available &&
-          (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth)) &&
           !context.isCorner &&
           isOfferableConnectorKind(entry.connectorType),
-        ...(googleConnected
-          ? { paired: { status: 'connected' as const, helperName: 'Google Workspace',
-              onThisMachine: true } }
-          : row
+        ...(row
           ? {
               paired: {
                 status: row.status,
@@ -5284,7 +5251,7 @@ export class DaemonService {
         state: row.state,
       })),
       registryServers,
-      apps: (await readOwnerApps(this.database, context.owner.pubkey)).map(
+      apps: (await readOwnerApps(this.database, context.owner.pubkey, this.composio)).map(
         (app) => ({
           appKey: app.appKey,
           name: app.name,
@@ -5333,7 +5300,34 @@ export class DaemonService {
       noApi: input.noApi === true,
       installRoomId: input.roomId,
       installCommandId: this.authorizedCommand?.id ?? null,
+      ...(this.composio ? { composio: this.composio } : {}),
+      issueLink: false,
     });
+    if (outcome.transport === 'composio' && outcome.status === 'needs_sign_in' &&
+      outcome.appId && outcome.appKey) {
+      await this.database.transaction(async (database) => {
+        await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`,
+          [`app-sign-in:${input.roomId}:${outcome.appId}`]);
+        const exists = await database.query(
+          `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='app-sign-in'
+           AND card->>'appId'=$2 AND card->>'status'='pending' LIMIT 1`,
+          [input.roomId, outcome.appId],
+        );
+        if (exists.rowCount) return;
+        await systemLine(database, {
+          roomId: input.roomId,
+          subject: { kind: 'agent', id: agentId, name: context.agent.name },
+          verb: 'needs a connection to', object: outcome.name ?? app,
+          consequence: 'Sign in to continue the request.',
+          presentation: 'card', cardType: 'app-sign-in',
+          card: { appId: outcome.appId, appKey: outcome.appKey,
+            name: outcome.name ?? app, ownerId: context.owner.pubkey,
+            agentId, status: 'pending', commandId: this.authorizedCommand?.id ?? null },
+        });
+      });
+      this.live.publish({ type: 'invalidate', roomId: input.roomId,
+        reason: 'app-sign-in', agentId });
+    }
     return {
       status: outcome.status,
       app: outcome.name ?? outcome.app,
@@ -5343,8 +5337,88 @@ export class DaemonService {
       ...(outcome.route ? { route: outcome.route } : {}),
       ...(outcome.transport ? { transport: outcome.transport } : {}),
       ...(outcome.connectorId ? { connectorId: outcome.connectorId } : {}),
-      ...(outcome.authorizationUrl ? { authorizationUrl: outcome.authorizationUrl } : {}),
+      ...(outcome.authorizationUrl && outcome.transport !== 'composio'
+        ? { authorizationUrl: outcome.authorizationUrl } : {}),
     };
+  }
+
+  private async connectedAppForTool(appId: string, roomId: string, agentId: string) {
+    if (typeof appId !== 'string' || !/^[0-9a-f-]{36}$/i.test(appId))
+      throw new Error('App id is invalid');
+    const row = (await this.database.query<{ id: string; app_key: string;
+      owner_identity_id: string; composio_account_id: string | null;
+      composio_link_expires_at: Date | null;
+      agent_owner_id: string }>(
+      `SELECT app.id,app.app_key,app.owner_identity_id,app.composio_account_id,
+              app.composio_link_expires_at,
+              agent.owner_id agent_owner_id
+       FROM workspace_apps app JOIN agents agent ON agent.agent_id=$3
+       JOIN rooms room ON room.id=$2
+       JOIN memberships owner_member ON owner_member.workspace_id=room.workspace_id
+         AND owner_member.room_id IS NULL AND owner_member.identity_id=app.owner_identity_id
+         AND owner_member.removed_at IS NULL
+       WHERE app.id=$1::uuid AND app.state='active' AND app.transport='composio'`,
+      [appId, roomId, agentId],
+    )).rows[0];
+    if (!row) throw new Error('Connected app is unavailable in this Room');
+    return row;
+  }
+
+  private async listAppTools(input: Input<'listAppTools'>, agentId: string) {
+    if (!this.composio) throw new Error('App tools are unavailable');
+    const row = await this.connectedAppForTool(input.appId, input.roomId, agentId);
+    if (row.composio_link_expires_at || !row.composio_account_id ||
+      !(await this.composio.account(row.composio_account_id,
+      row.owner_identity_id, composioToolkitForApp(row.app_key))))
+      return { tools: [] };
+    return { tools: await this.composio.listTools(composioToolkitForApp(row.app_key),
+      input.query) };
+  }
+
+  private async executeAppTool(input: Input<'executeAppTool'>, agentId: string) {
+    if (!this.composio) throw new Error('App tools are unavailable');
+    const row = await this.connectedAppForTool(input.appId, input.roomId, agentId);
+    if (row.composio_link_expires_at || !row.composio_account_id ||
+      !(await this.composio.account(row.composio_account_id,
+      row.owner_identity_id, composioToolkitForApp(row.app_key))))
+      return { status: 'needs_connection' as const };
+    const requester = await this.grantRequester();
+    if (requester.kind !== 'human') throw new Error('App use requires a person’s request');
+    let grantId: string | undefined;
+    if (row.agent_owner_id !== row.owner_identity_id) {
+      const grant = (await this.database.query<{ id: string; status: string }>(
+        `SELECT id,status FROM agent_grants WHERE app_id=$1::uuid AND agent_id=$2
+         AND room_id=$3 AND requested_by=$4 AND kind='mcp' AND target=$5
+         AND auto=false AND (status='pending' OR decided_by=$6)
+         AND status IN ('pending','approved','once')
+         AND (expires_at IS NULL OR expires_at>now())
+         ORDER BY created_at DESC,id DESC LIMIT 1`,
+        [row.id, agentId, input.roomId, requester.id, appResourceTarget(row.app_key),
+          row.owner_identity_id],
+      )).rows[0];
+      if (!grant) {
+        const asked = await this.requestAgentGrant({ ...input, kind: 'mcp',
+          target: appResourceTarget(row.app_key), appId: row.id,
+          reason: `use ${row.app_key} for this request` }, agentId);
+        return { status: 'needs_permission' as const, grantId: asked.grantId };
+      }
+      if (grant.status === 'pending')
+        return { status: 'needs_permission' as const, grantId: grant.id };
+      grantId = grant.id;
+      if (grant.status === 'once')
+        await this.consumeAgentGrant({ grantId }, agentId);
+    }
+    const args = input.arguments;
+    if (!args || typeof args !== 'object' || Array.isArray(args) ||
+      JSON.stringify(args).length > 65_536)
+      throw new Error('App tool arguments are invalid');
+    const data = await this.composio.execute({ accountId: row.composio_account_id,
+      userId: row.owner_identity_id, toolkit: composioToolkitForApp(row.app_key),
+      tool: input.tool, arguments: args });
+    await recordAppUsage(this.database, { appId: row.id, agentId,
+      roomId: input.roomId, requesterId: requester.id, transport: 'composio',
+      operation: input.tool, ...(grantId ? { grantId } : {}) });
+    return { status: 'executed' as const, data };
   }
 
   /**
@@ -5497,19 +5571,7 @@ export class DaemonService {
     const context = await this.offerContext(input.roomId, agentId);
     if (context.isCorner)
       throw new Error('connector offer is invalid: offer a tool from the Room, not from a corner');
-    if (connectorType.startsWith('google-') && context.addressee.pubkey !== context.owner.pubkey)
-      throw new Error('Google Workspace offer is invalid: this agent’s owner must connect it in Workbench');
     const connectorName = connectorDisplayName(connectorType);
-    const googleConnected = connectorType.startsWith('google-')
-      ? await this.database.query(
-          `SELECT 1 FROM google_oauth_accounts WHERE owner_identity_id=$1
-             AND sealed_grant IS NOT NULL AND granted_scopes @> $2::text[]`,
-          [context.addressee.pubkey,
-            GOOGLE_TOOL_SCOPES[connectorType as keyof typeof GOOGLE_TOOL_SCOPES]])
-      : null;
-    if (googleConnected?.rowCount) {
-      throw new Error(`${connectorName} is already connected; check workbench_status`);
-    }
     const already = (
       await this.database.query<{ status: string }>(
         `SELECT status FROM workspace_connectors
@@ -6608,6 +6670,8 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   searchMcpRegistry: true,
   connectMcpServer: true,
   connectApp: true,
+  listAppTools: true,
+  executeAppTool: true,
   offerConnector: true,
   createCorner: true,
   upgradeCornerLane: true,

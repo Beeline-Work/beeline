@@ -234,10 +234,6 @@ export function connectorExpandedActions(
  */
 export const GOOGLE_ENTRY_ID = 'google';
 
-/** Brand domain the Workbench Google row hands `ServiceMark` — the same
- *  favicon lookup the Keys list already uses for a vault company. */
-export const GOOGLE_ENTRY_FAVICON_DOMAIN = 'google.com';
-
 /** Canonical order of the tool entries the single Google entry folds. */
 export const GOOGLE_CONNECTOR_ORDER: readonly (
   'google-gmail' | 'google-calendar' | 'google-drive' | 'google-youtube'
@@ -297,19 +293,6 @@ export function googleEntryConnector(
     signedInAs: connected?.signedInAs,
     ...(failed?.errorMessage ? { errorMessage: failed.errorMessage } : {}),
   };
-}
-
-/** Per-tool rows for the Google entry's expanded disclosure: one line per
- *  folded tool (Gmail / Calendar / Drive / YouTube) with its own status word,
- *  so a single tool like YouTube is visible and legible behind the fold.
- *  Tools the catalog does not list are omitted. */
-export function googleToolRows(
-  connectors: readonly WorkbenchConnector[],
-): readonly WorkbenchConnector[] {
-  return googleEntryTools(connectors).map((tool) => ({
-    ...tool,
-    status: tool.status ?? 'disconnected',
-  }));
 }
 
 /** The concrete Google tool type the single entry pairs first: a failed tool

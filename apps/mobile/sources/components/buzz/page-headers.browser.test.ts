@@ -4,9 +4,9 @@ import { describe, expect, it } from 'vitest';
 import { CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
 
 /**
- * Tray, Workbench and Corners are sibling section pages, so their top headers
- * must read as one: the back chevron at the same inset, the same eyebrow over
- * the same title, and the same divider under it. Workspace settings and
+ * The Corners header is the reference every section page is aligned to: the
+ * back chevron at its inset, the same eyebrow over the same title, the same
+ * trailing text, and the same divider under it. Workspace settings and
  * What's New carry no eyebrow but share the rest. Each page is painted for
  * real in a phone-width browser and measured.
  */
@@ -69,21 +69,31 @@ async function measure(page: string): Promise<Record<string, unknown>> {
 }
 
 describe.skipIf(!existsSync(CHROME))('section page headers in a browser', () => {
-  it('draws Tray, Workbench and Corners headers the same way', async () => {
-    const tray = await measure('tray');
-    const workbench = await measure('workbench');
-    const corners = await measure('corners');
-    const { page: _tray, ...trayHeader } = tray;
-    for (const other of [workbench, corners]) {
-      const { page, ...header } = other;
-      expect(header, `${String(page)} header differs from Tray`).toEqual(trayHeader);
-    }
-    expect(trayHeader.eyebrowAboveTitle).toBe(true);
-    expect(trayHeader.divider).toBe('1px solid');
-    const { eyebrowFont: _font, eyebrowAboveTitle: _above, ...shared } = trayHeader;
-    for (const page of ['workspace', 'changelog']) {
+  it('draws every section page header the way Corners draws its own', async () => {
+    const { page: _corners, ...corners } = await measure('corners');
+    // The Corners header as it stood before the pages were aligned to it.
+    expect(corners).toMatchObject({
+      backLeft: 8,
+      backSize: 44,
+      titleLeft: 52,
+      headerMinHeight: '66px',
+      divider: '1px solid',
+      titleFont: '22px SpaceGrotesk-Medium',
+      eyebrowFont: '13px SpaceGrotesk-Regular',
+      eyebrowAboveTitle: true,
+    });
+    const { eyebrowFont: _font, eyebrowAboveTitle: _above, trailingFont: _t, ...frame } = corners;
+    for (const page of ['tray', 'workbench', 'workspace', 'changelog']) {
       const { page: _page, ...header } = await measure(page);
-      expect(header, `${page} header differs from Tray`).toEqual(shared);
+      // Pages without an eyebrow or trailing text share everything else.
+      const expected = {
+        ...frame,
+        ...('eyebrowFont' in header
+          ? { eyebrowFont: corners.eyebrowFont, eyebrowAboveTitle: true }
+          : {}),
+        ...('trailingFont' in header ? { trailingFont: corners.trailingFont } : {}),
+      };
+      expect(header, `${page} header differs from Corners`).toEqual(expected);
     }
   }, 300_000);
 });

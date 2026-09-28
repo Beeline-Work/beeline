@@ -601,8 +601,8 @@ describe('RoomCornersHeader', () => {
       borderBottomWidth: 1,
       borderBottomColor: hull.border,
       minHeight: 66,
-      // The shared PageHeader inset, the same one Tray and Workbench sit at.
-      paddingHorizontal: 12,
+      // The Corners inset, which the shared PageHeader carries for every page.
+      paddingHorizontal: hull.space.sm,
     });
     expect(resolvedStyle(header.props.style).backgroundColor).toBeUndefined();
     expect(tree.root.findAllByType('HullSurface' as any)).toHaveLength(0);
@@ -617,7 +617,10 @@ describe('RoomCornersHeader', () => {
     expect(resolvedStyle(texts[0].props.style)).toMatchObject(hull.type.meta);
     expect(resolvedStyle(texts[1].props.style)).toMatchObject(hull.type.hero);
     expect(texts[1].props.accessibilityRole).toBe('header');
-    expect(resolvedStyle(texts[2].props.style)).toMatchObject(hull.type.meta);
+    expect(resolvedStyle(texts[2].props.style)).toMatchObject({
+      ...hull.type.meta,
+      color: hull.textMuted,
+    });
     expect(texts[2].props.accessibilityLabel).toBe(
       `${count} ${count === 1 ? 'corner' : 'corners'}`,
     );

@@ -15,15 +15,23 @@ import { cornerSectionsView } from './corner-sections-fixture';
 /**
  * Paints one real section page (`?page=tray|workbench|corners|workspace|changelog`)
  * and reports
- * how its top header is drawn: where the back chevron sits, the title and
- * eyebrow type, and the divider under the header. The browser test compares
+ * how its top header is drawn: where the back chevron sits, the title,
+ * eyebrow and trailing type, and the divider under the header. The browser test compares
  * the three reports, so a page that drifts from the others fails.
  */
 const page = new URLSearchParams(location.search).get('page') ?? 'tray';
-const screens: Record<string, { Screen: React.ComponentType; title: string; eyebrow?: string }> = {
-  tray: { Screen: TrayScreen, title: 'Tray', eyebrow: 'Workspace' },
+const screens: Record<
+  string,
+  { Screen: React.ComponentType; title: string; eyebrow?: string; trailing?: string }
+> = {
+  tray: {
+    Screen: TrayScreen,
+    title: 'Tray',
+    eyebrow: 'Workspace',
+    trailing: '0 NEED YOU · 0 SAVED',
+  },
   workbench: { Screen: WorkbenchScreen, title: 'Workbench', eyebrow: 'Settings' },
-  corners: { Screen: BuzzCorners, title: 'Corners', eyebrow: '#alpha' },
+  corners: { Screen: BuzzCorners, title: 'Corners', eyebrow: '#alpha', trailing: '10' },
   workspace: { Screen: WorkspaceSettings, title: 'Workspace' },
   changelog: { Screen: ChangelogScreen, title: "What's New" },
 };
@@ -38,7 +46,7 @@ const textNode = (text: string) =>
   );
 
 async function run() {
-  const { Screen, title, eyebrow } = screens[page]!;
+  const { Screen, title, eyebrow, trailing } = screens[page]!;
   createRoot(document.getElementById('root')!).render(<Screen />);
   for (let i = 0; i < 6; i += 1) await pause();
 
@@ -54,6 +62,9 @@ async function run() {
   const headerStyle = getComputedStyle(header);
   const titleStyle = getComputedStyle(titleNode);
   const eyebrowStyle = eyebrowNode ? getComputedStyle(eyebrowNode) : undefined;
+  const trailingNode = trailing ? textNode(trailing) : undefined;
+  if (trailing && !trailingNode) throw new Error(`${page}: trailing "${trailing}" missing`);
+  const trailingStyle = trailingNode ? getComputedStyle(trailingNode) : undefined;
   report(
     JSON.stringify({
       page,
@@ -69,6 +80,11 @@ async function run() {
             eyebrowAboveTitle:
               eyebrowNode.getBoundingClientRect().bottom <=
               titleNode.getBoundingClientRect().top + 1,
+          }
+        : {}),
+      ...(trailingStyle
+        ? {
+            trailingFont: `${trailingStyle.fontSize} ${trailingStyle.color} ${trailingStyle.textAlign}`,
           }
         : {}),
     }),

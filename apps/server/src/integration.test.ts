@@ -3204,6 +3204,38 @@ describe('monolith integration', () => {
     ).toBe(400);
   });
 
+  it("returns more than 60 of a long turn's corner work rows, oldest first", async () => {
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'long-turn-corner',
+      name: 'Long turn',
+      objective: 'Long turn',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    const updates = 96;
+    for (let update = 1; update <= updates; update++) {
+      expect(
+        (
+          await daemonOperation('postAgentActivity', {
+            agentId: AGENT,
+            roomId: cornerId,
+            requestId: 'long-turn',
+            activity: [{ kind: 'output', title: 'Update', text: `Update ${update}` }],
+          })
+        ).status,
+      ).toBe(200);
+    }
+
+    const corner = (await (await request(`/v1/phone/rooms/${cornerId}`)).json()) as RoomView;
+    expect(isRoomView(corner)).toBe(true);
+    const texts = corner.toolRows!.map((message) => message.activity?.[0]?.text);
+    expect(texts).toHaveLength(updates);
+    expect(texts[0]).toBe('Update 1');
+    // A phone that still keeps only the last 60 rows keeps the newest ones.
+    expect(texts.slice(-60)[59]).toBe(`Update ${updates}`);
+  });
+
   it('keeps settled corner tool rows in the corner read but never in the parent Room', async () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,

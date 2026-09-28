@@ -1,6 +1,7 @@
 import { performance } from 'node:perf_hooks';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { QueryResultRow } from 'pg';
+import { ROOM_VIEW_TOOL_ROW_LIMIT } from '@beeline/api-contract/phone';
 import { migrate, type QueryResult, type SqlDatabase } from './database.js';
 import { PhoneService } from './phone-service.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
@@ -227,8 +228,9 @@ describe('PhoneService.readRoom latency', () => {
       // 170 ms a query: one serial trip each would be about 2.4 s.
       expect(durationMs).toBeLessThan(1_200);
       expect(enrichment.spans.filter((span) => /tagged_ids/.test(span.text))).toHaveLength(1);
-      // The settled rows never leave the database for a corner open.
-      expect(largestRead).toBeLessThan(200);
+      // The settled rows never leave the database for a corner open; only
+      // the capped corner work rows do.
+      expect(largestRead).toBeLessThanOrEqual(ROOM_VIEW_TOOL_ROW_LIMIT);
     }, 20_000);
   });
 

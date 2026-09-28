@@ -394,13 +394,13 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.buzz.space.md,
   },
   roleChoiceSelected: {
-    backgroundColor: theme.buzz.accent,
-    borderColor: theme.buzz.accent,
+    backgroundColor: theme.buzz.buttonPrimaryFill,
+    borderColor: theme.buzz.buttonPrimaryFill,
   },
   roleLabel: {
     ...Typography.default('semiBold'),
     ...theme.buzz.type.meta,
     color: theme.buzz.textSecondary,
   },
-  roleLabelSelected: { color: theme.buzz.textInverted },
+  roleLabelSelected: { color: theme.buzz.buttonPrimaryText },
 }));

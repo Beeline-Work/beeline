@@ -14,7 +14,7 @@ type SettingsRowTrailingPress = {
 };
 
 /** The compact bordered action control on the trailing axis (board
- *  revision 2's `.cbtn`): one word, brass, boxed — the Connect button a
+ *  revision 2's `.cbtn`): one word, ink, boxed — the Connect button a
  *  tool row carries while it is not connected. Excludes `value`/`action`. */
 export type SettingsRowActionControl = {
   accessibilityLabel?: string;
@@ -322,12 +322,12 @@ const styles = StyleSheet.create((theme) => {
       color: hull.accent,
     },
     valueRow: { flexDirection: 'row', alignItems: 'center', gap: hull.space.sm },
-    // The one compact bordered control (board revision 2's `.cbtn`): brass
-    // word, brass border, the shared radius — acting stays the one thing
+    // The one compact bordered control (board revision 2's `.cbtn`): ink
+    // word, ink border, the shared radius — acting stays the one thing
     // with a box on a row, because it is the one thing a row must act on.
     actionControl: {
       borderWidth: 1,
-      borderColor: hull.accent,
+      borderColor: hull.buttonSecondaryText,
       borderRadius: hull.radius,
       paddingVertical: 5,
       paddingHorizontal: 14,
@@ -336,7 +336,7 @@ const styles = StyleSheet.create((theme) => {
       ...Typography.default(),
       ...Typography.ledger('medium'),
       ...hull.type.meta,
-      color: hull.accent,
+      color: hull.buttonSecondaryText,
     },
     // The one word that acts. Brass, because acting is what brass marks — and
     // redundant with the verb itself, never the only signal.

@@ -247,7 +247,9 @@ export function navigateToBuzzTargetFromNotification(
         channelId,
         ...(target.workspaceId ? { communityId: target.workspaceId } : {}),
         notificationResponseId,
-        ...(target.roomId !== target.channelId ? { parent: target.roomId } : {}),
+        ...(target.roomId !== target.channelId
+          ? { parent: target.roomId, returnTo: 'corners' }
+          : { returnTo: 'room-list' }),
         ...(target.target === 'message' && target.messageId
           ? { notificationMessageId: target.messageId }
           : {}),

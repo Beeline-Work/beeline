@@ -176,6 +176,7 @@ describe('routeBuzzNotificationResponse', () => {
         params: {
           channelId: 'room-b',
           notificationResponseId: 'msg-1',
+          returnTo: 'room-list',
           notificationMessageId: undefined,
           notificationTarget: 'message',
         },
@@ -444,7 +445,9 @@ describe('notification response wiring', () => {
             channelId,
             communityId: 'other-workspace',
             notificationResponseId: responseId,
-            ...(surface === 'corner' ? { parent: roomId } : {}),
+            ...(surface === 'corner'
+              ? { parent: roomId, returnTo: 'corners' }
+              : { returnTo: 'room-list' }),
             notificationMessageId: messageId,
             notificationTarget: 'message',
           },

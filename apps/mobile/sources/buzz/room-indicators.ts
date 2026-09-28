@@ -60,15 +60,14 @@ export type WorkingAgentsInput = {
    * channel. Concurrent turns are ordinary: one message can address two
    * agents, and both rings light. */
   activeTurnPubkeys?: readonly string[];
-  /** This corner's administering agent, only while the corner's canonical
-   * lifecycle is `working` and live (`sessionState === 'working'`). */
-  workingCornerAgentPubkey?: string | null;
 };
 
 /**
  * The agents whose identity marks wear the gold ring right now, keyed by
- * pubkey. The ring means WORKING — a live turn or a live corner — and this is
+ * pubkey. The ring means WORKING — the agent's own live turn — and this is
  * the same proof `selectTurnProgressAgentPubkey` and the corner header read.
+ * A corner being worked in is not enough: a reviewer's turn in someone
+ * else's corner must not light the corner owner's ring.
  * Delivery availability is deliberately not an input: a daemon can be online
  * before it has claimed work (C77), so it says nothing about whether the agent
  * is working. An empty record is the ordinary
@@ -77,7 +76,6 @@ export type WorkingAgentsInput = {
 export function selectWorkingAgents(input: WorkingAgentsInput): Readonly<Record<string, true>> {
   const working: Record<string, true> = {};
   for (const pubkey of input.activeTurnPubkeys ?? []) if (pubkey) working[pubkey] = true;
-  if (input.workingCornerAgentPubkey) working[input.workingCornerAgentPubkey] = true;
   return working;
 }
 

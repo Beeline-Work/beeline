@@ -29,7 +29,6 @@ export type MemberRosterRowProps = SharedRowProps &
         alive?: boolean;
         kind: 'agent';
         model?: string;
-        online?: boolean;
         ownerHandle?: string;
       }
   );
@@ -57,16 +56,13 @@ export function MemberRosterRow(props: MemberRosterRowProps) {
   const title = memberRosterTitle(props);
   const subtitle = memberRosterSubtitle(props);
   const address = title.slice(1);
-  const onlineState =
-    props.kind === 'agent' && props.online !== undefined
-      ? props.online
-        ? ', online'
-        : ', offline'
-      : '';
+  // Presence is not spoken: it ages out while an idle agent waits on its
+  // socket, so only a live turn is named, matching the ring.
+  const workingState = props.kind === 'agent' && props.alive ? ', working' : '';
 
   return (
     <TouchableOpacity
-      accessibilityLabel={`${title}, ${props.kind === 'human' ? 'person' : 'agent'}${onlineState}, at ${address}`}
+      accessibilityLabel={`${title}, ${props.kind === 'human' ? 'person' : 'agent'}${workingState}, at ${address}`}
       disabled={props.disabled}
       onPress={props.onPress}
       style={[styles.row, props.divider === 'top' ? styles.dividerTop : styles.dividerBottom]}

@@ -9,7 +9,6 @@ import {
   mergeAgentPresenceBatch,
   nextAgentPresenceTransitionAt,
   nextAgentTurnExpiryAt,
-  onlineVerdicts,
   type RoomAgentPresence,
 } from './agent-presence';
 
@@ -94,11 +93,5 @@ describe('mobile live presence overlay', () => {
     expect(mergeAgentPresenceBatch({ [agent]: server }, [{ ...presence, observedAt: 30 }])).toEqual(
       { [agent]: { ...presence, observedAt: 30 } },
     );
-  });
-
-  it('resolves one stable online verdict per requested agent', () => {
-    expect(
-      onlineVerdicts({ [agent]: { ...presence, observedAt: 1_000 } }, [agent, 'missing'], 1_000),
-    ).toEqual({ [agent]: true, missing: false });
   });
 });

@@ -366,7 +366,7 @@ export class ConnectionPresence {
       roomId: delivery.room_id,
       requestId: delivery.message_id,
       agentId: delivery.agent_id,
-      reason: "her helper isn't running",
+      reason: "the helper isn't running",
       reasonKind: 'offline',
       liveRestart: true,
     }).catch(this.report);

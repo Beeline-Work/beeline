@@ -33,13 +33,14 @@ describe('directMessageHeaderPresence', () => {
     ).toBe('yesterday');
   });
 
-  it('shows working, idle, and offline copy for an agent', () => {
+  it('shows only working for an agent, never idle or offline', () => {
     const observedAt = Math.floor(NOW / 1_000);
     expect(directMessageHeaderPresence(item(agent, 'online', observedAt, 'working'), NOW)).toBe(
       'working',
     );
-    expect(directMessageHeaderPresence(item(agent, 'online', observedAt), NOW)).toBe('idle');
-    expect(directMessageHeaderPresence(item(agent, 'offline', observedAt), NOW)).toBe('offline');
+    expect(directMessageHeaderPresence(item(agent, 'online', observedAt), NOW)).toBe('');
+    expect(directMessageHeaderPresence(item(agent, 'offline', observedAt), NOW)).toBe('');
+    expect(directMessageHeaderPresence(item(agent, 'online', observedAt - 120), NOW)).toBe('');
   });
 
   it('shows no subtitle when the peer or a person presence is unknown', () => {

@@ -27,16 +27,18 @@ describe('Room participant roster layout', () => {
   });
 
   it('marks agent state with the tile ring alone: no status square, no kind word (C76)', () => {
-    // The ring reads the working record (C77); presence stays in the row's
-    // accessibility label without occupying its model-and-owner subtitle.
+    // The ring reads the working record (C77), and so does the row's
+    // accessibility label; presence is not announced at all.
     expect(source).toContain('alive={agentWorking}');
     expect(source).not.toContain('alive={agentOnline}');
     expect(source).not.toContain("' · online'");
     expect(source).not.toContain("' · offline'");
     expect(source).not.toContain('RosterPresenceLight');
     expect(source).not.toMatch(/'AGENT'|'PERSON'/);
-    // Status is still announced once, through the row's accessibility label.
-    expect(rowSource).toContain("', online'");
+    // Working is announced once, through the row's accessibility label.
+    expect(rowSource).toContain("', working'");
+    expect(rowSource).not.toContain("', online'");
+    expect(rowSource).not.toContain("', offline'");
   });
 
   it('reads in the Members page vocabulary: one word over one counted head, roles from the type scale', () => {

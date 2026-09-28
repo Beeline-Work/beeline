@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  type ClassifiedTurnSilence,
   classifyTurnSilence,
   hiccupBackoffMs,
   HICCUP_ATTEMPT_LIMIT,
@@ -97,14 +98,14 @@ describe('turn silence phrasing', () => {
       phraseTurnSilence('Candy', { kind: 'update-interrupted' }),
     ];
     expect(lines.map((line) => `Candy ${line.verb} · ${line.consequence}`)).toEqual([
-      'Candy could not answer · the turn stalled. Restarting her and resending your message.',
-      "Candy could not answer · she's set to a model that isn't available. Pick another in her settings.",
-      'Candy could not answer · her provider allowance is spent until Sep 19th, 2026 4:09 AM. Top up, or move her to another provider.',
-      "Candy could not answer · she isn't signed in to her provider. Run `beeline connect` on her machine.",
-      "Candy could not answer · she couldn't get a working copy of acme/widgets. Check the repository is reachable.",
-      'Candy could not answer · her helper is out of date. Run `beeline start` on her machine.',
-      "Candy is offline · her helper isn't running. Run `beeline start` on her machine.",
-      'Candy was interrupted by an update · her request is queued to resume.',
+      'Candy could not answer · the turn stalled. Restarting the agent and resending your message.',
+      "Candy could not answer · the selected model isn't available. Pick another in the agent's settings.",
+      'Candy could not answer · the provider allowance is spent until Sep 19th, 2026 4:09 AM. Top up, or move the agent to another provider.',
+      "Candy could not answer · the helper isn't signed in to the provider. Run `beeline connect` on the helper's machine.",
+      "Candy could not answer · the helper couldn't get a working copy of acme/widgets. Check the repository is reachable.",
+      "Candy could not answer · the helper is out of date. Run `beeline start` on the helper's machine.",
+      "Candy is offline · the helper isn't running. Run `beeline start` on the helper's machine.",
+      'Candy was interrupted by an update · the request is queued to resume.',
     ]);
     for (const line of lines) {
       expect(`Candy ${line.verb} · ${line.consequence}`.length).toBeLessThanOrEqual(
@@ -113,9 +114,29 @@ describe('turn silence phrasing', () => {
     }
   });
 
+  it('never assigns the agent pronouns', () => {
+    const kinds: ClassifiedTurnSilence[] = [
+      { kind: 'hiccup', fault: 'the turn stalled' },
+      { kind: 'wrong-model' },
+      { kind: 'allowance-spent' },
+      { kind: 'allowance-spent', allowanceUntil: 'Sep 19th, 2026 4:09 AM' },
+      { kind: 'not-signed-in' },
+      { kind: 'workspace-failure' },
+      { kind: 'helper-out-of-date' },
+      { kind: 'offline' },
+      { kind: 'update-interrupted' },
+    ];
+    for (const kind of kinds) {
+      const line = phraseTurnSilence('Candy', kind);
+      expect(`${line.verb} · ${line.consequence}`).not.toMatch(
+        /\b(she|she's|her|hers|herself|he|he's|him|his|himself)\b/i,
+      );
+    }
+  });
+
   it('keeps the provider, not the model, as the allowance remedy', () => {
     const line = phraseTurnSilence('Candy', { kind: 'allowance-spent' });
-    expect(line.consequence).toContain('Top up, or move her to another provider.');
+    expect(line.consequence).toContain('Top up, or move the agent to another provider.');
     expect(line.consequence).not.toMatch(/model/i);
   });
 

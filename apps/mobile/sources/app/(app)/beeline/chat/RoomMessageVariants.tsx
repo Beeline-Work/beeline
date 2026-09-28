@@ -1768,8 +1768,8 @@ export interface OrdinaryLedgerMessageProps {
   personName?: string;
   viewerPubkey: string;
   /**
-   * The speaker is WORKING right now — a fresh working receipt or a live
-   * corner (`selectWorkingAgents`). Lights the byline's gold ring. Never the
+   * The speaker is WORKING right now — its own fresh working receipt
+   * (`selectWorkingAgents`). Lights the byline's gold ring. Never the
    * delivery availability: an available daemon may not be working yet (C77).
    */
   speakerWorking: boolean;

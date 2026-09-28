@@ -84,7 +84,6 @@ describe('Room composer status layout', () => {
     expect(inputBar.indexOf('hanging-turn-chrome')).toBe(-1);
     expect(source).toContain('paddingTop: phoneTranscriptTailPadding({');
     expect(source).toContain('turnChromeVisible: Boolean(composerAck || settledTurn)');
-    expect(source).toContain('pushedChromeVisible: agentsOffline');
     expect(source).not.toContain('CornerLiveBar');
   });
 

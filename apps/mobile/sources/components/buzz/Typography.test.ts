@@ -146,7 +146,6 @@ const monoStyles = new Set([
   'attachmentMeta',
   'pendingAttachmentMeta',
   'agentLiveStatusText',
-  'agentOfflineHintTitle',
   'agentOfflineNoticeTitle',
   'cornerBackText',
   'cornerChannelName',

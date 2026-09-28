@@ -170,10 +170,7 @@ function slotInFlowHeight({ lineShown }: { lineShown: boolean }): number {
  * and never moves, so it is the fixed end of the measurement.
  */
 function newestMessageToComposerGap({ lineShown }: { lineShown: boolean }): number {
-  const tail = phoneTranscriptTailPadding({
-    turnChromeVisible: lineShown,
-    pushedChromeVisible: false,
-  });
+  const tail = phoneTranscriptTailPadding({ turnChromeVisible: lineShown });
   const newestRowBottomPadding = groknight.messagePaddingVertical;
   return slotInFlowHeight({ lineShown }) + tail + newestRowBottomPadding;
 }

@@ -32,7 +32,7 @@ describe('Room-open bottom chrome geometry', () => {
     // with `phoneTranscriptTailPadding`; the shell reserve follows THAT value.
     expect(surface).toContain('paddingTop: phoneTranscriptTailPadding({');
     expect(
-      phoneTranscriptTailPadding({ turnChromeVisible: false, pushedChromeVisible: false }),
+      phoneTranscriptTailPadding({ turnChromeVisible: false }),
     ).toBe(ROOM_OPEN_LIST_TAIL_PADDING);
     // The composer row is one of the three styles `buzz/room-bottom-chrome.ts`
     // owns, so this reads its actual values rather than the screen's source.

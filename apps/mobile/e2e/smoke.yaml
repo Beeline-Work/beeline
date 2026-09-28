@@ -120,8 +120,6 @@ env:
     visible:
       id: chat-message-${SMOKE_LATEST_MESSAGE_ID}
     timeout: 20000
-- assertNotVisible:
-    id: agent-offline-hint
 
 # The device must restore touch handling before foreground reconnect work runs.
 # This is intentionally a real Android HOME/resume transition, not a mocked

@@ -603,7 +603,6 @@ describe('useRoomSurfaceSession', () => {
       controls.subscriptions[0]!.emit({ monolithLive: { type: 'subscribed', roomId: 'room-a' } });
       controls.subscriptions[0]!.emit({ monolithLive: { type: 'subscribed', roomId: 'room-a' } });
     });
-    expect(current.presenceReconnecting).toBe(true);
 
     await act(async () => {
       controls.subscriptions[0]!.emit({
@@ -631,7 +630,6 @@ describe('useRoomSurfaceSession', () => {
         ],
       }),
     );
-    expect(current.presenceReconnecting).toBe(false);
     expect(current.presenceResolved).toBe(true);
     await act(async () => {
       controls.subscriptions[0]!.emit({ monolithLive: {

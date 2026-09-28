@@ -39,9 +39,9 @@ type FaceProps = {
   face?: string;
 };
 
-// Gold means ONE thing product-wide: an agent WORKING right now — a fresh
-// working receipt or a live corner (`selectWorkingAgents`, the proofs the
-// thinking line reads). It is never delivery availability: a daemon can be
+// Gold means ONE thing product-wide: an agent WORKING right now — its own
+// fresh working receipt (`selectWorkingAgents`, the proof the thinking line
+// reads). It is never delivery availability: a daemon can be
 // online before it has claimed work, and a ring that meant "process alive"
 // would not say the agent is working (C77). The discriminated union is
 // that rule enforced at the type level — no human or Workspace mark can carry

@@ -228,7 +228,6 @@ export interface UseRoomSurfaceSessionResult {
   userPubkey: string;
   heartbeatPresences: Record<string, RoomAgentPresence>;
   presenceResolved: boolean;
-  presenceReconnecting: boolean;
   presenceReconnectGrace: Record<string, number>;
   presenceNow: number;
   setPresenceNow(now: number): void;
@@ -258,7 +257,6 @@ export function useRoomSurfaceSession({
   const [userPubkey, setUserPubkey] = useState('');
   const [heartbeatPresences, setAgentPresences] = useState<Record<string, RoomAgentPresence>>({});
   const [presenceResolved, setPresenceResolved] = useState(false);
-  const [presenceReconnecting, setPresenceReconnecting] = useState(false);
   const [presenceReconnectGrace, setPresenceReconnectGrace] = useState<Record<string, number>>({});
   const [presenceNow, setPresenceNow] = useState(Date.now());
   const [hydrationAttempt, setHydrationAttempt] = useState(0);
@@ -471,7 +469,6 @@ export function useRoomSurfaceSession({
     setAgentPresences({});
     setPresenceReconnectGrace({});
     setPresenceResolved(false);
-    setPresenceReconnecting(false);
     liveOverlaysRef.current = [];
     setLiveOverlays([]);
     reconciledViewRef.current = null;
@@ -587,7 +584,6 @@ export function useRoomSurfaceSession({
       agentPresencesRef.current = mergedPresences;
       setAgentPresences(mergedPresences);
       if (fresh) setPresenceResolved(true);
-      setPresenceReconnecting(false);
       setPresenceNow(Date.now());
 
       decoder = new LiveOverlayDecoder(
@@ -665,9 +661,6 @@ export function useRoomSurfaceSession({
               // this lane: one follow-up read covers that gap without
               // discarding the opening read still in flight.
               if (handshakeSeen) {
-                // A reconnect has a covering read; hold any stale offline
-                // verdict until that read settles, without blocking the Room.
-                setPresenceReconnecting(true);
                 if (hasPainted) visibleScheduler()?.force();
                 return;
               }
@@ -1186,7 +1179,6 @@ export function useRoomSurfaceSession({
     userPubkey,
     heartbeatPresences,
     presenceResolved,
-    presenceReconnecting,
     presenceReconnectGrace,
     presenceNow,
     setPresenceNow,

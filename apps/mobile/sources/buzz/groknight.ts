@@ -56,17 +56,6 @@ const shared = {
     previewLineHeight: 22,
   },
   agentProfileTypography: { name: { fontSize: 28, lineHeight: 36 } },
-  agentOfflineHintTypography: {
-    title: {
-      fontSize: 10,
-      lineHeight: 14,
-      letterSpacing: 0.55,
-    },
-    text: {
-      fontSize: 11,
-      lineHeight: 15,
-    },
-  },
 } as const;
 
 /**

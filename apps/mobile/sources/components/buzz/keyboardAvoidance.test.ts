@@ -37,17 +37,17 @@ describe('Buzz keyboard avoidance', () => {
     expect(chatSource).not.toContain('handleMessageListContentSizeChange');
   });
 
-  it('keeps the offline hint outside a growing multiline composer', () => {
-    // The Room's fixed bottom chrome is pinned between the transcript and the
-    // composer: it must never scroll with the transcript, and it must never be
-    // pushed off-screen by a composer growing to its multiline maximum. The
-    // pinned corner line is gone; the offline hint holds the same slot.
-    const listEnd = chatSource.indexOf('<FlatList');
-    const inputBar = chatSource.indexOf('<Animated.View style={[styles.inputBar');
-    expect(listEnd).toBeGreaterThanOrEqual(0);
-    expect(inputBar).toBeGreaterThan(listEnd);
-    expect(chatSource.indexOf('<AgentOfflineHint')).toBeGreaterThan(listEnd);
-    expect(chatSource.indexOf('<AgentOfflineHint')).toBeLessThan(inputBar);
+  it('mounts no agent-offline footer between the transcript and the composer', () => {
+    // Presence ages out 90 seconds after a daemon's last HTTP call, so an idle
+    // agent waiting on its socket read as offline and the footer called every
+    // idle Room unavailable. A mention nobody picks up is still inscribed in
+    // the transcript by the server.
+    const between = chatSource.slice(
+      chatSource.indexOf('<FlatList'),
+      chatSource.indexOf('<Animated.View style={[styles.inputBar'),
+    );
+    expect(between).not.toContain('AgentOfflineHint');
+    expect(chatSource).not.toContain('agentsOffline');
   });
 
   it('keeps focused Agent fields visible in keyboard-aware scroll content', () => {

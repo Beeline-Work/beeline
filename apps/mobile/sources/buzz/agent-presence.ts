@@ -1,7 +1,6 @@
 import {
   AGENT_PRESENCE_DORMANT_MS,
   AGENT_PRESENCE_STALE_MS,
-  isAgentPresenceOnline,
   newerAgentPresence,
   resolveAgentPresenceTier,
   type AgentPresence,
@@ -50,16 +49,6 @@ export function activeMentionCandidates<T extends { pubkey: string }>(
   });
 }
 
-/** Preserve the existing call shape while reading last-evidence availability. */
-export function isAgentPresenceOnlineWithReconnectGrace(
-  presence: RoomAgentPresence | undefined,
-  now = Date.now(),
-  reconnectGraceUntil = 0,
-): boolean {
-  void reconnectGraceUntil;
-  return isAgentPresenceOnline(presence, now);
-}
-
 export function nextAgentPresenceTransitionAt(
   presences: Readonly<Record<string, RoomAgentPresence | AgentPresence>>,
   now = Date.now(),
@@ -91,25 +80,6 @@ export function nextAgentTurnExpiryAt(
     next = next === undefined ? deadline : Math.min(next, deadline);
   }
   return next;
-}
-
-/**
- * An empty presence map during bootstrap is unknown, not an offline verdict.
- * Only a completed snapshot with a known fact for every Room agent may mark a
- * steer as deferred.
- */
-export function isAgentOfflineAfterPresenceResolved(
-  presenceResolved: boolean,
-  roomAgentCount: number,
-  knownAgentPresenceCount: number,
-  onlineAgentCount: number,
-): boolean {
-  return (
-    presenceResolved &&
-    roomAgentCount > 0 &&
-    knownAgentPresenceCount === roomAgentCount &&
-    onlineAgentCount === 0
-  );
 }
 
 /** A working turn belongs only to the currently online daemon generation. */
@@ -149,32 +119,4 @@ export function mergeAgentPresenceBatch(
   incoming: readonly RoomAgentPresence[],
 ): Record<string, RoomAgentPresence> {
   return incoming.reduce(mergeAgentPresence, current as Record<string, RoomAgentPresence>);
-}
-
-/**
- * One online/offline verdict per agent pubkey, resolved once per render.
- *
- * The transcript's renderItem needs each speaker's liveness for the byline
- * ring, but reading the three raw inputs (presence map, wall clock,
- * reconnect grace) directly recreated the callback on EVERY heartbeat and on
- * every streamed batch, rebuilding every visible ledger row for no visible
- * change. Collapsing them to a flat boolean record lets the screen preserve
- * identity with `useStable` while no verdict actually flips — rows then
- * re-render only when an agent genuinely went online or offline.
- */
-export function onlineVerdicts(
-  presences: Readonly<Record<string, RoomAgentPresence>>,
-  pubkeys: readonly string[],
-  now: number,
-  reconnectGrace: Readonly<Record<string, number>> = {},
-): Record<string, boolean> {
-  const verdicts: Record<string, boolean> = {};
-  for (const pubkey of pubkeys) {
-    verdicts[pubkey] = isAgentPresenceOnlineWithReconnectGrace(
-      presences[pubkey],
-      now,
-      reconnectGrace[pubkey],
-    );
-  }
-  return verdicts;
 }

@@ -18,54 +18,23 @@ const chatSource = readFileSync(
 );
 
 describe('phoneTranscriptTailPadding', () => {
-  const ordinaryTail = phoneTranscriptTailPadding({
-    turnChromeVisible: false,
-    pushedChromeVisible: false,
-  });
+  const ordinaryTail = phoneTranscriptTailPadding({ turnChromeVisible: false });
 
   it('does not step when the thinking line paints or clears', () => {
-    const thinking = phoneTranscriptTailPadding({
-      turnChromeVisible: true,
-      pushedChromeVisible: false,
-    });
-    const thinkingThenIdle = phoneTranscriptTailPadding({
-      turnChromeVisible: false,
-      pushedChromeVisible: false,
-    });
+    const thinking = phoneTranscriptTailPadding({ turnChromeVisible: true });
+    const thinkingThenIdle = phoneTranscriptTailPadding({ turnChromeVisible: false });
 
     expect(thinking).toBe(ordinaryTail);
     expect(thinkingThenIdle).toBe(ordinaryTail);
   });
 
   it('stays at the ordinary list tail, never the hanging-line height on top of it', () => {
-    const thinking = phoneTranscriptTailPadding({
-      turnChromeVisible: true,
-      pushedChromeVisible: false,
-    });
-    const thinkingWithOffline = phoneTranscriptTailPadding({
-      turnChromeVisible: true,
-      pushedChromeVisible: true,
-    });
+    const thinking = phoneTranscriptTailPadding({ turnChromeVisible: true });
 
     expect(ordinaryTail).toBe(ROOM_OPEN_LIST_TAIL_PADDING);
     expect(thinking).toBe(ordinaryTail);
     expect(thinking).not.toBeGreaterThan(ordinaryTail);
-    expect(thinkingWithOffline).toBe(ordinaryTail);
     expect(thinking - ordinaryTail).toBe(0);
-  });
-
-  it('keeps thinking + offline chrome at the same ordinary tail', () => {
-    const idleWithOffline = phoneTranscriptTailPadding({
-      turnChromeVisible: false,
-      pushedChromeVisible: true,
-    });
-    const thinkingWithOffline = phoneTranscriptTailPadding({
-      turnChromeVisible: true,
-      pushedChromeVisible: true,
-    });
-
-    expect(thinkingWithOffline).toBe(idleWithOffline);
-    expect(thinkingWithOffline).toBe(ordinaryTail);
   });
 });
 
@@ -527,7 +496,6 @@ describe('the chat screen wires the scroll rule', () => {
     expect(chatSource).toContain('<TurnBandSlot');
     expect(chatSource).toContain('paddingTop: phoneTranscriptTailPadding({');
     expect(chatSource).toContain('turnChromeVisible: Boolean(composerAck || settledTurn)');
-    expect(chatSource).toContain('pushedChromeVisible: agentsOffline');
     expect(chatSource).toContain('styles.bottomChromeStack');
     expect(chatSource).not.toContain('(composerAck || settledTurn) && {');
   });

@@ -3,7 +3,14 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const server = vi.hoisted(() => ({ seen: [] as string[] | null, available: true }));
+const server = vi.hoisted(() => ({
+  seen: [] as string[] | null,
+  available: true,
+  viewer: 'person-1',
+  deferA: false,
+  releaseA: null as (() => void) | null,
+  readBFinished: false,
+}));
 const back = vi.hoisted(() => ({ handlers: [] as Array<() => boolean> }));
 const rect = vi.hoisted(() => ({ value: { x: 16, y: 120, width: 358, height: 64 } }));
 vi.mock('@/buzz/runtime-config', () => ({
@@ -12,6 +19,11 @@ vi.mock('@/buzz/runtime-config', () => ({
 vi.mock('@/auth/monolith-session', () => ({
   monolithSession: {
     fetch: vi.fn(async (url: string, options: { body: string }) => {
+      const requestViewer = server.viewer;
+      if (server.deferA && requestViewer === 'person-1' && url.endsWith('/readProductTour'))
+        await new Promise<void>((resolve) => {
+          server.releaseA = resolve;
+        });
       if (!server.available) return { ok: false, status: 503 };
       const { tip } = JSON.parse(options.body) as { tip?: string };
       if (url.endsWith('/updateProductTour')) {
@@ -20,10 +32,16 @@ vi.mock('@/auth/monolith-session', () => ({
       }
       return {
         ok: true,
-        json: async () => ({
-          version: 2,
-          seenTips: server.seen ?? ['swipe', 'cornerMark', 'squire'],
-        }),
+        json: async () => {
+          if (requestViewer === 'person-2') server.readBFinished = true;
+          return {
+            version: 2,
+            seenTips:
+              requestViewer === 'person-2'
+                ? ['swipe', 'cornerMark', 'squire']
+                : (server.seen ?? ['swipe', 'cornerMark', 'squire']),
+          };
+        },
       };
     }),
   },
@@ -84,7 +102,7 @@ vi.mock('@react-navigation/core', async () => {
   return { NavigationContext: ReactModule.createContext(undefined) };
 });
 vi.mock('@/auth/buzz-identity-storage', () => ({
-  loadBuzzIdentity: vi.fn(async () => ({ publicKey: 'person-1' })),
+  loadBuzzIdentity: vi.fn(async () => ({ publicKey: server.viewer })),
 }));
 vi.mock('@/constants/Typography', () => ({
   Typography: { default: () => ({}), mono: () => ({}) },
@@ -157,6 +175,10 @@ describe('the first-sight tips', () => {
   beforeEach(() => {
     server.seen = [];
     server.available = true;
+    server.viewer = 'person-1';
+    server.deferA = false;
+    server.releaseA = null;
+    server.readBFinished = false;
     resetProductTourCacheForTests();
     back.handlers.length = 0;
     rect.value = { x: 16, y: 120, width: 358, height: 64 };
@@ -192,6 +214,35 @@ describe('the first-sight tips', () => {
     server.available = false;
     const unavailable = await render(target('cornerMark'));
     expect(byTestId(unavailable, 'tour-spotlight')).toHaveLength(0);
+  });
+
+  it('ignores account A’s late tour response after account B becomes viewer', async () => {
+    server.deferA = true;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(React.createElement(ProductTourProvider, null, target('cornerMark', 'A')), {
+        createNodeMock: nodeMock,
+      });
+    });
+    for (let i = 0; i < 3; i += 1) await act(async () => undefined);
+    expect(server.releaseA).toBeTypeOf('function');
+
+    server.viewer = 'person-2';
+    await act(async () => {
+      renderer.update(React.createElement(ProductTourProvider, null));
+    });
+    await act(async () => {
+      renderer.update(React.createElement(ProductTourProvider, null, target('cornerMark', 'B')));
+    });
+    for (let i = 0; i < 3; i += 1) await act(async () => undefined);
+    expect(server.readBFinished).toBe(true);
+    expect(byTestId(renderer, 'tour-spotlight')).toHaveLength(0);
+
+    await act(async () => {
+      server.releaseA?.();
+    });
+    for (let i = 0; i < 3; i += 1) await act(async () => undefined);
+    expect(byTestId(renderer, 'tour-spotlight')).toHaveLength(0);
   });
 
   it('aligns the cutout to a measured corner mark and hides on missing or hidden bounds', async () => {

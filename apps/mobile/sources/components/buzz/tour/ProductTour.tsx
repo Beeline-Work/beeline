@@ -92,19 +92,31 @@ export function ProductTourProvider({ children }: { children: React.ReactNode })
   const targets = useRef(new Map<TourTipId, TargetEntry[]>());
   const [targetIds, setTargetIds] = useState<readonly TourTipId[]>([]);
   const [activeEntry, setActiveEntry] = useState<TargetEntry | null>(null);
+  const refreshGeneration = useRef(0);
+
+  useEffect(
+    () => () => {
+      refreshGeneration.current += 1;
+    },
+    [],
+  );
 
   // The viewer is re-read whenever a target registers, so a sign-in or
   // identity change is picked up without any extra wiring.
   const refreshViewer = useCallback(() => {
+    const generation = ++refreshGeneration.current;
     void loadBuzzIdentity()
       .then(async (identity) => {
+        if (generation !== refreshGeneration.current) return;
         const pubkey = identity?.publicKey ?? null;
         setViewer(pubkey);
         if (!pubkey) return setState(null);
         setState(null);
-        setState(await loadProductTour(pubkey).catch(() => COMPLETED_TOUR));
+        const next = await loadProductTour(pubkey).catch(() => COMPLETED_TOUR);
+        if (generation === refreshGeneration.current) setState(next);
       })
       .catch(() => {
+        if (generation !== refreshGeneration.current) return;
         setViewer(null);
         setState(null);
       });

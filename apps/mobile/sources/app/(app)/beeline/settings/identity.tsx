@@ -93,7 +93,6 @@ export default function BuzzIdentitySettings() {
   const [face, setFace] = useState<string | null>(null);
   const [facePickerOpen, setFacePickerOpen] = useState(false);
   const [githubNotice, setGitHubNotice] = useState<string | null>(null);
-  const [confirmSignOut, setConfirmSignOut] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const manualUpdateRunning = useRef(false);
@@ -117,10 +116,6 @@ export default function BuzzIdentitySettings() {
   const monolithEnabled = getBuzzRuntimeConfig().monolithEnabled;
 
   const signOut = useCallback(async () => {
-    if (!confirmSignOut) {
-      setConfirmSignOut(true);
-      return;
-    }
     await Promise.all([
       monolithSession.clear(),
       clearBuzzIdentity(),
@@ -128,13 +123,9 @@ export default function BuzzIdentitySettings() {
     ]);
     clearMobileSurfaceStorage();
     router.replace('/beeline/onboarding');
-  }, [confirmSignOut]);
+  }, []);
 
   const deleteAccount = useCallback(async () => {
-    if (!confirmDelete) {
-      setConfirmDelete(true);
-      return;
-    }
     if (deleteBusy) return;
     setDeleteBusy(true);
     try {
@@ -152,7 +143,7 @@ export default function BuzzIdentitySettings() {
       setError('Could not delete the account. Check your connection and try again.');
       setDeleteBusy(false);
     }
-  }, [confirmDelete, deleteBusy, profileIdentity]);
+  }, [deleteBusy, profileIdentity]);
 
   const checkForUpdate = useCallback(async () => {
     if (!Updates.isEnabled || manualUpdateRunning.current) return;
@@ -517,16 +508,16 @@ export default function BuzzIdentitySettings() {
             />
           </View>
           <SettingsRow
-            accessibilityLabel={confirmSignOut ? 'Confirm sign out' : 'Sign out on this device'}
+            accessibilityLabel="Sign out on this device"
             onPress={() => void signOut()}
             testID="sign-out-setting"
             title="Sign out"
             tone="destructive"
           />
           <SettingsRow
-            accessibilityLabel={confirmDelete ? 'Confirm delete account' : 'Delete account'}
+            accessibilityLabel="Delete account"
             disabled={deleteBusy}
-            onPress={() => void deleteAccount()}
+            onPress={() => setConfirmDelete(true)}
             testID="delete-account-setting"
             title={deleteBusy ? 'Deleting…' : 'Delete account'}
             tone="destructive"
@@ -535,24 +526,33 @@ export default function BuzzIdentitySettings() {
 
         {githubNotice ? <Text style={styles.notice}>{githubNotice}</Text> : null}
 
-        {confirmSignOut ? (
-          <PixelGateReveal style={styles.warning}>
-            <Text style={styles.warningText}>Remove this identity from this device?</Text>
-            <TouchableOpacity onPress={() => setConfirmSignOut(false)} style={styles.cancelAction}>
-              <Text style={styles.cancelText}>Cancel</Text>
-            </TouchableOpacity>
-          </PixelGateReveal>
-        ) : null}
-
         {confirmDelete ? (
           <PixelGateReveal style={styles.warning}>
             <Text style={styles.warningText}>
-              Permanently delete this account? Shared messages remain attributed to “Deleted
-              account”.
+              deleting your account will delete all your data. this action is irrevocable. confirm?
             </Text>
-            <TouchableOpacity onPress={() => setConfirmDelete(false)} style={styles.cancelAction}>
-              <Text style={styles.cancelText}>Cancel</Text>
-            </TouchableOpacity>
+            <View style={styles.confirmActions}>
+              <TouchableOpacity
+                accessibilityLabel="Yes, delete account"
+                accessibilityRole="button"
+                disabled={deleteBusy}
+                onPress={() => void deleteAccount()}
+                style={styles.confirmAction}
+                testID="delete-account-yes"
+              >
+                <Text style={styles.confirmText}>Yes</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                accessibilityLabel="Cancel account deletion"
+                accessibilityRole="button"
+                disabled={deleteBusy}
+                onPress={() => setConfirmDelete(false)}
+                style={styles.confirmAction}
+                testID="delete-account-cancel"
+              >
+                <Text style={styles.cancelText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
           </PixelGateReveal>
         ) : null}
 
@@ -633,12 +633,19 @@ const styles = StyleSheet.create((theme) => {
     },
     warning: {
       padding: hull.space.md,
-      flexDirection: 'row',
-      alignItems: 'center',
+      alignItems: 'stretch',
       gap: hull.space.md,
     },
-    warningText: { ...Typography.default(), ...hull.type.meta, flex: 1, color: hull.textSecondary },
-    cancelAction: { minHeight: 44, justifyContent: 'center', paddingHorizontal: hull.space.sm },
+    warningText: { ...Typography.default(), ...hull.type.meta, color: hull.textSecondary },
+    confirmActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: hull.space.sm },
+    confirmAction: {
+      minHeight: 44,
+      minWidth: 64,
+      justifyContent: 'center',
+      alignItems: 'center',
+      paddingHorizontal: hull.space.sm,
+    },
+    confirmText: { ...Typography.default(), ...hull.type.body, color: hull.danger },
     cancelText: { ...Typography.default(), ...hull.type.body, color: hull.accent },
     errorPanel: {
       padding: hull.space.md,

@@ -1673,6 +1673,53 @@ describe('Room message variant components', () => {
     });
   });
 
+  it('wears the agent’s saved avatar on the steps row as on its settled reply', () => {
+    // Speedy's "3 steps" row showed the seeded default creature and hue while
+    // its reply and the header showed the avatar it had saved.
+    const agent = {
+      pubkey: 'agent',
+      displayName: 'Speedy',
+      avatar: 'https://images.example/saved.png',
+    };
+    const props = {
+      agent,
+      participantsHydrated: true,
+      viewerPubkey: 'viewer',
+      speakerWorking: false,
+      continued: false,
+      participantHandles: [],
+      channelIndex: { rooms: [], corners: [] },
+      deliveryFailed: false,
+      onChannelReference: vi.fn(),
+      onReply: vi.fn(),
+      onCopy: vi.fn(),
+      onRetry: vi.fn(),
+      onDismiss: vi.fn(),
+    };
+    render(
+      <OrdinaryLedgerMessage
+        {...props}
+        message={message({ id: 'settled', pubkey: 'agent', isAgentAuthor: true })}
+      />,
+    );
+    const settledMark = ledgerEntryRender.mock.lastCall?.[0].byline.mark;
+    const steps = render(
+      <OrdinaryLedgerMessage
+        {...props}
+        message={message({
+          id: 'steps',
+          pubkey: 'agent',
+          isAgentAuthor: true,
+          isAgentActivity: true,
+          activity: [{ kind: 'tool', title: 'Read file', id: 'call-1' }],
+        })}
+      />,
+    );
+    const stepsMark = steps.root.findByType('ActivityTimeline').props.mark;
+    expect(stepsMark).toMatchObject({ avatarUrl: 'https://images.example/saved.png' });
+    expect(stepsMark.avatarUrl).toBe(settledMark.avatarUrl);
+  });
+
   it('never lifts a live draft into settled narration (C108 duplicate)', () => {
     const props = {
       agent: { pubkey: 'agent', displayName: 'ECHO' },

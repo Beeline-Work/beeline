@@ -87,6 +87,29 @@ describe('Postgres live fanout', () => {
     vi.restoreAllMocks();
   });
 
+  it('delivers read-mark changes to the listener with the reader identity', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const events: LiveEvent[] = [];
+    const release = live.subscribe(ROOM, (event) => events.push(event));
+    void listener.run();
+    await eventually(() => listener.projectionHealth().connected);
+    await database.query(
+      `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
+       VALUES($1,$2,now(),$3)`,
+      [ROOM, AUTHOR, 'a'.repeat(64)],
+    );
+    await eventually(() => events.some((event) =>
+      event.type === 'invalidate' && event.reason === 'postgres:room_read_marks'));
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'invalidate', roomId: ROOM, readerId: AUTHOR,
+    }));
+    release();
+    await listener.stop();
+  });
+
   it('bounds notification DB projections and coalesces a repeated repository wake', async () => {
     let releaseReads!: () => void;
     const readBarrier = new Promise<void>((resolve) => { releaseReads = resolve; });

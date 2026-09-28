@@ -23,8 +23,9 @@ function activityAt(item: ChatListItem): number {
 function applyMessage(view: ChatListView, index: number, message: RoomViewMessage): ChatListView {
   const item = view.chats[index]!;
   const latest = item.latestMessage;
-  if (!PREVIEW_PRESENTATIONS.has(message.presentation)) return view;
-  if (latest && latest.createdAt > message.createdAt) return view;
+  if (message.deleted || !PREVIEW_PRESENTATIONS.has(message.presentation)) return view;
+  if (latest && (latest.createdAt > message.createdAt ||
+    (latest.createdAt === message.createdAt && latest.id > message.id))) return view;
   const preview: NonNullable<ChatListItem['latestMessage']> = {
     id: message.id,
     text: message.text,
@@ -67,8 +68,12 @@ export function applyChatListDelta(view: ChatListView, delta: ChatListDelta): Ch
   return { ...view, chats };
 }
 
-/** A settled turn on a working row: only the server knows whether anything else still works. */
+/** A deleted preview or settled turn needs the server's full Room-list projection. */
 export function chatListDeltaNeedsRead(view: ChatListView, delta: ChatListDelta): boolean {
+  if (delta.type === 'message-delta') {
+    return delta.message.deleted === true && view.chats.some((item) =>
+      item.room.id === delta.roomId && item.latestMessage?.id === delta.message.id);
+  }
   if (delta.type !== 'turn-delta' || delta.turn.status === 'working') return false;
   return view.chats.find((item) => item.room.id === delta.roomId)?.agentState === 'working';
 }

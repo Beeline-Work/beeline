@@ -88,6 +88,16 @@ describe('chat list deltas', () => {
       expect(applyChatListDelta(view, delta)).toBe(view);
   });
 
+  it('uses the message id to order deltas within the same second', () => {
+    const view = deck(item('a', 20, { latestMessage: {
+      id: 'b', text: 'current', createdAt: 20, author: agent,
+    } }));
+    expect(applyChatListDelta(view, { type: 'message-delta', roomId: 'a',
+      message: message('a', 20) })).toBe(view);
+    expect(applyChatListDelta(view, { type: 'message-delta', roomId: 'a',
+      message: message('c', 20) }).chats[0]?.latestMessage?.id).toBe('c');
+  });
+
   it('updates the same latest row in place without relighting unread', () => {
     const view = deck(item('a', 20), item('b', 10));
     const next = applyChatListDelta(view, {
@@ -97,6 +107,19 @@ describe('chat list deltas', () => {
     });
     expect(next.chats.map((chat) => chat.room.id)).toEqual(['a', 'b']);
     expect(next.chats[1]).toMatchObject({ unread: false, latestMessage: { text: 'edited' } });
+  });
+
+  it('reconciles a deleted latest row instead of painting its tombstone or relighting unread', () => {
+    const view = deck(item('a', 20, { unread: true }));
+    const delta = { type: 'message-delta' as const, roomId: 'a',
+      message: message('a-latest', 20, { deleted: true, text: '', presentation: 'system' }) };
+    expect(chatListDeltaNeedsRead(view, delta)).toBe(true);
+    expect(applyChatListDelta(view, delta)).toBe(view);
+    const reconciled = deck(item('a', 10, { unread: false, latestMessage: {
+      id: 'previous', text: 'earlier', createdAt: 10, author: agent,
+    } }));
+    expect(reconciled.chats[0]?.latestMessage?.text).toBe('earlier');
+    expect(chatListDeltaNeedsRead(reconciled, delta)).toBe(false);
   });
 
   it('lights a working turn, and asks for a read only when a settled turn meets a working row', () => {

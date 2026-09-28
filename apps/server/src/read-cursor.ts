@@ -8,6 +8,13 @@ import { hiddenWakeCardSql } from './room-choice.js';
 export const UNREAD_COUNT_CAP = 99;
 export const UNREAD_AGENT_TURN_COUNT_CAP = 6;
 
+/** A durable message that can represent activity in the Room list. */
+export function visibleChatMessageSql(alias: string): string {
+  return `${alias}.presentation IN ('message','system','card')
+      AND ${alias}.deleted_at IS NULL
+      AND ${hiddenWakeCardSql(alias)}`;
+}
+
 /**
  * WHAT COUNTS AS UNREAD. One definition, and the only one.
  *
@@ -15,9 +22,9 @@ export const UNREAD_AGENT_TURN_COUNT_CAP = 6;
  * deck's boolean took the `('message','system','card')` allowlist, and the
  * phone's own queue counted every folded id with no presentation rule at all.
  * A Room could therefore report a first-unread row that the deck refused to
- * call unread. The allowlist wins — it is closed, so a presentation added
- * later cannot silently become unread mail — and `IS DISTINCT FROM` wins over
- * `<>` because a row with no author is somebody else's, not nobody's.
+ * call unread. The closed preview allowlist excludes deleted and hidden rows,
+ * and `IS DISTINCT FROM` wins over `<>` because a row with no author is
+ * somebody else's, not nobody's.
  *
  * The phone's half of this same rule lives in
  * `apps/mobile/sources/buzz/room-new-message-boundary.ts` (`countsAsUnread`);
@@ -27,8 +34,7 @@ export const UNREAD_AGENT_TURN_COUNT_CAP = 6;
  */
 export function unreadMessageSql(alias: string): string {
   const column = (name: string) => `${alias}.${name}`;
-  return `${column('presentation')} IN ('message','system','card')
-      AND ${hiddenWakeCardSql(alias)}
+  return `${visibleChatMessageSql(alias)}
       AND ${column('author_id')} IS DISTINCT FROM $2`;
 }
 

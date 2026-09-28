@@ -1,4 +1,5 @@
 import { getBuzzNotificationTargetFromData } from '@/utils/notificationRouting';
+import { ACTION_OUTCOME_DATA_KEY } from './notification-actions';
 
 /**
  * Foreground banner policy for remote push notifications.
@@ -16,6 +17,8 @@ import { getBuzzNotificationTargetFromData } from '@/utils/notificationRouting';
  * - Always suppress when the notification's channel/Room id is the currently
  *   open Room, regardless of app state — even mid-transition they are already
  *   reading exactly that conversation.
+ * - Always present an Android rewrite of a notification whose action was just
+ *   answered; suppressing it leaves an inline reply spinning in the shade.
  * - Background/unrelated notifications keep their existing display behavior.
  *
  * This is display policy ONLY. Deep-link routing of notification responses
@@ -23,6 +26,7 @@ import { getBuzzNotificationTargetFromData } from '@/utils/notificationRouting';
  */
 
 export type ForegroundNotificationDecisionReason =
+  | 'action-outcome'
   | 'open-room-match'
   | 'app-active'
   | 'app-inactive';
@@ -63,6 +67,14 @@ export function decideForegroundNotificationDisplay(
   input: ForegroundNotificationInput,
 ): ForegroundNotificationDecision {
   const { appState, openChannelId, data } = input;
+
+  if (
+    data &&
+    typeof data === 'object' &&
+    (data as Record<string, unknown>)[ACTION_OUTCOME_DATA_KEY] === 'true'
+  ) {
+    return { shouldPresent: true, reason: 'action-outcome' };
+  }
 
   // Open-Room suppression wins regardless of the broader app-state signal.
   const trimmedOpenChannelId = typeof openChannelId === 'string' ? openChannelId.trim() : '';

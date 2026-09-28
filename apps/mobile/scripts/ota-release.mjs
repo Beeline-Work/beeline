@@ -55,6 +55,7 @@ export const COMPAT_RUNTIMES = [
   { platform: 'android', runtimeVersion: '26' },
   { platform: 'android', runtimeVersion: '28' },
   { platform: 'android', runtimeVersion: '29' },
+  { platform: 'android', runtimeVersion: '31' },
   { platform: 'ios', runtimeVersion: '23' },
   { platform: 'ios', runtimeVersion: '24' },
   { platform: 'ios', runtimeVersion: '25' },
@@ -105,6 +106,12 @@ export const SHIPPED_NATIVE_RUNTIMES = [
     runtimeVersion: '29',
     evidence:
       'store binaries shipped on the android@29 pin (c095ca34, v0.2.20) and uploaded to the Play production track by successful unified release run 35802330273 (mobile_native_android step "Upload Android to the selected Play track")',
+  },
+  {
+    platform: 'android',
+    runtimeVersion: '31',
+    evidence:
+      'store binary built on the android@31 pin (895bb8eb, #1765) and uploaded by successful unified release run 36277001426 (mobile_native_android step "Upload Android to the selected Play track")',
   },
   {
     platform: 'ios',

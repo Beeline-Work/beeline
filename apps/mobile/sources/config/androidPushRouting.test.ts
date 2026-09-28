@@ -136,7 +136,9 @@ describe('Android push routing manifest', () => {
     const push = activity(await generatedManifest(), PUSH_ACTIVITY);
 
     expect(push.$?.['android:exported']).toBe('true');
-    expect(push.$?.['android:excludeFromRecents']).toBe('true');
+    // Every launcher open roots the app's task on this activity, and Android
+    // keeps a task out of Recents when its root is excluded.
+    expect(push.$).not.toHaveProperty('android:excludeFromRecents');
     expect(push.$?.['android:noHistory']).toBe('true');
     // It paints nothing: a themed starting window would flash a second splash
     // over the task it is about to bring forward.

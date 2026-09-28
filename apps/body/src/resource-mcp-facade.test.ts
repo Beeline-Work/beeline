@@ -111,9 +111,12 @@ describe('resource MCP transport authorization', () => {
           {
             type: 'text',
             text: JSON.stringify({
+              url: 'https://garden-blooms.test/checkout',
+              request: { url: 'https://garden-blooms.test/api' },
+              script: { url: 'https://garden-blooms.test/shopify.js' },
               status: 'approval_pending',
               approval_id: 'purchase-7',
-              approval_url: 'https://approve.trustysquire.test/approval/purchase-7',
+              approval_url: 'https://trustysquire.ai/vault/pay/purchase-7',
             }),
           },
         ],
@@ -124,7 +127,7 @@ describe('resource MCP transport authorization', () => {
       title: 'Purchase approval',
       detail: 'Noise-cancelling headphones · at Acme · 199.00 USD',
       approvalId: 'purchase-7',
-      approvalUrl: 'https://approve.trustysquire.test/approval/purchase-7',
+      approvalUrl: 'https://trustysquire.ai/vault/pay/purchase-7',
       linkKind: 'approval',
     });
   });

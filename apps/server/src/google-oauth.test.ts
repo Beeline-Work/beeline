@@ -155,9 +155,12 @@ it('seals a helper-free account grant and exposes only the access token to the o
   expect(secondUrl.searchParams.get('scope')).toContain('calendar.readonly');
   expect(secondUrl.searchParams.get('scope')).toContain('gmail.readonly');
   expect(secondUrl.searchParams.get('scope')).not.toContain('yt-analytics');
+  expect(await oauth.accountStatus(OWNER)).toMatchObject({ connected: true,
+    connectedTypes: ['google-calendar'], authorizationUrl: secondUrl.toString() });
   expect(await oauth.completeAccount(secondUrl.searchParams.get('state')!, 'good-code-2'))
     .toEqual({ completed: true, offers: [] });
-  expect(await oauth.accountStatus(OWNER)).toMatchObject({ connectedTypes: ['google-gmail', 'google-calendar'] });
+  expect(await oauth.accountStatus(OWNER)).toEqual({ connected: true,
+    connectedTypes: ['google-gmail', 'google-calendar'] });
   expect(await oauth.grantForOwner(OWNER)).toMatchObject({ accessToken: 'owner-token' });
   expect(await oauth.grantForOwner('c'.repeat(64))).toBeNull();
 });

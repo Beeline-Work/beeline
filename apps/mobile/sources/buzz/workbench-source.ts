@@ -269,7 +269,9 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
   }): Promise<ConnectorInstallState | null> {
     if (input.connectorId === GOOGLE_ACCOUNT_CONNECTOR_ID) {
       const state = await monolithPhoneOperation('readGoogleSignIn', {});
-      return { connectorId: input.connectorId, steps: [], connected: state.connected,
+      // A previously granted tool does not complete a newly pending top-up.
+      return { connectorId: input.connectorId, steps: [],
+        connected: state.connected && !state.authorizationUrl,
         signIn: state.authorizationUrl ? { method: 'oauth', url: state.authorizationUrl } : null };
     }
     const dto = await monolithPhoneOperation('readWorkbench', { workspaceId: input.workspaceId });

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({
   calls: [] as { op: string; input: Record<string, unknown> }[],
   readWorkbenchOutput: {} as Record<string, unknown>,
+  googleSignInOutput: null as null | { connected: boolean; authorizationUrl?: string },
 }));
 
 vi.mock('@/sync/transport/monolith-operation', () => ({
@@ -11,7 +12,8 @@ vi.mock('@/sync/transport/monolith-operation', () => ({
     if (op === 'readWorkbench') return state.readWorkbenchOutput;
     if (op === 'pairConnector') return { connectorId: 'conn-1' };
     if (op === 'beginGoogleSignIn') return { authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth?state=one' };
-    if (op === 'readGoogleSignIn') return { connected: false, authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth?state=one' };
+    if (op === 'readGoogleSignIn') return state.googleSignInOutput ??
+      { connected: false, authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth?state=one' };
     return {};
   },
 }));
@@ -86,7 +88,25 @@ describe('MonolithWorkbenchSource pairConnector — the ONE Google entry', () =>
 });
 
 describe('MonolithWorkbenchSource direct Google consent', () => {
-  afterEach(() => { state.calls.length = 0; });
+  afterEach(() => { state.calls.length = 0; state.googleSignInOutput = null; });
+
+  it('keeps Gmail top-up on sign-in while Calendar is already granted', async () => {
+    const source = new MonolithWorkbenchSource();
+    const input = { workspaceId: 'ws1', connectorId: 'google-account' };
+    state.googleSignInOutput = { connected: true,
+      authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth?state=gmail-top-up' };
+    expect(await source.readInstallState(input)).toMatchObject({
+      connected: false, signIn: { url: state.googleSignInOutput.authorizationUrl },
+    });
+    state.googleSignInOutput = { connected: true };
+    expect(await source.readInstallState(input)).toMatchObject({ connected: true, signIn: null });
+    // Cancelling the top-up also returns to the already-connected Calendar state.
+    state.googleSignInOutput = { connected: true,
+      authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth?state=retry' };
+    expect((await source.readInstallState(input))?.connected).toBe(false);
+    state.googleSignInOutput = { connected: true };
+    expect((await source.readInstallState(input))?.connected).toBe(true);
+  });
 
   it('keeps a connected legacy Gmail row visible beside a direct Calendar grant', async () => {
     state.readWorkbenchOutput = { ...workbenchDto([{ connectorType: 'google-gmail', status: 'connected' }]),

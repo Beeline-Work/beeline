@@ -3,15 +3,47 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const storage = new Map<string, string>();
+const server = vi.hoisted(() => ({
+  seen: [] as string[] | null,
+  available: true,
+  viewer: 'person-1',
+  deferA: false,
+  releaseA: null as (() => void) | null,
+  readBFinished: false,
+}));
 const back = vi.hoisted(() => ({ handlers: [] as Array<() => boolean> }));
 const rect = vi.hoisted(() => ({ value: { x: 16, y: 120, width: 358, height: 64 } }));
-
-vi.mock('@react-native-async-storage/async-storage', () => ({
-  default: {
-    getItem: vi.fn(async (key: string) => storage.get(key) ?? null),
-    setItem: vi.fn(async (key: string, value: string) => void storage.set(key, value)),
-    removeItem: vi.fn(async (key: string) => void storage.delete(key)),
+vi.mock('@/buzz/runtime-config', () => ({
+  getBuzzRuntimeConfig: () => ({ monolithUrl: 'http://server.test' }),
+}));
+vi.mock('@/auth/monolith-session', () => ({
+  monolithSession: {
+    fetch: vi.fn(async (url: string, options: { body: string }) => {
+      const requestViewer = server.viewer;
+      if (server.deferA && requestViewer === 'person-1' && url.endsWith('/readProductTour'))
+        await new Promise<void>((resolve) => {
+          server.releaseA = resolve;
+        });
+      if (!server.available) return { ok: false, status: 503 };
+      const { tip } = JSON.parse(options.body) as { tip?: string };
+      if (url.endsWith('/updateProductTour')) {
+        if (tip === 'replay') server.seen = [];
+        else if (server.seen && tip && !server.seen.includes(tip)) server.seen.push(tip);
+      }
+      return {
+        ok: true,
+        json: async () => {
+          if (requestViewer === 'person-2') server.readBFinished = true;
+          return {
+            version: 2,
+            seenTips:
+              requestViewer === 'person-2'
+                ? ['swipe', 'cornerMark', 'squire']
+                : (server.seen ?? ['swipe', 'cornerMark', 'squire']),
+          };
+        },
+      };
+    }),
   },
 }));
 vi.mock('react-native', async () => {
@@ -70,7 +102,7 @@ vi.mock('@react-navigation/core', async () => {
   return { NavigationContext: ReactModule.createContext(undefined) };
 });
 vi.mock('@/auth/buzz-identity-storage', () => ({
-  loadBuzzIdentity: vi.fn(async () => ({ publicKey: 'person-1' })),
+  loadBuzzIdentity: vi.fn(async () => ({ publicKey: server.viewer })),
 }));
 vi.mock('@/constants/Typography', () => ({
   Typography: { default: () => ({}), mono: () => ({}) },
@@ -141,7 +173,12 @@ function target(tip: 'swipe' | 'cornerMark' | 'squire', label = 'Row') {
 
 describe('the first-sight tips', () => {
   beforeEach(() => {
-    storage.clear();
+    server.seen = [];
+    server.available = true;
+    server.viewer = 'person-1';
+    server.deferA = false;
+    server.releaseA = null;
+    server.readBFinished = false;
     resetProductTourCacheForTests();
     back.handlers.length = 0;
     rect.value = { x: 16, y: 120, width: 358, height: 64 };
@@ -167,6 +204,82 @@ describe('the first-sight tips', () => {
         expect.objectContaining({ left: 10, top: 114, width: 370, height: 76 }),
       ]),
     );
+  });
+
+  it('does not show a tip for an existing account or an unavailable state read', async () => {
+    server.seen = null;
+    const existing = await render(target('cornerMark'));
+    expect(byTestId(existing, 'tour-spotlight')).toHaveLength(0);
+    server.seen = [];
+    server.available = false;
+    const unavailable = await render(target('cornerMark'));
+    expect(byTestId(unavailable, 'tour-spotlight')).toHaveLength(0);
+  });
+
+  it('ignores account A’s late tour response after account B becomes viewer', async () => {
+    server.deferA = true;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(React.createElement(ProductTourProvider, null, target('cornerMark', 'A')), {
+        createNodeMock: nodeMock,
+      });
+    });
+    for (let i = 0; i < 3; i += 1) await act(async () => undefined);
+    expect(server.releaseA).toBeTypeOf('function');
+
+    server.viewer = 'person-2';
+    await act(async () => {
+      renderer.update(React.createElement(ProductTourProvider, null));
+    });
+    await act(async () => {
+      renderer.update(React.createElement(ProductTourProvider, null, target('cornerMark', 'B')));
+    });
+    for (let i = 0; i < 3; i += 1) await act(async () => undefined);
+    expect(server.readBFinished).toBe(true);
+    expect(byTestId(renderer, 'tour-spotlight')).toHaveLength(0);
+
+    await act(async () => {
+      server.releaseA?.();
+    });
+    for (let i = 0; i < 3; i += 1) await act(async () => undefined);
+    expect(byTestId(renderer, 'tour-spotlight')).toHaveLength(0);
+  });
+
+  it('aligns the cutout to a measured corner mark and hides on missing or hidden bounds', async () => {
+    rect.value = { x: 344, y: 514, width: 14, height: 14 };
+    const renderer = await render(target('cornerMark'));
+    expect(byTestId(renderer, 'tour-cutout')[0]!.props.style).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ left: 338, top: 508, width: 26, height: 26 }),
+      ]),
+    );
+    rect.value = { x: 344, y: 514, width: 0, height: 0 };
+    await act(async () =>
+      byTestId(renderer, 'tour-target-cornerMark')[0]!.props.onLayout({
+        nativeEvent: { layout: {} },
+      }),
+    );
+    for (let i = 0; i < 3; i += 1) await act(async () => undefined);
+    expect(byTestId(renderer, 'tour-spotlight')).toHaveLength(0);
+    rect.value = { x: 344, y: 900, width: 14, height: 14 };
+    await act(async () =>
+      byTestId(renderer, 'tour-target-cornerMark')[0]!.props.onLayout({
+        nativeEvent: { layout: {} },
+      }),
+    );
+    for (let i = 0; i < 3; i += 1) await act(async () => undefined);
+    expect(byTestId(renderer, 'tour-spotlight')).toHaveLength(0);
+  });
+
+  it('never shows an overlay when the target cannot be measured', async () => {
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(React.createElement(ProductTourProvider, null, target('cornerMark')), {
+        createNodeMock: () => ({}),
+      });
+    });
+    for (let i = 0; i < 4; i += 1) await act(async () => undefined);
+    expect(byTestId(renderer, 'tour-spotlight')).toHaveLength(0);
   });
 
   it('Got it retires the tip for good, and it never comes back', async () => {

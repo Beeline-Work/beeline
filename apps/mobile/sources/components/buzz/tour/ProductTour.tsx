@@ -14,6 +14,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import {
   TOUR_TIP_IDS,
+  COMPLETED_TOUR,
   loadProductTour,
   markTourTipSeen,
   replayProductTour,
@@ -91,13 +92,34 @@ export function ProductTourProvider({ children }: { children: React.ReactNode })
   const targets = useRef(new Map<TourTipId, TargetEntry[]>());
   const [targetIds, setTargetIds] = useState<readonly TourTipId[]>([]);
   const [activeEntry, setActiveEntry] = useState<TargetEntry | null>(null);
+  const refreshGeneration = useRef(0);
+
+  useEffect(
+    () => () => {
+      refreshGeneration.current += 1;
+    },
+    [],
+  );
 
   // The viewer is re-read whenever a target registers, so a sign-in or
   // identity change is picked up without any extra wiring.
   const refreshViewer = useCallback(() => {
+    const generation = ++refreshGeneration.current;
     void loadBuzzIdentity()
-      .then((identity) => setViewer(identity?.publicKey ?? null))
-      .catch(() => setViewer(null));
+      .then(async (identity) => {
+        if (generation !== refreshGeneration.current) return;
+        const pubkey = identity?.publicKey ?? null;
+        setViewer(pubkey);
+        if (!pubkey) return setState(null);
+        setState(null);
+        const next = await loadProductTour(pubkey).catch(() => COMPLETED_TOUR);
+        if (generation === refreshGeneration.current) setState(next);
+      })
+      .catch(() => {
+        if (generation !== refreshGeneration.current) return;
+        setViewer(null);
+        setState(null);
+      });
   }, []);
 
   useEffect(() => {
@@ -106,7 +128,6 @@ export function ProductTourProvider({ children }: { children: React.ReactNode })
       return;
     }
     let live = true;
-    void loadProductTour(viewer).then((next) => live && setState(next));
     const unsubscribe = subscribeProductTour(viewer, (next) => live && setState(next));
     return () => {
       live = false;
@@ -167,7 +188,9 @@ export function ProductTourProvider({ children }: { children: React.ReactNode })
                 layoutTick={layoutTick}
                 entries={() => targets.current.get(activeTip) ?? []}
                 onTarget={setActiveEntry}
-                onDone={() => void markTourTipSeen(viewer, activeTip)}
+                onDone={() => {
+                  void markTourTipSeen(viewer, activeTip).catch(() => undefined);
+                }}
                 tip={activeTip}
               />
             ) : null}
@@ -211,6 +234,8 @@ function TourSpotlight({
   // off screen) shows nothing at all.
   useEffect(() => {
     let live = true;
+    setTarget(null);
+    onTargetRef.current(null);
     const candidates = entriesRef.current();
     void Promise.all(candidates.map((entry) => entry.measure())).then((rects) => {
       if (!live) return;

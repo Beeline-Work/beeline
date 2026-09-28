@@ -37,6 +37,33 @@ function result<Row>(rows: Row[]) {
 
 const TERMINATED = () => new Error('Connection terminated unexpectedly');
 
+it('keeps old tour state completed while new identities inherit an eligible state', async () => {
+  const database = new PgliteDatabase();
+  try {
+    const oldId = 'a'.repeat(64);
+    const newId = 'b'.repeat(64);
+    await database.query(`CREATE TABLE identities (
+      id text PRIMARY KEY, kind text NOT NULL, name text NOT NULL, handle text,
+      avatar text, hidden_from_roster boolean NOT NULL DEFAULT false,
+      push_level text NOT NULL DEFAULT 'mine', github_subject text UNIQUE,
+      created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+    )`);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Old')`, [oldId]);
+    await migrate(database);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','New')`, [newId]);
+    const rows = await database.query<{ id: string; tour_seen_tips: string[] | null }>(
+      `SELECT id,tour_seen_tips FROM identities WHERE id=ANY($1::text[]) ORDER BY id`,
+      [[oldId, newId]],
+    );
+    expect(rows.rows).toEqual([
+      { id: oldId, tour_seen_tips: null },
+      { id: newId, tour_seen_tips: [] },
+    ]);
+  } finally {
+    await database.close();
+  }
+});
+
 describe('Room slugs', () => {
   it('requires a bounded lowercase slug for new names', () => {
     expect(requireRoomSlug('room-name-2')).toBe('room-name-2');

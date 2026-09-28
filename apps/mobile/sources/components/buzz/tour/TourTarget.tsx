@@ -43,16 +43,7 @@ export function measureView(view: View | null): Promise<TourRect | null> {
  * while mounted and re-measures on every layout, so a tip never points at a
  * stale rect and never waits on a target that is gone.
  */
-export function TourTarget({
-  tip,
-  children,
-  style,
-}: {
-  tip: TourTipId;
-  /** A render function learns whether the tip on screen points at this target. */
-  children: React.ReactNode | ((active: boolean) => React.ReactNode);
-  style?: React.ComponentProps<typeof View>['style'];
-}) {
+export function useTourTarget(tip: TourTipId, enabled = true) {
   const tour = useContext(ProductTourContext);
   const seen = useContext(SeenTourTipsContext);
   const activeEntry = useContext(ActiveTourTargetContext);
@@ -77,15 +68,29 @@ export function TourTarget({
   const ref = useRef<View>(null);
   const entry = useRef<TargetEntry>({ measure: () => measureView(ref.current) }).current;
   useEffect(() => {
-    if (!tour || !focused || !due) return;
+    if (!tour || !focused || !due || !enabled) return;
     return tour.registerTarget(tip, entry);
-  }, [due, entry, focused, tip, tour]);
+  }, [due, enabled, entry, focused, tip, tour]);
   const onLayout = useCallback(
     (_event: LayoutChangeEvent) => {
       tour?.targetLaidOut(tip);
     },
     [tip, tour],
   );
+  return { ref, onLayout, active: activeEntry === entry };
+}
+
+export function TourTarget({
+  tip,
+  children,
+  style,
+}: {
+  tip: TourTipId;
+  /** A render function learns whether the tip on screen points at this target. */
+  children: React.ReactNode | ((active: boolean) => React.ReactNode);
+  style?: React.ComponentProps<typeof View>['style'];
+}) {
+  const { ref, onLayout, active } = useTourTarget(tip);
   return (
     <View
       collapsable={false}
@@ -94,7 +99,7 @@ export function TourTarget({
       style={style}
       testID={`tour-target-${tip}`}
     >
-      {typeof children === 'function' ? children(activeEntry === entry) : children}
+      {typeof children === 'function' ? children(active) : children}
     </View>
   );
 }

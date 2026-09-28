@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { AppState, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { AppState, Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import * as WebBrowser from 'expo-web-browser';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { router, useFocusEffect, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -18,6 +19,7 @@ import { PageHeader } from '@/components/buzz/PageHeader';
 import { AppMark } from '@/components/buzz/AppMark';
 import { appBoardColors } from '@/buzz/app-board-style';
 import { ChevronGlyph } from '@/components/buzz/ChevronGlyph';
+import { authSessionOptions } from '@/auth/auth-session';
 import {
   appInstrument,
   connectionCompany,
@@ -65,6 +67,8 @@ export default function WorkbenchScreen() {
   const [view, setView] = useState<WorkbenchView | null>(null);
   const [networkFailure, setNetworkFailure] = useState<'load' | 'wallet' | null>(null);
   const [walletConnecting, setWalletConnecting] = useState(false);
+  const [linkConnecting, setLinkConnecting] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
   const [walletWorkspaceMissing, setWalletWorkspaceMissing] = useState(false);
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
   const [foregroundGeneration, setForegroundGeneration] = useState(0);
@@ -195,6 +199,32 @@ export default function WorkbenchScreen() {
     }
   }, [walletConnecting, workspaceId]);
 
+  const connectLink = useCallback(async () => {
+    if (linkConnecting) return;
+    setLinkConnecting(true);
+    setLinkError(null);
+    try {
+      const { authorizationUrl } = await getWorkbenchSource().beginLinkSignIn();
+      const state = new URL(authorizationUrl).searchParams.get('state') ?? undefined;
+      const returnUri = 'beeline://beeline/settings/workbench';
+      const result = await WebBrowser.openAuthSessionAsync(authorizationUrl, returnUri,
+        authSessionOptions(Platform.OS, returnUri));
+      if (result.type !== 'success') await getWorkbenchSource().cancelLinkSignIn(state);
+      await load();
+    } catch {
+      setLinkError('Link sign-in did not finish. Tap Connect to try again.');
+    } finally {
+      setLinkConnecting(false);
+    }
+  }, [linkConnecting, load]);
+
+  const disconnectLink = useCallback(async () => {
+    try {
+      await getWorkbenchSource().disconnectLinkSignIn();
+      await load();
+    } catch { setLinkError('Could not disconnect Link. Try again.'); }
+  }, [load]);
+
   // The screen has three states, and they must not bleed into each other. A
   // failed load used to still render the section chrome and the "None yet"
   // empty state with a red banner pinned to the very bottom (behind the
@@ -248,6 +278,32 @@ export default function WorkbenchScreen() {
         contentContainerStyle={[styles.contentInner, { paddingBottom: theme.buzz.space.xxl + insets.bottom }]}
         testID="workbench-scroll"
       >
+        <View testID="workbench-payment-tools">
+          <Text style={styles.sectionLabel} testID="workbench-payment-tools-head">Payment tools</Text>
+          <ToolDetailsCell
+            testID="workbench-link"
+            title="Link"
+            leading={<ServiceMark company="Link" domain="link.com" testID="workbench-link-mark" />}
+            detailText={view?.linkAccount?.ineligible
+              ? 'Link agent payments are available only to consumers in the US or Canada.'
+              : 'Approve each purchase in Link before your agents use a one-time payment card.'}
+            descriptionText={view?.linkAccount?.ineligible
+              ? 'Your Link account is not eligible. Available only in the US or Canada.'
+              : !view?.linkAccount?.connected ? 'Available to consumers in the US or Canada.'
+                : undefined}
+            errorText={linkError ?? undefined}
+            action={!view?.linkAccount?.connected && !view?.linkAccount?.pending
+              ? (linkConnecting ? 'Connecting' : 'Connect') : undefined}
+            actionDisabled={linkConnecting}
+            actionTestID="workbench-link-connect"
+            onAction={() => void connectLink()}
+            extraActions={view?.linkAccount?.connected ? [{ label: 'Disconnect',
+              testID: 'workbench-link-disconnect', tone: 'destructive',
+              onPress: () => void disconnectLink() }] : []}
+            value={view?.linkAccount?.connected ? 'connected'
+              : view?.linkAccount?.pending ? 'installing' : undefined}
+          />
+        </View>
         <View testID="workbench-connectors">
           <Text style={styles.sectionLabel} testID="workbench-tools-head">
             TOOLS

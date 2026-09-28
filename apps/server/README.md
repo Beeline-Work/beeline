@@ -51,6 +51,25 @@ transferred; people must sign in again through Connect an app. The new server
 does not use the old token tables. They remain during the rolling update for
 older server images and are removed by a later release migration.
 
+Link Agent Wallet uses a separate, per-consumer hosted OAuth grant. Apply for a
+[confidential Link OAuth client](https://docs.stripe.com/agentic-commerce/link-agent-wallet/oauth)
+with application name **Beeline**, description **Agents request a specific purchase;
+the customer approves it in Link before a one-time payment credential is issued**,
+and exact production redirect URI
+`https://server.usebeeline.app/v1/link/oauth/callback`. Register the matching
+local/test origin separately if needed. Set `BEELINE_LINK_CLIENT_ID`,
+`BEELINE_LINK_CLIENT_SECRET`, `BEELINE_LINK_PUBLISHABLE_KEY` (`pk_live_...` in
+production), and `BEELINE_LINK_TOKEN_KEY` (stable base64-encoded 32 random
+bytes) on the server only. Request `payment_methods.agentic userinfo:read`;
+the latter lets Workbench state the consumer's US/Canada eligibility. A Stripe
+secret API key does not authenticate Link. Agent spend requests use the
+consumer OAuth token at `api.link.com`; the server alone stores and refreshes
+that encrypted grant. Link's own approval is the purchase decision. The Link
+approval card goes to the owner's private Link DM; the agent's wait tool gets
+the approved one-time card or Shared Payment Token and can fill ordinary
+checkout fields with Squire. Link test mode is selected per spend request and
+does not charge the underlying method.
+
 Apps connect through one front door: an agent's `connect_app` or Workbench →
 Connect an app. The server chooses the route in a fixed order — an app already
 connected in Workbench, managed OAuth for a supported app, then Trusty Squire

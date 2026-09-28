@@ -26,6 +26,7 @@ export type { ConnectorStatus, ConnectorStep };
 /** Connector types known to the Workbench. */
 export const CONNECTOR_KINDS = [
   'trusty-squire',
+  'link',
   'wallet',
   'tailscale',
   'google-gmail',
@@ -164,6 +165,8 @@ export type WorkbenchView = {
   /** Server-owned Google sign-in, independent of helper selection. */
   readonly googleAccount?: { readonly connected: boolean; readonly pending: boolean;
     readonly connectedTypes: readonly string[]; readonly accountEmail?: string };
+  readonly linkAccount?: { readonly connected: boolean; readonly pending: boolean;
+    readonly ineligible: boolean };
   /** The VIEWER's connectors. Another member's connectors are never visible. */
   readonly connectors: readonly WorkbenchConnectorView[];
   /** The VIEWER's connections. Another member's connections are never visible. */

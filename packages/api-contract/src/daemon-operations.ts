@@ -437,6 +437,19 @@ export type DaemonOperationMap = {
       };
     }
   >;
+  createLinkSpendRequest: Operation<AgentRoomInput & {
+    merchant: string; merchantUrl?: string; amount: number; description: string;
+    test?: boolean; idempotencyKey: string;
+    credentialType?: 'card' | 'shared_payment_token'; networkId?: string;
+  }, { id: string; status: string; approvalUrl?: string }>;
+  retrieveLinkSpendRequest: Operation<AgentRoomInput & { id: string }, {
+    id: string; status: string; approvalUrl?: string;
+    nextAction?: { resolution?: string; displayMessage?: string; actionUrl?: string };
+    card?: { number: string; cvc?: string; expMonth: number; expYear: number;
+      billingAddress?: { name?: string; postalCode?: string; line1?: string; city?: string;
+        state?: string; country?: string }; validUntil?: string };
+    sharedPaymentToken?: { id: string; validUntil?: string };
+  }>;
   /** A connected Google grant for this agent's current Room, renewed server-side. */
   getRoomGoogleGrant: Operation<RoomInput, {
     readonly status: 'pending' | 'ready';

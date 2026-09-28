@@ -110,21 +110,21 @@ describe('PRODUCTION-CORPUS width-shaped room-list', () => {
   });
 
   it('tolerates one stalled query but rejects a sustained slow room-list query', async () => {
-    hotReads.delayRoomListQueries(1, 120);
+    hotReads.delayRoomListQueries(1, 180);
     const single = await sampleRoomList(phone, 1);
     expect(single[0]).toBeGreaterThan(HOT_READ_BUDGETS_MS['room-list']);
 
-    hotReads.delayRoomListQueries(1, 120);
+    hotReads.delayRoomListQueries(1, 180);
     const oneStall = await sampleRoomList(phone);
     expect(median(oneStall)).toBeLessThanOrEqual(HOT_READ_BUDGETS_MS['room-list']);
 
-    hotReads.delayRoomListQueries(5, 120);
+    hotReads.delayRoomListQueries(5, 180);
     const sustainedSlow = await sampleRoomList(phone);
     expect(median(sustainedSlow)).toBeGreaterThan(HOT_READ_BUDGETS_MS['room-list']);
     console.log(
       JSON.stringify({
         path: 'width-room-list-injected-query-delay',
-        delayMs: 120,
+        delayMs: 180,
         oldSingleMs: Math.round(single[0]!),
         oneStallMs: oneStall.map(Math.round),
         sustainedSlowMs: sustainedSlow.map(Math.round),

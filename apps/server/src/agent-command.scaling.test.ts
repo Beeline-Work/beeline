@@ -30,6 +30,8 @@ class CountingDatabase implements SqlDatabase {
 }
 
 class DelayedCountingDatabase extends CountingDatabase {
+  delayElapsedMs = 0;
+
   constructor(
     database: SqlDatabase,
     private readonly delayMs: number,
@@ -41,7 +43,9 @@ class DelayedCountingDatabase extends CountingDatabase {
     sql: string,
     values: unknown[] = [],
   ): Promise<QueryResult<Row>> {
+    const delayStartedAt = performance.now();
     await new Promise((resolve) => setTimeout(resolve, this.delayMs));
+    this.delayElapsedMs += performance.now() - delayStartedAt;
     return super.query<Row>(sql, values);
   }
 }
@@ -204,7 +208,7 @@ describe('addressed-message routing and claim scaling', () => {
     expect(notifications.rows[0]?.count).toBe(20 * 3);
   }, 20_000);
 
-  it('keeps sustained atomic claims below the initial p95 and p99 budgets', async () => {
+  it('keeps sustained atomic claims to one statement with bounded query overhead', async () => {
     const requests = Array.from({ length: 20 }, (_, index) =>
       (index + 40).toString(16).padStart(64, '0'),
     );
@@ -226,10 +230,12 @@ describe('addressed-message routing and claim scaling', () => {
     }
 
     // Stage-one production traces put a slow representative database operation
-    // at 206 ms. One atomic statement leaves enough budget; BEGIN + COMMIT does not.
-    const delayed = new DelayedCountingDatabase(database, 206);
-    const durations = await Promise.all(
+    // at 206 ms. Measure the actual timer wait separately: CI scheduler delay
+    // must not be mistaken for extra claim work. The exact query/transaction
+    // counts below still reject an added statement or BEGIN + COMMIT.
+    const measurements = await Promise.all(
       commands.map(async (command, index) => {
+        const delayed = new DelayedCountingDatabase(database, 206);
         const beganAt = performance.now();
         await claimAgentCommand(
           delayed,
@@ -238,22 +244,31 @@ describe('addressed-message routing and claim scaling', () => {
           command,
           `sustained-generation-${index}`,
         );
-        return performance.now() - beganAt;
+        const wallMs = performance.now() - beganAt;
+        return {
+          wallMs,
+          overheadMs: wallMs - delayed.delayElapsedMs,
+          queries: delayed.queries,
+          transactions: delayed.transactions,
+        };
       }),
     );
 
-    const p95 = percentile(durations, 0.95);
-    const p99 = percentile(durations, 0.99);
+    const wall = measurements.map(({ wallMs }) => wallMs);
+    const overhead = measurements.map(({ overheadMs }) => overheadMs);
     console.info('[claim-latency-regression]', {
-      samples: durations.length,
+      samples: measurements.length,
       representativeQueryMs: 206,
-      p95Ms: Math.round(p95),
-      p99Ms: Math.round(p99),
-      maxMs: Math.round(Math.max(...durations)),
+      wallP95Ms: Math.round(percentile(wall, 0.95)),
+      overheadP95Ms: Math.round(percentile(overhead, 0.95)),
+      overheadP99Ms: Math.round(percentile(overhead, 0.99)),
     });
-    expect(delayed.queries).toBe(20);
-    expect(delayed.transactions).toBe(0);
-    expect(p95).toBeLessThan(250);
-    expect(p99).toBeLessThan(500);
+    expect(measurements.every(({ queries }) => queries === 1)).toBe(true);
+    expect(measurements.every(({ transactions }) => transactions === 0)).toBe(true);
+    // The old 250 ms wall limit allowed only 44 ms above the synthetic 206 ms
+    // delay; passing CI already reaches 248 ms. Local query overhead is 2 ms.
+    // A sustained 50 ms query regression still fails this gate.
+    expect(percentile(overhead, 0.95)).toBeLessThan(50);
+    expect(percentile(overhead, 0.99)).toBeLessThan(100);
   }, 20_000);
 });

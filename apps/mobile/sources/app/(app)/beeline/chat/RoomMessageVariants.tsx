@@ -2073,6 +2073,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
                     // speaker, so it must not wear a different animal for the
                     // length of the turn.
                     ...(speakerFace ? { face: speakerFace } : {}),
+                    ...(speakerAvatar ? { avatarUrl: speakerAvatar } : {}),
                     alive: message.isAgentLiveTurn === true,
                   }
                 : undefined

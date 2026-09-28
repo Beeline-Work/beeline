@@ -556,6 +556,34 @@ describe('the transcript new-message control', () => {
     expect(discs(renderer)).toHaveLength(1);
   });
 
+  it('ROOM-CHEV-REST-1: clears the 9+ chevron when a scroll comes to rest on the newest row', () => {
+    // The reader is in history while ten messages land below the fold.
+    const renderer = mount({ ...AT_TAIL, pinnedToTail: false });
+    report([SEED[1]!, SEED[2]!]);
+    const arrivals = Array.from({ length: 10 }, (_, index) => row(`arrival-${index}`, 5 + index));
+    const arrived = [...SEED, ...arrivals];
+    update(renderer, {
+      ...AT_TAIL,
+      messages: arrived,
+      arrivingIds: new Set(arrivals.map((message) => message.id)),
+      pinnedToTail: false,
+    });
+    expect(badges(renderer)).toEqual(['9+']);
+
+    // They scroll down. The list throttles `onScroll` to one tick per 100 ms,
+    // and the last tick it sends is still 120 px above the tail: not pinned,
+    // and the viewable set taken at that offset stops short of the newest row.
+    scroll(false);
+    report([arrived[12]!, arrived[13]!]);
+    expect(onScreen(renderer)).toContain('jump disc: shown · badge: 9+');
+
+    // The list comes to rest at offset 0 inside the throttle window. iOS sends
+    // that position only with momentum-end (drag-end without momentum), which
+    // is the reading the surface now takes as tail position.
+    scroll(true);
+    expect(onScreen(renderer)).toContain('jump disc: hidden · badge: none');
+  });
+
   it('raises the control even though the last report said the newest row was on screen', () => {
     // The report before the arrival was taken while seed-4 was the newest row,
     // and it said seed-4 was on screen. The arrival lands below the fold, which

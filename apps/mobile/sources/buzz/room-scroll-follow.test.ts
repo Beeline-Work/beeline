@@ -468,6 +468,23 @@ describe('the chat screen wires the scroll rule', () => {
     }
   });
 
+  it('ROOM-CHEV-REST-1: reads tail position from where a phone scroll comes to rest', () => {
+    // `scrollEventThrottle` drops the ticks inside its window, and iOS never
+    // sends the resting offset as an `onScroll`. Drag-end and momentum-end
+    // carry it, so they must feed the same tail reading `onScroll` does.
+    const list = chatSource.slice(
+      chatSource.indexOf('<FlatList\n            testID="chat-messages"'),
+      chatSource.indexOf('renderItem={renderItem}', chatSource.indexOf('testID="chat-messages"')),
+    );
+    const handler = (name: string) =>
+      list.slice(list.indexOf(`${name}={`), list.indexOf('}}', list.indexOf(`${name}={`)));
+    for (const name of ['onScroll', 'onScrollEndDrag', 'onMomentumScrollEnd']) {
+      expect(handler(name), name).toContain(
+        'observePhoneTailOffset(event.nativeEvent.contentOffset.y)',
+      );
+    }
+  });
+
   it('lands the desktop transcript on the newest message on open', () => {
     // A chronological list starts at its top, so the open must scroll; an
     // inverted native list already shows the tail. A bookmark/notification

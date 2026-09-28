@@ -2638,6 +2638,18 @@ export function BuzzChatSurface({
     },
     [loadOlderTranscriptMessages, observeTailPinned],
   );
+  // Pinned? Native offset 0 is the visual bottom of the inverted list. The
+  // throttled `onScroll` is not the last word: iOS drops ticks inside the
+  // throttle window and sends the resting offset only with drag-end and
+  // momentum-end, so a scroll that settles on the newest row inside that
+  // window left the jump chevron and its badge up over the tail.
+  const observePhoneTailOffset = useCallback(
+    (offsetY: number) => {
+      isPinnedToTailRef.current = offsetY <= TAIL_PIN_THRESHOLD;
+      observeTailPinned(isPinnedToTailRef.current);
+    },
+    [observeTailPinned],
+  );
   // Older history paging in above the reader grows the content from the
   // top, not the bottom — hold the reader's place by the real measured
   // growth instead of letting it silently shift what they were reading.
@@ -5740,9 +5752,7 @@ export function BuzzChatSurface({
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode={transcriptKeyboardDismissMode(Platform.OS)}
             onScroll={(event) => {
-              const { contentOffset } = event.nativeEvent;
-              isPinnedToTailRef.current = contentOffset.y <= TAIL_PIN_THRESHOLD;
-              observeTailPinned(isPinnedToTailRef.current);
+              observePhoneTailOffset(event.nativeEvent.contentOffset.y);
             }}
             scrollEventThrottle={100}
             onViewableItemsChanged={observeVisibleTranscriptMessages}
@@ -5752,6 +5762,7 @@ export function BuzzChatSurface({
               allowOlderHistoryRef.current = true;
             }}
             onScrollEndDrag={(event) => {
+              observePhoneTailOffset(event.nativeEvent.contentOffset.y);
               // Drag-end precedes momentum-begin. Missing optional velocity is
               // not proof that the gesture stopped: keep the guard armed for
               // the event turn, so momentum-begin can claim it before a
@@ -5776,7 +5787,8 @@ export function BuzzChatSurface({
               userDraggingRef.current = true;
               allowOlderHistoryRef.current = true;
             }}
-            onMomentumScrollEnd={() => {
+            onMomentumScrollEnd={(event) => {
+              observePhoneTailOffset(event.nativeEvent.contentOffset.y);
               dragEndSequenceRef.current += 1;
               userDraggingRef.current = false;
               resumePendingNewMessageLanding();

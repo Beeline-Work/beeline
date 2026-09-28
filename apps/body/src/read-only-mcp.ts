@@ -79,6 +79,7 @@ import {
   type CornerLifecycleView,
   type MessageReactionEmoji,
 } from '@beeline/api-contract/phone';
+import { normalizeAppContinuation } from '@beeline/api-contract/app-connections';
 import { READ_ONLY_TOOL_NAMES } from './read-only-policy.js';
 import { validateArtifact } from './artifact-validation.js';
 import {
@@ -1510,20 +1511,6 @@ function stringArg(args: JsonObject, name: string, fallback?: string): string | 
   if (value === undefined) return fallback;
   if (typeof value !== 'string') throw new Error(`${name} must be a string`);
   return value;
-}
-
-/** Keep the model-authored promise on a card short and free of obvious secrets. */
-function appContinuation(value: unknown): string | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== 'string') throw new Error('app continuation must be a sentence');
-  const sentence = value.trim();
-  if (!sentence || sentence.length > 160 || /[\u0000-\u001f\u007f`@]/u.test(sentence) ||
-    /(?:https?:\/\/|www\.|\b(?:token|api[_ -]?key|secret|password|credential)\b\s*[:=])/iu.test(sentence) ||
-    /\b[A-Za-z0-9_-]{32,}\b/u.test(sentence) ||
-    (sentence.match(/[.!?](?:\s|$)/gu) ?? []).length !== 1 ||
-    !/[.!?]$/u.test(sentence))
-    throw new Error('app continuation must be one short sentence without links or credentials');
-  return sentence;
 }
 
 function booleanArg(args: JsonObject, name: string, fallback: boolean): boolean {
@@ -3628,7 +3615,7 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       const app = stringArg(args, 'app')?.trim();
       const reason = stringArg(args, 'reason')?.trim();
       if (!app || !reason) throw new Error('app and reason are required');
-      const continuation = appContinuation(args.continuation);
+      const continuation = normalizeAppContinuation(args.continuation);
       const context = await activeCommandContext();
       return JSON.stringify(
         await daemonExecute('connectApp', {

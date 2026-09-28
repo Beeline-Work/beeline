@@ -243,16 +243,18 @@ describe('connect_app', () => {
   it('posts one route-neutral Room card and resumes the original request after sign-in', async () => {
     const provider = fakeComposio();
     const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const continuation = 'I will post the launch notes after sign-in.';
     const first = await daemon.execute('connectApp',
-      { ...turn, app: 'Slack', reason: 'post the launch notes' }, HELPER);
+      { ...turn, app: 'Slack', reason: 'post the launch notes', continuation }, HELPER);
     expect(first).toMatchObject({ status: 'needs_sign_in', route: 'composio',
       transport: 'composio' });
     expect(first).not.toHaveProperty('authorizationUrl');
     expect(await routes()).toEqual([{ route: 'composio', transport: 'composio' }]);
-    const card = (await database.query<{ card: { appId: string; status: string } }>(
+    const card = (await database.query<{ card: { appId: string; status: string;
+      continuation?: string } }>(
       `SELECT card FROM messages WHERE room_id=$1 AND card_type='app-sign-in'`, [ROOM],
     )).rows[0];
-    expect(card?.card).toMatchObject({ appId: first.appId, status: 'pending' });
+    expect(card?.card).toMatchObject({ appId: first.appId, status: 'pending', continuation });
     expect(JSON.stringify(card)).not.toContain('composio');
     const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
       undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
@@ -261,9 +263,9 @@ describe('connect_app', () => {
     expect(provider.link).toHaveBeenCalledWith(OWNER, 'slack');
     await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture' }, OWNER);
     expect(provider.completeAuth).toHaveBeenCalledWith('session-fixture', OWNER);
-    expect((await database.query<{ card: { status: string } }>(
+    expect((await database.query<{ card: { status: string; continuation?: string } }>(
       `SELECT card FROM messages WHERE room_id=$1 AND card_type='app-sign-in'`, [ROOM],
-    )).rows[0]?.card.status).toBe('connected');
+    )).rows[0]?.card).toMatchObject({ status: 'connected', continuation });
     expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1
       AND agent_id=$2 AND reason='app_connected'`, [ROOM, HELPER])).rowCount).toBe(1);
     const neverUsed = (await readOwnerApps(database, OWNER, provider))[0]!;
@@ -291,11 +293,24 @@ describe('connect_app', () => {
         roomName: 'Tools', usedAt: afterUse.lastUsedAt } });
   });
 
+  it('rejects invalid card copy before creating a connection or card', async () => {
+    const daemon = daemonWith(fakeRegistry([]).client, fakeComposio());
+    await expect(daemon.execute('connectApp', { ...turn, app: 'Slack',
+      reason: 'post the launch notes', continuation: '<b>Do this now.</b>' }, HELPER))
+      .rejects.toThrow(/app continuation/);
+    expect((await database.query(`SELECT 1 FROM messages WHERE card_type='app-sign-in'`))
+      .rowCount).toBe(0);
+    expect((await database.query(`SELECT 1 FROM workspace_apps`)).rowCount).toBe(0);
+  });
+
   it('binds sign-in to the returning person and refuses a foreign agent until the app owner approves', async () => {
     const provider = fakeComposio();
     const daemon = daemonWith(fakeRegistry([]).client, provider);
     const connected = await daemon.execute('connectApp',
       { ...turn, app: 'Slack', reason: 'post the launch notes' }, HELPER);
+    expect((await database.query<{ card: Record<string, unknown> }>(
+      `SELECT card FROM messages WHERE room_id=$1 AND card_type='app-sign-in'`, [ROOM],
+    )).rows[0]?.card).not.toHaveProperty('continuation');
     const OTHER = 'c'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Other')`, [OTHER]);
     expect(await readOwnerApps(database, OTHER, provider)).toEqual([]);

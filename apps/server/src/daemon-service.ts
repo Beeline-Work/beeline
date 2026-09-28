@@ -92,6 +92,7 @@ import {
 import { mediaIdFromUrl } from './media-ttl.js';
 import { postRoomChoice } from './room-choice.js';
 import { APP_INPUT_MAX_LENGTH, appResourceTarget, connectorAdapter } from '@beeline/api-contract/workbench';
+import { normalizeAppContinuation } from '@beeline/api-contract/app-connections';
 import { McpRegistryClient } from './mcp-registry.js';
 import {
   appGateFor,
@@ -5287,6 +5288,7 @@ export class DaemonService {
     const reason = typeof input.reason === 'string' ? input.reason.trim().replace(/\s+/g, ' ') : '';
     if (!app || app.length > APP_INPUT_MAX_LENGTH || !reason || reason.length > 500)
       throw new Error('app and reason are required');
+    const continuation = normalizeAppContinuation(input.continuation);
     const context = await this.offerContext(input.roomId, agentId);
     if (context.isCorner)
       throw new Error('connect_app is invalid: connect an app from the Room, not from a corner');
@@ -5323,7 +5325,8 @@ export class DaemonService {
           presentation: 'card', cardType: 'app-sign-in',
           card: { appId: outcome.appId, appKey: outcome.appKey,
             name: outcome.name ?? app, ownerId: context.owner.pubkey,
-            agentId, status: 'pending', commandId: this.authorizedCommand?.id ?? null },
+            agentId, status: 'pending', commandId: this.authorizedCommand?.id ?? null,
+            ...(continuation ? { continuation } : {}) },
         });
       });
       this.live.publish({ type: 'invalidate', roomId: input.roomId,

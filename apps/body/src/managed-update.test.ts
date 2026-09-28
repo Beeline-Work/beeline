@@ -25,6 +25,7 @@ import {
   MAX_HOST_RESTART_STAGGER_MS,
   proveLoadedReleaseReady,
   rollbackFailedSuccessor,
+  UPDATE_CONVERGENCE_SLO_MS,
   UPDATE_DRAIN_DEADLINE_MS,
 } from './managed-update.js';
 import { UpdateFunctionalProbeError } from './update-functional-probe.js';
@@ -77,6 +78,10 @@ afterEach(async () => {
 });
 
 describe('managed update handoff', () => {
+  it('reserves the full service stop budget and successor proof time', () => {
+    expect(UPDATE_DRAIN_DEADLINE_MS + 90_000 + 60_000)
+      .toBeLessThanOrEqual(UPDATE_CONVERGENCE_SLO_MS);
+  });
   it('keeps a server-minimum release installed when one agent probe fails', async () => {
     const { layout, runtimeDir } = await layoutFixture();
     await rm(layout.libDir);
@@ -445,7 +450,7 @@ describe('managed update handoff', () => {
     });
   });
 
-  it('keeps the journal until every required runtime proves a functional session', async () => {
+  it('confirms the new release when one peer proves it while an old peer is still stopping', async () => {
     const { layout, runtimeDir } = await layoutFixture();
     const secondRuntime = resolve(dirname(runtimeDir), 'runtime-2');
     await mkdir(secondRuntime);
@@ -461,6 +466,11 @@ describe('managed update handoff', () => {
     await first.check();
     await second.check();
 
+    expect(await proveLoadedReleaseReady(layout, secondRuntime, 'old', {
+      probeId: 'agent-2', functionalProof,
+    })).toBe(false);
+    expect((await readUpdateAttempt(layout))?.status).toBe('pending');
+
     expect(
       await proveLoadedReleaseReady(layout, runtimeDir, 'new', {
         probeId: 'agent-1',
@@ -468,16 +478,11 @@ describe('managed update handoff', () => {
       }),
     ).toBe(true);
     expect(await readUpdateAttempt(layout)).toMatchObject({
+      status: 'confirmed',
       requiredProbeIds,
       confirmedProbeIds: ['agent-1'],
     });
-    expect(
-      await proveLoadedReleaseReady(layout, secondRuntime, 'new', {
-        probeId: 'agent-2',
-        functionalProof,
-      }),
-    ).toBe(true);
-    expect((await readUpdateAttempt(layout))?.status).toBe('confirmed');
+    expect(await activeReleaseId(layout)).toBe('new');
   });
 
   it('stages automatic updates in the locked worker and activates only after intake quiesces', async () => {

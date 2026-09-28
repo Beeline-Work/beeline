@@ -99,8 +99,14 @@ export class ThinDaemonCore {
       onProgress?: (status: string) => void | Promise<void>;
     } = {},
   ): Promise<'aborted' | 'agent-removed'> {
-    await opts.onEstablished?.();
+    const stop = () => {
+      this.roomRuntime.setDrainDeadlineAt(Date.now() + 45_000);
+      this.roomRuntime.beginShutdown();
+    };
+    opts.signal?.addEventListener('abort', stop, { once: true });
+    if (opts.signal?.aborted) stop();
     try {
+      if (!opts.signal?.aborted) await opts.onEstablished?.();
       while (!opts.signal?.aborted) {
         this.pendingDiscovery = false;
         try {
@@ -113,11 +119,13 @@ export class ThinDaemonCore {
           this.discoveryStatus = `monolith discovery degraded: ${error instanceof Error ? error.message : String(error)}`;
           this.roomRuntime.reconnectAfterFailure();
         }
+        if (opts.signal?.aborted) break;
         await opts.onProgress?.(this.healthStatus());
         if (!this.pendingDiscovery) await this.waitForDiscovery(opts.signal);
       }
       return 'aborted';
     } finally {
+      opts.signal?.removeEventListener('abort', stop);
       await this.roomRuntime.shutdown();
     }
   }

@@ -9,7 +9,6 @@ vi.mock('@/buzz/welcome-cards', () => ({ completeWelcomeCards: () => complete() 
 vi.mock('react-native', () => {
   const host = (name: string) => (props: any) => React.createElement(name, props, props.children);
   return {
-    Modal: host('Modal'),
     Pressable: host('Pressable'),
     Text: host('Text'),
     View: host('View'),
@@ -22,8 +21,15 @@ vi.mock('react-native-safe-area-context', () => ({
 vi.mock('react-native-svg', () => ({ SvgXml: () => null }));
 vi.mock('./Ledger', () => ({ LedgerEntry: () => null }));
 vi.mock('./IdentityMark', () => ({ IdentityMark: () => null }));
+vi.mock('./ChevronGlyph', () => ({ ChevronGlyph: () => null }));
+vi.mock('./CornerGlyph', () => ({ CornerGlyph: () => null }));
+vi.mock('./HullDialog', () => ({
+  HullModal: (props: any) => React.createElement('HullModal', props, props.children),
+}));
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
 beforeEach(() => complete.mockClear());
 

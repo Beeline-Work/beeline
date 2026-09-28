@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
-import { Modal, Pressable, Text, View, useWindowDimensions } from 'react-native';
+import { Pressable, Text, View, useWindowDimensions } from 'react-native';
 import { SvgXml } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LedgerEntry } from './Ledger';
 import { IdentityMark } from './IdentityMark';
+import { ChevronGlyph } from './ChevronGlyph';
+import { CornerGlyph } from './CornerGlyph';
+import { HullModal } from './HullDialog';
 import { welcomeBrandMarks } from './welcome-brand-marks';
 import { completeWelcomeCards } from '@/buzz/welcome-cards';
 
@@ -14,6 +17,23 @@ const BRASS = '#8A6A2E';
 const MONO = 'IBMPlexMono-Regular';
 const SANS = 'SpaceGrotesk-Regular';
 const MEDIUM = 'SpaceGrotesk-Medium';
+// The approved mock defines this card's type scale. Keep its explicit sizes
+// together while the app's transcript remains on its own shared type roles.
+const WELCOME_TYPE = {
+  size10: 10,
+  size11: 11,
+  size12: 12,
+  size13: 13,
+  size14: 14,
+  size16: 16,
+  size18: 18,
+  size20: 20,
+  size28: 28,
+  size30: 30,
+  trackingTight: -0.5,
+  trackingLabel: 1,
+  trackingWide: 2,
+} as const;
 const TOOL_NAMES = [
   'gmail',
   'googlecalendar',
@@ -94,9 +114,9 @@ function RoomScene() {
   return (
     <View style={scene.shell} testID="welcome-room-scene">
       <View style={scene.header}>
-        <Text style={scene.back}>‹</Text>
+        <ChevronGlyph color={INK} direction="left" size={22} />
         <Text style={scene.roomTitle}>#growth</Text>
-        <Text style={scene.cornerGlyph}>◢</Text>
+        <CornerGlyph color={BRASS} size={18} />
       </View>
       <View style={scene.transcript}>
         <SampleEntry
@@ -133,7 +153,7 @@ function CornerScene() {
   return (
     <View style={scene.shell} testID="welcome-corner-scene">
       <View style={scene.header}>
-        <Text style={scene.back}>‹</Text>
+        <ChevronGlyph color={INK} direction="left" size={22} />
         <IdentityMark seed={'3'.repeat(64)} kind="agent" size={28} />
         <View style={{ flex: 1 }}>
           <Text style={scene.cornerTitle}>#app/Sign-in retry</Text>
@@ -237,11 +257,13 @@ export function WelcomeCards({ visible, onDone }: { visible: boolean; onDone: ()
     }
   };
   return (
-    <Modal
+    <HullModal
       visible={visible}
       animationType="fade"
       onRequestClose={() => undefined}
-      statusBarTranslucent
+      dismissOnBackdrop={false}
+      keyboardAvoiding={false}
+      placement="fill"
     >
       <View
         style={[
@@ -287,7 +309,7 @@ export function WelcomeCards({ visible, onDone }: { visible: boolean; onDone: ()
           </View>
         </View>
       </View>
-    </Modal>
+    </HullModal>
   );
 }
 
@@ -295,9 +317,15 @@ const card = {
   page: { flex: 1, backgroundColor: PAPER, alignItems: 'center' as const, paddingHorizontal: 24 },
   content: { flex: 1, width: '100%' as const, gap: 26 },
   copy: { gap: 12 },
-  title: { color: INK, fontFamily: MEDIUM, fontSize: 30, lineHeight: 36, letterSpacing: -0.5 },
-  body: { color: DIM, fontFamily: SANS, fontSize: 16, lineHeight: 24 },
-  error: { color: '#A8514D', fontFamily: SANS, fontSize: 13 },
+  title: {
+    color: INK,
+    fontFamily: MEDIUM,
+    fontSize: WELCOME_TYPE.size30,
+    lineHeight: 36,
+    letterSpacing: WELCOME_TYPE.trackingTight,
+  },
+  body: { color: DIM, fontFamily: SANS, fontSize: WELCOME_TYPE.size16, lineHeight: 24 },
+  error: { color: '#A8514D', fontFamily: SANS, fontSize: WELCOME_TYPE.size13 },
   footer: {
     flexDirection: 'row' as const,
     justifyContent: 'space-between' as const,
@@ -315,7 +343,7 @@ const card = {
     alignItems: 'center' as const,
     justifyContent: 'center' as const,
   },
-  nextText: { color: PAPER, fontFamily: MEDIUM, fontSize: 16 },
+  nextText: { color: PAPER, fontFamily: MEDIUM, fontSize: WELCOME_TYPE.size16 },
 };
 const scene = {
   shell: {
@@ -335,11 +363,14 @@ const scene = {
     borderBottomWidth: 1,
     borderBottomColor: '#E2D9CB',
   },
-  back: { color: INK, fontSize: 28, lineHeight: 30 },
-  roomTitle: { flex: 1, color: INK, fontFamily: MEDIUM, fontSize: 20 },
-  cornerGlyph: { color: BRASS, fontSize: 18 },
-  cornerTitle: { color: INK, fontFamily: MEDIUM, fontSize: 16 },
-  cornerState: { color: BRASS, fontFamily: MONO, fontSize: 10, letterSpacing: 1 },
+  roomTitle: { flex: 1, color: INK, fontFamily: MEDIUM, fontSize: WELCOME_TYPE.size20 },
+  cornerTitle: { color: INK, fontFamily: MEDIUM, fontSize: WELCOME_TYPE.size16 },
+  cornerState: {
+    color: BRASS,
+    fontFamily: MONO,
+    fontSize: WELCOME_TYPE.size10,
+    letterSpacing: WELCOME_TYPE.trackingLabel,
+  },
   transcript: { flex: 1, paddingHorizontal: 16, paddingTop: 12 },
   composer: {
     margin: 14,
@@ -350,17 +381,23 @@ const scene = {
     justifyContent: 'center' as const,
     paddingHorizontal: 14,
   },
-  placeholder: { color: '#6F6558', fontFamily: SANS, fontSize: 14 },
+  placeholder: { color: '#6F6558', fontFamily: SANS, fontSize: WELCOME_TYPE.size14 },
   quote: {
     color: '#3A332B',
     fontFamily: SANS,
-    fontSize: 13,
+    fontSize: WELCOME_TYPE.size13,
     lineHeight: 19,
     borderLeftWidth: 2,
     borderLeftColor: BRASS,
     paddingLeft: 10,
   },
-  pr: { color: '#3A332B', fontFamily: MONO, fontSize: 11, marginTop: 14, marginBottom: 4 },
+  pr: {
+    color: '#3A332B',
+    fontFamily: MONO,
+    fontSize: WELCOME_TYPE.size11,
+    marginTop: 14,
+    marginBottom: 4,
+  },
   cornerRow: {
     paddingHorizontal: 16,
     paddingVertical: 10,
@@ -368,11 +405,26 @@ const scene = {
     borderTopColor: '#E2D9CB',
     gap: 4,
   },
-  rowCaption: { fontFamily: MONO, fontSize: 10, letterSpacing: 2, color: '#6F6558' },
-  rowName: { flex: 1, fontFamily: SANS, fontSize: 13, color: INK },
-  rowStatus: { fontFamily: MONO, fontSize: 10, letterSpacing: 1, color: BRASS },
+  rowCaption: {
+    fontFamily: MONO,
+    fontSize: WELCOME_TYPE.size10,
+    letterSpacing: WELCOME_TYPE.trackingWide,
+    color: '#6F6558',
+  },
+  rowName: { flex: 1, fontFamily: SANS, fontSize: WELCOME_TYPE.size13, color: INK },
+  rowStatus: {
+    fontFamily: MONO,
+    fontSize: WELCOME_TYPE.size10,
+    letterSpacing: WELCOME_TYPE.trackingLabel,
+    color: BRASS,
+  },
   collection: { flex: 1, borderRadius: 22, backgroundColor: '#EDE5D8', padding: 18, gap: 10 },
-  collectionCaption: { fontFamily: MONO, fontSize: 11, letterSpacing: 2, color: '#6F6558' },
+  collectionCaption: {
+    fontFamily: MONO,
+    fontSize: WELCOME_TYPE.size11,
+    letterSpacing: WELCOME_TYPE.trackingWide,
+    color: '#6F6558',
+  },
   agentRow: {
     minHeight: 65,
     borderRadius: 14,
@@ -382,9 +434,14 @@ const scene = {
     alignItems: 'center' as const,
     gap: 12,
   },
-  agentName: { fontFamily: MEDIUM, fontSize: 16, color: INK },
-  agentMeta: { fontFamily: SANS, fontSize: 12, color: '#6F6558' },
-  agentFoot: { fontFamily: SANS, fontSize: 12, color: '#6F6558', marginHorizontal: 4 },
+  agentName: { fontFamily: MEDIUM, fontSize: WELCOME_TYPE.size16, color: INK },
+  agentMeta: { fontFamily: SANS, fontSize: WELCOME_TYPE.size12, color: '#6F6558' },
+  agentFoot: {
+    fontFamily: SANS,
+    fontSize: WELCOME_TYPE.size12,
+    color: '#6F6558',
+    marginHorizontal: 4,
+  },
   tools: {
     flex: 1,
     borderRadius: 22,

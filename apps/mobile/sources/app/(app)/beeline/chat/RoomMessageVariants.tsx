@@ -2478,6 +2478,20 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.buzz.bgHighlight,
   },
   cornerSwipeGlyph: { color: theme.buzz.accent },
+  replySwipeGlyph: {
+    ...Typography.default('semiBold'),
+    color: theme.buzz.textPrimary,
+    fontSize: 17,
+    lineHeight: 20,
+  },
+  replySwipeLabel: {
+    ...Typography.mono('semiBold'),
+    marginTop: 2,
+    color: theme.buzz.textMuted,
+    fontSize: 8,
+    lineHeight: 11,
+    letterSpacing: 0.6,
+  },
   attachmentCard: {
     minWidth: 0,
     width: '100%',

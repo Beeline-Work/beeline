@@ -71,6 +71,7 @@ export class SquireTaskRelay {
   private active?: TurnKey;
   private task?: TaskConnection;
   private leaseTimer?: ReturnType<typeof setTimeout>;
+  private approvalRequestId?: string;
   private closed = false;
   private callTail: Promise<void> = Promise.resolve();
 
@@ -139,9 +140,12 @@ export class SquireTaskRelay {
     }
   }
 
-  deactivate(requestId: string): void {
+  deactivate(requestId: string, approvalRequestId?: string): void {
     if (this.active?.requestId !== requestId) return;
     this.active = undefined;
+    this.approvalRequestId = approvalRequestId;
+    // A human approval is an open continuation, however long the card waits.
+    if (approvalRequestId) return;
     this.scheduleIdle();
   }
 
@@ -157,15 +161,17 @@ export class SquireTaskRelay {
   }
 
   cancel(requestId: string): void {
-    if (this.active?.requestId !== requestId) return;
-    this.active = undefined;
-    this.scheduleIdle();
+    if (this.active?.requestId !== requestId && this.approvalRequestId !== requestId) return;
+    if (this.active?.requestId === requestId) this.active = undefined;
+    if (this.approvalRequestId === requestId) this.approvalRequestId = undefined;
+    if (!this.active && !this.approvalRequestId) this.scheduleIdle();
   }
 
   close(): void {
     if (this.closed) return;
     this.closed = true;
     this.active = undefined;
+    this.approvalRequestId = undefined;
     this.retire('helper-exit');
     this.server?.close();
   }

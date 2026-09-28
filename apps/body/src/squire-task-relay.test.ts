@@ -117,15 +117,15 @@ describe('helper-owned Squire task relay', () => {
     expect(logs.join('\n')).not.toContain('browser-1');
   });
 
-  it('keeps a finished turn through an approval wait and closes after idle timeout', async () => {
+  it('keeps a connection through a long approval wait, then closes after decision and idle timeout', async () => {
     const logs: string[] = [];
     vi.spyOn(console, 'info').mockImplementation((...parts) => { logs.push(parts.join(' ')); });
     const { relay, stats } = fixture();
     relay.activate(command('finished', 'turn-one'), 'generation');
     await request(relay, 'finished', 'turn-one', 'tools/call', { name: 'operate_start' });
     vi.useFakeTimers();
-    relay.deactivate('turn-one');
-    await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS - 1);
+    relay.deactivate('turn-one', 'turn-one');
+    await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS * 2);
     expect(stats().exits).toBe(0);
     relay.activate(command('approval-resume', 'turn-two'), 'generation');
     vi.useRealTimers();
@@ -145,6 +145,21 @@ describe('helper-owned Squire task relay', () => {
     });
     expect(stale.status).toBe(400);
     expect(stale.body.error).toMatch(/no longer owned/);
+  });
+
+  it('keeps an open approval through an unrelated turn and bounds it after cancellation', async () => {
+    const { relay, stats } = fixture();
+    relay.activate(command('first', 'turn-one'), 'generation');
+    await request(relay, 'first', 'turn-one', 'tools/call', { name: 'operate_start' });
+    vi.useFakeTimers();
+    relay.deactivate('turn-one', 'turn-one');
+    relay.activate(command('other', 'turn-other'), 'generation');
+    relay.deactivate('turn-other', 'turn-one');
+    await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS * 2);
+    expect(stats().exits).toBe(0);
+    relay.cancel('turn-one');
+    await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS);
+    expect(stats().exits).toBe(1);
   });
 
   it('bounds an idle conversation when no continuation arrives', async () => {

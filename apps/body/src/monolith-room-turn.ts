@@ -8,6 +8,7 @@ import { homedir, hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { parseGrantDecisionLine } from '@beeline/api-contract/agent-grants';
+import { isResumeKind } from '@beeline/api-contract/phone';
 import {
   SCHEDULE_RAN_VERB,
   SCHEDULE_SCHEDULER_NAME,
@@ -1152,6 +1153,7 @@ export class MonolithRoomTurnLoop {
    * the press and the delivery, and the server's own receipt already said so.
    */
   private stopTurn(requestId: string): void {
+    if (this.pausedOnGrantRequestId === requestId) this.pausedOnGrantRequestId = undefined;
     this.squireRelay.cancel(requestId);
     for (let index = this.queuedTurns.length - 1; index >= 0; index -= 1)
       if (this.queuedTurns[index]!.id === requestId) this.queuedTurns.splice(index, 1);
@@ -1259,9 +1261,12 @@ export class MonolithRoomTurnLoop {
                     message.id,
                   ),
                 }));
-              const grantDecision = this.commandContext.current?.action === 'resume';
-              const resumedRequestId = grantDecision ? this.pausedOnGrantRequestId : undefined;
-              if (grantDecision) this.pausedOnGrantRequestId = undefined;
+              const command = this.commandContext.current;
+              const grantDecision = command?.action === 'resume';
+              const decisionResume = grantDecision &&
+                isResumeKind(command.source.systemEvent?.kind);
+              const resumedRequestId = decisionResume ? this.pausedOnGrantRequestId : undefined;
+              if (decisionResume) this.pausedOnGrantRequestId = undefined;
               // Built per ATTEMPT, never once per turn: a C92 re-pin runs the
               // same turn against a NEW session id that holds none of this
               // conversation, so it has to render the whole window again.
@@ -1657,7 +1662,8 @@ export class MonolithRoomTurnLoop {
           console.error('[thin-core] Room command failed', error);
         },
         onEnter: (command) => this.squireRelay.activate(command, this.commandContext.generationId),
-        onLeave: (command) => this.squireRelay.deactivate(command.turnRequestId),
+        onLeave: (command) =>
+          this.squireRelay.deactivate(command.turnRequestId, this.pausedOnGrantRequestId),
         stop: (requestId) => this.stopTurn(requestId),
         restart: () => this.options.onRestartRequested?.(),
         canStartTurn: this.options.canStartTurn,

@@ -73,7 +73,7 @@ describe('grant decision recognition', () => {
 });
 
 describe('Room turn paused on a grant card', () => {
-  it('marks the turn paused after a pending request_grant and resumes it when the decision line arrives', async () => {
+  it.each(['once', 'deny'] as const)('clears the pending approval after a %s decision resumes the turn', async (grantDecision) => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-room-grants-'));
     roots.push(root);
     const identity = identityFromKey(AGENT_HEX, 'Bee');
@@ -110,7 +110,7 @@ describe('Room turn paused on a grant card', () => {
     } as BodyConfig;
     const decision = formatGrantDecisionLine({
       deciderName: 'Captain',
-      decision: 'once',
+      decision: grantDecision,
       kind: 'command',
       target: 'fly deploy -a preview --with FLY_TOKEN',
     });
@@ -171,6 +171,7 @@ describe('Room turn paused on a grant card', () => {
                 createdAt: 3,
                 type: 'system',
                 body: decision,
+                systemEvent: { kind: 'grant-decided' },
                 attachments: [],
               },
             ],
@@ -220,7 +221,7 @@ describe('Room turn paused on a grant card', () => {
       .mockResolvedValueOnce({
         stopReason: 'end_turn',
         updates: [],
-        agentText: 'Deployed the preview.',
+        agentText: grantDecision === 'deny' ? 'Permission declined; no command was run.' : 'Deployed the preview.',
         toolCalls: [],
       });
     // C94: what the Room registers is what the runner enforces, so record it.

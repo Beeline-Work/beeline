@@ -57,7 +57,10 @@ vi.mock('./HullActionSheet', async () => {
   return {
     HULL_SHEET_INSET: 22,
     HullActionSheetModal: (props: any) =>
-      ReactModule.createElement('HullActionSheetModal', props, props.children, props.footer),
+      ReactModule.createElement('HullActionSheetModal', props, props.children),
+    HullActionSheetRow: (props: any) => ReactModule.createElement('HullActionSheetRow', props),
+    HullActionSheetCancel: (props: any) =>
+      ReactModule.createElement('HullActionSheetCancel', props),
   };
 });
 
@@ -94,8 +97,9 @@ function mount(error?: string) {
 describe('NewCornerDialog', () => {
   it('presents through the shared bottom sheet, not a centred dialog', () => {
     const { sheet } = mount();
-    expect(sheet().title).toBe('New corner');
+    expect(sheet().title).toBe('Begin a new corner');
     expect(sheet().subtitle).toBeUndefined();
+    expect(sheet().footer).toBeUndefined();
     expect(sheet().visible).toBe(true);
     expect(sheet().dismissOnBackdrop).toBe(true);
   });
@@ -113,6 +117,16 @@ describe('NewCornerDialog', () => {
     expect(host('create-corner-submit').props.disabled).toBe(false);
     act(() => host('create-corner-submit').props.onPress());
     expect(submit).toHaveBeenCalledWith('Release notes');
+  });
+
+  it('uses the Forward sheet rows: Open corner, then the sheet Cancel', () => {
+    const { tree, host, close } = mount();
+    expect(tree.root.findByType('HullActionSheetRow').props).toMatchObject({
+      label: 'Open corner',
+      testID: 'create-corner-submit',
+    });
+    act(() => host('create-corner-cancel').props.onPress());
+    expect(close).toHaveBeenCalledOnce();
   });
 
   it('keeps a server refusal visible in the sheet', () => {

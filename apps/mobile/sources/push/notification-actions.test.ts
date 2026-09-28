@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { decideForegroundNotificationDisplay } from './foreground-policy';
 import {
   createHandledActionStore,
   handleNotificationAction,
@@ -249,6 +250,23 @@ describe('answering a tapped action', () => {
     });
     expect(d.presented[0]!.categoryIdentifier).toBeUndefined();
   });
+
+  // Android keeps the Reply spinner until the notification is rewritten. With
+  // the app active, expo asks the root handler before posting that rewrite.
+  it.each(['room-2', 'corner-1'])(
+    'posts the Android "Replied" rewrite while the app is active with %s open',
+    async (openChannelId) => {
+      const d = deps('android');
+      await handleNotificationAction(response('reply', replyData, 'On it'), d);
+      expect(
+        decideForegroundNotificationDisplay({
+          appState: 'active',
+          openChannelId,
+          data: d.presented[0]!.data,
+        }).shouldPresent,
+      ).toBe(true);
+    },
+  );
 
   it('confirms an iOS reply quietly, naming who was answered', async () => {
     const d = deps('ios');

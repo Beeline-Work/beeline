@@ -220,7 +220,24 @@ function grantSubject(data: Data): string {
   return `${agent} can ${ask}`;
 }
 
+/**
+ * Marks an Android rewrite in its data. Android keeps an inline reply spinning
+ * until the tapped notification is updated, so the foreground display policy
+ * must post the rewrite even while the app is active.
+ */
+export const ACTION_OUTCOME_DATA_KEY = 'actionOutcome';
+
 export function outcomeNotification(
+  request: NotificationActionRequest,
+  outcome: NotificationActionOutcome,
+  platform: Platform,
+): OutcomeNotification {
+  const notification = platformOutcomeNotification(request, outcome, platform);
+  if (platform !== 'android') return notification;
+  return { ...notification, data: { ...notification.data, [ACTION_OUTCOME_DATA_KEY]: 'true' } };
+}
+
+function platformOutcomeNotification(
   request: NotificationActionRequest,
   outcome: NotificationActionOutcome,
   platform: Platform,

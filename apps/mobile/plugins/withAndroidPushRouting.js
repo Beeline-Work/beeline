@@ -149,7 +149,6 @@ function withPushActivityManifest(config) {
       ...pushActivity.$,
       'android:name': PUSH_ACTIVITY,
       'android:exported': 'true',
-      'android:excludeFromRecents': 'true',
       'android:noHistory': 'true',
       'android:theme': PUSH_ACTIVITY_THEME,
     };

@@ -227,6 +227,9 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
         useCount: app.useCount,
         ...(app.lastUsedAt !== undefined ? { lastUsedAt: app.lastUsedAt } : {}),
         createdAt: app.createdAt,
+        accountLabel: app.accountLabel,
+        workspaceName: app.workspaceName,
+        ...(app.lastUse ? { lastUse: { ...app.lastUse } } : {}),
       })),
       connections: dto.connections.map((connection) => toConnection(connection, input.viewerId)),
     };

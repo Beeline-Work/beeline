@@ -26,7 +26,6 @@ import {
   connectorOfferTitle,
   connectorOfferWaitingLine,
 } from '@/buzz/connector-offer-copy';
-import { GoogleMark } from '@/components/buzz/GoogleMark';
 import { AppMark } from '@/components/buzz/AppMark';
 import { appDomain } from '@/buzz/app-catalog';
 import { appBoardColors } from '@/buzz/app-board-style';
@@ -505,7 +504,6 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
   onOpenWorkbench,
 }: ConnectorOfferCardProps) {
   const offer = message.connectorOffer!;
-  const googleOffer = offer.connectorType.startsWith('google-');
   const display = resolveAgentDisplayIdentity(offer.agent.pubkey, agent);
   const agentName = agent ? display.name : offer.agent.name;
   const pending = offer.status === 'pending';
@@ -518,7 +516,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
     pending && canAccept
       ? [
           {
-            label: googleOffer ? 'Connect Google' : connectorOfferActionLabel(offer.connectorName),
+            label: connectorOfferActionLabel(offer.connectorName),
             primary: true,
             disabled: actionId !== null,
             loading: busy,
@@ -549,19 +547,10 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
     <TranscriptCard
       tier={pending || connecting ? 'ask' : 'record'}
       testID={`connector-offer-${pending ? 'pending' : connecting ? 'connecting' : 'settled'}`}
-      identity={googleOffer ? <GoogleMark size={32} /> :
-        <IdentityMark
-          kind="agent"
-          seed={display.avatarSeed ?? offer.agent.pubkey}
-          avatarUrl={display.avatarUrl}
-          face={display.face}
-          name={agentName}
-          size={26}
-        />}
-      title={googleOffer ? 'Connect Google Workspace' : connectorOfferTitle(offer.connectorName)}
-      subline={googleOffer
-        ? `One sign-in connects Gmail, Calendar, Drive and YouTube. ${agentName} continues this request right after.`
-        : offer.consequence}
+
+      identity={<IdentityMark kind="agent" seed={display.avatarSeed ?? offer.agent.pubkey} avatarUrl={display.avatarUrl} face={display.face} name={agentName} size={26} />}
+      title={connectorOfferTitle(offer.connectorName)}
+      subline={offer.consequence}
       sublineTestID={`connector-offer-${offer.offerId}-line`}
       stamp={ledgerStamp(message.timestamp)}
       footerNote={

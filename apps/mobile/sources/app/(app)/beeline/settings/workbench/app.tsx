@@ -51,9 +51,11 @@ export default function AppDetailScreen() {
     finally { setWorking(false); }
   };
 
-  const lastUsed = app?.lastUsedAt
-    ? `Last used${app.lastUsedByAgentName ? ` by ${app.lastUsedByAgentName}` : ''}${app.lastUsedRoomName ? ` in ${app.lastUsedRoomName}` : ''}, ${new Date(app.lastUsedAt * 1000).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}.`
-    : 'Not used yet.';
+  const lastUsed = app?.lastUse
+    ? `Last used by ${app.lastUse.agentName} in ${app.lastUse.roomName.startsWith('#') ? '' : '#'}${app.lastUse.roomName}, ${new Date(app.lastUse.usedAt * 1000).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}.`
+    : app?.lastUsedAt
+      ? `Last used ${new Date(app.lastUsedAt * 1000).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}.`
+      : 'Not used yet.';
 
   return <View style={[styles.screen, { paddingTop: insets.top }]} testID="app-detail-screen">
     <AppPageHeader eyebrow="Workbench" title={app?.name ?? 'App'} backLabel="Back to Workbench" onBack={() => router.back()} />
@@ -63,7 +65,7 @@ export default function AppDetailScreen() {
           <AppMark name={app.name} domain={app.domain} size={48} />
           <View style={styles.identityCopy}>
             <Text style={styles.status}>{app.status === 'connected' ? 'Connected' : app.status === 'connecting' ? 'Connecting' : 'Needs attention'}</Text>
-            {app.accountLabel ? <Text style={styles.account}>{app.accountLabel}</Text> : null}
+            {app.accountLabel ? <Text style={styles.account}>{app.accountLabel}{app.workspaceName ? ` · ${app.workspaceName} workspace` : ''}</Text> : null}
           </View>
         </View>
         <Text style={styles.permission}>Your agents can use {app.name} as you. Other people’s agents ask you first.</Text>

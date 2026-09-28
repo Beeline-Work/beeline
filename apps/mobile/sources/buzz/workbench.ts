@@ -110,8 +110,8 @@ export type WorkbenchApp = {
   createdAt?: number;
   /** Owner-visible account identity and last use attribution from the server. */
   accountLabel?: string;
-  lastUsedByAgentName?: string;
-  lastUsedRoomName?: string;
+  workspaceName?: string;
+  lastUse?: { agentId: string; agentName: string; roomId: string; roomName: string; usedAt: number };
 };
 
 export type WorkbenchView = {

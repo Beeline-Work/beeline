@@ -715,6 +715,8 @@ export function createBeelineServer(options: ServerOptions): Server {
                   // listener. Commands have their own targeted projection;
                   // their source message is delivered by its message event.
                   if (event.type !== 'invalidate') return;
+                  // Read marks only reconcile the reader's phone devices.
+                  if (event.readerId) return;
                   // A child corner's status changed; only corner lists read it.
                   if (event.reason === 'corner-status') return;
                   const trigger = event.trace

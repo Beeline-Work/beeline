@@ -93,6 +93,8 @@ import {
   GOOGLE_DRIVE_MCP_TOOLS,
   callGoogleDriveTool,
 } from './google-drive-mcp.js';
+import { GOOGLE_PERSONAL_MCP_SERVER_NAME, GOOGLE_PERSONAL_MCP_SURFACE,
+  GOOGLE_PERSONAL_MCP_TOOLS, callGooglePersonalTool } from './google-personal-mcp.js';
 import { validateArtifact } from './artifact-validation.js';
 import {
   BoundedSizeError,
@@ -1380,6 +1382,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
 const agentSurface = process.env.BEELINE_MCP_SURFACE === 'agent';
 const youtubeSurface = process.env.BEELINE_MCP_SURFACE === YOUTUBE_MCP_SURFACE;
 const googleDriveSurface = process.env.BEELINE_MCP_SURFACE === GOOGLE_DRIVE_MCP_SURFACE;
+const googlePersonalSurface = process.env.BEELINE_MCP_SURFACE === GOOGLE_PERSONAL_MCP_SURFACE;
 
 /** The bounded daemon-control tools for one surface. A direct message is
  *  strictly conversational: repository corners are never openable there. */
@@ -1430,6 +1433,10 @@ const TOOLS = youtubeSurface
   ? [...YOUTUBE_MCP_TOOLS]
   : googleDriveSurface
     ? [...GOOGLE_DRIVE_MCP_TOOLS]
+    : googlePersonalSurface
+      ? GOOGLE_PERSONAL_MCP_TOOLS.filter(tool => tool.name.startsWith('google_calendar_')
+          ? Boolean(process.env.BEELINE_GOOGLE_CALENDAR_ACCESS_TOKEN)
+          : Boolean(process.env.BEELINE_GOOGLE_GMAIL_ACCESS_TOKEN))
     : agentToolsFor(
         agentSurface,
         process.env.BEELINE_AGENT_DM === '1',
@@ -3676,6 +3683,8 @@ async function handleLine(line: string): Promise<void> {
             ? YOUTUBE_MCP_SERVER_NAME
             : googleDriveSurface
               ? GOOGLE_DRIVE_MCP_SERVER_NAME
+              : googlePersonalSurface
+                ? GOOGLE_PERSONAL_MCP_SERVER_NAME
               : agentSurface
                 ? 'beeline-agent'
                 : 'beeline-readonly-mcp',
@@ -3708,11 +3717,15 @@ async function handleLine(line: string): Promise<void> {
               asObject(params.arguments),
               youtubeClientFromToken(process.env.BEELINE_YOUTUBE_ACCESS_TOKEN ?? ''),
             )
-          : googleDriveSurface
-            ? await callGoogleDriveTool(
+            : googleDriveSurface
+              ? await callGoogleDriveTool(
                 params.name,
                 process.env.BEELINE_GOOGLE_DRIVE_ACCESS_TOKEN ?? '',
               )
+              : googlePersonalSurface
+                ? await callGooglePersonalTool(params.name, asObject(params.arguments),
+                  process.env.BEELINE_GOOGLE_CALENDAR_ACCESS_TOKEN ?? '',
+                  process.env.BEELINE_GOOGLE_GMAIL_ACCESS_TOKEN ?? '')
             : agentSurface
               ? await callAgentTool(
                   params.name,

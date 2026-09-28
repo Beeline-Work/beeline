@@ -91,7 +91,7 @@ import {
 } from './system-line.js';
 import { mediaIdFromUrl } from './media-ttl.js';
 import { postRoomChoice } from './room-choice.js';
-import { APP_INPUT_MAX_LENGTH, connectorAdapter } from '@beeline/api-contract/workbench';
+import { APP_INPUT_MAX_LENGTH, GOOGLE_TOOL_SCOPES, connectorAdapter } from '@beeline/api-contract/workbench';
 import { McpRegistryClient } from './mcp-registry.js';
 import {
   appGateFor,
@@ -1058,6 +1058,17 @@ export class DaemonService {
       }
       case 'getRoomGoogleGrant': {
         const roomId = (input as Input<'getRoomGoogleGrant'>).roomId;
+        const owner = (await this.database.query<{ owner_id: string }>(
+          `SELECT a.owner_id FROM agents a
+           JOIN rooms r ON r.id=$1
+           JOIN memberships member ON member.room_id=r.id AND member.identity_id=a.agent_id
+             AND member.removed_at IS NULL
+           JOIN memberships owner ON owner.workspace_id=r.workspace_id
+             AND owner.room_id IS NULL AND owner.identity_id=a.owner_id
+             AND owner.removed_at IS NULL
+           WHERE a.agent_id=$2`, [roomId, authenticatedAgentId])).rows[0];
+        const accountGrant = owner
+          ? await this.googleOAuth?.grantForOwner(owner.owner_id) : null;
         const connected = await this.database.query<{ id: string; connector_type: string }>(
           `SELECT c.id,c.connector_type FROM workspace_connectors c
            JOIN rooms r ON r.workspace_id=c.workspace_id AND r.id=$1
@@ -1069,18 +1080,30 @@ export class DaemonService {
              AND owner.room_id IS NULL AND owner.identity_id=a.owner_id
              AND owner.removed_at IS NULL
            WHERE c.helper_agent_id=$2 AND c.status='connected'
-             AND c.connector_type IN ('google-gmail','google-drive','google-youtube')
+             AND c.connector_type IN ('google-gmail','google-calendar','google-drive','google-youtube')
            ORDER BY CASE c.connector_type WHEN 'google-drive' THEN 0 ELSE 1 END
            `,
           [roomId, authenticatedAgentId],
         );
-        const connectorId = connected.rows[0]?.id;
-        const grant = connectorId
-          ? await this.googleOAuth?.grantForHelper(connectorId, authenticatedAgentId)
-          : null;
-        return (grant ? {
-          status: 'ready', credentials: grant,
-          connectedTypes: connected.rows.map((row) => row.connector_type),
+        const credentialsByType: Record<string, NonNullable<Output<'getRoomGoogleGrant'>['credentials']>> = {};
+        if (accountGrant) {
+          for (const [kind, scopes] of Object.entries(GOOGLE_TOOL_SCOPES)) {
+            if (scopes.every((scope) => accountGrant.scopes.includes(scope))) {
+              credentialsByType[kind] = accountGrant;
+            }
+          }
+        }
+        const legacyGrants = await Promise.all(connected.rows.map(async (row) => ({
+          type: row.connector_type,
+          grant: await this.googleOAuth?.grantForHelper(row.id, authenticatedAgentId),
+        })));
+        for (const { type, grant } of legacyGrants) {
+          if (grant && !credentialsByType[type]) credentialsByType[type] = grant;
+        }
+        const connectedTypes = Object.keys(credentialsByType);
+        const credentials = accountGrant ?? legacyGrants.find(({ grant }) => grant)?.grant;
+        return (credentials ? {
+          status: 'ready', credentials, credentialsByType, connectedTypes,
         } : { status: 'pending' }) as Output<Name>;
       }
       case 'beginRegistryMcpOAuth': {
@@ -5120,10 +5143,16 @@ export class DaemonService {
         [context.workspaceId, context.owner.pubkey],
       )
     ).rows;
+    const googleAccount = (await this.database.query<{ granted_scopes: string[] }>(
+      `SELECT granted_scopes FROM google_oauth_accounts WHERE owner_identity_id=$1
+         AND sealed_grant IS NOT NULL`, [context.owner.pubkey])).rows[0];
     const catalog = connectorCatalog().map((entry) => {
       // The most recently touched row wins; a live one over a disconnected one.
       const rows = paired.filter((row) => row.connector_type === entry.connectorType);
       const row = rows.find((candidate) => candidate.status !== 'disconnected') ?? rows[0];
+      const googleConnected = entry.connectorType.startsWith('google-') && googleAccount &&
+        GOOGLE_TOOL_SCOPES[entry.connectorType as keyof typeof GOOGLE_TOOL_SCOPES]?.every(
+          scope => googleAccount.granted_scopes.includes(scope));
       return {
         connectorType: entry.connectorType,
         name: entry.name,
@@ -5136,7 +5165,10 @@ export class DaemonService {
           (!entry.connectorType.startsWith('google-') || Boolean(this.googleOAuth)) &&
           !context.isCorner &&
           isOfferableConnectorKind(entry.connectorType),
-        ...(row
+        ...(googleConnected
+          ? { paired: { status: 'connected' as const, helperName: 'Google Workspace',
+              onThisMachine: true } }
+          : row
           ? {
               paired: {
                 status: row.status,
@@ -5411,7 +5443,19 @@ export class DaemonService {
     const context = await this.offerContext(input.roomId, agentId);
     if (context.isCorner)
       throw new Error('connector offer is invalid: offer a tool from the Room, not from a corner');
+    if (connectorType.startsWith('google-') && context.addressee.pubkey !== context.owner.pubkey)
+      throw new Error('Google Workspace offer is invalid: this agent’s owner must connect it in Workbench');
     const connectorName = connectorDisplayName(connectorType);
+    const googleConnected = connectorType.startsWith('google-')
+      ? await this.database.query(
+          `SELECT 1 FROM google_oauth_accounts WHERE owner_identity_id=$1
+             AND sealed_grant IS NOT NULL AND granted_scopes @> $2::text[]`,
+          [context.addressee.pubkey,
+            GOOGLE_TOOL_SCOPES[connectorType as keyof typeof GOOGLE_TOOL_SCOPES]])
+      : null;
+    if (googleConnected?.rowCount) {
+      throw new Error(`${connectorName} is already connected; check workbench_status`);
+    }
     const already = (
       await this.database.query<{ status: string }>(
         `SELECT status FROM workspace_connectors

@@ -17,6 +17,7 @@ import { getWalletSource } from '@/buzz/wallet-source';
 import { resolveWalletWorkspaceId } from '@/buzz/wallet-workspace';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { GoogleEntryRow } from './workbench/GoogleEntryRow';
+import { GOOGLE_ACCOUNT_CONNECTOR_ID } from '@beeline/api-contract/workbench';
 import {
   appDetailLine,
   appInstrument,
@@ -122,7 +123,18 @@ export default function WorkbenchScreen() {
     `${getBuzzRuntimeConfig().monolithUrl}/v1/connectors/logo/${id}.svg`;
 
   const connectConnector = useCallback(
-    (connectorId: string) => {
+    async (connectorId: string) => {
+      if (connectorId === 'google' || isGoogleToolConnectorId(connectorId)) {
+        try {
+          const started = await getWorkbenchSource().beginGoogleSignIn({ workspaceId,
+            connectorType: (connectorId === 'google' ? 'google-calendar' : connectorId) as
+              'google-gmail' | 'google-calendar' | 'google-drive' | 'google-youtube' });
+          router.push({ pathname: '/beeline/settings/workbench/connect-signin',
+            params: { workspaceId, viewerId, connectorId: GOOGLE_ACCOUNT_CONNECTOR_ID,
+              connectorName: 'Google Workspace', method: 'oauth', url: started.authorizationUrl } } as Href);
+        } catch { setNetworkFailure('load'); }
+        return;
+      }
       router.push({
         pathname: '/beeline/settings/workbench/connect',
         params: { workspaceId, viewerId, connectorId },

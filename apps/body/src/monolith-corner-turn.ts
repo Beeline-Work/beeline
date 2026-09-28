@@ -51,7 +51,7 @@ import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import { registryMcpHostBindPaths, registryMcpHostDeclarations } from './registry-mcp.js';
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import { syncCornerBranch } from './corner-branch-sync.js';
-import { beelineAgentMcpServer, googleDriveMcpServer, youtubeMcpServer } from './room-session.js';
+import { beelineAgentMcpServer, googleDriveMcpServer, googlePersonalMcpServer, youtubeMcpServer } from './room-session.js';
 import { roomGoogleToolFingerprint, roomGoogleToolTokens } from './room-google-grant.js';
 import { institutionalContextForTurn } from './institutional-context.js';
 import {
@@ -1041,6 +1041,8 @@ export class MonolithCornerTurnLoop {
     if (youtube) servers.push(youtube);
     const drive = googleDriveMcpServer(this.options.config, googleTokens.drive, resourceAuthFile);
     if (drive) servers.push(drive);
+    const personal = googlePersonalMcpServer(this.options.config, googleTokens, resourceAuthFile);
+    if (personal) servers.push(personal);
     const grantedRouteServers = grantedHostRouteWires(
       mountedHostRoutes,
       operatorHome,

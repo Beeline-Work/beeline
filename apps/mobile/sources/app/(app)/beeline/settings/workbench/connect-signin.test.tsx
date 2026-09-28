@@ -203,6 +203,7 @@ describe('ConnectorSignInScreen', () => {
     expect(renderer.root.findAllByType('WebView')).toHaveLength(0);
     expect(renderer.root.findAllByType('Text').some((node: any) =>
       String(node.props.children).includes('Choose Advanced, then Go to Beeline'))).toBe(true);
+    expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith(searchParams.url);
     await act(async () => renderer.root.findByProps({ testID: 'signin-open-external' }).props.onPress());
     expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith(searchParams.url);
     await act(async () => renderer.unmount());
@@ -217,7 +218,7 @@ describe('ConnectorSignInScreen', () => {
     let renderer!: ReactTestRenderer;
     await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); });
     await act(async () => renderer.root.findByProps({ testID: 'signin-open-external' }).props.onPress());
-    expect(cancelGoogleSignIn).toHaveBeenCalledWith({ connectorId: 'connector-row-1' });
+    expect(cancelGoogleSignIn).toHaveBeenCalledWith({ connectorId: 'connector-row-1', state: 'cancelled' });
     expect(router.back).toHaveBeenCalled();
     await act(async () => renderer.unmount());
     vi.mocked(router.back).mockClear();
@@ -233,7 +234,7 @@ describe('ConnectorSignInScreen', () => {
     let renderer!: ReactTestRenderer;
     await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); });
     await act(async () => renderer.root.findByProps({ testID: 'signin-open-external' }).props.onPress());
-    expect(cancelGoogleSignIn).toHaveBeenCalledWith({ connectorId: 'connector-row-1' });
+    expect(cancelGoogleSignIn).toHaveBeenCalledWith({ connectorId: 'connector-row-1', state: 'completed' });
     expect(router.back).not.toHaveBeenCalled();
     await act(async () => renderer.unmount());
     cancelGoogleSignIn.mockClear();

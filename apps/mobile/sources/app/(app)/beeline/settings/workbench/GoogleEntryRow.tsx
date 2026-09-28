@@ -37,7 +37,9 @@ export function GoogleEntryRow({
   const entry = googleEntryConnector(connectors);
   if (!entry) return null;
   const tools = googleToolRows(connectors);
-  const targetId = resolveGoogleConnectTarget(connectors);
+  const targetId = entry.status === 'disconnected' &&
+    connectors.some(tool => tool.id === 'google-calendar' && tool.status !== 'connected')
+    ? 'google-calendar' : resolveGoogleConnectTarget(connectors);
   const target = tools.find((tool) => tool.id === targetId) ?? tools[0];
   const available = tools.some((tool) => tool.available);
   // The parent row is not a connector — never pass the folded "google" id.
@@ -123,7 +125,10 @@ export function GoogleEntryRow({
                 <SettingsRow
                   key={`${tool.id}-${control.action}`}
                   testID={`google-tool-${tool.id}-${control.action}`}
-                  title={control.label}
+                  title={control.action === 'disconnect' && tool.sharedGoogleAccount
+                    ? 'Disconnect Google Workspace' : control.label}
+                  description={control.action === 'disconnect' && tool.sharedGoogleAccount
+                    ? 'Removes access for all tools connected through this Google account.' : undefined}
                   tone={control.action === 'disconnect' ? 'destructive' : 'action'}
                   onPress={() =>
                     control.action === 'disconnect'

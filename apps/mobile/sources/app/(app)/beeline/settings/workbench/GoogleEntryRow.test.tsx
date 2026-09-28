@@ -107,7 +107,7 @@ it('shows Connect on the parent when no Google tool is connected', async () => {
   expect(parent.props.action).toBe('Connect');
   expect(parent.props.trailingPress.testID).toBe('google-entry-connect');
   await act(async () => parent.props.trailingPress.onPress());
-  expect(onPressConnect).toHaveBeenCalledWith('google-gmail');
+  expect(onPressConnect).toHaveBeenCalledWith('google-calendar');
   await act(async () => renderer.unmount());
 });
 
@@ -176,7 +176,8 @@ it('offers YouTube reconnect and disconnect from the adapter while connected', a
     { id: 'google-gmail', name: 'Gmail', description: 'Mail', available: true, status: 'connected' },
     { id: 'google-calendar', name: 'Calendar', description: 'Events', available: true, status: 'connected' },
     { id: 'google-drive', name: 'Drive', description: 'Files', available: true, status: 'connected' },
-    { id: 'google-youtube', name: 'YouTube', description: 'Videos', available: true, status: 'connected' },
+    { id: 'google-youtube', name: 'YouTube', description: 'Videos', available: true, status: 'connected',
+      sharedGoogleAccount: true },
   ];
   let renderer!: ReactTestRenderer;
   await act(async () => {
@@ -200,6 +201,8 @@ it('offers YouTube reconnect and disconnect from the adapter while connected', a
   );
   expect(
     renderer.root.findByProps({ testID: 'google-tool-google-youtube-disconnect' }).props.title,
-  ).toBe('Disconnect');
+  ).toBe('Disconnect Google Workspace');
+  expect(renderer.root.findByProps({ testID: 'google-tool-google-youtube-disconnect' }).props.description)
+    .toContain('all tools');
   await act(async () => renderer.unmount());
 });

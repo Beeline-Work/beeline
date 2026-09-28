@@ -67,12 +67,9 @@ export const GOOGLE_CONNECTOR_KINDS: readonly ConnectorKind[] = [
 /** Scope authority for the four independent Google product installs. */
 export const GOOGLE_TOOL_SCOPES = {
   'google-gmail': [
-    'https://www.googleapis.com/auth/gmail.send',
     'https://www.googleapis.com/auth/gmail.readonly',
-    'https://www.googleapis.com/auth/gmail.compose',
   ],
   'google-calendar': [
-    'https://www.googleapis.com/auth/calendar.events',
     'https://www.googleapis.com/auth/calendar.readonly',
   ],
   'google-drive': ['https://www.googleapis.com/auth/drive.readonly'],
@@ -187,6 +184,9 @@ export type WorkbenchHelperView = {
 export type WorkbenchView = {
   readonly workspaceId: string;
   readonly catalog: readonly WorkbenchCatalogEntry[];
+  /** Server-owned Google sign-in, independent of helper selection. */
+  readonly googleAccount?: { readonly connected: boolean; readonly pending: boolean;
+    readonly connectedTypes: readonly string[] };
   /** The VIEWER's connectors. Another member's connectors are never visible. */
   readonly connectors: readonly WorkbenchConnectorView[];
   /** The VIEWER's connections. Another member's connections are never visible. */
@@ -223,7 +223,9 @@ export type PairConnectorResult = {
 };
 export type CancelGoogleSignInInput = {
   readonly connectorId: string;
+  readonly state?: string;
 };
+export const GOOGLE_ACCOUNT_CONNECTOR_ID = 'google-account';
 /**
  * Workbench → Connect an app. The server resolves and records the route, then
  * hands the sign-in or sign-up to the chosen machine's agent, which completes

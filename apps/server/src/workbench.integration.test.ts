@@ -1101,7 +1101,7 @@ describe('workbench connectors', () => {
       connectors: { connectorId: string; status: { status: string; signIn?: unknown } }[];
     };
     expect(view.connectors.find((row) => row.connectorId === paired.connectorId)?.status)
-      .toMatchObject({ status: 'error' });
+      .toMatchObject({ status: 'disconnected' });
     expect(view.connectors.find((row) => row.connectorId === paired.connectorId)?.status.signIn)
       .toBeUndefined();
     const retry = await phoneOperation('pairConnector', {
@@ -1129,6 +1129,7 @@ describe('workbench connectors', () => {
       accessToken: 'renewed-server-token', expiresAt: Date.now() + 3_600_000,
       scopes: ['https://www.googleapis.com/auth/drive.readonly'],
     });
+    const ownerGrant = vi.spyOn(GoogleOAuth.prototype, 'grantForOwner').mockResolvedValue(null);
     try {
       const connected = await daemonOperation('getRoomGoogleGrant', { roomId });
       expect(connected).toMatchObject({ status: 200, body: {
@@ -1136,6 +1137,19 @@ describe('workbench connectors', () => {
         credentials: { accessToken: 'renewed-server-token' },
       } });
       expect(grant).toHaveBeenCalledWith(paired.connectorId, HELPER);
+      ownerGrant.mockResolvedValue({ accessToken: 'calendar-token',
+        expiresAt: Date.now() + 3_600_000,
+        scopes: ['https://www.googleapis.com/auth/calendar.readonly'] });
+      expect(await daemonOperation('getRoomGoogleGrant', { roomId })).toMatchObject({
+        status: 200, body: { status: 'ready',
+          connectedTypes: expect.arrayContaining(['google-calendar', 'google-gmail']),
+          credentialsByType: {
+            'google-calendar': { accessToken: 'calendar-token' },
+            'google-gmail': { accessToken: 'renewed-server-token' },
+          },
+        },
+      });
+      ownerGrant.mockResolvedValue(null);
       const other = await daemonOperation('getRoomGoogleGrant', { roomId }, otherHelperToken);
       expect(other).toMatchObject({ status: 403, body: { error: 'daemon room access denied' } });
       await database.query(`UPDATE workspace_connectors SET status='disconnected' WHERE id=$1`,
@@ -1152,10 +1166,11 @@ describe('workbench connectors', () => {
       });
     } finally {
       grant.mockRestore();
+      ownerGrant.mockRestore();
     }
   });
 
-  it('keeps a Google retry error until the helper confirms the tool install', async () => {
+  it('clears a Google retry error before the helper confirms the tool install', async () => {
     const paired = (await phoneOperation('pairConnector', {
       workspaceId: WORKSPACE, connectorType: 'google-gmail', helperAgentId: HELPER,
     })) as { connectorId: string };
@@ -1170,7 +1185,7 @@ describe('workbench connectors', () => {
     const read = async () => (await database.query<{ status: string; status_error: string | null }>(
       `SELECT status,status_error FROM workspace_connectors WHERE id=$1`, [paired.connectorId]
     )).rows[0]!;
-    expect(await read()).toEqual({ status: 'installing', status_error: 'Gmail permission denied' });
+    expect(await read()).toEqual({ status: 'installing', status_error: null });
     const queue = await daemonOperation('getConnectorAssignments', {});
     const assignment = (queue.body.assignments as { connectorId: string;
       pairingGeneration: number }[]).find((row) => row.connectorId === paired.connectorId)!;
@@ -1178,7 +1193,7 @@ describe('workbench connectors', () => {
       connectorId: paired.connectorId, pairingGeneration: assignment.pairingGeneration,
       steps: [{ label: 'authorized with Google', status: 'done' }],
     });
-    expect(await read()).toEqual({ status: 'installing', status_error: 'Gmail permission denied' });
+    expect(await read()).toEqual({ status: 'installing', status_error: null });
     const installed = await daemonOperation('installConnector', {
       connectorId: paired.connectorId, pairingGeneration: assignment.pairingGeneration,
     });

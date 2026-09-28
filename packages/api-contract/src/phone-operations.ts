@@ -146,6 +146,12 @@ export type PhoneOperationMap = {
   readWorkbench: { input: ReadWorkbenchInput; output: WorkbenchView };
   pairConnector: { input: PairConnectorInput; output: PairConnectorResult };
   cancelGoogleSignIn: { input: CancelGoogleSignInInput; output: { cancelled: boolean } };
+  beginGoogleSignIn: { input: { connectorType: 'google-gmail' | 'google-calendar' | 'google-drive' | 'google-youtube' };
+    output: { authorizationUrl: string } };
+  readGoogleSignIn: { input: EmptyInput; output: {
+    connected: boolean; connectedTypes?: string[]; authorizationUrl?: string;
+  } };
+  disconnectGoogleSignIn: { input: EmptyInput; output: void };
   unpairConnector: { input: UnpairConnectorInput; output: void };
   /** The one front door for connecting an app from the Workbench. */
   connectWorkbenchApp: { input: ConnectWorkbenchAppInput; output: ConnectWorkbenchAppResult };
@@ -309,6 +315,8 @@ export type AcceptConnectorOfferResult = {
   readonly roomId: string;
   /** The Workbench connector row the acceptance created or re-armed. */
   readonly connectorId: string;
+  /** Google consent can open immediately without a helper ceremony. */
+  readonly authorizationUrl?: string;
 };
 export type AnswerChoiceInput = {
   readonly choiceId: string;

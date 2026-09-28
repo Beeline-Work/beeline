@@ -10,6 +10,7 @@ import { PageHeader } from '@/components/buzz/PageHeader';
 import { useSandboxWebView } from '@/components/buzz/sandbox-webview';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { connectorOfferCompletionRoute } from '@/buzz/connector-offer-ceremony';
+import { GOOGLE_ACCOUNT_CONNECTOR_ID } from '@beeline/api-contract/workbench';
 
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -51,6 +52,7 @@ export default function ConnectorSignInScreen() {
   const webView = useSandboxWebView();
   const [fellBack, setFellBack] = useState(false);
   const dismissedRef = useRef(false);
+  const openedUrlRef = useRef<string | null>(null);
   const insets = useSafeAreaInsets();
 
   const dismiss = useCallback(() => {
@@ -70,6 +72,7 @@ export default function ConnectorSignInScreen() {
             url: state.signIn.url,
             method: state.signIn.method,
           });
+          else if (connectorId === GOOGLE_ACCOUNT_CONNECTOR_ID && state) dismiss();
         })
         .catch(() => undefined);
     }, SIGN_IN_POLL_MS);
@@ -83,28 +86,41 @@ export default function ConnectorSignInScreen() {
       return '';
     }
   })();
+  const oauthState = (() => {
+    try { return new URL(currentSignIn.url).searchParams.get('state') ?? undefined; }
+    catch { return undefined; }
+  })();
 
   // Android may return from a Custom Tab with `opened`, not a close result.
   // Leaving this screen still retires its pending Google attempt.
   useEffect(() => () => {
     if (host === 'accounts.google.com') {
-      void getWorkbenchSource().cancelGoogleSignIn({ connectorId }).catch(() => undefined);
+      void getWorkbenchSource().cancelGoogleSignIn({ connectorId,
+        ...(oauthState ? { state: oauthState } : {}) }).catch(() => undefined);
     }
-  }, [connectorId, host]);
+  }, [connectorId, host, oauthState]);
 
   const openExternally = useCallback(async () => {
     if (!currentSignIn.url) return;
     const result = await WebBrowser.openBrowserAsync(currentSignIn.url);
     if (host === 'accounts.google.com' &&
       (result?.type === 'cancel' || result?.type === 'dismiss')) {
-      const cancelled = await getWorkbenchSource().cancelGoogleSignIn({ connectorId });
+      const cancelled = await getWorkbenchSource().cancelGoogleSignIn({ connectorId,
+        ...(oauthState ? { state: oauthState } : {}) });
       if (cancelled) {
         router.back();
         return;
       }
     }
     setFellBack(true);
-  }, [connectorId, currentSignIn.url, host]);
+  }, [connectorId, currentSignIn.url, host, oauthState]);
+
+  useEffect(() => {
+    if (host !== 'accounts.google.com' || !currentSignIn.url ||
+        openedUrlRef.current === currentSignIn.url) return;
+    openedUrlRef.current = currentSignIn.url;
+    void openExternally();
+  }, [currentSignIn.url, host, openExternally]);
 
   return (
     <View style={styles.scrim} testID="signin-overlay">
@@ -118,7 +134,8 @@ export default function ConnectorSignInScreen() {
         meta={[machineName, host].filter(Boolean).join(' · ') || undefined}
         onBack={() => {
           if (host === 'accounts.google.com') {
-            void getWorkbenchSource().cancelGoogleSignIn({ connectorId })
+            void getWorkbenchSource().cancelGoogleSignIn({ connectorId,
+              ...(oauthState ? { state: oauthState } : {}) })
               .finally(() => router.back());
           } else router.back();
         }}

@@ -1968,6 +1968,18 @@ CREATE TABLE IF NOT EXISTS google_oauth_grants (
   updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (workspace_id,owner_identity_id,machine_id)
 );
+-- Server-owned Google consent belongs to the person, before any helper is
+-- selected. Legacy per-machine grants above remain readable for old pairs.
+CREATE TABLE IF NOT EXISTS google_oauth_accounts (
+  owner_identity_id text PRIMARY KEY REFERENCES identities(id) ON DELETE CASCADE,
+  state text UNIQUE,
+  requested_scopes text[] NOT NULL DEFAULT '{}',
+  expires_at timestamptz,
+  claimed_at timestamptz,
+  sealed_grant text,
+  granted_scopes text[] NOT NULL DEFAULT '{}',
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS registry_mcp_oauth_attempts (
   state text PRIMARY KEY,
   connector_id uuid NOT NULL REFERENCES workspace_connectors(id) ON DELETE CASCADE,

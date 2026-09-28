@@ -272,6 +272,9 @@ export class MockWorkbenchSource implements WorkbenchSource {
   }
 
   async cancelGoogleSignIn(): Promise<boolean> { return true; }
+  async beginGoogleSignIn(): Promise<{ authorizationUrl: string }> {
+    return { authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth?state=mock' };
+  }
 
   async readInstallState(input: {
     workspaceId: string;

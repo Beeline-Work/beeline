@@ -365,7 +365,7 @@ import {
   takeCornerComposerDraft,
 } from '@/buzz/message-corner-forward';
 import { roomMemberManagementState } from '@/buzz/room-member-management';
-import { connectorOfferCeremonyRoute } from '@/buzz/connector-offer-ceremony';
+import { connectorOfferCeremonyRoute, continueGoogleOffer, googleOfferSignInRoute } from '@/buzz/connector-offer-ceremony';
 import { useIsDesktop } from '@/utils/responsive';
 import { isDesktopShell } from '@/utils/isDesktopShell';
 import {
@@ -3921,6 +3921,24 @@ export function BuzzChatSurface({
     [activeCommunityId, cacheViewerPubkey, decodedId],
   );
 
+  const continueConnectorOffer = useCallback(async (offerId: string,
+    connectorType: string, pairedConnectorId: string) => {
+    if (pairedConnectorId === 'google-account') {
+      try {
+        const route = await continueGoogleOffer({ workspaceId: activeCommunityId ?? '',
+          viewerId: cacheViewerPubkey, roomId: decodedId, offerId, pairedConnectorId },
+          () => monolithPhoneOperation('readGoogleSignIn', {}),
+          () => monolithPhoneOperation('acceptConnectorOffer', { offerId }));
+        if (route) router.push(route as Href);
+        else Modal.alert('Google sign-in unavailable', 'Tap Connect again to retry.');
+      } catch (error) {
+        Modal.alert('Could not resume Google sign-in', phoneOperationFailureReason(error));
+      }
+      return;
+    }
+    openConnectorOfferCeremony(offerId, connectorType, pairedConnectorId);
+  }, [activeCommunityId, cacheViewerPubkey, decodedId, openConnectorOfferCeremony]);
+
   /**
    * Start a connector-offer ceremony. The server holds the authority, pairs
    * the offering helper, and returns its row; the phone immediately routes
@@ -3933,7 +3951,16 @@ export function BuzzChatSurface({
       setConnectorOfferActionId(offerId);
       try {
         const accepted = await monolithPhoneOperation('acceptConnectorOffer', { offerId });
-        openConnectorOfferCeremony(offerId, connectorType, accepted.connectorId, accepted.roomId);
+        if (accepted.connectorId === 'google-account') {
+          const route = googleOfferSignInRoute({ workspaceId: activeCommunityId ?? '',
+            viewerId: cacheViewerPubkey, roomId: accepted.roomId, offerId,
+            pairedConnectorId: accepted.connectorId,
+            authorizationUrl: accepted.authorizationUrl });
+          if (route) router.push(route as Href);
+          else Modal.alert('Google sign-in unavailable', 'Tap Connect again to retry.');
+        } else {
+          openConnectorOfferCeremony(offerId, connectorType, accepted.connectorId, accepted.roomId);
+        }
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
         console.warn('Connector offer acceptance failed:', err);
@@ -3941,7 +3968,7 @@ export function BuzzChatSurface({
         setConnectorOfferActionId(null);
       }
     },
-    [connectorOfferActionId, openConnectorOfferCeremony, viewerIsAgent],
+    [activeCommunityId, cacheViewerPubkey, connectorOfferActionId, openConnectorOfferCeremony, viewerIsAgent],
   );
 
   /** The settled offer card's door to the Workbench page (Q3: one of its three remaining paths). */
@@ -5106,7 +5133,8 @@ export function BuzzChatSurface({
             viewerRole={viewerChannelRole}
             actionId={connectorOfferActionId}
             onAccept={handleAcceptConnectorOffer}
-            onContinue={openConnectorOfferCeremony}
+            onContinue={(offerId, connectorType, pairedConnectorId) =>
+              void continueConnectorOffer(offerId, connectorType, pairedConnectorId)}
             onOpenWorkbench={openWorkbench}
           />
         );

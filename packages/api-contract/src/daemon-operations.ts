@@ -330,6 +330,12 @@ export type DaemonOperationMap = {
   getRoomGoogleGrant: Operation<RoomInput, {
     readonly status: 'pending' | 'ready';
     readonly connectedTypes?: readonly string[];
+    /** A legacy helper connection and the owner's direct connection can coexist. */
+    readonly credentialsByType?: Readonly<Record<string, {
+      readonly accessToken: string;
+      readonly expiresAt: number;
+      readonly scopes: readonly string[];
+    }>>;
     readonly credentials?: {
       readonly accessToken: string;
       readonly expiresAt: number;

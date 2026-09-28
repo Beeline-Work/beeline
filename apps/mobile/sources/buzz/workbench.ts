@@ -41,6 +41,8 @@ export type WorkbenchConnector = {
   /** `soon` connectors are listed for the section's shape and never act. */
   available: boolean;
   status?: WorkbenchConnectorStatus;
+  /** Disconnecting this tool revokes the shared direct Google account grant. */
+  sharedGoogleAccount?: boolean;
   /** The helper's exact failure text. Recovery reuses Connect. */
   errorMessage?: string;
   /** When connected: helper name, agent count and sign-in email. */
@@ -267,8 +269,8 @@ export type GoogleEntryState = 'connected' | 'installing' | 'error' | 'repair' |
 export function googleEntryState(connectors: readonly WorkbenchConnector[]): GoogleEntryState {
   const tools = googleEntryTools(connectors);
   if (tools.length && tools.every((tool) => tool.status === 'connected')) return 'connected';
-  if (tools.some((tool) => tool.status === 'error')) return 'error';
   if (tools.some((tool) => tool.status === 'installing')) return 'installing';
+  if (tools.some((tool) => tool.status === 'error')) return 'error';
   if (tools.some((tool) => tool.status === 'connected')) return 'repair';
   return 'connect';
 }

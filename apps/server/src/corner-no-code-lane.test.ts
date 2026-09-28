@@ -6,6 +6,8 @@ import { PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
+import { GitHubOperations } from './github-operations.js';
+import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 
 /**
@@ -259,7 +261,7 @@ it('upgrades one repository-backed human corner on its explicit human code reque
     lane: 'code',
     owner_agent_id: AGENT,
     commissioned_by: HUMAN,
-    feature_branch: null,
+    feature_branch: `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`,
   });
   const afterMessages = await db.query<{ id: string; text: string }>(
     `SELECT id,text FROM messages WHERE room_id=$1 ORDER BY created_at,id`,
@@ -418,6 +420,54 @@ it('leaves an agent-opened corner with its original opener when another agent up
     ).rows[0],
   ).toMatchObject({ owner_agent_id: AGENT, lane: 'code' });
   expect(await pending(cornerId, AGENT2)).toMatchObject([{ reason: 'corner_lane_upgrade' }]);
+});
+
+it("delivers GitHub's pull request to a corner another agent upgraded", async () => {
+  // The upgrading agent is not the recorded opener, so its restart never
+  // records the branch; the upgrade itself has to.
+  const cornerId = await open(CODE_ROOM, 'no_code', 'owner/widgets');
+  await upgrade(cornerId, AGENT2);
+  await db.query(
+    `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
+     VALUES(77,$1,'42','owner','User','selected','active') ON CONFLICT DO NOTHING`,
+    [HUMAN],
+  );
+  await db.query(
+    `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch)
+     VALUES(101,77,'owner/widgets','main') ON CONFLICT DO NOTHING`,
+  );
+  await db.query(`UPDATE rooms SET github_installation_id=77 WHERE id=$1`, [CODE_ROOM]);
+  const branch = `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`;
+  const github = new GitHubOperations(db, {} as GitHubOAuthClient, {} as GitHubAppClient, 's');
+
+  await github.processWebhook('pull_request', {
+    action: 'opened',
+    installation: { id: 77 },
+    repository: { full_name: 'owner/widgets' },
+    pull_request: {
+      number: 7,
+      title: 'Ship it',
+      html_url: 'https://github.com/owner/widgets/pull/7',
+      head: { ref: branch, sha: '1'.repeat(40) },
+      base: { ref: 'main', sha: '2'.repeat(40) },
+      mergeable_state: 'clean',
+      merged: false,
+    },
+  });
+
+  expect(
+    (
+      await db.query<{ lifecycle: Record<string, unknown> }>(
+        `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+        [cornerId],
+      )
+    ).rows[0]?.lifecycle,
+  ).toMatchObject({
+    lifecycle: 'in-review',
+    branch,
+    checks: 'unknown',
+    pr: { number: 7, url: 'https://github.com/owner/widgets/pull/7' },
+  });
 });
 
 it('carries the corner discussion into a first brief the human ask approves', async () => {

@@ -35,6 +35,13 @@ const notificationApi = vi.hoisted(() => ({
   dismissNotificationAsync: vi.fn(async () => undefined),
   setBadgeCountAsync: vi.fn(async () => true),
 }));
+const account = vi.hoisted(() => ({
+  clearSession: vi.fn(async () => undefined),
+  clearIdentity: vi.fn(async () => undefined),
+  clearGitHub: vi.fn(async () => undefined),
+  clearSurface: vi.fn(),
+  deleteAccount: vi.fn(async () => undefined),
+}));
 
 const focus = vi.hoisted(() => ({ refocus: undefined as undefined | (() => void) }));
 const workbench = vi.hoisted(() => ({ readWorkbench: vi.fn() }));
@@ -65,6 +72,10 @@ vi.mock('expo-updates', () => ({
   checkForUpdateAsync: vi.fn(),
   fetchUpdateAsync: vi.fn(),
   reloadAsync: vi.fn(),
+}));
+vi.mock('@/auth/monolith-session', () => ({ monolithSession: { clear: account.clearSession } }));
+vi.mock('@/auth/github-auth-session', () => ({
+  clearPendingGitHubSignInState: account.clearGitHub,
 }));
 vi.mock('expo-notifications', () => notificationApi);
 vi.mock('expo-haptics', () => ({
@@ -113,7 +124,7 @@ vi.mock('@/sync/transport/room-view-client', () => ({
 }));
 vi.mock('@/auth/buzz-identity-storage', () => ({
   getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
-  clearBuzzIdentity: vi.fn(async () => undefined),
+  clearBuzzIdentity: account.clearIdentity,
   loadBuzzIdentity: vi.fn(async () => ({
     publicKey: 'a'.repeat(64),
     secretKey: new Uint8Array(32).fill(1),
@@ -171,6 +182,7 @@ vi.mock('@/utils/open-external-url', () => ({ openExternalUrl: vi.fn(async () =>
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     ensureClient = vi.fn(async () => client);
+    deleteAccount = account.deleteAccount;
   },
 }));
 vi.mock('@/components/buzz/PushLevelSetting', async () => {
@@ -217,7 +229,7 @@ vi.mock('@/push/buzz-push-registration', () => pushModule);
 vi.mock('@/push/push-level-storage', () => ({ saveStoredPushLevel: vi.fn(async () => undefined) }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
 vi.mock('@/sync/pushRegistration', () => permissionInfo);
-vi.mock('@/buzz/surface-storage', () => ({ clearMobileSurfaceStorage: vi.fn() }));
+vi.mock('@/buzz/surface-storage', () => ({ clearMobileSurfaceStorage: account.clearSurface }));
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: {
     create: (styles: unknown) =>
@@ -390,5 +402,56 @@ describe('Reproduction R-1: the Settings Workbench row re-reads on focus', () =>
     expect(workbenchRow(renderer).props.description).toBeUndefined();
     act(() => workbenchRow(renderer).props.onPress());
     expect(navigation.push).toHaveBeenCalledWith('/beeline/settings/workbench');
+  });
+});
+
+describe('Settings account actions', () => {
+  it('signs out on the first tap and keeps every local cleanup step', async () => {
+    const renderer = await renderScreen();
+    await act(async () =>
+      renderer.root.findByProps({ testID: 'sign-out-setting' }).props.onPress(),
+    );
+    expect(account.clearSession).toHaveBeenCalledOnce();
+    expect(account.clearIdentity).toHaveBeenCalledOnce();
+    expect(account.clearGitHub).toHaveBeenCalledOnce();
+    expect(account.clearSurface).toHaveBeenCalledOnce();
+    expect(navigation.replace).toHaveBeenCalledWith('/beeline/onboarding');
+    expect(headings(renderer)).not.toContain('Remove this identity from this device?');
+  });
+
+  it('shows the exact delete prompt with visible Yes and Cancel before deleting', async () => {
+    const renderer = await renderScreen();
+    await act(async () =>
+      renderer.root.findByProps({ testID: 'delete-account-setting' }).props.onPress(),
+    );
+    expect(headings(renderer)).toContain(
+      'deleting your account will delete all your data. this action is irrevocable. confirm?',
+    );
+    expect(renderer.root.findByProps({ testID: 'delete-account-yes' }).props.disabled).toBe(false);
+    expect(renderer.root.findByProps({ testID: 'delete-account-cancel' }).props.disabled).toBe(
+      false,
+    );
+    expect(headings(renderer)).toContain('Yes');
+    expect(headings(renderer)).toContain('Cancel');
+    expect(account.deleteAccount).not.toHaveBeenCalled();
+    await act(async () =>
+      renderer.root.findByProps({ testID: 'delete-account-setting' }).props.onPress(),
+    );
+    expect(account.deleteAccount).not.toHaveBeenCalled();
+
+    await act(async () =>
+      renderer.root.findByProps({ testID: 'delete-account-cancel' }).props.onPress(),
+    );
+    expect(account.deleteAccount).not.toHaveBeenCalled();
+    expect(renderer.root.findAllByProps({ testID: 'delete-account-yes' })).toHaveLength(0);
+
+    await act(async () =>
+      renderer.root.findByProps({ testID: 'delete-account-setting' }).props.onPress(),
+    );
+    await act(async () =>
+      renderer.root.findByProps({ testID: 'delete-account-yes' }).props.onPress(),
+    );
+    expect(account.deleteAccount).toHaveBeenCalledOnce();
+    expect(navigation.replace).toHaveBeenCalledWith('/beeline/onboarding');
   });
 });

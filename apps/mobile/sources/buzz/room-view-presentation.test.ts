@@ -55,6 +55,47 @@ describe('Room view presentation', () => {
     expect(duplicate).toBe(ordered);
   });
 
+  it('keeps earlier corner work rows on screen while live updates arrive', () => {
+    const corner: RoomView = { ...emptyRoom(), parent: { id: 'parent', name: 'Parent' } };
+    const output = (id: string, createdAt: number): RoomViewMessage => ({
+      id,
+      text: '',
+      createdAt,
+      author: { pubkey: 'agent', kind: 'agent', name: 'Greeter' },
+      presentation: 'activity',
+      requestId: 'request',
+      activity: [{ kind: 'output', title: 'Update', text: id }],
+    });
+    // Each saved row moves the working turn's timestamp forward on the server.
+    const live = [1, 2, 3].reduce(
+      (view, at) =>
+        reconcileRoomTurnDelta(reconcileRoomMessageDelta(view, output(`update-${at}`, at)), {
+          requestId: 'request',
+          agentPubkey: 'agent',
+          status: 'working',
+          createdAt: at,
+        }),
+      corner,
+    );
+
+    expect(roomViewTranscriptMessages(live).map((message) => message.id)).toEqual([
+      'update-1',
+      'update-2',
+      'update-3',
+    ]);
+    const settled = reconcileRoomTurnDelta(live, {
+      requestId: 'request',
+      agentPubkey: 'agent',
+      status: 'complete',
+      createdAt: 4,
+    });
+    expect(roomViewTranscriptMessages(settled).map((message) => message.id)).toEqual([
+      'update-1',
+      'update-2',
+      'update-3',
+    ]);
+  });
+
   it('does not let a reordered working delta regress the same completed turn', () => {
     const base = emptyRoom();
     const working = {

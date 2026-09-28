@@ -8105,10 +8105,11 @@ export class PhoneService {
     // Settled corner work rows survive the turn (#804): tools and the agent's
     // own interim prose share the additive activity payload, under its own cap
     // so neither crowds out the message window. The wire field keeps its
-    // historical `toolRows` name for compatibility with shipped phones.
-    const cornerActivityMessages = cornerActivityRows.map((row) =>
-      projectedMessage(row, this.publicOrigin, viewerId),
-    );
+    // historical `toolRows` name for compatibility with shipped phones. Rows go
+    // oldest first because a shipped phone keeps only the last 60 it receives.
+    const cornerActivityMessages = cornerActivityRows
+      .map((row) => projectedMessage(row, this.publicOrigin, viewerId))
+      .reverse();
     const byId = new Map(
       collapsePermissionCards([...transcript.reverse(), ...liveActivity.reverse()]).map(
         (message) => [message.id, message],

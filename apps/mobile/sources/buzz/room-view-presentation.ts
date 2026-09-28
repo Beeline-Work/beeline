@@ -15,6 +15,7 @@ import type {
 import {
   ROOM_VIEW_AGENT_LIMIT,
   ROOM_VIEW_MESSAGE_LIMIT,
+  ROOM_VIEW_TOOL_ROW_LIMIT,
   type SystemEvent,
   type SystemSubject,
 } from '@beeline/api-contract/phone';
@@ -170,16 +171,36 @@ export function reconcileRoomView(previous: RoomView | null, next: RoomView): Ro
   }) as RoomView;
 }
 
-/** Merge one server-projected committed message into the bounded Room window. */
+function byMessageTime(left: RoomViewMessage, right: RoomViewMessage): number {
+  return (
+    (left.createdAtMs ?? left.createdAt * 1_000) - (right.createdAtMs ?? right.createdAt * 1_000) ||
+    left.id.localeCompare(right.id)
+  );
+}
+
+/** A settled corner tool or output row, which the full read returns in `toolRows`. */
+function isCornerWorkRow(message: RoomViewMessage): boolean {
+  return (
+    message.presentation === 'activity' &&
+    !message.durableFact &&
+    Boolean(message.activity?.some((item) => item.kind === 'tool' || item.kind === 'output'))
+  );
+}
+
+/** Merge one server-projected committed message into the bounded Room window.
+ * A corner work row also joins `toolRows`, as the next full read returns it, so
+ * the turn delta that prunes live activity cannot take it off screen. */
 export function reconcileRoomMessageDelta(view: RoomView, message: RoomViewMessage): RoomView {
   const messages = [...view.messages.filter((candidate) => candidate.id !== message.id), message]
-    .sort(
-      (left, right) =>
-        (left.createdAtMs ?? left.createdAt * 1_000) -
-          (right.createdAtMs ?? right.createdAt * 1_000) || left.id.localeCompare(right.id),
-    )
+    .sort(byMessageTime)
     .slice(-ROOM_VIEW_MESSAGE_LIMIT);
-  return reconcileRoomView(view, { ...view, messages });
+  const toolRows =
+    view.parent && isCornerWorkRow(message)
+      ? [...(view.toolRows ?? []).filter((candidate) => candidate.id !== message.id), message]
+          .sort(byMessageTime)
+          .slice(-ROOM_VIEW_TOOL_ROW_LIMIT)
+      : view.toolRows;
+  return reconcileRoomView(view, { ...view, messages, ...(toolRows ? { toolRows } : {}) });
 }
 
 /** Merge the server's latest persisted turn for one agent. Terminal state also

@@ -86,8 +86,10 @@ export type CornerState = 'working' | 'waiting' | 'review' | 'archived';
 export type CornerStateReason = 'failed' | 'checks-failed' | 'question';
 
 export const ROOM_VIEW_MESSAGE_LIMIT = 30;
-/** Kept separate from the conversation window for settled corner tool activity. */
-export const ROOM_VIEW_TOOL_ROW_LIMIT = 60;
+/** Kept separate from the conversation window for settled corner tool activity.
+ * Phones before this limit was raised keep only the last 60 rows they receive,
+ * so the server sends these rows oldest first. */
+export const ROOM_VIEW_TOOL_ROW_LIMIT = 200;
 export const ROOM_VIEW_BRIEFING_LIMIT = 10;
 export const ROOM_VIEW_WORKSPACE_LIMIT = 50;
 export const ROOM_VIEW_CHAT_LIMIT = 200;

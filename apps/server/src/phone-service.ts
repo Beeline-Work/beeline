@@ -7256,6 +7256,7 @@ export class PhoneService {
         connected: googleAccount.connected,
         pending: Boolean(googleAccount.authorizationUrl),
         connectedTypes: googleAccount.connectedTypes,
+        ...(googleAccount.accountEmail ? { accountEmail: googleAccount.accountEmail } : {}),
       } } : {}),
       catalog: connectorCatalog().map((entry) =>
         isGoogleToolConnectorKind(entry.connectorType) && !this.googleOAuth

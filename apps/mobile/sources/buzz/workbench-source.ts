@@ -187,6 +187,7 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
               return { ...toConnector({ connectorType: entry.connectorType, name: entry.name,
                 available: true, row }), available: true,
                 sharedGoogleAccount: dto.googleAccount.connectedTypes.includes(entry.connectorType),
+                signedInAs: dto.googleAccount.accountEmail,
                 status: dto.googleAccount.connectedTypes.includes(entry.connectorType)
                   || row?.status.status === 'connected'
                   ? 'connected' as const : dto.googleAccount.pending ? 'installing' as const

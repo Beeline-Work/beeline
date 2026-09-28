@@ -252,7 +252,10 @@ describe('ConnectorSignInScreen', () => {
     await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); });
     expect(cancelGoogleSignIn).toHaveBeenCalledWith({ connectorId: 'connector-row-1', state: 'cancelled' });
     expect(WebBrowser.dismissAuthSession).toHaveBeenCalled();
-    expect(router.replace).toHaveBeenCalledWith('/beeline/settings/workbench');
+    expect(router.replace).toHaveBeenCalledWith(expect.objectContaining({
+      pathname: '/beeline/settings/workbench',
+      params: expect.objectContaining({ googleNotice: 'incomplete' }),
+    }));
     expect(storedReturn.size).toBe(0);
     await act(async () => renderer.unmount());
   });
@@ -275,7 +278,10 @@ describe('ConnectorSignInScreen', () => {
     await act(async () => { finish({ type: 'dismiss' }); });
     expect(cancelGoogleSignIn).toHaveBeenCalledWith({ connectorId: 'connector-row-1',
       state: 'backgrounded' });
-    expect(router.replace).toHaveBeenCalledWith('/beeline/settings/workbench');
+    expect(router.replace).toHaveBeenCalledWith(expect.objectContaining({
+      pathname: '/beeline/settings/workbench',
+      params: expect.objectContaining({ googleNotice: 'incomplete' }),
+    }));
     await act(async () => renderer.unmount());
   });
 
@@ -312,6 +318,22 @@ describe('ConnectorSignInScreen', () => {
     delete (searchParams as typeof searchParams & { roomId?: string }).roomId;
   });
 
+  it('returns a denied Workbench callback to a quiet Connect action', async () => {
+    storedReturn.set('beeline.google-auth-return.v1', JSON.stringify({
+      state: 'denied', workspaceId: 'workspace-1', viewerId: 'viewer-1',
+    }));
+    searchParams.oauthReturn = 'denied';
+    searchParams.url = '';
+    readInstallState.mockResolvedValueOnce({ connected: false, steps: [], signIn: null });
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); });
+    expect(router.replace).toHaveBeenCalledWith({
+      pathname: '/beeline/settings/workbench',
+      params: { workspaceId: 'workspace-1', viewerId: 'viewer-1', googleNotice: 'incomplete' },
+    });
+    await act(async () => renderer.unmount());
+  });
+
   it('retires a failed session and a manual back without leaving the browser live', async () => {
     searchParams.url = 'https://accounts.google.com/o/oauth2/v2/auth?state=failed';
     vi.mocked(WebBrowser.openAuthSessionAsync).mockRejectedValueOnce(new Error('browser unavailable'));
@@ -328,7 +350,9 @@ describe('ConnectorSignInScreen', () => {
     await act(async () => renderer.root.findByProps({ testID: 'signin-header' }).props.onBack());
     expect(cancelGoogleSignIn).toHaveBeenCalledWith({ connectorId: 'connector-row-1', state: 'failed' });
     expect(WebBrowser.dismissAuthSession).toHaveBeenCalled();
-    expect(router.back).toHaveBeenCalled();
+    expect(router.replace).toHaveBeenCalledWith(expect.objectContaining({
+      pathname: '/beeline/settings/workbench',
+    }));
     await act(async () => renderer.unmount());
   });
 
@@ -345,7 +369,10 @@ describe('ConnectorSignInScreen', () => {
       expect(await readInstallState.mock.results[0]!.value).toEqual({ connected: false, signIn: undefined });
       await act(async () => { await Promise.resolve(); });
       expect(WebBrowser.dismissAuthSession).toHaveBeenCalled();
-      expect(router.replace).toHaveBeenCalledWith('/beeline/settings/workbench');
+      expect(router.replace).toHaveBeenCalledWith(expect.objectContaining({
+        pathname: '/beeline/settings/workbench',
+        params: expect.objectContaining({ googleNotice: 'incomplete' }),
+      }));
       await act(async () => renderer.unmount());
       vi.mocked(router.replace).mockClear();
       vi.mocked(WebBrowser.dismissAuthSession).mockClear();
@@ -355,7 +382,10 @@ describe('ConnectorSignInScreen', () => {
         await Promise.resolve();
       });
       expect(WebBrowser.dismissAuthSession).toHaveBeenCalled();
-      expect(router.replace).toHaveBeenCalledWith('/beeline/settings/workbench');
+      expect(router.replace).toHaveBeenCalledWith(expect.objectContaining({
+        pathname: '/beeline/settings/workbench',
+        params: expect.objectContaining({ googleNotice: 'incomplete' }),
+      }));
       await act(async () => renderer.unmount());
     } finally {
       vi.useRealTimers();
@@ -386,7 +416,7 @@ describe('ConnectorSignInScreen', () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
       expect(renderer.root.findByProps({ testID: 'signin-card' })).toBeTruthy();
       expect(renderer.root.findByProps({ testID: 'signin-header' }).props.meta)
-        .toBe('squire-box · login.tailscale.com');
+        .toBeUndefined();
       await act(async () => renderer.root.findByProps({ testID: 'signin-open-external' }).props.onPress());
       expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://login.tailscale.com/a/second');
       await act(async () => renderer.unmount());
@@ -427,7 +457,7 @@ describe('ConnectorSignInScreen', () => {
     const header = renderer.root.findByProps({ testID: 'signin-header' });
     expect(header.props.eyebrow).toBe('Workbench');
     expect(header.props.title).toBe('Sign in to Tailscale');
-    expect(header.props.meta).toBe('squire-box · login.tailscale.com');
+    expect(header.props.meta).toBeUndefined();
     await act(async () => renderer.unmount());
   });
 });

@@ -134,6 +134,7 @@ export default function ConnectionDetailScreen() {
       <PageHeader
         backAccessibilityLabel="Back to Workbench"
         eyebrow="Workbench"
+        prominent
         onBack={() => router.back()}
         testID="connection-header"
         title={headerTitle}

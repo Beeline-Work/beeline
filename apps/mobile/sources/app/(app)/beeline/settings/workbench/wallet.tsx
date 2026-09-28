@@ -127,7 +127,7 @@ export default function WalletScreen() {
     <PageHeader
       backAccessibilityLabel="Back to Workbench"
       eyebrow="Workbench"
-      meta="Coinbase CDP Server Wallet"
+      prominent
       onBack={() => router.back()}
       testID="wallet-header"
       title="Wallet"

@@ -73,6 +73,7 @@ export default function ConnectAppScreen() {
       <PageHeader
         backAccessibilityLabel="Back to Workbench"
         eyebrow="Workbench"
+        prominent
         onBack={() => router.back()}
         testID="connect-app-header"
         title="Connect an app"

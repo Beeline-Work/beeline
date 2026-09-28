@@ -64,8 +64,10 @@ it('shows four independent Google install actions and statuses', async () => {
   expect(parent.props.leading.props.company).toBe('google');
   expect(parent.props.leading.props.domain).toBe('google.com');
   expect(parent.props.leading.props.testID).toBe('google-entry-mark');
-  expect(parent.props.value).toBe('installing');
-  expect(parent.props.action).toBeUndefined();
+  expect(parent.props.value).toBeUndefined();
+  expect(parent.props.description).toBe('Scope refused');
+  expect(parent.props.descriptionTone).toBe('danger');
+  expect(parent.props.action).toBe('Connect');
   await act(async () => parent.props.onPress());
   expect(renderer.root.findByProps({ testID: 'google-tool-google-gmail' }).props.value).toBe('connected');
   expect(renderer.root.findByProps({ testID: 'google-tool-google-drive' }).props.leading.props.avatarUrl)

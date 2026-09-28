@@ -655,19 +655,21 @@ export function useRoomSurfaceSession({
             }
             if (live.type === 'subscribed') {
               markRoomOpen('subscribed', live.roomId);
-              // This watch's first frame is listen-ready, and the read
-              // startAfter then issues is the one covering read of the open.
-              // A later frame on this same watch is a reconnect and must
-              // reread. When the read gave up waiting and ran first, its
-              // snapshot predates this lane, so the frame that finally
-              // arrives is the only thing that can cover it.
+              // This watch's first frame is listen-ready. A later frame on
+              // this same watch is a reconnect and must reread. The opening
+              // read runs alongside the watch, so its snapshot may predate
+              // this lane: one follow-up read covers that gap without
+              // discarding the opening read still in flight.
               if (handshakeSeen) {
                 if (hasPainted) visibleScheduler()?.force();
                 return;
               }
               handshakeSeen = true;
               listenReady?.();
-              if (readRacedAhead) visibleScheduler()?.force();
+              if (readRacedAhead) {
+                markRoomOpen('covering-read');
+                visibleScheduler()?.followUp();
+              }
               return;
             }
             if (live.type === 'message-delta' || live.type === 'turn-delta') {
@@ -731,6 +733,8 @@ export function useRoomSurfaceSession({
             if (live.type === 'invalidate') {
               // A child corner's list status: this Room's own read does not change.
               if (live.reason === 'corner-status') return;
+              // Its invalidation's deliveryId already reread this Room.
+              if (live.reconcilesDelivery) return;
               if (live.trace) {
                 const received = {
                   ...live.trace,
@@ -1103,8 +1107,15 @@ export function useRoomSurfaceSession({
           scheduler.refreshNow();
           await scheduler.startAfter(Promise.resolve());
         } else {
+          // The opening read starts with the watch instead of waiting up to
+          // SUBSCRIBE_HANDSHAKE_TIMEOUT_MS for its first frame; that frame
+          // then asks for the covering read.
+          watchStarted = true;
+          readRacedAhead = true;
           markRoomOpen('watch-install');
-          await scheduler.startAfter(installWatch());
+          const watchReady = installWatch();
+          scheduler.refreshNow();
+          await Promise.all([scheduler.startAfter(Promise.resolve()), watchReady]);
         }
         markRoomOpen('watch-ready');
       } catch (error) {

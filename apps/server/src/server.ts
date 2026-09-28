@@ -33,7 +33,13 @@ const MAX_JSON_BYTES = 1024 * 1024;
 // A reconnecting helper may send all of its Room subscriptions at once. Keep
 // those reads outside pg-pool's queue, where they would otherwise time out and
 // amplify the reconnect. Older helpers need no new protocol to use this gate.
-const MAX_LIVE_DB_TASKS = 2;
+// The gate scales with the machine's app pool and leaves four of its
+// connections to ordinary requests, so live work never takes all of them.
+const MIN_LIVE_DB_TASKS = 2;
+const LIVE_DB_RESERVED_APP_CONNECTIONS = 4;
+export function maxLiveDbTasks(appConnections: number | undefined): number {
+  return Math.max(MIN_LIVE_DB_TASKS, (appConnections ?? 0) - LIVE_DB_RESERVED_APP_CONNECTIONS);
+}
 const MAX_LIVE_WAITING_TASKS = 512;
 const MAX_LIVE_SOCKET_TASKS = 8_192;
 const MAX_LIVE_SOCKET_QUEUED_BYTES = 2 * 1024 * 1024;
@@ -212,6 +218,7 @@ export function createBeelineServer(options: ServerOptions): Server {
   const helperVersionGate = options.helperVersionGate ??
     new HelperVersionGate(process.env.BEELINE_MIN_HELPER_VERSION);
   const webSockets = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
+  const liveDbTaskLimit = maxLiveDbTasks(options.databaseBudget?.app);
   let liveDbTasks = 0;
   const liveDbWaiters: Array<() => void> = [];
   const socketCounts = new Map<string, number>();
@@ -237,7 +244,7 @@ export function createBeelineServer(options: ServerOptions): Server {
     else liveDbTasks--;
   };
   const acquireLiveDbTask = async (): Promise<() => void> => {
-    if (liveDbTasks < MAX_LIVE_DB_TASKS) {
+    if (liveDbTasks < liveDbTaskLimit) {
       liveDbTasks++;
       return releaseLiveDbTask;
     }
@@ -815,13 +822,18 @@ export function createBeelineServer(options: ServerOptions): Server {
                   trace && options.livePaintDiagnostics && typeof trace.startedAt !== 'number'
                     ? ({ ...trace, paintAck: 'database-clock' as const } satisfies LiveTrace)
                     : trace;
+                const deliveryId = wireTrace?.id ?? randomUUID();
+                const invalidationSent = !committedRow;
+                // A deleted row or a failed read has no delta to follow the
+                // invalidation. Lists that wait for that delta still need a
+                // read; a Room already reread on the invalidation's deliveryId.
+                // A row that exists but projects no delta changes no list.
                 const fallback = {
                   ...wireEvent,
                   ...(wireTrace ? { trace: wireTrace } : {}),
                   reason: `delta-fallback:${event.reason}`,
+                  ...(invalidationSent ? { reconcilesDelivery: deliveryId } : {}),
                 };
-                const deliveryId = wireTrace?.id ?? randomUUID();
-                const invalidationSent = !committedRow;
                 if (invalidationSent && client.readyState === client.OPEN) {
                   rememberPaintTrace(wireTrace);
                   sendLive(
@@ -867,7 +879,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                     if (client.readyState !== client.OPEN) return;
                     if ('error' in result) throw result.error;
                     rememberPaintTrace(wireTrace);
-                    if (!result.delta && invalidationSent) return;
+                    if (!result.delta && invalidationSent && event.operation !== 'DELETE') return;
                     sendLive(
                       JSON.stringify(
                         result.delta
@@ -885,7 +897,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                       '[live] committed row delivery failed',
                       error instanceof Error ? error.message : String(error),
                     );
-                    if (!invalidationSent && client.readyState === client.OPEN) {
+                    if (client.readyState === client.OPEN) {
                       rememberPaintTrace(wireTrace);
                       sendLive(JSON.stringify(fallback));
                     }

@@ -7,6 +7,7 @@ import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transpo
 
 const deck = vi.hoisted(() => ({
   appState: 'active' as string,
+  appStateListeners: [] as Array<(state: string) => void>,
   bottomInset: 0,
   chatsReads: 0,
   chatsResponse: null as unknown,
@@ -36,7 +37,14 @@ vi.mock('react-native', async () => {
     ReactModule.createElement(name, props, props.children);
   return {
     AppState: {
-      addEventListener: () => ({ remove: () => undefined }),
+      addEventListener: (_type: string, listener: (state: string) => void) => {
+        deck.appStateListeners.push(listener);
+        return {
+          remove: () => {
+            deck.appStateListeners = deck.appStateListeners.filter((entry) => entry !== listener);
+          },
+        };
+      },
       get currentState() {
         return deck.appState;
       },
@@ -194,6 +202,33 @@ function chatList(latest: { id: string; text: string; createdAt: number }): Chat
   };
 }
 
+function room(id: string, latestAt: number, extra: Partial<ChatListItem> = {}): ChatListItem {
+  return {
+    room: {
+      id,
+      workspaceId: 'workspace',
+      name: id,
+      archived: false,
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    latestMessage: { id: `${id}-latest`, text: 'hello', createdAt: latestAt, author: agent },
+    unread: false,
+    ...extra,
+  };
+}
+
+function listOf(chats: ChatListItem[], extra: Partial<ChatListView> = {}): ChatListView {
+  return {
+    workspace: { id: 'workspace', name: 'Work', role: 'member', updatedAt: 1 },
+    chats,
+    viewer,
+    truncated: false,
+    watchFilters: [{ '#h': chats.map((item) => item.room.id) }],
+    ...extra,
+  };
+}
+
 function paintedRows(renderer: ReactTestRenderer): ChatListItem[] {
   const list = renderer.root.find(
     (node: { type: unknown; props: { testID?: string } }) =>
@@ -225,6 +260,7 @@ async function mountDeck(): Promise<ReactTestRenderer> {
 
 beforeEach(() => {
   deck.appState = 'active';
+  deck.appStateListeners = [];
   deck.bottomInset = 0;
   deck.chatsReads = 0;
   deck.reconnects = 0;
@@ -387,6 +423,90 @@ describe('Room deck live path', () => {
     expect(deck.chatsReads).toBe(readsAtRest);
     await act(async () => renderer.unmount());
   });
+
+  it('reads the list when a corner under a Room changes working or waiting state', async () => {
+    const renderer = await mountDeck();
+    const readsAtRest = deck.chatsReads;
+
+    await act(async () =>
+      roomWatch().emit({
+        monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'corner-status' },
+      }),
+    );
+    await quiet();
+
+    expect(deck.chatsReads).toBe(readsAtRest + 1);
+    await act(async () => renderer.unmount());
+  });
+
+  it('keeps the last known unread dot and corners when the server could not read them', async () => {
+    deck.chatsResponse = listOf([
+      room('room-a', 10, {
+        unread: true,
+        cornerCount: 2,
+        waitingCornerCount: 1,
+        openCorners: [{ id: 'corner-1', name: 'fix', state: 'waiting' }],
+      }),
+    ]);
+    const renderer = await mountDeck();
+    expect(paintedRows(renderer)[0]).toMatchObject({ unread: true, cornerCount: 2 });
+
+    deck.chatsResponse = listOf([room('room-a', 10)], { unavailable: ['unread', 'corners'] });
+    await act(async () =>
+      roomWatch().emit({
+        monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'activity' },
+      }),
+    );
+    await quiet();
+
+    expect(paintedRows(renderer)[0]).toMatchObject({
+      unread: true,
+      cornerCount: 2,
+      waitingCornerCount: 1,
+      openCorners: [{ id: 'corner-1', name: 'fix', state: 'waiting' }],
+    });
+    await act(async () => renderer.unmount());
+  });
+
+  it('keeps its live watch when Rooms only change order', async () => {
+    deck.chatsResponse = listOf([room('room-a', 20), room('room-b', 10)]);
+    const renderer = await mountDeck();
+    const watches = deck.subscriptions.length;
+
+    deck.chatsResponse = listOf([room('room-b', 30), room('room-a', 20)]);
+    await act(async () =>
+      roomWatch().emit({
+        monolithLive: { type: 'invalidate', roomId: 'room-b', reason: 'activity' },
+      }),
+    );
+    await quiet();
+
+    expect(paintedRows(renderer).map((item) => item.room.id)).toEqual(['room-b', 'room-a']);
+    expect(deck.subscriptions).toHaveLength(watches);
+    await act(async () => renderer.unmount());
+  });
+
+  it('reads once when the app returns to the foreground, and never on a timer', async () => {
+    const renderer = await mountDeck();
+    const readsAtRest = deck.chatsReads;
+
+    await act(async () => {
+      deck.appState = 'background';
+      for (const listener of deck.appStateListeners) listener('background');
+    });
+    await quiet();
+    await act(async () => {
+      deck.appState = 'active';
+      for (const listener of deck.appStateListeners) listener('active');
+    });
+    await quiet();
+    expect(deck.chatsReads).toBe(readsAtRest + 1);
+
+    await quiet();
+    await quiet();
+    expect(deck.chatsReads).toBe(readsAtRest + 1);
+    await act(async () => renderer.unmount());
+  }, 10_000);
 
   it('reads nothing while hidden under a Room, then catches up on focus', async () => {
     const renderer = await mountDeck();

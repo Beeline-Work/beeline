@@ -560,6 +560,18 @@ describe('Postgres live fanout', () => {
       [corner],
     );
     await eventually(() => nudges().length === 3);
+    // An approval waiting inside the corner is the parent Room's needs-you dot.
+    await database.query(
+      `INSERT INTO permission_authority(room_id,permission_id,principal_id,request_id,scope,status)
+       VALUES($1,'perm-1',$2,'r1','{}'::jsonb,'pending')`,
+      [corner, agent],
+    );
+    await eventually(() => nudges().length === 4);
+    await database.query(
+      `UPDATE permission_authority SET status='authorized' WHERE room_id=$1`,
+      [corner],
+    );
+    await eventually(() => nudges().length === 5);
     // A top-level Room's own turn has no parent to nudge.
     await database.query(
       `INSERT INTO agent_turns(room_id,request_id,agent_id,status) VALUES($1,'r2',$2,'working')`,
@@ -570,9 +582,9 @@ describe('Postgres live fanout', () => {
         (event) => event.type === 'invalidate' && event.reason === 'postgres:agent_turns',
       ),
     );
-    expect(nudges()).toHaveLength(3);
+    expect(nudges()).toHaveLength(5);
     expect(nudges()).toEqual(
-      Array(3).fill({ type: 'invalidate', roomId: ROOM, reason: 'corner-status' }),
+      Array(5).fill({ type: 'invalidate', roomId: ROOM, reason: 'corner-status' }),
     );
   });
 

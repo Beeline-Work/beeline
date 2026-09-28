@@ -97,7 +97,7 @@ export type WorkbenchApp = {
   name: string;
   /** Brand domain for the row's mark; absent draws the lettermark. */
   domain?: string;
-  transport: 'registry-mcp' | 'squire-api' | 'squire-browser';
+  transport: 'registry-mcp' | 'composio' | 'squire-api' | 'squire-browser';
   status: 'connecting' | 'connected' | 'error';
   errorMessage?: string;
   helperName?: string;
@@ -707,6 +707,8 @@ function appRouteLabel(transport: WorkbenchApp['transport']): string {
   switch (transport) {
     case 'registry-mcp':
       return 'Official MCP server';
+    case 'composio':
+      return 'Managed sign-in';
     case 'squire-api':
       return 'Trusty Squire · API key';
     case 'squire-browser':

@@ -676,7 +676,20 @@ describe('fresh Room discovery through the live membership wake', () => {
   it('refreshes a running Room when its GitHub installation changes over the socket', async () => {
     const execute = vi.spyOn(daemonApi, 'execute');
     await vi.waitFor(() => expect(core.activeRoomIds()).toContain(ROOM));
-    await vi.waitFor(() => expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands').length).toBeGreaterThan(0));
+    // The initial command read starts before the socket subscription is ready.
+    // Wait for both ends of the notification path before changing the install.
+    await vi.waitFor(() => expect(listener.projectionHealth().connected).toBe(true));
+    await vi.waitFor(() =>
+      expect(core.surfaceHealthSnapshot().find((surface) => surface.id === ROOM)?.stage).toBe('intake-ready'),
+    );
+    const subscribe = daemonApi.liveSubscribe.bind(daemonApi);
+    let replacementSubscribed = false;
+    vi.spyOn(daemonApi, 'liveSubscribe').mockImplementation((roomId, cursor, onItems, onState, presence, onCommands) =>
+      subscribe(roomId, cursor, onItems, (connected, capabilities) => {
+        onState?.(connected, capabilities);
+        if (roomId === ROOM && connected && capabilities?.pushIntake) replacementSubscribed = true;
+      }, presence, onCommands),
+    );
     execute.mockClear();
     await database.query(
       `INSERT INTO github_installations(installation_id,owner_id,account_login,account_type)
@@ -687,6 +700,9 @@ describe('fresh Room discovery through the live membership wake', () => {
     );
     await vi.waitFor(() => expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands').length).toBeGreaterThan(0),
       { timeout: 10_000 });
+    // The command read precedes the replacement socket subscription. The next
+    // update must target the new, acknowledged subscription.
+    await vi.waitFor(() => expect(replacementSubscribed).toBe(true), { timeout: 10_000 });
     execute.mockClear();
     await database.query(
       `UPDATE github_installations SET status='suspended',updated_at=now() WHERE installation_id=77`,

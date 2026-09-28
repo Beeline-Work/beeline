@@ -295,21 +295,15 @@ describe('Workbench settings screen', () => {
     );
   });
 
-  it('keeps a Google account group with a separate Connect action per product', async () => {
+  it('shows one Google Workspace Connect action for all four products', async () => {
     const renderer = await render();
     const entry = renderer.root.findByProps({ testID: 'google-entry-row' });
     expect(entry.props.title).toBe('Google Workspace');
-    expect(entry.props.leading.props.company).toBe('google');
-    expect(entry.props.leading.props.domain).toBe('google.com');
+    expect(entry.props.description).toContain('One sign-in connects all four.');
     expect(entry.props.value).toBeUndefined();
     expect(entry.props.action).toBe('Connect');
     expect(entry.props.trailingPress.testID).toBe('google-entry-connect');
     await act(async () => entry.props.trailingPress.onPress());
-    expect(navigation.push.mock.calls.at(-1)![0].params.connectorId).toBe('google-account');
-    act(() => entry.props.onPress());
-    const gmail = renderer.root.findByProps({ testID: 'google-tool-google-gmail' });
-    expect(gmail.props.action).toBe('Connect');
-    await act(async () => gmail.props.trailingPress.onPress());
     const push = navigation.push.mock.calls.at(-1)![0];
     expect(push.pathname).toBe('/beeline/settings/workbench/connect-signin');
     expect(push.params.connectorId).toBe('google-account');
@@ -462,9 +456,7 @@ describe('Workbench settings screen', () => {
   it('shows the none-yet state with a short sovereignty note for a member with no connections', async () => {
     searchParams.params = { workspaceId: 'workspace-1', viewerId: 'human-terra' };
     const renderer = await render();
-    const empty = renderer.root.findByProps({ testID: 'workbench-connections-empty' });
-    expect(empty.props.title).toBe('None yet');
-    expect(empty.props.description).toBeUndefined();
+    expect(renderer.root.findAllByProps({ testID: 'workbench-connections' })).toHaveLength(0);
     expect(
       renderer.root.findAllByProps({ testID: 'workbench-connection-cred_vercel' }),
     ).toHaveLength(0);
@@ -487,9 +479,7 @@ describe('Workbench settings screen', () => {
     expect(squire.props.descriptionTone).toBe('danger');
   });
 
-  // The server clears a re-armed Google row's error, so any error left on it
-  // is a live Google failure and paints as one.
-  it('paints an error left on a Google row as a Google failure', async () => {
+  it('keeps Google retry quiet after a previous tool error', async () => {
     const source = new MockWorkbenchSource();
     source.failNextPair('trusty-squire');
     source.failNextPair('google-gmail');
@@ -503,12 +493,8 @@ describe('Workbench settings screen', () => {
     const google = renderer.root.findByProps({ testID: 'google-entry-row' });
     expect(google.props.title).toBe('Google Workspace');
     expect(google.props.action).toBe('Connect');
-    expect(google.props.descriptionTone).toBe('danger');
-    expect(google.props.description).toContain('already using the browser');
-    act(() => google.props.onPress());
-    const gmail = renderer.root.findByProps({ testID: 'google-tool-google-gmail' });
-    expect(gmail.props.descriptionTone).toBe('danger');
-    expect(gmail.props.description).toContain('already using the browser');
+    expect(google.props.descriptionTone).toBeUndefined();
+    expect(google.props.description).toContain('One sign-in connects all four.');
   });
 
   it('creates a wallet from Connect and opens the dashboard', async () => {

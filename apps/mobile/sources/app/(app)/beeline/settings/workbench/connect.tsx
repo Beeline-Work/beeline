@@ -46,11 +46,9 @@ const INSTALL_POLL_MISS_LIMIT = 8;
 const PAIR_FEEDBACK_MS = 15_000;
 
 /**
- * Connect Trusty Squire — the pairing flow. ONE connect path (captain
- * ruling, steer-1): pairing asks once. The helper-machine selector is
- * ALWAYS shown before the binary install starts — one machine or many —
- * so the user explicitly targets the machine that will hold the keys
- * (steer: multi-agent, multi-machine setups). The helper's own step
+ * Connect Trusty Squire — one page for pairing and installation. One
+ * eligible online helper pairs automatically; several require a choice.
+ * The chosen helper stays visible above the helper's own step
  * reports follow as a live checklist: the running step pulses gold, the
  * CLI command and its captured output stream under it, done steps check
  * off, and a failed step shows its own reason and output with a Retry —
@@ -80,6 +78,7 @@ export default function ConnectTrustySquireScreen() {
   const insets = useSafeAreaInsets();
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pairedHelperRef = useRef<string | null>(null);
+  const autoPairRef = useRef(false);
 
   useEffect(() => {
     if (offerCeremony) return;
@@ -193,6 +192,14 @@ export default function ConnectTrustySquireScreen() {
     [connectorId, helpers, startPolling, stopPolling, workspaceId],
   );
 
+  useEffect(() => {
+    if (offerCeremony || autoPairRef.current || helpers === null || pairedHelperRef.current) return;
+    const online = helpers.filter((helper) => helper.online);
+    if (online.length !== 1) return;
+    autoPairRef.current = true;
+    void pair(online[0]!.id);
+  }, [helpers, offerCeremony, pair]);
+
   const retry = useCallback(() => {
     setInstall(null);
     if (offerId) {
@@ -210,17 +217,18 @@ export default function ConnectTrustySquireScreen() {
   const connectorName = connectorNameFor(connectorId);
   const machineName = install?.helperName ?? selectedHelperName;
 
-  const noHelpers = helpers !== null && helpers.length === 0;
-  // The machine selector is explicit BEFORE any install: the user targets
-  // the helper machine, whether the workspace runs one helper or many.
-  const someHelpers = helpers !== null && helpers.length > 0;
+  const noHelpers = helpers !== null && helpers.every((helper) => !helper.online);
+  // Only online helpers are eligible. A sole eligible machine has no choice
+  // to make; the helper row still stays visible above installation output.
+  const onlineHelpers = helpers?.filter((helper) => helper.online) ?? [];
+  const someHelpers = onlineHelpers.length > 0;
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <PageHeader
         backAccessibilityLabel="Back to Workbench"
         eyebrow="Workbench"
-        meta={machineName ?? undefined}
+        prominent
         onBack={() => router.back()}
         testID="connect-header"
         title={connectorName}
@@ -235,12 +243,10 @@ export default function ConnectTrustySquireScreen() {
         {noHelpers && !offerCeremony ? (
           <View testID="connect-no-helper">
             <Text style={styles.note}>
-              {connectorId.startsWith('google-')
-                ? 'Google Workspace connects on a helper. Choose the machine that will hold your Google access.'
-                : 'Squire runs on a helper. Every agent on that helper can use its connections, within the grants you set.'}
+              Squire runs on a helper. Every agent on that helper can use its connections, within the grants you set.
             </Text>
             <Text style={styles.empty} testID="connect-no-helper-empty">
-              No helpers found
+              No online helpers found
             </Text>
             <View style={styles.commandBlock} testID="connect-no-helper-command">
               <Text style={styles.command}>npx usebeeline connect</Text>
@@ -257,24 +263,26 @@ export default function ConnectTrustySquireScreen() {
             <Text style={styles.note}>Starting sign-in on the offered helper…</Text>
           </View>
         ) : null}
-        {install === null && someHelpers && !offerCeremony ? (
+        {someHelpers && !offerCeremony ? (
           <View testID="connect-machine-picker">
             <Text style={styles.sectionLabel}>Helpers</Text>
-            {helpers!.map((helper) => (
+            {onlineHelpers.length === 1 ? (
+              <SettingsRow title={onlineHelpers[0]!.name}
+                description={install ? 'paired' : 'pairing automatically'}
+                testID={`connect-machine-${onlineHelpers[0]!.id}`} />
+            ) : onlineHelpers.map((helper) => (
               <SettingsRow
                 key={helper.id}
-                description={helper.online ? 'online' : 'offline'}
-                disabled={!helper.online}
+                description={pairedHelperRef.current === helper.id ? 'paired' : 'online'}
+                disabled={Boolean(pairedHelperRef.current)}
                 onPress={() => void pair(helper.id)}
                 testID={`connect-machine-${helper.id}`}
                 title={helper.name}
-                action={helper.online ? 'pair' : undefined}
-                value={helper.online ? undefined : 'offline'}
+                action={pairedHelperRef.current ? undefined : 'pair'}
               />
             ))}
-            <Text style={styles.note}>
-              Pair a helper, not an agent. Offline helpers cannot be paired.
-            </Text>
+            {onlineHelpers.length > 1 && !pairedHelperRef.current ?
+              <Text style={styles.note}>Choose the machine that will hold your keys.</Text> : null}
           </View>
         ) : null}
         {install !== null ? (
@@ -371,9 +379,15 @@ export default function ConnectTrustySquireScreen() {
           </View>
         ) : null}
         {error ? (
-          <Text accessibilityRole="alert" style={styles.errorText} testID="connect-error">
-            {error}
-          </Text>
+          <View>
+            <Text accessibilityRole="alert" style={styles.errorText} testID="connect-error">
+              {error}
+            </Text>
+            {pairedHelperRef.current ? <TouchableOpacity accessibilityRole="button"
+              onPress={retry} style={styles.retryButton} testID="connect-pair-retry">
+              <Text style={styles.retryText}>Retry</Text>
+            </TouchableOpacity> : null}
+          </View>
         ) : null}
       </ScrollView>
     </View>

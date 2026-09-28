@@ -186,7 +186,7 @@ export type WorkbenchView = {
   readonly catalog: readonly WorkbenchCatalogEntry[];
   /** Server-owned Google sign-in, independent of helper selection. */
   readonly googleAccount?: { readonly connected: boolean; readonly pending: boolean;
-    readonly connectedTypes: readonly string[] };
+    readonly connectedTypes: readonly string[]; readonly accountEmail?: string };
   /** The VIEWER's connectors. Another member's connectors are never visible. */
   readonly connectors: readonly WorkbenchConnectorView[];
   /** The VIEWER's connections. Another member's connections are never visible. */

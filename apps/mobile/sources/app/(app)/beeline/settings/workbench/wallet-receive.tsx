@@ -39,6 +39,7 @@ export default function WalletReceiveScreen() {
       <PageHeader
         backAccessibilityLabel="Back to Wallet"
         eyebrow="Wallet"
+        prominent
         onBack={() => router.back()}
         testID="wallet-receive-header"
         title="Receive"

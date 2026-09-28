@@ -2723,6 +2723,23 @@ describe('Room message variant components', () => {
       },
     });
 
+    it('offers one Google Workspace sign-in from the conversation', () => {
+      const onAccept = vi.fn();
+      const card = render(<ConnectorOfferCard
+        message={message({ connectorOffer: {
+          ...pending.connectorOffer!, connectorType: 'google-calendar', connectorName: 'Google Calendar',
+        } })}
+        viewerIsAgent={false} viewerPubkey="zeke" viewerRole="member" actionId={null}
+        onAccept={onAccept} onOpenWorkbench={vi.fn()} />);
+      expect(JSON.stringify(card.toJSON())).toContain('Connect Google Workspace');
+      expect(card.root.findByProps({ testID: 'connector-offer-offer-1-line' }).props.children)
+        .toContain('One sign-in connects Gmail, Calendar, Drive and YouTube.');
+      const accept = card.root.findByProps({ testID: 'connector-offer-offer-1-accept' });
+      expect(accept.props.accessibilityLabel).toBe('Connect Google');
+      act(() => accept.props.onPress());
+      expect(onAccept).toHaveBeenCalledWith('offer-1', 'google-calendar');
+    });
+
     it('asks the question once, states consequence + boundary in one server-owned line, and offers ONE affirmative action to the addressee', () => {
       const onAccept = vi.fn();
       const card = render(

@@ -103,12 +103,12 @@ export class GoogleOAuth {
                              THEN google_oauth_accounts.claimed_at ELSE NULL END,
            updated_at=now()
        RETURNING state,requested_scopes`,
-      [ownerId, state, GOOGLE_TOOL_SCOPES[connectorType]],
+      [ownerId, state, [...new Set(Object.values(GOOGLE_TOOL_SCOPES).flat())]],
     );
     return this.authorizationUrl(row.rows[0]!.state, row.rows[0]!.requested_scopes);
   }
 
-  async accountStatus(ownerId: string): Promise<{ connected: boolean; connectedTypes: string[]; authorizationUrl?: string }> {
+  async accountStatus(ownerId: string): Promise<{ connected: boolean; connectedTypes: string[]; accountEmail?: string; authorizationUrl?: string }> {
     const row = await this.database.transaction(async (database) => {
       const expired = await database.query(
         `SELECT 1 FROM google_oauth_accounts WHERE owner_identity_id=$1 AND state IS NOT NULL
@@ -124,12 +124,15 @@ export class GoogleOAuth {
       if (expired.rowCount) await resetGoogleAccountOffers(database, ownerId);
       return account.rows[0];
     });
-    const scopes = row?.sealed_grant ? this.open(row.sealed_grant).scopes : [];
+    const grant = row?.sealed_grant ? this.open(row.sealed_grant) : undefined;
+    const scopes = grant?.scopes ?? [];
+    const accountEmail = grant?.accountEmail;
     return {
       connected: Boolean(row?.sealed_grant),
       connectedTypes: Object.entries(GOOGLE_TOOL_SCOPES)
         .filter(([, required]) => required.every(scope => scopes.includes(scope)))
         .map(([kind]) => kind),
+      ...(accountEmail ? { accountEmail } : {}),
       ...(row?.state ? { authorizationUrl: this.authorizationUrl(row.state, row.requested_scopes) } : {}),
     };
   }

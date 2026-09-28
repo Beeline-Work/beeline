@@ -207,18 +207,20 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     ).toHaveLength(0);
   });
 
-  it('with exactly one machine, still shows the explicit machine selector first', async () => {
-    setWorkbenchSource(
-      Object.assign(new MockWorkbenchSource(), {
+  it('with exactly one online helper, pairs without asking for a choice', async () => {
+    const source = Object.assign(new MockWorkbenchSource(), {
         listHelpers: async () => [{ id: 'helper-squire-box', name: 'squire-box', online: true }],
-      }),
-    );
+      });
+    const pairing = vi.spyOn(source, 'pairConnector');
+    setWorkbenchSource(source);
     const renderer = await render();
     expect(navigation.push).not.toHaveBeenCalled();
-    // No install starts until the user picks the machine: the selector is
-    // explicit even for a single-helper workspace.
     expect(renderer.root.findByProps({ testID: 'connect-machine-picker' })).toBeDefined();
-    expect(renderer.root.findAllByProps({ testID: 'connect-install-progress' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'connect-machine-helper-squire-box' }).props.description)
+      .toMatch(/pairing automatically|paired/);
+    expect(pairing).toHaveBeenCalledTimes(1);
+    expect(pairing).toHaveBeenCalledWith({ workspaceId: 'workspace-1',
+      connectorId: 'trusty-squire', helperId: 'helper-squire-box' });
   });
 
   it('with more than one machine, asks once with a single machine list', async () => {
@@ -229,9 +231,7 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     expect(online.props.action).toBe('pair');
     expect(online.props.value).toBeUndefined();
     expect(online.props.disabled).toBe(false);
-    const offline = renderer.root.findByProps({ testID: 'connect-machine-helper-office-mini' });
-    expect(offline.props.value).toBe('offline');
-    expect(offline.props.disabled).toBe(true);
+    expect(renderer.root.findAllByProps({ testID: 'connect-machine-helper-office-mini' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'connect-helper-picker' })).toHaveLength(0);
   });
 
@@ -251,10 +251,10 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
   it('shows the machine’s step-by-step install progress and then the sign-in button', async () => {
     const renderer = await render();
     await pair(renderer);
-    expect(renderer.root.findByProps({ testID: 'connect-header' }).props.meta).toBe('squire-box');
+    expect(renderer.root.findByProps({ testID: 'connect-header' }).props.meta).toBeUndefined();
     await advancePolls(2);
     expect(renderer.root.findByProps({ testID: 'connect-install-progress' })).toBeDefined();
-    expect(renderer.root.findByProps({ testID: 'connect-header' }).props.meta).toBe('squire-box');
+    expect(renderer.root.findByProps({ testID: 'connect-header' }).props.meta).toBeUndefined();
     const active = renderer.root.findAll(
       (node: any) => node.props?.testID === 'connect-step-1-active',
     );

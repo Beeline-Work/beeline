@@ -26,6 +26,7 @@ import {
   connectorOfferTitle,
   connectorOfferWaitingLine,
 } from '@/buzz/connector-offer-copy';
+import { GoogleMark } from '@/components/buzz/GoogleMark';
 import { shouldShowReplyReference } from '@/buzz/reply-reference';
 import {
   draftRequestId,
@@ -468,6 +469,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
   onOpenWorkbench,
 }: ConnectorOfferCardProps) {
   const offer = message.connectorOffer!;
+  const googleOffer = offer.connectorType.startsWith('google-');
   const display = resolveAgentDisplayIdentity(offer.agent.pubkey, agent);
   const agentName = agent ? display.name : offer.agent.name;
   const pending = offer.status === 'pending';
@@ -480,7 +482,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
     pending && canAccept
       ? [
           {
-            label: connectorOfferActionLabel(offer.connectorName),
+            label: googleOffer ? 'Connect Google' : connectorOfferActionLabel(offer.connectorName),
             primary: true,
             disabled: actionId !== null,
             loading: busy,
@@ -511,7 +513,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
     <TranscriptCard
       tier={pending || connecting ? 'ask' : 'record'}
       testID={`connector-offer-${pending ? 'pending' : connecting ? 'connecting' : 'settled'}`}
-      identity={
+      identity={googleOffer ? <GoogleMark size={32} /> :
         <IdentityMark
           kind="agent"
           seed={display.avatarSeed ?? offer.agent.pubkey}
@@ -519,10 +521,11 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
           face={display.face}
           name={agentName}
           size={26}
-        />
-      }
-      title={connectorOfferTitle(offer.connectorName)}
-      subline={offer.consequence}
+        />}
+      title={googleOffer ? 'Connect Google Workspace' : connectorOfferTitle(offer.connectorName)}
+      subline={googleOffer
+        ? `One sign-in connects Gmail, Calendar, Drive and YouTube. ${agentName} continues this request right after.`
+        : offer.consequence}
       sublineTestID={`connector-offer-${offer.offerId}-line`}
       stamp={ledgerStamp(message.timestamp)}
       footerNote={

@@ -23,6 +23,7 @@ export default function WalletSendScreen() {
       <PageHeader
         backAccessibilityLabel="Back to Wallet"
         eyebrow="Wallet"
+        prominent
         onBack={() => router.back()}
         testID="wallet-send-header"
         title="Send"

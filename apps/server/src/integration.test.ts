@@ -21,7 +21,6 @@ import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
 import { MediaExpiryLoop, PushDeliveryLoop } from './background.js';
 import { GitHubOperations } from './github-operations.js';
 import { GoogleOAuth } from './google-oauth.js';
-import { completeGoogleAccountOffers } from './connector-offer-completion.js';
 import { GOOGLE_ACCOUNT_CONNECTOR_ID, GOOGLE_TOOL_SCOPES } from '@beeline/api-contract/workbench';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
@@ -10258,8 +10257,9 @@ describe('monolith integration', () => {
     expect(oauthUrl.searchParams.get('state')).not.toBe(firstUrl.searchParams.get('state'));
     expect(oauthUrl.host).toBe('accounts.google.com');
     expect(oauthUrl.searchParams.get('scope')).toContain('calendar.readonly');
-    expect(oauthUrl.searchParams.get('scope')).not.toContain('gmail.');
-    expect(oauthUrl.searchParams.get('scope')).not.toContain('yt-analytics');
+    expect(oauthUrl.searchParams.get('scope')).toContain('gmail.');
+    expect(oauthUrl.searchParams.get('scope')).toContain('drive.');
+    expect(oauthUrl.searchParams.get('scope')).toContain('yt-analytics');
     expect((await operation('readGoogleSignIn', {})).status).toBe(200);
     expect((await database.query(`SELECT 1 FROM workspace_connectors WHERE connector_type='google-calendar'`)).rowCount).toBe(0);
     const linked = (await database.query<{ command_id: string }>(
@@ -10270,7 +10270,7 @@ describe('monolith integration', () => {
     const transport = vi.fn(async (url: string | URL | Request) => new Response(JSON.stringify(
       String(url).endsWith('/token') ? {
         access_token: 'calendar-token', refresh_token: 'renewable', expires_in: 3600,
-        scope: ['openid', 'email', ...GOOGLE_TOOL_SCOPES['google-calendar']].join(' '),
+        scope: ['openid', 'email', ...new Set(Object.values(GOOGLE_TOOL_SCOPES).flat())].join(' '),
       } : { email: 'owner@example.test' }), { status: 200 })) as typeof fetch;
     const oauth = new GoogleOAuth(database, 'client', 'secret', 'http://placeholder',
       Buffer.alloc(32, 1).toString('base64'), transport);
@@ -10289,36 +10289,18 @@ describe('monolith integration', () => {
     const room = await daemonOperation('getRoomGoogleGrant', { roomId: ROOM });
     expect(room.status).toBe(200);
     expect(await room.json()).toMatchObject({ status: 'ready',
-      credentials: { accessToken: 'calendar-token' }, connectedTypes: expect.arrayContaining(['google-calendar']) });
+      credentials: { accessToken: 'calendar-token' },
+      connectedTypes: expect.arrayContaining(Object.keys(GOOGLE_TOOL_SCOPES)) });
+    expect(await (await operation('readGoogleSignIn', {})).json()).toMatchObject({
+      connected: true, connectedTypes: expect.arrayContaining(Object.keys(GOOGLE_TOOL_SCOPES)),
+    });
     const workbench = await daemonOperation('readAgentWorkbench', { roomId: ROOM });
     expect(workbench.status).toBe(200);
     const catalog = (await workbench.json() as { catalog: Array<{ connectorType: string;
       paired?: { status: string } }> }).catalog;
-    expect(catalog.find(item => item.connectorType === 'google-calendar')?.paired?.status).toBe('connected');
-    expect(catalog.find(item => item.connectorType === 'google-gmail')?.paired).toBeUndefined();
-    const mailAsk = await operation('sendRoomMessage', { roomId: ROOM,
-      text: '@bee find my Gmail message', mentions: [AGENT] });
-    const mailSource = await mailAsk.json() as { messageId: string };
-    const mailOfferResponse = await daemonOperation('offerConnector', { roomId: ROOM,
-      requestId: mailSource.messageId, connectorType: 'google-gmail', reason: 'find that message' });
-    expect(mailOfferResponse.status).toBe(200);
-    const mailOffer = await mailOfferResponse.json() as { offerId: string; messageId: string };
-    const mailAccepted = await operation('acceptConnectorOffer', { offerId: mailOffer.offerId });
-    expect(mailAccepted.status).toBe(200);
-    const mailUrl = new URL(((await mailAccepted.json()) as { authorizationUrl: string }).authorizationUrl);
-    expect(mailUrl.searchParams.get('scope')).toContain('gmail.readonly');
-    expect(mailUrl.searchParams.get('scope')).toContain('calendar.readonly');
-    expect(await completeGoogleAccountOffers(database, HUMAN,
-      GOOGLE_TOOL_SCOPES['google-calendar'])).toEqual([]);
-    expect((await database.query<{ status: string }>(
-      `SELECT status FROM connector_offers WHERE id=$1::uuid`, [mailOffer.offerId])).rows[0]!.status)
-      .toBe('connecting');
-    // Google returns only the old Calendar scope: the Gmail offer remains retryable.
-    expect((await oauth.completeAccount(mailUrl.searchParams.get('state')!, 'partial'))?.completed).toBe(false);
-    expect((await database.query<{ card: { status: string } }>(
-      `SELECT card FROM messages WHERE id=$1`, [mailOffer.messageId])).rows[0]!.card.status).toBe('pending');
-    expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2
-      AND action='resume'`, [ROOM, AGENT])).rowCount).toBe(1);
+    for (const connectorType of Object.keys(GOOGLE_TOOL_SCOPES)) {
+      expect(catalog.find(item => item.connectorType === connectorType)?.paired?.status).toBe('connected');
+    }
     // This must pass through the public phone operation registry, then revoke
     // only the owner's direct account grant.
     expect((await operation('disconnectGoogleSignIn', {})).status).toBe(204);
@@ -10355,7 +10337,7 @@ describe('monolith integration', () => {
       vi.fn(async (address: string | URL | Request) => new Response(JSON.stringify(
         String(address).endsWith('/token') ? {
           access_token: 'dm-token', refresh_token: 'dm-refresh', expires_in: 3600,
-          scope: ['openid', 'email', ...GOOGLE_TOOL_SCOPES['google-calendar']].join(' '),
+          scope: ['openid', 'email', ...new Set(Object.values(GOOGLE_TOOL_SCOPES).flat())].join(' '),
         } : { email: 'owner@example.test' }), { status: 200 })) as typeof fetch);
     expect((await oauth.completeAccount(url.searchParams.get('state')!, 'code'))?.completed).toBe(true);
     expect((await database.query<{ card: { status: string } }>(

@@ -58,6 +58,7 @@ export default function WorkbenchScreen() {
   const params = useLocalSearchParams<{
     workspaceId?: string | string[];
     viewerId?: string | string[];
+    googleNotice?: string | string[];
   }>();
   const workspaceId = firstParam(params.workspaceId) ?? '';
   const viewerId = firstParam(params.viewerId) ?? '';
@@ -127,7 +128,7 @@ export default function WorkbenchScreen() {
       if (connectorId === 'google' || isGoogleToolConnectorId(connectorId)) {
         try {
           const started = await getWorkbenchSource().beginGoogleSignIn({ workspaceId,
-            connectorType: (connectorId === 'google' ? 'google-calendar' : connectorId) as
+            connectorType: (connectorId === 'google' ? 'google-gmail' : connectorId) as
               'google-gmail' | 'google-calendar' | 'google-drive' | 'google-youtube' });
           router.push({ pathname: '/beeline/settings/workbench/connect-signin',
             params: { workspaceId, viewerId, connectorId: GOOGLE_ACCOUNT_CONNECTOR_ID,
@@ -245,6 +246,7 @@ export default function WorkbenchScreen() {
     <PageHeader
       backAccessibilityLabel="Back to Settings"
       eyebrow="Settings"
+      prominent
       onBack={desktop ? undefined : () => router.back()}
       testID="workbench-header"
       title="Workbench"
@@ -328,11 +330,8 @@ export default function WorkbenchScreen() {
                 />
               );
             }
-            // The ONE Google connect entry: the four google tool connectors
-            // fold into a single logical row (first google entry renders it;
-            // its siblings render nothing). Its side Connect button hands
-            // off with the logical `google` id, which the source resolves to
-            // the first not-yet-connected tool.
+            // The four server tool records render as one account row with one
+            // consent action. Individual products stay out of the picker.
             if (isGoogleToolConnectorId(connector.id)) {
               if (connectors.findIndex((entry) => isGoogleToolConnectorId(entry.id)) !== index) {
                 return null;
@@ -341,6 +340,8 @@ export default function WorkbenchScreen() {
                 <GoogleEntryRow
                   key="google"
                   connectors={connectors}
+                  notice={firstParam(params.googleNotice) === 'incomplete'
+                    ? 'Sign-in didn’t finish. Tap Connect to try again.' : undefined}
                   onPressConnect={(id) => connectConnector(id)}
                   onPressDisconnect={(id) => void disconnectConnector(id)}
                 />
@@ -445,19 +446,11 @@ export default function WorkbenchScreen() {
             );
           })}
         </View>
-        <View testID="workbench-connections">
+        {connections.length > 0 ? <View testID="workbench-connections">
           <Text style={styles.sectionLabel} testID="workbench-keys-head">
             Keys
           </Text>
-          {connections.length === 0 ? (
-            <SettingsRow
-              disabled
-              testID="workbench-connections-empty"
-              title="None yet"
-              tone="quiet"
-            />
-          ) : (
-            connections.map((connection) => {
+          {connections.map((connection) => {
               const instrument = connectionInstrument(connection.state);
               const domains = connectionDomainsLine(connection);
               return (
@@ -485,9 +478,8 @@ export default function WorkbenchScreen() {
                   valueTone={instrument.valueTone}
                 />
               );
-            })
-          )}
-        </View>
+            })}
+        </View> : null}
       </ScrollView>
     </View>
   );

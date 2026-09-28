@@ -159,7 +159,7 @@ describe('Wallet screens (mock §Screens, pass 4)', () => {
     const header = renderer.root.findByProps({ testID: 'wallet-header' });
     expect(header.props.title).toBe('Wallet');
     expect(header.props.eyebrow).toBe('Workbench');
-    expect(header.props.meta).toBe('Coinbase CDP Server Wallet');
+    expect(header.props.meta).toBeUndefined();
     expect(header.props.onBack).toBeTypeOf('function');
   });
 

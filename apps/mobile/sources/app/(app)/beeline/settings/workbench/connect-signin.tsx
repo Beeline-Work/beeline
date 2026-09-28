@@ -60,13 +60,17 @@ export default function ConnectorSignInScreen() {
     oauthReturn?: string | string[];
   }>();
   const workspaceId = firstParam(params.workspaceId) ?? '';
+  const viewerId = firstParam(params.viewerId) ?? '';
   const connectorId = firstParam(params.connectorId) ?? 'trusty-squire';
   const connectorName = firstParam(params.connectorName) ?? 'Trusty Squire';
-  const machineName = firstParam(params.machineName);
   const url = firstParam(params.url) ?? '';
   const method = firstParam(params.method) ?? 'streamed';
   const [currentSignIn, setCurrentSignIn] = useState({ url, method });
   const roomId = firstParam(params.roomId);
+  const workbenchReturn = (incomplete = false): Href => ({
+    pathname: '/beeline/settings/workbench',
+    params: { workspaceId, viewerId, ...(incomplete ? { googleNotice: 'incomplete' } : {}) },
+  } as Href);
   const returnState = firstParam(params.oauthReturn);
   const webView = useSandboxWebView();
   const [fellBack, setFellBack] = useState(false);
@@ -80,12 +84,22 @@ export default function ConnectorSignInScreen() {
     let live = true;
     void AsyncStorage.getItem(GOOGLE_RETURN_KEY).then(async (stored) => {
       if (!live) return;
-      let destination: ReturnType<typeof connectorOfferCompletionRoute> | '/beeline/channels' = '/beeline/channels';
+      let destination: Href = workbenchReturn();
       if (stored) {
         try {
-          const record = JSON.parse(stored) as { state: string; roomId?: string };
+          const record = JSON.parse(stored) as { state: string; roomId?: string;
+            workspaceId?: string; viewerId?: string };
           if (record.state === returnState) {
-            destination = connectorOfferCompletionRoute(record.roomId);
+            const settled = await getWorkbenchSource().readInstallState({
+              workspaceId: record.workspaceId ?? workspaceId,
+              connectorId: GOOGLE_ACCOUNT_CONNECTOR_ID,
+            }).catch(() => null);
+            destination = record.roomId ? connectorOfferCompletionRoute(record.roomId) as Href : ({
+              pathname: '/beeline/settings/workbench',
+              params: { workspaceId: record.workspaceId ?? workspaceId,
+                viewerId: record.viewerId ?? viewerId,
+                ...(!settled?.connected ? { googleNotice: 'incomplete' } : {}) },
+            } as Href);
             await AsyncStorage.removeItem(GOOGLE_RETURN_KEY);
           }
         } catch { /* A stale return record cannot authorize a destination. */ }
@@ -95,16 +109,16 @@ export default function ConnectorSignInScreen() {
       dismissGoogleBrowser();
       router.replace(destination as Href);
     }).catch(() => {
-      if (live) router.replace('/beeline/channels' as Href);
+      if (live) router.replace(workbenchReturn());
     });
     return () => { live = false; };
   }, [returnState]);
 
-  const dismiss = useCallback(() => {
+  const dismiss = useCallback((incomplete = false) => {
     if (dismissedRef.current) return;
     dismissedRef.current = true;
-    router.replace(connectorOfferCompletionRoute(roomId) as unknown as Href);
-  }, [roomId]);
+    router.replace(roomId ? connectorOfferCompletionRoute(roomId) as Href : workbenchReturn(incomplete));
+  }, [roomId, workspaceId, viewerId]);
 
   // A failed attempt, or a row with no sign-in page left, has nothing for
   // this overlay to show: return to the connect screen, which shows Retry.
@@ -124,7 +138,7 @@ export default function ConnectorSignInScreen() {
           if (!live) return;
           if (state?.connected) {
             if (connectorId === GOOGLE_ACCOUNT_CONNECTOR_ID) dismissGoogleBrowser();
-            dismiss();
+            dismiss(false);
           }
           else if (state?.signIn &&
             (connectorId === GOOGLE_ACCOUNT_CONNECTOR_ID ||
@@ -135,7 +149,7 @@ export default function ConnectorSignInScreen() {
           }
           else if (connectorId === GOOGLE_ACCOUNT_CONNECTOR_ID && state) {
             dismissGoogleBrowser();
-            dismiss();
+            dismiss(true);
           }
           else if (state) returnToConnect();
         })
@@ -166,7 +180,7 @@ export default function ConnectorSignInScreen() {
         .then((install) => {
           if (live && install && !install.signIn) {
             dismissGoogleBrowser();
-            dismiss();
+            dismiss(true);
           }
         }).catch(() => undefined);
     });
@@ -186,9 +200,10 @@ export default function ConnectorSignInScreen() {
     if (!currentSignIn.url || authOpenRef.current) return;
     if (googleAuth) {
       authOpenRef.current = true;
+      let awaitingCallback = false;
       try {
         if (oauthState) await AsyncStorage.setItem(GOOGLE_RETURN_KEY,
-          JSON.stringify({ state: oauthState, ...(roomId ? { roomId } : {}) }));
+          JSON.stringify({ state: oauthState, workspaceId, viewerId, ...(roomId ? { roomId } : {}) }));
         const result = await WebBrowser.openAuthSessionAsync(currentSignIn.url,
           GOOGLE_RETURN_URI, authSessionOptions(Platform.OS, GOOGLE_RETURN_URI));
         if (result.type !== 'success') {
@@ -198,6 +213,7 @@ export default function ConnectorSignInScreen() {
           // milliseconds before Linking delivers a successful callback. A
           // settled server state returns false: keep its Room return record.
           if (cancelled) await clearGoogleReturn(oauthState);
+          else awaitingCallback = true;
         }
       } catch {
         await getWorkbenchSource().cancelGoogleSignIn({ connectorId,
@@ -206,13 +222,18 @@ export default function ConnectorSignInScreen() {
       } finally {
         authOpenRef.current = false;
         dismissGoogleBrowser();
-        dismiss();
+        if (!awaitingCallback) {
+          const settled = await getWorkbenchSource().readInstallState({
+            workspaceId, connectorId,
+          }).catch(() => null);
+          dismiss(!settled?.connected);
+        }
       }
       return;
     }
     await WebBrowser.openBrowserAsync(currentSignIn.url);
     setFellBack(true);
-  }, [connectorId, currentSignIn.url, dismiss, googleAuth, oauthState, roomId]);
+  }, [connectorId, currentSignIn.url, dismiss, googleAuth, oauthState, roomId, workspaceId, viewerId]);
 
   useEffect(() => {
     if (!googleAuth || returnState || !currentSignIn.url ||
@@ -230,7 +251,7 @@ export default function ConnectorSignInScreen() {
       <PageHeader
         backAccessibilityLabel="Close sign-in"
         eyebrow="Workbench"
-        meta={[machineName, host].filter(Boolean).join(' · ') || undefined}
+        prominent
         onBack={() => {
           if (googleAuth) {
             dismissedRef.current = true;
@@ -242,7 +263,7 @@ export default function ConnectorSignInScreen() {
               .catch(() => undefined)
               .finally(() => {
                 dismissGoogleBrowser();
-                router.back();
+                router.replace(roomId ? connectorOfferCompletionRoute(roomId) as Href : workbenchReturn(true));
               });
           } else router.back();
         }}

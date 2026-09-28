@@ -2,165 +2,59 @@ import React, { useState } from 'react';
 import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
-import { IdentityMark } from '@/components/buzz/IdentityMark';
-import { ServiceMark } from '@/components/buzz/ServiceMark';
-import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
-import {
-  GOOGLE_ENTRY_FAVICON_DOMAIN,
-  GOOGLE_ENTRY_ID,
-  googleEntryConnector,
-  googleToolRows,
-  connectorExpandedActions,
-  connectorInstrument,
-  resolveGoogleConnectTarget,
-  type WorkbenchConnector,
-} from '@/buzz/workbench';
+import { Typography } from '@/constants/Typography';
+import { GoogleMark } from '@/components/buzz/GoogleMark';
+import { googleEntryConnector, googleEntryState, type WorkbenchConnector } from '@/buzz/workbench';
 
-/**
- * One Google account with four separately installed tools. The disclosure
- * shows each tool's status and its own Connect action.
- *
- * The row wears the same company mark and trailing status as every other
- * tool. Its disclosure has no extra glyph and contains only the catalog's
- * existing one-line capability copy.
- */
 export function GoogleEntryRow({
   connectors,
   onPressConnect,
   onPressDisconnect,
+  notice,
 }: {
   connectors: readonly WorkbenchConnector[];
   onPressConnect: (id: WorkbenchConnector['id']) => void;
   onPressDisconnect: (id: WorkbenchConnector['id']) => void;
+  notice?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const entry = googleEntryConnector(connectors);
   if (!entry) return null;
-  const tools = googleToolRows(connectors);
-  const targetId = entry.status === 'disconnected' &&
-    connectors.some(tool => tool.id === 'google-calendar' && tool.status !== 'connected')
-    ? 'google-calendar' : resolveGoogleConnectTarget(connectors);
-  const target = tools.find((tool) => tool.id === targetId) ?? tools[0];
-  const available = tools.some((tool) => tool.available);
-  // The parent row is not a connector — never pass the folded "google" id.
-  // Status comes from the real google-* tools; soon only when every listed
-  // tool is itself unavailable (Google Workspace is not offered here).
-  const instrument = connectorInstrument(
-    available ? entry.status : 'soon',
-    target?.id,
-  );
-  const canConnect = instrument.connect && available;
-  const errorText = available && entry.status === 'error'
-    ? (entry.errorMessage ?? 'Connection failed')
-    : undefined;
-
-  return (
-    <View testID="google-entry">
-      <SettingsRow
-        action={canConnect ? 'Connect' : undefined}
-        description={available ? errorText : 'Google connection is unavailable on this Beeline server'}
-        descriptionDetail={available && entry.status !== 'connected'
-          ? 'Google may show an unverified-app warning. Choose Advanced, then Go to Beeline to continue.'
-          : undefined}
-        descriptionTone={errorText ? 'danger' : undefined}
-        leading={
-          <ServiceMark
-            company={GOOGLE_ENTRY_ID}
-            domain={GOOGLE_ENTRY_FAVICON_DOMAIN}
-            testID="google-entry-mark"
-          />
-        }
-        onPress={() => setExpanded((value) => !value)}
-        testID="google-entry-row"
-        title={entry.name}
-        trailingPress={
-          canConnect
-            ? {
-                accessibilityLabel: 'Connect Google Workspace',
-                onPress: () => onPressConnect(targetId),
-                testID: 'google-entry-connect',
-              }
-            : undefined
-        }
-        value={instrument.value}
-        valueTone={instrument.valueTone}
-      />
-      {expanded ? (
-        <View style={styles.details} testID="google-entry-details">
-          <Text style={styles.tool}>{entry.description}</Text>
-          {googleToolRows(connectors).flatMap((tool) => {
-            const toolInstrument = connectorInstrument(tool.status, tool.id);
-            const canConnect = tool.available && toolInstrument.connect;
-            const extras = tool.available ? connectorExpandedActions(toolInstrument) : [];
-            return [
-              <SettingsRow
-                leading={
-                  <IdentityMark
-                    kind="human"
-                    seed={tool.id}
-                    name={tool.name}
-                    avatarUrl={`${getBuzzRuntimeConfig().monolithUrl}/v1/connectors/logo/${tool.id}.svg`}
-                    size={26}
-                  />
-                }
-                key={tool.id}
-                testID={`google-tool-${tool.id}`}
-                title={tool.name}
-                value={tool.available ? toolInstrument.value : 'soon'}
-                valueTone={tool.available ? toolInstrument.valueTone : undefined}
-                action={canConnect ? 'Connect' : undefined}
-                description={tool.available && tool.status === 'error' ? tool.errorMessage : undefined}
-                descriptionTone={tool.available && tool.status === 'error' ? 'danger' : undefined}
-                trailingPress={
-                  canConnect
-                    ? {
-                        accessibilityLabel: `Connect ${tool.name}`,
-                        onPress: () => onPressConnect(tool.id),
-                        testID: `google-tool-${tool.id}-connect`,
-                      }
-                    : undefined
-                }
-              />,
-              ...extras.map((control) => (
-                <SettingsRow
-                  key={`${tool.id}-${control.action}`}
-                  testID={`google-tool-${tool.id}-${control.action}`}
-                  title={control.action === 'disconnect' && tool.sharedGoogleAccount
-                    ? 'Disconnect Google Workspace' : control.label}
-                  description={control.action === 'disconnect' && tool.sharedGoogleAccount
-                    ? 'Removes access for all tools connected through this Google account.' : undefined}
-                  tone={control.action === 'disconnect' ? 'destructive' : 'action'}
-                  onPress={() =>
-                    control.action === 'disconnect'
-                      ? onPressDisconnect(tool.id)
-                      : onPressConnect(tool.id)
-                  }
-                />
-              )),
-            ];
-          })}
-        </View>
-      ) : null}
-    </View>
-  );
+  const state = googleEntryState(connectors);
+  const available = entry.available;
+  const connected = state === 'connected';
+  const pending = state === 'installing';
+  return <View testID="google-entry">
+    <SettingsRow
+      leading={<GoogleMark />}
+      title="Google Workspace"
+      action={available && !connected && !pending ? 'Connect' : undefined}
+      trailingPress={available && !connected && !pending ? {
+        accessibilityLabel: 'Connect Google Workspace',
+        onPress: () => onPressConnect('google'),
+        testID: 'google-entry-connect',
+      } : undefined}
+      value={connected ? 'connected' : pending ? 'connecting' : undefined}
+      description={connected
+        ? `${entry.signedInAs ?? 'Google account'} · Gmail, Calendar, Drive and YouTube`
+        : notice ?? 'Gmail, Calendar, Drive and YouTube. One sign-in connects all four.'}
+      onPress={connected ? () => setExpanded((value) => !value) : undefined}
+      testID="google-entry-row"
+    />
+    {connected ? <Text style={styles.notice} testID="google-entry-confirmation">
+      ✓ Google connected. Agents can use all four tools.
+    </Text> : null}
+    {connected && expanded ? <SettingsRow
+      title="Disconnect Google Workspace"
+      description="Removes access to all four Google tools."
+      tone="destructive"
+      onPress={() => onPressDisconnect('google-gmail')}
+      testID="google-entry-disconnect"
+    /> : null}
+  </View>;
 }
 
-const styles = StyleSheet.create((theme) => {
-  const hull = theme.buzz;
-  return {
-    details: {
-      paddingLeft: hull.space.md,
-      paddingBottom: hull.space.sm,
-      paddingRight: hull.space.sm,
-    },
-    tool: { ...hull.type.meta, color: hull.textSecondary },
-    toolRow: {
-      flexDirection: 'row' as const,
-      justifyContent: 'space-between' as const,
-      alignItems: 'center' as const,
-      gap: hull.space.sm,
-    },
-    toolConnected: { color: hull.textPrimary },
-    toolError: { color: hull.danger },
-  };
-});
+const styles = StyleSheet.create((theme) => ({
+  notice: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.textMuted,
+    paddingHorizontal: theme.buzz.space.md, paddingBottom: theme.buzz.space.sm },
+}));

@@ -4,6 +4,9 @@ import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { GOOGLE_GRANT_REVOKED, GoogleOAuth } from './google-oauth.js';
 import { PhoneService } from './phone-service.js';
+import { GOOGLE_TOOL_SCOPES } from '@beeline/api-contract/workbench';
+
+const ACCOUNT_SCOPES = ['openid', 'email', ...new Set(Object.values(GOOGLE_TOOL_SCOPES).flat())].join(' ');
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const CONNECTOR = '22222222-2222-4222-8222-222222222222';
@@ -116,8 +119,8 @@ it('starts account consent without a helper and clears denied, failed, cancelled
     expect(url.host).toBe('accounts.google.com');
     expect(url.searchParams.get('redirect_uri')).toBe('https://beeline.example/v1/google/oauth/callback');
     expect(url.searchParams.get('scope')).toContain('calendar.readonly');
-    expect(url.searchParams.get('scope')).not.toContain('gmail.');
-    expect(url.searchParams.get('scope')).not.toContain('yt-analytics');
+    expect(url.searchParams.get('scope')).toContain('gmail.');
+    expect(url.searchParams.get('scope')).toContain('yt-analytics');
     const state = url.searchParams.get('state')!;
     expect((await oauth.accountStatus(OWNER)).authorizationUrl).toBe(url.toString());
     if (outcome === 'denied') expect(await oauth.cancelAccountState(state)).toBe(true);
@@ -136,31 +139,29 @@ it('starts account consent without a helper and clears denied, failed, cancelled
 });
 
 it('seals a helper-free account grant and exposes only the access token to the owner', async () => {
-  const transport = vi.fn(async (url: string | URL | Request, init?: RequestInit) =>
+  const transport = vi.fn(async (url: string | URL | Request) =>
     new Response(JSON.stringify(String(url).endsWith('/token') ? {
       access_token: 'owner-token', refresh_token: 'owner-refresh', expires_in: 3600,
-      scope: ['openid', 'email', 'https://www.googleapis.com/auth/calendar.readonly',
-        ...(String(init?.body).includes('good-code-2')
-          ? ['https://www.googleapis.com/auth/gmail.readonly'] : [])].join(' '),
+      scope: ACCOUNT_SCOPES,
     } : { email: 'owner@example.test' }), { status: 200 })) as typeof fetch;
   const oauth = new GoogleOAuth(database, 'client-id', 'client-secret',
     'https://beeline.example', randomBytes(32).toString('base64'), transport);
   const firstUrl = new URL(await oauth.beginAccount(OWNER, 'google-calendar'));
-  expect(firstUrl.searchParams.get('scope')).not.toContain('gmail.');
+  expect(firstUrl.searchParams.get('scope')).toContain('gmail.');
   const state = firstUrl.searchParams.get('state')!;
   expect(await oauth.completeAccount(state, 'good-code')).toEqual({ completed: true, offers: [] });
   expect(await oauth.accountStatus(OWNER)).toMatchObject({ connected: true,
-    connectedTypes: ['google-calendar'] });
+    connectedTypes: Object.keys(GOOGLE_TOOL_SCOPES), accountEmail: 'owner@example.test' });
   const secondUrl = new URL(await oauth.beginAccount(OWNER, 'google-gmail'));
   expect(secondUrl.searchParams.get('scope')).toContain('calendar.readonly');
   expect(secondUrl.searchParams.get('scope')).toContain('gmail.readonly');
-  expect(secondUrl.searchParams.get('scope')).not.toContain('yt-analytics');
+  expect(secondUrl.searchParams.get('scope')).toContain('yt-analytics');
   expect(await oauth.accountStatus(OWNER)).toMatchObject({ connected: true,
-    connectedTypes: ['google-calendar'], authorizationUrl: secondUrl.toString() });
+    connectedTypes: Object.keys(GOOGLE_TOOL_SCOPES), authorizationUrl: secondUrl.toString() });
   expect(await oauth.completeAccount(secondUrl.searchParams.get('state')!, 'good-code-2'))
     .toEqual({ completed: true, offers: [] });
   expect(await oauth.accountStatus(OWNER)).toEqual({ connected: true,
-    connectedTypes: ['google-gmail', 'google-calendar'] });
+    connectedTypes: Object.keys(GOOGLE_TOOL_SCOPES), accountEmail: 'owner@example.test' });
   expect(await oauth.grantForOwner(OWNER)).toMatchObject({ accessToken: 'owner-token' });
   expect(await oauth.grantForOwner('c'.repeat(64))).toBeNull();
 });
@@ -179,7 +180,7 @@ it('does not restore a disconnected account when an access-token refresh finishe
     return new Response(JSON.stringify({ access_token: `token-${tokenCalls}`,
       ...(tokenCalls === 1 ? { refresh_token: 'refresh' } : {}),
       expires_in: tokenCalls === 1 ? 0 : 3600,
-      scope: 'openid email https://www.googleapis.com/auth/calendar.readonly' }), { status: 200 });
+      scope: ACCOUNT_SCOPES }), { status: 200 });
   }) as typeof fetch;
   const oauth = new GoogleOAuth(database, 'client-id', 'client-secret',
     'https://beeline.example', randomBytes(32).toString('base64'), transport);

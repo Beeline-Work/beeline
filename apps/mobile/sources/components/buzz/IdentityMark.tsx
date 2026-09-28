@@ -79,18 +79,27 @@ export function isConnectorLogoUrl(url: string | undefined): boolean {
 
 // ── The Workspace plate ──────────────────────────────────────────────────────
 
-const SQUARE_INSET = 12;
-const SQUARE_SIDE = 100 - SQUARE_INSET * 2;
+/** The plate fills its seat the way a Workspace picture does: inset only far
+ *  enough that the selected frame's stroke is not clipped, with corners that
+ *  follow the rail seat's curve (8px on a 36px picture ≈ 22%). */
+const PLATE_INSET = 3;
+const PLATE_SIDE = 100 - PLATE_INSET * 2;
+const PLATE_RADIUS = 22 - PLATE_INSET;
 
 /** The workspace cypher: speakeasy's 3×3 primitive plate — block, slot, cut,
- *  void — in our tones. A machined plate, never a QR code. */
-const PLATE_ORIGIN = 22;
-const PLATE_CELL = 56 / 3;
+ *  void — in our tones. A machined plate, never a QR code. The grid keeps the
+ *  proportion it had inside the old square frame, and its cells carry a small
+ *  radius so they sit with the rounded frame. */
+const PLATE_GRID = 69;
+const PLATE_ORIGIN = (100 - PLATE_GRID) / 2;
+const PLATE_CELL = PLATE_GRID / 3;
+const CELL_RADIUS = 2.4;
 
 function plateRects(cell: CypherCell, index: number): Array<[number, number, number, number]> {
   const x = PLATE_ORIGIN + (index % 3) * PLATE_CELL;
   const y = PLATE_ORIGIN + Math.floor(index / 3) * PLATE_CELL;
-  const inset = 1.6;
+  const inset = 2;
+  const gap = 1.7;
   const span = PLATE_CELL - inset * 2;
   switch (cell.primitive) {
     case 'slot-h':
@@ -99,12 +108,26 @@ function plateRects(cell: CypherCell, index: number): Array<[number, number, num
       return [[x + PLATE_CELL / 2 - PLATE_CELL / 6, y + inset, PLATE_CELL / 3, span]];
     case 'cut':
       return [
-        [x + inset, y + inset, span, PLATE_CELL / 3 - 1.4],
-        [x + inset, y + PLATE_CELL / 2 + 1.4, span, PLATE_CELL / 3 - 1.4],
+        [x + inset, y + inset, span, PLATE_CELL / 3 - gap],
+        [x + inset, y + PLATE_CELL / 2 + gap, span, PLATE_CELL / 3 - gap],
       ];
     default:
       return [[x + inset, y + inset, span, span]];
   }
+}
+
+/** The half fill's left half, rounded on the left to match the frame and
+ *  square along the centre line. */
+function leftHalfPath(): string {
+  const left = PLATE_INSET;
+  const top = PLATE_INSET;
+  const right = 50;
+  const bottom = PLATE_INSET + PLATE_SIDE;
+  const r = PLATE_RADIUS;
+  return (
+    `M${right} ${top}H${left + r}A${r} ${r} 0 0 0 ${left} ${top + r}` +
+    `V${bottom - r}A${r} ${r} 0 0 0 ${left + r} ${bottom}H${right}Z`
+  );
 }
 
 function cellFill(cell: CypherCell, palette: IdentityPalette): string {
@@ -138,30 +161,23 @@ function WorkspacePlate({
   return (
     <Svg width={size} height={size} viewBox="0 0 100 100">
       <Rect
-        x={SQUARE_INSET}
-        y={SQUARE_INSET}
-        width={SQUARE_SIDE}
-        height={SQUARE_SIDE}
+        x={PLATE_INSET}
+        y={PLATE_INSET}
+        width={PLATE_SIDE}
+        height={PLATE_SIDE}
+        rx={PLATE_RADIUS}
         fill={bodyFill}
       />
-      {visibleFillState === 'half' && (
-        <Rect
-          x={SQUARE_INSET}
-          y={SQUARE_INSET}
-          width={SQUARE_SIDE / 2}
-          height={SQUARE_SIDE}
-          fill={palette.mid}
-        />
-      )}
+      {visibleFillState === 'half' && <Path d={leftHalfPath()} fill={palette.mid} />}
       <Rect
-        x={SQUARE_INSET}
-        y={SQUARE_INSET}
-        width={SQUARE_SIDE}
-        height={SQUARE_SIDE}
+        x={PLATE_INSET}
+        y={PLATE_INSET}
+        width={PLATE_SIDE}
+        height={PLATE_SIDE}
+        rx={PLATE_RADIUS}
         fill="none"
         stroke={frameStroke}
         strokeWidth={frameWidth}
-        strokeLinejoin="miter"
       />
       {detailed && (
         <G transform={`rotate(${rotation * 90} 50 50)`}>
@@ -174,6 +190,7 @@ function WorkspacePlate({
                 y={y}
                 width={width}
                 height={height}
+                rx={Math.min(CELL_RADIUS, width / 2, height / 2)}
                 fill={fill}
               />
             ));

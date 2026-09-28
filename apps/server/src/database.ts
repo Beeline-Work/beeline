@@ -27,6 +27,11 @@ export const HEALTH_STATEMENT_TIMEOUT_MS = 2_000;
 export const HEALTH_POOL_WAIT_TIMEOUT_MS = 1_000;
 export const MIGRATION_LOCK_TIMEOUT_MS = 1_000;
 export const MIGRATION_STATEMENT_TIMEOUT_MS = 10 * 60_000;
+export const APP_TRANSACTION_DEADLINE_MS = 30_000;
+export const ENRICHMENT_TRANSACTION_DEADLINE_MS = 3_000;
+export const HEALTH_TRANSACTION_DEADLINE_MS = 5_000;
+export const JOB_TRANSACTION_DEADLINE_MS = 5 * 60_000;
+export const MIGRATION_TRANSACTION_DEADLINE_MS = 10 * 60_000;
 export const APP_DATABASE_NAME = 'beeline_app';
 export const ENRICHMENT_DATABASE_NAME = 'beeline_enrichment';
 export const LONG_RUNNING_DATABASE_NAME = 'beeline_long_running';
@@ -104,6 +109,8 @@ const pause: Pause = (milliseconds) => new Promise((resolve) => setTimeout(resol
 export interface PostgresDatabaseOptions {
   pool?: Pool;
   pause?: Pause;
+  /** Deterministic test override; production uses the pool class limit. */
+  transactionDeadlineMs?: number;
 }
 
 export interface QueryResult<Row> {
@@ -127,6 +134,8 @@ export interface SqlDatabase {
    *  fail. This one is scoped to this process's own pool and says so. */
   oldestActiveQueryAgeMs?(): Promise<number | null>;
   queryProfiles?(): ReturnType<QueryProfiler['snapshot']>;
+  oldestActiveTransactionAgeMs?(): number | null;
+  transactionDeadlineCount?(): number;
   /** Fires once after an app-pool failure is followed by a successful read.
    * Live subscribers use it to retry discovery without closing their socket. */
   onRecovery?(listener: () => void): () => void;
@@ -205,6 +214,9 @@ export class PostgresDatabase implements ClosableDatabase {
   readonly #pool: Pool;
   readonly #profiler = new QueryProfiler();
   readonly #pause: Pause;
+  readonly #transactionDeadlineMs: number;
+  readonly #transactions = new Map<number, number>();
+  #transactionDeadlines = 0;
   /** Start time of every query this process currently has in flight, keyed by
    *  a monotonic ticket so identical concurrent statements cannot collide. */
   readonly #inFlight = new Map<number, number>();
@@ -290,6 +302,14 @@ export class PostgresDatabase implements ClosableDatabase {
       options.pool ??
       new Pool(postgresPoolConfig(connectionString, maximumConnections, options.mode));
     this.#pause = options.pause ?? pause;
+    this.#transactionDeadlineMs = options.transactionDeadlineMs ??
+      (options.mode === 'enrichment' ? ENRICHMENT_TRANSACTION_DEADLINE_MS
+        : options.mode === 'diagnostics' ? HEALTH_TRANSACTION_DEADLINE_MS
+        : options.mode === 'long-running' ? JOB_TRANSACTION_DEADLINE_MS
+        : options.mode === 'migration' ? MIGRATION_TRANSACTION_DEADLINE_MS
+        : APP_TRANSACTION_DEADLINE_MS);
+    if (!Number.isSafeInteger(this.#transactionDeadlineMs) || this.#transactionDeadlineMs < 1)
+      throw new Error('invalid transaction deadline');
     this.#pool.on('error', (error) => {
       console.error('postgres idle client error', error);
     });
@@ -308,6 +328,17 @@ export class PostgresDatabase implements ClosableDatabase {
     for (const startedAt of this.#inFlight.values())
       if (oldest === undefined || startedAt < oldest) oldest = startedAt;
     return oldest === undefined ? null : Date.now() - oldest;
+  }
+
+  oldestActiveTransactionAgeMs(): number | null {
+    let oldest: number | undefined;
+    for (const startedAt of this.#transactions.values())
+      if (oldest === undefined || startedAt < oldest) oldest = startedAt;
+    return oldest === undefined ? null : Date.now() - oldest;
+  }
+
+  transactionDeadlineCount(): number {
+    return this.#transactionDeadlines;
   }
 
   async query<Row extends QueryResultRow = QueryResultRow>(
@@ -378,6 +409,21 @@ export class PostgresDatabase implements ClosableDatabase {
 
   async transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {
     const { client, release } = await this.#beginTransaction();
+    const ticket = this.#nextTicket++;
+    this.#transactions.set(ticket, Date.now());
+    let expired = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        expired = true;
+        this.#transactionDeadlines++;
+        const error = Object.assign(new Error('database transaction deadline exceeded'), {
+          code: '57014',
+        });
+        release(error);
+        reject(error);
+      }, this.#transactionDeadlineMs);
+    });
     let releaseError: Error | undefined;
     try {
       const database: SqlDatabase = {
@@ -385,9 +431,11 @@ export class PostgresDatabase implements ClosableDatabase {
           sql: string,
           values: unknown[] = [],
         ) => {
-          const raw = await this.#timed(sql, () =>
+          if (expired) throw new Error('database transaction deadline exceeded');
+          const raw = await this.#timed(sql, () => Promise.race([
             values.length ? client.query<Row>(sql, values) : client.query<Row>(sql),
-          );
+            deadline,
+          ]));
           const result = Array.isArray(raw) ? raw.at(-1) : raw;
           return {
             rows: result?.rows ?? [],
@@ -397,15 +445,16 @@ export class PostgresDatabase implements ClosableDatabase {
         transaction: async <Result>(nested: (database: SqlDatabase) => Promise<Result>) =>
           nested(database),
       };
-      const result = await work(database);
-      await client.query('COMMIT');
+      const result = await Promise.race([work(database), deadline]);
+      await Promise.race([client.query('COMMIT'), deadline]);
       return result;
     } catch (error) {
       this.#noteFailure(error);
+      if (expired) throw error;
       if (isTransientDatabaseConnectionError(error))
         releaseError = error instanceof Error ? error : new Error('transaction connection failed');
       try {
-        await client.query('ROLLBACK');
+        await Promise.race([client.query('ROLLBACK'), deadline]);
       } catch (rollbackError) {
         // The original error is more useful than a rollback failure on a dead connection.
         releaseError =
@@ -413,6 +462,8 @@ export class PostgresDatabase implements ClosableDatabase {
       }
       throw error;
     } finally {
+      if (timer) clearTimeout(timer);
+      this.#transactions.delete(ticket);
       release(releaseError);
     }
   }

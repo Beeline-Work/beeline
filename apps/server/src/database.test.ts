@@ -134,6 +134,46 @@ describe('pool checkout telemetry', () => {
 });
 
 describe('a terminated checked-out connection never wedges the pool', () => {
+  it('destroys a transaction connection after its total deadline and refuses late queries', async () => {
+    const client = stubClient();
+    const database = new PostgresDatabase('', 1, {
+      pool: poolHandingOut([client]), transactionDeadlineMs: 50,
+    });
+    let releaseWork: (() => void) | undefined;
+    const work = new Promise<void>((resolve) => { releaseWork = resolve; });
+    let markStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const stalled = database.transaction(async (transaction) => {
+      markStarted!();
+      await work;
+      await transaction.query('SELECT should_not_run');
+    });
+    const rejection = expect(stalled).rejects.toThrow(/transaction deadline exceeded/);
+    await started;
+    expect(database.oldestActiveTransactionAgeMs()).not.toBe(null);
+    await rejection;
+    expect(client.release).toHaveBeenCalledWith(expect.objectContaining({ code: '57014' }));
+    expect(database.transactionDeadlineCount()).toBe(1);
+    expect(database.oldestActiveTransactionAgeMs()).toBe(null);
+    releaseWork!();
+    await Promise.resolve();
+    expect(client.query).not.toHaveBeenCalledWith('SELECT should_not_run');
+  });
+
+  it('clears a stalled query age when a transaction deadline destroys its client', async () => {
+    const client = stubClient();
+    client.query.mockImplementation((sql: string) =>
+      sql === 'SELECT hanging' ? new Promise(() => {}) : Promise.resolve(result([])),
+    );
+    const database = new PostgresDatabase('', 1, {
+      pool: poolHandingOut([client]), transactionDeadlineMs: 20,
+    });
+    await expect(database.transaction((transaction) => transaction.query('SELECT hanging')))
+      .rejects.toThrow(/transaction deadline exceeded/);
+    expect(await database.oldestActiveQueryAgeMs()).toBe(null);
+    expect(database.oldestActiveTransactionAgeMs()).toBe(null);
+    expect(client.release).toHaveBeenCalledOnce();
+  });
   it('frees a checked-out transaction client that errors while no query is pending, and the pool recovers', async () => {
     const dying = stubClient();
     dying.query

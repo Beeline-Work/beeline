@@ -1106,6 +1106,12 @@ async function route(
               ),
             }
           : {}),
+        ...(options.database.oldestActiveTransactionAgeMs
+          ? { oldestActiveTransactionAgeMs: options.database.oldestActiveTransactionAgeMs() }
+          : {}),
+        ...(options.database.transactionDeadlineCount
+          ? { transactionDeadlines: options.database.transactionDeadlineCount() }
+          : {}),
       },
       live: liveHealth(),
       ...(options.backgroundHealth ? { background: options.backgroundHealth() } : {}),

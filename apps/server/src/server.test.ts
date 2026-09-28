@@ -144,6 +144,17 @@ describe('server readiness', () => {
     });
   });
 
+  it('reports an app transaction that is holding a connection and deadline count', async () => {
+    const response = await get('/health', {
+      query: vi.fn().mockResolvedValue({ rows: [], rowCount: 0 }), transaction: vi.fn(),
+      oldestActiveTransactionAgeMs: () => 42,
+      transactionDeadlineCount: () => 3,
+    });
+    expect((await response.json()).database).toMatchObject({
+      oldestActiveTransactionAgeMs: 42, transactionDeadlines: 3,
+    });
+  });
+
   it('returns 503 when the database query fails', async () => {
     const response = await get('/readyz', {
       query: vi.fn().mockRejectedValue(new Error('Connection terminated unexpectedly')),

@@ -423,6 +423,11 @@ describe('using-beeline "Tools and the Workbench" section', () => {
     expect(markdown).not.toContain('you never walk them through it');
   });
 
+  it('asks for a request-specific connect card promise without embedding a stock promise', () => {
+    expect(markdown).toContain('request-specific `continuation`');
+    expect(markdown).toContain('Do not include a link, credential, account identifier, or private data');
+  });
+
   it('requires research-first prose before an unfamiliar tool is offered', () => {
     expect(markdown).toContain('**Research before you offer, and say so.**');
     expect(markdown).toContain('Never offer a tool you cannot describe');

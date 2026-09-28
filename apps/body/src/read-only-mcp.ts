@@ -1204,7 +1204,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'connect_app',
     description:
-      'Connect an app after workbench_status shows it is missing. The server chooses managed OAuth when supported and posts a sign-in card to the owner. Wait for the connection wake, then use the app ID with list_app_tools and execute_app_tool. Only when the provider reports managed OAuth unsupported does the server choose Trusty Squire. An outage or refusal never permits a silent route switch. Never put sign-in links or credentials in chat. This is setup, not use permission.',
+      'Connect an app after workbench_status shows it is missing. Pass a request-specific continuation sentence for the sign-in card, stating what you will do after sign-in; omit links, secrets, and private data. The server chooses managed OAuth when supported and posts the card to the owner. Wait for the connection wake, then use the app ID with list_app_tools and execute_app_tool. Only when the provider reports managed OAuth unsupported does the server choose Trusty Squire. An outage or refusal never permits a silent route switch. Never put sign-in links or credentials in chat. This is setup, not use permission.',
     inputSchema: {
       type: 'object',
       required: ['app', 'reason'],
@@ -1216,6 +1216,10 @@ const AGENT_TOOLS: ToolDefinition[] = [
           description: 'The app’s product name or website, e.g. "Linear" or "linear.app".',
         },
         reason: { type: 'string', minLength: 1, maxLength: 500 },
+        continuation: {
+          type: 'string', minLength: 1, maxLength: 160,
+          description: 'One short sentence promising what you will do for this request after sign-in. No links, credentials, account identifiers, or private data.',
+        },
         reconnect: {
           type: 'boolean',
           description: 'Resolve an app in error again from the top of the route order.',
@@ -1506,6 +1510,20 @@ function stringArg(args: JsonObject, name: string, fallback?: string): string | 
   if (value === undefined) return fallback;
   if (typeof value !== 'string') throw new Error(`${name} must be a string`);
   return value;
+}
+
+/** Keep the model-authored promise on a card short and free of obvious secrets. */
+function appContinuation(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') throw new Error('app continuation must be a sentence');
+  const sentence = value.trim();
+  if (!sentence || sentence.length > 160 || /[\u0000-\u001f\u007f`@]/u.test(sentence) ||
+    /(?:https?:\/\/|www\.|\b(?:token|api[_ -]?key|secret|password|credential)\b\s*[:=])/iu.test(sentence) ||
+    /\b[A-Za-z0-9_-]{32,}\b/u.test(sentence) ||
+    (sentence.match(/[.!?](?:\s|$)/gu) ?? []).length !== 1 ||
+    !/[.!?]$/u.test(sentence))
+    throw new Error('app continuation must be one short sentence without links or credentials');
+  return sentence;
 }
 
 function booleanArg(args: JsonObject, name: string, fallback: boolean): boolean {
@@ -3610,12 +3628,14 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       const app = stringArg(args, 'app')?.trim();
       const reason = stringArg(args, 'reason')?.trim();
       if (!app || !reason) throw new Error('app and reason are required');
+      const continuation = appContinuation(args.continuation);
       const context = await activeCommandContext();
       return JSON.stringify(
         await daemonExecute('connectApp', {
           ...context,
           app,
           reason,
+          ...(continuation ? { continuation } : {}),
           ...(args.reconnect === true ? { reconnect: true } : {}),
           ...(args.noApi === true ? { noApi: true } : {}),
         }),

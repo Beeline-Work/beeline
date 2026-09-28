@@ -34,6 +34,32 @@ afterEach(() => {
 });
 
 describe('server-mediated connected app tools', () => {
+  it('passes one bounded request-specific promise into connectApp', async () => {
+    const continuation = 'I will finish the requested draft after sign-in.';
+    await callAgentTool('connect_app', { app: 'Example', reason: 'Finish the draft',
+      continuation }, 'call-1');
+    expect(calls).toEqual([{ name: 'connectApp', input: expect.objectContaining({
+      app: 'Example', reason: 'Finish the draft', continuation,
+      roomId: 'room-1', requestId: 'request-1', generationId: 'generation-1',
+    }) }]);
+  });
+
+  it('rejects multiline, oversized, and secret-shaped card promises before the server call', async () => {
+    const invalid = [
+      'I will finish this. Then I will send that.',
+      'I will finish this.\nPlease sign in.',
+      `${'x'.repeat(161)}.`,
+      'I will use token: ya29-secret to finish this.',
+      'I will open https://example.com to finish this.',
+    ];
+    for (const continuation of invalid) {
+      await expect(callAgentTool('connect_app', { app: 'Example', reason: 'Finish',
+        continuation }, 'call-1'))
+        .rejects.toThrow(/app continuation/);
+    }
+    expect(calls).toEqual([]);
+  });
+
   it('discovers and executes a connected app with turn authority and no provider secret', async () => {
     expect(agentToolsFor(true, false).map((tool) => tool.name))
       .toEqual(expect.arrayContaining(['list_app_tools', 'execute_app_tool']));

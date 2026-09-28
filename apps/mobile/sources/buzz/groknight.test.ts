@@ -31,6 +31,32 @@ describe('Beeline theme tokens', () => {
       expect(theme.proseMedium).toBeTruthy();
     }
   });
+
+  it('uses an inverse ink and cream primary with legible contrast in both themes', () => {
+    expect(beelineThemes.bone).toMatchObject({
+      buttonPrimaryFill: '#1C1712',
+      buttonPrimaryText: '#F3EDE3',
+      buttonSecondaryText: '#1C1712',
+      accent: '#8a6323',
+    });
+    expect(beelineThemes.obsidian).toMatchObject({
+      buttonPrimaryFill: '#F3EDE3',
+      buttonPrimaryText: '#1C1712',
+      buttonSecondaryText: '#F3EDE3',
+      accent: '#b08a4a',
+    });
+    const luminance = (hex: string) => {
+      const channels = hex.slice(1).match(/../g)!.map((value) => {
+        const channel = parseInt(value, 16) / 255;
+        return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+      });
+      return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+    };
+    for (const theme of Object.values(beelineThemes)) {
+      const pair = [luminance(theme.buttonPrimaryFill), luminance(theme.buttonPrimaryText)].sort((a, b) => b - a);
+      expect((pair[0] + 0.05) / (pair[1] + 0.05)).toBeGreaterThan(15);
+    }
+  });
 });
 
 describe('Speakeasy canvas alignment', () => {

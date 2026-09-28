@@ -7,6 +7,9 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 const theme = vi.hoisted(() => ({
   hull: {
     accent: '#b08a4a',
+    buttonPrimaryFill: '#F3EDE3',
+    buttonPrimaryText: '#1C1712',
+    buttonSecondaryText: '#F3EDE3',
     bgPressed: '#2a1b31',
     bgRaised: '#1d1024',
     bgTerminal: '#14091a',
@@ -133,7 +136,7 @@ function hostByTestID(renderer: ReactTestRenderer, testID: string, type: string)
 }
 
 describe('Hull dialog family', () => {
-  it('renders quiet, single-brass primary, and red destructive actions with modal dismissal semantics', () => {
+  it('renders quiet, ink primary, and red destructive actions with modal dismissal semantics', () => {
     const onClose = vi.fn();
     const cancel = vi.fn();
     const save = vi.fn();
@@ -170,7 +173,13 @@ describe('Hull dialog family', () => {
     );
     expect(
       hostByTestID(renderer, 'save', 'Pressable').props.style({ pressed: false }),
-    ).toContainEqual({ backgroundColor: hull.accent });
+    ).toContainEqual({ backgroundColor: hull.buttonPrimaryFill });
+    expect(
+      hostByTestID(renderer, 'save', 'Pressable').props.style({ pressed: true }),
+    ).toContainEqual({ backgroundColor: hull.buttonPrimaryFill });
+    expect(
+      hostByTestID(renderer, 'cancel', 'Pressable').props.style({ pressed: false }),
+    ).toContainEqual({ borderWidth: 1, borderColor: hull.buttonSecondaryText, backgroundColor: 'transparent' });
     expect(
       hostByTestID(renderer, 'remove', 'Pressable').findByType('Text' as any).props.style,
     ).toContainEqual({ color: hull.dialogDanger });

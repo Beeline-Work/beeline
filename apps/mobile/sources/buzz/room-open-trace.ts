@@ -31,6 +31,8 @@ type TraceMark = { phase: string; t: number; detail?: string };
 /** The current open, oldest mark first. Reset when a Room open begins. */
 let currentRun: TraceMark[] = [];
 let listeners: Array<(run: readonly TraceMark[]) => void> = [];
+let pageStartedAt: number | null = null;
+let pageReported = false;
 
 /** The first mark of an open. Everything after it belongs to the same run. */
 const RUN_START_PHASE = 'nav-dispatch';
@@ -57,6 +59,21 @@ export function roomOpenTraceEnabled(): boolean {
 }
 
 export function markRoomOpen(phase: string, detail?: string): void {
+  // Operational page timing is independent of the optional diagnostic trace.
+  // Only the navigation and first painted frame matter; no Room identifier or
+  // trace detail is sent. A failed covering read is the terminal failure event.
+  if (phase === RUN_START_PHASE || (phase === 'route-mount' && (pageStartedAt === null || pageReported))) {
+    pageStartedAt = performance.now();
+    pageReported = false;
+  } else if ((phase === 'newest-frame' || phase === 'room-read-error') &&
+             pageStartedAt !== null && !pageReported) {
+    pageReported = true;
+    const durationMs = Math.max(0, Math.min(600_000, Math.round(performance.now() - pageStartedAt)));
+    if (typeof process === 'undefined' || (process.env.NODE_ENV !== 'test' && !process.env.VITEST)) {
+      void import('./room-page-observation').then(({ reportRoomPageObservation }) =>
+        reportRoomPageObservation(durationMs, phase === 'room-read-error'), () => undefined);
+    }
+  }
   if (tracingOff()) return;
   const mark: TraceMark = { phase, t: performance.now(), ...(detail ? { detail } : {}) };
   if (phase === RUN_START_PHASE || currentRun.length === 0) currentRun = [mark];

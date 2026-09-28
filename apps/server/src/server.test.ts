@@ -280,6 +280,12 @@ describe('server readiness', () => {
       roomId: 'room-open',
       reason: 'phone-write',
       messageId: 'posted-message',
+      trace: {
+        id: expect.any(String),
+        startedAt: expect.any(Number),
+        databaseAt: expect.any(Number),
+        emittedAt: expect.any(Number),
+      },
     });
   });
 
@@ -1279,9 +1285,13 @@ describe('phone committed-row live delivery', () => {
     const project = vi.fn((eventRoom: string, committed: { row: { room_id: string } }) =>
       committed.row.room_id === eventRoom ? delta : null,
     );
+    const recordedEvents = vi.fn().mockResolvedValue({ rows: [], rowCount: 0 });
     const { live, roomId, socket, port } = await connect(
       read as PhoneService['readLiveDelta'],
       project as PhoneService['projectCommittedLiveDelta'],
+      vi.fn().mockResolvedValue(true),
+      false,
+      recordedEvents,
     );
     const rawMarker = 'raw-committed-row-must-not-cross-wire';
     const startedAt = Date.now();
@@ -1328,6 +1338,10 @@ describe('phone committed-row live delivery', () => {
       upperBoundMs: expect.any(Number),
     });
     const acknowledged = await paintAck;
+    expect(recordedEvents).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO operator_function_events'),
+      ['message_delivery', expect.any(Number), false],
+    );
     expect(acknowledged.serverReceivedAt as number).toBeGreaterThanOrEqual(startedAt);
     expect((acknowledged.serverReceivedAt as number) - startedAt).toBeLessThan(100);
     socket.send(JSON.stringify({ type: 'trace-paint', id: trace.id }));

@@ -468,6 +468,31 @@ describe('the chat screen wires the scroll rule', () => {
     }
   });
 
+  it('ROOM-CHEV-REST-1: reads tail position from where a phone scroll comes to rest', () => {
+    const list = chatSource.slice(
+      chatSource.indexOf('<FlatList\n            testID="chat-messages"'),
+      chatSource.indexOf('renderItem={renderItem}', chatSource.indexOf('testID="chat-messages"')),
+    );
+    const handler = (name: string, next: string) =>
+      list.slice(list.indexOf(`${name}={`), list.indexOf(`${next}=`, list.indexOf(`${name}={`)));
+    const read = 'observePhoneTailOffset(event.nativeEvent.contentOffset.y)';
+
+    // A 100 ms window left the list's viewability report — which settles the
+    // badge and the unread line — on an offset it had already scrolled past.
+    expect(list).toContain('scrollEventThrottle={16}');
+    expect(list).not.toContain('scrollEventThrottle={100}');
+
+    // iOS never sends the resting offset as an `onScroll`.
+    expect(handler('onScroll', 'scrollEventThrottle')).toContain(read);
+    expect(handler('onMomentumScrollEnd', 'renderItem')).toContain(read);
+
+    // Drag-end is a resting offset only when no momentum follows it.
+    const dragEnd = handler('onScrollEndDrag', 'onMomentumScrollBegin');
+    expect(dragEnd.match(/observePhoneTailOffset\(/g)).toHaveLength(1);
+    expect(dragEnd.indexOf(read)).toBeGreaterThan(dragEnd.indexOf('if (!hasMomentum) {'));
+    expect(dragEnd.indexOf(read)).toBeLessThan(dragEnd.indexOf('return;'));
+  });
+
   it('lands the desktop transcript on the newest message on open', () => {
     // A chronological list starts at its top, so the open must scroll; an
     // inverted native list already shows the tail. A bookmark/notification

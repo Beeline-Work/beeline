@@ -556,6 +556,43 @@ describe('the transcript new-message control', () => {
     expect(discs(renderer)).toHaveLength(1);
   });
 
+  it('ROOM-CHEV-REST-1: a scroll that rests on the newest row settles the 9+ chevron and the line', () => {
+    // Opened on an unread boundary, in history, while ten messages land below.
+    const open: HarnessProps = { ...AT_TAIL, firstUnreadMessageId: 'seed-2', pinnedToTail: false };
+    const renderer = mount(open);
+    report([SEED[1]!, SEED[2]!]);
+    const arrivals = Array.from({ length: 10 }, (_, index) => row(`arrival-${index}`, 5 + index));
+    const arrived = [...SEED, ...arrivals];
+    update(renderer, {
+      ...open,
+      messages: arrived,
+      arrivingIds: new Set(arrivals.map((message) => message.id)),
+    });
+    expect(onScreen(renderer)).toContain('unread line: seed-2');
+    expect(badges(renderer)).toEqual(['9+']);
+
+    // Scrolling down, a tick 120 px above the tail: the viewable set taken at
+    // that offset stops short of the newest row. Under the old 100 ms window
+    // this was the list's LAST word, and every line below stayed up.
+    scroll(false);
+    report([arrived[12]!, arrived[13]!]);
+    expect(onScreen(renderer)).toContain('jump disc: shown · badge: 9+');
+
+    // Ticks now follow the list frame by frame, so its viewability pass runs at
+    // the resting offset and the momentum-end reading pins the tail.
+    report([arrived[13]!, arrived[14]!]);
+    scroll(true);
+    expect(onScreen(renderer)).toContain(
+      'unread line: none · catch-up bar: none · jump disc: hidden · badge: none',
+    );
+
+    // Back up into history: the rows were reached, so nothing is counted twice.
+    scroll(false);
+    report([SEED[1]!, SEED[2]!]);
+    expect(onScreen(renderer)).toContain('unread line: none');
+    expect(onScreen(renderer)).toContain('jump disc: shown · badge: none');
+  });
+
   it('raises the control even though the last report said the newest row was on screen', () => {
     // The report before the arrival was taken while seed-4 was the newest row,
     // and it said seed-4 was on screen. The arrival lands below the fold, which

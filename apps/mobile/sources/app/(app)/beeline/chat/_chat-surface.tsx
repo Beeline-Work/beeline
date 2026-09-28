@@ -2638,6 +2638,19 @@ export function BuzzChatSurface({
     },
     [loadOlderTranscriptMessages, observeTailPinned],
   );
+  // Pinned? Native offset 0 is the visual bottom of the inverted list. iOS
+  // drops `onScroll` ticks inside the throttle window and never sends the
+  // resting offset as one; only momentum-end (or drag-end with no momentum)
+  // carries it. With a 100 ms window, a scroll that settled on the newest row
+  // left both this reading and the list's viewability report short of the
+  // tail, so the jump chevron and its badge stayed up over the newest row.
+  const observePhoneTailOffset = useCallback(
+    (offsetY: number) => {
+      isPinnedToTailRef.current = offsetY <= TAIL_PIN_THRESHOLD;
+      observeTailPinned(isPinnedToTailRef.current);
+    },
+    [observeTailPinned],
+  );
   // Older history paging in above the reader grows the content from the
   // top, not the bottom — hold the reader's place by the real measured
   // growth instead of letting it silently shift what they were reading.
@@ -5768,11 +5781,12 @@ export function BuzzChatSurface({
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode={transcriptKeyboardDismissMode(Platform.OS)}
             onScroll={(event) => {
-              const { contentOffset } = event.nativeEvent;
-              isPinnedToTailRef.current = contentOffset.y <= TAIL_PIN_THRESHOLD;
-              observeTailPinned(isPinnedToTailRef.current);
+              observePhoneTailOffset(event.nativeEvent.contentOffset.y);
             }}
-            scrollEventThrottle={100}
+            // One frame, the list's own default. A wider window leaves the
+            // viewability report (which settles the badge and the unread
+            // line) on an offset the list has already scrolled past.
+            scrollEventThrottle={16}
             onViewableItemsChanged={observeVisibleTranscriptMessages}
             onScrollBeginDrag={() => {
               dragEndSequenceRef.current += 1;
@@ -5789,7 +5803,12 @@ export function BuzzChatSurface({
               if (velocity !== undefined) {
                 const hasMomentum = Math.abs(velocity) > 0.01;
                 userDraggingRef.current = hasMomentum;
-                if (!hasMomentum) resumePendingNewMessageLanding();
+                if (!hasMomentum) {
+                  // No momentum follows, so this is where the list rests. With
+                  // momentum it is an in-flight offset; momentum-end rests it.
+                  observePhoneTailOffset(event.nativeEvent.contentOffset.y);
+                  resumePendingNewMessageLanding();
+                }
                 return;
               }
               userDraggingRef.current = true;
@@ -5804,7 +5823,8 @@ export function BuzzChatSurface({
               userDraggingRef.current = true;
               allowOlderHistoryRef.current = true;
             }}
-            onMomentumScrollEnd={() => {
+            onMomentumScrollEnd={(event) => {
+              observePhoneTailOffset(event.nativeEvent.contentOffset.y);
               dragEndSequenceRef.current += 1;
               userDraggingRef.current = false;
               resumePendingNewMessageLanding();

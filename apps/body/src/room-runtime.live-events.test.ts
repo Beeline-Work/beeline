@@ -27,6 +27,68 @@ function runtimeAt(root: string): AgentRuntimeRecord {
 }
 
 describe('RoomRuntimeCoordinator live membership apply', () => {
+  it('finishes an active turn before restarting for a repository revision', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-revision-mid-turn-'));
+    roots.push(root);
+    let revision = 'first';
+    let busy = true;
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getDaemonBootstrap') return { workspaceIds: ['workspace'],
+        rooms: [{ roomId: 'room-1', archived: false, repositoryRevision: revision }] };
+      if (name === 'listRoomCorners') return { corners: [] };
+      return {};
+    });
+    const coordinator = new RoomRuntimeCoordinator(runtimeAt(root), join(root, 'agent.json'),
+      { workspaceRoot: root } as never, { daemonApi: {
+        execute, setRoomsChangedListener: vi.fn(),
+      } as unknown as DaemonApiClient });
+    const internal = coordinator as unknown as {
+      running: Map<string, unknown>;
+      notePoll(roomId: string): void;
+      stopRunning(roomId: string, room: unknown): Promise<void>;
+      startRoom(roomId: string): Promise<void>;
+    };
+    internal.running.set('room-1', {
+      body: { isBusy: () => busy, requestReconciliation: vi.fn() },
+      controller: new AbortController(), promise: Promise.resolve(),
+      lastPollAt: 0, backoffUntil: 0, recovering: false,
+    });
+    const stop = vi.spyOn(internal, 'stopRunning').mockImplementation(async () => {
+      internal.running.delete('room-1');
+    });
+    const start = vi.spyOn(internal, 'startRoom').mockResolvedValue();
+    try {
+      await coordinator.reconcile();
+      revision = 'second';
+      await coordinator.reconcile();
+      expect(stop).not.toHaveBeenCalled();
+      busy = false;
+      internal.notePoll('room-1');
+      await vi.waitFor(() => expect(start).toHaveBeenCalledWith('room-1'));
+      expect(stop).toHaveBeenCalledOnce();
+    } finally {
+      await coordinator.shutdown();
+    }
+  });
+  it('keeps a capable live socket after a discovery read fault and retains old-server fallback', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-discovery-recovery-'));
+    roots.push(root);
+    const reconnectLive = vi.fn();
+    const supportsDiscoveryWake = vi.fn(() => true);
+    const coordinator = new RoomRuntimeCoordinator(runtimeAt(root), join(root, 'agent.json'),
+      { workspaceRoot: root } as never, { daemonApi: {
+        reconnectLive, supportsDiscoveryWake, setRoomsChangedListener: vi.fn(),
+      } as unknown as DaemonApiClient });
+    try {
+      coordinator.reconnectAfterFailure();
+      expect(reconnectLive).not.toHaveBeenCalled();
+      supportsDiscoveryWake.mockReturnValue(false);
+      coordinator.reconnectAfterFailure();
+      expect(reconnectLive).toHaveBeenCalledOnce();
+    } finally {
+      await coordinator.shutdown();
+    }
+  });
   it('starts a Room from a membership push without listing corners', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-live-room-'));
     roots.push(root);

@@ -576,6 +576,8 @@ export class RoomRuntimeCoordinator {
   private workspaceRemovalConfirmations = 0;
   private readonly roomRemovalConfirmations = new Map<string, number>();
   private readonly repositoryRevisions = new Map<string, string>();
+  /** A revision discovered mid-turn retires the Room only after that turn ends. */
+  private readonly deferredRepositoryRestarts = new Set<string>();
   private readonly repositoryStateCache = new Map<
     string,
     { value: RoomRepositoryStateResult; until: number }
@@ -697,7 +699,11 @@ export class RoomRuntimeCoordinator {
   }
 
   reconnectAfterFailure(): void {
-    this.options.daemonApi.reconnectLive?.();
+    // New servers emit a discovery wake when their DB listener recovers.
+    // Older servers lack that guarantee, so retain socket reconnect recovery
+    // until they leave the rolling fleet.
+    if (!this.options.daemonApi.supportsDiscoveryWake?.())
+      this.options.daemonApi.reconnectLive?.();
   }
 
   private wakeDiscovery(): void {
@@ -810,7 +816,11 @@ export class RoomRuntimeCoordinator {
       if (previous === undefined || previous === revision) continue;
       this.invalidateParentRepository(room.roomId);
       const running = this.running.get(room.roomId);
-      if (running) await this.stopRunning(room.roomId, running);
+      if (running?.body.isBusy()) {
+        this.deferredRepositoryRestarts.add(room.roomId);
+      } else if (running) {
+        await this.stopRunning(room.roomId, running);
+      }
       // A restored App grant can also clear a corner's previous standing
       // checkout fault; those corners retry in this same reconciliation pass.
       for (const [cornerId, parentId] of this.monolithCornerParents)
@@ -1002,6 +1012,7 @@ export class RoomRuntimeCoordinator {
   }
 
   private async stopRunning(channelId: string, running: RunningRoom): Promise<void> {
+    this.deferredRepositoryRestarts.delete(channelId);
     running.controller.abort();
     await running.promise.catch(() => undefined);
     try {
@@ -1727,6 +1738,15 @@ export class RoomRuntimeCoordinator {
     if (!room) return;
     room.lastPollAt = this.now();
     room.backoffUntil = 0;
+    if (this.deferredRepositoryRestarts.has(roomId) && !room.body.isBusy()) {
+      this.deferredRepositoryRestarts.delete(roomId);
+      void this.stopRunning(roomId, room)
+        .then(() => this.stopped ? undefined : this.startRoom(roomId))
+        .catch((error) => {
+          console.error(`[thin-core] failed to restart Room ${roomId} after repository change:`, error);
+          this.wakeDiscovery();
+        });
+    }
     if (this.isWorkspaceIdle()) this.interactiveIdleListener?.();
   }
 

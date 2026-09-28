@@ -212,7 +212,10 @@ export async function runServerCommandIntake(options: {
         const aborted = () => done(false);
         wake = done;
         signal?.addEventListener('abort', aborted, { once: true });
-        if (
+        // `closed()` and command claims can yield after shutdown has already
+        // aborted the signal, before this listener is installed.
+        if (signal?.aborted) done(false);
+        else if (
           !busy &&
           [...pending.values()].some(
             (command) =>

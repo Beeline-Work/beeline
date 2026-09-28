@@ -105,7 +105,7 @@ export class ThinDaemonCore {
           this.discoveryStatus = membership === 'unknown' ? 'monolith membership degraded' : '';
         } catch (error) {
           if (isAgentRemovedError(error)) return 'agent-removed';
-          console.error('[thin-core] discovery failed; waiting for socket reconnect:', error);
+          console.error('[thin-core] discovery failed; waiting for live recovery:', error);
           this.discoveryStatus = `monolith discovery degraded: ${error instanceof Error ? error.message : String(error)}`;
           this.roomRuntime.reconnectAfterFailure();
         }

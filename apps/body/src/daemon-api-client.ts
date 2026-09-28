@@ -7,6 +7,7 @@ import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import { helperVersion, helperVersionHeader } from './helper-version.js';
+import { HostReadBudget, ReadBudgetFullError } from './host-read-budget.js';
 import {
   readRuntimeRecord,
   runtimeDirectory,
@@ -40,6 +41,7 @@ export class DaemonApiError extends Error {
     readonly retryable: boolean,
     /** The server's machine-readable refusal code, `request_failed` if none. */
     readonly code: string = 'request_failed',
+    readonly retryAfterMs?: number,
     readonly minVersion?: string,
   ) {
     super(message);
@@ -125,9 +127,33 @@ async function responseError(response: Response): Promise<DaemonApiError> {
     response.status,
     response.status === 408 || response.status === 429 || response.status >= 500,
     code,
+    retryAfterMs(response.headers.get('retry-after')),
     minVersion,
   );
 }
+
+/** Retry-After may be seconds or an HTTP date. Clamp malformed/remote values. */
+function retryAfterMs(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const seconds = Number(value);
+  const delay = Number.isFinite(seconds) && seconds >= 0
+    ? seconds * 1_000
+    : Date.parse(value) - Date.now();
+  return Number.isFinite(delay) && delay >= 0 ? Math.min(delay, 60_000) : undefined;
+}
+
+export type DaemonClientMetrics = {
+  readonly inFlight: number;
+  readonly requests: number;
+  readonly timeouts: number;
+  readonly reconnects: number;
+  readonly subscriptionsSent: number;
+  readonly readQueueDepth: number;
+  readonly readQueueWaitMs: number;
+};
+
+const REQUEST_DEADLINE_MS = 30_000;
+const STABLE_SOCKET_MS = 30_000;
 
 /** Typed client for the complete named daemon operation contract. */
 export class DaemonApiClient {
@@ -135,6 +161,14 @@ export class DaemonApiClient {
   private liveSocket?: WebSocket;
   private liveReconnect?: ReturnType<typeof setTimeout>;
   private liveReconnectDelayMs = 1_000;
+  private liveOpenedAt = 0;
+  private inFlight = 0;
+  private requestCount = 0;
+  private timeoutCount = 0;
+  private reconnectCount = 0;
+  private subscriptionCount = 0;
+  private discoveryWakeSupported = false;
+  private readonly readBudget?: HostReadBudget;
   private readonly liveRooms = new Map<
     string,
     {
@@ -170,7 +204,12 @@ export class DaemonApiClient {
     private readonly fetchImpl: DaemonFetch = fetch,
     private readonly webSocketFactory: DaemonWebSocketFactory = (url, protocols) =>
       new WebSocket(url, protocols),
-  ) {}
+    readBudget?: HostReadBudget,
+  ) {
+    // Test transports may supply their own admission model. The real network
+    // transport always takes the machine-wide budget.
+    this.readBudget = readBudget ?? (fetchImpl === fetch ? new HostReadBudget(baseUrl) : undefined);
+  }
 
   /** Connection material for the daemon-owned MCP proxy and corner credentials. */
   connection(): { baseUrl: string; daemonToken: string; agentId: string; helperVersion: string } {
@@ -187,6 +226,24 @@ export class DaemonApiClient {
 
   setForceUpdateListener(listener: (minVersion: string) => void): void {
     this.forceUpdateListener = listener;
+  }
+
+  metrics(): DaemonClientMetrics {
+    const budget = this.readBudget?.metrics();
+    return {
+      inFlight: this.inFlight,
+      requests: this.requestCount,
+      timeouts: this.timeoutCount,
+      reconnects: this.reconnectCount,
+      subscriptionsSent: this.subscriptionCount,
+      readQueueDepth: budget?.waiting ?? 0,
+      readQueueWaitMs: budget?.totalWaitMs ?? 0,
+    };
+  }
+
+  /** A new server can wake discovery after its DB listener recovers. */
+  supportsDiscoveryWake(): boolean {
+    return this.discoveryWakeSupported;
   }
 
   /** Add one Room to this agent's shared live socket. */
@@ -306,25 +363,57 @@ export class DaemonApiClient {
     if (typeof candidate.agentId === 'string' && candidate.agentId !== this.agentId) {
       throw new Error('daemon operation agentId does not match the runtime identity');
     }
-    const response = await this.fetchImpl(
-      endpoint(this.baseUrl, `/v1/daemon/operations/${String(name)}`),
-      {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${this.daemonToken}`,
-          'content-type': 'application/json',
-          ...helperVersionHeader(this.helperIdentity.releaseVersion),
+    const controller = new AbortController();
+    const deadline = setTimeout(() => controller.abort(), REQUEST_DEADLINE_MS);
+    deadline.unref?.();
+    this.requestCount += 1;
+    let release: (() => Promise<void>) | undefined;
+    let admitted = false;
+    let output: Output<Name>;
+    try {
+      const operation = String(name);
+      if (this.readBudget && (/^(get|list|read|search)/.test(operation) || operation === 'claimInstitutionalMemoryJob')) {
+        release = await this.readBudget.acquire(
+          operation === 'getAgentCommands' || operation === 'getRoomInbox' ? 'urgent' : 'background',
+          Date.now() + REQUEST_DEADLINE_MS,
+        );
+      }
+      this.inFlight += 1;
+      admitted = true;
+      const response = await this.fetchImpl(
+        endpoint(this.baseUrl, `/v1/daemon/operations/${String(name)}`),
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${this.daemonToken}`,
+            'content-type': 'application/json',
+            ...helperVersionHeader(this.helperIdentity.releaseVersion),
+          },
+          body: JSON.stringify(input),
+          signal: controller.signal,
         },
-        body: JSON.stringify(input),
-      },
-    );
-    if (!response.ok) {
-      const error = await responseError(response);
-      if (error.status === 426 && error.code === 'update_required' && error.minVersion)
-        this.forceUpdateListener?.(error.minVersion);
+      );
+      if (!response.ok) {
+        const error = await responseError(response);
+        if (error.status === 426 && error.code === 'update_required' && error.minVersion)
+          this.forceUpdateListener?.(error.minVersion);
+        throw error;
+      }
+      output = (await response.json()) as Output<Name>;
+    } catch (error) {
+      if (error instanceof ReadBudgetFullError) {
+        throw new DaemonApiError(error.message, 429, true, 'read_budget_full', 1_000);
+      }
+      if (controller.signal.aborted) {
+        this.timeoutCount += 1;
+        throw new DaemonApiError(`monolith daemon ${String(name)} timed out`, 408, true, 'deadline_exceeded');
+      }
       throw error;
+    } finally {
+      clearTimeout(deadline);
+      if (admitted) this.inFlight -= 1;
+      await release?.();
     }
-    const output = (await response.json()) as Output<Name>;
     if (name === 'postAgentTurnReceipt') {
       const receipt = output as { hiccupRestart?: unknown; hiccupAttempt?: unknown };
       if (receipt.hiccupRestart === true) {
@@ -347,7 +436,8 @@ export class DaemonApiClient {
     ]);
     this.liveSocket = socket;
     socket.onopen = () => {
-      this.liveReconnectDelayMs = 1_000;
+      this.liveOpenedAt = Date.now();
+      this.discoveryWakeSupported = false;
       for (const roomId of this.liveRooms.keys()) this.sendLiveSubscription(roomId);
       // Every wake on this socket is fire-and-forget: a membership written, or
       // a Connect tapped, while this socket was connecting (or between
@@ -370,6 +460,11 @@ export class DaemonApiClient {
         this.forceUpdateListener?.(event.minVersion);
         return;
       }
+      if (event.type === 'hello' && event.protocolMin === 1 && event.protocolMax === 1) {
+        const capabilities = event.capabilities as Record<string, unknown> | undefined;
+        if (capabilities?.discoveryWake === true) this.discoveryWakeSupported = true;
+        return;
+      }
       if (event.type === 'helper-release' && typeof event.version === 'string' &&
           typeof event.sha === 'string') {
         this.helperReleaseListener?.({ version: event.version, sha: event.sha });
@@ -377,6 +472,11 @@ export class DaemonApiClient {
       }
       if (event.type === 'rooms-changed') {
         this.roomsChangedListener?.(membershipChange(event));
+        return;
+      }
+      if (event.type === 'discovery-wake' &&
+          (event.reason === 'listener-resync' || event.reason === 'database-recovered')) {
+        this.roomsChangedListener?.();
         return;
       }
       if (event.type === 'corner-complete' && typeof event.roomId === 'string') {
@@ -405,6 +505,7 @@ export class DaemonApiClient {
       }
       if (event.type === 'subscribed' && typeof event.roomId === 'string') {
         const capabilities = event.capabilities as Record<string, unknown> | undefined;
+        if (capabilities?.discoveryWake === true) this.discoveryWakeSupported = true;
         this.liveRooms.get(event.roomId)?.onState?.(true, {
           pushIntake: capabilities?.pushIntake === true,
           connectionPresence: capabilities?.connectionPresence === true,
@@ -456,11 +557,16 @@ export class DaemonApiClient {
     const reconnect = () => {
       if (this.liveSocket !== socket) return;
       this.liveSocket = undefined;
+      this.discoveryWakeSupported = false;
       for (const room of this.liveRooms.values()) room.onState?.(false);
       if (!this.liveRooms.size && !this.roomsChangedListener) return;
       const delay = this.liveReconnectDelayMs;
-      this.liveReconnectDelayMs = Math.min(delay * 2, 30_000);
-      this.liveReconnect = setTimeout(() => this.ensureLiveSocket(), delay + Math.floor(Math.random() * delay * 0.25));
+      this.liveReconnectDelayMs = Date.now() - this.liveOpenedAt >= STABLE_SOCKET_MS
+        ? 1_000
+        : Math.min(delay * 2, 30_000);
+      this.reconnectCount += 1;
+      // Full jitter prevents a host's agents from reconnecting in lockstep.
+      this.liveReconnect = setTimeout(() => this.ensureLiveSocket(), Math.floor(Math.random() * delay));
       this.liveReconnect.unref?.();
     };
     socket.onerror = () => undefined;
@@ -470,6 +576,7 @@ export class DaemonApiClient {
   private sendLiveSubscription(roomId: string): void {
     const room = this.liveRooms.get(roomId);
     if (!room || this.liveSocket?.readyState !== WebSocket.OPEN) return;
+    this.subscriptionCount += 1;
     this.liveSocket.send(
       JSON.stringify({
         type: 'subscribe',

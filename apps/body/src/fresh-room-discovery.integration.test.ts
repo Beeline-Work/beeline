@@ -316,6 +316,10 @@ describe('fresh Room discovery through the live membership wake', () => {
     coreRun = core.run({ pollMs: 100, signal: abort.signal });
   });
 
+  // A repository corner reaps its worktree and branch during shutdown. The
+  // helper now gives a server read a bounded admission wait, so this fixture
+  // cleanup needs room for that wait plus local worktree teardown under CI
+  // contention; the turn and delivery assertions retain their own deadlines.
   afterEach(async () => {
     abort?.abort();
     await coreRun;
@@ -323,7 +327,7 @@ describe('fresh Room discovery through the live membership wake', () => {
     await new Promise((r) => setTimeout(r, 150));
     if (server) await new Promise<void>((resolve2) => server.close(() => resolve2()));
     if (database) await database.close();
-  });
+  }, 90_000);
 
   const request = async (path: string, method = 'GET', payload?: unknown) =>
     fetch(`${origin}${path}`, {

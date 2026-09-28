@@ -15,6 +15,7 @@ import {
   writeRuntimeRecord,
   type AgentRuntimeRecord,
 } from './runtime.js';
+import type { HostReadBudget } from './host-read-budget.js';
 
 const roots: string[] = [];
 
@@ -205,6 +206,32 @@ describe('DaemonApiClient', () => {
     release();
   });
 
+  it('exposes the server Retry-After delay on a retryable overload', async () => {
+    const client = new DaemonApiClient('http://127.0.0.1:43123', 'token', 'a'.repeat(64),
+      async () => Response.json({ error: 'overloaded' },
+        { status: 429, headers: { 'retry-after': '2' } }));
+    await expect(client.execute('getDaemonBootstrap', { agentId: client.agentId }))
+      .rejects.toMatchObject({ status: 429, retryable: true, retryAfterMs: 2_000 });
+  });
+
+  it('aborts a hung operation at its deadline without retiring the agent', async () => {
+    vi.useFakeTimers();
+    const budget = { acquire: async () => async () => undefined,
+      metrics: () => ({ waiting: 0, active: 0, totalWaitMs: 0 }) } as unknown as HostReadBudget;
+    const request: typeof fetch = async (_url, init) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+    });
+    const client = new DaemonApiClient('http://127.0.0.1:43123', 'token', 'a'.repeat(64),
+      request, undefined, budget);
+    const operation = client.execute('getDaemonBootstrap', { agentId: client.agentId });
+    const failed = expect(operation).rejects.toMatchObject({
+      status: 408, retryable: true, code: 'deadline_exceeded',
+    });
+    await vi.advanceTimersByTimeAsync(30_000);
+    await failed;
+    expect(client.metrics()).toMatchObject({ inFlight: 0, timeouts: 1 });
+  });
+
   it('reconnects the one live socket by cursor and de-duplicates replayed ids', async () => {
     vi.useFakeTimers();
     FakeWebSocket.instances.length = 0;
@@ -292,6 +319,29 @@ describe('DaemonApiClient', () => {
     expect(configChanged).toHaveBeenCalledOnce();
     release();
     vi.useRealTimers();
+  });
+
+  it('uses server recovery wakes only after the subscribed capability is acknowledged', () => {
+    FakeWebSocket.instances.length = 0;
+    const client = new DaemonApiClient('http://127.0.0.1:43123', 'token', 'b'.repeat(64),
+      fetch, ((url, protocols) => new FakeWebSocket(url, protocols)) as DaemonWebSocketFactory);
+    const discovery = vi.fn();
+    client.setRoomsChangedListener(discovery);
+    const release = client.liveSubscribe('room-1');
+    const socket = FakeWebSocket.instances[0]!;
+    socket.open();
+    expect(client.supportsDiscoveryWake()).toBe(false);
+    socket.message({ type: 'hello', protocolMin: 1, protocolMax: 1,
+      capabilities: { discoveryWake: true, pushIntake: true } });
+    expect(client.supportsDiscoveryWake()).toBe(true);
+    socket.message({ type: 'subscribed', roomId: 'room-1', capabilities: { discoveryWake: true } });
+    expect(client.supportsDiscoveryWake()).toBe(true);
+    socket.message({ type: 'discovery-wake', reason: 'database-recovered' });
+    expect(discovery).toHaveBeenCalledTimes(2); // open recovery and DB recovery
+    socket.close();
+    expect(client.supportsDiscoveryWake()).toBe(false);
+    release();
+    client.closeLive();
   });
 
   it('delivers a hiccup-restart push to the one registered listener', async () => {

@@ -884,7 +884,6 @@ export class DaemonService {
       case 'getCornerRestoreState':
         return (await this.cornerRestore(
           (input as Input<'getCornerRestoreState'>).cornerId,
-          authenticatedAgentId,
         )) as Output<Name>;
       case 'listCornerBriefRevisions':
         return (await this.listCornerBriefRevisions(
@@ -2557,7 +2556,6 @@ export class DaemonService {
    * where that record is thinnest, so the two derivations must agree.
    */
   private async corners(roomId: string, agentId: string) {
-    await this.access(roomId, agentId);
     const rows = await this.database.query<{
       id: string;
       parent_id: string;
@@ -2594,8 +2592,7 @@ export class DaemonService {
       })),
     };
   }
-  private async cornerRestore(cornerId: string, agentId: string) {
-    await this.access(cornerId, agentId);
+  private async cornerRestore(cornerId: string) {
     const brief = await currentCornerBrief(this.database, cornerId);
     const recordedValidation = brief
       ? (

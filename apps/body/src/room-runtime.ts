@@ -573,6 +573,8 @@ export class RoomRuntimeCoordinator {
   private localWorktreeIds?: Promise<Set<string>>;
   /** Event-driven cleanup retries stay scoped to the failed local corner. */
   private readonly archiveCleanupFaults = new Map<string, { failures: number; retryAt: number }>();
+  /** A refused local checkout is kept until a later Room listing proves membership again. */
+  private readonly archiveCleanupAccessDenied = new Set<string>();
   private readonly startingCorners = new Set<string>();
   /**
    * Rooms whose start is in flight. `running` is not set until the checkout
@@ -1702,6 +1704,8 @@ export class RoomRuntimeCoordinator {
       )
         continue;
       if (!this.archiveCleanupDue(cornerId)) continue;
+      if (this.archiveCleanupAccessDenied.has(cornerId) && !corners.has(cornerId)) continue;
+      this.archiveCleanupAccessDenied.delete(cornerId);
       let corner = corners.get(cornerId);
       let discovered: DiscoveredCornerWorktree | undefined;
       try {
@@ -1749,7 +1753,9 @@ export class RoomRuntimeCoordinator {
         });
         console.log(`[thin-core] swept archived corner worktree ${cornerId}`);
       } catch (error) {
-        this.deferArchiveCleanup(cornerId);
+        if (error instanceof DaemonApiError && error.status === 403)
+          this.archiveCleanupAccessDenied.add(cornerId);
+        else this.deferArchiveCleanup(cornerId);
         console.error(`[thin-core] archived corner ${cornerId} cleanup deferred:`, error);
         // The checkout remains for the next heartbeat. A stale or unsafe
         // checkout cannot require another full discovery immediately.

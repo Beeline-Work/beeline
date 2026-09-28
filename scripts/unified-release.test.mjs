@@ -1149,12 +1149,10 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   }
   const migrationStep = serverLegAction.runs.steps.find((step) => step.name === 'Run schema migrations and backfills once before Machine updates');
   const migrate = migrationStep.run;
-  assert.equal(migrationStep.env.SERVER_DB_DIRECT_IP, 'fdaa:67:2f3e:0:1::11');
+  // Production Postgres is on Neon, reached directly by MIGRATION_DATABASE_URL; no Fly private-network proxy.
+  assert.equal(migrationStep.env?.SERVER_DB_DIRECT_IP, undefined);
   assert.match(migrate, /MIGRATION_DATABASE_URL is required/);
-  assert.match(migrate, /flyctl proxy "15432:5432" "\$SERVER_DB_DIRECT_IP" -a beeline-server/);
-  assert.match(migrate, /trap 'kill "\$proxy_pid".*wait "\$proxy_pid"/);
-  assert.match(migrate, /\/dev\/tcp\/127\.0\.0\.1\/15432/);
-  assert.match(migrate, /database proxy did not open within 30s/);
+  assert.doesNotMatch(migrate, /flyctl proxy/);
   assert.match(migrate, /current_database\(\) AS database/);
   assert.match(migrate, /to_regclass\('public\.messages'\) IS NOT NULL AS has_messages/);
   assert.match(migrate, /database !== 'fly-db' \|\| hasMessages !== true/);

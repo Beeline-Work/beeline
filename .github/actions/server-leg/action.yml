@@ -117,29 +117,9 @@ runs:
       id: migrate
       if: inputs.phase == 'promote'
       shell: bash
-      env:
-        # `flyctl mpg status --json` does not expose the cluster's private address.
-        SERVER_DB_DIRECT_IP: fdaa:67:2f3e:0:1::11
       run: |
         set -euo pipefail
         test -n "${MIGRATION_DATABASE_URL:-}" || { echo 'MIGRATION_DATABASE_URL is required' >&2; exit 1; }
-
-        flyctl proxy "15432:5432" "$SERVER_DB_DIRECT_IP" -a beeline-server &
-        proxy_pid=$!
-        trap 'kill "$proxy_pid" 2>/dev/null || true; wait "$proxy_pid" 2>/dev/null || true' EXIT
-
-        proxy_ready=false
-        for _ in $(seq 1 30); do
-          if (: > /dev/tcp/127.0.0.1/15432) 2>/dev/null; then
-            proxy_ready=true
-            break
-          fi
-          sleep 1
-        done
-        if [ "$proxy_ready" != true ]; then
-          echo 'database proxy did not open within 30s' >&2
-          exit 1
-        fi
 
         node <<'NODE'
         const { Client } = require('pg');

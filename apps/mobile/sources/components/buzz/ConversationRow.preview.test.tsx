@@ -37,7 +37,7 @@ const latestMessage = {
   author: { pubkey: 'speedy', kind: 'agent' as const, name: 'Speedy', handle: '@speedy' },
 };
 
-function renderRow(changes: Partial<ChatListItem> = {}) {
+function renderRow(changes: Partial<ChatListItem> = {}, cornerTip = false) {
   const item = {
     room: { id: 'room', name: 'experiments', updatedAt: 100 },
     latestMessage,
@@ -52,6 +52,7 @@ function renderRow(changes: Partial<ChatListItem> = {}) {
         now={100_000}
         onPress={() => {}}
         onPin={() => {}}
+        cornerTip={cornerTip}
         testID="room"
       />,
     );
@@ -65,6 +66,18 @@ function renderRow(changes: Partial<ChatListItem> = {}) {
 }
 
 describe('ConversationRow preview', () => {
+  it('anchors the corner tip on the actual corner control only when the mark exists', () => {
+    const shown = renderRow({ cornerCount: 1 }, true).root;
+    const mark = shown.findByProps({ testID: 'room-corners' });
+    expect(typeof mark.props.onLayout).toBe('function');
+    expect(mark.props.style).toEqual(
+      expect.arrayContaining([expect.objectContaining({ position: 'absolute' })]),
+    );
+    expect(shown.findAllByProps({ testID: 'tour-target-cornerMark' })).toHaveLength(0);
+    expect(
+      renderRow({ cornerCount: 0 }, true).root.findAllByProps({ testID: 'room-corners' }),
+    ).toHaveLength(0);
+  });
   it('shows the latest sender and text for an unread mention while retaining its attention state', () => {
     const { root, visibleText } = renderRow({
       unread: true,

@@ -14,6 +14,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import {
   TOUR_TIP_IDS,
+  COMPLETED_TOUR,
   loadProductTour,
   markTourTipSeen,
   replayProductTour,
@@ -96,8 +97,17 @@ export function ProductTourProvider({ children }: { children: React.ReactNode })
   // identity change is picked up without any extra wiring.
   const refreshViewer = useCallback(() => {
     void loadBuzzIdentity()
-      .then((identity) => setViewer(identity?.publicKey ?? null))
-      .catch(() => setViewer(null));
+      .then(async (identity) => {
+        const pubkey = identity?.publicKey ?? null;
+        setViewer(pubkey);
+        if (!pubkey) return setState(null);
+        setState(null);
+        setState(await loadProductTour(pubkey).catch(() => COMPLETED_TOUR));
+      })
+      .catch(() => {
+        setViewer(null);
+        setState(null);
+      });
   }, []);
 
   useEffect(() => {
@@ -106,7 +116,6 @@ export function ProductTourProvider({ children }: { children: React.ReactNode })
       return;
     }
     let live = true;
-    void loadProductTour(viewer).then((next) => live && setState(next));
     const unsubscribe = subscribeProductTour(viewer, (next) => live && setState(next));
     return () => {
       live = false;
@@ -167,7 +176,9 @@ export function ProductTourProvider({ children }: { children: React.ReactNode })
                 layoutTick={layoutTick}
                 entries={() => targets.current.get(activeTip) ?? []}
                 onTarget={setActiveEntry}
-                onDone={() => void markTourTipSeen(viewer, activeTip)}
+                onDone={() => {
+                  void markTourTipSeen(viewer, activeTip).catch(() => undefined);
+                }}
                 tip={activeTip}
               />
             ) : null}
@@ -211,6 +222,8 @@ function TourSpotlight({
   // off screen) shows nothing at all.
   useEffect(() => {
     let live = true;
+    setTarget(null);
+    onTargetRef.current(null);
     const candidates = entriesRef.current();
     void Promise.all(candidates.map((entry) => entry.measure())).then((rects) => {
       if (!live) return;

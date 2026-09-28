@@ -1,11 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const storage = new Map<string, string>();
-vi.mock('@react-native-async-storage/async-storage', () => ({
-  default: {
-    getItem: vi.fn(async (key: string) => storage.get(key) ?? null),
-    setItem: vi.fn(async (key: string, value: string) => void storage.set(key, value)),
-    removeItem: vi.fn(async (key: string) => void storage.delete(key)),
+const server = vi.hoisted(() => ({ viewer: 'person-1', seen: new Map<string, string[] | null>() }));
+vi.mock('@/buzz/runtime-config', () => ({
+  getBuzzRuntimeConfig: () => ({ monolithUrl: 'http://server.test' }),
+}));
+vi.mock('@/auth/monolith-session', () => ({
+  monolithSession: {
+    fetch: vi.fn(async (url: string, options: { body: string }) => {
+      const { tip } = JSON.parse(options.body) as { tip?: string };
+      if (url.endsWith('/updateProductTour')) {
+        const seen = server.seen.get(server.viewer);
+        if (tip === 'replay') server.seen.set(server.viewer, []);
+        else if (seen && tip && !seen.includes(tip)) server.seen.set(server.viewer, [...seen, tip]);
+      }
+      const seen = server.seen.get(server.viewer);
+      return {
+        ok: true,
+        json: async () => ({ version: 2, seenTips: seen ?? ['swipe', 'cornerMark', 'squire'] }),
+      };
+    }),
   },
 }));
 
@@ -19,47 +32,41 @@ import {
 } from './product-tour';
 
 const ME = 'person-1';
-
-describe('first-sight tip state', () => {
+describe('server-backed first-sight tip state', () => {
   beforeEach(() => {
-    storage.clear();
+    server.viewer = ME;
+    server.seen.clear();
     resetProductTourCacheForTests();
   });
 
-  it('starts with every tip due, with no overview or offer gate', async () => {
+  it('treats an existing account without a tour record as completed', async () => {
+    server.seen.set(ME, null);
     const state = await loadProductTour(ME);
-    expect(state).toEqual({ version: 2, seenTips: [] });
     for (const tip of ['swipe', 'cornerMark', 'squire'] as const)
-      expect(tourTipDue(state, tip)).toBe(true);
+      expect(tourTipDue(state, tip)).toBe(false);
+    expect((await markTourTipSeen(ME, 'cornerMark')).seenTips).toHaveLength(3);
   });
 
-  it('retires a tip for good and persists it per identity', async () => {
+  it('shows a fresh account, persists Got it, and reloads it on another device', async () => {
+    server.seen.set(ME, []);
+    expect((await loadProductTour(ME)).seenTips).toEqual([]);
     await markTourTipSeen(ME, 'squire');
-    await markTourTipSeen(ME, 'swipe');
     resetProductTourCacheForTests();
-    const state = await loadProductTour(ME);
-    expect(state).toEqual({ version: 2, seenTips: ['swipe', 'squire'] });
-    expect(tourTipDue(state, 'cornerMark')).toBe(true);
-    expect((await loadProductTour('someone-else')).seenTips).toEqual([]);
+    expect((await loadProductTour(ME)).seenTips).toEqual(['squire']);
+    server.viewer = 'person-2';
+    server.seen.set('person-2', []);
+    expect((await loadProductTour('person-2')).seenTips).toEqual([]);
   });
 
-  it('replay brings every tip back and tells listeners', async () => {
-    await markTourTipSeen(ME, 'cornerMark');
+  it('replay re-enrolls only the signed-in person and informs local listeners', async () => {
+    server.seen.set(ME, null);
+    server.seen.set('person-2', null);
     const heard: number[] = [];
     const stop = subscribeProductTour(ME, (state) => heard.push(state.seenTips.length));
     expect(await replayProductTour(ME)).toEqual({ version: 2, seenTips: [] });
     stop();
     expect(heard).toEqual([0]);
-  });
-
-  it('reads damaged storage as nothing seen and ignores the retired v1 tour', async () => {
-    storage.set('@beeline/product-tour/v2/person-1', '{not json');
-    expect((await loadProductTour(ME)).seenTips).toEqual([]);
-    resetProductTourCacheForTests();
-    storage.set(
-      '@beeline/product-tour/v2/person-1',
-      JSON.stringify({ seenTips: ['rooms', 'squire', 'workbench'] }),
-    );
-    expect((await loadProductTour(ME)).seenTips).toEqual(['squire']);
+    server.viewer = 'person-2';
+    expect((await loadProductTour('person-2')).seenTips).toHaveLength(3);
   });
 });

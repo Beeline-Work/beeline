@@ -60,8 +60,11 @@ import {
   isCommunityInviteToken,
   isFaceId,
   MESSAGE_REACTION_EMOJIS,
+  PRODUCT_TOUR_TIPS,
   resolveFace,
   type PhoneOperationMap,
+  type ProductTourTip,
+  type ProductTourView,
   isPushLevel,
   type ArtifactAttachment,
 } from '@beeline/api-contract/phone';
@@ -248,6 +251,13 @@ function roomFilters(
 
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
 type Output<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['output'];
+
+function productTourView(seen: readonly string[] | null): ProductTourView {
+  return {
+    version: 2,
+    seenTips: seen === null ? PRODUCT_TOUR_TIPS : PRODUCT_TOUR_TIPS.filter((tip) => seen.includes(tip)),
+  };
+}
 
 interface IdentityRow {
   id: string;
@@ -940,6 +950,31 @@ export class PhoneService {
           ]
         : [];
     });
+  }
+
+  async readProductTour(viewerId: string): Promise<ProductTourView> {
+    const result = await this.database.query<{ tour_seen_tips: string[] | null }>(
+      `SELECT tour_seen_tips FROM identities WHERE id=$1 AND kind='human'`,
+      [viewerId],
+    );
+    if (!result.rows[0]) throw new Error('human identity required');
+    return productTourView(result.rows[0].tour_seen_tips);
+  }
+
+  async updateProductTour(viewerId: string, tip: ProductTourTip | 'replay'): Promise<ProductTourView> {
+    if (tip !== 'replay' && !PRODUCT_TOUR_TIPS.includes(tip))
+      throw new Error('invalid product tour tip');
+    const result = await this.database.query<{ tour_seen_tips: string[] | null }>(
+      tip === 'replay'
+        ? `UPDATE identities SET tour_seen_tips=ARRAY[]::text[] WHERE id=$1 AND kind='human' RETURNING tour_seen_tips`
+        : `UPDATE identities SET tour_seen_tips=CASE
+             WHEN tour_seen_tips IS NULL OR $2=ANY(tour_seen_tips) THEN tour_seen_tips
+             ELSE array_append(tour_seen_tips,$2) END
+           WHERE id=$1 AND kind='human' RETURNING tour_seen_tips`,
+      tip === 'replay' ? [viewerId] : [viewerId, tip],
+    );
+    if (!result.rows[0]) throw new Error('human identity required');
+    return productTourView(result.rows[0].tour_seen_tips);
   }
 
   async readWorkspaces(viewerId: string): Promise<WorkspaceListView> {
@@ -3155,6 +3190,10 @@ export class PhoneService {
       if (spectator.rowCount) throw new Error('spectator access is read-only (access denied)');
     }
     switch (name) {
+      case 'readProductTour':
+        return (await this.readProductTour(viewerId)) as Output<Name>;
+      case 'updateProductTour':
+        return (await this.updateProductTour(viewerId, (input as Input<'updateProductTour'>).tip)) as Output<Name>;
       case 'sendRoomMessage':
         return (await this.sendMessage(
           input as Input<'sendRoomMessage'>,
@@ -8550,6 +8589,8 @@ export const REVIEW_LOCKED_OPERATIONS = new Set<keyof PhoneOperationMap>([
 ]);
 
 export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
+  'readProductTour',
+  'updateProductTour',
   'sendRoomMessage',
   'sendRoomReply',
   'reactToMessage',

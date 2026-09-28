@@ -19,7 +19,7 @@ import {
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { CornerGlyph } from './CornerGlyph';
 import { PinGlyph } from './PinGlyph';
-import { TourTarget } from './tour/TourTarget';
+import { useTourTarget } from './tour/TourTarget';
 
 export function ConversationRow({
   item,
@@ -59,6 +59,7 @@ export function ConversationRow({
   const showReason = item.agentState === 'needs-you' && reason;
   const status = needsYou ? 'needs you' : item.unread ? 'new messages' : null;
   const hasCorners = roomRowShowsCornerMark(item);
+  const cornerTarget = useTourTarget('cornerMark', cornerTip && hasCorners);
   const cornerPosition = desktop ? styles.desktopCornerToggle : styles.mobileCornerToggle;
   const cornerRotation = useSharedValue(cornersExpanded ? 1 : 0);
   React.useEffect(() => {
@@ -71,8 +72,8 @@ export function ConversationRow({
   const cornerRotationStyle = useAnimatedStyle(() => ({
     transform: [{ rotate: `${cornerRotation.value * 135}deg` }],
   }));
-  // The corner-mark tip's target wraps the mark in the positioned box, so the
-  // mark itself sits unpositioned inside it.
+  // Measure the actual control. A positioned wrapper can report a different
+  // native window rect from the glyph it encloses.
   const cornerMark = (
     <Pressable
       accessibilityLabel={`${cornersExpanded ? 'Collapse' : 'Expand'} ${item.cornerCount} corners`}
@@ -83,7 +84,9 @@ export function ConversationRow({
       hitSlop={8}
       onLongPress={onLongPressCorners}
       onPress={onToggleCorners}
-      style={cornerTip ? styles.cornerMark : [styles.cornerToggle, cornerPosition]}
+      onLayout={cornerTarget.onLayout}
+      ref={cornerTarget.ref}
+      style={[styles.cornerToggle, cornerPosition]}
       testID={`${testID}-corners`}
     >
       <Animated.View style={cornerRotationStyle}>
@@ -93,12 +96,7 @@ export function ConversationRow({
   );
 
   return (
-    <View
-      style={[
-        styles.row,
-        selected && styles.selected,
-      ]}
-    >
+    <View style={[styles.row, selected && styles.selected]}>
       <Pressable
         onPress={onPress}
         onLongPress={onPin}
@@ -177,14 +175,7 @@ export function ConversationRow({
           <View style={styles.statusSlot} />
         </View>
       </Pressable>
-      {hasCorners &&
-        (cornerTip ? (
-          <TourTarget style={[styles.cornerToggle, cornerPosition]} tip="cornerMark">
-            {cornerMark}
-          </TourTarget>
-        ) : (
-          cornerMark
-        ))}
+      {hasCorners && cornerMark}
     </View>
   );
 }
@@ -261,7 +252,6 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  cornerMark: { width: 14, height: 14, alignItems: 'center', justifyContent: 'center' },
   desktopCornerToggle: { right: theme.buzz.space.md, bottom: 12 },
   mobileCornerToggle: { right: 14, bottom: 14 },
   selected: {

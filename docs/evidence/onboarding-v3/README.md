@@ -36,3 +36,13 @@ cleared storage.
 | T1. Swipe right to open a corner | `T1-swipe-dark.png` | `T1-swipe-light.png` |
 | T2. This Room has corners | `T2-corner-mark-dark.png` | `T2-corner-mark-light.png` |
 | T3. Trusty Squire | `T3-squire-dark.png` | `T3-squire-light.png` |
+
+## Corner mark regression check
+
+`T2-corner-mark-fixed-web.png` is a 390×844 representative Expo web run
+against the local fixture after the tour fix. The actual corner control measured
+14×14 at (349, 266); the padded cutout measured 26×26 at (343, 260), exactly
+six pixels around the control. Pressing “Got it” removed the tip, and reopening
+the Rooms list did not show it again. The installed Android emulator app showed
+“Network is not available right now,” so this image does not establish the
+reporting phone's acceptance result.

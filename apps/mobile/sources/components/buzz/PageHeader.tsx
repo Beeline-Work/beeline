@@ -14,6 +14,10 @@ export interface PageHeaderProps {
   prominent?: boolean;
   /** Count aligned with the title block's trailing edge. */
   trailing?: string;
+  /** What a screen reader says for `trailing`, when the bare text is not enough. */
+  trailingAccessibilityLabel?: string;
+  /** One control after the trailing text, such as a page's add button. */
+  action?: React.ReactNode;
   /** Renders the back control when provided. */
   onBack?: () => void;
   backAccessibilityLabel?: string;
@@ -34,6 +38,8 @@ export function PageHeader({
   eyebrow,
   prominent = false,
   trailing,
+  trailingAccessibilityLabel,
+  action,
   onBack,
   backAccessibilityLabel = 'Back',
   backTestID,
@@ -63,12 +69,21 @@ export function PageHeader({
             {eyebrow}
           </Text>
         ) : null}
-        <Text style={[styles.headerTitle, prominent && styles.headerHero]} testID={titleTestID}>
+        <Text
+          accessibilityRole="header"
+          style={[styles.headerTitle, prominent && styles.headerHero]}
+          testID={titleTestID}
+        >
           {title}
         </Text>
         {meta ? <Text style={styles.headerMeta}>{meta}</Text> : null}
       </View>
-      {trailing ? <Text style={styles.headerTrailing}>{trailing}</Text> : null}
+      {trailing ? (
+        <Text accessibilityLabel={trailingAccessibilityLabel} style={styles.headerTrailing}>
+          {trailing}
+        </Text>
+      ) : null}
+      {action}
     </View>
   );
 }

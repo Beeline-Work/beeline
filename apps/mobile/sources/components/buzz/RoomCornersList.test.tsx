@@ -586,7 +586,7 @@ describe('RoomCornersList archived footer', () => {
 });
 
 describe('RoomCornersHeader', () => {
-  it.each([0, 1, 2])('renders the slab header and accessible count for %s corners', (count) => {
+  it.each([0, 1, 2])('renders the shared page header and accessible count for %s corners', (count) => {
     const onBack = vi.fn();
     const onAdd = vi.fn();
     let tree!: ReactTestRenderer;
@@ -600,13 +600,19 @@ describe('RoomCornersHeader', () => {
     expect(resolvedStyle(header.props.style)).toMatchObject({
       borderBottomWidth: 1,
       borderBottomColor: hull.border,
-      paddingHorizontal: hull.space.sm,
+      minHeight: 66,
+      // The shared PageHeader inset, the same one Tray and Workbench sit at.
+      paddingHorizontal: 12,
     });
     expect(resolvedStyle(header.props.style).backgroundColor).toBeUndefined();
     expect(tree.root.findAllByType('HullSurface' as any)).toHaveLength(0);
     // Three written parts. The back mark is drawn, so it is not one of them.
     const texts = tree.root.findAllByType('Text' as any);
-    expect(texts.map((node: any) => node.props.children)).toEqual(['#alpha', 'Corners', count]);
+    expect(texts.map((node: any) => node.props.children)).toEqual([
+      '#alpha',
+      'Corners',
+      String(count),
+    ]);
     expect(tree.root.findAllByType('Polyline' as any)).toHaveLength(1);
     expect(resolvedStyle(texts[0].props.style)).toMatchObject(hull.type.meta);
     expect(resolvedStyle(texts[1].props.style)).toMatchObject(hull.type.hero);

@@ -1394,6 +1394,16 @@ export function BuzzChatSurface({
     () => new Set<string>(roomMembers.map((member) => member.pubkey)),
     [roomMembers],
   );
+  const speechHints = useMemo(
+    () => [
+      ...new Set(
+        [...selectedMembers.map((member) => member.identity.displayName), resolvedChannelName]
+          .map((name) => name?.trim())
+          .filter((name): name is string => Boolean(name)),
+      ),
+    ],
+    [resolvedChannelName, selectedMembers],
+  );
   const personProfiles = useMemo(
     () =>
       (roomSurface?.members ?? [])
@@ -6202,6 +6212,7 @@ export function BuzzChatSurface({
                     current.filter((_, attachmentIndex) => attachmentIndex !== index),
                   )
                 }
+                speechHints={speechHints}
                 value={inputText}
                 inputRevision={composerInputRevision}
                 isInputRevisionCurrent={(inputRevision) =>

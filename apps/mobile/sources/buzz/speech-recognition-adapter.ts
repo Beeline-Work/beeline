@@ -14,6 +14,8 @@ export interface SpeechRecognitionInterface {
   getPermissionsAsync(): Promise<{ status: string; granted: boolean; canAskAgain: boolean }>;
   requestPermissionsAsync(): Promise<{ status: string; granted: boolean; canAskAgain: boolean }>;
   supportsOnDeviceRecognition?(): boolean;
+  getSupportedLocales?(options: object): Promise<{ locales: string[]; installedLocales: string[] }>;
+  androidTriggerOfflineModelDownload?(options: { locale: string }): Promise<{ status: string }>;
   addListener?(event: string, handler: (...args: any[]) => void): { remove(): void };
 }
 
@@ -26,6 +28,10 @@ interface SpeechRecognitionModule {
     requestPermissionsAsync: () => Promise<{ status: string; granted: boolean; canAskAgain: boolean }>;
     addListener?: (event: string, handler: (...args: any[]) => void) => { remove(): void };
     supportsOnDeviceRecognition?: () => boolean;
+    getSupportedLocales?: (
+      options: object,
+    ) => Promise<{ locales: string[]; installedLocales: string[] }>;
+    androidTriggerOfflineModelDownload?: (options: { locale: string }) => Promise<{ status: string }>;
   };
 }
 
@@ -98,6 +104,14 @@ export function getRecognitionModule(): SpeechRecognitionInterface | null {
       typeof mod.ExpoSpeechRecognitionModule.supportsOnDeviceRecognition === 'function'
         ? mod.ExpoSpeechRecognitionModule.supportsOnDeviceRecognition()
         : false,
+    getSupportedLocales: (options: object) =>
+      typeof mod.ExpoSpeechRecognitionModule.getSupportedLocales === 'function'
+        ? mod.ExpoSpeechRecognitionModule.getSupportedLocales(options)
+        : Promise.resolve({ locales: [], installedLocales: [] }),
+    androidTriggerOfflineModelDownload: (options: { locale: string }) =>
+      typeof mod.ExpoSpeechRecognitionModule.androidTriggerOfflineModelDownload === 'function'
+        ? mod.ExpoSpeechRecognitionModule.androidTriggerOfflineModelDownload(options)
+        : Promise.resolve({ status: 'unsupported' }),
     addListener: (event: string, handler: (...args: any[]) => void) => {
       if (typeof mod.ExpoSpeechRecognitionModule.addListener === 'function') {
         return mod.ExpoSpeechRecognitionModule.addListener(event, handler);

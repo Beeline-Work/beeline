@@ -28,6 +28,17 @@ describe('the legacy-theme bridge carries the Speakeasy language to lesser scree
     expect(boneTheme.buzz.name).toBe('bone');
   });
 
+  it('keeps link and emphasis brass while button colors use their own palette', () => {
+    expect(obsidianTheme.buzz.accent).toBe('#b08a4a');
+    expect(boneTheme.buzz.accent).toBe('#8a6323');
+    for (const theme of bridged) {
+      expect(theme.colors.textLink).toBe(theme.buzz.accent);
+      expect(theme.colors.button.primary.background).toBe(theme.buzz.buttonPrimaryFill);
+      expect(theme.colors.button.primary.tint).toBe(theme.buzz.buttonPrimaryText);
+      expect(theme.colors.button.primary.background).not.toBe(theme.buzz.accent);
+    }
+  });
+
   it('carries dark/light through the bridge, not the legacy base object it was spread from', () => {
     // The bridge builds every theme by spreading the legacy darkTheme object
     // (whose own `dark` field is a fixed `true`) and layering buzz tokens on

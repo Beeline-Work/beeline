@@ -74,7 +74,7 @@ vi.mock('@/constants/Typography', () => ({
   Typography: { default: () => ({}), mono: () => ({}) },
 }));
 
-import { BrassButton, OnboardingButton } from './MonoHull';
+import { BrassButton, MonoButton, OnboardingButton } from './MonoHull';
 
 beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -108,26 +108,59 @@ async function colours(Button: typeof OnboardingButton) {
 }
 
 describe('the onboarding primary button', () => {
-  it('is white with ink text in dark mode', async () => {
+  it('is cream with ink text in dark mode', async () => {
     active.theme = 'obsidian';
-    expect(await colours(OnboardingButton)).toEqual({ background: '#f0f0f3', text: '#111111' });
+    expect(await colours(OnboardingButton)).toEqual({ background: '#F3EDE3', text: '#1C1712' });
   });
 
-  it('is dark brass with ink text in light mode', async () => {
+  it('is ink with cream text in light mode', async () => {
     active.theme = 'bone';
-    expect(await colours(OnboardingButton)).toEqual({ background: '#8a6323', text: '#171310' });
+    expect(await colours(OnboardingButton)).toEqual({ background: '#1C1712', text: '#F3EDE3' });
   });
 
-  it('leaves BrassButton as it was at every other call site', async () => {
+  it('uses the same primary palette at every legacy BrassButton call site', async () => {
     active.theme = 'bone';
     expect(await colours(BrassButton)).toEqual({
-      background: beelineThemes.bone.accent,
-      text: beelineThemes.bone.textInverted,
+      background: beelineThemes.bone.buttonPrimaryFill,
+      text: beelineThemes.bone.buttonPrimaryText,
     });
     active.theme = 'obsidian';
     expect(await colours(BrassButton)).toEqual({
-      background: beelineThemes.obsidian.accent,
-      text: beelineThemes.obsidian.textInverted,
+      background: beelineThemes.obsidian.buttonPrimaryFill,
+      text: beelineThemes.obsidian.buttonPrimaryText,
     });
+  });
+});
+
+describe('the shared MonoButton palette', () => {
+  it.each(['bone', 'obsidian'] as const)('renders primary and secondary in %s', async (name) => {
+    active.theme = name;
+    const palette = beelineThemes[name];
+    for (const variant of ['primary', 'secondary'] as const) {
+      let tree!: ReactTestRenderer;
+      await act(async () => {
+        tree = create(React.createElement(MonoButton, { label: 'Continue', variant, onPress: () => undefined }));
+      });
+      const label = tree.root.find((node: any) => node.type === 'Text');
+      let plate = label.parent!;
+      while (plate.type !== 'View') plate = plate.parent!;
+      const style = flat(plate.props.style);
+      expect(style.backgroundColor).toBe(variant === 'primary' ? palette.buttonPrimaryFill : 'transparent');
+      expect(style.borderColor).toBe(variant === 'primary' ? palette.buttonPrimaryFill : palette.buttonSecondaryText);
+      expect(flat(label.props.style).color).toBe(variant === 'primary' ? palette.buttonPrimaryText : palette.buttonSecondaryText);
+    }
+  });
+
+  it('keeps a disabled primary legible as disabled', async () => {
+    active.theme = 'bone';
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = create(React.createElement(MonoButton, { label: 'Continue', disabled: true }));
+    });
+    const label = tree.root.find((node: any) => node.type === 'Text');
+    let plate = label.parent!;
+    while (plate.type !== 'View') plate = plate.parent!;
+    expect(flat(plate.props.style).backgroundColor).toBe(beelineThemes.bone.bgBase);
+    expect(flat(label.props.style).color).toBe(beelineThemes.bone.textDisabled);
   });
 });

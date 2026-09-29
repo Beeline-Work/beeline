@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { StateDot } from './StateDot';
 import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
+import { appBoardColors, appBoardType } from '@/buzz/app-board-style';
 
 /** Its own 44pt press for a trailing mark the row itself does not own. */
 type SettingsRowTrailingPress = {
@@ -14,7 +15,7 @@ type SettingsRowTrailingPress = {
 };
 
 /** The compact bordered action control on the trailing axis (board
- *  revision 2's `.cbtn`): one word, brass, boxed — the Connect button a
+ *  revision 2's `.cbtn`): one word, ink, boxed — the Connect button a
  *  tool row carries while it is not connected. Excludes `value`/`action`. */
 export type SettingsRowActionControl = {
   accessibilityLabel?: string;
@@ -33,6 +34,8 @@ type SettingsRowDescriptionAction = {
 };
 
 type SettingsRowProps = {
+  /** Approved Workbench app-board row metrics. */
+  appBoard?: boolean;
   accessibilityLabel?: string;
   accessibilityRole?: 'button' | 'link';
   /** A single action word on the trailing axis. Excludes `value` and
@@ -103,6 +106,7 @@ type SettingsRowProps = {
  * A row never wears a box and never carries an explanatory paragraph.
  */
 export function SettingsRow({
+  appBoard = false,
   accessibilityLabel,
   accessibilityRole = 'button',
   action,
@@ -140,6 +144,7 @@ export function SettingsRow({
           numberOfLines={1}
           style={[
             styles.value,
+            appBoard && styles.boardValue,
             valueTone === 'danger' && styles.valueDanger,
             valueTone === 'accent' && styles.valueAccent,
           ]}
@@ -192,6 +197,7 @@ export function SettingsRow({
           numberOfLines={1}
           style={[
             styles.title,
+            appBoard && styles.boardTitle,
             tone === 'quiet' && styles.quiet,
             tone === 'action' && styles.actionTitle,
             tone === 'destructive' && styles.destructive,
@@ -243,7 +249,7 @@ export function SettingsRow({
     return (
       <View
         accessibilityLabel={accessibilityLabel ?? (spoken ? `${title}. ${spoken}` : title)}
-        style={styles.row}
+        style={[styles.row, appBoard && styles.boardRow]}
         testID={testID}
       >
         {body}
@@ -257,7 +263,7 @@ export function SettingsRow({
       accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}
-      style={[styles.row, disabled && styles.disabled]}
+      style={[styles.row, appBoard && styles.boardRow, disabled && styles.disabled]}
       testID={testID}
     >
       {body}
@@ -270,6 +276,7 @@ const TRAILING_COLUMN = 72;
 
 const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
+  const board = appBoardColors(hull);
   return {
     row: {
       minHeight: hull.layout.row,
@@ -280,9 +287,12 @@ const styles = StyleSheet.create((theme) => {
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: hull.border,
     },
+    boardRow: { minHeight: 64, gap: 16, paddingHorizontal: 0,
+      borderBottomWidth: 1, borderBottomColor: board.border },
     disabled: { opacity: 0.42 },
     copy: { flex: 1, minWidth: 0 },
     title: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary },
+    boardTitle: { ...Typography.ledger(), ...appBoardType.rowTitle, color: board.ink },
     quiet: { color: hull.textMuted },
     actionTitle: { color: hull.accent },
     destructive: { color: hull.dialogDanger },
@@ -308,6 +318,7 @@ const styles = StyleSheet.create((theme) => {
       textAlign: 'right',
       color: hull.textMuted,
     },
+    boardValue: { ...Typography.ledger(), ...appBoardType.rowValue, color: board.quiet },
     valueDanger: {
       ...Typography.default(),
       ...hull.type.meta,
@@ -322,12 +333,12 @@ const styles = StyleSheet.create((theme) => {
       color: hull.accent,
     },
     valueRow: { flexDirection: 'row', alignItems: 'center', gap: hull.space.sm },
-    // The one compact bordered control (board revision 2's `.cbtn`): brass
-    // word, brass border, the shared radius — acting stays the one thing
+    // The one compact bordered control (board revision 2's `.cbtn`): ink
+    // word, ink border, the shared radius — acting stays the one thing
     // with a box on a row, because it is the one thing a row must act on.
     actionControl: {
       borderWidth: 1,
-      borderColor: hull.accent,
+      borderColor: hull.buttonSecondaryText,
       borderRadius: hull.radius,
       paddingVertical: 5,
       paddingHorizontal: 14,
@@ -336,7 +347,7 @@ const styles = StyleSheet.create((theme) => {
       ...Typography.default(),
       ...Typography.ledger('medium'),
       ...hull.type.meta,
-      color: hull.accent,
+      color: hull.buttonSecondaryText,
     },
     // The one word that acts. Brass, because acting is what brass marks — and
     // redundant with the verb itself, never the only signal.

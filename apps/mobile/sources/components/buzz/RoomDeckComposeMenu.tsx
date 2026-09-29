@@ -99,7 +99,7 @@ export function RoomDeckComposeMenu({
           >
             <Path
               fill="none"
-              stroke={header ? styles.headerGlyph.color : '#1A0F22'}
+              stroke={header ? styles.headerGlyph.color : styles.fabGlyph.color}
               strokeLinecap="square"
               strokeWidth={FAB_GLYPH_STROKE_WIDTH}
               d="M12 4v16M4 12h16"
@@ -210,9 +210,10 @@ const styles = StyleSheet.create((theme) => {
       borderRadius: groknight.radius,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: groknight.accent,
+      backgroundColor: groknight.buttonPrimaryFill,
     },
     fabGlyph: {
+      color: groknight.buttonPrimaryText,
       width: FAB_GLYPH_SIZE,
       height: FAB_GLYPH_SIZE,
       alignItems: 'center',

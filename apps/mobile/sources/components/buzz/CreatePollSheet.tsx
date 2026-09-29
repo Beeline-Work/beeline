@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { HullDialog, HullDialogInput } from './HullDialog';
+import { HullDialogInput } from './HullDialog';
+import { HullActionSheetCancel, HullActionSheetModal, HullActionSheetRow } from './HullActionSheet';
 
 const CLOSING_TIMES = [
   { label: '5 min', seconds: 300 },
@@ -44,30 +45,33 @@ export function CreatePollSheet({
     options.length >= 2 &&
     options.every((option) => option.trim().length > 0 && option.trim().length <= 32);
   return (
-    <HullDialog
+    <HullActionSheetModal
       visible={visible}
-      onRequestClose={onClose}
+      onClose={busy ? () => undefined : onClose}
+      dismissOnBackdrop={!busy}
+      scrollBody={false}
       title="Create poll"
       testID="create-poll-sheet"
-      actions={[
-        { label: 'Cancel', onPress: onClose, disabled: busy },
-        {
-          label: 'Create poll',
-          variant: 'primary',
-          disabled: busy || !ready,
-          busy,
-          onPress: () =>
-            onCreate({
-              prompt: prompt.trim(),
-              options: options.map((option) => ({
-                label: option.trim(),
-                consequence: option.trim(),
-              })),
-              ttlSeconds,
-            }),
-          testID: 'create-poll-submit',
-        },
-      ]}
+      footer={
+        <View>
+          <HullActionSheetRow
+            disabled={busy || !ready}
+            label="Create poll"
+            onPress={() =>
+              onCreate({
+                prompt: prompt.trim(),
+                options: options.map((option) => ({
+                  label: option.trim(),
+                  consequence: option.trim(),
+                })),
+                ttlSeconds,
+              })
+            }
+            testID="create-poll-submit"
+          />
+          <HullActionSheetCancel disabled={busy} onPress={onClose} />
+        </View>
+      }
     >
       <ScrollView keyboardShouldPersistTaps="handled" style={styles.content}>
         <Text style={styles.label}>Question</Text>
@@ -130,7 +134,7 @@ export function CreatePollSheet({
           ))}
         </View>
       </ScrollView>
-    </HullDialog>
+    </HullActionSheetModal>
   );
 }
 

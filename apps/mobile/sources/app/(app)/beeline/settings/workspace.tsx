@@ -36,6 +36,7 @@ import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { WORKSPACE_SETTINGS_TILE, workspacePictureSeat } from '@/buzz/workspace-tile';
 import { Modal } from '@/modal';
 import { PageHeader } from '@/components/buzz/PageHeader';
+import { HullDialog } from '@/components/buzz/HullDialog';
 
 type WorkspaceRoomSetting = {
   id: string;
@@ -44,6 +45,63 @@ type WorkspaceRoomSetting = {
   canManage: boolean;
   createdAt?: number;
 };
+
+export function WorkspaceDeleteConfirmDialog({
+  visible,
+  workspaceName,
+  value,
+  busy,
+  onChangeText,
+  onClose,
+  onDelete,
+}: {
+  visible: boolean;
+  workspaceName: string;
+  value: string;
+  busy: boolean;
+  onChangeText: (value: string) => void;
+  onClose: () => void;
+  onDelete: () => void;
+}) {
+  const { theme } = useUnistyles();
+  return (
+    <HullDialog
+      accessibilityLabel={`Close delete ${WORKSPACE_LABEL} confirmation`}
+      onRequestClose={onClose}
+      dismissOnBackdrop={!busy}
+      body={`This permanently deletes every ${ROOM_LABEL}, message, and member of "${workspaceName}". This cannot be undone. Type its name to confirm.`}
+      testID="workspace-delete-sheet"
+      title={`Delete ${WORKSPACE_LABEL}?`}
+      visible={visible}
+      actions={[
+        { label: 'Cancel', onPress: onClose, disabled: busy, testID: 'workspace-delete-cancel' },
+        {
+          label: busy ? 'Deleting…' : `Delete ${WORKSPACE_LABEL}`,
+          onPress: onDelete,
+          variant: 'destructive',
+          busy,
+          disabled: busy || !workspaceName || value.trim() !== workspaceName,
+          testID: 'workspace-delete-confirm',
+        },
+      ]}
+    >
+      <View style={styles.inlineEditor}>
+        <TextInput
+          accessibilityLabel={`Type ${workspaceName} to confirm`}
+          autoCapitalize="none"
+          autoCorrect={false}
+          editable={!busy}
+          onChangeText={onChangeText}
+          placeholder={workspaceName}
+          placeholderTextColor={theme.buzz.dim}
+          style={styles.input}
+          testID="workspace-delete-confirm-input"
+          value={value}
+        />
+      </View>
+    </HullDialog>
+  );
+}
 
 const ROOM_DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
   month: 'short',
@@ -350,9 +408,7 @@ export default function WorkspaceSettings() {
   const peopleTotal = workspaceView?.peopleTotal;
   const agentTotal = workspaceView?.agentTotal;
   const memberCount =
-    peopleTotal === undefined || agentTotal === undefined
-      ? undefined
-      : peopleTotal + agentTotal;
+    peopleTotal === undefined || agentTotal === undefined ? undefined : peopleTotal + agentTotal;
   const pictureAction =
     workingKey === 'picture' ? 'Working…' : workspace?.avatar ? 'Change picture' : 'Set picture';
 
@@ -605,48 +661,15 @@ export default function WorkspaceSettings() {
         />
       </HullActionSheetModal>
 
-      <HullActionSheetModal
-        accessibilityLabel={`Close delete ${WORKSPACE_LABEL} confirmation`}
-        onClose={closeDeleteSheet}
-        subtitle={`This permanently deletes every ${ROOM_LABEL}, message, and member of "${
-          workspace?.name ?? ''
-        }". This cannot be undone. Type its name to confirm.`}
-        testID="workspace-delete-sheet"
-        title={`Delete ${WORKSPACE_LABEL}?`}
+      <WorkspaceDeleteConfirmDialog
         visible={deleteSheetOpen}
-      >
-        <View style={styles.inlineEditor}>
-          <TextInput
-            accessibilityLabel={`Type ${workspace?.name ?? ''} to confirm`}
-            autoCapitalize="none"
-            autoCorrect={false}
-            editable={!deleteBusy}
-            onChangeText={setDeleteConfirmText}
-            placeholder={workspace?.name ?? ''}
-            placeholderTextColor={theme.buzz.dim}
-            style={styles.input}
-            testID="workspace-delete-confirm-input"
-            value={deleteConfirmText}
-          />
-          <View style={styles.inlineEditorControls}>
-            <MonoButton
-              disabled={deleteBusy}
-              label="Cancel"
-              onPress={closeDeleteSheet}
-              testID="workspace-delete-cancel"
-              variant="secondary"
-            />
-            <MonoButton
-              disabled={deleteBusy || deleteConfirmText.trim() !== (workspace?.name ?? '\0')}
-              label={deleteBusy ? 'Deleting…' : `Delete ${WORKSPACE_LABEL}`}
-              loading={deleteBusy}
-              onPress={() => void confirmDeleteWorkspace()}
-              testID="workspace-delete-confirm"
-              variant="destructive"
-            />
-          </View>
-        </View>
-      </HullActionSheetModal>
+        workspaceName={workspace?.name ?? ''}
+        value={deleteConfirmText}
+        busy={deleteBusy}
+        onChangeText={setDeleteConfirmText}
+        onClose={closeDeleteSheet}
+        onDelete={() => void confirmDeleteWorkspace()}
+      />
     </View>
   );
 }

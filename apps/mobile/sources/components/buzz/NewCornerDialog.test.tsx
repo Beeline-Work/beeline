@@ -49,6 +49,15 @@ vi.mock('@/constants/Typography', () => ({
 vi.mock('./HullDialog', async () => {
   const ReactModule = await import('react');
   return {
+    HullDialog: (props: any) =>
+      ReactModule.createElement(
+        'HullDialog',
+        props,
+        props.children,
+        props.actions.map((action: any) =>
+          ReactModule.createElement('DialogAction', { ...action, key: action.testID }),
+        ),
+      ),
     HullDialogInput: (props: any) => ReactModule.createElement('TextInput', props),
   };
 });
@@ -90,21 +99,20 @@ function mount(error?: string) {
     tree = create(<Harness />);
   });
   const host = (testID: string) => tree.root.findByProps({ testID });
-  const sheet = () => tree.root.findByType('HullActionSheetModal').props;
+  const sheet = () => tree.root.findByType('HullDialog').props;
   return { tree, host, sheet, submit, close };
 }
 
 describe('NewCornerDialog', () => {
-  it('presents through the shared bottom sheet, not a centred dialog', () => {
+  it('presents through the centered dialog', () => {
     const { sheet } = mount();
     expect(sheet().title).toBe('Begin a new corner');
-    expect(sheet().subtitle).toBeUndefined();
-    expect(sheet().footer).toBeUndefined();
+    expect(sheet().body).toBeUndefined();
     expect(sheet().visible).toBe(true);
     expect(sheet().dismissOnBackdrop).toBe(true);
   });
 
-  it('opens a name-only sheet and submits the entered corner title', () => {
+  it('opens a name-only dialog and submits the entered corner title', () => {
     const { tree, host, submit } = mount();
     expect(tree.root.findAllByProps({ testID: 'create-corner-app-field' })).toHaveLength(0);
     expect(tree.root.findAllByProps({ testID: 'create-corner-app-guide' })).toHaveLength(0);
@@ -119,9 +127,9 @@ describe('NewCornerDialog', () => {
     expect(submit).toHaveBeenCalledWith('Release notes');
   });
 
-  it('uses the Forward sheet rows: Open corner, then the sheet Cancel', () => {
-    const { tree, host, close } = mount();
-    expect(tree.root.findByType('HullActionSheetRow').props).toMatchObject({
+  it('offers one Open action and one Cancel action', () => {
+    const { host, close } = mount();
+    expect(host('create-corner-submit').props).toMatchObject({
       label: 'Open corner',
       testID: 'create-corner-submit',
     });
@@ -129,7 +137,7 @@ describe('NewCornerDialog', () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
-  it('keeps a server refusal visible in the sheet', () => {
+  it('keeps a server refusal visible in the dialog', () => {
     const { host } = mount('only the creator can close this corner');
     expect(host('create-corner-error').props.accessibilityRole).toBe('alert');
   });

@@ -3,21 +3,14 @@ import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { CORNER_LABEL } from '@/buzz/vocabulary';
-import { HullDialogInput } from './HullDialog';
-import {
-  HULL_SHEET_INSET,
-  HullActionSheetCancel,
-  HullActionSheetModal,
-  HullActionSheetRow,
-} from './HullActionSheet';
+import { HullDialog, HullDialogInput } from './HullDialog';
 
 // Keep this local to the app bundle: mobile may run against an older built SDK
 // during a rolling release. The server remains the authority for the same cap.
 export const HUMAN_CORNER_TITLE_MAX_LENGTH = 120;
 
 /**
- * The corners list + opens the same "Begin a new corner" sheet the transcript's
- * Forward uses: the title field, then one Open row and the sheet's Cancel.
+ * The corners list + opens a short title decision in the shared dialog.
  */
 export function NewCornerDialog({
   visible,
@@ -38,12 +31,23 @@ export function NewCornerDialog({
 }) {
   const ready = Boolean(title.trim()) && !creating;
   return (
-    <HullActionSheetModal
+    <HullDialog
       dismissOnBackdrop={!creating}
-      onClose={onClose}
+      onRequestClose={creating ? () => undefined : onClose}
       testID="new-corner-dialog"
       title={`Begin a new ${CORNER_LABEL}`}
       visible={visible}
+      actions={[
+        { label: 'Cancel', onPress: onClose, disabled: creating, testID: 'create-corner-cancel' },
+        {
+          label: creating ? 'Opening…' : `Open ${CORNER_LABEL}`,
+          onPress: onCreate,
+          disabled: !ready,
+          busy: creating,
+          variant: 'primary',
+          testID: 'create-corner-submit',
+        },
+      ]}
     >
       <View style={styles.titleField} testID="create-corner-content">
         <HullDialogInput
@@ -64,24 +68,14 @@ export function NewCornerDialog({
           </Text>
         ) : null}
       </View>
-      <HullActionSheetRow
-        disabled={!ready}
-        label={creating ? 'Opening…' : `Open ${CORNER_LABEL}`}
-        onPress={onCreate}
-        testID="create-corner-submit"
-      />
-      <HullActionSheetCancel
-        onPress={creating ? () => undefined : onClose}
-        testID="create-corner-cancel"
-      />
-    </HullActionSheetModal>
+    </HullDialog>
   );
 }
 
 const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
-    titleField: { paddingHorizontal: HULL_SHEET_INSET, paddingBottom: hull.space.sm },
+    titleField: { paddingBottom: hull.space.sm },
     error: {
       ...Typography.default(),
       ...hull.type.meta,

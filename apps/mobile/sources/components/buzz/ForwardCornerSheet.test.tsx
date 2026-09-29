@@ -12,14 +12,10 @@ vi.mock('react-native', async () => {
     View: host('View'),
   };
 });
-vi.mock('./HullActionSheet', async () => {
+vi.mock('./HullDialog', async () => {
   const ReactModule = await import('react');
   return {
-    HullActionSheetModal: (props: any) =>
-      ReactModule.createElement('HullActionSheetModal', props, props.children),
-    HullActionSheetRow: (props: any) => ReactModule.createElement('HullActionSheetRow', props),
-    HullActionSheetCancel: (props: any) =>
-      ReactModule.createElement('HullActionSheetCancel', props),
+    HullDialog: (props: any) => ReactModule.createElement('HullDialog', props),
   };
 });
 
@@ -48,39 +44,33 @@ function render(element: React.ReactElement): ReactTestRenderer {
   return renderer;
 }
 
-describe('forward-to-new-corner sheet', () => {
-  it('asks through the shared bottom sheet, keeping the prompt wording', () => {
+describe('forward-to-new-corner dialog', () => {
+  it('asks through the centered dialog, keeping the prompt wording', () => {
     const renderer = render(<ForwardCornerSheet onClose={vi.fn()} onOpen={vi.fn()} visible />);
-    const sheet = renderer.root.findByType('HullActionSheetModal').props;
+    const sheet = renderer.root.findByType('HullDialog').props;
     expect(sheet.testID).toBe('forward-corner-sheet');
     expect(sheet.title).toBe('Begin a new corner');
-    expect(sheet.subtitle).toBe(
-      'Start a new corner with the chosen message as the starting topic.',
-    );
+    expect(sheet.body).toBe('Start a new corner with the chosen message as the starting topic.');
     expect(sheet.visible).toBe(true);
   });
 
-  it('confirms with one plain row and cancels through the sheet', () => {
+  it('confirms or cancels through its two actions', () => {
     const onOpen = vi.fn();
     const onClose = vi.fn();
     const renderer = render(<ForwardCornerSheet onClose={onClose} onOpen={onOpen} visible />);
-    const row = renderer.root.findByType('HullActionSheetRow').props;
+    const row = renderer.root.findByType('HullDialog').props.actions[1];
     expect(row.testID).toBe('forward-corner-open');
     expect(row.label).toBe('Open corner');
-    // A plain action carries no fifth trailing mark.
-    expect(row.chevron).toBeUndefined();
-    expect(row.toggle).toBeUndefined();
-    expect(row.metadata).toBeUndefined();
     act(() => row.onPress());
     expect(onOpen).toHaveBeenCalledOnce();
-    act(() => renderer.root.findByType('HullActionSheetCancel').props.onPress());
+    act(() => renderer.root.findByType('HullDialog').props.actions[0].onPress());
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it('closes the sheet on its own x, scrim or hardware back', () => {
+  it('closes on backdrop or hardware back', () => {
     const onClose = vi.fn();
     const renderer = render(<ForwardCornerSheet onClose={onClose} onOpen={vi.fn()} visible />);
-    act(() => renderer.root.findByType('HullActionSheetModal').props.onClose());
+    act(() => renderer.root.findByType('HullDialog').props.onRequestClose());
     expect(onClose).toHaveBeenCalledOnce();
   });
 });

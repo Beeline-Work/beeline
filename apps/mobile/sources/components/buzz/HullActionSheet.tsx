@@ -258,10 +258,12 @@ export function HullActionSheetRow({
 }
 
 export function HullActionSheetCancel({
+  disabled = false,
   label = 'Cancel',
   onPress,
   testID,
 }: {
+  disabled?: boolean;
   label?: string;
   onPress: () => void;
   testID?: string;
@@ -270,8 +272,14 @@ export function HullActionSheetCancel({
     <Pressable
       accessibilityLabel={label}
       accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
       onPress={onPress}
-      style={({ pressed }) => [styles.cancel, pressed && styles.rowPressed]}
+      style={({ pressed }) => [
+        styles.cancel,
+        pressed && styles.rowPressed,
+        disabled && styles.disabled,
+      ]}
       testID={testID}
     >
       <Text style={styles.cancelText}>{label}</Text>

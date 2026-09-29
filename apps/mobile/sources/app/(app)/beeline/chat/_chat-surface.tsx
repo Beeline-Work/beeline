@@ -263,6 +263,10 @@ import { copyEntireTurn } from '@/buzz/message-copy';
 import { storeTempText } from '@/sync/persistence';
 import { useRoomMessageRenderItem } from '@/buzz/room-message-cell';
 import { arrivalFlashTiming, landingFlashesArrival } from '@/buzz/room-arrival-flash';
+import {
+  canSettleMessageSourceLanding,
+  startMessageSourceLanding,
+} from '@/buzz/message-source-landing';
 import { useRoomTranscriptHistory } from '@/buzz/use-room-transcript-history';
 import {
   markRoomOpen,
@@ -2357,6 +2361,14 @@ export function BuzzChatSurface({
   // same row is a fresh false→true edge and a re-render is not.
   const [arrivalFlashMessageId, setArrivalFlashMessageId] = useState<string | null>(null);
   const arrivalFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The row a settled message-source jump (a quote reference, a forward
+  // source, a notification target) just centered. Same one-cycle timing as
+  // the arrival pointer above, but its own brass tint — this is a reader
+  // reaching for a specific message, not the passive "you arrived here" mark.
+  const [sourceLandingFlashMessageId, setSourceLandingFlashMessageId] = useState<string | null>(
+    null,
+  );
+  const sourceLandingFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messageAnchorIdRef = useRef(messageAnchorId);
   messageAnchorIdRef.current = messageAnchorId;
   const sourceJumpSequenceRef = useRef(0);
@@ -2381,9 +2393,18 @@ export function BuzzChatSurface({
       // outlast the longer of the two shapes it can take.
     }, arrivalFlashTiming(false).totalMs);
   }, []);
+  const raiseSourceLandingFlash = useCallback((messageId: string) => {
+    if (sourceLandingFlashTimerRef.current !== null) clearTimeout(sourceLandingFlashTimerRef.current);
+    setSourceLandingFlashMessageId(messageId);
+    sourceLandingFlashTimerRef.current = setTimeout(() => {
+      sourceLandingFlashTimerRef.current = null;
+      setSourceLandingFlashMessageId(null);
+    }, arrivalFlashTiming(false).totalMs);
+  }, []);
   useEffect(
     () => () => {
       if (arrivalFlashTimerRef.current !== null) clearTimeout(arrivalFlashTimerRef.current);
+      if (sourceLandingFlashTimerRef.current !== null) clearTimeout(sourceLandingFlashTimerRef.current);
     },
     [],
   );
@@ -2810,15 +2831,22 @@ export function BuzzChatSurface({
           animated: false,
         });
         // A first scroll can mount a distant variable-height row with its
-        // provisional frame. Once native measures that row, center the same
-        // durable id again; otherwise a sliver at the viewport edge can
-        // count as viewable while the message itself remains clipped.
-        for (const delay of [400, 1200]) {
-          setTimeout(() => {
+        // provisional frame; once native measures that row, its real height
+        // can move the same durable id. Re-center it exactly ONCE, deferred
+        // by two animation frames so the check runs right after that one
+        // layout pass commits instead of guessing a wall-clock delay — a
+        // fixed 400ms/1200ms retry ladder fired unconditionally, producing
+        // two extra, humanly-visible corrections whether or not the first
+        // landing already needed one. See `buzz/message-source-landing.ts`.
+        const landing = startMessageSourceLanding(messageId, dragSequence);
+        scheduleAnimationFrame(() => {
+          scheduleAnimationFrame(() => {
             if (
-              messageAnchorIdRef.current !== messageId ||
-              dragEndSequenceRef.current !== dragSequence ||
-              userDraggingRef.current
+              !canSettleMessageSourceLanding(landing, {
+                messageAnchorId: messageAnchorIdRef.current,
+                dragSequence: dragEndSequenceRef.current,
+                isUserDragging: userDraggingRef.current,
+              })
             ) return;
             const measuredIndex = transcriptMessagesRef.current.findIndex(
               (message) => message.id === messageId || message.relayId === messageId,
@@ -2830,8 +2858,12 @@ export function BuzzChatSurface({
                 animated: false,
               });
             }
-          }, delay);
-        }
+            // The landing is settled either way — the second call is a
+            // harmless no-op when the first estimate was already exact — so
+            // this is the one place to mark the destination for the reader.
+            raiseSourceLandingFlash(messageId);
+          });
+        });
       });
       handledNotificationAnchorRef.current = anchorKey;
       return;
@@ -2858,6 +2890,7 @@ export function BuzzChatSurface({
     revealTranscriptThrough,
     loadOlderTranscriptMessages,
     transcriptHistoryStatus,
+    raiseSourceLandingFlash,
   ]);
   // A reconciled draft/final bubble keeps a stable display `id` across the
   // turn, so it also needs to resolve by its real relay event id — the id
@@ -5358,6 +5391,7 @@ export function BuzzChatSurface({
     cardMotionStore: transcriptCardMotionStore,
     firstNewMessageId,
     arrivalFlashMessageId,
+    sourceLandingFlashMessageId,
     // The catch-up door rides the unread line, where the run it summarizes
     // begins, rather than in chrome floating over the transcript.
     catchUpOffered: catchUpOfferVisible,

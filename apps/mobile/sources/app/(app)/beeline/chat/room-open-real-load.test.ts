@@ -102,8 +102,13 @@ describe('Room open paints a Room, not the last message', () => {
     expect(failedIndex).toContain('scrollToOffset');
     expect(failedIndex).toContain('scrollToIndex');
     // The first native frame can report a clipped sliver as viewable. A
-    // measured re-center keeps that provisional frame from ending the jump.
-    expect(surface).toContain('for (const delay of [400, 1200])');
-    expect(surface).toContain('dragEndSequenceRef.current !== dragSequence');
+    // measured re-center keeps that provisional frame from ending the jump —
+    // but exactly ONCE: a fixed [400, 1200]ms retry ladder used to reissue it
+    // unconditionally, producing two extra, humanly-visible corrections after
+    // the landing regardless of whether the first one already needed it. See
+    // `buzz/message-source-landing.ts` and its own tests for the one-shot gate.
+    expect(surface).not.toContain('for (const delay of [400, 1200])');
+    expect(surface).toContain('canSettleMessageSourceLanding');
+    expect(surface).toContain('dragEndSequenceRef.current');
   });
 });

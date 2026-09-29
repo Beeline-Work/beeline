@@ -17,12 +17,14 @@ const PRODUCT_MARKS: Record<string, string> = {
 
 /** A consistent tile for apps, with the official public favicon when available. */
 export function AppMark({ name, domain, size = 36, white = false }: { name: string; domain?: string; size?: number; white?: boolean }) {
-  const [failed, setFailed] = useState(false);
+  const [failedUri, setFailedUri] = useState<string | null>(null);
   const imageSize = Math.round(size * 0.56);
   const productMark = PRODUCT_MARKS[name.toLowerCase()];
+  const uri = productMark ?? (domain ? serviceFaviconUrl(domain) : undefined);
+  const showImage = uri && failedUri !== uri;
   return <View style={[styles.tile, { width: size, height: size, borderRadius: Math.round(size * .22), ...(white ? { backgroundColor: '#FFFFFF' } : {}) }]}>
-    <Text style={styles.fallback}>{name.slice(0, 1).toUpperCase()}</Text>
-    {(productMark || domain) && !failed ? <Image accessibilityIgnoresInvertColors source={{ uri: productMark ?? serviceFaviconUrl(domain!) }} onError={() => setFailed(true)} style={{ width: imageSize, height: imageSize, position: 'absolute' }} /> : null}
+    {!showImage ? <Text style={styles.fallback}>{name.slice(0, 1).toUpperCase()}</Text> : null}
+    {showImage ? <Image accessibilityIgnoresInvertColors source={{ uri }} onError={() => setFailedUri(uri)} style={{ width: imageSize, height: imageSize }} /> : null}
   </View>;
 }
 

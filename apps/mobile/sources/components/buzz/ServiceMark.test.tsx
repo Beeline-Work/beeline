@@ -17,6 +17,7 @@ vi.mock('react-native', async () => {
 });
 
 import { ServiceMark, serviceFaviconUrl } from './ServiceMark';
+import { AppMark } from './AppMark';
 
 const originalConsoleError = console.error;
 
@@ -67,5 +68,22 @@ describe('ServiceMark', () => {
     });
     expect(renderer.root.findAllByType('Image')).toHaveLength(0);
     expect(renderer.root.findByType('Text').props.children).toBe('S');
+  });
+});
+
+describe('AppMark', () => {
+  it('shows a transparent product logo without a letter underneath, then falls back if loading fails', () => {
+    const renderer = render(<AppMark name="Gmail" domain="gmail.com" size={34} />);
+    expect(renderer.root.findAllByType('Image')).toHaveLength(1);
+    expect(renderer.root.findAllByType('Text')).toHaveLength(0);
+    act(() => renderer.root.findByType('Image').props.onError());
+    expect(renderer.root.findAllByType('Image')).toHaveLength(0);
+    expect(renderer.root.findByType('Text').props.children).toBe('G');
+  });
+
+  it('uses a letter tile when an app has no known image', () => {
+    const renderer = render(<AppMark name="Example App" size={34} />);
+    expect(renderer.root.findAllByType('Image')).toHaveLength(0);
+    expect(renderer.root.findByType('Text').props.children).toBe('E');
   });
 });

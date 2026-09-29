@@ -464,7 +464,7 @@ jobs:
           node .desktop-visual-harness/scripts/desktop-ui-fixture.mjs > "$frames/fixture-server.log" 2>&1 &
           fixture_pid=$!
           trap 'kill "$fixture_pid" 2>/dev/null || true' EXIT
-          for attempt in 1 2 3 4 5; do
+          for _ in 1 2 3 4 5; do
             if curl --silent --fail http://127.0.0.1:39191/health > /dev/null; then break; fi
             sleep 1
           done

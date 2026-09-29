@@ -1,7 +1,7 @@
 import React from 'react';
 import { TouchableOpacity } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { CHANGES_LABEL, CORNER_LABEL } from '@/buzz/vocabulary';
+import { CHANGES_LABEL } from '@/buzz/vocabulary';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import Svg, { Line } from 'react-native-svg';
 
@@ -11,17 +11,15 @@ const SCREEN_TITLE = `${CHANGES_LABEL.charAt(0).toUpperCase()}${CHANGES_LABEL.sl
 
 /**
  * The Corners page header: the shared `PageHeader` (Room name over Corners,
- * the same inset, type and divider as Tray and Workbench) with the corner
- * count and the create-a-corner button at its trailing edge.
+ * the same inset, type and divider as Tray and Workbench) with the
+ * create-a-corner button at its trailing edge.
  */
 export function RoomCornersHeader({
   title,
-  count,
   onBack,
   onAdd,
 }: {
   title: string;
-  count: number;
   onBack: () => void;
   onAdd: () => void;
 }) {
@@ -62,8 +60,6 @@ export function RoomCornersHeader({
       onBack={onBack}
       prominent
       title={SCREEN_TITLE}
-      trailing={String(count)}
-      trailingAccessibilityLabel={`${count} ${count === 1 ? CORNER_LABEL : CHANGES_LABEL}`}
     />
   );
 }

@@ -586,14 +586,12 @@ describe('RoomCornersList archived footer', () => {
 });
 
 describe('RoomCornersHeader', () => {
-  it.each([0, 1, 2])('renders the shared page header and accessible count for %s corners', (count) => {
+  it('renders the shared page header with no corner count', () => {
     const onBack = vi.fn();
     const onAdd = vi.fn();
     let tree!: ReactTestRenderer;
     act(() => {
-      tree = create(
-        <RoomCornersHeader title="#alpha" count={count} onBack={onBack} onAdd={onAdd} />,
-      );
+      tree = create(<RoomCornersHeader title="#alpha" onBack={onBack} onAdd={onAdd} />);
     });
     const hull = beelineThemes.obsidian;
     const header = tree.root.findAllByType('View' as any)[0];
@@ -606,24 +604,14 @@ describe('RoomCornersHeader', () => {
     });
     expect(resolvedStyle(header.props.style).backgroundColor).toBeUndefined();
     expect(tree.root.findAllByType('HullSurface' as any)).toHaveLength(0);
-    // Three written parts. The back mark is drawn, so it is not one of them.
+    // Two written parts: no count beside the add button. The back mark is
+    // drawn, so it is not one of them.
     const texts = tree.root.findAllByType('Text' as any);
-    expect(texts.map((node: any) => node.props.children)).toEqual([
-      '#alpha',
-      'Corners',
-      String(count),
-    ]);
+    expect(texts.map((node: any) => node.props.children)).toEqual(['#alpha', 'Corners']);
     expect(tree.root.findAllByType('Polyline' as any)).toHaveLength(1);
     expect(resolvedStyle(texts[0].props.style)).toMatchObject(hull.type.meta);
     expect(resolvedStyle(texts[1].props.style)).toMatchObject(hull.type.hero);
     expect(texts[1].props.accessibilityRole).toBe('header');
-    expect(resolvedStyle(texts[2].props.style)).toMatchObject({
-      ...hull.type.meta,
-      color: hull.textMuted,
-    });
-    expect(texts[2].props.accessibilityLabel).toBe(
-      `${count} ${count === 1 ? 'corner' : 'corners'}`,
-    );
     const [back, add] = tree.root.findAllByType('TouchableOpacity' as any);
     expect(back.props).toMatchObject({ accessibilityRole: 'button', accessibilityLabel: 'Back' });
     expect(resolvedStyle(back.props.style)).toMatchObject({ width: 44, height: 44 });

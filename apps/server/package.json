@@ -22,6 +22,7 @@
     "aws4fetch": "^1.0.20",
     "cron-parser": "^5.10.0",
     "firebase-admin": "^13.4.0",
+    "ipaddr.js": "^2.5.0",
     "pg": "^8.23.0",
     "sharp": "^0.34.5",
     "web-push": "^3.6.7",

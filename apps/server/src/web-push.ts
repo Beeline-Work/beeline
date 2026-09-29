@@ -1,4 +1,9 @@
 import webpush from 'web-push';
+import { lookup } from 'node:dns/promises';
+import { Agent } from 'node:https';
+import { isIP } from 'node:net';
+import { parse as parseLegacyUrl } from 'node:url';
+import ipaddr from 'ipaddr.js';
 import type { SqlDatabase } from './database.js';
 import type { PushSender } from './background.js';
 
@@ -11,7 +16,36 @@ export function webPushPublicKey(environment: NodeJS.ProcessEnv): string | null 
 }
 
 /** Browser push services provide opaque HTTPS endpoints across browser vendors. */
-export function validateWebPushSubscription(endpoint: string, keys: WebPushKeys | undefined): void {
+function isPublicAddress(address: string): boolean {
+  try {
+    const parsed = ipaddr.parse(address);
+    if (parsed.range() !== 'unicast') return false;
+    // IPv6 global unicast is 2000::/3; documentation addresses are never endpoints.
+    return parsed.kind() === 'ipv4' ||
+      (parsed.match(ipaddr.parseCIDR('2000::/3')) && !parsed.match(ipaddr.parseCIDR('2001:db8::/32')));
+  } catch {
+    return false;
+  }
+}
+
+async function resolvePublicAddress(hostname: string): Promise<{ address: string; family: 4 | 6 }> {
+  const host = hostname.startsWith('[') ? hostname.slice(1, -1) : hostname;
+  try {
+    const answers = isIP(host)
+      ? [{ address: host, family: isIP(host) }]
+      : await lookup(host, { all: true, verbatim: true });
+    if (!answers.length || answers.some(({ address }) => !isPublicAddress(address)))
+      throw new Error('unsafe address');
+    const answer = answers[0];
+    if (!answer || (answer.family !== 4 && answer.family !== 6)) throw new Error('invalid address family');
+    return { address: answer.address, family: answer.family };
+  } catch {
+    // Never expose a subscription endpoint or DNS error in a client response.
+    throw new Error('invalid web push endpoint');
+  }
+}
+
+export async function validateWebPushSubscription(endpoint: string, keys: WebPushKeys | undefined): Promise<{ hostname: string; address: string; family: 4 | 6 }> {
   let url: URL;
   try {
     url = new URL(endpoint);
@@ -27,12 +61,16 @@ export function validateWebPushSubscription(endpoint: string, keys: WebPushKeys 
     endpoint.length > 2048
   )
     throw new Error('invalid web push endpoint');
+  // web-push uses node:url.parse for https.request; verify its actual host.
+  if (parseLegacyUrl(url.href).hostname !== url.hostname.replace(/^\[|\]$/g, ''))
+    throw new Error('invalid web push endpoint');
   if (
     !keys ||
     !/^[A-Za-z0-9_-]{80,100}$/.test(keys.p256dh) ||
     !/^[A-Za-z0-9_-]{16,40}$/.test(keys.auth)
   )
     throw new Error('invalid web push keys');
+  return { hostname: url.hostname, ...await resolvePublicAddress(url.hostname) };
 }
 
 export function createWebPushSender(
@@ -57,6 +95,14 @@ export function createWebPushSender(
         throw Object.assign(new Error('web push subscription unavailable'), {
           classification: 'unregistered',
         });
+      const checked = await validateWebPushSubscription(endpoint, keys);
+      // A fresh agent pins this request's connect address while HTTPS keeps the
+      // original hostname for SNI and certificate verification.
+      const agent = new Agent({ autoSelectFamily: false, lookup(hostname, _options, callback) {
+        if (hostname !== checked.hostname && hostname !== checked.hostname.replace(/^\[|\]$/g, ''))
+          return callback(new Error('invalid web push endpoint'), '', 4);
+        callback(null, checked.address, checked.family);
+      } });
       const url =
         message.type === 'test'
           ? '/beeline/channels'
@@ -65,7 +111,7 @@ export function createWebPushSender(
             : `/beeline/chat/${encodeURIComponent(message.type === 'message' ? message.channelId : message.roomId!)}?communityId=${encodeURIComponent(message.workspaceId)}`;
       try {
         await webpush.sendNotification(
-          { endpoint, keys },
+          { endpoint: new URL(endpoint).href, keys },
           JSON.stringify({
             body: message.text.slice(0, 200),
             url,
@@ -74,7 +120,7 @@ export function createWebPushSender(
               ? { channelId: message.channelId, roomId: message.roomId }
               : {}),
           }),
-          { TTL: 60 * 60, urgency: 'normal' },
+          { TTL: 60 * 60, urgency: 'normal', agent },
         );
       } catch (error) {
         if (
@@ -88,6 +134,8 @@ export function createWebPushSender(
           });
         // Never forward an endpoint, key, or payload from the vendor error into delivery claims.
         throw new Error('web push delivery failed');
+      } finally {
+        agent.destroy();
       }
     },
   };

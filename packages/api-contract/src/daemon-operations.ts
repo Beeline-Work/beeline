@@ -9,7 +9,7 @@ import type {
 import type { CornerLifecycleView, MessageReactionEmoji } from './phone-types.js';
 import type { ChoiceOptionInput } from './room-choices.js';
 import type { RoomScheduleCadence } from './phone-operations.js';
-import type { WorkflowDefinition } from './workflows.js';
+import type { WorkflowCheckResult, WorkflowDefinition } from './workflows.js';
 import type { CornerAppDefinition } from './corner-apps.js';
 import type {
   ClaimInstitutionalMemoryJobResult,
@@ -117,6 +117,17 @@ export type CommandClaimInput = RoomInput & {
 };
 export type TurnOutputAuthority = { readonly generationId?: string; readonly requestId?: string };
 export type DaemonOperationMap = {
+  checkWorkflow: Operation<RoomInput & { readonly definition: WorkflowDefinition }, WorkflowCheckResult>;
+  listWorkflows: Operation<RoomInput, readonly { readonly name: string; readonly purpose: string;
+    readonly trigger: WorkflowDefinition['trigger']; readonly layer: 'built-in' | 'workspace' | 'room';
+    readonly version: number }[]>;
+  readWorkflow: Operation<RoomInput & { readonly name: string;
+    readonly layer?: 'built-in' | 'workspace' | 'room'; readonly version?: number },
+    { readonly name: string; readonly purpose: string; readonly trigger: WorkflowDefinition['trigger'];
+      readonly layer: 'built-in' | 'workspace' | 'room'; readonly version: number;
+      readonly definition: WorkflowDefinition }>;
+  publishWorkflow: Operation<RoomInput & TurnOutputAuthority & { readonly name: string },
+    { readonly choiceId: string; readonly name: string; readonly sourceRevision: number }>;
   putWorkflowDefinition: Operation<
     RoomInput & TurnOutputAuthority & { readonly definition: WorkflowDefinition; readonly roles?: Readonly<Record<string, string>> },
     { readonly name: string; readonly revision: number }
@@ -125,6 +136,7 @@ export type DaemonOperationMap = {
     RoomInput &
       TurnOutputAuthority & {
         readonly name: string;
+        readonly layer?: 'built-in' | 'workspace' | 'room';
         readonly roles: Readonly<Record<string, string>>;
       },
     { readonly runId: string; readonly state: string; readonly status: string }

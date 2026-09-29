@@ -71,6 +71,9 @@ export type PhoneOperationMap = {
   acceptConnectorOffer: { input: AcceptConnectorOfferInput; output: AcceptConnectorOfferResult };
   createRoomPoll: { input: CreateRoomPollInput; output: CreateRoomPollResult };
   answerChoice: { input: AnswerChoiceInput; output: ChoiceDecisionResult };
+  overrideWorkflowRun: { input: RoomInput & { readonly runId: string;
+    readonly action: 'jump' | 'reassign' | 'kill'; readonly state?: string;
+    readonly role?: string; readonly agentId?: string; readonly reason: string }; output: void };
   skipChoice: { input: SkipChoiceInput; output: ChoiceDecisionResult };
   createWorkspace: { input: NamedWorkspaceInput; output: CreateWorkspaceResult };
   updateWorkspace: { input: UpdateWorkspaceInput; output: void };

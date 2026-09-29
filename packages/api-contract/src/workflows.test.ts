@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { readWorkflowDefinition, workflowOutputError } from './workflows.js';
+import { checkWorkflowDefinition, readWorkflowDefinition, workflowOutputError } from './workflows.js';
 
 const definition = {
   version: 1,
   name: 'code-corner',
+  success: ['closed'],
   roles: ['implementer', 'reviewer'],
   trigger: { kind: 'manual' },
   start: 'implement',
@@ -21,7 +22,7 @@ const definition = {
     },
     wait_ci: {
       kind: 'wait',
-      event: 'ci_completed',
+      event: 'check-completed',
       timeoutSeconds: 7200,
       on: { success: 'review', timeout: 'escalate' },
     },
@@ -158,5 +159,66 @@ describe('workflow definition boundary', () => {
     expect(workflowOutputError(review.step, { verdict: 'maybe' })).toBe(
       'verdict must be one of approve, changes',
     );
+  });
+
+  it('reports named event, field, and guard errors', () => {
+    const bad = {
+      ...definition,
+      states: {
+        ...definition.states,
+        wait_ci: { ...definition.states.wait_ci, event: 'check-completd', match: { sha: '$.missing' } },
+        review: { ...definition.states.review, on: { ...definition.states.review.on, changes: undefined } },
+      },
+    };
+    const result = checkWorkflowDefinition(bad);
+    expect(result.errors.map((error) => error.rule)).toContain('event');
+    expect(result.errors.map((error) => error.rule)).toContain('guard-route');
+    const fieldResult = checkWorkflowDefinition({
+      ...definition,
+      states: {
+        ...definition.states,
+        wait_ci: { ...definition.states.wait_ci, match: { sha: '$.missing' } },
+      },
+    });
+    expect(fieldResult.errors.map((error) => error.rule)).toContain('field-flow');
+  });
+
+  it('computes a bound and reports non-success endings', () => {
+    const result = checkWorkflowDefinition(definition);
+    expect(result.ok).toBe(true);
+    expect(result.bounds.agentTurns).toBeGreaterThan(0);
+    expect(result.bounds.durationMs).toBeGreaterThan(0);
+    expect(result.nonSuccessRoutes.some((route) => route.terminal === 'escalate')).toBe(true);
+  });
+
+  it('computes exact retry and wait bounds and checks fields on every incoming path', () => {
+    const checked = checkWorkflowDefinition({
+      version: 1, name: 'bounded', roles: ['worker'], trigger: { kind: 'manual' },
+      start: 'make', success: ['done'], states: {
+        make: { kind: 'step', step: { role: 'worker', skill: 'make',
+          output: { value: 'string' }, timeoutSeconds: 10, retries: 1 },
+          on: { success: 'wait', failure: 'failed', timeout: 'failed' } },
+        wait: { kind: 'wait', event: 'check-passed', match: { value: '$.value' },
+          timeoutSeconds: 5, on: { success: 'done', timeout: 'failed' } },
+        done: { kind: 'terminal' }, failed: { kind: 'terminal' },
+      },
+    });
+    expect(checked.ok).toBe(true);
+    expect(checked.bounds).toEqual({ durationMs: 25_000, agentTurns: 2 });
+    expect(checked.nonSuccessRoutes.map((route) => route.terminal)).toContain('failed');
+    const invalid = checkWorkflowDefinition({
+      version: 1, name: 'bad-flow', roles: ['worker'], trigger: { kind: 'manual' },
+      start: 'make', success: ['done'], states: {
+        make: { kind: 'step', step: { role: 'worker', skill: 'make',
+          output: { value: 'string' }, timeoutSeconds: 10, retries: 0 },
+          on: { success: 'wait', failure: 'wait', timeout: 'failed' } },
+        wait: { kind: 'wait', event: 'check-passed', match: { value: '$.value' },
+          timeoutSeconds: 5, on: { success: 'done', timeout: 'failed' } },
+        done: { kind: 'terminal' }, failed: { kind: 'terminal' },
+      },
+    });
+    expect(invalid.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ rule: 'field-flow', state: 'wait', path: '$.states.wait.match.value' }),
+    ]));
   });
 });

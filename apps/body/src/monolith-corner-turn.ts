@@ -53,6 +53,7 @@ import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import { syncCornerBranch } from './corner-branch-sync.js';
 import { beelineAgentMcpServer } from './room-session.js';
 import { institutionalContextForTurn } from './institutional-context.js';
+import { workflowAmbient } from './workflow-ambient.js';
 import {
   codegraphFingerprintServers,
   codegraphMcpServer,
@@ -1303,6 +1304,8 @@ export class MonolithCornerTurnLoop {
                 restored,
                 activeReviewerInstruction,
                 institutionalContext,
+                workflows,
+                workflowRuns,
               ] = await trace.measure('context-fetch', () =>
                 Promise.all([
                   api.execute('getRoomConversation', {
@@ -1316,6 +1319,8 @@ export class MonolithCornerTurnLoop {
                   institutionalContextForTurn(api, cornerId, (message) =>
                     console.warn(`[thin-core] corner ${cornerId}: ${message}`),
                   ),
+                  api.execute('listWorkflows', { roomId: cornerId }).catch(() => []),
+                  api.execute('listWorkflowRuns', { roomId: cornerId }).catch(() => ({ runs: [], triggerErrors: [] })),
                 ]),
               );
               const briefAttachments: DaemonAttachment[] = (restored.brief?.attachments ?? []).map(
@@ -1416,6 +1421,7 @@ export class MonolithCornerTurnLoop {
                   },
                   members: roomMentionDirectory(roster, this.agent.publicKey),
                   memory: institutionalContext.text,
+                  workflows: workflowAmbient(workflows, workflowRuns.runs, trigger),
                   ...(activeReviewerInstruction
                     ? { reviewerTarget: activeReviewerInstruction }
                     : {}),

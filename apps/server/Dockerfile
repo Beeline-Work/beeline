@@ -21,6 +21,7 @@ COPY apps/gate/src ./apps/gate/src
 COPY packages/nostr/src ./packages/nostr/src
 COPY packages/api-contract/src ./packages/api-contract/src
 COPY packages/buzz-client/src ./packages/buzz-client/src
+COPY workflows ./workflows
 COPY scripts/clean-dist.mjs ./scripts/clean-dist.mjs
 RUN npm run build -w @beeline/nostr \
   && npm run build -w @beeline/api-contract \
@@ -54,6 +55,7 @@ COPY packages/buzz-client/package.json ./packages/buzz-client/package.json
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 COPY --from=build /app/apps/server/dist ./apps/server/dist
 COPY --from=build /app/apps/server/assets ./apps/server/assets
+COPY --from=build /app/workflows ./workflows
 COPY --from=build /app/apps/auth/dist ./apps/auth/dist
 COPY --from=build /app/apps/push-gateway/dist ./apps/push-gateway/dist
 COPY --from=build /app/apps/body/dist ./apps/body/dist

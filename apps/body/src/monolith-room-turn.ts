@@ -57,6 +57,7 @@ import {
   readOnlyMcpServer,
 } from './room-session.js';
 import { institutionalContextForTurn } from './institutional-context.js';
+import { workflowAmbient } from './workflow-ambient.js';
 import { modelContextWindowTokens } from './model-context-window.js';
 import {
   codegraphFingerprintServers,
@@ -1230,7 +1231,7 @@ export class MonolithRoomTurnLoop {
                 throw new Error('Room checkout refresh failed before this turn');
               }
               const checkout = this.turnCheckout;
-              const [conversation, roster, delivered, corners, institutionalContext] =
+              const [conversation, roster, delivered, corners, institutionalContext, workflows, workflowRuns] =
                 await trace.measure('context-fetch', () =>
                   Promise.all([
                     api.execute('getRoomConversation', { roomId: this.options.roomId, limit: 200 }),
@@ -1240,6 +1241,8 @@ export class MonolithRoomTurnLoop {
                     institutionalContextForTurn(api, this.options.roomId, (message) =>
                       console.warn(`[thin-core] Room ${this.options.roomId}: ${message}`),
                     ),
+                    api.execute('listWorkflows', { roomId: this.options.roomId }).catch(() => []),
+                    api.execute('listWorkflowRuns', { roomId: this.options.roomId }).catch(() => ({ runs: [], triggerErrors: [] })),
                   ]),
                 );
               const names = new Map(
@@ -1318,6 +1321,7 @@ export class MonolithRoomTurnLoop {
                   ...(grantDecision ? { resume: resumePrompt(item) } : {}),
                   members: roomMentionDirectory(roster, this.agent.publicKey),
                   memory: institutionalContext.text,
+                  workflows: workflowAmbient(workflows, workflowRuns.runs, inboxItemPromptBody(item)),
                   corners: openCorners,
                   closedCorners,
                   task: {

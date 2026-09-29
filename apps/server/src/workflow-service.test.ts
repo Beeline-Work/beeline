@@ -12,19 +12,28 @@ import {
   runDueWorkflowDeadlines,
   runDueWorkflowSchedules,
   settleWorkflowGateChoice,
+  listWorkflows,
+  readWorkflow,
+  publishWorkflow,
+  settleWorkflowPublicationChoice,
+  settleWorkflowStartChoice,
+  checkWorkflow,
 } from './workflow-service.js';
 import { answerRoomChoice } from './room-choice.js';
+import { PhoneService } from './phone-service.js';
 
 const OWNER = 'a'.repeat(64);
 const AUTHOR = 'b'.repeat(64);
 const REVIEWER = 'c'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
+const OTHER_ROOM = '33333333-3333-4333-8333-333333333333';
 const SOURCE = 'd'.repeat(64);
 
 const definition = {
   version: 1,
   name: 'review-demo',
+  success: ['done'],
   roles: ['author', 'reviewer'],
   trigger: { kind: 'manual' },
   start: 'write',
@@ -69,9 +78,25 @@ async function fixture() {
     WORKSPACE,
     OWNER,
   ]);
+  await db.query(`INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Other Room')`, [
+    OTHER_ROOM, WORKSPACE, OWNER,
+  ]);
+  for (const [index, slug] of ['write-change', 'review-change', 'author-skill', 'reviewer-skill'].entries()) {
+    await db.query(
+      `INSERT INTO workspace_skills(id,workspace_id,slug,description,current_version,revision,
+         source_room_id,repository,target_commit)
+       VALUES($1,$2,$3,'Workflow test skill',1,1,$4,'acme/repo',$5)`,
+      [`${String(index + 1).padStart(8, '0')}-1111-4111-8111-111111111111`,
+        WORKSPACE, slug, ROOM, 'a'.repeat(40)],
+    );
+  }
   await db.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member')`,
     [WORKSPACE, ROOM, OWNER, AUTHOR, REVIEWER],
+  );
+  await db.query(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member')`,
+    [WORKSPACE, OTHER_ROOM, OWNER, AUTHOR, REVIEWER],
   );
   await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Start')`, [
     SOURCE,
@@ -89,6 +114,144 @@ async function fixture() {
 }
 
 describe('workflow run handoff', () => {
+  it('reports an unknown workspace skill before a draft is saved', async () => {
+    const { db, parent } = await fixture();
+    try {
+      const unknown = { ...definition, states: { ...definition.states,
+        write: { ...definition.states.write, step: { ...definition.states.write.step,
+          skill: 'not-installed' } } } };
+      expect((await checkWorkflow(db, ROOM, unknown)).errors).toEqual(
+        expect.arrayContaining([expect.objectContaining({ rule: 'skill', state: 'write' })]),
+      );
+      await expect(db.transaction((tx) => putWorkflowDefinition(tx, ROOM, AUTHOR,
+        unknown, undefined, parent))).rejects.toThrow('unknown workspace skill');
+    } finally { await db.close(); }
+  });
+  it('publishes a pinned draft after human approval and lists it in another Room', async () => {
+    const { db, parent } = await fixture();
+    try {
+      await db.transaction((tx) => putWorkflowDefinition(tx, ROOM, AUTHOR, definition, undefined, parent));
+      const pending = await db.transaction((tx) => publishWorkflow(tx, ROOM, 'review-demo', parent));
+      expect((await listWorkflows(db, OTHER_ROOM)).some((item) => item.name === 'review-demo')).toBe(false);
+      await db.transaction(async (tx) => {
+        await answerRoomChoice(tx, { choiceId: pending.choiceId, optionId: 'A', viewerId: OWNER });
+        await settleWorkflowPublicationChoice(tx, pending.choiceId, 'A', OWNER);
+      });
+      expect((await listWorkflows(db, OTHER_ROOM)).find((item) => item.name === 'review-demo'))
+        .toMatchObject({ layer: 'workspace', version: 1 });
+      expect((await readWorkflow(db, OTHER_ROOM, 'review-demo')).definition).toEqual(definition);
+      const otherSource = 'e'.repeat(64);
+      await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Run it')`,
+        [otherSource, OTHER_ROOM, OWNER]);
+      const otherParent = await createAgentCommand(db, { roomId: OTHER_ROOM,
+        agentId: AUTHOR, sourceMessageId: otherSource, reason: 'human_mention' });
+      expect(otherParent).toBeTruthy();
+      const run = await db.transaction((tx) => startWorkflowRun(tx, OTHER_ROOM, 'review-demo',
+        { author: AUTHOR, reviewer: REVIEWER }, otherParent!));
+      expect(run).toMatchObject({ layer: 'workspace', status: 'running' });
+    } finally { await db.close(); }
+  });
+
+  it('starts a short draft immediately and waits for approval on a long draft', async () => {
+    const { db, parent } = await fixture();
+    try {
+      await db.transaction((tx) => putWorkflowDefinition(tx, ROOM, AUTHOR, definition, undefined, parent));
+      const short = await db.transaction((tx) => startWorkflowRun(tx, ROOM, 'review-demo',
+        { author: AUTHOR, reviewer: REVIEWER }, parent));
+      expect(short.status).toBe('running');
+      const long = { ...definition, name: 'long-review',
+        states: { ...definition.states, write: { ...definition.states.write,
+          step: { ...definition.states.write.step, timeoutSeconds: 1801 } } } };
+      await db.transaction((tx) => putWorkflowDefinition(tx, ROOM, AUTHOR, long, undefined, parent));
+      const waiting = await db.transaction((tx) => startWorkflowRun(tx, ROOM, 'long-review',
+        { author: AUTHOR, reviewer: REVIEWER }, parent));
+      expect(waiting.status).toBe('waiting');
+      const choice = (await db.query<{ choice_id: string }>(
+        `SELECT choice_id FROM workflow_start_choices WHERE run_id=$1`, [waiting.runId],
+      )).rows[0]!;
+      await db.transaction(async (tx) => {
+        await answerRoomChoice(tx, { choiceId: choice.choice_id, optionId: 'A', viewerId: OWNER });
+        await settleWorkflowStartChoice(tx, choice.choice_id, 'A', OWNER);
+      });
+      expect((await readWorkflowRun(db, ROOM, waiting.runId)).run.status).toBe('running');
+      const external = { ...definition, name: 'external-write-demo', states: {
+        ...definition.states, write: { ...definition.states.write,
+          step: { ...definition.states.write.step, effects: ['external-write'] } },
+      } };
+      await db.transaction((tx) => putWorkflowDefinition(tx, ROOM, AUTHOR, external, undefined, parent));
+      const sideEffectRun = await db.transaction((tx) => startWorkflowRun(tx, ROOM,
+        'external-write-demo', { author: AUTHOR, reviewer: REVIEWER }, parent));
+      expect(sideEffectRun.status).toBe('waiting');
+    } finally { await db.close(); }
+  });
+
+  it('fails a run when its agent-turn budget is exhausted', async () => {
+    const { db, parent } = await fixture();
+    try {
+      await db.transaction((tx) => putWorkflowDefinition(tx, ROOM, AUTHOR, definition, undefined, parent));
+      const run = await db.transaction((tx) => startWorkflowRun(tx, ROOM, 'review-demo',
+        { author: AUTHOR, reviewer: REVIEWER }, parent));
+      await db.query(`UPDATE workflow_runs SET turns_used=100 WHERE id=$1`, [run.runId]);
+      const commandId = (await db.query<{ command_id: string }>(
+        `SELECT command_id FROM workflow_run_assignments WHERE run_id=$1`, [run.runId],
+      )).rows[0]!.command_id;
+      const command = (await db.query<typeof parent>(
+        `SELECT * FROM agent_commands WHERE id=$1`, [commandId],
+      )).rows[0]!;
+      const result = await db.transaction((tx) => completeWorkflowStep(tx, ROOM, run.runId, 0,
+        { head: 'abc' }, 'success', command));
+      expect(result).toMatchObject({ status: 'failed', error: 'workflow run agent-turn cap reached' });
+    } finally { await db.close(); }
+  });
+
+  it('logs the human actor for reassign, jump, and kill', async () => {
+    const { db, parent } = await fixture();
+    try {
+      const phone = new PhoneService(db, 'http://test');
+      await db.transaction((tx) => putWorkflowDefinition(tx, ROOM, AUTHOR, definition, undefined, parent));
+      const run = await db.transaction((tx) => startWorkflowRun(tx, ROOM, 'review-demo',
+        { author: AUTHOR, reviewer: REVIEWER }, parent));
+      await phone.execute('overrideWorkflowRun', { roomId: ROOM, runId: run.runId,
+        action: 'reassign', role: 'author', agentId: REVIEWER, reason: 'Cover this step' }, OWNER);
+      await phone.execute('overrideWorkflowRun', { roomId: ROOM, runId: run.runId,
+        action: 'jump', state: 'review', reason: 'Review the current artifact' }, OWNER);
+      await phone.execute('overrideWorkflowRun', { roomId: ROOM, runId: run.runId,
+        action: 'kill', reason: 'Stop this run' }, OWNER);
+      const result = await readWorkflowRun(db, ROOM, run.runId);
+      expect(result.run.status).toBe('failed');
+      expect(result.log.filter((item) => item.event.startsWith('override_'))
+        .map((item) => [item.event, (item.payload as { viewerId: string }).viewerId]))
+        .toEqual([['override_reassign', OWNER], ['override_jump', OWNER], ['override_kill', OWNER]]);
+    } finally { await db.close(); }
+  });
+
+  it('ignores CI for an old head in the built-in code-corner wait', async () => {
+    const { db, parent } = await fixture();
+    try {
+      await db.query(
+        `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle)
+         VALUES($1,$2,'Review', $3::jsonb)`,
+        [ROOM, AUTHOR, JSON.stringify({ checks: 'pending', pr: { headSha: 'new-head' } })],
+      );
+      await db.query(`UPDATE rooms SET parent_id=$2 WHERE id=$1`, [ROOM, OTHER_ROOM]);
+      const run = await db.transaction((tx) => startWorkflowRun(tx, ROOM, 'code-corner',
+        { implementer: AUTHOR, reviewer: REVIEWER }, parent));
+      const commandId = (await db.query<{ command_id: string }>(
+        `SELECT command_id FROM workflow_run_assignments WHERE run_id=$1`, [run.runId],
+      )).rows[0]!.command_id;
+      const command = (await db.query<typeof parent>(
+        `SELECT * FROM agent_commands WHERE id=$1`, [commandId],
+      )).rows[0]!;
+      await db.transaction((tx) => completeWorkflowStep(tx, ROOM, run.runId, 0,
+        { head: 'old-head' }, 'success', command));
+      expect(await db.transaction((tx) => signalWorkflowEvent(tx, ROOM,
+        'check-completed', { sha: 'old-head', outcome: 'success' }, 'old-event'))).toBe(0);
+      expect((await readWorkflowRun(db, ROOM, run.runId)).run.state).toBe('ci');
+      expect(await db.transaction((tx) => signalWorkflowEvent(tx, ROOM,
+        'check-completed', { sha: 'new-head', outcome: 'success' }, 'new-event'))).toBe(1);
+      expect((await readWorkflowRun(db, ROOM, run.runId)).run.state).toBe('review');
+    } finally { await db.close(); }
+  });
   it('pins the definition, validates output, and wakes the next role without a tag', async () => {
     const { db, parent } = await fixture();
     try {
@@ -286,7 +449,7 @@ describe('workflow run handoff', () => {
     const { db, parent } = await fixture();
     try {
       const wait = (next: string) => ({
-        kind: 'wait', event: 'tick', timeoutSeconds: 60, on: { success: next, timeout: 'stopped' },
+        kind: 'wait', event: 'agent:tick', timeoutSeconds: 60, on: { success: next, timeout: 'stopped' },
       });
       await db.transaction((tx) => putWorkflowDefinition(tx, ROOM, AUTHOR, {
         ...definition,
@@ -296,7 +459,7 @@ describe('workflow run handoff', () => {
       await db.transaction((tx) =>
         startWorkflowRun(tx, ROOM, 'review-demo', { author: AUTHOR, reviewer: REVIEWER }, parent));
       const signal = (eventId: string) =>
-        db.transaction((tx) => signalWorkflowEvent(tx, ROOM, 'tick', {}, eventId));
+        db.transaction((tx) => signalWorkflowEvent(tx, ROOM, 'agent:tick', {}, eventId));
       expect(await signal('tick-1')).toBe(1);
       expect(await signal('tick-1')).toBe(0);
       expect((await listWorkflowRuns(db, ROOM)).runs[0]).toMatchObject({ state: 'second', status: 'waiting' });

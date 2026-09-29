@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "name": "code-corner",
+  "purpose": "Route implementation, CI, review, and merge readiness for a code corner.",
+  "roles": ["implementer", "reviewer"],
+  "trigger": { "kind": "manual" },
+  "start": "implement",
+  "success": ["landed"],
+  "states": {
+    "implement": {
+      "kind": "step",
+      "step": { "role": "implementer", "skill": "code-change", "output": { "head": "string" }, "timeoutSeconds": 86400, "retries": 0 },
+      "on": { "success": "ci", "failure": "stopped", "timeout": "stopped" }
+    },
+    "ci": {
+      "kind": "wait",
+      "event": "check-completed",
+      "timeoutSeconds": 86400,
+      "on": { "success": "review", "failure": "implement", "timeout": "stopped" },
+      "loop": { "to": "implement", "maxIterations": 5, "onExceeded": "stopped" }
+    },
+    "review": {
+      "kind": "step",
+      "step": { "role": "reviewer", "skill": "code-review", "output": { "verdict": { "type": "string", "enum": ["approve_merge", "findings"] } }, "timeoutSeconds": 86400, "retries": 0 },
+      "guard": { "field": "verdict" },
+      "on": { "approve_merge": "merge", "findings": "implement", "failure": "stopped", "timeout": "stopped" },
+      "loop": { "to": "implement", "maxIterations": 5, "onExceeded": "stopped" }
+    },
+    "merge": {
+      "kind": "wait",
+      "event": "merged",
+      "timeoutSeconds": 604800,
+      "on": { "success": "landed", "timeout": "stopped" }
+    },
+    "landed": { "kind": "terminal" },
+    "stopped": { "kind": "terminal" }
+  }
+}

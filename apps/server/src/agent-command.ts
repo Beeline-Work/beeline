@@ -10,6 +10,7 @@ import type { SqlDatabase } from './database.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
 import { ensureSystemIdentity, GITHUB_SUBJECT, systemLine } from './system-line.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import { existingCornerWake, recordCodeCornerShadowWake } from './corner-workflow-shadow.js';
 
 export const COMMAND_LEASE_SECONDS = 90;
 export const COMMAND_MAX_DEPTH = 3;
@@ -725,7 +726,7 @@ export async function queueCornerWorkerAfterReview(
       )
     ).rows[0]?.review_handback_count ?? 1;
   if (handbacks <= REVIEW_HANDBACK_LIMIT) {
-    await createAgentCommand(db, {
+    const command = await createAgentCommand(db, {
       roomId: input.roomId,
       agentId: review.worker_agent_id,
       sourceMessageId: input.verdictMessageId,
@@ -737,8 +738,21 @@ export async function queueCornerWorkerAfterReview(
       retainDepth: true,
       reason: 'corner_review',
     });
+    await recordCodeCornerShadowWake(db, {
+      cornerId: input.roomId, eventId: input.verdictMessageId, event: 'review-ended',
+      implementerId: review.worker_agent_id, reviewerId: input.reviewerAgentId,
+      reviewerReachable: true, checksPassing: true, handbacks,
+      headSha: review.head_sha, actualAgentId: command ? review.worker_agent_id :
+        await existingCornerWake(db, input.roomId, input.verdictMessageId, review.worker_agent_id),
+    });
     return;
   }
+  await recordCodeCornerShadowWake(db, {
+    cornerId: input.roomId, eventId: input.verdictMessageId, event: 'review-ended',
+    implementerId: review.worker_agent_id, reviewerId: input.reviewerAgentId,
+    reviewerReachable: true, checksPassing: true, handbacks,
+    headSha: review.head_sha, actualAgentId: null,
+  });
   // A corner an agent opened off its own root message records no requester,
   // and that corner is just as stuck. So the line is addressed to the corner
   // itself rather than dropped: the loop stopping is the fact worth reading,
@@ -1048,6 +1062,7 @@ export async function routeSystemCommand(
         reviewer_agent_id: string | null;
         state: string;
         command_check_state: string | null;
+        head_sha: string | null;
       }>(
         `SELECT fact.owner_agent_id,
                 parent.reviewer_agent_id configured_reviewer_id,
@@ -1062,7 +1077,8 @@ export async function routeSystemCommand(
                     AND reviewer_membership.identity_id=parent.reviewer_agent_id
                     AND reviewer_membership.removed_at IS NULL
                 ) reviewer_agent_id,
-                fact.lifecycle->>'checks' state,fact.command_check_state
+                fact.lifecycle->>'checks' state,fact.command_check_state,
+                fact.lifecycle->'pr'->>'headSha' head_sha
          FROM corner_facts fact
          JOIN rooms corner ON corner.id=fact.corner_id
          JOIN rooms parent ON parent.id=corner.parent_id
@@ -1113,6 +1129,15 @@ export async function routeSystemCommand(
             input.roomId,
             fact.state,
           ]);
+        await recordCodeCornerShadowWake(db, {
+          cornerId: input.roomId, eventId: input.sourceMessageId,
+          event: input.kind === 'check-failed' ? 'checks-failed' : 'checks-passed',
+          implementerId: fact.owner_agent_id, reviewerId: fact.configured_reviewer_id,
+          reviewerReachable: Boolean(fact.reviewer_agent_id), checksPassing: fact.state === 'passing',
+          handbacks: 0, headSha: fact.head_sha,
+          actualAgentId: command ? fact.owner_agent_id :
+            await existingCornerWake(db, input.roomId, input.sourceMessageId, fact.owner_agent_id),
+        });
         return;
       }
       const unreachable = {
@@ -1126,6 +1151,12 @@ export async function routeSystemCommand(
         await noteUnreachableReviewer(db, {
           ...unreachable,
           reason: REVIEWER_NOT_PARENT_MEMBER,
+        });
+        await recordCodeCornerShadowWake(db, {
+          cornerId: input.roomId, eventId: input.sourceMessageId, event: 'checks-passed',
+          implementerId: fact.owner_agent_id, reviewerId: fact.configured_reviewer_id,
+          reviewerReachable: false, checksPassing: true, handbacks: 0,
+          headSha: fact.head_sha, actualAgentId: null,
         });
         return;
       }
@@ -1147,13 +1178,26 @@ export async function routeSystemCommand(
           ...unreachable,
           reason: REVIEWER_NOT_CORNER_MEMBER,
         });
+        await recordCodeCornerShadowWake(db, {
+          cornerId: input.roomId, eventId: input.sourceMessageId, event: 'checks-passed',
+          implementerId: fact.owner_agent_id, reviewerId: fact.configured_reviewer_id,
+          reviewerReachable: false, checksPassing: true, handbacks: 0,
+          headSha: fact.head_sha, actualAgentId: null,
+        });
         return;
       }
-      await createAgentCommand(db, {
+      const command = await createAgentCommand(db, {
         roomId: input.roomId,
         agentId: fact.reviewer_agent_id,
         sourceMessageId: input.sourceMessageId,
         reason: 'subscribed_event',
+      });
+      await recordCodeCornerShadowWake(db, {
+        cornerId: input.roomId, eventId: input.sourceMessageId, event: 'checks-passed',
+        implementerId: fact.owner_agent_id, reviewerId: fact.configured_reviewer_id,
+        reviewerReachable: true, checksPassing: true, handbacks: 0, headSha: fact.head_sha,
+        actualAgentId: command ? fact.reviewer_agent_id :
+          await existingCornerWake(db, input.roomId, input.sourceMessageId, fact.reviewer_agent_id),
       });
       await db.query(`UPDATE corner_facts SET command_check_state=$2 WHERE corner_id=$1`, [
         input.roomId,

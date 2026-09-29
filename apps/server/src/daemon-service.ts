@@ -166,6 +166,10 @@ import { loadWorkspaceSkill } from './institutional-skills.js';
 
 import {
   putWorkflowDefinition,
+  checkWorkflow,
+  listWorkflows,
+  readWorkflow,
+  publishWorkflow,
   startWorkflowRun,
   completeWorkflowStep,
   listWorkflowRuns,
@@ -327,6 +331,7 @@ export class DaemonService {
       await this.assertCornerOpener(scopedRoom, authenticatedAgentId);
     const turnWrites = new Set([
       'putWorkflowDefinition',
+      'publishWorkflow',
       'startWorkflowRun',
       'completeWorkflowStep',
       'postAgentAvatar',
@@ -680,6 +685,22 @@ export class DaemonService {
         return { status: 'permission-required', grantId: permission.grantId } as Output<Name>;
     }
     switch (name) {
+      case 'checkWorkflow':
+        return (await checkWorkflow(this.database, (input as Input<'checkWorkflow'>).roomId,
+          (input as Input<'checkWorkflow'>).definition)) as Output<Name>;
+      case 'listWorkflows':
+        return (await listWorkflows(this.database, (input as Input<'listWorkflows'>).roomId)) as Output<Name>;
+      case 'readWorkflow': {
+        const request = input as Input<'readWorkflow'>;
+        return (await readWorkflow(this.database, request.roomId, request.name,
+          request.layer, request.version)) as Output<Name>;
+      }
+      case 'publishWorkflow': {
+        const request = input as Input<'publishWorkflow'>;
+        if (!this.authorizedCommand) throw new Error('workflow publication requires an active turn');
+        return (await publishWorkflow(this.database, request.roomId, request.name,
+          this.authorizedCommand)) as Output<Name>;
+      }
       case 'putWorkflowDefinition': {
         const request = input as Input<'putWorkflowDefinition'>;
         if (!this.authorizedCommand)
@@ -702,6 +723,8 @@ export class DaemonService {
           request.name,
           { ...request.roles },
           this.authorizedCommand,
+          undefined,
+          request.layer,
         )) as Output<Name>;
       }
       case 'completeWorkflowStep': {
@@ -6843,6 +6866,10 @@ function laterCursor(
  * failed wake as "resolved" — became a spin against the server.
  */
 const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
+  checkWorkflow: true,
+  listWorkflows: true,
+  readWorkflow: true,
+  publishWorkflow: true,
   putWorkflowDefinition: true,
   startWorkflowRun: true,
   completeWorkflowStep: true,

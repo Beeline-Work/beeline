@@ -135,7 +135,7 @@ import {
   postRoomChoice,
   skipRoomChoice,
 } from './room-choice.js';
-import { settleWorkflowGateChoice } from './workflow-service.js';
+import { overrideWorkflowRun, settleWorkflowGateChoice, settleWorkflowPublicationChoice, settleWorkflowStartChoice } from './workflow-service.js';
 import { unreadMessageSql, visibleChatMessageSql, VIEWER_READ_CURSOR_SQL } from './read-cursor.js';
 import {
   connectorCatalog,
@@ -3269,6 +3269,11 @@ export class PhoneService {
         )) as Output<Name>;
       case 'answerChoice':
         return (await this.answerChoice(input as Input<'answerChoice'>, viewerId)) as Output<Name>;
+      case 'overrideWorkflowRun': {
+        const request = input as Input<'overrideWorkflowRun'>;
+        await this.database.transaction((database) => overrideWorkflowRun(database, request, viewerId));
+        return undefined as Output<Name>;
+      }
       case 'skipChoice':
         return (await this.skipChoice(input as Input<'skipChoice'>, viewerId)) as Output<Name>;
       case 'createWorkspace':
@@ -6142,13 +6147,18 @@ export class PhoneService {
         viewerId,
       });
       await settleWorkflowGateChoice(database, input.choiceId, input.optionId, viewerId);
+      await settleWorkflowPublicationChoice(database, input.choiceId, input.optionId, viewerId);
+      await settleWorkflowStartChoice(database, input.choiceId, input.optionId, viewerId);
       return result;
     });
   }
   private async skipChoice(input: Input<'skipChoice'>, viewerId: string) {
-    return this.database.transaction((database) =>
-      skipRoomChoice(database, { choiceId: input.choiceId, viewerId }),
-    );
+    return this.database.transaction(async (database) => {
+      const result = await skipRoomChoice(database, { choiceId: input.choiceId, viewerId });
+      await settleWorkflowPublicationChoice(database, input.choiceId, 'B', viewerId);
+      await settleWorkflowStartChoice(database, input.choiceId, 'B', viewerId);
+      return result;
+    });
   }
   private async requireGrantAuthority(grantId: unknown, viewerId: string) {
     if (typeof grantId !== 'string' || !grantId) throw new Error('grantId is required');
@@ -8602,6 +8612,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'acceptConnectorOffer',
   'createRoomPoll',
   'answerChoice',
+  'overrideWorkflowRun',
   'skipChoice',
   'createWorkspace',
   'updateWorkspace',

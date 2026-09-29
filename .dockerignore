@@ -5,6 +5,8 @@
 !scripts
 scripts/*
 !scripts/clean-dist.mjs
+!workflows
+!workflows/**
 !apps
 apps/*
 !apps/auth

@@ -1515,11 +1515,23 @@ CREATE TABLE IF NOT EXISTS workflow_definitions (
   created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY(room_id,name,revision)
 );
+CREATE TABLE IF NOT EXISTS workspace_workflow_definitions (
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  revision integer NOT NULL,
+  definition jsonb NOT NULL,
+  published_by text NOT NULL REFERENCES identities(id),
+  source_room_id uuid REFERENCES rooms(id) ON DELETE SET NULL,
+  source_revision integer NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(workspace_id,name,revision)
+);
 CREATE TABLE IF NOT EXISTS workflow_runs (
   id uuid PRIMARY KEY,
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   name text NOT NULL,
   revision integer NOT NULL,
+  layer text NOT NULL DEFAULT 'room',
   definition jsonb NOT NULL,
   roles jsonb NOT NULL,
   state text NOT NULL,
@@ -1531,9 +1543,29 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
   source_command_id text NOT NULL,
   trigger_message_id text,
   error text,
+  turns_used integer NOT NULL DEFAULT 0,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS turns_used integer NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS workflow_workspace_day_turns (
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  day date NOT NULL,
+  used integer NOT NULL DEFAULT 0,
+  PRIMARY KEY(workspace_id,day)
+);
+CREATE TABLE IF NOT EXISTS workflow_corner_shadow (
+  corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  event_id text NOT NULL,
+  cause text NOT NULL,
+  head_sha text,
+  predicted_agent_id text,
+  actual_agent_id text,
+  disagrees boolean NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(corner_id,event_id,cause)
+);
+ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS layer text NOT NULL DEFAULT 'room';
 CREATE INDEX IF NOT EXISTS workflow_runs_room_idx ON workflow_runs(room_id,created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS workflow_runs_event_once_idx
   ON workflow_runs(room_id,name,revision,trigger_message_id)
@@ -2066,6 +2098,25 @@ CREATE TABLE IF NOT EXISTS workflow_run_gates (
   run_id uuid NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
   sequence integer NOT NULL,
   UNIQUE(run_id,sequence)
+);
+CREATE TABLE IF NOT EXISTS workflow_start_choices (
+  choice_id uuid PRIMARY KEY REFERENCES room_choices(id) ON DELETE CASCADE,
+  run_id uuid NOT NULL UNIQUE REFERENCES workflow_runs(id) ON DELETE CASCADE,
+  status text NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','denied')),
+  decided_by text REFERENCES identities(id),
+  decided_at timestamptz
+);
+CREATE TABLE IF NOT EXISTS workflow_publication_choices (
+  choice_id uuid PRIMARY KEY REFERENCES room_choices(id) ON DELETE CASCADE,
+  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  source_revision integer NOT NULL,
+  definition jsonb NOT NULL,
+  requested_by text NOT NULL REFERENCES identities(id),
+  status text NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','denied')),
+  decided_by text REFERENCES identities(id),
+  decided_at timestamptz
 );
 CREATE TABLE IF NOT EXISTS room_choice_votes (
   choice_id uuid NOT NULL REFERENCES room_choices(id) ON DELETE CASCADE,

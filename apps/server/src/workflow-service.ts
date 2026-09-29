@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { CronExpressionParser } from 'cron-parser';
 import {
+  checkWorkflowDefinition,
   readWorkflowDefinition,
   workflowOutputError,
   type WorkflowDefinition,
@@ -17,6 +19,7 @@ type Run = {
   room_id: string;
   name: string;
   revision: number;
+  layer: WorkflowLayer;
   definition: WorkflowDefinition;
   roles: Record<string, string>;
   state: string;
@@ -33,11 +36,34 @@ const runView = (run: Run) => ({
   runId: run.id,
   name: run.name,
   revision: run.revision,
+  layer: run.layer,
   state: run.state,
   status: run.status,
   ...(run.deadline_at ? { deadlineAt: run.deadline_at.getTime() } : {}),
   ...(run.error ? { error: run.error } : {}),
 });
+
+const WORKFLOW_RUN_TURN_CAP = 100;
+const WORKSPACE_DAILY_TURN_CAP = 1_000;
+
+async function reserveWorkflowTurn(db: SqlDatabase, run: Run): Promise<void> {
+  const runBudget = await db.query(
+    `UPDATE workflow_runs SET turns_used=turns_used+1 WHERE id=$1 AND turns_used<$2 RETURNING id`,
+    [run.id, WORKFLOW_RUN_TURN_CAP],
+  );
+  if (!runBudget.rowCount) throw new Error('workflow run agent-turn cap reached');
+  const workspaceBudget = await db.query(
+    `INSERT INTO workflow_workspace_day_turns(workspace_id,day,used)
+     SELECT workspace_id,(now() at time zone 'UTC')::date,1 FROM rooms WHERE id=$1
+     ON CONFLICT(workspace_id,day) DO UPDATE SET used=workflow_workspace_day_turns.used+1
+       WHERE workflow_workspace_day_turns.used<$2 RETURNING used`,
+    [run.room_id, WORKSPACE_DAILY_TURN_CAP],
+  );
+  if (!workspaceBudget.rowCount) {
+    await db.query(`UPDATE workflow_runs SET turns_used=turns_used-1 WHERE id=$1`, [run.id]);
+    throw new Error('workspace daily workflow agent-turn cap reached (UTC day)');
+  }
+}
 
 async function log(db: SqlDatabase, run: Run, event: string, payload: unknown): Promise<void> {
   await db.query(
@@ -64,6 +90,15 @@ async function save(db: SqlDatabase, run: Run): Promise<void> {
   );
 }
 
+async function cancelRunAssignments(db: SqlDatabase, run: Run): Promise<void> {
+  await db.query(`UPDATE agent_commands SET state='cancelled',completed_at=now()
+    WHERE id IN (SELECT command_id FROM workflow_run_assignments
+      WHERE run_id=$1 AND sequence=$2 AND status='pending')
+      AND state IN ('pending','claimed')`, [run.id, run.sequence]);
+  await db.query(`UPDATE workflow_run_assignments SET status='failed'
+    WHERE run_id=$1 AND sequence=$2 AND status='pending'`, [run.id, run.sequence]);
+}
+
 async function wake(
   db: SqlDatabase,
   run: Run,
@@ -73,16 +108,23 @@ async function wake(
   skill: string,
   output: unknown,
   seconds: number,
+  input?: Record<string, string>,
 ): Promise<void> {
   const agentId = run.roles[role];
   if (!agentId) throw new Error(`workflow role ${role} is not bound`);
+  const member = await db.query(`SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2
+    AND removed_at IS NULL FOR SHARE`, [run.room_id, agentId]);
+  if (!member.rowCount) throw new Error(`workflow role ${role} is no longer a Room member`);
+  await reserveWorkflowTurn(db, run);
   await ensureSystemIdentity(db);
   const note = await systemLine(db, {
     roomId: run.room_id,
     subject: { kind: 'person', id: SYSTEM_IDENTITY_ID, name: SYSTEM_IDENTITY_NAME },
     verb: 'started workflow step',
     object: `${run.name}: ${run.state} (${skill})`,
-    consequence: `Run ${run.id}, sequence ${run.sequence}. Use read_workflow_run for prior inputs and return structured output matching ${JSON.stringify(output)} with complete_workflow_step.`,
+    consequence: `Run ${run.id}, sequence ${run.sequence}. Input ${JSON.stringify(Object.fromEntries(
+      Object.entries(input ?? {}).map(([key, source]) => [key, run.context[source.slice(2)]]),
+    ))}. Return structured output matching ${JSON.stringify(output)} with complete_workflow_step.`,
   });
   const command = await createAgentCommand(db, {
     roomId: run.room_id,
@@ -126,11 +168,13 @@ async function dispatch(db: SqlDatabase, run: Run, parent: CommandRow): Promise<
       state.step.skill,
       state.step.output,
       state.step.timeoutSeconds,
+      state.step.input,
     );
   } else if (state.kind === 'parallel') {
     run.status = 'running';
     for (const [slot, step] of state.steps.entries())
-      await wake(db, run, parent, slot, step.role, step.skill, step.output, step.timeoutSeconds);
+      await wake(db, run, parent, slot, step.role, step.skill, step.output, step.timeoutSeconds,
+        step.input);
     run.deadline_at = new Date(Date.now() + state.deadlineSeconds * 1000);
   } else if (state.kind === 'gate') {
     run.status = 'waiting';
@@ -162,6 +206,7 @@ async function dispatchOrFail(db: SqlDatabase, run: Run, parent: CommandRow): Pr
   try {
     await dispatch(db, run, parent);
   } catch (cause) {
+    await cancelRunAssignments(db, run);
     run.status = 'failed';
     run.deadline_at = null;
     run.error = cause instanceof Error ? cause.message.slice(0, 500) : 'workflow dispatch failed';
@@ -178,8 +223,9 @@ export async function putWorkflowDefinition(
   roles: Record<string, string> | undefined,
   parent: CommandRow,
 ) {
-  const definition = readWorkflowDefinition(value);
-  if (!definition) throw new Error('workflow definition is invalid');
+  const checked = await workspaceWorkflowCheck(db, roomId, value);
+  if (!checked.ok) throw new Error(`workflow definition is invalid: ${JSON.stringify(checked.errors)}`);
+  const definition = readWorkflowDefinition(value)!;
   if (
     roles &&
     (Object.keys(roles).length !== definition.roles.length ||
@@ -221,6 +267,154 @@ export async function putWorkflowDefinition(
   return { name: definition.name, revision };
 }
 
+export async function checkWorkflow(db: SqlDatabase, roomId: string, value: unknown) {
+  return workspaceWorkflowCheck(db, roomId, value);
+}
+
+async function workspaceWorkflowCheck(db: SqlDatabase, roomId: string, value: unknown) {
+  const skills = await db.query<{ slug: string }>(
+    `SELECT skill.slug FROM workspace_skills skill JOIN rooms room ON room.workspace_id=skill.workspace_id
+     WHERE room.id=$1 AND skill.state='active'`, [roomId],
+  );
+  const knownSkills = new Set(skills.rows.map((row) => row.slug));
+  knownSkills.add('code-change');
+  knownSkills.add('code-review');
+  return checkWorkflowDefinition(value, { knownSkills });
+}
+
+type WorkflowLayer = 'built-in' | 'workspace' | 'room';
+type WorkflowEntry = { name: string; purpose: string; trigger: WorkflowDefinition['trigger'];
+  layer: WorkflowLayer; version: number; definition: WorkflowDefinition };
+
+const builtInDefinitions = (() => {
+  const value = JSON.parse(readFileSync(new URL('../../../workflows/code-corner/WORKFLOW.json', import.meta.url), 'utf8'));
+  const definition = readWorkflowDefinition(value);
+  if (!definition) throw new Error('built-in code-corner workflow is invalid');
+  return [definition];
+})();
+
+async function workflowEntries(db: SqlDatabase, roomId: string): Promise<WorkflowEntry[]> {
+  const room = (await db.query<{ workspace_id: string; code_corner: boolean }>(
+    `SELECT room.workspace_id,(room.parent_id IS NOT NULL AND fact.lane='code') code_corner
+     FROM rooms room LEFT JOIN corner_facts fact ON fact.corner_id=room.id WHERE room.id=$1`, [roomId],
+  )).rows[0];
+  if (!room) throw new Error('Room not found');
+  const published = await db.query<{ name: string; revision: number; definition: WorkflowDefinition }>(
+    `SELECT DISTINCT ON (name) name,revision,definition FROM workspace_workflow_definitions
+     WHERE workspace_id=$1 ORDER BY name,revision DESC`, [room.workspace_id],
+  );
+  const drafts = await db.query<{ name: string; revision: number; definition: WorkflowDefinition }>(
+    `SELECT DISTINCT ON (name) name,revision,definition FROM workflow_definitions
+     WHERE room_id=$1 ORDER BY name,revision DESC`, [roomId],
+  );
+  const entry = (definition: WorkflowDefinition, revision: number, layer: WorkflowLayer): WorkflowEntry => ({
+    name: definition.name, purpose: definition.purpose ?? '', trigger: definition.trigger,
+    layer, version: revision, definition,
+  });
+  const effective = new Map<string, WorkflowEntry>();
+  for (const row of drafts.rows) effective.set(row.name, entry(row.definition, row.revision, 'room'));
+  for (const row of published.rows) effective.set(row.name, entry(row.definition, row.revision, 'workspace'));
+  if (room.code_corner)
+    for (const definition of builtInDefinitions)
+      effective.set(definition.name, entry(definition, 1, 'built-in'));
+  return [...effective.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function listWorkflows(db: SqlDatabase, roomId: string) {
+  return (await workflowEntries(db, roomId)).map(({ definition: _definition, ...entry }) => entry);
+}
+
+export async function readWorkflow(db: SqlDatabase, roomId: string, name: string,
+  layer?: WorkflowLayer, revision?: number): Promise<WorkflowEntry> {
+  if (!layer) {
+    const found = (await workflowEntries(db, roomId)).find((entry) => entry.name === name);
+    if (!found) throw new Error('workflow not found');
+    return revision === undefined ? found : readWorkflow(db, roomId, name, found.layer, revision);
+  }
+  if (layer === 'built-in') {
+    const available = (await workflowEntries(db, roomId)).some((entry) =>
+      entry.layer === 'built-in' && entry.name === name);
+    if (!available) throw new Error('workflow not available in this Room');
+    const found = builtInDefinitions.find((definition) => definition.name === name);
+    if (!found || (revision !== undefined && revision !== 1)) throw new Error('workflow not found');
+    return { name, purpose: found.purpose ?? '', trigger: found.trigger,
+      layer, version: 1, definition: found };
+  }
+  const room = (await db.query<{ workspace_id: string }>(
+    `SELECT workspace_id FROM rooms WHERE id=$1`, [roomId],
+  )).rows[0];
+  if (!room) throw new Error('Room not found');
+  const workspace = layer === 'workspace';
+  const rows = await db.query<{ revision: number; definition: WorkflowDefinition }>(
+    workspace
+      ? `SELECT revision,definition FROM workspace_workflow_definitions WHERE workspace_id=$1 AND name=$2
+         AND ($3::integer IS NULL OR revision=$3) ORDER BY revision DESC LIMIT 1`
+      : `SELECT revision,definition FROM workflow_definitions WHERE room_id=$1 AND name=$2
+         AND ($3::integer IS NULL OR revision=$3) ORDER BY revision DESC LIMIT 1`,
+    [workspace ? room.workspace_id : roomId, name, revision ?? null],
+  );
+  const found = rows.rows[0];
+  if (!found) throw new Error('workflow not found');
+  return { name, purpose: found.definition.purpose ?? '', trigger: found.definition.trigger,
+    layer: workspace ? 'workspace' as const : 'room' as const,
+    version: found.revision, definition: found.definition };
+}
+
+export async function publishWorkflow(db: SqlDatabase, roomId: string, name: string,
+  parent: CommandRow) {
+  const room = (await db.query<{ workspace_id: string }>(
+    `SELECT workspace_id FROM rooms WHERE id=$1`, [roomId],
+  )).rows[0];
+  if (!room) throw new Error('Room not found');
+  const draft = await readWorkflow(db, roomId, name, 'room');
+  const check = await workspaceWorkflowCheck(db, roomId, draft.definition);
+  if (!check.ok) throw new Error(`workflow definition is invalid: ${JSON.stringify(check.errors)}`);
+  const choice = await postRoomChoice(db, { roomId, agentId: parent.agent_id,
+    mode: 'question', prompt: `Publish workflow ${name} version ${draft.version} to this workspace?`,
+    options: [
+      { label: 'Approve', consequence: 'Publish this exact draft version.' },
+      { label: 'Deny', consequence: 'Keep it as a Room draft.' },
+    ],
+  });
+  await db.query(
+    `INSERT INTO workflow_publication_choices(choice_id,room_id,workspace_id,name,source_revision,definition,requested_by)
+     VALUES($1,$2,$3,$4,$5,$6::jsonb,$7)`,
+    [choice.choiceId, roomId, room.workspace_id, name, draft.version,
+      JSON.stringify(draft.definition), parent.agent_id],
+  );
+  return { choiceId: choice.choiceId, name, sourceRevision: draft.version };
+}
+
+export async function settleWorkflowPublicationChoice(db: SqlDatabase, choiceId: string,
+  optionId: string, viewerId: string) {
+  const pending = (await db.query<{ room_id: string; workspace_id: string; name: string; source_revision: number;
+    definition: WorkflowDefinition; status: string }>(
+    `SELECT room_id,workspace_id,name,source_revision,definition,status FROM workflow_publication_choices
+     WHERE choice_id=$1 FOR UPDATE`, [choiceId],
+  )).rows[0];
+  if (!pending || pending.status !== 'pending') return;
+  const approved = optionId === 'A';
+  if (approved) {
+    const check = await workspaceWorkflowCheck(db, pending.room_id, pending.definition);
+    if (!check.ok) throw new Error('approved workflow failed its pinned check');
+    await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+      `workspace-workflow:${pending.workspace_id}:${pending.name}`,
+    ]);
+    const previous = (await db.query<{ revision: number }>(
+      `SELECT revision FROM workspace_workflow_definitions WHERE workspace_id=$1 AND name=$2
+       ORDER BY revision DESC LIMIT 1`, [pending.workspace_id, pending.name],
+    )).rows[0];
+    await db.query(
+      `INSERT INTO workspace_workflow_definitions(workspace_id,name,revision,definition,published_by,source_revision,source_room_id)
+       VALUES($1,$2,$3,$4::jsonb,$5,$6,$7)`,
+      [pending.workspace_id, pending.name, (previous?.revision ?? 0) + 1,
+        JSON.stringify(pending.definition), viewerId, pending.source_revision, pending.room_id],
+    );
+  }
+  await db.query(`UPDATE workflow_publication_choices SET status=$2,decided_by=$3,decided_at=now()
+    WHERE choice_id=$1`, [choiceId, approved ? 'approved' : 'denied', viewerId]);
+}
+
 export async function startWorkflowRun(
   db: SqlDatabase,
   roomId: string,
@@ -228,14 +422,9 @@ export async function startWorkflowRun(
   roles: Record<string, string>,
   parent: CommandRow,
   triggerMessageId?: string,
+  layer?: WorkflowLayer,
 ) {
-  const saved = (
-    await db.query<{ revision: number; definition: WorkflowDefinition }>(
-      `SELECT revision,definition FROM workflow_definitions WHERE room_id=$1 AND name=$2 ORDER BY revision DESC LIMIT 1`,
-      [roomId, name],
-    )
-  ).rows[0];
-  if (!saved) throw new Error('workflow definition not found');
+  const saved = await readWorkflow(db, roomId, name, layer);
   const active = (
     await db.query<{ count: number }>(
       `SELECT count(*)::int count FROM workflow_runs WHERE room_id=$1 AND status IN ('running','waiting')`,
@@ -245,6 +434,13 @@ export async function startWorkflowRun(
   if (active >= 50) throw new Error('too many active workflow runs in this Room');
   const definition = readWorkflowDefinition(saved.definition);
   if (!definition) throw new Error('stored workflow definition is invalid');
+  const check = await workspaceWorkflowCheck(db, roomId, definition);
+  if (!check.ok) throw new Error(`workflow failed its start check: ${JSON.stringify(check.errors)}`);
+  const sideEffect = Object.values(definition.states).some((state) =>
+    (state.kind === 'step' ? [state.step] : state.kind === 'parallel' ? state.steps : [])
+      .some((step) => Boolean(step.effects?.length)));
+  const approvalRequired = saved.layer === 'room' &&
+    (check.bounds.durationMs > 30 * 60_000 || check.bounds.agentTurns > 10 || sideEffect);
   if (
     Object.keys(roles).length !== definition.roles.length ||
     !definition.roles.every((role) => typeof roles[role] === 'string')
@@ -263,7 +459,8 @@ export async function startWorkflowRun(
     id: randomUUID(),
     room_id: roomId,
     name,
-    revision: saved.revision,
+    revision: saved.version,
+    layer: saved.layer,
     definition,
     roles,
     state: definition.start,
@@ -276,14 +473,15 @@ export async function startWorkflowRun(
     error: null,
   };
   const inserted = await db.query(
-    `INSERT INTO workflow_runs(id,room_id,name,revision,definition,roles,state,status,source_command_id,trigger_message_id)
-     VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8,$9,$10)
+    `INSERT INTO workflow_runs(id,room_id,name,revision,layer,definition,roles,state,status,source_command_id,trigger_message_id)
+     VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9,$10,$11)
      ON CONFLICT DO NOTHING`,
     [
       run.id,
       roomId,
       name,
       run.revision,
+      run.layer,
       JSON.stringify(definition),
       JSON.stringify(roles),
       run.state,
@@ -302,8 +500,157 @@ export async function startWorkflowRun(
     if (existing) return runView(existing);
     throw new Error('workflow run trigger conflict');
   }
-  await dispatchOrFail(db, run, parent);
+  if (approvalRequired) {
+    run.status = 'waiting';
+    await save(db, run);
+    const choice = await postRoomChoice(db, { roomId, agentId: parent.agent_id,
+      mode: 'question', prompt: `Start workflow ${name} version ${saved.version}?`,
+      constraint: `Bound ${Math.ceil(check.bounds.durationMs / 60_000)} minutes and ${check.bounds.agentTurns} agent turns.`,
+      options: [
+        { label: 'Approve', consequence: 'Start this workflow run.' },
+        { label: 'Deny', consequence: 'Do not start this run.' },
+      ],
+    });
+    await db.query(`INSERT INTO workflow_start_choices(choice_id,run_id) VALUES($1,$2)`,
+      [choice.choiceId, run.id]);
+    await log(db, run, 'approval_requested', { choiceId: choice.choiceId });
+  } else await dispatchOrFail(db, run, parent);
   return runView(run);
+}
+
+export async function settleWorkflowStartChoice(db: SqlDatabase, choiceId: string,
+  optionId: string, viewerId: string) {
+  const choice = (await db.query<{ run_id: string; status: string }>(
+    `SELECT run_id,status FROM workflow_start_choices WHERE choice_id=$1 FOR UPDATE`, [choiceId],
+  )).rows[0];
+  if (!choice || choice.status !== 'pending') return;
+  const run = (await db.query<Run>(`SELECT * FROM workflow_runs WHERE id=$1 FOR UPDATE`,
+    [choice.run_id])).rows[0];
+  if (!run || run.status !== 'waiting') return;
+  const approved = optionId === 'A';
+  await db.query(`UPDATE workflow_start_choices SET status=$2,decided_by=$3,decided_at=now()
+    WHERE choice_id=$1`, [choiceId, approved ? 'approved' : 'denied', viewerId]);
+  await log(db, run, approved ? 'start_approved' : 'start_denied', { viewerId, choiceId });
+  if (!approved) {
+    run.status = 'failed';
+    run.error = 'Human denied workflow start';
+    await save(db, run);
+    return;
+  }
+  const parent = (await db.query<CommandRow>(`SELECT * FROM agent_commands WHERE id=$1`,
+    [run.source_command_id])).rows[0];
+  if (!parent) throw new Error('workflow source command is missing');
+  await dispatchOrFail(db, run, parent);
+}
+
+export async function overrideWorkflowRun(db: SqlDatabase, input: {
+  roomId: string; runId: string; action: 'jump' | 'reassign' | 'kill'; state?: string;
+  role?: string; agentId?: string; reason: string;
+}, viewerId: string) {
+  if (!input.reason.trim() || input.reason.length > 500) throw new Error('override reason is required');
+  const human = (await db.query<{ identity_id: string }>(
+    `SELECT m.identity_id FROM memberships m JOIN identities i ON i.id=m.identity_id
+     WHERE m.room_id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL AND i.kind='human'
+     FOR SHARE OF m`, [input.roomId, viewerId],
+  )).rows[0];
+  if (!human) throw new Error('workflow override requires a current human Room member');
+  const run = (await db.query<Run>(
+    `SELECT * FROM workflow_runs WHERE id=$1 AND room_id=$2 FOR UPDATE`,
+    [input.runId, input.roomId],
+  )).rows[0];
+  if (!run) throw new Error('workflow run not found');
+  if (run.status === 'complete' || run.status === 'failed') throw new Error('workflow run has ended');
+  const pendingStart = (await db.query(
+    `SELECT 1 FROM workflow_start_choices WHERE run_id=$1 AND status='pending'`, [run.id],
+  )).rowCount;
+  if (pendingStart) throw new Error('workflow start still needs human approval');
+  const retireAssignments = async () => {
+    const gate = (await db.query<{ choice_id: string }>(
+      `SELECT choice_id FROM workflow_run_gates WHERE run_id=$1 AND sequence=$2`,
+      [run.id, run.sequence],
+    )).rows[0];
+    if (gate) await settleExpiredChoice(db, gate.choice_id, true);
+    await cancelRunAssignments(db, run);
+  };
+  if (input.action === 'kill') {
+    const fromState = run.state;
+    await retireAssignments();
+    run.status = 'failed';
+    run.error = `Killed by human: ${input.reason}`;
+    run.deadline_at = null;
+    run.sequence++;
+    await save(db, run);
+    await log(db, run, 'override_kill', { viewerId, fromState, reason: input.reason });
+    return;
+  }
+  if (input.action === 'reassign') {
+    if (!input.role || !run.definition.roles.includes(input.role) || !input.agentId)
+      throw new Error('valid role and agent are required');
+    const member = (await db.query(
+      `SELECT 1 FROM memberships m JOIN identities i ON i.id=m.identity_id AND i.kind='agent'
+       WHERE m.room_id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL FOR SHARE OF m`,
+      [input.roomId, input.agentId],
+    )).rowCount;
+    if (!member) throw new Error('replacement must be a current Room agent');
+    const priorAgentId = run.roles[input.role];
+    run.roles[input.role] = input.agentId;
+    const state = run.definition.states[run.state];
+    const assignedSlots = state?.kind === 'step'
+      ? state.step.role === input.role ? [0] : []
+      : state?.kind === 'parallel'
+        ? state.steps.flatMap((step, index) => step.role === input.role ? [index] : [])
+        : [];
+    const parent = (await db.query<CommandRow>(`SELECT * FROM agent_commands WHERE id=$1`,
+      [run.source_command_id])).rows[0];
+    if (!parent) throw new Error('workflow source command is missing');
+    for (const slot of assignedSlots) {
+      const assignment = (await db.query<{ status: string; command_id: string }>(
+        `SELECT status,command_id FROM workflow_run_assignments WHERE run_id=$1 AND sequence=$2 AND slot=$3`,
+        [run.id, run.sequence, slot],
+      )).rows[0];
+      if (assignment?.status !== 'pending') continue;
+      const note = await systemLine(db, {
+        roomId: run.room_id,
+        subject: { kind: 'person', id: viewerId, name: 'A Room member' },
+        verb: 'reassigned workflow step', object: `${run.name}: ${run.state}`,
+        consequence: `Run ${run.id}, sequence ${run.sequence}. ${input.reason}`,
+      });
+      const command = await createAgentCommand(db, { roomId: run.room_id,
+        agentId: input.agentId, sourceMessageId: note.id, reason: 'workflow_reassigned',
+        parent, retainDepth: true });
+      if (!command) throw new Error('replacement agent cannot be woken');
+      await db.query(`UPDATE agent_commands SET state='cancelled',completed_at=now()
+        WHERE id=$1 AND state IN ('pending','claimed')`, [assignment.command_id]);
+      await db.query(`UPDATE workflow_run_assignments SET agent_id=$4,command_id=$5
+        WHERE run_id=$1 AND sequence=$2 AND slot=$3`,
+        [run.id, run.sequence, slot, input.agentId, command.id]);
+    }
+    await save(db, run);
+    await log(db, run, 'override_reassign', { viewerId, role: input.role,
+      priorAgentId, agentId: input.agentId, reason: input.reason });
+    return;
+  }
+  if (input.action === 'jump') {
+    const target = input.state ? run.definition.states[input.state] : undefined;
+    if (!target || target.kind === 'terminal')
+      throw new Error('jump target must be a nonterminal state');
+    const effects = target.kind === 'step' ? target.step.effects :
+      target.kind === 'parallel' ? target.steps.flatMap((step) => step.effects ?? []) : [];
+    if (effects?.length) throw new Error('jump cannot bypass a step with domain effects');
+    const fromState = run.state;
+    const parent = (await db.query<CommandRow>(`SELECT * FROM agent_commands WHERE id=$1`,
+      [run.source_command_id])).rows[0];
+    if (!parent) throw new Error('workflow source command is missing');
+    await retireAssignments();
+    run.state = input.state!;
+    run.sequence++;
+    run.deadline_at = null;
+    await log(db, run, 'override_jump', { viewerId, fromState,
+      toState: run.state, reason: input.reason });
+    await dispatchOrFail(db, run, parent);
+    return;
+  }
+  throw new Error('unknown workflow override');
 }
 
 type Assignment = {
@@ -373,6 +720,15 @@ export async function completeWorkflowStep(
   if (!step) throw new Error('workflow step slot is invalid');
   const error = workflowOutputError(step, output);
   if (error && assignment.attempts === 0) {
+    try { await reserveWorkflowTurn(db, run); }
+    catch (cause) {
+      run.status = 'failed';
+      run.error = cause instanceof Error ? cause.message : 'workflow turn cap reached';
+      run.deadline_at = null;
+      await save(db, run);
+      await log(db, run, 'failed', { error: run.error });
+      return receipt({ state: run.state, status: run.status, error: run.error });
+    }
     const note = await systemLine(db, {
       roomId,
       subject: { kind: 'person', id: SYSTEM_IDENTITY_ID, name: SYSTEM_IDENTITY_NAME },
@@ -553,6 +909,13 @@ export async function signalWorkflowEvent(
     if (!run) continue;
     const state = run.definition.states[run.state];
     if (!state || state.kind !== 'wait' || state.event !== event) continue;
+    if (run.name === 'code-corner' && event === 'check-completed') {
+      const current = (await db.query<{ head_sha: string | null }>(
+        `SELECT lifecycle->'pr'->>'headSha' head_sha FROM corner_facts WHERE corner_id=$1
+         FOR SHARE`, [roomId],
+      )).rows[0]?.head_sha;
+      if (!current || payload.sha !== current) continue;
+    }
     const matches = Object.entries(state.match ?? {}).every(([key, expected]) => {
       const resolved = expected.startsWith('$.') ? run.context[expected.slice(2)] : expected;
       return payload[key] === resolved;
@@ -595,15 +958,7 @@ export async function signalWorkflowEvent(
     }
     run.state = next;
     run.sequence++;
-    try {
-      await dispatch(db, run, parent);
-    } catch (cause) {
-      run.status = 'failed';
-      run.error = cause instanceof Error ? cause.message.slice(0, 500) : 'workflow dispatch failed';
-      run.deadline_at = null;
-      await save(db, run);
-      await log(db, run, 'failed', { error: run.error });
-    }
+    await dispatchOrFail(db, run, parent);
     advanced++;
   }
   if (eventId) {
@@ -696,15 +1051,7 @@ export async function settleWorkflowGateChoice(
   run.state = next;
   run.sequence++;
   run.error = outcome === 'denied' ? `Human denied ${state.human}` : null;
-  try {
-    await dispatch(db, run, parent);
-  } catch (cause) {
-    run.status = 'failed';
-    run.error = cause instanceof Error ? cause.message.slice(0, 500) : 'workflow dispatch failed';
-    run.deadline_at = null;
-    await save(db, run);
-    await log(db, run, 'failed', { error: run.error });
-  }
+  await dispatchOrFail(db, run, parent);
 }
 
 export async function nextWorkflowDeadline(db: SqlDatabase): Promise<Date | undefined> {
@@ -863,6 +1210,7 @@ export async function runDueWorkflowDeadlines(db: SqlDatabase, now = new Date())
             )
           ).rows[0];
           if (assignment && assignment.timeout_retries < state.step.retries) {
+            await reserveWorkflowTurn(tx, run);
             const note = await systemLine(tx, {
               roomId: run.room_id,
               subject: { kind: 'person', id: SYSTEM_IDENTITY_ID, name: SYSTEM_IDENTITY_NAME },
@@ -933,16 +1281,7 @@ export async function runDueWorkflowDeadlines(db: SqlDatabase, now = new Date())
           run.state = next;
           run.error = 'Workflow state timed out';
         }
-        try {
-          await dispatch(tx, run, parent);
-        } catch (cause) {
-          run.status = 'failed';
-          run.error =
-            cause instanceof Error ? cause.message.slice(0, 500) : 'workflow dispatch failed';
-          run.deadline_at = null;
-          await save(tx, run);
-          await log(tx, run, 'failed', { error: run.error });
-        }
+        await dispatchOrFail(tx, run, parent);
         settled++;
       });
     } catch (cause) {

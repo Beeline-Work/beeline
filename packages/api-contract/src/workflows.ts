@@ -1,9 +1,12 @@
 /** Declarative, bounded workflow definitions. No user supplied code executes here. */
+import { isAgentKind, isServerEventKind } from './system-events.js';
 export type WorkflowValueType = 'string' | 'number' | 'boolean' | 'object' | 'array';
 export type WorkflowOutputField = WorkflowValueType | { type: 'string'; enum: string[] };
 export type WorkflowStep = {
   role: string;
   skill: string;
+  input?: Record<string, string>;
+  effects?: ('merge' | 'order' | 'external-write')[];
   output: Record<string, WorkflowOutputField>;
   timeoutSeconds: number;
   retries: number;
@@ -37,6 +40,8 @@ export type WorkflowState =
 export type WorkflowDefinition = {
   version: 1;
   name: string;
+  purpose?: string;
+  success?: string[];
   roles: string[];
   trigger: { kind: 'manual' | 'event' | 'schedule'; value?: string };
   start: string;
@@ -53,7 +58,15 @@ const keys = (value: Record<string, unknown>, allowed: readonly string[]) =>
   Object.keys(value).every((key) => allowed.includes(key));
 
 function validStep(value: unknown, roles: Set<string>): value is WorkflowStep {
-  if (!record(value) || !keys(value, ['role', 'skill', 'output', 'timeoutSeconds', 'retries']))
+  if (!record(value) || !keys(value, ['role', 'skill', 'input', 'effects', 'output', 'timeoutSeconds', 'retries']))
+    return false;
+  if (value.effects !== undefined && (!Array.isArray(value.effects) ||
+    !value.effects.every((effect) => ['merge', 'order', 'external-write'].includes(effect))))
+    return false;
+  if (value.input !== undefined &&
+    (!record(value.input) || Object.keys(value.input).length > 32 ||
+      !Object.entries(value.input).every(([key, source]) => slug.test(key) &&
+        typeof source === 'string' && /^\$\.[a-z][a-z0-9_-]{0,63}$/.test(source))))
     return false;
   if (
     typeof value.role !== 'string' ||
@@ -91,13 +104,15 @@ function validStep(value: unknown, roles: Set<string>): value is WorkflowStep {
 export function readWorkflowDefinition(value: unknown): WorkflowDefinition | null {
   if (
     !record(value) ||
-    !keys(value, ['version', 'name', 'roles', 'trigger', 'start', 'states']) ||
+    !keys(value, ['version', 'name', 'purpose', 'success', 'roles', 'trigger', 'start', 'states']) ||
     value.version !== 1
   )
     return null;
   if (
     typeof value.name !== 'string' ||
     !slug.test(value.name) ||
+    (value.purpose !== undefined &&
+      (typeof value.purpose !== 'string' || value.purpose.length > 160)) ||
     !Array.isArray(value.roles) ||
     value.roles.length < 1 ||
     value.roles.length > 16
@@ -132,6 +147,11 @@ export function readWorkflowDefinition(value: unknown): WorkflowDefinition | nul
   )
     return null;
   const states = value.states;
+  if (value.success !== undefined &&
+    (!Array.isArray(value.success) || value.success.length === 0 ||
+      !value.success.every((name) => typeof name === 'string' &&
+        Object.hasOwn(states, name) && record(states[name]) && states[name].kind === 'terminal')))
+    return null;
   const edges = new Map<string, string[]>();
   let terminalCount = 0;
   for (const [name, raw] of Object.entries(states)) {
@@ -292,4 +312,147 @@ export function workflowOutputError(step: WorkflowStep, output: unknown): string
       return `${key} must be one of ${rule.enum.join(', ')}`;
   }
   return null;
+}
+
+export type WorkflowCheckError = {
+  rule: string;
+  state: string;
+  path: string;
+  message: string;
+};
+export type WorkflowCheckResult = {
+  ok: boolean;
+  errors: WorkflowCheckError[];
+  bounds: { durationMs: number; agentTurns: number };
+  nonSuccessRoutes: { terminal: string; path: string[] }[];
+};
+
+/** Check the same definition used by storage and execution. Duration excludes queue delay. */
+export function checkWorkflowDefinition(value: unknown, options?: {
+  knownSkills?: ReadonlySet<string>;
+}): WorkflowCheckResult {
+  const errors: WorkflowCheckError[] = [];
+  const add = (rule: string, state: string, path: string, message: string) => {
+    if (!errors.some((item) => item.rule === rule && item.path === path && item.message === message))
+      errors.push({ rule, state, path, message });
+  };
+  const invalid = (): WorkflowCheckResult => ({
+    ok: false, errors, bounds: { durationMs: 0, agentTurns: 0 }, nonSuccessRoutes: [],
+  });
+  if (!record(value) || !record(value.states)) {
+    add('structure', '', '$', 'workflow must have states');
+    return invalid();
+  }
+  const states = value.states;
+  for (const [name, raw] of Object.entries(states)) {
+    if (!record(raw)) continue;
+    const steps = raw.kind === 'step' ? [raw.step] : raw.kind === 'parallel' ? raw.steps : [];
+    if (Array.isArray(steps) && options?.knownSkills) {
+      for (const [index, step] of steps.entries()) {
+        if (record(step) && typeof step.skill === 'string' &&
+          !options.knownSkills.has(step.skill))
+          add('skill', name, raw.kind === 'step' ? `$.states.${name}.step.skill` :
+            `$.states.${name}.steps.${index}.skill`, `unknown workspace skill ${step.skill}`);
+      }
+    }
+    if (raw.kind === 'wait' &&
+      !(isServerEventKind(raw.event) || isAgentKind(raw.event) || raw.event === 'check-completed'))
+      add('event', name, `$.states.${name}.event`, `unknown event ${String(raw.event)}`);
+    if (raw.kind === 'step' && record(raw.step) && record(raw.step.output) && record(raw.guard)) {
+      const field = raw.guard.field;
+      const contract = typeof field === 'string' ? raw.step.output[field] : undefined;
+      if (!record(contract) || !Array.isArray(contract.enum))
+        add('guard-field', name, `$.states.${name}.guard.field`, 'guard requires an enum output');
+      else if (record(raw.on)) {
+        const possible = new Set(contract.enum);
+        for (const option of contract.enum) {
+          if (typeof option === 'string' && typeof raw.on[option] !== 'string')
+            add('guard-route', name, `$.states.${name}.on`, `no route for ${option}`);
+        }
+        for (const option of Object.keys(raw.on)) {
+          if (!possible.has(option) && option !== 'failure' && option !== 'timeout')
+            add('guard-unreachable', name, `$.states.${name}.on.${option}`, `unreachable route ${option}`);
+        }
+      }
+    }
+  }
+  if (!Array.isArray(value.success) || !value.success.length) {
+    add('success', '', '$.success', 'declare at least one successful terminal state');
+  }
+  const definition = readWorkflowDefinition(value);
+  if (!definition) {
+    if (!errors.some((item) => item.rule === 'structure'))
+      add('structure', '', '$', 'workflow has an invalid or unbounded graph');
+    return invalid();
+  }
+  const successes = new Set(definition.success ?? []);
+  const failures: { terminal: string; path: string[] }[] = [];
+  let reachesSuccess = false;
+  let durationMs = 0;
+  let agentTurns = 0;
+  let explored = 0;
+  const visit = (
+    name: string,
+    fields: Set<string>,
+    loops: Record<string, number>,
+    duration: number,
+    turns: number,
+    path: string[],
+  ): void => {
+    const state = definition.states[name]!;
+    if (++explored > 50_000) {
+      add('analysis-limit', name, '$.states', 'workflow has more than 50,000 bounded route visits');
+      return;
+    }
+    if (state.kind === 'terminal') {
+      durationMs = Math.max(durationMs, duration);
+      agentTurns = Math.max(agentTurns, turns);
+      if (successes.has(name)) reachesSuccess = true;
+      else failures.push({ terminal: name, path });
+      return;
+    }
+    const references = state.kind === 'wait'
+      ? Object.entries(state.match ?? {}).map(([key, source]) => [key, source, `$.states.${name}.match.${key}`])
+      : state.kind === 'step'
+        ? Object.entries(state.step.input ?? {}).map(([key, source]) => [key, source, `$.states.${name}.step.input.${key}`])
+        : state.kind === 'parallel'
+          ? state.steps.flatMap((step, index) => Object.entries(step.input ?? {})
+            .map(([key, source]) => [key, source, `$.states.${name}.steps.${index}.input.${key}`]))
+          : [];
+    for (const [, source, sourcePath] of references) {
+      if (source?.startsWith('$.') && !fields.has(source.slice(2)))
+        add('field-flow', name, sourcePath!, `${source} is not available on every incoming path`);
+    }
+    const nextFields = new Set(fields);
+    if (state.kind === 'step') {
+      for (const key of Object.keys(state.step.output)) nextFields.add(key);
+    } else if (state.kind === 'parallel') {
+      for (const step of state.steps) for (const key of Object.keys(step.output)) nextFields.add(key);
+    }
+    const cost = state.kind === 'step'
+      ? { duration: state.step.timeoutSeconds * (state.step.retries + 1) * 1000,
+          turns: state.step.retries + 1 }
+      : state.kind === 'parallel'
+        ? { duration: state.deadlineSeconds * 1000,
+            turns: state.steps.reduce((sum, step) => sum + step.retries + 1, 0) }
+        : { duration: state.timeoutSeconds * 1000, turns: 0 };
+    for (const [outcome, target] of Object.entries(state.on)) {
+      const isSuccessOutput = state.kind === 'step'
+        ? outcome !== 'failure' && outcome !== 'timeout'
+        : state.kind === 'parallel' ? outcome === 'success' : false;
+      const available = isSuccessOutput ? nextFields : fields;
+      let destination = target;
+      let nextLoops = loops;
+      if ((state.kind === 'step' || state.kind === 'wait') && state.loop?.to === target) {
+        nextLoops = { ...loops, [name]: (loops[name] ?? 0) + 1 };
+        if (nextLoops[name]! > state.loop.maxIterations) destination = state.loop.onExceeded;
+      }
+      visit(destination, available, nextLoops, duration + cost.duration,
+        turns + cost.turns, [...path, `${name}:${outcome}`, destination]);
+    }
+  };
+  visit(definition.start, new Set(), {}, 0, 0, [definition.start]);
+  if (!reachesSuccess) add('success-unreachable', '', '$.success', 'no route reaches a declared success state');
+  return { ok: errors.length === 0, errors, bounds: { durationMs, agentTurns },
+    nonSuccessRoutes: failures };
 }

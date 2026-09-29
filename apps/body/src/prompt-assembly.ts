@@ -615,6 +615,7 @@ export interface TurnPromptContext {
   readonly resume?: string;
   readonly members?: string;
   readonly memory?: string;
+  readonly workflows?: string;
   readonly corners?: readonly unknown[];
   readonly closedCorners?: readonly {
     readonly name?: string;
@@ -636,6 +637,15 @@ export interface TurnPromptContext {
 const ROOMS: readonly PromptSurface[] = ['room', 'dm'];
 
 export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
+  {
+    id: 'turn.workflows',
+    topic: 'workflows',
+    why: 'Agents can discover a useful available workflow and resume open runs by name.',
+    budgetBytes: 1_200,
+    layer: 'turn',
+    surfaces: EVERYWHERE,
+    render: ({ workflows }) => workflows ?? '',
+  },
   {
     id: 'turn.session',
     topic: 'session-delivery',

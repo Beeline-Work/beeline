@@ -7,6 +7,7 @@ import { LiveHub } from './live.js';
 import { systemLine } from './system-line.js';
 import { createAgentCommand, REVIEW_HANDBACK_LIMIT } from './agent-command.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import { recordCornerMergeApproval } from './corner-merge-approval.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import type { QueryResultRow } from 'pg';
 const H = 'a'.repeat(64),
@@ -78,6 +79,8 @@ beforeAll(async () => {
 }, 30_000);
 afterAll(async () => db?.close());
 beforeEach(async () => {
+  await db.query(`DELETE FROM workflow_corner_shadow`);
+  await db.query(`DELETE FROM corner_merge_approvals WHERE corner_id=$1`, [C]);
   await db.query(`DELETE FROM agent_commands`);
   await db.query(`DELETE FROM agent_turns`);
   await db.query(`DELETE FROM messages WHERE room_id=$1`, [C]);
@@ -139,6 +142,40 @@ async function greenHead(number: number, headSha: string, checks = 'passing') {
 }
 
 describe('corner message attribution', () => {
+  it('replays failed CI, review findings, and approval with no shadow wake disagreement', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
+      [C, JSON.stringify({ checks: 'failing', pr: { number: 12, headSha: '1'.repeat(40) } })]);
+    await systemLine(db, { roomId: C, authorId: H,
+      subject: { kind: 'github', name: 'GitHub' }, verb: 'failed a check', kind: 'check-failed' });
+    expect((await commands(A, C)).map((item) => item.reason)).toContain('corner_check');
+
+    await greenHead(12, '2'.repeat(40));
+    const [firstReview] = await commands(B, C);
+    expect(firstReview?.reason).toBe('subscribed_event');
+    await claim(firstReview!);
+    await result(firstReview!, 'Findings: fix the race and rerun checks.');
+    expect((await commands(A, C)).some((item) => item.reason === 'corner_review')).toBe(true);
+
+    await greenHead(12, '3'.repeat(40));
+    const [secondReview] = await commands(B, C);
+    expect(secondReview?.reason).toBe('subscribed_event');
+    await recordCornerMergeApproval(db, { cornerId: C, approvedBy: B, force: false,
+      pullRequestNumber: 12, headSha: '3'.repeat(40) });
+    await claim(secondReview!, 'g2');
+    await result(secondReview!, 'Approved at the current head.', 'g2');
+
+    const shadow = (await db.query<{ cause: string; predicted_agent_id: string | null;
+      actual_agent_id: string | null; disagrees: boolean }>(
+      `SELECT cause,predicted_agent_id,actual_agent_id,disagrees FROM workflow_corner_shadow
+       WHERE corner_id=$1 ORDER BY created_at,event_id`, [C],
+    )).rows;
+    expect(shadow.map((row) => row.cause)).toEqual([
+      'checks-failed', 'checks-passed', 'review-ended', 'checks-passed', 'review-ended',
+    ]);
+    expect(shadow.every((row) => row.predicted_agent_id === row.actual_agent_id && !row.disagrees))
+      .toBe(true);
+  });
   // Reproduction ZC-1: GitHub reports no rollup for a PR with no checks, so no
   // check webhook exists to create the configured reviewer's command.
   it('wakes the configured reviewer when the worker completes a zero-check PR, without changing the no-reviewer path', async () => {

@@ -591,6 +591,29 @@ const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: 'list_workflows',
+    description: 'List workflows available in this Room, including their purpose, trigger, layer, and version.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'read_workflow',
+    description: 'Read an available workflow definition. Optionally select a layer or version.',
+    inputSchema: { type: 'object', required: ['name'], properties: {
+      name: { type: 'string' }, layer: { type: 'string', enum: ['built-in', 'workspace', 'room'] },
+      version: { type: 'integer', minimum: 1 },
+    }, additionalProperties: false },
+  },
+  {
+    name: 'publish_workflow',
+    description: 'Ask a human to approve publishing the current Room draft to the workspace.',
+    inputSchema: { type: 'object', required: ['name'], properties: { name: { type: 'string' } }, additionalProperties: false },
+  },
+  {
+    name: 'check_workflow',
+    description: 'Check a workflow definition and return named errors, execution bounds, and routes outside declared success.',
+    inputSchema: { type: 'object', required: ['definition'], properties: { definition: { type: 'object' } }, additionalProperties: false },
+  },
+  {
     name: 'put_workflow',
     description:
       'Create a new version of a declarative workflow in this Room during an active turn. The server validates roles, deadlines, transitions, and bounded loops.',
@@ -610,6 +633,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
       required: ['name', 'roles'],
       properties: {
         name: { type: 'string' },
+        layer: { type: 'string', enum: ['built-in', 'workspace', 'room'] },
         roles: { type: 'object', additionalProperties: { type: 'string' } },
       },
       additionalProperties: false,
@@ -3671,6 +3695,20 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
     }
     case 'create_schedule':
       return createSchedule(args);
+    case 'list_workflows':
+      return JSON.stringify(await daemonExecute('listWorkflows', { roomId: agentScheduleRoomId() }));
+    case 'read_workflow':
+      return JSON.stringify(await daemonExecute('readWorkflow', { roomId: agentScheduleRoomId(),
+        name: args.name, ...(args.layer ? { layer: args.layer } : {}),
+        ...(args.version ? { version: args.version } : {}) }));
+    case 'publish_workflow':
+      return JSON.stringify(await daemonExecute('publishWorkflow', {
+        roomId: agentScheduleRoomId(), name: args.name,
+      }));
+    case 'check_workflow':
+      return JSON.stringify(await daemonExecute('checkWorkflow', {
+        roomId: agentScheduleRoomId(), definition: args.definition,
+      }));
     case 'put_workflow':
       return JSON.stringify(
         await daemonExecute('putWorkflowDefinition', {
@@ -3685,6 +3723,7 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
           roomId: agentScheduleRoomId(),
           name: args.name,
           roles: args.roles,
+          ...(args.layer ? { layer: args.layer } : {}),
         }),
       );
     case 'complete_workflow_step':

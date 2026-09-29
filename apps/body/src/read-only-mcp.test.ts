@@ -37,6 +37,7 @@ describe('direct message helper surface', () => {
     expect(byDefault).toContain('search_history');
     expect(byDefault).toContain('search_memory');
     expect(byDefault).toContain('load_workspace_skill');
+    expect(byDefault).toContain('save_skill');
     expect(byDefault).toContain('save_workflow');
     expect(byDefault).toContain('start_workflow');
     expect(byDefault).toContain('handoff');
@@ -48,6 +49,7 @@ describe('direct message helper surface', () => {
     expect(disabled).not.toContain('search_history');
     expect(disabled).not.toContain('search_memory');
     expect(disabled).not.toContain('load_workspace_skill');
+    expect(disabled).not.toContain('save_skill');
     expect(disabled).not.toContain('save_workflow');
     expect(disabled).not.toContain('start_workflow');
     expect(disabled).not.toContain('handoff');
@@ -59,6 +61,7 @@ describe('direct message helper surface', () => {
     expect(enabled).toContain('search_history');
     expect(enabled).toContain('search_memory');
     expect(enabled).toContain('load_workspace_skill');
+    expect(enabled).toContain('save_skill');
     expect(enabled).toContain('save_workflow');
     expect(enabled).toContain('start_workflow');
     expect(enabled).toContain('handoff');

@@ -165,11 +165,6 @@ export function rewriteHostMcpDeclaration(
   }
   if (gooseShape) next.envs = { ...recordValue(declaration.envs), ...routeEnv };
   else next.env = { ...recordValue(declaration.env), ...routeEnv };
-  // 1.1.19 owns browser sessions by MCP process, never by this retired env.
-  if (launch) {
-    delete (next.env as Record<string, unknown> | undefined)?.TRUSTY_SQUIRE_AGENT_IDENTITY;
-    delete (next.envs as Record<string, unknown> | undefined)?.TRUSTY_SQUIRE_AGENT_IDENTITY;
-  }
   if (resourceAuthFile) {
     const target =
       explicitResourceTarget ?? (isSquireDeclaration(name, declaration) ? 'squire' : name);

@@ -5,7 +5,7 @@ import {
   type IncomingHttpHeaders,
   type OutgoingHttpHeaders,
 } from 'node:http2';
-import { createPrivateKey, sign } from 'node:crypto';
+import { createHash, createPrivateKey, sign } from 'node:crypto';
 import type { PushSender } from './background.js';
 import { pushAlert, pushMessageData, type PushDeliveryMessage } from './firebase-push.js';
 
@@ -77,6 +77,12 @@ export function apnsPushRequest(
 ): { headers: OutgoingHttpHeaders; payload: Record<string, unknown> } {
   const data = pushMessageData(message);
   const threadId = data.threadId ?? data.roomId;
+  // Collapse only retries of the same message. Room grouping belongs to
+  // aps.thread-id; collapsing by Room hides distinct unread alerts.
+  const collapseId =
+    Buffer.byteLength(message.messageId, 'utf8') <= 64
+      ? message.messageId
+      : createHash('sha256').update(message.messageId).digest('hex');
   return {
     headers: {
       [http2Constants.HTTP2_HEADER_METHOD]: 'POST',
@@ -86,7 +92,7 @@ export function apnsPushRequest(
       'apns-push-type': 'alert',
       'apns-priority': '10',
       'apns-expiration': '0',
-      ...(threadId ? { 'apns-collapse-id': threadId } : {}),
+      'apns-collapse-id': collapseId,
     },
     payload: {
       aps: {

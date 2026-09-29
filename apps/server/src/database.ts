@@ -1851,6 +1851,8 @@ CREATE TABLE IF NOT EXISTS push_delivery_claims (
   error text,
   PRIMARY KEY (message_id, device_token)
 );
+ALTER TABLE push_delivery_claims ADD COLUMN IF NOT EXISTS attempts integer NOT NULL DEFAULT 1;
+ALTER TABLE push_delivery_claims ADD COLUMN IF NOT EXISTS next_retry_at timestamptz;
 -- Content-free observations written only when a real client operation ends.
 -- The dashboard reads a bounded recent window; no timer produces samples.
 CREATE TABLE IF NOT EXISTS operator_function_events (
@@ -1865,7 +1867,7 @@ CREATE INDEX IF NOT EXISTS operator_function_events_recent
   ON operator_function_events(created_at DESC);
 ALTER TABLE push_delivery_claims DROP CONSTRAINT IF EXISTS push_delivery_claims_status_check;
 ALTER TABLE push_delivery_claims ADD CONSTRAINT push_delivery_claims_status_check
-  CHECK (status IN ('claimed', 'delivered', 'failed', 'suppressed'));
+  CHECK (status IN ('claimed', 'delivered', 'failed', 'suppressed', 'retryable'));
 
 -- At most one latest unseen release candidate per device registration.
 CREATE TABLE IF NOT EXISTS push_release_catchups (

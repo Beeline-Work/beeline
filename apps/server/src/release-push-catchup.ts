@@ -1,5 +1,6 @@
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
+export const PUSH_MAX_ATTEMPTS = 3;
 
 /** Registration is a new delivery opportunity, not permission to replay chat.
  * Queue only the latest unread release in the person's existing announcement
@@ -46,7 +47,7 @@ export async function claimReleaseCatchup(
   identityId: string,
 ): Promise<boolean> {
   const claim = await database.query(
-    `INSERT INTO push_delivery_claims(message_id,device_token,status)
+    `INSERT INTO push_delivery_claims AS claim(message_id,device_token,status)
      SELECT $1,$2,'claimed'
      WHERE EXISTS (
        SELECT 1
@@ -63,7 +64,11 @@ export async function claimReleaseCatchup(
          AND NOT EXISTS (SELECT 1 FROM messages newer WHERE newer.room_id=m.room_id
            AND newer.author_id=m.author_id AND newer.card_type IS NULL
            AND (newer.created_at,newer.id)>(m.created_at,m.id))
-     ) ON CONFLICT DO NOTHING`,
+     ) ON CONFLICT(message_id,device_token) DO UPDATE
+       SET status='claimed',attempts=claim.attempts+1,claimed_at=now(),
+         completed_at=NULL,error=NULL,next_retry_at=NULL
+       WHERE claim.status='retryable' AND claim.next_retry_at<=now()
+         AND claim.attempts<${PUSH_MAX_ATTEMPTS}`,
     [messageId, token, identityId],
   );
   return Boolean(claim.rowCount);
@@ -75,7 +80,7 @@ export async function retireTerminalReleaseCatchups(database: SqlDatabase) {
      WHERE NOT EXISTS (
        SELECT 1 FROM push_delivery_claims claim
        WHERE claim.device_token=catchup.device_token AND claim.message_id=catchup.message_id
-         AND claim.status IN ('claimed','failed')
+         AND claim.status IN ('claimed','failed','retryable')
      )
      AND (
        EXISTS (

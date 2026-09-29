@@ -28,22 +28,32 @@ describe('background advisory-lock ownership', () => {
   it('records a failed job and still runs the next independent job', async () => {
     let clock = 1_000;
     const runner = new BackgroundJobRunner(() => clock);
-    const later = vi.fn(async () => { clock += 5; });
-    expect(await runner.run('push', async () => {
-      clock += 7;
-      throw new Error('provider unavailable');
-    })).toEqual({ ok: false });
+    const later = vi.fn(async () => {
+      clock += 5;
+    });
+    expect(
+      await runner.run('push', async () => {
+        clock += 7;
+        throw new Error('provider unavailable');
+      }),
+    ).toEqual({ ok: false });
     await runner.run('schedules', later);
     expect(later).toHaveBeenCalledOnce();
     expect(runner.snapshot()).toEqual({
-      push: { lastSuccessAt: null, lastErrorAt: 1_007,
-        lastDurationMs: 7, consecutiveFailures: 1 },
-      schedules: { lastSuccessAt: 1_012, lastErrorAt: null,
-        lastDurationMs: 5, consecutiveFailures: 0 },
+      push: { lastSuccessAt: null, lastErrorAt: 1_007, lastDurationMs: 7, consecutiveFailures: 1 },
+      schedules: {
+        lastSuccessAt: 1_012,
+        lastErrorAt: null,
+        lastDurationMs: 5,
+        consecutiveFailures: 0,
+      },
     });
-    await runner.run('push', async () => { clock += 2; });
+    await runner.run('push', async () => {
+      clock += 2;
+    });
     expect(runner.snapshot().push).toMatchObject({
-      lastSuccessAt: 1_014, consecutiveFailures: 0,
+      lastSuccessAt: 1_014,
+      consecutiveFailures: 0,
     });
   });
 
@@ -473,6 +483,115 @@ describe('background advisory-lock ownership', () => {
       expect(firebaseSend).toHaveBeenCalledWith(android, expect.objectContaining({ roomId: room }));
       expect(apnsSend).toHaveBeenCalledOnce();
       expect(apnsSend).toHaveBeenCalledWith(ios, expect.objectContaining({ roomId: room }));
+    } finally {
+      await db.close();
+    }
+  });
+  it('retries an APNs timeout durably and records acceptance on the same message claim', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const human = 'a'.repeat(64),
+        agent = 'b'.repeat(64);
+      const workspace = '11111111-1111-4111-8111-111111111111';
+      const room = '22222222-2222-4222-8222-222222222222';
+      const message = '1'.repeat(64);
+      const token = 'c0ffee'.repeat(10) + 'abcd';
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
+        [human, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
+        room,
+        workspace,
+      ]);
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+        [workspace, room, human, agent],
+      );
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES($1,$2,'ios','physical')`,
+        [token, human],
+      );
+      const send = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('APNs request timed out'))
+        .mockResolvedValue(undefined);
+      const loop = new PushDeliveryLoop(db, { send: vi.fn() }, { send });
+      await loop.runOnce();
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@owner hello')`,
+        [message, room, agent],
+      );
+      expect(await loop.runOnce()).toBe(0);
+      expect(
+        (
+          await db.query<{ status: string; attempts: number }>(
+            `SELECT status,attempts FROM push_delivery_claims WHERE message_id=$1`,
+            [message],
+          )
+        ).rows[0],
+      ).toEqual({ status: 'retryable', attempts: 1 });
+      expect(await loop.runOnce()).toBe(0);
+      expect(send).toHaveBeenCalledTimes(1);
+      await db.query(
+        `UPDATE push_delivery_claims SET next_retry_at=now()-interval '1 second' WHERE message_id=$1`,
+        [message],
+      );
+      expect(await loop.runOnce()).toBe(1);
+      expect(send).toHaveBeenCalledTimes(2);
+      expect(
+        (
+          await db.query<{ status: string; attempts: number }>(
+            `SELECT status,attempts FROM push_delivery_claims WHERE message_id=$1`,
+            [message],
+          )
+        ).rows[0],
+      ).toEqual({ status: 'delivered', attempts: 2 });
+
+      const connectionMessage = '3'.repeat(64);
+      send.mockRejectedValueOnce(
+        Object.assign(new Error('connection reset'), { code: 'ECONNRESET' }),
+      );
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@owner again')`,
+        [connectionMessage, room, agent],
+      );
+      expect(await loop.runOnce()).toBe(0);
+      expect(
+        (
+          await db.query<{ status: string }>(
+            `SELECT status FROM push_delivery_claims WHERE message_id=$1`,
+            [connectionMessage],
+          )
+        ).rows[0]?.status,
+      ).toBe('retryable');
+
+      // A persistent outage has a bounded retry budget and cannot spin forever.
+      const exhaustedMessage = '2'.repeat(64);
+      send.mockRejectedValue(new Error('APNs request timed out'));
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@owner still here')`,
+        [exhaustedMessage, room, agent],
+      );
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        expect(await loop.runOnce()).toBe(0);
+        const claim = (
+          await db.query<{ status: string; attempts: number }>(
+            `SELECT status,attempts FROM push_delivery_claims WHERE message_id=$1`,
+            [exhaustedMessage],
+          )
+        ).rows[0];
+        expect(claim).toEqual({ status: attempt < 3 ? 'retryable' : 'failed', attempts: attempt });
+        if (attempt < 3)
+          await db.query(
+            `UPDATE push_delivery_claims SET next_retry_at=now()-interval '1 second' WHERE message_id=$1`,
+            [exhaustedMessage],
+          );
+      }
+      expect(await loop.runOnce()).toBe(0);
+      expect(send).toHaveBeenCalledTimes(6);
     } finally {
       await db.close();
     }

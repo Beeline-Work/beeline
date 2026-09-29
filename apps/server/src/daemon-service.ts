@@ -6459,125 +6459,136 @@ export class DaemonService {
     if (requester?.kind !== 'human')
       throw new Error('corner lane upgrade requires an explicit human request in this corner');
 
-    const target = (
-      await this.database.query<{
-        lane: string;
-        repository_key: string | null;
-        repository_remote: string | null;
-        repository_resolution: string;
-      }>(
-        `SELECT fact.lane,parent.repository_key,parent.repository_remote,parent.repository_resolution
-         FROM corner_facts fact
-         JOIN rooms corner ON corner.id=fact.corner_id
-         JOIN rooms parent ON parent.id=corner.parent_id
-         WHERE fact.corner_id=$1 AND corner.archived_at IS NULL AND parent.archived_at IS NULL
-         FOR UPDATE OF fact,corner,parent`,
-        [cornerId],
+    // Everything below is one transaction: the lane flip, the feature-branch
+    // write, the brief, and the resume/complete bookkeeping commit together
+    // or not at all. A corner already sitting on lane='code' with no branch
+    // (an interrupted earlier attempt, or a row touched some other way) is
+    // not a second, refused transition - it is the same transition, and this
+    // converges it: the lane UPDATE below is then a no-op (its own WHERE
+    // already requires lane='no_code'), the branch UPDATE fills the gap, and
+    // a corner that finished cleanly the first time re-runs the same writes
+    // as harmless no-ops, so a retry (or a genuinely new human ask on an
+    // already-upgraded corner) always converges instead of throwing.
+    await this.database.transaction(async (db) => {
+      const target = (
+        await db.query<{
+          lane: string;
+          repository_key: string | null;
+          repository_remote: string | null;
+          repository_resolution: string;
+        }>(
+          `SELECT fact.lane,parent.repository_key,parent.repository_remote,parent.repository_resolution
+           FROM corner_facts fact
+           JOIN rooms corner ON corner.id=fact.corner_id
+           JOIN rooms parent ON parent.id=corner.parent_id
+           WHERE fact.corner_id=$1 AND corner.archived_at IS NULL AND parent.archived_at IS NULL
+           FOR UPDATE OF fact,corner,parent`,
+          [cornerId],
+        )
+      ).rows[0];
+      if (!target) throw new Error('corner not found');
+      if (target.lane !== 'no_code' && target.lane !== 'code')
+        throw new Error(`corner lane upgrade requires no_code, found ${target.lane}`);
+      if (
+        target.repository_resolution !== 'repository' ||
+        !target.repository_key ||
+        !target.repository_remote
       )
-    ).rows[0];
-    if (!target) throw new Error('corner not found');
-    if (target.lane !== 'no_code')
-      throw new Error(`corner lane upgrade requires no_code, found ${target.lane}`);
-    if (
-      target.repository_resolution !== 'repository' ||
-      !target.repository_key ||
-      !target.repository_remote
-    )
-      throw new Error('corner lane upgrade requires a repository-backed parent Room');
+        throw new Error('corner lane upgrade requires a repository-backed parent Room');
 
-    await this.database.query(
-      `UPDATE corner_facts
-       SET lane='code',owner_agent_id=COALESCE(owner_agent_id,$2),updated_at=now()
-       WHERE corner_id=$1 AND lane='no_code'`,
-      [cornerId, agentId],
-    );
-    // GitHub's PR and check events find a corner only by its recorded branch.
-    // The daemon records it on start only when it restarts as the corner's
-    // owner, so an upgraded corner records it here instead.
-    const featureBranch = `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`;
-    await this.database.query(
-      `UPDATE corner_facts
-       SET feature_branch=$2,
-           lifecycle=lifecycle||jsonb_build_object('lifecycle','working','branch',$2::text,'checks','unknown'),
-           updated_at=now()
-       WHERE corner_id=$1 AND feature_branch IS NULL AND NOT lifecycle ? 'pr'`,
-      [cornerId, featureBranch],
-    );
-    // A repository corner works from a brief. This one already existed as
-    // chat, so its discussion so far is what the brief has to carry, written
-    // by the server rather than the agent whose work it authorizes. A corner
-    // that already holds revisions keeps them: they are already its authority.
-    const briefed = await this.database.query(
-      `SELECT 1 FROM corner_brief_revisions WHERE corner_id=$1`,
-      [cornerId],
-    );
-    if (!briefed.rowCount) {
-      await ensureSystemIdentity(this.database);
-      const draft = await composeCornerUpgradeBrief(this.database, cornerId, {
-        sourceMessageId: command.source_message_id,
-        snapshot: requester.text,
-      });
-      const authority = await resolveCornerBriefApproval(
-        this.database,
-        [cornerId],
-        draft,
-        [],
-        command.source_message_id,
+      await db.query(
+        `UPDATE corner_facts
+         SET lane='code',owner_agent_id=COALESCE(owner_agent_id,$2),updated_at=now()
+         WHERE corner_id=$1 AND lane='no_code'`,
+        [cornerId, agentId],
       );
-      await this.database.query(
-        `INSERT INTO corner_brief_revisions(
-           corner_id,revision,content,intent_verbatim,build_spec,criteria,non_goals,
-           brief_references,approval_basis,revision_hash,author_id,
-           source_room_id,source_message_id,attachments
-         ) VALUES($1,1,$2,$3,$4,$5,'[]'::jsonb,'[]'::jsonb,$6,$7,$8,$9,$10,'[]'::jsonb)`,
-        [
-          cornerId,
-          draft.buildSpec.trim(),
-          JSON.stringify(draft.intentVerbatim),
-          draft.buildSpec.trim(),
-          JSON.stringify(draft.criteria),
-          JSON.stringify(authority.approvalBasis),
-          authority.revisionHash,
-          SYSTEM_IDENTITY_ID,
-          authority.sourceRoomId,
+      // GitHub's PR and check events find a corner only by its recorded branch.
+      // The daemon records it on start only when it restarts as the corner's
+      // owner, so an upgraded corner records it here instead.
+      const featureBranch = `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`;
+      await db.query(
+        `UPDATE corner_facts
+         SET feature_branch=$2,
+             lifecycle=lifecycle||jsonb_build_object('lifecycle','working','branch',$2::text,'checks','unknown'),
+             updated_at=now()
+         WHERE corner_id=$1 AND feature_branch IS NULL AND NOT lifecycle ? 'pr'`,
+        [cornerId, featureBranch],
+      );
+      // A repository corner works from a brief. This one already existed as
+      // chat, so its discussion so far is what the brief has to carry, written
+      // by the server rather than the agent whose work it authorizes. A corner
+      // that already holds revisions keeps them: they are already its authority.
+      const briefed = await db.query(`SELECT 1 FROM corner_brief_revisions WHERE corner_id=$1`, [
+        cornerId,
+      ]);
+      if (!briefed.rowCount) {
+        await ensureSystemIdentity(db);
+        const draft = await composeCornerUpgradeBrief(db, cornerId, {
+          sourceMessageId: command.source_message_id,
+          snapshot: requester.text,
+        });
+        const authority = await resolveCornerBriefApproval(
+          db,
+          [cornerId],
+          draft,
+          [],
           command.source_message_id,
-        ],
+        );
+        await db.query(
+          `INSERT INTO corner_brief_revisions(
+             corner_id,revision,content,intent_verbatim,build_spec,criteria,non_goals,
+             brief_references,approval_basis,revision_hash,author_id,
+             source_room_id,source_message_id,attachments
+           ) VALUES($1,1,$2,$3,$4,$5,'[]'::jsonb,'[]'::jsonb,$6,$7,$8,$9,$10,'[]'::jsonb)`,
+          [
+            cornerId,
+            draft.buildSpec.trim(),
+            JSON.stringify(draft.intentVerbatim),
+            draft.buildSpec.trim(),
+            JSON.stringify(draft.criteria),
+            JSON.stringify(authority.approvalBasis),
+            authority.revisionHash,
+            SYSTEM_IDENTITY_ID,
+            authority.sourceRoomId,
+            command.source_message_id,
+          ],
+        );
+      }
+      const laneRequestId = `lane-upgrade:${command.turn_request_id}`;
+      const resumed = await createAgentCommand(db, {
+        roomId: cornerId,
+        agentId,
+        sourceMessageId: command.source_message_id,
+        turnRequestId: laneRequestId,
+        action: 'resume',
+        reason: 'corner_lane_upgrade',
+        parent: command,
+        retainDepth: true,
+      });
+      if (!resumed) throw new Error('corner lane upgrade could not resume the requested agent');
+      // `agent_commands` is unique on (room,message,agent,action), so a request
+      // that was ITSELF a resume returns its own already-claimed row here. Then
+      // completing `command.id` below would consume the very re-delivery it just
+      // created and the human's ask would vanish. Re-arm whatever row came back.
+      await db.query(
+        `UPDATE agent_commands SET
+           state='pending',generation_id=NULL,lease_expires_at=NULL,claimed_at=NULL,
+           completed_at=NULL,turn_request_id=$2,reason='corner_lane_upgrade'
+         WHERE id=$1 AND state<>'pending'`,
+        [resumed.id, laneRequestId],
       );
-    }
-    const laneRequestId = `lane-upgrade:${command.turn_request_id}`;
-    const resumed = await createAgentCommand(this.database, {
-      roomId: cornerId,
-      agentId,
-      sourceMessageId: command.source_message_id,
-      turnRequestId: laneRequestId,
-      action: 'resume',
-      reason: 'corner_lane_upgrade',
-      parent: command,
-      retainDepth: true,
+      if (resumed.id !== command.id)
+        await db.query(
+          `UPDATE agent_commands SET state='complete',completed_at=now()
+           WHERE id=$1 AND state='claimed'`,
+          [command.id],
+        );
+      await db.query(
+        `UPDATE agent_turns SET status='complete',created_at=now()
+         WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working'`,
+        [cornerId, agentId, command.turn_request_id],
+      );
     });
-    if (!resumed) throw new Error('corner lane upgrade could not resume the requested agent');
-    // `agent_commands` is unique on (room,message,agent,action), so a request
-    // that was ITSELF a resume returns its own already-claimed row here. Then
-    // completing `command.id` below would consume the very re-delivery it just
-    // created and the human's ask would vanish. Re-arm whatever row came back.
-    await this.database.query(
-      `UPDATE agent_commands SET
-         state='pending',generation_id=NULL,lease_expires_at=NULL,claimed_at=NULL,
-         completed_at=NULL,turn_request_id=$2,reason='corner_lane_upgrade'
-       WHERE id=$1 AND state<>'pending'`,
-      [resumed.id, laneRequestId],
-    );
-    if (resumed.id !== command.id)
-      await this.database.query(
-        `UPDATE agent_commands SET state='complete',completed_at=now()
-         WHERE id=$1 AND state='claimed'`,
-        [command.id],
-      );
-    await this.database.query(
-      `UPDATE agent_turns SET status='complete',created_at=now()
-       WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working'`,
-      [cornerId, agentId, command.turn_request_id],
-    );
     this.live.publish({ type: 'invalidate', roomId: cornerId, reason: 'corner', agentId });
     return { cornerId, lane: 'code' as const };
   }

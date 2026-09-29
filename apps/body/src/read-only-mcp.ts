@@ -89,6 +89,7 @@ import {
   fetchBoundedBytes,
 } from './attachment-delivery.js';
 import { describeTailscaleReach } from './connector-tailscale.js';
+import { UPGRADE_INTENT_RULE } from './prompt-assembly.js';
 
 type JsonObject = Record<string, unknown>;
 
@@ -1142,7 +1143,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'upgrade_corner_to_code',
     description:
-      'Upgrade this repository-backed no-code corner to a writable code corner. Call this only while answering a human message that explicitly asks for code edits in this same corner. Never infer permission from the objective, prior discussion, or your own recommendation. The one-way upgrade preserves this corner and its messages, then re-delivers the same request after restarting with a feature branch and checkout. After success, end this turn immediately; do not edit the scratch workspace.',
+      `Upgrade this repository-backed no-code corner to a writable code corner. ${UPGRADE_INTENT_RULE} The one-way upgrade preserves this corner and its messages, then re-delivers the same request after restarting with a feature branch and checkout. After success, end this turn immediately; do not edit the scratch workspace.`,
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {

@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
 import { createAgentCommand } from './agent-command.js';
-import { migrate } from './database.js';
+import { migrate, type SqlDatabase } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
@@ -351,13 +351,123 @@ it('rejects an upgrade backed by an agent-authored ask, however live the command
   ).toHaveLength(0);
 });
 
-it('rejects every second or non-no-code lane transition', async () => {
-  const cornerId = await humanCorner(CODE_ROOM);
-  await upgrade(cornerId);
-  await expect(upgrade(cornerId)).rejects.toThrow('requires no_code, found code');
-
+it('rejects a lane transition on a corner that never was no_code or code', async () => {
   const research = await open(CODE_ROOM, 'research', 'owner/widgets');
   await expect(upgrade(research)).rejects.toThrow('requires no_code, found research');
+});
+
+it('converges a second upgrade of an already fully-upgraded corner instead of throwing', async () => {
+  // A fully upgraded corner (lane='code', feature_branch already recorded)
+  // is not a second, refused transition - a retry, or a genuinely new human
+  // ask on the same corner, converges instead of hitting the old
+  // "requires no_code, found code" dead end.
+  const cornerId = await humanCorner(CODE_ROOM);
+  const first = await upgrade(cornerId);
+  const branch = `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`;
+  expect(first).toEqual({ cornerId, lane: 'code' });
+  expect(await lane(cornerId)).toBe('code');
+
+  const second = await upgrade(cornerId);
+
+  expect(second).toEqual({ cornerId, lane: 'code' });
+  expect(
+    (
+      await db.query<{ feature_branch: string }>(
+        `SELECT feature_branch FROM corner_facts WHERE corner_id=$1`,
+        [cornerId],
+      )
+    ).rows[0]?.feature_branch,
+  ).toBe(branch);
+  // No duplicate brief revision from converging twice.
+  expect(
+    (await daemon.execute('listCornerBriefRevisions', { cornerId }, AGENT)).revisions,
+  ).toHaveLength(1);
+});
+
+it('converges a corner stuck with lane=code but no recorded feature branch', async () => {
+  // Simulates the state an interrupted upgrade (or a row touched some other
+  // way) could leave behind before this fix: the lane flipped but the branch
+  // write never landed. A retry must finish the job, not throw.
+  const cornerId = await humanCorner(CODE_ROOM);
+  await db.query(`UPDATE corner_facts SET lane='code' WHERE corner_id=$1`, [cornerId]);
+  expect(
+    (
+      await db.query<{ feature_branch: string | null }>(
+        `SELECT feature_branch FROM corner_facts WHERE corner_id=$1`,
+        [cornerId],
+      )
+    ).rows[0]?.feature_branch,
+  ).toBeNull();
+
+  const result = await upgrade(cornerId);
+
+  const branch = `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`;
+  expect(result).toEqual({ cornerId, lane: 'code' });
+  expect(
+    (
+      await db.query<{ feature_branch: string }>(
+        `SELECT feature_branch FROM corner_facts WHERE corner_id=$1`,
+        [cornerId],
+      )
+    ).rows[0]?.feature_branch,
+  ).toBe(branch);
+  expect(
+    (await daemon.execute('listCornerBriefRevisions', { cornerId }, AGENT)).revisions,
+  ).toHaveLength(1);
+});
+
+/** Wraps a database so the next query matching `shouldFail` throws instead of
+ *  running, at any transaction nesting depth - proving a mid-write failure
+ *  rolls back everything in the same transaction, not just that one query. */
+function withInjectedFailure(
+  inner: SqlDatabase,
+  shouldFail: (sql: string) => boolean,
+  message: string,
+): SqlDatabase {
+  let fired = false;
+  const wrap = (target: SqlDatabase): SqlDatabase => ({
+    query: async (sql: string, values: unknown[] = []) => {
+      if (!fired && shouldFail(sql)) {
+        fired = true;
+        throw new Error(message);
+      }
+      return target.query(sql, values);
+    },
+    transaction: async (work) => target.transaction((nested) => work(wrap(nested))),
+  });
+  return wrap(inner);
+}
+
+it('rolls a failure between the lane flip and the branch write back to no_code', async () => {
+  // Proves the two writes are one transaction: an error thrown after the
+  // lane flip (but before the function returns) must undo the flip too, so a
+  // retry sees a clean no_code corner rather than a half-upgraded one.
+  const cornerId = await humanCorner(CODE_ROOM);
+  const command = await commissioned(cornerId);
+  const failing = withInjectedFailure(
+    db,
+    (sql) => sql.includes('SET feature_branch=$2'),
+    'injected failure between the lane flip and the branch write',
+  );
+  const failingDaemon = new DaemonService(failing, new LiveHub());
+
+  await expect(
+    failingDaemon.execute(
+      'upgradeCornerLane',
+      { cornerId, requestId: command.turnRequestId, generationId: 'g1' },
+      AGENT,
+    ),
+  ).rejects.toThrow('injected failure between the lane flip and the branch write');
+
+  expect(await lane(cornerId)).toBe('no_code');
+  expect(
+    (
+      await db.query<{ feature_branch: string | null }>(
+        `SELECT feature_branch FROM corner_facts WHERE corner_id=$1`,
+        [cornerId],
+      )
+    ).rows[0]?.feature_branch,
+  ).toBeNull();
 });
 
 it('rejects a no-code corner whose parent Room has no repository', async () => {

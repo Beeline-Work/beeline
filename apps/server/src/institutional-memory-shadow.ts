@@ -9,6 +9,7 @@ import {
   INSTITUTIONAL_MEMORY_MODEL_MAX_LENGTH,
   INSTITUTIONAL_MEMORY_SEARCH_QUERY_MAX_BYTES,
   INSTITUTIONAL_MEMORY_SEARCH_RESULT_MAX,
+  INSTITUTIONAL_MEMORY_SEARCH_SCAN_MAX,
   parseInstitutionalCuratorProposal,
   parseInstitutionalMemoryProposal,
   type CompleteInstitutionalMemoryJobInput,
@@ -1180,6 +1181,33 @@ function keywordMatches(keywords: readonly string[], words: ReadonlySet<string>)
   return keywords.filter((keyword) => words.has(keyword)).length;
 }
 
+/**
+ * How many of the query's words this item answers: a stored keyword, or a
+ * literal appearance in the canonical key or body. Counts distinct query
+ * words, not occurrences, so ranking cannot be inflated by a repeated term.
+ * A literal whole-query hit (the query's word extraction is Latin-only, so a
+ * non-Latin-script query such as Korean or Japanese extracts no words at
+ * all) scores at least as high as a perfect word-overlap match.
+ */
+function searchRelevance(
+  item: { keywords: readonly string[]; canonical_key: string; body: string },
+  words: ReadonlySet<string>,
+  literalQuery: string,
+): number {
+  const canonicalKey = item.canonical_key.toLocaleLowerCase('en-US');
+  const body = item.body.toLocaleLowerCase('en-US');
+  let score = 0;
+  for (const word of words) {
+    if (item.keywords.includes(word) || canonicalKey.includes(word) || body.includes(word)) {
+      score += 1;
+    }
+  }
+  if (canonicalKey.includes(literalQuery) || body.includes(literalQuery)) {
+    score = Math.max(score, words.size);
+  }
+  return score;
+}
+
 function skillMatches(skill: WorkspaceSkillIndexCandidate, words: ReadonlySet<string>): number {
   return keywordMatches(
     [...institutionalMemoryRequestWords(skill.slug.replace(/-/g, ' '), skill.description)],
@@ -1603,34 +1631,63 @@ export async function searchInstitutionalMemory(
     if (!rolloutAllowsLive(rolloutStage)) {
       throw new Error('institutional memory is not enabled for this Workspace');
     }
-    const rows = (
+    // The same tokenizer and any-word-overlap semantics as the per-turn
+    // snapshot (getInstitutionalContext): a natural-language query matches on
+    // its individual words, not as one literal phrase. Word extraction is
+    // Latin-only, so a non-Latin-script query (Korean, Japanese, ...)
+    // extracts no words at all; the literal whole-query substring match
+    // below is what the old strpos-only code relied on and remains a
+    // standing OR alternative rather than only a fallback, so it keeps
+    // finding non-Latin facts the tokenizer cannot see into.
+    const words = institutionalMemoryRequestWords(query);
+    const literalQuery = query.toLocaleLowerCase('en-US');
+    const candidates = (
       await db.query<{
         id: string;
         kind: 'workspace_fact' | 'human_profile_fact';
         canonical_key: string;
         body: string;
+        keywords: string[];
         version: number;
+        updated_at: Date;
       }>(
-        `SELECT item.id,item.kind,item.canonical_key,item.body,item.version
+        `SELECT item.id,item.kind,item.canonical_key,item.body,item.keywords,item.version,
+                item.updated_at
        FROM institutional_memory_items item
        WHERE item.workspace_id=$1 AND item.state='active' AND item.deleted_at IS NULL
          AND (item.kind='workspace_fact' OR
               (item.kind='human_profile_fact' AND item.subject_identity_id=$2))
-         AND (strpos(lower(item.canonical_key),lower($3))>0 OR
-              strpos(lower(item.body),lower($3))>0)
+         AND (item.keywords && $3::text[] OR EXISTS (
+               SELECT 1 FROM unnest($3::text[]) word
+               WHERE strpos(lower(item.canonical_key),word)>0 OR strpos(lower(item.body),word)>0
+             ) OR strpos(lower(item.canonical_key),$4)>0 OR strpos(lower(item.body),$4)>0)
          AND NOT EXISTS (
            SELECT 1 FROM institutional_memory_item_sources source
            JOIN messages message ON message.id=source.message_id
            WHERE source.item_id=item.id AND message.deleted_at IS NOT NULL
          )
        ORDER BY item.updated_at DESC,item.id
-       LIMIT $4`,
-        [authority.workspace_id, authority.requester_identity_id, query, limit],
+       LIMIT $5`,
+        [
+          authority.workspace_id,
+          authority.requester_identity_id,
+          [...words],
+          literalQuery,
+          INSTITUTIONAL_MEMORY_SEARCH_SCAN_MAX,
+        ],
       )
     ).rows;
+    const ranked = [...candidates].sort((left, right) => {
+      const relevance =
+        searchRelevance(right, words, literalQuery) - searchRelevance(left, words, literalQuery);
+      if (relevance) return relevance;
+      const recency = right.updated_at.getTime() - left.updated_at.getTime();
+      return recency || left.id.localeCompare(right.id);
+    });
+    const selected = ranked.slice(0, limit);
     return {
       quotedContext: true,
-      results: rows.map((row) => ({
+      results: selected.map((row) => ({
         id: row.id,
         kind: row.kind,
         canonicalKey: row.canonical_key,

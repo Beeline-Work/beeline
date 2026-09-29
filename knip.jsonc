@@ -66,6 +66,7 @@
         "scripts/consolidated-board-proof.tsx",
         "scripts/android-splash-theme-proof.js",
         "scripts/corner-sections-proof.tsx",
+        "scripts/corner-dropdown-proof.tsx",
         "scripts/new-corner-dialog-proof.tsx",
         "scripts/page-headers-proof.tsx",
       ],

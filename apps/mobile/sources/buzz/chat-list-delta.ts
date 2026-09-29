@@ -1,3 +1,4 @@
+import { chatActivityAt } from '@beeline/api-contract/phone';
 import type {
   ChatListItem,
   ChatListView,
@@ -15,10 +16,6 @@ const PREVIEW_PRESENTATIONS: ReadonlySet<RoomViewMessage['presentation']> = new 
   'system',
   'card',
 ]);
-
-function activityAt(item: ChatListItem): number {
-  return item.latestMessage?.createdAt ?? item.room.updatedAt ?? 0;
-}
 
 function applyMessage(view: ChatListView, index: number, message: RoomViewMessage): ChatListView {
   const item = view.chats[index]!;
@@ -47,7 +44,7 @@ function applyMessage(view: ChatListView, index: number, message: RoomViewMessag
     ? { ...open, latestMessage: preview, unread: true }
     : { ...item, latestMessage: preview, unread: false };
   const rest = view.chats.filter((_, position) => position !== index);
-  const at = rest.findIndex((candidate) => activityAt(candidate) <= message.createdAt);
+  const at = rest.findIndex((candidate) => chatActivityAt(candidate) <= chatActivityAt(next));
   rest.splice(at < 0 ? rest.length : at, 0, next);
   return { ...view, chats: rest };
 }

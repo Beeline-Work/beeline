@@ -4,17 +4,21 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { ChatListItem } from '@beeline/buzz-client';
 import { displayGroupedCornerTitle } from '@/buzz/room-list-row';
 import { CornerGlyph, CORNER_META_SIZE } from './CornerGlyph';
+import { CornerWaitingPulse } from './CornerWaitingPulse';
 
 /** The viewer's open corners in one Room: ones they commissioned or that
- * await them, waiting first. Everyone else's corners stay off the rail. */
+ * await them, waiting first. Everyone else's corners stay off the rail. The
+ * phone Room list shows the same dropdown under its row. */
 export function DesktopRoomCorners({
   item,
   onOpen,
   renderDrag,
+  mobile = false,
 }: {
   item: ChatListItem;
   onOpen: (cornerId: string) => void;
   renderDrag: (cornerId: string, children: React.ReactNode) => React.ReactNode;
+  mobile?: boolean;
 }) {
   // The chat list carries each Room's open corners; no per-Room corners read.
   const corners = (item.openCorners ?? [])
@@ -22,7 +26,10 @@ export function DesktopRoomCorners({
     .sort((a, b) => Number(b.state === 'waiting') - Number(a.state === 'waiting'));
   if (corners.length === 0) return null;
   return (
-    <View style={styles.list} testID={`desktop-room-corners-${item.room.id}`}>
+    <View
+      style={[styles.list, mobile && styles.mobileList]}
+      testID={`desktop-room-corners-${item.room.id}`}
+    >
       {corners.map((corner) => {
         const ready = corner.state === 'waiting';
         return (
@@ -40,7 +47,9 @@ export function DesktopRoomCorners({
                 <Text numberOfLines={1} style={styles.name}>
                   {displayGroupedCornerTitle(item.room.name, corner.name, corner.id)}
                 </Text>
-                <Text style={[styles.state, ready && styles.waiting]}>{corner.state}</Text>
+                <CornerWaitingPulse state={corner.state}>
+                  <Text style={[styles.state, ready && styles.waiting]}>{corner.state}</Text>
+                </CornerWaitingPulse>
               </Pressable>,
             )}
           </React.Fragment>
@@ -55,7 +64,11 @@ const styles = StyleSheet.create((theme) => ({
     paddingRight: theme.buzz.space.md,
     paddingBottom: theme.buzz.space.sm,
   },
+  mobileList: { paddingLeft: 14, paddingRight: 14 },
   corner: {
+    // On web the row is a <button>; inside the rail's draggable <div> it would
+    // shrink to its content and pull the status in beside the name.
+    width: '100%',
     minHeight: 32,
     paddingVertical: theme.buzz.space.xs,
     flexDirection: 'row',

@@ -6,6 +6,7 @@ import type { CornerListItem } from '@beeline/buzz-client';
 import { isMineCorner } from '@/buzz/mine-corners';
 import { cornerHref } from '@/buzz/corner-navigation';
 import { cornerDisplayState } from '@/buzz/corner-display-state';
+import { CornerWaitingPulse } from './CornerWaitingPulse';
 import {
   archivedCornersLabel,
   cornerClosedStamp,
@@ -159,18 +160,20 @@ export function RoomCornersList({
         </View>
         {/* The state, twice over: the word carries it for everyone, the
           circle carries its motion for the glance. */}
-        <Text
-          style={[
-            styles.state,
-            display.tone === 'brass'
-              ? styles.stateBrass
-              : display.tone === 'ghost'
-                ? styles.stateGhost
-                : styles.stateQuiet,
-          ]}
-        >
-          {display.word}
-        </Text>
+        <CornerWaitingPulse state={display.word}>
+          <Text
+            style={[
+              styles.state,
+              display.tone === 'brass'
+                ? styles.stateBrass
+                : display.tone === 'ghost'
+                  ? styles.stateGhost
+                  : styles.stateQuiet,
+            ]}
+          >
+            {display.word}
+          </Text>
+        </CornerWaitingPulse>
         <StateCircle state={display.visual} tone={display.tone} />
       </Pressable>
     );

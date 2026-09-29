@@ -26,6 +26,7 @@ import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
 import { ConversationRow } from '@/components/buzz/ConversationRow';
 import { DesktopRoomCorners } from '@/components/buzz/DesktopRoomCorners';
+import { useCornerDropdowns } from '@/buzz/corner-dropdowns';
 import { DesktopWorkspaceRail } from '@/components/buzz/DesktopWorkspaceRail';
 import { DesktopWorkspaceStrip } from '@/components/buzz/DesktopWorkspaceStrip';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
@@ -209,9 +210,11 @@ export const SidebarView = React.memo(function SidebarView() {
   const [workspaceRoomCounts, setWorkspaceRoomCounts] = React.useState<ReadonlyMap<string, number>>(
     () => new Map(),
   );
-  const [expandedRoomIds, setExpandedRoomIds] = React.useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
+  const {
+    expanded: expandedRoomIds,
+    setExpanded: setExpandedRoomIds,
+    toggle: toggleRoomCorners,
+  } = useCornerDropdowns(surface?.chats);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -696,14 +699,7 @@ export const SidebarView = React.memo(function SidebarView() {
                           selected={isDesktop && active}
                           desktop
                           cornersExpanded={expandedRoomIds.has(item.room.id)}
-                          onToggleCorners={() =>
-                            setExpandedRoomIds((current) => {
-                              const next = new Set(current);
-                              if (next.has(item.room.id)) next.delete(item.room.id);
-                              else next.add(item.room.id);
-                              return next;
-                            })
-                          }
+                          onToggleCorners={() => toggleRoomCorners(item.room.id)}
                           pinned={pinned.includes(item.room.id)}
                           onPin={() => void togglePin(item.room.id)}
                           onLongPressCorners={

@@ -17,6 +17,7 @@ import {
   saveLastViewedChannel,
 } from '@/buzz/community-storage';
 import { cornerHref, navigateToRoom } from '@/buzz/corner-navigation';
+import { useCornerDropdowns } from '@/buzz/corner-dropdowns';
 import { agentPairingCommand } from '@/buzz/agent-pairing-command';
 import { loadPendingInvite } from '@/buzz/pending-invite';
 import { deckLanding } from '@/buzz/deck-landing';
@@ -39,6 +40,7 @@ import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/CommunityRail';
 import { ConversationRow } from '@/components/buzz/ConversationRow';
+import { DesktopRoomCorners } from '@/components/buzz/DesktopRoomCorners';
 import { DirectMessagePickerSheet } from '@/components/buzz/DirectMessagePickerSheet';
 import { ExitGlyph } from '@/components/buzz/ExitGlyph';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
@@ -188,6 +190,7 @@ export default function BuzzChannels() {
   const [chatList, setChatList] = useState<ChatListView | null>(null);
   const [welcomeDue, setWelcomeDue] = useState(false);
   const needsYouCount = useNeedsYouCount(chatList?.workspace.id, chatList);
+  const cornerDropdowns = useCornerDropdowns(chatList?.chats);
   const [workspaceDetail, setWorkspaceDetail] = useState<WorkspaceView | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1031,6 +1034,7 @@ export default function BuzzChannels() {
             testID="room-list"
             sections={chatSections}
             keyExtractor={(item) => item.room.id}
+            extraData={cornerDropdowns.expanded}
             stickySectionHeadersEnabled={false}
             refreshing={refreshing}
             onRefresh={() => {
@@ -1069,11 +1073,7 @@ export default function BuzzChannels() {
               const title = `${heading.sigil}${heading.name}`;
               const first = index === 0;
               const last = index === section.data.length - 1;
-              const openCorners = () =>
-                router.push({
-                  pathname: '/beeline/corners/[roomId]',
-                  params: { roomId: item.room.id },
-                } as never);
+              const cornersExpanded = cornerDropdowns.expanded.has(item.room.id);
               const row = (
                 <View
                   style={[
@@ -1092,12 +1092,26 @@ export default function BuzzChannels() {
                     }}
                     pinned={pinned.includes(item.room.id)}
                     onPin={() => void togglePin(item.room.id)}
-                    onToggleCorners={openCorners}
+                    cornersExpanded={cornersExpanded}
+                    onToggleCorners={() => cornerDropdowns.toggle(item.room.id)}
                     onLongPressCorners={
                       viewerIsAgent ? undefined : () => void openNewCorner(item.room.id)
                     }
                     testID={`room-${item.room.id}`}
                   />
+                  {!item.directMessage && (item.cornerCount ?? 0) > 0 && cornersExpanded && (
+                    <DesktopRoomCorners
+                      item={item}
+                      mobile
+                      onOpen={(cornerId) => {
+                        const corner = item.openCorners?.find((open) => open.id === cornerId);
+                        router.push(
+                          cornerHref(cornerId, item.room.id, corner?.name, 'room-list'),
+                        );
+                      }}
+                      renderDrag={(_, children) => children}
+                    />
+                  )}
                 </View>
               );
               return (

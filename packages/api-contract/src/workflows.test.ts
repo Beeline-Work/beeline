@@ -30,11 +30,12 @@ const definition = {
       step: {
         role: 'reviewer',
         skill: 'code-review',
-        output: { verdict: 'string' },
+        output: { verdict: { type: 'string', enum: ['approve', 'changes'] } },
         timeoutSeconds: 3600,
         retries: 1,
       },
-      on: { success: 'closed', failure: 'escalate', timeout: 'escalate' },
+      guard: { field: 'verdict' },
+      on: { approve: 'closed', changes: 'implement', failure: 'escalate', timeout: 'escalate' },
       loop: { to: 'implement', maxIterations: 5, onExceeded: 'escalate' },
     },
     escalate: { kind: 'terminal' },
@@ -92,5 +93,23 @@ describe('workflow definition boundary', () => {
         head_sha: 12,
       }),
     ).toBe('head_sha must be string');
+  });
+
+  it('requires an enum contract for a guard that chooses the next state', () => {
+    const review = {
+      ...definition.states.review,
+      step: {
+        ...definition.states.review.step,
+        output: { verdict: { type: 'string', enum: ['approve', 'changes'] } },
+      },
+      guard: { field: 'verdict' },
+      on: { approve: 'closed', changes: 'implement', failure: 'escalate', timeout: 'escalate' },
+    };
+    expect(
+      readWorkflowDefinition({ ...definition, states: { ...definition.states, review } }),
+    ).not.toBeNull();
+    expect(workflowOutputError(review.step, { verdict: 'maybe' })).toBe(
+      'verdict must be one of approve, changes',
+    );
   });
 });

@@ -16,6 +16,7 @@ import {
 } from './background.js';
 import { mediaTtlHours, MEDIA_SWEEP_INTERVAL_MS } from './media-ttl.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
+import { nextWorkflowDeadline, nextWorkflowSchedule, runDueWorkflowDeadlines, runDueWorkflowSchedules } from './workflow-service.js';
 import { ChoiceExpiryLoop } from './choice-expiry.js';
 import { ConnectionPresence } from './connection-presence.js';
 import { createFirebasePushSender } from './firebase-push.js';
@@ -337,6 +338,8 @@ async function main() {
       }
       if (push) await backgroundJobs.run('push', () => push.runIfDue());
       await backgroundJobs.run('schedules', () => schedules.runOnce());
+      await backgroundJobs.run('workflow-deadlines', () => runDueWorkflowDeadlines(jobsDatabase));
+      await backgroundJobs.run('workflow-schedules', () => runDueWorkflowSchedules(jobsDatabase));
       await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
       const now = Date.now();
       if (now - lastReconciliationAt >= reconciliationMs) {
@@ -354,10 +357,16 @@ async function main() {
         }
       }
       const nextDue = await backgroundJobs.run('schedule-next-due', () => schedules.nextDueAt());
+      const workflowDue = await backgroundJobs.run('workflow-next-due', () => nextWorkflowDeadline(jobsDatabase));
+      const workflowSchedule = await backgroundJobs.run('workflow-schedule-next-due', () => nextWorkflowSchedule(jobsDatabase));
       return Math.min(
         reconciliationMs,
         ...(nextDue.ok && nextDue.value
           ? [Math.max(0, nextDue.value.getTime() - Date.now())] : []),
+        ...(workflowDue.ok && workflowDue.value
+          ? [Math.max(0, workflowDue.value.getTime() - Date.now())] : []),
+        ...(workflowSchedule.ok && workflowSchedule.value
+          ? [Math.max(0, workflowSchedule.value.getTime() - Date.now())] : []),
         ...(push ? [push.millisecondsUntilNextRun()] : []),
       );
     },
@@ -366,7 +375,9 @@ async function main() {
   const stopBackgroundWake = live.subscribeAll((event) => {
     if (
       event.type === 'invalidate' &&
-      (event.reason === 'postgres:messages' || event.reason === 'postgres:agent_schedules')
+      (event.reason === 'postgres:messages' || event.reason === 'postgres:agent_schedules' ||
+        event.reason === 'postgres:workflow_runs' ||
+        event.reason === 'postgres:workflow_definitions')
     )
       leader.wake();
   });

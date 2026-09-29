@@ -135,6 +135,7 @@ import {
   postRoomChoice,
   skipRoomChoice,
 } from './room-choice.js';
+import { settleWorkflowGateChoice } from './workflow-service.js';
 import { unreadMessageSql, visibleChatMessageSql, VIEWER_READ_CURSOR_SQL } from './read-cursor.js';
 import {
   connectorCatalog,
@@ -6134,13 +6135,15 @@ export class PhoneService {
     });
   }
   private async answerChoice(input: Input<'answerChoice'>, viewerId: string) {
-    return this.database.transaction((database) =>
-      answerRoomChoice(database, {
+    return this.database.transaction(async (database) => {
+      const result = await answerRoomChoice(database, {
         choiceId: input.choiceId,
         optionId: input.optionId,
         viewerId,
-      }),
-    );
+      });
+      await settleWorkflowGateChoice(database, input.choiceId, input.optionId, viewerId);
+      return result;
+    });
   }
   private async skipChoice(input: Input<'skipChoice'>, viewerId: string) {
     return this.database.transaction((database) =>

@@ -1,9 +1,10 @@
 /** Declarative, bounded workflow definitions. No user supplied code executes here. */
 export type WorkflowValueType = 'string' | 'number' | 'boolean' | 'object' | 'array';
+export type WorkflowOutputField = WorkflowValueType | { type: 'string'; enum: string[] };
 export type WorkflowStep = {
   role: string;
   skill: string;
-  output: Record<string, WorkflowValueType>;
+  output: Record<string, WorkflowOutputField>;
   timeoutSeconds: number;
   retries: number;
 };
@@ -12,6 +13,7 @@ export type WorkflowState =
       kind: 'step';
       step: WorkflowStep;
       on: Record<string, string>;
+      guard?: { field: string };
       loop?: { to: string; maxIterations: number; onExceeded: string };
     }
   | {
@@ -22,7 +24,13 @@ export type WorkflowState =
       deadlineSeconds: number;
       on: Record<string, string>;
     }
-  | { kind: 'wait'; event: string; timeoutSeconds: number; on: Record<string, string> }
+  | {
+      kind: 'wait';
+      event: string;
+      match?: Record<string, string>;
+      timeoutSeconds: number;
+      on: Record<string, string>;
+    }
   | { kind: 'gate'; human: string; timeoutSeconds: number; on: Record<string, string> }
   | { kind: 'terminal' };
 export type WorkflowDefinition = {
@@ -35,6 +43,7 @@ export type WorkflowDefinition = {
 };
 
 const slug = /^[a-z][a-z0-9_-]{0,63}$/;
+const eventName = /^[a-z][a-z0-9_.:-]{0,79}$/;
 const record = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 const positive = (value: unknown, maximum: number) =>
@@ -60,10 +69,21 @@ function validStep(value: unknown, roles: Set<string>): value is WorkflowStep {
     return false;
   if (!Number.isInteger(value.retries) || Number(value.retries) < 0 || Number(value.retries) > 5)
     return false;
-  return Object.entries(value.output).every(
-    ([key, type]) =>
-      slug.test(key) && ['string', 'number', 'boolean', 'object', 'array'].includes(String(type)),
-  );
+  return Object.entries(value.output).every(([key, rule]) => {
+    if (!slug.test(key)) return false;
+    if (typeof rule === 'string')
+      return ['string', 'number', 'boolean', 'object', 'array'].includes(rule);
+    return (
+      record(rule) &&
+      keys(rule, ['type', 'enum']) &&
+      rule.type === 'string' &&
+      Array.isArray(rule.enum) &&
+      rule.enum.length > 0 &&
+      rule.enum.length <= 16 &&
+      rule.enum.every((choice) => typeof choice === 'string' && slug.test(choice)) &&
+      new Set(rule.enum).size === rule.enum.length
+    );
+  });
 }
 
 /** Reject malformed, unbounded, and unreachable definitions before storage. */
@@ -133,13 +153,32 @@ export function readWorkflowDefinition(value: unknown): WorkflowDefinition | nul
     const targets = Object.values(raw.on) as string[];
     if (raw.kind === 'step') {
       if (
-        !keys(raw, ['kind', 'step', 'on', 'loop']) ||
+        !keys(raw, ['kind', 'step', 'on', 'guard', 'loop']) ||
         !validStep(raw.step, roles) ||
-        !('success' in raw.on) ||
+        (raw.guard === undefined && !('success' in raw.on)) ||
         !('failure' in raw.on) ||
         !('timeout' in raw.on)
       )
         return null;
+      if (raw.guard !== undefined) {
+        if (
+          !record(raw.guard) ||
+          !keys(raw.guard, ['field']) ||
+          typeof raw.guard.field !== 'string' ||
+          !record(raw.step)
+        )
+          return null;
+        const output = raw.step.output as Record<string, WorkflowOutputField>;
+        const rule = output[raw.guard.field];
+        const outcomes = raw.on;
+        if (
+          !record(rule) ||
+          rule.type !== 'string' ||
+          !Array.isArray(rule.enum) ||
+          !rule.enum.every((choice) => typeof choice === 'string' && choice in outcomes)
+        )
+          return null;
+      }
       if (raw.loop !== undefined) {
         if (
           !record(raw.loop) ||
@@ -151,6 +190,7 @@ export function readWorkflowDefinition(value: unknown): WorkflowDefinition | nul
           !(raw.loop.onExceeded in states)
         )
           return null;
+        if (raw.guard === undefined || !Object.values(raw.on).includes(raw.loop.to)) return null;
         targets.push(raw.loop.to, raw.loop.onExceeded);
       }
     } else if (raw.kind === 'parallel') {
@@ -172,12 +212,22 @@ export function readWorkflowDefinition(value: unknown): WorkflowDefinition | nul
         return null;
     } else if (raw.kind === 'wait') {
       if (
-        !keys(raw, ['kind', 'event', 'timeoutSeconds', 'on']) ||
+        !keys(raw, ['kind', 'event', 'match', 'timeoutSeconds', 'on']) ||
         typeof raw.event !== 'string' ||
-        !slug.test(raw.event) ||
+        !eventName.test(raw.event) ||
         !positive(raw.timeoutSeconds, 604_800) ||
         !('success' in raw.on) ||
         !('timeout' in raw.on)
+      )
+        return null;
+      if (
+        raw.match !== undefined &&
+        (!record(raw.match) ||
+          Object.keys(raw.match).length > 16 ||
+          !Object.entries(raw.match).every(
+            ([key, expected]) =>
+              slug.test(key) && typeof expected === 'string' && expected.length <= 160,
+          ))
       )
         return null;
     } else if (raw.kind === 'gate') {
@@ -217,8 +267,10 @@ export function readWorkflowDefinition(value: unknown): WorkflowDefinition | nul
 
 export function workflowOutputError(step: WorkflowStep, output: unknown): string | null {
   if (!record(output)) return 'output must be an object';
-  for (const [key, type] of Object.entries(step.output)) {
+  if (JSON.stringify(output).length > 16_384) return 'output exceeds 16 KB';
+  for (const [key, rule] of Object.entries(step.output)) {
     const item = output[key];
+    const type = typeof rule === 'string' ? rule : rule.type;
     const valid =
       type === 'array'
         ? Array.isArray(item)
@@ -226,6 +278,8 @@ export function workflowOutputError(step: WorkflowStep, output: unknown): string
           ? record(item)
           : typeof item === type;
     if (!valid) return `${key} must be ${type}`;
+    if (typeof rule === 'object' && !rule.enum.includes(String(item)))
+      return `${key} must be one of ${rule.enum.join(', ')}`;
   }
   return null;
 }

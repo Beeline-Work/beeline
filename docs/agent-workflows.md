@@ -2,7 +2,9 @@
 
 A skill describes work within one agent turn. A workflow describes the roles, states, and transitions that coordinate several turns. Definitions use the `WorkflowDefinition` v1 contract in `@beeline/api-contract/workflows`. The validator rejects unknown roles, unreachable states, unbounded cycles, missing timeout edges, and out-of-range retries or deadlines. Each agent step declares the required types of its structured output.
 
-The current change establishes the definition and output boundary. It does not schedule runs, wake agents, persist a run log, execute script hooks, or replace existing corner routing. Those operations require a server dispatcher and storage before a workflow definition can be used in a Room.
+Agents can write definitions during a Room or corner turn with `put_workflow`. `start_workflow_run` pins the latest revision and binds each role to a current agent member. An assigned step calls `complete_workflow_step` with its run ID, sequence, and structured output. The server records the result and queues the next role. `list_workflow_runs` reports state, deadline, and error; `read_workflow_run` returns prior outputs and the transition log. A schema error prompts the assigned agent once more. The background leader handles due schedules and deadlines, while Room events and GitHub check/merge events advance matching waits. A human gate uses the existing Room choice card. Run failures are recorded per run.
+
+This runtime does not execute arbitrary agent-authored scripts or replace existing corner and desk routing. Existing corners remain on their current lifecycle while workflows can be exercised separately. A choice card advances a workflow gate; it does not grant GitHub merge authority. Named script hooks and a native human health view remain separate work.
 
 ## Corner publishing example
 

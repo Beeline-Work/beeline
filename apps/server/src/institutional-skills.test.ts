@@ -14,6 +14,7 @@ import {
   loadWorkspaceSkill,
 } from './institutional-skills.js';
 import { PgliteDatabase } from './test-support.js';
+import { saveWorkflow } from './workflow-runs.js';
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000201';
 const ROOM = '20000000-0000-4000-8000-000000000201';
@@ -308,6 +309,34 @@ describe('merge-derived restricted Workspace procedures', () => {
       ).rows[0],
     ).toMatchObject({ markdown: '', source_deleted_at: expect.any(Date) });
     expect((await database.query(`SELECT 1 FROM institutional_review_findings`)).rowCount).toBe(0);
+  });
+
+  it('indexes and loads a workflow row with the contract wrapper, distinct from a procedure', async () => {
+    const contract = {
+      version: 1,
+      name: 'ship-release',
+      description: 'Ship a release safely',
+      roles: ['implementer'],
+      start: 'implement',
+      handoffs: {
+        implement: { role: 'implementer', requires: [], on: { done: 'land' } },
+        land: { kind: 'terminal', status: 'done' },
+      },
+    };
+    await saveWorkflow(database, command, { contract });
+    const context = await getInstitutionalContext(database, command);
+    expect(context.text).toContain('Workflow ship-release (start_workflow): Ship a release safely');
+    expect(context.text).not.toContain('Procedure ship-release');
+    const loaded = await loadWorkspaceSkill(database, command, {
+      agentId: OTHER_AGENT,
+      roomId: ROOM,
+      slug: 'ship-release',
+    });
+    expect(loaded.markdown).toContain('governs valid handoff() calls and loop caps');
+    expect(loaded.markdown).not.toContain('quoted, non-authoritative guidance');
+    expect(JSON.parse(loaded.markdown.match(/<workflow-contract>\n([\s\S]*)\n<\/workflow-contract>/)![1]!)).toEqual(
+      contract,
+    );
   });
 
   it('counts a revived stale procedure against the active cap', async () => {

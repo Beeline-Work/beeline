@@ -13,6 +13,9 @@ vi.mock('react-native', () => ({
     get OS() {
       return platformState.OS;
     },
+    get Version() {
+      return platformState.Version;
+    },
     select: (c: any) => c.default,
   },
 }));
@@ -23,7 +26,7 @@ vi.mock('./speech-locale', () => ({
   getDeviceSpeechLocale: () => 'en-GB',
 }));
 
-const platformState = vi.hoisted(() => ({ OS: 'android' }));
+const platformState = vi.hoisted(() => ({ OS: 'android', Version: 34 }));
 
 const mockMod = {
   start: vi.fn(),
@@ -32,6 +35,8 @@ const mockMod = {
   getPermissionsAsync: vi.fn(),
   requestPermissionsAsync: vi.fn(),
   supportsOnDeviceRecognition: vi.fn(),
+  getSupportedLocales: vi.fn(),
+  androidTriggerOfflineModelDownload: vi.fn(),
   addListener: vi.fn(),
 };
 
@@ -86,6 +91,12 @@ beforeEach(() => {
     canAskAgain: true,
   });
   mockMod.supportsOnDeviceRecognition.mockReturnValue(true);
+  mockMod.getSupportedLocales.mockResolvedValue({ locales: [], installedLocales: [] });
+  mockMod.androidTriggerOfflineModelDownload.mockResolvedValue({
+    status: 'download_success',
+    message: '',
+  });
+  platformState.Version = 34;
   vi.mocked(getRecognitionModule).mockReturnValue(mockMod as any);
 });
 
@@ -183,6 +194,60 @@ describe('useSpeechInput', () => {
       expect.objectContaining({ requiresOnDeviceRecognition: true, lang: 'en-GB' }),
     );
     platformState.OS = 'android';
+  });
+
+  it('uses the Android on-device recognizer, which punctuates, when the locale is installed', async () => {
+    mockMod.getSupportedLocales.mockResolvedValue({
+      locales: ['en-GB', 'en-US'],
+      installedLocales: ['en_gb'],
+    });
+    const { speech } = renderHook();
+    await act(async () => {
+      await speech().start();
+    });
+    expect(mockMod.start).toHaveBeenCalledWith(
+      expect.objectContaining({ requiresOnDeviceRecognition: true, addsPunctuation: true }),
+    );
+    expect(mockMod.androidTriggerOfflineModelDownload).not.toHaveBeenCalled();
+  });
+
+  it('keeps the Android platform recognizer and requests the model on Android 14+', async () => {
+    mockMod.getSupportedLocales.mockResolvedValue({ locales: [], installedLocales: ['en-US'] });
+    const { speech } = renderHook();
+    await act(async () => {
+      await speech().start();
+    });
+    expect(mockMod.start).toHaveBeenCalledWith(
+      expect.objectContaining({ requiresOnDeviceRecognition: false }),
+    );
+    expect(mockMod.androidTriggerOfflineModelDownload).toHaveBeenCalledWith({ locale: 'en-GB' });
+  });
+
+  it('does not request the model on Android 13, where the download opens a dialog', async () => {
+    platformState.Version = 33;
+    const { speech } = renderHook();
+    await act(async () => {
+      await speech().start();
+    });
+    expect(mockMod.start).toHaveBeenCalledWith(
+      expect.objectContaining({ requiresOnDeviceRecognition: false }),
+    );
+    expect(mockMod.androidTriggerOfflineModelDownload).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the Android platform recognizer when the on-device one rejects the locale', async () => {
+    mockMod.getSupportedLocales.mockResolvedValue({ locales: [], installedLocales: ['en-GB'] });
+    const { speech } = renderHook();
+    await act(async () => {
+      await speech().start();
+    });
+    await act(async () => {
+      fireEvent('error', { error: 'language-not-supported' });
+      fireEvent('end');
+    });
+    expect(mockMod.start).toHaveBeenLastCalledWith(
+      expect.objectContaining({ requiresOnDeviceRecognition: false }),
+    );
   });
 
   it('maps native volume changes to the mic activity range', async () => {

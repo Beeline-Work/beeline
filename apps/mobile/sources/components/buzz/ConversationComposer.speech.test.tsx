@@ -2,6 +2,7 @@ import * as React from 'react';
 // @ts-expect-error No renderer declarations in this workspace.
 import { act, create } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getDeviceSpeechLocale } from '@/buzz/speech-locale';
 
 // Synchronous mock for react-native.
 const platformSetter = vi.hoisted(() => {
@@ -223,6 +224,24 @@ describe('listening flow', () => {
         contextualStrings: ['Niglet', 'Emberus', 'Formatting voice'],
       }),
     );
+  });
+
+  it('dictates through the Android on-device recognizer, which punctuates, when its model is installed', async () => {
+    const withLocales = mockMod as typeof mockMod & { getSupportedLocales?: unknown };
+    withLocales.getSupportedLocales = vi
+      .fn()
+      .mockResolvedValue({ locales: [], installedLocales: [getDeviceSpeechLocale()] });
+    try {
+      const { renderer } = render();
+      await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+      await act(async () => {});
+
+      expect(mockMod.start).toHaveBeenCalledWith(
+        expect.objectContaining({ addsPunctuation: true, requiresOnDeviceRecognition: true }),
+      );
+    } finally {
+      delete withLocales.getSupportedLocales;
+    }
   });
 
   it('shows interim transcript once, inside the input in provisional styling', async () => {

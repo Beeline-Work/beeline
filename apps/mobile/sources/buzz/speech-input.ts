@@ -41,6 +41,38 @@ const MAX_RESTARTS = 10;
 // Native volume spans roughly -2 (silent) through 10 (loud). Anything above
 // the documented silence floor counts as speech activity.
 const SPEECH_VOLUME_FLOOR = 0;
+// Android 14 downloads a speech model silently; Android 13 opens a dialog.
+const ANDROID_SILENT_MODEL_DOWNLOAD_API = 34;
+
+function sameLocale(a: string, b: string): boolean {
+  return a.replace(/_/g, '-').toLowerCase() === b.replace(/_/g, '-').toLowerCase();
+}
+
+/**
+ * Android punctuates only through its on-device recognizer, which rejects a
+ * locale whose model is not installed. Report whether the model is there, and
+ * ask for a missing one once where that download needs no dialog.
+ */
+async function androidOnDeviceModelInstalled(
+  m: SpeechRecognitionInterface,
+  locale: string,
+  modelRequestedRef: { current: boolean },
+): Promise<boolean> {
+  try {
+    const support = await m.getSupportedLocales?.({});
+    if (support?.installedLocales.some((installed) => sameLocale(installed, locale))) return true;
+    if (
+      !modelRequestedRef.current &&
+      Number(Platform.Version) >= ANDROID_SILENT_MODEL_DOWNLOAD_API
+    ) {
+      modelRequestedRef.current = true;
+      m.androidTriggerOfflineModelDownload?.({ locale }).catch(() => {});
+    }
+  } catch {
+    // The platform recognizer still works without punctuation.
+  }
+  return false;
+}
 
 /**
  * Hook wrapping platform speech recognition.
@@ -71,6 +103,8 @@ export function useSpeechInput(
   } | null>(null);
   const modRef = React.useRef<SpeechRecognitionInterface | null>(getRecognitionModule());
   const startAttemptRef = React.useRef(0);
+  const androidOnDeviceRef = React.useRef(false);
+  const androidModelRequestedRef = React.useRef(false);
   const capability: SpeechInputCapability =
     (Platform.OS === 'ios' || Platform.OS === 'android') && modRef.current
       ? 'available'
@@ -112,8 +146,8 @@ export function useSpeechInput(
       interimResults: true,
       continuous: true,
       // Android reports that an on-device recognizer exists even when the
-      // selected locale model is not installed. The library recommends the
-      // platform recognizer there unless installed locales were queried.
+      // selected locale model is not installed, so it is chosen per start
+      // from the installed locales instead (nativeStartOptions).
       requiresOnDeviceRecognition: Platform.OS === 'ios' && onDevice,
       addsPunctuation: true,
       iosTaskHint: 'dictation' as const,
@@ -122,6 +156,14 @@ export function useSpeechInput(
       ...(contextualKey ? { contextualStrings: contextualKey.split('\n') } : {}),
     };
   }, [contextualKey]);
+  // Android's recognizer is chosen per start from the installed models.
+  const nativeStartOptions = React.useCallback(
+    () =>
+      Platform.OS === 'android'
+        ? { ...startOptions, requiresOnDeviceRecognition: androidOnDeviceRef.current }
+        : startOptions,
+    [startOptions],
+  );
 
   const finishStopWithCapture = React.useCallback((pendingPartial: string) => {
     pendingPartialRef.current = '';
@@ -160,11 +202,11 @@ export function useSpeechInput(
     restartCountRef.current += 1;
     setVolumeLevel(0);
     try {
-      modRef.current?.start(startOptions);
+      modRef.current?.start(nativeStartOptions());
     } catch {
       doStop();
     }
-  }, [doStop, finishStopWithCapture, startOptions]);
+  }, [doStop, finishStopWithCapture, nativeStartOptions]);
 
   const armSilenceTimer = React.useCallback(() => {
     clearSilenceTimer();
@@ -232,6 +274,11 @@ export function useSpeechInput(
         setPartialText('');
         setVolumeLevel(0);
         return;
+      }
+      if (event.error === 'language-not-supported' && androidOnDeviceRef.current) {
+        // A model reported as installed can still be refused. The restart on
+        // `end` then listens through the platform recognizer instead.
+        androidOnDeviceRef.current = false;
       }
       // The library guarantees `end` after an error. Restart there so one
       // native failure cannot trigger duplicate recognizers from error+end.
@@ -309,6 +356,14 @@ export function useSpeechInput(
           return;
         }
       }
+      if (Platform.OS === 'android' && !androidOnDeviceRef.current) {
+        androidOnDeviceRef.current = await androidOnDeviceModelInstalled(
+          m,
+          startOptions.lang,
+          androidModelRequestedRef,
+        );
+        if (attempt !== startAttemptRef.current) return;
+      }
 
       setPartialText('');
       pendingPartialRef.current = '';
@@ -320,13 +375,13 @@ export function useSpeechInput(
       setState('listening');
       armSilenceTimer();
 
-      m.start(startOptions);
+      m.start(nativeStartOptions());
     } catch {
       setState('idle');
       listeningRef.current = false;
       clearSilenceTimer();
     }
-  }, [armSilenceTimer, capability, clearSilenceTimer, startOptions]);
+  }, [armSilenceTimer, capability, clearSilenceTimer, nativeStartOptions, startOptions.lang]);
 
   const stop = React.useCallback((): Promise<boolean | null> => {
     if (stopSettlementRef.current) return stopSettlementRef.current.promise;

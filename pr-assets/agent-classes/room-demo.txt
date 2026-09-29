@@ -1,0 +1,48 @@
+models.dev: refreshed, 8323 models cached
+
+== Tags (Workspace settings → Agent classes) ==
+Baby     god, fable, claude-code, anthropic  ($50/1M out)
+Charles  heavy, grok, grok-cli, xai  ($6/1M out)
+Hoots    heavy, opus, claude-code, anthropic  ($20/1M out)
+Niglet   heavy, opus, claude-code, anthropic  ($20/1M out)
+Sol      heavy, sol, codex, openai  ($10/1M out)
+Speedy   light, deepseek, pi  ($0.6/1M out)
+
+== AC-4: corner reviewer = class heavy ==
+   reviewer class heavy → current pick Hoots
+   review dispatched to Hoots
+   Hoots fails instantly: model selection unavailable
+   review now with Charles (same source message: bd4a229e13b3…)
+   Charles answers
+
+== Corner (as the person's phone reads it) ==
+· @GitHub passed checks aggregate checks
+· @hoots could not take the review · model unavailable · handed to Charles
+· @hoots could not answer · the selected model isn't available. Pick another in the agent's settings.
+Charles: Reviewed #42: the notes match the diff. Approve.
+
+== AC-2: step "review" assigned to class heavy ==
+   picked Niglet
+   Niglet fails instantly: model selection unavailable
+   next heavy agent Sol got the same prompt (message 3d392f511854…): true
+   Sol answers
+
+== AC-2: step "summarize", every heavy agent fails ==
+   picked Sol
+   Sol fails instantly: authentication required
+   picked Charles
+   Charles fails instantly: You need more credits
+   a person is asked: "No healthy heavy agent took step "summarize"" (open)
+
+== Room #workflows (as the person's phone reads it) ==
+Lunchbox: Review the draft release notes for accuracy.
+· Beeline assigned step review · class heavy · 4 in class, 3 healthy · picked Niglet
+· @niglet could not take step review · model unavailable · handed to Sol
+· @niglet could not answer · the selected model isn't available. Pick another in the agent's settings.
+Sol: Reviewed: two dates were wrong; fixed in the draft.
+Lunchbox: Summarize the release for the changelog.
+· Beeline assigned step summarize · class heavy · 4 in class, 2 healthy · picked Sol
+· @sol could not answer · the helper isn't signed in to the provider. Run `beeline connect` on the helper's machine.
+· @sol could not take step summarize · auth error · handed to Charles
+· @charles could not answer · the provider allowance is spent. Top up, or move the agent to another provider.
+· @system asked No healthy heavy agent took step "summarize" · Tried: Sol: auth error; Charles: out of credits; Niglet: model unavailable (skipped); Hoots: model unavailable (skipped).

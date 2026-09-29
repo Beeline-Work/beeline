@@ -1,8 +1,8 @@
 import React, { useCallback, useState } from 'react';
-import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { RoomWorkflowListResult, RoomWorkflowView } from '@beeline/api-contract/phone';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { Typography } from '@/constants/Typography';
@@ -11,12 +11,105 @@ import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { Modal } from '@/modal/ModalManager';
 import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
+import { MonoButton } from '@/components/buzz/MonoHull';
 
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
 const LAST_RUN = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+
+/**
+ * A workflow step addressed to a class of agents (a tier or a tag) rather
+ * than one agent: the server picks a healthy member of the class, fails over
+ * inside the class, and asks a person here when the class is exhausted.
+ */
+function ClassStepForm({ roomId }: { roomId: string }) {
+  const { theme } = useUnistyles();
+  const [agentClass, setAgentClass] = useState('heavy');
+  const [role, setRole] = useState('review');
+  const [prompt, setPrompt] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [outcome, setOutcome] = useState<string | null>(null);
+  const run = async () => {
+    if (busy || !prompt.trim()) return;
+    setBusy(true);
+    setOutcome(null);
+    try {
+      const result = await monolithPhoneOperation('dispatchClassStep', {
+        roomId,
+        agentClass: agentClass.trim().toLowerCase(),
+        role: role.trim().toLowerCase(),
+        prompt: prompt.trim(),
+      });
+      setPrompt('');
+      setOutcome(
+        result.agentId
+          ? 'Sent to a healthy agent in the class. Follow it in the Room.'
+          : 'No healthy agent carries that class. The Room was asked what to do.',
+      );
+    } catch (caught) {
+      setOutcome(`! Could not run the step: ${String(caught)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <View style={styles.classStep} testID="class-step-form">
+      <Text style={styles.sectionLabel}>Run a step by class</Text>
+      <Text style={styles.notice}>
+        Name a tier (god, heavy, light) or a tag. A healthy agent in the class takes the step; if
+        it fails, the next one does.
+      </Text>
+      <View style={styles.classStepRow}>
+        <TextInput
+          accessibilityLabel="Class"
+          autoCapitalize="none"
+          autoCorrect={false}
+          onChangeText={setAgentClass}
+          placeholder="class"
+          placeholderTextColor={theme.buzz.dim}
+          style={[styles.input, styles.classStepField]}
+          testID="class-step-class"
+          value={agentClass}
+        />
+        <TextInput
+          accessibilityLabel="Role"
+          autoCapitalize="none"
+          autoCorrect={false}
+          onChangeText={setRole}
+          placeholder="role"
+          placeholderTextColor={theme.buzz.dim}
+          style={[styles.input, styles.classStepField]}
+          testID="class-step-role"
+          value={role}
+        />
+      </View>
+      <TextInput
+        accessibilityLabel="Step prompt"
+        multiline
+        onChangeText={setPrompt}
+        placeholder="What should the step do?"
+        placeholderTextColor={theme.buzz.dim}
+        style={[styles.input, styles.classStepPrompt]}
+        testID="class-step-prompt"
+        value={prompt}
+      />
+      <MonoButton
+        disabled={busy || !prompt.trim() || !agentClass.trim() || !role.trim()}
+        label={busy ? 'Running…' : 'Run step'}
+        loading={busy}
+        onPress={() => void run()}
+        testID="class-step-run"
+      />
+      {outcome ? (
+        <Text accessibilityRole="alert" style={styles.notice} testID="class-step-outcome">
+          {outcome}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
 
 /** Repository workflows remain a Room-manager action; this route is only an entry surface. */
 export default function RoomWorkflows() {
@@ -101,7 +194,8 @@ export default function RoomWorkflows() {
           <SurfaceGlyphLoader testID="workflows-loader" />
         </View>
       ) : (
-        <ScrollView contentContainerStyle={styles.content}>
+        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+          {roomId && !error ? <ClassStepForm roomId={roomId} /> : null}
           <Text style={styles.notice}>
             Dispatches run on {list?.defaultBranch ?? 'the repository default branch'}.
           </Text>
@@ -188,5 +282,24 @@ const styles = StyleSheet.create((theme) => ({
   },
   runGlyph: { color: theme.buzz.accent },
   empty: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.textMuted },
+  classStep: { gap: 8, paddingBottom: 16 },
+  classStepRow: { flexDirection: 'row', gap: 8 },
+  classStepField: { flex: 1 },
+  classStepPrompt: { minHeight: 88, paddingVertical: 8, textAlignVertical: 'top' },
+  sectionLabel: {
+    ...Typography.default(),
+    ...theme.buzz.type.sectionHead,
+    color: theme.buzz.textMuted,
+  },
+  input: {
+    ...Typography.default(),
+    ...theme.buzz.type.body,
+    minHeight: 40,
+    paddingHorizontal: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.buzz.border,
+    borderRadius: theme.buzz.radius,
+    color: theme.buzz.textPrimary,
+  },
   error: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.danger },
 }));

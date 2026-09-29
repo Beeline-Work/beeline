@@ -88,6 +88,23 @@ function fakeApi(configuration: { model?: string; effort?: string } = {}) {
 }
 
 describe('syncAgentModelCatalog', () => {
+  it('reports the harness and a configured provider for the automatic agent tags', async () => {
+    const runtimeDir = await scratchDir('buzzy-catalog-runtime-');
+    const command = await fakeCatalogAgent(ADVERTISED);
+    const api = fakeApi();
+    const result = await syncAgentModelCatalog({
+      api: api as never,
+      agent: { kind: 'goose', command, args: [] },
+      agentEnv: { PATH: process.env.PATH ?? '', HOME: runtimeDir, GOOSE_PROVIDER: 'OpenRouter' },
+      agentId: 'agent-1',
+      workspaceId: 'workspace-1',
+      runtimeDir,
+      log: vi.fn(),
+    });
+    expect(result).toBe('posted');
+    expect(api.posted[0]).toMatchObject({ harness: 'goose', provider: 'openrouter' });
+  });
+
   it('posts the harness catalog with the server selection on activation, once per change', async () => {
     const runtimeDir = await scratchDir('buzzy-catalog-runtime-');
     const command = await fakeCatalogAgent(ADVERTISED);

@@ -95,6 +95,20 @@ import {
   typedMentionHandles,
 } from './message-mentions.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
+import {
+  dispatchClassStep,
+  loadAgentClasses,
+  loadTierOverrides,
+  settleClassReviewer,
+  settleExhaustedClassChoice,
+} from './agent-classes.js';
+import {
+  isAgentTier,
+  MAX_CUSTOM_TAGS_PER_AGENT,
+  MODELS_DEV_URL,
+  normalizeAgentClass,
+  normalizeCustomAgentTag,
+} from '@beeline/api-contract/phone';
 import { needsYouExpiresAt, needsYouItems } from './needs-you.js';
 import { tombstoneInstitutionalMemoryForMessage } from './institutional-memory-shadow.js';
 import {
@@ -278,6 +292,7 @@ interface RoomRow {
   github_installation_id: string | null;
   github_events_enabled: boolean;
   reviewer_agent_id: string | null;
+  reviewer_class?: string | null;
   created_at: Date;
   updated_at: Date;
   leave_deletes_room?: boolean;
@@ -472,6 +487,7 @@ function roomHeader(row: RoomRow, publicOrigin: string) {
     ...(row.avatar ? { avatar: assetUrl(row.avatar, publicOrigin) } : {}),
     visibility: row.visibility,
     ...(row.reviewer_agent_id ? { reviewerAgentId: row.reviewer_agent_id } : {}),
+    ...(row.reviewer_class ? { reviewerClass: row.reviewer_class } : {}),
     archived: Boolean(row.archived_at),
     createdAt: unix(row.created_at),
     updatedAt: unix(row.updated_at),
@@ -2400,6 +2416,7 @@ export class PhoneService {
         avatar_generation_pending: boolean;
         can_change_yolo: boolean;
         can_manage_grants: boolean;
+        can_manage_classes: boolean;
         access_policy: unknown;
         owner_id: string | null;
         owner_name: string | null;
@@ -2413,7 +2430,8 @@ export class PhoneService {
                 setter.name yolo_set_by_name,a.access_policy,a.owner_id,
                 owner.name owner_name,owner.handle owner_handle,
                 a.owner_id=$3 can_change_yolo,
-                (a.owner_id=$3 OR viewer_membership.role IN ('owner','admin')) can_manage_grants
+                (a.owner_id=$3 OR viewer_membership.role IN ('owner','admin')) can_manage_grants,
+                viewer_membership.role IN ('owner','admin') can_manage_classes
          FROM agents a
          JOIN memberships agent_membership ON agent_membership.identity_id=a.agent_id
            AND agent_membership.workspace_id=$2 AND agent_membership.room_id IS NULL
@@ -2460,6 +2478,8 @@ export class PhoneService {
     );
     const workPage = recentWork.rows.slice(0, 5);
     const lastWork = workPage.at(-1);
+    const classes = (await loadAgentClasses(this.database, workspaceId, [agentId])).get(agentId)
+      ?.classes;
     return {
       workspaceId,
       ...(config?.avatar_generation_id ? { avatarGenerationId: config.avatar_generation_id } : {}),
@@ -2543,6 +2563,9 @@ export class PhoneService {
       ),
       // Grant decisions retain their separate owner-or-Workspace-manager axis.
       canManageGrants: config?.can_manage_grants ?? false,
+      ...(classes ? { classes } : {}),
+      // Custom tags and tier overrides are Workspace-admin only, never the owner's.
+      canManageClasses: config?.can_manage_classes ?? false,
       watchFilters: [],
     };
   }
@@ -3273,6 +3296,22 @@ export class PhoneService {
         )) as Output<Name>;
       case 'answerChoice':
         return (await this.answerChoice(input as Input<'answerChoice'>, viewerId)) as Output<Name>;
+      case 'dispatchClassStep':
+        return (await this.dispatchClassStep(
+          input as Input<'dispatchClassStep'>,
+          viewerId,
+        )) as Output<Name>;
+      case 'readWorkspaceAgentClasses':
+        return (await this.readWorkspaceAgentClasses(
+          (input as Input<'readWorkspaceAgentClasses'>).workspaceId,
+          viewerId,
+        )) as Output<Name>;
+      case 'setAgentCustomTag':
+        await this.setAgentCustomTag(input as Input<'setAgentCustomTag'>, viewerId);
+        return undefined as Output<Name>;
+      case 'setModelTierOverride':
+        await this.setModelTierOverride(input as Input<'setModelTierOverride'>, viewerId);
+        return undefined as Output<Name>;
       case 'skipChoice':
         return (await this.skipChoice(input as Input<'skipChoice'>, viewerId)) as Output<Name>;
       case 'createWorkspace':
@@ -5268,7 +5307,11 @@ export class PhoneService {
     ).rows[0];
     if (!existing) throw new Error('room not found');
     if (existing.parent_id) {
-      if (input.visibility !== undefined || input.reviewerAgentId !== undefined) {
+      if (
+        input.visibility !== undefined ||
+        input.reviewerAgentId !== undefined ||
+        input.reviewerClass !== undefined
+      ) {
         throw new Error('room lifecycle cannot target a corner');
       }
       await this.renameCorner(input.roomId, input.name, viewerId);
@@ -5277,6 +5320,12 @@ export class PhoneService {
     const room = await this.requireTopLevelRoom(input.roomId);
     await this.requireWorkspaceManager(room.workspace_id, viewerId);
     const name = input.name === undefined ? undefined : requireRoomSlug(input.name);
+    const reviewerClass =
+      input.reviewerClass === undefined || input.reviewerClass === null
+        ? input.reviewerClass
+        : normalizeAgentClass(input.reviewerClass);
+    if (reviewerClass && input.reviewerAgentId)
+      throw new Error('choose a reviewer agent or a reviewer class, not both');
     await this.database.transaction(async (database) => {
       if (name !== undefined)
         await reserveRoomName(database, room.workspace_id, name, input.roomId);
@@ -5302,6 +5351,8 @@ export class PhoneService {
         `UPDATE rooms
          SET name=COALESCE($2,name),visibility=COALESCE($3,visibility),
              reviewer_agent_id=CASE WHEN $4::boolean THEN $5 ELSE reviewer_agent_id END,
+             reviewer_class=CASE WHEN $6::boolean THEN $7
+               WHEN $4::boolean THEN NULL ELSE reviewer_class END,
              updated_at=now()
          WHERE id=$1`,
         [
@@ -5310,8 +5361,13 @@ export class PhoneService {
           input.visibility ?? null,
           input.reviewerAgentId !== undefined,
           input.reviewerAgentId ?? null,
+          reviewerClass !== undefined,
+          reviewerClass ?? null,
         ],
       );
+      // A class reviewer is picked now (a random healthy member of the class)
+      // so the Room shows who reviews next; each review re-checks health.
+      if (reviewerClass) await settleClassReviewer(database, input.roomId);
       if (
         input.reviewerAgentId !== undefined &&
         input.reviewerAgentId !== current?.reviewer_agent_id
@@ -5341,7 +5397,7 @@ export class PhoneService {
             [input.roomId, input.reviewerAgentId],
           );
       }
-      if (input.reviewerAgentId !== undefined)
+      if (input.reviewerAgentId !== undefined || reviewerClass !== undefined)
         await reconcileConfiguredCornerReviewers(database, input.roomId);
       if (input.visibility && input.visibility !== current?.visibility) {
         if (input.visibility === 'public')
@@ -6139,12 +6195,144 @@ export class PhoneService {
     });
   }
   private async answerChoice(input: Input<'answerChoice'>, viewerId: string) {
-    return this.database.transaction((database) =>
-      answerRoomChoice(database, {
+    return this.database.transaction(async (database) => {
+      const answered = await answerRoomChoice(database, {
         choiceId: input.choiceId,
         optionId: input.optionId,
         viewerId,
+      });
+      await settleExhaustedClassChoice(database, {
+        choiceId: input.choiceId,
+        optionId: input.optionId,
+      });
+      return answered;
+    });
+  }
+  private async dispatchClassStep(input: Input<'dispatchClassStep'>, viewerId: string) {
+    if (!(await this.hasRoomAccess(input.roomId, viewerId))) throw new Error('room access denied');
+    await this.assertRoomIsWritable(input.roomId, viewerId);
+    return this.database.transaction((database) =>
+      dispatchClassStep(database, {
+        roomId: input.roomId,
+        requesterId: viewerId,
+        agentClass: input.agentClass,
+        role: input.role,
+        prompt: input.prompt,
+        runKey: input.runKey,
+        timeoutSeconds: input.timeoutSeconds,
+        messageId: messageId(),
       }),
+    );
+  }
+  private async readWorkspaceAgentClasses(
+    workspaceId: string,
+    viewerId: string,
+  ): Promise<Output<'readWorkspaceAgentClasses'>> {
+    await this.requireWorkspaceManager(workspaceId, viewerId);
+    const [classes, identities, overrides, registry] = await Promise.all([
+      loadAgentClasses(this.database, workspaceId),
+      this.database.query<{ id: string; name: string; handle: string | null }>(
+        `SELECT identity.id,COALESCE(NULLIF(identity.name,''),'An agent') name,identity.handle
+         FROM memberships member
+         JOIN identities identity ON identity.id=member.identity_id AND identity.kind='agent'
+         WHERE member.workspace_id=$1 AND member.room_id IS NULL AND member.removed_at IS NULL
+         ORDER BY lower(identity.name),identity.id`,
+        [workspaceId],
+      ),
+      loadTierOverrides(this.database, workspaceId),
+      this.database.query<{ fetched_at: Date | null; model_count: number }>(
+        `SELECT fetched_at,model_count FROM model_registry_state WHERE singleton`,
+      ),
+    ]);
+    const agents = identities.rows.flatMap((row) => {
+      const entry = classes.get(row.id);
+      return entry
+        ? [
+            {
+              agentId: row.id,
+              name: row.name,
+              ...(row.handle ? { handle: row.handle } : {}),
+              ...(entry.model ? { model: entry.model } : {}),
+              classes: entry.classes,
+            },
+          ]
+        : [];
+    });
+    const unclassified = new Map<string, string[]>();
+    for (const agent of agents) {
+      if (!agent.classes.unclassified) continue;
+      const key = agent.classes.provider
+        ? `${agent.classes.provider}/${agent.model ?? 'unknown'}`
+        : (agent.model ?? 'unknown model');
+      unclassified.set(key, [...(unclassified.get(key) ?? []), agent.name]);
+    }
+    const state = registry.rows[0];
+    return {
+      workspaceId,
+      registry: {
+        source: MODELS_DEV_URL,
+        ...(state?.fetched_at ? { fetchedAt: unix(state.fetched_at) } : {}),
+        modelCount: state?.model_count ?? 0,
+      },
+      agents,
+      overrides,
+      unclassified: [...unclassified].map(([key, agentNames]) => ({ key, agentNames })),
+    };
+  }
+  private async setAgentCustomTag(input: Input<'setAgentCustomTag'>, viewerId: string) {
+    await this.requireWorkspaceManager(input.workspaceId, viewerId);
+    const tag = normalizeCustomAgentTag(input.tag);
+    if (typeof input.present !== 'boolean') throw new Error('present is required');
+    const agent = await this.database.query(
+      `SELECT 1 FROM memberships member
+       JOIN identities identity ON identity.id=member.identity_id AND identity.kind='agent'
+       WHERE member.workspace_id=$1 AND member.room_id IS NULL AND member.identity_id=$2
+         AND member.removed_at IS NULL`,
+      [input.workspaceId, input.agentId],
+    );
+    if (!agent.rowCount) throw new Error('agent not found in workspace');
+    if (!input.present) {
+      await this.database.query(
+        `DELETE FROM agent_custom_tags WHERE workspace_id=$1 AND agent_id=$2 AND tag=$3`,
+        [input.workspaceId, input.agentId, tag],
+      );
+      return;
+    }
+    const count = await this.database.query<{ count: string }>(
+      `SELECT count(*) FROM agent_custom_tags WHERE workspace_id=$1 AND agent_id=$2`,
+      [input.workspaceId, input.agentId],
+    );
+    if (Number(count.rows[0]?.count ?? 0) >= MAX_CUSTOM_TAGS_PER_AGENT)
+      throw new Error(`an agent carries at most ${MAX_CUSTOM_TAGS_PER_AGENT} custom tags`);
+    await this.database.query(
+      `INSERT INTO agent_custom_tags(workspace_id,agent_id,tag,created_by) VALUES($1,$2,$3,$4)
+       ON CONFLICT DO NOTHING`,
+      [input.workspaceId, input.agentId, tag, viewerId],
+    );
+  }
+  private async setModelTierOverride(input: Input<'setModelTierOverride'>, viewerId: string) {
+    await this.requireWorkspaceManager(input.workspaceId, viewerId);
+    if (input.scope !== 'model' && input.scope !== 'family') throw new Error('scope is invalid');
+    const key = typeof input.key === 'string' ? input.key.trim().toLowerCase() : '';
+    const valid =
+      input.scope === 'family'
+        ? /^[a-z0-9][a-z0-9-]{0,31}$/.test(key)
+        : /^[a-z0-9._-]{1,64}\/[a-z0-9._:/-]{1,200}$/.test(key);
+    if (!valid) throw new Error('override key is invalid');
+    if (input.tier === null) {
+      await this.database.query(
+        `DELETE FROM model_tier_overrides WHERE workspace_id=$1 AND scope=$2 AND key=$3`,
+        [input.workspaceId, input.scope, key],
+      );
+      return;
+    }
+    if (!isAgentTier(input.tier)) throw new Error('tier is invalid');
+    await this.database.query(
+      `INSERT INTO model_tier_overrides(workspace_id,scope,key,tier,set_by,set_at)
+       VALUES($1,$2,$3,$4,$5,now())
+       ON CONFLICT(workspace_id,scope,key) DO UPDATE SET tier=EXCLUDED.tier,set_by=EXCLUDED.set_by,
+         set_at=now()`,
+      [input.workspaceId, input.scope, key, input.tier, viewerId],
     );
   }
   private async skipChoice(input: Input<'skipChoice'>, viewerId: string) {
@@ -8643,6 +8831,10 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'removeRoomRepository',
   'listRoomWorkflows',
   'dispatchRoomWorkflow',
+  'dispatchClassStep',
+  'readWorkspaceAgentClasses',
+  'setAgentCustomTag',
+  'setModelTierOverride',
   'approveCornerMerge',
   'getAuthCapabilities',
   'beginGitHubIdentityBind',

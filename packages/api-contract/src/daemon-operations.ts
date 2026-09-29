@@ -877,6 +877,10 @@ export type PostAgentModelCatalogInput = AgentInput & {
   readonly selection?: { readonly model?: string; readonly effort?: string };
   /** Startup validation verdict for the persisted selection. */
   readonly unavailable?: 'model' | 'effort' | 'selection';
+  /** The helper's agent kind (`claude`, `codex`, `pi`, …), for the automatic harness tag. */
+  readonly harness?: string;
+  /** The provider the harness is configured for, when it names one (e.g. goose). */
+  readonly provider?: string;
 };
 export type PostCornerLifecycleInput = CornerInput & {
   readonly status: string;

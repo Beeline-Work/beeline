@@ -399,15 +399,21 @@ export async function loadConnectModelCatalog(
 
 /**
  * How long the wizard waits for a harness to say what it can do before it
- * gives up and asks instead. A configured harness answers the ACP handshake
- * plus `session/new` in about three seconds on a warm machine (measured:
- * goose 1.41 against a live OpenRouter config, 3.0s, nearly all of it
- * `session/new` loading extensions). Twelve seconds is four times that — room
- * for a cold binary on a loaded machine — and still short enough that nobody
- * reads the wizard as hung. There is exactly one attempt: a harness that
- * needs longer than this is one the person should simply be asked about.
+ * gives up and asks instead — the WHOLE read, handshake through live
+ * validation of every advertised model (`loadConnectModelCatalog` exercises
+ * each candidate through the harness's real setter before offering it, one
+ * ACP round trip apiece). A configured harness answers the ACP handshake plus
+ * `session/new` in about three seconds on a warm machine (measured: goose
+ * 1.41 against a live OpenRouter config, 3.0s, nearly all of it `session/new`
+ * loading extensions); claude-agent-acp's per-model validation adds roughly a
+ * further second per numbered model on top of that (measured: claude-agent-acp
+ * 0.84.0, ~12 models, ~13s of validation alone). Twenty-five seconds covers
+ * that with room for a cold binary on a loaded machine, while a spinner
+ * covers the wait itself so nobody reads it as hung. There is exactly one
+ * attempt: a harness that needs longer than this is one the person should
+ * simply be asked about.
  */
-export const CONNECT_PROBE_TIMEOUT_MS = 12_000;
+export const CONNECT_PROBE_TIMEOUT_MS = 25_000;
 
 /**
  * A catalog is evidence that a harness is already configured only when the
@@ -548,17 +554,24 @@ export async function collectConnectWizard(
     return (picked ?? '').trim();
   };
   // One bounded attempt, and never a hard failure: a harness that times out,
-  // refuses or crashes is simply one the wizard has to ask about.
+  // refuses or crashes is simply one the wizard has to ask about. The read
+  // itself can take several seconds (claude-agent-acp live-validates every
+  // advertised model), so a spinner covers the wait — without it, the wizard
+  // sits at "Choose harness" with nothing on screen and reads as hung.
   const probe = async (
     candidate: (typeof CONNECT_HARNESSES)[number],
   ): Promise<ConnectModelCatalog | undefined> => {
+    const spinner = clack.spinner({ output: clackPromptOutput() });
+    spinner.start(brass(`Checking ${connectHarnessLabel(candidate)}…`));
     try {
       const catalog = await loadModels({
         harness: candidate,
         timeoutMs: CONNECT_PROBE_TIMEOUT_MS,
       });
+      spinner.stop();
       return connectProbeFoundModels(catalog) ? catalog : undefined;
     } catch {
+      spinner.stop();
       return undefined;
     }
   };

@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   fetchAgentModelCatalog,
   filterAgentModelCatalog,
@@ -6,6 +9,16 @@ import {
   modelCatalogProbeEnvironment,
 } from './model-catalog.js';
 import type { AgentModelConfigOption } from './model-types.js';
+
+const temporaryDirectories: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryDirectories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
+  );
+});
 
 describe('model catalog probe environment', () => {
   it('gives Goose a disposable profile instead of loading operator extensions', () => {
@@ -205,6 +218,61 @@ describe('bounded catalog probe', () => {
       ),
     ).rejects.toThrow(/timed out/i);
     // The default is 60s per request; the bound is what ends this one.
+    expect(Date.now() - started).toBeLessThan(15_000);
+  });
+
+  it('bounds the live per-model validation pass, not just the handshake', async () => {
+    // A harness that answers the handshake instantly but never answers
+    // `session/set_config_option` — connect's discovery probe validates every
+    // advertised model through that call before offering it (`fetchAgentModelCatalog`
+    // -> `filterModelChoicesByLiveValidation`), each with its own 60s default
+    // timeout. A `timeoutMs` passed to the probe is documented as a "whole-read
+    // deadline", but only bounded the handshake: three unanswered models used
+    // to cost up to 180s (or hang forever) instead of failing at the deadline.
+    const directory = await mkdtemp(resolve(tmpdir(), 'beeline-catalog-probe-'));
+    temporaryDirectories.push(directory);
+    const script = resolve(directory, 'silent-setter-agent.mjs');
+    await writeFile(
+      script,
+      `#!/usr/bin/env node
+import { createInterface } from 'node:readline';
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+createInterface({ input: process.stdin }).on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+  } else if (message.method === 'session/new') {
+    send({
+      jsonrpc: '2.0',
+      id: message.id,
+      result: {
+        sessionId: 'session-1',
+        configOptions: [
+          {
+            id: 'model',
+            category: 'model',
+            currentValue: 'model-a',
+            options: [{ id: 'model-a' }, { id: 'model-b' }, { id: 'model-c' }],
+          },
+        ],
+      },
+    });
+  }
+  // session/set_config_option: never answered.
+});
+`,
+    );
+    const started = Date.now();
+    await expect(
+      fetchAgentModelCatalog(
+        { command: process.execPath, args: [script] },
+        {},
+        undefined,
+        { timeoutMs: 500 },
+      ),
+    ).rejects.toThrow(/timed out/i);
+    // Three unanswered setter calls at the 60s-per-request default would take
+    // 180s; the whole-read deadline is what must end this one instead.
     expect(Date.now() - started).toBeLessThan(15_000);
   });
 });

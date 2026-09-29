@@ -101,6 +101,42 @@ describe('parseAdvertisedConfigOptions', () => {
       'vendor/model-4.5',
     ]);
   });
+  it('groups by family and sorts a nameless-in-its-id alias by the version its name carries', () => {
+    // Captured verbatim from claude-agent-acp's session/new (2026-09-29): the
+    // Opus/Sonnet/Fable families interleave in the raw feed, and `opus`/
+    // `sonnet`/`haiku` are aliases whose id carries no version at all — only
+    // their name does ("opus" == "Opus 5.5"). A flat digit sort over ids
+    // stranded every alias at the end of the WHOLE list, not just its family.
+    expect(
+      sortModelChoicesNewestFirst([
+        { id: 'default', name: 'Default (recommended)' },
+        { id: 'opus', name: 'Opus 5.5' },
+        { id: 'claude-fable-5-1', name: 'Fable 5.1' },
+        { id: 'sonnet', name: 'Sonnet 5.5' },
+        { id: 'haiku', name: 'Haiku 4.5' },
+        { id: 'claude-sonnet-5', name: 'Sonnet 5' },
+        { id: 'claude-opus-5', name: 'Opus 5' },
+        { id: 'claude-fable-5', name: 'Fable 5' },
+        { id: 'claude-opus-4-8', name: 'Opus 4.8' },
+        { id: 'claude-opus-4-7', name: 'Opus 4.7' },
+        { id: 'claude-opus-4-6', name: 'Opus 4.6' },
+        { id: 'claude-sonnet-4-6', name: 'Sonnet 4.6' },
+      ]).map((choice) => choice.id),
+    ).toEqual([
+      'default',
+      'opus',
+      'claude-opus-5',
+      'claude-opus-4-8',
+      'claude-opus-4-7',
+      'claude-opus-4-6',
+      'claude-fable-5-1',
+      'claude-fable-5',
+      'sonnet',
+      'claude-sonnet-5',
+      'claude-sonnet-4-6',
+      'haiku',
+    ]);
+  });
   it('captures every axis, unfiltered, from a raw session/new result', () => {
     const options = parseAdvertisedConfigOptions(claudeLikeRaw());
     expect(options.map((option) => option.id)).toEqual(['model', 'effort', 'mode']);

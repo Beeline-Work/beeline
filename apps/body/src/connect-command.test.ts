@@ -326,6 +326,30 @@ describe('connect wizard', () => {
     expect(fixture.calls.some((call) => /Agent name|soul/i.test(call))).toBe(false);
   });
 
+  it('shows a spinner while probing the chosen harness, so the wait after "Choose harness" is never silent', async () => {
+    // claude-agent-acp's live model validation can take several real seconds
+    // (`CONNECT_PROBE_TIMEOUT_MS`'s docblock); with nothing on screen between
+    // picking the harness and the next prompt, that wait reads as a hang.
+    const fixture = promptFixture(['claude', 'claude-opus-5']);
+    spinner.start.mockClear();
+    spinner.stop.mockClear();
+    const seam = catalogSeam({
+      configured: { options: [{ id: 'claude-opus-5', name: 'Opus 5' }] },
+    });
+
+    await collectConnectWizard(
+      fixture.prompts,
+      seam.load,
+      { read: async () => undefined, save: async () => {} },
+      process.env,
+      async () => undefined,
+      { detect: installed('codex', 'claude'), announce: () => {} },
+    );
+
+    expect(spinner.start.mock.calls).toEqual([['Checking Claude…']]);
+    expect(spinner.stop).toHaveBeenCalledTimes(1);
+  });
+
   it('still asks model and effort for a Goose that already holds a provider', async () => {
     const fixture = promptFixture(['anthropic/claude-sonnet-4.5', 'high']);
     const announced: string[] = [];

@@ -142,7 +142,7 @@ export default function BuzzOnboarding() {
   const [namingIdentity, setNamingIdentity] = useState<Identity | null>(null);
   const [namingClient, setNamingClient] = useState<BuzzClient | null>(null);
   const [nameInput, setNameInput] = useState('');
-  // The You step (name + face): published once the monolith identity exists,
+  // The You step (handle + face): published once the monolith identity exists,
   // cleared by the crossfade into the app. `face` is a face already on record.
   const [faceStep, setFaceStep] = useState<OnboardingFaceStep | null>(null);
   const loading = loadingAction !== null;
@@ -154,7 +154,7 @@ export default function BuzzOnboarding() {
 
   /**
    * After a monolith sign-in the identity exists; before the app opens the
-   * person confirms their name and chooses their face. A person who already
+   * person sees their GitHub handle and chooses their face. A person who already
    * chose (a returning sign-in on a new device) goes straight in — both live
    * in Settings.
    */
@@ -750,9 +750,7 @@ export default function BuzzOnboarding() {
           currentFace={faceStep.face}
           handle={faceStep.handle}
           name={faceStep.name}
-          onConfirm={async ({ name, face }) => {
-            if (name !== faceStep.name)
-              await monolithPhoneOperation('updatePersonProfile', { name });
+          onConfirm={async ({ face }) => {
             await monolithPhoneOperation('updateIdentityFace', { faceId: face });
           }}
           onEntered={() => {

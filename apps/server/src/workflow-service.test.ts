@@ -114,6 +114,19 @@ async function fixture() {
 }
 
 describe('workflow run handoff', () => {
+  it('keeps the built-in code-corner in shadow mode', async () => {
+    const { db, parent } = await fixture();
+    try {
+      await db.query(`UPDATE rooms SET parent_id=$1 WHERE id=$2`, [OTHER_ROOM, ROOM]);
+      await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lane)
+        VALUES($1,$2,'Code work','code')`, [ROOM, AUTHOR]);
+      expect((await listWorkflows(db, ROOM)).find((item) => item.name === 'code-corner'))
+        .toMatchObject({ layer: 'built-in' });
+      await expect(db.transaction((tx) => startWorkflowRun(tx, ROOM, 'code-corner',
+        { implementer: AUTHOR, reviewer: REVIEWER }, parent))).rejects.toThrow('shadow mode');
+      expect((await db.query(`SELECT 1 FROM workflow_runs WHERE room_id=$1`, [ROOM])).rowCount).toBe(0);
+    } finally { await db.close(); }
+  });
   it('reports an unknown workspace skill before a draft is saved', async () => {
     const { db, parent } = await fixture();
     try {
@@ -234,30 +247,30 @@ describe('workflow run handoff', () => {
         [ROOM, AUTHOR, JSON.stringify({ checks: 'pending', pr: { headSha: 'new-head' } })],
       );
       await db.query(`UPDATE rooms SET parent_id=$2 WHERE id=$1`, [ROOM, OTHER_ROOM]);
-      const run = await db.transaction((tx) => startWorkflowRun(tx, ROOM, 'code-corner',
-        { implementer: AUTHOR, reviewer: REVIEWER }, parent));
-      const commandId = (await db.query<{ command_id: string }>(
-        `SELECT command_id FROM workflow_run_assignments WHERE run_id=$1`, [run.runId],
-      )).rows[0]!.command_id;
-      const command = (await db.query<typeof parent>(
-        `SELECT * FROM agent_commands WHERE id=$1`, [commandId],
-      )).rows[0]!;
-      await db.transaction((tx) => completeWorkflowStep(tx, ROOM, run.runId, 0,
-        { head: 'old-head' }, 'success', command));
+      const runId = '44444444-4444-4444-8444-444444444444';
+      const builtIn = await readWorkflow(db, ROOM, 'code-corner');
+      await db.query(`INSERT INTO workflow_runs
+        (id,room_id,name,revision,layer,definition,roles,state,status,source_command_id)
+        VALUES($1,$2,'code-corner',1,'built-in',$3::jsonb,$4::jsonb,'ci','waiting',$5)`,
+      [runId, ROOM, JSON.stringify(builtIn.definition),
+        JSON.stringify({ implementer: AUTHOR, reviewer: REVIEWER }), parent.id]);
       expect(await db.transaction((tx) => signalWorkflowEvent(tx, ROOM,
         'check-completed', { sha: 'old-head', outcome: 'success' }, 'old-event'))).toBe(0);
-      expect((await readWorkflowRun(db, ROOM, run.runId)).run.state).toBe('ci');
+      expect((await readWorkflowRun(db, ROOM, runId)).run.state).toBe('ci');
       expect(await db.transaction((tx) => signalWorkflowEvent(tx, ROOM,
         'check-completed', { sha: 'new-head', outcome: 'success' }, 'new-event'))).toBe(1);
-      expect((await readWorkflowRun(db, ROOM, run.runId)).run.state).toBe('review');
+      expect((await readWorkflowRun(db, ROOM, runId)).run.state).toBe('review');
     } finally { await db.close(); }
   });
   it('pins the definition, validates output, and wakes the next role without a tag', async () => {
     const { db, parent } = await fixture();
     try {
+      const mapped = { ...definition, states: { ...definition.states,
+        review: { ...definition.states.review, step: { ...definition.states.review.step,
+          input: { change: '$.write.outputs' } } } } };
       expect(
         await db.transaction((tx) =>
-          putWorkflowDefinition(tx, ROOM, AUTHOR, definition, undefined, parent),
+          putWorkflowDefinition(tx, ROOM, AUTHOR, mapped, undefined, parent),
         ),
       ).toEqual({ name: 'review-demo', revision: 1 });
       const run = await db.transaction((tx) =>
@@ -291,6 +304,12 @@ describe('workflow run handoff', () => {
         )
       ).rows[0]!;
       expect(next.agent_id).toBe(REVIEWER);
+      const wake = (await db.query<{ text: string }>(
+        `SELECT m.text FROM workflow_run_assignments a JOIN agent_commands c ON c.id=a.command_id
+         JOIN messages m ON m.id=c.source_message_id WHERE a.run_id=$1 AND a.sequence=1`,
+        [run.runId],
+      )).rows[0]!.text;
+      expect(wake).toContain('"change":{"head":"abc"}');
       expect((await readWorkflowRun(db, ROOM, run.runId)).log.map((event) => event.event)).toEqual([
         'entered',
         'success',

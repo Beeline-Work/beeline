@@ -66,7 +66,7 @@ function validStep(value: unknown, roles: Set<string>): value is WorkflowStep {
   if (value.input !== undefined &&
     (!record(value.input) || Object.keys(value.input).length > 32 ||
       !Object.entries(value.input).every(([key, source]) => slug.test(key) &&
-        typeof source === 'string' && /^\$\.[a-z][a-z0-9_-]{0,63}$/.test(source))))
+        typeof source === 'string' && /^\$\.[a-z][a-z0-9_-]{0,63}(?:\.outputs)?$/.test(source))))
     return false;
   if (
     typeof value.role !== 'string' ||
@@ -426,8 +426,10 @@ export function checkWorkflowDefinition(value: unknown, options?: {
     const nextFields = new Set(fields);
     if (state.kind === 'step') {
       for (const key of Object.keys(state.step.output)) nextFields.add(key);
+      nextFields.add(`${name}.outputs`);
     } else if (state.kind === 'parallel') {
       for (const step of state.steps) for (const key of Object.keys(step.output)) nextFields.add(key);
+      nextFields.add(`${name}.outputs`);
     }
     const cost = state.kind === 'step'
       ? { duration: state.step.timeoutSeconds * (state.step.retries + 1) * 1000,

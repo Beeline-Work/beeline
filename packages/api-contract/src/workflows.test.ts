@@ -221,4 +221,18 @@ describe('workflow definition boundary', () => {
       expect.objectContaining({ rule: 'field-flow', state: 'wait', path: '$.states.wait.match.value' }),
     ]));
   });
+
+  it('checks state output mappings before the next agent receives them', () => {
+    const mapped = { ...definition, states: { ...definition.states,
+      review: { ...definition.states.review, step: { ...definition.states.review.step,
+        input: { change: '$.implement.outputs' } } } } };
+    expect(checkWorkflowDefinition(mapped).ok).toBe(true);
+    const missing = { ...mapped, states: { ...mapped.states,
+      review: { ...mapped.states.review, step: { ...mapped.states.review.step,
+        input: { change: '$.unknown.outputs' } } } } };
+    expect(checkWorkflowDefinition(missing).errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ rule: 'field-flow', state: 'review',
+        path: '$.states.review.step.input.change' }),
+    ]));
+  });
 });

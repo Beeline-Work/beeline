@@ -46,6 +46,16 @@ const runView = (run: Run) => ({
 const WORKFLOW_RUN_TURN_CAP = 100;
 const WORKSPACE_DAILY_TURN_CAP = 1_000;
 
+function workflowSource(context: Record<string, unknown>, source: string): unknown {
+  if (!source.startsWith('$.')) return source;
+  const path = source.slice(2);
+  if (!path.endsWith('.outputs')) return context[path];
+  const state = path.slice(0, -'.outputs'.length);
+  const value = context[state];
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  return 'outputs' in value ? value.outputs : undefined;
+}
+
 async function reserveWorkflowTurn(db: SqlDatabase, run: Run): Promise<void> {
   const runBudget = await db.query(
     `UPDATE workflow_runs SET turns_used=turns_used+1 WHERE id=$1 AND turns_used<$2 RETURNING id`,
@@ -123,7 +133,7 @@ async function wake(
     verb: 'started workflow step',
     object: `${run.name}: ${run.state} (${skill})`,
     consequence: `Run ${run.id}, sequence ${run.sequence}. Input ${JSON.stringify(Object.fromEntries(
-      Object.entries(input ?? {}).map(([key, source]) => [key, run.context[source.slice(2)]]),
+      Object.entries(input ?? {}).map(([key, source]) => [key, workflowSource(run.context, source)]),
     ))}. Return structured output matching ${JSON.stringify(output)} with complete_workflow_step.`,
   });
   const command = await createAgentCommand(db, {
@@ -425,6 +435,8 @@ export async function startWorkflowRun(
   layer?: WorkflowLayer,
 ) {
   const saved = await readWorkflow(db, roomId, name, layer);
+  if (saved.layer === 'built-in' && saved.name === 'code-corner')
+    throw new Error('code-corner is in shadow mode and cannot start a live workflow run');
   const active = (
     await db.query<{ count: number }>(
       `SELECT count(*)::int count FROM workflow_runs WHERE room_id=$1 AND status IN ('running','waiting')`,
@@ -809,7 +821,7 @@ export async function completeWorkflowStep(
   });
   if (!error && output && typeof output === 'object' && !Array.isArray(output)) {
     const fields = output as Record<string, unknown>;
-    if (state.kind === 'step') run.context[run.state] = output;
+    if (state.kind === 'step') run.context[run.state] = { outputs: output };
     for (const key of Object.keys(step.output)) run.context[key] = fields[key];
   }
   run.source_command_id = parent.id;
@@ -917,7 +929,7 @@ export async function signalWorkflowEvent(
       if (!current || payload.sha !== current) continue;
     }
     const matches = Object.entries(state.match ?? {}).every(([key, expected]) => {
-      const resolved = expected.startsWith('$.') ? run.context[expected.slice(2)] : expected;
+      const resolved = workflowSource(run.context, expected);
       return payload[key] === resolved;
     });
     if (!matches) continue;

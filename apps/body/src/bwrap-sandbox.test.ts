@@ -38,6 +38,7 @@ import {
   isSandboxPolicy,
   harnessHomeStateDirs,
   sandboxMountPlan,
+  siblingAgentMaskPaths,
   wrapAgentCommand,
 } from './bwrap-sandbox.js';
 import { trustySquireStorePath } from './trusty-squire-storage.js';
@@ -506,6 +507,46 @@ describe('credential masks — readable is usable, so known stores are absent', 
     expect(masks.map((mask) => mask.path)).toEqual(
       expect.arrayContaining(['/home/op/.config/gh', '/home/op/.ssh']),
     );
+  });
+});
+
+describe('sibling agent masks — same Unix account, so file modes cannot isolate agents alone', () => {
+  it('masks every other agent directory under the same agents root, sorted', () => {
+    const masks = siblingAgentMaskPaths('/state/beeline/agents/aaa', (root) => {
+      expect(root).toBe('/state/beeline/agents');
+      return ['aaa', 'bbb', 'ccc'];
+    });
+    expect(masks).toEqual([
+      { path: '/state/beeline/agents/bbb', kind: 'dir' },
+      { path: '/state/beeline/agents/ccc', kind: 'dir' },
+    ]);
+  });
+
+  it('never masks its own directory, case-insensitively', () => {
+    const masks = siblingAgentMaskPaths('/state/beeline/agents/AAA', () => ['aaa', 'AAA', 'bbb']);
+    expect(masks.map((mask) => mask.path)).not.toContain('/state/beeline/agents/AAA');
+    expect(masks.map((mask) => mask.path)).not.toContain('/state/beeline/agents/aaa');
+    expect(masks.map((mask) => mask.path)).toEqual(['/state/beeline/agents/bbb']);
+  });
+
+  it('degrades to no masks when the agents root does not exist (default lister)', () => {
+    const masks = siblingAgentMaskPaths('/does/not/exist/beeline/agents/aaa');
+    expect(masks).toEqual([]);
+  });
+
+  it('lists the real agents root by default when no lister is injected', () => {
+    const root = mkdtempSync(resolve(tmpdir(), 'sibling-agents-'));
+    const own = resolve(root, 'aaa');
+    const sibling = resolve(root, 'bbb');
+    mkdirSync(own, { recursive: true });
+    mkdirSync(sibling, { recursive: true });
+    writeFileSync(resolve(root, 'not-a-dir'), 'x');
+    try {
+      const masks = siblingAgentMaskPaths(own);
+      expect(masks).toEqual([{ path: sibling, kind: 'dir' }]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -1517,5 +1558,77 @@ server.listen(socket, () => {
       await stopFakeMcpBroker(mcpBroker);
       await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Agent-to-agent isolation: the exact incident this closes. Every Beeline
+// agent on a host shares one Unix account, so a real ACP child's sandbox is
+// the only thing that can stop it reading a SIBLING agent's `runtime.json`
+// (signing `secretKeyHex`, `daemonToken`) the way a Room agent did on
+// 2026-09-29 with a plain `cat agents/*/runtime.json`.
+// ---------------------------------------------------------------------------
+
+liveDescribe('agent A cannot read agent B in a real sandboxed command', () => {
+  let agentsRoot: string;
+  let agentA: string;
+  let agentB: string;
+
+  beforeAll(() => {
+    // Deliberately OUTSIDE /tmp: the sandbox's own private `--tmpfs /tmp`
+    // would otherwise hide agent B for a reason that has nothing to do with
+    // the mask under test (only `cwd` — agent A — gets restored there).
+    agentsRoot = mkdtempSync(resolve(homedir(), '.beeline-sibling-agents-proof-'));
+    agentA = resolve(agentsRoot, 'a'.repeat(64));
+    agentB = resolve(agentsRoot, 'b'.repeat(64));
+    mkdirSync(agentA, { recursive: true, mode: 0o700 });
+    mkdirSync(agentB, { recursive: true, mode: 0o700 });
+    writeFileSync(
+      resolve(agentA, 'runtime.json'),
+      JSON.stringify({ agent: { secretKeyHex: 'AGENT-A-SECRET-KEY-HEX' } }),
+      { mode: 0o600 },
+    );
+    writeFileSync(
+      resolve(agentB, 'runtime.json'),
+      JSON.stringify({ agent: { secretKeyHex: 'AGENT-B-SECRET-KEY-HEX' } }),
+      { mode: 0o600 },
+    );
+  });
+
+  afterAll(() => {
+    rmSync(agentsRoot, { recursive: true, force: true });
+  });
+
+  const readBoth = (maskPaths: ReturnType<typeof siblingAgentMaskPaths>) => {
+    const wrapped = wrapAgentCommand({
+      bwrapPath: bwrap.path!,
+      spec: { mode: 'readonly', cwd: agentA, maskPaths },
+      command: '/bin/sh',
+      args: [
+        '-c',
+        `cat ${JSON.stringify(resolve(agentA, 'runtime.json'))}; echo ---; ` +
+          `cat ${JSON.stringify(resolve(agentB, 'runtime.json'))} 2>&1`,
+      ],
+    });
+    return spawnSync(wrapped.command, wrapped.args, { encoding: 'utf8' });
+  };
+
+  it('the vulnerability: an unmasked Room sandbox can still read a sibling agent runtime.json', () => {
+    // 0600 file modes do nothing here — both files are owned by the same
+    // account the sandboxed child runs as, and the whole-home ro-bind makes
+    // every path on the host readable absent an explicit mask. This is the
+    // exact shape of the read Hoots ran against production.
+    const result = readBoth([]);
+    expect(result.stdout).toContain('AGENT-A-SECRET-KEY-HEX');
+    expect(result.stdout).toContain('AGENT-B-SECRET-KEY-HEX');
+  });
+
+  it('the fix: siblingAgentMaskPaths hides every other agent while leaving A intact', () => {
+    const result = readBoth(siblingAgentMaskPaths(agentA));
+    const [own, rest] = result.stdout.split('---\n');
+    expect(own).toContain('AGENT-A-SECRET-KEY-HEX');
+    expect(rest ?? '').not.toContain('AGENT-B-SECRET-KEY-HEX');
+    expect(result.stdout).not.toContain('AGENT-B-SECRET-KEY-HEX');
+    expect((rest ?? '') + result.stderr).toMatch(/No such file or directory/);
   });
 });

@@ -58,7 +58,12 @@ import {
   codegraphMcpServer,
   prepareCodegraphIndex,
 } from './codegraph.js';
-import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
+import {
+  credentialMaskPaths,
+  harnessHomeStateDirs,
+  siblingAgentMaskPaths,
+  wrapAgentCommand,
+} from './bwrap-sandbox.js';
 import { harnessIdentityLabel } from './cursor-acp-bridge.js';
 import type { BodyConfig } from './config.js';
 import { type DaemonApiClient } from './daemon-api-client.js';
@@ -78,7 +83,7 @@ import {
   parseAdvertisedConfigOptions,
 } from './model-config.js';
 import type { AgentRuntimeRecord } from './runtime.js';
-import { runtimeIdentity } from './runtime.js';
+import { runtimeDirectory, runtimeIdentity } from './runtime.js';
 import {
   assembleSessionPrompt,
   assembleTurnPrompt,
@@ -931,7 +936,12 @@ export class MonolithCornerTurnLoop {
           cargoTargetDir,
           ...registryMcpHostBindPaths(configuration.registryMcpRoutes),
         ],
-        maskPaths: credentialMaskPaths(this.options.config.sandboxMaskPaths, operatorHome),
+        maskPaths: [
+          ...credentialMaskPaths(this.options.config.sandboxMaskPaths, operatorHome),
+          ...siblingAgentMaskPaths(
+            runtimeDirectory(this.options.runtime.supervisorRoot, this.options.runtime.agent.publicKey),
+          ),
+        ],
       },
       command,
       args: agentArgs,

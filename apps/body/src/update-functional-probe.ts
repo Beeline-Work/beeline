@@ -4,7 +4,12 @@ import { resolve } from 'node:path';
 import { AcpClient } from './acp.js';
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import { openRouterRoutingCacheDir, openRouterRoutingInput } from './openrouter-routing.js';
-import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
+import {
+  credentialMaskPaths,
+  harnessHomeStateDirs,
+  siblingAgentMaskPaths,
+  wrapAgentCommand,
+} from './bwrap-sandbox.js';
 import { harnessIdentityLabel } from './cursor-acp-bridge.js';
 import type { BodyConfig } from './config.js';
 import { explainEmptyAgentTurn, isAccountOrProviderRefusal } from './empty-turn.js';
@@ -386,7 +391,10 @@ export async function runUpdateFunctionalProbe(input: {
           cwd,
           harnessStateDirs: stateDirs,
           harnessHomeStateDirs: homeStateDirs,
-          maskPaths: credentialMaskPaths(input.config.sandboxMaskPaths, operatorHome),
+          maskPaths: [
+            ...credentialMaskPaths(input.config.sandboxMaskPaths, operatorHome),
+            ...siblingAgentMaskPaths(input.runtimeDir),
+          ],
           ...(tmpDir ? { tmpDir } : {}),
         },
         command,

@@ -101,10 +101,10 @@ on:
 permissions:
   contents: read
 
-# One build per ref. A newer push supersedes the whole matrix, never one
-# platform of it.
+# Visual comparisons build two source refs from one harness branch. Keep those
+# runs separate while retaining the usual newer-push cancellation.
 concurrency:
-  group: desktop-${{ github.ref }}
+  group: desktop-${{ github.ref }}-${{ inputs.visual_fixture && inputs.source_ref || 'default' }}
   cancel-in-progress: true
 
 defaults:

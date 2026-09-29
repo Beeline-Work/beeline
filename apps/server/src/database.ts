@@ -167,7 +167,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 11;
+export const REQUIRED_SCHEMA_VERSION = 12;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -1290,6 +1290,14 @@ ALTER TABLE workspace_skills ADD CONSTRAINT workspace_skills_anchor_stale_reason
   CHECK (anchor_stale_reason IS NULL OR length(anchor_stale_reason)<=300);
 CREATE INDEX IF NOT EXISTS workspace_skills_catalog_idx
   ON workspace_skills(workspace_id,state,updated_at DESC,id);
+-- A workflow row is a skill row: a declarative contract, saved/discovered/loaded
+-- through the exact same table, index, and load_workspace_skill path as a
+-- procedure. repository/target_commit stay populated with '' for a workflow
+-- row, which is not anchored to a repo+commit the way a procedure is.
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'procedure';
+ALTER TABLE workspace_skills DROP CONSTRAINT IF EXISTS workspace_skills_kind_check;
+ALTER TABLE workspace_skills ADD CONSTRAINT workspace_skills_kind_check
+  CHECK (kind IN ('procedure','workflow'));
 
 CREATE TABLE IF NOT EXISTS workspace_skill_versions (
   skill_id uuid NOT NULL REFERENCES workspace_skills(id) ON DELETE CASCADE,
@@ -1319,6 +1327,9 @@ ALTER TABLE workspace_skill_versions
     (source_deleted_at IS NULL AND octet_length(convert_to(markdown,'UTF8')) BETWEEN 1 AND 32768) OR
     (source_deleted_at IS NOT NULL AND markdown='')
   );
+-- A workflow save is synchronous, inside one tool call, never a queued
+-- institutional_memory_jobs row: `save_workflow` writes NULL here.
+ALTER TABLE workspace_skill_versions ALTER COLUMN source_job_id DROP NOT NULL;
 
 CREATE TABLE IF NOT EXISTS institutional_review_findings (
   id uuid PRIMARY KEY,

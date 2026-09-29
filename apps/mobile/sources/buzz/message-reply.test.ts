@@ -43,7 +43,7 @@ describe('message replies', () => {
     });
   });
 
-  it('maps narration to its turn final while quoting the selected excerpt', () => {
+  it('keeps activity out of the reply body when its turn has a parent message', () => {
     const activity = {
       id: 'activity-id',
       text: '',
@@ -70,7 +70,6 @@ describe('message replies', () => {
       },
     };
     const parent = activityReplyParent(activity, [activity, final]);
-    const excerpt = agentActivityReplyExcerpt(activity);
 
     expect(parent).toBe(final);
     const target = activityMessageReplyTarget(activity, [activity, final], {
@@ -82,12 +81,11 @@ describe('message replies', () => {
       preview: 'Agent activity',
     });
     expect(target).toMatchObject({
-      preview: excerpt,
-      quotedExcerpt: excerpt,
+      preview: final.text,
       reference: final.reference,
     });
     expect(prepareMessageReply('Why?', target)).toEqual({
-      text: '> A heads-up from the turn.\n\n@sol Why?',
+      text: '@sol Why?',
       reference: final.reference,
       agentPubkey: 'sol-agent-id',
     });
@@ -123,7 +121,7 @@ describe('message replies', () => {
     expect(activityReplyParent(activity, [latestAgentMessage, activity])).toBe(latestAgentMessage);
   });
 
-  it('turns working tool activity with no parent into an addressed quoted steer', () => {
+  it('sends an addressed message without copying working tool activity into the body', () => {
     const activity = {
       id: 'tool-id',
       text: '',
@@ -148,10 +146,9 @@ describe('message replies', () => {
         authorPubkey: 'sol-agent-id',
         isAgent: true,
         preview: excerpt,
-        quotedExcerpt: excerpt,
       }),
     ).toEqual({
-      text: '> Run tests · npm test\n\n@sol Check the mobile suite too.',
+      text: '@sol Check the mobile suite too.',
       agentPubkey: 'sol-agent-id',
     });
   });

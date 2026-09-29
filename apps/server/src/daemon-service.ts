@@ -6467,17 +6467,23 @@ export class DaemonService {
     // converges it: the lane UPDATE below is then a no-op (its own WHERE
     // already requires lane='no_code'), the branch UPDATE fills the gap, and
     // a corner that finished cleanly the first time re-runs the same writes
-    // as harmless no-ops, so a retry (or a genuinely new human ask on an
-    // already-upgraded corner) always converges instead of throwing.
+    // as harmless no-ops, so an interrupted retry always converges instead
+    // of throwing. A corner that is ALREADY fully upgraded (branch already
+    // recorded) is a different case entirely: it must not restart the
+    // corner every time the tool is called again, whether from a stale tool
+    // mount, a retry after success, or a model mistake, so it short-circuits
+    // to an idempotent no-op below before any resume/complete bookkeeping.
+    let alreadyUpgraded = false;
     await this.database.transaction(async (db) => {
       const target = (
         await db.query<{
           lane: string;
+          feature_branch: string | null;
           repository_key: string | null;
           repository_remote: string | null;
           repository_resolution: string;
         }>(
-          `SELECT fact.lane,parent.repository_key,parent.repository_remote,parent.repository_resolution
+          `SELECT fact.lane,fact.feature_branch,parent.repository_key,parent.repository_remote,parent.repository_resolution
            FROM corner_facts fact
            JOIN rooms corner ON corner.id=fact.corner_id
            JOIN rooms parent ON parent.id=corner.parent_id
@@ -6489,6 +6495,10 @@ export class DaemonService {
       if (!target) throw new Error('corner not found');
       if (target.lane !== 'no_code' && target.lane !== 'code')
         throw new Error(`corner lane upgrade requires no_code, found ${target.lane}`);
+      if (target.lane === 'code' && target.feature_branch) {
+        alreadyUpgraded = true;
+        return;
+      }
       if (
         target.repository_resolution !== 'repository' ||
         !target.repository_key ||
@@ -6589,7 +6599,12 @@ export class DaemonService {
         [cornerId, agentId, command.turn_request_id],
       );
     });
-    this.live.publish({ type: 'invalidate', roomId: cornerId, reason: 'corner', agentId });
+    // An already-upgraded corner changed nothing above (no resume, no
+    // completion, no invalidate): the caller gets the same idempotent
+    // success shape as a real upgrade, but nothing here restarts the corner
+    // or re-delivers the triggering command a second time.
+    if (!alreadyUpgraded)
+      this.live.publish({ type: 'invalidate', roomId: cornerId, reason: 'corner', agentId });
     return { cornerId, lane: 'code' as const };
   }
   private async ensureMembership(input: Input<'ensureAgentMembership'>, agentId: string) {

@@ -356,18 +356,32 @@ it('rejects a lane transition on a corner that never was no_code or code', async
   await expect(upgrade(research)).rejects.toThrow('requires no_code, found research');
 });
 
-it('converges a second upgrade of an already fully-upgraded corner instead of throwing', async () => {
-  // A fully upgraded corner (lane='code', feature_branch already recorded)
-  // is not a second, refused transition - a retry, or a genuinely new human
-  // ask on the same corner, converges instead of hitting the old
-  // "requires no_code, found code" dead end.
+it('answers a second upgrade of an already fully-upgraded corner with an idempotent no-op, never a restart', async () => {
+  // A corner that is ALREADY fully upgraded (lane='code', feature_branch
+  // already recorded) is not the interrupted-retry case this fix targets:
+  // a stale tool mount, a retry after success, or a model mistake calling
+  // upgrade_corner_to_code again must get a harmless idempotent result, not
+  // a fresh resume that re-delivers the request and restarts the corner's
+  // session a second time.
   const cornerId = await humanCorner(CODE_ROOM);
   const first = await upgrade(cornerId);
   const branch = `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`;
   expect(first).toEqual({ cornerId, lane: 'code' });
   expect(await lane(cornerId)).toBe('code');
 
-  const second = await upgrade(cornerId);
+  const beforeCommands = (
+    await db.query<{ id: string; state: string; action: string }>(
+      `SELECT id,state,action FROM agent_commands WHERE room_id=$1 ORDER BY created_at,id`,
+      [cornerId],
+    )
+  ).rows;
+  const command = await commissioned(cornerId);
+
+  const second = await daemon.execute(
+    'upgradeCornerLane',
+    { cornerId, requestId: command.turnRequestId, generationId: 'g1' },
+    AGENT,
+  );
 
   expect(second).toEqual({ cornerId, lane: 'code' });
   expect(
@@ -382,6 +396,22 @@ it('converges a second upgrade of an already fully-upgraded corner instead of th
   expect(
     (await daemon.execute('listCornerBriefRevisions', { cornerId }, AGENT)).revisions,
   ).toHaveLength(1);
+  // No new resume command, and the command that authorized this call is
+  // left exactly as it was: untouched, not completed, nothing to deliver.
+  const afterCommands = (
+    await db.query<{ id: string; state: string; action: string }>(
+      `SELECT id,state,action FROM agent_commands WHERE room_id=$1 ORDER BY created_at,id`,
+      [cornerId],
+    )
+  ).rows;
+  expect(afterCommands).toEqual([
+    ...beforeCommands,
+    { id: command.id, state: 'claimed', action: 'input' },
+  ]);
+  // Exactly the one 'resume' row the FIRST upgrade created - none added now.
+  const resumeCountBefore = beforeCommands.filter((row) => row.action === 'resume').length;
+  const resumeCountAfter = afterCommands.filter((row) => row.action === 'resume').length;
+  expect(resumeCountAfter).toBe(resumeCountBefore);
 });
 
 it('converges a corner stuck with lane=code but no recorded feature branch', async () => {

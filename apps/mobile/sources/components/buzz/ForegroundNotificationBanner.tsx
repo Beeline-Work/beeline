@@ -1,6 +1,6 @@
 import * as React from 'react';
 import * as Notifications from 'expo-notifications';
-import { Animated, AppState, PanResponder, Pressable, Text, View } from 'react-native';
+import { Animated, AppState, PanResponder, Platform, Pressable, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StyleSheet } from 'react-native-unistyles';
 import { getOpenBuzzChannelId } from '@/buzz/open-room-tracker';
@@ -74,7 +74,7 @@ export function ForegroundNotificationBanner({
   }, [present]);
 
   React.useEffect(() => {
-    if (!__DEV__ || typeof window === 'undefined') return;
+    if (!__DEV__ || Platform.OS !== 'web' || typeof window === 'undefined') return;
     // Expo does not emit notification-received events on web. Keep a development-only
     // bridge so the real responsive app can exercise this native-first surface in Chrome.
     const receive = (event: Event) => {

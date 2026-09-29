@@ -4730,7 +4730,7 @@ export function BuzzChatSurface({
   }, [commitDesktopWorkPane, hasLiveDesktopCorners, workPaneWindowClass]);
 
   useEffect(() => {
-    if (!desktopExperience || typeof window === 'undefined') return;
+    if (!desktopExperience || Platform.OS !== 'web' || typeof window === 'undefined') return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (isDesktopWorkPaneCommand(event)) {
         event.preventDefault();

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Platform, Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import Animated, {
   Easing,
@@ -96,7 +96,7 @@ export function DesktopWorkspaceRail({
   }, [activeIndex, open, railX, reducedMotion]);
 
   React.useEffect(() => {
-    if (!open || typeof window === 'undefined') return;
+    if (!open || Platform.OS !== 'web' || typeof window === 'undefined') return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();

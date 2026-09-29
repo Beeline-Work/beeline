@@ -396,8 +396,15 @@ jobs:
         if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && inputs.variant == 'preview' && inputs.visual_fixture
         shell: pwsh
         run: |
-          $exe = Join-Path $env:GITHUB_WORKSPACE 'apps/mobile/src-tauri/target/x86_64-pc-windows-msvc/release/beeline-desktop.exe'
-          if (!(Test-Path $exe)) { throw "No preview executable at $exe" }
+          $bundle = Join-Path $env:GITHUB_WORKSPACE 'apps/mobile/src-tauri/target/x86_64-pc-windows-msvc/release/bundle'
+          $installer = Get-ChildItem (Join-Path $bundle 'nsis') -Filter '*.exe' | Select-Object -First 1
+          if (!$installer) { throw "No NSIS preview installer under $bundle" }
+          $installDir = Join-Path $env:RUNNER_TEMP 'BeelinePreview'
+          $install = Start-Process -FilePath $installer.FullName -ArgumentList '/S', "/D=$installDir" -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Preview installer exited $($install.ExitCode)" }
+          $exe = Get-ChildItem $installDir -Recurse -Filter '*.exe' |
+            Where-Object { $_.Name -notmatch 'uninstall' } | Select-Object -First 1
+          if (!$exe) { throw "No installed preview executable under $installDir" }
           $frames = Join-Path $env:RUNNER_TEMP 'desktop-ui-smoke'
           New-Item -ItemType Directory -Force -Path $frames | Out-Null
           $fixtureScript = Join-Path $env:GITHUB_WORKSPACE '.desktop-visual-harness/scripts/desktop-ui-fixture.mjs'
@@ -412,7 +419,7 @@ jobs:
           $service = 'app.usebeeline.desktop.preview'
           cmdkey "/generic:buzzy.monolith.identity.v1.$service" '/user:buzzy.monolith.identity.v1' "/pass:$('a' * 64)" | Out-Null
           cmdkey "/generic:buzzy.monolith.refresh.v1.$service" '/user:buzzy.monolith.refresh.v1' '/pass:fixture-refresh' | Out-Null
-          $app = Start-Process -FilePath $exe -PassThru
+          $app = Start-Process -FilePath $exe.FullName -PassThru
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type -AssemblyName System.Drawing
           Start-Sleep -Seconds 5
@@ -430,8 +437,11 @@ jobs:
             Start-Sleep -Seconds 2
           }
           $app.Refresh()
-          "process-exited=$($app.HasExited)" | Set-Content (Join-Path $frames 'launch.txt')
+          $exitCode = if ($app.HasExited) { $app.ExitCode } else { 'running' }
+          "process-exited=$($app.HasExited) exit-code=$exitCode exe=$($exe.FullName)" |
+            Set-Content (Join-Path $frames 'launch.txt')
           Stop-Process -Id $fixture.Id -ErrorAction SilentlyContinue
+          if ($app.HasExited) { throw "Installed preview exited $exitCode during capture" }
 
       - name: Capture macOS preview launch frames
         if: runner.os == 'macOS' && github.event_name == 'workflow_dispatch' && inputs.variant == 'preview' && inputs.visual_fixture
@@ -439,6 +449,7 @@ jobs:
           set -euo pipefail
           app=$(find "apps/mobile/src-tauri/target/${{ matrix.target }}/release/bundle" -type d -name '*.app' -print -quit)
           test -n "$app"
+          app="$(cd "$(dirname "$app")" && pwd)/$(basename "$app")"
           frames="$RUNNER_TEMP/desktop-ui-smoke"
           mkdir -p "$frames"
           node .desktop-visual-harness/scripts/desktop-ui-fixture.mjs > "$frames/fixture-server.log" 2>&1 &
@@ -457,11 +468,17 @@ jobs:
             -T "$app/Contents/MacOS/beeline-desktop"
           open -n "$app"
           sleep 5
+          if ! pgrep -fl beeline-desktop > "$frames/launch.txt"; then
+            log show --last 2m --style compact --predicate 'process == "beeline-desktop"' \
+              > "$frames/process-log.txt" 2>&1 || true
+            echo '::error::Preview app exited before capture; inspect process-log.txt'
+            exit 1
+          fi
           for index in 0 1 2; do
             screencapture -x "$frames/frame-$index.png"
             sleep 2
           done
-          pgrep -fl beeline-desktop > "$frames/launch.txt" || true
+          pgrep -fl beeline-desktop > "$frames/launch.txt"
 
       - uses: actions/upload-artifact@v4
         if: always() && (runner.os == 'macOS' || runner.os == 'Windows') && github.event_name == 'workflow_dispatch' && inputs.variant == 'preview' && inputs.visual_fixture

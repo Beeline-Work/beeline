@@ -140,6 +140,35 @@ export type DaemonOperationMap = {
   >;
   /** Load one merge-derived restricted procedure after rechecking its source audience. */
   loadWorkspaceSkill: Operation<LoadWorkspaceSkillInput, LoadWorkspaceSkillResult>;
+  /** Validate and save a workflow contract as a `workspace_skills` row of `kind='workflow'`. */
+  saveWorkflow: Operation<
+    RoomInput & TurnOutputAuthority & { readonly contract: unknown },
+    { readonly slug: string; readonly version: number }
+  >;
+  /** Bind current Room members to a saved workflow's roles and start a run. */
+  startWorkflow: Operation<
+    RoomInput &
+      TurnOutputAuthority & {
+        readonly name: string;
+        readonly roleBindings: Readonly<Record<string, string>>;
+      },
+    { readonly runId: string; readonly state: string }
+  >;
+  /** Advance a run's current state; validated against its pinned contract. */
+  handoff: Operation<
+    RoomInput &
+      TurnOutputAuthority & {
+        readonly runId: string;
+        readonly outcome: string;
+        readonly contents: unknown;
+      },
+    { readonly runId: string; readonly state: string; readonly status?: 'done' | 'failed' }
+  >;
+  /** Retire a workflow; in-flight runs keep their pinned version. */
+  archiveWorkflow: Operation<
+    RoomInput & TurnOutputAuthority & { readonly name: string },
+    { readonly slug: string; readonly archived: boolean }
+  >;
   getAgentCommands: Operation<
     RoomInput,
     { readonly commandProtocol: 1; readonly commands: readonly AgentCommand[] }

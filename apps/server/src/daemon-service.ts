@@ -163,6 +163,7 @@ import {
 } from './institutional-memory-shadow.js';
 import { searchInstitutionalHistory } from './institutional-history.js';
 import { loadWorkspaceSkill } from './institutional-skills.js';
+import { archiveWorkflow, handoff, saveWorkflow, startWorkflow } from './workflow-runs.js';
 
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
@@ -360,6 +361,10 @@ export class DaemonService {
       'searchInstitutionalMemory',
       'searchInstitutionalHistory',
       'loadWorkspaceSkill',
+      'saveWorkflow',
+      'startWorkflow',
+      'handoff',
+      'archiveWorkflow',
     ]);
     if (
       !this.commandTransaction &&
@@ -765,6 +770,42 @@ export class DaemonService {
           this.database,
           this.authorizedCommand,
           input as Input<'loadWorkspaceSkill'>,
+        )) as Output<Name>;
+      case 'saveWorkflow':
+        if (!this.commandTransaction || !this.authorizedCommand) {
+          throw new Error('workflow save requires an active command');
+        }
+        return (await saveWorkflow(
+          this.database,
+          this.authorizedCommand,
+          input as Input<'saveWorkflow'>,
+        )) as Output<Name>;
+      case 'startWorkflow':
+        if (!this.commandTransaction || !this.authorizedCommand) {
+          throw new Error('workflow start requires an active command');
+        }
+        return (await startWorkflow(
+          this.database,
+          this.authorizedCommand,
+          input as Input<'startWorkflow'>,
+        )) as Output<Name>;
+      case 'handoff':
+        if (!this.commandTransaction || !this.authorizedCommand) {
+          throw new Error('workflow handoff requires an active command');
+        }
+        return (await handoff(
+          this.database,
+          this.authorizedCommand,
+          input as Input<'handoff'>,
+        )) as Output<Name>;
+      case 'archiveWorkflow':
+        if (!this.commandTransaction || !this.authorizedCommand) {
+          throw new Error('workflow archive requires an active command');
+        }
+        return (await archiveWorkflow(
+          this.database,
+          this.authorizedCommand,
+          input as Input<'archiveWorkflow'>,
         )) as Output<Name>;
       case 'getAgentCommands':
         return (await readAgentCommands(
@@ -6817,6 +6858,10 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   searchInstitutionalMemory: true,
   searchInstitutionalHistory: true,
   loadWorkspaceSkill: true,
+  saveWorkflow: true,
+  startWorkflow: true,
+  handoff: true,
+  archiveWorkflow: true,
   getDaemonBootstrap: true,
   getWorkspaceRoster: true,
   getRoomInbox: true,

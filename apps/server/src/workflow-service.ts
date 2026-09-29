@@ -405,6 +405,15 @@ export async function completeWorkflowStep(
     `UPDATE workflow_run_assignments SET status=$3,output=$4::jsonb WHERE run_id=$1 AND command_id=$2`,
     [runId, parent.id, error ? 'failed' : 'complete', JSON.stringify(output)],
   );
+  if (error && state.kind === 'parallel' && !state.on.failure) {
+    await log(db, run, 'failure', {
+      output,
+      error,
+      agentId: parent.agent_id,
+      commandId: parent.id,
+    });
+    return receipt({ state: run.state, status: run.status, error });
+  }
   if (!error && state.kind === 'parallel') {
     const assignments = await db.query<Assignment>(
       `SELECT sequence,slot,status,output,agent_id,attempts FROM workflow_run_assignments

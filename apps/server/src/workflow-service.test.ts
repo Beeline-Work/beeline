@@ -467,6 +467,61 @@ describe('workflow run handoff', () => {
     }
   });
 
+  it('fails one parallel assignment after its retry without leaving the join', async () => {
+    const { db, parent } = await fixture();
+    try {
+      const slot = (role: string, field: string) => ({
+        role, skill: `${role}-skill`, output: { [field]: 'string' }, timeoutSeconds: 60, retries: 0,
+      });
+      await db.transaction((tx) => putWorkflowDefinition(tx, ROOM, AUTHOR, {
+        ...definition,
+        start: 'analyze',
+        states: {
+          analyze: {
+            kind: 'parallel',
+            steps: [slot('author', 'head'), slot('reviewer', 'verdict')],
+            join: 'any',
+            deadlineSeconds: 120,
+            on: { success: 'done', deadline: 'stopped' },
+          },
+          stopped: { kind: 'terminal' },
+          done: { kind: 'terminal' },
+        },
+      }, undefined, parent));
+      const run = await db.transaction((tx) =>
+        startWorkflowRun(tx, ROOM, 'review-demo', { author: AUTHOR, reviewer: REVIEWER }, parent));
+      const commandFor = async (slotIndex: number) => {
+        const { command_id } = (await db.query<{ command_id: string }>(
+          `SELECT command_id FROM workflow_run_assignments WHERE run_id=$1 AND slot=$2`,
+          [run.runId, slotIndex],
+        )).rows[0]!;
+        return (await db.query<typeof parent>(
+          `SELECT * FROM agent_commands WHERE id=$1`, [command_id],
+        )).rows[0]!;
+      };
+      const invalid = async () => {
+        const command = await commandFor(0);
+        return db.transaction((tx) =>
+          completeWorkflowStep(tx, ROOM, run.runId, 0, { wrong: 1 }, 'success', command));
+      };
+      expect(await invalid()).toMatchObject({ state: 'analyze', status: 'running' });
+      expect(await invalid()).toMatchObject({ state: 'analyze', status: 'running' });
+      expect((await db.query<{ status: string }>(
+        `SELECT status FROM workflow_run_assignments WHERE run_id=$1 AND slot=0`, [run.runId],
+      )).rows[0]!.status).toBe('failed');
+      const reviewer = await commandFor(1);
+      expect(await db.transaction((tx) => completeWorkflowStep(
+        tx, ROOM, run.runId, 0, { verdict: 'approve' }, 'success', reviewer,
+      ))).toEqual({ state: 'done', status: 'complete' });
+      expect((await readWorkflowRun(db, ROOM, run.runId)).run.context.analyze).toEqual({
+        outputs: [{ verdict: 'approve' }],
+        missing: ['author'],
+      });
+    } finally {
+      await db.close();
+    }
+  });
+
   it('starts an event triggered run once for the same event id', async () => {
     const { db, parent } = await fixture();
     try {

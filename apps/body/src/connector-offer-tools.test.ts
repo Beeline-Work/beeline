@@ -48,7 +48,7 @@ describe('beeline-agent workbench_status + offer_connector (R5)', () => {
     const kinds = (tool.inputSchema.properties as { connectorType: { enum: string[] } }).connectorType
       .enum;
     expect(kinds).toContain('trusty-squire');
-    expect(kinds).toContain('google-gmail');
+    expect(kinds).not.toContain('google-gmail');
     expect(kinds).not.toContain('wallet');
     expect(kinds).toContain('tailscale');
   });

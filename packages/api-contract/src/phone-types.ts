@@ -272,6 +272,16 @@ export type RoomViewMessage = {
   readonly squireApproval?: SquireApprovalCardView;
   /** One connector offer: the agent reaches for a Workbench tool it needs (R5). */
   readonly connectorOffer?: ConnectorOfferCardView;
+  /** A connected app is needed to finish the Room request. Route details stay server-side. */
+  readonly appSignIn?: {
+    readonly appId: string;
+    readonly appKey: string;
+    readonly name: string;
+    readonly ownerId: string;
+    readonly agentId: string;
+    readonly status: 'pending' | 'connected';
+    readonly continuation?: string;
+  };
   /** One preference card: a lettered question or a Room poll. Never authority. */
   readonly choice?: ChoiceCardView;
   readonly targetBranch?: {

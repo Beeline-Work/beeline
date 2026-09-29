@@ -26,7 +26,7 @@ import { ObjectService } from './object-service.js';
 import { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { GitHubOperations } from './github-operations.js';
 import { createMonolithAuth } from './monolith-auth.js';
-import { GoogleOAuth } from './google-oauth.js';
+import { ComposioApps } from './composio-apps.js';
 import { McpRegistryClient } from './mcp-registry.js';
 import { RegistryMcpOAuth } from './registry-mcp-oauth.js';
 import { ReviewAccess } from './review-access.js';
@@ -227,18 +227,9 @@ async function main() {
     publicOrigin,
     mediaExpiryMediaMaximumBytes,
   );
-  const googleOAuth =
-    process.env.BEELINE_GOOGLE_CLIENT_ID &&
-    process.env.BEELINE_GOOGLE_CLIENT_SECRET &&
-    process.env.BEELINE_GOOGLE_TOKEN_KEY
-      ? new GoogleOAuth(
-          database,
-          process.env.BEELINE_GOOGLE_CLIENT_ID,
-          process.env.BEELINE_GOOGLE_CLIENT_SECRET,
-          publicOrigin,
-          process.env.BEELINE_GOOGLE_TOKEN_KEY,
-        )
-      : undefined;
+  const composio = process.env.BEELINE_COMPOSIO_API_KEY
+    ? new ComposioApps(process.env.BEELINE_COMPOSIO_API_KEY)
+    : undefined;
   const mcpRegistry = new McpRegistryClient();
   const registryMcpOAuth = new RegistryMcpOAuth(database, publicOrigin);
   const mediaExpiry = objectStorage
@@ -260,8 +251,9 @@ async function main() {
     false,
     enrichmentDatabase,
     objectService,
-    googleOAuth,
+    undefined,
     mcpRegistry,
+    composio,
   );
   const daemon = new DaemonService(
     database,
@@ -273,10 +265,11 @@ async function main() {
     process.env.LIVE_PAINT_DIAGNOSTICS === 'true',
     process.env.FLY_MACHINE_ID,
     github ? (input) => github!.prChecksStatus(input) : undefined,
-    googleOAuth,
+    undefined,
     institutionalMemory,
     mcpRegistry,
     registryMcpOAuth,
+    composio,
   );
   // The Google Play review link. Absent secret = the endpoint refuses like any
   // wrong secret; rotating the value revokes every future use of the link.
@@ -300,7 +293,6 @@ async function main() {
     enrichmentDatabase,
     jobsDatabase,
     databasePools: { app: database, enrichment: enrichmentDatabase, diagnostics: healthDatabase, jobs: jobsDatabase },
-    googleOAuth,
     registryMcpOAuth,
     healthDatabase,
     backgroundHealth: () => backgroundJobs.snapshot(),
@@ -350,8 +342,6 @@ async function main() {
         await backgroundJobs.run('media-expiry', () => mediaExpiry.runOnce(now));
         await backgroundJobs.run('maintenance', () => runMaintenance(jobsDatabase));
         await backgroundJobs.run('mention-notices', () => phone.flushPendingMentionNotices(now));
-        if (googleOAuth)
-          await backgroundJobs.run('google-oauth-expiry', () => googleOAuth.expireAttempts(jobsDatabase));
         await backgroundJobs.run('institutional-curator', () =>
           runInstitutionalCuratorCycle(jobsDatabase, institutionalMemory, new Date(now), {
             ...(institutionalAnchors ? { anchors: institutionalAnchors } : {}),

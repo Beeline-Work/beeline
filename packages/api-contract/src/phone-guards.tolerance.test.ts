@@ -380,6 +380,18 @@ describe('phone surface readers', () => {
     expect(invalid?.grantRequest?.sourceMessageId).toBeUndefined();
   });
 
+  it('retains the pending app sign-in card for the Room and rejects malformed authority', () => {
+    const appSignIn = { appId: roomId, appKey: 'slack', name: 'Slack',
+      ownerId: identity.pubkey, agentId: agent.pubkey, status: 'pending' as const,
+      continuation: 'Bee posts the notes right after.' };
+    expect(readRoomViewMessage({ ...message, presentation: 'card', appSignIn })?.appSignIn)
+      .toEqual(appSignIn);
+    expect(readRoomViewMessage({ ...message, appSignIn: { ...appSignIn, ownerId: 'other' } })
+      ?.appSignIn).toBeUndefined();
+    expect(readRoomViewMessage({ ...message, appSignIn: { ...appSignIn, continuation: 'x'.repeat(161) } })
+      ?.appSignIn?.continuation).toBeUndefined();
+  });
+
   it('preserves a Squire-owned approval link and drops malformed destinations', () => {
     const sourceMessageId = 'e'.repeat(64);
     const squireApproval = {

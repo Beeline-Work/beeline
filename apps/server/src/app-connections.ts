@@ -6,7 +6,6 @@ import {
   registrableDomain,
   registryServerAppKey,
   registryServerDomain,
-  selectOfficialHostedServer,
   type AppConnectionStatus,
   type AppRoute,
   type AppTransport,
@@ -16,13 +15,13 @@ import {
 import type { ConnectorStatus, RegistryMcpManifest } from '@beeline/api-contract/daemon';
 import type { SqlDatabase } from './database.js';
 import type { McpRegistryClient } from './mcp-registry.js';
-import { notifyConnectorHelper } from './postgres-live.js';
+import { ComposioApps, composioToolkitForApp } from './composio-apps.js';
 
 /**
  * The one front door for apps (`@beeline/api-contract/app-connections`).
  *
  * `resolveAppRoute` is the ONLY place the route order lives:
- *   workbench → registry-mcp (official hosted server) → squire-api → squire-browser.
+ *   connected Workbench row → composio → squire-api → squire-browser.
  * Every decision it makes is written to `workspace_app_routes` and logged.
  * Two rules keep a route from being skipped silently:
  *   - an app that already has a route keeps it — an error or a refused use is
@@ -30,7 +29,7 @@ import { notifyConnectorHelper } from './postgres-live.js';
  *     explicit reconnect re-resolves, and it starts again from the top;
  *   - the Squire browser is reached only from the Squire API route, on the
  *     explicit fact that the app has no API.
- * A Registry search that fails is `unavailable`, not "no official server".
+ * An OAuth support check that fails is `unavailable`, not "unsupported".
  */
 
 type ExistingApp = {
@@ -49,10 +48,7 @@ type WorkbenchBacking =
     }
   | { readonly transport: 'squire-api'; readonly reference: string };
 
-type RegistryPick =
-  | { readonly status: 'official'; readonly manifest: RegistryMcpManifest }
-  | { readonly status: 'none' }
-  | { readonly status: 'unavailable' };
+type ComposioPick = 'supported' | 'none' | 'unavailable';
 
 type AppRouteDecision =
   | { readonly kind: 'keep'; readonly transport: AppTransport; readonly note?: string }
@@ -62,15 +58,14 @@ type AppRouteDecision =
       readonly transport: AppTransport;
       readonly reason: string;
       readonly backing?: WorkbenchBacking;
-      readonly manifest?: RegistryMcpManifest;
     }
   | { readonly kind: 'unavailable'; readonly reason: string };
 
 export type AppRouteProbes = {
   /** A connected Workbench connection that already serves this app. */
   workbench(): Promise<WorkbenchBacking | undefined>;
-  /** The app's official hosted MCP server, if the Registry publishes one. */
-  registry(): Promise<RegistryPick>;
+  /** Managed OAuth support for this exact app. Absent only in old unit fixtures. */
+  composio?(): Promise<ComposioPick>;
 };
 
 /** The fixed route order. Probes run lazily, only as far as the order needs. */
@@ -115,26 +110,17 @@ export async function resolveAppRoute(
           : `already connected in Workbench through vault key ${backing.reference}`,
       backing,
     };
-  const registry = await probes.registry();
-  if (registry.status === 'unavailable')
-    return {
-      kind: 'unavailable',
-      reason:
-        'The MCP Registry could not be searched, so the route cannot be chosen yet; try again shortly.',
-    };
-  if (registry.status === 'official')
-    return {
-      kind: 'route',
-      route: 'registry-mcp',
-      transport: 'registry-mcp',
-      reason: `official hosted MCP server ${registry.manifest.name}@${registry.manifest.version}`,
-      manifest: registry.manifest,
-    };
+  const oauth = await probes.composio?.() ?? 'unavailable';
+  if (oauth === 'unavailable')
+    return { kind: 'unavailable', reason: 'The app connection could not be checked; try again shortly.' };
+  if (oauth === 'supported')
+    return { kind: 'route', route: 'composio', transport: 'composio',
+      reason: 'managed OAuth is supported for this app' };
   return {
     kind: 'route',
     route: 'squire-api',
     transport: 'squire-api',
-    reason: 'no official hosted MCP server; Trusty Squire provisions an API key',
+    reason: 'managed OAuth is unsupported; Trusty Squire provisions an API key',
   };
 }
 
@@ -263,6 +249,8 @@ type AppRow = {
   transport: AppTransport;
   route: AppRoute;
   connector_id: string | null;
+  composio_account_id: string | null;
+  composio_link_expires_at: Date | null;
   machine_id: string | null;
   state: 'active' | 'disconnected';
   created_at: Date;
@@ -336,7 +324,25 @@ type Derived = {
 };
 
 /** The app's live state, read from whatever serves it — never stored twice. */
-async function deriveStatus(database: SqlDatabase, row: AppRow): Promise<Derived> {
+async function deriveStatus(database: SqlDatabase, row: AppRow, composio?: ComposioApps): Promise<Derived> {
+  if (row.transport === 'composio') {
+    if (!composio) return { status: 'error', errorMessage: 'App sign-in is unavailable' };
+    if (!row.composio_account_id) return { status: 'connecting' };
+    // Provider activation alone is not enough. The phone must redeem the
+    // single-use verifier session under the authenticated Beeline identity.
+    if (row.composio_link_expires_at)
+      return row.composio_link_expires_at > new Date()
+        ? { status: 'connecting' }
+        : { status: 'error', errorMessage: 'App sign-in needs attention' };
+    try {
+      return await composio.account(row.composio_account_id, row.owner_identity_id,
+        composioToolkitForApp(row.app_key))
+        ? { status: 'connected' }
+        : { status: 'error', errorMessage: 'App sign-in needs attention' };
+    } catch {
+      return { status: 'error', errorMessage: 'App connection could not be checked' };
+    }
+  }
   if (row.transport === 'registry-mcp') {
     const connector = row.connector_id
       ? (
@@ -383,7 +389,8 @@ async function deriveStatus(database: SqlDatabase, row: AppRow): Promise<Derived
 }
 
 const APP_COLUMNS = `a.id,a.workspace_id,a.owner_identity_id,a.app_key,a.display_name,a.domain,
-  a.transport,a.route,a.connector_id,a.machine_id,a.state,a.created_at`;
+  a.transport,a.route,a.connector_id,a.composio_account_id,a.composio_link_expires_at,
+  a.machine_id,a.state,a.created_at`;
 
 /**
  * The person's apps — ONE row per app, across every Workspace, because the
@@ -392,10 +399,14 @@ const APP_COLUMNS = `a.id,a.workspace_id,a.owner_identity_id,a.app_key,a.display
 export async function readOwnerApps(
   database: SqlDatabase,
   ownerId: string,
+  composio?: ComposioApps,
 ): Promise<WorkbenchAppView[]> {
   const rows = (
     await database.query<
-      AppRow & { helper_name: string | null; use_count: string; last_used_at: Date | null }
+      AppRow & { helper_name: string | null; account_label: string;
+        workspace_name: string; use_count: string; last_used_at: Date | null;
+        last_agent_id: string | null; last_agent_name: string | null;
+        last_room_id: string | null; last_room_name: string | null }
     >(
       `SELECT ${APP_COLUMNS},
               (SELECT COALESCE(MAX(sibling.machine_name),MIN(i.name)) FROM agents sibling
@@ -403,8 +414,21 @@ export async function readOwnerApps(
                 WHERE sibling.owner_id=a.owner_identity_id
                   AND COALESCE(sibling.machine_id,sibling.agent_id)=a.machine_id) helper_name,
               (SELECT COUNT(*) FROM workspace_app_usage u WHERE u.app_id=a.id) use_count,
-              (SELECT MAX(u.created_at) FROM workspace_app_usage u WHERE u.app_id=a.id) last_used_at
+              COALESCE(NULLIF(owner.handle,''),owner.name) account_label,
+              workspace.name workspace_name,
+              last_use.created_at last_used_at,
+              last_use.agent_id last_agent_id,agent.name last_agent_name,
+              last_use.room_id last_room_id,room.name last_room_name
        FROM workspace_apps a
+       JOIN identities owner ON owner.id=a.owner_identity_id
+       JOIN workspaces workspace ON workspace.id=a.workspace_id
+       LEFT JOIN LATERAL (
+         SELECT u.created_at,u.agent_id,u.room_id FROM workspace_app_usage u
+         WHERE u.app_id=a.id AND u.transport='composio'
+         ORDER BY u.created_at DESC,u.id DESC LIMIT 1
+       ) last_use ON true
+       LEFT JOIN identities agent ON agent.id=last_use.agent_id
+       LEFT JOIN rooms room ON room.id=last_use.room_id
        WHERE a.owner_identity_id=$1 AND a.state='active'
        ORDER BY a.created_at, a.app_key`,
       [ownerId],
@@ -412,7 +436,7 @@ export async function readOwnerApps(
   ).rows;
   const views: WorkbenchAppView[] = [];
   for (const row of rows) {
-    const derived = await deriveStatus(database, row);
+    const derived = await deriveStatus(database, row, composio);
     views.push({
       appId: row.id,
       appKey: row.app_key,
@@ -427,7 +451,15 @@ export async function readOwnerApps(
       ...(derived.connectionReference
         ? { connectionReference: derived.connectionReference }
         : {}),
+      accountLabel: row.account_label,
+      workspaceName: row.workspace_name,
       useCount: Number(row.use_count),
+      ...(row.last_used_at && row.last_agent_id && row.last_agent_name &&
+        row.last_room_id && row.last_room_name ? { lastUse: {
+          agentId: row.last_agent_id, agentName: row.last_agent_name,
+          roomId: row.last_room_id, roomName: row.last_room_name,
+          usedAt: Math.floor(row.last_used_at.getTime() / 1000),
+        } } : {}),
       ...(row.last_used_at ? { lastUsedAt: Math.floor(row.last_used_at.getTime() / 1000) } : {}),
       createdAt: Math.floor(row.created_at.getTime() / 1000),
     });
@@ -465,6 +497,10 @@ type ConnectAppParams = {
   /** Where an agent's install turn waits, so a finished sign-in resumes it. */
   readonly installRoomId?: string | null;
   readonly installCommandId?: string | null;
+  /** Configured only when the project's callback verifier is enabled. */
+  readonly composio?: ComposioApps;
+  /** Room cards issue a fresh link only when the person taps Connect. */
+  readonly issueLink?: boolean;
 };
 
 type ConnectAppOutcome = {
@@ -491,14 +527,19 @@ function nextStep(
   const target = outcome.appKey ? appResourceTarget(outcome.appKey) : 'this app';
   const where = outcome.domain ?? name;
   if (outcome.status === 'unavailable')
-    return 'The MCP Registry could not be searched, so no route was chosen. Try again shortly; Beeline never skips ahead to another route.';
+    return 'The app connection could not be checked. Try again shortly.';
   if (outcome.status === 'needs_squire')
     return `Trusty Squire handles every sign-in, sign-up and payment for apps, and it is not connected for this owner. Offer it with offer_connector (connectorType trusty-squire), then call connect_app again.`;
+  if (outcome.status === 'needs_sign_in')
+    if (outcome.transport === 'composio')
+      return `The person must complete ${name} sign-in from the connection card. The app resumes on this same route after sign-in.`;
   if (outcome.status === 'needs_sign_in')
     return `Open authorizationUrl with Trusty Squire (operate_start, operate_login, operate_observe, then operate_finish). Any passkey or vouch step goes to the owner through Squire; never paste the link into chat. Call connect_app again when Squire finishes.`;
   if (outcome.status === 'error')
     return `${errorNote ?? derived.errorMessage ?? 'The connection failed'}. The route stays ${outcome.transport}; call connect_app with reconnect: true to resolve it again from the top.`;
   if (outcome.status === 'connected') {
+    if (outcome.transport === 'composio')
+      return `Use the server app tools for ${name}. Every execution is authorized as ${target}.`;
     if (outcome.transport === 'registry-mcp')
       return `Use the mounted ${name} MCP tools. Every call is authorized as ${target}.`;
     if (outcome.transport === 'squire-browser')
@@ -518,7 +559,7 @@ function nextStep(
  */
 export async function connectApp(
   database: SqlDatabase,
-  registryClient: McpRegistryClient,
+  _registryClient: McpRegistryClient,
   params: ConnectAppParams,
 ): Promise<ConnectAppOutcome> {
   const identity = appIdentity(params.app);
@@ -539,38 +580,19 @@ export async function connectApp(
       )
     ).rows[0];
 
-  let registryMemo: Promise<RegistryPick> | undefined;
-  const registryProbe = (db: SqlDatabase) => async (): Promise<RegistryPick> => {
-    registryMemo ??= (async () => {
-      let servers: readonly RegistryMcpManifest[];
+  let composioMemo: Promise<ComposioPick> | undefined;
+  const composioProbe = (): Promise<ComposioPick> =>
+    (composioMemo ??= (async () => {
+      // Without a configured provider we cannot prove that OAuth is unsupported.
+      // Keep the route unresolved rather than silently selecting Squire.
+      if (!params.composio) return 'unavailable';
       try {
-        servers = await registryClient.search(key, 10);
+        return await params.composio.supportsOAuth(composioToolkitForApp(key))
+          ? 'supported' : 'none';
       } catch {
-        return { status: 'unavailable' } as const;
+        return 'unavailable';
       }
-      const pick = selectOfficialHostedServer(servers, key);
-      if (!pick) return { status: 'none' } as const;
-      // An app already pinned on this machine keeps its pinned version.
-      const pinned = (
-        await db.query<{ registry_version: string }>(
-          `SELECT registry_version FROM workspace_connectors
-           WHERE workspace_id=$1 AND owner_identity_id=$2 AND machine_id=$3
-             AND connector_type='registry-mcp' AND registry_server_name=$4`,
-          [params.workspaceId, params.ownerId, params.machineId, pick.name],
-        )
-      ).rows[0]?.registry_version;
-      try {
-        // Integrity boundary: the exact pinned record is always re-fetched.
-        const manifest = await registryClient.exact(pick.name, pinned ?? pick.version);
-        return manifest && manifest.remotes.some((remote) => remote.type === 'streamable-http')
-          ? ({ status: 'official', manifest } as const)
-          : ({ status: 'unavailable' } as const);
-      } catch {
-        return { status: 'unavailable' } as const;
-      }
-    })();
-    return registryMemo;
-  };
+    })());
   const workbenchProbe = (db: SqlDatabase) => async (): Promise<WorkbenchBacking | undefined> => {
     const registry = (
       await db.query<{ id: string; registry_server_name: string; machine_id: string | null }>(
@@ -609,11 +631,11 @@ export async function connectApp(
         reconnect: params.reconnect === true,
         noApi: params.noApi === true,
       },
-      { workbench: workbenchProbe(db), registry: registryProbe(db) },
+      { workbench: workbenchProbe(db), composio: composioProbe },
     );
 
-  // Network (the Registry) is read before the transaction; the transaction
-  // re-decides under the app lock with that memoized answer.
+  // The provider support result is memoized across the preview and locked
+  // decision so a transient outage cannot change routes mid-request.
   const preview = await resolveWith(database, await readExisting(database));
   if (preview.kind === 'unavailable')
     return {
@@ -629,30 +651,11 @@ export async function connectApp(
     const decision = await resolveWith(db, existing);
     if (decision.kind === 'unavailable') return { decision, row: existing };
     let row = existing;
-    let armedConnector: RegistryConnectorRow | undefined;
     if (decision.kind === 'route') {
       let connectorId: string | null = null;
-      let manifest = decision.manifest;
       if (decision.backing?.transport === 'registry-mcp') connectorId = decision.backing.connectorId;
-      if (decision.transport === 'registry-mcp' && manifest) {
-        armedConnector = await armRegistryConnector(db, {
-          workspaceId: params.workspaceId,
-          ownerId: params.ownerId,
-          machineId: params.machineId,
-          helperAgentId: params.helperAgentId,
-          manifest,
-          installRoomId: params.installRoomId ?? null,
-          installCommandId: params.installCommandId ?? null,
-        });
-        if (armedConnector.versionConflict) manifest = undefined;
-        connectorId = armedConnector.id;
-      }
-      const name = displayNameFor(params.app, key, manifest);
-      const domain =
-        identity.domain ??
-        domainOf(manifest?.websiteUrl) ??
-        (manifest ? registryServerDomain(manifest.name) : undefined) ??
-        null;
+      const name = displayNameFor(params.app, key);
+      const domain = identity.domain ?? null;
       const id = existing?.id ?? randomUUID();
       await db.query(
         `INSERT INTO workspace_apps(
@@ -664,6 +667,10 @@ export async function connectApp(
              domain=COALESCE(EXCLUDED.domain,workspace_apps.domain),
              transport=EXCLUDED.transport,route=EXCLUDED.route,
              connector_id=EXCLUDED.connector_id,machine_id=EXCLUDED.machine_id,
+             composio_account_id=CASE WHEN EXCLUDED.transport='composio' AND workspace_apps.transport='composio'
+               THEN workspace_apps.composio_account_id ELSE NULL END,
+             composio_link_expires_at=CASE WHEN EXCLUDED.transport='composio' AND workspace_apps.transport='composio'
+               THEN workspace_apps.composio_link_expires_at ELSE NULL END,
              state='active',updated_at=now()`,
         [
           id,
@@ -703,7 +710,7 @@ export async function connectApp(
         [existing.connector_id, params.helperAgentId, params.installRoomId, params.installCommandId],
       );
     }
-    return { decision, row, armedConnector };
+    return { decision, row };
   });
 
   if (applied.decision.kind === 'unavailable' || !applied.row)
@@ -713,15 +720,28 @@ export async function connectApp(
       appKey: key,
       next: nextStep({ status: 'unavailable', app: params.app, appKey: key }, { status: 'error' }),
     };
-  if (applied.armedConnector?.created) await notifyConnectorHelper(database, applied.armedConnector.id);
-
   const row = applied.row;
-  const derived = await deriveStatus(database, row);
-  const versionNote = applied.armedConnector?.versionConflict
-    ? `This machine already pins another version of the server (${applied.armedConnector.registry_version}); automatic upgrades are not supported`
-    : undefined;
+  let authorizationUrl: string | undefined;
+  let linkFailed = false;
+  if (row.transport === 'composio' && params.composio && params.issueLink !== false) {
+    const current = await deriveStatus(database, row, params.composio);
+    if (current.status !== 'connected') {
+      try {
+        authorizationUrl = (await beginComposioAppSignIn(database, params.composio,
+          params.ownerId, row.id)).authorizationUrl;
+      } catch {
+        // Keep this route. A retry can issue another link; never fall through.
+        linkFailed = true;
+      }
+    }
+  }
+  const derived = await deriveStatus(database, { ...row,
+    ...(authorizationUrl ? { composio_account_id: null,
+      composio_link_expires_at: new Date(Date.now() + 10 * 60_000) } : {}),
+  }, params.composio);
+  const versionNote = undefined;
   const decisionNote = applied.decision.kind === 'keep' ? applied.decision.note : undefined;
-  const status: ConnectAppStatus = versionNote
+  const status: ConnectAppStatus = versionNote || linkFailed
     ? 'error'
     : derived.needsSquire
       ? 'needs_squire'
@@ -729,7 +749,9 @@ export async function connectApp(
         ? 'connected'
         : derived.status === 'error'
           ? 'error'
-          : derived.signInUrl
+        : row.transport === 'composio'
+          ? 'needs_sign_in'
+          : authorizationUrl || derived.signInUrl
             ? 'needs_sign_in'
             : 'connecting';
   const base = {
@@ -742,8 +764,8 @@ export async function connectApp(
     ...(applied.decision.kind === 'route' ? { route: applied.decision.route } : {}),
     transport: row.transport,
     ...(row.connector_id ? { connectorId: row.connector_id } : {}),
-    ...(status === 'needs_sign_in' && derived.signInUrl
-      ? { authorizationUrl: derived.signInUrl }
+    ...(status === 'needs_sign_in' && (authorizationUrl || derived.signInUrl)
+      ? { authorizationUrl: authorizationUrl ?? derived.signInUrl }
       : {}),
     derived: derived.status,
   };
@@ -759,7 +781,8 @@ export async function connectApp(
  */
 export async function disconnectApp(
   database: SqlDatabase,
-  input: { readonly ownerId: string; readonly appId: string },
+  input: { readonly ownerId: string; readonly appId: string;
+    readonly revokeComposio?: (accountId: string) => Promise<void> },
 ): Promise<{ helperAgentId?: string }> {
   return database.transaction(async (db) => {
     const row = (
@@ -770,17 +793,22 @@ export async function disconnectApp(
       )
     ).rows[0];
     if (!row) throw new Error('app not found (access denied)');
+    if (row.transport === 'composio' && row.composio_account_id) {
+      if (!input.revokeComposio) throw new Error('App connection cannot be revoked now');
+      await input.revokeComposio(row.composio_account_id);
+    }
     await db.query(
       `UPDATE workspace_apps SET state='disconnected',updated_at=now() WHERE id=$1::uuid`,
       [row.id],
     );
     await db.query(
       `UPDATE agent_grants g SET status='revoked',decided_by=$2,decided_at=now()
-       FROM agents a
-       WHERE a.agent_id=g.agent_id AND a.owner_id=$2
-         AND g.kind='mcp' AND g.target=$1 AND g.status IN ('approved','once')`,
-      [appResourceTarget(row.app_key), input.ownerId],
+       WHERE g.kind='mcp' AND g.target=$1 AND g.status IN ('pending','approved','once')
+         AND (g.app_id=$3::uuid OR (g.app_id IS NULL AND EXISTS (
+           SELECT 1 FROM agents a WHERE a.agent_id=g.agent_id AND a.owner_id=$2)))`,
+      [appResourceTarget(row.app_key), input.ownerId, row.id],
     );
+    if (row.transport === 'composio') return {};
     if (row.transport !== 'registry-mcp' || !row.connector_id) return {};
     await db.query(`DELETE FROM workspace_connections WHERE connector_id=$1::uuid`, [
       row.connector_id,
@@ -795,6 +823,72 @@ export async function disconnectApp(
       )
     ).rows[0];
     return connector ? { helperAgentId: connector.helper_agent_id } : {};
+  });
+}
+
+/** The phone redeems a verifier session as its authenticated Beeline identity. */
+export async function completeComposioSignIn(
+  database: SqlDatabase,
+  composio: ComposioApps,
+  viewerId: string,
+  sessionUri: string,
+  settle?: (database: SqlDatabase, appId: string) => Promise<void>,
+): Promise<{ appId: string }> {
+  const completed = await composio.completeAuth(sessionUri, viewerId);
+  return database.transaction(async (db) => {
+    const pending = (
+      await db.query<{ id: string; app_key: string }>(
+        `SELECT id,app_key FROM workspace_apps
+         WHERE owner_identity_id=$1 AND composio_account_id=$2
+           AND transport='composio' AND state='active' AND composio_link_expires_at>now()
+         FOR UPDATE`,
+        [viewerId, completed.accountId],
+      )
+    ).rows.find((row) => composioToolkitForApp(row.app_key) === completed.toolkit);
+    if (!pending || !(await composio.account(completed.accountId, viewerId, completed.toolkit)))
+      throw new Error('App sign-in is no longer pending for this person');
+    const updated = await db.query(
+      `UPDATE workspace_apps SET composio_link_expires_at=NULL,updated_at=now()
+       WHERE id=$1::uuid AND owner_identity_id=$2 AND composio_account_id=$3
+         AND composio_link_expires_at>now()`,
+      [pending.id, viewerId, completed.accountId],
+    );
+    if (!updated.rowCount) throw new Error('App sign-in is no longer pending for this person');
+    await settle?.(db, pending.id);
+    return { appId: pending.id };
+  });
+}
+
+/** A card tap issues a fresh link; the link itself is never persisted in Room history. */
+export async function beginComposioAppSignIn(
+  database: SqlDatabase,
+  composio: ComposioApps,
+  ownerId: string,
+  appId: string,
+): Promise<{ authorizationUrl: string }> {
+  return database.transaction(async (db) => {
+    const row = (
+      await db.query<AppRow>(
+        `SELECT ${APP_COLUMNS} FROM workspace_apps a
+         WHERE a.id=$1::uuid AND a.owner_identity_id=$2 AND a.transport='composio'
+           AND a.state='active' FOR UPDATE`, [appId, ownerId],
+      )
+    ).rows[0];
+    if (!row) throw new Error('App sign-in is unavailable for this person');
+    const toolkit = composioToolkitForApp(row.app_key);
+    if (row.composio_account_id) {
+      if (!row.composio_link_expires_at &&
+        await composio.account(row.composio_account_id, ownerId, toolkit))
+        throw new Error('App is already connected');
+      await composio.deleteAccount(row.composio_account_id);
+    }
+    const link = await composio.link(ownerId, toolkit);
+    await db.query(
+      `UPDATE workspace_apps SET composio_account_id=$3,composio_link_expires_at=$4,updated_at=now()
+       WHERE id=$1::uuid AND owner_identity_id=$2`,
+      [appId, ownerId, link.accountId, link.expiresAt],
+    );
+    return { authorizationUrl: link.url };
   });
 }
 
@@ -880,6 +974,9 @@ export async function appGateFor(
   const apps = new Map(rows.map((row) => [row.id, row]));
   if (apps.size !== 1) return { kind: 'refuse' };
   const row = rows[0]!;
+  // Managed OAuth is never mounted in Squire or a helper MCP route. Only the
+  // server's executeAppTool operation can reach that connected account.
+  if (row.transport === 'composio') return { kind: 'refuse' };
   return {
     kind: 'app',
     target: appResourceTarget(row.app_key),

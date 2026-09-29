@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  appDetailLine,
   connectionCompany,
   connectionCreatedByLine,
   connectionDetailLabel,
@@ -39,6 +40,12 @@ import {
 
 const VIEWER_A = 'human-dani';
 const VIEWER_B = 'human-terra';
+
+it('describes managed app sign-in without naming its provider', () => {
+  const detail = appDetailLine({ id: 'app-1', key: 'gmail', name: 'Gmail',
+    transport: 'composio', status: 'connected', useCount: 0 });
+  expect(detail).toBe('App sign-in · not used yet');
+});
 
 const view: WorkbenchView = {
   connectors: [

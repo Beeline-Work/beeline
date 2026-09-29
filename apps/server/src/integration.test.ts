@@ -20,8 +20,6 @@ import { LiveHub } from './live.js';
 import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
 import { MediaExpiryLoop, PushDeliveryLoop } from './background.js';
 import { GitHubOperations } from './github-operations.js';
-import { GoogleOAuth } from './google-oauth.js';
-import { GOOGLE_ACCOUNT_CONNECTOR_ID, GOOGLE_TOOL_SCOPES } from '@beeline/api-contract/workbench';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import {
@@ -166,13 +164,6 @@ describe('monolith integration', () => {
       'http://placeholder',
       1024 * 1024,
     );
-    const googleOAuth = new GoogleOAuth(
-      database,
-      'client',
-      'secret',
-      'http://placeholder',
-      Buffer.alloc(32, 1).toString('base64'),
-    );
     phone = new PhoneService(
       database,
       'http://placeholder',
@@ -182,7 +173,7 @@ describe('monolith integration', () => {
       false,
       database,
       objectService,
-      googleOAuth,
+      undefined,
     );
     const live = new LiveHub();
     const daemon = new DaemonService(
@@ -198,7 +189,7 @@ describe('monolith integration', () => {
       false,
       undefined,
       undefined,
-      googleOAuth,
+      undefined,
     );
     mountedAuth = await createMonolithAuth(database, 'https://server.test', undefined, {
       createDaemonExchange: (agentId, transaction) =>
@@ -227,7 +218,6 @@ describe('monolith integration', () => {
       auth,
       phone,
       daemon,
-      googleOAuth,
       live,
       review: new ReviewAccess({
         secret: REVIEW_SECRET,
@@ -10286,141 +10276,6 @@ describe('monolith integration', () => {
       ).grants,
     ).toEqual([]);
     expect((await operation('revokeAgentGrant', { grantId: third.grantId })).status).toBe(409);
-  });
-
-  it('continues the original Room request after one-tap Google consent without pairing a helper', async () => {
-    const asked = await operation('sendRoomMessage', {
-      roomId: ROOM, text: '@bee read my calendar', mentions: [AGENT],
-    });
-    expect(asked.status).toBe(200);
-    const requestMessage = await asked.json() as { messageId: string };
-    const offered = await daemonOperation('offerConnector', {
-      roomId: ROOM, requestId: requestMessage.messageId,
-      connectorType: 'google-calendar', reason: 'read upcoming events',
-    });
-    expect(offered.status).toBe(200);
-    const offer = await offered.json() as { offerId: string; messageId: string };
-    const accepted = await operation('acceptConnectorOffer', { offerId: offer.offerId });
-    expect(accepted.status).toBe(200);
-    const ceremony = await accepted.json() as { connectorId: string; authorizationUrl: string };
-    expect(ceremony.connectorId).toBe(GOOGLE_ACCOUNT_CONNECTOR_ID);
-    const firstUrl = new URL(ceremony.authorizationUrl);
-    expect((await operation('cancelGoogleSignIn', { connectorId: GOOGLE_ACCOUNT_CONNECTOR_ID })).status).toBe(200);
-    const retryCard = (await database.query<{ card: { status: string } }>(
-      `SELECT card FROM messages WHERE id=$1`, [offer.messageId])).rows[0]!.card;
-    expect(retryCard.status).toBe('pending');
-    const retried = await operation('acceptConnectorOffer', { offerId: offer.offerId });
-    expect(retried.status).toBe(200);
-    const oauthUrl = new URL(((await retried.json()) as { authorizationUrl: string }).authorizationUrl);
-    expect(oauthUrl.searchParams.get('state')).not.toBe(firstUrl.searchParams.get('state'));
-    expect(oauthUrl.host).toBe('accounts.google.com');
-    expect(oauthUrl.searchParams.get('scope')).toContain('calendar.readonly');
-    expect(oauthUrl.searchParams.get('scope')).toContain('gmail.');
-    expect(oauthUrl.searchParams.get('scope')).toContain('drive.');
-    expect(oauthUrl.searchParams.get('scope')).toContain('yt-analytics');
-    expect((await operation('readGoogleSignIn', {})).status).toBe(200);
-    expect((await database.query(`SELECT 1 FROM workspace_connectors WHERE connector_type='google-calendar'`)).rowCount).toBe(0);
-    const linked = (await database.query<{ command_id: string }>(
-      `SELECT command_id FROM connector_offers WHERE id=$1::uuid`, [offer.offerId])).rows[0]!;
-    expect(linked.command_id).toEqual(expect.any(String));
-    expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND action='resume'`, [ROOM])).rowCount).toBe(0);
-
-    const transport = vi.fn(async (url: string | URL | Request) => new Response(JSON.stringify(
-      String(url).endsWith('/token') ? {
-        access_token: 'calendar-token', refresh_token: 'renewable', expires_in: 3600,
-        scope: ['openid', 'email', ...new Set(Object.values(GOOGLE_TOOL_SCOPES).flat())].join(' '),
-      } : { email: 'owner@example.test' }), { status: 200 })) as typeof fetch;
-    const oauth = new GoogleOAuth(database, 'client', 'secret', 'http://placeholder',
-      Buffer.alloc(32, 1).toString('base64'), transport);
-    const completed = await oauth.completeAccount(oauthUrl.searchParams.get('state')!, 'code');
-    expect(completed).toMatchObject({ completed: true,
-      offers: [{ offerId: offer.offerId, roomId: ROOM, agentId: AGENT }] });
-    const card = (await database.query<{ card: { status: string } }>(
-      `SELECT card FROM messages WHERE id=$1`, [offer.messageId])).rows[0]!.card;
-    expect(card.status).toBe('accepted');
-    const resumed = (await database.query<{ id: string; state: string }>(
-      `SELECT id,state FROM agent_commands WHERE room_id=$1 AND agent_id=$2
-         AND action='resume'`, [ROOM, AGENT])).rows;
-    expect(resumed).toHaveLength(1);
-    expect(resumed[0]!.state).toBe('pending');
-    expect((await operation('readGoogleSignIn', {})).status).toBe(200);
-    const room = await daemonOperation('getRoomGoogleGrant', { roomId: ROOM });
-    expect(room.status).toBe(200);
-    expect(await room.json()).toMatchObject({ status: 'ready',
-      credentials: { accessToken: 'calendar-token' },
-      connectedTypes: expect.arrayContaining(Object.keys(GOOGLE_TOOL_SCOPES)) });
-    expect(await (await operation('readGoogleSignIn', {})).json()).toMatchObject({
-      connected: true, connectedTypes: expect.arrayContaining(Object.keys(GOOGLE_TOOL_SCOPES)),
-    });
-    const workbench = await daemonOperation('readAgentWorkbench', { roomId: ROOM });
-    expect(workbench.status).toBe(200);
-    const catalog = (await workbench.json() as { catalog: Array<{ connectorType: string;
-      paired?: { status: string } }> }).catalog;
-    for (const connectorType of Object.keys(GOOGLE_TOOL_SCOPES)) {
-      expect(catalog.find(item => item.connectorType === connectorType)?.paired?.status).toBe('connected');
-    }
-    // This must pass through the public phone operation registry, then revoke
-    // only the owner's direct account grant.
-    expect((await operation('disconnectGoogleSignIn', {})).status).toBe(204);
-    expect(await (await operation('readGoogleSignIn', {})).json()).toMatchObject({
-      connected: false, connectedTypes: [],
-    });
-    expect(await (await daemonOperation('getRoomGoogleGrant', { roomId: ROOM })).json())
-      .toMatchObject({ status: 'pending' });
-  });
-
-  it('offers the same one-tap Google card in a direct message and resumes that request', async () => {
-    const dmResponse = await operation('resolveDirectMessage', {
-      workspaceId: WORKSPACE, participantId: AGENT });
-    expect(dmResponse.status).toBe(200);
-    const dm = await dmResponse.json() as { id: string };
-    const sent = await operation('sendRoomMessage', {
-      roomId: dm.id, text: 'Please read my calendar',
-    });
-    expect(sent.status).toBe(200);
-    const source = await sent.json() as { messageId: string };
-    const offered = await daemonOperation('offerConnector', {
-      roomId: dm.id, requestId: source.messageId,
-      connectorType: 'google-calendar', reason: 'read upcoming events',
-    });
-    expect(offered.status).toBe(200);
-    const offer = await offered.json() as { offerId: string; messageId: string };
-    const accepted = await operation('acceptConnectorOffer', { offerId: offer.offerId });
-    expect(accepted.status).toBe(200);
-    const url = new URL(((await accepted.json()) as { authorizationUrl: string }).authorizationUrl);
-    expect(url.host).toBe('accounts.google.com');
-    expect((await database.query(`SELECT 1 FROM workspace_connectors WHERE connector_type='google-calendar'`)).rowCount).toBe(0);
-    const oauth = new GoogleOAuth(database, 'client', 'secret', 'http://placeholder',
-      Buffer.alloc(32, 1).toString('base64'),
-      vi.fn(async (address: string | URL | Request) => new Response(JSON.stringify(
-        String(address).endsWith('/token') ? {
-          access_token: 'dm-token', refresh_token: 'dm-refresh', expires_in: 3600,
-          scope: ['openid', 'email', ...new Set(Object.values(GOOGLE_TOOL_SCOPES).flat())].join(' '),
-        } : { email: 'owner@example.test' }), { status: 200 })) as typeof fetch);
-    expect((await oauth.completeAccount(url.searchParams.get('state')!, 'code'))?.completed).toBe(true);
-    expect((await database.query<{ card: { status: string } }>(
-      `SELECT card FROM messages WHERE id=$1`, [offer.messageId])).rows[0]!.card.status).toBe('accepted');
-    expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2
-      AND action='resume' AND source_message_id IN
-        (SELECT id FROM messages WHERE card_type='connector-offer-decision')`,
-      [dm.id, AGENT])).rowCount).toBe(1);
-  });
-
-  it('does not offer an owner-bound Google grant to another Room member', async () => {
-    const memberToken = await phoneToken('google-requester');
-    const memberId = createHash('sha256').update('github:google-requester').digest('hex');
-    await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId, role: 'member' });
-    await operation('addRoomMember', { roomId: ROOM, memberId });
-    const asked = await operation('sendRoomMessage', { roomId: ROOM,
-      text: '@bee read my calendar', mentions: [AGENT] }, memberToken);
-    expect(asked.status).toBe(200);
-    const source = await asked.json() as { messageId: string };
-    const offered = await daemonOperation('offerConnector', { roomId: ROOM,
-      requestId: source.messageId, connectorType: 'google-calendar',
-      reason: 'read the requester calendar' });
-    expect(offered.status).toBe(400);
-    expect(await offered.json()).toMatchObject({ error: expect.stringContaining('owner') });
-    expect((await database.query(`SELECT 1 FROM connector_offers WHERE connector_type='google-calendar'`)).rowCount).toBe(0);
   });
 
   it('runs the connector offer loop (R5): card addressed to the person, one affirmative tap gated to addressee or manager, pairing on the offering machine, settled card naming who acted, hidden resume line', async () => {

@@ -233,6 +233,7 @@ describe('MonolithWorkbenchSource connections', () => {
         helperName: 'Owner laptop',
         helperId: 'machine-one',
         useCount: 3,
+        createdAt: 1,
       },
     ]);
   });

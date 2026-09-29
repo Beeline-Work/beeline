@@ -6,9 +6,9 @@ import {
   type CommandRow,
 } from './agent-command.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import type { ComposioApps } from './composio-apps.js';
+import { beginComposioAppSignIn, completeComposioSignIn } from './app-connections.js';
 import { CORNER_VALIDATION_STAGES, currentCornerBrief } from './corner-brief.js';
-import type { GoogleOAuth } from './google-oauth.js';
-import { GOOGLE_ACCOUNT_CONNECTOR_ID } from '@beeline/api-contract/workbench';
 import { storeWorkspaceAvatar } from './durable-avatar.js';
 import { queueLatestReleasePush } from './release-push-catchup.js';
 import { requireRoomSlug, reserveRoomName } from './room-names.js';
@@ -159,8 +159,6 @@ import {
   connectorAdapter,
   connectorRequesterRole,
   faviconDomain,
-  GOOGLE_TOOL_SCOPES,
-  isGoogleToolConnectorKind,
 } from '@beeline/api-contract/workbench';
 import type {
   GrantWalletDelegationInput,
@@ -655,6 +653,12 @@ function projectedMessage(
         ...base,
         connectorOffer: row.card as NonNullable<RoomViewMessage['connectorOffer']>,
       };
+    case 'app-sign-in': {
+      const card = row.card as NonNullable<RoomViewMessage['appSignIn']>;
+      return { ...base, appSignIn: { appId: card.appId, appKey: card.appKey,
+        name: card.name, ownerId: card.ownerId, agentId: card.agentId,
+        status: card.status, ...(card.continuation ? { continuation: card.continuation } : {}) } };
+    }
     case 'choice':
       return { ...base, choice: row.card as NonNullable<RoomViewMessage['choice']> };
     case 'wallet-tx':
@@ -744,8 +748,9 @@ export class PhoneService {
     private readonly routingTransaction = false,
     private readonly enrichmentDatabase: SqlDatabase = database,
     private readonly objects?: ObjectService,
-    private readonly googleOAuth?: GoogleOAuth,
+    _legacyProviderSlot?: unknown,
     private readonly mcpRegistry: McpRegistryClient = new McpRegistryClient(),
+    private readonly composio?: ComposioApps,
   ) {}
 
   private async optionalEnrichment<T>(name: string, work: Promise<T>): Promise<T | undefined> {
@@ -3502,23 +3507,12 @@ export class PhoneService {
           viewerId,
         )) as Output<Name>;
       case 'cancelGoogleSignIn':
-        return { cancelled: (input as Input<'cancelGoogleSignIn'>).connectorId === GOOGLE_ACCOUNT_CONNECTOR_ID
-          ? await this.googleOAuth?.cancelAccount(viewerId,
-              (input as Input<'cancelGoogleSignIn'>).state) ?? false
-          : await this.googleOAuth?.cancelConnector(
-              (input as Input<'cancelGoogleSignIn'>).connectorId, viewerId) ?? false } as Output<Name>;
+        return { cancelled: false } as Output<Name>;
       case 'beginGoogleSignIn':
-        await this.viewerWorkbenchWorkspace(viewerId);
-        if (!this.googleOAuth) throw new Error('Google OAuth is unavailable');
-        return { authorizationUrl: await this.googleOAuth.beginAccount(viewerId,
-          (input as Input<'beginGoogleSignIn'>).connectorType) } as Output<Name>;
+        throw new Error('This sign-in was retired; use Connect an app');
       case 'readGoogleSignIn':
-        await this.viewerWorkbenchWorkspace(viewerId);
-        return (await this.googleOAuth?.accountStatus(viewerId)
-          ?? { connected: false, connectedTypes: [] }) as Output<Name>;
+        return { connected: false, connectedTypes: [] } as Output<Name>;
       case 'disconnectGoogleSignIn':
-        await this.viewerWorkbenchWorkspace(viewerId);
-        await this.googleOAuth?.disconnectAccount(viewerId);
         return undefined as Output<Name>;
       case 'unpairConnector':
         await this.unpairConnector(input as Input<'unpairConnector'>, viewerId);
@@ -3528,6 +3522,16 @@ export class PhoneService {
           input as Input<'connectWorkbenchApp'>,
           viewerId,
         )) as Output<Name>;
+      case 'beginAppSignIn':
+        await this.viewerWorkbenchWorkspace(viewerId);
+        if (!this.composio) throw new Error('App sign-in is unavailable');
+        return (await beginComposioAppSignIn(this.database, this.composio, viewerId,
+          (input as Input<'beginAppSignIn'>).appId)) as Output<Name>;
+      case 'completeAppSignIn':
+        await this.viewerWorkbenchWorkspace(viewerId);
+        if (!this.composio) throw new Error('App sign-in is unavailable');
+        return (await this.completeAppSignIn(
+          (input as Input<'completeAppSignIn'>).sessionUri, viewerId)) as Output<Name>;
       case 'disconnectWorkbenchApp':
         await this.disconnectWorkbenchApp(input as Input<'disconnectWorkbenchApp'>, viewerId);
         return undefined as Output<Name>;
@@ -6151,13 +6155,28 @@ export class PhoneService {
         target: string;
         status: AgentGrantStatus;
         owner_id: string;
+        app_owner_id: string | null;
       }>(
-        `SELECT g.agent_id,g.workspace_id,g.room_id,g.kind,g.target,g.status,a.owner_id
-         FROM agent_grants g JOIN agents a ON a.agent_id=g.agent_id WHERE g.id::text=$1`,
+        `SELECT g.agent_id,g.workspace_id,g.room_id,g.kind,g.target,g.status,a.owner_id,
+                app.owner_identity_id app_owner_id
+         FROM agent_grants g JOIN agents a ON a.agent_id=g.agent_id
+         LEFT JOIN workspace_apps app ON app.id=g.app_id
+         WHERE g.id::text=$1`,
         [grantId],
       )
     ).rows[0];
     if (!grant) throw new Error('grant not found');
+    if (grant.target.startsWith('app:')) {
+      if (!grant.app_owner_id || grant.app_owner_id !== viewerId)
+        throw new Error('app approval access denied: requires the connected person');
+      const member = await this.database.query(
+        `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
+         AND identity_id=$2 AND removed_at IS NULL`,
+        [grant.workspace_id, viewerId],
+      );
+      if (!member.rowCount) throw new Error('app approval access denied');
+      return grant;
+    }
     if (grant.kind !== 'repository') {
       if (grant.owner_id !== viewerId) throw new Error(AGENT_OWNER_AUTHORITY_MESSAGE);
       const member = await this.database.query(
@@ -6229,31 +6248,6 @@ export class PhoneService {
     await this.requireWorkspaceMember(offer.workspace_id, viewerId);
     if (offer.status === 'connecting' && offer.accepted_by !== viewerId)
       throw new Error('connector offer conflict: sign-in is already in progress');
-    if (isGoogleToolConnectorKind(connectorType)) {
-      const agentOwner = (await this.database.query<{ owner_id: string }>(
-        `SELECT owner_id FROM agents WHERE agent_id=$1`, [offer.agent_id])).rows[0]?.owner_id;
-      if (agentOwner !== viewerId)
-        throw new Error('Google Workspace access denied: only this agent’s owner can connect it');
-      if (!this.googleOAuth) throw new Error('Google OAuth is unavailable');
-      const authorizationUrl = await this.googleOAuth.beginAccount(viewerId,
-        connectorType as keyof typeof GOOGLE_TOOL_SCOPES);
-      const acceptor = await this.requireIdentity(viewerId);
-      await this.database.transaction(async (database) => {
-        const updated = await database.query<{ accepted_at: Date }>(
-          `UPDATE connector_offers SET status='connecting',accepted_by=$2,
-             accepted_at=COALESCE(accepted_at,now())
-           WHERE id::text=$1 AND status IN ('pending','connecting') RETURNING accepted_at`,
-          [input.offerId, viewerId]);
-        if (!updated.rows[0]) throw new Error('connector offer conflict: already accepted');
-        await this.markConnectorOfferConnecting(database, {
-          roomId: offer.room_id, offerId: input.offerId, acceptedBy: acceptor,
-          acceptedAt: updated.rows[0].accepted_at,
-          connectorId: GOOGLE_ACCOUNT_CONNECTOR_ID,
-        });
-      });
-      return { offerId: input.offerId, status: 'connecting', roomId: offer.room_id,
-        connectorId: GOOGLE_ACCOUNT_CONNECTOR_ID, authorizationUrl };
-    }
     // The helper is the offering agent's machine; it must still be here to install.
     const helper = await this.database.query(
       `SELECT 1 FROM agents a
@@ -7139,8 +7133,6 @@ export class PhoneService {
     input: Input<'readWorkbench'>,
     viewerId: string,
   ): Promise<Output<'readWorkbench'>> {
-    await this.googleOAuth?.expirePending(viewerId);
-    const googleAccount = await this.googleOAuth?.accountStatus(viewerId);
     if (input.refreshVault) {
       const refreshes = await this.database.transaction(async (database) => {
         const rows = (
@@ -7265,7 +7257,7 @@ export class PhoneService {
       )
     ).rows;
 
-    const apps = await readOwnerApps(this.database, viewerId);
+    const apps = await readOwnerApps(this.database, viewerId, this.composio);
     const walletRow = (
       await this.database.query<{
         created_at: Date;
@@ -7278,17 +7270,7 @@ export class PhoneService {
     ).rows[0];
     return {
       workspaceId: input.workspaceId,
-      ...(googleAccount ? { googleAccount: {
-        connected: googleAccount.connected,
-        pending: Boolean(googleAccount.authorizationUrl),
-        connectedTypes: googleAccount.connectedTypes,
-        ...(googleAccount.accountEmail ? { accountEmail: googleAccount.accountEmail } : {}),
-      } } : {}),
-      catalog: connectorCatalog().map((entry) =>
-        isGoogleToolConnectorKind(entry.connectorType) && !this.googleOAuth
-          ? { ...entry, available: false }
-          : entry,
-      ),
+      catalog: connectorCatalog(),
       ...(walletRow
         ? {
             wallet: {
@@ -7453,10 +7435,12 @@ export class PhoneService {
       reconnect: input.reconnect === true,
       installRoomId: dm.id,
       installCommandId: null,
+      ...(this.composio ? { composio: this.composio } : {}),
     });
     if (outcome.status === 'unavailable') throw new Error(outcome.next);
     if (!outcome.appId || !outcome.transport) throw new Error(outcome.next);
-    if (outcome.status === 'connecting' || outcome.status === 'needs_sign_in') {
+    if (outcome.transport !== 'composio' &&
+      (outcome.status === 'connecting' || outcome.status === 'needs_sign_in')) {
       const agent = (
         await this.database.query<{ handle: string | null }>(
           `SELECT handle FROM identities WHERE id=$1`,
@@ -7477,7 +7461,50 @@ export class PhoneService {
       status: outcome.derived ?? 'connecting',
       transport: outcome.transport,
       ...(outcome.route ? { route: outcome.route } : {}),
+      ...(outcome.authorizationUrl ? { authorizationUrl: outcome.authorizationUrl } : {}),
     };
+  }
+
+  private async completeAppSignIn(sessionUri: string, viewerId: string) {
+    if (!this.composio) throw new Error('App sign-in is unavailable');
+    let rooms: string[] = [];
+    const completed = await completeComposioSignIn(this.database, this.composio,
+      viewerId, sessionUri, async (database, appId) => {
+      const cards = (await database.query<{ id: string; room_id: string;
+        card: { appId: string; name: string; agentId: string; commandId?: string } }>(
+        `SELECT id,room_id,card FROM messages WHERE card_type='app-sign-in'
+         AND card->>'appId'=$1 AND card->>'ownerId'=$2 AND card->>'status'='pending'
+         FOR UPDATE`, [appId, viewerId],
+      )).rows;
+      for (const card of cards) {
+        await database.query(
+          `UPDATE messages SET card=jsonb_set(card,'{status}','"connected"'::jsonb)
+           WHERE id=$1`, [card.id],
+        );
+        const source = await systemLine(database, {
+          roomId: card.room_id,
+          authorId: viewerId,
+          subject: { kind: 'person', id: viewerId, name: 'A member' },
+          verb: 'connected', object: card.card.name,
+          consequence: 'The request can continue.',
+        });
+        const parent = card.card.commandId
+          ? (await database.query<CommandRow>(
+              `SELECT * FROM agent_commands WHERE id=$1 AND room_id=$2 AND agent_id=$3`,
+              [card.card.commandId, card.room_id, card.card.agentId],
+            )).rows[0]
+          : undefined;
+        await createAgentCommand(database, {
+          roomId: card.room_id, agentId: card.card.agentId,
+          sourceMessageId: source.id, reason: 'app_connected',
+          ...(parent ? { parent, retainDepth: true } : {}),
+        });
+      }
+      rooms = [...new Set(cards.map((card) => card.room_id))];
+    });
+    for (const roomId of rooms) this.live?.publish({ type: 'invalidate', roomId,
+      reason: 'app-connected' });
+    return completed;
   }
 
   async disconnectWorkbenchApp(
@@ -7486,7 +7513,10 @@ export class PhoneService {
   ): Promise<void> {
     // `workspaceId` is accepted for wire compatibility; an app is the
     // viewer's own across Workspaces, so ownership is the whole check.
-    const result = await disconnectApp(this.database, { ownerId: viewerId, appId: input.appId });
+    const result = await disconnectApp(this.database, { ownerId: viewerId, appId: input.appId,
+      ...(this.composio ? { revokeComposio: (accountId: string) =>
+        this.composio!.deleteAccount(accountId) } : {}),
+    });
     if (result.helperAgentId) await notifyConnectorAssignment(this.database, result.helperAgentId);
   }
 
@@ -7530,8 +7560,6 @@ export class PhoneService {
       machineId: string;
     },
   ): Promise<Output<'pairConnector'>> {
-    if (isGoogleToolConnectorKind(input.connectorType) && !this.googleOAuth)
-      throw new Error('Google OAuth is not configured on this Beeline server');
     const adapter = connectorAdapter(input.connectorType);
     if (adapter) {
       const helperOwner = (
@@ -7548,16 +7576,6 @@ export class PhoneService {
     const ws = { workspace_id: input.workspaceId };
     const matched = { agent_id: input.helperAgentId };
     const id = randomUUID();
-    const previousGoogleStatus = isGoogleToolConnectorKind(input.connectorType)
-      ? (
-          await database.query<{ status: string }>(
-            `SELECT status FROM workspace_connectors
-           WHERE workspace_id=$1 AND owner_identity_id=$2
-             AND connector_type=$3 AND machine_id=$4`,
-            [ws.workspace_id, viewerId, input.connectorType, machineId],
-          )
-        ).rows[0]?.status
-      : undefined;
     await database.query(
       `INSERT INTO workspace_connectors(
          id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,
@@ -7610,18 +7628,6 @@ export class PhoneService {
       status_steps: defaultConnectorSteps() as ConnectorStep[],
       status_error: null,
     };
-    if (isGoogleToolConnectorKind(input.connectorType) && this.googleOAuth) {
-      if (
-        previousGoogleStatus === 'error' ||
-        !(await this.googleOAuth.hasGrant(ws.workspace_id, viewerId, machineId, database))
-      ) {
-        const url = await this.googleOAuth.begin(existing.id, database);
-        await database.query(`UPDATE workspace_connectors SET sign_in=$2::jsonb WHERE id=$1`, [
-          existing.id,
-          JSON.stringify({ method: 'oauth', url }),
-        ]);
-      }
-    }
     // Push the install to this helper now; the poll is only recovery.
     await notifyConnectorAssignment(database, matched.agent_id);
     await ensureConnectorDirectMessageRoom(
@@ -7692,23 +7698,6 @@ export class PhoneService {
        WHERE id=$1::uuid`,
       [input.connectorId],
     );
-    if (isGoogleToolConnectorKind(connector.connector_type)) {
-      await this.database.query(
-        `DELETE FROM google_oauth_grants g
-         USING workspace_connectors c
-         WHERE c.id=$1 AND g.workspace_id=c.workspace_id
-           AND g.owner_identity_id=c.owner_identity_id AND g.machine_id=c.machine_id
-           AND NOT EXISTS (
-             SELECT 1 FROM workspace_connectors active
-             WHERE active.workspace_id=c.workspace_id
-               AND active.owner_identity_id=c.owner_identity_id
-               AND active.machine_id=c.machine_id
-               AND active.connector_type LIKE 'google-%'
-               AND active.status IN ('installing','connected','error')
-           )`,
-        [input.connectorId],
-      );
-    }
     await notifyConnectorAssignment(this.database, connector.helper_agent_id);
   }
 

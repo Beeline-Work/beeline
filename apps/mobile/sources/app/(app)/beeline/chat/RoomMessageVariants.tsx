@@ -26,7 +26,9 @@ import {
   connectorOfferTitle,
   connectorOfferWaitingLine,
 } from '@/buzz/connector-offer-copy';
-import { GoogleMark } from '@/components/buzz/GoogleMark';
+import { AppMark } from '@/components/buzz/AppMark';
+import { appDomain } from '@/buzz/app-catalog';
+import { appBoardColors, appBoardType } from '@/buzz/app-board-style';
 import { shouldShowReplyReference } from '@/buzz/reply-reference';
 import {
   draftRequestId,
@@ -456,6 +458,38 @@ export interface ConnectorOfferCardProps {
  * then settles into `added by @who · 12:04` only after the helper reports
  * connected. The phone mirrors the server's authority; it never decides it.
  */
+export function AppSignInCard({ message, agentName, canConnect, onConnect, busy }: {
+  message: ChatDisplayMessage;
+  agentName: string;
+  canConnect: boolean;
+  onConnect: () => void;
+  busy: boolean;
+}) {
+  const app = message.appSignIn!;
+  if (app.status === 'connected') return <Text style={appSignInStyles.settled}>{app.name.toUpperCase()} CONNECTED · {agentName.toUpperCase()} CONTINUES</Text>;
+  return <View style={appSignInStyles.wrap} testID={`app-sign-in-${app.appKey}`}>
+    <View style={appSignInStyles.card}>
+      <View style={appSignInStyles.heading}><AppMark name={app.name} domain={appDomain(app.name)} size={30} white /><Text style={appSignInStyles.title}>Connect {app.name}</Text></View>
+      <Text style={appSignInStyles.detail}>Sign in once. {app.continuation ?? `${agentName} continues the request right after.`}</Text>
+      {canConnect ? <Pressable accessibilityRole="button" disabled={busy} onPress={onConnect} style={appSignInStyles.button} testID={`app-sign-in-${app.appKey}-connect`}><Text style={appSignInStyles.buttonText}>{busy ? 'Connecting' : `Connect ${app.name}`}</Text></Pressable> : <Text style={appSignInStyles.detail}>Waiting for the account owner to connect {app.name}.</Text>}
+    </View>
+  </View>;
+}
+
+const appSignInStyles = StyleSheet.create(theme => {
+  const board = appBoardColors(theme.buzz);
+  return {
+  wrap: { gap: 8, marginVertical: 8, marginHorizontal: 6 },
+  card: { borderWidth: 1, borderColor: board.cardBorder, borderRadius: 14, padding: 14, gap: 12, backgroundColor: board.card },
+  heading: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  title: { ...Typography.ledger(), ...appBoardType.cardTitle, color: board.ink },
+  detail: { ...Typography.ledger(), ...appBoardType.cardDetail, color: board.secondary },
+  button: { alignSelf: 'flex-start', minHeight: 44, paddingHorizontal: 18, borderRadius: 10, justifyContent: 'center', backgroundColor: board.buttonFill },
+  buttonText: { ...Typography.ledger(), ...appBoardType.cardAction, color: board.buttonText },
+  settled: { ...Typography.mono(), ...appBoardType.cardSettled, color: board.quiet, marginVertical: 8, marginHorizontal: 6 },
+  };
+});
+
 export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
   message,
   agent,
@@ -468,7 +502,6 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
   onOpenWorkbench,
 }: ConnectorOfferCardProps) {
   const offer = message.connectorOffer!;
-  const googleOffer = offer.connectorType.startsWith('google-');
   const display = resolveAgentDisplayIdentity(offer.agent.pubkey, agent);
   const agentName = agent ? display.name : offer.agent.name;
   const pending = offer.status === 'pending';
@@ -481,7 +514,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
     pending && canAccept
       ? [
           {
-            label: googleOffer ? 'Connect Google' : connectorOfferActionLabel(offer.connectorName),
+            label: connectorOfferActionLabel(offer.connectorName),
             primary: true,
             disabled: actionId !== null,
             loading: busy,
@@ -512,26 +545,10 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
     <TranscriptCard
       tier={pending || connecting ? 'ask' : 'record'}
       testID={`connector-offer-${pending ? 'pending' : connecting ? 'connecting' : 'settled'}`}
-      identity={
-        googleOffer ? (
-          <GoogleMark size={32} />
-        ) : (
-          <IdentityMark
-            kind="agent"
-            seed={display.avatarSeed ?? offer.agent.pubkey}
-            avatarUrl={display.avatarUrl}
-            face={display.face}
-            name={agentName}
-            size={26}
-          />
-        )
-      }
-      title={googleOffer ? 'Connect Google Workspace' : connectorOfferTitle(offer.connectorName)}
-      subline={
-        googleOffer
-          ? `One sign-in connects Gmail, Calendar, Drive and YouTube. ${agentName} continues this request right after.`
-          : offer.consequence
-      }
+
+      identity={<IdentityMark kind="agent" seed={display.avatarSeed ?? offer.agent.pubkey} avatarUrl={display.avatarUrl} face={display.face} name={agentName} size={26} />}
+      title={connectorOfferTitle(offer.connectorName)}
+      subline={offer.consequence}
       sublineTestID={`connector-offer-${offer.offerId}-line`}
       stamp={ledgerStamp(message.timestamp)}
       footerNote={

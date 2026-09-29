@@ -38,25 +38,27 @@ Direct iOS delivery uses APNs token authentication. Set `APNS_KEY_P8_BASE64` to 
 
 The mounted auth routes also require `PUBLIC_ORIGIN`, `BUZZY_AUTH_TENANTS_JSON`, and the six `BUZZY_AUTH_OIDC_*` values documented in `apps/auth/README.md`. The tenants JSON must contain an entry whose host and origin match `PUBLIC_ORIGIN`; production uses `server.usebeeline.app`.
 
-Google Workspace connections use Beeline's own confidential web OAuth client. Configure
-`BEELINE_GOOGLE_CLIENT_ID`, `BEELINE_GOOGLE_CLIENT_SECRET`, and
-`BEELINE_GOOGLE_TOKEN_KEY` (32 random bytes, base64 encoded) on the server,
-and register `${PUBLIC_ORIGIN}/v1/google/oauth/callback` as the client's exact
-authorized redirect URI in Google Cloud. Keep the encryption key stable across
-releases: it protects stored refresh tokens. Without all three values, the
-Google products are unavailable in Workbench. Consent requests Gmail, Calendar,
-Drive, and YouTube scopes; each product is installed and reports status
-separately. Enable the corresponding APIs and complete Google's verification
-for restricted scopes before offering this outside test users.
+Managed app sign-in uses a server-only `BEELINE_COMPOSIO_API_KEY`. Configure the
+provider's callback verifier to `${PUBLIC_ORIGIN}/v1/apps/oauth/verify` before
+enabling the API key.
+The verifier sends a single-use session URI to the signed-in phone; the server
+completes it with that person's Beeline identity ID and checks the exact pending
+account and toolkit. The API key, provider credentials, and tool execution stay
+on the server. Each Google Workspace product (Gmail, Calendar, Drive, Docs,
+Sheets) is a separate app connection. Existing first-party Google grants are
+disconnected during schema migration because their OAuth client cannot be
+transferred; people must sign in again through Connect an app. The new server
+does not use the old token tables. They remain during the rolling update for
+older server images and are removed by a later release migration.
 
 Apps connect through one front door: an agent's `connect_app` or Workbench →
 Connect an app. The server chooses the route in a fixed order — an app already
-connected in Workbench, the app's official hosted MCP server from the Registry,
-then Trusty Squire with an API key, then Squire in a browser only when the app
-has no API — and records each choice in `workspace_app_routes`. Every use on
-every route is authorized as `app:<key>` and recorded in
-`workspace_app_usage` (`src/app-connections.ts`). Composio is retired; its
-persisted rows are removed by the migration.
+connected in Workbench, managed OAuth for a supported app, then Trusty Squire
+with an API key, then Squire in a browser only when the app has no API — and
+records each choice in `workspace_app_routes`. An existing Registry MCP
+connection remains usable, but new route decisions do not select one. Every
+use is authorized as `app:<key>` and recorded in `workspace_app_usage`
+(`src/app-connections.ts`).
 
 The browser client is hosted separately at `https://web.usebeeline.app`. Set
 `BEELINE_WEB_APP_ORIGINS=https://web.usebeeline.app` in production so the server

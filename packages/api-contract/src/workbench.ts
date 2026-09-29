@@ -47,41 +47,7 @@ export function isConnectorKind(value: unknown): value is ConnectorKind {
 export const CONNECTABLE_CONNECTOR_KINDS: readonly ConnectorKind[] = [
   'trusty-squire',
   'tailscale',
-  'google-gmail',
-  'google-calendar',
-  'google-drive',
-  'google-youtube',
 ];
-
-/**
- * The four Google Workspace tool kinds share one OAuth grant on a helper.
- * Pairing and status remain independent per product.
- */
-export const GOOGLE_CONNECTOR_KINDS: readonly ConnectorKind[] = [
-  'google-gmail',
-  'google-calendar',
-  'google-drive',
-  'google-youtube',
-];
-
-/** Scope authority for the four independent Google product installs. */
-export const GOOGLE_TOOL_SCOPES = {
-  'google-gmail': [
-    'https://www.googleapis.com/auth/gmail.readonly',
-  ],
-  'google-calendar': [
-    'https://www.googleapis.com/auth/calendar.readonly',
-  ],
-  'google-drive': ['https://www.googleapis.com/auth/drive.readonly'],
-  'google-youtube': [
-    'https://www.googleapis.com/auth/youtube.readonly',
-    'https://www.googleapis.com/auth/yt-analytics.readonly',
-  ],
-} as const;
-
-export function isGoogleToolConnectorKind(value: ConnectorKind): boolean {
-  return (GOOGLE_CONNECTOR_KINDS as readonly string[]).includes(value);
-}
 
 export type WorkbenchConnectorView = {
   readonly connectorId: string;
@@ -167,7 +133,18 @@ export type WorkbenchAppView = {
   readonly helperId?: string;
   /** The vault key a Squire route holds, when one is bound. */
   readonly connectionReference?: string;
+  /** The connected person's Beeline handle/name, never provider account data. */
+  readonly accountLabel: string;
+  readonly workspaceName: string;
   readonly useCount: number;
+  /** Present only after a successful managed app tool execution. */
+  readonly lastUse?: {
+    readonly agentId: string;
+    readonly agentName: string;
+    readonly roomId: string;
+    readonly roomName: string;
+    readonly usedAt: number;
+  };
   readonly lastUsedAt?: number;
   readonly createdAt: number;
 };
@@ -245,7 +222,14 @@ export type ConnectWorkbenchAppResult = {
   readonly status: AppConnectionStatus;
   readonly transport: AppTransport;
   readonly route?: AppRoute;
+  /** Hosted sign-in page for a managed OAuth route. Open only for the signed-in person. */
+  readonly authorizationUrl?: string;
 };
+/** Redeem the provider verifier's single-use session under the current phone identity. */
+export type CompleteAppSignInInput = { readonly sessionUri: string };
+export type CompleteAppSignInResult = { readonly appId: string };
+export type BeginAppSignInInput = { readonly appId: string };
+export type BeginAppSignInResult = { readonly authorizationUrl: string };
 export type DisconnectWorkbenchAppInput = {
   readonly workspaceId: string;
   readonly appId: string;

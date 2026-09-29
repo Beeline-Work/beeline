@@ -113,6 +113,7 @@ import { TurnBandSlot, TurnSettledLine } from '@/components/buzz/TurnProgressLin
 import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
 import { DesktopWorkPaneHandle } from '@/components/DesktopWorkPaneHandle';
 import { openExternalUrl } from '@/utils/open-external-url';
+import { openAppSignIn } from '@/buzz/app-sign-in';
 import { openArtifactInBrowserOrExplain } from '@/buzz/artifact-link';
 import {
   subscribeDesktopArtifact,
@@ -276,6 +277,7 @@ import {
   GrantRequestCard,
   SquireApprovalCard,
   ConnectorOfferCard,
+  AppSignInCard,
   ChoiceCard,
   WalletCards,
   OrdinaryLedgerMessage,
@@ -361,7 +363,7 @@ import {
   takeCornerComposerDraft,
 } from '@/buzz/message-corner-forward';
 import { roomMemberManagementState } from '@/buzz/room-member-management';
-import { connectorOfferCeremonyRoute, continueGoogleOffer, googleOfferSignInRoute } from '@/buzz/connector-offer-ceremony';
+import { connectorOfferCeremonyRoute } from '@/buzz/connector-offer-ceremony';
 import { useIsDesktop } from '@/utils/responsive';
 import { isDesktopShell } from '@/utils/isDesktopShell';
 import {
@@ -728,6 +730,7 @@ export function BuzzChatSurface({
   const [permissionActionId, setPermissionActionId] = useState<string | null>(null);
   const [grantActionId, setGrantActionId] = useState<string | null>(null);
   const [connectorOfferActionId, setConnectorOfferActionId] = useState<string | null>(null);
+  const [appSignInActionId, setAppSignInActionId] = useState<string | null>(null);
   const [choiceActionId, setChoiceActionId] = useState<string | null>(null);
   /** Proposal currently being confirmed, and the last refusal/failure text. */
   const [targetBranchActionId, setTargetBranchActionId] = useState<string | null>(null);
@@ -3888,21 +3891,8 @@ export function BuzzChatSurface({
 
   const continueConnectorOffer = useCallback(async (offerId: string,
     connectorType: string, pairedConnectorId: string) => {
-    if (pairedConnectorId === 'google-account') {
-      try {
-        const route = await continueGoogleOffer({ workspaceId: activeCommunityId ?? '',
-          viewerId: cacheViewerPubkey, roomId: decodedId, offerId, pairedConnectorId },
-          () => monolithPhoneOperation('readGoogleSignIn', {}),
-          () => monolithPhoneOperation('acceptConnectorOffer', { offerId }));
-        if (route) router.push(route as Href);
-        else Modal.alert('Google sign-in unavailable', 'Tap Connect again to retry.');
-      } catch (error) {
-        Modal.alert('Could not resume Google sign-in', phoneOperationFailureReason(error));
-      }
-      return;
-    }
     openConnectorOfferCeremony(offerId, connectorType, pairedConnectorId);
-  }, [activeCommunityId, cacheViewerPubkey, decodedId, openConnectorOfferCeremony]);
+  }, [openConnectorOfferCeremony]);
 
   /**
    * Start a connector-offer ceremony. The server holds the authority, pairs
@@ -3916,16 +3906,7 @@ export function BuzzChatSurface({
       setConnectorOfferActionId(offerId);
       try {
         const accepted = await monolithPhoneOperation('acceptConnectorOffer', { offerId });
-        if (accepted.connectorId === 'google-account') {
-          const route = googleOfferSignInRoute({ workspaceId: activeCommunityId ?? '',
-            viewerId: cacheViewerPubkey, roomId: accepted.roomId, offerId,
-            pairedConnectorId: accepted.connectorId,
-            authorizationUrl: accepted.authorizationUrl });
-          if (route) router.push(route as Href);
-          else Modal.alert('Google sign-in unavailable', 'Tap Connect again to retry.');
-        } else {
-          openConnectorOfferCeremony(offerId, connectorType, accepted.connectorId, accepted.roomId);
-        }
+        openConnectorOfferCeremony(offerId, connectorType, accepted.connectorId, accepted.roomId);
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
         console.warn('Connector offer acceptance failed:', err);
@@ -3933,7 +3914,7 @@ export function BuzzChatSurface({
         setConnectorOfferActionId(null);
       }
     },
-    [activeCommunityId, cacheViewerPubkey, connectorOfferActionId, openConnectorOfferCeremony, viewerIsAgent],
+    [connectorOfferActionId, openConnectorOfferCeremony, viewerIsAgent],
   );
 
   /** The settled offer card's door to the Workbench page (Q3: one of its three remaining paths). */
@@ -5086,6 +5067,24 @@ export function BuzzChatSurface({
         );
       }
 
+      if (item.appSignIn) {
+        const card = item.appSignIn;
+        const agentName = resolveAgentDisplayIdentity(card.agentId, agentByPubkey.get(card.agentId)).name;
+        return <AppSignInCard
+          message={item}
+          agentName={agentName}
+          canConnect={!viewerIsAgent && cacheViewerPubkey === card.ownerId}
+          busy={appSignInActionId === card.appId}
+          onConnect={() => {
+            if (appSignInActionId || viewerIsAgent || cacheViewerPubkey !== card.ownerId) return;
+            setAppSignInActionId(card.appId);
+            void monolithPhoneOperation('beginAppSignIn', { appId: card.appId })
+              .then(result => openAppSignIn(result.authorizationUrl, { workspaceId: activeCommunityId ?? '', viewerId: cacheViewerPubkey, roomId: decodedId }))
+              .catch(error => Modal.alert('Could not connect app', phoneOperationFailureReason(error)))
+              .finally(() => setAppSignInActionId(null));
+          }}
+        />;
+      }
       if (item.connectorOffer) {
         return (
           <ConnectorOfferCard
@@ -5308,6 +5307,10 @@ export function BuzzChatSurface({
       handleForwardToNewCorner,
       grantActionId,
       connectorOfferActionId,
+      appSignInActionId,
+      activeCommunityId,
+      cacheViewerPubkey,
+      decodedId,
       handleAcceptConnectorOffer,
       openConnectorOfferCeremony,
       openWorkbench,

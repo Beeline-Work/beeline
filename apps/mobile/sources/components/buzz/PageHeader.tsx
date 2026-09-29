@@ -2,6 +2,8 @@ import React from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { CHEVRON_BACK_SIZE, ChevronGlyph } from './ChevronGlyph';
+import { Typography } from '@/constants/Typography';
+import { appBoardColors, appBoardType } from '@/buzz/app-board-style';
 
 export interface PageHeaderProps {
   /** The section's one title. */
@@ -24,6 +26,8 @@ export interface PageHeaderProps {
   backTestID?: string;
   titleTestID?: string;
   testID?: string;
+  /** Approved Connect an app board treatment within the shared header. */
+  appBoard?: boolean;
 }
 
 /**
@@ -45,9 +49,10 @@ export function PageHeader({
   backTestID,
   titleTestID,
   testID,
+  appBoard = false,
 }: PageHeaderProps) {
   return (
-    <View style={[styles.header, eyebrow && styles.headerWithEyebrow]} testID={testID}>
+    <View style={[styles.header, eyebrow && styles.headerWithEyebrow, appBoard && styles.appBoardHeader]} testID={testID}>
       {onBack ? (
         <TouchableOpacity
           accessibilityLabel={backAccessibilityLabel}
@@ -63,15 +68,15 @@ export function PageHeader({
           />
         </TouchableOpacity>
       ) : null}
-      <View style={styles.headerCopy}>
+      <View style={[styles.headerCopy, appBoard && styles.appBoardCopy]}>
         {eyebrow ? (
-          <Text numberOfLines={1} style={styles.headerEyebrow}>
+          <Text numberOfLines={1} style={[styles.headerEyebrow, appBoard && Typography.ledger(), appBoard && styles.appBoardEyebrow]}>
             {eyebrow}
           </Text>
         ) : null}
         <Text
           accessibilityRole="header"
-          style={[styles.headerTitle, prominent && styles.headerHero]}
+          style={[styles.headerTitle, prominent && styles.headerHero, appBoard && Typography.ledger('medium'), appBoard && styles.appBoardTitle]}
           testID={titleTestID}
         >
           {title}
@@ -88,7 +93,9 @@ export function PageHeader({
   );
 }
 
-const styles = StyleSheet.create((theme) => ({
+const styles = StyleSheet.create((theme) => {
+  const board = appBoardColors(theme.buzz);
+  return {
   header: {
     minHeight: 66,
     flexDirection: 'row',
@@ -113,4 +120,10 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.buzz.space.sm,
     textAlign: 'right',
   },
-}));
+  appBoardHeader: { gap: 14, paddingLeft: 16, paddingRight: 20, paddingTop: 18, paddingBottom: 16,
+    borderBottomWidth: 1, borderBottomColor: board.border },
+  appBoardCopy: { gap: 2 },
+  appBoardEyebrow: { ...appBoardType.eyebrow, color: board.quiet },
+  appBoardTitle: { ...appBoardType.title, color: board.ink },
+  };
+});

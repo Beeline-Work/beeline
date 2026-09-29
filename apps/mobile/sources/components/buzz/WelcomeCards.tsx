@@ -77,7 +77,7 @@ const COPY = [
   },
   {
     title: 'All your tools, ready for your agents',
-    body: 'Connect Google, GitHub, Stripe and more once in Workbench. For everything else, agents discover and connect services on their own.',
+    body: 'Connect an app once in Workbench. Agents can also ask you to connect an app from a conversation when they need one.',
   },
 ] as const;
 

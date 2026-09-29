@@ -171,6 +171,7 @@ import {
   GrantRequestCard,
   SquireApprovalCard,
   ConnectorOfferCard,
+  AppSignInCard,
   ConnectorReceiptCard,
   ChoiceCard,
   agentBylineLabel,
@@ -2700,33 +2701,24 @@ describe('Room message variant components', () => {
       },
     });
 
-    it('offers one Google Workspace sign-in from the conversation', () => {
-      const onAccept = vi.fn();
-      const card = render(
-        <ConnectorOfferCard
-          message={message({
-            connectorOffer: {
-              ...pending.connectorOffer!,
-              connectorType: 'google-calendar',
-              connectorName: 'Google Calendar',
-            },
-          })}
-          viewerIsAgent={false}
-          viewerPubkey="zeke"
-          viewerRole="member"
-          actionId={null}
-          onAccept={onAccept}
-          onOpenWorkbench={vi.fn()}
-        />,
-      );
-      expect(JSON.stringify(card.toJSON())).toContain('Connect Google Workspace');
-      expect(
-        card.root.findByProps({ testID: 'connector-offer-offer-1-line' }).props.children,
-      ).toContain('One sign-in connects Gmail, Calendar, Drive and YouTube.');
-      const accept = card.root.findByProps({ testID: 'connector-offer-offer-1-accept' });
-      expect(accept.props.accessibilityLabel).toBe('Connect Google');
-      act(() => accept.props.onPress());
-      expect(onAccept).toHaveBeenCalledWith('offer-1', 'google-calendar');
+
+    it('renders the route-neutral app card for its exact owner and waits for server settlement', () => {
+      const onConnect = vi.fn();
+      const signIn = message({ appSignIn: { appId: 'app-slack', appKey: 'slack', name: 'Slack', ownerId: 'zeke', agentId: 'monarch', status: 'pending', continuation: 'Monarch posts the notes right after.' } });
+      const pendingCard = render(<AppSignInCard message={signIn} agentName="Monarch" canConnect onConnect={onConnect} busy={false} />);
+      expect(JSON.stringify(pendingCard.toJSON())).toContain('Connect Slack');
+      expect(JSON.stringify(pendingCard.toJSON())).toContain('posts the notes right after.');
+      const fallback = render(<AppSignInCard message={message({ appSignIn: { ...signIn.appSignIn!, continuation: undefined } })} agentName="Monarch" canConnect onConnect={onConnect} busy={false} />);
+      expect(JSON.stringify(fallback.toJSON())).toContain('continues the request right after.');
+      act(() => pendingCard.root.findByProps({ testID: 'app-sign-in-slack-connect' }).props.onPress());
+      expect(onConnect).toHaveBeenCalledTimes(1);
+      const waiting = render(<AppSignInCard message={signIn} agentName="Monarch" canConnect={false} onConnect={onConnect} busy={false} />);
+      expect(JSON.stringify(waiting.toJSON())).toContain('Waiting for the account owner');
+      const settled = render(<AppSignInCard message={message({ appSignIn: { ...signIn.appSignIn!, status: 'connected' } })} agentName="Monarch" canConnect={false} onConnect={onConnect} busy={false} />);
+      expect(JSON.stringify(settled.toJSON())).toContain('SLACK');
+      expect(JSON.stringify(settled.toJSON())).toContain('CONNECTED ·');
+      expect(JSON.stringify(settled.toJSON())).toContain('MONARCH');
+      expect(JSON.stringify(settled.toJSON())).not.toContain('Connect Slack');
     });
 
     it('asks the question once, states consequence + boundary in one server-owned line, and offers ONE affirmative action to the addressee', () => {

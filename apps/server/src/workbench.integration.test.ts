@@ -10,7 +10,6 @@ import { LiveHub } from './live.js';
 import { createBeelineServer } from './server.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { GitHubOperations } from './github-operations.js';
-import { GOOGLE_GRANT_REVOKED, GoogleOAuth } from './google-oauth.js';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import {
   applyVaultList,
@@ -68,13 +67,6 @@ describe('workbench connectors', () => {
       {} as unknown as GitHubAppClient,
       'github-client-secret',
     );
-    const googleOAuth = new GoogleOAuth(
-      database,
-      'client',
-      'secret',
-      'http://placeholder',
-      Buffer.alloc(32, 1).toString('base64'),
-    );
     phone = new PhoneService(
       database,
       'http://placeholder',
@@ -84,7 +76,7 @@ describe('workbench connectors', () => {
       false,
       database,
       undefined,
-      googleOAuth,
+      undefined,
     );
     const live = new LiveHub();
     daemon = new DaemonService(
@@ -97,9 +89,9 @@ describe('workbench connectors', () => {
       false,
       undefined,
       undefined,
-      googleOAuth,
+      undefined,
     );
-    server = createBeelineServer({ database, auth, phone, daemon, live, googleOAuth });
+    server = createBeelineServer({ database, auth, phone, daemon, live });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     accessToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
@@ -971,12 +963,12 @@ describe('workbench connectors', () => {
   });
 
   it('answers the connector status the helper named, not the oldest row', async () => {
-    // A helper carries the four Google tool rows beside its Squire row, and
-    // the Google ones are created first. An unscoped read would hand the
+    // A helper carries another tool row beside its Squire row, and
+    // that one is created first. An unscoped read would hand the
     // helper another connector's state for its own assignment.
-    const google = (await phoneOperation('pairConnector', {
+    const tailscale = (await phoneOperation('pairConnector', {
       workspaceId: WORKSPACE,
-      connectorType: 'google-gmail',
+      connectorType: 'tailscale',
       helperAgentId: HELPER,
     })) as { connectorId: string };
     const squire = (await phoneOperation('pairConnector', {
@@ -991,7 +983,7 @@ describe('workbench connectors', () => {
     });
 
     const unscoped = await daemonOperation('getConnectorStatus', {});
-    expect(unscoped.body.connectorId).toBe(google.connectorId);
+    expect(unscoped.body.connectorId).toBe(tailscale.connectorId);
 
     const scoped = await daemonOperation('getConnectorStatus', {
       connectorId: squire.connectorId,
@@ -1065,213 +1057,6 @@ describe('workbench connectors', () => {
     );
   });
 
-  it('pairing one Google tool queues only that product', async () => {
-    const paired = (await phoneOperation('pairConnector', {
-      workspaceId: WORKSPACE,
-      connectorType: 'google-gmail',
-      helperAgentId: HELPER,
-    })) as { connectorId: string };
-
-    const rows = await database.query<{ connector_type: string; status: string }>(
-      `SELECT connector_type,status FROM workspace_connectors
-       WHERE workspace_id=$1 AND owner_identity_id=$2 AND machine_id=$3
-         AND connector_type LIKE 'google-%'`,
-      [WORKSPACE, HUMAN, HELPER],
-    );
-    const byType = Object.fromEntries(rows.rows.map((row) => [row.connector_type, row.status]));
-    expect(Object.keys(byType)).toEqual(['google-gmail']);
-    expect(byType['google-gmail']).toBe('installing');
-    const queue = await daemonOperation('getConnectorAssignments', {});
-    const kinds = (
-      queue.body as { assignments?: { kind: string; connectorType: string }[] }
-    ).assignments?.filter((assignment) => assignment.connectorType?.startsWith('google-'));
-    expect(kinds?.map((assignment) => assignment.connectorType)).toEqual(['google-gmail']);
-    expect(kinds?.every((assignment) => assignment.kind === 'install')).toBe(true);
-  });
-
-  it('lets only the Google connector owner cancel a pending browser and retry', async () => {
-    const paired = await phoneOperation('pairConnector', {
-      workspaceId: WORKSPACE, connectorType: 'google-gmail', helperAgentId: HELPER,
-    }) as { connectorId: string };
-    const input = { connectorId: paired.connectorId };
-    expect(await phoneOperation('cancelGoogleSignIn', input, recipientToken)).toEqual({ cancelled: false });
-    expect(await phoneOperation('cancelGoogleSignIn', input)).toEqual({ cancelled: true });
-    expect(await phoneOperation('cancelGoogleSignIn', input)).toEqual({ cancelled: false });
-    const view = await phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as {
-      connectors: { connectorId: string; status: { status: string; signIn?: unknown } }[];
-    };
-    expect(view.connectors.find((row) => row.connectorId === paired.connectorId)?.status)
-      .toMatchObject({ status: 'disconnected' });
-    expect(view.connectors.find((row) => row.connectorId === paired.connectorId)?.status.signIn)
-      .toBeUndefined();
-    const retry = await phoneOperation('pairConnector', {
-      workspaceId: WORKSPACE, connectorType: 'google-gmail', helperAgentId: HELPER,
-    }) as { connectorId: string };
-    expect(retry.connectorId).toBe(paired.connectorId);
-  });
-
-  it('serves a connected Gmail grant to its Room agent and denies unrelated Rooms', async () => {
-    const roomId = randomUUID();
-    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Google Room')`,
-      [roomId, WORKSPACE]);
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES($1,$2,$3,'member')`, [WORKSPACE, roomId, HELPER]);
-    const before = await daemonOperation('getRoomGoogleGrant', { roomId });
-    expect(before).toMatchObject({ status: 200, body: { status: 'pending' } });
-
-    const paired = await phoneOperation('pairConnector', {
-      workspaceId: WORKSPACE, connectorType: 'google-gmail', helperAgentId: HELPER,
-    }) as { connectorId: string };
-    await database.query(`UPDATE workspace_connectors SET status='connected',sign_in=NULL
-      WHERE id=$1`, [paired.connectorId]);
-    const grant = vi.spyOn(GoogleOAuth.prototype, 'grantForHelper').mockResolvedValue({
-      accessToken: 'renewed-server-token', expiresAt: Date.now() + 3_600_000,
-      scopes: ['https://www.googleapis.com/auth/drive.readonly'],
-    });
-    const ownerGrant = vi.spyOn(GoogleOAuth.prototype, 'grantForOwner').mockResolvedValue(null);
-    try {
-      const connected = await daemonOperation('getRoomGoogleGrant', { roomId });
-      expect(connected).toMatchObject({ status: 200, body: {
-        status: 'ready', connectedTypes: ['google-gmail'],
-        credentials: { accessToken: 'renewed-server-token' },
-      } });
-      expect(grant).toHaveBeenCalledWith(paired.connectorId, HELPER);
-      ownerGrant.mockResolvedValue({ accessToken: 'calendar-token',
-        expiresAt: Date.now() + 3_600_000,
-        scopes: ['https://www.googleapis.com/auth/calendar.readonly'] });
-      expect(await daemonOperation('getRoomGoogleGrant', { roomId })).toMatchObject({
-        status: 200, body: { status: 'ready',
-          connectedTypes: expect.arrayContaining(['google-calendar', 'google-gmail']),
-          credentialsByType: {
-            'google-calendar': { accessToken: 'calendar-token' },
-            'google-gmail': { accessToken: 'renewed-server-token' },
-          },
-        },
-      });
-      ownerGrant.mockResolvedValue(null);
-      const other = await daemonOperation('getRoomGoogleGrant', { roomId }, otherHelperToken);
-      expect(other).toMatchObject({ status: 403, body: { error: 'daemon room access denied' } });
-      await database.query(`UPDATE workspace_connectors SET status='disconnected' WHERE id=$1`,
-        [paired.connectorId]);
-      expect(await daemonOperation('getRoomGoogleGrant', { roomId })).toMatchObject({
-        status: 200, body: { status: 'pending' },
-      });
-      await database.query(`UPDATE workspace_connectors SET status='connected' WHERE id=$1`,
-        [paired.connectorId]);
-      await database.query(`UPDATE memberships SET removed_at=now()
-        WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`, [WORKSPACE, HUMAN]);
-      expect(await daemonOperation('getRoomGoogleGrant', { roomId })).toMatchObject({
-        status: 200, body: { status: 'pending' },
-      });
-    } finally {
-      grant.mockRestore();
-      ownerGrant.mockRestore();
-    }
-  });
-
-  it('answers a revoked Google grant as a refusal and every other failure as retryable', async () => {
-    const paired = await phoneOperation('pairConnector', {
-      workspaceId: WORKSPACE, connectorType: 'google-gmail', helperAgentId: HELPER,
-    }) as { connectorId: string };
-    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const grant = vi.spyOn(GoogleOAuth.prototype, 'grantForHelper')
-      .mockRejectedValueOnce(new Error('Google could not refresh the grant (HTTP 503); retrying'))
-      .mockRejectedValueOnce(new Error(GOOGLE_GRANT_REVOKED));
-    try {
-      const outage = await daemonOperation('getGoogleOAuthGrant', { connectorId: paired.connectorId });
-      expect(outage.status).toBe(503);
-      const revoked = await daemonOperation('getGoogleOAuthGrant', { connectorId: paired.connectorId });
-      expect(revoked.status).toBe(400);
-      expect(revoked.body.error).toContain('invalid_grant');
-    } finally {
-      grant.mockRestore();
-      errors.mockRestore();
-    }
-  });
-
-  it('clears a Google retry error before the helper confirms the tool install', async () => {
-    const paired = (await phoneOperation('pairConnector', {
-      workspaceId: WORKSPACE, connectorType: 'google-gmail', helperAgentId: HELPER,
-    })) as { connectorId: string };
-    await database.query(
-      `UPDATE workspace_connectors SET status='error',status_error='Gmail permission denied',
-         status_steps='[{"label":"tools enabled","status":"failed","reason":"Gmail permission denied"}]'::jsonb
-       WHERE id=$1`, [paired.connectorId]);
-
-    await phoneOperation('pairConnector', {
-      workspaceId: WORKSPACE, connectorType: 'google-gmail', helperAgentId: HELPER,
-    });
-    const read = async () => (await database.query<{ status: string; status_error: string | null }>(
-      `SELECT status,status_error FROM workspace_connectors WHERE id=$1`, [paired.connectorId]
-    )).rows[0]!;
-    expect(await read()).toEqual({ status: 'installing', status_error: null });
-    const queue = await daemonOperation('getConnectorAssignments', {});
-    const assignment = (queue.body.assignments as { connectorId: string;
-      pairingGeneration: number }[]).find((row) => row.connectorId === paired.connectorId)!;
-    await daemonOperation('postConnectorStatus', {
-      connectorId: paired.connectorId, pairingGeneration: assignment.pairingGeneration,
-      steps: [{ label: 'authorized with Google', status: 'done' }],
-    });
-    expect(await read()).toEqual({ status: 'installing', status_error: null });
-    const installed = await daemonOperation('installConnector', {
-      connectorId: paired.connectorId, pairingGeneration: assignment.pairingGeneration,
-    });
-    expect(installed.status).toBe(200);
-    expect(await read()).toEqual({ status: 'connected', status_error: null });
-  });
-
-  it('re-pairing one Google tool leaves a connected sibling alone', async () => {
-    const paired = (await phoneOperation('pairConnector', {
-      workspaceId: WORKSPACE,
-      connectorType: 'google-gmail',
-      helperAgentId: HELPER,
-    })) as { connectorId: string };
-
-    await phoneOperation('pairConnector', {
-      workspaceId: WORKSPACE,
-      connectorType: 'google-youtube',
-      helperAgentId: HELPER,
-    });
-    await database.query(
-      `UPDATE workspace_connectors SET status='connected', connected_at=now()
-       WHERE workspace_id=$1 AND owner_identity_id=$2 AND machine_id=$3
-         AND connector_type='google-youtube'`,
-      [WORKSPACE, HUMAN, HELPER],
-    );
-
-    const again = (await phoneOperation('pairConnector', {
-      workspaceId: WORKSPACE,
-      connectorType: 'google-gmail',
-      helperAgentId: HELPER,
-    })) as { connectorId: string; status: { status: string } };
-    expect(again.connectorId).toBe(paired.connectorId);
-    expect(again.status.status).toBe('installing');
-
-    const rows = await database.query<{
-      connector_type: string;
-      status: string;
-      connected_at: Date | null;
-    }>(
-      `SELECT connector_type,status,connected_at FROM workspace_connectors
-       WHERE workspace_id=$1 AND owner_identity_id=$2 AND machine_id=$3
-         AND connector_type LIKE 'google-%'`,
-      [WORKSPACE, HUMAN, HELPER],
-    );
-    const byType = Object.fromEntries(
-      rows.rows.map((row) => [
-        row.connector_type,
-        { status: row.status, connectedAt: row.connected_at },
-      ]),
-    );
-    // The connected sibling keeps its live grant untouched.
-    expect(byType['google-youtube']!.status).toBe('connected');
-    expect(byType['google-youtube']!.connectedAt).not.toBeNull();
-    expect(byType['google-gmail']!.status).toBe('installing');
-    expect(byType['google-calendar']).toBeUndefined();
-    expect(byType['google-drive']).toBeUndefined();
-  });
-
   it('keeps the connector receipt DM read-only for everyone but the connector identity', async () => {
     const connectorId = await pairOwnerConnector();
     await daemonOperation('postConnectionUsage', {
@@ -1297,45 +1082,6 @@ describe('workbench connectors', () => {
       text: 'hello?',
     });
     expect(response.status).toBe(403);
-  });
-
-  it('routes YouTube lifecycle through its adapter: owner unpairs, another requester cannot', async () => {
-    const paired = (await phoneOperation('pairConnector', {
-      workspaceId: WORKSPACE,
-      connectorType: 'google-youtube',
-      helperAgentId: HELPER,
-    })) as { connectorId: string };
-    await database.query(
-      `UPDATE workspace_connectors SET status='connected', connected_at=now()
-       WHERE id=$1::uuid`,
-      [paired.connectorId],
-    );
-    const queue = await daemonOperation('getConnectorAssignments', {});
-    expect(
-      (queue.body as { assignments?: { kind: string; connectorType: string }[] }).assignments,
-    ).toContainEqual({
-      kind: 'refresh-google-grant',
-      connectorId: paired.connectorId,
-      connectorType: 'google-youtube',
-    });
-    expect(
-      (
-        await operation(
-          'unpairConnector',
-          { workspaceId: WORKSPACE, connectorId: paired.connectorId },
-          recipientToken,
-        )
-      ).status,
-    ).toBe(403);
-    await phoneOperation('unpairConnector', {
-      workspaceId: WORKSPACE,
-      connectorId: paired.connectorId,
-    });
-    const row = await database.query<{ status: string }>(
-      `SELECT status FROM workspace_connectors WHERE id=$1::uuid`,
-      [paired.connectorId],
-    );
-    expect(row.rows[0]!.status).toBe('disconnected');
   });
 
   it('does not copy a helper vault onto a Workbench row the helper owner does not own', async () => {

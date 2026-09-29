@@ -1,0 +1,536 @@
+import { beforeEach, describe, expect, it } from 'vitest';
+import type { QueryResultRow } from 'pg';
+import { migrate, type QueryResult, type SqlDatabase } from './database.js';
+import { PgliteDatabase } from './test-support.js';
+import { createAgentCommand, type CommandRow } from './agent-command.js';
+import { answerRoomChoice } from './room-choice.js';
+import {
+  archiveWorkflow,
+  handoff,
+  saveWorkflow,
+  startWorkflow,
+  workflowRunLockKey,
+} from './workflow-runs.js';
+
+/**
+ * Records every SQL statement issued through this wrapper, in order,
+ * including inside nested `transaction()` calls (PGlite's own transaction
+ * primitive serializes fully on its single embedded connection, so it never
+ * surfaces a `BEGIN` through the `SqlDatabase.query()` interface handoff()
+ * writes against — only the statements the application code itself issues
+ * are recorded here). This is how P0-1's fix is proven: not by reproducing
+ * genuine concurrent Postgres connections (PGlite architecturally cannot —
+ * see the concurrency describe block below), but by asserting the run lock
+ * is the first thing handoff() does, before it ever reads the run's state.
+ */
+type RecordedCall = { sql: string; values?: unknown[] };
+
+class RecordingDatabase implements SqlDatabase {
+  constructor(
+    private readonly inner: SqlDatabase,
+    readonly calls: RecordedCall[] = [],
+  ) {}
+  async query<Row extends QueryResultRow = QueryResultRow>(
+    sql: string,
+    values?: unknown[],
+  ): Promise<QueryResult<Row>> {
+    this.calls.push({ sql: sql.replace(/\s+/g, ' ').trim(), values });
+    return this.inner.query<Row>(sql, values);
+  }
+  transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {
+    return this.inner.transaction((db) => work(new RecordingDatabase(db, this.calls)));
+  }
+}
+
+const WORKSPACE = '10000000-0000-4000-8000-000000000001';
+const ROOM = '20000000-0000-4000-8000-000000000001';
+const OWNER = 'a'.repeat(64);
+const IMPLEMENTER = 'b'.repeat(64);
+const REVIEWER = 'c'.repeat(64);
+const APPROVER = 'd'.repeat(64);
+const OUTSIDER = 'e'.repeat(64);
+
+let database: PgliteDatabase;
+
+const CONTRACT = {
+  version: 1,
+  name: 'corner',
+  description: 'Implement, get checks green, get reviewed, and land a change',
+  roles: ['implementer', 'reviewer', 'approver'],
+  start: 'implement',
+  handoffs: {
+    implement: {
+      role: 'implementer',
+      requires: ['summary', 'prUrl'],
+      on: { pushed: 'checks', blocked: 'ask_human' },
+    },
+    checks: {
+      role: 'implementer',
+      requires: ['headSha'],
+      on: { passing: 'review', failing: 'implement' },
+      loop: { onEdge: 'failing', cap: 2, onExceeded: 'ask_human' },
+    },
+    review: {
+      role: 'reviewer',
+      requires: ['verdict', 'notes'],
+      on: { approved: 'human_approve', changes_requested: 'implement' },
+      loop: { onEdge: 'changes_requested', cap: 2, onExceeded: 'ask_human' },
+    },
+    human_approve: {
+      kind: 'gate',
+      role: 'approver',
+      requires: ['decision'],
+      on: { approved: 'land', rejected: 'implement' },
+    },
+    ask_human: {
+      kind: 'gate',
+      role: 'approver',
+      requires: ['decision'],
+      on: { resume: 'implement', abandon: 'failed' },
+    },
+    land: { kind: 'terminal', status: 'done' },
+    failed: { kind: 'terminal', status: 'failed' },
+  },
+};
+
+async function rootMessage(authorId: string, text = 'kick off the workflow'): Promise<string> {
+  const id = `${authorId}-root-${Math.random().toString(16).slice(2)}`;
+  await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`, [
+    id,
+    ROOM,
+    authorId,
+    text,
+  ]);
+  return id;
+}
+
+async function commandFor(agentId: string, sourceMessageId?: string): Promise<CommandRow> {
+  const sourceId = sourceMessageId ?? (await rootMessage(agentId === OWNER ? OWNER : IMPLEMENTER));
+  const command = await createAgentCommand(database, {
+    roomId: ROOM,
+    agentId,
+    sourceMessageId: sourceId,
+    reason: 'test',
+  });
+  if (!command) throw new Error('failed to create test command');
+  return command;
+}
+
+async function pendingCommandsFor(agentId: string): Promise<number> {
+  const rows = await database.query<{ count: string }>(
+    `SELECT count(*)::text count FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND state='pending'`,
+    [ROOM, agentId],
+  );
+  return Number(rows.rows[0]?.count ?? 0);
+}
+
+beforeEach(async () => {
+  database = new PgliteDatabase();
+  await migrate(database);
+  await database.query(
+    `INSERT INTO identities(id,kind,name) VALUES
+       ($1,'human','Owner'),($2,'agent','Impy'),($3,'agent','Ravi'),($4,'agent','Ada'),($5,'human','Outsider')`,
+    [OWNER, IMPLEMENTER, REVIEWER, APPROVER, OUTSIDER],
+  );
+  await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Workspace')`, [WORKSPACE]);
+  await database.query(`INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Team')`, [
+    ROOM,
+    WORKSPACE,
+    OWNER,
+  ]);
+  await database.query(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+       ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member'),($1,$2,$6,'member')`,
+    [WORKSPACE, ROOM, OWNER, IMPLEMENTER, REVIEWER, APPROVER],
+  );
+});
+
+describe('save_workflow', () => {
+  it('saves a valid contract as version 1', async () => {
+    const command = await commandFor(IMPLEMENTER);
+    const result = await saveWorkflow(database, command, { contract: CONTRACT });
+    expect(result).toEqual({ slug: 'corner', version: 1 });
+    const row = await database.query<{ kind: string; state: string; current_version: number }>(
+      `SELECT kind,state,current_version FROM workspace_skills WHERE workspace_id=$1 AND slug='corner'`,
+      [WORKSPACE],
+    );
+    expect(row.rows[0]).toEqual({ kind: 'workflow', state: 'active', current_version: 1 });
+  });
+
+  it('bumps the version on a second save of the same name', async () => {
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: CONTRACT });
+    const changed = { ...CONTRACT, description: 'Updated description' };
+    const second = await saveWorkflow(database, command, { contract: changed });
+    expect(second).toEqual({ slug: 'corner', version: 2 });
+  });
+
+  it('rejects an uncapped loop', async () => {
+    const command = await commandFor(IMPLEMENTER);
+    const broken = {
+      ...CONTRACT,
+      handoffs: { ...CONTRACT.handoffs, checks: { ...CONTRACT.handoffs.checks, loop: undefined } },
+    };
+    await expect(saveWorkflow(database, command, { contract: broken })).rejects.toThrow(
+      'workflow contract is invalid',
+    );
+  });
+
+  it('rejects a contract naming an unknown role', async () => {
+    const command = await commandFor(IMPLEMENTER);
+    const broken = {
+      ...CONTRACT,
+      handoffs: { ...CONTRACT.handoffs, implement: { ...CONTRACT.handoffs.implement, role: 'ghost' } },
+    };
+    await expect(saveWorkflow(database, command, { contract: broken })).rejects.toThrow(
+      'workflow contract is invalid',
+    );
+  });
+});
+
+describe('start_workflow', () => {
+  it('rejects a role with no binding', async () => {
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: CONTRACT });
+    await expect(
+      startWorkflow(database, command, {
+        name: 'corner',
+        roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER },
+      }),
+    ).rejects.toThrow('role binding is missing for approver');
+  });
+
+  it('rejects a role bound to someone who is not a current Room member', async () => {
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: CONTRACT });
+    await expect(
+      startWorkflow(database, command, {
+        name: 'corner',
+        roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: 'f'.repeat(64) },
+      }),
+    ).rejects.toThrow('is not a current member of this Room');
+  });
+
+  it('posts a run and wakes the start role agent', async () => {
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: CONTRACT });
+    const started = await startWorkflow(database, command, {
+      name: 'corner',
+      roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+    });
+    expect(started.state).toBe('implement');
+    expect(await pendingCommandsFor(IMPLEMENTER)).toBeGreaterThan(0);
+    const card = await database.query<{ card_type: string }>(
+      `SELECT card_type FROM messages WHERE id=$1`,
+      [started.runId],
+    );
+    expect(card.rows[0]?.card_type).toBe('workflow-handoff');
+  });
+});
+
+async function startedRun(): Promise<{ runId: string }> {
+  const command = await commandFor(IMPLEMENTER);
+  await saveWorkflow(database, command, { contract: CONTRACT });
+  return startWorkflow(database, command, {
+    name: 'corner',
+    roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+  });
+}
+
+describe('handoff', () => {
+  it('rejects a caller not bound to the current state role', async () => {
+    const { runId } = await startedRun();
+    const command = await commandFor(REVIEWER);
+    await expect(
+      handoff(database, command, { runId, outcome: 'pushed', contents: { summary: 'x', prUrl: 'y' } }),
+    ).rejects.toThrow('not you');
+  });
+
+  it('rejects an unknown outcome', async () => {
+    const { runId } = await startedRun();
+    const command = await commandFor(IMPLEMENTER);
+    await expect(
+      handoff(database, command, { runId, outcome: 'nope', contents: {} }),
+    ).rejects.toThrow('outcome must be one of');
+  });
+
+  it('rejects contents missing a required field', async () => {
+    const { runId } = await startedRun();
+    const command = await commandFor(IMPLEMENTER);
+    await expect(
+      handoff(database, command, { runId, outcome: 'pushed', contents: { summary: 'only this' } }),
+    ).rejects.toThrow('prUrl is required');
+  });
+
+  it('advances state and wakes the next role agent', async () => {
+    const { runId } = await startedRun();
+    const command = await commandFor(IMPLEMENTER);
+    const result = await handoff(database, command, {
+      runId,
+      outcome: 'pushed',
+      contents: { summary: 'did the thing', prUrl: 'https://example.test/pr/1' },
+    });
+    expect(result.state).toBe('checks');
+    expect(await pendingCommandsFor(IMPLEMENTER)).toBeGreaterThan(0);
+  });
+
+  it('rejects a handoff on a run that has already ended', async () => {
+    const { runId } = await startedRun();
+    let command = await commandFor(IMPLEMENTER);
+    await handoff(database, command, {
+      runId,
+      outcome: 'pushed',
+      contents: { summary: 'x', prUrl: 'y' },
+    });
+    command = await commandFor(IMPLEMENTER);
+    await handoff(database, command, { runId, outcome: 'passing', contents: { headSha: 'abc' } });
+    command = await commandFor(REVIEWER);
+    await handoff(database, command, {
+      runId,
+      outcome: 'approved',
+      contents: { verdict: 'approve', notes: 'lgtm' },
+    });
+    // human_approve is now open as a gate; answer it to reach the terminal land state.
+    const choice = await database.query<{ id: string; options: { optionId: string; label: string }[] }>(
+      `SELECT id,options FROM room_choices WHERE room_id=$1 AND agent_id=$2 AND status='open'`,
+      [ROOM, APPROVER],
+    );
+    const approvedOption = choice.rows[0]!.options.find((option) => option.label === 'approved')!;
+    await answerRoomChoice(database, {
+      choiceId: choice.rows[0]!.id,
+      optionId: approvedOption.optionId,
+      viewerId: OWNER,
+    });
+    command = await commandFor(APPROVER);
+    const landed = await handoff(database, command, {
+      runId,
+      outcome: 'approved',
+      contents: { decision: 'approved' },
+    });
+    expect(landed).toEqual({ runId, state: 'land', status: 'done' });
+    command = await commandFor(APPROVER);
+    await expect(
+      handoff(database, command, { runId, outcome: 'approved', contents: { decision: 'approved' } }),
+    ).rejects.toThrow('already ended');
+  });
+
+  it('caps a loop and forces onExceeded after the configured number of rounds', async () => {
+    const { runId } = await startedRun();
+    // The cap is 2: the loop edge may be taken twice back to `implement`, and
+    // only the third attempt is forced to the loop's onExceeded target.
+    const expected = ['implement', 'implement', 'ask_human'];
+    for (let round = 0; round < expected.length; round += 1) {
+      let command = await commandFor(IMPLEMENTER);
+      await handoff(database, command, {
+        runId,
+        outcome: 'pushed',
+        contents: { summary: 'x', prUrl: 'y' },
+      });
+      command = await commandFor(IMPLEMENTER);
+      const checked = await handoff(database, command, {
+        runId,
+        outcome: 'failing',
+        contents: { headSha: `sha-${round}` },
+      });
+      expect(checked.state).toBe(expected[round]);
+    }
+  });
+
+  it('posts a choice card for a gate instead of waking an agent directly', async () => {
+    const { runId } = await startedRun();
+    let command = await commandFor(IMPLEMENTER);
+    await handoff(database, command, {
+      runId,
+      outcome: 'pushed',
+      contents: { summary: 'x', prUrl: 'y' },
+    });
+    command = await commandFor(IMPLEMENTER);
+    await handoff(database, command, { runId, outcome: 'passing', contents: { headSha: 'abc' } });
+    command = await commandFor(REVIEWER);
+    const reviewed = await handoff(database, command, {
+      runId,
+      outcome: 'approved',
+      contents: { verdict: 'approve', notes: 'lgtm' },
+    });
+    expect(reviewed.state).toBe('human_approve');
+    const choice = await database.query<{ options: unknown[] }>(
+      `SELECT options FROM room_choices WHERE room_id=$1 AND agent_id=$2 AND status='open'`,
+      [ROOM, APPROVER],
+    );
+    expect(choice.rows).toHaveLength(1);
+    expect(choice.rows[0]!.options).toHaveLength(2);
+  });
+
+  it('schedules and cancels a state timeout across a handoff', async () => {
+    const timed = {
+      ...CONTRACT,
+      handoffs: {
+        ...CONTRACT.handoffs,
+        implement: {
+          ...CONTRACT.handoffs.implement,
+          on: { ...CONTRACT.handoffs.implement.on, timeout: 'ask_human' },
+          timeoutSeconds: 3600,
+        },
+      },
+    };
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: timed });
+    const started = await startWorkflow(database, command, {
+      name: 'corner',
+      roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+    });
+    const before = await database.query(`SELECT id FROM agent_schedules WHERE room_id=$1`, [ROOM]);
+    expect(before.rows).toHaveLength(1);
+    const next = await commandFor(IMPLEMENTER);
+    await handoff(database, next, {
+      runId: started.runId,
+      outcome: 'pushed',
+      contents: { summary: 'x', prUrl: 'y' },
+    });
+    // The implement state's own timeout is cancelled once it resolves normally.
+    const after = await database.query(`SELECT id FROM agent_schedules WHERE room_id=$1`, [ROOM]);
+    expect(after.rows).toHaveLength(0);
+  });
+});
+
+describe('archive_workflow', () => {
+  it('archives a workflow so a later start_workflow refuses it', async () => {
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: CONTRACT });
+    const archived = await archiveWorkflow(database, command, { name: 'corner' });
+    expect(archived).toEqual({ slug: 'corner', archived: true });
+    await expect(
+      startWorkflow(database, command, {
+        name: 'corner',
+        roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+      }),
+    ).rejects.toThrow('workflow is unavailable');
+  });
+
+  it('keeps a run in flight on its pinned version after the workflow is archived', async () => {
+    const { runId } = await startedRun();
+    const command = await commandFor(IMPLEMENTER);
+    await archiveWorkflow(database, command, { name: 'corner' });
+    const result = await handoff(database, command, {
+      runId,
+      outcome: 'pushed',
+      contents: { summary: 'x', prUrl: 'y' },
+    });
+    expect(result.state).toBe('checks');
+  });
+});
+
+/**
+ * P0-1 (external review of PR #1909): handoff() derived a run's current
+ * state, validated the caller's requested transition against it, and wrote
+ * the next `workflow-handoff` card with NO lock around that whole sequence —
+ * only the narrower loop-edge count had one. Two concurrent handoffs from
+ * the same state (a duplicate/retried tool call is exactly the "hiccup"
+ * pattern this codebase's own command-delivery layer already produces) could
+ * both read the same current state under READ COMMITTED, both validate
+ * independently, and both write a card; whichever committed last would
+ * silently become the run's canonical state per loadRun's newest-card-wins
+ * derivation, discarding the other transition even though its wake had
+ * already fired.
+ *
+ * PGlite cannot exhibit that race directly: it is a single embedded WASM
+ * connection guarded by its own internal mutex, so `database.transaction()`
+ * calls fully serialize — one call's BEGIN...COMMIT always completes before
+ * the next one's BEGIN begins, which is also why no test here (or anywhere
+ * else in this codebase, for the identical `resolveCascade` root lock or the
+ * pre-existing loop-edge lock) can force two genuinely concurrent Postgres
+ * connections to interleave. What CAN be proven, and is proven below, is
+ * that the code takes the run-level lock as the very first statement of the
+ * transaction, before it reads anything — which is the actual fix, and the
+ * assertion genuinely fails against the pre-fix code (no such call existed
+ * at all) and passes against the fix.
+ */
+describe('handoff run-level locking (P0-1)', () => {
+  it('derives the same lock key start_workflow and handoff both use', () => {
+    expect(workflowRunLockKey('abc123')).toBe('workflow-run:abc123');
+  });
+
+  it("acquires the run lock as the transaction's first statement, before it reads the run's current state", async () => {
+    const { runId } = await startedRun();
+    const recording = new RecordingDatabase(database);
+    await handoff(recording, await commandFor(IMPLEMENTER), {
+      runId,
+      outcome: 'pushed',
+      contents: { summary: 'x', prUrl: 'y' },
+    });
+    expect(recording.calls[0]).toEqual({
+      sql: 'SELECT pg_advisory_xact_lock(hashtext($1))',
+      values: [workflowRunLockKey(runId)],
+    });
+    const readIndex = recording.calls.findIndex((call) => call.sql.includes('FROM messages'));
+    expect(readIndex).toBeGreaterThan(0);
+  });
+
+  it("start_workflow locks its freshly minted run id before writing the run's start card", async () => {
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: CONTRACT });
+    const recording = new RecordingDatabase(database);
+    const { runId } = await startWorkflow(recording, command, {
+      name: 'corner',
+      roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+    });
+    const lockIndex = recording.calls.findIndex(
+      (call) =>
+        call.sql === 'SELECT pg_advisory_xact_lock(hashtext($1))' &&
+        call.values?.[0] === workflowRunLockKey(runId),
+    );
+    const insertIndex = recording.calls.findIndex((call) => call.sql.includes('INSERT INTO messages'));
+    expect(lockIndex).toBeGreaterThanOrEqual(0);
+    expect(insertIndex).toBeGreaterThan(lockIndex);
+  });
+
+  it('keeps loop counts exact and every card internally consistent across handoffs fired together', async () => {
+    // PGlite fully serializes database.transaction() calls (see the
+    // docblock above), so this cannot force the true interleaving the fix
+    // guards against — that is proven by the call-order tests above
+    // instead. This test is a regression safety net: whatever order PGlite
+    // actually runs these two calls in, the result must be internally
+    // consistent (the run ends up at exactly one real state, and the loop
+    // count computed for whichever call takes the capped edge reflects
+    // reality) rather than corrupted.
+    const { runId } = await startedRun();
+    const implementer = await commandFor(IMPLEMENTER);
+    await handoff(database, implementer, {
+      runId,
+      outcome: 'pushed',
+      contents: { summary: 'x', prUrl: 'y' },
+    });
+    const [a, b] = await Promise.allSettled([
+      handoff(database, await commandFor(IMPLEMENTER), {
+        runId,
+        outcome: 'passing',
+        contents: { headSha: 'sha-a' },
+      }),
+      handoff(database, await commandFor(IMPLEMENTER), {
+        runId,
+        outcome: 'failing',
+        contents: { headSha: 'sha-b' },
+      }),
+    ]);
+    // Both calls read/validated/wrote against the SAME source state
+    // ("checks"), which is only valid once — the second one to actually run
+    // sees the first one's committed card and is bound to whatever role
+    // that landed on, not "implementer" (this is the run-level lock doing
+    // its job: it forces true sequencing, so the second call's view of
+    // "current state" is never stale).
+    const outcomes = [a, b];
+    const fulfilled = outcomes.filter((o) => o.status === 'fulfilled');
+    const rejected = outcomes.filter((o) => o.status === 'rejected');
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    const cards = await database.query<{ card: { fromState: string; outcome: string; toState: string } }>(
+      `SELECT card FROM messages WHERE room_id=$1 AND card_type='workflow-handoff'
+       AND card->>'runId'=$2 ORDER BY created_at,id`,
+      [ROOM, runId],
+    );
+    // Exactly one card was ever written for the "checks" state, not two
+    // conflicting ones racing to be "the" current state.
+    const fromChecks = cards.rows.filter((row) => row.card.fromState === 'checks');
+    expect(fromChecks).toHaveLength(1);
+  });
+});

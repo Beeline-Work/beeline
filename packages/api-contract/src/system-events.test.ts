@@ -89,6 +89,7 @@ describe('the event kinds beside the prose', () => {
       'choice-answered',
       'choice-skipped',
       'poll-closed',
+      'workflow-handoff',
     ]);
     expect(isServerEventKind('joined')).toBe(true);
     expect(isServerEventKind('agent:handoff')).toBe(false);

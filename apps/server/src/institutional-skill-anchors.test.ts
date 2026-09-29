@@ -277,4 +277,35 @@ describe('Workspace procedure code anchors', () => {
     expect(unconfigured).toMatchObject({ checked: 0 });
     expect((await skillState()).state).toBe('active');
   });
+
+  it('never checks a workflow row, which carries no repository anchor at all', async () => {
+    const WORKFLOW = '40000000-0000-4000-8000-000000000302';
+    await database.query(
+      `INSERT INTO workspace_skills
+       (id,workspace_id,slug,description,state,current_version,revision,source_room_id,
+        repository,target_commit,path,kind)
+       VALUES($1,$2,'ship-it','Ship it','active',1,1,$3,'','',NULL,'workflow')`,
+      [WORKFLOW, WORKSPACE, CORNER],
+    );
+    await database.query(
+      `INSERT INTO workspace_skill_versions
+       (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,
+        repository,target_commit,path,extractor_version,model)
+       VALUES($1,1,'{}',$2,NULL,ARRAY[$3],'','',NULL,'workflow-save-v1','n/a')`,
+      [WORKFLOW, 'd'.repeat(64), REVIEW_MESSAGE],
+    );
+    const result = await refreshWorkspaceSkillAnchors(
+      database,
+      WORKSPACE,
+      anchorSource({ digests: {} }),
+    );
+    expect(result).toMatchObject({ checked: 0 });
+    const row = (
+      await database.query<{ anchor_checked_at: Date | null; state: string }>(
+        `SELECT anchor_checked_at,state FROM workspace_skills WHERE id=$1`,
+        [WORKFLOW],
+      )
+    ).rows[0]!;
+    expect(row).toEqual({ anchor_checked_at: null, state: 'active' });
+  });
 });

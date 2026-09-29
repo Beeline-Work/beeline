@@ -185,9 +185,10 @@ describe('Borrowing Calm type roles and spacing', () => {
     letterSpacing,
   });
 
-  it('pins the four sizes and the one mono role', () => {
+  it('pins the five sizes and the one mono role', () => {
     expect(typeRoles).toEqual({
       hero: role('SpaceGrotesk-Medium', 22, 32, -0.3),
+      display: role('SpaceGrotesk-Medium', 36, 43, -0.5),
       body: role('SpaceGrotesk-Regular', 16, 23, 0),
       bodyStrong: role('SpaceGrotesk-SemiBold', 16, 23, 0),
       meta: role('SpaceGrotesk-Regular', 13, 19, 0),
@@ -197,7 +198,10 @@ describe('Borrowing Calm type roles and spacing', () => {
       },
       machine: role('IBMPlexMono-Regular', 13, 19, 0),
     });
-    for (const value of Object.values(typeRoles)) {
+    // `display` is the one exception: its 36/43 line height is pinned by the
+    // approved Welcome Cards desktop measurement report, not the 1.45x rule.
+    for (const [name, value] of Object.entries(typeRoles)) {
+      if (name === 'display') continue;
       expect(value.lineHeight).toBe(Math.round(value.fontSize * 1.45));
     }
     // Section heads are the only tracked-uppercase style.

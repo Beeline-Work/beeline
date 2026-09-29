@@ -93,7 +93,27 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|_app| {
+            // CI's safe fixture checks that the installed shell can ask the OS
+            // to display a notification. No network request or real user push.
+            #[cfg(desktop)]
+            if std::env::var_os("BEELINE_DESKTOP_NOTIFICATION_PROOF").is_some() {
+                use tauri_plugin_notification::NotificationExt;
+                let handle = _app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    if let Err(error) = handle
+                        .notification()
+                        .builder()
+                        .title("Beeline desktop proof")
+                        .body("Safe test fixture: native OS notification")
+                        .show()
+                    {
+                        eprintln!("desktop notification proof failed: {error}");
+                    }
+                });
+            }
             #[cfg(desktop)]
             _app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;

@@ -369,6 +369,28 @@ jobs:
           npx tauri build --target "${{ matrix.target }}" ${config[@]+"${config[@]}"} \
             2>&1 | tee "$RUNNER_TEMP/tauri-build.log"
 
+      # This safe local fixture proves the plugin reaches the runner OS. The
+      # TypeScript test covers the signed-in live-message-to-plugin boundary.
+      - name: Capture macOS native notification
+        if: github.event_name == 'pull_request' && runner.os == 'macOS'
+        continue-on-error: true
+        timeout-minutes: 3
+        run: bash scripts/desktop-notification-proof-macos.sh
+
+      - name: Capture Windows native notification
+        if: github.event_name == 'pull_request' && runner.os == 'Windows'
+        continue-on-error: true
+        timeout-minutes: 3
+        run: pwsh -File scripts/desktop-notification-proof-windows.ps1
+
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'pull_request' && (runner.os == 'macOS' || runner.os == 'Windows')
+        with:
+          name: desktop-native-notification-${{ matrix.label }}
+          path: ${{ runner.temp }}/desktop-native-notification-*.png
+          if-no-files-found: warn
+          retention-days: 14
+
       # Pull requests cannot use release secrets. Exercise the exact codesign
       # verification path against an ad-hoc-signed copy without changing the
       # unsigned preview artifact that testers download.

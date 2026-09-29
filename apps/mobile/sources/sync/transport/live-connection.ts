@@ -122,7 +122,11 @@ export class LiveConnection {
     if (roomIds.size === 0) this.ensureFallback();
     if (fresh.length && this.socket && isSocketOpen(this.socket)) this.sendSubscribe(fresh);
     for (const roomId of held) this.replayLateJoin(registration, roomId);
-    return this.ensureSocket().then(() => () => this.stop(registration));
+    // Registration is complete before the socket authenticates. Initial
+    // Workspace/Room reads start after this promise, so a slow live handshake
+    // must not hold the deck on its loading view.
+    void this.ensureSocket();
+    return Promise.resolve(() => this.stop(registration));
   }
 
   dispose(): void {
@@ -138,7 +142,17 @@ export class LiveConnection {
    * the current socket missed events.
    */
   reconnect(): void {
-    if (this.connectInFlight) return;
+    if (this.connectInFlight) {
+      // Registration can return while the first connect promise is still
+      // settling. Keep a foreground/read recovery request made in that gap.
+      if (this.socket || this.reconnectTimer) {
+        const generation = this.generation;
+        void this.connectInFlight.then(() => {
+          if (generation === this.generation) this.reconnect();
+        });
+      }
+      return;
+    }
     if (this.socket?.readyState === 0) return;
     if (!this.socket && !this.reconnectTimer) return;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);

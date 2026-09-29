@@ -102,6 +102,30 @@ describe('LiveConnection', () => {
     vi.unstubAllGlobals();
   });
 
+  it('starts the first room read while live authorization is still pending', async () => {
+    let authorize!: (token: string) => void;
+    const authorization = vi.fn(() => new Promise<string>((resolve) => { authorize = resolve; }));
+    const { connection } = createConnection(authorization);
+    const fetch = vi.fn(async () => 'rooms');
+
+    const registration = connection.register([{ '#h': [ROOM_A] }], () => undefined);
+    const firstRead = registration.then(fetch);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(await firstRead).toBe('rooms');
+    expect(sockets).toHaveLength(0);
+
+    authorize('phone-session');
+    await Promise.resolve();
+    expect(sockets).toHaveLength(1);
+    sockets[0]!.open();
+    expect(sockets[0]!.sent).toEqual([JSON.stringify({ type: 'subscribe', roomIds: [ROOM_A] })]);
+    (await registration)();
+    connection.dispose();
+  });
+
   it('opens one socket for two registrations and subscribes only new rooms', async () => {
     const { connection } = createConnection();
     const first: unknown[] = [];

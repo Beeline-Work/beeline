@@ -37,6 +37,10 @@ describe('direct message helper surface', () => {
     expect(byDefault).toContain('search_history');
     expect(byDefault).toContain('search_memory');
     expect(byDefault).toContain('load_workspace_skill');
+    expect(byDefault).toContain('save_workflow');
+    expect(byDefault).toContain('start_workflow');
+    expect(byDefault).toContain('handoff');
+    expect(byDefault).toContain('archive_workflow');
     const disabled = agentToolsFor(true, false, false, false, true, false, false).map(
       (tool) => tool.name,
     );
@@ -44,6 +48,10 @@ describe('direct message helper surface', () => {
     expect(disabled).not.toContain('search_history');
     expect(disabled).not.toContain('search_memory');
     expect(disabled).not.toContain('load_workspace_skill');
+    expect(disabled).not.toContain('save_workflow');
+    expect(disabled).not.toContain('start_workflow');
+    expect(disabled).not.toContain('handoff');
+    expect(disabled).not.toContain('archive_workflow');
     const enabled = agentToolsFor(true, false, false, false, true, false, true).map(
       (tool) => tool.name,
     );
@@ -51,6 +59,10 @@ describe('direct message helper surface', () => {
     expect(enabled).toContain('search_history');
     expect(enabled).toContain('search_memory');
     expect(enabled).toContain('load_workspace_skill');
+    expect(enabled).toContain('save_workflow');
+    expect(enabled).toContain('start_workflow');
+    expect(enabled).toContain('handoff');
+    expect(enabled).toContain('archive_workflow');
     const proposal = agentToolsFor(true, false).find((tool) => tool.name === 'propose_memory_item');
     expect(proposal?.inputSchema.required).toContain('subject_is_requester');
     expect(proposal?.inputSchema.properties).not.toHaveProperty('memory_kind');

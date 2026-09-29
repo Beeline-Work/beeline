@@ -384,11 +384,11 @@ export async function closeExpiredChoices(database: SqlDatabase, now = new Date(
   return closed;
 }
 
-async function settleExpiredChoice(database: SqlDatabase, choiceId: string): Promise<void> {
+export async function settleExpiredChoice(database: SqlDatabase, choiceId: string, suppressWake = false): Promise<void> {
   const choice = await loadChoice(database, choiceId);
   if (!choice || choice.status !== 'open') return;
   if (choice.mode === 'question') {
-    await skipOpenChoice(database, choice, undefined, 'expired');
+    await skipOpenChoice(database, choice, undefined, 'expired', suppressWake);
     return;
   }
   await closeOpenPoll(database, choice);
@@ -444,6 +444,7 @@ async function skipOpenChoice(
   choice: ChoiceRow,
   viewer: IdentityRow | undefined,
   reason: 'skip' | 'expired',
+  suppressWake = false,
 ): Promise<void> {
   const status: ChoiceStatus = 'skipped';
   const agent = await loadIdentity(database, choice.agent_id);
@@ -467,7 +468,10 @@ async function skipOpenChoice(
     footer,
   });
   await writeChoiceCard(database, choice.message_id, card);
-  await wakeChoice(database, {
+  const workflowGate = await database.query(
+    `SELECT 1 FROM workflow_run_gates WHERE choice_id=$1`, [choice.id],
+  );
+  if (!suppressWake && !workflowGate.rowCount) await wakeChoice(database, {
     roomId: choice.room_id,
     authorId: viewer?.id ?? choice.agent_id,
     agentId: choice.agent_id,
@@ -566,7 +570,10 @@ export async function answerRoomChoice(
     footer: `picked ${option.letter} · @${handleOf(viewer)}`,
   });
   await writeChoiceCard(database, choice.message_id, card);
-  await wakeChoice(database, {
+  const workflowGate = await database.query(
+    `SELECT 1 FROM workflow_run_gates WHERE choice_id=$1`, [choice.id],
+  );
+  if (!workflowGate.rowCount) await wakeChoice(database, {
     roomId: choice.room_id,
     authorId: input.viewerId,
     agentId: choice.agent_id,

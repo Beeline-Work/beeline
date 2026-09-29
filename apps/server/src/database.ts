@@ -1503,6 +1503,88 @@ CREATE TABLE IF NOT EXISTS agent_schedule_occurrences (
   PRIMARY KEY (schedule_id, scheduled_for)
 );
 
+CREATE TABLE IF NOT EXISTS workflow_definitions (
+  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  revision integer NOT NULL,
+  definition jsonb NOT NULL,
+  author_id text NOT NULL REFERENCES identities(id),
+  role_bindings jsonb,
+  source_command_id text NOT NULL,
+  next_run_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(room_id,name,revision)
+);
+CREATE TABLE IF NOT EXISTS workflow_runs (
+  id uuid PRIMARY KEY,
+  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  revision integer NOT NULL,
+  definition jsonb NOT NULL,
+  roles jsonb NOT NULL,
+  state text NOT NULL,
+  status text NOT NULL CHECK(status IN ('running','waiting','failed','complete')),
+  sequence integer NOT NULL DEFAULT 0,
+  deadline_at timestamptz,
+  loop_counts jsonb NOT NULL DEFAULT '{}'::jsonb,
+  context jsonb NOT NULL DEFAULT '{}'::jsonb,
+  source_command_id text NOT NULL,
+  trigger_message_id text,
+  error text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS workflow_runs_room_idx ON workflow_runs(room_id,created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS workflow_runs_event_once_idx
+  ON workflow_runs(room_id,name,revision,trigger_message_id)
+  WHERE trigger_message_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS workflow_runs_due_idx ON workflow_runs(deadline_at,id)
+  WHERE status IN ('running','waiting');
+CREATE TABLE IF NOT EXISTS workflow_run_log (
+  run_id uuid NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
+  sequence integer NOT NULL,
+  state text NOT NULL,
+  event text NOT NULL,
+  payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(run_id,sequence,event)
+);
+CREATE TABLE IF NOT EXISTS workflow_run_assignments (
+  run_id uuid NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
+  sequence integer NOT NULL,
+  slot integer NOT NULL,
+  agent_id text NOT NULL REFERENCES identities(id),
+  command_id text NOT NULL UNIQUE,
+  status text NOT NULL CHECK(status IN ('pending','complete','failed')),
+  attempts integer NOT NULL DEFAULT 0,
+  timeout_retries integer NOT NULL DEFAULT 0,
+  output jsonb,
+  PRIMARY KEY(run_id,sequence,slot)
+);
+CREATE TABLE IF NOT EXISTS workflow_step_receipts (
+  command_id text PRIMARY KEY,
+  run_id uuid NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
+  sequence integer NOT NULL,
+  input_hash text NOT NULL,
+  response jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS workflow_run_event_receipts (
+  run_id uuid NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
+  event_id text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(run_id,event_id)
+);
+CREATE TABLE IF NOT EXISTS workflow_trigger_failures (
+  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  revision integer NOT NULL,
+  trigger_id text NOT NULL,
+  error text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(room_id,name,revision,trigger_id)
+);
+
 CREATE TABLE IF NOT EXISTS agent_mandates (
   agent_id text NOT NULL REFERENCES identities(id),
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -1979,6 +2061,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS room_choices_open_agent_room
   ON room_choices(agent_id, room_id) WHERE status='open';
 CREATE INDEX IF NOT EXISTS room_choices_due_idx
   ON room_choices(closes_at) WHERE status='open' AND closes_at IS NOT NULL;
+CREATE TABLE IF NOT EXISTS workflow_run_gates (
+  choice_id uuid PRIMARY KEY REFERENCES room_choices(id) ON DELETE CASCADE,
+  run_id uuid NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
+  sequence integer NOT NULL,
+  UNIQUE(run_id,sequence)
+);
 CREATE TABLE IF NOT EXISTS room_choice_votes (
   choice_id uuid NOT NULL REFERENCES room_choices(id) ON DELETE CASCADE,
   voter_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,

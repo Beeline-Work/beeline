@@ -653,13 +653,22 @@ describe('monolith integration', () => {
       expect(
         (
           await operation('registerPushDevice', {
-            token: 'https://evil.example/collect',
+            token: 'http://push.example.org/subscription',
             platform: 'web',
             environment: 'physical',
             keys,
           })
         ).status,
       ).toBeGreaterThanOrEqual(400);
+      const safariToken = 'https://web.push.apple.com/test-subscription';
+      expect((await operation('registerPushDevice', {
+        token: safariToken,
+        platform: 'web',
+        environment: 'physical',
+        keys,
+      })).status).toBe(200);
+      expect((await database.query(`SELECT identity_id FROM push_devices WHERE token=$1`, [safariToken])).rows)
+        .toEqual([{ identity_id: HUMAN }]);
       expect(
         (
           await operation('unregisterPushDevice', {

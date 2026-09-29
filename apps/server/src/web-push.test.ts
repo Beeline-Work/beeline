@@ -12,13 +12,22 @@ const environment = {
 };
 
 describe('web push transport', () => {
-  it('requires configured VAPID credentials and a Chrome push endpoint', () => {
+  it('requires configured VAPID credentials and accepts HTTPS browser push endpoints', () => {
     expect(webPushPublicKey({})).toBeNull();
     expect(createWebPushSender({ query: vi.fn() } as never, {})).toBeUndefined();
     expect(() => validateWebPushSubscription(endpoint, keys)).not.toThrow();
-    expect(() => validateWebPushSubscription('https://evil.example/collect', keys)).toThrow(
-      'invalid web push endpoint',
-    );
+    for (const publicEndpoint of [
+      'https://web.push.apple.com/QWERTY',
+      'https://updates.push.services.mozilla.com/wpush/v2/QWERTY',
+      'https://db3.notify.windows.com/?token=QWERTY',
+      'https://push.example.org/subscription',
+    ]) expect(() => validateWebPushSubscription(publicEndpoint, keys)).not.toThrow();
+    for (const invalidEndpoint of [
+      'http://push.example.org/subscription',
+      'https://user:pass@push.example.org/subscription',
+      'https://push.example.org:8443/subscription',
+      'https://push.example.org/subscription#fragment',
+    ]) expect(() => validateWebPushSubscription(invalidEndpoint, keys)).toThrow('invalid web push endpoint');
     expect(() => validateWebPushSubscription(endpoint, { ...keys, auth: 'bad' })).toThrow(
       'invalid web push keys',
     );

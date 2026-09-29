@@ -10,7 +10,7 @@ export function webPushPublicKey(environment: NodeJS.ProcessEnv): string | null 
     : null;
 }
 
-/** Chrome subscriptions are scoped to the push service, not to an arbitrary URL. */
+/** Browser push services provide opaque HTTPS endpoints across browser vendors. */
 export function validateWebPushSubscription(endpoint: string, keys: WebPushKeys | undefined): void {
   let url: URL;
   try {
@@ -20,8 +20,6 @@ export function validateWebPushSubscription(endpoint: string, keys: WebPushKeys 
   }
   if (
     url.protocol !== 'https:' ||
-    url.hostname !== 'fcm.googleapis.com' ||
-    !/^\/(?:fcm\/send|wp)\//.test(url.pathname) ||
     url.username ||
     url.password ||
     url.port ||

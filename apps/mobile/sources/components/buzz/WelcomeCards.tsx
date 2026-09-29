@@ -31,6 +31,7 @@ const WELCOME_TYPE = {
   size20: 20,
   size28: 28,
   size30: 30,
+  size36: 36,
   trackingTight: -0.5,
   trackingLabel: 1,
   trackingWide: 2,
@@ -237,12 +238,15 @@ export function WelcomeCards({ visible, onDone }: { visible: boolean; onDone: ()
   const [error, setError] = useState<string | null>(null);
   const { height, width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+  const desktop = width >= 1024;
   const wideCanvas = width >= 768;
-  const sceneHeight = wideCanvas
-    ? index < 2
-      ? 610
-      : 430
-    : Math.min(index < 2 ? 480 : 430, Math.max(270, height * 0.57));
+  const sceneHeight = desktop
+    ? 572
+    : wideCanvas
+      ? index < 2
+        ? 610
+        : 430
+      : Math.min(index < 2 ? 480 : 430, Math.max(270, height * 0.57));
   const next = async () => {
     if (index < 3) {
       setIndex(index + 1);
@@ -260,6 +264,35 @@ export function WelcomeCards({ visible, onDone }: { visible: boolean; onDone: ()
       setWorking(false);
     }
   };
+  const illustration =
+    index === 0 ? (
+      <RoomScene />
+    ) : index === 1 ? (
+      <CornerScene />
+    ) : index === 2 ? (
+      <ModelScene />
+    ) : (
+      <ToolsScene />
+    );
+  const footer = (
+    <View style={card.footer}>
+      <View style={card.steps}>
+        {COPY.map((_, i) => (
+          <View key={i} style={[card.step, i === index && card.stepActive]} />
+        ))}
+      </View>
+      <Pressable
+        onPress={() => void next()}
+        disabled={working}
+        accessibilityRole="button"
+        accessibilityLabel={index === 3 ? 'Get started' : 'Next'}
+        style={[card.next, desktop && card.desktopNext]}
+        testID="welcome-next"
+      >
+        <Text style={card.nextText}>{index === 3 ? 'Get started' : 'Next'}</Text>
+      </Pressable>
+    </View>
+  );
   return (
     <HullModal
       visible={visible}
@@ -273,50 +306,41 @@ export function WelcomeCards({ visible, onDone }: { visible: boolean; onDone: ()
         style={[
           card.page,
           { paddingTop: Math.max(insets.top, 28), paddingBottom: Math.max(insets.bottom, 30) },
+          desktop && card.desktopPage,
         ]}
         testID="welcome-cards"
       >
         <View
           style={[
             card.content,
-            { maxWidth: wideCanvas ? 600 : Math.min(390, width) },
-            wideCanvas && { justifyContent: 'center' },
+            { maxWidth: desktop ? 960 : wideCanvas ? 600 : Math.min(390, width) },
+            desktop ? card.desktopContent : wideCanvas && { justifyContent: 'center' },
           ]}
         >
-          <View style={{ height: sceneHeight }}>
-            {index === 0 ? (
-              <RoomScene />
-            ) : index === 1 ? (
-              <CornerScene />
-            ) : index === 2 ? (
-              <ModelScene />
-            ) : (
-              <ToolsScene />
-            )}
+          <View style={[{ height: sceneHeight }, desktop && card.desktopScene]}>
+            {illustration}
           </View>
-          <View style={card.copy}>
-            <Text style={card.title}>{COPY[index].title}</Text>
-            <Text style={card.body}>{COPY[index].body}</Text>
-          </View>
-          {!wideCanvas && <View style={{ flex: 1 }} />}
-          {error && <Text style={card.error}>{error}</Text>}
-          <View style={card.footer}>
-            <View style={card.steps}>
-              {COPY.map((_, i) => (
-                <View key={i} style={[card.step, i === index && card.stepActive]} />
-              ))}
+          {desktop ? (
+            <View style={card.desktopRight}>
+              <View style={card.copy}>
+                <Text style={[card.title, card.desktopTitle]}>{COPY[index].title}</Text>
+                <Text style={[card.body, card.desktopBody]}>{COPY[index].body}</Text>
+              </View>
+              <View style={{ flex: 1 }} />
+              {error && <Text style={card.error}>{error}</Text>}
+              {footer}
             </View>
-            <Pressable
-              onPress={() => void next()}
-              disabled={working}
-              accessibilityRole="button"
-              accessibilityLabel={index === 3 ? 'Get started' : 'Next'}
-              style={card.next}
-              testID="welcome-next"
-            >
-              <Text style={card.nextText}>{index === 3 ? 'Get started' : 'Next'}</Text>
-            </Pressable>
-          </View>
+          ) : (
+            <>
+              <View style={card.copy}>
+                <Text style={card.title}>{COPY[index].title}</Text>
+                <Text style={card.body}>{COPY[index].body}</Text>
+              </View>
+              {!wideCanvas && <View style={{ flex: 1 }} />}
+              {error && <Text style={card.error}>{error}</Text>}
+              {footer}
+            </>
+          )}
         </View>
       </View>
     </HullModal>
@@ -326,6 +350,21 @@ export function WelcomeCards({ visible, onDone }: { visible: boolean; onDone: ()
 const card = {
   page: { flex: 1, backgroundColor: PAPER, alignItems: 'center' as const, paddingHorizontal: 24 },
   content: { flex: 1, width: '100%' as const, gap: 26 },
+  desktopPage: { justifyContent: 'center' as const, paddingTop: 30, paddingBottom: 30 },
+  desktopContent: {
+    flex: 0,
+    flexBasis: 620,
+    height: 620,
+    flexDirection: 'row' as const,
+    gap: 32,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: '#DCCFBB',
+    borderRadius: 22,
+    backgroundColor: '#FBF8F2',
+  },
+  desktopScene: { width: 480 },
+  desktopRight: { width: 398, paddingTop: 14, paddingBottom: 12 },
   copy: { gap: 12 },
   title: {
     color: INK,
@@ -335,6 +374,12 @@ const card = {
     letterSpacing: WELCOME_TYPE.trackingTight,
   },
   body: { color: DIM, fontFamily: SANS, fontSize: WELCOME_TYPE.size16, lineHeight: 24 },
+  desktopTitle: {
+    fontSize: WELCOME_TYPE.size36,
+    lineHeight: 43,
+    letterSpacing: WELCOME_TYPE.trackingTight,
+  },
+  desktopBody: { fontSize: WELCOME_TYPE.size18, lineHeight: 28 },
   error: { color: '#A8514D', fontFamily: SANS, fontSize: WELCOME_TYPE.size13 },
   footer: {
     flexDirection: 'row' as const,
@@ -353,6 +398,7 @@ const card = {
     alignItems: 'center' as const,
     justifyContent: 'center' as const,
   },
+  desktopNext: { width: 136, height: 48 },
   nextText: { color: PAPER, fontFamily: MEDIUM, fontSize: WELCOME_TYPE.size16 },
 };
 const scene = {

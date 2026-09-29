@@ -62,7 +62,7 @@ describe('APNs provider token and request', () => {
       'apns-push-type': 'alert',
       'apns-priority': '10',
       'apns-expiration': '0',
-      'apns-collapse-id': 'room-1',
+      'apns-collapse-id': 'message-1',
     });
     expect(request.payload).toEqual({
       aps: {
@@ -79,6 +79,44 @@ describe('APNs provider token and request', () => {
       threadId: 'room-1',
       messageId: 'message-1',
     });
+  });
+
+  it('keeps Room grouping while giving distinct messages distinct collapse IDs', () => {
+    const base = {
+      workspaceId: 'workspace-1',
+      roomId: 'room-1',
+      channelId: 'room-1',
+      target: 'message' as const,
+      type: 'message' as const,
+      text: 'hello',
+    };
+    const first = apnsPushRequest(
+      'device-token',
+      { ...base, messageId: 'first' },
+      'app.usebeeline.mobile',
+      'provider-token',
+    );
+    const second = apnsPushRequest(
+      'device-token',
+      { ...base, messageId: 'second' },
+      'app.usebeeline.mobile',
+      'provider-token',
+    );
+    expect(first.headers['apns-collapse-id']).toBe('first');
+    expect(second.headers['apns-collapse-id']).toBe('second');
+    expect((first.payload.aps as Record<string, unknown>)['thread-id']).toBe('room-1');
+    expect((second.payload.aps as Record<string, unknown>)['thread-id']).toBe('room-1');
+    const longId = 'long-message-id-'.repeat(8);
+    const longRequest = apnsPushRequest(
+      'device-token',
+      { ...base, messageId: longId },
+      'app.usebeeline.mobile',
+      'provider-token',
+    );
+    expect(Buffer.byteLength(String(longRequest.headers['apns-collapse-id']))).toBeLessThanOrEqual(
+      64,
+    );
+    expect(longRequest.headers['apns-collapse-id']).not.toBe('room-1');
   });
 
   it('sends a permission ask whole, without the app-name title', () => {

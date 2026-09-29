@@ -7,6 +7,7 @@ import type { ObjectService } from './object-service.js';
 import { tagsKnownIdentitySql } from './message-mentions.js';
 import {
   claimReleaseCatchup,
+  PUSH_MAX_ATTEMPTS,
   RELEASE_CATCHUP_CANDIDATES_SQL,
   retireTerminalReleaseCatchups,
 } from './release-push-catchup.js';
@@ -17,6 +18,20 @@ export const PUSH_DELIVERY_MIN_INTERVAL_MS = 5_000;
  * up to APNS_REQUEST_TIMEOUT_MS per token; serializing 100 candidates on the
  * sole background leader otherwise stalls attention delivery. */
 export const PUSH_DELIVERY_CONCURRENCY = 8;
+
+function isRetryableApnsFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.message === 'APNs request timed out') return true;
+  if ('classification' in error) return error.classification === 'retryable';
+  const code = 'code' in error ? error.code : undefined;
+  return [
+    'ECONNRESET',
+    'ETIMEDOUT',
+    'ERR_HTTP2_STREAM_CANCEL',
+    'ERR_HTTP2_GOAWAY_SESSION',
+    'ERR_HTTP2_INVALID_SESSION',
+  ].includes(String(code));
+}
 
 /** What a person can do from the notification itself; see `push-actions.ts`. */
 export type PushAction = PushActionPayload;
@@ -167,6 +182,8 @@ export class PushDeliveryLoop {
           AND NOT EXISTS (
             SELECT 1 FROM push_delivery_claims claim
             WHERE claim.message_id=m.id AND claim.device_token=d.token
+              AND (claim.status<>'retryable' OR claim.next_retry_at>now()
+                OR claim.attempts>=${PUSH_MAX_ATTEMPTS})
           )
       ), candidates AS (
         SELECT m.id message_id,room.workspace_id::text workspace_id,
@@ -268,7 +285,8 @@ export class PushDeliveryLoop {
           AND ${this.iosSender ? "device.platform IN ('android','ios')" : "device.platform='android'"}
         LEFT JOIN push_delivery_claims claim
           ON claim.message_id=candidate.message_id AND claim.device_token=candidate.token
-        WHERE claim.message_id IS NULL
+        WHERE claim.message_id IS NULL OR (claim.status='retryable'
+          AND claim.next_retry_at<=now() AND claim.attempts<${PUSH_MAX_ATTEMPTS})
         ORDER BY candidate.message_id,candidate.token,candidate.is_release_catchup DESC
       )
       SELECT message_id,workspace_id,room_id,channel_id,corner_id,target,
@@ -312,7 +330,7 @@ export class PushDeliveryLoop {
         : Boolean(
             (
               await this.database.query(
-                `INSERT INTO push_delivery_claims(message_id,device_token,status)
+                `INSERT INTO push_delivery_claims AS claim(message_id,device_token,status)
                  SELECT $1,$2,'claimed'
                  WHERE EXISTS (SELECT 1 FROM push_devices WHERE token=$2 AND identity_id=$3)
                    AND EXISTS (SELECT 1 FROM identities WHERE id=$3 AND push_level<>'off')
@@ -335,7 +353,11 @@ export class PushDeliveryLoop {
                        )
                      ))
                    )
-                 ON CONFLICT DO NOTHING`,
+                 ON CONFLICT(message_id,device_token) DO UPDATE
+                   SET status='claimed',attempts=claim.attempts+1,claimed_at=now(),
+                     completed_at=NULL,error=NULL,next_retry_at=NULL
+                   WHERE claim.status='retryable' AND claim.next_retry_at<=now()
+                     AND claim.attempts<${PUSH_MAX_ATTEMPTS}`,
                 [
                   candidate.message_id,
                   candidate.token,
@@ -399,11 +421,18 @@ export class PushDeliveryLoop {
               localDelivered += 1;
             } catch (error) {
               await this.database.query(
-                `UPDATE push_delivery_claims SET status='failed',completed_at=now(),error=$3 WHERE message_id=$1 AND device_token=$2`,
+                `UPDATE push_delivery_claims
+                 SET status=CASE WHEN $4::boolean AND attempts<${PUSH_MAX_ATTEMPTS}
+                   THEN 'retryable' ELSE 'failed' END,
+                   completed_at=now(),error=$3,
+                   next_retry_at=CASE WHEN $4::boolean AND attempts<${PUSH_MAX_ATTEMPTS}
+                     THEN now()+(interval '15 seconds' * power(2,attempts-1)) ELSE NULL END
+                 WHERE message_id=$1 AND device_token=$2`,
                 [
                   candidate.message_id,
                   candidate.token,
                   error instanceof Error ? error.message : String(error),
+                  candidate.platform === 'ios' && isRetryableApnsFailure(error),
                 ],
               );
               if (isUnregisteredPushToken(error))
@@ -572,9 +601,7 @@ export async function runMaintenance(database: SqlDatabase): Promise<void> {
   );
   // A deferred mention notice is spent once written or withdrawn; its row has
   // no further use after the source message and the notice are both long gone.
-  await database.query(
-    `DELETE FROM pending_mention_notices WHERE due_at<now()-interval '30 days'`,
-  );
+  await database.query(`DELETE FROM pending_mention_notices WHERE due_at<now()-interval '30 days'`);
 }
 
 /**
@@ -679,9 +706,15 @@ export class BackgroundJobRunner {
     return Object.fromEntries([...this.#health].map(([name, health]) => [name, { ...health }]));
   }
 
-  async run<T>(name: string, work: () => Promise<T>): Promise<{ ok: true; value: T } | { ok: false }> {
+  async run<T>(
+    name: string,
+    work: () => Promise<T>,
+  ): Promise<{ ok: true; value: T } | { ok: false }> {
     const health = this.#health.get(name) ?? {
-      lastSuccessAt: null, lastErrorAt: null, lastDurationMs: null, consecutiveFailures: 0,
+      lastSuccessAt: null,
+      lastErrorAt: null,
+      lastDurationMs: null,
+      consecutiveFailures: 0,
     };
     this.#health.set(name, health);
     const startedAt = this.now();

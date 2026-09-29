@@ -49,7 +49,10 @@ import {
   registerBuzzPushNotifications,
   retryBuzzPushRegistration,
 } from '@/push/buzz-push-registration';
-import { clearWebPushSubscription } from '@/push/web-push-registration';
+import {
+  clearWebPushSubscription,
+  installWebPushForegroundResponder,
+} from '@/push/web-push-registration';
 import { monolithSession } from '@/auth/monolith-session';
 import { startPushRegistrationLifecycle } from '@/push/push-registration-lifecycle';
 import { reportRunningUpdateReceipt } from '@/push/update-receipt';
@@ -274,6 +277,11 @@ export default function RootLayout() {
             error instanceof Error ? error.message : String(error),
           ),
       }),
+    [],
+  );
+
+  React.useEffect(
+    () => (Platform.OS === 'web' ? installWebPushForegroundResponder() : undefined),
     [],
   );
 

@@ -68,7 +68,14 @@ export function createWebPushSender(
       try {
         await webpush.sendNotification(
           { endpoint, keys },
-          JSON.stringify({ body: message.text.slice(0, 200), url, messageId: message.messageId }),
+          JSON.stringify({
+            body: message.text.slice(0, 200),
+            url,
+            messageId: message.messageId,
+            ...(message.type === 'message'
+              ? { channelId: message.channelId, roomId: message.roomId }
+              : {}),
+          }),
           { TTL: 60 * 60, urgency: 'normal' },
         );
       } catch (error) {

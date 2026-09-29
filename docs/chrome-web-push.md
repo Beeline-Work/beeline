@@ -1,6 +1,6 @@
 # Chrome web notifications
 
-The Expo web app registers `/push-sw.js` after a signed-in person grants Chrome notification permission. It reads the VAPID public key through the authenticated `readWebPushKey` phone operation and binds the browser endpoint and encryption keys with `registerPushDevice` (`platform: web`). The server stores these in `push_devices`, tied to the authenticated identity. Its existing message delivery loop selects web subscriptions alongside native devices, applies the same Room membership and push-level filters, and sends a short preview through VAPID. The worker displays the notification even when the app is foregrounded; clicking it opens the Room in the same origin.
+The Expo web app registers `/push-sw.js` after a signed-in person grants Chrome notification permission. It reads the VAPID public key through the authenticated `readWebPushKey` phone operation and binds the browser endpoint and encryption keys with `registerPushDevice` (`platform: web`). The server stores these in `push_devices`, tied to the authenticated identity. Its existing message delivery loop selects web subscriptions alongside native devices, applies the same Room membership and push-level filters, and sends a short preview through VAPID. The worker asks a focused, visible same-origin tab which Room is open and suppresses that Room's alert; background and other-Room notifications remain visible. The tab response has a 200 ms upper bound, after which the worker displays the notification. Clicking it opens the Room in the same origin.
 
 ## Deployment
 

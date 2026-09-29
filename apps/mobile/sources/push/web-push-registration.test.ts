@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearWebPushSubscription,
+  installWebPushForegroundResponder,
   registerWebPush,
   unregisterWebPush,
 } from './web-push-registration';
+import { pushOpenBuzzChannelId, releaseOpenBuzzChannelId } from '@/buzz/open-room-tracker';
 
 const operation = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: operation }));
@@ -20,6 +22,8 @@ describe('Chrome push registration', () => {
   } | null;
   const subscribe = vi.fn();
   const requestPermission = vi.fn();
+  const addMessageListener = vi.fn();
+  const removeMessageListener = vi.fn();
   const local = new Map<string, string>();
 
   beforeEach(() => {
@@ -44,6 +48,8 @@ describe('Chrome push registration', () => {
       serviceWorker: {
         register: vi.fn(async () => registration),
         getRegistration: vi.fn(async () => registration),
+        addEventListener: addMessageListener,
+        removeEventListener: removeMessageListener,
       },
     });
     vi.stubGlobal('localStorage', {
@@ -94,5 +100,20 @@ describe('Chrome push registration', () => {
     expect(old.unsubscribe).toHaveBeenCalledOnce();
     expect(subscribe).toHaveBeenCalledTimes(2);
     expect(local.get('@beeline/web-push/owner')).toBe('person-2');
+  });
+
+  it('reports the currently open Room to the service worker and detaches on unmount', () => {
+    pushOpenBuzzChannelId('room-1');
+    try {
+      const stop = installWebPushForegroundResponder();
+      const respond = addMessageListener.mock.calls[0]![1] as (event: unknown) => void;
+      const postMessage = vi.fn();
+      respond({ data: { type: 'beeline-web-push-open-room' }, ports: [{ postMessage }] });
+      expect(postMessage).toHaveBeenCalledWith({ channelId: 'room-1' });
+      stop();
+      expect(removeMessageListener).toHaveBeenCalledWith('message', respond);
+    } finally {
+      releaseOpenBuzzChannelId('room-1');
+    }
   });
 });

@@ -47,6 +47,8 @@ describe('web push transport', () => {
       expect.stringContaining('hello'),
       expect.objectContaining({ TTL: 3600 }),
     );
+    const sent = JSON.parse((sendNotification.mock.calls[0] as unknown as [unknown, string])[1]);
+    expect(sent).toMatchObject({ channelId: 'room', roomId: 'room' });
   });
 
   it('refuses a subscription that moved to another person', async () => {
@@ -55,9 +57,14 @@ describe('web push transport', () => {
       { query: vi.fn(async () => ({ rows: [] })) } as never,
       environment,
     )!;
-    await expect(sender.send(endpoint, {
-      type: 'test', messageId: 'test', text: 'secret', recipientIdentityId: 'old-person',
-    })).rejects.toMatchObject({ classification: 'unregistered' });
+    await expect(
+      sender.send(endpoint, {
+        type: 'test',
+        messageId: 'test',
+        text: 'secret',
+        recipientIdentityId: 'old-person',
+      }),
+    ).rejects.toMatchObject({ classification: 'unregistered' });
     expect(sendNotification).not.toHaveBeenCalled();
   });
 });

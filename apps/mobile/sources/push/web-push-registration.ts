@@ -1,9 +1,21 @@
 import type { Identity } from '@beeline/buzz-client';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
+import { getOpenBuzzChannelId } from '@/buzz/open-room-tracker';
 import type { BuzzPushRegistrationResult } from './buzz-push-registration';
 
 const WORKER_PATH = '/push-sw.js';
 const OWNER_KEY = '@beeline/web-push/owner';
+
+/** Let the worker make a bounded display decision for the focused web tab. */
+export function installWebPushForegroundResponder(): () => void {
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return () => {};
+  const respond = (event: MessageEvent) => {
+    if (event.data?.type !== 'beeline-web-push-open-room') return;
+    event.ports[0]?.postMessage({ channelId: getOpenBuzzChannelId() });
+  };
+  navigator.serviceWorker.addEventListener('message', respond);
+  return () => navigator.serviceWorker.removeEventListener('message', respond);
+}
 
 function supported(): boolean {
   return (

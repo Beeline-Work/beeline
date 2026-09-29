@@ -126,6 +126,7 @@ import {
   connectorOfferConsequence,
   connectorPurpose,
   isOfferableConnectorKind,
+  squireLoginWallConsequence,
   type ConnectorOfferCardView,
 } from '@beeline/api-contract/connector-offers';
 import {
@@ -142,7 +143,11 @@ import {
   turnSilenceLockKey,
 } from './turn-silence-notice.js';
 import { completeConnectorOffersForConnector } from './connector-offer-completion.js';
-import { notifyAgentConfigChange, notifyConnectorHelper } from './postgres-live.js';
+import {
+  notifyAgentConfigChange,
+  notifyConnectorAssignment,
+  notifyConnectorHelper,
+} from './postgres-live.js';
 import {
   claimInstitutionalMemoryJob,
   completeInstitutionalMemoryJob,
@@ -321,6 +326,7 @@ export class DaemonService {
       'postAgentTurnReceipt',
       'postAgentActivity',
       'postSquireApproval',
+      'postSquireLoginWall',
       'createCorner',
       'reviseCornerBrief',
       'postCornerValidationStage',
@@ -541,13 +547,17 @@ export class DaemonService {
             [(result as { grantId: string }).grantId, command.id],
           );
         }
-        if (name === 'offerConnector') {
-          // The accept's hidden `connector-offer-decided` line resumes THIS
-          // command's turn, the way a grant decision resumes its ask.
-          await db.query(
-            `UPDATE connector_offers SET command_id=$2 WHERE id::text=$1 AND command_id IS NULL`,
-            [(result as { offerId: string }).offerId, command.id],
-          );
+        if (name === 'offerConnector' || name === 'postSquireLoginWall') {
+          // The accept's (or the reconnect's own) hidden `connector-offer-decided`
+          // line resumes THIS command's turn, the way a grant decision resumes
+          // its ask. A `postSquireLoginWall` call that produced no card (an
+          // `awaiting_human` wall, or no connected connector) has no offerId.
+          const offerId = (result as { offerId?: string }).offerId;
+          if (offerId)
+            await db.query(
+              `UPDATE connector_offers SET command_id=$2 WHERE id::text=$1 AND command_id IS NULL`,
+              [offerId, command.id],
+            );
         }
         if (name === 'postRoomMessage' && candidate.relay === undefined) {
           // routeAgentResult reads the reply's own text for the agents it hands
@@ -1030,6 +1040,11 @@ export class DaemonService {
           input as Input<'postSquireApproval'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'postSquireLoginWall':
+        return (await this.squireLoginWall(
+          input as Input<'postSquireLoginWall'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
       case 'postPermissionRequest':
         return (await this.permissionRequest(
           input as Input<'postPermissionRequest'>,
@@ -1435,9 +1450,10 @@ export class DaemonService {
         registry_server_name: string | null;
         registry_version: string | null;
         registry_manifest: import('@beeline/api-contract/daemon').RegistryMcpManifest | null;
+        force_relogin_provider: string | null;
       }>(
         `SELECT id,connector_type,status,pending_ops,pairing_generation,
-                registry_server_name,registry_version,registry_manifest
+                registry_server_name,registry_version,registry_manifest,force_relogin_provider
          FROM workspace_connectors
          WHERE helper_agent_id=$1 AND status IN ('installing','connected','error','disconnected')
          ORDER BY created_at`,
@@ -1466,6 +1482,9 @@ export class DaemonService {
                   connectorId: row.id,
                   connectorType: row.connector_type as never,
                   ...generation,
+                  ...(kind === 'install' && row.force_relogin_provider
+                    ? { forceReloginProvider: row.force_relogin_provider }
+                    : {}),
                 },
           );
         }
@@ -1479,6 +1498,9 @@ export class DaemonService {
             ...(row.registry_server_name ? { registryServerName: row.registry_server_name } : {}),
             ...(row.registry_version ? { registryVersion: row.registry_version } : {}),
             ...(row.registry_manifest ? { registryManifest: row.registry_manifest } : {}),
+            ...(row.force_relogin_provider
+              ? { forceReloginProvider: row.force_relogin_provider }
+              : {}),
           });
         if (row.status === 'disconnected')
           assignments.push({
@@ -1563,7 +1585,7 @@ export class DaemonService {
          SET status='connected', status_steps='[]'::jsonb, status_error=NULL,
              squire_version=COALESCE($2,squire_version),
              signed_in_as=COALESCE($3,signed_in_as),
-             sign_in=$4::jsonb,
+             sign_in=$4::jsonb, force_relogin_provider=NULL,
              connected_at=COALESCE(connected_at, now()), updated_at=now()
          WHERE id=$1::uuid`,
         [
@@ -3988,6 +4010,162 @@ export class DaemonService {
     if (line.inserted)
       this.live.publish({ type: 'invalidate', roomId, reason: 'message', agentId });
     return { id: line.id, createdAt: Math.floor(Date.now() / 1000) };
+  }
+
+  /**
+   * A Squire in-task result named `needs_user.wall === 'google_session'`
+   * (Squire's own gate: no live provider session in its shared browser) or
+   * an OAuth `awaiting_human` mid-flow challenge. Only `google_session`
+   * produces a card: Squire's own `resume: "connect"` on that wall IS the
+   * ceremony a reconnect offer re-arms, and it is the one shape with an
+   * actual sign-in to relay. `awaiting_human`'s own `next_action:
+   * "operate_observe"` is already the correct wait-and-retry, already in
+   * the agent's tool result, and carries no sign-in page — there is nothing
+   * to open, so this call records it and posts no card.
+   *
+   * Same chassis as `offerConnector` (a `connector_offers` row, a
+   * `connector-offer` card, the hidden `connector-offer-decided` resume
+   * line `completeConnectorOffersForConnector` posts once the helper
+   * reports the reconnect connected) — but nothing here is a decision a
+   * person makes: Squire is ALREADY connected, so the row is written
+   * straight to `connecting` with `connectorId` set up front (what already
+   * drives the phone's in-app "Continue sign-in" ceremony screen), and the
+   * connector is re-armed with `force_relogin_provider` set — the one path
+   * allowed to pass Squire's own `--force-relogin`; the ordinary "add a
+   * connector" pairing never does.
+   */
+  private async squireLoginWall(
+    input: Input<'postSquireLoginWall'>,
+    agentId: string,
+  ): Promise<Output<'postSquireLoginWall'>> {
+    if (typeof input.roomId !== 'string' || !input.roomId) throw new Error('roomId is required');
+    if (input.wall !== 'google_session' && input.wall !== 'awaiting_human')
+      throw new Error('Squire login wall is invalid');
+    if (typeof input.message !== 'string' || !input.message.trim())
+      throw new Error('Squire login wall message is required');
+    const notActioned = { id: '', createdAt: Math.floor(Date.now() / 1000), cardPosted: false };
+    if (input.wall !== 'google_session') return notActioned;
+    const provider = 'google';
+    const context = await this.offerContext(input.roomId, agentId);
+    if (context.isCorner)
+      throw new Error('Squire login wall is invalid: not from a corner');
+    const connectorType: ConnectorKind = 'trusty-squire';
+    const connectorName = connectorDisplayName(connectorType);
+    const reason = input.message.trim().slice(0, CONNECTOR_OFFER_REASON_MAX_LENGTH);
+    const result = await this.database.transaction(async (database) => {
+      // Same lock `offerConnector` takes: one open offer per Room+connector,
+      // even when two turns on the same stale session race.
+      await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+        `connector-offer:${input.roomId}:${connectorType}`,
+      ]);
+      // An open offer is checked BEFORE the connector's own status: the first
+      // trigger already moved that row off 'connected' into 'installing', so
+      // a second stuck turn on the SAME reconnect must still join the open
+      // card rather than finding no connected row and reporting notActioned.
+      const open = (
+        await database.query<{ id: string }>(
+          `SELECT id FROM connector_offers
+           WHERE room_id=$1 AND connector_type=$2 AND status IN ('pending','connecting')
+           ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
+          [input.roomId, connectorType],
+        )
+      ).rows[0];
+      if (open) return { offerId: open.id, cardPosted: false };
+      const connected = (
+        await database.query<{ id: string; machine_id: string | null }>(
+          `SELECT id,machine_id FROM workspace_connectors
+           WHERE workspace_id=$1 AND owner_identity_id=$2 AND connector_type=$3
+             AND helper_agent_id=$4 AND status='connected'
+           ORDER BY updated_at DESC LIMIT 1`,
+          [context.workspaceId, context.owner.pubkey, connectorType, agentId],
+        )
+      ).rows[0];
+      if (!connected) return undefined;
+      const offerId = randomUUID();
+      const messageId = id();
+      const acceptedAt = new Date();
+      const created = (
+        await database.query<{ created_at: Date }>(
+          `INSERT INTO connector_offers(
+             id,agent_id,workspace_id,room_id,addressee_id,connector_type,reason,machine_id,
+             intent,provider,status,accepted_by,accepted_at,connector_id
+           ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'reconnect',$9,'connecting',$5,$10,$11)
+           RETURNING created_at`,
+          [
+            offerId,
+            agentId,
+            context.workspaceId,
+            input.roomId,
+            context.owner.pubkey,
+            connectorType,
+            reason,
+            connected.machine_id ?? context.machine.machineId,
+            provider,
+            acceptedAt,
+            connected.id,
+          ],
+        )
+      ).rows[0]!;
+      const card: ConnectorOfferCardView = {
+        offerId,
+        agent: context.agent,
+        addressee: context.owner,
+        connectorType,
+        connectorName,
+        reason,
+        consequence: squireLoginWallConsequence(provider),
+        helper: context.machine,
+        status: 'connecting',
+        createdAt: seconds(created.created_at),
+        acceptedBy: context.owner,
+        acceptedAt: seconds(acceptedAt),
+        connectorId: connected.id,
+        intent: 'reconnect',
+        provider,
+      };
+      await systemLine(database, {
+        id: messageId,
+        roomId: input.roomId,
+        subject: { kind: 'agent', id: agentId, name: context.agent.name },
+        verb: 'hit a signed-out',
+        object: `${provider} session`,
+        consequence: reason,
+        presentation: 'card',
+        cardType: 'connector-offer',
+        card: card as unknown as Record<string, unknown>,
+      });
+      await database.query(`UPDATE connector_offers SET message_id=$2 WHERE id=$1`, [
+        offerId,
+        messageId,
+      ]);
+      // Force the shared browser's stale provider session through Squire's
+      // own connect ceremony. Never set on the ordinary "add a connector"
+      // pairing (armConnectorPairing) — only this scoped reconnect trigger
+      // may pass --force-relogin.
+      await database.query(
+        `UPDATE workspace_connectors
+         SET status='installing', status_error=NULL, pending_ops='[]'::jsonb,
+             connected_at=NULL, sign_in=NULL, force_relogin_provider=$2,
+             pairing_generation=pairing_generation + 1, updated_at=now()
+         WHERE id=$1::uuid`,
+        [connected.id, provider],
+      );
+      return { offerId, cardPosted: true };
+    });
+    if (!result) return notActioned;
+    await notifyConnectorAssignment(this.database, agentId);
+    this.live.publish({
+      type: 'invalidate',
+      roomId: input.roomId,
+      reason: 'connector-offer',
+      agentId,
+    });
+    return {
+      id: result.offerId,
+      createdAt: Math.floor(Date.now() / 1000),
+      cardPosted: result.cardPosted,
+      offerId: result.offerId,
+    };
   }
 
   private async permissionRequest(input: Input<'postPermissionRequest'>, agentId: string) {
@@ -6663,6 +6841,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postAgentTurnReceipt: true,
   postAgentActivity: true,
   postSquireApproval: true,
+  postSquireLoginWall: true,
   postPermissionRequest: true,
   postPermissionExecution: true,
   postWorkSchedule: true,

@@ -551,6 +551,18 @@ export type InstallSquireOptions = {
   readonly log?: (message: string) => void;
   /** The Chrome profile Squire serializes on. */
   readonly profileDir?: string;
+  /**
+   * Set only by a Squire login-wall reconnect (never the ordinary pairing
+   * flow): forces Squire's connect run through `--force-relogin=<value>` so
+   * an already-claimed machine re-runs the ceremony instead of skipping it
+   * as "already connected". Runs through the SAME shared-broker ceremony as
+   * a bare connect — `runCeremonyInSharedBroker` attaches to the live
+   * broker's already-open Chrome via its socket, never a second broker or
+   * the profile's exclusive operation lock, and an upfront cookie-clear
+   * attempt that DOES contend that lock degrades to deferred-through-the-
+   * shared-browser instead of failing (Squire's own `install/cli.ts`).
+   */
+  readonly forceReloginProvider?: string;
 };
 
 export type InstallSquireResult = {
@@ -689,13 +701,27 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
     );
   }
 
-  // Connect uses the shared host Chrome (or its headless noVNC URL). Do not
-  // pass --skip-browser or --force-relogin: those sign the human in outside
-  // the bot profile and clear cookies the broker can already share. `--json`
-  // is what puts the typed report on stdout.
+  // Connect uses the shared host Chrome (or its headless noVNC URL). The
+  // ordinary pairing path never passes --skip-browser (it signs the human in
+  // OUTSIDE the bot profile — no Chrome-profile provider session lands) or
+  // --force-relogin (it clears cookies the broker can already share, for no
+  // reason on a fresh pairing). `forceReloginProvider` is the one exception,
+  // set only by a login-wall reconnect that already knows the shared
+  // profile's session is stale: verified (`--force-relogin=google` against a
+  // live isolated broker) to run through the SAME shared-broker ceremony —
+  // no second broker, no profile-lock contention. `--json` is what puts the
+  // typed report on stdout.
   const install = await streamRun(
     'npx',
-    [...resolution.npxArgs, 'connect', '--target=codex', '--json'],
+    [
+      ...resolution.npxArgs,
+      'connect',
+      '--target=codex',
+      '--json',
+      ...(options.forceReloginProvider
+        ? [`--force-relogin=${options.forceReloginProvider}`]
+        : []),
+    ],
     squireConnectProcessEnv(profileDir),
   );
   const report = install.report;

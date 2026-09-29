@@ -85,7 +85,16 @@ function approvalUrl(value: unknown): string | undefined {
   }
 }
 
-/** Generic URL fields need to identify a Squire approval page themselves. */
+/**
+ * Generic URL fields need to identify a Squire-hosted page themselves. The
+ * vault/approval/passkey/vouch paths are the credential-vault confirmation
+ * ceremony; `/install` is the account-claim/sign-in confirm page a `connect`
+ * run opens (`sign_in_url`), and `/` on any subdomain is the noVNC viewer
+ * `connect` hands over for a headless machine (its session rides the URL
+ * fragment, e.g. `vnc.trustysquire.ai/#p=<token>` — verified against a live
+ * connect run). The domain check remains the actual boundary; this only
+ * widens which of Squire's OWN paths are recognised on it.
+ */
 function isSquireApprovalUrl(value: string): boolean {
   const url = new URL(value);
   const host = url.hostname;
@@ -95,6 +104,7 @@ function isSquireApprovalUrl(value: string): boolean {
     )
   )
     return false;
+  if (url.pathname === '/' || url.pathname === '/install') return true;
   return /^\/(?:vault\/(?:pay|fetch|mutate|mutate-card)|approval|passkey|vouch)\/[^/]+\/?$/.test(
     url.pathname,
   );
@@ -322,6 +332,71 @@ export function squireApprovalFromMcp(
   return { tool, ...squireApprovalCopy(tool, args), ...link };
 }
 
+export type SquireLoginWallSignal = {
+  readonly wall: 'google_session' | 'awaiting_human';
+  readonly message: string;
+};
+
+/**
+ * Squire's own structured hand-back for a stale/logged-out or mid-flow
+ * provider session — read only from named fields, never prose:
+ * `needs_user.wall === 'google_session'` (`NeedsUserLogin`, Squire's
+ * Google-session gate: no live provider session at all, `resume: "connect"`;
+ * `needs_user.message` is carried verbatim) or `oauth.state ===
+ * 'awaiting_human'` (an OAuth mid-flow challenge Squire is already driving;
+ * `oauth.reason` is carried verbatim — Squire's own `next_action:
+ * "operate_observe"` on this shape is left for the agent to read as-is,
+ * since there is no sign-in page in it to relay). Depth-bounded and
+ * JSON-string-aware like `approvalLinkIn`, for the same reason: an MCP text
+ * block wraps the tool's actual JSON result as a string.
+ */
+function squireLoginWallIn(value: unknown, depth = 0): SquireLoginWallSignal | undefined {
+  if (depth > 6) return undefined;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.length > 20_000 || !/^[{[]/.test(trimmed)) return undefined;
+    try {
+      return squireLoginWallIn(JSON.parse(trimmed), depth + 1);
+    } catch {
+      return undefined;
+    }
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const found = squireLoginWallIn(entry, depth + 1);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  const item = record(value);
+  if (!item) return undefined;
+  const needsUser = record(item.needs_user);
+  if (needsUser?.wall === 'google_session') {
+    const message = shortString(needsUser.message);
+    if (message) return { wall: 'google_session', message };
+  }
+  const oauth = record(item.oauth);
+  if (oauth?.state === 'awaiting_human') {
+    const reason = shortString(oauth.reason);
+    if (reason) return { wall: 'awaiting_human', message: reason };
+  }
+  for (const entry of Object.values(item)) {
+    const found = squireLoginWallIn(entry, depth + 1);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/** A Squire MCP result names a stale/logged-out or mid-flow provider session. */
+export function squireLoginWallFromMcp(
+  request: Record<string, unknown> | undefined,
+  response: Record<string, unknown>,
+): SquireLoginWallSignal | undefined {
+  if (!request || request.method !== 'tools/call' || request.id !== response.id) return undefined;
+  if (!('result' in response)) return undefined;
+  return squireLoginWallIn(response.result);
+}
+
 async function postSquireApproval(
   approval: SquireApprovalRelay,
   authFile: string,
@@ -352,6 +427,39 @@ async function postSquireApproval(
       'x-beeline-helper-version': auth.helperVersion ?? 'v0.0.0',
     },
     body: JSON.stringify({ ...context, ...approval, ...(signInUrl ? { signInUrl } : {}) }),
+    signal: AbortSignal.timeout(20_000),
+  });
+}
+
+async function postSquireLoginWall(
+  wall: SquireLoginWallSignal,
+  authFile: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const auth = JSON.parse(await readFile(authFile, 'utf8')) as {
+    baseUrl: string;
+    daemonToken: string;
+    turnContextPath: string;
+    helperVersion?: string;
+  };
+  const context = JSON.parse(await readFile(auth.turnContextPath, 'utf8')) as Record<
+    string,
+    unknown
+  >;
+  if (
+    ![context.roomId, context.requestId, context.generationId].every(
+      (value) => typeof value === 'string' && value.length > 0,
+    )
+  )
+    return;
+  await fetchImpl(new URL('/v1/daemon/operations/postSquireLoginWall', auth.baseUrl), {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${auth.daemonToken}`,
+      'content-type': 'application/json',
+      'x-beeline-helper-version': auth.helperVersion ?? 'v0.0.0',
+    },
+    body: JSON.stringify({ ...context, wall: wall.wall, message: wall.message }),
     signal: AbortSignal.timeout(20_000),
   });
 }
@@ -457,6 +565,10 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
       await postSquireApproval(approval, authFile, request?.drivenUrl).catch(() => {});
       if (request?.drivenUrl && activeSquireBrowserUrl === request.drivenUrl)
         activeSquireBrowserUrl = undefined;
+    }
+    const loginWall = squireLoginWallFromMcp(request?.message, message);
+    if (loginWall) {
+      await postSquireLoginWall(loginWall, authFile).catch(() => {});
     }
   };
   const authorizedResponseIds = new Set<string>();

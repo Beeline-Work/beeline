@@ -7599,6 +7599,7 @@ export class PhoneService {
            pending_ops='[]'::jsonb,
            connected_at=NULL,
            sign_in=NULL,
+           force_relogin_provider=NULL,
            pairing_generation=workspace_connectors.pairing_generation + 1,
            updated_at=now()`,
       [

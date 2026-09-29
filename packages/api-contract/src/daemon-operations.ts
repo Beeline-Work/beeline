@@ -255,6 +255,11 @@ export type DaemonOperationMap = {
   /** Relay a Squire-owned approval page into the agent owner's private
    * Trusty Squire DM. Beeline never settles the approval itself. */
   postSquireApproval: Operation<PostSquireApprovalInput, WriteResult>;
+  /** A Squire in-task result named a stale/logged-out provider session
+   * (`needs_user.wall === 'google_session'`); a reconnect card goes to the
+   * SAME Room carrying Squire's own hosted sign-in page, and the paused
+   * turn resumes once the helper reports the reconnect ceremony connected. */
+  postSquireLoginWall: Operation<PostSquireLoginWallInput, PostSquireLoginWallResult>;
   postPermissionRequest: Operation<PostPermissionRequestInput, WriteResult>;
   postPermissionExecution: Operation<PostPermissionExecutionInput, WriteResult>;
   postWorkSchedule: Operation<PostWorkScheduleInput, WriteResult>;
@@ -1156,6 +1161,35 @@ export type PostSquireApprovalInput = TurnOutputAuthority &
      */
     readonly signInUrl?: string;
   };
+/**
+ * Squire's own structured hand-back, named field by field — never prose.
+ * `google_session` is `NeedsUserLogin` (Squire's Google-session gate: no live
+ * provider session at all, `resume: "connect"`). `awaiting_human` is an
+ * OAuth mid-flow observation (a 2FA/consent challenge Squire is already
+ * driving); it carries no sign-in page of its own — Squire's own
+ * `next_action: "operate_observe"` remains the remedy for it, so it is
+ * detected and reported but produces no reconnect ceremony here.
+ */
+export type PostSquireLoginWallInput = TurnOutputAuthority &
+  RoomInput & {
+    readonly wall: 'google_session' | 'awaiting_human';
+    /** Squire's own `needs_user.message` (google_session) or `oauth.reason`
+     *  (awaiting_human), verbatim. */
+    readonly message: string;
+  };
+export type PostSquireLoginWallResult = {
+  readonly id: string;
+  readonly createdAt: number;
+  /** False when the wall was recorded but produced no card — e.g.
+   *  `awaiting_human`, or no connected Squire connector was found. */
+  readonly cardPosted: boolean;
+  /** The `connector_offers` row this call created or joined, present
+   *  whenever one exists (whether this call posted the card or joined an
+   *  open one). Stamped onto that row's `command_id` the same way
+   *  `offerConnector`'s result is, so its hidden resume line reaches THIS
+   *  command's turn. */
+  readonly offerId?: string;
+};
 export type AuthorizeSquireCallResult = {
   readonly allowed: boolean;
   readonly grantId?: string;
@@ -1466,6 +1500,10 @@ export type ConnectorAssignment =
       readonly registryServerName?: string;
       readonly registryVersion?: string;
       readonly registryManifest?: RegistryMcpManifest;
+      /** Set only for a scoped in-task reconnect (never the ordinary "add"
+       *  pairing): the exact provider whose session Squire's connect run
+       *  should force through `--force-relogin=<provider>`. */
+      readonly forceReloginProvider?: string;
     }
   | { readonly kind: 'sync'; readonly connectorId: string; readonly connectorType: ConnectorKind }
   | {

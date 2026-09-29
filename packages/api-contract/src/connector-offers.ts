@@ -76,6 +76,15 @@ export function connectorOfferConsequence(kind: ConnectorKind, reason?: string):
   }
 }
 
+/**
+ * The card's one line for a `'reconnect'` offer: what stalled, in words a
+ * person reads, with no agent "I can …" clause (nothing new is being
+ * added — a session already in use just needs a fresh sign-in).
+ */
+export function squireLoginWallConsequence(provider: string): string {
+  return `A task hit a signed-out ${provider} session in Trusty Squire's shared browser. Sign in again to let it continue.`;
+}
+
 function connectorOfferBoundary(kind: ConnectorKind): string {
   switch (kind) {
     case 'trusty-squire':
@@ -132,6 +141,17 @@ export function connectorOfferActionLabel(connectorName: string): string {
  * tool will hold — and the one who may accept besides a Workspace manager.
  * `helper` names the machine the connector installs on (the offering agent's
  * own), so a reader knows where the tool will live before tapping.
+ *
+ * `intent` distinguishes two different questions on the SAME chassis:
+ * `'add'` (the only kind before this field existed — "shall this Workspace
+ * gain tool X?", decided by a tap) and `'reconnect'` (an already-connected
+ * connector's own live session went stale mid-task — nothing to decide, so
+ * the row is created already `connecting` with `connectorId` set up front,
+ * and `provider` names the exact session Squire is refreshing, e.g.
+ * `'google'`). A `'reconnect'` card's existing `connectorId` is what already
+ * drives the phone's "Continue sign-in" ceremony screen — the same in-app
+ * browser / noVNC overlay an `'add'` offer opens after acceptance, reading
+ * Squire's live sign-in page off the connector row it polls.
  */
 export type ConnectorOfferCardView = {
   readonly offerId: string;
@@ -149,6 +169,10 @@ export type ConnectorOfferCardView = {
   readonly acceptedAt?: number;
   /** The Workbench connector row the acceptance created, for the settled card's link. */
   readonly connectorId?: string;
+  /** `'add'` when omitted — every offer before this field existed. */
+  readonly intent?: 'add' | 'reconnect';
+  /** The provider a `'reconnect'` offer is refreshing, e.g. `'google'`. */
+  readonly provider?: string;
 };
 
 /**

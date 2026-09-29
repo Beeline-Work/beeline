@@ -215,7 +215,11 @@ export class ConnectorAssignmentLoop {
       } else if (assignment.connectorType === 'tailscale') {
         await this.runTailscaleInstall(assignment.connectorId, pairingGeneration);
       } else {
-        await this.runInstall(assignment.connectorId, pairingGeneration);
+        await this.runInstall(
+          assignment.connectorId,
+          pairingGeneration,
+          assignment.forceReloginProvider,
+        );
       }
     } else if (assignment.kind === 'sync' && assignment.connectorType === 'tailscale') {
       await this.runTailscaleInstall(assignment.connectorId);
@@ -355,8 +359,13 @@ export class ConnectorAssignmentLoop {
       });
   }
 
-  /** Install Trusty Squire, reporting every step as it settles. */
-  private async runInstall(connectorId: string, pairingGeneration?: number): Promise<void> {
+  /** Install Trusty Squire, reporting every step as it settles.
+   *  `forceReloginProvider` is set only for a login-wall reconnect. */
+  private async runInstall(
+    connectorId: string,
+    pairingGeneration?: number,
+    forceReloginProvider?: string,
+  ): Promise<void> {
     const generation = pairingGeneration !== undefined ? { pairingGeneration } : {};
     // The row stays `installing` for the whole time the human is signing in,
     // and the server re-issues this assignment on EVERY poll until it leaves
@@ -411,6 +420,7 @@ export class ConnectorAssignmentLoop {
       mcp: this.squire(),
       onProgress: report,
       log: (message) => this.log(`[trusty-squire] ${message}`),
+      ...(forceReloginProvider ? { forceReloginProvider } : {}),
     });
     if (result.status === 'error') {
       await this.api.execute('postConnectorStatus', {

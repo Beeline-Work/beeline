@@ -13,6 +13,12 @@ export function connectorOfferTitle(connectorName: string): string {
   return `Add ${connectorName} as a tool?`;
 }
 
+/** `Sign in to Google again` — a `'reconnect'` offer asks nothing; it names
+ *  what stalled. `provider` is Squire's own value (e.g. `'google'`). */
+export function connectorOfferReconnectTitle(provider: string): string {
+  return `Sign in to ${provider[0]!.toUpperCase()}${provider.slice(1)} again`;
+}
+
 /** `✓ Add Trusty Squire` — the one action, with the check glyph the captain photographed. */
 export function connectorOfferActionLabel(connectorName: string): string {
   return `✓ Add ${connectorName}`;

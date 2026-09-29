@@ -289,6 +289,7 @@ describe('monolith integration', () => {
       'postAgentTurnReceipt',
       'retractAgentLiveOutput',
       'postSquireApproval',
+      'postSquireLoginWall',
       'createCorner',
       'reviseCornerBrief',
       'postCornerValidationStage',
@@ -10745,6 +10746,136 @@ describe('monolith integration', () => {
       reason: 'read the inbox you asked about',
     });
     expect(gmail.status).toBe(400);
+  });
+
+  it('posts a reconnect card from a Squire google_session wall and resumes the stuck turn once it reconnects', async () => {
+    // Squire is ALREADY connected for this owner/agent — the scenario is a
+    // live task hitting a stale session in the shared browser, not a missing
+    // tool.
+    const connector = (
+      await database.query<{ id: string }>(
+        `INSERT INTO workspace_connectors(
+           id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,status
+         ) VALUES(gen_random_uuid(),$1,$2,'trusty-squire',$3,'machine-otter-wall',
+                  'connected') RETURNING id`,
+        [WORKSPACE, HUMAN, AGENT],
+      )
+    ).rows[0]!;
+
+    const notActioned = await daemonOperation('postSquireLoginWall', {
+      roomId: ROOM,
+      wall: 'awaiting_human',
+      message: 'Google is asking you to tap 42 on your phone.',
+    });
+    expect(notActioned.status).toBe(200);
+    expect(await notActioned.json()).toEqual({
+      id: '',
+      createdAt: expect.any(Number),
+      cardPosted: false,
+    });
+    expect(
+      (await database.query(`SELECT 1 FROM messages WHERE card_type='connector-offer'`)).rowCount,
+    ).toBe(0);
+
+    const posted = await daemonOperation('postSquireLoginWall', {
+      roomId: ROOM,
+      wall: 'google_session',
+      message: 'no live Google session on this profile',
+    });
+    expect(posted.status).toBe(200);
+    const result = (await posted.json()) as {
+      id: string;
+      createdAt: number;
+      cardPosted: boolean;
+      offerId: string;
+    };
+    expect(result.cardPosted).toBe(true);
+    expect(result.offerId).toEqual(expect.any(String));
+
+    // A second wall on the same session, before the first reconnect settles,
+    // joins the open card rather than posting a second.
+    const joined = await daemonOperation('postSquireLoginWall', {
+      roomId: ROOM,
+      wall: 'google_session',
+      message: 'still no live Google session',
+    });
+    expect((await joined.json()) as { offerId: string; cardPosted: boolean }).toEqual({
+      id: result.offerId,
+      createdAt: expect.any(Number),
+      cardPosted: false,
+      offerId: result.offerId,
+    });
+
+    const cards = await database.query<{ id: string; card: Record<string, any> }>(
+      `SELECT id,card FROM messages WHERE card_type='connector-offer'`,
+    );
+    expect(cards.rows).toHaveLength(1);
+    expect(cards.rows[0]!.card).toEqual(
+      expect.objectContaining({
+        offerId: result.offerId,
+        status: 'connecting',
+        connectorType: 'trusty-squire',
+        intent: 'reconnect',
+        provider: 'google',
+        connectorId: connector.id,
+        reason: 'no live Google session on this profile',
+      }),
+    );
+    expect(cards.rows[0]!.card.addressee).toEqual(
+      expect.objectContaining({ pubkey: HUMAN, kind: 'human' }),
+    );
+    expect(cards.rows[0]!.card.consequence).toMatch(/google/i);
+
+    // The connector is re-armed to force the shared browser's stale Google
+    // session through Squire's own connect ceremony — never the ordinary
+    // "add a connector" pairing, which must never pass --force-relogin.
+    const armed = await database.query<{ status: string; force_relogin_provider: string | null }>(
+      `SELECT status,force_relogin_provider FROM workspace_connectors WHERE id=$1::uuid`,
+      [connector.id],
+    );
+    expect(armed.rows[0]).toEqual({ status: 'installing', force_relogin_provider: 'google' });
+    const assignments = (await (
+      await daemonOperation('getConnectorAssignments', { agentId: AGENT })
+    ).json()) as {
+      assignments: Array<{ kind: string; connectorId: string; forceReloginProvider?: string }>;
+    };
+    expect(assignments.assignments).toEqual([
+      expect.objectContaining({
+        kind: 'install',
+        connectorId: connector.id,
+        forceReloginProvider: 'google',
+      }),
+    ]);
+
+    // The offer is linked to the turn it paused, exactly like offerConnector's.
+    const linked = await database.query<{ command_id: string | null }>(
+      `SELECT command_id FROM connector_offers WHERE id::text=$1`,
+      [result.offerId],
+    );
+    expect(linked.rows[0]!.command_id).toEqual(expect.any(String));
+
+    // The helper's connected report settles the card, clears the force-relogin
+    // flag, and resumes the SAME paused agent turn — the existing
+    // connector-offer settle-in-place and hidden resume path, unchanged.
+    expect((await daemonOperation('installConnector', { connectorId: connector.id })).status).toBe(
+      200,
+    );
+    const settled = await database.query<{ card: Record<string, any> }>(
+      `SELECT card FROM messages WHERE card_type='connector-offer'`,
+    );
+    expect(settled.rows[0]!.card).toEqual(
+      expect.objectContaining({ status: 'accepted', connectorId: connector.id }),
+    );
+    const clearedFlag = await database.query<{ force_relogin_provider: string | null }>(
+      `SELECT force_relogin_provider FROM workspace_connectors WHERE id=$1::uuid`,
+      [connector.id],
+    );
+    expect(clearedFlag.rows[0]!.force_relogin_provider).toBeNull();
+    const resume = await database.query<{ action: string; state: string }>(
+      `SELECT action,state FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND action='resume'`,
+      [ROOM, AGENT],
+    );
+    expect(resume.rows).toEqual([{ action: 'resume', state: 'pending' }]);
   });
 
   it('workbench_status reports the helper owner Workbench, not the addressee Workbench', async () => {

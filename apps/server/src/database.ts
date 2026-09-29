@@ -2059,6 +2059,13 @@ ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS install_room_id uuid R
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS install_command_id text;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_handoff_attempt text;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_squire_relayed_attempt text;
+-- Set only by a Squire login-wall reconnect (DaemonService.squireLoginWall):
+-- the exact provider Squire's next connect run must force through
+-- --force-relogin=provider, pushing its shared-browser session through the
+-- ceremony instead of the ordinary already-connected skip. Cleared on every
+-- ordinary re-pair (armConnectorPairing) and on a completed install
+-- (installConnector), so it never outlives one run.
+ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS force_relogin_provider text;
 
 CREATE TABLE IF NOT EXISTS registry_mcp_oauth_attempts (
   state text PRIMARY KEY,
@@ -2135,6 +2142,16 @@ CREATE TABLE IF NOT EXISTS connector_offers (
 );
 CREATE INDEX IF NOT EXISTS connector_offers_room_idx
   ON connector_offers(room_id, connector_type, status, created_at DESC);
+-- 'add' (the only kind before this column existed) asks "shall this
+-- Workspace gain tool X?", decided by a tap. 'reconnect' (squire-login-wall
+-- handoff) is written straight to 'connecting' with no decision to make: an
+-- already-connected connector's own live session went stale mid-task, and
+-- provider names which one (e.g. 'google').
+ALTER TABLE connector_offers ADD COLUMN IF NOT EXISTS intent text NOT NULL DEFAULT 'add';
+ALTER TABLE connector_offers DROP CONSTRAINT IF EXISTS connector_offers_intent_check;
+ALTER TABLE connector_offers ADD CONSTRAINT connector_offers_intent_check
+  CHECK (intent IN ('add','reconnect'));
+ALTER TABLE connector_offers ADD COLUMN IF NOT EXISTS provider text;
 ALTER TABLE connector_offers DROP CONSTRAINT IF EXISTS connector_offers_status_check;
 ALTER TABLE connector_offers ADD CONSTRAINT connector_offers_status_check
   CHECK (status IN ('pending','connecting','accepted'));

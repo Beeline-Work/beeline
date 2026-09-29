@@ -52,7 +52,7 @@ import { registryMcpHostBindPaths, registryMcpHostDeclarations } from './registr
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import { syncCornerBranch } from './corner-branch-sync.js';
 import { beelineAgentMcpServer } from './room-session.js';
-import { institutionalContextForTurn } from './institutional-context.js';
+import { awaitInstitutionalContext, startInstitutionalContextFetch } from './institutional-context.js';
 import {
   codegraphFingerprintServers,
   codegraphMcpServer,
@@ -1262,6 +1262,9 @@ export class MonolithCornerTurnLoop {
       : undefined;
     this.currentTurn = { requestId, ...(requester ? { requester } : {}) };
     const trace = this.beginTurnTrace(requestId);
+    // Kicked off now, alongside activation rather than after it, so its own
+    // network round trip has somewhere to hide (see institutional-context.ts).
+    const institutionalContextFetch = startInstitutionalContextFetch(api, cornerId);
     let deliberateNoReply = false;
     // Observed LIVE from the stream, where the catch below can reach it: the
     // server settles this turn and its command inside `upgradeCornerLane`, so
@@ -1313,11 +1316,12 @@ export class MonolithCornerTurnLoop {
                   this.roster(),
                   api.execute('getCornerRestoreState', { cornerId }),
                   this.activeReviewerInstruction(),
-                  institutionalContextForTurn(api, cornerId, (message) =>
+                  awaitInstitutionalContext(institutionalContextFetch, (message) =>
                     console.warn(`[thin-core] corner ${cornerId}: ${message}`),
                   ),
                 ]),
               );
+              trace.noteInstitutionalMemory(institutionalContext.outcome);
               const briefAttachments: DaemonAttachment[] = (restored.brief?.attachments ?? []).map(
                 (file) => ({
                   url: new URL(`/v1/media/${file.objectId}`, api.baseUrl).toString(),

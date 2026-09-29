@@ -1569,6 +1569,12 @@ CREATE TABLE IF NOT EXISTS workflow_step_receipts (
   response jsonb NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS workflow_run_event_receipts (
+  run_id uuid NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
+  event_id text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(run_id,event_id)
+);
 CREATE TABLE IF NOT EXISTS workflow_trigger_failures (
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   name text NOT NULL,

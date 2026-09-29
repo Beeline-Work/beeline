@@ -282,6 +282,31 @@ describe('workflow run handoff', () => {
     }
   });
 
+  it('lets one event id advance only one of two sequential waits', async () => {
+    const { db, parent } = await fixture();
+    try {
+      const wait = (next: string) => ({
+        kind: 'wait', event: 'tick', timeoutSeconds: 60, on: { success: next, timeout: 'stopped' },
+      });
+      await db.transaction((tx) => putWorkflowDefinition(tx, ROOM, AUTHOR, {
+        ...definition,
+        start: 'first',
+        states: { first: wait('second'), second: wait('done'), stopped: { kind: 'terminal' }, done: { kind: 'terminal' } },
+      }, undefined, parent));
+      await db.transaction((tx) =>
+        startWorkflowRun(tx, ROOM, 'review-demo', { author: AUTHOR, reviewer: REVIEWER }, parent));
+      const signal = (eventId: string) =>
+        db.transaction((tx) => signalWorkflowEvent(tx, ROOM, 'tick', {}, eventId));
+      expect(await signal('tick-1')).toBe(1);
+      expect(await signal('tick-1')).toBe(0);
+      expect((await listWorkflowRuns(db, ROOM)).runs[0]).toMatchObject({ state: 'second', status: 'waiting' });
+      expect(await signal('tick-2')).toBe(1);
+      expect((await listWorkflowRuns(db, ROOM)).runs[0]).toMatchObject({ state: 'done', status: 'complete' });
+    } finally {
+      await db.close();
+    }
+  });
+
   it('caps a failed CI wait that sends implementation back through another attempt', async () => {
     const { db, parent } = await fixture();
     try {

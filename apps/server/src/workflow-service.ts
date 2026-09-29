@@ -550,6 +550,17 @@ export async function signalWorkflowEvent(
     });
     if (!matches) continue;
     if (payload.outcome === 'failure' && !state.on.failure) continue;
+    if (
+      eventId &&
+      !(
+        await db.query(
+          `INSERT INTO workflow_run_event_receipts(run_id,event_id) VALUES($1,$2)
+           ON CONFLICT DO NOTHING RETURNING run_id`,
+          [run.id, eventId],
+        )
+      ).rows.length
+    )
+      continue;
     const parent = (
       await db.query<CommandRow>(`SELECT * FROM agent_commands WHERE id=$1`, [
         run.source_command_id,

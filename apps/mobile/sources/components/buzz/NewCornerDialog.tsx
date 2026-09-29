@@ -10,7 +10,7 @@ import { HullDialog, HullDialogInput } from './HullDialog';
 export const HUMAN_CORNER_TITLE_MAX_LENGTH = 120;
 
 /**
- * The corners list + opens a short title decision in the shared dialog.
+ * A title-entry dialog for callers that need a human-named corner.
  */
 export function NewCornerDialog({
   visible,

@@ -13,7 +13,7 @@ import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { displayRoomIndexTitle } from '@/buzz/room-list-row';
-import { CHANGES_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
+import { CHANGES_LABEL, CORNER_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { MonoButton } from '@/components/buzz/MonoHull';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { RoomCornersHeader } from '@/components/buzz/RoomCornersHeader';
@@ -22,9 +22,10 @@ import { BuzzRigTransport } from '@/sync/transport';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { Typography } from '@/constants/Typography';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
-import { NewCornerDialog } from '@/components/buzz/NewCornerDialog';
-import { phoneOperationFailureReason } from '@/sync/transport/monolith-operation';
 import { cornerHref } from '@/buzz/corner-navigation';
+import { openRoomListCorner } from '@/buzz/room-list-new-corner';
+import { phoneOperationFailureReason } from '@/sync/transport/monolith-operation';
+import { Modal } from '@/modal';
 import { archivedCornersByClosure, type ArchivedCornersState } from '@/buzz/archived-corners';
 
 /** Parent-Room hints that change this list: a corner's status, a corner
@@ -39,10 +40,7 @@ export default function BuzzCorners() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [retryGeneration, setRetryGeneration] = useState(0);
-  const [creating, setCreating] = useState(false);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [createTitle, setCreateTitle] = useState('');
-  const [createError, setCreateError] = useState<string | null>(null);
+  const creatingRef = useRef(false);
   const [archived, setArchived] = useState<ArchivedCornersState>({ status: 'idle' });
   const schedulerRef = useRef<SurfaceRefreshScheduler<CornerListView> | null>(null);
 
@@ -168,28 +166,22 @@ export default function BuzzCorners() {
     }
   };
 
-  const closeCreate = () => {
-    if (creating) return;
-    setCreateOpen(false);
-    setCreateTitle('');
-    setCreateError(null);
-  };
   const createCorner = async () => {
-    const nextTitle = createTitle.replace(/\s+/g, ' ').trim();
-    if (!nextTitle || creating) return;
-    setCreating(true);
-    setCreateError(null);
+    if (creatingRef.current) return;
+    creatingRef.current = true;
     try {
       const identity = await loadBuzzIdentity();
       if (!identity) throw new Error('Beeline identity is unavailable');
-      const cornerId = await new BuzzRigTransport(identity).createHumanCorner(decodedId, nextTitle);
-      setCreateOpen(false);
-      setCreateTitle('');
-      router.push(cornerHref(cornerId, decodedId, nextTitle, 'corners'));
+      await openRoomListCorner({
+        roomId: decodedId,
+        createCorner: (roomId, title) => new BuzzRigTransport(identity).createHumanCorner(roomId, title),
+        openCorner: (cornerId, title) =>
+          router.push(cornerHref(cornerId, decodedId, title, 'corners')),
+      });
     } catch (reason) {
-      setCreateError(phoneOperationFailureReason(reason));
+      Modal.alert(`Could not open ${CORNER_LABEL}`, phoneOperationFailureReason(reason));
     } finally {
-      setCreating(false);
+      creatingRef.current = false;
     }
   };
 
@@ -234,7 +226,7 @@ export default function BuzzCorners() {
         <RoomCornersHeader
           title={title}
           onBack={() => router.back()}
-          onAdd={() => setCreateOpen(true)}
+          onAdd={() => void createCorner()}
         />
         {!!error && (
           // F5: it is tappable, so it announces as a button. `alert` promised
@@ -264,18 +256,6 @@ export default function BuzzCorners() {
             setRefreshing(true);
             schedulerRef.current?.force();
           }}
-        />
-        <NewCornerDialog
-          visible={createOpen}
-          title={createTitle}
-          setTitle={(value) => {
-            setCreateTitle(value);
-            if (createError) setCreateError(null);
-          }}
-          creating={creating}
-          error={createError}
-          onCreate={() => void createCorner()}
-          onClose={closeCreate}
         />
       </View>
     </BuzzCommunityShell>

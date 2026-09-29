@@ -10,8 +10,7 @@ type ForwardCornerSheetProps = {
 
 /**
  * Mobile swipe-right on a message asks whether to forward it into a new
- * corner. It is the same "Begin a new corner" dialog the corners list + opens,
- * with one line saying the chosen message becomes the starting topic.
+ * corner. The prompt says the chosen message becomes the starting topic.
  */
 export function ForwardCornerSheet({ onClose, onOpen, visible }: ForwardCornerSheetProps) {
   return (

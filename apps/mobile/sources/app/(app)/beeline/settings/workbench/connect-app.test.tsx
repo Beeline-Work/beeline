@@ -27,6 +27,7 @@ vi.mock('react-native', async () => {
     ScrollView: host('ScrollView'),
     StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
     Text: host('Text'),
+    Image: host('Image'),
     TextInput: host('TextInput'),
     TouchableOpacity: host('TouchableOpacity'),
     View: host('View'),
@@ -69,6 +70,9 @@ vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
     SurfaceGlyphLoader: (props: any) => ReactModule.createElement('SurfaceGlyphLoader', props),
   };
 });
+
+const signIn = vi.hoisted(() => ({ open: vi.fn() }));
+vi.mock('@/buzz/app-sign-in', () => ({ openAppSignIn: signIn.open }));
 
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
@@ -118,70 +122,40 @@ async function render(): Promise<ReactTestRenderer> {
 }
 
 describe('Connect an app', () => {
-  it('asks only for the app and the machine — never for a route', async () => {
+  it('shows a searchable Popular picker with connected state and ink Connect buttons', async () => {
+    source.setApps([{ id: 'app-gmail', key: 'gmail', name: 'Gmail', domain: 'gmail.com', transport: 'composio', status: 'connected', useCount: 0 }]);
     const renderer = await render();
     const header = renderer.root.findByProps({ testID: 'connect-app-header' });
     expect(header.props.eyebrow).toBe('Workbench');
     expect(header.props.title).toBe('Connect an app');
     expect(renderer.root.findAllByType('TextInput' as never)).toHaveLength(1);
-    const rows = renderer.root.findAll(
-      (node: any) =>
-        node.type === 'SettingsRow' &&
-        typeof node.props.testID === 'string' &&
-        node.props.testID.startsWith('connect-app-machine-'),
-    );
-    expect(rows.length).toBeGreaterThan(0);
-    // Nothing is connectable until the app is named.
-    expect(rows.every((row: any) => row.props.disabled === true)).toBe(true);
+    expect(renderer.root.findByProps({ testID: 'connect-app-gmail' }).findAllByType('TouchableOpacity' as never)).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'connect-app-slack' }).findAllByType('TouchableOpacity' as never)).toHaveLength(1);
+    await act(async () => renderer.root.findByProps({ testID: 'connect-app-input' }).props.onChangeText('slack'));
+    expect(renderer.root.findAllByProps({ testID: 'connect-app-gmail' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'connect-app-slack' }).length).toBeGreaterThan(0);
   });
 
-  it('connects the named app on the chosen machine and returns to Workbench', async () => {
+  it('connects the selected app through the authenticated source', async () => {
     const renderer = await render();
-    await act(async () => {
-      renderer.root.findByProps({ testID: 'connect-app-input' }).props.onChangeText(' Linear ');
-    });
-    const [online] = renderer.root.findAll(
-      (node: any) =>
-        node.type === 'SettingsRow' &&
-        typeof node.props.testID === 'string' &&
-        node.props.testID.startsWith('connect-app-machine-') &&
-        node.props.disabled === false,
-    );
-    expect(online.props.action).toBe('connect');
-    await act(async () => {
-      online.props.onPress();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(source.appRequests).toEqual([
-      { app: 'Linear', helperId: online.props.testID.replace('connect-app-machine-', '') },
-    ]);
+    await act(async () => { renderer.root.findByProps({ testID: 'connect-app-slack' }).findByType('TouchableOpacity' as never).props.onPress(); await Promise.resolve(); });
+    expect(source.appRequests).toEqual([{ app: 'Slack', helperId: 'helper-squire-box' }]);
     expect(navigation.back).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps the person on the page with the server’s reason when connecting fails', async () => {
-    source.connectApp = async () => {
-      throw new Error('The MCP Registry could not be searched, so no route was chosen.');
-    };
+  it('opens the server-issued sign-in URL without showing a route', async () => {
+    source.connectApp = async () => ({ appId: 'app-slack', authorizationUrl: 'https://signin.example.test/one' });
     const renderer = await render();
-    await act(async () => {
-      renderer.root.findByProps({ testID: 'connect-app-input' }).props.onChangeText('Linear');
-    });
-    const [online] = renderer.root.findAll(
-      (node: any) =>
-        node.type === 'SettingsRow' &&
-        typeof node.props.testID === 'string' &&
-        node.props.testID.startsWith('connect-app-machine-') &&
-        node.props.disabled === false,
-    );
-    await act(async () => {
-      online.props.onPress();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await act(async () => { renderer.root.findByProps({ testID: 'connect-app-slack' }).findByType('TouchableOpacity' as never).props.onPress(); await Promise.resolve(); });
+    expect(signIn.open).toHaveBeenCalledWith('https://signin.example.test/one', { workspaceId: 'workspace-1', viewerId: 'human-dani' });
     expect(navigation.back).not.toHaveBeenCalled();
-    expect(renderer.root.findByProps({ testID: 'connect-app-error' }).props.children).toBe(
-      'The MCP Registry could not be searched, so no route was chosen.',
-    );
+  });
+
+  it('keeps the server error visible and never claims connection', async () => {
+    source.connectApp = async () => { throw new Error('Sign-in is unavailable'); };
+    const renderer = await render();
+    await act(async () => { renderer.root.findByProps({ testID: 'connect-app-slack' }).findByType('TouchableOpacity' as never).props.onPress(); await Promise.resolve(); });
+    expect(navigation.back).not.toHaveBeenCalled();
+    expect(JSON.stringify(renderer.toJSON())).toContain('Sign-in is unavailable');
   });
 });

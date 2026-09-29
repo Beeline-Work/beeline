@@ -695,6 +695,8 @@ export type ConnectAppInput = TurnOutputAuthority &
     /** The app's name or website, e.g. `Linear` or `linear.app`. */
     readonly app: string;
     readonly reason: string;
+    /** Display-only promise on a managed sign-in card, never a command. */
+    readonly continuation?: string;
     /** Re-resolve the route from the top, for an app in error. */
     readonly reconnect?: boolean;
     /** Squire found no API for this app: move its API route to the browser. */

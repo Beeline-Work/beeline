@@ -400,9 +400,7 @@ describe('using-beeline "Tools and the Workbench" section', () => {
     expect(markdown).toContain('a **key** is the credential that tool holds for that human');
     expect(markdown).toContain('beeline-agent workbench_status');
     expect(markdown).toContain('Trusty Squire is vaulted credentials plus a browser');
-    expect(markdown).toContain(
-      'YouTube Analytics answers only the channel owner account, not a manager',
-    );
+    expect(markdown).toContain('Connected apps are listed once per app with a stable ID');
     expect(markdown).toContain('Tailscale installs its CLI on the selected helper');
     expect(markdown).toContain('tailscale file cp');
     expect(markdown).toContain(
@@ -419,12 +417,15 @@ describe('using-beeline "Tools and the Workbench" section', () => {
     expect(markdown).toContain(
       'Then call offer_connector with the connectorType and one short reason',
     );
-    expect(markdown).toContain('For Google, only your human owner can accept and sign in');
-    expect(markdown).toContain('Offer Google only when answering your owner');
     expect(markdown).toContain('Your turn pauses on the card');
     expect(markdown).not.toContain('Settings → Workbench → Tools');
     expect(markdown).not.toContain('tell the person exactly where to go');
     expect(markdown).not.toContain('you never walk them through it');
+  });
+
+  it('asks for a request-specific connect card promise without embedding a stock promise', () => {
+    expect(markdown).toContain('request-specific `continuation`');
+    expect(markdown).toContain('Do not include a link, credential, account identifier, or private data');
   });
 
   it('requires research-first prose before an unfamiliar tool is offered', () => {

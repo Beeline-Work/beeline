@@ -393,6 +393,17 @@ export class MockWorkbenchSource implements WorkbenchSource {
     this.apps = this.apps.filter((app) => app.id !== input.appId);
   }
 
+  async beginAppSignIn(input: { appId: string }): Promise<{ authorizationUrl: string }> {
+    return { authorizationUrl: `https://example.test/connect/${input.appId}` };
+  }
+
+  async completeAppSignIn(input: { sessionUri: string }): Promise<{ appId: string }> {
+    const appId = new URL(input.sessionUri).searchParams.get('appId') ?? '';
+    const app = this.apps.find((item) => item.id === appId);
+    if (app) app.status = 'connected';
+    return { appId };
+  }
+
   /** Test hook: seed the viewer's apps. */
   setApps(apps: readonly WorkbenchApp[]): void {
     this.apps = apps.map((app) => ({ ...app }));

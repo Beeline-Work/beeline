@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   APP_ROUTES,
+  APP_CONTINUATION_MAX_LENGTH,
   appIdentity,
   appKeyForHost,
   appResourceTarget,
@@ -9,9 +10,27 @@ import {
   registryServerDomain,
   selectOfficialHostedServer,
   squireCallAppKeys,
+  normalizeAppContinuation,
 } from './app-connections.js';
 
 const remote = [{ type: 'streamable-http', url: 'https://mcp.linear.app/mcp' }];
+
+describe('app sign-in card continuation', () => {
+  it('normalizes an optional single sentence without inventing copy', () => {
+    expect(normalizeAppContinuation(undefined)).toBeUndefined();
+    expect(normalizeAppContinuation('  I will finish the request after sign-in.  '))
+      .toBe('I will finish the request after sign-in.');
+    expect(APP_CONTINUATION_MAX_LENGTH).toBe(160);
+  });
+
+  it.each(['', 'I will do one thing. Then another.', 'Line one.\nLine two.',
+    '<b>Sign in.</b>', 'Open https://example.com next.',
+    'Use token: secret to continue.', `${'x'.repeat(160)}.`])(
+    'rejects invalid display text', (value) => {
+      expect(() => normalizeAppContinuation(value)).toThrow(/app continuation/);
+    },
+  );
+});
 
 describe('app identity', () => {
   it('reads a name, a website and an API URL as the same app', () => {

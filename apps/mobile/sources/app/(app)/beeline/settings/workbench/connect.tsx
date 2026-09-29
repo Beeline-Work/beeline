@@ -21,16 +21,10 @@ function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-/** User-visible connector names, one row per id the build knows. `google` is
- * the ONE logical Google entry — the four tool connectors behind one grant. */
+/** User-visible names for the remaining machine-level tool pairing flow. */
 const CONNECTOR_NAMES: Record<string, string> = {
   'trusty-squire': 'Trusty Squire',
   tailscale: 'Tailscale',
-  google: 'Google Workspace',
-  'google-gmail': 'Gmail',
-  'google-calendar': 'Google Calendar',
-  'google-drive': 'Google Drive',
-  'google-youtube': 'YouTube',
 };
 
 function connectorNameFor(connectorId: string): string {
@@ -56,6 +50,22 @@ const PAIR_FEEDBACK_MS = 15_000;
  * a row inside the step list.
  */
 export default function ConnectTrustySquireScreen() {
+  const params = useLocalSearchParams<{ connectorId?: string | string[];
+    workspaceId?: string | string[]; viewerId?: string | string[] }>();
+  const connectorId = firstParam(params.connectorId);
+  if (connectorId === 'google' || connectorId?.startsWith('google-'))
+    return <LegacyGoogleAppRedirect workspaceId={firstParam(params.workspaceId) ?? ''}
+      viewerId={firstParam(params.viewerId) ?? ''} />;
+  return <ConnectToolFlow />;
+}
+
+function LegacyGoogleAppRedirect({ workspaceId, viewerId }: { workspaceId: string; viewerId: string }) {
+  useEffect(() => { router.replace({ pathname: '/beeline/settings/workbench/connect-app',
+    params: { workspaceId, viewerId } } as Href); }, [workspaceId, viewerId]);
+  return null;
+}
+
+function ConnectToolFlow() {
   const params = useLocalSearchParams<{
     workspaceId?: string | string[];
     viewerId?: string | string[];
@@ -447,7 +457,7 @@ const styles = StyleSheet.create((theme) => {
     signInButton: {
       minHeight: hull.layout.row,
       borderWidth: 1,
-      borderColor: hull.accent,
+      borderColor: hull.buttonSecondaryText,
       alignItems: 'center',
       justifyContent: 'center',
       paddingHorizontal: hull.space.md,
@@ -459,16 +469,16 @@ const styles = StyleSheet.create((theme) => {
       color: hull.textMuted,
       textAlign: 'center',
     },
-    signInText: { ...Typography.default(), ...hull.type.body, color: hull.accent },
+    signInText: { ...Typography.default(), ...hull.type.body, color: hull.buttonSecondaryText },
     retryButton: {
       minHeight: hull.layout.row,
       borderWidth: 1,
-      borderColor: hull.border,
+      borderColor: hull.buttonSecondaryText,
       alignItems: 'center',
       justifyContent: 'center',
       paddingHorizontal: hull.space.md,
     },
-    retryText: { ...Typography.default(), ...hull.type.body, color: hull.textMuted },
+    retryText: { ...Typography.default(), ...hull.type.body, color: hull.buttonSecondaryText },
     errorText: { ...Typography.default(), ...hull.type.meta, color: hull.dialogDanger },
   };
 });

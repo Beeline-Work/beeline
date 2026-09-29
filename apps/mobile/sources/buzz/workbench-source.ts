@@ -68,7 +68,9 @@ export interface WorkbenchSource {
     app: string;
     helperId: string;
     reconnect?: boolean;
-  }): Promise<{ appId: string }>;
+  }): Promise<{ appId: string; authorizationUrl?: string }>;
+  beginAppSignIn(input: { appId: string }): Promise<{ authorizationUrl: string }>;
+  completeAppSignIn(input: { sessionUri: string }): Promise<{ appId: string }>;
   disconnectApp(input: { workspaceId: string; appId: string }): Promise<void>;
 }
 
@@ -224,6 +226,10 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
         ...(app.connectionReference ? { connectionReference: app.connectionReference } : {}),
         useCount: app.useCount,
         ...(app.lastUsedAt !== undefined ? { lastUsedAt: app.lastUsedAt } : {}),
+        ...(app.createdAt !== undefined ? { createdAt: app.createdAt } : {}),
+        ...(app.accountLabel ? { accountLabel: app.accountLabel } : {}),
+        ...(app.workspaceName ? { workspaceName: app.workspaceName } : {}),
+        ...(app.lastUse ? { lastUse: { ...app.lastUse } } : {}),
       })),
       connections: dto.connections.map((connection) => toConnection(connection, input.viewerId)),
     };
@@ -382,14 +388,22 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
     app: string;
     helperId: string;
     reconnect?: boolean;
-  }): Promise<{ appId: string }> {
+  }): Promise<{ appId: string; authorizationUrl?: string }> {
     const result = await monolithPhoneOperation('connectWorkbenchApp', {
       workspaceId: input.workspaceId,
       app: input.app,
       helperAgentId: input.helperId,
       ...(input.reconnect ? { reconnect: true } : {}),
     });
-    return { appId: result.appId };
+    return { appId: result.appId, ...(result.authorizationUrl ? { authorizationUrl: result.authorizationUrl } : {}) };
+  }
+
+  async beginAppSignIn(input: { appId: string }): Promise<{ authorizationUrl: string }> {
+    return monolithPhoneOperation('beginAppSignIn', input);
+  }
+
+  async completeAppSignIn(input: { sessionUri: string }): Promise<{ appId: string }> {
+    return monolithPhoneOperation('completeAppSignIn', input);
   }
 
   async disconnectApp(input: { workspaceId: string; appId: string }): Promise<void> {

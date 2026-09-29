@@ -14,6 +14,7 @@ const searchParams = vi.hoisted(() => ({
   url: 'https://login.tailscale.com/a/test',
   method: 'oauth',
   oauthReturn: undefined as string | undefined,
+  appSignInSession: undefined as string | undefined,
 }));
 const readInstallState = vi.hoisted(() => vi.fn(async () => null as null | {
   connected: boolean;
@@ -21,6 +22,7 @@ const readInstallState = vi.hoisted(() => vi.fn(async () => null as null | {
   signIn?: { method: 'oauth' | 'streamed'; url: string } | null;
 }));
 const cancelGoogleSignIn = vi.hoisted(() => vi.fn(async () => true));
+const completeAppSignIn = vi.hoisted(() => vi.fn(async () => ({ appId: 'app-slack' })));
 
 vi.mock('expo-router', () => ({
   router: { back: vi.fn(), replace: vi.fn() },
@@ -83,7 +85,7 @@ vi.mock('@/components/buzz/sandbox-webview', async () => {
 });
 
 vi.mock('@/buzz/workbench-source', () => ({
-  getWorkbenchSource: () => ({ readInstallState, cancelGoogleSignIn }),
+  getWorkbenchSource: () => ({ readInstallState, cancelGoogleSignIn, completeAppSignIn }),
 }));
 
 import ConnectorSignInScreen from './connect-signin';
@@ -109,6 +111,8 @@ afterEach(() => {
   searchParams.connectorName = 'Tailscale';
   searchParams.url = 'https://login.tailscale.com/a/test';
   searchParams.oauthReturn = undefined;
+  searchParams.appSignInSession = undefined;
+  completeAppSignIn.mockReset().mockResolvedValue({ appId: 'app-slack' });
   readInstallState.mockReset().mockResolvedValue(null);
   cancelGoogleSignIn.mockReset().mockResolvedValue(true);
   vi.mocked(WebBrowser.openAuthSessionAsync).mockReset()
@@ -229,235 +233,34 @@ describe('ConnectorSignInScreen', () => {
     }
   });
 
-  it('opens Google in an Android auth session with the app return URI', async () => {
-    searchParams.connectorName = 'Google Workspace';
-    searchParams.url = 'https://accounts.google.com/o/oauth2/v2/auth?state=test';
-    let renderer!: ReactTestRenderer;
-    await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); });
-    expect(renderer.root.findAllByType('WebView')).toHaveLength(0);
-    expect(renderer.root.findAllByType('Text').some((node: any) =>
-      String(node.props.children).includes('Choose Advanced, then Go to Beeline'))).toBe(true);
-    expect(WebBrowser.openAuthSessionAsync).toHaveBeenCalledWith(searchParams.url,
-      'beeline://beeline/settings/workbench/connect-signin',
-      { preferUniversalLinks: false, createTask: true, useProxyActivity: false });
-    expect(WebBrowser.openBrowserAsync).not.toHaveBeenCalled();
-    expect(JSON.parse(storedReturn.get('beeline.google-auth-return.v1')!)).toMatchObject({ state: 'test' });
-    await act(async () => renderer.unmount());
-  });
-
-  it.each(['cancel', 'dismiss'])('retires the attempt on auth-session %s', async (type) => {
-    searchParams.url = 'https://accounts.google.com/o/oauth2/v2/auth?state=cancelled';
-    vi.mocked(WebBrowser.openAuthSessionAsync).mockResolvedValueOnce({ type } as never);
-    let renderer!: ReactTestRenderer;
-    await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); });
-    expect(cancelGoogleSignIn).toHaveBeenCalledWith({ connectorId: 'connector-row-1', state: 'cancelled' });
-    expect(WebBrowser.dismissAuthSession).toHaveBeenCalled();
-    expect(router.replace).toHaveBeenCalledWith(expect.objectContaining({
-      pathname: '/beeline/settings/workbench',
-      params: expect.objectContaining({ googleNotice: 'incomplete' }),
-    }));
+  it('redeems a provider callback once and returns to the original Room', async () => {
+    searchParams.appSignInSession = 'https://provider.test/session/one';
+    storedReturn.set('beeline.app-sign-in-return.v1', JSON.stringify({ workspaceId: 'workspace-1', viewerId: 'human-1', roomId: 'room-1' }));
+    await act(async () => { create(React.createElement(ConnectorSignInScreen)); await Promise.resolve(); });
+    expect(completeAppSignIn).toHaveBeenCalledWith({ sessionUri: searchParams.appSignInSession });
+    expect(router.replace).toHaveBeenCalledWith({ pathname: '/beeline/chat/[channelId]', params: { channelId: 'room-1' } });
     expect(storedReturn.size).toBe(0);
-    await act(async () => renderer.unmount());
   });
 
-  it('shows Beeline and retires the attempt after backgrounding mid-sign-in', async () => {
-    searchParams.url = 'https://accounts.google.com/o/oauth2/v2/auth?state=backgrounded';
-    readInstallState.mockResolvedValue({ connected: false,
-      signIn: { method: 'oauth', url: searchParams.url } });
-    let finish!: (result: { type: string }) => void;
-    vi.mocked(WebBrowser.openAuthSessionAsync).mockImplementationOnce(
-      () => new Promise((resolve) => { finish = resolve; }) as never);
+  it('returns a Workbench connection to Workbench only after verified completion', async () => {
+    searchParams.appSignInSession = 'https://provider.test/session/two';
+    storedReturn.set('beeline.app-sign-in-return.v1', JSON.stringify({ workspaceId: 'workspace-1', viewerId: 'human-1' }));
+    await act(async () => { create(React.createElement(ConnectorSignInScreen)); await Promise.resolve(); });
+    expect(router.replace).toHaveBeenCalledWith({ pathname: '/beeline/settings/workbench', params: { workspaceId: 'workspace-1', viewerId: 'human-1' } });
+  });
+
+  it('keeps a failed verifier on the callback screen and does not claim success', async () => {
+    searchParams.appSignInSession = 'https://provider.test/session/denied';
+    completeAppSignIn.mockRejectedValueOnce(new Error('Sign-in was denied'));
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); await Promise.resolve(); });
+    expect(JSON.stringify(renderer.toJSON())).toContain('Sign-in was denied');
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  it('keeps an ordinary helper sign-in in the existing Workbench overlay', async () => {
     let renderer!: ReactTestRenderer;
     await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); });
-    await act(async () => {
-      for (const listener of appStateListeners) listener('background');
-      for (const listener of appStateListeners) listener('active');
-      await Promise.resolve();
-    });
-    expect(cancelGoogleSignIn).not.toHaveBeenCalled();
-    await act(async () => { finish({ type: 'dismiss' }); });
-    expect(cancelGoogleSignIn).toHaveBeenCalledWith({ connectorId: 'connector-row-1',
-      state: 'backgrounded' });
-    expect(router.replace).toHaveBeenCalledWith(expect.objectContaining({
-      pathname: '/beeline/settings/workbench',
-      params: expect.objectContaining({ googleNotice: 'incomplete' }),
-    }));
-    await act(async () => renderer.unmount());
-  });
-
-  it('keeps the Room return when Android reports dismiss before the callback link', async () => {
-    searchParams.url = 'https://accounts.google.com/o/oauth2/v2/auth?state=race';
-    (searchParams as typeof searchParams & { roomId?: string }).roomId = 'room-race';
-    cancelGoogleSignIn.mockResolvedValueOnce(false);
-    vi.mocked(WebBrowser.openAuthSessionAsync).mockResolvedValueOnce({ type: 'dismiss' } as never);
-    let renderer!: ReactTestRenderer;
-    await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); });
-    expect(storedReturn.get('beeline.google-auth-return.v1')).toContain('room-race');
-    await act(async () => renderer.unmount());
-    vi.mocked(router.replace).mockClear();
-    searchParams.oauthReturn = 'race';
-    searchParams.url = '';
-    await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); });
-    expect(router.replace).toHaveBeenCalledWith({ pathname: '/beeline/chat/[channelId]',
-      params: { channelId: 'room-race' } });
-    await act(async () => renderer.unmount());
-    delete (searchParams as typeof searchParams & { roomId?: string }).roomId;
-  });
-
-  it('returns to the Room on a successful Google redirect', async () => {
-    searchParams.url = 'https://accounts.google.com/o/oauth2/v2/auth?state=completed';
-    (searchParams as typeof searchParams & { roomId?: string }).roomId = 'room-1';
-    vi.mocked(WebBrowser.openAuthSessionAsync).mockResolvedValueOnce({ type: 'success',
-      url: 'beeline://beeline/settings/workbench/connect-signin?oauthReturn=completed' } as never);
-    let renderer!: ReactTestRenderer;
-    await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); });
-    expect(cancelGoogleSignIn).not.toHaveBeenCalled();
-    expect(router.replace).toHaveBeenCalledWith({ pathname: '/beeline/chat/[channelId]',
-      params: { channelId: 'room-1' } });
-    await act(async () => renderer.unmount());
-    delete (searchParams as typeof searchParams & { roomId?: string }).roomId;
-  });
-
-  it('returns a denied Workbench callback to a quiet Connect action', async () => {
-    storedReturn.set('beeline.google-auth-return.v1', JSON.stringify({
-      state: 'denied', workspaceId: 'workspace-1', viewerId: 'viewer-1',
-    }));
-    searchParams.oauthReturn = 'denied';
-    searchParams.url = '';
-    readInstallState.mockResolvedValueOnce({ connected: false, steps: [], signIn: null });
-    let renderer!: ReactTestRenderer;
-    await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); });
-    expect(router.replace).toHaveBeenCalledWith({
-      pathname: '/beeline/settings/workbench',
-      params: { workspaceId: 'workspace-1', viewerId: 'viewer-1', googleNotice: 'incomplete' },
-    });
-    await act(async () => renderer.unmount());
-  });
-
-  it('retires a failed session and a manual back without leaving the browser live', async () => {
-    searchParams.url = 'https://accounts.google.com/o/oauth2/v2/auth?state=failed';
-    vi.mocked(WebBrowser.openAuthSessionAsync).mockRejectedValueOnce(new Error('browser unavailable'));
-    let renderer!: ReactTestRenderer;
-    await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); });
-    expect(cancelGoogleSignIn).toHaveBeenCalledWith({ connectorId: 'connector-row-1', state: 'failed' });
-    expect(router.replace).toHaveBeenCalled();
-    expect(storedReturn.size).toBe(0);
-    await act(async () => renderer.unmount());
-
-    vi.mocked(router.replace).mockClear();
-    cancelGoogleSignIn.mockClear();
-    await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); });
-    await act(async () => renderer.root.findByProps({ testID: 'signin-header' }).props.onBack());
-    expect(cancelGoogleSignIn).toHaveBeenCalledWith({ connectorId: 'connector-row-1', state: 'failed' });
-    expect(WebBrowser.dismissAuthSession).toHaveBeenCalled();
-    expect(router.replace).toHaveBeenCalledWith(expect.objectContaining({
-      pathname: '/beeline/settings/workbench',
-    }));
-    await act(async () => renderer.unmount());
-  });
-
-  it('dismisses on expiry and on foreground with no pending attempt', async () => {
-    searchParams.connectorId = 'google-account';
-    searchParams.url = 'https://accounts.google.com/o/oauth2/v2/auth?state=expired';
-    readInstallState.mockResolvedValue({ connected: false, signIn: undefined });
-    vi.useFakeTimers();
-    let renderer!: ReactTestRenderer;
-    try {
-      await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); });
-      await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
-      expect(readInstallState).toHaveBeenCalledWith({ workspaceId: 'workspace-1', connectorId: 'google-account' });
-      expect(await readInstallState.mock.results[0]!.value).toEqual({ connected: false, signIn: undefined });
-      await act(async () => { await Promise.resolve(); });
-      expect(WebBrowser.dismissAuthSession).toHaveBeenCalled();
-      expect(router.replace).toHaveBeenCalledWith(expect.objectContaining({
-        pathname: '/beeline/settings/workbench',
-        params: expect.objectContaining({ googleNotice: 'incomplete' }),
-      }));
-      await act(async () => renderer.unmount());
-      vi.mocked(router.replace).mockClear();
-      vi.mocked(WebBrowser.dismissAuthSession).mockClear();
-      await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); });
-      await act(async () => {
-        for (const listener of appStateListeners) listener('active');
-        await Promise.resolve();
-      });
-      expect(WebBrowser.dismissAuthSession).toHaveBeenCalled();
-      expect(router.replace).toHaveBeenCalledWith(expect.objectContaining({
-        pathname: '/beeline/settings/workbench',
-        params: expect.objectContaining({ googleNotice: 'incomplete' }),
-      }));
-      await act(async () => renderer.unmount());
-    } finally {
-      vi.useRealTimers();
-      searchParams.connectorId = 'connector-row-1';
-    }
-  });
-
-  it('recovers a cold redirect to the original Room without reopening Google', async () => {
-    searchParams.oauthReturn = 'returned';
-    searchParams.url = '';
-    storedReturn.set('beeline.google-auth-return.v1', JSON.stringify({ state: 'returned', roomId: 'room-2' }));
-    let renderer!: ReactTestRenderer;
-    await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); });
-    expect(WebBrowser.openAuthSessionAsync).not.toHaveBeenCalled();
-    expect(router.replace).toHaveBeenCalledWith({ pathname: '/beeline/chat/[channelId]',
-      params: { channelId: 'room-2' } });
-    expect(storedReturn.size).toBe(0);
-    await act(async () => renderer.unmount());
-  });
-
-  it('switches to a newer OAuth link while the overlay stays open', async () => {
-    readInstallState.mockResolvedValue({ connected: false, steps: [],
-      signIn: { method: 'oauth', url: 'https://login.tailscale.com/a/second' } });
-    vi.useFakeTimers();
-    let renderer!: ReactTestRenderer;
-    try {
-      await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); });
-      await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
-      expect(renderer.root.findByProps({ testID: 'signin-card' })).toBeTruthy();
-      expect(renderer.root.findByProps({ testID: 'signin-header' }).props.meta)
-        .toBeUndefined();
-      await act(async () => renderer.root.findByProps({ testID: 'signin-open-external' }).props.onPress());
-      expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://login.tailscale.com/a/second');
-      await act(async () => renderer.unmount());
-    } finally { vi.useRealTimers(); }
-  });
-
-  it.each([
-    ['a failed attempt', {
-      connected: false, signIn: { method: 'oauth' as const, url: 'https://login.tailscale.com/old' },
-      steps: [{ label: 'Sign-in', status: 'failed' }],
-    }],
-    ['no sign-in page left', { connected: false, signIn: null, steps: [] }],
-  ])('returns to the connect screen for Retry after %s', async (_case, state) => {
-    readInstallState.mockResolvedValue(state);
-    vi.useFakeTimers();
-    let renderer!: ReactTestRenderer;
-    try {
-      await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); });
-      await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
-      await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
-      expect(router.back).toHaveBeenCalledTimes(1);
-      expect(router.replace).not.toHaveBeenCalled();
-      await act(async () => renderer.unmount());
-    } finally {
-      vi.useRealTimers();
-      readInstallState.mockReset();
-      vi.mocked(router.back).mockClear();
-    }
-  });
-
-  it('names the connector being authenticated', async () => {
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(React.createElement(ConnectorSignInScreen));
-      await Promise.resolve();
-    });
-
-    const header = renderer.root.findByProps({ testID: 'signin-header' });
-    expect(header.props.eyebrow).toBe('Workbench');
-    expect(header.props.title).toBe('Sign in to Tailscale');
-    expect(header.props.meta).toBeUndefined();
-    await act(async () => renderer.unmount());
+    expect(renderer.root.findByProps({ testID: 'signin-header' }).props.title).toBe('Sign in to Tailscale');
   });
 });

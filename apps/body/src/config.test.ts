@@ -71,6 +71,19 @@ describe('buildAgentEnv passthrough boundary', () => {
     expect(agentEnv.STRIPE_SECRET_KEY).toBeUndefined();
   });
 
+  it('passes the Google model key without passing old app or Composio credentials', () => {
+    const agentEnv = buildAgentEnv({ ...daemonEnv,
+      GOOGLE_API_KEY: 'model-key',
+      GOOGLE_CLIENT_SECRET: 'retired-app-secret',
+      GOOGLE_OAUTH_ACCESS_TOKEN: 'retired-app-token',
+      BEELINE_COMPOSIO_API_KEY: 'server-only-key',
+    });
+    expect(agentEnv.GOOGLE_API_KEY).toBe('model-key');
+    expect(agentEnv.GOOGLE_CLIENT_SECRET).toBeUndefined();
+    expect(agentEnv.GOOGLE_OAUTH_ACCESS_TOKEN).toBeUndefined();
+    expect(agentEnv.BEELINE_COMPOSIO_API_KEY).toBeUndefined();
+  });
+
   it('extends the boundary through BUZZY_BODY_AGENT_ENV_PASSTHROUGH without a code change', () => {
     const agentEnv = buildAgentEnv({
       ...daemonEnv,

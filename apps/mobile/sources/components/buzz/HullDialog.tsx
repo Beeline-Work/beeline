@@ -366,7 +366,7 @@ export function HullDialog({
                 style={({ pressed }) => [
                   styles.dialogAction,
                   isPrimary && styles.dialogActionPrimary,
-                  pressed && styles.dialogActionPressed,
+                  pressed && (isPrimary ? styles.dialogActionPrimaryPressed : styles.dialogActionPressed),
                   action.disabled && styles.dialogActionDisabled,
                 ]}
                 testID={action.testID}
@@ -481,18 +481,19 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'center',
       borderRadius: hull.radius,
     },
-    dialogActionPrimary: { backgroundColor: hull.accent },
+    dialogActionPrimary: { backgroundColor: hull.buttonPrimaryFill },
     dialogActionPressed: { opacity: 0.78, backgroundColor: hull.bgPressed },
+    dialogActionPrimaryPressed: { opacity: 0.78 },
     dialogActionDisabled: { opacity: 0.42 },
     dialogActionText: {
       ...Typography.mono('semiBold'),
-      color: hull.chrome,
+      color: hull.buttonSecondaryText,
       fontSize: 12,
       lineHeight: 16,
       letterSpacing: 0.8,
       textTransform: 'uppercase',
     },
-    dialogActionPrimaryText: { color: hull.textInverted },
+    dialogActionPrimaryText: { color: hull.buttonPrimaryText },
     dialogActionDestructiveText: { color: hull.dialogDanger },
     dialogActionDisabledText: { color: hull.textDisabled },
     inputRule: {

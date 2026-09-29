@@ -19,6 +19,7 @@ import { IdentityMark } from './IdentityMark';
  * cell own it.
  */
 export type ToolDetailsCellProps = {
+  appBoard?: boolean;
   action?: string;
   actionDisabled?: boolean;
   actionTestID?: string;
@@ -47,6 +48,7 @@ export type ToolDetailsCellProps = {
 };
 
 export function ToolDetailsCell({
+  appBoard,
   action,
   actionDisabled,
   actionTestID,
@@ -73,6 +75,7 @@ export function ToolDetailsCell({
   return (
     <View testID={testID}>
       <SettingsRow
+        appBoard={appBoard}
         leading={
           leading ??
           (logoUrl ? (

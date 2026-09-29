@@ -112,9 +112,9 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       justifyContent: 'center',
       borderRadius: hull.radius,
-      backgroundColor: hull.accent,
+      backgroundColor: hull.buttonPrimaryFill,
     },
     disabledAction: { opacity: 0.42 },
-    primaryActionText: { ...Typography.default('semiBold'), color: hull.textInverted },
+    primaryActionText: { ...Typography.default('semiBold'), color: hull.buttonPrimaryText },
   };
 });

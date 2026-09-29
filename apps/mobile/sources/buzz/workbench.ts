@@ -107,6 +107,11 @@ export type WorkbenchApp = {
   connectionReference?: string;
   useCount: number;
   lastUsedAt?: number;
+  createdAt?: number;
+  /** Owner-visible account identity and last use attribution from the server. */
+  accountLabel?: string;
+  workspaceName?: string;
+  lastUse?: { agentId: string; agentName: string; roomId: string; roomName: string; usedAt: number };
 };
 
 export type WorkbenchView = {
@@ -705,10 +710,10 @@ export function appInstrument(status: WorkbenchApp['status']): {
 /** What serves the app, in the words the row states it. */
 function appRouteLabel(transport: WorkbenchApp['transport']): string {
   switch (transport) {
+    case 'composio':
+      return 'App sign-in';
     case 'registry-mcp':
       return 'Official MCP server';
-    case 'composio':
-      return 'Managed sign-in';
     case 'squire-api':
       return 'Trusty Squire · API key';
     case 'squire-browser':

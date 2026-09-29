@@ -79,22 +79,8 @@ import {
   type CornerLifecycleView,
   type MessageReactionEmoji,
 } from '@beeline/api-contract/phone';
+import { normalizeAppContinuation } from '@beeline/api-contract/app-connections';
 import { READ_ONLY_TOOL_NAMES } from './read-only-policy.js';
-import {
-  YOUTUBE_MCP_SERVER_NAME,
-  YOUTUBE_MCP_SURFACE,
-  YOUTUBE_MCP_TOOLS,
-  callYoutubeTool,
-  youtubeClientFromToken,
-} from './youtube-mcp.js';
-import {
-  GOOGLE_DRIVE_MCP_SERVER_NAME,
-  GOOGLE_DRIVE_MCP_SURFACE,
-  GOOGLE_DRIVE_MCP_TOOLS,
-  callGoogleDriveTool,
-} from './google-drive-mcp.js';
-import { GOOGLE_PERSONAL_MCP_SERVER_NAME, GOOGLE_PERSONAL_MCP_SURFACE,
-  GOOGLE_PERSONAL_MCP_TOOLS, callGooglePersonalTool } from './google-personal-mcp.js';
 import { validateArtifact } from './artifact-validation.js';
 import {
   BoundedSizeError,
@@ -1219,7 +1205,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'connect_app',
     description:
-      'The ONE way to connect an app (a SaaS product or service) to the Workbench of the owner you run for. Name the app; the server chooses the route in a fixed order — an app already connected in Workbench, else the app’s official hosted MCP server, else Trusty Squire with an API key, else Squire in a browser — records it, and returns `next`: follow it exactly. Trusty Squire handles every sign-in, sign-up and payment; never paste a sign-in link or a key into chat. Call again after each step it asks for; repeating a call is safe. Whatever the route, every use is authorized as app:<key> and a refusal is final for that call — do not try another route instead. This is setup, not permission.',
+      'Connect an app after workbench_status shows it is missing. Pass a request-specific continuation sentence for the sign-in card, stating what you will do after sign-in; omit links, secrets, and private data. The server chooses managed OAuth when supported and posts the card to the owner. Wait for the connection wake, then use the app ID with list_app_tools and execute_app_tool. Only when the provider reports managed OAuth unsupported does the server choose Trusty Squire. An outage or refusal never permits a silent route switch. Never put sign-in links or credentials in chat. This is setup, not use permission.',
     inputSchema: {
       type: 'object',
       required: ['app', 'reason'],
@@ -1231,6 +1217,10 @@ const AGENT_TOOLS: ToolDefinition[] = [
           description: 'The app’s product name or website, e.g. "Linear" or "linear.app".',
         },
         reason: { type: 'string', minLength: 1, maxLength: 500 },
+        continuation: {
+          type: 'string', minLength: 1, maxLength: 160,
+          description: 'One short sentence promising what you will do for this request after sign-in. No links, credentials, account identifiers, or private data.',
+        },
         reconnect: {
           type: 'boolean',
           description: 'Resolve an app in error again from the top of the route order.',
@@ -1243,6 +1233,23 @@ const AGENT_TOOLS: ToolDefinition[] = [
       },
       additionalProperties: false,
     },
+  },
+  {
+    name: 'list_app_tools',
+    description: 'List the tools of one connected app by its app ID from workbench_status or connect_app. Discovery returns no credentials. An empty list means the account is unavailable; ask the person to reconnect it.',
+    inputSchema: { type: 'object', required: ['appId'], properties: {
+      appId: { type: 'string', format: 'uuid' },
+      query: { type: 'string', maxLength: 120 },
+    }, additionalProperties: false },
+  },
+  {
+    name: 'execute_app_tool',
+    description: 'Run one tool against the connected person’s app account. The server decides permission on every call. A needs_permission result means wait for the owner’s decision; needs_connection means ask the person to reconnect. Never switch to another route after a refusal or outage.',
+    inputSchema: { type: 'object', required: ['appId', 'tool', 'arguments'], properties: {
+      appId: { type: 'string', format: 'uuid' },
+      tool: { type: 'string', minLength: 1 },
+      arguments: { type: 'object' },
+    }, additionalProperties: false },
   },
   {
     name: 'offer_connector',
@@ -1380,10 +1387,6 @@ const AGENT_TOOLS: ToolDefinition[] = [
 ];
 
 const agentSurface = process.env.BEELINE_MCP_SURFACE === 'agent';
-const youtubeSurface = process.env.BEELINE_MCP_SURFACE === YOUTUBE_MCP_SURFACE;
-const googleDriveSurface = process.env.BEELINE_MCP_SURFACE === GOOGLE_DRIVE_MCP_SURFACE;
-const googlePersonalSurface = process.env.BEELINE_MCP_SURFACE === GOOGLE_PERSONAL_MCP_SURFACE;
-
 /** The bounded daemon-control tools for one surface. A direct message is
  *  strictly conversational: repository corners are never openable there. */
 export function agentToolsFor(
@@ -1429,24 +1432,16 @@ export function agentToolsFor(
   });
 }
 
-const TOOLS = youtubeSurface
-  ? [...YOUTUBE_MCP_TOOLS]
-  : googleDriveSurface
-    ? [...GOOGLE_DRIVE_MCP_TOOLS]
-    : googlePersonalSurface
-      ? GOOGLE_PERSONAL_MCP_TOOLS.filter(tool => tool.name.startsWith('google_calendar_')
-          ? Boolean(process.env.BEELINE_GOOGLE_CALENDAR_ACCESS_TOKEN)
-          : Boolean(process.env.BEELINE_GOOGLE_GMAIL_ACCESS_TOKEN))
-    : agentToolsFor(
-        agentSurface,
-        process.env.BEELINE_AGENT_DM === '1',
-        Boolean(process.env.BEELINE_DAEMON_CORNER_ID),
-        process.env.BEELINE_CORNER_REVIEWER === '1',
-        Boolean(process.env.BEELINE_GRANT_RUNNER_URL),
-        process.env.BEELINE_CORNER_AGENT_CLOSE === '1',
-        process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false',
-        process.env.BEELINE_CORNER_CAN_UPGRADE === '1',
-      );
+const TOOLS = agentToolsFor(
+  agentSurface,
+  process.env.BEELINE_AGENT_DM === '1',
+  Boolean(process.env.BEELINE_DAEMON_CORNER_ID),
+  process.env.BEELINE_CORNER_REVIEWER === '1',
+  Boolean(process.env.BEELINE_GRANT_RUNNER_URL),
+  process.env.BEELINE_CORNER_AGENT_CLOSE === '1',
+  process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false',
+  process.env.BEELINE_CORNER_CAN_UPGRADE === '1',
+);
 
 const MAX_ATTACH_BYTES = 25 * 1024 * 1024;
 // Nothing else ties TOOLS' names to READ_ONLY_TOOL_NAMES (the auto-allow
@@ -3036,7 +3031,7 @@ export async function workbenchStatus(
       label: string;
       state: string;
     }>;
-    apps?: Array<{ appKey: string; name: string; transport: string; status: string }>;
+    apps?: Array<{ appId: string; appKey: string; name: string; transport: string; status: string }>;
     machine?: { machineId: string; name: string };
   };
   const who = view.owner?.handle
@@ -3072,7 +3067,7 @@ export async function workbenchStatus(
   const apps = view.apps ?? [];
   if (!apps.length) lines.push('- none');
   for (const app of apps)
-    lines.push(`- ${app.name} (app:${app.appKey}) via ${app.transport}: ${app.status}`);
+    lines.push(`- ${app.name} (app:${app.appKey}, id ${app.appId}) via ${app.transport}: ${app.status}`);
   if (deps.tailscaleReach) {
     const enabled = Boolean(
       view.catalog?.some(
@@ -3285,7 +3280,7 @@ async function daemonUploadArtifact(
   };
 }
 
-async function callAgentTool(name: string, args: JsonObject, toolCallId: string): Promise<string> {
+export async function callAgentTool(name: string, args: JsonObject, toolCallId: string): Promise<string> {
   switch (name) {
     case 'load_workspace_skill':
       return JSON.stringify(
@@ -3620,16 +3615,39 @@ async function callAgentTool(name: string, args: JsonObject, toolCallId: string)
       const app = stringArg(args, 'app')?.trim();
       const reason = stringArg(args, 'reason')?.trim();
       if (!app || !reason) throw new Error('app and reason are required');
+      const continuation = normalizeAppContinuation(args.continuation);
       const context = await activeCommandContext();
       return JSON.stringify(
         await daemonExecute('connectApp', {
           ...context,
           app,
           reason,
+          ...(continuation ? { continuation } : {}),
           ...(args.reconnect === true ? { reconnect: true } : {}),
           ...(args.noApi === true ? { noApi: true } : {}),
         }),
       );
+    }
+    case 'list_app_tools': {
+      const appId = stringArg(args, 'appId');
+      if (!appId) throw new Error('appId is required');
+      return JSON.stringify(await daemonExecute('listAppTools', {
+        ...await activeCommandContext(),
+        agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
+        appId,
+        ...(typeof args.query === 'string' ? { query: args.query } : {}),
+      }));
+    }
+    case 'execute_app_tool': {
+      const appId = stringArg(args, 'appId');
+      const tool = stringArg(args, 'tool');
+      if (!appId || !tool || !args.arguments || typeof args.arguments !== 'object' ||
+        Array.isArray(args.arguments)) throw new Error('appId, tool, and arguments are required');
+      return JSON.stringify(await daemonExecute('executeAppTool', {
+        ...await activeCommandContext(),
+        agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
+        appId, tool, arguments: args.arguments,
+      }));
     }
     case 'offer_connector':
       return offerConnector(args);
@@ -3679,15 +3697,7 @@ async function handleLine(line: string): Promise<void> {
           typeof params.protocolVersion === 'string' ? params.protocolVersion : '2024-11-05',
         capabilities: { tools: {} },
         serverInfo: {
-          name: youtubeSurface
-            ? YOUTUBE_MCP_SERVER_NAME
-            : googleDriveSurface
-              ? GOOGLE_DRIVE_MCP_SERVER_NAME
-              : googlePersonalSurface
-                ? GOOGLE_PERSONAL_MCP_SERVER_NAME
-              : agentSurface
-                ? 'beeline-agent'
-                : 'beeline-readonly-mcp',
+          name: agentSurface ? 'beeline-agent' : 'beeline-readonly-mcp',
           version: '1.0.0',
         },
       });
@@ -3711,28 +3721,9 @@ async function handleLine(line: string): Promise<void> {
       // why buried in a transport frame (C90).
       let output: string;
       try {
-        output = youtubeSurface
-          ? await callYoutubeTool(
-              params.name,
-              asObject(params.arguments),
-              youtubeClientFromToken(process.env.BEELINE_YOUTUBE_ACCESS_TOKEN ?? ''),
-            )
-            : googleDriveSurface
-              ? await callGoogleDriveTool(
-                params.name,
-                process.env.BEELINE_GOOGLE_DRIVE_ACCESS_TOKEN ?? '',
-              )
-              : googlePersonalSurface
-                ? await callGooglePersonalTool(params.name, asObject(params.arguments),
-                  process.env.BEELINE_GOOGLE_CALENDAR_ACCESS_TOKEN ?? '',
-                  process.env.BEELINE_GOOGLE_GMAIL_ACCESS_TOKEN ?? '')
-            : agentSurface
-              ? await callAgentTool(
-                  params.name,
-                  asObject(params.arguments),
-                  toolCallId(params, request.id),
-                )
-              : callTool(params.name, asObject(params.arguments));
+        output = agentSurface
+          ? await callAgentTool(params.name, asObject(params.arguments), toolCallId(params, request.id))
+          : await callTool(params.name, asObject(params.arguments));
       } catch (error) {
         success(request.id, {
           content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],

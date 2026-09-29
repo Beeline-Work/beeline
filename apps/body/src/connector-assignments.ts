@@ -20,27 +20,16 @@
  * One helper carries ONE Squire account (captain decision 2026-09-14), so
  * after an install or a `sync` assignment the vault list is reported once
  * through `postConnectorVault` and covers every connector this helper serves.
- * The four Google tool connectors ride ONE grant: their installs share a
- * single credential resolution per drain and run one at a time.
  * One assignment at a time per connector; failures are logged, never raised —
  * the next drain retries on the next push or reconnect.
  */
 import type {
   ConnectorAssignment,
-  ConnectorKind,
   ConnectorStatus,
   ConnectorStep,
   VaultConnectionMeta,
 } from '@beeline/api-contract/daemon';
-import {
-  installGoogleTool,
-  isGoogleToolConnectorType,
-  persistManualGoogleCredentials,
-  type InstallGoogleToolResult,
-  type ResolvedGoogleCredentials,
-} from './connector-google.js';
-import { clearYoutubeGrant, isAdaptedYoutube } from './connector-adapters.js';
-import { DaemonApiError, type DaemonApiClient } from './daemon-api-client.js';
+import { type DaemonApiClient } from './daemon-api-client.js';
 import {
   CONNECT_TIMEOUT_MS,
   installSquire,
@@ -73,21 +62,12 @@ export type ConnectorAssignmentLoopOptions = {
   readonly mcp?: SquireMcpClient;
   /** Override the Squire install routine. */
   readonly install?: (options: InstallSquireOptions) => Promise<InstallSquireResult>;
-  /** Override the Google tool install routine. The third argument resolves
-   * access for this connector, so a sibling cannot bypass pending OAuth. */
-  readonly installGoogle?: (
-    connectorType: ConnectorKind,
-    onProgress: (steps: readonly ConnectorStep[]) => void,
-    sharedCredentials?: () => Promise<ResolvedGoogleCredentials>,
-  ) => Promise<InstallGoogleToolResult>;
   /** Override the Tailscale install/sign-in routine. */
   readonly installTailscale?: (options: {
     onProgress: (steps: readonly ConnectorStep[]) => void;
     signIn?: ConnectorStatus['signIn'];
   }) => Promise<InstallTailscaleResult>;
   readonly watchTailscaleSignIn?: typeof watchTailscaleSignIn;
-  /** Where manual google-credentials.json lives (defaults to the runtime home). */
-  readonly googleHome?: string;
   /** Host-owned state root for Registry OAuth grants (never an isolated agent home). */
   readonly registryHome?: string;
   readonly installRegistry?: (
@@ -110,18 +90,12 @@ export class ConnectorAssignmentLoop {
   private readonly api: ConnectorApi;
   private readonly log: (message: string) => void;
   private readonly install: (options: InstallSquireOptions) => Promise<InstallSquireResult>;
-  private readonly installGoogle: (
-    connectorType: ConnectorKind,
-    onProgress: (steps: readonly ConnectorStep[]) => void,
-    sharedCredentials?: () => Promise<ResolvedGoogleCredentials>,
-  ) => Promise<InstallGoogleToolResult>;
   private readonly installTailscale: (options: {
     onProgress: (steps: readonly ConnectorStep[]) => void;
     signIn?: ConnectorStatus['signIn'];
   }) => Promise<InstallTailscaleResult>;
   private readonly watchTailscaleSignIn: typeof watchTailscaleSignIn;
   private tailscaleWatch?: () => void;
-  private readonly googleHomeDir: string;
   private readonly registryHomeDir: string;
   private readonly installRegistry: typeof installRegistryMcp;
   /** When each registry sign-in attempt's SERVER clock ends, so one can time
@@ -150,20 +124,8 @@ export class ConnectorAssignmentLoop {
     this.api = options.api;
     this.log = options.log ?? (() => {});
     this.install = options.install ?? installSquire;
-    this.installGoogle =
-      options.installGoogle ??
-      ((connectorType, onProgress, sharedCredentials) =>
-        installGoogleTool({
-          connectorType,
-          home: this.googleHome(),
-          onProgress,
-          resolvedCredentials: sharedCredentials
-            ? sharedCredentials()
-            : Promise.resolve({ source: 'pending', reason: 'waiting for Google sign-in' }),
-        }));
     this.installTailscale = options.installTailscale ?? installTailscale;
     this.watchTailscaleSignIn = options.watchTailscaleSignIn ?? watchTailscaleSignIn;
-    this.googleHomeDir = options.googleHome ?? process.env.BEELINE_AGENT_HOME ?? process.cwd();
     this.registryHomeDir = options.registryHome ?? process.env.HOME ?? process.cwd();
     this.installRegistry = options.installRegistry ?? installRegistryMcp;
     this.readVaultFn = options.readVault ?? readVault;
@@ -217,78 +179,15 @@ export class ConnectorAssignmentLoop {
       this.log(`connector assignments unavailable: ${describe(error)}`);
       return;
     }
-    const youtubeRows = assignments.filter((assignment) =>
-      isAdaptedYoutube(assignment.connectorType),
-    );
-    if (
-      youtubeRows.some((assignment) => assignment.kind === 'uninstall') &&
-      youtubeRows.every((assignment) => assignment.kind === 'uninstall')
-    ) {
-      clearYoutubeGrant(this.googleHome(), (message) => this.log(message));
-    }
-    let googleBatch: ConnectorAssignment[] | undefined;
     for (const assignment of assignments) {
       const key = `${assignment.kind}:${assignment.connectorId}`;
       if (assignment.kind === 'uninstall') continue; // the server reaps disconnected rows
-      // Google installs run sequentially. Each connector checks whether its
-      // OAuth grant is available before it can confirm its own tool.
-      if (assignment.kind === 'install' && isGoogleToolConnectorType(assignment.connectorType)) {
-        if (this.inFlight.has(key)) continue;
-        this.inFlight.add(key);
-        (googleBatch ??= []).push(assignment);
-        continue;
-      }
       if (this.inFlight.has(key)) continue;
       this.inFlight.add(key);
       void this.handle(assignment)
         .catch((error) => this.log(`connector assignment ${key} failed: ${describe(error)}`))
         .finally(() => this.inFlight.delete(key));
     }
-    if (googleBatch) {
-      const keys = googleBatch.map((assignment) => `${assignment.kind}:${assignment.connectorId}`);
-      void this.runGoogleBatch(googleBatch)
-        .catch((error) => this.log(`google connector installs failed: ${describe(error)}`))
-        .finally(() => {
-          for (const key of keys) this.inFlight.delete(key);
-        });
-    }
-  }
-
-  /** Google tools share a machine grant, but each connector has its own OAuth
-   * readiness. Resolve it per connector while installs run sequentially. */
-  private async runGoogleBatch(batch: readonly ConnectorAssignment[]): Promise<void> {
-    for (const assignment of batch) {
-      await this.runGoogleInstall(
-        assignment.connectorId,
-        assignment.connectorType,
-        () => this.resolveGoogleCredentials(assignment.connectorId),
-        assignment.kind === 'install' ? assignment.pairingGeneration : undefined,
-      );
-    }
-  }
-
-  /** Only Google's definite refusal (`invalid_grant`) errors this connector.
-   * A 5xx, network failure, or other lookup error leaves it pending so the
-   * next wake with a ready grant installs it. */
-  private resolveGoogleCredentials(connectorId: string): Promise<ResolvedGoogleCredentials> {
-    return (async () => {
-      try {
-        const grant = await this.api.execute('getGoogleOAuthGrant', {
-          agentId: this.agentId,
-          connectorId,
-        });
-        if (grant.status === 'ready' && grant.credentials)
-          return { source: 'beeline', credentials: grant.credentials };
-      } catch (error) {
-        this.log(`Google grant lookup failed: ${describe(error)}`);
-        if (error instanceof DaemonApiError && !error.retryable && error.code.includes('invalid_grant'))
-          return {
-            source: 'error',
-            reason: 'Google revoked the grant; retry the connection',
-          };
-      }
-      return { source: 'pending', reason: 'waiting for Google sign-in' };
-    })();
   }
 
   private squire(): SquireMcpClient {
@@ -303,7 +202,15 @@ export class ConnectorAssignmentLoop {
         ? assignment.pairingGeneration
         : undefined;
     if (assignment.kind === 'install') {
-      if (assignment.connectorType === 'registry-mcp') {
+      if (assignment.connectorType?.startsWith('google-')) {
+        await this.api.execute('postConnectorStatus', { agentId: this.agentId,
+          connectorId: assignment.connectorId,
+          steps: [{ label: 'Connect app', status: 'failed',
+            reason: 'Reconnect through Connect an app' }],
+          errorMessage: 'Reconnect through Connect an app',
+          ...(pairingGeneration !== undefined ? { pairingGeneration } : {}),
+        });
+      } else if (assignment.connectorType === 'registry-mcp') {
         await this.runRegistryMcpInstall(assignment);
       } else if (assignment.connectorType === 'tailscale') {
         await this.runTailscaleInstall(assignment.connectorId, pairingGeneration);
@@ -315,9 +222,7 @@ export class ConnectorAssignmentLoop {
     } else if (assignment.kind === 'sync') {
       await this.runSync();
     } else if (assignment.kind === 'refresh-google-grant') {
-      const grant = await this.resolveGoogleCredentials(assignment.connectorId);
-      if ('credentials' in grant)
-        persistManualGoogleCredentials(this.googleHome(), grant.credentials);
+      this.log('retired Google grant assignment ignored; reconnect through Connect an app');
     } else if (assignment.kind === 'revoke-grants')
       await this.runRevoke(assignment.connectorId, assignment.reference);
   }
@@ -448,55 +353,6 @@ export class ConnectorAssignmentLoop {
         this.tailscaleWatch = undefined;
         if (!this.stopped) this.wake();
       });
-  }
-
-  /** Google tool connectors keep their manual credentials next to the runtime. */
-  private googleHome(): string {
-    return this.googleHomeDir;
-  }
-
-  /** Install one Google tool connector (Gmail/Calendar/Drive/YouTube),
-   * riding the drain's shared grant resolution. */
-  private async runGoogleInstall(
-    connectorId: string,
-    connectorType: ConnectorKind,
-    sharedCredentials: () => Promise<ResolvedGoogleCredentials>,
-    pairingGeneration?: number,
-  ): Promise<void> {
-    const generation = pairingGeneration !== undefined ? { pairingGeneration } : {};
-    const report = async (steps: readonly ConnectorStep[]) => {
-      try {
-        await this.api.execute('postConnectorStatus', {
-          agentId: this.agentId,
-          connectorId,
-          steps,
-          ...generation,
-        });
-      } catch (error) {
-        this.log(`step report failed: ${describe(error)}`);
-      }
-    };
-    const result = await this.installGoogle(connectorType, report, sharedCredentials);
-    if (result.status === 'installing') return;
-    if (result.status === 'error') {
-      if (isAdaptedYoutube(connectorType)) {
-        clearYoutubeGrant(this.googleHome(), (message) => this.log(message));
-      }
-      await this.api.execute('postConnectorStatus', {
-        agentId: this.agentId,
-        connectorId,
-        steps: result.steps,
-        errorMessage: result.errorMessage,
-        ...generation,
-      });
-      return;
-    }
-    await this.api.execute('installConnector', {
-      agentId: this.agentId,
-      connectorId,
-      ...(result.signedInAs ? { signedInAs: result.signedInAs } : {}),
-      ...generation,
-    });
   }
 
   /** Install Trusty Squire, reporting every step as it settles. */

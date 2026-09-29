@@ -234,12 +234,7 @@ type BrassButtonProps = Omit<BrittlePressProps, 'children'> & {
   loading?: boolean;
 };
 
-/**
- * The one brass primary: a flat 44pt brass plate with an ink label in the body
- * role, sentence case (`DESIGN.md` → Index rows: "the plus is a brass square";
- * → Type: buttons read at body size). Brass on a control means "this is the
- * thing to do here", so a surface carries at most one of these.
- */
+/** Flat primary kept under its existing public name for callers. */
 export function BrassButton({
   label,
   loading = false,
@@ -269,9 +264,7 @@ export function BrassButton({
 
 /**
  * The onboarding primary: sign-in, You, Create or join, Name the Workspace,
- * and the tips' "Got it". Obsidian fills it with the action white and ink
- * text; Bone fills it with dark brass and ink text (a human call, kept at
- * 3.4:1). Every other primary keeps `BrassButton` / `MonoButton`.
+ * and the tips' "Got it". It shares the app's primary button palette.
  */
 export function OnboardingButton({
   label,
@@ -830,30 +823,30 @@ const styles = StyleSheet.create((theme) => {
       flexDirection: 'row',
       gap: 8,
     },
-    primaryButton: { backgroundColor: groknight.actionFill, borderColor: groknight.actionFill },
-    secondaryButton: { backgroundColor: groknight.bgBase, borderColor: groknight.borderStrong },
+    primaryButton: { backgroundColor: groknight.buttonPrimaryFill, borderColor: groknight.buttonPrimaryFill },
+    secondaryButton: { backgroundColor: 'transparent', borderColor: groknight.buttonSecondaryText },
     destructiveButton: { borderStyle: 'dashed', borderColor: groknight.borderStrong },
     disabledButton: { backgroundColor: groknight.bgBase, borderColor: groknight.border },
     monoButtonText: { ...Typography.default('semiBold'), fontSize: 13, lineHeight: 18 },
-    primaryButtonText: { color: groknight.textInverted },
+    primaryButtonText: { color: groknight.buttonPrimaryText },
     brassButtonFrame: { minHeight: 44 },
     brassButton: {
       minHeight: 44,
       paddingHorizontal: 16,
       borderRadius: 3,
-      backgroundColor: groknight.accent,
+      backgroundColor: groknight.buttonPrimaryFill,
       alignItems: 'center',
       justifyContent: 'center',
       flexDirection: 'row',
       gap: 8,
     },
     brassButtonDisabled: { backgroundColor: groknight.bgRaised },
-    brassButtonText: { ...Typography.default(), ...typeRoles.body, color: groknight.textInverted },
+    brassButtonText: { ...Typography.default(), ...typeRoles.body, color: groknight.buttonPrimaryText },
     onboardingButton: {
       minHeight: 44,
       paddingHorizontal: 16,
       borderRadius: 3,
-      backgroundColor: groknight.dark ? groknight.actionFill : groknight.accent,
+      backgroundColor: groknight.buttonPrimaryFill,
       alignItems: 'center',
       justifyContent: 'center',
       flexDirection: 'row',
@@ -862,9 +855,9 @@ const styles = StyleSheet.create((theme) => {
     onboardingButtonText: {
       ...Typography.default(),
       ...typeRoles.bodyStrong,
-      color: groknight.dark ? groknight.textInverted : groknight.textPrimary,
+      color: groknight.buttonPrimaryText,
     },
-    secondaryButtonText: { color: groknight.textSecondary },
+    secondaryButtonText: { color: groknight.buttonSecondaryText },
     disabledButtonText: { color: groknight.textDisabled },
     pixelLoader: { width: 42, height: 14, flexDirection: 'row', alignItems: 'center', gap: 4 },
     pixelLoaderCompact: { width: 30, height: 10, gap: 3 },

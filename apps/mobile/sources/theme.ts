@@ -523,11 +523,11 @@ function createBeelineAppTheme(buzz: BeelineThemeTokens) {
             button: {
                 ...darkTheme.colors.button,
                 primary: {
-                    background: buzz.accent,
-                    tint: buzz.textInverted,
+                    background: buzz.buttonPrimaryFill,
+                    tint: buzz.buttonPrimaryText,
                     disabled: buzz.textDisabled,
                 },
-                secondary: { tint: buzz.textMuted },
+                secondary: { tint: buzz.buttonSecondaryText },
             },
             radio: {
                 active: buzz.accent,

@@ -5,53 +5,6 @@ import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import type { GrantRunnerEndpoint } from './grant-runner.js';
 import { BEELINE_AGENT_MCP_SERVER_NAME, READ_ONLY_MCP_SERVER_NAME } from './read-only-policy.js';
-import { YOUTUBE_MCP_SERVER_NAME, YOUTUBE_MCP_SURFACE } from './youtube-mcp.js';
-import { GOOGLE_DRIVE_MCP_SERVER_NAME, GOOGLE_DRIVE_MCP_SURFACE } from './google-drive-mcp.js';
-import { GOOGLE_PERSONAL_MCP_SERVER_NAME, GOOGLE_PERSONAL_MCP_SURFACE } from './google-personal-mcp.js';
-import { rewriteHostMcpDeclaration } from './host-mcp-route.js';
-
-export function googleDriveMcpServer(
-  config: BodyConfig,
-  accessToken: string | undefined,
-  resourceAuthFile?: string,
-): McpServerWire | undefined {
-  if (!accessToken || !config.readonlyMcpCommand) return undefined;
-  const server: McpServerWire = {
-    name: GOOGLE_DRIVE_MCP_SERVER_NAME,
-    command: config.readonlyMcpCommand,
-    args: [...(config.readonlyMcpArgs ?? [])],
-    env: [
-      { name: 'BEELINE_MCP_SURFACE', value: GOOGLE_DRIVE_MCP_SURFACE },
-      { name: 'BEELINE_GOOGLE_DRIVE_ACCESS_TOKEN', value: accessToken },
-    ],
-  };
-  if (!resourceAuthFile) return server;
-  const route = rewriteHostMcpDeclaration(server.name, {
-    command: server.command, args: server.args,
-    env: Object.fromEntries((server.env ?? []).map(entry => [entry.name, entry.value])),
-  }, config.operatorHome ?? '', resourceAuthFile);
-  return { name: server.name, command: String(route.command), args: route.args as string[],
-    env: Object.entries(route.env as Record<string, string>).map(([name,value]) => ({name,value})) };
-}
-
-export function googlePersonalMcpServer(config: BodyConfig,
-  tokens: { calendar?: string; gmail?: string }, resourceAuthFile?: string): McpServerWire | undefined {
-  if ((!tokens.calendar && !tokens.gmail) || !config.readonlyMcpCommand) return undefined;
-  const server: McpServerWire = { name: GOOGLE_PERSONAL_MCP_SERVER_NAME,
-    command: config.readonlyMcpCommand, args: [...(config.readonlyMcpArgs ?? [])],
-    env: [
-      { name: 'BEELINE_MCP_SURFACE', value: GOOGLE_PERSONAL_MCP_SURFACE },
-      { name: 'BEELINE_GOOGLE_CALENDAR_ACCESS_TOKEN', value: tokens.calendar ?? '' },
-      { name: 'BEELINE_GOOGLE_GMAIL_ACCESS_TOKEN', value: tokens.gmail ?? '' },
-    ] };
-  if (!resourceAuthFile) return server;
-  const route = rewriteHostMcpDeclaration(server.name, {
-    command: server.command, args: server.args,
-    env: Object.fromEntries((server.env ?? []).map(entry => [entry.name, entry.value])),
-  }, config.operatorHome ?? '', resourceAuthFile);
-  return { name: server.name, command: String(route.command), args: route.args as string[],
-    env: Object.entries(route.env as Record<string, string>).map(([name,value]) => ({name,value})) };
-}
 
 export class ReadOnlyToolsUnavailableError extends Error {
   override readonly name = 'ReadOnlyToolsUnavailableError';
@@ -160,36 +113,4 @@ export function readOnlyMcpServer(
         : []),
     ],
   };
-}
-
-/**
- * Local YouTube Data/Analytics MCP. Mounted only when this helper already
- * holds the Workbench Google grant — the token stays in this process env
- * and is never sent to a third-party host. Reuses the same beeline MCP
- * binary as the agent/read-only surfaces (`BEELINE_MCP_SURFACE=youtube`).
- */
-export function youtubeMcpServer(
-  config: BodyConfig,
-  accessToken: string | undefined,
-  resourceAuthFile?: string,
-): McpServerWire | undefined {
-  if (!accessToken || !config.readonlyMcpCommand) return undefined;
-  const server: McpServerWire = {
-    name: YOUTUBE_MCP_SERVER_NAME,
-    command: config.readonlyMcpCommand,
-    args: [...(config.readonlyMcpArgs ?? [])],
-    env: [
-      { name: 'BEELINE_MCP_SURFACE', value: YOUTUBE_MCP_SURFACE },
-      { name: 'BEELINE_YOUTUBE_ACCESS_TOKEN', value: accessToken },
-      { name: 'BEELINE_GOOGLE_CREDENTIALS_PATH',
-        value: resolve(process.env.BEELINE_AGENT_HOME ?? process.cwd(), 'google-credentials.json') },
-    ],
-  };
-  if (!resourceAuthFile) return server;
-  const route = rewriteHostMcpDeclaration(server.name, {
-    command: server.command, args: server.args,
-    env: Object.fromEntries((server.env ?? []).map(entry => [entry.name, entry.value])),
-  }, config.operatorHome ?? '', resourceAuthFile);
-  return { name: server.name, command: String(route.command), args: route.args as string[],
-    env: Object.entries(route.env as Record<string, string>).map(([name,value]) => ({name,value})) };
 }

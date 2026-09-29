@@ -505,6 +505,18 @@ function readGrantRequest(value: unknown): GrantRequestCardView | null {
   };
 }
 
+function readAppSignInCard(value: unknown): NonNullable<RoomViewMessage['appSignIn']> | null {
+  const item = record(value);
+  if (!item || !uuid(item.appId) || typeof item.appKey !== 'string' ||
+    !item.appKey || typeof item.name !== 'string' || !item.name ||
+    !hex64(item.ownerId) || !hex64(item.agentId) ||
+    (item.status !== 'pending' && item.status !== 'connected')) return null;
+  return { appId: item.appId, appKey: item.appKey, name: item.name,
+    ownerId: item.ownerId, agentId: item.agentId, status: item.status,
+    ...field('continuation', typeof item.continuation === 'string' && item.continuation.length <= 160
+      ? item.continuation : undefined) };
+}
+
 function readSquireApproval(value: unknown): NonNullable<RoomViewMessage['squireApproval']> | null {
   const item = record(value);
   const agent = readIdentity(item?.agent);
@@ -1040,6 +1052,7 @@ export function readRoomViewMessage(value: unknown): RoomViewMessage | null {
     ...field('grantRequest', readGrantRequest(item.grantRequest)),
     ...field('squireApproval', readSquireApproval(item.squireApproval)),
     ...field('connectorOffer', readConnectorOfferCardView(item.connectorOffer)),
+    ...field('appSignIn', readAppSignInCard(item.appSignIn)),
     ...field('choice', readChoiceCard(item.choice)),
     ...field('walletTx', readWalletTx(item.walletTx)),
     ...field('walletInsufficient', readWalletInsufficient(item.walletInsufficient)),

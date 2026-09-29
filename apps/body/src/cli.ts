@@ -795,7 +795,7 @@ async function main(): Promise<void> {
   }
   if (command === SQUIRE_FACADE_FLAG) {
     if (process.env.BEELINE_SQUIRE_RELAY_URL) runSquireTaskProxy();
-    else runSquireFacade();
+    else await runSquireFacade();
     return;
   }
   if (command === SQUIRE_BROKER_FLAG) {

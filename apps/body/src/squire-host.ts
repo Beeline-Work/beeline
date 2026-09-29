@@ -9,8 +9,9 @@
  * namespace. A sandboxed façade never elects.
  */
 import { spawn } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { createConnection } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -68,13 +69,29 @@ export function squireHostBindPaths(home: string, squireRouteGranted: boolean): 
   return [ensureSquireHostDir(home).dir];
 }
 
-/** A façade may spawn only when the host daemon already holds the socket. */
-export function squireBrokerSocketReady(socketPath: string): boolean {
-  try {
-    return lstatSync(socketPath).isSocket();
-  } catch {
-    return false;
-  }
+/**
+ * A façade may spawn the relay only when the host daemon is actually
+ * listening — never on a stale socket inode a crashed/restart-looping
+ * broker left behind. A dead `trusty-squire-broker.service` leaves its
+ * `broker.sock` file on disk (only a graceful close unlinks it), so an
+ * `lstat` type check alone reports "ready" while nothing answers; this is
+ * exactly what let a façade fall through to `npx @trusty-squire/mcp server`,
+ * whose own on-demand-launch fallback then elected a second, agent-owned
+ * broker while the host unit was mid-restart-loop. A real connect attempt is
+ * the only way to tell a live listener from an orphaned file.
+ */
+export async function squireBrokerSocketReady(socketPath: string): Promise<boolean> {
+  return await new Promise((resolveReady) => {
+    const probe = createConnection(socketPath);
+    probe.once('connect', () => {
+      probe.destroy();
+      resolveReady(true);
+    });
+    probe.once('error', () => {
+      probe.destroy();
+      resolveReady(false);
+    });
+  });
 }
 
 /**
@@ -185,11 +202,13 @@ export function runSquireBroker(env: NodeJS.ProcessEnv = process.env): void {
   );
 }
 
-export function runSquireFacade(env: NodeJS.ProcessEnv = process.env): void {
+export async function runSquireFacade(env: NodeJS.ProcessEnv = process.env): Promise<void> {
   const socket =
     env.TRUSTY_SQUIRE_BROKER_SOCKET ?? squireHostPaths(env.HOME?.trim() || homedir()).brokerSocket;
-  if (!squireBrokerSocketReady(socket)) {
-    process.stderr.write(`${SQUIRE_BROKER_UNAVAILABLE}\n`);
+  if (!(await squireBrokerSocketReady(socket))) {
+    process.stderr.write(
+      `${SQUIRE_BROKER_UNAVAILABLE}: ${TRUSTY_SQUIRE_BROKER_UNIT_NAME} is not reachable at ${socket}\n`,
+    );
     process.exitCode = 1;
     return;
   }

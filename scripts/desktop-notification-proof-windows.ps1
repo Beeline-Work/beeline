@@ -20,7 +20,15 @@ if (-not $app) { throw 'The installed Beeline Preview executable was not found' 
 Write-Host "Installed executable: $($app.FullName)"
 $env:BEELINE_DESKTOP_NOTIFICATION_PROOF = '1'
 $process = Start-Process -FilePath $app.FullName -PassThru
-Start-Sleep -Seconds 7
+Start-Sleep -Seconds 2
+$process.Refresh()
+Add-Type -Namespace BeelineProof -Name NativeWindow -MemberDefinition '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr handle, int command);'
+if ($process.MainWindowHandle -ne [IntPtr]::Zero) {
+  [BeelineProof.NativeWindow]::ShowWindow($process.MainWindowHandle, 6) | Out-Null
+} else {
+  (New-Object -ComObject Shell.Application).MinimizeAll()
+}
+Start-Sleep -Seconds 4
 if ($process.HasExited) { throw "Beeline Preview exited before capture with status $($process.ExitCode)" }
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing

@@ -111,6 +111,8 @@ pub fn run() {
                         .show()
                     {
                         eprintln!("desktop notification proof failed: {error}");
+                    } else {
+                        eprintln!("desktop notification proof send succeeded");
                     }
                 });
             }

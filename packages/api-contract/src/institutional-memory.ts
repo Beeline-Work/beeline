@@ -120,6 +120,12 @@ export const INSTITUTIONAL_CONTEXT_HARD_MAX_BYTES = 1_000;
 export const INSTITUTIONAL_HISTORY_QUERY_MAX_BYTES = 500;
 export const INSTITUTIONAL_MEMORY_SEARCH_QUERY_MAX_BYTES = 500;
 export const INSTITUTIONAL_MEMORY_SEARCH_RESULT_MAX = 10;
+/**
+ * search_memory matches on the query's individual words (the same tokenizer
+ * and keyword-overlap semantics the per-turn snapshot uses), scanned newest
+ * first and ranked by word-overlap before the result limit above applies.
+ */
+export const INSTITUTIONAL_MEMORY_SEARCH_SCAN_MAX = 200;
 export const INSTITUTIONAL_HISTORY_RESULT_MAX = 10;
 export const INSTITUTIONAL_HISTORY_SNIPPET_MAX_BYTES = 360;
 /**

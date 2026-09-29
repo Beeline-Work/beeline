@@ -8,6 +8,7 @@
  */
 import {
   classifyTurnSilence,
+  escalateExhaustedHiccup,
   phraseTurnSilence,
   shouldRestartHiccup,
   type TurnSilenceKind,
@@ -112,8 +113,14 @@ async function inscribeSilence(
   const canIncrement = command?.state === 'claimed';
   const attempt = canIncrement ? command!.hiccup_attempts + 1 : (command?.hiccup_attempts ?? 0);
   const restart = Boolean(canIncrement && shouldRestartHiccup(classified.kind, attempt));
-  const phrase = phraseTurnSilence(agentName, classified, {
-    givingUp: classified.kind === 'hiccup' && canIncrement && attempt >= 3,
+  const givingUp = classified.kind === 'hiccup' && canIncrement && attempt >= 3;
+  // An auth-shaped fault gets the same bounded hiccup retries as any other
+  // transient condition; only once those are exhausted does the Room line
+  // (and the card it carries) read as the plain, standing not-signed-in
+  // verdict instead of a generic "stopped restarting" hiccup give-up.
+  const renderClassified = givingUp ? escalateExhaustedHiccup(classified) : classified;
+  const phrase = phraseTurnSilence(agentName, renderClassified, {
+    givingUp,
     restarting: restart,
   });
   const systemPhrase: SystemPhrase = {
@@ -125,7 +132,7 @@ async function inscribeSilence(
     requestId: input.requestId,
     agentId: input.agentId,
     state: 'failed',
-    silenceKind: classified.kind,
+    silenceKind: renderClassified.kind,
   };
 
   await database.query(
@@ -151,7 +158,6 @@ async function inscribeSilence(
       [input.roomId, input.requestId, input.agentId, classified.kind === 'update-interrupted'],
     )
   ).rows[0];
-  const givingUp = classified.kind === 'hiccup' && canIncrement && attempt >= 3;
   if (recent) {
     if (restart || givingUp || classified.kind === 'update-interrupted')
       await restateSystemLine(database, recent.id, systemPhrase, card);

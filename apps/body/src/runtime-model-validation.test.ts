@@ -2,10 +2,25 @@ import { describe, expect, it, vi } from 'vitest';
 import { ModelSelectionUnavailableError } from './model-config.js';
 import {
   applyRuntimeModelPreflight,
+  resolvePreflightModelSelection,
   revalidateRuntimeModelSelection,
 } from './runtime-model-validation.js';
 
 const agent = { kind: 'codex' as const, command: 'fake-acp', args: ['stdio'] };
+
+describe('resolvePreflightModelSelection', () => {
+  it('prefers the server selection over a stale local runtime.json cache', () => {
+    expect(
+      resolvePreflightModelSelection({ model: 'opus[1m]' }, { model: 'sonnet' }),
+    ).toEqual({ model: 'sonnet' });
+  });
+
+  it('falls back to the local cache only when the server is unreachable', () => {
+    expect(resolvePreflightModelSelection({ model: 'opus[1m]' }, undefined)).toEqual({
+      model: 'opus[1m]',
+    });
+  });
+});
 
 describe('revalidateRuntimeModelSelection', () => {
   it('wires a persisted selection and its startup block onto the daemon Body config', async () => {

@@ -63,7 +63,19 @@ export function distillTurnFailureReason(error: unknown): DistilledTurnFailureRe
   const classified = classifyTurnSilence(
     redactToolDetail(informative.join(' ')).replace(/\s+/g, ' ') || text,
   );
+  // A transient token-refresh race on the harness's own provider connection
+  // (claude-agent-acp mid-OAuth-refresh, say) can read identically to a
+  // genuinely expired/missing credential. Report every auth-shaped failure as
+  // an ordinary retryable hiccup here — the server's existing bounded hiccup
+  // budget (packages/api-contract/src/turn-silence.ts's escalateExhaustedHiccup)
+  // settles it into the standing not-signed-in verdict only once those
+  // retries are exhausted, so a genuinely signed-out helper is still named
+  // plainly, just after giving the race a chance to clear on its own.
   const kind: TurnReceiptReasonKind =
-    classified.kind === 'wrong-model' ? 'model-selection-unavailable' : classified.kind;
+    classified.kind === 'wrong-model'
+      ? 'model-selection-unavailable'
+      : classified.kind === 'not-signed-in'
+        ? 'hiccup'
+        : classified.kind;
   return { text, kind };
 }

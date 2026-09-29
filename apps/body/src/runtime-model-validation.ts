@@ -12,6 +12,23 @@ type LiveValidator = (
 ) => Promise<unknown>;
 
 /**
+ * The daemon-start preflight must validate against the SERVER's current
+ * selection when it can be read, never the local `runtime.json` cache
+ * alone: a stale local copy (an id the owner already corrected server-side,
+ * or a retired alias with no same-family replacement) must not re-poison
+ * `config.modelUnavailable` on the next restart just because this one
+ * process never received the correction. The local cache remains the
+ * fallback only when the server is unreachable, matching the runtime
+ * record's existing offline-resilience intent.
+ */
+export function resolvePreflightModelSelection(
+  local: Selection | undefined,
+  server: Selection | undefined,
+): Selection | undefined {
+  return server ?? local;
+}
+
+/**
  * Daemon-start gate for persisted runtime.json selections. Returning a state
  * (rather than crashing the daemon) lets Body keep machine-readable presence
  * and turn status alive while refusing every ordinary ACP activation.

@@ -4584,9 +4584,9 @@ export class DaemonService {
   private async modelCatalog(input: Input<'postAgentModelCatalog'>, agentId: string) {
     return this.database.transaction(async (database) => {
     const prior = (await database.query<{
-      model_unavailable: string | null; owner_id: string; name: string; updated_at: Date;
+      model_unavailable: string | null; selected_model: string | null; owner_id: string; name: string; updated_at: Date;
     }>(
-      `SELECT a.model_unavailable,a.owner_id,i.name,a.updated_at FROM agents a
+      `SELECT a.model_unavailable,a.selected_model,a.owner_id,i.name,a.updated_at FROM agents a
        JOIN identities i ON i.id=a.agent_id
        JOIN memberships agent_member ON agent_member.identity_id=a.agent_id
          AND agent_member.workspace_id=$2 AND agent_member.room_id IS NULL
@@ -4633,6 +4633,41 @@ export class DaemonService {
         subject: { kind: 'agent', id: agentId, name: prior.name },
         verb: 'needs a different model',
         consequence: 'Open this agent’s settings and choose an available model or effort.',
+      });
+    }
+    // The daemon substitutes a same-family replacement automatically when a
+    // persisted model id vanishes from the live catalog (`resolveModelFamilyFallback`
+    // in `model-config.ts`, e.g. Claude dropping the `opus[1m]` alias) rather
+    // than bricking the agent's turns. That is the only way this operation's
+    // `selection.model` ever differs from the prior value (a human settings
+    // change goes through a separate phone-only path), so this always names
+    // a real automatic correction, never a routine catalog mirror.
+    if (
+      prior?.selected_model &&
+      input.selection?.model &&
+      input.selection.model !== prior.selected_model &&
+      input.unavailable !== 'model' &&
+      input.unavailable !== 'selection'
+    ) {
+      const roomId = await ensureSystemDirectMessageRoom(
+        database, input.workspaceId, prior.owner_id,
+      );
+      const newModelName =
+        input.options
+          .find((axis) => axis.category === 'model')
+          ?.options.find((choice) => choice.id === input.selection?.model)?.name ??
+        input.selection.model;
+      await systemLine(database, {
+        roomId,
+        authorId: SYSTEM_IDENTITY_ID,
+        id: createHash('sha256')
+          .update(
+            `agent-model-fallback:v1:${agentId}:${prior.selected_model}:${input.selection.model}:${prior.updated_at.toISOString()}`,
+          )
+          .digest('hex'),
+        subject: { kind: 'agent', id: agentId, name: prior.name },
+        verb: 'switched models',
+        consequence: `${prior.selected_model} is no longer offered; now using ${newModelName}.`,
       });
     }
     return this.writeResult();

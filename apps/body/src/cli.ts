@@ -40,7 +40,10 @@ import {
   isAgentAccessPolicy,
   LEGACY_ACCESS_POLICY,
 } from './access-policy.js';
-import { applyRuntimeModelPreflight } from './runtime-model-validation.js';
+import {
+  applyRuntimeModelPreflight,
+  resolvePreflightModelSelection,
+} from './runtime-model-validation.js';
 import { modelUnavailableState } from './model-availability.js';
 import { syncAgentModelCatalog } from './model-catalog-sync.js';
 import { ConnectorAssignmentLoop } from './connector-assignments.js';
@@ -252,11 +255,27 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
     config.externalMcpCapabilities = [...runtime.externalMcpCapabilities];
   }
   if (runtime.sharedSkills) config.sharedSkills = [...runtime.sharedSkills];
-  if (runtime.modelSelection) {
+  // The server's current selection is authoritative for this preflight: a
+  // stale local runtime.json cache (an id already corrected server-side, or
+  // a retired alias) must not re-poison config.modelUnavailable on this
+  // restart just because it never received the correction.
+  const serverModelSelection = await daemonApi
+    .execute('getAgentConfiguration', { agentId: runtime.agent.publicKey })
+    .then((result) =>
+      result.model || result.effort
+        ? { ...(result.model ? { model: result.model } : {}), ...(result.effort ? { effort: result.effort } : {}) }
+        : undefined,
+    )
+    .catch(() => undefined);
+  const preflightModelSelection = resolvePreflightModelSelection(
+    runtime.modelSelection,
+    serverModelSelection,
+  );
+  if (preflightModelSelection) {
     await applyRuntimeModelPreflight(
       config,
       agent,
-      runtime.modelSelection,
+      preflightModelSelection,
       undefined,
       refreshRuntimeAdapter,
     );

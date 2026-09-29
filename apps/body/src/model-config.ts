@@ -17,6 +17,8 @@
 import { isAllowedAgentModelConfigCategory, type AgentModelConfigOption } from './model-types.js';
 import { lstatSync, readFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
+import { isAuthShapedFault } from '@beeline/api-contract/daemon';
+import { isTransientProviderText } from './transient-provider-error.js';
 
 /** Synthetic safe axes derived from Grok's standard ACP session model metadata. */
 export const GROK_SESSION_MODEL_AXIS_ID = 'beeline:grok-session-model';
@@ -138,6 +140,27 @@ export function sortModelChoicesNewestFirst(
     result.push(...bucket.map(({ choice }) => choice));
   }
   return result;
+}
+
+/**
+ * When a persisted model id has vanished entirely from the live advertised
+ * catalog — Claude dropping the `opus[1m]` 1M-context alias, say — find a
+ * same-family replacement among the choices the harness is CURRENTLY
+ * offering, so a routine provider rename/retirement does not brick the
+ * agent. Family is derived the same way `sortModelChoicesNewestFirst` derives
+ * it for the picker sort — the leading letters of a `name` — applied to the
+ * vanished id itself, since nothing advertises a `name` for an id that is no
+ * longer in the catalog to compare against; never a bracket-specific string
+ * edit. `options` is already newest-first for a `model` axis, so the first
+ * family match is the family's current alias or newest member.
+ */
+export function resolveModelFamilyFallback(
+  options: AgentModelConfigOption['options'],
+  missingId: string,
+): AgentModelConfigOption['options'][number] | undefined {
+  const family = (/^\s*[\p{L}]+/u.exec(missingId)?.[0] ?? '').toLowerCase();
+  if (!family) return undefined;
+  return options.find((choice) => modelFamilyKey(choice) === family);
 }
 
 /** Parse safe picker axes from raw `configOptions` and standard session model state. */
@@ -525,6 +548,17 @@ export interface ModelConfigSettable {
   setModel?(sessionId: string, modelId: string): Promise<unknown>;
 }
 
+export interface AppliedModelSelectionResult {
+  readonly options: AgentModelConfigOption[];
+  /**
+   * What was actually applied — differs from the request only when a
+   * vanished model id was substituted with a same-family replacement (see
+   * `resolveModelFamilyFallback`) and/or its effort was dropped because the
+   * replacement model does not support it.
+   */
+  readonly appliedSelection: { model?: string; effort?: string };
+}
+
 /**
  * Apply a persisted `{model, effort}` selection to a live ACP session. Each
  * target category group is only ever searched among the RAW advertised
@@ -537,52 +571,87 @@ export interface ModelConfigSettable {
  * for the following effort check and are returned to catalog callers. A
  * harness refusal for an exact advertised value is surfaced as typed
  * unavailability so provider retirement redirects and other useful recovery
- * guidance are not collapsed into a generic turn failure.
+ * guidance are not collapsed into a generic turn failure — EXCEPT when the
+ * refusal text itself looks transient (a 429/529/timeout/rate-limit, or an
+ * auth-shaped condition that could be a token-refresh race rather than a
+ * genuinely missing credential): that is rethrown as an ordinary error so
+ * the daemon's usual hiccup-retry path handles it instead of reporting a
+ * standing "pick another model"/"not signed in" verdict for a condition that
+ * is likely to clear on its own.
+ *
+ * A model id absent entirely from the live catalog (`not-advertised`) is
+ * NOT automatically a failure: a routine provider rename or retirement
+ * (Claude dropping the `opus[1m]` 1M-context alias, say) is first resolved
+ * against a same-family replacement (`resolveModelFamilyFallback`) among the
+ * catalog's current choices. Only when no same-family choice exists does
+ * this still throw `not-advertised`, preserving today's "pick another
+ * model" copy.
  */
 export async function applyAgentModelSelectionWithUpdatedCatalog(
   client: ModelConfigSettable,
   sessionId: string,
   advertisedOptions: AgentModelConfigOption[],
   selection: { model?: string; effort?: string; fastMode?: boolean },
-): Promise<AgentModelConfigOption[]> {
+): Promise<AppliedModelSelectionResult> {
   let currentOptions = advertisedOptions;
+  const appliedSelection: { model?: string; effort?: string } = {};
+  let modelWasSubstituted = false;
   for (const target of modelSelectionTargets(selection)) {
     if (!target.value) continue;
     const axis = currentOptions.find((option) => target.categories.includes(option.category));
     if (!axis) continue;
     assertModelConfigAxisAllowed(axis.id, currentOptions);
-    if (!axis.options.some((choice) => choice.id === target.value)) {
-      throw new ModelSelectionUnavailableError({
-        label: target.label as ModelSelectionLabel,
-        value: target.value,
-        reason: 'not-advertised',
-      });
+    let value = target.value;
+    if (!axis.options.some((choice) => choice.id === value)) {
+      const fallback =
+        target.label === 'model' ? resolveModelFamilyFallback(axis.options, value) : undefined;
+      if (fallback) {
+        value = fallback.id;
+        modelWasSubstituted = true;
+      } else if (target.label === 'effort' && modelWasSubstituted) {
+        // The model this effort was persisted against just got substituted —
+        // an effort the new model doesn't support is dropped silently rather
+        // than failing a turn a fallback just rescued.
+        continue;
+      } else {
+        throw new ModelSelectionUnavailableError({
+          label: target.label as ModelSelectionLabel,
+          value: target.value,
+          reason: 'not-advertised',
+        });
+      }
     }
     try {
       if (axis.id === GROK_SESSION_MODEL_AXIS_ID) {
         if (!client.setModel) throw new Error('ACP client does not support session/set_model');
-        await client.setModel(sessionId, target.value);
+        await client.setModel(sessionId, value);
       } else if (axis.id === GROK_LAUNCH_EFFORT_AXIS_ID) {
-        if (axis.currentValue !== target.value) {
+        if (axis.currentValue !== value) {
           throw new Error(
-            `Grok started with reasoning effort "${axis.currentValue ?? 'unknown'}", not "${target.value}"`,
+            `Grok started with reasoning effort "${axis.currentValue ?? 'unknown'}", not "${value}"`,
           );
         }
       } else {
-        const updated = await client.setConfigOption(sessionId, axis.id, target.value);
+        const updated = await client.setConfigOption(sessionId, axis.id, value);
         const refreshed = filterAllowedModelConfigOptions(
-          parseAdvertisedConfigOptions(updated, selection.model),
+          parseAdvertisedConfigOptions(updated, target.label === 'model' ? value : selection.model),
         );
         if (refreshed.length > 0) currentOptions = refreshed;
       }
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (isTransientProviderText(message) || isAuthShapedFault(message)) {
+        throw error instanceof Error ? error : new Error(message);
+      }
       throw new ModelSelectionUnavailableError({
         label: target.label as ModelSelectionLabel,
         value: target.value,
         reason: 'provider-refused',
-        guidance: error instanceof Error ? error.message : String(error),
+        guidance: message,
       });
     }
+    if (target.label === 'model') appliedSelection.model = value;
+    else appliedSelection.effort = value;
   }
   if (selection.fastMode && !supportsFastMode(currentOptions)) {
     throw new Error('Fast mode is unavailable for the selected model and harness');
@@ -590,7 +659,7 @@ export async function applyAgentModelSelectionWithUpdatedCatalog(
   if (supportsFastMode(currentOptions)) {
     await client.setConfigOption(sessionId, 'fast-mode', selection.fastMode ? 'on' : 'off');
   }
-  return currentOptions;
+  return { options: currentOptions, appliedSelection };
 }
 
 export async function applyAgentModelSelection(
@@ -598,6 +667,6 @@ export async function applyAgentModelSelection(
   sessionId: string,
   advertisedOptions: AgentModelConfigOption[],
   selection: { model?: string; effort?: string; fastMode?: boolean },
-): Promise<void> {
-  await applyAgentModelSelectionWithUpdatedCatalog(client, sessionId, advertisedOptions, selection);
+): Promise<AppliedModelSelectionResult> {
+  return applyAgentModelSelectionWithUpdatedCatalog(client, sessionId, advertisedOptions, selection);
 }

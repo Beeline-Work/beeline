@@ -82,6 +82,7 @@ import {
   filterAllowedModelConfigOptions,
   parseAdvertisedConfigOptions,
 } from './model-config.js';
+import type { AgentModelConfigOption } from './model-types.js';
 import type { AgentRuntimeRecord } from './runtime.js';
 import { runtimeDirectory, runtimeIdentity } from './runtime.js';
 import {
@@ -1088,14 +1089,47 @@ export class MonolithCornerTurnLoop {
     this.sessionId = opened.sessionId;
     this.sessionFingerprint = fingerprint;
     this.sessionCodegraphReady = codegraphReady;
+    let appliedModel: string | undefined;
     if (selection) {
       const options = filterAllowedModelConfigOptions(
         parseAdvertisedConfigOptions(opened.raw, selection.model),
       );
-      await applyAgentModelSelection(this.client, opened.sessionId, options, selection);
+      const applied = await applyAgentModelSelection(this.client, opened.sessionId, options, selection);
+      appliedModel = applied.appliedSelection.model;
+      if (selection.model && appliedModel && appliedModel !== selection.model) {
+        this.recordModelFallback(applied.appliedSelection, applied.options);
+      }
     }
-    this.sessionModel = selection?.model ?? null;
+    this.sessionModel = appliedModel ?? selection?.model ?? null;
     return opened.sessionId;
+  }
+
+  /**
+   * A vanished model id was just substituted for a same-family replacement
+   * (`resolveModelFamilyFallback`) so THIS turn could proceed instead of
+   * failing it. Persist the correction so the phone stops offering the dead
+   * id and the durable `model_unavailable` flag stays clear, and let the
+   * server (`daemon-service.ts`'s `modelCatalog`) name the change in the
+   * agent's DM — fire-and-forget: a slow or failed report must never hold up
+   * or fail a turn that already succeeded with the fallback model applied.
+   */
+  private recordModelFallback(
+    appliedSelection: { model?: string; effort?: string },
+    options: AgentModelConfigOption[],
+  ): void {
+    this.options.api
+      .execute('postAgentModelCatalog', {
+        agentId: this.agent.publicKey,
+        workspaceId: this.options.workspaceId,
+        options: options as DaemonOperationMap['postAgentModelCatalog']['input']['options'],
+        selection: appliedSelection,
+      })
+      .catch((error) =>
+        console.error(
+          `[thin-core] failed to persist automatic model fallback for corner ${this.options.cornerId}:`,
+          error,
+        ),
+      );
   }
 
   /**

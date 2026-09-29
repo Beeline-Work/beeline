@@ -97,6 +97,7 @@ import {
   filterAllowedModelConfigOptions,
   parseAdvertisedConfigOptions,
 } from './model-config.js';
+import type { AgentModelConfigOption } from './model-types.js';
 import type { AgentRuntimeRecord } from './runtime.js';
 import { runtimeDirectory, runtimeIdentity } from './runtime.js';
 import {
@@ -1055,9 +1056,44 @@ export class MonolithRoomTurnLoop {
       const options = filterAllowedModelConfigOptions(
         parseAdvertisedConfigOptions(opened.raw, selection.model),
       );
-      await applyAgentModelSelection(this.client, opened.sessionId, options, selection);
+      const applied = await applyAgentModelSelection(this.client, opened.sessionId, options, selection);
+      if (
+        selection.model &&
+        applied.appliedSelection.model &&
+        applied.appliedSelection.model !== selection.model
+      ) {
+        this.recordModelFallback(applied.appliedSelection, applied.options);
+      }
     }
     return opened.sessionId;
+  }
+
+  /**
+   * A vanished model id was just substituted for a same-family replacement
+   * (`resolveModelFamilyFallback`) so THIS turn could proceed instead of
+   * failing it. Persist the correction so the phone stops offering the dead
+   * id and the durable `model_unavailable` flag stays clear, and let the
+   * server (`daemon-service.ts`'s `modelCatalog`) name the change in the
+   * agent's DM — fire-and-forget: a slow or failed report must never hold up
+   * or fail a turn that already succeeded with the fallback model applied.
+   */
+  private recordModelFallback(
+    appliedSelection: { model?: string; effort?: string },
+    options: AgentModelConfigOption[],
+  ): void {
+    this.options.api
+      .execute('postAgentModelCatalog', {
+        agentId: this.agent.publicKey,
+        workspaceId: this.options.workspaceId,
+        options: options as DaemonOperationMap['postAgentModelCatalog']['input']['options'],
+        selection: appliedSelection,
+      })
+      .catch((error) =>
+        console.error(
+          `[thin-core] failed to persist automatic model fallback for Room ${this.options.roomId}:`,
+          error,
+        ),
+      );
   }
 
   /**

@@ -46,8 +46,12 @@ const SPEECH_VOLUME_FLOOR = 0;
  * Hook wrapping platform speech recognition.
  *
  * @param onResult  Called when a final transcript, or the bounded interim fallback, is committed.
+ * @param contextualStrings  Words the recogniser should favour, such as Room member names.
  */
-export function useSpeechInput(onResult: (transcript: string) => void): SpeechInputValue {
+export function useSpeechInput(
+  onResult: (transcript: string) => void,
+  contextualStrings: readonly string[] = [],
+): SpeechInputValue {
   const [state, setState] = React.useState<SpeechInputState>('idle');
   const [partialText, setPartialText] = React.useState('');
   const [volumeLevel, setVolumeLevel] = React.useState(0);
@@ -92,6 +96,8 @@ export function useSpeechInput(onResult: (transcript: string) => void): SpeechIn
     }
   }, [clearSilenceTimer]);
 
+  // A caller rebuilding the same names each render must not restart listeners.
+  const contextualKey = contextualStrings.join('\n');
   // Prefer the free on-device recogniser where the platform reports it; the
   // platform default (still free) is the fallback.
   const startOptions = React.useMemo(() => {
@@ -112,8 +118,10 @@ export function useSpeechInput(onResult: (transcript: string) => void): SpeechIn
       addsPunctuation: true,
       iosTaskHint: 'dictation' as const,
       volumeChangeEventOptions: { enabled: true, intervalMillis: 160 },
+      // iOS biases toward these; Android does on 13+ (EXTRA_BIASING_STRINGS).
+      ...(contextualKey ? { contextualStrings: contextualKey.split('\n') } : {}),
     };
-  }, []);
+  }, [contextualKey]);
 
   const finishStopWithCapture = React.useCallback((pendingPartial: string) => {
     pendingPartialRef.current = '';

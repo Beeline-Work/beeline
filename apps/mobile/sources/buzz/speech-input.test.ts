@@ -42,8 +42,14 @@ function fireEvent(event: string, data?: any) {
   handlerMap.get(event)?.(data);
 }
 
-function Harness({ onResult }: { onResult: (t: string) => void }) {
-  const speech = useSpeechInput(onResult);
+function Harness({
+  onResult,
+  contextualStrings,
+}: {
+  onResult: (t: string) => void;
+  contextualStrings?: string[];
+}) {
+  const speech = useSpeechInput(onResult, contextualStrings);
   // Expose state through serializable props so react-test-renderer can find them.
   return React.createElement('div', {
     'data-state': speech.state,
@@ -53,10 +59,10 @@ function Harness({ onResult }: { onResult: (t: string) => void }) {
   } as any);
 }
 
-function renderHook(onResult = vi.fn()) {
+function renderHook(onResult = vi.fn(), contextualStrings?: string[]) {
   let renderer: any;
   act(() => {
-    renderer = create(React.createElement(Harness, { onResult }));
+    renderer = create(React.createElement(Harness, { onResult, contextualStrings }));
   });
   return {
     renderer,
@@ -149,6 +155,22 @@ describe('useSpeechInput', () => {
     expect(mockMod.start).toHaveBeenCalledWith(
       expect.objectContaining({ requiresOnDeviceRecognition: false }),
     );
+  });
+
+  it('passes contextual names to the recogniser only when there are some', async () => {
+    const { speech } = renderHook(vi.fn(), ['Niglet', 'Emberus']);
+    await act(async () => {
+      await speech().start();
+    });
+    expect(mockMod.start).toHaveBeenLastCalledWith(
+      expect.objectContaining({ contextualStrings: ['Niglet', 'Emberus'] }),
+    );
+
+    const bare = renderHook();
+    await act(async () => {
+      await bare.speech().start();
+    });
+    expect(mockMod.start.mock.lastCall?.[0]).not.toHaveProperty('contextualStrings');
   });
 
   it('uses on-device recognition on iOS when the platform supports it', async () => {

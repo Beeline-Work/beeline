@@ -47,6 +47,8 @@ type Props = {
    * environment already tested availability).
    */
   speechEnabled?: boolean;
+  /** Names spoken in this conversation, so dictation spells them as written. */
+  speechHints?: readonly string[];
   /**
    * Only supplied for a server-authorized, current working turn. The plain
    * tap-to-send composer takes no stop gesture of its own — the stop control
@@ -101,6 +103,7 @@ export function ConversationComposer({
   onSelectionChange,
   onSend,
   speechEnabled = true,
+  speechHints,
   inputRef,
   inputRevision = 0,
   isInputRevisionCurrent,
@@ -123,7 +126,7 @@ export function ConversationComposer({
   const speech = useSpeechInput((transcript) => {
     const separator = value && transcript ? ' ' : '';
     commitInputChange(value + separator + transcript);
-  });
+  }, speechHints);
   const isListening = speech.state === 'listening';
   const isFinalizing = speech.state === 'finalizing';
   const isCapturingSpeech = isListening || isFinalizing;

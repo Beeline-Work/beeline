@@ -212,6 +212,19 @@ describe('listening flow', () => {
     expect(String(status.props.children)).toBe('listening \u00b7 tap mic to stop');
   });
 
+  it('primes the recogniser with the conversation names when the mic is tapped', async () => {
+    const { renderer } = render({ speechHints: ['Niglet', 'Emberus', 'Formatting voice'] });
+    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => {});
+
+    expect(mockMod.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        addsPunctuation: true,
+        contextualStrings: ['Niglet', 'Emberus', 'Formatting voice'],
+      }),
+    );
+  });
+
   it('shows interim transcript once, inside the input in provisional styling', async () => {
     const { renderer } = render();
     await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());

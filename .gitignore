@@ -58,6 +58,7 @@ relay-stack/web/dl/*.tar.gz.sha256
 .scratch/
 .scratch-target/
 .beeline-tools/
+/agent-home/
 
 # Expo (apps/mobile isolated install)
 apps/mobile/node_modules/

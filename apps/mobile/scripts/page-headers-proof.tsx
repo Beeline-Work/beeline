@@ -31,7 +31,7 @@ const screens: Record<
     trailing: '0 NEED YOU · 0 SAVED',
   },
   workbench: { Screen: WorkbenchScreen, title: 'Workbench', eyebrow: 'Settings' },
-  corners: { Screen: BuzzCorners, title: 'Corners', eyebrow: '#alpha', trailing: '10' },
+  corners: { Screen: BuzzCorners, title: 'Corners', eyebrow: '#alpha' },
   workspace: { Screen: WorkspaceSettings, title: 'Workspace' },
   changelog: { Screen: ChangelogScreen, title: "What's New" },
 };
@@ -85,6 +85,15 @@ async function run() {
       ...(trailingStyle
         ? {
             trailingFont: `${trailingStyle.fontSize} ${trailingStyle.color} ${trailingStyle.textAlign}`,
+          }
+        : {}),
+      // Every written word in the Corners header, so a count beside the add
+      // button would show up here.
+      ...(page === 'corners'
+        ? {
+            headerText: Array.from(header.querySelectorAll<HTMLElement>('*'))
+              .filter((node) => node.childElementCount === 0 && node.textContent)
+              .map((node) => node.textContent),
           }
         : {}),
     }),

@@ -68,7 +68,9 @@ async function measure(page: string): Promise<Record<string, unknown>> {
 
 describe.skipIf(!existsSync(CHROME))('section page headers in a browser', () => {
   it('aligns ordinary section page headers with Corners', async () => {
-    const { page: _corners, ...corners } = await measure('corners');
+    const { page: _corners, headerText, ...corners } = await measure('corners');
+    // No corner count beside the add button: the header says only where you are.
+    expect(headerText).toEqual(['#alpha', 'Corners']);
     // The Corners header as it stood before the pages were aligned to it.
     expect(corners).toMatchObject({
       backLeft: 8,
@@ -80,7 +82,7 @@ describe.skipIf(!existsSync(CHROME))('section page headers in a browser', () => 
       eyebrowFont: '13px SpaceGrotesk-Regular',
       eyebrowAboveTitle: true,
     });
-    const { eyebrowFont: _font, eyebrowAboveTitle: _above, trailingFont: _t, ...frame } = corners;
+    const { eyebrowFont: _font, eyebrowAboveTitle: _above, ...frame } = corners;
     for (const page of ['tray', 'workspace', 'changelog']) {
       const { page: _page, ...header } = await measure(page);
       // Pages without an eyebrow or trailing text share everything else.
@@ -89,7 +91,7 @@ describe.skipIf(!existsSync(CHROME))('section page headers in a browser', () => 
         ...('eyebrowFont' in header
           ? { eyebrowFont: corners.eyebrowFont, eyebrowAboveTitle: true }
           : {}),
-        ...('trailingFont' in header ? { trailingFont: corners.trailingFont } : {}),
+        ...('trailingFont' in header ? { trailingFont: '13px rgb(131, 131, 141) right' } : {}),
       };
       expect(header, `${page} header differs from Corners`).toEqual(expected);
     }

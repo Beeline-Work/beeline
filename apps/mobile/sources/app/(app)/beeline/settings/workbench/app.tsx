@@ -9,7 +9,7 @@ import { AppPageHeader } from '@/components/buzz/AppPageHeader';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { openAppSignIn } from '@/buzz/app-sign-in';
 import type { WorkbenchApp } from '@/buzz/workbench';
-import { appBoardColors } from '@/buzz/app-board-style';
+import { appBoardColors, appBoardType } from '@/buzz/app-board-style';
 
 function first(value: string | string[] | undefined): string | undefined { return Array.isArray(value) ? value[0] : value; }
 
@@ -84,14 +84,14 @@ const styles = StyleSheet.create(theme => {
   content: { paddingHorizontal: 20, paddingVertical: 24, gap: 18 },
   identity: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   identityCopy: { gap: 2 },
-  status: { ...Typography.ledger(), fontSize: 18, color: board.ink },
-  account: { ...Typography.ledger(), fontSize: 14, color: board.quiet },
-  permission: { ...Typography.ledger(), fontSize: 15, lineHeight: 22, color: board.secondary },
+  status: { ...Typography.ledger(), ...appBoardType.rowTitle, color: board.ink },
+  account: { ...Typography.ledger(), ...appBoardType.meta, color: board.quiet },
+  permission: { ...Typography.ledger(), ...appBoardType.rowValue, lineHeight: 22, color: board.secondary },
   lastUsed: { ...Typography.ledger(), fontSize: 13, lineHeight: 19, color: board.quiet },
   outline: { alignSelf: 'flex-start', minHeight: 44, paddingHorizontal: 18, justifyContent: 'center', borderRadius: 10, borderWidth: 2, borderColor: board.buttonOutline },
-  outlineText: { ...Typography.ledger(), fontSize: 15, color: board.buttonOutline },
+  outlineText: { ...Typography.ledger(), ...appBoardType.cardAction, color: board.buttonOutline },
   ink: { alignSelf: 'flex-start', minHeight: 44, paddingHorizontal: 18, justifyContent: 'center', borderRadius: 10, backgroundColor: board.buttonFill },
-  inkText: { ...Typography.ledger(), fontSize: 15, color: board.buttonText },
+  inkText: { ...Typography.ledger(), ...appBoardType.cardAction, color: board.buttonText },
   error: { ...Typography.default(), color: theme.buzz.dialogDanger },
   };
 });

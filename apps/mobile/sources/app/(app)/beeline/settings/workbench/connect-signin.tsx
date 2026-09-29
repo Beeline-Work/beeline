@@ -11,6 +11,7 @@ import { useSandboxWebView } from '@/components/buzz/sandbox-webview';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { connectorOfferCompletionRoute } from '@/buzz/connector-offer-ceremony';
 import { takeAppSignInReturn } from '@/buzz/app-sign-in';
+import { appBoardType } from '@/buzz/app-board-style';
 
 function first(value: string | string[] | undefined): string | undefined { return Array.isArray(value) ? value[0] : value; }
 
@@ -92,8 +93,8 @@ const styles = StyleSheet.create(theme => ({
   scrim: { flex: 1, justifyContent: 'center' },
   card: { flex: 1, marginHorizontal: 16, borderRadius: 12, overflow: 'hidden', backgroundColor: theme.buzz.bgTerminal },
   centered: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', gap: 16, padding: 24 },
-  note: { ...Typography.default(), fontSize: 15, color: theme.buzz.textSecondary, textAlign: 'center' },
+  note: { ...Typography.default(), ...appBoardType.cardAction, color: theme.buzz.textSecondary, textAlign: 'center' },
   button: { minHeight: 44, paddingHorizontal: 18, justifyContent: 'center', borderRadius: 10, backgroundColor: theme.buzz.textPrimary },
-  buttonText: { ...Typography.default(), fontSize: 15, color: theme.buzz.bgTerminal },
+  buttonText: { ...Typography.default(), ...appBoardType.cardAction, color: theme.buzz.bgTerminal },
   webView: { flex: 1 },
 }));

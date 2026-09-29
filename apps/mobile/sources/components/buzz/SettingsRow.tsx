@@ -4,7 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { StateDot } from './StateDot';
 import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
-import { appBoardColors } from '@/buzz/app-board-style';
+import { appBoardColors, appBoardType } from '@/buzz/app-board-style';
 
 /** Its own 44pt press for a trailing mark the row itself does not own. */
 type SettingsRowTrailingPress = {
@@ -292,7 +292,7 @@ const styles = StyleSheet.create((theme) => {
     disabled: { opacity: 0.42 },
     copy: { flex: 1, minWidth: 0 },
     title: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary },
-    boardTitle: { ...Typography.ledger(), fontSize: 18, color: board.ink },
+    boardTitle: { ...Typography.ledger(), ...appBoardType.rowTitle, color: board.ink },
     quiet: { color: hull.textMuted },
     actionTitle: { color: hull.accent },
     destructive: { color: hull.dialogDanger },
@@ -318,7 +318,7 @@ const styles = StyleSheet.create((theme) => {
       textAlign: 'right',
       color: hull.textMuted,
     },
-    boardValue: { ...Typography.ledger(), fontSize: 15, color: board.quiet },
+    boardValue: { ...Typography.ledger(), ...appBoardType.rowValue, color: board.quiet },
     valueDanger: {
       ...Typography.default(),
       ...hull.type.meta,

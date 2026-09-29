@@ -11,7 +11,7 @@ import { POPULAR_APPS } from '@/buzz/app-catalog';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import type { WorkbenchApp, WorkbenchHelper } from '@/buzz/workbench';
 import { openAppSignIn } from '@/buzz/app-sign-in';
-import { appBoardColors } from '@/buzz/app-board-style';
+import { appBoardColors, appBoardType } from '@/buzz/app-board-style';
 
 function first(value: string | string[] | undefined): string | undefined { return Array.isArray(value) ? value[0] : value; }
 
@@ -89,13 +89,13 @@ const styles = StyleSheet.create(theme => {
   search: { flexDirection: 'row', alignItems: 'center', gap: 10, height: 48, paddingHorizontal: 14, borderWidth: 1, borderColor: board.strongBorder, borderRadius: 12, backgroundColor: board.tile },
   input: { ...Typography.ledger(), flex: 1, fontSize: 16, color: board.ink, paddingVertical: 0 },
   placeholder: { color: board.quiet },
-  section: { ...Typography.mono(), paddingHorizontal: 20, paddingTop: 12, paddingBottom: 4, fontSize: 12, letterSpacing: 3, color: board.quiet },
+  section: { ...Typography.mono(), ...appBoardType.section, paddingHorizontal: 20, paddingTop: 12, paddingBottom: 4, color: board.quiet },
   list: { paddingHorizontal: 20 },
   row: { minHeight: 54, flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: board.border },
-  name: { ...Typography.ledger(), flex: 1, fontSize: 17, color: board.ink },
-  connected: { ...Typography.ledger(), fontSize: 14, color: board.quiet },
+  name: { ...Typography.ledger(), ...appBoardType.pickerName, flex: 1, color: board.ink },
+  connected: { ...Typography.ledger(), ...appBoardType.meta, color: board.quiet },
   button: { minHeight: 36, paddingHorizontal: 14, justifyContent: 'center', borderRadius: 9, backgroundColor: board.buttonFill },
-  buttonText: { ...Typography.ledger(), fontSize: 14, color: board.buttonText },
+  buttonText: { ...Typography.ledger(), ...appBoardType.pickerAction, color: board.buttonText },
   error: { ...Typography.default(), margin: 20, color: theme.buzz.dialogDanger },
   };
 });

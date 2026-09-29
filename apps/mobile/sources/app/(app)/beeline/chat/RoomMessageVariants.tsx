@@ -28,7 +28,7 @@ import {
 } from '@/buzz/connector-offer-copy';
 import { AppMark } from '@/components/buzz/AppMark';
 import { appDomain } from '@/buzz/app-catalog';
-import { appBoardColors } from '@/buzz/app-board-style';
+import { appBoardColors, appBoardType } from '@/buzz/app-board-style';
 import { shouldShowReplyReference } from '@/buzz/reply-reference';
 import {
   draftRequestId,
@@ -482,11 +482,11 @@ const appSignInStyles = StyleSheet.create(theme => {
   wrap: { gap: 8, marginVertical: 8, marginHorizontal: 6 },
   card: { borderWidth: 1, borderColor: board.cardBorder, borderRadius: 14, padding: 14, gap: 12, backgroundColor: board.card },
   heading: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  title: { ...Typography.ledger(), fontSize: 17, color: board.ink },
-  detail: { ...Typography.ledger(), fontSize: 14, lineHeight: 20, color: board.secondary },
+  title: { ...Typography.ledger(), ...appBoardType.cardTitle, color: board.ink },
+  detail: { ...Typography.ledger(), ...appBoardType.cardDetail, color: board.secondary },
   button: { alignSelf: 'flex-start', minHeight: 44, paddingHorizontal: 18, borderRadius: 10, justifyContent: 'center', backgroundColor: board.buttonFill },
-  buttonText: { ...Typography.ledger(), fontSize: 15, color: board.buttonText },
-  settled: { ...Typography.mono(), fontSize: 11, letterSpacing: 1, color: board.quiet, marginVertical: 8, marginHorizontal: 6 },
+  buttonText: { ...Typography.ledger(), ...appBoardType.cardAction, color: board.buttonText },
+  settled: { ...Typography.mono(), ...appBoardType.cardSettled, color: board.quiet, marginVertical: 8, marginHorizontal: 6 },
   };
 });
 

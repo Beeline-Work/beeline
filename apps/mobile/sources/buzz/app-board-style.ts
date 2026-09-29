@@ -14,3 +14,20 @@ export function appBoardColors(buzz: {
     buttonOutline: buzz.buttonSecondaryText,
   };
 }
+
+/** Type sizes from the four approved app boards, shared by their real surfaces. */
+export const appBoardType = {
+  eyebrow: { fontSize: 15 },
+  title: { fontSize: 32, lineHeight: 40 },
+  section: { fontSize: 12, letterSpacing: 3 },
+  monoMark: { fontSize: 12 },
+  rowTitle: { fontSize: 18 },
+  rowValue: { fontSize: 15 },
+  pickerName: { fontSize: 17 },
+  meta: { fontSize: 14 },
+  pickerAction: { fontSize: 14 },
+  cardTitle: { fontSize: 17 },
+  cardDetail: { fontSize: 14, lineHeight: 20 },
+  cardAction: { fontSize: 15 },
+  cardSettled: { fontSize: 11, letterSpacing: 1 },
+} as const;

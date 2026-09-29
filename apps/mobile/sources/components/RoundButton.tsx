@@ -13,8 +13,11 @@ const sizes: { [key in RoundButtonSize]: { height: number, hitSlop: number, pad:
     small: { height: 24, hitSlop: 12, pad: Platform.OS == 'ios' ? -1 : -1 }
 }
 /** Kept apart from `sizes` above (pure layout geometry) so this table holds
- *  nothing but theme references — never a raw number to bypass the roles. */
-const sizeTypeRole = { large: typeRoles.hero, normal: typeRoles.body, small: typeRoles.meta }
+ *  nothing but theme references — never a raw number to bypass the roles.
+ *  `body` matches the app's established primary-button-label role (e.g.
+ *  `workbench/connect-app.tsx`'s `buttonText`), not `hero` — a full-width CTA
+ *  label is not "a screen's one big line". */
+const sizeTypeRole = { large: typeRoles.body, normal: typeRoles.body, small: typeRoles.meta }
 
 export type RoundButtonDisplay = 'default' | 'inverted';
 

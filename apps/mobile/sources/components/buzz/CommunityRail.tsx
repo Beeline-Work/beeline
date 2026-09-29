@@ -728,7 +728,7 @@ const styles = StyleSheet.create((theme) => {
       backgroundColor: groknight.selectedBorder,
     },
     drawerTriggerName: {
-      ...theme.buzz.type.hero,
+      ...theme.buzz.type.bodyStrong,
       flexShrink: 1,
       color: groknight.textPrimary,
     },

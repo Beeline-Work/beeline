@@ -102,7 +102,7 @@ const styles = StyleSheet.create((theme) => ({
         marginBottom: 32,
     },
     titleText: {
-        ...theme.buzz.type.bodyStrong,
+        ...theme.buzz.type.hero,
         color: theme.buzz.textPrimary,
         marginBottom: 8,
     },

@@ -1234,7 +1234,7 @@ const styles = StyleSheet.create((theme) => {
       textAlign: 'center',
     },
     nameInput: {
-      ...theme.buzz.type.hero,
+      ...theme.buzz.type.bodyStrong,
       fontFamily: groknight.proseSemibold,
       minHeight: 52,
       borderWidth: 1,

@@ -8288,14 +8288,18 @@ describe('monolith integration', () => {
   });
 
   it("lifts a Room up the Room list when one of the viewer's corners starts waiting", async () => {
-    const busy = '22222222-2222-4222-8222-2222222222b1';
-    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Busy')`, [
-      busy,
-      WORKSPACE,
-    ]);
+    // More busier Rooms than the list's 200-Room page, so General starts off it.
     await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`,
-      [WORKSPACE, busy, HUMAN],
+      `INSERT INTO rooms(id,workspace_id,name)
+       SELECT ('71000000-0000-4000-8000-' || lpad(value::text,12,'0'))::uuid,$1,
+              'Busy ' || lpad(value::text,3,'0')
+       FROM generate_series(1,205) value`,
+      [WORKSPACE],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       SELECT $1,id,$2,'owner' FROM rooms WHERE name LIKE 'Busy %'`,
+      [WORKSPACE, HUMAN],
     );
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
@@ -8306,36 +8310,36 @@ describe('monolith integration', () => {
     const { cornerId } = (await created.json()) as { cornerId: string };
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)
-       VALUES('busy-chatter',$1,$2,'Chatter.',now()+interval '5 seconds')`,
-      [busy, AGENT],
+       SELECT 'busy-chatter-' || id,id,$1,'Chatter.',now()+interval '5 seconds'
+       FROM rooms WHERE name LIKE 'Busy %'`,
+      [AGENT],
     );
     const listed = async () =>
-      (
-        (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
-          chats: Array<{
-            room: { id: string };
-            openCorners?: Array<{ id: string; state: string; mine?: true }>;
-          }>;
-        }
-      ).chats;
-    const order = async () =>
-      (await listed()).map((item) => item.room.id).filter((id) => id === ROOM || id === busy);
-    expect(await order()).toEqual([busy, ROOM]);
+      (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
+        truncated: boolean;
+        chats: Array<{
+          room: { id: string };
+          openCorners?: Array<{ id: string; state: string; mine?: true }>;
+        }>;
+      };
+    const before = await listed();
+    expect(before.truncated).toBe(true);
+    expect(before.chats.some((item) => item.room.id === ROOM)).toBe(false);
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)
        VALUES('corner-hands-back',$1,$2,'Small or large?',now()+interval '10 seconds')`,
       [cornerId, AGENT],
     );
-    const corner = (await listed())
-      .find((item) => item.room.id === ROOM)
-      ?.openCorners?.find((item) => item.id === cornerId);
-    expect(corner).toEqual(expect.objectContaining({ state: 'waiting', mine: true }));
-    expect(await order()).toEqual([ROOM, busy]);
+    const after = await listed();
+    expect(after.chats[0]?.room.id).toBe(ROOM);
+    expect(after.chats[0]?.openCorners?.find((item) => item.id === cornerId)).toEqual(
+      expect.objectContaining({ state: 'waiting', mine: true }),
+    );
     // Someone else's waiting corner is not the viewer's activity.
     await database.query(`UPDATE corner_facts SET commissioned_by=NULL WHERE corner_id=$1`, [
       cornerId,
     ]);
-    expect(await order()).toEqual([busy, ROOM]);
+    expect((await listed()).chats.some((item) => item.room.id === ROOM)).toBe(false);
   });
 
   it('returns the active corner when the same originating task is opened repeatedly', async () => {

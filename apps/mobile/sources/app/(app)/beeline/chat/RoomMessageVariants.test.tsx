@@ -1148,7 +1148,7 @@ describe('Room message variant components', () => {
     act(() => swipeable.props.onSwipeableOpen('left'));
   });
 
-  it('adds Open and Cancel to an exact agent corner proposal without replacing reply swipe', () => {
+  it('asks a corner proposal as the lettered choice card without replacing reply swipe', () => {
     const onDecision = vi.fn();
     const onReply = vi.fn();
     const proposal = message({
@@ -1178,20 +1178,58 @@ describe('Room message variant components', () => {
       />,
     );
 
-    act(() =>
-      renderer.root.findByProps({ testID: 'corner-proposal-open-corner-proposal' }).props.onPress(),
-    );
+    const card = renderer.root.findByProps({ testID: 'corner-proposal-corner-proposal' });
+    expect(card.findAllByProps({ testID: 'chat-message-text-corner-proposal' })).toHaveLength(0);
+    const choice = (decision: string) =>
+      renderer.root.findByProps({
+        testID: `transcript-card-choice-corner-proposal-${decision}-corner-proposal`,
+      });
+    expect(choice('open').props.accessibilityLabel).toBe('A. Open corner. ');
+    expect(choice('cancel').props.accessibilityLabel).toBe('B. Cancel. ');
+    act(() => choice('open').props.onPress());
     expect(onDecision).toHaveBeenCalledWith(proposal, 'open');
-    act(() =>
-      renderer.root
-        .findByProps({ testID: 'corner-proposal-cancel-corner-proposal' })
-        .props.onPress(),
-    );
+    act(() => choice('cancel').props.onPress());
     expect(onDecision).toHaveBeenCalledWith(proposal, 'cancel');
 
     const swipe = renderer.root.findByProps({ testID: 'swipe-reply-corner-proposal' });
     act(() => swipe.props.onSwipeableOpen('right'));
     expect(onReply).toHaveBeenCalledWith(proposal);
+  });
+
+  it('shows the pick and who opened it once a corner proposal is answered', () => {
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={message({
+          id: 'answered-proposal',
+          text: 'Proposed corner: Faster reads — Bound query latency under load',
+          pubkey: 'agent-sol',
+          isAgentAuthor: true,
+        })}
+        agent={{ pubkey: 'agent-sol', displayName: 'Sol' }}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        cornerProposalAnswer={{ decision: 'open', handle: 'lunchboxfortwo' }}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    const open = renderer.root.findByProps({
+      testID: 'transcript-card-choice-corner-proposal-open-answered-proposal',
+    });
+    expect(open.props.onPress).toBeUndefined();
+    expect(
+      renderer.root.findByProps({ testID: 'corner-proposal-footer-answered-proposal' }).props
+        .children,
+    ).toBe('opened · @lunchboxfortwo');
   });
 
   it('does not add corner actions to an agent message that only quotes the proposal syntax', () => {
@@ -1221,7 +1259,7 @@ describe('Room message variant components', () => {
     );
 
     expect(
-      renderer.root.findAllByProps({ testID: 'corner-proposal-actions-quoted-proposal' }),
+      renderer.root.findAllByProps({ testID: 'corner-proposal-quoted-proposal' }),
     ).toHaveLength(0);
   });
 

@@ -69,7 +69,7 @@ import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { MessageReactionRoster } from '@/components/buzz/MessageReactionRoster';
 import { ALIVE_RING_PAD } from '@/buzz/identity-mark';
-import { isCornerProposalText } from '@/buzz/corner-proposal';
+import { parseCornerProposal } from '@/buzz/corner-proposal';
 import {
   LedgerEntry,
   LedgerGhostLine,
@@ -1455,7 +1455,6 @@ function AttachmentCard({
   );
 }
 
-
 function SwipeToReply({
   children,
   messageId,
@@ -1802,6 +1801,8 @@ export interface OrdinaryLedgerMessageProps {
   onForwardToNewCorner?(message: ChatDisplayMessage): void;
   onCornerProposalDecision?(message: ChatDisplayMessage, decision: 'open' | 'cancel'): void;
   cornerProposalAction?: 'open' | 'cancel' | null;
+  /** The human reply that answered this corner proposal, once one exists. */
+  cornerProposalAnswer?: { decision: 'open' | 'cancel' | null; handle: string } | null;
   onRetry(eventId: string): void;
   onDismiss(eventId: string): void;
   /** Read-only @system DMs are a full-width announcement feed, not a chat. */
@@ -1912,6 +1913,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   onForwardToNewCorner,
   onCornerProposalDecision,
   cornerProposalAction = null,
+  cornerProposalAnswer = null,
   onRetry,
   onDismiss,
   announcementFeed = false,
@@ -1941,11 +1943,10 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
     message.isAgentAuthor ||
     message.isAgentActivity ||
     Boolean(currentAgent);
-  const isCornerProposal =
-    isAgent &&
-    !message.isAgentActivity &&
-    !message.isAgentDraft &&
-    isCornerProposalText(message.text);
+  const cornerProposal =
+    isAgent && !message.isAgentActivity && !message.isAgentDraft
+      ? parseCornerProposal(message.text)
+      : null;
   const display = isAgent
     ? resolvePendingAgentDisplay(
         message.pubkey ?? indexedAuthor?.pubkey ?? 'unknown-agent',
@@ -2231,6 +2232,54 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             replyReference={replyReference}
             attachments={attachments}
           />
+        ) : cornerProposal ? (
+          <TranscriptCard
+            tier={onCornerProposalDecision && !cornerProposalAnswer ? 'ask' : 'record'}
+            testID={`corner-proposal-${message.id}`}
+            identity={
+              <IdentityMark
+                kind="agent"
+                seed={markSeed}
+                avatarUrl={speakerAvatar}
+                face={speakerFace}
+                name={voiceName}
+                size={26}
+              />
+            }
+            title={`Proposed ${CORNER_LABEL}: ${cornerProposal.title}`}
+            wrapTitle
+            subline={cornerProposal.objective}
+            stamp={ledgerStamp(message.timestamp)}
+            body={cornerProposal.warnings.length ? cornerProposal.warnings.join('\n') : undefined}
+            quietBody
+            choices={(
+              [
+                ['open', 'A', `Open ${CORNER_LABEL}`],
+                ['cancel', 'B', 'Cancel'],
+              ] as const
+            ).map(([decision, letter, label]) => ({
+              id: `corner-proposal-${decision}-${message.id}`,
+              letter,
+              label,
+              consequence: '',
+              selected: (cornerProposalAnswer?.decision ?? cornerProposalAction) === decision,
+              ...(onCornerProposalDecision && !cornerProposalAnswer && !cornerProposalAction
+                ? { onPress: () => onCornerProposalDecision(message, decision) }
+                : {}),
+            }))}
+            footerNote={
+              cornerProposalAnswer
+                ? `${
+                    cornerProposalAnswer.decision === 'open'
+                      ? 'opened'
+                      : cornerProposalAnswer.decision === 'cancel'
+                        ? 'cancelled'
+                        : 'answered'
+                  } · @${cornerProposalAnswer.handle}`
+                : undefined
+            }
+            footerNoteTestID={`corner-proposal-footer-${message.id}`}
+          />
         ) : (
           <LedgerEntry
             itemId={message.id}
@@ -2298,32 +2347,6 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
                 reaction={reaction}
               />
             ))}
-          </View>
-        ) : null}
-        {isCornerProposal && onCornerProposalDecision ? (
-          <View
-            style={styles.cornerProposalActions}
-            testID={`corner-proposal-actions-${message.id}`}
-          >
-            <MonoButton
-              accessibilityLabel="Cancel proposed corner"
-              disabled={cornerProposalAction !== null}
-              label="Cancel"
-              loading={cornerProposalAction === 'cancel'}
-              onPress={() => onCornerProposalDecision(message, 'cancel')}
-              style={styles.cornerProposalAction}
-              testID={`corner-proposal-cancel-${message.id}`}
-              variant="secondary"
-            />
-            <MonoButton
-              accessibilityLabel="Open proposed corner"
-              disabled={cornerProposalAction !== null}
-              label="Open"
-              loading={cornerProposalAction === 'open'}
-              onPress={() => onCornerProposalDecision(message, 'open')}
-              style={styles.cornerProposalAction}
-              testID={`corner-proposal-open-${message.id}`}
-            />
           </View>
         ) : null}
       </View>
@@ -2461,14 +2484,6 @@ const styles = StyleSheet.create((theme) => ({
     marginLeft: 8,
   },
   reactionEmoji: emojiTextStyle(theme.buzz.type.body),
-  cornerProposalActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 8,
-    marginTop: 10,
-    marginLeft: 8,
-  },
-  cornerProposalAction: { minWidth: 96 },
   forwardCaption: {
     ...theme.buzz.type.sectionHead,
     marginTop: 5,

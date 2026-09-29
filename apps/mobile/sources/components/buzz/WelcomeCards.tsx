@@ -237,7 +237,12 @@ export function WelcomeCards({ visible, onDone }: { visible: boolean; onDone: ()
   const [error, setError] = useState<string | null>(null);
   const { height, width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  const sceneHeight = Math.min(index < 2 ? 480 : 430, Math.max(270, height * 0.57));
+  const wideCanvas = width >= 768;
+  const sceneHeight = wideCanvas
+    ? index < 2
+      ? 610
+      : 430
+    : Math.min(index < 2 ? 480 : 430, Math.max(270, height * 0.57));
   const next = async () => {
     if (index < 3) {
       setIndex(index + 1);
@@ -271,7 +276,13 @@ export function WelcomeCards({ visible, onDone }: { visible: boolean; onDone: ()
         ]}
         testID="welcome-cards"
       >
-        <View style={[card.content, { maxWidth: Math.min(390, width) }]}>
+        <View
+          style={[
+            card.content,
+            { maxWidth: wideCanvas ? 600 : Math.min(390, width) },
+            wideCanvas && { justifyContent: 'center' },
+          ]}
+        >
           <View style={{ height: sceneHeight }}>
             {index === 0 ? (
               <RoomScene />
@@ -287,7 +298,7 @@ export function WelcomeCards({ visible, onDone }: { visible: boolean; onDone: ()
             <Text style={card.title}>{COPY[index].title}</Text>
             <Text style={card.body}>{COPY[index].body}</Text>
           </View>
-          <View style={{ flex: 1 }} />
+          {!wideCanvas && <View style={{ flex: 1 }} />}
           {error && <Text style={card.error}>{error}</Text>}
           <View style={card.footer}>
             <View style={card.steps}>

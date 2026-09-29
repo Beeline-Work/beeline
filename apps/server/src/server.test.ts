@@ -263,6 +263,12 @@ describe('server readiness', () => {
       roomId: 'room-open',
       reason: 'phone-write',
       messageId: 'posted-message',
+      trace: {
+        id: expect.any(String),
+        startedAt: expect.any(Number),
+        databaseAt: expect.any(Number),
+        emittedAt: expect.any(Number),
+      },
     });
   });
 
@@ -617,6 +623,67 @@ describe('daemon live command push', () => {
       }),
     );
     expect(commandCalls()).toBe(2);
+  });
+
+  it('sends read-mark reconciliation to reader devices without replaying a daemon inbox', async () => {
+    const roomId = 'room-live';
+    const live = new LiveHub();
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getRoomInbox') return { items: [], cursor: undefined };
+      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
+      throw new Error(`unexpected operation ${name}`);
+    });
+    const server = createBeelineServer({
+      database: { query: vi.fn(), transaction: vi.fn() },
+      auth: {
+        authenticateDaemon: vi.fn().mockResolvedValue('agent-live'),
+        authenticatePhone: vi.fn().mockResolvedValue('reader'),
+      } as unknown as TokenAuth,
+      phone: {
+        canReadRooms: canReadRoomsFrom(async () => true),
+        liveDraftSnapshot: vi.fn().mockResolvedValue([]),
+      } as unknown as PhoneService,
+      daemon: { execute } as unknown as DaemonService,
+      live,
+      mediaMaximumBytes: 1,
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const connect = async (token: string) => {
+      const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, [`bearer.${token}`]);
+      sockets.push(socket);
+      await new Promise<void>((resolve, reject) => {
+        socket.once('open', () => resolve());
+        socket.once('error', reject);
+      });
+      const subscribed = nextSocketMessage(socket, 'subscribed');
+      const initialInbox = token.startsWith('bdt_') ? nextSocketMessage(socket, 'inbox') : null;
+      socket.send(JSON.stringify({ type: 'subscribe', roomId }));
+      await subscribed;
+      if (initialInbox) await initialInbox;
+      return socket;
+    };
+    const daemonSocket = await connect('bdt_test');
+    const phoneA = await connect('phone-a');
+    const phoneB = await connect('phone-b');
+    const inboxCalls = () => execute.mock.calls.filter(([name]) => name === 'getRoomInbox').length;
+    expect(inboxCalls()).toBe(1);
+
+    const first = nextSocketMessage(phoneA, 'invalidate');
+    const second = nextSocketMessage(phoneB, 'invalidate');
+    live.publish({ type: 'invalidate', roomId, reason: 'postgres:room_read_marks', readerId: 'reader' });
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ reason: 'postgres:room_read_marks' }),
+      expect.objectContaining({ reason: 'postgres:room_read_marks' }),
+    ]);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(inboxCalls()).toBe(1);
+
+    const replayed = nextSocketMessage(daemonSocket, 'inbox');
+    live.publish({ type: 'invalidate', roomId, reason: 'postgres:messages' });
+    await replayed;
+    expect(inboxCalls()).toBe(2);
   });
 
   it('pushes config-changed only to the changed agent, without an inbox replay', async () => {
@@ -1262,9 +1329,13 @@ describe('phone committed-row live delivery', () => {
     const project = vi.fn((eventRoom: string, committed: { row: { room_id: string } }) =>
       committed.row.room_id === eventRoom ? delta : null,
     );
+    const recordedEvents = vi.fn().mockResolvedValue({ rows: [], rowCount: 0 });
     const { live, roomId, socket, port } = await connect(
       read as PhoneService['readLiveDelta'],
       project as PhoneService['projectCommittedLiveDelta'],
+      vi.fn().mockResolvedValue(true),
+      false,
+      recordedEvents,
     );
     const rawMarker = 'raw-committed-row-must-not-cross-wire';
     const startedAt = Date.now();
@@ -1311,6 +1382,10 @@ describe('phone committed-row live delivery', () => {
       upperBoundMs: expect.any(Number),
     });
     const acknowledged = await paintAck;
+    expect(recordedEvents).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO operator_function_events'),
+      ['message_delivery', expect.any(Number), false],
+    );
     expect(acknowledged.serverReceivedAt as number).toBeGreaterThanOrEqual(startedAt);
     expect((acknowledged.serverReceivedAt as number) - startedAt).toBeLessThan(100);
     socket.send(JSON.stringify({ type: 'trace-paint', id: trace.id }));

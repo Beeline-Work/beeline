@@ -172,7 +172,6 @@ vi.mock('@/components/buzz/MonoHull', async () => {
   return {
     HullSurface: host('HullSurface'),
     MonoButton: host('MonoButton'),
-    OnboardingButton: host('OnboardingButton'),
     PixelGateReveal: host('PixelGateReveal'),
   };
 });
@@ -292,8 +291,7 @@ describe('GitHub callback delivery into onboarding', () => {
     });
     const tree = await render();
     const signIn = tree.root.find(
-      (node: any) =>
-        node.type === 'OnboardingButton' && node.props.label === 'Continue with GitHub',
+      (node: any) => node.type === 'MonoButton' && node.props.label === 'Continue with GitHub',
     );
 
     await act(async () => {
@@ -310,13 +308,12 @@ describe('GitHub callback delivery into onboarding', () => {
     const ceremony = tree.root.findByType('YouStep' as never);
     expect(ceremony.props.seed).toBe(MONOLITH_IDENTITY);
     expect(ceremony.props.currentFace).toBeNull();
-    // The GitHub name is pre-filled; an edit is saved with the chosen face.
-    expect(ceremony.props.name).toBe('Octo Cat');
+    // The actual GitHub handle is shown; this step saves only the chosen face.
     expect(ceremony.props.handle).toBe('octocat');
     await act(async () => {
-      await ceremony.props.onConfirm({ name: 'Ada', face: 'owl' });
+      await ceremony.props.onConfirm({ face: 'owl' });
     });
-    expect(phoneOperation).toHaveBeenCalledWith('updatePersonProfile', { name: 'Ada' });
+    expect(phoneOperation).not.toHaveBeenCalledWith('updatePersonProfile', expect.anything());
     expect(phoneOperation).toHaveBeenCalledWith('updateIdentityFace', { faceId: 'owl' });
     expect(navigation.replace).not.toHaveBeenCalled();
     act(() => ceremony.props.onEntered());
@@ -348,8 +345,7 @@ describe('GitHub callback delivery into onboarding', () => {
 
     const pressed = await render();
     const signIn = pressed.root.find(
-      (node: any) =>
-        node.type === 'OnboardingButton' && node.props.label === 'Continue with GitHub',
+      (node: any) => node.type === 'MonoButton' && node.props.label === 'Continue with GitHub',
     );
     let press!: Promise<void>;
     await act(async () => {
@@ -369,8 +365,7 @@ describe('GitHub callback delivery into onboarding', () => {
     expect(monolith.exchangeGitHubTicket).toHaveBeenCalledTimes(1);
     expect(
       routed.root.findAll(
-        (node: any) =>
-          node.type === 'OnboardingButton' && node.props.label === 'Continue with GitHub',
+        (node: any) => node.type === 'MonoButton' && node.props.label === 'Continue with GitHub',
       ),
     ).toHaveLength(1);
 
@@ -434,8 +429,7 @@ describe('GitHub callback delivery into onboarding', () => {
     });
     const tree = await render();
     const signIn = tree.root.find(
-      (node: any) =>
-        node.type === 'OnboardingButton' && node.props.label === 'Continue with GitHub',
+      (node: any) => node.type === 'MonoButton' && node.props.label === 'Continue with GitHub',
     );
     await act(async () => {
       await signIn.props.onPress();
@@ -459,7 +453,7 @@ describe('GitHub callback delivery into onboarding', () => {
       const signIn = () =>
         tree.root.find(
           (node: any) =>
-            node.type === 'OnboardingButton' && node.props.testID === 'onboarding-github-sign-in',
+            node.type === 'MonoButton' && node.props.testID === 'onboarding-github-sign-in',
         );
       expect(signIn().props.label).toBe('Continue with GitHub');
 
@@ -512,7 +506,7 @@ describe('GitHub callback delivery into onboarding', () => {
     const tree = await render();
     const signIn = tree.root.find(
       (node: any) =>
-        node.type === 'OnboardingButton' && node.props.testID === 'onboarding-github-sign-in',
+        node.type === 'MonoButton' && node.props.testID === 'onboarding-github-sign-in',
     );
 
     await act(async () => {
@@ -525,7 +519,7 @@ describe('GitHub callback delivery into onboarding', () => {
     expect(
       tree.root.find(
         (node: any) =>
-          node.type === 'OnboardingButton' && node.props.testID === 'onboarding-github-sign-in',
+          node.type === 'MonoButton' && node.props.testID === 'onboarding-github-sign-in',
       ).props.label,
     ).toBe('Continue with GitHub');
   });
@@ -541,8 +535,7 @@ describe('GitHub callback delivery into onboarding', () => {
 
     expect(
       tree.root.findAll(
-        (node: any) =>
-          node.type === 'OnboardingButton' && node.props.label === 'Continue with GitHub',
+        (node: any) => node.type === 'MonoButton' && node.props.label === 'Continue with GitHub',
       ),
     ).toHaveLength(1);
     expect(sdk.getCapabilities).not.toHaveBeenCalled();
@@ -554,8 +547,7 @@ describe('GitHub callback delivery into onboarding', () => {
     sdk.getCapabilities.mockRejectedValue(new Error('offline'));
     const tree = await render();
     const signIn = tree.root.find(
-      (node: any) =>
-        node.type === 'OnboardingButton' && node.props.label === 'Continue with GitHub',
+      (node: any) => node.type === 'MonoButton' && node.props.label === 'Continue with GitHub',
     );
 
     await act(async () => {
@@ -718,8 +710,7 @@ describe('GitHub callback delivery into onboarding', () => {
     expect(noticeText(tree)).toContain('SESSION EXPIRED · TICKET_EXPIRED');
     expect(
       tree.root.findAll(
-        (node: any) =>
-          node.type === 'OnboardingButton' && node.props.label === 'Continue with GitHub',
+        (node: any) => node.type === 'MonoButton' && node.props.label === 'Continue with GitHub',
       ),
     ).toHaveLength(1);
   });
@@ -732,8 +723,7 @@ describe('GitHub callback delivery into onboarding', () => {
     });
     const tree = await render();
     const signIn = tree.root.find(
-      (node: any) =>
-        node.type === 'OnboardingButton' && node.props.label === 'Continue with GitHub',
+      (node: any) => node.type === 'MonoButton' && node.props.label === 'Continue with GitHub',
     );
 
     await act(async () => {
@@ -767,8 +757,7 @@ describe('GitHub callback delivery into onboarding', () => {
 
     const firstTree = await render();
     const firstSignIn = firstTree.root.find(
-      (node: any) =>
-        node.type === 'OnboardingButton' && node.props.label === 'Continue with GitHub',
+      (node: any) => node.type === 'MonoButton' && node.props.label === 'Continue with GitHub',
     );
     let firstAttempt!: Promise<void>;
     act(() => {
@@ -785,8 +774,7 @@ describe('GitHub callback delivery into onboarding', () => {
     await act(async () => firstTree.unmount());
     const remountedTree = await render();
     const retry = remountedTree.root.find(
-      (node: any) =>
-        node.type === 'OnboardingButton' && node.props.label === 'Continue with GitHub',
+      (node: any) => node.type === 'MonoButton' && node.props.label === 'Continue with GitHub',
     );
     await act(async () => {
       await retry.props.onPress();
@@ -816,8 +804,7 @@ describe('GitHub callback delivery into onboarding', () => {
     });
     const tree = await render();
     const signIn = tree.root.find(
-      (node: any) =>
-        node.type === 'OnboardingButton' && node.props.label === 'Continue with GitHub',
+      (node: any) => node.type === 'MonoButton' && node.props.label === 'Continue with GitHub',
     );
 
     await act(async () => {
@@ -826,7 +813,7 @@ describe('GitHub callback delivery into onboarding', () => {
 
     expect(noticeText(tree)).toContain('DEVICE KEY ALREADY LINKED · IDENTITY_CONFLICT');
     const replace = tree.root.find(
-      (node: any) => node.type === 'OnboardingButton' && node.props.label === 'Replace device key',
+      (node: any) => node.type === 'MonoButton' && node.props.label === 'Replace device key',
     );
     await act(async () => {
       await replace.props.onPress();
@@ -861,8 +848,7 @@ describe('GitHub callback delivery into onboarding', () => {
 
     const originalTree = await render();
     const signIn = originalTree.root.find(
-      (node: any) =>
-        node.type === 'OnboardingButton' && node.props.label === 'Continue with GitHub',
+      (node: any) => node.type === 'MonoButton' && node.props.label === 'Continue with GitHub',
     );
     act(() => {
       void signIn.props.onPress();
@@ -883,7 +869,7 @@ describe('GitHub callback delivery into onboarding', () => {
     });
 
     const replace = remountedTree.root.find(
-      (node: any) => node.type === 'OnboardingButton' && node.props.label === 'Replace device key',
+      (node: any) => node.type === 'MonoButton' && node.props.label === 'Replace device key',
     );
     await act(async () => {
       await replace.props.onPress();
@@ -909,8 +895,7 @@ describe('GitHub callback delivery into onboarding', () => {
     });
     const tree = await render();
     const signIn = tree.root.find(
-      (node: any) =>
-        node.type === 'OnboardingButton' && node.props.label === 'Continue with GitHub',
+      (node: any) => node.type === 'MonoButton' && node.props.label === 'Continue with GitHub',
     );
 
     await act(async () => {
@@ -941,8 +926,7 @@ describe('GitHub callback delivery into onboarding', () => {
     });
     const tree = await render();
     const signIn = tree.root.find(
-      (node: any) =>
-        node.type === 'OnboardingButton' && node.props.label === 'Continue with GitHub',
+      (node: any) => node.type === 'MonoButton' && node.props.label === 'Continue with GitHub',
     );
 
     await act(async () => {
@@ -974,8 +958,7 @@ describe('GitHub callback delivery into onboarding', () => {
 
     const originalTree = await render();
     const signIn = originalTree.root.find(
-      (node: any) =>
-        node.type === 'OnboardingButton' && node.props.label === 'Continue with GitHub',
+      (node: any) => node.type === 'MonoButton' && node.props.label === 'Continue with GitHub',
     );
 
     await act(async () => {

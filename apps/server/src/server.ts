@@ -23,7 +23,7 @@ import { connectorLogo } from './workbench.js';
 import type { RegistryMcpOAuth } from './registry-mcp-oauth.js';
 import { InvitePreviewAccess } from './invite-preview.js';
 import type { ConnectionPresence } from './connection-presence.js';
-import { parseDashboardPlatforms, readOperatorDashboard } from './operator-dashboard.js';
+import { parseDashboardPlatforms, readOperatorDashboard, recordOperatorFunctionEvent } from './operator-dashboard.js';
 import { HelperVersionGate, helperVersionBelowMinimum } from './helper-version-gate.js';
 
 export const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
@@ -255,6 +255,29 @@ export function createBeelineServer(options: ServerOptions): Server {
   const server = createServer((request, response) => {
     const url = exactPath(request.url);
     const method = request.method ?? 'GET';
+    const observedFunction = method === 'POST' &&
+      (url.pathname === '/v1/phone/media' || url.pathname === '/v1/daemon/uploads')
+      ? 'attachment_upload'
+      : method === 'POST' && /^\/v1\/phone\/operations\/(sendRoomMessage|sendRoomReply)$/.test(url.pathname)
+        ? 'message_delivery'
+        : method === 'POST' && (url.pathname === '/v1/phone/operations/createHumanCorner' ||
+            url.pathname === '/v1/daemon/operations/createCorner')
+          ? 'corner_open'
+          : null;
+    if (observedFunction) {
+      const started = performance.now();
+      response.once('finish', () => {
+        // The observation is after the response. It cannot delay the write or
+        // paint that it describes, and it carries no user or message content.
+        if (response.statusCode === 401 || response.statusCode === 403) return;
+        // Successful messages are observed when an actual subscribed phone
+        // acknowledges paint below. A failed write has no paint to await.
+        if (observedFunction === 'message_delivery' && response.statusCode < 400) return;
+        const duration = Math.min(600_000, Math.round(performance.now() - started));
+        void recordOperatorFunctionEvent(options.database, observedFunction, duration,
+          response.statusCode >= 400).catch(() => undefined);
+      });
+    }
     console.log('[req]', method, url.pathname);
     const minimum = helperVersionGate.minimum;
     const reportedVersion = request.headers['x-beeline-helper-version'];
@@ -469,15 +492,17 @@ export function createBeelineServer(options: ServerOptions): Server {
           readonly startedAt?: number;
           readonly databaseAt: number;
           readonly databaseClock: boolean;
+          readonly kind: 'message' | 'turn';
         }
       >();
-      const rememberPaintTrace = (trace: LiveTrace | undefined) => {
+      const rememberPaintTrace = (trace: LiveTrace | undefined, kind: 'message' | 'turn') => {
         if (!trace || (typeof trace.startedAt !== 'number' && trace.paintAck !== 'database-clock'))
           return;
         pendingPaintTraces.set(trace.id, {
           startedAt: trace.startedAt,
           databaseAt: trace.databaseAt,
           databaseClock: trace.paintAck === 'database-clock',
+          kind,
         });
         if (pendingPaintTraces.size > 64) {
           const oldest = pendingPaintTraces.keys().next().value;
@@ -555,6 +580,11 @@ export function createBeelineServer(options: ServerOptions): Server {
             }
             if (typeof trace.startedAt !== 'number') return;
             const serverReceivedAt = Date.now();
+            if (trace.kind === 'message' && serverReceivedAt >= trace.startedAt &&
+                serverReceivedAt - trace.startedAt <= 600_000) {
+              void recordOperatorFunctionEvent(options.database, 'message_delivery',
+                serverReceivedAt - trace.startedAt, false).catch(() => undefined);
+            }
             sendLive(
               JSON.stringify({
                 type: 'trace-painted',
@@ -683,6 +713,8 @@ export function createBeelineServer(options: ServerOptions): Server {
                   // listener. Commands have their own targeted projection;
                   // their source message is delivered by its message event.
                   if (event.type !== 'invalidate') return;
+                  // Read marks only reconcile the reader's phone devices.
+                  if (event.readerId) return;
                   // A child corner's status changed; only corner lists read it.
                   if (event.reason === 'corner-status') return;
                   const trigger = event.trace
@@ -793,6 +825,7 @@ export function createBeelineServer(options: ServerOptions): Server {
             releases.set(
               roomId,
               options.live.subscribe(roomId, (event) => {
+                if (event.type === 'invalidate' && event.readerId && event.readerId !== principal.identityId) return;
                 if (event.type === 'draft') streamed.add(event.agentId);
                 if (event.type !== 'invalidate') {
                   if (client.readyState === client.OPEN) sendLive(JSON.stringify(event));
@@ -833,7 +866,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                   ...(invalidationSent ? { reconcilesDelivery: deliveryId } : {}),
                 };
                 if (invalidationSent && client.readyState === client.OPEN) {
-                  rememberPaintTrace(wireTrace);
+                  rememberPaintTrace(wireTrace, target.type);
                   sendLive(
                     JSON.stringify({
                       ...wireEvent,
@@ -876,7 +909,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                   .then((result) => {
                     if (client.readyState !== client.OPEN) return;
                     if ('error' in result) throw result.error;
-                    rememberPaintTrace(wireTrace);
+                    rememberPaintTrace(wireTrace, target.type);
                     if (!result.delta && invalidationSent && event.operation !== 'DELETE') return;
                     sendLive(
                       JSON.stringify(
@@ -896,7 +929,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                       error instanceof Error ? error.message : String(error),
                     );
                     if (client.readyState === client.OPEN) {
-                      rememberPaintTrace(wireTrace);
+                      rememberPaintTrace(wireTrace, target.type);
                       sendLive(JSON.stringify(fallback));
                     }
                   });
@@ -1602,6 +1635,19 @@ async function route(
     }
     return;
   }
+  if (method === 'POST' && url.pathname === '/v1/phone/observations/page-load') {
+    const input = await body(request);
+    const duration = input.durationMs;
+    if (!Number.isInteger(duration) || (duration as number) < 0 || (duration as number) > 600_000 ||
+        typeof input.failed !== 'boolean') {
+      json(response, 400, { error: 'invalid_observation' });
+      return;
+    }
+    await recordOperatorFunctionEvent(options.database, 'page_load', duration as number, input.failed);
+    response.writeHead(204, { 'cache-control': 'private, no-store' });
+    response.end();
+    return;
+  }
   match = url.pathname.match(/^\/v1\/phone\/github\/room-token\/([0-9a-f-]+)$/);
   if (method === 'GET' && match) {
     if (!options.github?.roomToken) throw new Error('GitHub room token service unavailable');
@@ -1615,6 +1661,7 @@ async function route(
   match = url.pathname.match(/^\/v1\/phone\/operations\/([A-Za-z][A-Za-z0-9]+)$/);
   if (method === 'POST' && match) {
     const name = match[1]!;
+    const operationStartedAt = Date.now();
     console.log('[phone-op]', name, `identity=${identityId}`, 'start');
     if (!PHONE_OPERATION_NAMES.has(name as never)) {
       json(response, 404, { error: 'unknown_phone_operation' });
@@ -1639,6 +1686,14 @@ async function route(
         roomId: invalidatedRoom,
         reason: 'phone-write',
         ...(messageId ? { messageId } : {}),
+        ...(messageId && (name === 'sendRoomMessage' || name === 'sendRoomReply') ? {
+          trace: {
+            id: randomUUID(),
+            databaseAt: Date.now(),
+            emittedAt: Date.now(),
+            startedAt: operationStartedAt,
+          },
+        } : {}),
       });
     }
     if (result === undefined) {

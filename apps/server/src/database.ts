@@ -134,6 +134,7 @@ export interface SqlDatabase {
    *  fail. This one is scoped to this process's own pool and says so. */
   oldestActiveQueryAgeMs?(): Promise<number | null>;
   queryProfiles?(): ReturnType<QueryProfiler['snapshot']>;
+  queryWindow?(): ReturnType<QueryProfiler['window']>;
   oldestActiveTransactionAgeMs?(): number | null;
   transactionDeadlineCount?(): number;
   /** Fires once after an app-pool failure is followed by a successful read.
@@ -233,7 +234,8 @@ export class PostgresDatabase implements ClosableDatabase {
     return { ...this.#telemetry, waitBuckets: [...this.#telemetry.waitBuckets] };
   }
 
-  #recordWait(durationMs: number): void {
+  #recordWait(durationMs: number, waiters: number): void {
+    this.#profiler.recordCheckout(durationMs, waiters);
     this.#telemetry.checkouts++;
     this.#telemetry.waitMs += durationMs;
     this.#telemetry.maxWaitMs = Math.max(this.#telemetry.maxWaitMs, durationMs);
@@ -289,6 +291,10 @@ export class PostgresDatabase implements ClosableDatabase {
 
   queryProfiles() {
     return this.#profiler.snapshot();
+  }
+
+  queryWindow() {
+    return this.#profiler.window();
   }
 
   constructor(
@@ -379,13 +385,16 @@ export class PostgresDatabase implements ClosableDatabase {
   }> {
     const startedAt = performance.now();
     let client: PoolClient;
+    let waiters = 0;
     try {
-      client = await this.#pool.connect();
+      const checkout = this.#pool.connect();
+      waiters = this.#pool.waitingCount;
+      client = await checkout;
     } catch (error) {
       this.#telemetry.checkoutFailures++;
       throw error;
     }
-    this.#recordWait(performance.now() - startedAt);
+    this.#recordWait(performance.now() - startedAt, waiters);
     const acquiredAt = performance.now();
     let released = false;
     const onError = (error: Error) => {
@@ -472,13 +481,16 @@ export class PostgresDatabase implements ClosableDatabase {
     return this.#retryTransientConnection(async () => {
       const startedAt = performance.now();
       let client: PoolClient;
+      let waiters = 0;
       try {
-        client = await this.#pool.connect();
+        const checkout = this.#pool.connect();
+        waiters = this.#pool.waitingCount;
+        client = await checkout;
       } catch (error) {
         this.#telemetry.checkoutFailures++;
         throw error;
       }
-      this.#recordWait(performance.now() - startedAt);
+      this.#recordWait(performance.now() - startedAt, waiters);
       const acquiredAt = performance.now();
       const onError = (error: Error) => {
         console.error('dedicated postgres client error', error);
@@ -1839,6 +1851,18 @@ CREATE TABLE IF NOT EXISTS push_delivery_claims (
   error text,
   PRIMARY KEY (message_id, device_token)
 );
+-- Content-free observations written only when a real client operation ends.
+-- The dashboard reads a bounded recent window; no timer produces samples.
+CREATE TABLE IF NOT EXISTS operator_function_events (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  function_name text NOT NULL CHECK (function_name IN
+    ('page_load','message_delivery','corner_open','attachment_upload')),
+  duration_ms integer NOT NULL CHECK (duration_ms >= 0 AND duration_ms <= 600000),
+  failed boolean NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS operator_function_events_recent
+  ON operator_function_events(created_at DESC);
 ALTER TABLE push_delivery_claims DROP CONSTRAINT IF EXISTS push_delivery_claims_status_check;
 ALTER TABLE push_delivery_claims ADD CONSTRAINT push_delivery_claims_status_check
   CHECK (status IN ('claimed', 'delivered', 'failed', 'suppressed'));

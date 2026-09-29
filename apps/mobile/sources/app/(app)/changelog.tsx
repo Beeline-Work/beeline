@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { ScrollView, TouchableOpacity, View, Text } from 'react-native';
+import { ScrollView, View, Text } from 'react-native';
 import { router } from 'expo-router';
 import { StyleSheet } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -9,7 +9,7 @@ import { Typography } from '@/constants/Typography';
 import { layout } from '@/components/layout';
 import { t } from '@/text';
 import { useLayoutClass } from '@/utils/responsive';
-import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
+import { PageHeader } from '@/components/buzz/PageHeader';
 
 export default function ChangelogScreen() {
     const insets = useSafeAreaInsets();
@@ -75,20 +75,13 @@ export default function ChangelogScreen() {
 
 function ChangelogHeader() {
     return (
-        <View style={styles.header}>
-            <TouchableOpacity
-                accessibilityLabel={t('common.back')}
-                accessibilityRole="button"
-                onPress={() => router.back()}
-                style={styles.back}
-            >
-        <ChevronGlyph color={styles.backText.color} direction="left" size={CHEVRON_BACK_SIZE} />
-            </TouchableOpacity>
-            <View style={styles.headerCopy}>
-                <Text style={styles.headerTitle}>{t('navigation.whatsNew')}</Text>
-                <Text style={styles.headerMeta}>RELEASE LEDGER</Text>
-            </View>
-        </View>
+        <PageHeader
+            backAccessibilityLabel={t('common.back')}
+            meta="RELEASE LEDGER"
+            onBack={() => router.back()}
+            prominent
+            title={t('navigation.whatsNew')}
+        />
     );
 }
 
@@ -96,38 +89,6 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
         backgroundColor: theme.buzz.bgTerminal,
-    },
-    header: {
-        minHeight: 64,
-        paddingRight: 16,
-        paddingVertical: 8,
-        flexDirection: 'row',
-        alignItems: 'center',
-        borderBottomWidth: StyleSheet.hairlineWidth,
-        borderBottomColor: theme.buzz.border,
-    },
-    back: {
-        width: 44,
-        height: 44,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-  backText: { color: theme.buzz.chrome },
-    headerCopy: { flex: 1, minWidth: 0 },
-    headerTitle: {
-        ...Typography.default('semiBold'),
-        fontFamily: theme.buzz.proseSemibold,
-        color: theme.buzz.textPrimary,
-        fontSize: 17,
-        lineHeight: 22,
-    },
-    headerMeta: {
-        ...Typography.mono(),
-        marginTop: 2,
-        color: theme.buzz.ledgerGhost,
-        fontSize: 9,
-        lineHeight: 12,
-        letterSpacing: 0.8,
     },
     content: {
         paddingHorizontal: 16,

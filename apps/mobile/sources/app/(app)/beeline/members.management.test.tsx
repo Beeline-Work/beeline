@@ -125,7 +125,7 @@ const client = vi.hoisted(() => ({
 
 const phoneOperation = vi.hoisted(() =>
   vi.fn(async (name: string, input: any): Promise<any> => {
-    if (['addWorkspaceMember', 'banWorkspaceMember', 'unbanWorkspaceMember'].includes(name)) return;
+    if (['addWorkspaceMember'].includes(name)) return;
     if (name === 'updateAgentAccessPolicy') {
       state.agent = { ...state.agent, access: { ...state.agent.access, policy: input.policy } };
       return;
@@ -775,17 +775,33 @@ describe('Members workspace management', () => {
     expect(phoneOperation).not.toHaveBeenCalled();
   });
 
-  it('keeps peers and owners outside admin role and ban authority', async () => {
+  it('keeps peers and owners outside admin role edit authority', async () => {
     state.workspace = baseWorkspace('admin');
     let renderer = await personProfile(OWNER);
     expect(renderer.root.findAllByProps({ testID: 'edit-person-role' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'ban-person' })).toHaveLength(0);
     state.workspace.members = state.workspace.members.map((m: any) =>
       m.identity.pubkey === MEMBER ? { ...m, role: 'admin' } : m,
     );
     renderer = await personProfile();
     expect(renderer.root.findAllByProps({ testID: 'edit-person-role' })).toHaveLength(0);
+  });
+
+  it('lists members without any Banned members roster (banning UI removed)', async () => {
+    const renderer = await render();
+    // No "Banned members" disclosure, no lift controls, no ban operation call.
+    expect(renderer.root.findAllByProps({ title: 'Banned members' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'workspace-bans' })).toHaveLength(0);
+    expect(phoneOperation).not.toHaveBeenCalledWith('listWorkspaceBans', expect.anything());
+  });
+
+  it('offers role edits without any ban control (banning UI removed)', async () => {
+    const renderer = await personProfile();
     expect(renderer.root.findAllByProps({ testID: 'ban-person' })).toHaveLength(0);
+    await press(renderer, 'edit-person-role');
+    // Edit mode still renders Save; the Ban from Workspace row is gone.
+    expect(renderer.root.findByProps({ testID: 'save-person-role' })).toBeDefined();
+    expect(renderer.root.findAllByProps({ testID: 'ban-person' })).toHaveLength(0);
+    expect(phoneOperation).not.toHaveBeenCalledWith('banWorkspaceMember', expect.anything());
   });
 
   it('lets members view a human profile and message without management powers', async () => {
@@ -796,27 +812,11 @@ describe('Members workspace management', () => {
     };
     const renderer = await personProfile();
     expect(renderer.root.findAllByProps({ testID: 'edit-person-role' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'ban-person' })).toHaveLength(0);
     phoneOperation.mockResolvedValueOnce({ id: 'dm-room' });
     await press(renderer, 'human-profile-message');
     expect(phoneOperation).toHaveBeenCalledWith('resolveDirectMessage', {
       workspaceId: WORKSPACE,
       participantId: MEMBER,
-    });
-  });
-
-  it('confirms persistent bans and leaves membership untouched on cancellation', async () => {
-    const renderer = await personProfile();
-    expect(renderer.root.findAllByProps({ testID: 'ban-person' })).toHaveLength(0);
-    await press(renderer, 'edit-person-role');
-    expect(renderer.root.findAllByProps({ testID: 'ban-person' }).length).toBeGreaterThan(0);
-    modal.confirm.mockResolvedValueOnce(false);
-    await press(renderer, 'ban-person');
-    expect(phoneOperation).not.toHaveBeenCalled();
-    await press(renderer, 'ban-person');
-    expect(phoneOperation).toHaveBeenCalledWith('banWorkspaceMember', {
-      workspaceId: WORKSPACE,
-      memberId: MEMBER,
     });
   });
 
@@ -829,27 +829,6 @@ describe('Members workspace management', () => {
         .findAllByType('Text' as any)
         .some((node: any) => String(node.props.children).includes('network unavailable')),
     ).toBe(true);
-  });
-
-  it('lifts a persistent ban without adding the member back', async () => {
-    const renderer = await render();
-    phoneOperation.mockResolvedValueOnce({
-      members: [{ pubkey: MEMBER, name: 'Builder', kind: 'human', canLift: true }],
-      hasMore: false,
-    });
-    await act(async () => renderer.root.findByProps({ title: 'Banned members' }).props.onPress());
-    expect(phoneOperation).toHaveBeenCalledWith('listWorkspaceBans', {
-      workspaceId: WORKSPACE,
-      offset: 0,
-    });
-    await act(async () =>
-      renderer.root.findByProps({ title: 'Builder' }).props.actionControl.onPress(),
-    );
-    expect(phoneOperation).toHaveBeenCalledWith('unbanWorkspaceMember', {
-      workspaceId: WORKSPACE,
-      memberId: MEMBER,
-    });
-    expect(client.addMember).not.toHaveBeenCalled();
   });
 
   it('renders MODEL and EFFORT rows with the live catalog as a typeahead chooser', async () => {
@@ -1386,8 +1365,7 @@ describe('Members workspace management', () => {
         .filter((child: any) => typeof child === 'string')
         .join(''),
     ).toContain('clara');
-    // An agent is never banned: its owner could pair it back as a new agent.
-    expect(renderer.root.findAllByProps({ testID: 'ban-owned-agent' })).toHaveLength(0);
+    // An agent is removed, never banned: its owner could pair it back as a new agent.
     const remove = renderer.root.findByProps({ testID: 'remove-agent' });
     expect(remove.props.accessibilityLabel).toBe('Remove from Workspace');
     expect(remove.findAllByType('Text')[0].props.children).toBe('Remove from Workspace');
@@ -1399,7 +1377,6 @@ describe('Members workspace management', () => {
       destructive: true,
     });
     expect(client.removeAgent).toHaveBeenCalledWith(WORKSPACE, AGENT);
-    expect(phoneOperation).not.toHaveBeenCalledWith('banWorkspaceMember', expect.anything());
   });
 
   it('lets the owner flip yolo and shows who set it', async () => {
@@ -1525,7 +1502,6 @@ describe('Members workspace management', () => {
         .filter((child: any) => typeof child === 'string')
         .join(''),
     ).toContain('viewer');
-    expect(renderer.root.findAllByProps({ testID: 'ban-owned-agent' })).toHaveLength(0);
     const control = renderer.root.findByProps({ testID: 'remove-agent' });
     expect(control.props.accessibilityLabel).toBe('Remove from Workspace');
     const word = control.findAllByType('Text')[0];

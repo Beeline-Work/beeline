@@ -6,7 +6,6 @@ import { IdentityMark } from './IdentityMark';
 
 export const FACE_TILE_SIZE = 64;
 export const FACE_TILE_BORDER = 2;
-const FACE_GRID_COLUMNS = 3;
 
 type FaceGridProps = {
   /** The identity seed the tiles are drawn for. */
@@ -16,18 +15,30 @@ type FaceGridProps = {
   disabled?: boolean;
   /** `${testIDPrefix}-<face>` names each tile. */
   testIDPrefix: string;
+  columns?: 3 | 4;
+  tileSize?: number;
+  selectedBorderColor?: string;
 };
 
 /**
- * The face ceremony grid: the twelve animals in a fixed 3×4 grid of 64px
+ * The face ceremony grid: the twelve animals in a 3- or 4-column grid of 64px
  * tiles. Selection is a border COLOUR flip (faint → brass) on a border whose
  * width never changes, so choosing a tile never shifts its siblings.
  */
-export function FaceGrid({ seed, selected, onSelect, disabled, testIDPrefix }: FaceGridProps) {
+export function FaceGrid({
+  seed,
+  selected,
+  onSelect,
+  disabled,
+  testIDPrefix,
+  columns = 3,
+  tileSize = FACE_TILE_SIZE,
+  selectedBorderColor,
+}: FaceGridProps) {
   const { theme } = useUnistyles();
   const rows: FaceId[][] = [];
-  for (let index = 0; index < FACE_IDS.length; index += FACE_GRID_COLUMNS) {
-    rows.push(FACE_IDS.slice(index, index + FACE_GRID_COLUMNS));
+  for (let index = 0; index < FACE_IDS.length; index += columns) {
+    rows.push(FACE_IDS.slice(index, index + columns));
   }
   return (
     <View style={styles.grid} testID={`${testIDPrefix}-grid`}>
@@ -46,7 +57,13 @@ export function FaceGrid({ seed, selected, onSelect, disabled, testIDPrefix }: F
                 onPress={() => onSelect(face)}
                 style={[
                   styles.tile,
-                  { borderColor: isSelected ? theme.buzz.accent : theme.buzz.faint },
+                  {
+                    width: tileSize,
+                    height: tileSize,
+                    borderColor: isSelected
+                      ? (selectedBorderColor ?? theme.buzz.accent)
+                      : theme.buzz.faint,
+                  },
                 ]}
                 testID={`${testIDPrefix}-${face}`}
               >
@@ -55,7 +72,7 @@ export function FaceGrid({ seed, selected, onSelect, disabled, testIDPrefix }: F
                   seed={seed}
                   face={face}
                   name={face}
-                  size={FACE_TILE_SIZE - FACE_TILE_BORDER * 2 - 8}
+                  size={tileSize - FACE_TILE_BORDER * 2 - 8}
                 />
               </Pressable>
             );

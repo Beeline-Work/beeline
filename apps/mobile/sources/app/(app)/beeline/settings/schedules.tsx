@@ -199,7 +199,7 @@ export default function ScheduledWork() {
 const styles = StyleSheet.create((theme) => ({
   container: { flex: 1, backgroundColor: theme.buzz.bgTerminal },
   header: { paddingHorizontal: 16, paddingTop: 8 },
-  subtitle: { ...Typography.mono(), color: theme.buzz.textMuted, fontSize: 10 },
+  subtitle: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.textMuted },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   content: { padding: 16, gap: 18 },
   listSection: { gap: 10 },

@@ -22,12 +22,12 @@ export const CORNER_WAKE_MIN_INTERVAL_MS = 400;
  * wake stop meaning "something new for you".
  *
  * Everything else wakes: any event authored by someone else (a human message,
- * a close request, the owner's grant decision), and every fact the server
- * itself publishes (a GitHub check, a schedule, a phone write), which carries
- * no author at all. The filter fails OPEN — an event with no `agentId` always
- * wakes — and the daemon's timed poll remains the recovery path regardless.
+ * a close request, the owner's grant decision), and server facts such as checks
+ * or schedules. A reader's cursor change is device sync, not work for a helper.
+ * The daemon's timed poll remains the recovery path regardless.
  */
 export function wakesCorner(event: LiveEvent, agentId: string): boolean {
+  if (event.type === 'invalidate' && event.readerId) return false;
   return !isOwnTurnNarration(event, agentId);
 }
 

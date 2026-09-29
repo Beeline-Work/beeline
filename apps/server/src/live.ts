@@ -71,6 +71,8 @@ export type LiveEvent =
       reason: string;
       agentId?: string;
       targetAgentId?: string;
+      /** A read-cursor change belongs only to this reader's devices. */
+      readerId?: string;
       messageId?: string;
       requestId?: string;
       operation?: string;

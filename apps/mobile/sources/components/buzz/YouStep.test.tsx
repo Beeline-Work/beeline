@@ -33,6 +33,7 @@ vi.mock('react-native', async () => {
     ScrollView: host('ScrollView'),
     Text: host('Text'),
     TextInput: host('TextInput'),
+    useWindowDimensions: () => ({ width: 390, height: 844 }),
     View: host('View'),
   };
 });
@@ -89,7 +90,6 @@ async function render(props: Partial<React.ComponentProps<typeof YouStep>> = {})
     tree = create(
       React.createElement(YouStep, {
         seed: SEED,
-        name: 'Octo Cat',
         handle: 'octocat',
         onConfirm,
         onEntered,
@@ -106,19 +106,26 @@ async function press(node: any) {
 }
 
 describe('YouStep', () => {
-  it('asks for name and face on one screen, the name pre-filled from GitHub', async () => {
+  it('shows the actual GitHub handle and the unlabeled twelve-face picker', async () => {
     const { tree } = await render();
-    expect(host(tree, 'onboarding-you-title').props.children).toBe('You, in every Workspace');
-    expect(host(tree, 'onboarding-you-meta').props.children).toBe(
-      'People and agents see this name and face. Change either in Settings.',
-    );
-    expect(host(tree, 'onboarding-you-name').props.value).toBe('Octo Cat');
-    expect(host(tree, 'onboarding-you-source').props.children).toBe('From GitHub · @octocat');
+    expect(host(tree, 'onboarding-you-title').props.children).toBe('You are');
+    const handleParts = host(tree, 'onboarding-you-handle').props.children;
+    expect(handleParts.map((part: any) => part.props.children)).toEqual(['@', 'octocat', '.']);
+    expect(handleParts.map((part: any) => flat(part.props.style).color)).toEqual([
+      theme.accent,
+      theme.textPrimary,
+      theme.textPrimary,
+    ]);
+    expect(host(tree, 'onboarding-you-source').props.children).toBe('From GitHub · change either later in Settings');
     const labels = tree.root
       .findAll((node: any) => node.type === 'Text')
       .map((node: any) => node.props.children);
-    expect(labels).toEqual(expect.arrayContaining(['Name', 'Face']));
+    expect(labels).not.toEqual(expect.arrayContaining(['Name', 'Face', 'You look like']));
+    expect(tree.root.findAll((node: any) => node.type === 'TextInput')).toHaveLength(0);
     for (const face of FACE_IDS) host(tree, `onboarding-face-${face}`);
+    const grid = host(tree, 'onboarding-face-grid');
+    expect(grid.children).toHaveLength(3);
+    expect(grid.children.map((row: any) => row.findAll((node: any) => node.type === 'Pressable').length)).toEqual([4, 4, 4]);
     const tileIDs = new Set(FACE_IDS.map((face) => `onboarding-face-${face}`));
     const tiles = tree.root.findAll(
       (node: any) => node.type === 'Pressable' && tileIDs.has(node.props?.testID),
@@ -133,39 +140,36 @@ describe('YouStep', () => {
     expect(host(tree, 'onboarding-face-confirm').props.label).toBe('Continue');
   });
 
-  it('saves the edited name and the face the person picked, not the default', async () => {
+  it('saves the face the person picked, not the default', async () => {
     animations.timings.length = 0;
     const { tree, onConfirm, onEntered } = await render();
-    await act(async () => {
-      host(tree, 'onboarding-you-name').props.onChangeText('Ada');
-    });
     const other = FACE_IDS.find((face) => face !== defaultFaceForSeed(SEED))!;
     await press(host(tree, `onboarding-face-${other}`));
     await press(host(tree, 'onboarding-face-confirm'));
-    expect(onConfirm).toHaveBeenCalledWith({ name: 'Ada', face: other });
+    expect(onConfirm).toHaveBeenCalledWith({ face: other });
     expect(onEntered).toHaveBeenCalledTimes(1);
   });
 
-  it('gates Continue on a name', async () => {
-    const { tree } = await render();
-    await act(async () => {
-      host(tree, 'onboarding-you-name').props.onChangeText('   ');
-    });
-    expect(host(tree, 'onboarding-face-confirm').props.disabled).toBe(true);
+  it('substitutes another real handle without changing the punctuation', async () => {
+    const { tree } = await render({ handle: 'ada_lovelace' });
+    expect(host(tree, 'onboarding-you-handle').props.children.map((part: any) => part.props.children)).toEqual(['@', 'ada_lovelace', '.']);
+  });
+
+  it('uses the saved name if the managed handle read is unavailable', async () => {
+    const { tree } = await render({ handle: undefined, name: 'Octo Cat' });
+    expect(host(tree, 'onboarding-you-handle').props.children.map((part: any) => part?.props?.children ?? null)).toEqual([null, 'Octo Cat', '.']);
   });
 
   it('pre-selects the seed default so one tap also works', async () => {
     const { tree } = await render();
     const preset = defaultFaceForSeed(SEED);
-    expect(flat(host(tree, `onboarding-face-${preset}`).props.style).borderColor).toBe(
-      theme.accent,
-    );
+    expect(flat(host(tree, `onboarding-face-${preset}`).props.style).borderColor).toBe(theme.textPrimary);
     expect(host(tree, 'onboarding-face-confirm').props.disabled).toBe(false);
   });
 
   it('prefers a face already on record over the seed default', async () => {
     const { tree } = await render({ currentFace: 'whale' });
-    expect(flat(host(tree, 'onboarding-face-whale').props.style).borderColor).toBe(theme.accent);
+    expect(flat(host(tree, 'onboarding-face-whale').props.style).borderColor).toBe(theme.textPrimary);
   });
 
   it('flips only the border colour on selection; width and layout never change', async () => {
@@ -174,14 +178,14 @@ describe('YouStep', () => {
     for (const style of before) {
       expect(style.borderColor).toBe(theme.faint);
       expect(style.borderWidth).toBe(2);
-      expect(style.width).toBe(64);
-      expect(style.height).toBe(64);
+      expect(style.width).toBe(78);
+      expect(style.height).toBe(78);
     }
     await press(host(tree, 'onboarding-face-owl'));
     const after = FACE_IDS.map((face) => flat(host(tree, `onboarding-face-${face}`).props.style));
     after.forEach((style, index) => {
       const face = FACE_IDS[index];
-      expect(style.borderColor).toBe(face === 'owl' ? theme.accent : theme.faint);
+      expect(style.borderColor).toBe(face === 'owl' ? theme.textPrimary : theme.faint);
       const { borderColor: _a, ...rest } = style;
       const { borderColor: _b, ...restBefore } = before[index]!;
       expect(rest).toEqual(restBefore);
@@ -202,7 +206,7 @@ describe('YouStep', () => {
     const { tree, onConfirm, onEntered } = await render();
     await press(host(tree, 'onboarding-face-heron'));
     await press(host(tree, 'onboarding-face-confirm'));
-    expect(onConfirm).toHaveBeenCalledWith({ name: 'Octo Cat', face: 'heron' });
+    expect(onConfirm).toHaveBeenCalledWith({ face: 'heron' });
     expect(animations.timings).toEqual([{ duration: FACE_CEREMONY_CROSSFADE_MS }]);
     expect(FACE_CEREMONY_CROSSFADE_MS).toBe(240);
     expect(onEntered).toHaveBeenCalledTimes(1);
@@ -215,7 +219,7 @@ describe('YouStep', () => {
   it('keeps the person here with an inline, retryable error when saving fails', async () => {
     animations.timings.length = 0;
     const onConfirm = vi
-      .fn<(choice: { name: string; face: string }) => Promise<void>>()
+      .fn<(choice: { face: string }) => Promise<void>>()
       .mockRejectedValueOnce(new Error('offline'))
       .mockResolvedValueOnce(undefined);
     const { tree, onEntered } = await render({ onConfirm });

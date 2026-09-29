@@ -35,7 +35,7 @@ import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { WORKSPACE_SETTINGS_TILE, workspacePictureSeat } from '@/buzz/workspace-tile';
 import { Modal } from '@/modal';
-import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
+import { PageHeader } from '@/components/buzz/PageHeader';
 
 type WorkspaceRoomSetting = {
   id: string;
@@ -358,18 +358,7 @@ export default function WorkspaceSettings() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-      <View style={styles.header}>
-        <TouchableOpacity
-          accessibilityLabel="Back"
-          onPress={() => router.back()}
-          style={styles.back}
-        >
-          <ChevronGlyph color={styles.backText.color} direction="left" size={CHEVRON_BACK_SIZE} />
-        </TouchableOpacity>
-        <View style={styles.headerCopy}>
-          <Text style={styles.title}>{WORKSPACE_LABEL}</Text>
-        </View>
-      </View>
+      <PageHeader onBack={() => router.back()} prominent title={WORKSPACE_LABEL} />
 
       {!workspaceView ? (
         <View style={styles.denied} testID="workspace-settings-load-failed">
@@ -667,18 +656,6 @@ const styles = StyleSheet.create((theme) => {
   return {
     container: { flex: 1, backgroundColor: hull.bgTerminal },
     center: { alignItems: 'center', justifyContent: 'center' },
-    header: {
-      minHeight: 66,
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: hull.space.sm,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: hull.border,
-    },
-    back: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-    backText: { color: hull.textPrimary },
-    headerCopy: { flex: 1, minWidth: 0 },
-    title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
     content: {
       padding: hull.space.md,
       gap: hull.layout.sectionGap,

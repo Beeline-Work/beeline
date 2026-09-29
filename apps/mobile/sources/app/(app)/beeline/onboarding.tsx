@@ -77,12 +77,7 @@ import {
 } from '@/buzz/person-name';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { BeelineMark } from '@/components/buzz/BeelineMark';
-import {
-  HullSurface,
-  MonoButton,
-  OnboardingButton,
-  PixelGateReveal,
-} from '@/components/buzz/MonoHull';
+import { HullSurface, MonoButton, PixelGateReveal } from '@/components/buzz/MonoHull';
 import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
 import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
@@ -147,7 +142,7 @@ export default function BuzzOnboarding() {
   const [namingIdentity, setNamingIdentity] = useState<Identity | null>(null);
   const [namingClient, setNamingClient] = useState<BuzzClient | null>(null);
   const [nameInput, setNameInput] = useState('');
-  // The You step (name + face): published once the monolith identity exists,
+  // The You step (handle + face): published once the monolith identity exists,
   // cleared by the crossfade into the app. `face` is a face already on record.
   const [faceStep, setFaceStep] = useState<OnboardingFaceStep | null>(null);
   const loading = loadingAction !== null;
@@ -159,7 +154,7 @@ export default function BuzzOnboarding() {
 
   /**
    * After a monolith sign-in the identity exists; before the app opens the
-   * person confirms their name and chooses their face. A person who already
+   * person sees their GitHub handle and chooses their face. A person who already
    * chose (a returning sign-in on a new device) goes straight in — both live
    * in Settings.
    */
@@ -755,9 +750,7 @@ export default function BuzzOnboarding() {
           currentFace={faceStep.face}
           handle={faceStep.handle}
           name={faceStep.name}
-          onConfirm={async ({ name, face }) => {
-            if (name !== faceStep.name)
-              await monolithPhoneOperation('updatePersonProfile', { name });
+          onConfirm={async ({ face }) => {
             await monolithPhoneOperation('updateIdentityFace', { faceId: face });
           }}
           onEntered={() => {
@@ -956,7 +949,7 @@ export default function BuzzOnboarding() {
           beeline<Text style={styles.titlePeriod}>.</Text>
         </Text>
         <Text style={styles.subtitle} testID="onboarding-tagline">
-          A Workspace for people and agents.
+          workspace for all intelligence
         </Text>
       </View>
 
@@ -1028,7 +1021,8 @@ export default function BuzzOnboarding() {
               Rooms, and repository approvals follow this account — agents and people you work with
               keep working with you, no re-invites.
             </Text>
-            <OnboardingButton
+            <MonoButton
+              labelStyle={styles.buttonLabel}
               label="Replace device key"
               loading={loadingAction === 'recover'}
               onPress={() => void handleReplaceDeviceKey()}
@@ -1037,14 +1031,16 @@ export default function BuzzOnboarding() {
             />
           </View>
         ) : !showAdvanced && canRetryBind ? (
-          <OnboardingButton
+          <MonoButton
+            labelStyle={styles.buttonLabel}
             label="Retry device bind"
             loading={loadingAction === 'bind'}
             onPress={() => pendingBind.current && void finishPendingBind(pendingBind.current)}
             disabled={loading}
           />
         ) : !showAdvanced && canSignIn ? (
-          <OnboardingButton
+          <MonoButton
+            labelStyle={styles.buttonLabel}
             label={signInLabel}
             testID="onboarding-github-sign-in"
             loading={
@@ -1074,6 +1070,8 @@ export default function BuzzOnboarding() {
 
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
+  const compactProse = { fontSize: 14, lineHeight: 20 };
+  const compactMonoLabel = { fontSize: 11, lineHeight: 15, letterSpacing: 0.8 };
   return {
     container: {
       flex: 1,
@@ -1108,8 +1106,9 @@ const styles = StyleSheet.create((theme) => {
     buttonLabel: { fontFamily: groknight.proseSemibold },
     subtitle: {
       ...Typography.default(),
-      ...groknight.type.body,
+      fontFamily: groknight.proseRegular,
       maxWidth: 320,
+      ...compactProse,
       color: groknight.textSecondary,
       textAlign: 'center',
     },
@@ -1124,31 +1123,29 @@ const styles = StyleSheet.create((theme) => {
       marginBottom: 16,
     },
     statusLabel: {
-      ...Typography.default(),
-      ...groknight.type.sectionHead,
+      ...Typography.mono('semiBold'),
       color: groknight.textPrimary,
+      ...compactMonoLabel,
       marginBottom: 4,
     },
     noticeText: {
       ...Typography.default(),
-      ...groknight.type.meta,
+      fontFamily: groknight.proseRegular,
       color: groknight.textSecondary,
+      ...compactProse,
     },
     importPanel: { width: '100%', maxWidth: 440, alignSelf: 'center', marginBottom: 16 },
     sectionLabel: {
       ...Typography.mono('semiBold'),
       color: groknight.textMuted,
-      fontSize: 11,
-      lineHeight: 15,
-      letterSpacing: 0.8,
+      ...compactMonoLabel,
       marginBottom: 4,
     },
     keyGuide: {
       ...Typography.default(),
       fontFamily: groknight.proseRegular,
       color: groknight.textSecondary,
-      fontSize: 14,
-      lineHeight: 20,
+      ...compactProse,
       marginBottom: 10,
     },
     input: {

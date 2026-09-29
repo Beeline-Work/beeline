@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { isCornerProposalText } from './corner-proposal';
+import { cornerProposalDecision, parseCornerProposal } from './corner-proposal';
+
+const isCornerProposalText = (text: string) => parseCornerProposal(text) !== null;
 
 describe('corner proposal transcript lines', () => {
   it('recognizes the exact one-line proposal ceremony', () => {
@@ -48,5 +50,23 @@ describe('corner proposal transcript lines', () => {
         'Proposed corner: Faster reads — Bound latency\nTriage warning — warranted: A related change exists\nWant me to proceed?',
       ),
     ).toBe(false);
+  });
+
+  it('reads the title, objective, and warnings the card shows', () => {
+    expect(
+      parseCornerProposal(
+        'Proposed corner: Faster reads — Bound query latency under load\nTriage warning — warranted: The bug did not reproduce',
+      ),
+    ).toEqual({
+      title: 'Faster reads',
+      objective: 'Bound query latency under load',
+      warnings: ['Triage warning — warranted: The bug did not reproduce'],
+    });
+  });
+
+  it('maps the card replies back to the picked choice', () => {
+    expect(cornerProposalDecision('go')).toBe('open');
+    expect(cornerProposalDecision(' Cancel ')).toBe('cancel');
+    expect(cornerProposalDecision('go ahead')).toBeNull();
   });
 });

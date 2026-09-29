@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Animated, Easing, ScrollView, Text, TextInput, View } from 'react-native';
+import { Animated, Easing, ScrollView, Text, useWindowDimensions, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { defaultFaceForSeed, type FaceId } from '@/buzz/faces';
@@ -9,15 +9,15 @@ import { OnboardingButton } from './MonoHull';
 /** The one canvas crossfade in the app: the You step into the app. */
 export const FACE_CEREMONY_CROSSFADE_MS = 240;
 
-export type YouStepChoice = { name: string; face: FaceId };
+export type YouStepChoice = { face: FaceId };
 
 type YouStepProps = {
   /** The new identity's id: the seed the tiles and the default face are drawn from. */
   seed: string;
-  /** The name on record, from GitHub on a first sign-in. Editable here. */
-  name: string;
-  /** The GitHub login, shown under the name as where it came from. */
+  /** The actual GitHub login assigned to this identity, when available. */
   handle?: string;
+  /** Existing display name, used only if the handle read is unavailable. */
+  name?: string;
   /** A face already on record; else the seed's default. */
   currentFace?: string | null;
   /** Persist the choice. A rejection keeps the person here with an inline, retryable error. */
@@ -29,21 +29,21 @@ type YouStepProps = {
 };
 
 /**
- * Onboarding's one identity step: "You, in every Workspace". The name comes
- * from GitHub and can be edited; the face grid is the only face picker in
- * signup, and the face chosen here is the one saved.
+ * Onboarding's identity step. GitHub supplies the handle; the face chosen
+ * here is the one saved. Both can be changed later in Settings.
  */
 export function YouStep({
   seed,
-  name: initialName,
   handle,
+  name,
   currentFace,
   onConfirm,
   onEntered,
   initialSelection,
 }: YouStepProps) {
   const { theme } = useUnistyles();
-  const [name, setName] = useState(initialName);
+  const { width } = useWindowDimensions();
+  const tileSize = Math.min(78, Math.floor((width - theme.buzz.space.md * 2 - 30) / 4));
   const [selected, setSelected] = useState<string | null>(
     initialSelection === undefined ? (currentFace ?? defaultFaceForSeed(seed)) : initialSelection,
   );
@@ -51,17 +51,15 @@ export function YouStep({
   const [error, setError] = useState<string | null>(null);
   const crossfade = useRef(new Animated.Value(0)).current;
   const contentOpacity = crossfade.interpolate({ inputRange: [0, 1], outputRange: [1, 0] });
-  const trimmed = name.trim();
-
   const confirm = async () => {
-    if (!selected || !trimmed || busy) return;
+    if (!selected || busy) return;
     setBusy(true);
     setError(null);
     try {
-      await onConfirm({ name: trimmed, face: selected as FaceId });
+      await onConfirm({ face: selected as FaceId });
     } catch (caught) {
       setError(
-        `Could not save your name and face. Try again. (${caught instanceof Error ? caught.message : String(caught)})`,
+        `Could not save your face. Try again. (${caught instanceof Error ? caught.message : String(caught)})`,
       );
       setBusy(false);
       return;
@@ -86,57 +84,53 @@ export function YouStep({
           keyboardShouldPersistTaps="handled"
           style={styles.fill}
         >
-          <Text accessibilityRole="header" style={styles.title} testID="onboarding-you-title">
-            You, in every Workspace
-          </Text>
-          <Text style={styles.meta} testID="onboarding-you-meta">
-            People and agents see this name and face. Change either in Settings.
-          </Text>
-          <Text style={styles.label}>Name</Text>
-          <TextInput
-            accessibilityLabel="Name"
-            autoCapitalize="words"
-            editable={!busy}
-            maxLength={80}
-            onChangeText={(value) => {
-              setName(value);
-              setError(null);
-            }}
-            placeholderTextColor={theme.buzz.textDisabled}
-            style={styles.input}
-            testID="onboarding-you-name"
-            value={name}
-          />
-          {handle ? (
-            <Text style={styles.hint} testID="onboarding-you-source">
-              {`From GitHub · @${handle}`}
+          <View style={styles.choices}>
+            <Text accessibilityRole="header" style={styles.title} testID="onboarding-you-title">
+              You are
             </Text>
-          ) : null}
-          <Text style={[styles.label, styles.faceLabel]}>Face</Text>
-          <View style={styles.gridSlot}>
-            <FaceGrid
-              disabled={busy}
-              onSelect={(face) => {
-                setSelected(face);
-                setError(null);
-              }}
-              seed={seed}
-              selected={selected}
-              testIDPrefix="onboarding-face"
-            />
+            <Text
+              adjustsFontSizeToFit
+              numberOfLines={1}
+              style={styles.handleLine}
+              testID="onboarding-you-handle"
+            >
+              {handle ? <Text style={styles.at}>@</Text> : null}
+              <Text style={styles.handle}>{handle || name || 'You'}</Text>
+              <Text style={styles.period}>.</Text>
+            </Text>
+            <View style={styles.gridSlot}>
+              <FaceGrid
+                columns={4}
+                disabled={busy}
+                onSelect={(face) => {
+                  setSelected(face);
+                  setError(null);
+                }}
+                seed={seed}
+                selected={selected}
+                selectedBorderColor={theme.buzz.textPrimary}
+                testIDPrefix="onboarding-face"
+                tileSize={tileSize}
+              />
+            </View>
           </View>
-          {error ? (
-            <Text accessibilityRole="alert" style={styles.error} testID="onboarding-face-error">
-              {error}
+          <View style={styles.footer}>
+            {error ? (
+              <Text accessibilityRole="alert" style={styles.error} testID="onboarding-face-error">
+                {error}
+              </Text>
+            ) : null}
+            <OnboardingButton
+              disabled={!selected || busy}
+              label="Continue"
+              loading={busy}
+              onPress={() => void confirm()}
+              testID="onboarding-face-confirm"
+            />
+            <Text style={styles.hint} testID="onboarding-you-source">
+              From GitHub · change either later in Settings
             </Text>
-          ) : null}
-          <OnboardingButton
-            disabled={!selected || !trimmed || busy}
-            label="Continue"
-            loading={busy}
-            onPress={() => void confirm()}
-            testID="onboarding-face-confirm"
-          />
+          </View>
         </ScrollView>
       </Animated.View>
       <Animated.View
@@ -153,50 +147,35 @@ export function YouStep({
 
 const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
+  // The approved identity line combines the hero and body scales.
+  const handleSize = hull.type.hero.fontSize + hull.type.body.fontSize;
   return {
     root: { flex: 1 },
     fill: { flex: 1 },
     content: {
       flexGrow: 1,
-      justifyContent: 'center',
+      justifyContent: 'space-between',
       width: '100%',
       maxWidth: 460,
       alignSelf: 'center',
+      paddingHorizontal: hull.space.md,
       paddingVertical: hull.space.lg,
     },
-    title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
-    meta: {
-      ...Typography.default(),
-      ...hull.type.meta,
-      color: hull.textSecondary,
-      marginTop: hull.space.sm,
-      marginBottom: hull.space.lg,
-    },
-    label: {
-      ...Typography.default(),
-      ...hull.type.meta,
-      color: hull.textSecondary,
-      marginBottom: hull.space.sm,
-    },
-    faceLabel: { marginTop: hull.space.lg },
-    input: {
-      ...Typography.default(),
-      ...hull.type.body,
-      minHeight: 48,
-      paddingHorizontal: hull.space.md,
-      borderRadius: hull.radius,
-      borderWidth: 1,
-      borderColor: hull.borderStrong,
-      color: hull.textPrimary,
-      backgroundColor: hull.bgBase,
-    },
+    choices: { paddingTop: hull.space.xl },
+    title: { ...Typography.default(), ...hull.type.hero, color: hull.textSecondary },
+    handleLine: { ...Typography.default(), fontSize: handleSize, lineHeight: 52, marginTop: hull.space.xs },
+    at: { color: hull.accent },
+    handle: { color: hull.textPrimary },
+    period: { color: hull.dark ? hull.textPrimary : '#111111' },
     hint: {
       ...Typography.default(),
       ...hull.type.meta,
       color: hull.ledgerQuiet,
-      marginTop: hull.space.sm,
+      textAlign: 'center',
+      marginTop: hull.space.md,
     },
-    gridSlot: { alignItems: 'center', marginBottom: hull.space.lg },
+    gridSlot: { alignItems: 'center', marginTop: hull.space.xxl },
+    footer: { paddingBottom: hull.space.sm },
     error: {
       ...Typography.default(),
       ...hull.type.meta,

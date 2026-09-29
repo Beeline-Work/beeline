@@ -4,6 +4,7 @@ import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { createBeelineServer } from './server.js';
 import { dashboardHealth, dashboardOps } from './operator-dashboard.js';
+import { QueryWindow } from './query-profile.js';
 import type { SqlDatabase } from './database.js';
 import type { TokenAuth } from './auth.js';
 import type { PhoneService } from './phone-service.js';
@@ -25,7 +26,7 @@ beforeEach(async () => {
   server = createBeelineServer({
     database: db,
     dashboardSecret: 'dashboard-only-secret',
-    auth: {} as TokenAuth,
+    auth: { authenticatePhone: async (value: string) => value === 'phone-key-for-dashboard-test' ? 'viewer' : null } as TokenAuth,
     phone: {} as PhoneService,
     daemon: {} as DaemonService,
     live: {} as LiveHub,
@@ -109,9 +110,9 @@ describe('private operator dashboard', () => {
     expect(allBody.usage.people[0].count).toBe(10);
     expect(allBody.usage.people[2].count).toBe(10);
     expect(allBody.usage.people[2]).toMatchObject({
-      medianTimeToStepMs: null,
-      timeToStepState: 'unmeasured',
+      timeToStepState: 'measured',
     });
+    expect(allBody.usage.people[2].medianTimeToStepMs).toBeGreaterThanOrEqual(0);
     expect(allBody.usage.agents[2].count).toBe(10);
     const explicitAll = await (await get('?platforms=ios,android,macos,windows,linux')).json();
     expect(explicitAll.usage.people).toEqual(allBody.usage.people);
@@ -154,6 +155,33 @@ describe('private operator dashboard', () => {
     expect(result.memory.tokenShare).toMatchObject({ state: 'unmeasured', share: null });
   });
 
+  it('derives funnel time from each person’s actual stage timestamps', async () => {
+    await seed();
+    await db.query(`UPDATE identities SET created_at=now()-interval '3 hours' WHERE kind='human'`);
+    await db.query(`UPDATE memberships SET joined_at=now()-interval '2 hours'
+      WHERE room_id IS NULL AND identity_id IN (SELECT id FROM identities WHERE kind='human')`);
+    await db.query(`UPDATE daemon_tokens SET created_at=now()-interval '1 hour'`);
+    const result = await (await get()).json();
+    expect(result.usage.people[1].timeToStepState).toBe('measured');
+    expect(result.usage.people[2].timeToStepState).toBe('measured');
+    expect(Math.abs(result.usage.people[1].medianTimeToStepMs - 3_600_000)).toBeLessThan(1000);
+    expect(Math.abs(result.usage.people[2].medianTimeToStepMs - 3_600_000)).toBeLessThan(1000);
+  });
+
+  it('keeps funnel counts when the optional timing read fails', async () => {
+    await seed();
+    const original = db.query.bind(db);
+    vi.spyOn(db, 'query').mockImplementation((async (sql, params) => {
+      if (String(sql).includes('workspace_times AS')) throw new Error('timing unavailable');
+      return original(sql, params);
+    }) as typeof db.query);
+    const result = await (await get()).json();
+    expect(result.usage.state).toBe('measured');
+    expect(result.usage.people[2]).toMatchObject({
+      count: 10, timeToStepState: 'unmeasured', medianTimeToStepMs: null,
+    });
+  });
+
   it('measures store-only runtimes when release thresholds exist, and isolates a bad memory read', async () => {
     await seed();
     const original = db.query.bind(db);
@@ -172,7 +200,7 @@ describe('private operator dashboard', () => {
     expect(JSON.stringify(result)).not.toContain(secret);
   });
 
-  it('does not report overall green when only database and turn telemetry exist', async () => {
+  it('ignores an instant slow query and judges the ten-minute distribution', async () => {
     await seed();
     const agent = `b${(1).toString(16).padStart(63, '0')}`;
     for (let index = 0; index < 20; index++) {
@@ -181,16 +209,32 @@ describe('private operator dashboard', () => {
         [room, `turn-${index}`, agent, index < 2 ? 'failed' : 'complete'],
       );
     }
+    const window = new QueryWindow();
+    for (let index = 0; index < 40; index++) {
+      window.recordQuery(index === 0 ? 6001 : 20);
+      window.recordCheckout(2, 0);
+    }
     const measuredDb = {
       query: db.query.bind(db),
       transaction: db.transaction.bind(db),
-      poolCounts: () => ({ total: 5, idle: 5, waiting: 0 }),
+      poolCounts: () => ({ total: 5, idle: 5, waiting: 1 }),
       oldestActiveQueryAgeMs: async () => 6001,
+      queryWindow: () => window.snapshot(),
     } as SqlDatabase;
-    const red = await dashboardHealth(measuredDb, new Date().toISOString());
-    expect(red.server.verdict).toBe('green');
-    expect(red.slow).toMatchObject({ verdict: 'red', function: 'database.query' });
-    expect(red.failing).toMatchObject({ verdict: 'red', function: 'agent_turn' });
+    const stable = await dashboardHealth(measuredDb, new Date().toISOString());
+    expect(stable.server.verdict).toBe('green');
+    expect(stable.slow).toMatchObject({
+      verdict: 'unmeasured', function: null, windowMinutes: 10,
+      queryP95Ms: 20, queryP99Ms: 6001, currentWaiters: 1,
+    });
+    expect(stable.failing).toMatchObject({ verdict: 'red', function: 'agent_turn' });
+    for (let index = 0; index < 20; index++) {
+      window.recordQuery(6001);
+      window.recordCheckout(220, 1);
+    }
+    const degraded = await dashboardHealth(measuredDb, new Date().toISOString());
+    expect(degraded.slow).toMatchObject({ verdict: 'red', function: 'database.query' });
+    expect(degraded.slow.queryP95Ms).toBe(6001);
     await db.query(`UPDATE agent_turns SET status='complete'`);
     const incomplete = await dashboardHealth(measuredDb, new Date().toISOString());
     expect(incomplete.failing).toMatchObject({
@@ -198,5 +242,43 @@ describe('private operator dashboard', () => {
       measuredFunctions: ['agent_turn'],
     });
     expect(incomplete.failing.unmeasuredFunctions).toContain('attachment_upload');
+  });
+
+  it('uses completed page and push events, not synthetic counts', async () => {
+    await seed();
+    const unauthenticated = await fetch(`${base}/v1/phone/observations/page-load`, {
+      method: 'POST', body: JSON.stringify({ durationMs: 120, failed: false }),
+    });
+    expect(unauthenticated.status).toBe(401);
+    const accepted = await fetch(`${base}/v1/phone/observations/page-load`, {
+      method: 'POST', headers: { authorization: 'Bearer phone-key-for-dashboard-test' },
+      body: JSON.stringify({ durationMs: 120, failed: false }),
+    });
+    expect(accepted.status).toBe(204);
+    for (let index = 1; index <= 5; index++) {
+      await db.query(`INSERT INTO push_delivery_claims(message_id,device_token,status,claimed_at,completed_at)
+        VALUES($1,$2,'delivered',now()-interval '2 seconds',now())`,
+        [`message-${index}`, `push-${index}`]);
+    }
+    const health = await dashboardHealth(db, new Date().toISOString());
+    expect(health.functions.find((item) => item.function === 'page_load')).toMatchObject({
+      state: 'unmeasured', total: null,
+    });
+    expect(health.functions.find((item) => item.function === 'push_delivery')).toMatchObject({
+      state: 'measured', total: 5,
+    });
+    expect((await db.query(`SELECT count(*) total FROM operator_function_events WHERE function_name='page_load'`))
+      .rows[0]?.total).toBe(1);
+    for (let index = 0; index < 19; index++) {
+      await db.query(`INSERT INTO operator_function_events(function_name,duration_ms,failed)
+        VALUES('page_load',$1,$2)`, [6001, index < 2]);
+    }
+    const degraded = await dashboardHealth(db, new Date().toISOString());
+    expect(degraded.slow).toMatchObject({ verdict: 'red', function: 'page_load' });
+    expect(degraded.failing).toMatchObject({ verdict: 'red', function: 'page_load' });
+    expect(degraded.functions.find((item) => item.function === 'page_load')).toMatchObject({
+      state: 'measured', verdictSampleState: 'sufficient', total: 20,
+      p95Ms: 6001, failureRate: 0.1,
+    });
   });
 });

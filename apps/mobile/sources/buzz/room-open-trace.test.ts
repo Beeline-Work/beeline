@@ -1,4 +1,6 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
+const reportPage = vi.hoisted(() => vi.fn());
+vi.mock('./room-page-observation', () => ({ reportRoomPageObservation: reportPage }));
 
 /**
  * The point of this module is that it can be READ on a real phone. These tests
@@ -32,9 +34,23 @@ const withEnv = async (value: string | undefined, isDev: boolean) => {
   return { mod, restore };
 };
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); reportPage.mockClear(); });
 
 describe('room open trace', () => {
+  it('reports a real first frame once and a failed read as a failed page load', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { mod, restore } = await withEnv(undefined, false);
+    mod.markRoomOpen('nav-dispatch');
+    mod.markRoomOpen('newest-frame');
+    mod.markRoomOpen('newest-frame');
+    await vi.waitFor(() => expect(reportPage).toHaveBeenCalledTimes(1));
+    expect(reportPage).toHaveBeenCalledWith(expect.any(Number), false);
+    mod.markRoomOpen('nav-dispatch');
+    mod.markRoomOpen('room-read-error');
+    await vi.waitFor(() => expect(reportPage).toHaveBeenCalledTimes(2));
+    expect(reportPage).toHaveBeenLastCalledWith(expect.any(Number), true);
+    restore();
+  });
   it('reports elapsed milliseconds from the first mark, not absolute clocks', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const { mod, restore } = await withEnv('1', false);

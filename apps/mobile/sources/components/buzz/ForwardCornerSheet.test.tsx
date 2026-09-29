@@ -17,8 +17,7 @@ vi.mock('./HullActionSheet', async () => {
   return {
     HullActionSheetModal: (props: any) =>
       ReactModule.createElement('HullActionSheetModal', props, props.children),
-    HullActionSheetRow: (props: any) =>
-      ReactModule.createElement('HullActionSheetRow', props),
+    HullActionSheetRow: (props: any) => ReactModule.createElement('HullActionSheetRow', props),
     HullActionSheetCancel: (props: any) =>
       ReactModule.createElement('HullActionSheetCancel', props),
   };
@@ -54,9 +53,9 @@ describe('forward-to-new-corner sheet', () => {
     const renderer = render(<ForwardCornerSheet onClose={vi.fn()} onOpen={vi.fn()} visible />);
     const sheet = renderer.root.findByType('HullActionSheetModal').props;
     expect(sheet.testID).toBe('forward-corner-sheet');
-    expect(sheet.title).toBe('Forward to a new corner?');
+    expect(sheet.title).toBe('Begin a new corner');
     expect(sheet.subtitle).toBe(
-      'A human-owned corner opens with this message ready to send in its composer.',
+      'Start a new corner with the chosen message as the starting topic.',
     );
     expect(sheet.visible).toBe(true);
   });
@@ -64,12 +63,10 @@ describe('forward-to-new-corner sheet', () => {
   it('confirms with one plain row and cancels through the sheet', () => {
     const onOpen = vi.fn();
     const onClose = vi.fn();
-    const renderer = render(
-      <ForwardCornerSheet onClose={onClose} onOpen={onOpen} visible />,
-    );
+    const renderer = render(<ForwardCornerSheet onClose={onClose} onOpen={onOpen} visible />);
     const row = renderer.root.findByType('HullActionSheetRow').props;
     expect(row.testID).toBe('forward-corner-open');
-    expect(row.label).toBe('Open a new corner');
+    expect(row.label).toBe('Open corner');
     // A plain action carries no fifth trailing mark.
     expect(row.chevron).toBeUndefined();
     expect(row.toggle).toBeUndefined();

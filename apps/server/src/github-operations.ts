@@ -818,6 +818,10 @@ export class GitHubOperations {
       if (event === 'push') await this.processBaseBranchPush(body, install.id);
       return;
     }
+    // Only installation and repository lifecycle events change the catalog.
+    // Other subscribed webhook types must not turn every delivery into a
+    // full GitHub refresh and repository-change wake for every bound Room.
+    if (event !== 'installation' && event !== 'installation_repositories' && event !== 'repository') return;
     if (event === 'installation' && body.action === 'deleted') {
       await this.database.query(
         `UPDATE github_installations SET status='revoked',updated_at=now() WHERE installation_id=$1`,
@@ -1851,7 +1855,9 @@ export class GitHubOperations {
   ) {
     const account = await this.app.installationAccount(installationId);
     await database.query(
-      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,account_avatar_url,repository_selection,status) VALUES($1,$2,$3,$4,$5,$6,$7,'active') ON CONFLICT(installation_id) DO UPDATE SET owner_id=EXCLUDED.owner_id,account_id=EXCLUDED.account_id,account_login=EXCLUDED.account_login,account_type=EXCLUDED.account_type,account_avatar_url=EXCLUDED.account_avatar_url,repository_selection=EXCLUDED.repository_selection,status='active',updated_at=now()`,
+      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,account_avatar_url,repository_selection,status) VALUES($1,$2,$3,$4,$5,$6,$7,'active') ON CONFLICT(installation_id) DO UPDATE SET owner_id=EXCLUDED.owner_id,account_id=EXCLUDED.account_id,account_login=EXCLUDED.account_login,account_type=EXCLUDED.account_type,account_avatar_url=EXCLUDED.account_avatar_url,repository_selection=EXCLUDED.repository_selection,status='active',updated_at=now()
+       WHERE (github_installations.owner_id,github_installations.account_id,github_installations.account_login,github_installations.account_type,github_installations.account_avatar_url,github_installations.repository_selection,github_installations.status)
+         IS DISTINCT FROM (EXCLUDED.owner_id,EXCLUDED.account_id,EXCLUDED.account_login,EXCLUDED.account_type,EXCLUDED.account_avatar_url,EXCLUDED.repository_selection,EXCLUDED.status)`,
       [
         installationId,
         viewerId,
@@ -2047,7 +2053,9 @@ export class GitHubOperations {
     database: SqlDatabase,
   ) {
     await database.query(
-      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch) VALUES($1,$2,$3,$4) ON CONFLICT(repository_id) DO UPDATE SET installation_id=EXCLUDED.installation_id,full_name=EXCLUDED.full_name,default_branch=EXCLUDED.default_branch,active=true,updated_at=now()`,
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch) VALUES($1,$2,$3,$4) ON CONFLICT(repository_id) DO UPDATE SET installation_id=EXCLUDED.installation_id,full_name=EXCLUDED.full_name,default_branch=EXCLUDED.default_branch,active=true,updated_at=now()
+       WHERE (github_repositories.installation_id,github_repositories.full_name,github_repositories.default_branch,github_repositories.active)
+         IS DISTINCT FROM (EXCLUDED.installation_id,EXCLUDED.full_name,EXCLUDED.default_branch,true)`,
       [repository.id, repository.installationId, repository.fullName, repository.defaultBranch],
     );
   }

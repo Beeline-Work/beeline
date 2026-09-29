@@ -97,6 +97,7 @@ import { continuedSpeakerIds, ledgerSpeakerKey } from '@/buzz/ledger-attribution
 import { publishFailurePresentation } from '@/buzz/publish-failure';
 import { ledgerStamp } from '@/buzz/relative-time';
 import { anchorRelayReports, foldSystemLines } from '@/buzz/system-lines';
+import { cornerProposalDecision } from '@/buzz/corner-proposal';
 import { anchorCornerMarkers } from '@/buzz/corner-markers';
 import { cornerName } from '@/buzz/corners';
 import { CHANGES_LABEL, CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
@@ -2870,17 +2871,21 @@ export function BuzzChatSurface({
     return map;
   }, [visibleMessages]);
   const visibleMessageById = useStable(rawVisibleMessageById, sameMessageRefMap);
-  const answeredMessageIds = useMemo(
-    () =>
-      new Set(
-        visibleMessages
-          .filter(
-            (message) => message.authorIdentity?.kind === 'human' && Boolean(message.replyToId),
-          )
-          .map((message) => message.replyToId!),
-      ),
-    [visibleMessages],
-  );
+  // The first human reply to a message answers it; a corner proposal card shows
+  // which choice that reply made and who made it.
+  const answerByMessageId = useMemo(() => {
+    const answers = new Map<string, { decision: 'open' | 'cancel' | null; handle: string }>();
+    for (const message of visibleMessages) {
+      const identity = message.authorIdentity;
+      if (identity?.kind !== 'human' || !message.replyToId) continue;
+      if (answers.has(message.replyToId)) continue;
+      answers.set(message.replyToId, {
+        decision: cornerProposalDecision(message.text),
+        handle: (identity.handle || identity.name).replace(/^@/, ''),
+      });
+    }
+    return answers;
+  }, [visibleMessages]);
   const bylineOpeners = useMemo(() => transcriptBylineOpeners(visibleMessages), [visibleMessages]);
   const rawImmediatelyPrecedingVisibleMessageById = useMemo(() => {
     const map = new Map<string, ChatDisplayMessage>();
@@ -5260,9 +5265,10 @@ export function BuzzChatSurface({
           !isArchived &&
           !viewerIsAgent &&
           !isReadOnlyDirectMessage &&
-          !answeredMessageIds.has(item.relayId ?? item.id)
+          !answerByMessageId.has(item.relayId ?? item.id)
             ? { onCornerProposalDecision: handleCornerProposalDecision }
             : {})}
+          cornerProposalAnswer={answerByMessageId.get(item.relayId ?? item.id) ?? null}
           cornerProposalAction={
             cornerProposalAction?.messageId === item.id ? cornerProposalAction.decision : null
           }
@@ -5283,7 +5289,7 @@ export function BuzzChatSurface({
       renderCornerMarker,
       bylineOpeners,
       agentByPubkey,
-      answeredMessageIds,
+      answerByMessageId,
       isDesktop,
       handleWritePermission,
       handleGrantDecision,

@@ -12,12 +12,11 @@ It makes no store API calls. The current app identity is `app.usebeeline`.
 - `assets/store-icon-512.png` — Google Play app icon; 512 × 512 32-bit PNG (brass loop).
 - `assets/ios-app-icon-1024.png` — App Store icon source; 1024 × 1024 PNG.
 - `assets/feature-graphic-1024x500.png` — Google Play feature graphic; 1024 × 500 24-bit PNG, no alpha.
-- `screenshots/` — four 1080 × 2090 framed captures of the Beeline app, in carousel order.
+- `screenshots/` — four 1080 × 2160 Play phone captures, plus four 1260 × 2736 App Store 6.9-inch iPhone and four 2064 × 2752 App Store 13-inch iPad captures, in card order. See [the screenshot manifest](screenshots/README.md).
 
-The icon, feature graphic and screenshots are owner-delivered finals; there is
-no generator for them any more. Replace a file in place and keep the listed
-dimensions and PNG formats — `scripts/sync-play-metadata.mjs` refuses anything
-Play would reject.
+The icon and feature graphic are owner-delivered finals. The screenshots are
+captures of the app UI. Preserve the dimensions and RGB PNG format when
+replacing them; `scripts/sync-play-metadata.mjs` validates the Play set.
 
 ## Derived Play metadata
 

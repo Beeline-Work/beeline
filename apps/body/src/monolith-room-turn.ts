@@ -57,6 +57,7 @@ import {
   readOnlyMcpServer,
 } from './room-session.js';
 import { institutionalContextForTurn } from './institutional-context.js';
+import { modelContextWindowTokens } from './model-context-window.js';
 import {
   codegraphFingerprintServers,
   codegraphIndexDirectory,
@@ -413,6 +414,7 @@ export class MonolithRoomTurnLoop {
   private readonly queuedTurns: HumanMessage[] = [];
   /** Session scratch directory attachments are downloaded into (`TMPDIR/beeline-attachments`). */
   private attachmentDir?: string;
+  private modelContextTokens?: number;
   /** Whether the pinned model takes images; `undefined` when the pin did not say. */
   private modelTakesImages?: boolean;
   /** The session's TMPDIR: writable to a granted command in a Room, as it is to the harness (C94). */
@@ -829,6 +831,10 @@ export class MonolithRoomTurnLoop {
     });
     const agentEnv = { ...this.options.config.agentEnv, ...homeOverlay };
     this.agentEnv = agentEnv;
+    this.modelContextTokens = await modelContextWindowTokens(
+      selectionModel,
+      agentEnv.PI_CODING_AGENT_DIR,
+    );
     const agentArgs = agentArgsWithModelSelection(
       {
         kind: this.options.config.agentKind,
@@ -1292,6 +1298,7 @@ export class MonolithRoomTurnLoop {
                 );
                 const assembled = assembleTurnPrompt({
                   surface: this.sessionSurface,
+                  modelContextTokens: this.modelContextTokens,
                   sessionPrefix: this.turnInstructionPrefix,
                   ...(institutionalContext.standingPreference
                     ? {

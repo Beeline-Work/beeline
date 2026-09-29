@@ -3,7 +3,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
 
-describe.skipIf(!existsSync(CHROME))('New corner sheet in a browser', () => {
+describe.skipIf(!existsSync(CHROME))('New corner dialog in a browser', () => {
   it('shows Begin a new corner with a title field and opens the named corner', async () => {
     const mobile = process.cwd();
     const { result, status, stderr } = await runBrowserProof({
@@ -14,10 +14,18 @@ describe.skipIf(!existsSync(CHROME))('New corner sheet in a browser', () => {
         ...webProofShims(mobile),
         '@/constants/Typography': 'export const Typography = { default: () => ({}) };',
         '@/buzz/vocabulary': "export const CORNER_LABEL = 'corner';",
-        '@/components/buzz/HullDialog': `import { TextInput } from 'react-native';
-          export const HullDialogInput = props => <TextInput {...props} />;`,
-        './HullDialog': `import { TextInput } from 'react-native';
-          export const HullDialogInput = props => <TextInput {...props} />;`,
+        '@/components/buzz/HullDialog': `import { Pressable, Text, TextInput, View } from 'react-native';
+          export const HullDialogInput = props => <TextInput {...props} />;
+          export const HullDialog = ({ visible, title, children, actions, testID }) =>
+            visible ? <View testID={testID}><Text>{title}</Text>{children}{actions.map(action =>
+              <Pressable key={action.testID} disabled={action.disabled} onPress={action.onPress} testID={action.testID}><Text>{action.label}</Text></Pressable>
+            )}</View> : null;`,
+        './HullDialog': `import { Pressable, Text, TextInput, View } from 'react-native';
+          export const HullDialogInput = props => <TextInput {...props} />;
+          export const HullDialog = ({ visible, title, children, actions, testID }) =>
+            visible ? <View testID={testID}><Text>{title}</Text>{children}{actions.map(action =>
+              <Pressable key={action.testID} disabled={action.disabled} onPress={action.onPress} testID={action.testID}><Text>{action.label}</Text></Pressable>
+            )}</View> : null;`,
         './HullActionSheet': `import { Pressable, Text, View } from 'react-native';
           export const HULL_SHEET_INSET = 22;
           export const HullActionSheetModal = ({ visible, title, children, footer, testID }) =>

@@ -21,9 +21,10 @@ describe('Room participant roster layout', () => {
     expect(rosterStart).toBeGreaterThanOrEqual(0);
     expect(rosterEnd).toBeGreaterThan(rosterStart);
     expect(rosterModal).toContain("maxHeight: '82%'");
-    expect(source).toContain(
-      "rosterModal: {\n      width: '100%',\n      maxWidth: 460,\n      maxHeight: '100%'",
-    );
+    expect(source).toContain('<HullActionSheetModal');
+    expect(source).toContain('scrollBody={false}');
+    expect(source).toContain('<ScrollView');
+    expect(source).toContain('style={styles.rosterModal}');
   });
 
   it('marks agent state with the tile ring alone: no status square, no kind word (C76)', () => {

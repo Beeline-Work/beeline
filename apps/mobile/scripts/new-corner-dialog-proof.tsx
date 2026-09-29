@@ -43,18 +43,18 @@ async function run() {
   await pause();
   document.querySelector<HTMLElement>('[data-testid="add-corner"]')!.click();
   await pause();
-  const sheet = document.querySelector<HTMLElement>('[data-testid="new-corner-dialog"]');
+  const dialog = document.querySelector<HTMLElement>('[data-testid="new-corner-dialog"]');
   check(
-    'plus opens Begin a new corner sheet',
-    Boolean(sheet?.textContent?.includes('Begin a new corner')),
+    'plus opens Begin a new corner dialog',
+    Boolean(dialog?.textContent?.includes('Begin a new corner')),
   );
-  check('sheet has one name field', sheet?.querySelectorAll('input').length === 1);
+  check('dialog has one name field', dialog?.querySelectorAll('input').length === 1);
   check(
-    'sheet has no subtitle or Corner App reference',
-    !sheet?.textContent?.includes('human-owned') && !sheet?.textContent?.includes('Corner App'),
+    'dialog has no subtitle or Corner App reference',
+    !dialog?.textContent?.includes('human-owned') && !dialog?.textContent?.includes('Corner App'),
   );
 
-  const input = sheet!.querySelector<HTMLInputElement>('input')!;
+  const input = dialog!.querySelector<HTMLInputElement>('input')!;
   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
     input,
     'Release notes',
@@ -63,7 +63,7 @@ async function run() {
   await pause();
   const open = document.querySelector<HTMLElement>('[data-testid="create-corner-submit"]');
   check(
-    'sheet offers Open corner and Cancel',
+    'dialog offers Open corner and Cancel',
     Boolean(
       open?.textContent === 'Open corner' &&
       document.querySelector('[data-testid="create-corner-cancel"]')?.textContent === 'Cancel',

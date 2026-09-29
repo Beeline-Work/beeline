@@ -43,6 +43,7 @@ import {
 import { trustySquireStorePath } from './trusty-squire-storage.js';
 import { grantedSquireHostBindPaths } from './agent-home.js';
 import { ensureSquireHostDir, squireFacadeLaunch } from './squire-host.js';
+import { startFakeMcpBroker, stopFakeMcpBroker } from './squire-broker-link.test-support.js';
 
 const ROOM_BASE = [
   '--unshare-pid',
@@ -1423,7 +1424,7 @@ server.listen(socket, () => {
       server.once('error', rejectListen);
       server.listen(paths.brokerSocket, resolveListen);
     });
-    const runFacade = (granted: readonly string[]) => {
+    const wrapFacade = (granted: readonly string[]) => {
       const launch = squireFacadeLaunch(operatorHome, { agentId: 'agent-a', roomId: 'room-a' });
       const wrapped = wrapAgentCommand({
         bwrapPath: bwrap.path!,
@@ -1439,20 +1440,52 @@ server.listen(socket, () => {
         command: launch.command,
         args: launch.args,
       });
-      return spawnSync(wrapped.command, wrapped.args, {
-        encoding: 'utf8',
-        env: {
-          ...launch.env,
-          PATH: `${shimDir}:${process.env.PATH ?? ''}`,
-          HOME: operatorHome,
-        },
-      });
+      const env = {
+        ...launch.env,
+        PATH: `${shimDir}:${process.env.PATH ?? ''}`,
+        HOME: operatorHome,
+      };
+      return { command: wrapped.command, args: wrapped.args, env };
+    };
+    const runFacade = (granted: readonly string[]) => {
+      const wrapped = wrapFacade(granted);
+      return spawnSync(wrapped.command, wrapped.args, { encoding: 'utf8', env: wrapped.env });
+    };
+    /** Real round-trip through the sandboxed façade's connect-only relay,
+     * over its shared MCP socket — `spawnSync` closes stdin the instant its
+     * whole `input` is written, which races ahead of the façade's async
+     * socket connect, so this keeps stdin open like a real harness does. */
+    const runFacadeInteractive = async (granted: readonly string[]): Promise<number | null> => {
+      const wrapped = wrapFacade(granted);
+      const child = spawn(wrapped.command, wrapped.args, { env: wrapped.env, stdio: ['pipe', 'pipe', 'ignore'] });
+      const readLine = async (): Promise<Record<string, unknown>> =>
+        await new Promise((resolveLine) => {
+          let buffer = Buffer.alloc(0);
+          const onData = (chunk: Buffer) => {
+            buffer = Buffer.concat([buffer, chunk]);
+            const end = buffer.indexOf(10);
+            if (end < 0) return;
+            child.stdout.off('data', onData);
+            resolveLine(JSON.parse(buffer.subarray(0, end).toString('utf8')) as Record<string, unknown>);
+          };
+          child.stdout.on('data', onData);
+        });
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} })}\n`);
+      const initReply = await readLine();
+      expect((initReply.result as { serverInfo: { name: string } }).serverInfo.name).toBe('fake-mcp-broker');
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })}\n`);
+      const toolsReply = await readLine();
+      expect((toolsReply.result as { tools: unknown[] }).tools).toHaveLength(1);
+      child.stdin.end();
+      return await new Promise((resolveExit) => child.once('exit', resolveExit));
     };
     const records = () =>
       readFileSync(ledger, 'utf8')
         .split('\n')
         .filter((line) => line.trim().length > 0)
         .map((line) => JSON.parse(line) as { outcome: string; socket: string });
+    const mcpBroker = await startFakeMcpBroker(paths.mcpSocket);
     try {
       const reachable = runWrapped(
         {
@@ -1465,12 +1498,14 @@ server.listen(socket, () => {
       expect(reachable.stdout.trim()).toBe('{"paired":true}');
 
       writeFileSync(ledger, '');
-      expect(runFacade(['squire']).status).toBe(0);
-      expect(runFacade(['squire']).status).toBe(0);
-      expect(records().map((entry) => entry.outcome)).toEqual(['connected', 'connected']);
-      expect(new Set(records().map((entry) => entry.socket))).toEqual(
-        new Set([paths.brokerSocket]),
-      );
+      expect(await runFacadeInteractive(['squire'])).toBe(0);
+      expect(await runFacadeInteractive(['squire'])).toBe(0);
+      // The regression this test guards: a real sandboxed façade reaches the
+      // host broker over its shared MCP socket directly and never touches
+      // `npx` at all — there is nothing left inside the sandbox that could
+      // fall through to an on-demand broker launch (whose own guard,
+      // `systemctl --user show`, is itself unreachable from inside bwrap).
+      expect(records()).toEqual([]);
       expect(lstatSync(paths.brokerSocket).isSocket()).toBe(true);
 
       // A grant on some other host server binds nothing here: the broker
@@ -1479,6 +1514,7 @@ server.listen(socket, () => {
       expect(runFacade(['browser']).status).not.toBe(0);
       expect(records()).toEqual([]);
     } finally {
+      await stopFakeMcpBroker(mcpBroker);
       await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
     }
   });

@@ -76,6 +76,24 @@ function firstMatch(value: string, pattern: RegExp): string | undefined {
 }
 
 /**
+ * The one definition of "this text looks like a credential/auth problem" —
+ * shared by the free-text classifier below and by a caller (`model-config.ts`)
+ * that must recognize the SAME shape before it ever becomes a distilled
+ * turn-failure reason, so a transient 401 (a harness's own OAuth token mid
+ * refresh) can be retried as a hiccup instead of skipping straight to a
+ * standing not-signed-in verdict.
+ */
+export function isAuthShapedFault(text: string): boolean {
+  return (
+    /authentication required/i.test(text) ||
+    /not signed in/i.test(text) ||
+    /isn't signed in/i.test(text) ||
+    /invalid api[_ -]?key/i.test(text) ||
+    /\b401\b/.test(text)
+  );
+}
+
+/**
  * Classify a distilled helper reason. `reasonKind` from a current helper wins;
  * text matching covers old helpers and the 90s stall path (no receipt).
  */
@@ -120,13 +138,7 @@ export function classifyTurnSilence(
     };
   }
 
-  if (
-    /authentication required/i.test(text) ||
-    /not signed in/i.test(text) ||
-    /isn't signed in/i.test(text) ||
-    /invalid api[_ -]?key/i.test(text) ||
-    /\b401\b/.test(text)
-  ) {
+  if (isAuthShapedFault(text)) {
     return { kind: 'not-signed-in' };
   }
 
@@ -169,6 +181,21 @@ function repoFromReason(text: string): string {
 
 export function shouldRestartHiccup(kind: TurnSilenceKind, nextAttempt: number): boolean {
   return kind === 'hiccup' && nextAttempt > 0 && nextAttempt < HICCUP_ATTEMPT_LIMIT;
+}
+
+/**
+ * A hiccup that has exhausted its restart budget AND still looks auth-shaped
+ * is escalated to the plain not-signed-in verdict instead of the generic
+ * "stopped restarting" line — a genuinely expired/missing credential is
+ * still named plainly, just after giving a transient token-refresh race the
+ * same bounded retries any other hiccup gets. Only called once restarting is
+ * over (`!shouldRestartHiccup(...)`); an auth-shaped fault mid-retry stays a
+ * quiet hiccup so it never reports a standing failure prematurely.
+ */
+export function escalateExhaustedHiccup(classified: ClassifiedTurnSilence): ClassifiedTurnSilence {
+  if (classified.kind !== 'hiccup') return classified;
+  if (!isAuthShapedFault(classified.fault ?? '')) return classified;
+  return { kind: 'not-signed-in' };
 }
 
 /** Corner-start configuration that cannot recover without a human/config change. */

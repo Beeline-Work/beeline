@@ -1,30 +1,37 @@
 /**
- * Local reproduction for the Claude model-availability flap (P2, 2026-09-29):
- * Claude agents intermittently fail turns with "the selected model isn't
- * available" or "isn't signed in to her provider" and recover on their own
- * with no change.
+ * End-to-end regression coverage for the Claude model-availability flap (P2,
+ * 2026-09-29): Claude agents intermittently failed turns with "the selected
+ * model isn't available" or "isn't signed in to her provider" and recovered
+ * on their own with no change. Production evidence (2026-09-29T22:02Z) found
+ * two distinct, compounding causes:
  *
- * Both fake harnesses below answer with a TRANSIENT provider condition (a 529
- * overloaded response from `session/set_config_option`, and a 401 mid-refresh
- * response from `session/new`) — never a genuinely wrong model id or missing
- * credential. Both still produce the exact standing-condition Room copy a
- * human reads as permanent, because:
+ *  1. TRANSIENT masking: a genuinely transient provider condition (a 529
+ *     overload from `session/set_config_option`, or a 401 from
+ *     claude-agent-acp's own OAuth token mid-refresh on `session/new`) was
+ *     indistinguishable, by the code, from a permanent configuration
+ *     problem — both collapsed into the same standing, non-retryable Room
+ *     copy. Fixed by `isTransientProviderText`/`isAuthShapedFault`
+ *     (`transient-provider-error.ts`, `@beeline/api-contract`'s
+ *     `turn-silence.ts`) rethrowing instead of wrapping in
+ *     `ModelSelectionUnavailableError`, and by `distillTurnFailureReason`
+ *     reporting every auth-shaped failure as an ordinary retryable hiccup
+ *     (escalated to the standing not-signed-in verdict only once the
+ *     existing bounded hiccup retries are exhausted — see
+ *     `turn-silence-notice.test.ts`'s "escalates an exhausted auth-shaped
+ *     hiccup" case for that half).
+ *  2. RETIREMENT: Niglet's actual `opus[1m]` selection had been genuinely
+ *     dropped from claude-agent-acp's own catalog (not a bug — a real
+ *     provider-side alias removal), which correctly set the durable
+ *     `model_unavailable` flag but then bricked the agent with no automatic
+ *     recovery. Fixed by `resolveModelFamilyFallback`
+ *     (`model-config.ts`) substituting a same-family replacement so the
+ *     turn still succeeds; see `model-config.test.ts` for synthetic-catalog
+ *     coverage of the fallback/effort-drop/no-family-match cases.
  *
- *  - `applyAgentModelSelectionWithUpdatedCatalog` (model-config.ts) wraps ANY
- *    `setConfigOption`/`setModel` rejection into `ModelSelectionUnavailableError`
- *    with `reason: 'provider-refused'`, discarding whether the provider said
- *    "that model doesn't exist" or "try again in a second".
- *  - `distillTurnFailureReason` (turn-failure-reason.ts) special-cases EVERY
- *    `ModelSelectionUnavailableError` to the fixed text `'model selection
- *    unavailable'` before the real (transient) message is even looked at.
- *  - `classifyTurnSilence`/`phraseTurnSilence` (api-contract's turn-silence.ts)
- *    then render the fixed, non-retryable "wrong-model" or "not-signed-in"
- *    copy. Neither kind is in `shouldRestartHiccup`'s retry set, so the turn
- *    fails outright instead of being retried as a hiccup — the daemon's next,
- *    unrelated activation just happens to succeed, which reads as "recovered
- *    on its own with no change".
- *
- * Evidence only — no production code is changed by this file.
+ * The two tests below drive REAL fake ACP harnesses end to end (spawn,
+ * `session/new`, the real `applyAgentModelSelection`/`distillTurnFailureReason`
+ * pipeline) to prove cases 1 and 2 no longer produce the bug's standing,
+ * misleading Room copy.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -39,7 +46,6 @@ import {
   ModelSelectionUnavailableError,
 } from './model-config.js';
 import { distillTurnFailureReason } from './turn-failure-reason.js';
-import { classifyTurnSilence, phraseTurnSilence } from '@beeline/api-contract/daemon';
 
 const temporaryDirectories: string[] = [];
 
@@ -151,8 +157,71 @@ lines.on('line', (line) => {
   return binary;
 }
 
-describe('model-flap repro: transient provider errors read as standing conditions', () => {
-  it('a 529 overload on set_config_option renders as "the selected model isn\'t available"', async () => {
+/**
+ * Mimics claude-agent-acp genuinely dropping `opus[1m]` from its own live
+ * catalog (case 2, production-verified for Niglet): `session/new` advertises
+ * `model`/`sonnet`/`opus` but no `[1m]` variant at all, and
+ * `session/set_config_option` succeeds for whatever id it is actually asked
+ * to apply.
+ */
+async function fakeClaudeAgentAcpRetiredAlias(): Promise<string> {
+  const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-retired-alias-'));
+  temporaryDirectories.push(directory);
+  const binary = resolve(directory, 'claude-agent-acp.mjs');
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
+import { createInterface } from 'node:readline';
+
+const lines = createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+lines.on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+  } else if (message.method === 'session/new') {
+    send({
+      jsonrpc: '2.0',
+      id: message.id,
+      result: {
+        sessionId: 'sess-1',
+        configOptions: [
+          {
+            id: 'model',
+            category: 'model',
+            currentValue: 'sonnet',
+            options: [{ id: 'sonnet', name: 'Sonnet 5.5' }, { id: 'opus', name: 'Opus 5.5' }],
+          },
+        ],
+      },
+    });
+  } else if (message.method === 'session/set_config_option') {
+    send({
+      jsonrpc: '2.0',
+      id: message.id,
+      result: {
+        configOptions: [
+          {
+            id: 'model',
+            category: 'model',
+            currentValue: message.params.value,
+            options: [{ id: 'sonnet', name: 'Sonnet 5.5' }, { id: 'opus', name: 'Opus 5.5' }],
+          },
+        ],
+      },
+    });
+  } else if (message.method === 'shutdown') {
+    process.exit(0);
+  }
+});
+`,
+  );
+  await chmod(binary, 0o755);
+  return binary;
+}
+
+describe('model-flap fix: transient provider errors no longer read as standing conditions', () => {
+  it('a 529 overload on set_config_option retries as an ordinary hiccup, not a standing "model unavailable" verdict', async () => {
     const client = new AcpClient({
       agentCommand: await fakeClaudeAgentAcpTransientOverload(),
       agentLabel: 'claude-agent-acp',
@@ -174,28 +243,19 @@ describe('model-flap repro: transient provider errors read as standing condition
       await client.stop();
     }
 
-    // The thrown error still carries the real, transient cause...
-    expect(turnError).toBeInstanceOf(ModelSelectionUnavailableError);
-    const modelError = turnError as ModelSelectionUnavailableError;
-    expect(modelError.reason).toBe('provider-refused');
-    expect(modelError.guidance).toContain('overloaded_error');
+    // No longer collapsed into the typed, non-retryable unavailability error...
+    expect(turnError).not.toBeInstanceOf(ModelSelectionUnavailableError);
+    expect((turnError as Error).message).toContain('overloaded_error');
 
-    // ...but the daemon's own turn-failure distillation throws it away:
+    // ...so the daemon's own turn-failure distillation reports it as an
+    // ordinary hiccup, which the server retries with backoff instead of
+    // telling the owner to pick another model.
     const distilled = distillTurnFailureReason(turnError);
-    expect(distilled.text).toBe('model selection unavailable');
-    expect(distilled.kind).toBe('model-selection-unavailable');
-
-    // ...and the Room copy reads as a permanent, non-retryable configuration
-    // problem with the actual "provider said 529" detail gone entirely.
-    const classified = classifyTurnSilence(distilled.text, distilled.kind);
-    expect(classified.kind).toBe('wrong-model');
-    const phrase = phraseTurnSilence('Niglet', classified);
-    expect(phrase.consequence).toBe(
-      "the selected model isn't available. Pick another in the agent's settings.",
-    );
+    expect(distilled.kind).toBe('hiccup');
+    expect(distilled.text).toContain('overloaded_error');
   });
 
-  it('a 401 mid-token-refresh on session/new renders as "isn\'t signed in to the provider"', async () => {
+  it("a 401 mid-token-refresh on session/new retries as an ordinary hiccup, not a standing \"not signed in\" verdict", async () => {
     const client = new AcpClient({
       agentCommand: await fakeClaudeAgentAcpAuthRefreshRace(),
       agentLabel: 'claude-agent-acp',
@@ -211,18 +271,35 @@ describe('model-flap repro: transient provider errors read as standing condition
       await client.stop();
     }
 
-    // This never goes through model-config at all — session/new itself
-    // failed, so the raw harness message is all the daemon has.
     expect(turnError).not.toBeInstanceOf(ModelSelectionUnavailableError);
     const distilled = distillTurnFailureReason(turnError);
+    // No longer text-matched straight into the standing not-signed-in verdict:
+    // the server's bounded hiccup retries (see turn-silence-notice.test.ts's
+    // "escalates an exhausted auth-shaped hiccup" case) now get a chance to
+    // clear the race before it settles into that copy.
+    expect(distilled.kind).toBe('hiccup');
+  });
+});
 
-    // Text-matched straight into the same non-retryable standing-condition
-    // bucket as a genuinely expired/missing credential.
-    const classified = classifyTurnSilence(distilled.text, distilled.kind);
-    expect(classified.kind).toBe('not-signed-in');
-    const phrase = phraseTurnSilence('Niglet', classified);
-    expect(phrase.consequence).toBe(
-      "the helper isn't signed in to the provider. Run `beeline connect` on the helper's machine.",
-    );
+describe('model-flap fix: a retired model alias falls back instead of bricking the agent', () => {
+  it('opus[1m] dropped from the live catalog falls back to opus and the turn still succeeds', async () => {
+    const client = new AcpClient({
+      agentCommand: await fakeClaudeAgentAcpRetiredAlias(),
+      agentLabel: 'claude-agent-acp',
+      agentEnv: {},
+    });
+    await client.start();
+    try {
+      const opened = await client.sessionNew({ cwd: tmpdir() });
+      const options = filterAllowedModelConfigOptions(
+        parseAdvertisedConfigOptions(opened.raw, 'opus[1m]'),
+      );
+      const applied = await applyAgentModelSelection(client, opened.sessionId, options, {
+        model: 'opus[1m]',
+      });
+      expect(applied.appliedSelection.model).toBe('opus');
+    } finally {
+      await client.stop();
+    }
   });
 });

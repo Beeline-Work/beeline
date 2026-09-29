@@ -28,6 +28,11 @@ const HUMAN = '22'.repeat(32);
 async function activateWith(
   configuration: { model?: string; effort?: string },
   modelSelection: { model?: string; effort?: string },
+  options: {
+    sessionRaw?: unknown;
+    setConfigOptionImpl?: (configId: string, value: string) => Promise<void> | void;
+    recordCalls?: Array<{ name: string; input: Record<string, unknown> }>;
+  } = {},
 ): Promise<Array<[string, string]>> {
   const root = await mkdtemp(join(tmpdir(), 'beeline-room-model-selection-'));
   roots.push(root);
@@ -63,6 +68,7 @@ async function activateWith(
   let delivered = false;
   const receipts: Array<Record<string, unknown>> = [];
   const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+    options.recordCalls?.push({ name, input });
     if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false, ...configuration };
     if (name === 'getRoomRepositoryState') return { resolution: 'none' };
     if (name === 'getWorkspaceRoster') {
@@ -114,7 +120,7 @@ async function activateWith(
   vi.spyOn(acp, 'start').mockResolvedValue(undefined);
   vi.spyOn(acp, 'sessionNew').mockResolvedValue({
     sessionId: 'room-session',
-    raw: {
+    raw: options.sessionRaw ?? {
       configOptions: [
         {
           id: 'model-axis',
@@ -136,6 +142,7 @@ async function activateWith(
   const setConfigCalls: Array<[string, string]> = [];
   vi.spyOn(acp, 'setConfigOption').mockImplementation(async (_sid, configId, value) => {
     setConfigCalls.push([configId, value]);
+    await options.setConfigOptionImpl?.(configId, value);
   });
   vi.spyOn(acp, 'stop').mockResolvedValue(undefined);
   vi.spyOn(acp, 'sessionPrompt').mockResolvedValue({
@@ -505,6 +512,46 @@ describe('Room session activation model/effort selection', () => {  it('falls ba
 
     expect(calls).toContainEqual(['model-axis', 'default-model']);
     expect(calls).toContainEqual(['effort-axis', 'low']);
+  });
+
+  it('falls back to a same-family model and records the correction when the persisted model vanished from the catalog', async () => {
+    // Production symptom (2026-09-29): Claude dropped the `opus[1m]` 1M-context
+    // alias from claude-agent-acp's own live catalog. The turn must still
+    // succeed with the family's current alias, and the daemon must persist
+    // the correction (postAgentModelCatalog) rather than silently drifting.
+    const recordCalls: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const calls = await activateWith(
+      {},
+      { model: 'opus[1m]', effort: 'high' },
+      {
+        sessionRaw: {
+          configOptions: [
+            {
+              id: 'model-axis',
+              category: 'model',
+              currentValue: 'sonnet',
+              options: [
+                { id: 'sonnet', name: 'Sonnet 5.5' },
+                { id: 'opus', name: 'Opus 5.5' },
+              ],
+            },
+            {
+              id: 'effort-axis',
+              category: 'effort',
+              currentValue: 'medium',
+              options: [{ id: 'high' }, { id: 'medium' }, { id: 'low' }],
+            },
+          ],
+        },
+        recordCalls,
+      },
+    );
+
+    expect(calls).toContainEqual(['model-axis', 'opus']);
+    expect(calls).toContainEqual(['effort-axis', 'high']);
+
+    const catalogPost = recordCalls.find((call) => call.name === 'postAgentModelCatalog');
+    expect(catalogPost?.input).toMatchObject({ selection: { model: 'opus', effort: 'high' } });
   });
 
   it('keeps a grok harness launch-time model and effort flags when nothing overrides them', async () => {

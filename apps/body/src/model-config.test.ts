@@ -15,6 +15,7 @@ import {
   agentArgsWithModelSelection,
   sortModelChoicesNewestFirst,
   withEffectiveCurrentValues,
+  resolveModelFamilyFallback,
 } from './model-config.js';
 import type { AgentModelConfigOption } from './model-types.js';
 import { CODEX_ACP_SESSION_NEW_CONFIG_OPTIONS } from './fixtures/codex-acp-config-options.js';
@@ -426,10 +427,11 @@ describe('applyAgentModelSelection — the set path', () => {
       ['restart-session', 'model', 'gpt-6-astra'],
       ['restart-session', 'reasoning_effort', 'xhigh'],
     ]);
-    expect(applied.find((axis) => axis.category === 'thought_level')?.options).toEqual([
+    expect(applied.options.find((axis) => axis.category === 'thought_level')?.options).toEqual([
       { id: 'high' },
       { id: 'xhigh' },
     ]);
+    expect(applied.appliedSelection).toEqual({ model: 'gpt-6-astra', effort: 'xhigh' });
   });
 
   it('rejects an unknown or retired model before calling the harness setter', async () => {
@@ -475,6 +477,125 @@ describe('applyAgentModelSelection — the set path', () => {
     });
   });
 
+  it('rethrows a transient provider setter refusal instead of a standing model-unavailable verdict', async () => {
+    const setConfigOption = vi
+      .fn()
+      .mockRejectedValue(
+        new Error('529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}'),
+      );
+    await expect(
+      applyAgentModelSelection({ setConfigOption }, 'sess-1', raw, { model: 'sonnet' }),
+    ).rejects.not.toBeInstanceOf(ModelSelectionUnavailableError);
+    await expect(
+      applyAgentModelSelection({ setConfigOption }, 'sess-1', raw, { model: 'sonnet' }),
+    ).rejects.toThrow(/overloaded_error/);
+  });
+
+  it('rethrows an auth-shaped provider setter refusal instead of a standing model-unavailable verdict', async () => {
+    const setConfigOption = vi
+      .fn()
+      .mockRejectedValue(
+        new Error('401 authentication_error: OAuth token refresh in progress, retry'),
+      );
+    await expect(
+      applyAgentModelSelection({ setConfigOption }, 'sess-1', raw, { model: 'sonnet' }),
+    ).rejects.not.toBeInstanceOf(ModelSelectionUnavailableError);
+  });
+
+  describe('resolveModelFamilyFallback', () => {
+    it('finds the family current alias for a vanished model id, not a bracket-stripped guess', () => {
+      const options: AgentModelConfigOption['options'] = [
+        { id: 'sonnet', name: 'Sonnet 5.5' },
+        { id: 'opus', name: 'Opus 5.5' },
+      ];
+      expect(resolveModelFamilyFallback(options, 'opus[1m]')).toEqual({
+        id: 'opus',
+        name: 'Opus 5.5',
+      });
+    });
+
+    it('prefers the newest same-family member when several exist', () => {
+      const options: AgentModelConfigOption['options'] = sortModelChoicesNewestFirst([
+        { id: 'opus-4', name: 'Opus 4' },
+        { id: 'opus-5', name: 'Opus 5' },
+      ]);
+      expect(resolveModelFamilyFallback(options, 'opus[1m]')?.id).toBe('opus-5');
+    });
+
+    it('returns undefined when no same-family model survives', () => {
+      const options: AgentModelConfigOption['options'] = [{ id: 'sonnet', name: 'Sonnet 5.5' }];
+      expect(resolveModelFamilyFallback(options, 'openrouter/stealth/ox-alpha')).toBeUndefined();
+    });
+  });
+
+  it('falls back to a same-family model instead of bricking the agent when the persisted model vanished', async () => {
+    // Claude dropping the `opus[1m]` 1M-context alias — the live catalog no
+    // longer advertises it at all, but the plain `opus` alias survives.
+    const withoutOpus1m = parseAdvertisedConfigOptions({
+      configOptions: [
+        {
+          id: 'model',
+          category: 'model',
+          currentValue: 'sonnet',
+          options: [
+            { id: 'default', name: 'Default' },
+            { id: 'sonnet', name: 'Sonnet' },
+            { id: 'opus', name: 'Opus' },
+          ],
+        },
+        {
+          id: 'effort',
+          category: 'effort',
+          currentValue: 'default',
+          options: [{ id: 'default' }, { id: 'low' }, { id: 'high' }],
+        },
+      ],
+    });
+    const setConfigOption = vi.fn().mockResolvedValue({});
+    const applied = await applyAgentModelSelectionWithUpdatedCatalog(
+      { setConfigOption },
+      'sess-1',
+      withoutOpus1m,
+      { model: 'opus[1m]', effort: 'high' },
+    );
+    expect(setConfigOption).toHaveBeenCalledWith('sess-1', 'model', 'opus');
+    expect(setConfigOption).toHaveBeenCalledWith('sess-1', 'effort', 'high');
+    expect(applied.appliedSelection).toEqual({ model: 'opus', effort: 'high' });
+  });
+
+  it('drops a persisted effort the fallback model does not support instead of failing the turn', async () => {
+    const withoutOpus1m = parseAdvertisedConfigOptions({
+      configOptions: [
+        {
+          id: 'model',
+          category: 'model',
+          currentValue: 'sonnet',
+          options: [
+            { id: 'sonnet', name: 'Sonnet' },
+            { id: 'opus', name: 'Opus' },
+          ],
+        },
+        {
+          id: 'effort',
+          category: 'effort',
+          currentValue: 'default',
+          options: [{ id: 'default' }, { id: 'low' }],
+        },
+      ],
+    });
+    const setConfigOption = vi.fn().mockResolvedValue({});
+    const applied = await applyAgentModelSelectionWithUpdatedCatalog(
+      { setConfigOption },
+      'sess-1',
+      withoutOpus1m,
+      { model: 'opus[1m]', effort: 'xhigh' },
+    );
+    expect(setConfigOption).toHaveBeenCalledWith('sess-1', 'model', 'opus');
+    expect(setConfigOption).not.toHaveBeenCalledWith('sess-1', 'effort', expect.anything());
+    expect(applied.appliedSelection).toEqual({ model: 'opus' });
+  });
+
+
   it('never reaches a mode axis when a model-shaped value is invalid', async () => {
     const setConfigOption = vi.fn().mockResolvedValue({});
     await expect(
@@ -494,7 +615,7 @@ describe('applyAgentModelSelection — the set path', () => {
     const modelOnly = raw.filter((option) => option.category !== 'effort');
     await expect(
       applyAgentModelSelection({ setConfigOption }, 'sess-1', modelOnly, { effort: 'high' }),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({ appliedSelection: {} });
     expect(setConfigOption).not.toHaveBeenCalled();
   });
 
@@ -506,7 +627,7 @@ describe('applyAgentModelSelection — the set path', () => {
     const effortOnly = raw.filter((option) => option.category !== 'model');
     await expect(
       applyAgentModelSelection({ setConfigOption }, 'sess-1', effortOnly, { model: 'auto' }),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({ appliedSelection: {} });
     expect(setConfigOption).not.toHaveBeenCalled();
   });
 

@@ -258,6 +258,9 @@ describe('connect_app', () => {
     expect(JSON.stringify(card)).not.toContain('composio');
     const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
       undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    const pendingRoom = await phone.readRoom(ROOM, OWNER);
+    expect(pendingRoom?.messages.find((message) => message.appSignIn?.appId === first.appId)
+      ?.appSignIn).toMatchObject({ status: 'pending', continuation });
     const opened = await phone.execute('beginAppSignIn', { appId: first.appId! }, OWNER);
     expect(opened.authorizationUrl).toBe('https://app.composio.dev/connect/fixture');
     expect(provider.link).toHaveBeenCalledWith(OWNER, 'slack');
@@ -266,6 +269,9 @@ describe('connect_app', () => {
     expect((await database.query<{ card: { status: string; continuation?: string } }>(
       `SELECT card FROM messages WHERE room_id=$1 AND card_type='app-sign-in'`, [ROOM],
     )).rows[0]?.card).toMatchObject({ status: 'connected', continuation });
+    const connectedRoom = await phone.readRoom(ROOM, OWNER);
+    expect(connectedRoom?.messages.find((message) => message.appSignIn?.appId === first.appId)
+      ?.appSignIn).toMatchObject({ status: 'connected', continuation });
     expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1
       AND agent_id=$2 AND reason='app_connected'`, [ROOM, HELPER])).rowCount).toBe(1);
     const neverUsed = (await readOwnerApps(database, OWNER, provider))[0]!;

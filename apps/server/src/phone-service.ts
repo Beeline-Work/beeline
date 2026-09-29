@@ -657,7 +657,7 @@ function projectedMessage(
       const card = row.card as NonNullable<RoomViewMessage['appSignIn']>;
       return { ...base, appSignIn: { appId: card.appId, appKey: card.appKey,
         name: card.name, ownerId: card.ownerId, agentId: card.agentId,
-        status: card.status } };
+        status: card.status, ...(card.continuation ? { continuation: card.continuation } : {}) } };
     }
     case 'choice':
       return { ...base, choice: row.card as NonNullable<RoomViewMessage['choice']> };

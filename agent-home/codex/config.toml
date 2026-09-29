@@ -1,0 +1,26 @@
+[agents]
+enabled = false
+
+[features]
+standalone_web_search = true
+
+[mcp_servers.openaiDeveloperDocs]
+url = "https://developers.openai.com/mcp"
+
+[mcp_servers.squire]
+command = "/home/alan/projects/hermes/service/data/node/bin/node"
+args = [ "/home/alan/.local/lib/beeline/lib/beeline/beeline-cli.mjs", "--resource-mcp-facade" ]
+
+[mcp_servers.squire.env]
+TRUSTY_SQUIRE_AGENT_IDENTITY = "codex"
+TRUSTY_SQUIRE_PROFILE_DIR = "/home/alan/.trusty-squire/chrome-profile"
+TRUSTY_SQUIRE_BROKER_SOCKET = "/home/alan/.trusty-squire/broker.sock"
+TRUSTY_SQUIRE_ACCOUNT_ID = "01KW763BNBJJQ1M1JH5SY7W8CD"
+TRUSTY_SQUIRE_REGISTRY_URL = "https://registry.trustysquire.ai"
+BEELINE_SQUIRE_RELAY_URL = "http://127.0.0.1:39601"
+BEELINE_SQUIRE_RELAY_TOKEN = "0143a9a4-3d0b-4b5b-96cf-47d2b0c094aa"
+BEELINE_TURN_CONTEXT_FILE = "/home/alan/.local/state/beeline/agents/99b179219351bef5006bed6c221fd7832ebdddde3a8c7fd9e782efe918a9aad3/rooms/5793d014-908f-44a1-84d8-f4e6efbe467a/scratch/agent-home/beeline-command-f2f662c3-036a-4451-a8f5-a3e83ee3b3ad.json"
+BEELINE_RESOURCE_TARGET = "squire"
+BEELINE_RESOURCE_GATE = "transport"
+BEELINE_RESOURCE_AUTH_FILE = "/home/alan/.local/state/beeline/agents/99b179219351bef5006bed6c221fd7832ebdddde3a8c7fd9e782efe918a9aad3/rooms/5793d014-908f-44a1-84d8-f4e6efbe467a/scratch/agent-home/beeline-command-f2f662c3-036a-4451-a8f5-a3e83ee3b3ad.json.resource-auth.json"
+BEELINE_RESOURCE_LAUNCH = "{\"command\":\"/home/alan/projects/hermes/service/data/node/bin/node\",\"args\":[\"/home/alan/.local/lib/beeline/lib/beeline/beeline-cli.mjs\",\"--squire-facade\"],\"env\":{\"TRUSTY_SQUIRE_AGENT_IDENTITY\":\"codex\",\"TRUSTY_SQUIRE_PROFILE_DIR\":\"/home/alan/.trusty-squire/chrome-profile\",\"TRUSTY_SQUIRE_BROKER_SOCKET\":\"/home/alan/.trusty-squire/broker.sock\",\"TRUSTY_SQUIRE_ACCOUNT_ID\":\"01KW763BNBJJQ1M1JH5SY7W8CD\",\"TRUSTY_SQUIRE_REGISTRY_URL\":\"https://registry.trustysquire.ai\",\"BEELINE_SQUIRE_RELAY_URL\":\"http://127.0.0.1:39601\",\"BEELINE_SQUIRE_RELAY_TOKEN\":\"0143a9a4-3d0b-4b5b-96cf-47d2b0c094aa\",\"BEELINE_TURN_CONTEXT_FILE\":\"/home/alan/.local/state/beeline/agents/99b179219351bef5006bed6c221fd7832ebdddde3a8c7fd9e782efe918a9aad3/rooms/5793d014-908f-44a1-84d8-f4e6efbe467a/scratch/agent-home/beeline-command-f2f662c3-036a-4451-a8f5-a3e83ee3b3ad.json\"}}"

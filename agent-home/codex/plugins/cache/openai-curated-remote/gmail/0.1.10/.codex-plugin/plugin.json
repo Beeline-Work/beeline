@@ -1,0 +1,47 @@
+{
+  "name": "gmail",
+  "version": "0.1.10",
+  "description": "Work with Gmail using the configured Gmail app connector.",
+  "author": {
+    "name": "OpenAI",
+    "email": "support@openai.com",
+    "url": "https://openai.com/"
+  },
+  "homepage": "https://workspace.google.com/products/gmail/",
+  "repository": "https://github.com/openai/openai/tree/master/chatgpt/oai-maintained-plugins",
+  "license": "MIT",
+  "keywords": [
+    "gmail",
+    "email",
+    "google",
+    "google workspace",
+    "mail",
+    "inbox",
+    "threads",
+    "drafts"
+  ],
+  "apps": "./.app.json",
+  "interface": {
+    "displayName": "Gmail",
+    "shortDescription": "Read and manage Gmail",
+    "longDescription": "Use Gmail to summarize inbox activity, draft replies, and organize email threads through the connected Gmail app.",
+    "developerName": "OpenAI",
+    "category": "Communication",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "websiteURL": "https://workspace.google.com/products/gmail/",
+    "privacyPolicyURL": "https://policies.google.com/privacy",
+    "termsOfServiceURL": "https://policies.google.com/terms",
+    "defaultPrompt": [
+      "Summarize the last 5 messages in [subject line] and capture decisions, open questions, and what I should follow up on next",
+      "Draft a polite, firm reply to our auditor's latest email, with a short bullet list of exactly what we'll provide",
+      "Turn my latest customer escalation thread into an action tracker with owners, deadlines, and an email reference for each item"
+    ],
+    "brandColor": "#EA4335",
+    "composerIcon": "./assets/gmail.png",
+    "logo": "./assets/gmail.png",
+    "screenshots": []
+  }
+}

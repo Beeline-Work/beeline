@@ -1,0 +1,2939 @@
+{
+ "duration": 150.0,
+ "bpm": 152,
+ "beats": [
+  0.839,
+  1.234,
+  1.629,
+  2.0,
+  2.418,
+  2.813,
+  3.184,
+  3.579,
+  3.974,
+  4.369,
+  4.763,
+  5.135,
+  5.553,
+  5.948,
+  6.319,
+  6.737,
+  7.132,
+  7.503,
+  7.875,
+  8.27,
+  8.664,
+  9.036,
+  9.431,
+  9.848,
+  10.266,
+  10.661,
+  11.033,
+  11.427,
+  11.822,
+  12.217,
+  12.612,
+  13.006,
+  13.378,
+  13.773,
+  14.167,
+  14.562,
+  14.957,
+  15.352,
+  15.746,
+  16.141,
+  16.513,
+  16.931,
+  17.325,
+  17.697,
+  18.092,
+  18.463,
+  18.881,
+  19.276,
+  19.671,
+  20.042,
+  20.414,
+  20.832,
+  21.226,
+  21.621,
+  22.016,
+  22.41,
+  22.805,
+  23.2,
+  23.571,
+  23.966,
+  24.361,
+  24.756,
+  25.15,
+  25.545,
+  25.94,
+  26.335,
+  26.729,
+  27.124,
+  27.496,
+  27.89,
+  28.285,
+  28.68,
+  29.051,
+  29.469,
+  29.864,
+  30.236,
+  30.607,
+  31.025,
+  31.42,
+  31.838,
+  32.233,
+  32.604,
+  32.999,
+  33.394,
+  33.788,
+  34.183,
+  34.578,
+  34.972,
+  35.367,
+  35.762,
+  36.133,
+  36.528,
+  36.923,
+  37.318,
+  37.712,
+  38.107,
+  38.502,
+  38.873,
+  39.268,
+  39.663,
+  40.058,
+  40.452,
+  40.847,
+  41.242,
+  41.637,
+  42.031,
+  42.403,
+  42.798,
+  43.192,
+  43.587,
+  43.982,
+  44.377,
+  44.771,
+  45.12,
+  45.538,
+  45.932,
+  46.327,
+  46.699,
+  47.117,
+  47.511,
+  47.906,
+  48.301,
+  48.695,
+  49.09,
+  49.462,
+  49.856,
+  50.251,
+  50.646,
+  51.041,
+  51.435,
+  51.807,
+  52.202,
+  52.596,
+  52.991,
+  53.386,
+  53.781,
+  54.175,
+  54.57,
+  54.965,
+  55.36,
+  55.754,
+  56.149,
+  56.521,
+  56.915,
+  57.31,
+  57.705,
+  58.076,
+  58.471,
+  58.866,
+  59.261,
+  59.655,
+  60.05,
+  60.445,
+  60.84,
+  61.188,
+  61.606,
+  62.024,
+  62.418,
+  62.813,
+  63.208,
+  63.603,
+  63.974,
+  64.346,
+  64.74,
+  65.158,
+  65.553,
+  65.925,
+  66.343,
+  66.714,
+  67.109,
+  67.504,
+  67.898,
+  68.293,
+  68.688,
+  69.083,
+  69.477,
+  69.872,
+  70.244,
+  70.638,
+  71.033,
+  71.428,
+  71.823,
+  72.217,
+  72.612,
+  72.984,
+  73.378,
+  73.773,
+  74.168,
+  74.562,
+  74.957,
+  75.352,
+  75.747,
+  76.141,
+  76.513,
+  76.908,
+  77.302,
+  77.697,
+  78.092,
+  78.487,
+  78.881,
+  79.276,
+  79.671,
+  80.066,
+  80.437,
+  80.832,
+  81.227,
+  81.621,
+  82.016,
+  82.411,
+  82.806,
+  83.2,
+  83.595,
+  83.99,
+  84.385,
+  84.756,
+  85.151,
+  85.546,
+  85.94,
+  86.335,
+  86.73,
+  87.124,
+  87.519,
+  87.891,
+  88.285,
+  88.657,
+  89.029,
+  89.446,
+  89.864,
+  90.236,
+  90.631,
+  91.025,
+  91.443,
+  91.838,
+  92.233,
+  92.628,
+  92.999,
+  93.371,
+  93.765,
+  94.16,
+  94.578,
+  94.973,
+  95.344,
+  95.739,
+  96.134,
+  96.505,
+  96.923,
+  97.318,
+  97.713,
+  98.108,
+  98.479,
+  98.874,
+  99.269,
+  99.663,
+  100.058,
+  100.453,
+  100.847,
+  101.242,
+  101.614,
+  102.008,
+  102.403,
+  102.798,
+  103.193,
+  103.564,
+  103.982,
+  104.377,
+  104.748,
+  105.143,
+  105.538,
+  105.933,
+  106.327,
+  106.722,
+  107.117,
+  107.512,
+  107.883,
+  108.278,
+  108.673,
+  109.067,
+  109.462,
+  109.857,
+  110.252,
+  110.646,
+  111.018,
+  111.389,
+  111.807,
+  112.225,
+  112.62,
+  113.015,
+  113.386,
+  113.781,
+  114.176,
+  114.57,
+  114.942,
+  115.337,
+  115.731,
+  116.126,
+  116.521,
+  116.916,
+  117.31,
+  117.705,
+  118.1,
+  118.471,
+  118.866,
+  119.261,
+  119.656,
+  120.05,
+  120.445,
+  120.817,
+  121.211,
+  121.629,
+  122.001,
+  122.396,
+  122.79,
+  123.185,
+  123.58,
+  123.975,
+  124.369,
+  124.764,
+  125.159,
+  125.554,
+  125.902,
+  126.273,
+  126.645,
+  127.063,
+  127.458,
+  127.852,
+  128.247,
+  128.688,
+  129.083,
+  129.478,
+  129.872,
+  130.267,
+  130.662,
+  131.057,
+  131.451,
+  131.823,
+  132.218,
+  132.612,
+  133.007,
+  133.379,
+  133.773,
+  134.168,
+  134.563,
+  134.958,
+  135.352,
+  135.747,
+  136.142,
+  136.513,
+  136.885,
+  137.303,
+  137.698,
+  138.092,
+  138.487,
+  138.882,
+  139.277,
+  139.671,
+  140.043,
+  140.438,
+  140.832,
+  141.227,
+  141.622,
+  142.016,
+  142.411,
+  142.806,
+  143.177,
+  143.572,
+  143.967,
+  144.362,
+  144.756,
+  145.151,
+  145.546,
+  145.941,
+  146.312,
+  146.707,
+  147.102,
+  147.496,
+  147.891,
+  148.286,
+  148.681,
+  149.075,
+  149.47,
+  149.865
+ ],
+ "hits": [
+  1.412,
+  1.806,
+  2.39,
+  2.594,
+  2.968,
+  3.178,
+  3.557,
+  4.166,
+  4.55,
+  4.749,
+  4.949,
+  5.527,
+  5.732,
+  6.321,
+  7.867,
+  8.261,
+  9.054,
+  9.838,
+  10.237,
+  11.015,
+  11.409,
+  11.803,
+  12.966,
+  13.36,
+  13.759,
+  14.153,
+  14.547,
+  14.931,
+  15.335,
+  15.734,
+  16.103,
+  16.507,
+  17.291,
+  17.675,
+  18.084,
+  18.473,
+  18.872,
+  20.444,
+  20.833,
+  22.01,
+  22.399,
+  22.793,
+  23.187,
+  23.576,
+  23.971,
+  25.542,
+  27.108,
+  28.675,
+  29.069,
+  29.852,
+  30.246,
+  31.424,
+  41.226,
+  42.404,
+  42.793,
+  43.581,
+  43.97,
+  47.093,
+  47.502,
+  48.27,
+  49.637,
+  50.231,
+  51.408,
+  52.191,
+  53.364,
+  54.551,
+  55.324,
+  56.522,
+  57.694,
+  58.462,
+  59.639,
+  60.817,
+  61.595,
+  63.965,
+  64.733,
+  65.346,
+  65.91,
+  67.102,
+  67.871,
+  69.462,
+  69.846,
+  70.245,
+  70.629,
+  71.029,
+  71.423,
+  71.812,
+  72.206,
+  72.595,
+  72.989,
+  73.383,
+  73.772,
+  74.166,
+  74.546,
+  74.95,
+  75.344,
+  75.733,
+  76.127,
+  76.516,
+  76.91,
+  77.304,
+  77.698,
+  78.088,
+  78.482,
+  78.871,
+  79.265,
+  79.644,
+  80.048,
+  80.427,
+  80.831,
+  81.225,
+  81.62,
+  84.363,
+  85.146,
+  85.541,
+  85.93,
+  86.324,
+  86.713,
+  87.107,
+  87.496,
+  91.013,
+  93.562,
+  94.146,
+  95.323,
+  95.722,
+  96.112,
+  96.496,
+  96.71,
+  97.289,
+  98.267,
+  98.466,
+  98.855,
+  99.249,
+  99.464,
+  99.843,
+  100.442,
+  101.599,
+  102.183,
+  102.382,
+  102.981,
+  103.555,
+  104.732,
+  105.316,
+  105.52,
+  106.119,
+  107.875,
+  108.254,
+  108.658,
+  109.262,
+  109.636,
+  109.835,
+  111.013,
+  111.407,
+  111.796,
+  112.4,
+  113.367,
+  113.756,
+  114.146,
+  114.54,
+  114.934,
+  115.328,
+  115.722,
+  116.106,
+  116.5,
+  116.894,
+  117.283,
+  117.678,
+  118.072,
+  118.461,
+  118.865,
+  119.244,
+  119.638,
+  120.027,
+  120.421,
+  120.815,
+  121.21,
+  121.599,
+  121.993,
+  122.382,
+  122.776,
+  123.17,
+  123.559,
+  123.953,
+  124.342,
+  124.737,
+  125.131,
+  125.53,
+  128.668,
+  131.81,
+  132.978,
+  133.382,
+  133.761,
+  134.15,
+  134.36,
+  134.943,
+  136.106,
+  138.071,
+  139.054,
+  139.638,
+  140.027,
+  140.63,
+  141.01,
+  141.209,
+  142.192,
+  142.576,
+  142.776,
+  143.165,
+  143.758,
+  145.325,
+  145.714,
+  145.913,
+  146.302,
+  146.896,
+  147.48,
+  148.662,
+  149.051,
+  149.44
+ ],
+ "gaps": [
+  [
+   0.0,
+   1.4
+  ],
+  [
+   5.06,
+   5.52
+  ],
+  [
+   45.21,
+   46.1
+  ],
+  [
+   46.14,
+   47.08
+  ],
+  [
+   48.5,
+   49.63
+  ],
+  [
+   51.64,
+   52.18
+  ],
+  [
+   54.78,
+   55.31
+  ],
+  [
+   57.92,
+   58.45
+  ],
+  [
+   64.18,
+   64.73
+  ],
+  [
+   67.32,
+   67.86
+  ],
+  [
+   89.06,
+   91.0
+  ],
+  [
+   91.9,
+   93.34
+  ],
+  [
+   127.86,
+   128.66
+  ],
+  [
+   130.61,
+   131.06
+  ],
+  [
+   136.81,
+   138.06
+  ]
+ ],
+ "words": [
+  {
+   "text": "TEST",
+   "start": 0.56,
+   "part": "intro",
+   "verify": false,
+   "end": 1.2
+  },
+  {
+   "text": "ATLAS",
+   "start": 1.2,
+   "part": "intro",
+   "verify": false,
+   "end": 1.94
+  },
+  {
+   "text": "HEY",
+   "start": 1.94,
+   "part": "intro",
+   "verify": false,
+   "end": 2.74
+  },
+  {
+   "text": "TEST",
+   "start": 2.74,
+   "part": "intro",
+   "verify": false,
+   "end": 3.42
+  },
+  {
+   "text": "ATLAS",
+   "start": 3.42,
+   "part": "intro",
+   "verify": false,
+   "end": 4.32
+  },
+  {
+   "text": "HEY",
+   "start": 5.08,
+   "part": "intro",
+   "verify": false,
+   "end": 5.98
+  },
+  {
+   "text": "MIDNIGHT",
+   "start": 6.635,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 7.342
+  },
+  {
+   "text": "ANOTHER",
+   "start": 7.342,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 7.857
+  },
+  {
+   "text": "PRACTICE",
+   "start": 7.857,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 8.645
+  },
+  {
+   "text": "TEST",
+   "start": 8.645,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 9.029
+  },
+  {
+   "text": "COLD",
+   "start": 9.029,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 9.404
+  },
+  {
+   "text": "COFFEE",
+   "start": 9.404,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 9.844
+  },
+  {
+   "text": "HIGHLIGHTER",
+   "start": 9.844,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 10.604
+  },
+  {
+   "text": "RUNNING",
+   "start": 10.604,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 11.185
+  },
+  {
+   "text": "ON",
+   "start": 11.185,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 11.385
+  },
+  {
+   "text": "NO",
+   "start": 11.385,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 11.765
+  },
+  {
+   "text": "REST",
+   "start": 11.765,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 12.665
+  },
+  {
+   "text": "READ",
+   "start": 12.741,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 13.066
+  },
+  {
+   "text": "EVERY",
+   "start": 13.066,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 13.375
+  },
+  {
+   "text": "PASSAGE",
+   "start": 13.375,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 13.767
+  },
+  {
+   "text": "LIKE",
+   "start": 13.767,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 13.928
+  },
+  {
+   "text": "MY",
+   "start": 13.928,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 14.127
+  },
+  {
+   "text": "LIFE'S",
+   "start": 14.127,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 14.387
+  },
+  {
+   "text": "ON",
+   "start": 14.387,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 14.527
+  },
+  {
+   "text": "THE",
+   "start": 14.527,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 14.728
+  },
+  {
+   "text": "LINE",
+   "start": 14.728,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 15.288
+  },
+  {
+   "text": "SAME",
+   "start": 15.288,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 15.608
+  },
+  {
+   "text": "SCORE",
+   "start": 15.608,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 16.089
+  },
+  {
+   "text": "SAME",
+   "start": 16.089,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 16.409
+  },
+  {
+   "text": "SCORE",
+   "start": 16.409,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 16.989
+  },
+  {
+   "text": "EVERY",
+   "start": 16.989,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 17.249
+  },
+  {
+   "text": "SINGLE",
+   "start": 17.249,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 18.009
+  },
+  {
+   "text": "TIME",
+   "start": 18.009,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 18.852
+  },
+  {
+   "text": "ALWAYS",
+   "start": 18.852,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 19.251
+  },
+  {
+   "text": "NEVER",
+   "start": 19.251,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 19.711
+  },
+  {
+   "text": "EVERY",
+   "start": 19.711,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 20.384
+  },
+  {
+   "text": "POISON",
+   "start": 20.384,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 20.8
+  },
+  {
+   "text": "CROSS",
+   "start": 20.8,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 21.0
+  },
+  {
+   "text": "IT",
+   "start": 21.0,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 21.18
+  },
+  {
+   "text": "OUT",
+   "start": 21.18,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 21.94
+  },
+  {
+   "text": "MATCH",
+   "start": 21.94,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 22.16
+  },
+  {
+   "text": "IT",
+   "start": 22.16,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 22.319
+  },
+  {
+   "text": "TO",
+   "start": 22.319,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 22.58
+  },
+  {
+   "text": "THE",
+   "start": 22.58,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 22.754
+  },
+  {
+   "text": "LINE",
+   "start": 22.754,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 23.56
+  },
+  {
+   "text": "THERE'S",
+   "start": 23.56,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 23.774
+  },
+  {
+   "text": "NO",
+   "start": 23.774,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 23.98
+  },
+  {
+   "text": "ROOM",
+   "start": 23.98,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 24.18
+  },
+  {
+   "text": "FOR",
+   "start": 24.18,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 24.32
+  },
+  {
+   "text": "DOUBT",
+   "start": 24.32,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 25.1
+  },
+  {
+   "text": "THEY",
+   "start": 25.1,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 25.32
+  },
+  {
+   "text": "SAID",
+   "start": 25.32,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 25.52
+  },
+  {
+   "text": "READ",
+   "start": 25.52,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 25.7
+  },
+  {
+   "text": "HARDER",
+   "start": 25.7,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 26.12
+  },
+  {
+   "text": "I",
+   "start": 26.12,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 26.48
+  },
+  {
+   "text": "SAID",
+   "start": 26.48,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 26.8
+  },
+  {
+   "text": "NAH",
+   "start": 26.8,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 27.4
+  },
+  {
+   "text": "I'M",
+   "start": 27.4,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 27.56
+  },
+  {
+   "text": "GOOD",
+   "start": 27.56,
+   "part": "Verse 1",
+   "verify": false,
+   "end": 28.46
+  },
+  {
+   "text": "I",
+   "start": 28.46,
+   "part": "verse1-last",
+   "verify": false,
+   "end": 28.68
+  },
+  {
+   "text": "FOUND",
+   "start": 28.68,
+   "part": "verse1-last",
+   "verify": false,
+   "end": 28.86
+  },
+  {
+   "text": "THE",
+   "start": 28.86,
+   "part": "verse1-last",
+   "verify": false,
+   "end": 29.08
+  },
+  {
+   "text": "PATTERN",
+   "start": 29.08,
+   "part": "verse1-last",
+   "verify": false,
+   "end": 29.62
+  },
+  {
+   "text": "LIKE",
+   "start": 29.62,
+   "part": "verse1-last",
+   "verify": false,
+   "end": 29.96
+  },
+  {
+   "text": "I",
+   "start": 29.96,
+   "part": "verse1-last",
+   "verify": false,
+   "end": 30.22
+  },
+  {
+   "text": "KNEW",
+   "start": 30.22,
+   "part": "verse1-last",
+   "verify": false,
+   "end": 30.4
+  },
+  {
+   "text": "I",
+   "start": 30.4,
+   "part": "verse1-last",
+   "verify": false,
+   "end": 30.57
+  },
+  {
+   "text": "COULD",
+   "start": 30.57,
+   "part": "verse1-last",
+   "verify": false,
+   "end": 30.82
+  },
+  {
+   "text": "IT'S",
+   "start": 30.82,
+   "part": "pre1",
+   "verify": false,
+   "end": 31.0
+  },
+  {
+   "text": "NOT",
+   "start": 31.0,
+   "part": "pre1",
+   "verify": false,
+   "end": 31.26
+  },
+  {
+   "text": "A",
+   "start": 31.26,
+   "part": "pre1",
+   "verify": false,
+   "end": 31.4
+  },
+  {
+   "text": "READING",
+   "start": 31.4,
+   "part": "pre1",
+   "verify": false,
+   "end": 31.7
+  },
+  {
+   "text": "TEST",
+   "start": 31.7,
+   "part": "pre1",
+   "verify": false,
+   "end": 32.21
+  },
+  {
+   "text": "NO",
+   "start": 32.21,
+   "part": "pre1",
+   "verify": false,
+   "end": 32.58
+  },
+  {
+   "text": "IT'S",
+   "start": 32.58,
+   "part": "pre1",
+   "verify": false,
+   "end": 32.8
+  },
+  {
+   "text": "A",
+   "start": 32.8,
+   "part": "pre1",
+   "verify": false,
+   "end": 32.95
+  },
+  {
+   "text": "PATTERN",
+   "start": 32.95,
+   "part": "pre1",
+   "verify": false,
+   "end": 33.18
+  },
+  {
+   "text": "TEST",
+   "start": 33.18,
+   "part": "pre1",
+   "verify": false,
+   "end": 33.45
+  },
+  {
+   "text": "YES",
+   "start": 33.45,
+   "part": "pre1",
+   "verify": false,
+   "end": 34.16
+  },
+  {
+   "text": "FIND",
+   "start": 34.16,
+   "part": "pre1",
+   "verify": false,
+   "end": 34.3
+  },
+  {
+   "text": "THE",
+   "start": 34.3,
+   "part": "pre1",
+   "verify": false,
+   "end": 34.54
+  },
+  {
+   "text": "ONE",
+   "start": 34.54,
+   "part": "pre1",
+   "verify": false,
+   "end": 34.68
+  },
+  {
+   "text": "THAT'S",
+   "start": 34.68,
+   "part": "pre1",
+   "verify": false,
+   "end": 34.9
+  },
+  {
+   "text": "COSTING",
+   "start": 34.9,
+   "part": "pre1",
+   "verify": false,
+   "end": 35.14
+  },
+  {
+   "text": "ME",
+   "start": 35.14,
+   "part": "pre1",
+   "verify": false,
+   "end": 35.65
+  },
+  {
+   "text": "DRILL",
+   "start": 35.65,
+   "part": "pre1",
+   "verify": false,
+   "end": 35.88
+  },
+  {
+   "text": "IT",
+   "start": 35.88,
+   "part": "pre1",
+   "verify": false,
+   "end": 36.12
+  },
+  {
+   "text": "THEN",
+   "start": 36.12,
+   "part": "pre1",
+   "verify": false,
+   "end": 36.35
+  },
+  {
+   "text": "REASSESS",
+   "start": 36.35,
+   "part": "pre1",
+   "verify": false,
+   "end": 39.5
+  },
+  {
+   "text": "DRILL",
+   "start": 39.96,
+   "part": "pre1",
+   "verify": false,
+   "end": 40.2
+  },
+  {
+   "text": "IT",
+   "start": 40.2,
+   "part": "pre1",
+   "verify": false,
+   "end": 40.44
+  },
+  {
+   "text": "REASSESS",
+   "start": 40.44,
+   "part": "pre1",
+   "verify": false,
+   "end": 41.34
+  },
+  {
+   "text": "HERE",
+   "start": 42.03,
+   "part": "pre1",
+   "verify": false,
+   "end": 42.2
+  },
+  {
+   "text": "WE",
+   "start": 42.2,
+   "part": "pre1",
+   "verify": false,
+   "end": 42.37
+  },
+  {
+   "text": "GO",
+   "start": 42.37,
+   "part": "pre1",
+   "verify": false,
+   "end": 43.27
+  },
+  {
+   "text": "I",
+   "start": 44.16,
+   "part": "chorus1",
+   "verify": false,
+   "end": 44.36
+  },
+  {
+   "text": "GOT",
+   "start": 44.36,
+   "part": "chorus1",
+   "verify": false,
+   "end": 44.54
+  },
+  {
+   "text": "THE",
+   "start": 44.54,
+   "part": "chorus1",
+   "verify": false,
+   "end": 44.7
+  },
+  {
+   "text": "MAP",
+   "start": 44.7,
+   "part": "chorus1",
+   "verify": false,
+   "end": 45.07
+  },
+  {
+   "text": "HEY",
+   "start": 45.07,
+   "part": "chorus1",
+   "verify": false,
+   "end": 45.51
+  },
+  {
+   "text": "I",
+   "start": 45.51,
+   "part": "chorus1",
+   "verify": false,
+   "end": 45.71
+  },
+  {
+   "text": "KNOW",
+   "start": 45.71,
+   "part": "chorus1",
+   "verify": false,
+   "end": 46.11
+  },
+  {
+   "text": "THE",
+   "start": 46.11,
+   "part": "chorus1",
+   "verify": false,
+   "end": 46.3
+  },
+  {
+   "text": "WAY",
+   "start": 46.3,
+   "part": "chorus1",
+   "verify": false,
+   "end": 46.63
+  },
+  {
+   "text": "HEY",
+   "start": 46.63,
+   "part": "chorus1",
+   "verify": false,
+   "end": 47.09
+  },
+  {
+   "text": "EVERY",
+   "start": 47.09,
+   "part": "chorus1",
+   "verify": false,
+   "end": 47.43
+  },
+  {
+   "text": "TRAP",
+   "start": 47.43,
+   "part": "chorus1",
+   "verify": false,
+   "end": 47.67
+  },
+  {
+   "text": "THEY",
+   "start": 47.67,
+   "part": "chorus1",
+   "verify": false,
+   "end": 47.93
+  },
+  {
+   "text": "SET",
+   "start": 47.93,
+   "part": "chorus1",
+   "verify": false,
+   "end": 48.08
+  },
+  {
+   "text": "I",
+   "start": 48.08,
+   "part": "chorus1",
+   "verify": false,
+   "end": 48.24
+  },
+  {
+   "text": "SEE",
+   "start": 48.24,
+   "part": "chorus1",
+   "verify": false,
+   "end": 48.46
+  },
+  {
+   "text": "IT",
+   "start": 48.46,
+   "part": "chorus1",
+   "verify": false,
+   "end": 48.67
+  },
+  {
+   "text": "FROM",
+   "start": 48.67,
+   "part": "chorus1",
+   "verify": false,
+   "end": 48.88
+  },
+  {
+   "text": "A",
+   "start": 48.88,
+   "part": "chorus1",
+   "verify": false,
+   "end": 49.02
+  },
+  {
+   "text": "MILE",
+   "start": 49.02,
+   "part": "chorus1",
+   "verify": false,
+   "end": 49.3
+  },
+  {
+   "text": "AWAY",
+   "start": 49.3,
+   "part": "chorus1",
+   "verify": false,
+   "end": 49.86
+  },
+  {
+   "text": "RUN",
+   "start": 49.86,
+   "part": "chorus1",
+   "verify": false,
+   "end": 50.05
+  },
+  {
+   "text": "IT",
+   "start": 50.05,
+   "part": "chorus1",
+   "verify": false,
+   "end": 50.24
+  },
+  {
+   "text": "BACK",
+   "start": 50.24,
+   "part": "chorus1",
+   "verify": false,
+   "end": 50.62
+  },
+  {
+   "text": "RUN",
+   "start": 50.62,
+   "part": "chorus1",
+   "verify": false,
+   "end": 50.82
+  },
+  {
+   "text": "IT",
+   "start": 50.82,
+   "part": "chorus1",
+   "verify": false,
+   "end": 51.03
+  },
+  {
+   "text": "BACK",
+   "start": 51.03,
+   "part": "chorus1",
+   "verify": false,
+   "end": 51.42
+  },
+  {
+   "text": "RUN",
+   "start": 51.42,
+   "part": "chorus1",
+   "verify": false,
+   "end": 51.8
+  },
+  {
+   "text": "RUN",
+   "start": 51.8,
+   "part": "chorus1",
+   "verify": false,
+   "end": 52.0
+  },
+  {
+   "text": "IT",
+   "start": 52.0,
+   "part": "chorus1",
+   "verify": false,
+   "end": 52.19
+  },
+  {
+   "text": "BACK",
+   "start": 52.19,
+   "part": "chorus1",
+   "verify": false,
+   "end": 52.42
+  },
+  {
+   "text": "AGAIN",
+   "start": 52.42,
+   "part": "chorus1",
+   "verify": false,
+   "end": 53.32
+  },
+  {
+   "text": "WATCH",
+   "start": 53.36,
+   "part": "chorus1",
+   "verify": false,
+   "end": 53.57
+  },
+  {
+   "text": "MY",
+   "start": 53.57,
+   "part": "chorus1",
+   "verify": false,
+   "end": 53.78
+  },
+  {
+   "text": "SCORE",
+   "start": 53.78,
+   "part": "chorus1",
+   "verify": false,
+   "end": 53.93
+  },
+  {
+   "text": "CLIMB",
+   "start": 53.93,
+   "part": "chorus1",
+   "verify": false,
+   "end": 54.2
+  },
+  {
+   "text": "HIGHER",
+   "start": 54.2,
+   "part": "chorus1",
+   "verify": false,
+   "end": 54.83
+  },
+  {
+   "text": "THAN",
+   "start": 54.83,
+   "part": "chorus1",
+   "verify": false,
+   "end": 55.42
+  },
+  {
+   "text": "IT'S",
+   "start": 55.42,
+   "part": "chorus1",
+   "verify": false,
+   "end": 55.78
+  },
+  {
+   "text": "EVER",
+   "start": 55.78,
+   "part": "chorus1",
+   "verify": false,
+   "end": 56.12
+  },
+  {
+   "text": "BEEN",
+   "start": 56.12,
+   "part": "chorus1",
+   "verify": false,
+   "end": 57.02
+  },
+  {
+   "text": "TEST",
+   "start": 57.24,
+   "part": "chorus1",
+   "verify": false,
+   "end": 57.67
+  },
+  {
+   "text": "ATLAS",
+   "start": 57.67,
+   "part": "chorus1",
+   "verify": false,
+   "end": 58.57
+  },
+  {
+   "text": "TEST",
+   "start": 58.88,
+   "part": "chorus1",
+   "verify": false,
+   "end": 59.25
+  },
+  {
+   "text": "ATLAS",
+   "start": 59.25,
+   "part": "chorus1",
+   "verify": false,
+   "end": 59.64
+  },
+  {
+   "text": "PATTERN",
+   "start": 59.64,
+   "part": "chorus1",
+   "verify": false,
+   "end": 60.42
+  },
+  {
+   "text": "TEST",
+   "start": 60.42,
+   "part": "chorus1",
+   "verify": false,
+   "end": 60.9
+  },
+  {
+   "text": "I",
+   "start": 60.9,
+   "part": "chorus1",
+   "verify": false,
+   "end": 61.14
+  },
+  {
+   "text": "CRACKED",
+   "start": 61.14,
+   "part": "chorus1",
+   "verify": false,
+   "end": 61.58
+  },
+  {
+   "text": "IT",
+   "start": 61.58,
+   "part": "chorus1",
+   "verify": false,
+   "end": 62.04
+  },
+  {
+   "text": "AT",
+   "start": 62.04,
+   "part": "chorus1",
+   "verify": false,
+   "end": 62.28
+  },
+  {
+   "text": "LAST",
+   "start": 62.28,
+   "part": "chorus1",
+   "verify": false,
+   "end": 63.18
+  },
+  {
+   "text": "TEST",
+   "start": 63.52,
+   "part": "chorus1",
+   "verify": false,
+   "end": 63.95
+  },
+  {
+   "text": "ATLAS",
+   "start": 63.95,
+   "part": "chorus1",
+   "verify": false,
+   "end": 64.85
+  },
+  {
+   "text": "TEST",
+   "start": 65.15,
+   "part": "chorus1",
+   "verify": false,
+   "end": 65.52
+  },
+  {
+   "text": "ATLAS",
+   "start": 65.52,
+   "part": "chorus1",
+   "verify": false,
+   "end": 66.42
+  },
+  {
+   "text": "I",
+   "start": 67.08,
+   "part": "chorus1",
+   "verify": false,
+   "end": 67.41
+  },
+  {
+   "text": "CRACKED",
+   "start": 67.41,
+   "part": "chorus1",
+   "verify": false,
+   "end": 67.83
+  },
+  {
+   "text": "IT",
+   "start": 67.83,
+   "part": "chorus1",
+   "verify": false,
+   "end": 68.2
+  },
+  {
+   "text": "AT",
+   "start": 68.2,
+   "part": "chorus1",
+   "verify": false,
+   "end": 68.58
+  },
+  {
+   "text": "LAST",
+   "start": 68.58,
+   "part": "chorus1",
+   "verify": false,
+   "end": 69.21
+  },
+  {
+   "text": "QUICK",
+   "start": 69.21,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 69.367
+  },
+  {
+   "text": "CHECK",
+   "start": 69.367,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 69.782
+  },
+  {
+   "text": "SHOWS",
+   "start": 69.782,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 70.042
+  },
+  {
+   "text": "ME",
+   "start": 70.042,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 70.223
+  },
+  {
+   "text": "WHERE",
+   "start": 70.223,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 70.463
+  },
+  {
+   "text": "I'M",
+   "start": 70.463,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 70.663
+  },
+  {
+   "text": "LOSING",
+   "start": 70.663,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 71.385
+  },
+  {
+   "text": "GROUND",
+   "start": 71.385,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 71.991
+  },
+  {
+   "text": "ONE",
+   "start": 71.991,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 72.206
+  },
+  {
+   "text": "LITTLE",
+   "start": 72.206,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 72.546
+  },
+  {
+   "text": "FAMILY",
+   "start": 72.546,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 72.927
+  },
+  {
+   "text": "DRAGGING",
+   "start": 72.927,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 73.348
+  },
+  {
+   "text": "MY",
+   "start": 73.348,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 73.66
+  },
+  {
+   "text": "WHOLE",
+   "start": 73.66,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 74.029
+  },
+  {
+   "text": "SCORE",
+   "start": 74.029,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 74.526
+  },
+  {
+   "text": "DOWN",
+   "start": 74.526,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 75.234
+  },
+  {
+   "text": "FIFTEEN",
+   "start": 75.234,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 76.072
+  },
+  {
+   "text": "QUESTIONS",
+   "start": 76.072,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 76.89
+  },
+  {
+   "text": "LOCK",
+   "start": 76.89,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 77.1
+  },
+  {
+   "text": "IT",
+   "start": 77.1,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 77.414
+  },
+  {
+   "text": "IN",
+   "start": 77.414,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 77.654
+  },
+  {
+   "text": "TIGHT",
+   "start": 77.654,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 78.417
+  },
+  {
+   "text": "RETEST",
+   "start": 78.417,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 79.237
+  },
+  {
+   "text": "HITS",
+   "start": 79.237,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 79.46
+  },
+  {
+   "text": "AND",
+   "start": 79.46,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 79.84
+  },
+  {
+   "text": "THE",
+   "start": 79.84,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 80.018
+  },
+  {
+   "text": "NUMBERS",
+   "start": 80.018,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 80.46
+  },
+  {
+   "text": "LOOK",
+   "start": 80.46,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 80.7
+  },
+  {
+   "text": "RIGHT",
+   "start": 80.7,
+   "part": "Verse 2",
+   "verify": false,
+   "end": 81.4
+  },
+  {
+   "text": "ASSESS",
+   "start": 81.4,
+   "part": "pre2",
+   "verify": false,
+   "end": 81.94
+  },
+  {
+   "text": "HEY",
+   "start": 81.94,
+   "part": "pre2",
+   "verify": false,
+   "end": 82.74
+  },
+  {
+   "text": "DIAGNOSE",
+   "start": 82.74,
+   "part": "pre2",
+   "verify": false,
+   "end": 83.44
+  },
+  {
+   "text": "HEY",
+   "start": 83.44,
+   "part": "pre2",
+   "verify": false,
+   "end": 83.9
+  },
+  {
+   "text": "DRILL",
+   "start": 83.9,
+   "part": "pre2",
+   "verify": false,
+   "end": 84.1
+  },
+  {
+   "text": "IT",
+   "start": 84.1,
+   "part": "pre2",
+   "verify": false,
+   "end": 84.36
+  },
+  {
+   "text": "REASSESS",
+   "start": 84.36,
+   "part": "pre2",
+   "verify": false,
+   "end": 85.26
+  },
+  {
+   "text": "HERE",
+   "start": 85.96,
+   "part": "pre2",
+   "verify": false,
+   "end": 86.12
+  },
+  {
+   "text": "WE",
+   "start": 86.12,
+   "part": "pre2",
+   "verify": false,
+   "end": 86.34
+  },
+  {
+   "text": "GO",
+   "start": 86.34,
+   "part": "pre2",
+   "verify": false,
+   "end": 87.24
+  },
+  {
+   "text": "I",
+   "start": 88.08,
+   "part": "chorus2",
+   "verify": false,
+   "end": 88.28
+  },
+  {
+   "text": "GOT",
+   "start": 88.28,
+   "part": "chorus2",
+   "verify": false,
+   "end": 88.46
+  },
+  {
+   "text": "THE",
+   "start": 88.46,
+   "part": "chorus2",
+   "verify": false,
+   "end": 88.62
+  },
+  {
+   "text": "MAP",
+   "start": 88.62,
+   "part": "chorus2",
+   "verify": false,
+   "end": 88.99
+  },
+  {
+   "text": "HEY",
+   "start": 88.99,
+   "part": "chorus2",
+   "verify": false,
+   "end": 89.43
+  },
+  {
+   "text": "I",
+   "start": 89.43,
+   "part": "chorus2",
+   "verify": false,
+   "end": 89.63
+  },
+  {
+   "text": "KNOW",
+   "start": 89.63,
+   "part": "chorus2",
+   "verify": false,
+   "end": 90.03
+  },
+  {
+   "text": "THE",
+   "start": 90.03,
+   "part": "chorus2",
+   "verify": false,
+   "end": 90.22
+  },
+  {
+   "text": "WAY",
+   "start": 90.22,
+   "part": "chorus2",
+   "verify": false,
+   "end": 90.55
+  },
+  {
+   "text": "HEY",
+   "start": 90.55,
+   "part": "chorus2",
+   "verify": false,
+   "end": 91.01
+  },
+  {
+   "text": "EVERY",
+   "start": 91.01,
+   "part": "chorus2",
+   "verify": false,
+   "end": 91.35
+  },
+  {
+   "text": "TRAP",
+   "start": 91.35,
+   "part": "chorus2",
+   "verify": false,
+   "end": 91.59
+  },
+  {
+   "text": "THEY",
+   "start": 91.59,
+   "part": "chorus2",
+   "verify": false,
+   "end": 91.85
+  },
+  {
+   "text": "SET",
+   "start": 91.85,
+   "part": "chorus2",
+   "verify": false,
+   "end": 92.0
+  },
+  {
+   "text": "I",
+   "start": 92.0,
+   "part": "chorus2",
+   "verify": false,
+   "end": 92.16
+  },
+  {
+   "text": "SEE",
+   "start": 92.16,
+   "part": "chorus2",
+   "verify": false,
+   "end": 92.38
+  },
+  {
+   "text": "IT",
+   "start": 92.38,
+   "part": "chorus2",
+   "verify": false,
+   "end": 92.59
+  },
+  {
+   "text": "FROM",
+   "start": 92.59,
+   "part": "chorus2",
+   "verify": false,
+   "end": 92.8
+  },
+  {
+   "text": "A",
+   "start": 92.8,
+   "part": "chorus2",
+   "verify": false,
+   "end": 92.94
+  },
+  {
+   "text": "MILE",
+   "start": 92.94,
+   "part": "chorus2",
+   "verify": false,
+   "end": 93.22
+  },
+  {
+   "text": "AWAY",
+   "start": 93.22,
+   "part": "chorus2",
+   "verify": false,
+   "end": 93.78
+  },
+  {
+   "text": "RUN",
+   "start": 93.78,
+   "part": "chorus2",
+   "verify": false,
+   "end": 93.97
+  },
+  {
+   "text": "IT",
+   "start": 93.97,
+   "part": "chorus2",
+   "verify": false,
+   "end": 94.16
+  },
+  {
+   "text": "BACK",
+   "start": 94.16,
+   "part": "chorus2",
+   "verify": false,
+   "end": 94.54
+  },
+  {
+   "text": "RUN",
+   "start": 94.54,
+   "part": "chorus2",
+   "verify": false,
+   "end": 94.74
+  },
+  {
+   "text": "IT",
+   "start": 94.74,
+   "part": "chorus2",
+   "verify": false,
+   "end": 94.95
+  },
+  {
+   "text": "BACK",
+   "start": 94.95,
+   "part": "chorus2",
+   "verify": false,
+   "end": 95.34
+  },
+  {
+   "text": "RUN",
+   "start": 95.34,
+   "part": "chorus2",
+   "verify": false,
+   "end": 95.72
+  },
+  {
+   "text": "RUN",
+   "start": 95.72,
+   "part": "chorus2",
+   "verify": false,
+   "end": 95.92
+  },
+  {
+   "text": "IT",
+   "start": 95.92,
+   "part": "chorus2",
+   "verify": false,
+   "end": 96.11
+  },
+  {
+   "text": "BACK",
+   "start": 96.11,
+   "part": "chorus2",
+   "verify": false,
+   "end": 96.34
+  },
+  {
+   "text": "AGAIN",
+   "start": 96.34,
+   "part": "chorus2",
+   "verify": false,
+   "end": 97.24
+  },
+  {
+   "text": "WATCH",
+   "start": 97.28,
+   "part": "chorus2",
+   "verify": false,
+   "end": 97.49
+  },
+  {
+   "text": "MY",
+   "start": 97.49,
+   "part": "chorus2",
+   "verify": false,
+   "end": 97.7
+  },
+  {
+   "text": "SCORE",
+   "start": 97.7,
+   "part": "chorus2",
+   "verify": false,
+   "end": 97.85
+  },
+  {
+   "text": "CLIMB",
+   "start": 97.85,
+   "part": "chorus2",
+   "verify": false,
+   "end": 98.12
+  },
+  {
+   "text": "HIGHER",
+   "start": 98.12,
+   "part": "chorus2",
+   "verify": false,
+   "end": 98.75
+  },
+  {
+   "text": "THAN",
+   "start": 98.75,
+   "part": "chorus2",
+   "verify": false,
+   "end": 99.34
+  },
+  {
+   "text": "IT'S",
+   "start": 99.34,
+   "part": "chorus2",
+   "verify": false,
+   "end": 99.7
+  },
+  {
+   "text": "EVER",
+   "start": 99.7,
+   "part": "chorus2",
+   "verify": false,
+   "end": 100.04
+  },
+  {
+   "text": "BEEN",
+   "start": 100.04,
+   "part": "chorus2",
+   "verify": false,
+   "end": 100.94
+  },
+  {
+   "text": "TEST",
+   "start": 101.16,
+   "part": "chorus2",
+   "verify": false,
+   "end": 101.59
+  },
+  {
+   "text": "ATLAS",
+   "start": 101.59,
+   "part": "chorus2",
+   "verify": false,
+   "end": 102.49
+  },
+  {
+   "text": "TEST",
+   "start": 102.8,
+   "part": "chorus2",
+   "verify": false,
+   "end": 103.17
+  },
+  {
+   "text": "ATLAS",
+   "start": 103.17,
+   "part": "chorus2",
+   "verify": false,
+   "end": 103.56
+  },
+  {
+   "text": "PATTERN",
+   "start": 103.56,
+   "part": "chorus2",
+   "verify": false,
+   "end": 104.34
+  },
+  {
+   "text": "TEST",
+   "start": 104.34,
+   "part": "chorus2",
+   "verify": false,
+   "end": 104.82
+  },
+  {
+   "text": "I",
+   "start": 104.82,
+   "part": "chorus2",
+   "verify": false,
+   "end": 105.06
+  },
+  {
+   "text": "CRACKED",
+   "start": 105.06,
+   "part": "chorus2",
+   "verify": false,
+   "end": 105.5
+  },
+  {
+   "text": "IT",
+   "start": 105.5,
+   "part": "chorus2",
+   "verify": false,
+   "end": 105.96
+  },
+  {
+   "text": "AT",
+   "start": 105.96,
+   "part": "chorus2",
+   "verify": false,
+   "end": 106.2
+  },
+  {
+   "text": "LAST",
+   "start": 106.2,
+   "part": "chorus2",
+   "verify": false,
+   "end": 107.1
+  },
+  {
+   "text": "TEST",
+   "start": 107.44,
+   "part": "chorus2",
+   "verify": false,
+   "end": 107.87
+  },
+  {
+   "text": "ATLAS",
+   "start": 107.87,
+   "part": "chorus2",
+   "verify": false,
+   "end": 108.77
+  },
+  {
+   "text": "TEST",
+   "start": 109.07,
+   "part": "chorus2",
+   "verify": false,
+   "end": 109.44
+  },
+  {
+   "text": "ATLAS",
+   "start": 109.44,
+   "part": "chorus2",
+   "verify": false,
+   "end": 110.34
+  },
+  {
+   "text": "I",
+   "start": 111.0,
+   "part": "chorus2",
+   "verify": false,
+   "end": 111.33
+  },
+  {
+   "text": "CRACKED",
+   "start": 111.33,
+   "part": "chorus2",
+   "verify": false,
+   "end": 111.75
+  },
+  {
+   "text": "IT",
+   "start": 111.75,
+   "part": "chorus2",
+   "verify": false,
+   "end": 112.12
+  },
+  {
+   "text": "AT",
+   "start": 112.12,
+   "part": "chorus2",
+   "verify": false,
+   "end": 112.5
+  },
+  {
+   "text": "LAST",
+   "start": 112.5,
+   "part": "chorus2",
+   "verify": false,
+   "end": 113.02
+  },
+  {
+   "text": "SHOW",
+   "start": 113.02,
+   "part": "Bridge",
+   "verify": false,
+   "end": 113.2
+  },
+  {
+   "text": "'EM",
+   "start": 113.2,
+   "part": "Bridge",
+   "verify": false,
+   "end": 113.36
+  },
+  {
+   "text": "THE",
+   "start": 113.36,
+   "part": "Bridge",
+   "verify": false,
+   "end": 113.56
+  },
+  {
+   "text": "RECEIPT",
+   "start": 113.56,
+   "part": "Bridge",
+   "verify": false,
+   "end": 114.04
+  },
+  {
+   "text": "SHOW",
+   "start": 114.04,
+   "part": "Bridge",
+   "verify": false,
+   "end": 114.36
+  },
+  {
+   "text": "'EM",
+   "start": 114.36,
+   "part": "Bridge",
+   "verify": false,
+   "end": 114.76
+  },
+  {
+   "text": "SHOW",
+   "start": 114.76,
+   "part": "Bridge",
+   "verify": false,
+   "end": 115.1
+  },
+  {
+   "text": "'EM",
+   "start": 115.1,
+   "part": "Bridge",
+   "verify": false,
+   "end": 115.6
+  },
+  {
+   "text": "SHOW",
+   "start": 115.6,
+   "part": "Bridge",
+   "verify": false,
+   "end": 115.8
+  },
+  {
+   "text": "YOUR",
+   "start": 115.8,
+   "part": "Bridge",
+   "verify": false,
+   "end": 116.02
+  },
+  {
+   "text": "MOM",
+   "start": 116.02,
+   "part": "Bridge",
+   "verify": false,
+   "end": 116.3
+  },
+  {
+   "text": "THE",
+   "start": 116.3,
+   "part": "Bridge",
+   "verify": false,
+   "end": 116.54
+  },
+  {
+   "text": "RECEIPT",
+   "start": 116.54,
+   "part": "Bridge",
+   "verify": false,
+   "end": 117.18
+  },
+  {
+   "text": "SHOW",
+   "start": 117.18,
+   "part": "Bridge",
+   "verify": false,
+   "end": 117.5
+  },
+  {
+   "text": "'EM",
+   "start": 117.5,
+   "part": "Bridge",
+   "verify": false,
+   "end": 117.92
+  },
+  {
+   "text": "SHOW",
+   "start": 117.92,
+   "part": "Bridge",
+   "verify": false,
+   "end": 118.24
+  },
+  {
+   "text": "'EM",
+   "start": 118.24,
+   "part": "Bridge",
+   "verify": false,
+   "end": 119.04
+  },
+  {
+   "text": "BEFORE",
+   "start": 119.04,
+   "part": "Bridge",
+   "verify": false,
+   "end": 119.74
+  },
+  {
+   "text": "AND",
+   "start": 119.74,
+   "part": "Bridge",
+   "verify": false,
+   "end": 120.0
+  },
+  {
+   "text": "AFTER",
+   "start": 120.0,
+   "part": "Bridge",
+   "verify": false,
+   "end": 120.8
+  },
+  {
+   "text": "BLACK",
+   "start": 120.8,
+   "part": "Bridge",
+   "verify": false,
+   "end": 121.18
+  },
+  {
+   "text": "AND",
+   "start": 121.18,
+   "part": "Bridge",
+   "verify": false,
+   "end": 121.5
+  },
+  {
+   "text": "WHITE",
+   "start": 121.5,
+   "part": "Bridge",
+   "verify": false,
+   "end": 121.98
+  },
+  {
+   "text": "MISTAKE",
+   "start": 121.98,
+   "part": "Bridge",
+   "verify": false,
+   "end": 122.62
+  },
+  {
+   "text": "FIXED",
+   "start": 122.62,
+   "part": "Bridge",
+   "verify": false,
+   "end": 122.98
+  },
+  {
+   "text": "YEAH",
+   "start": 122.98,
+   "part": "Bridge",
+   "verify": false,
+   "end": 123.76
+  },
+  {
+   "text": "THE",
+   "start": 123.76,
+   "part": "Bridge",
+   "verify": false,
+   "end": 123.9
+  },
+  {
+   "text": "PROOF'S",
+   "start": 123.9,
+   "part": "Bridge",
+   "verify": false,
+   "end": 124.44
+  },
+  {
+   "text": "IN",
+   "start": 124.44,
+   "part": "Bridge",
+   "verify": false,
+   "end": 124.72
+  },
+  {
+   "text": "SIGHT",
+   "start": 124.72,
+   "part": "Bridge",
+   "verify": false,
+   "end": 125.62
+  },
+  {
+   "text": "I",
+   "start": 125.725,
+   "part": "final",
+   "verify": false,
+   "end": 125.925
+  },
+  {
+   "text": "GOT",
+   "start": 125.925,
+   "part": "final",
+   "verify": false,
+   "end": 126.105
+  },
+  {
+   "text": "THE",
+   "start": 126.105,
+   "part": "final",
+   "verify": false,
+   "end": 126.265
+  },
+  {
+   "text": "MAP",
+   "start": 126.265,
+   "part": "final",
+   "verify": false,
+   "end": 126.635
+  },
+  {
+   "text": "HEY",
+   "start": 126.635,
+   "part": "final",
+   "verify": false,
+   "end": 127.075
+  },
+  {
+   "text": "I",
+   "start": 127.075,
+   "part": "final",
+   "verify": false,
+   "end": 127.275
+  },
+  {
+   "text": "KNOW",
+   "start": 127.275,
+   "part": "final",
+   "verify": false,
+   "end": 127.675
+  },
+  {
+   "text": "THE",
+   "start": 127.675,
+   "part": "final",
+   "verify": false,
+   "end": 127.865
+  },
+  {
+   "text": "WAY",
+   "start": 127.865,
+   "part": "final",
+   "verify": false,
+   "end": 128.195
+  },
+  {
+   "text": "HEY",
+   "start": 128.195,
+   "part": "final",
+   "verify": false,
+   "end": 128.655
+  },
+  {
+   "text": "EVERY",
+   "start": 128.655,
+   "part": "final",
+   "verify": false,
+   "end": 128.995
+  },
+  {
+   "text": "TRAP",
+   "start": 128.995,
+   "part": "final",
+   "verify": false,
+   "end": 129.235
+  },
+  {
+   "text": "THEY",
+   "start": 129.235,
+   "part": "final",
+   "verify": false,
+   "end": 129.495
+  },
+  {
+   "text": "SET",
+   "start": 129.495,
+   "part": "final",
+   "verify": false,
+   "end": 129.645
+  },
+  {
+   "text": "I",
+   "start": 129.645,
+   "part": "final",
+   "verify": false,
+   "end": 129.805
+  },
+  {
+   "text": "SEE",
+   "start": 129.805,
+   "part": "final",
+   "verify": false,
+   "end": 130.025
+  },
+  {
+   "text": "IT",
+   "start": 130.025,
+   "part": "final",
+   "verify": false,
+   "end": 130.235
+  },
+  {
+   "text": "FROM",
+   "start": 130.235,
+   "part": "final",
+   "verify": false,
+   "end": 130.445
+  },
+  {
+   "text": "A",
+   "start": 130.445,
+   "part": "final",
+   "verify": false,
+   "end": 130.585
+  },
+  {
+   "text": "MILE",
+   "start": 130.585,
+   "part": "final",
+   "verify": false,
+   "end": 130.865
+  },
+  {
+   "text": "AWAY",
+   "start": 130.865,
+   "part": "final",
+   "verify": false,
+   "end": 131.765
+  },
+  {
+   "text": "TEST",
+   "start": 133.58,
+   "part": "final",
+   "verify": false,
+   "end": 133.96
+  },
+  {
+   "text": "ATLAS",
+   "start": 133.96,
+   "part": "final",
+   "verify": false,
+   "end": 134.16
+  },
+  {
+   "text": "TEST",
+   "start": 134.16,
+   "part": "final",
+   "verify": false,
+   "end": 134.56
+  },
+  {
+   "text": "ATLAS",
+   "start": 134.56,
+   "part": "final",
+   "verify": false,
+   "end": 134.94
+  },
+  {
+   "text": "PATTERN",
+   "start": 134.94,
+   "part": "final",
+   "verify": false,
+   "end": 135.7
+  },
+  {
+   "text": "TEST",
+   "start": 135.7,
+   "part": "final",
+   "verify": false,
+   "end": 136.18
+  },
+  {
+   "text": "I",
+   "start": 136.18,
+   "part": "final",
+   "verify": false,
+   "end": 136.42
+  },
+  {
+   "text": "CRACKED",
+   "start": 136.42,
+   "part": "final",
+   "verify": false,
+   "end": 136.88
+  },
+  {
+   "text": "IT",
+   "start": 136.88,
+   "part": "final",
+   "verify": false,
+   "end": 137.3
+  },
+  {
+   "text": "AT",
+   "start": 137.3,
+   "part": "final",
+   "verify": false,
+   "end": 137.56
+  },
+  {
+   "text": "LAST",
+   "start": 137.56,
+   "part": "final",
+   "verify": false,
+   "end": 138.46
+  },
+  {
+   "text": "TEST",
+   "start": 139.19,
+   "part": "outro",
+   "verify": false,
+   "end": 139.99
+  },
+  {
+   "text": "ATLAS",
+   "start": 139.99,
+   "part": "outro",
+   "verify": false,
+   "end": 140.89
+  },
+  {
+   "text": "TEST",
+   "start": 142.33,
+   "part": "outro",
+   "verify": false,
+   "end": 143.23
+  },
+  {
+   "text": "TEST",
+   "start": 145.46,
+   "part": "outro",
+   "verify": false,
+   "end": 146.36
+  }
+ ],
+ "sections": {
+  "intro": 0.0,
+  "verse1": 5.8,
+  "verse1b": 18.47,
+  "pre1": 30.44,
+  "chorus1": 44.16,
+  "drop": 47.09,
+  "verse2": 69.4,
+  "pre2": 81.38,
+  "chorus2": 88.08,
+  "drop2": 91.01,
+  "bridge": 113.37,
+  "final": 125.73,
+  "outro": 138.07,
+  "end": 150.0
+ }
+}

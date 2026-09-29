@@ -1,9 +1,46 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { migrate } from './database.js';
+import type { QueryResultRow } from 'pg';
+import { migrate, type QueryResult, type SqlDatabase } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { createAgentCommand, type CommandRow } from './agent-command.js';
 import { answerRoomChoice } from './room-choice.js';
-import { archiveWorkflow, handoff, saveWorkflow, startWorkflow } from './workflow-runs.js';
+import {
+  archiveWorkflow,
+  handoff,
+  saveWorkflow,
+  startWorkflow,
+  workflowRunLockKey,
+} from './workflow-runs.js';
+
+/**
+ * Records every SQL statement issued through this wrapper, in order,
+ * including inside nested `transaction()` calls (PGlite's own transaction
+ * primitive serializes fully on its single embedded connection, so it never
+ * surfaces a `BEGIN` through the `SqlDatabase.query()` interface handoff()
+ * writes against — only the statements the application code itself issues
+ * are recorded here). This is how P0-1's fix is proven: not by reproducing
+ * genuine concurrent Postgres connections (PGlite architecturally cannot —
+ * see the concurrency describe block below), but by asserting the run lock
+ * is the first thing handoff() does, before it ever reads the run's state.
+ */
+type RecordedCall = { sql: string; values?: unknown[] };
+
+class RecordingDatabase implements SqlDatabase {
+  constructor(
+    private readonly inner: SqlDatabase,
+    readonly calls: RecordedCall[] = [],
+  ) {}
+  async query<Row extends QueryResultRow = QueryResultRow>(
+    sql: string,
+    values?: unknown[],
+  ): Promise<QueryResult<Row>> {
+    this.calls.push({ sql: sql.replace(/\s+/g, ' ').trim(), values });
+    return this.inner.query<Row>(sql, values);
+  }
+  transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {
+    return this.inner.transaction((db) => work(new RecordingDatabase(db, this.calls)));
+  }
+}
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000001';
 const ROOM = '20000000-0000-4000-8000-000000000001';
@@ -380,5 +417,120 @@ describe('archive_workflow', () => {
       contents: { summary: 'x', prUrl: 'y' },
     });
     expect(result.state).toBe('checks');
+  });
+});
+
+/**
+ * P0-1 (external review of PR #1909): handoff() derived a run's current
+ * state, validated the caller's requested transition against it, and wrote
+ * the next `workflow-handoff` card with NO lock around that whole sequence —
+ * only the narrower loop-edge count had one. Two concurrent handoffs from
+ * the same state (a duplicate/retried tool call is exactly the "hiccup"
+ * pattern this codebase's own command-delivery layer already produces) could
+ * both read the same current state under READ COMMITTED, both validate
+ * independently, and both write a card; whichever committed last would
+ * silently become the run's canonical state per loadRun's newest-card-wins
+ * derivation, discarding the other transition even though its wake had
+ * already fired.
+ *
+ * PGlite cannot exhibit that race directly: it is a single embedded WASM
+ * connection guarded by its own internal mutex, so `database.transaction()`
+ * calls fully serialize — one call's BEGIN...COMMIT always completes before
+ * the next one's BEGIN begins, which is also why no test here (or anywhere
+ * else in this codebase, for the identical `resolveCascade` root lock or the
+ * pre-existing loop-edge lock) can force two genuinely concurrent Postgres
+ * connections to interleave. What CAN be proven, and is proven below, is
+ * that the code takes the run-level lock as the very first statement of the
+ * transaction, before it reads anything — which is the actual fix, and the
+ * assertion genuinely fails against the pre-fix code (no such call existed
+ * at all) and passes against the fix.
+ */
+describe('handoff run-level locking (P0-1)', () => {
+  it('derives the same lock key start_workflow and handoff both use', () => {
+    expect(workflowRunLockKey('abc123')).toBe('workflow-run:abc123');
+  });
+
+  it("acquires the run lock as the transaction's first statement, before it reads the run's current state", async () => {
+    const { runId } = await startedRun();
+    const recording = new RecordingDatabase(database);
+    await handoff(recording, await commandFor(IMPLEMENTER), {
+      runId,
+      outcome: 'pushed',
+      contents: { summary: 'x', prUrl: 'y' },
+    });
+    expect(recording.calls[0]).toEqual({
+      sql: 'SELECT pg_advisory_xact_lock(hashtext($1))',
+      values: [workflowRunLockKey(runId)],
+    });
+    const readIndex = recording.calls.findIndex((call) => call.sql.includes('FROM messages'));
+    expect(readIndex).toBeGreaterThan(0);
+  });
+
+  it("start_workflow locks its freshly minted run id before writing the run's start card", async () => {
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: CONTRACT });
+    const recording = new RecordingDatabase(database);
+    const { runId } = await startWorkflow(recording, command, {
+      name: 'corner',
+      roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+    });
+    const lockIndex = recording.calls.findIndex(
+      (call) =>
+        call.sql === 'SELECT pg_advisory_xact_lock(hashtext($1))' &&
+        call.values?.[0] === workflowRunLockKey(runId),
+    );
+    const insertIndex = recording.calls.findIndex((call) => call.sql.includes('INSERT INTO messages'));
+    expect(lockIndex).toBeGreaterThanOrEqual(0);
+    expect(insertIndex).toBeGreaterThan(lockIndex);
+  });
+
+  it('keeps loop counts exact and every card internally consistent across handoffs fired together', async () => {
+    // PGlite fully serializes database.transaction() calls (see the
+    // docblock above), so this cannot force the true interleaving the fix
+    // guards against — that is proven by the call-order tests above
+    // instead. This test is a regression safety net: whatever order PGlite
+    // actually runs these two calls in, the result must be internally
+    // consistent (the run ends up at exactly one real state, and the loop
+    // count computed for whichever call takes the capped edge reflects
+    // reality) rather than corrupted.
+    const { runId } = await startedRun();
+    const implementer = await commandFor(IMPLEMENTER);
+    await handoff(database, implementer, {
+      runId,
+      outcome: 'pushed',
+      contents: { summary: 'x', prUrl: 'y' },
+    });
+    const [a, b] = await Promise.allSettled([
+      handoff(database, await commandFor(IMPLEMENTER), {
+        runId,
+        outcome: 'passing',
+        contents: { headSha: 'sha-a' },
+      }),
+      handoff(database, await commandFor(IMPLEMENTER), {
+        runId,
+        outcome: 'failing',
+        contents: { headSha: 'sha-b' },
+      }),
+    ]);
+    // Both calls read/validated/wrote against the SAME source state
+    // ("checks"), which is only valid once — the second one to actually run
+    // sees the first one's committed card and is bound to whatever role
+    // that landed on, not "implementer" (this is the run-level lock doing
+    // its job: it forces true sequencing, so the second call's view of
+    // "current state" is never stale).
+    const outcomes = [a, b];
+    const fulfilled = outcomes.filter((o) => o.status === 'fulfilled');
+    const rejected = outcomes.filter((o) => o.status === 'rejected');
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    const cards = await database.query<{ card: { fromState: string; outcome: string; toState: string } }>(
+      `SELECT card FROM messages WHERE room_id=$1 AND card_type='workflow-handoff'
+       AND card->>'runId'=$2 ORDER BY created_at,id`,
+      [ROOM, runId],
+    );
+    // Exactly one card was ever written for the "checks" state, not two
+    // conflicting ones racing to be "the" current state.
+    const fromChecks = cards.rows.filter((row) => row.card.fromState === 'checks');
+    expect(fromChecks).toHaveLength(1);
   });
 });

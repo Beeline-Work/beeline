@@ -95,6 +95,25 @@ function workflowTimeoutScheduleId(runId: string, stateName: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+/**
+ * Serializes the whole "derive current state -> validate -> write the next
+ * card" critical section per run. Without this, two concurrent handoffs (or
+ * a handoff racing the run's own start) both read the same current state
+ * under READ COMMITTED, both validate independently, and both insert a
+ * `workflow-handoff` card — whichever commits last silently becomes the
+ * run's canonical state per `loadRun`'s newest-card-wins derivation, even
+ * though both wakes already fired. Taken as the FIRST statement in the
+ * transaction, before any read, matching the discipline `resolveCascade`
+ * already uses for a cascade's root lock.
+ */
+export function workflowRunLockKey(runId: string): string {
+  return `workflow-run:${runId}`;
+}
+
+async function lockWorkflowRun(db: SqlDatabase, runId: string): Promise<void> {
+  await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [workflowRunLockKey(runId)]);
+}
+
 async function cancelWorkflowTimeout(db: SqlDatabase, runId: string, stateName: string): Promise<void> {
   await db.query(`DELETE FROM agent_schedules WHERE id=$1`, [
     workflowTimeoutScheduleId(runId, stateName),
@@ -239,6 +258,10 @@ export async function startWorkflow(
     for (const role of contract.roles) roleBindings[role] = input.roleBindings[role]!;
     const starter = await loadIdentityRow(db, command.agent_id);
     const runId = randomBytes(32).toString('hex');
+    // No other writer can already hold this exact fresh, random runId, but
+    // taking the lock here anyway keeps every run-card writer in this file
+    // following the identical discipline handoff() below requires.
+    await lockWorkflowRun(db, runId);
     const startState = contract.handoffs[contract.start]!;
     const isGate = startState.kind === 'gate';
     await systemLine(db, {
@@ -291,6 +314,11 @@ export async function handoff(
   if (typeof input.runId !== 'string' || !input.runId) throw new Error('runId is required');
   if (typeof input.outcome !== 'string' || !input.outcome) throw new Error('outcome is required');
   return database.transaction(async (db) => {
+    // First statement, before any read: serializes this run's whole
+    // read-validate-write critical section against every other handoff (or
+    // the run's own start) so "what state is this run in" can never be
+    // answered from a read another writer is about to make stale.
+    await lockWorkflowRun(db, input.runId);
     const room = (
       await db.query<{ workspace_id: string }>(`SELECT workspace_id FROM rooms WHERE id=$1`, [
         command.room_id,

@@ -8,5 +8,5 @@ import { runSquireTaskProxy } from './squire-task-relay.js';
 const entry = process.argv[1]?.replace(/\\/g, '/');
 if (entry && /squire-facade\.(c?js|ts)$/.test(entry)) {
   if (process.env.BEELINE_SQUIRE_RELAY_URL) runSquireTaskProxy(process.env);
-  else runSquireFacade(process.env);
+  else await runSquireFacade(process.env);
 }

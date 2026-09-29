@@ -7,8 +7,8 @@
  * launch line the way a verbatim copy into two PrivateTmp agents would; GREEN
  * spawns the real `squire-facade` entry produced by the route rewrite.
  */
-import { spawnSync } from 'node:child_process';
-import { chmodSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -30,6 +30,7 @@ import {
   TRUSTY_SQUIRE_BROKER_UNIT_NAME,
   trustySquireBrokerUnit,
 } from './squire-host.js';
+import { startFakeMcpBroker, stopFakeMcpBroker } from './squire-broker-link.test-support.js';
 
 const SQUIRE_LAUNCH = {
   command: 'npx',
@@ -114,6 +115,48 @@ async function closeServer(server: Server): Promise<void> {
   await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
 }
 
+/**
+ * One newline-delimited JSON-RPC reply from a real child's stdout. `spawnSync`
+ * writes its whole `input` then closes stdin immediately, which races ahead
+ * of the façade's async socket connect — a real harness keeps stdin open and
+ * reads replies as they arrive, so the façade tests do the same with `spawn`.
+ */
+async function readChildLine(stream: NodeJS.ReadableStream): Promise<Record<string, unknown>> {
+  return await new Promise((resolve) => {
+    let buffer = Buffer.alloc(0);
+    const onData = (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      const end = buffer.indexOf(10);
+      if (end < 0) return;
+      stream.off('data', onData);
+      resolve(JSON.parse(buffer.subarray(0, end).toString('utf8')) as Record<string, unknown>);
+    };
+    stream.on('data', onData);
+  });
+}
+
+/**
+ * Leave an orphaned Unix socket inode at `path`, the way a broker that never
+ * reaches its own graceful shutdown does (SIGKILL, OOM, a restart-loop crash
+ * mid-cycle): only `server.close()` unlinks the file, so a listener that dies
+ * any other way leaves the socket special file behind with nothing answering
+ * it.
+ */
+async function leaveStaleSocket(path: string): Promise<void> {
+  const child = spawn(
+    process.execPath,
+    ['-e', `require('net').createServer().listen(${JSON.stringify(path)});`],
+    { stdio: 'ignore' },
+  );
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline && !existsSync(path)) {
+    await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+  }
+  if (!existsSync(path)) throw new Error('stale socket setup never bound');
+  child.kill('SIGKILL');
+  await new Promise((resolveExit) => child.once('exit', resolveExit));
+}
+
 describe('squire host rewrite env', () => {
   it('points every façade at the host home, never a private /tmp', () => {
     const env = squireHostRewriteEnv('/home/op');
@@ -150,42 +193,47 @@ describe('RED/GREEN broker election', () => {
     expect(records.map((record) => record.socket)).toEqual(sockets);
   });
 
-  it('GREEN: two real façades reach one host broker and elect nothing', async () => {
+  it('GREEN: two real façades reach the host broker over its shared MCP socket and never touch npx', async () => {
     const home = await scratch('beeline-squire-green-');
     const paths = ensureSquireHostDir(home);
     const ledger = join(home, 'brokers.jsonl');
     const shimDir = join(home, 'bin');
     installNpxShim(shimDir, ledger);
-    const broker = await listenUnix(paths.brokerSocket);
-    const hostInode = lstatSync(paths.brokerSocket).ino;
+    const broker = await listenUnix(paths.brokerSocket); // satisfies the fast pre-check
+    const mcpBroker = await startFakeMcpBroker(paths.mcpSocket); // the real connect-only transport
     try {
       const route = rewriteHostMcpDeclaration('squire', { ...SQUIRE_LAUNCH }, home, undefined, { agentId: 'agent-a', roomId: 'room-a' });
       const routeEnv = route.env as Record<string, string>;
       for (const agent of ['agent-a', 'agent-b']) {
         const privateTmp = join(home, agent, 'tmp');
         mkdirSync(privateTmp, { recursive: true });
-        const run = spawnSync(route.command as string, route.args as string[], {
-          encoding: 'utf8',
+        const child = spawn(route.command as string, route.args as string[], {
           env: {
             ...routeEnv,
             PATH: `${shimDir}:${process.env.PATH ?? ''}`,
             TMPDIR: privateTmp,
             HOME: join(home, agent),
           },
+          stdio: ['pipe', 'pipe', 'ignore'],
         });
-        expect(run.status).toBe(0);
+        child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} })}\n`);
+        const initReply = await readChildLine(child.stdout);
+        expect((initReply.result as { serverInfo: { name: string } }).serverInfo.name).toBe('fake-mcp-broker');
+        child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
+        child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })}\n`);
+        const toolsReply = await readChildLine(child.stdout);
+        expect((toolsReply.result as { tools: unknown[] }).tools).toHaveLength(1);
+        child.stdin.end();
+        const code = await new Promise<number | null>((resolve) => child.once('exit', resolve));
+        expect(code).toBe(0);
       }
-      const records = brokerRecords(ledger);
-      expect(records.map((record) => record.outcome)).toEqual(['connected', 'connected']);
-      expect(new Set(records.map((record) => record.socket))).toEqual(
-        new Set([paths.brokerSocket]),
-      );
-      expect(new Set(records.map((record) => record.profileDir))).toEqual(
-        new Set([paths.profileDir]),
-      );
-      expect(lstatSync(paths.brokerSocket).ino).toBe(hostInode);
+      // The regression this test guards: neither façade ever ran `npx …
+      // server` at all — the connect-only relay speaks the broker's shared
+      // MCP socket directly, so there is nothing left that could elect.
+      expect(brokerRecords(ledger)).toEqual([]);
     } finally {
       await closeServer(broker);
+      await stopFakeMcpBroker(mcpBroker);
     }
   });
 
@@ -196,13 +244,41 @@ describe('RED/GREEN broker election', () => {
     const shimDir = join(home, 'bin');
     installNpxShim(shimDir, ledger);
     const launch = squireFacadeLaunch(home, { agentId: 'agent-a', roomId: 'room-a' });
-    expect(squireBrokerSocketReady(launch.env.TRUSTY_SQUIRE_BROKER_SOCKET!)).toBe(false);
+    await expect(squireBrokerSocketReady(launch.env.TRUSTY_SQUIRE_BROKER_SOCKET!)).resolves.toBe(false);
     const run = spawnSync(launch.command, launch.args, {
       encoding: 'utf8',
       env: { ...launch.env, PATH: `${shimDir}:${process.env.PATH ?? ''}`, HOME: home },
     });
     expect(run.status).toBe(1);
     expect(run.stderr).toContain(SQUIRE_BROKER_UNAVAILABLE);
+    expect(run.stderr).toContain(TRUSTY_SQUIRE_BROKER_UNIT_NAME);
+    expect(brokerRecords(ledger)).toEqual([]);
+  });
+
+  it('a real façade refuses and spawns nothing when the broker socket is a stale inode with no listener (connect-only, never elect)', async () => {
+    const home = await scratch('beeline-squire-stale-');
+    ensureSquireHostDir(home);
+    const ledger = join(home, 'brokers.jsonl');
+    const shimDir = join(home, 'bin');
+    installNpxShim(shimDir, ledger);
+    const launch = squireFacadeLaunch(home, { agentId: 'agent-a', roomId: 'room-a' });
+    const socket = launch.env.TRUSTY_SQUIRE_BROKER_SOCKET!;
+    await leaveStaleSocket(socket);
+    // The file-type check this test guards against would have reported this
+    // orphaned inode as a live broker; only an actual connect attempt can
+    // tell a crashed daemon's leftover socket from a listening one.
+    expect(lstatSync(socket).isSocket()).toBe(true);
+    await expect(squireBrokerSocketReady(socket)).resolves.toBe(false);
+    const run = spawnSync(launch.command, launch.args, {
+      encoding: 'utf8',
+      env: { ...launch.env, PATH: `${shimDir}:${process.env.PATH ?? ''}`, HOME: home },
+    });
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain(SQUIRE_BROKER_UNAVAILABLE);
+    expect(run.stderr).toContain(TRUSTY_SQUIRE_BROKER_UNIT_NAME);
+    // The regression: the façade must never fall through to `npx … server`
+    // (whose own on-demand-launch fallback is what elected a second,
+    // agent-owned broker in production while the host unit was restart-looping).
     expect(brokerRecords(ledger)).toEqual([]);
   });
 });

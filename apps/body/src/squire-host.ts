@@ -9,11 +9,13 @@
  * namespace. A sandboxed façade never elects.
  */
 import { spawn } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync } from 'node:fs';
+import { accessSync, constants as fsConstants, existsSync, mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { createConnection } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runSquireBrokerLink } from './squire-broker-link.js';
 
 export const SQUIRE_BROKER_UNAVAILABLE = 'broker unavailable';
 export const TRUSTY_SQUIRE_BROKER_UNIT_NAME = 'trusty-squire-broker.service';
@@ -29,6 +31,14 @@ export type SquireHostPaths = {
   readonly profileDir: string;
   readonly configHome: string;
   readonly brokerSocket: string;
+  /**
+   * Squire's own shared MCP listener socket (`bot/broker/mcp-socket-path.js`
+   * `sharedMcpSocketPath()`): `<dir>/mcp.sock` for the canonical profile dir
+   * Beeline always configures. This is what `runSquireBrokerLink` connects
+   * to — a different socket from `brokerSocket`, the broker's own wire
+   * control protocol.
+   */
+  readonly mcpSocket: string;
 };
 
 /** Host paths derived from the operator home, never from a sandbox $HOME. */
@@ -39,6 +49,7 @@ export function squireHostPaths(home: string): SquireHostPaths {
     profileDir: join(dir, 'chrome-profile'),
     configHome: join(resolve(home), '.config'),
     brokerSocket: join(dir, 'broker.sock'),
+    mcpSocket: join(dir, 'mcp.sock'),
   };
 }
 
@@ -68,13 +79,49 @@ export function squireHostBindPaths(home: string, squireRouteGranted: boolean): 
   return [ensureSquireHostDir(home).dir];
 }
 
-/** A façade may spawn only when the host daemon already holds the socket. */
-export function squireBrokerSocketReady(socketPath: string): boolean {
+/**
+ * Whether this process can write into the broker's own directory — the bind
+ * `squireHostBindPaths` grants only to a façade whose Squire route was
+ * actually rewritten. A read-only bind mount does not stop a process from
+ * `connect()`ing a Unix socket underneath it (connecting is not a
+ * filesystem write), so socket reachability alone cannot tell a granted
+ * façade from an unrelated one — only this can. Required alongside
+ * `squireBrokerSocketReady`: without it, an unrelated `mcp` grant's façade
+ * would reach the real broker over its shared MCP socket just as
+ * successfully as a Squire-granted one.
+ */
+export function squireHostDirWritable(socketPath: string): boolean {
   try {
-    return lstatSync(socketPath).isSocket();
+    accessSync(dirname(socketPath), fsConstants.W_OK);
+    return true;
   } catch {
     return false;
   }
+}
+
+/**
+ * A façade may spawn the relay only when the host daemon is actually
+ * listening — never on a stale socket inode a crashed/restart-looping
+ * broker left behind. A dead `trusty-squire-broker.service` leaves its
+ * `broker.sock` file on disk (only a graceful close unlinks it), so an
+ * `lstat` type check alone reports "ready" while nothing answers; this is
+ * exactly what let a façade fall through to `npx @trusty-squire/mcp server`,
+ * whose own on-demand-launch fallback then elected a second, agent-owned
+ * broker while the host unit was mid-restart-loop. A real connect attempt is
+ * the only way to tell a live listener from an orphaned file.
+ */
+export async function squireBrokerSocketReady(socketPath: string): Promise<boolean> {
+  return await new Promise((resolveReady) => {
+    const probe = createConnection(socketPath);
+    probe.once('connect', () => {
+      probe.destroy();
+      resolveReady(true);
+    });
+    probe.once('error', () => {
+      probe.destroy();
+      resolveReady(false);
+    });
+  });
 }
 
 /**
@@ -185,13 +232,41 @@ export function runSquireBroker(env: NodeJS.ProcessEnv = process.env): void {
   );
 }
 
-export function runSquireFacade(env: NodeJS.ProcessEnv = process.env): void {
+/**
+ * The façade's whole session, connect-only. `squireHostDirWritable` +
+ * `squireBrokerSocketReady` are the fast pre-check (near-instant refusal
+ * when this façade has no Squire grant, or the broker is plainly absent);
+ * `runSquireBrokerLink` (`squire-broker-link.ts`) is the actual MCP
+ * transport for the rest of the process's life, including every later
+ * reconnect — it never delegates to Squire's own `server` subcommand, so
+ * there is nothing left that can fall through to an on-demand broker launch.
+ */
+export async function runSquireFacade(env: NodeJS.ProcessEnv = process.env): Promise<void> {
   const socket =
     env.TRUSTY_SQUIRE_BROKER_SOCKET ?? squireHostPaths(env.HOME?.trim() || homedir()).brokerSocket;
-  if (!squireBrokerSocketReady(socket)) {
-    process.stderr.write(`${SQUIRE_BROKER_UNAVAILABLE}\n`);
+  if (!squireHostDirWritable(socket) || !(await squireBrokerSocketReady(socket))) {
+    process.stderr.write(
+      `${SQUIRE_BROKER_UNAVAILABLE}: ${TRUSTY_SQUIRE_BROKER_UNIT_NAME} is not reachable at ${socket}\n`,
+    );
     process.exitCode = 1;
     return;
   }
-  spawnSquireServer({ ...env, TRUSTY_SQUIRE_BROKER_SOCKET: socket }, false, SQUIRE_SERVER_ARGS);
+  // Squire's own `sharedMcpSocketPath()` is `<privateDir>/mcp.sock`
+  // alongside `<privateDir>/broker.sock` (bot/broker/mcp-socket-path.js,
+  // for the canonical profile dir Beeline always configures); deriving it
+  // from the broker socket that was actually resolved above — rather than
+  // re-deriving `home` from `env.HOME` — stays correct even when this
+  // process's own $HOME has been rewritten for sandboxing, since
+  // TRUSTY_SQUIRE_BROKER_SOCKET is always set to the real host path.
+  const mcpSocket = join(dirname(socket), 'mcp.sock');
+  const { ok } = await runSquireBrokerLink({
+    agentId: env.TRUSTY_SQUIRE_AGENT_IDENTITY?.trim() || 'unknown',
+    socketPath: mcpSocket,
+  });
+  // Squire's own `bin.js` force-exits after its relay resolves for the same
+  // reason: once stdin has been read in flowing mode there is no natural
+  // "idle" for Node to exit on, so a process relying on that alone would
+  // hang forever after a clean stop/give-up instead of returning control to
+  // whatever spawned it.
+  process.exit(ok ? 0 : 1);
 }

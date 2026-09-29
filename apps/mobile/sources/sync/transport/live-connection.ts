@@ -85,6 +85,7 @@ export class LiveConnection {
   private readonly pendingSubscribe = new Set<string>();
   private readonly overlays = new Map<string, RoomOverlayCache>();
   private readonly traceOwners = new Map<string, Registration>();
+  private readonly connectedListeners = new Set<() => void>();
   private socket: WebSocket | undefined;
   private connectInFlight: Promise<void> | undefined;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
@@ -133,6 +134,15 @@ export class LiveConnection {
     this.handleIdentityChanged();
     this.unsubscribeIdentity();
     this.unsubscribeForeground();
+  }
+
+  /** Fires once per successful socket open, first connect and every
+   *  reconnect alike. A caller that keeps its own state in sync with the
+   *  server (rather than reading room/turn deltas off active registrations)
+   *  uses this as its one covering reconcile trigger instead of polling. */
+  subscribeConnected(listener: () => void): () => void {
+    this.connectedListeners.add(listener);
+    return () => this.connectedListeners.delete(listener);
   }
 
   /**
@@ -262,6 +272,7 @@ export class LiveConnection {
         if (this.socket !== next) return;
         this.reconnectDelayMs = 1_000;
         this.sendSubscribe([...this.refcount.keys()]);
+        for (const listener of this.connectedListeners) listener();
       };
       next.onmessage = (message) => {
         if (this.socket !== next) return;

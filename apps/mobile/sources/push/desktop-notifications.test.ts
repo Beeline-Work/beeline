@@ -2,9 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const fixture = vi.hoisted(() => ({
   roomListener: null as null | ((event: unknown) => void),
+  connectedListener: null as null | (() => void),
   send: vi.fn(),
   permission: vi.fn(async () => true),
   identityChange: null as null | (() => void),
+  workspacesCalls: 0,
 }));
 vi.mock('@/utils/isTauri', () => ({ isTauri: () => true }));
 vi.mock('@/auth/buzz-identity-storage', () => ({
@@ -39,9 +41,16 @@ vi.mock('@/sync/transport', () => ({
         },
       });
     }
+    subscribeConnected(listener: () => void) {
+      fixture.connectedListener = listener;
+      return () => {
+        if (fixture.connectedListener === listener) fixture.connectedListener = null;
+      };
+    }
   },
   RoomViewClient: class {
     workspaces() {
+      fixture.workspacesCalls += 1;
       return Promise.resolve({ workspaces: [{ id: 'workspace-1' }] });
     }
     chats() {
@@ -72,8 +81,11 @@ import { startDesktopNotifications } from './desktop-notifications';
 
 afterEach(() => {
   fixture.roomListener = null;
+  fixture.connectedListener = null;
   fixture.send.mockClear();
+  fixture.workspacesCalls = 0;
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
@@ -130,6 +142,36 @@ describe('signed-in desktop native notification delivery', () => {
         body: 'Test sender: Review this',
       }),
     );
+    stop();
+  });
+
+  it('never sets a recurring timer to re-read the server', async () => {
+    vi.stubGlobal('document', { hasFocus: () => false });
+    const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
+    const stop = startDesktopNotifications();
+    await vi.waitFor(() => expect(fixture.roomListener).toBeTypeOf('function'));
+    // Let any pending microtasks from the initial reconcile settle too.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(setIntervalSpy).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it('reconciles exactly once when the live socket reconnects, never on a timer', async () => {
+    vi.stubGlobal('document', { hasFocus: () => false });
+    const stop = startDesktopNotifications();
+    await vi.waitFor(() => expect(fixture.roomListener).toBeTypeOf('function'));
+    await vi.waitFor(() => expect(fixture.connectedListener).toBeTypeOf('function'));
+    // Flush the initial reconcile fully before treating the reconnect hook as armed.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const readsAfterStart = fixture.workspacesCalls;
+    expect(readsAfterStart).toBeGreaterThan(0);
+
+    fixture.connectedListener?.();
+    await vi.waitFor(() => expect(fixture.workspacesCalls).toBe(readsAfterStart + 1));
+    // No burst: a reconnect signal read exactly once, not once per registration.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fixture.workspacesCalls).toBe(readsAfterStart + 1);
+
     stop();
   });
 });

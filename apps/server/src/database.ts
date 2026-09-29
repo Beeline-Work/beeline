@@ -1328,7 +1328,7 @@ ALTER TABLE workspace_skill_versions
     (source_deleted_at IS NOT NULL AND markdown='')
   );
 -- A workflow save is synchronous, inside one tool call, never a queued
--- institutional_memory_jobs row: `save_workflow` writes NULL here.
+-- institutional_memory_jobs row: save_workflow writes NULL here.
 ALTER TABLE workspace_skill_versions ALTER COLUMN source_job_id DROP NOT NULL;
 
 CREATE TABLE IF NOT EXISTS institutional_review_findings (

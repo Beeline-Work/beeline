@@ -131,7 +131,7 @@ export async function refreshWorkspaceSkillAnchors(
        FROM workspace_skills skill
        JOIN workspace_skill_versions version
          ON version.skill_id=skill.id AND version.version=skill.current_version
-       WHERE skill.workspace_id=$1 AND skill.state='active'
+       WHERE skill.workspace_id=$1 AND skill.state='active' AND skill.kind='procedure'
          AND version.source_deleted_at IS NULL
          AND (skill.anchor_checked_at IS NULL OR skill.anchor_checked_at<$2)
        ORDER BY skill.anchor_checked_at ASC NULLS FIRST,skill.id

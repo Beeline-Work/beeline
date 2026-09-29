@@ -1,0 +1,623 @@
+#!/usr/bin/env node
+/**
+ * End-to-end acceptance proof for the core workflow-contract model: a real
+ * HTTP server, two real agent daemon identities, a small two-role contract
+ * with one capped loop, driven start to finish through save_workflow,
+ * start_workflow, and handoff — never mocked, never the production
+ * Workspace.
+ *
+ * A second scenario (P1 follow-up) proves `save_skill`: one agent saves a
+ * procedure directly from a Room conversation (no corner, no merge review),
+ * and a different agent in a different Room of the same Workspace sees it in
+ * its own per-turn index and loads it via `load_workspace_skill`.
+ *
+ * These are agent CLIENTS — plain HTTP calls issuing the exact same daemon
+ * operations a live LLM-backed harness would call — not live LLM-backed
+ * agent harnesses. Stated here plainly, and again in the written transcript.
+ *
+ * Writes a human-readable transcript of every request and every Room message
+ * produced to the path given as argv[2] (or prints it to stdout).
+ *
+ * Local invocation:
+ *   npm run prove:workflow-run -- /path/to/real-run.md
+ */
+import { writeFile } from 'node:fs/promises';
+import type { AddressInfo } from 'node:net';
+import { migrate } from '../apps/server/src/database.js';
+import { PgliteDatabase } from '../apps/server/src/test-support.js';
+import { TokenAuth } from '../apps/server/src/auth.js';
+import { PhoneService } from '../apps/server/src/phone-service.js';
+import { DaemonService } from '../apps/server/src/daemon-service.js';
+import { LiveHub } from '../apps/server/src/live.js';
+import { createBeelineServer } from '../apps/server/src/server.js';
+import { createAgentCommand } from '../apps/server/src/agent-command.js';
+
+const HUMAN = 'a'.repeat(64);
+const WRITER = 'b'.repeat(64);
+const REVIEWER = 'c'.repeat(64);
+const WORKSPACE = '11111111-1111-4111-8111-111111111111';
+const ROOM = '22222222-2222-4222-8222-222222222222';
+const PERSONAL_ROOM = '33333333-3333-4333-8333-333333333333';
+
+const SKILL_SLUG = 'cartoon-short-video';
+const SKILL_DESCRIPTION = 'Storyboard and render a short cartoon clip';
+const SKILL_MARKDOWN =
+  '# Cartoon short video\n\n' +
+  '1. Write a one-paragraph beat sheet before opening any tool.\n' +
+  '2. Storyboard every shot on paper first; keep each shot under four seconds.\n' +
+  '3. Render at 12fps for the animatic pass, 24fps for the final pass.\n' +
+  '4. Mix a scratch voice track before final animation so timing is locked.\n'.padEnd(
+    7_000,
+    ' Keep every asset in one project folder so the render pipeline can find it.\n',
+  );
+
+const CONTRACT = {
+  version: 1,
+  name: 'draft-review',
+  description: 'Draft a note and get it reviewed',
+  roles: ['writer', 'reviewer'],
+  start: 'draft',
+  handoffs: {
+    draft: {
+      role: 'writer',
+      requires: ['text'],
+      on: { submitted: 'review' },
+    },
+    review: {
+      role: 'reviewer',
+      requires: ['verdict'],
+      on: { approved: 'done', changes_requested: 'draft' },
+      loop: { onEdge: 'changes_requested', cap: 1, onExceeded: 'failed' },
+    },
+    done: { kind: 'terminal', status: 'done' },
+    failed: { kind: 'terminal', status: 'failed' },
+  },
+};
+
+type Command = {
+  id: string;
+  roomId: string;
+  agentId: string;
+  sourceMessageId: string;
+  turnRequestId: string;
+  reason: string;
+};
+
+type LogEntry = { label: string; request?: unknown; response: unknown };
+
+async function main(): Promise<void> {
+  const log: LogEntry[] = [];
+  const database = new PgliteDatabase();
+  await migrate(database);
+  await database.query(
+    `INSERT INTO identities(id,kind,name,handle) VALUES
+       ($1,'human','Proof Owner','proofowner'),
+       ($2,'agent','Wren','wren'),
+       ($3,'agent','Revi','revi')`,
+    [HUMAN, WRITER, REVIEWER],
+  );
+  await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$3),($2,$3)`, [
+    WRITER,
+    REVIEWER,
+    HUMAN,
+  ]);
+  await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Workflow Proof Workspace')`, [
+    WORKSPACE,
+  ]);
+  await database.query(
+    `INSERT INTO rooms(id,workspace_id,created_by,name) VALUES
+       ($1,$3,$4,'Team'),($2,$3,$4,'Personal')`,
+    [ROOM, PERSONAL_ROOM, WORKSPACE, HUMAN],
+  );
+  for (const who of [HUMAN, WRITER, REVIEWER])
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+         ($1,NULL,$2,$3),($1,$4,$2,$3)`,
+      [WORKSPACE, who, who === HUMAN ? 'owner' : 'member', ROOM],
+    );
+  // The writer alone also holds the Personal Room the skill will be saved
+  // from, so load_workspace_skill's cross-Room visibility is genuinely
+  // cross-Room: the reviewer, who loads it, is never a member of Personal.
+  for (const who of [HUMAN, WRITER])
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,$4)`,
+      [WORKSPACE, PERSONAL_ROOM, who, who === HUMAN ? 'owner' : 'member'],
+    );
+
+  const auth = new TokenAuth(database, async () => ({
+    subject: 'proof-owner',
+    login: 'proofowner',
+    name: 'Proof Owner',
+  }));
+  const phone = new PhoneService(database, 'http://placeholder');
+  const live = new LiveHub();
+  const daemon = new DaemonService(database, live, undefined, undefined, false, undefined, false, undefined, undefined, undefined, {
+    enabled: true,
+    live: true,
+    dailyJobLimit: 20,
+    leaseMs: 60_000,
+  });
+  const server = createBeelineServer({
+    database,
+    auth,
+    phone,
+    daemon,
+    live,
+    mediaMaximumBytes: 1024 * 1024,
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+  const daemonTokenFor = async (agentId: string) => {
+    const exchange = await auth.createDaemonExchange(agentId);
+    return (await auth.exchangeDaemonToken(exchange.exchangeToken))!.daemonToken;
+  };
+  const writerToken = await daemonTokenFor(WRITER);
+  const reviewerToken = await daemonTokenFor(REVIEWER);
+
+  const call = async (label: string, name: string, payload: unknown, token: string) => {
+    const response = await fetch(`${origin}/v1/daemon/operations/${name}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      log.push({
+        label,
+        request: { operation: name, ...(payload as object) },
+        response: { httpStatus: response.status, ...(text ? JSON.parse(text) : {}) },
+      });
+      throw new Error(`${label} (${name}) -> HTTP ${response.status} ${text}`);
+    }
+    const parsed = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+    log.push({ label, request: { operation: name, ...(payload as object) }, response: parsed });
+    return parsed;
+  };
+
+  const commandsFor = async (agentId: string, token: string, roomId = ROOM): Promise<Command[]> =>
+    ((await call(`${agentId} polls its commands`, 'getAgentCommands', { roomId }, token))
+      .commands ?? []) as Command[];
+
+  /** Claim the given command and post a `working` receipt, exactly as a real daemon does. */
+  const claim = async (
+    agentId: string,
+    token: string,
+    command: Command,
+    roomId = ROOM,
+  ): Promise<{ requestId: string; generationId: string }> => {
+    const generationId = `gen-${command.id.slice(0, 8)}`;
+    await call(`${agentId} claims its turn`, 'claimAgentCommand', {
+      roomId,
+      commandId: command.id,
+      generationId,
+    }, token);
+    await call(`${agentId} starts working`, 'postAgentTurnReceipt', {
+      roomId,
+      agentId,
+      requestId: command.turnRequestId,
+      generationId,
+      status: 'working',
+    }, token);
+    return { requestId: command.turnRequestId, generationId };
+  };
+
+  const complete = async (
+    agentId: string,
+    token: string,
+    turn: { requestId: string; generationId: string },
+    roomId = ROOM,
+  ): Promise<void> => {
+    await call(`${agentId} ends its turn`, 'postAgentTurnReceipt', {
+      roomId,
+      agentId,
+      requestId: turn.requestId,
+      generationId: turn.generationId,
+      status: 'complete',
+    }, token);
+  };
+
+  // Seed the very first turn the way a human's addressed message would: this
+  // is scaffolding (an ordinary Room command), not something under test.
+  const kickoff = 'kickoff-message';
+  await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`, [
+    kickoff,
+    ROOM,
+    HUMAN,
+    'wren, please define and start our draft-review workflow',
+  ]);
+  const initialRow = await createAgentCommand(database, {
+    roomId: ROOM,
+    agentId: WRITER,
+    sourceMessageId: kickoff,
+    reason: 'human_tag',
+  });
+  if (!initialRow) throw new Error('failed to seed the initial writer command');
+  const initial: Command = {
+    id: initialRow.id,
+    roomId: initialRow.room_id,
+    agentId: initialRow.agent_id,
+    sourceMessageId: initialRow.source_message_id,
+    turnRequestId: initialRow.turn_request_id,
+    reason: initialRow.reason,
+  };
+
+  // --- Turn 1 (writer): save the contract and start a run. ---
+  const turn1 = await claim(WRITER, writerToken, initial);
+  const saved = await call(WRITER + ' saves the contract', 'saveWorkflow', {
+    roomId: ROOM,
+    requestId: turn1.requestId,
+    generationId: turn1.generationId,
+    agentId: WRITER,
+    contract: CONTRACT,
+  }, writerToken);
+  if (saved.slug !== 'draft-review' || saved.version !== 1) {
+    throw new Error(`unexpected save_workflow result: ${JSON.stringify(saved)}`);
+  }
+  const started = await call(WRITER + ' starts a run', 'startWorkflow', {
+    roomId: ROOM,
+    requestId: turn1.requestId,
+    generationId: turn1.generationId,
+    agentId: WRITER,
+    name: 'draft-review',
+    roleBindings: { writer: WRITER, reviewer: REVIEWER },
+  }, writerToken);
+  const runId = started.runId as string;
+  if (started.state !== 'draft' || typeof runId !== 'string') {
+    throw new Error(`unexpected start_workflow result: ${JSON.stringify(started)}`);
+  }
+  // --- Turn 1 continues: the writer submits its first draft. ---
+  const draft1 = await call(WRITER + ' hands off the draft', 'handoff', {
+    roomId: ROOM,
+    requestId: turn1.requestId,
+    generationId: turn1.generationId,
+    agentId: WRITER,
+    runId,
+    outcome: 'submitted',
+    contents: { text: 'Draft v1: the workflow ships next Tuesday.' },
+  }, writerToken);
+  if (draft1.state !== 'review') throw new Error(`expected review, got ${JSON.stringify(draft1)}`);
+  await complete(WRITER, writerToken, turn1);
+
+  // --- Turn 2 (reviewer): request changes (first pass through the capped loop). ---
+  const reviewerPending1 = (await commandsFor(REVIEWER, reviewerToken))[0];
+  if (!reviewerPending1) throw new Error('reviewer was never woken for the first review');
+  const turn2 = await claim(REVIEWER, reviewerToken, reviewerPending1);
+  const review1 = await call(REVIEWER + ' requests changes', 'handoff', {
+    roomId: ROOM,
+    requestId: turn2.requestId,
+    generationId: turn2.generationId,
+    agentId: REVIEWER,
+    runId,
+    outcome: 'changes_requested',
+    contents: { verdict: 'needs a launch date' },
+  }, reviewerToken);
+  if (review1.state !== 'draft') {
+    throw new Error(`expected the capped loop to send this back to draft, got ${JSON.stringify(review1)}`);
+  }
+  await complete(REVIEWER, reviewerToken, turn2);
+
+  // --- Turn 3 (writer): submit a second draft. ---
+  const writerPending2 = (await commandsFor(WRITER, writerToken))[0];
+  if (!writerPending2) throw new Error('writer was never woken after review requested changes');
+  const turn3 = await claim(WRITER, writerToken, writerPending2);
+  const draft2 = await call(WRITER + ' hands off a second draft', 'handoff', {
+    roomId: ROOM,
+    requestId: turn3.requestId,
+    generationId: turn3.generationId,
+    agentId: WRITER,
+    runId,
+    outcome: 'submitted',
+    contents: { text: 'Draft v2: the workflow ships next Tuesday at 10am PT.' },
+  }, writerToken);
+  if (draft2.state !== 'review') throw new Error(`expected review, got ${JSON.stringify(draft2)}`);
+  await complete(WRITER, writerToken, turn3);
+
+  // --- Turn 4 (reviewer): request changes AGAIN — this is the loop's cap ---
+  // (cap=1): the second "changes_requested" traversal must be redirected to
+  // the loop's own onExceeded terminal instead of back to draft.
+  const reviewerPending2 = (await commandsFor(REVIEWER, reviewerToken))[0];
+  if (!reviewerPending2) throw new Error('reviewer was never woken for the second review');
+  const turn4 = await claim(REVIEWER, reviewerToken, reviewerPending2);
+  const review2 = await call(REVIEWER + ' requests changes again (loop cap)', 'handoff', {
+    roomId: ROOM,
+    requestId: turn4.requestId,
+    generationId: turn4.generationId,
+    agentId: REVIEWER,
+    runId,
+    outcome: 'changes_requested',
+    contents: { verdict: 'still not there' },
+  }, reviewerToken);
+  await complete(REVIEWER, reviewerToken, turn4);
+
+  const failures: string[] = [];
+  if (review2.state !== 'failed' || review2.status !== 'failed') {
+    failures.push(
+      `expected the capped loop to force the run to the terminal "failed" state, got ${JSON.stringify(review2)}`,
+    );
+  }
+  // One more real turn for the reviewer (seeded the same scaffolding way the
+  // very first turn was) to prove a handoff on an already-ended run is
+  // refused as a business rule, not merely because no turn is active.
+  const strayMessage = 'stray-followup-message';
+  await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`, [
+    strayMessage,
+    ROOM,
+    HUMAN,
+    'revi, can you take another look?',
+  ]);
+  const strayRow = await createAgentCommand(database, {
+    roomId: ROOM,
+    agentId: REVIEWER,
+    sourceMessageId: strayMessage,
+    reason: 'human_tag',
+  });
+  if (!strayRow) throw new Error('failed to seed the stray follow-up command');
+  const stray: Command = {
+    id: strayRow.id,
+    roomId: strayRow.room_id,
+    agentId: strayRow.agent_id,
+    sourceMessageId: strayRow.source_message_id,
+    turnRequestId: strayRow.turn_request_id,
+    reason: strayRow.reason,
+  };
+  const turn5 = await claim(REVIEWER, reviewerToken, stray);
+  const laterHandoff = await call(REVIEWER + ' tries to act on the ended run', 'handoff', {
+    roomId: ROOM,
+    requestId: turn5.requestId,
+    generationId: turn5.generationId,
+    agentId: REVIEWER,
+    runId,
+    outcome: 'approved',
+    contents: { verdict: 'too late' },
+  }, reviewerToken).catch((error: Error) => error.message);
+  await complete(REVIEWER, reviewerToken, turn5);
+  if (typeof laterHandoff !== 'string' || !laterHandoff.includes('already ended')) {
+    failures.push(`expected a handoff on the ended run to be refused, got ${JSON.stringify(laterHandoff)}`);
+  }
+
+  const part1LogCount = log.length;
+  const skillFailures: string[] = [];
+  // ================= Scenario 2: save_skill cross-Room visibility =================
+  // The writer saves a procedure directly from a Personal-Room conversation
+  // (no corner, no merge review), and the reviewer — who is not a member of
+  // Personal at all — sees it in its own per-turn index in the Team Room and
+  // loads it via load_workspace_skill. This is the P1 follow-up: an agent
+  // previously had no way to do this and wrongly proposed opening a corner.
+  const skillKickoff = 'skill-kickoff-message';
+  await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`, [
+    skillKickoff,
+    PERSONAL_ROOM,
+    HUMAN,
+    'wren, save what we just figured out about making a cartoon short video as a skill',
+  ]);
+  const skillCommandRow = await createAgentCommand(database, {
+    roomId: PERSONAL_ROOM,
+    agentId: WRITER,
+    sourceMessageId: skillKickoff,
+    reason: 'human_tag',
+  });
+  if (!skillCommandRow) throw new Error('failed to seed the writer skill-save command');
+  const skillCommand: Command = {
+    id: skillCommandRow.id,
+    roomId: skillCommandRow.room_id,
+    agentId: skillCommandRow.agent_id,
+    sourceMessageId: skillCommandRow.source_message_id,
+    turnRequestId: skillCommandRow.turn_request_id,
+    reason: skillCommandRow.reason,
+  };
+  const skillTurn = await claim(WRITER, writerToken, skillCommand, PERSONAL_ROOM);
+  const savedSkill = await call(WRITER + ' saves a skill directly from conversation', 'saveSkill', {
+    roomId: PERSONAL_ROOM,
+    requestId: skillTurn.requestId,
+    generationId: skillTurn.generationId,
+    agentId: WRITER,
+    slug: SKILL_SLUG,
+    description: SKILL_DESCRIPTION,
+    markdown: SKILL_MARKDOWN,
+  }, writerToken);
+  if (savedSkill.slug !== SKILL_SLUG || savedSkill.version !== 1) {
+    skillFailures.push(`unexpected save_skill result: ${JSON.stringify(savedSkill)}`);
+  }
+  await complete(WRITER, writerToken, skillTurn, PERSONAL_ROOM);
+
+  // A message in the Team Room whose words overlap the skill's slug/
+  // description, so the reviewer's per-turn index has something to match.
+  const skillDiscoveryMessage = 'skill-discovery-message';
+  await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`, [
+    skillDiscoveryMessage,
+    ROOM,
+    HUMAN,
+    'revi, can you help me storyboard a short cartoon video?',
+  ]);
+  const discoveryCommandRow = await createAgentCommand(database, {
+    roomId: ROOM,
+    agentId: REVIEWER,
+    sourceMessageId: skillDiscoveryMessage,
+    reason: 'human_tag',
+  });
+  if (!discoveryCommandRow) throw new Error('failed to seed the reviewer discovery command');
+  const discoveryCommand: Command = {
+    id: discoveryCommandRow.id,
+    roomId: discoveryCommandRow.room_id,
+    agentId: discoveryCommandRow.agent_id,
+    sourceMessageId: discoveryCommandRow.source_message_id,
+    turnRequestId: discoveryCommandRow.turn_request_id,
+    reason: discoveryCommandRow.reason,
+  };
+  const discoveryTurn = await claim(REVIEWER, reviewerToken, discoveryCommand);
+  const discovered = await call(REVIEWER + " reads its per-turn index (getInstitutionalContext)", 'getInstitutionalContext', {
+    roomId: ROOM,
+    requestId: discoveryTurn.requestId,
+    generationId: discoveryTurn.generationId,
+    agentId: REVIEWER,
+  }, reviewerToken);
+  const indexLine = `Procedure ${SKILL_SLUG} (load_workspace_skill): ${SKILL_DESCRIPTION}`;
+  const indexText = String((discovered as { text?: unknown }).text ?? '');
+  if (!indexText.includes(indexLine)) {
+    skillFailures.push(
+      `expected the reviewer's per-turn index to list the skill, got: ${JSON.stringify(discovered)}`,
+    );
+  }
+  const loadedSkill = await call(REVIEWER + ' loads it via load_workspace_skill', 'loadWorkspaceSkill', {
+    roomId: ROOM,
+    requestId: discoveryTurn.requestId,
+    generationId: discoveryTurn.generationId,
+    agentId: REVIEWER,
+    slug: SKILL_SLUG,
+  }, reviewerToken);
+  const loadedMarkdown = String((loadedSkill as { markdown?: unknown }).markdown ?? '');
+  if (!loadedMarkdown.includes('Write a one-paragraph beat sheet')) {
+    skillFailures.push(`expected the loaded skill to carry its saved body, got: ${JSON.stringify(loadedSkill)}`);
+  }
+  if (String((loadedSkill as { sourceRoomId?: unknown }).sourceRoomId) !== PERSONAL_ROOM) {
+    skillFailures.push(
+      `expected the loaded skill's sourceRoomId to be the Personal Room it was saved from, got: ${JSON.stringify(loadedSkill)}`,
+    );
+  }
+  await complete(REVIEWER, reviewerToken, discoveryTurn);
+
+  const transcript = await database.query<{
+    id: string;
+    room_id: string;
+    author_id: string;
+    text: string;
+    card_type: string | null;
+    created_at: Date;
+  }>(
+    `SELECT id,room_id,author_id,text,card_type,created_at FROM messages
+     WHERE room_id=ANY($1::uuid[]) ORDER BY created_at,id`,
+    [[ROOM, PERSONAL_ROOM]],
+  );
+
+  const roomName = (roomId: string) => (roomId === ROOM ? 'Team' : 'Personal');
+  const who = (authorId: string) =>
+    authorId === HUMAN ? '@proofowner' : authorId === WRITER ? '@wren' : '@revi';
+
+  const requestResponseSection = (entries: LogEntry[]): string[] => {
+    const out: string[] = [];
+    for (const entry of entries) {
+      out.push(`### ${entry.label}`);
+      out.push('');
+      if (entry.request) {
+        out.push('Request:');
+        out.push('```json');
+        out.push(JSON.stringify(entry.request, null, 2));
+        out.push('```');
+      }
+      out.push('Response:');
+      out.push('```json');
+      out.push(JSON.stringify(entry.response, null, 2));
+      out.push('```');
+      out.push('');
+    }
+    return out;
+  };
+
+  const lines: string[] = [];
+  lines.push('# Real two-agent workflow run');
+  lines.push('');
+  lines.push(
+    `A real local HTTP server (\`createBeelineServer\`, real \`DaemonService\`/\`PhoneService\`/auth stack, ` +
+      `two real per-agent daemon tokens minted through \`TokenAuth\`) ran a disposable Workspace with two ` +
+      `Rooms. These are agent CLIENTS: plain HTTP calls issuing the exact same \`/v1/daemon/operations/*\` ` +
+      `calls a live LLM-backed harness would make, driven by this script rather than by a running model — ` +
+      `not live LLM-backed agent harnesses. Nothing here is mocked and nothing touched the production ` +
+      `Workspace.`,
+  );
+  lines.push('');
+  lines.push(`- Workspace: \`${WORKSPACE}\` ("Workflow Proof Workspace")`);
+  lines.push(`- Team Room: \`${ROOM}\``);
+  lines.push(`- Personal Room: \`${PERSONAL_ROOM}\``);
+  lines.push(`- Writer agent: \`${WRITER}\` (@wren)`);
+  lines.push(`- Reviewer agent: \`${REVIEWER}\` (@revi)`);
+  lines.push('');
+  lines.push('## Scenario 1: save_workflow, start_workflow, handoff');
+  lines.push('');
+  lines.push(`Run id: \`${runId}\``);
+  lines.push('');
+  lines.push('### Contract saved via `save_workflow`');
+  lines.push('');
+  lines.push('```json');
+  lines.push(JSON.stringify(CONTRACT, null, 2));
+  lines.push('```');
+  lines.push('');
+  lines.push('### Requests and responses, in order');
+  lines.push('');
+  lines.push(...requestResponseSection(log.slice(0, part1LogCount)));
+  lines.push('### Verdict');
+  lines.push('');
+  if (failures.length) {
+    lines.push('**FAILED**');
+    for (const failure of failures) lines.push(`- ${failure}`);
+  } else {
+    lines.push(
+      'PASSED: save_workflow validated and stored the contract, start_workflow bound both roles and ' +
+        'dispatched the first state, four real handoff() calls advanced the run across both agents, the ' +
+        "capped loop's second traversal was redirected to its own onExceeded terminal instead of the " +
+        'agent-requested target, and a handoff on the ended run was refused.',
+    );
+  }
+  lines.push('');
+  lines.push(
+    '## Scenario 2: save_skill saved from one Room, discovered and loaded from another (P1 follow-up)',
+  );
+  lines.push('');
+  lines.push(
+    `@wren saves a procedure directly from a Personal-Room conversation — no corner, no merge review — ` +
+      `and @revi, who is not a member of Personal at all, sees it in its own per-turn index while working ` +
+      `in Team and loads it via \`load_workspace_skill\`.`,
+  );
+  lines.push('');
+  lines.push('### Requests and responses, in order');
+  lines.push('');
+  lines.push(...requestResponseSection(log.slice(part1LogCount)));
+  lines.push('### Verdict');
+  lines.push('');
+  if (skillFailures.length) {
+    lines.push('**FAILED**');
+    for (const failure of skillFailures) lines.push(`- ${failure}`);
+  } else {
+    lines.push(
+      'PASSED: save_skill validated and stored the procedure from a Personal-Room conversation with no ' +
+        'corner and no merge review; a different agent with no membership in that Room saw it in its own ' +
+        "per-turn index (`Procedure cartoon-short-video (load_workspace_skill): ...`) while working in a " +
+        'different Room of the same Workspace, and loaded its full body via load_workspace_skill.',
+    );
+  }
+  lines.push('');
+  lines.push('## Resulting transcript, both Rooms');
+  lines.push('');
+  for (const row of transcript.rows) {
+    lines.push(
+      `- \`${row.created_at.toISOString()}\` [${roomName(row.room_id)}] ${who(row.author_id)}` +
+        `${row.card_type ? ` [${row.card_type}]` : ''}: ${row.text.length > 200 ? `${row.text.slice(0, 200)}…` : row.text}`,
+    );
+  }
+
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  await database.close();
+
+  const allFailures = [...failures, ...skillFailures];
+  const output = lines.join('\n');
+  const target = process.argv[2];
+  if (target) {
+    await writeFile(target, output, 'utf8');
+    console.log(`wrote transcript to ${target}`);
+  } else {
+    console.log(output);
+  }
+  if (allFailures.length) {
+    console.error(`\nFAILED: ${allFailures.join('; ')}`);
+    process.exitCode = 1;
+  } else {
+    console.log('\nPASSED');
+  }
+}
+
+main()
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  })
+  .finally(() => process.exit(process.exitCode ?? 0));

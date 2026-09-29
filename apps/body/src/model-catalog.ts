@@ -210,7 +210,7 @@ export async function filterModelChoicesByLiveValidation(
         model: choice.id,
       });
       available.push(choice);
-      if (choice.id === preferred) preferredCatalog = updated;
+      if (choice.id === preferred) preferredCatalog = updated.options;
     } catch {
       // Fail closed: a picker choice must have completed the live setter.
     }
@@ -244,7 +244,7 @@ export async function validateAgentModelSelection(
         catalog,
         selection,
       );
-      return { raw, catalog: applied };
+      return { raw, catalog: applied.options };
     },
   );
 }

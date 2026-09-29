@@ -65,6 +65,7 @@ export const SERVER_EVENT_KINDS = [
   'choice-answered',
   'choice-skipped',
   'poll-closed',
+  'workflow-handoff',
 ] as const;
 export type ServerEventKind = (typeof SERVER_EVENT_KINDS)[number];
 export type AgentEventKind = `agent:${string}`;

@@ -357,6 +357,46 @@ describe('first-silence notice', () => {
     });
   });
 
+  it('escalates an exhausted auth-shaped hiccup to the not-signed-in verdict', async () => {
+    // A transient token-refresh race (claude-agent-acp mid-OAuth-refresh) gets
+    // the same bounded hiccup retries as any other hiccup; only once those
+    // are exhausted does the Room line read as the plain not-signed-in
+    // verdict instead of a generic "stopped restarting" hiccup give-up — a
+    // genuinely expired/missing credential is still named plainly, just
+    // after giving the race a chance to clear on its own.
+    const requestId = '9'.repeat(64);
+    const command = await ask(database, requestId);
+    const daemon = new DaemonService(database, new LiveHub());
+    for (const attempt of [1, 2, 3]) {
+      if (attempt > 1) await claimAgentCommand(database, ROOM, AGENT, command.id, `g${attempt}`);
+      const result = await daemon.execute(
+        'postAgentTurnReceipt',
+        {
+          roomId: ROOM,
+          requestId,
+          generationId: `g${attempt}`,
+          status: 'failed',
+          reason:
+            'ACP error -32603: Internal error; harness stderr: 401 authentication_error: OAuth token refresh in progress',
+          reasonKind: 'hiccup',
+        },
+        AGENT,
+      );
+      if (attempt < 3) {
+        expect(result).toMatchObject({ hiccupRestart: true, hiccupAttempt: attempt });
+        expect((await commandState(database, command.id))?.state).toBe('pending');
+      } else {
+        expect(result.hiccupRestart).toBeUndefined();
+        expect((await commandState(database, command.id))?.state).toBe('complete');
+      }
+    }
+    expect(await failureLine(database, requestId)).toEqual({
+      text: "@candy could not answer · the helper isn't signed in to the provider. Run `beeline connect` on the helper's machine.",
+      silence: 'not-signed-in',
+      state: 'failed',
+    });
+  });
+
   it('keeps the silence line after a later successful answer', async () => {
     const requestId = '8'.repeat(64);
     const command = await ask(database, requestId);

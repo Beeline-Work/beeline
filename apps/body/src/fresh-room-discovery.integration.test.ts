@@ -6,7 +6,7 @@ import { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { EventEmitter } from 'node:events';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from '../../server/src/database.js';
 import { PgliteDatabase } from '../../server/src/test-support.js';
 import { TokenAuth } from '../../server/src/auth.js';
@@ -154,41 +154,59 @@ lines.on('line', async (line) => {
   return binary;
 }
 
-async function createDatabaseSnapshot(): Promise<Blob | File> {
+async function createMigratedDatabase(): Promise<PgliteDatabase> {
   const database = new PgliteDatabase();
-  try {
-    await migrate(database);
-    await new (await import('@beeline/auth/store')).AuthStore(
-      database as unknown as TransactionalDatabase,
-    ).migrate();
-    await database.query(
-      `INSERT INTO identities(id,kind,name,handle,github_subject) VALUES($1,'human','Owner','owner','owner'),($2,'agent','Bee','bee',NULL)`,
-      [HUMAN, AGENT],
-    );
-    await database.query(
-      `INSERT INTO agents(agent_id,owner_id,soul,selected_model,selected_effort,model_catalog)
-       VALUES($1,$2,$3::jsonb,NULL,NULL,'[]'::jsonb)`,
-      [AGENT, HUMAN, JSON.stringify({ name: 'Bee', instructions: 'Answer briefly.' })],
-    );
-    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [WORKSPACE]);
-    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'General')`, [
-      ROOM,
-      WORKSPACE,
-    ]);
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,$4,$2,'owner'),($1,$4,$3,'member')`,
-      [WORKSPACE, HUMAN, AGENT, ROOM],
-    );
-    return await database.snapshot();
-  } finally {
-    await database.close();
-  }
+  await migrate(database);
+  await new (await import('@beeline/auth/store')).AuthStore(
+    database as unknown as TransactionalDatabase,
+  ).migrate();
+  return database;
 }
 
-// The full server + auth migration dominates this suite's hook budget under CI
-// contention. Build it once during collection, then restore an isolated in-memory
-// database for every test rather than repeating the migrations in every hook.
-const DATABASE_SNAPSHOT = await createDatabaseSnapshot();
+async function seedFixtureRows(database: PgliteDatabase): Promise<void> {
+  await database.query(
+    `INSERT INTO identities(id,kind,name,handle,github_subject) VALUES($1,'human','Owner','owner','owner'),($2,'agent','Bee','bee',NULL)`,
+    [HUMAN, AGENT],
+  );
+  await database.query(
+    `INSERT INTO agents(agent_id,owner_id,soul,selected_model,selected_effort,model_catalog)
+     VALUES($1,$2,$3::jsonb,NULL,NULL,'[]'::jsonb)`,
+    [AGENT, HUMAN, JSON.stringify({ name: 'Bee', instructions: 'Answer briefly.' })],
+  );
+  await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [WORKSPACE]);
+  await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'General')`, [
+    ROOM,
+    WORKSPACE,
+  ]);
+  await database.query(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,$4,$2,'owner'),($1,$4,$3,'member')`,
+    [WORKSPACE, HUMAN, AGENT, ROOM],
+  );
+}
+
+// Restoring a full app+auth migration into a fresh WASM Postgres instance -
+// whether by re-running the migrations or by restoring a dumped snapshot -
+// costs 400ms+ per instantiation in isolation, and that cost does not scale
+// linearly: 24 concurrent instantiations (approximating this suite's own
+// hook running alongside the rest of the parallel CI worker pool) measured
+// up to ~9s at the tail, well past a 10s hook budget, because spinning up a
+// WASM VM is CPU-bound and every concurrent instantiation competes for the
+// same host CPU. Migrate ONE instance during collection and reset it with a
+// plain TRUNCATE + reseed before every test instead: that is ordinary SQL
+// against an already-warm instance, holds up far better under the same
+// contention (measured ~2s wall for 24 concurrent resets vs ~9s for 24
+// concurrent restores), and needs no per-test WASM instantiation at all.
+const SHARED_DATABASE = await createMigratedDatabase();
+const RESET_TABLES = (
+  await SHARED_DATABASE.query<{ tablename: string }>(
+    `SELECT tablename FROM pg_tables WHERE schemaname = 'public'`,
+  )
+).rows.map((row) => `"${row.tablename}"`);
+
+async function resetDatabase(database: PgliteDatabase): Promise<void> {
+  await database.query(`TRUNCATE ${RESET_TABLES.join(',')} RESTART IDENTITY CASCADE`);
+  await seedFixtureRows(database);
+}
 
 describe('fresh Room discovery through the live membership wake', () => {
   let database: PgliteDatabase;
@@ -230,7 +248,8 @@ describe('fresh Room discovery through the live membership wake', () => {
 
   beforeEach(async () => {
     deniedRoomId = undefined;
-    database = PgliteDatabase.fromSnapshot(DATABASE_SNAPSHOT);
+    database = SHARED_DATABASE;
+    await resetDatabase(database);
     auth = new TokenAuth(database, async (proof) => ({
       subject: proof === 'proof' ? 'owner' : proof,
       login: proof === 'proof' ? 'owner' : proof,
@@ -326,8 +345,14 @@ describe('fresh Room discovery through the live membership wake', () => {
     await listener?.stop();
     await new Promise((r) => setTimeout(r, 150));
     if (server) await new Promise<void>((resolve2) => server.close(() => resolve2()));
-    if (database) await database.close();
   }, 90_000);
+
+  // database is the one shared, already-migrated instance created during
+  // collection (see the comment above SHARED_DATABASE); it is reset, not
+  // recreated, between tests and only closed once the whole file is done.
+  afterAll(async () => {
+    await SHARED_DATABASE.close();
+  });
 
   const request = async (path: string, method = 'GET', payload?: unknown) =>
     fetch(`${origin}${path}`, {

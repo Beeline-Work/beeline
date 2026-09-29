@@ -73,7 +73,12 @@ import {
   isMountedMcpToolPermissionRequest,
   ROOM_MOUNTED_MCP_SERVERS,
 } from './read-only-policy.js';
-import { credentialMaskPaths, harnessHomeStateDirs, wrapAgentCommand } from './bwrap-sandbox.js';
+import {
+  credentialMaskPaths,
+  harnessHomeStateDirs,
+  siblingAgentMaskPaths,
+  wrapAgentCommand,
+} from './bwrap-sandbox.js';
 import { harnessIdentityLabel } from './cursor-acp-bridge.js';
 import type { BodyConfig } from './config.js';
 import { type DaemonApiClient } from './daemon-api-client.js';
@@ -92,8 +97,9 @@ import {
   filterAllowedModelConfigOptions,
   parseAdvertisedConfigOptions,
 } from './model-config.js';
+import type { AgentModelConfigOption } from './model-types.js';
 import type { AgentRuntimeRecord } from './runtime.js';
-import { runtimeIdentity } from './runtime.js';
+import { runtimeDirectory, runtimeIdentity } from './runtime.js';
 import {
   assembleSessionPrompt,
   assembleTurnPrompt,
@@ -491,10 +497,15 @@ export class MonolithRoomTurnLoop {
       ...(this.options.config.bwrapPath ? { bwrapPath: this.options.config.bwrapPath } : {}),
       ...(this.sessionScratchDir ? { scratch: this.sessionScratchDir } : {}),
       ...(this.sessionStateDirs.length ? { harnessStateDirs: this.sessionStateDirs } : {}),
-      maskPaths: credentialMaskPaths(
-        this.options.config.sandboxMaskPaths,
-        this.options.config.operatorHome ?? homedir(),
-      ),
+      maskPaths: [
+        ...credentialMaskPaths(
+          this.options.config.sandboxMaskPaths,
+          this.options.config.operatorHome ?? homedir(),
+        ),
+        ...siblingAgentMaskPaths(
+          runtimeDirectory(this.options.runtime.supervisorRoot, this.options.runtime.agent.publicKey),
+        ),
+      ],
     };
   }
 
@@ -890,7 +901,12 @@ export class MonolithRoomTurnLoop {
           ...(codegraphReady ? [codegraphIndexDirectory(this.options.cwd)] : []),
           ...registryMcpHostBindPaths(configuration.registryMcpRoutes),
         ],
-        maskPaths: credentialMaskPaths(this.options.config.sandboxMaskPaths, operatorHome),
+        maskPaths: [
+          ...credentialMaskPaths(this.options.config.sandboxMaskPaths, operatorHome),
+          ...siblingAgentMaskPaths(
+            runtimeDirectory(this.options.runtime.supervisorRoot, this.options.runtime.agent.publicKey),
+          ),
+        ],
       },
       command,
       args: agentArgs,
@@ -1040,9 +1056,44 @@ export class MonolithRoomTurnLoop {
       const options = filterAllowedModelConfigOptions(
         parseAdvertisedConfigOptions(opened.raw, selection.model),
       );
-      await applyAgentModelSelection(this.client, opened.sessionId, options, selection);
+      const applied = await applyAgentModelSelection(this.client, opened.sessionId, options, selection);
+      if (
+        selection.model &&
+        applied.appliedSelection.model &&
+        applied.appliedSelection.model !== selection.model
+      ) {
+        this.recordModelFallback(applied.appliedSelection, applied.options);
+      }
     }
     return opened.sessionId;
+  }
+
+  /**
+   * A vanished model id was just substituted for a same-family replacement
+   * (`resolveModelFamilyFallback`) so THIS turn could proceed instead of
+   * failing it. Persist the correction so the phone stops offering the dead
+   * id and the durable `model_unavailable` flag stays clear, and let the
+   * server (`daemon-service.ts`'s `modelCatalog`) name the change in the
+   * agent's DM — fire-and-forget: a slow or failed report must never hold up
+   * or fail a turn that already succeeded with the fallback model applied.
+   */
+  private recordModelFallback(
+    appliedSelection: { model?: string; effort?: string },
+    options: AgentModelConfigOption[],
+  ): void {
+    this.options.api
+      .execute('postAgentModelCatalog', {
+        agentId: this.agent.publicKey,
+        workspaceId: this.options.workspaceId,
+        options: options as DaemonOperationMap['postAgentModelCatalog']['input']['options'],
+        selection: appliedSelection,
+      })
+      .catch((error) =>
+        console.error(
+          `[thin-core] failed to persist automatic model fallback for Room ${this.options.roomId}:`,
+          error,
+        ),
+      );
   }
 
   /**

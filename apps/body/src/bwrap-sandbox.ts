@@ -126,6 +126,13 @@
  * corners a GitHub App token scoped to the linked repository. Ambient secrets
  * beyond the mask list remain the operator's own exposure on their account.
  *
+ * Every OTHER Beeline agent's own runtime directory is masked too
+ * ({@link siblingAgentMaskPaths}): agents on this host share the same Unix
+ * account, so without this a session could `cat` a sibling's `runtime.json`
+ * (its signing `secretKeyHex`, `daemonToken`) or its Rooms' harness logins
+ * straight through the whole-home ro-bind — the mechanism a Room agent used
+ * to print another agent's keys in production.
+ *
  * Capabilities that pierce the namespace entirely (a reachable
  * `/var/run/docker.sock`, the systemd user bus) override ALL of the above by
  * owner choice; see "What this boundary is NOT".
@@ -144,9 +151,9 @@
  * corner callbacks can enforce the denylist only for harnesses that still ask.
  */
 import { execFile, spawnSync } from 'node:child_process';
-import { lstatSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import { executableOnPath } from './agent-command.js';
 import type { SessionMode } from './config.js';
 import { CURSOR_HARNESS_COMMAND } from './cursor-acp-bridge.js';
@@ -289,6 +296,44 @@ export function credentialMaskPaths(
     masks.push({ path, kind: info.isDirectory ? 'dir' : 'file' });
   }
   return masks.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/**
+ * Every OTHER agent's runtime directory on this host, masked absent.
+ *
+ * Beeline agents share one Unix account, so the whole-home `--ro-bind / /`
+ * above makes every sibling agent's `<supervisorRoot>/beeline/agents/<publicKey>`
+ * tree readable from inside this session — `runtime.json` there carries that
+ * agent's own signing `secretKeyHex` and its `daemonToken`, and its Rooms'
+ * `agent-home` subtrees carry harness logins (`claude/.credentials.json`,
+ * `codex/auth.json`, `pi/auth.json`, …). A same-user sandbox cannot rely on
+ * file permission bits for this — 0600 stops nothing when the reading process
+ * runs as the same account — so the sibling's whole directory is masked
+ * empty, the same technique {@link credentialMaskPaths} uses for ambient
+ * credential stores. Only THIS agent's own directory (derived from
+ * `ownRuntimeDir`, never enumerated or altered) stays out of the mask list;
+ * everything under it keeps reaching the session exactly as it does today
+ * through the existing harness-state and home overlays.
+ */
+export function siblingAgentMaskPaths(
+  ownRuntimeDir: string,
+  listAgentDirs: (agentsRoot: string) => string[] = (agentsRoot) => {
+    try {
+      return readdirSync(agentsRoot, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name);
+    } catch {
+      return [];
+    }
+  },
+): MaskedPath[] {
+  const own = resolve(ownRuntimeDir);
+  const agentsRoot = dirname(own);
+  const ownName = basename(own).toLowerCase();
+  return listAgentDirs(agentsRoot)
+    .filter((name) => name.toLowerCase() !== ownName)
+    .map((name) => ({ path: resolve(agentsRoot, name), kind: 'dir' as const }))
+    .sort((a, b) => a.path.localeCompare(b.path));
 }
 
 /** Result of the one-shot start-up feature detection. */

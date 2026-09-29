@@ -1342,7 +1342,10 @@ export async function getInstitutionalContext(
     }
     const selectedSkills: WorkspaceSkillIndexCandidate[] = [];
     for (const skill of skillCandidates) {
-      const line = `- Procedure ${skill.slug} (load_workspace_skill): ${skill.description}`;
+      const line =
+        skill.kind === 'workflow'
+          ? `- Workflow ${skill.slug} (start_workflow): ${skill.description}`
+          : `- Procedure ${skill.slug} (load_workspace_skill): ${skill.description}`;
       if (!fits(line)) continue;
       lines.push(line);
       selectedSkills.push(skill);

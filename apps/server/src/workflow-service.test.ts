@@ -217,6 +217,23 @@ describe('workflow run handoff', () => {
     } finally { await db.close(); }
   });
 
+  it('marks a declared non-success terminal as failed', async () => {
+    const { db, parent } = await fixture();
+    try {
+      await db.transaction((tx) => putWorkflowDefinition(tx, ROOM, AUTHOR, definition, undefined, parent));
+      const run = await db.transaction((tx) => startWorkflowRun(tx, ROOM, 'review-demo',
+        { author: AUTHOR, reviewer: REVIEWER }, parent));
+      const command = (await db.query<typeof parent>(
+        `SELECT c.* FROM workflow_run_assignments a JOIN agent_commands c ON c.id=a.command_id
+         WHERE a.run_id=$1`, [run.runId],
+      )).rows[0]!;
+      expect(await db.transaction((tx) => completeWorkflowStep(tx, ROOM, run.runId, 0,
+        { head: 'abc' }, 'failure', command))).toMatchObject({
+        state: 'stopped', status: 'failed',
+      });
+    } finally { await db.close(); }
+  });
+
   it('logs the human actor for reassign, jump, and kill', async () => {
     const { db, parent } = await fixture();
     try {

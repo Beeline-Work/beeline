@@ -165,6 +165,8 @@ async function dispatch(db: SqlDatabase, run: Run, parent: CommandRow): Promise<
   const state = run.definition.states[run.state];
   if (!state) throw new Error('workflow state is absent from pinned definition');
   if (state.kind === 'terminal') {
+    if (!run.definition.success?.includes(run.state))
+      run.error ??= `Workflow ended at non-success state ${run.state}`;
     run.status = run.error ? 'failed' : 'complete';
     run.deadline_at = null;
   } else if (state.kind === 'step') {

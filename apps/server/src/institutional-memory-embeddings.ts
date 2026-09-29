@@ -257,30 +257,39 @@ export function hasPendingEmbedRetry(key: string): boolean {
   return pendingEmbedRetries.has(key);
 }
 
+function embeddingDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return !env[INSTITUTIONAL_MEMORY_EMBEDDING_ENV_VAR]?.trim();
+}
+
 /**
  * Embed one just-saved/updated `institutional_memory_items` row. Fire-and-
  * forget from the caller's perspective (never awaited, never blocks or fails
  * the save); a failure retries this one row on a bounded in-process backoff.
+ *
+ * With no `embedBatch` override and no key configured, this schedules
+ * nothing at all — not even the row's own read: a save every ordinary
+ * caller makes must never pay for a query whose answer is already known to
+ * be "disabled" before it runs.
  */
 export function scheduleEmbedInstitutionalMemoryItem(
   database: SqlDatabase,
   itemId: string,
-  embedBatch: EmbedBatchFn = createDefaultEmbedBatchFn(),
+  embedBatch?: EmbedBatchFn,
 ): void {
-  scheduleWithRetry(`item:${itemId}`, () =>
-    embedOneInstitutionalMemoryItem(database, itemId, embedBatch),
-  );
+  if (!embedBatch && embeddingDisabled()) return;
+  const batch = embedBatch ?? createDefaultEmbedBatchFn();
+  scheduleWithRetry(`item:${itemId}`, () => embedOneInstitutionalMemoryItem(database, itemId, batch));
 }
 
 /** Same as above, for a `workspace_skills` row whose current version just changed. */
 export function scheduleEmbedWorkspaceSkillVersion(
   database: SqlDatabase,
   skillId: string,
-  embedBatch: EmbedBatchFn = createDefaultEmbedBatchFn(),
+  embedBatch?: EmbedBatchFn,
 ): void {
-  scheduleWithRetry(`skill:${skillId}`, () =>
-    embedOneWorkspaceSkillVersion(database, skillId, embedBatch),
-  );
+  if (!embedBatch && embeddingDisabled()) return;
+  const batch = embedBatch ?? createDefaultEmbedBatchFn();
+  scheduleWithRetry(`skill:${skillId}`, () => embedOneWorkspaceSkillVersion(database, skillId, batch));
 }
 
 export interface EmbeddingBackfillCounts {

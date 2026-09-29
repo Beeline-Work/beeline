@@ -237,6 +237,23 @@ describe('embed-on-save (event-driven, no scan)', () => {
     expect(row?.embedding_version).toBe(1);
   });
 
+  it('schedules no work at all (not even a read) when disabled and no embedder override is given', async () => {
+    // Regression: `saveSkill`/`proposeInstitutionalMemory` schedule with no
+    // override, so with no key configured this must never touch the
+    // database — a stray query racing an unrelated caller's own transaction
+    // on the same row crashed pglite (memory access out of bounds) before
+    // this guard existed.
+    const database = new PgliteDatabase();
+    await seed(database);
+    const itemId = 'ffffffff-ffff-4fff-8fff-fffffffffffa';
+    await insertItem(database, itemId);
+    const querySpy = vi.spyOn(database, 'query');
+    scheduleEmbedInstitutionalMemoryItem(database, itemId);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(querySpy).not.toHaveBeenCalled();
+    expect(hasPendingEmbedRetry(`item:${itemId}`)).toBe(false);
+  });
+
   it('a row already gone or inactive is treated as done, not a failure to retry', async () => {
     const database = new PgliteDatabase();
     await seed(database);

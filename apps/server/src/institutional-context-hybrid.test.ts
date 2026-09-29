@@ -234,4 +234,39 @@ describe('getInstitutionalContext hybrid vector snapshot', () => {
     );
     expect(context.text).toContain('gift-shopping');
   });
+
+  // A workflow row is a workspace_skills row of kind='workflow' (#1909): the
+  // embedding cycle has no kind filter, so it is embedded and found the same
+  // way a procedure is, with no code change — this proves it, and that the
+  // index renders it with the workflow (start_workflow) wording, not the
+  // procedure (load_workspace_skill) wording, even when found by meaning
+  // alone with no shared words.
+  it('surfaces a kind=workflow skill by meaning alone, with the workflow wording', async () => {
+    stubEmbeddingFetch();
+    const daemon = liveDaemon();
+    await openCommand('turn-5', 'gen-5');
+    const skillId = 'ffffffff-ffff-4fff-8fff-ffffffffff03';
+    await database.query(
+      `INSERT INTO workspace_skills
+         (id,workspace_id,slug,description,state,current_version,revision,source_room_id,
+          repository,target_commit,kind,embedding,embedding_model,embedding_version,embedded_at)
+       VALUES($1::uuid,$2,'gift-approval','Get sign-off before buying a present','active',1,1,$3,'','',
+              'workflow',$4::vector,'voyageai/voyage-4-lite',1,now())`,
+      [skillId, WORKSPACE, ROOM, pgvectorLiteral(conceptVector(WIFE_CONCEPT))],
+    );
+    await database.query(
+      `INSERT INTO workspace_skill_versions
+         (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,repository,
+          target_commit,extractor_version,model)
+       VALUES($1::uuid,1,'{}',$2,NULL,$3,'','','v1','model')`,
+      [skillId, 'd'.repeat(64), [MESSAGE]],
+    );
+    const context = await daemon.execute(
+      'getInstitutionalContext',
+      { roomId: ROOM, requestId: 'turn-5', generationId: 'gen-5' },
+      RONNIE,
+    );
+    expect(context.text).toContain('Workflow gift-approval (start_workflow)');
+    expect(context.text).not.toContain('Procedure gift-approval');
+  });
 });

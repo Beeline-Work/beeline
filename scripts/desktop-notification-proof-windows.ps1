@@ -18,6 +18,13 @@ foreach ($root in $roots) {
 }
 if (-not $app) { throw 'The installed Beeline Preview executable was not found' }
 Write-Host "Installed executable: $($app.FullName)"
+
+# The Windows Server base image these runners use ships with the toast master
+# switch off, which silently drops every app's toast regardless of that app's
+# own notification settings.
+New-Item -Path 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\PushNotifications' -Force | Out-Null
+Set-ItemProperty -Path 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\PushNotifications' -Name 'ToastEnabled' -Value 1 -Type DWord
+
 $env:BEELINE_DESKTOP_NOTIFICATION_PROOF = '1'
 $process = Start-Process -FilePath $app.FullName -PassThru
 Start-Sleep -Seconds 2

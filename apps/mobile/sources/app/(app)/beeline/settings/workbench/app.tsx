@@ -9,7 +9,7 @@ import { AppPageHeader } from '@/components/buzz/AppPageHeader';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { openAppSignIn } from '@/buzz/app-sign-in';
 import type { WorkbenchApp } from '@/buzz/workbench';
-import { appBoardColors, appBoardType } from '@/buzz/app-board-style';
+import { appBoardColors } from '@/buzz/app-board-style';
 
 function first(value: string | string[] | undefined): string | undefined { return Array.isArray(value) ? value[0] : value; }
 
@@ -78,20 +78,21 @@ export default function AppDetailScreen() {
 }
 
 const styles = StyleSheet.create(theme => {
-  const board = appBoardColors(theme.buzz);
+  const hull = theme.buzz;
+  const board = appBoardColors(hull);
   return {
   screen: { flex: 1, backgroundColor: board.canvas },
   content: { paddingHorizontal: 20, paddingVertical: 24, gap: 18 },
   identity: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   identityCopy: { gap: 2 },
-  status: { ...Typography.ledger(), ...appBoardType.rowTitle, color: board.ink },
-  account: { ...Typography.ledger(), ...appBoardType.meta, color: board.quiet },
-  permission: { ...Typography.ledger(), ...appBoardType.rowValue, lineHeight: 22, color: board.secondary },
-  lastUsed: { ...Typography.ledger(), fontSize: 13, lineHeight: 19, color: board.quiet },
+  status: { ...Typography.ledger(), ...hull.type.body, color: board.ink },
+  account: { ...Typography.ledger(), ...hull.type.meta, color: board.quiet },
+  permission: { ...Typography.ledger(), ...hull.type.meta, color: board.secondary },
+  lastUsed: { ...Typography.ledger(), ...hull.type.meta, color: board.quiet },
   outline: { alignSelf: 'flex-start', minHeight: 44, paddingHorizontal: 18, justifyContent: 'center', borderRadius: 10, borderWidth: 2, borderColor: board.buttonOutline },
-  outlineText: { ...Typography.ledger(), ...appBoardType.cardAction, color: board.buttonOutline },
+  outlineText: { ...Typography.ledger(), ...hull.type.body, color: board.buttonOutline },
   ink: { alignSelf: 'flex-start', minHeight: 44, paddingHorizontal: 18, justifyContent: 'center', borderRadius: 10, backgroundColor: board.buttonFill },
-  inkText: { ...Typography.ledger(), ...appBoardType.cardAction, color: board.buttonText },
+  inkText: { ...Typography.ledger(), ...hull.type.body, color: board.buttonText },
   error: { ...Typography.default(), color: theme.buzz.dialogDanger },
   };
 });

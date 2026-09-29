@@ -16,7 +16,7 @@ import { resolveWalletWorkspaceId } from '@/buzz/wallet-workspace';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import { AppMark } from '@/components/buzz/AppMark';
-import { appBoardColors, appBoardType } from '@/buzz/app-board-style';
+import { appBoardColors } from '@/buzz/app-board-style';
 import { ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import {
   appInstrument,
@@ -202,7 +202,7 @@ export default function WorkbenchScreen() {
   const loading = view === null && networkFailure === null;
   const screenStyle = [styles.container, { paddingTop: desktop ? 0 : insets.top }];
   const header = (
-    <PageHeader appBoard backAccessibilityLabel="Back to Settings" eyebrow="Settings" title="Workbench" testID="workbench-header" onBack={() => router.back()} />
+    <PageHeader prominent backAccessibilityLabel="Back to Settings" eyebrow="Settings" title="Workbench" testID="workbench-header" onBack={() => router.back()} />
   );
 
   if (networkFailure) {
@@ -346,16 +346,16 @@ const styles = StyleSheet.create((theme) => {
       paddingTop: 22,
       paddingBottom: hull.space.xxl,
     },
-    sectionLabel: { ...Typography.mono(), ...appBoardType.section, color: board.quiet, paddingBottom: 6 },
-    appsNote: { ...Typography.ledger(), marginTop: 18, fontSize: 13, lineHeight: 19, color: board.quiet },
+    sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: board.quiet, paddingBottom: 6 },
+    appsNote: { ...Typography.ledger(), ...hull.type.meta, marginTop: 18, color: board.quiet },
     indexRow: { minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: board.border },
-    rowTitle: { ...Typography.ledger(), ...appBoardType.rowTitle, flex: 1, color: board.ink },
+    rowTitle: { ...Typography.ledger(), ...hull.type.body, flex: 1, color: board.ink },
     rowAction: { color: board.brass },
-    rowValue: { ...Typography.ledger(), ...appBoardType.rowValue, color: board.quiet },
+    rowValue: { ...Typography.ledger(), ...hull.type.meta, color: board.quiet },
     toolMark: { width: 36, height: 36, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
     squireMark: { backgroundColor: '#141210' },
     walletMark: { backgroundColor: '#1652F0' },
-    toolMarkText: { ...Typography.mono(), ...appBoardType.monoMark, color: '#FFFFFF' },
+    toolMarkText: { ...Typography.mono(), ...hull.type.machine, color: '#FFFFFF' },
     squireMarkText: { color: '#9AA7FF' },
     centered: {
       flex: 1,

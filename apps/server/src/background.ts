@@ -30,6 +30,7 @@ export interface PushSender {
       action?: PushAction;
       /** A permission ask: its text is delivered whole, never cut to fit. */
       permission?: true;
+      recipientIdentityId?: string;
     } & (
       | { type: 'test' }
       | {
@@ -51,21 +52,24 @@ export interface PushSender {
 
 export function createPushTestSender(
   database: SqlDatabase,
-  sender: PushSender,
+  sender: PushSender | undefined,
   iosSender?: PushSender,
+  webSender?: PushSender,
 ): (identityId: string) => Promise<void> {
   return async (identityId) => {
-    const devices = await database.query<{ token: string; platform: 'android' | 'ios' }>(
+    const devices = await database.query<{ token: string; platform: 'android' | 'ios' | 'web' }>(
       `SELECT token,platform FROM push_devices
-       WHERE identity_id=$1 AND (platform='android' OR ($2::boolean AND platform='ios'))`,
-      [identityId, Boolean(iosSender)],
+       WHERE identity_id=$1 AND (($2::boolean AND platform='android') OR ($3::boolean AND platform='ios') OR ($4::boolean AND platform='web'))`,
+      [identityId, Boolean(sender), Boolean(iosSender), Boolean(webSender)],
     );
     for (const device of devices.rows) {
-      const deviceSender = device.platform === 'ios' ? iosSender! : sender;
+      const deviceSender =
+        device.platform === 'ios' ? iosSender! : device.platform === 'web' ? webSender! : sender!;
       await deviceSender.send(device.token, {
         messageId: 'test',
         type: 'test',
         text: 'Beeline notifications are ready.',
+        recipientIdentityId: identityId,
       });
     }
   };
@@ -95,10 +99,11 @@ export class PushDeliveryLoop {
 
   constructor(
     private readonly database: SqlDatabase,
-    private readonly sender: PushSender,
+    private readonly sender: PushSender | undefined,
     private readonly iosSender?: PushSender,
     private readonly minimumIntervalMs = PUSH_DELIVERY_MIN_INTERVAL_MS,
     private readonly now: () => number = Date.now,
+    private readonly webSender?: PushSender,
   ) {}
 
   async runOnce(): Promise<number> {
@@ -137,7 +142,7 @@ export class PushDeliveryLoop {
       token: string;
       identity_id: string;
       is_release_catchup: boolean;
-      platform: 'android' | 'ios';
+      platform: 'android' | 'ios' | 'web';
       action: 'grant' | 'reply' | null;
       grant_id: string | null;
       grant_kind: string | null;
@@ -265,7 +270,7 @@ export class PushDeliveryLoop {
           candidate.grant_agent_name,candidate.author_name
         FROM candidates candidate
         JOIN push_devices device ON device.token=candidate.token
-          AND ${this.iosSender ? "device.platform IN ('android','ios')" : "device.platform='android'"}
+          AND device.platform IN (${[this.sender && "'android'", this.iosSender && "'ios'", this.webSender && "'web'"].filter(Boolean).join(',') || "'none'"})
         LEFT JOIN push_delivery_claims claim
           ON claim.message_id=candidate.message_id AND claim.device_token=candidate.token
         WHERE claim.message_id IS NULL
@@ -385,8 +390,16 @@ export class PushDeliveryLoop {
             const index = nextClaim++;
             const { candidate, message } = claimedDeliveries[index]!;
             try {
-              const sender = candidate.platform === 'ios' ? this.iosSender! : this.sender;
-              await sender.send(candidate.token, message);
+              const sender =
+                candidate.platform === 'ios'
+                  ? this.iosSender!
+                  : candidate.platform === 'web'
+                    ? this.webSender!
+                    : this.sender!;
+              await sender.send(candidate.token, {
+                ...message,
+                recipientIdentityId: candidate.identity_id,
+              });
               await this.database.query(
                 `UPDATE push_delivery_claims SET status='delivered',completed_at=now() WHERE message_id=$1 AND device_token=$2`,
                 [candidate.message_id, candidate.token],
@@ -572,9 +585,7 @@ export async function runMaintenance(database: SqlDatabase): Promise<void> {
   );
   // A deferred mention notice is spent once written or withdrawn; its row has
   // no further use after the source message and the notice are both long gone.
-  await database.query(
-    `DELETE FROM pending_mention_notices WHERE due_at<now()-interval '30 days'`,
-  );
+  await database.query(`DELETE FROM pending_mention_notices WHERE due_at<now()-interval '30 days'`);
 }
 
 /**
@@ -679,9 +690,15 @@ export class BackgroundJobRunner {
     return Object.fromEntries([...this.#health].map(([name, health]) => [name, { ...health }]));
   }
 
-  async run<T>(name: string, work: () => Promise<T>): Promise<{ ok: true; value: T } | { ok: false }> {
+  async run<T>(
+    name: string,
+    work: () => Promise<T>,
+  ): Promise<{ ok: true; value: T } | { ok: false }> {
     const health = this.#health.get(name) ?? {
-      lastSuccessAt: null, lastErrorAt: null, lastDurationMs: null, consecutiveFailures: 0,
+      lastSuccessAt: null,
+      lastErrorAt: null,
+      lastDurationMs: null,
+      consecutiveFailures: 0,
     };
     this.#health.set(name, health);
     const startedAt = this.now();

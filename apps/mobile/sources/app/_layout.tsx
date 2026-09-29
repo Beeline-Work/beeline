@@ -49,6 +49,7 @@ import {
   registerBuzzPushNotifications,
   retryBuzzPushRegistration,
 } from '@/push/buzz-push-registration';
+import { clearWebPushSubscription } from '@/push/web-push-registration';
 import { monolithSession } from '@/auth/monolith-session';
 import { startPushRegistrationLifecycle } from '@/push/push-registration-lifecycle';
 import { reportRunningUpdateReceipt } from '@/push/update-receipt';
@@ -265,6 +266,7 @@ export default function RootLayout() {
         },
         register: registerBuzzPushNotifications,
         retry: retryBuzzPushRegistration,
+        clearIdentity: Platform.OS === 'web' ? clearWebPushSubscription : undefined,
         reportUpdate: reportRunningUpdateReceipt,
         reportFailure: (error) =>
           console.warn(

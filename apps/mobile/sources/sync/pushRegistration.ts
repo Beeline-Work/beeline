@@ -11,7 +11,15 @@ export interface PushPermissionInfo {
 
 export async function getPushPermissionInfo(): Promise<PushPermissionInfo> {
     if (Platform.OS === 'web') {
-        return { status: 'unsupported', granted: false, canAskAgain: false };
+        if (typeof window === 'undefined' || !window.isSecureContext ||
+            !('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window))
+            return { status: 'unsupported', granted: false, canAskAgain: false };
+        return {
+            status: Notification.permission === 'granted' ? 'granted' :
+                Notification.permission === 'denied' ? 'denied' : 'undetermined',
+            granted: Notification.permission === 'granted',
+            canAskAgain: Notification.permission !== 'denied',
+        };
     }
 
     try {

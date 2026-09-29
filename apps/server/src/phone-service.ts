@@ -11,6 +11,7 @@ import { beginComposioAppSignIn, completeComposioSignIn } from './app-connection
 import { CORNER_VALIDATION_STAGES, currentCornerBrief } from './corner-brief.js';
 import { storeWorkspaceAvatar } from './durable-avatar.js';
 import { queueLatestReleasePush } from './release-push-catchup.js';
+import { validateWebPushSubscription, webPushPublicKey } from './web-push.js';
 import { requireRoomSlug, reserveRoomName } from './room-names.js';
 import {
   createAgentPairingCode,
@@ -3487,6 +3488,8 @@ export class PhoneService {
           input as Input<'registerPushDevice'>,
           viewerId,
         )) as Output<Name>;
+      case 'readWebPushKey':
+        return { publicKey: webPushPublicKey(process.env) } as Output<Name>;
       case 'unregisterPushDevice':
         await this.database.query(`DELETE FROM push_devices WHERE token=$1 AND identity_id=$2`, [
           (input as Input<'unregisterPushDevice'>).token,
@@ -6985,10 +6988,16 @@ export class PhoneService {
     };
   }
   private async registerPush(input: Input<'registerPushDevice'>, viewerId: string) {
+    if (input.platform === 'web') {
+      if (!webPushPublicKey(process.env)) throw new Error('web push is not configured');
+      validateWebPushSubscription(input.token, input.keys);
+    } else if (input.platform !== 'android' && input.platform !== 'ios') {
+      throw new Error('invalid push platform');
+    }
     await this.database.transaction(async (database) => {
       await database.query(
-        `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at) VALUES($1,$2,$3,$4,now()) ON CONFLICT(token) DO UPDATE SET identity_id=EXCLUDED.identity_id,platform=EXCLUDED.platform,environment=EXCLUDED.environment,registered_at=CASE WHEN push_devices.identity_id IS DISTINCT FROM EXCLUDED.identity_id THEN now() ELSE push_devices.registered_at END,updated_at=now()`,
-        [input.token, viewerId, input.platform, input.environment],
+        `INSERT INTO push_devices(token,identity_id,platform,environment,web_keys,registered_at) VALUES($1,$2,$3,$4,$5::jsonb,now()) ON CONFLICT(token) DO UPDATE SET identity_id=EXCLUDED.identity_id,platform=EXCLUDED.platform,environment=EXCLUDED.environment,web_keys=EXCLUDED.web_keys,registered_at=CASE WHEN push_devices.identity_id IS DISTINCT FROM EXCLUDED.identity_id OR push_devices.web_keys IS DISTINCT FROM EXCLUDED.web_keys THEN now() ELSE push_devices.registered_at END,updated_at=now()`,
+        [input.token, viewerId, input.platform, input.environment, input.platform === 'web' ? JSON.stringify(input.keys) : null],
       );
       await queueLatestReleasePush(database, viewerId, input.token);
     });
@@ -8643,6 +8652,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'getGitHubRepositoryAccess',
   'uploadMedia',
   'registerPushDevice',
+  'readWebPushKey',
   'unregisterPushDevice',
   'sendPushTest',
   'reportRunningUpdate',

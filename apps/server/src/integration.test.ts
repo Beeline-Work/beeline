@@ -263,7 +263,9 @@ describe('monolith integration', () => {
     request(`/v1/phone/operations/${name}`, 'POST', payload, token);
   it('serves account-scoped welcome eligibility and durable completion', async () => {
     const fresh = 'e'.repeat(64);
-    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Fresh')`, [fresh]);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Fresh')`, [
+      fresh,
+    ]);
     await database.query(`UPDATE identities SET welcome_cards_due=NULL WHERE id=$1`, [HUMAN]);
     expect(await (await operation('readWelcomeCards', {})).json()).toEqual({ due: false });
     expect(await phone.execute('readWelcomeCards', {}, fresh)).toEqual({ due: true });
@@ -620,6 +622,62 @@ describe('monolith integration', () => {
         )
       ).rows,
     ).toEqual([expect.objectContaining({ registered_at: new Date('2000-01-01T00:00:00.000Z') })]);
+  });
+
+  it('binds a Chrome subscription to the authenticated person and removes it on opt-out', async () => {
+    const previousPublic = process.env.WEB_PUSH_VAPID_PUBLIC_KEY;
+    const previousPrivate = process.env.WEB_PUSH_VAPID_PRIVATE_KEY;
+    process.env.WEB_PUSH_VAPID_PUBLIC_KEY = 'test-public-key';
+    process.env.WEB_PUSH_VAPID_PRIVATE_KEY = 'test-private-key';
+    try {
+      expect(await (await operation('readWebPushKey', {})).json()).toEqual({
+        publicKey: 'test-public-key',
+      });
+      const token = 'https://fcm.googleapis.com/fcm/send/test-subscription';
+      const keys = { p256dh: 'a'.repeat(87), auth: 'b'.repeat(22) };
+      const registered = await operation('registerPushDevice', {
+        token,
+        platform: 'web',
+        environment: 'physical',
+        keys,
+      });
+      expect(registered.status).toBe(200);
+      expect(
+        (
+          await database.query<{ identity_id: string; web_keys: typeof keys }>(
+            `SELECT identity_id,web_keys FROM push_devices WHERE token=$1`,
+            [token],
+          )
+        ).rows,
+      ).toEqual([{ identity_id: HUMAN, web_keys: keys }]);
+      expect(
+        (
+          await operation('registerPushDevice', {
+            token: 'https://evil.example/collect',
+            platform: 'web',
+            environment: 'physical',
+            keys,
+          })
+        ).status,
+      ).toBeGreaterThanOrEqual(400);
+      expect(
+        (
+          await operation('unregisterPushDevice', {
+            token,
+            platform: 'web',
+            environment: 'physical',
+          })
+        ).status,
+      ).toBe(204);
+      expect(
+        (await database.query(`SELECT token FROM push_devices WHERE token=$1`, [token])).rows,
+      ).toEqual([]);
+    } finally {
+      if (previousPublic === undefined) delete process.env.WEB_PUSH_VAPID_PUBLIC_KEY;
+      else process.env.WEB_PUSH_VAPID_PUBLIC_KEY = previousPublic;
+      if (previousPrivate === undefined) delete process.env.WEB_PUSH_VAPID_PRIVATE_KEY;
+      else process.env.WEB_PUSH_VAPID_PRIVATE_KEY = previousPrivate;
+    }
   });
 
   it('resets a reassigned device registration floor', async () => {
@@ -5291,7 +5349,9 @@ describe('monolith integration', () => {
     });
     expect(created.status).toBe(200);
     const { cornerId } = (await created.json()) as { cornerId: string };
-    expect(await (await daemonOperation('getCornerRestoreState', { cornerId })).json()).toMatchObject({
+    expect(
+      await (await daemonOperation('getCornerRestoreState', { cornerId })).json(),
+    ).toMatchObject({
       cornerId,
       parentRoomId: ROOM,
       archived: false,
@@ -5329,7 +5389,9 @@ describe('monolith integration', () => {
     ).toBe(200);
 
     expect((await daemonOperation('archiveCorner', { cornerId })).status).toBe(200);
-    expect(await (await daemonOperation('getCornerRestoreState', { cornerId })).json()).toMatchObject({
+    expect(
+      await (await daemonOperation('getCornerRestoreState', { cornerId })).json(),
+    ).toMatchObject({
       cornerId,
       parentRoomId: ROOM,
       archived: true,

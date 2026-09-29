@@ -1,0 +1,11 @@
+# Chrome web notifications
+
+The Expo web app registers `/push-sw.js` after a signed-in person grants Chrome notification permission. It reads the VAPID public key through the authenticated `readWebPushKey` phone operation and binds the browser endpoint and encryption keys with `registerPushDevice` (`platform: web`). The server stores these in `push_devices`, tied to the authenticated identity. Its existing message delivery loop selects web subscriptions alongside native devices, applies the same Room membership and push-level filters, and sends a short preview through VAPID. The worker displays the notification even when the app is foregrounded; clicking it opens the Room in the same origin.
+
+## Deployment
+
+Generate one VAPID key pair for the server deployment and set `WEB_PUSH_VAPID_PUBLIC_KEY` and `WEB_PUSH_VAPID_PRIVATE_KEY` as server secrets. `WEB_PUSH_VAPID_SUBJECT` may override the default `mailto:support@usebeeline.app`. Keep the private key stable: rotating it invalidates existing subscriptions until the client re-registers. The web build must serve `/push-sw.js` from the app origin with JavaScript content type and a root scope. Deploy the server and its schema migration before the web build. Without both VAPID keys the server does not advertise browser push, and registration reports a retryable failure.
+
+Chrome uses `https://fcm.googleapis.com/fcm/send/...` or `/wp/...` endpoints. The server rejects other origins and never logs subscription keys or endpoint values. The app unsubscribes locally at sign-out and removes the server registration on notification opt-out. An expired endpoint is removed by the server after a 404/410 response. Message payloads contain the same bounded preview as native push and a same-origin Room destination.
+
+For a local end-to-end proof, use a disposable authenticated fixture user and a local server with VAPID keys. A message from another fixture member should appear in `ServiceWorkerRegistration.getNotifications()` in Chrome with the expected Room preview. Never use a production person's subscription for a test send.

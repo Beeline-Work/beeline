@@ -28,22 +28,32 @@ describe('background advisory-lock ownership', () => {
   it('records a failed job and still runs the next independent job', async () => {
     let clock = 1_000;
     const runner = new BackgroundJobRunner(() => clock);
-    const later = vi.fn(async () => { clock += 5; });
-    expect(await runner.run('push', async () => {
-      clock += 7;
-      throw new Error('provider unavailable');
-    })).toEqual({ ok: false });
+    const later = vi.fn(async () => {
+      clock += 5;
+    });
+    expect(
+      await runner.run('push', async () => {
+        clock += 7;
+        throw new Error('provider unavailable');
+      }),
+    ).toEqual({ ok: false });
     await runner.run('schedules', later);
     expect(later).toHaveBeenCalledOnce();
     expect(runner.snapshot()).toEqual({
-      push: { lastSuccessAt: null, lastErrorAt: 1_007,
-        lastDurationMs: 7, consecutiveFailures: 1 },
-      schedules: { lastSuccessAt: 1_012, lastErrorAt: null,
-        lastDurationMs: 5, consecutiveFailures: 0 },
+      push: { lastSuccessAt: null, lastErrorAt: 1_007, lastDurationMs: 7, consecutiveFailures: 1 },
+      schedules: {
+        lastSuccessAt: 1_012,
+        lastErrorAt: null,
+        lastDurationMs: 5,
+        consecutiveFailures: 0,
+      },
     });
-    await runner.run('push', async () => { clock += 2; });
+    await runner.run('push', async () => {
+      clock += 2;
+    });
     expect(runner.snapshot().push).toMatchObject({
-      lastSuccessAt: 1_014, consecutiveFailures: 0,
+      lastSuccessAt: 1_014,
+      consecutiveFailures: 0,
     });
   });
 
@@ -285,6 +295,52 @@ describe('background advisory-lock ownership', () => {
       now += 5_000;
       await loop.runIfDue();
       expect(query.mock.calls.length).toBeGreaterThan(afterFirst);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('dispatches a direct message to a Chrome subscription without Firebase configured', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const recipient = 'a'.repeat(64),
+        sender = 'b'.repeat(64);
+      const workspace = '11111111-1111-4111-8111-111111111111';
+      const room = '22222222-2222-4222-8222-222222222222';
+      const endpoint = 'https://fcm.googleapis.com/fcm/send/test-subscription';
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Recipient','recipient'),($2,'human','Sender','sender')`,
+        [recipient, sender],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(
+        `INSERT INTO rooms(id,workspace_id,name,direct_participants) VALUES($1,$2,'DM',$3::jsonb)`,
+        [room, workspace, JSON.stringify([recipient, sender])],
+      );
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member'),($1,$2,$4,'member')`,
+        [workspace, room, recipient, sender],
+      );
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment,web_keys) VALUES($1,$2,'web','physical',$3::jsonb)`,
+        [endpoint, recipient, JSON.stringify({ p256dh: 'a'.repeat(87), auth: 'b'.repeat(22) })],
+      );
+      const send = vi.fn(async () => undefined);
+      const loop = new PushDeliveryLoop(db, undefined, undefined, 0, Date.now, { send });
+      expect(await loop.runOnce()).toBe(0);
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Chrome proof message')`,
+        ['c'.repeat(64), room, sender],
+      );
+      expect(await loop.runOnce()).toBe(1);
+      expect(send).toHaveBeenCalledWith(
+        endpoint,
+        expect.objectContaining({
+          text: 'Sender: Chrome proof message',
+          recipientIdentityId: recipient,
+        }),
+      );
     } finally {
       await db.close();
     }

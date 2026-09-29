@@ -6990,7 +6990,7 @@ export class PhoneService {
   private async registerPush(input: Input<'registerPushDevice'>, viewerId: string) {
     if (input.platform === 'web') {
       if (!webPushPublicKey(process.env)) throw new Error('web push is not configured');
-      validateWebPushSubscription(input.token, input.keys);
+      await validateWebPushSubscription(input.token, input.keys);
     } else if (input.platform !== 'android' && input.platform !== 'ios') {
       throw new Error('invalid push platform');
     }

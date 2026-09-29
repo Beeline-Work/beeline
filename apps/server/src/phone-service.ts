@@ -52,6 +52,7 @@ import type {
 } from '@beeline/api-contract/phone';
 import {
   assignSeededAgentIdentity,
+  chatActivityAt,
   uniqueAgentHandle,
   cornerDisplayName,
   createCommunityInviteToken,
@@ -737,39 +738,6 @@ function roomSchedule(row: RoomScheduleRow): Output<'createRoomSchedule'> {
   };
 }
 
-type ChatCornerRow = {
-  id: string;
-  name: string;
-  parent_id: string;
-  archived_at: Date | null;
-  lifecycle: CornerLifecycleView | null;
-  latest_turn_status: string | null;
-  commissioned_by_viewer: boolean | null;
-  latest_tags_viewer: boolean | null;
-  latest_created_at: Date | null;
-};
-
-/** The viewer's open corners under the Rooms `scope` selects, as `chatCornerCounts` reads them. */
-function chatCornerRowsSql(scope: string): string {
-  return `SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,turn.status latest_turn_status,
-           initiator.id=$2 commissioned_by_viewer,
-           $2=ANY(${taggedIdentityIdsSql('lm')}) latest_tags_viewer,
-           lm.created_at latest_created_at
-         FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
-         LEFT JOIN identities initiator
-           ON initiator.id=f.commissioned_by AND initiator.kind='human'
-         LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=c.id AND presentation IN ('message','system') ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
-         LEFT JOIN LATERAL (
-           SELECT status FROM agent_turns WHERE room_id=c.id
-           ORDER BY created_at DESC LIMIT 1
-         ) turn ON true
-         WHERE ${scope} AND c.archived_at IS NULL AND EXISTS (
-           SELECT 1 FROM memberships member WHERE member.room_id=c.id
-             AND member.identity_id=$2 AND member.removed_at IS NULL
-         )
-         ORDER BY c.created_at DESC,c.id`;
-}
-
 export class PhoneService {
   private readonly lastEnrichmentLogAt = new Map<string, number>();
 
@@ -1171,24 +1139,6 @@ export class PhoneService {
     );
     const current = workspace.rows[0];
     if (!current) return null;
-    // A viewer's corner going to waiting is activity in its Room. It must order
-    // the Rooms before the 200-Room limit, so it is read Workspace-wide first,
-    // with the same state machine the corner counts use.
-    const waitingCorners = await this.optionalEnrichment(
-      'chat-waiting-activity',
-      this.enrichmentDatabase.query<ChatCornerRow>(
-        chatCornerRowsSql(`c.parent_id IN (
-          SELECT id FROM rooms WHERE workspace_id=$1 AND parent_id IS NULL AND archived_at IS NULL
-        )`),
-        [workspaceId, viewerId],
-      ),
-    );
-    const waitingByRoom = [...chatCornerCounts(waitingCorners?.rows ?? [])].flatMap(
-      ([roomId, counts]) => {
-        const at = Math.max(0, ...counts.openCorners.map((corner) => corner.waitingSince ?? 0));
-        return at ? [[roomId, at] as const] : [];
-      },
-    );
     const rooms = await this.database.query<
       RoomRow & {
         member_count: string;
@@ -1263,7 +1213,6 @@ export class PhoneService {
         ORDER BY created_at DESC,id DESC LIMIT 1
       ) lm ON true
       LEFT JOIN identities li ON li.id=lm.author_id
-      LEFT JOIN unnest($4::uuid[],$5::float8[]) waiting(room_id,at) ON waiting.room_id=r.id
       LEFT JOIN LATERAL (
         SELECT agent.name
         FROM permission_authority permission
@@ -1289,14 +1238,8 @@ export class PhoneService {
           r.direct_participants IS NULL OR peer.id IS NULL
           OR NOT (peer.id = ANY($3::text[])) OR lm.id IS NOT NULL
         )
-      ORDER BY GREATEST(COALESCE(lm.created_at,r.updated_at),to_timestamp(waiting.at)) DESC,r.id LIMIT 201`,
-      [
-        workspaceId,
-        viewerId,
-        connectorIdentityIds(),
-        waitingByRoom.map(([roomId]) => roomId),
-        waitingByRoom.map(([, at]) => at),
-      ],
+      ORDER BY COALESCE(lm.created_at,r.updated_at) DESC,r.id LIMIT 201`,
+      [workspaceId, viewerId, connectorIdentityIds()],
     );
     const roomIds = rooms.rows.map((room) => room.id);
     const [presence, cursors, cornerStates] = await Promise.all([
@@ -1371,8 +1314,34 @@ export class PhoneService {
       ),
       this.optionalEnrichment(
         'chat-corner-counts',
-        this.enrichmentDatabase.query<ChatCornerRow>(
-          chatCornerRowsSql('c.parent_id=ANY($1::uuid[])'),
+        this.enrichmentDatabase.query<{
+          id: string;
+          name: string;
+          parent_id: string;
+          archived_at: Date | null;
+          lifecycle: CornerLifecycleView | null;
+          latest_turn_status: string | null;
+          commissioned_by_viewer: boolean | null;
+          latest_tags_viewer: boolean | null;
+          latest_created_at: Date | null;
+        }>(
+          `SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,turn.status latest_turn_status,
+           initiator.id=$2 commissioned_by_viewer,
+           $2=ANY(${taggedIdentityIdsSql('lm')}) latest_tags_viewer,
+           lm.created_at latest_created_at
+         FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
+         LEFT JOIN identities initiator
+           ON initiator.id=f.commissioned_by AND initiator.kind='human'
+         LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=c.id AND presentation IN ('message','system') ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
+         LEFT JOIN LATERAL (
+           SELECT status FROM agent_turns WHERE room_id=c.id
+           ORDER BY created_at DESC LIMIT 1
+         ) turn ON true
+         WHERE c.parent_id=ANY($1::uuid[]) AND c.archived_at IS NULL AND EXISTS (
+           SELECT 1 FROM memberships member WHERE member.room_id=c.id
+             AND member.identity_id=$2 AND member.removed_at IS NULL
+         )
+         ORDER BY c.created_at DESC,c.id`,
           [roomIds, viewerId],
         ),
       ),
@@ -1499,7 +1468,9 @@ export class PhoneService {
               },
             }
           : {}),
-      })),
+      }))
+        // A viewer's corner going to waiting lifts its Room like a message does.
+        .sort((left, right) => chatActivityAt(right) - chatActivityAt(left)),
       viewer: await this.requireIdentity(viewerId),
       truncated: rooms.rows.length > 200,
       ...(unavailable.length ? { unavailable } : {}),

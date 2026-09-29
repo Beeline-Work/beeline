@@ -5,7 +5,7 @@ import type { NativeStackHeaderProps } from '@react-navigation/native-stack';
 import { layout } from '../layout';
 import { useHeaderHeight, useIsDesktop, useIsTablet, useLayoutClass } from '@/utils/responsive';
 import { Typography } from '@/constants/Typography';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 interface HeaderProps {
@@ -22,8 +22,6 @@ interface HeaderProps {
     headerTransparent?: boolean;
     safeAreaEnabled?: boolean;
 }
-
-const PHONE_SUBTITLE_FONT_SIZE = 12;
 
 export const Header = React.memo((props: HeaderProps) => {
     const styles = stylesheet;
@@ -125,6 +123,7 @@ const NavigationHeaderComponent: React.FC<NativeStackHeaderProps> = React.memo((
     const extendedOptions = options as ExtendedNavigationOptions;
     const isTablet = useIsTablet();
     const isDesktop = useIsDesktop();
+    const { theme } = useUnistyles();
 
     // Hide back button on tablet — navigation is handled via sidebar and persistent header
     const shouldHideBackButton = isTablet;
@@ -136,7 +135,7 @@ const NavigationHeaderComponent: React.FC<NativeStackHeaderProps> = React.memo((
             title = (
                 <Text style={[
                     {
-                        fontSize: isDesktop ? 17 : 16,
+                        ...theme.buzz.type.body,
                         fontWeight: '600',
                         textAlign: isDesktop && Platform.OS === 'ios' ? 'center' : 'left',
                         color: options.headerTintColor || '#000',
@@ -154,7 +153,7 @@ const NavigationHeaderComponent: React.FC<NativeStackHeaderProps> = React.memo((
     } else if (typeof options.title === 'string') {
         title = (
             <Text style={[
-                { fontSize: 17, fontWeight: '600', textAlign: Platform.OS === 'ios' ? 'center' : 'left', color: options.headerTintColor || '#000' },
+                { ...theme.buzz.type.body, fontWeight: '600', textAlign: Platform.OS === 'ios' ? 'center' : 'left', color: options.headerTintColor || '#000' },
                 Typography.ledger('semiBold'),
                 options.headerTitleStyle
             ]}>
@@ -264,14 +263,14 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         alignItems: 'flex-end',
     },
     title: {
-        fontSize: 16,
+        ...theme.buzz.type.body,
         fontWeight: '600',
         textAlign: 'center',
         color: theme.colors.header.tint,
         fontFamily: theme.buzz.proseSemibold,
     },
     subtitle: {
-        fontSize: PHONE_SUBTITLE_FONT_SIZE,
+        ...theme.buzz.type.meta,
         fontWeight: '400',
         textAlign: 'left',
         marginTop: 1,
@@ -279,7 +278,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         fontFamily: theme.buzz.monoRegular,
     },
     desktopSubtitle: {
-        fontSize: 13,
+        ...theme.buzz.type.meta,
         textAlign: Platform.OS === 'ios' ? 'center' : 'left',
         marginTop: 2,
     },

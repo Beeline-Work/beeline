@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { typeRoles } from '@/buzz/groknight';
 import { HullSurface } from './MonoHull';
 
 export type HullDialogAction = {
@@ -28,13 +29,16 @@ export const HULL_DIALOG_LAYOUT = {
   actionBorderTopWidth: StyleSheet.hairlineWidth,
   actionButtonMinHeight: 44,
   actionPaddingVertical: 8,
-  bodyLineHeight: 21,
+  // dialogBody reads the meta role; dialogTitle reads bodyStrong — this
+  // geometry budget (`hullDialogMinimumHeight`) must use their real line
+  // heights, not an approximation, or the two drift apart.
+  bodyLineHeight: typeRoles.meta.lineHeight,
   bodyMarginTop: 8,
   copyPaddingBottom: 16,
   copyPaddingTop: 22,
   inputMarginTop: 14,
   inputMinHeight: 44,
-  titleLineHeight: 22,
+  titleLineHeight: typeRoles.bodyStrong.lineHeight,
 } as const;
 
 export function hullDialogActionsMinimumHeight() {

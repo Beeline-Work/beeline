@@ -58,6 +58,42 @@ describe('Borrowing Calm lint', () => {
     ]);
   });
 
+  it('flags a WELCOME_TYPE-style key-renamed constant table referenced from fontSize/lineHeight/letterSpacing', () => {
+    // A digit-after-property-name scan alone misses this: the raw numbers
+    // sit under renamed keys (size36, trackingTight), never literally next
+    // to "fontSize:"/"lineHeight:"/"letterSpacing:" — only the REFERENCE
+    // (`WELCOME_TYPE.size36`) appears next to those property names, and it
+    // must be traced back to a non-theme local table to be caught.
+    const source = [
+      'const WELCOME_TYPE = { size16: 16, size36: 36, trackingTight: -0.5 };',
+      'const s = StyleSheet.create({',
+      '  title: { fontSize: WELCOME_TYPE.size36, letterSpacing: WELCOME_TYPE.trackingTight },',
+      '  body: { fontSize: WELCOME_TYPE.size16 },',
+      '});',
+    ].join('\n');
+    const offences = scanCalmSource(source, 'welcome.tsx');
+    expect(offences).toHaveLength(3);
+    expect(offences.every((o) => o.line === 3 || o.line === 4)).toBe(true);
+  });
+
+  it('passes a local constant table built entirely from theme roles (no raw number anywhere)', () => {
+    // The mirror case: a local lookup table is fine to reference for
+    // fontSize/lineHeight/letterSpacing as long as EVERY one of its own
+    // properties is itself theme-rooted — proven per-property, so a sibling
+    // raw-number property elsewhere in the same object (ordinary layout
+    // geometry, not a role bypass) never taints an unrelated one.
+    const source = [
+      "import { typeRoles } from './groknight';",
+      'const SIZE_ROLE = { large: typeRoles.hero, small: typeRoles.meta };',
+      'const LAYOUT = { padding: 12, titleLineHeight: typeRoles.bodyStrong.lineHeight };',
+      'const s = StyleSheet.create({',
+      '  a: { fontSize: SIZE_ROLE.large.fontSize },',
+      '  b: { lineHeight: LAYOUT.titleLineHeight },',
+      '});',
+    ].join('\n');
+    expect(scanCalmSource(source, 'clean.tsx')).toEqual([]);
+  });
+
   it('holds every screen to its baseline, and the baseline to the scan', () => {
     const offences = scanCalmTree(sourcesDir);
     if (process.env.CALM_BASELINE_WRITE) {

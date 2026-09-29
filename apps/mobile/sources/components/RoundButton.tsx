@@ -7,11 +7,14 @@ import { typeRoles } from '@/buzz/groknight';
 import { MobileGlassSurface } from './MobileGlass';
 
 export type RoundButtonSize = 'large' | 'normal' | 'small';
-const sizes: { [key in RoundButtonSize]: { height: number, fontSize: number, hitSlop: number, pad: number } } = {
-    large: { height: 48, fontSize: typeRoles.hero.fontSize, hitSlop: 0, pad: Platform.OS == 'ios' ? 0 : -1 },
-    normal: { height: 32, fontSize: typeRoles.body.fontSize, hitSlop: 8, pad: Platform.OS == 'ios' ? 1 : -2 },
-    small: { height: 24, fontSize: typeRoles.meta.fontSize, hitSlop: 12, pad: Platform.OS == 'ios' ? -1 : -1 }
+const sizes: { [key in RoundButtonSize]: { height: number, hitSlop: number, pad: number } } = {
+    large: { height: 48, hitSlop: 0, pad: Platform.OS == 'ios' ? 0 : -1 },
+    normal: { height: 32, hitSlop: 8, pad: Platform.OS == 'ios' ? 1 : -2 },
+    small: { height: 24, hitSlop: 12, pad: Platform.OS == 'ios' ? -1 : -1 }
 }
+/** Kept apart from `sizes` above (pure layout geometry) so this table holds
+ *  nothing but theme references — never a raw number to bypass the roles. */
+const sizeTypeRole = { large: typeRoles.hero, normal: typeRoles.body, small: typeRoles.meta }
 
 export type RoundButtonDisplay = 'default' | 'inverted';
 
@@ -88,6 +91,7 @@ export const RoundButton = React.memo((props: { size?: RoundButtonSize, display?
     }
 
     const size = sizes[props.size || 'large'];
+    const typeRole = sizeTypeRole[props.size || 'large'];
     const display = displays[props.display || 'default'];
     const content = (
         <View
@@ -109,7 +113,7 @@ export const RoundButton = React.memo((props: { size?: RoundButtonSize, display?
                         marginTop: size.pad,
                         opacity: doLoading ? 0 : 1,
                         color: display.textColor,
-                        fontSize: size.fontSize,
+                        fontSize: typeRole.fontSize,
                     },
                     props.textStyle,
                 ]}

@@ -167,7 +167,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 12;
+export const REQUIRED_SCHEMA_VERSION = 13;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -1034,6 +1034,10 @@ CREATE INDEX IF NOT EXISTS institutional_memory_jobs_claim_idx
 CREATE INDEX IF NOT EXISTS institutional_memory_jobs_workspace_created_idx
   ON institutional_memory_jobs(workspace_id,created_at,id);
 
+-- Meaning-based recall (search_memory, the per-turn snapshot, workspace
+-- skills) needs pgvector; Neon supports the extension directly.
+CREATE EXTENSION IF NOT EXISTS vector;
+
 CREATE TABLE IF NOT EXISTS institutional_memory_items (
   id uuid PRIMARY KEY,
   workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -1104,6 +1108,13 @@ ALTER TABLE institutional_memory_items ADD CONSTRAINT institutional_memory_items
 ALTER TABLE institutional_memory_items DROP CONSTRAINT IF EXISTS institutional_memory_items_creator_check;
 ALTER TABLE institutional_memory_items ADD CONSTRAINT institutional_memory_items_creator_check
   CHECK (NOT (created_by_job_id IS NOT NULL AND created_by_command_id IS NOT NULL));
+-- Meaning-based recall: NULL until the embedding cycle fills it (embed on
+-- save and backfill are the same query — see institutional-memory-embeddings.ts).
+-- embedding_model records which model produced it, so a future model change
+-- re-embeds every row instead of silently mixing incompatible vectors.
+ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS embedding vector(1024);
+ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS embedding_model text;
+ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS embedded_at timestamptz;
 CREATE UNIQUE INDEX IF NOT EXISTS institutional_memory_items_current_key_idx
   ON institutional_memory_items(
     workspace_id,kind,COALESCE(subject_identity_id,''),canonical_key,audience_kind
@@ -1161,6 +1172,14 @@ ALTER TABLE institutional_context_serves
   CHECK (prompt_bytes IS NULL OR prompt_bytes > 0);
 ALTER TABLE institutional_context_serves
   ADD COLUMN IF NOT EXISTS agent_id text REFERENCES identities(id) ON DELETE CASCADE;
+-- search_memory is the fallback tool this same turn reaches for when the
+-- snapshot above missed; both counters ride the serve row a turn already has
+-- so the body-side turn trace can read them back after the turn settles
+-- (getInstitutionalMemoryTurnStats) with no new table.
+ALTER TABLE institutional_context_serves
+  ADD COLUMN IF NOT EXISTS search_memory_calls integer NOT NULL DEFAULT 0;
+ALTER TABLE institutional_context_serves
+  ADD COLUMN IF NOT EXISTS search_memory_misses integer NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS institutional_context_serves_turn_idx
   ON institutional_context_serves(room_id,request_id,agent_id) WHERE mode='live';
 CREATE UNIQUE INDEX IF NOT EXISTS institutional_context_serves_shadow_job_idx
@@ -1288,6 +1307,15 @@ ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS anchor_stale_reason text;
 ALTER TABLE workspace_skills DROP CONSTRAINT IF EXISTS workspace_skills_anchor_stale_reason_check;
 ALTER TABLE workspace_skills ADD CONSTRAINT workspace_skills_anchor_stale_reason_check
   CHECK (anchor_stale_reason IS NULL OR length(anchor_stale_reason)<=300);
+-- Meaning-based skill lookup (same hybrid as institutional_memory_items,
+-- extended to workspace_skills per AGENTS.md's core-workflow note). Embeds
+-- slug + description + a short body summary; embedding_version is the
+-- current_version the vector answers for, so a new revision re-embeds
+-- through the same embed-on-save-and-backfill cycle with no separate job.
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS embedding vector(1024);
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS embedding_model text;
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS embedding_version integer;
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS embedded_at timestamptz;
 CREATE INDEX IF NOT EXISTS workspace_skills_catalog_idx
   ON workspace_skills(workspace_id,state,updated_at DESC,id);
 -- A workflow row is a skill row: a declarative contract, saved/discovered/loaded
@@ -2377,6 +2405,42 @@ export async function migrate(
      ON messages USING GIN(search_document)
      WHERE deleted_at IS NULL AND presentation='message'`,
   ));
+  // Embedding-cycle scan: cheap once the backfill converges, for the same
+  // reason as the search backfill index above (a filled row never re-enters
+  // this partial index).
+  await retryMigrationStep('institutional memory embedding backfill index', () =>
+    createIndexConcurrently(
+      database,
+      'institutional_memory_items_embedding_backfill_idx',
+      `CREATE INDEX CONCURRENTLY institutional_memory_items_embedding_backfill_idx
+       ON institutional_memory_items(updated_at ASC)
+       WHERE state='active' AND deleted_at IS NULL AND embedding IS NULL`,
+    ));
+  // The ANN index search_memory and the per-turn snapshot query against.
+  await retryMigrationStep('institutional memory embedding ann index', () =>
+    createIndexConcurrently(
+      database,
+      'institutional_memory_items_embedding_idx',
+      `CREATE INDEX CONCURRENTLY institutional_memory_items_embedding_idx
+       ON institutional_memory_items USING hnsw (embedding vector_cosine_ops)
+       WHERE state='active' AND deleted_at IS NULL AND embedding IS NOT NULL`,
+    ));
+  await retryMigrationStep('workspace skill embedding backfill index', () =>
+    createIndexConcurrently(
+      database,
+      'workspace_skills_embedding_backfill_idx',
+      `CREATE INDEX CONCURRENTLY workspace_skills_embedding_backfill_idx
+       ON workspace_skills(updated_at ASC)
+       WHERE state='active' AND embedding IS NULL`,
+    ));
+  await retryMigrationStep('workspace skill embedding ann index', () =>
+    createIndexConcurrently(
+      database,
+      'workspace_skills_embedding_idx',
+      `CREATE INDEX CONCURRENTLY workspace_skills_embedding_idx
+       ON workspace_skills USING hnsw (embedding vector_cosine_ops)
+       WHERE state='active' AND embedding IS NOT NULL`,
+    ));
   // The Needs-you tray finds undecided grant cards without reading transcripts.
   await retryMigrationStep('grant request index', () => createIndexConcurrently(
     database, 'messages_grant_request_idx',

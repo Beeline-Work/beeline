@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { agentToolsFor, cornerCallText } from './read-only-mcp.js';
-import { assembleSessionPrompt } from './prompt-assembly.js';
+import { assembleSessionPrompt, SEARCH_MEMORY_FIRST_RULE } from './prompt-assembly.js';
 
 describe('direct message helper surface', () => {
   it('opens no corners from a direct message', () => {
@@ -69,6 +69,11 @@ describe('direct message helper surface', () => {
     const proposal = agentToolsFor(true, false).find((tool) => tool.name === 'propose_memory_item');
     expect(proposal?.inputSchema.required).toContain('subject_is_requester');
     expect(proposal?.inputSchema.properties).not.toHaveProperty('memory_kind');
+  });
+
+  it('tells the agent to call search_memory before ever saying a fact was never saved', () => {
+    const searchMemory = agentToolsFor(true, false).find((tool) => tool.name === 'search_memory');
+    expect(searchMemory?.description).toContain(SEARCH_MEMORY_FIRST_RULE);
   });
 });
 

@@ -1234,6 +1234,28 @@ export class MonolithRoomTurnLoop {
     // Kicked off now, alongside activation rather than after it, so its own
     // network round trip has somewhere to hide (see institutional-context.ts).
     const institutionalContextFetch = startInstitutionalContextFetch(api, this.options.roomId);
+    // Best-effort read of this turn's search_memory call/miss counters before
+    // the trace writes — bounded so a slow or unreachable server never delays
+    // the turn's own completion over a diagnostic.
+    const finishTrace = async (
+      outcome: 'complete' | 'failed' | 'cancelled',
+      reason?: string,
+    ): Promise<void> => {
+      try {
+        const stats = await Promise.race([
+          api.execute('getInstitutionalMemoryTurnStats', {
+            roomId: this.options.roomId,
+            agentId: this.agent.publicKey,
+            requestId: item.id,
+          }),
+          new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 800)),
+        ]);
+        if (stats) trace.noteSearchMemoryStats(stats.searchCalls, stats.searchMisses);
+      } catch {
+        // Losing this measurement must never affect the turn.
+      }
+      await trace.finish(outcome, reason);
+    };
     // The draft lane, held where the catch below can reach it: a turn that
     // throws never reaches its settle, and only this reference can dissolve
     // what the model had already written.
@@ -1297,6 +1319,12 @@ export class MonolithRoomTurnLoop {
                   ]),
                 );
               trace.noteInstitutionalMemory(institutionalContext.outcome);
+              if (institutionalContext.embeddingOutcome !== undefined) {
+                trace.noteInstitutionalMemoryEmbedding(
+                  institutionalContext.embeddingOutcome,
+                  institutionalContext.embeddingMs ?? 0,
+                );
+              }
               const names = new Map(
                 roster.members.map((member) => [member.identityId, member.name]),
               );
@@ -1599,7 +1627,7 @@ export class MonolithRoomTurnLoop {
       });
       // After the receipt: an operator artifact must never delay the answer,
       // and it never becomes one — the trace has no way to post a Room row.
-      await trace.finish('complete');
+      await finishTrace('complete');
     } catch (error) {
       // A stopped turn already has its ending — the server wrote `cancelled`
       // and named who stopped it the moment it accepted the request. There is
@@ -1613,7 +1641,7 @@ export class MonolithRoomTurnLoop {
         console.log(
           `[thin-core] monolith Room ${this.options.roomId} turn ${item.id} stopped by the requester`,
         );
-        await trace.finish('cancelled');
+        await finishTrace('cancelled');
         return;
       }
       // An inactivity timeout on a turn that already opened a corner is not a
@@ -1666,7 +1694,7 @@ export class MonolithRoomTurnLoop {
           toolCalls: trace.toolCallsTotal,
           ...this.turnMetrics,
         });
-        await trace.finish('complete');
+        await finishTrace('complete');
         return;
       }
       // A failed turn ends owning no live output. Only `settle` dissolves the
@@ -1694,7 +1722,7 @@ export class MonolithRoomTurnLoop {
         toolCalls: trace.toolCallsTotal,
         ...this.turnMetrics,
       });
-      await trace.finish('failed', reason.text);
+      await finishTrace('failed', reason.text);
       throw error;
     } finally {
       this.busy = false;

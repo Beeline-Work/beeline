@@ -37,6 +37,7 @@ import { PostgresLiveListener } from './postgres-live.js';
 import { listenAfterBestEffortRecovery } from './startup.js';
 import { institutionalMemoryShadowConfigFromEnv } from './institutional-memory-shadow.js';
 import { runInstitutionalCuratorCycle } from './institutional-curator.js';
+import { InstitutionalMemoryEmbeddingLoop } from './institutional-memory-embeddings.js';
 import type { InstitutionalSkillAnchorSource } from './institutional-skill-anchors.js';
 import { retireWelcomeWorkspace, welcomeRetirementPreflight } from './welcome-retirement.js';
 
@@ -241,6 +242,7 @@ async function main() {
       })
     : new MediaExpiryLoop(jobsDatabase);
   const choiceExpiry = new ChoiceExpiryLoop(jobsDatabase);
+  const institutionalMemoryEmbedding = new InstitutionalMemoryEmbeddingLoop(jobsDatabase);
   const sendPushTest = pushSender || webPushSender
     ? createPushTestSender(database, pushSender, apnsPushSender, webPushSender)
     : undefined;
@@ -337,6 +339,8 @@ async function main() {
       }
       if (push) await backgroundJobs.run('push', () => push.runIfDue());
       await backgroundJobs.run('schedules', () => schedules.runOnce());
+      await backgroundJobs.run('institutional-memory-embedding', () =>
+        institutionalMemoryEmbedding.runIfDue());
       await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
       const now = Date.now();
       if (now - lastReconciliationAt >= reconciliationMs) {

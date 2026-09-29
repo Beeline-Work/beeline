@@ -1309,6 +1309,28 @@ export class MonolithCornerTurnLoop {
     // Kicked off now, alongside activation rather than after it, so its own
     // network round trip has somewhere to hide (see institutional-context.ts).
     const institutionalContextFetch = startInstitutionalContextFetch(api, cornerId);
+    // Best-effort read of this turn's search_memory call/miss counters before
+    // the trace writes — bounded so a slow or unreachable server never delays
+    // the turn's own completion over a diagnostic.
+    const finishTrace = async (
+      outcome: 'complete' | 'failed' | 'cancelled',
+      reason?: string,
+    ): Promise<void> => {
+      try {
+        const stats = await Promise.race([
+          api.execute('getInstitutionalMemoryTurnStats', {
+            roomId: cornerId,
+            agentId: this.agent.publicKey,
+            requestId,
+          }),
+          new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 800)),
+        ]);
+        if (stats) trace.noteSearchMemoryStats(stats.searchCalls, stats.searchMisses);
+      } catch {
+        // Losing this measurement must never affect the turn.
+      }
+      await trace.finish(outcome, reason);
+    };
     let deliberateNoReply = false;
     // Observed LIVE from the stream, where the catch below can reach it: the
     // server settles this turn and its command inside `upgradeCornerLane`, so
@@ -1366,6 +1388,12 @@ export class MonolithCornerTurnLoop {
                 ]),
               );
               trace.noteInstitutionalMemory(institutionalContext.outcome);
+              if (institutionalContext.embeddingOutcome !== undefined) {
+                trace.noteInstitutionalMemoryEmbedding(
+                  institutionalContext.embeddingOutcome,
+                  institutionalContext.embeddingMs ?? 0,
+                );
+              }
               const briefAttachments: DaemonAttachment[] = (restored.brief?.attachments ?? []).map(
                 (file) => ({
                   url: new URL(`/v1/media/${file.objectId}`, api.baseUrl).toString(),
@@ -1895,7 +1923,7 @@ export class MonolithCornerTurnLoop {
         (error) => console.error(`[thin-core] corner ${cornerId} receipt heartbeat failed:`, error),
       );
       if (laneUpgraded) {
-        await trace.finish('complete');
+        await finishTrace('complete');
         return;
       }
       await api.execute('postAgentTurnReceipt', {
@@ -1910,14 +1938,14 @@ export class MonolithCornerTurnLoop {
       });
       // After the receipt: an operator artifact never delays the answer, and
       // never becomes one — the trace has no way to post a Room row.
-      await trace.finish('complete');
+      await finishTrace('complete');
     } catch (error) {
       // A stopped turn already has its ending: the server wrote `cancelled` and
       // named who stopped it when it accepted the request. Nothing to post, and
       // nothing the helper is to blame for.
       if (error instanceof TurnStoppedError || this.stoppedTurns.has(requestId)) {
         console.log(`[thin-core] corner ${cornerId} turn ${requestId} stopped by the requester`);
-        await trace.finish('cancelled');
+        await finishTrace('cancelled');
         return;
       }
       // The upgrade already settled this turn complete. A later stumble in a
@@ -1929,7 +1957,7 @@ export class MonolithCornerTurnLoop {
           `[thin-core] corner ${cornerId} turn ${requestId} ended after its lane upgrade:`,
           error,
         );
-        await trace.finish('complete');
+        await finishTrace('complete');
         return;
       }
       const reason = distillTurnFailureReason(error);
@@ -1944,7 +1972,7 @@ export class MonolithCornerTurnLoop {
         toolCalls: trace.toolCallsTotal,
         ...this.turnMetrics,
       });
-      await trace.finish('failed', reason.text);
+      await finishTrace('failed', reason.text);
       throw error;
     } finally {
       this.busy = false;

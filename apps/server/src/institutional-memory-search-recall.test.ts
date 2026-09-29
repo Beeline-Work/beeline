@@ -1,9 +1,12 @@
-import { describe, expect, it, beforeEach } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { afterEach, describe, expect, it, beforeEach, vi } from 'vitest';
+import { INSTITUTIONAL_MEMORY_EMBEDDING_DIMENSIONS } from '@beeline/api-contract/daemon';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { claimAgentCommand, createAgentCommand } from './agent-command.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
+import { OPENROUTER_EMBEDDINGS_URL } from './institutional-memory-embeddings.js';
 
 // Regression coverage for the P1 "wife's details not loading" bug (captain
 // bug, corner "Personal/cake order", 2026-09-29 13:49 EDT). Root-caused on
@@ -310,5 +313,204 @@ describe('search_memory recall (institutional memory)', () => {
       RONNIE,
     );
     expect(result.results.map((r) => r.id)).toContain(saved.itemId);
+  });
+});
+
+/**
+ * Meaning-based recall: the vector channel UNIONs with the word-overlap
+ * channel above. "where does my wife live" shares NO word with either this
+ * item's canonical_key/body or its keywords (the fact is stored as Daeun's
+ * delivery address, with no "wife" anywhere), so only meaning-based matching
+ * can find it — the whole point of the acceptance criterion. A real
+ * `voyageai/voyage-4-lite` embedding call was verified by hand through the
+ * Trusty Squire vault against this exact query/fact pair (see the PR body for
+ * the recorded cosine similarities); these tests use a deterministic fake
+ * embedder over the real OpenRouter transport (real env var + real fetch
+ * code path, fake network response) so they need no network and no key.
+ */
+const EMBEDDING_DIM = INSTITUTIONAL_MEMORY_EMBEDDING_DIMENSIONS;
+
+/** A one-hot vector: two different concepts are orthogonal (cosine distance
+ *  1), the same concept is identical (cosine distance 0). */
+function conceptVector(concept: number): number[] {
+  const vector = new Array(EMBEDDING_DIM).fill(0);
+  vector[concept % EMBEDDING_DIM] = 1;
+  return vector;
+}
+
+const WIFE_CONCEPT = 0;
+const OTHER_CONCEPT = 1;
+
+/** True for text this fake model considers semantically about "the
+ *  requester's wife" even when it shares no literal word with "wife". */
+function isWifeConcept(text: string): boolean {
+  return /\bwife\b|\bdaeun\b/i.test(text);
+}
+
+function stubEmbeddingFetch(): ReturnType<typeof vi.fn> {
+  const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
+    expect(String(url)).toBe(OPENROUTER_EMBEDDINGS_URL);
+    const body = JSON.parse(String(init?.body)) as { input: string[] };
+    const data = body.input.map((text, index) => ({
+      embedding: conceptVector(isWifeConcept(text) ? WIFE_CONCEPT : OTHER_CONCEPT),
+      index,
+    }));
+    return new Response(JSON.stringify({ data }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  });
+  vi.stubGlobal('fetch', fetchImpl);
+  return fetchImpl;
+}
+
+describe('search_memory hybrid vector recall (no shared words)', () => {
+  beforeEach(() => {
+    process.env.OPENROUTER_EMBEDDING_API_KEY = 'test-key';
+  });
+  afterEach(() => {
+    delete process.env.OPENROUTER_EMBEDDING_API_KEY;
+    vi.unstubAllGlobals();
+  });
+
+  async function saveDaeunFactWithoutWifeWord(daemon: DaemonService) {
+    return daemon.execute(
+      'proposeInstitutionalMemory',
+      {
+        agentId: RONNIE,
+        roomId: ROOM,
+        requestId: 'cake-order-turn',
+        generationId: 'cake-order-generation',
+        memoryKind: 'human_profile_fact',
+        canonicalKey: 'requester.spouse.daeun_lee.japan_residence',
+        body: "Daeun's Tokyo residence is Motoazabu Hills 3-2-1 #402, phone 03-4700-2210.",
+        keywords: ['daeun', 'tokyo', 'residence', 'address'],
+        sourceMessageIds: [MESSAGE],
+        correction: false,
+        confidence: 0.9,
+        cas: { baseVersion: null },
+      },
+      RONNIE,
+    );
+  }
+
+  it('finds the fact for "where does my wife live" even though it shares no word with it', async () => {
+    stubEmbeddingFetch();
+    const daemon = liveDaemon();
+    await openCommand('cake-order-turn', 'cake-order-generation');
+    const saved = await saveDaeunFactWithoutWifeWord(daemon);
+    expect(saved.itemId).toBeTruthy();
+
+    // Embedding must be present before the vector query can find it (the
+    // real code embeds on save asynchronously via the background cycle;
+    // here we embed the row directly to isolate the search path).
+    await database.query(
+      `UPDATE institutional_memory_items SET embedding=$2::vector,embedding_model='voyageai/voyage-4-lite',embedded_at=now() WHERE id=$1`,
+      [saved.itemId, `[${conceptVector(WIFE_CONCEPT).join(',')}]`],
+    );
+
+    const result = await daemon.execute(
+      'searchInstitutionalMemory',
+      {
+        agentId: RONNIE,
+        roomId: ROOM,
+        requestId: 'cake-order-turn',
+        generationId: 'cake-order-generation',
+        query: 'where does my wife live',
+      },
+      RONNIE,
+    );
+    expect(result.results.map((r) => r.id)).toContain(saved.itemId);
+  });
+
+  it('never surfaces a vector match from another workspace, another requester profile, or a stale item', async () => {
+    const fetchImpl = stubEmbeddingFetch();
+    const daemon = liveDaemon();
+    await openCommand('cake-order-turn', 'cake-order-generation');
+    const saved = await saveDaeunFactWithoutWifeWord(daemon);
+
+    // Another Workspace's identical-concept workspace_fact.
+    const OTHER_WORKSPACE = '10000000-0000-4000-8000-00000000ca22';
+    const OTHER_ROOM = '20000000-0000-4000-8000-00000000ca22';
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Other WS')`, [
+      OTHER_WORKSPACE,
+    ]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Other')`, [
+      OTHER_ROOM,
+      OTHER_WORKSPACE,
+    ]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner'),($1,$3,$2,'owner')`,
+      [OTHER_WORKSPACE, CAPTAIN, OTHER_ROOM],
+    );
+    const otherMessage = 'e'.repeat(64);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'unrelated message')`,
+      [otherMessage, OTHER_ROOM, CAPTAIN],
+    );
+    const otherItemId = randomUUID();
+    await database.query(
+      `INSERT INTO institutional_memory_items
+         (id,workspace_id,kind,canonical_key,body,state,source_room_id,source_message_id,
+          audience_kind,confidence,version,keywords,embedding,embedding_model,embedded_at)
+       VALUES($1::uuid,$2,'workspace_fact','other.workspace.fact','Some other workspace fact about Daeun.',
+              'active',$3,$4,'workspace',0.9,1,'{}',$5::vector,'voyageai/voyage-4-lite',now())`,
+      [
+        otherItemId,
+        OTHER_WORKSPACE,
+        OTHER_ROOM,
+        otherMessage,
+        `[${conceptVector(WIFE_CONCEPT).join(',')}]`,
+      ],
+    );
+
+    // A stale copy in THIS workspace that would otherwise win by concept.
+    const staleFact = await daemon.execute(
+      'proposeInstitutionalMemory',
+      {
+        agentId: RONNIE,
+        roomId: ROOM,
+        requestId: 'cake-order-turn',
+        generationId: 'cake-order-generation',
+        memoryKind: 'workspace_fact',
+        canonicalKey: 'recipient.daeun_lee.old_residence',
+        body: 'Daeun used to reside at a different address.',
+        keywords: ['daeun', 'residence'],
+        sourceMessageIds: [MESSAGE],
+        correction: false,
+        confidence: 0.9,
+        cas: { baseVersion: null },
+      },
+      RONNIE,
+    );
+    await database.query(
+      `UPDATE institutional_memory_items
+       SET state='stale',embedding=$2::vector,embedding_model='voyageai/voyage-4-lite',embedded_at=now()
+       WHERE id=$1`,
+      [staleFact.itemId, `[${conceptVector(WIFE_CONCEPT).join(',')}]`],
+    );
+
+    // Embed the target fact last so it is the only ACTIVE, in-scope match.
+    await database.query(
+      `UPDATE institutional_memory_items SET embedding=$2::vector,embedding_model='voyageai/voyage-4-lite',embedded_at=now() WHERE id=$1`,
+      [saved.itemId, `[${conceptVector(WIFE_CONCEPT).join(',')}]`],
+    );
+
+    const result = await daemon.execute(
+      'searchInstitutionalMemory',
+      {
+        agentId: RONNIE,
+        roomId: ROOM,
+        requestId: 'cake-order-turn',
+        generationId: 'cake-order-generation',
+        query: 'where does my wife live',
+      },
+      RONNIE,
+    );
+    const ids = result.results.map((r) => r.id);
+    expect(ids).toContain(saved.itemId);
+    expect(ids).not.toContain(otherItemId);
+    expect(ids).not.toContain(staleFact.itemId);
+    expect(fetchImpl).toHaveBeenCalled();
   });
 });

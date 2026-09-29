@@ -42,15 +42,6 @@ on:
         description: Independent monotonic desktop updater version (required for production)
         required: false
         type: string
-      source_ref:
-        description: Source ref for preview visual comparison (defaults to the dispatched ref)
-        required: false
-        type: string
-      visual_fixture:
-        description: Capture preview frames against synthetic loopback Room data
-        required: false
-        default: false
-        type: boolean
   workflow_call:
     inputs:
       variant:
@@ -101,10 +92,10 @@ on:
 permissions:
   contents: read
 
-# Visual comparisons build two source refs from one harness branch. Keep those
-# runs separate while retaining the usual newer-push cancellation.
+# One build per ref. A newer push supersedes the whole matrix, never one
+# platform of it.
 concurrency:
-  group: desktop-${{ github.ref }}-${{ inputs.visual_fixture && inputs.source_ref || 'default' }}
+  group: desktop-${{ github.ref }}
   cancel-in-progress: true
 
 defaults:
@@ -172,7 +163,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.variant == 'preview' && inputs.source_ref || inputs.release_sha || github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ inputs.release_sha || github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -181,11 +172,6 @@ jobs:
         run: npm run tauri:icons:check
       - name: Check desktop release helpers
         run: node --test scripts/clean-dist.test.mjs scripts/desktop-update.test.mjs
-      - name: Keep the visual fixture in preview builds
-        if: github.event_name == 'workflow_dispatch' && inputs.visual_fixture
-        env:
-          VARIANT: ${{ inputs.variant }}
-        run: test "$VARIANT" = preview
 
   build:
     name: DESKTOP BUILD (${{ matrix.label }})
@@ -221,13 +207,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.variant == 'preview' && inputs.source_ref || inputs.release_sha || github.event.pull_request.head.sha || github.sha }}
-      - uses: actions/checkout@v4
-        if: github.event_name == 'workflow_dispatch' && inputs.visual_fixture
-        with:
-          ref: ${{ github.ref }}
-          path: .desktop-visual-harness
-          sparse-checkout: scripts/desktop-ui-fixture.mjs
+          ref: ${{ inputs.release_sha || github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -373,9 +353,8 @@ jobs:
         env:
           # app.config.js stamps the build with the commit it came from; the
           # checkout's git metadata would otherwise name a merge commit.
-          EXPO_PUBLIC_BEELINE_RELEASE_SHA: ${{ inputs.variant == 'preview' && inputs.source_ref || inputs.release_sha || github.event.pull_request.head.sha || github.sha }}
+          EXPO_PUBLIC_BEELINE_RELEASE_SHA: ${{ inputs.release_sha || github.event.pull_request.head.sha || github.sha }}
           EXPO_PUBLIC_BEELINE_DESKTOP_UPDATES: ${{ inputs.variant == 'production' && '1' || '0' }}
-          EXPO_PUBLIC_BUZZY_MONOLITH_URL: ${{ inputs.visual_fixture && 'http://127.0.0.1:39191' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_UPDATER_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_UPDATER_PRIVATE_KEY_PASSWORD }}
         run: |
@@ -389,121 +368,6 @@ jobs:
           esac
           npx tauri build --target "${{ matrix.target }}" ${config[@]+"${config[@]}"} \
             2>&1 | tee "$RUNNER_TEMP/tauri-build.log"
-
-      # A disposable loopback phone fixture keeps visual checks off real user
-      # accounts. Its credentials are created only in these hosted runners.
-      - name: Capture Windows preview launch frames
-        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && inputs.variant == 'preview' && inputs.visual_fixture
-        shell: pwsh
-        run: |
-          $bundle = Join-Path $env:GITHUB_WORKSPACE 'apps/mobile/src-tauri/target/x86_64-pc-windows-msvc/release/bundle'
-          $installer = Get-ChildItem (Join-Path $bundle 'nsis') -Filter '*.exe' | Select-Object -First 1
-          if (!$installer) { throw "No NSIS preview installer under $bundle" }
-          $installDir = Join-Path $env:RUNNER_TEMP 'BeelinePreview'
-          $install = Start-Process -FilePath $installer.FullName -ArgumentList '/S', "/D=$installDir" -Wait -PassThru
-          if ($install.ExitCode -ne 0) { throw "Preview installer exited $($install.ExitCode)" }
-          $exe = Get-ChildItem $installDir -Recurse -Filter '*.exe' |
-            Where-Object { $_.Name -notmatch 'uninstall' } | Select-Object -First 1
-          if (!$exe) { throw "No installed preview executable under $installDir" }
-          $frames = Join-Path $env:RUNNER_TEMP 'desktop-ui-smoke'
-          New-Item -ItemType Directory -Force -Path $frames | Out-Null
-          $fixtureScript = Join-Path $env:GITHUB_WORKSPACE '.desktop-visual-harness/scripts/desktop-ui-fixture.mjs'
-          $fixture = Start-Process -FilePath node -ArgumentList $fixtureScript -PassThru -RedirectStandardOutput (Join-Path $frames 'fixture-server.log')
-          for ($attempt = 0; $attempt -lt 5; $attempt++) {
-            try {
-              Invoke-WebRequest 'http://127.0.0.1:39191/health' -UseBasicParsing | Out-Null
-              break
-            } catch { Start-Sleep -Seconds 1 }
-          }
-          Invoke-WebRequest 'http://127.0.0.1:39191/health' -UseBasicParsing | Out-Null
-          $service = 'app.usebeeline.desktop.preview'
-          cmdkey "/generic:buzzy.monolith.identity.v1.$service" '/user:buzzy.monolith.identity.v1' "/pass:$('a' * 64)" | Out-Null
-          cmdkey "/generic:buzzy.monolith.refresh.v1.$service" '/user:buzzy.monolith.refresh.v1' '/pass:fixture-refresh' | Out-Null
-          $app = Start-Process -FilePath $exe.FullName -PassThru `
-            -RedirectStandardOutput (Join-Path $frames 'app-stdout.log') `
-            -RedirectStandardError (Join-Path $frames 'app-stderr.log')
-          Add-Type -AssemblyName System.Windows.Forms
-          Add-Type -AssemblyName System.Drawing
-          Start-Sleep -Seconds 5
-          for ($index = 0; $index -lt 3; $index++) {
-            $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-            $bitmap = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
-            $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-            try {
-              $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
-              $bitmap.Save((Join-Path $frames "frame-$index.png"))
-            } finally {
-              $graphics.Dispose()
-              $bitmap.Dispose()
-            }
-            Start-Sleep -Seconds 2
-          }
-          $app.Refresh()
-          $exitCode = if ($app.HasExited) { $app.ExitCode } else { 'running' }
-          "process-exited=$($app.HasExited) exit-code=$exitCode exe=$($exe.FullName)" |
-            Set-Content (Join-Path $frames 'launch.txt')
-          Stop-Process -Id $fixture.Id -ErrorAction SilentlyContinue
-          if ($app.HasExited) {
-            Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = (Get-Date).AddMinutes(-3) } `
-              -ErrorAction SilentlyContinue |
-              Where-Object { $_.Message -like '*beeline-desktop.exe*' } |
-              Select-Object TimeCreated, ProviderName, Id, Message |
-              Format-List | Out-File (Join-Path $frames 'application-events.txt')
-            throw "Installed preview exited $exitCode during capture"
-          }
-
-      - name: Capture macOS preview launch frames
-        if: runner.os == 'macOS' && github.event_name == 'workflow_dispatch' && inputs.variant == 'preview' && inputs.visual_fixture
-        run: |
-          set -euo pipefail
-          app=$(find "apps/mobile/src-tauri/target/${{ matrix.target }}/release/bundle" -type d -name '*.app' -print -quit)
-          test -n "$app"
-          app="$(cd "$(dirname "$app")" && pwd)/$(basename "$app")"
-          frames="$RUNNER_TEMP/desktop-ui-smoke"
-          mkdir -p "$frames"
-          node .desktop-visual-harness/scripts/desktop-ui-fixture.mjs > "$frames/fixture-server.log" 2>&1 &
-          fixture_pid=$!
-          trap 'kill "$fixture_pid" 2>/dev/null || true' EXIT
-          for _ in 1 2 3 4 5; do
-            if curl --silent --fail http://127.0.0.1:39191/health > /dev/null; then break; fi
-            sleep 1
-          done
-          curl --silent --fail http://127.0.0.1:39191/health > /dev/null
-          security add-generic-password -U -s app.usebeeline.desktop.preview \
-            -a buzzy.monolith.identity.v1 -w "$(printf 'a%.0s' {1..64})" \
-            -T "$app/Contents/MacOS/beeline-desktop"
-          security add-generic-password -U -s app.usebeeline.desktop.preview \
-            -a buzzy.monolith.refresh.v1 -w fixture-refresh \
-            -T "$app/Contents/MacOS/beeline-desktop"
-          RUST_BACKTRACE=1 "$app/Contents/MacOS/beeline-desktop" \
-            > "$frames/app-stdout.log" 2> "$frames/app-stderr.log" &
-          app_pid=$!
-          sleep 5
-          if ! kill -0 "$app_pid" 2>/dev/null; then
-            wait "$app_pid" || echo "process-exit=$?" > "$frames/launch.txt"
-            log show --last 2m --style compact --predicate 'process == "beeline-desktop"' \
-              > "$frames/process-log.txt" 2>&1 || true
-            for report in "$HOME"/Library/Logs/DiagnosticReports/*beeline-desktop*; do
-              if [ -f "$report" ]; then cp "$report" "$frames/$(basename "$report")"; fi
-            done
-            echo '::error::Preview app exited before capture; inspect process-log.txt'
-            exit 1
-          fi
-          echo "process-running=$app_pid" > "$frames/launch.txt"
-          open -a "$app"
-          for index in 0 1 2; do
-            screencapture -x "$frames/frame-$index.png"
-            sleep 2
-          done
-          kill -0 "$app_pid"
-
-      - uses: actions/upload-artifact@v4
-        if: always() && (runner.os == 'macOS' || runner.os == 'Windows') && github.event_name == 'workflow_dispatch' && inputs.variant == 'preview' && inputs.visual_fixture
-        with:
-          name: beeline-${{ matrix.label }}-preview-frames
-          path: ${{ runner.temp }}/desktop-ui-smoke/**
-          if-no-files-found: warn
-          retention-days: 14
 
       # Pull requests cannot use release secrets. Exercise the exact codesign
       # verification path against an ad-hoc-signed copy without changing the
@@ -642,7 +506,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: beeline-desktop-${{ inputs.visual_fixture && 'fixture' || inputs.variant || 'preview' }}-${{ matrix.label }}
+          name: beeline-desktop-${{ inputs.variant || 'preview' }}-${{ matrix.label }}
           # The whole bundle directory: a macOS run carries both the .dmg and
           # the .app archive, a Windows run both the .msi and the NSIS .exe.
           path: apps/mobile/src-tauri/target/${{ matrix.target }}/release/bundle/**

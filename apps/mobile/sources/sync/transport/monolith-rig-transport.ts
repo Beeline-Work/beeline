@@ -363,6 +363,11 @@ export class MonolithRigTransport {
     sharedLiveConnection().reconnect();
   }
 
+  /** Fires on the live socket's first connect and every reconnect. */
+  subscribeConnected(listener: () => void): () => void {
+    return sharedLiveConnection().subscribeConnected(listener);
+  }
+
   respondToWritePermission(
     roomId: string,
     permissionId: string,

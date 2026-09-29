@@ -503,6 +503,39 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
+  it('notifies subscribeConnected on first connect and every reconnect, never in between', async () => {
+    vi.useFakeTimers();
+    const { connection } = createConnection();
+    const connectedCalls: number[] = [];
+    let calls = 0;
+    const unsubscribe = connection.subscribeConnected(() => {
+      calls += 1;
+      connectedCalls.push(calls);
+    });
+    await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+    expect(calls).toBe(0);
+    sockets[0]!.open();
+    expect(calls).toBe(1);
+
+    sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A });
+    sockets[0]!.emit({ type: 'invalidate', roomId: ROOM_A, reason: 'message' });
+    expect(calls).toBe(1);
+
+    sockets[0]!.drop();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(sockets).toHaveLength(2);
+    sockets[1]!.open();
+    expect(calls).toBe(2);
+
+    unsubscribe();
+    sockets[1]!.drop();
+    await vi.advanceTimersByTimeAsync(1_000);
+    sockets[2]!.open();
+    expect(calls).toBe(2);
+
+    connection.dispose();
+  });
+
   it('replaces an open socket on foreground and resubscribes every held room', async () => {
     const { connection, foreground } = createConnection();
     const received: unknown[] = [];

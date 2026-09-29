@@ -19,13 +19,13 @@ export function startDesktopNotifications(): () => void {
   let stopSession: (() => void) | undefined;
   let stopRooms: (() => void) | undefined;
   let stopWorkspaces: (() => void) | undefined;
-  let timer: ReturnType<typeof setInterval> | undefined;
+  let stopConnected: (() => void) | undefined;
 
   async function startForIdentity() {
     const current = ++generation;
     stopRooms?.();
     stopWorkspaces?.();
-    if (timer) clearInterval(timer);
+    stopConnected?.();
     const identity = await loadBuzzIdentity();
     if (!identity || disposed || current !== generation) return;
     // Permission belongs to the installed native app. This request is
@@ -175,8 +175,18 @@ export function startDesktopNotifications(): () => void {
       return;
     }
     stopWorkspaces = workspaceStop;
+    // Clients never poll: the #p subscription's invalidate events and the
+    // room/corner subscriptions' message-deltas are the ordinary drive. The
+    // one exception is a genuine reconnect, where the socket itself may have
+    // missed events while it was down — a single covering re-read then, not
+    // a recurring timer, is what reconciles it.
+    let initialReadDone = false;
+    stopConnected = transport.subscribeConnected(() => {
+      if (!initialReadDone || disposed || current !== generation) return;
+      void refresh().catch(report);
+    });
     await refresh();
-    timer = setInterval(() => void refresh(), 30_000);
+    initialReadDone = true;
   }
 
   function report(error: unknown) {
@@ -192,6 +202,6 @@ export function startDesktopNotifications(): () => void {
     stopSession?.();
     stopRooms?.();
     stopWorkspaces?.();
-    if (timer) clearInterval(timer);
+    stopConnected?.();
   };
 }

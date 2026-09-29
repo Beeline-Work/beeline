@@ -138,8 +138,18 @@ export type DaemonOperationMap = {
     SearchInstitutionalHistoryInput,
     SearchInstitutionalHistoryResult
   >;
-  /** Load one merge-derived restricted procedure after rechecking its source audience. */
+  /** Load one restricted procedure after rechecking its source audience. */
   loadWorkspaceSkill: Operation<LoadWorkspaceSkillInput, LoadWorkspaceSkillResult>;
+  /** Save a procedure directly from conversation: no corner, no merge review. */
+  saveSkill: Operation<
+    RoomInput &
+      TurnOutputAuthority & {
+        readonly slug: string;
+        readonly description: string;
+        readonly markdown: string;
+      },
+    { readonly slug: string; readonly version: number }
+  >;
   /** Validate and save a workflow contract as a `workspace_skills` row of `kind='workflow'`. */
   saveWorkflow: Operation<
     RoomInput & TurnOutputAuthority & { readonly contract: unknown },

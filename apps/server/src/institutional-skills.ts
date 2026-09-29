@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
+  WORKSPACE_SKILL_DESCRIPTION_MAX_LENGTH,
   WORKSPACE_SKILL_MARKDOWN_MAX_BYTES,
+  WORKSPACE_SKILL_SLUG_MAX_LENGTH,
   parseInstitutionalMergeReviewProposal,
   type InstitutionalMergeReviewProposal,
   type LoadWorkspaceSkillInput,
@@ -13,6 +15,7 @@ import { institutionalWorkspaceRolloutStage, rolloutAllowsLive } from './institu
 
 export const WORKSPACE_SKILL_ACTIVE_MAX = 100;
 export const WORKSPACE_SKILL_ACTIVE_BYTES_MAX = 1024 * 1024;
+export const WORKSPACE_SKILL_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 const PROHIBITED_SKILL_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/i,
@@ -24,14 +27,18 @@ const PROHIBITED_SKILL_PATTERNS = [
   /\byou\s+must\s+obey\s+(?:this|these)\b/i,
 ] as const;
 
+function assertSkillTextSafe(description: string, markdown: string): void {
+  const text = `${description}\n${markdown}`;
+  if (PROHIBITED_SKILL_PATTERNS.some((pattern) => pattern.test(text))) {
+    throw new Error('workspace skill proposal crosses the restricted guidance boundary');
+  }
+}
+
 export function assertRestrictedWorkspaceSkillSafe(
   proposal: InstitutionalMergeReviewProposal,
 ): void {
   if (!proposal.skill) return;
-  const text = `${proposal.skill.description}\n${proposal.skill.markdown}`;
-  if (PROHIBITED_SKILL_PATTERNS.some((pattern) => pattern.test(text))) {
-    throw new Error('workspace skill proposal crosses the restricted guidance boundary');
-  }
+  assertSkillTextSafe(proposal.skill.description, proposal.skill.markdown);
 }
 
 type SkillRow = {
@@ -95,6 +102,151 @@ export async function authorizedWorkspaceSkillCandidates(
       [input.workspaceId, input.requesterIdentityId, input.agentId],
     )
   ).rows;
+}
+
+/**
+ * The write path shared by every SYNCHRONOUS, caller-versioned save: the
+ * server auto-resolves the next version from the current row rather than
+ * requiring a caller-supplied `baseVersion`, because a single tool call has
+ * no concurrent extractor job to race. `save_workflow` and `save_skill` both
+ * go through this; the async curator pipeline's `applyWorkspaceSkillProposal`
+ * below keeps its own caller-supplied CAS, since concurrent extractor jobs
+ * over the same slug are exactly what that one guards against.
+ */
+export async function applySkillRevision(
+  database: SqlDatabase,
+  input: {
+    workspaceId: string;
+    sourceRoomId: string;
+    slug: string;
+    description: string;
+    markdown: string;
+    kind: 'procedure' | 'workflow';
+    sourceMessageIds: readonly string[];
+  },
+): Promise<{ skillId: string; version: number }> {
+  const markdownBytes = Buffer.byteLength(input.markdown, 'utf8');
+  if (markdownBytes > WORKSPACE_SKILL_MARKDOWN_MAX_BYTES) {
+    throw new Error(`workspace ${input.kind} markdown is too large`);
+  }
+  return database.transaction(async (db) => {
+    await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+      `workspace-skill:${input.workspaceId}:${input.slug}`,
+    ]);
+    const current = (
+      await db.query<{
+        id: string;
+        kind: 'procedure' | 'workflow';
+        current_version: number;
+        current_bytes: number;
+      }>(
+        `SELECT skill.id,skill.kind,skill.current_version,
+                octet_length(convert_to(version.markdown,'UTF8')) current_bytes
+         FROM workspace_skills skill
+         JOIN workspace_skill_versions version
+           ON version.skill_id=skill.id AND version.version=skill.current_version
+         WHERE skill.workspace_id=$1 AND skill.slug=$2 FOR UPDATE OF skill`,
+        [input.workspaceId, input.slug],
+      )
+    ).rows[0];
+    if (current && current.kind !== input.kind) {
+      throw new Error(`a ${current.kind} with this name already exists; choose a different name`);
+    }
+    const totals = (
+      await db.query<{ active_count: string; active_bytes: string }>(
+        `SELECT count(*)::text active_count,
+                COALESCE(sum(octet_length(convert_to(version.markdown,'UTF8'))),0)::text active_bytes
+         FROM workspace_skills skill
+         JOIN workspace_skill_versions version
+           ON version.skill_id=skill.id AND version.version=skill.current_version
+         WHERE skill.workspace_id=$1 AND skill.state='active'`,
+        [input.workspaceId],
+      )
+    ).rows[0];
+    const counted = Boolean(current);
+    if (!counted && Number(totals?.active_count ?? 0) >= WORKSPACE_SKILL_ACTIVE_MAX) {
+      throw new Error('workspace skill active-count cap exceeded');
+    }
+    const nextBytes =
+      Number(totals?.active_bytes ?? 0) - (counted ? current!.current_bytes : 0) + markdownBytes;
+    if (nextBytes > WORKSPACE_SKILL_ACTIVE_BYTES_MAX) {
+      throw new Error('workspace skill active-byte cap exceeded');
+    }
+    const skillId = current?.id ?? randomUUID();
+    const version = (current?.current_version ?? 0) + 1;
+    if (current) {
+      await db.query(
+        `UPDATE workspace_skills
+         SET description=$2,state='active',current_version=$3,revision=revision+1,
+             source_room_id=$4,updated_at=now()
+         WHERE id=$1`,
+        [skillId, input.description, version, input.sourceRoomId],
+      );
+    } else {
+      await db.query(
+        `INSERT INTO workspace_skills
+         (id,workspace_id,slug,description,state,current_version,revision,source_room_id,
+          repository,target_commit,path,kind)
+         VALUES($1,$2,$3,$4,'active',$5,1,$6,'','',NULL,$7)`,
+        [skillId, input.workspaceId, input.slug, input.description, version, input.sourceRoomId, input.kind],
+      );
+    }
+    await db.query(
+      `INSERT INTO workspace_skill_versions
+       (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,
+        repository,target_commit,path,extractor_version,model)
+       VALUES($1,$2,$3,$4,NULL,$5,'','',NULL,$6,'n/a')`,
+      [
+        skillId,
+        version,
+        input.markdown,
+        createHash('sha256').update(input.markdown).digest('hex'),
+        input.sourceMessageIds,
+        `${input.kind}-save-v1`,
+      ],
+    );
+    return { skillId, version };
+  });
+}
+
+/**
+ * Save a procedure directly from conversation: no corner, no merge review.
+ * Workspace-scoped, versioned by slug, through the exact `applySkillRevision`
+ * write path `save_workflow` uses. Fixes the #Personal "cartoon-short-video"
+ * gap, where an agent wrongly believed only a merge review could create one.
+ */
+export async function saveSkill(
+  database: SqlDatabase,
+  command: CommandRow,
+  input: { slug: unknown; description: unknown; markdown: unknown },
+): Promise<{ slug: string; version: number }> {
+  const slug = typeof input.slug === 'string' ? input.slug.trim() : '';
+  if (!WORKSPACE_SKILL_SLUG_PATTERN.test(slug) || slug.length > WORKSPACE_SKILL_SLUG_MAX_LENGTH) {
+    throw new Error('skill slug is invalid');
+  }
+  const description = typeof input.description === 'string' ? input.description.trim() : '';
+  if (!description || description.length > WORKSPACE_SKILL_DESCRIPTION_MAX_LENGTH) {
+    throw new Error('skill description is invalid');
+  }
+  const markdown = typeof input.markdown === 'string' ? input.markdown : '';
+  if (!markdown.trim()) throw new Error('skill markdown is required');
+  assertSkillTextSafe(description, markdown);
+  const room = (
+    await database.query<{ workspace_id: string }>(`SELECT workspace_id FROM rooms WHERE id=$1`, [
+      command.room_id,
+    ])
+  ).rows[0];
+  if (!room) throw new Error('skill room not found');
+  const { version } = await applySkillRevision(database, {
+    workspaceId: room.workspace_id,
+    sourceRoomId: command.room_id,
+    slug,
+    description,
+    markdown,
+    kind: 'procedure',
+    sourceMessageIds: [command.root_source_message_id],
+  });
+  return { slug, version };
 }
 
 /** Apply one immutable restricted-procedure revision under logical-key CAS. */

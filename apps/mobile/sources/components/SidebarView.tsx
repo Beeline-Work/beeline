@@ -36,6 +36,7 @@ import { WorkspaceActionsMenu } from '@/components/buzz/WorkspaceActionsMenu';
 import { BuzzRigTransport } from '@/sync/transport';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { useHeaderHeight, useIsDesktop } from '@/utils/responsive';
+import { isTauri } from '@/utils/isTauri';
 import {
   type ChatListView,
   type RoomViewIdentity,
@@ -169,6 +170,10 @@ export const SidebarView = React.memo(function SidebarView() {
   const styles = stylesheet;
   const safeArea = useSafeAreaInsets();
   const headerHeight = useHeaderHeight();
+  const macTitlebarInset =
+    isTauri() && typeof navigator !== 'undefined' && /Mac/.test(navigator.platform)
+      ? headerHeight
+      : 0;
   const isDesktop = useIsDesktop();
   const { width: windowWidth } = useWindowDimensions();
   const showWorkspaceStrip = isDesktop && windowWidth >= 1360;
@@ -476,7 +481,7 @@ export const SidebarView = React.memo(function SidebarView() {
   );
 
   return (
-    <View style={{ flex: 1, flexDirection: 'row' }}>
+    <View style={{ flex: 1, flexDirection: 'row', paddingTop: macTitlebarInset }}>
       {showWorkspaceStrip && (
         <DesktopWorkspaceStrip
           workspaces={workspaces}

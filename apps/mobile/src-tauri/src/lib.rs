@@ -1,4 +1,8 @@
-const SESSION_KEYS: [&str; 2] = ["buzzy.monolith.refresh.v1", "buzzy.monolith.identity.v1"];
+const SESSION_KEYS: [&str; 3] = [
+    "buzzy.monolith.refresh.v1",
+    "buzzy.monolith.identity.v1",
+    "buzzy.monolith.access.v1",
+];
 
 fn credential(app: &tauri::AppHandle, key: &str) -> Result<keyring::Entry, String> {
     if !SESSION_KEYS.contains(&key) {

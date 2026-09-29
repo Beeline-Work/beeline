@@ -1,7 +1,19 @@
+import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+// The test fake enforces the same native allowlist as the shipped Tauri
+// command. Without this, the JS-only fake accepts keys Rust refuses and a
+// packaged desktop app can fail to restore an otherwise valid session.
+const nativeSessionKeys = new Set(
+  readFileSync(new URL('../../src-tauri/src/lib.rs', import.meta.url), 'utf8')
+    .match(/const SESSION_KEYS: \[&str; \d+\] = \[([^\]]+)\]/)?.[1]
+    ?.match(/"[^"]+"/g)
+    ?.map((key) => key.slice(1, -1)) ?? [],
+);
 
 const invoke = vi.hoisted(() =>
   vi.fn(async (command: string, args: { key: string; value?: string }) => {
+    if (!nativeSessionKeys.has(args.key)) throw new Error('unknown desktop credential key');
     if (command === 'desktop_secure_get') return desktopSecrets.get(args.key) ?? null;
     if (command === 'desktop_secure_set') {
       desktopSecrets.set(args.key, args.value!);

@@ -46,6 +46,7 @@ const chats = vi.hoisted(() =>
 );
 const windowListeners = new Map<string, (event: any) => void>();
 const viewport = vi.hoisted(() => ({ width: 1280 }));
+const desktopShell = vi.hoisted(() => ({ current: false }));
 
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
@@ -98,7 +99,8 @@ vi.mock('expo-router', () => ({
   usePathname: () => route.pathname,
   useRouter: () => ({ push: routerPush, navigate: routerNavigate }),
 }));
-vi.mock('@/utils/responsive', () => ({ useHeaderHeight: () => 0, useIsDesktop: () => true }));
+vi.mock('@/utils/responsive', () => ({ useHeaderHeight: () => 56, useIsDesktop: () => true }));
+vi.mock('@/utils/isTauri', () => ({ isTauri: () => desktopShell.current }));
 vi.mock('@/utils/platform', () => ({ isDesktopPlatform: () => true }));
 vi.mock('@/auth/buzz-identity-storage', () => ({
   getEffectiveRelayUrl: vi.fn(async () => 'http://server.test'),
@@ -276,12 +278,42 @@ describe('desktop Workspace navigation', () => {
     route.pathname = '/beeline/channels';
     openCornerState.current = 'working';
     viewport.width = 1280;
+    desktopShell.current = false;
     viewer.kind = 'human';
     workspaceRole.current = 'owner';
     await act(async () => {
       tree = create(<SidebarView />);
     });
     await settle();
+  });
+
+  it('keeps both Mac workspace headers below the overlay title bar', async () => {
+    desktopShell.current = true;
+    vi.stubGlobal('navigator', { platform: 'MacIntel' });
+    try {
+      await act(async () => tree.update(<SidebarView key="mac-compact" />));
+      expect(tree.root.findAllByType('View')[0]!.props.style.paddingTop).toBe(56);
+      expect(tree.root.findAllByProps({ testID: 'desktop-workspace-strip' })).toHaveLength(0);
+
+      viewport.width = 1440;
+      await act(async () => tree.update(<SidebarView key="mac-wide" />));
+      expect(tree.root.findAllByType('View')[0]!.props.style.paddingTop).toBe(56);
+      expect(control('desktop-workspace-strip')).toBeTruthy();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('keeps the Windows workspace header below its native window frame', async () => {
+    desktopShell.current = true;
+    vi.stubGlobal('navigator', { platform: 'Win32' });
+    try {
+      await act(async () => tree.update(<SidebarView key="windows" />));
+      expect(tree.root.findAllByType('View')[0]!.props.style.paddingTop).toBe(0);
+      expect(tree.root.findByType('CommunitySwitcherTrigger')).toBeTruthy();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('opens from Command-or-Control Shift S', () => {

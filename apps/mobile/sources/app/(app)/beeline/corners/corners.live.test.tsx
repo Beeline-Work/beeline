@@ -41,7 +41,11 @@ vi.mock('@/components/buzz/SurfaceGlyphLoader', () => hostModule('SurfaceGlyphLo
 vi.mock('@/components/buzz/RoomCornersHeader', () => hostModule('RoomCornersHeader'));
 vi.mock('@/components/buzz/RoomCornersList', () => hostModule('RoomCornersList'));
 vi.mock('@/components/buzz/CommunityRail', () => hostModule('BuzzCommunityShell'));
-vi.mock('@/components/buzz/NewCornerDialog', () => hostModule('NewCornerDialog'));
+vi.mock('@/modal', () => ({ Modal: { alert: vi.fn() } }));
+vi.mock('expo-haptics', () => ({
+  notificationAsync: vi.fn(),
+  NotificationFeedbackType: { Success: 'success', Error: 'error' },
+}));
 vi.mock('expo-router', () => ({
   router: { push: vi.fn(), replace: vi.fn(), back: vi.fn() },
   useLocalSearchParams: () => ({ roomId: 'room-a' }),
@@ -170,25 +174,20 @@ beforeEach(() => {
 });
 
 describe('Corner list live path', () => {
-  it('creates and opens a named corner from the plus button without an app binding', async () => {
+  it('creates and opens a randomly named corner from the plus button', async () => {
     const renderer = await mountList();
     const header = renderer.root.findByType('RoomCornersHeader');
     await act(async () => header.props.onAdd());
-    let sheet = renderer.root.findByType('NewCornerDialog');
-    expect(sheet.props.visible).toBe(true);
-    expect(sheet.props.apps).toBeUndefined();
-    expect(sheet.props.selectedAppId).toBeUndefined();
-    await act(async () => sheet.props.setTitle(' Release notes '));
-    sheet = renderer.root.findByType('NewCornerDialog');
-    await act(async () => sheet.props.onCreate());
-    expect(list.createCalls).toEqual([['room-a', 'Release notes']]);
+    expect(list.createCalls).toHaveLength(1);
+    const [roomId, title] = list.createCalls[0] as [string, string];
+    expect(roomId).toBe('room-a');
+    expect(title).toMatch(/^\w+ \w+ corner$/);
     expect(router.push).toHaveBeenCalledWith(
       expect.objectContaining({
         pathname: '/beeline/chat/[channelId]',
-        params: expect.objectContaining({ channelId: 'corner-created' }),
+        params: expect.objectContaining({ channelId: 'corner-created', title }),
       }),
     );
-    expect(renderer.root.findByType('NewCornerDialog').props.visible).toBe(false);
   });
 
   it('repaints a corner status from the parent Room nudge, without re-entering', async () => {

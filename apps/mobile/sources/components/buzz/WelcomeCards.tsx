@@ -10,7 +10,6 @@ import { HullModal } from './HullDialog';
 import { welcomeBrandMarks } from './welcome-brand-marks';
 import { WelcomeToolMark } from './WelcomeToolMark';
 import { completeWelcomeCards } from '@/buzz/welcome-cards';
-import { typeRoles } from '@/buzz/groknight';
 
 const INK = '#1C1712';
 const PAPER = '#F3EDE3';
@@ -32,6 +31,7 @@ const WELCOME_TYPE = {
   size20: 20,
   size28: 28,
   size30: 30,
+  size36: 36,
   trackingTight: -0.5,
   trackingLabel: 1,
   trackingWide: 2,
@@ -375,9 +375,9 @@ const card = {
   },
   body: { color: DIM, fontFamily: SANS, fontSize: WELCOME_TYPE.size16, lineHeight: 24 },
   desktopTitle: {
-    fontSize: typeRoles.display.fontSize,
-    lineHeight: typeRoles.display.lineHeight,
-    letterSpacing: typeRoles.display.letterSpacing,
+    fontSize: WELCOME_TYPE.size36,
+    lineHeight: 43,
+    letterSpacing: WELCOME_TYPE.trackingTight,
   },
   desktopBody: { fontSize: WELCOME_TYPE.size18, lineHeight: 28 },
   error: { color: '#A8514D', fontFamily: SANS, fontSize: WELCOME_TYPE.size13 },

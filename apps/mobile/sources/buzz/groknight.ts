@@ -90,13 +90,6 @@ export const typeRoles = {
     lineHeight: calmLineHeight(22),
     letterSpacing: -0.3,
   },
-  /** Desktop-only onboarding display line (Welcome Cards, >=1024px). Larger than `hero`; not used elsewhere. */
-  display: {
-    fontFamily: sans.medium,
-    fontSize: 36,
-    lineHeight: 43,
-    letterSpacing: -0.5,
-  },
   /** Body text and row titles. */
   body: {
     fontFamily: sans.regular,

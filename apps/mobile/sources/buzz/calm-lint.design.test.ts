@@ -26,8 +26,8 @@ const readBaseline = (): CalmBaseline => JSON.parse(readFileSync(baselineUrl, 'u
 
 describe('Borrowing Calm lint', () => {
   it('admits only the role sizes and trackings', () => {
-    expect([...CALM_FONT_SIZES].sort((a, b) => a - b)).toEqual([10, 13, 16, 22, 36]);
-    expect([...CALM_LETTER_SPACINGS].sort((a, b) => a - b)).toEqual([-0.5, -0.3, 0, 2]);
+    expect([...CALM_FONT_SIZES].sort((a, b) => a - b)).toEqual([10, 13, 16, 22]);
+    expect([...CALM_LETTER_SPACINGS].sort((a, b) => a - b)).toEqual([-0.3, 0, 2]);
   });
 
   it('flags raw literals and passes role values', () => {

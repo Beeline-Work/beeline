@@ -11,7 +11,7 @@ import { POPULAR_APPS } from '@/buzz/app-catalog';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import type { WorkbenchApp, WorkbenchHelper } from '@/buzz/workbench';
 import { openAppSignIn } from '@/buzz/app-sign-in';
-import { appBoardColors, appBoardType } from '@/buzz/app-board-style';
+import { appBoardColors } from '@/buzz/app-board-style';
 
 function first(value: string | string[] | undefined): string | undefined { return Array.isArray(value) ? value[0] : value; }
 
@@ -82,20 +82,21 @@ export default function ConnectAppScreen() {
 }
 
 const styles = StyleSheet.create(theme => {
-  const board = appBoardColors(theme.buzz);
+  const hull = theme.buzz;
+  const board = appBoardColors(hull);
   return {
   screen: { flex: 1, backgroundColor: board.canvas },
   searchWrap: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 6 },
   search: { flexDirection: 'row', alignItems: 'center', gap: 10, height: 48, paddingHorizontal: 14, borderWidth: 1, borderColor: board.strongBorder, borderRadius: 12, backgroundColor: board.tile },
-  input: { ...Typography.ledger(), flex: 1, fontSize: 16, color: board.ink, paddingVertical: 0 },
+  input: { ...Typography.ledger(), ...hull.type.body, flex: 1, color: board.ink, paddingVertical: 0 },
   placeholder: { color: board.quiet },
-  section: { ...Typography.mono(), ...appBoardType.section, paddingHorizontal: 20, paddingTop: 12, paddingBottom: 4, color: board.quiet },
+  section: { ...Typography.default(), ...hull.type.sectionHead, paddingHorizontal: 20, paddingTop: 12, paddingBottom: 4, color: board.quiet },
   list: { paddingHorizontal: 20 },
   row: { minHeight: 54, flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: board.border },
-  name: { ...Typography.ledger(), ...appBoardType.pickerName, flex: 1, color: board.ink },
-  connected: { ...Typography.ledger(), ...appBoardType.meta, color: board.quiet },
+  name: { ...Typography.ledger(), ...hull.type.body, flex: 1, color: board.ink },
+  connected: { ...Typography.ledger(), ...hull.type.meta, color: board.quiet },
   button: { minHeight: 36, paddingHorizontal: 14, justifyContent: 'center', borderRadius: 9, backgroundColor: board.buttonFill },
-  buttonText: { ...Typography.ledger(), ...appBoardType.pickerAction, color: board.buttonText },
+  buttonText: { ...Typography.ledger(), ...hull.type.body, color: board.buttonText },
   error: { ...Typography.default(), margin: 20, color: theme.buzz.dialogDanger },
   };
 });

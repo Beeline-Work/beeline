@@ -585,6 +585,13 @@ export function readConnectorOfferCardView(value: unknown): ConnectorOfferCardVi
     ...field('acceptedBy', readIdentityOnly(item.acceptedBy)),
     ...field('acceptedAt', integer(item.acceptedAt) ? item.acceptedAt : undefined),
     ...field('connectorId', typeof item.connectorId === 'string' ? item.connectorId : undefined),
+    ...field(
+      'intent',
+      item.intent === 'add' || item.intent === 'reconnect'
+        ? (item.intent as 'add' | 'reconnect')
+        : undefined,
+    ),
+    ...field('provider', typeof item.provider === 'string' ? item.provider : undefined),
   };
 }
 

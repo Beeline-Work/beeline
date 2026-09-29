@@ -3,6 +3,7 @@ import {
   connectorOfferActionLabel,
   connectorOfferConnectingLine,
   connectorOfferOutcomeLine,
+  connectorOfferReconnectTitle,
   connectorOfferTitle,
   connectorOfferWaitingLine,
 } from './connector-offer-copy';
@@ -13,6 +14,10 @@ describe('connector-offer copy (R5)', () => {
   it('asks one question and offers one action with the check glyph', () => {
     expect(connectorOfferTitle('Trusty Squire')).toBe('Add Trusty Squire as a tool?');
     expect(connectorOfferActionLabel('Trusty Squire')).toBe('✓ Add Trusty Squire');
+  });
+
+  it('names what stalled for a reconnect offer, never a question', () => {
+    expect(connectorOfferReconnectTitle('google')).toBe('Sign in to Google again');
   });
 
   it('names the actor by handle on the settled record, and nothing while the offer is open', () => {

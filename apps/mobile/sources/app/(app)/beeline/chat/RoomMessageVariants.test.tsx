@@ -2808,6 +2808,49 @@ describe('Room message variant components', () => {
       expect(onContinue).toHaveBeenCalledWith('offer-1', 'trusty-squire', 'connector-row-1');
     });
 
+    it('renders a squire-login-wall reconnect card with no Add affordance, straight to Continue sign-in', () => {
+      const onAccept = vi.fn();
+      const onContinue = vi.fn();
+      const reconnecting = render(
+        <ConnectorOfferCard
+          message={message({
+            connectorOffer: {
+              ...pending.connectorOffer!,
+              status: 'connecting',
+              intent: 'reconnect',
+              provider: 'google',
+              acceptedBy: zeke,
+              acceptedAt: 1_756_900_030,
+              connectorId: 'connector-row-1',
+              consequence:
+                "A task hit a signed-out google session in Trusty Squire's shared browser. Sign in again to let it continue.",
+            },
+          })}
+          viewerIsAgent={false}
+          viewerPubkey="zeke"
+          viewerRole="member"
+          actionId={null}
+          onAccept={onAccept}
+          onContinue={onContinue}
+          onOpenWorkbench={vi.fn()}
+        />,
+      );
+      const json = JSON.stringify(reconnecting.toJSON());
+      // The reconnect title, never the "Add ... as a tool?" question — nothing
+      // is being added, the session just needs a fresh sign-in.
+      expect(json).toContain('Sign in to Google again');
+      expect(json).not.toContain('Add Trusty Squire as a tool?');
+      expect(
+        reconnecting.root.findAllByProps({ testID: 'connector-offer-offer-1-accept' }),
+      ).toHaveLength(0);
+      expect(onAccept).not.toHaveBeenCalled();
+      const resume = reconnecting.root.findByProps({
+        testID: 'connector-offer-offer-1-continue',
+      });
+      act(() => resume.props.onPress());
+      expect(onContinue).toHaveBeenCalledWith('offer-1', 'trusty-squire', 'connector-row-1');
+    });
+
     it('lets a Workspace manager who is not the addressee accept (Q4)', () => {
       const card = render(
         <ConnectorOfferCard

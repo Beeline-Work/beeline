@@ -11,6 +11,7 @@ import {
   resourceFacadeArgs,
   squireApprovalCopy,
   squireApprovalFromMcp,
+  squireLoginWallFromMcp,
 } from './resource-mcp-facade.js';
 import { rewriteHostMcpDeclaration } from './host-mcp-route.js';
 
@@ -246,6 +247,98 @@ describe('resource MCP transport authorization', () => {
     });
   });
 
+  it('names a google_session wall from its structured needs_user field, never prose', () => {
+    const request = {
+      id: 9,
+      method: 'tools/call',
+      params: { name: 'operate_login', arguments: { session_id: 's1', provider: 'google', ref: 'r1' } },
+    };
+    expect(
+      squireLoginWallFromMcp(request, {
+        id: 9,
+        result: {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                session_id: 's1',
+                needs_user: {
+                  wall: 'google_session',
+                  message: 'no live Google session on this profile',
+                  resume: 'connect',
+                },
+              }),
+            },
+          ],
+        },
+      }),
+    ).toEqual({
+      wall: 'google_session',
+      message: 'no live Google session on this profile',
+    });
+    // A prose reply that merely MENTIONS a stale session names nothing: only
+    // the structured needs_user.wall field is read.
+    expect(
+      squireLoginWallFromMcp(request, {
+        id: 9,
+        result: { content: [{ type: 'text', text: 'the Google session looks stale to me' }] },
+      }),
+    ).toBeUndefined();
+  });
+
+  it('names an OAuth awaiting_human challenge, but only from oauth.state', () => {
+    const request = { id: 10, method: 'tools/call', params: { name: 'operate_login', arguments: {} } };
+    expect(
+      squireLoginWallFromMcp(request, {
+        id: 10,
+        result: {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                oauth: {
+                  state: 'awaiting_human',
+                  reason: 'Google is asking you to tap 42 on your phone.',
+                  next_action: 'operate_observe',
+                },
+              }),
+            },
+          ],
+        },
+      }),
+    ).toEqual({
+      wall: 'awaiting_human',
+      message: 'Google is asking you to tap 42 on your phone.',
+    });
+  });
+
+  it('ignores an unrelated wall/gate shape (e.g. a captcha gate) and a mismatched call id', () => {
+    const request = { id: 11, method: 'tools/call', params: { name: 'operate_start', arguments: {} } };
+    expect(
+      squireLoginWallFromMcp(request, {
+        id: 11,
+        result: {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({ needs_user: { gate: 'captcha_wall', message: 'solve it' } }),
+            },
+          ],
+        },
+      }),
+    ).toBeUndefined();
+    expect(
+      squireLoginWallFromMcp(request, {
+        id: 12,
+        result: {
+          content: [
+            { type: 'text', text: JSON.stringify({ needs_user: { wall: 'google_session', message: 'x' } }) },
+          ],
+        },
+      }),
+    ).toBeUndefined();
+  });
+
   it('ignores ordinary Squire results and unsafe approval destinations', () => {
     const request = {
       id: 1,
@@ -385,6 +478,115 @@ describe('resource MCP transport authorization', () => {
         approvalUrl: 'https://approve.trustysquire.test/approval/buy-3',
       });
       expect(requests[4]?.body.signInUrl).toBeUndefined();
+    } finally {
+      lines.close();
+      child.kill();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('relays a google_session wall from a live operate_login result to postSquireLoginWall', async () => {
+    const root = await mkdtemp('/tmp/squire-login-wall-facade-test-');
+    const context = join(root, 'turn.json');
+    const auth = join(root, 'auth.json');
+    const upstream = join(root, 'squire.cjs');
+    await writeFile(
+      upstream,
+      `require('node:readline').createInterface({input:process.stdin}).on('line', line => {
+        const m=JSON.parse(line);
+        if(m.id===undefined) return;
+        const result=m.params?.name==='operate_login'
+          ? {content:[{type:'text',text:JSON.stringify({session_id:'s1',needs_user:{wall:'google_session',message:'no live Google session',resume:'connect'}})}]}
+          : {content:[{type:'text',text:'[]'}]};
+        process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');
+      });`,
+    );
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const server = createServer(async (req, res) => {
+      let body = '';
+      for await (const chunk of req) body += chunk;
+      const parsed = JSON.parse(body) as Record<string, unknown>;
+      requests.push({ url: req.url ?? '', body: parsed });
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify(
+          req.url?.endsWith('/authorizeResourceCall') ? { allowed: true } : { id: 'message' },
+        ),
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address() as { port: number };
+    await writeFile(
+      auth,
+      JSON.stringify({
+        baseUrl: `http://127.0.0.1:${address.port}`,
+        daemonToken: 'test-token',
+        turnContextPath: context,
+      }),
+    );
+    await writeFile(
+      context,
+      JSON.stringify({ roomId: 'room', requestId: 'stuck-turn', generationId: 'generation' }),
+    );
+    const child = spawn(process.execPath, resourceFacadeArgs(), {
+      env: {
+        ...process.env,
+        BEELINE_RESOURCE_TARGET: 'squire',
+        BEELINE_RESOURCE_AUTH_FILE: auth,
+        BEELINE_RESOURCE_LAUNCH: JSON.stringify({ command: process.execPath, args: [upstream] }),
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const replies: Array<Record<string, unknown>> = [];
+    const lines = createInterface({ input: child.stdout });
+    lines.on('line', (line) => replies.push(JSON.parse(line)));
+    try {
+      child.stdin.write(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: {
+            name: 'operate_login',
+            arguments: { session_id: 's1', provider: 'google', ref: 'r1' },
+          },
+        })}\n`,
+      );
+      await vi.waitFor(() => expect(replies.some((reply) => reply.id === 1)).toBe(true), {
+        timeout: 5000,
+      });
+      await vi.waitFor(
+        () =>
+          expect(
+            requests.some((request) => request.url === '/v1/daemon/operations/postSquireLoginWall'),
+          ).toBe(true),
+        { timeout: 5000 },
+      );
+      const posted = requests.find(
+        (request) => request.url === '/v1/daemon/operations/postSquireLoginWall',
+      );
+      expect(posted?.body).toMatchObject({
+        roomId: 'room',
+        requestId: 'stuck-turn',
+        wall: 'google_session',
+        message: 'no live Google session',
+      });
+      // A tool result carrying no needs_user/oauth wall posts nothing.
+      child.stdin.write(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/call',
+          params: { name: 'list_credentials', arguments: {} },
+        })}\n`,
+      );
+      await vi.waitFor(() => expect(replies.some((reply) => reply.id === 2)).toBe(true), {
+        timeout: 5000,
+      });
+      expect(
+        requests.filter((request) => request.url === '/v1/daemon/operations/postSquireLoginWall'),
+      ).toHaveLength(1);
     } finally {
       lines.close();
       child.kill();

@@ -137,6 +137,16 @@ export const CORNER_YOLO_MERGE_NUDGE =
 export const RESEARCH_CORNER_HOLD =
   'This is a research corner with writable repository access. Investigate and edit files as needed. Do not commit, push, or open a pull request until a human explicitly directs that step. Never merge. Leave the corner open; only a human closes it.';
 
+/** Shared verbatim between the upgrade_corner_to_code tool description
+ *  (`read-only-mcp.ts`) and this corner's own no-code prompt clause below, so
+ *  the two surfaces can never say something different. A clear ask to change
+ *  the code - a bug report, a requested change, a described problem - is
+ *  enough; no specific phrase is required. What still disqualifies a call is
+ *  the source of the intent, not its wording: an earlier message (not the one
+ *  being answered) or the agent's own initiative. */
+export const UPGRADE_INTENT_RULE =
+  'Call this only while answering a human message, in this same corner, that clearly conveys intent to change the code — a bug report, a requested change, or a problem described for you to fix, not a specific required phrase. Never call it from an earlier message, or your own initiative.';
+
 const handle = (value: string): string => value.replace(/^@/, '');
 
 /**
@@ -473,7 +483,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
       [
         "This is a no-code corner with no repository checkout and no GitHub workflow. Work in this corner's writable workspace: create files with write_scratch_file or your own tools, then send them with post_artifact.",
         agentMayUpgradeCorner
-          ? 'Do not initialize a repository, create a branch, commit, push, open a pull request, or wait for GitHub checks. The one exception is beeline-agent upgrade_corner_to_code: call it only when the human message you are currently answering explicitly asks for code edits in this same corner. That one-way upgrade restarts this same corner with a feature branch and writable checkout, keeps its discussion, and re-delivers that same request in the code session, so end this turn immediately once it succeeds and do not edit this workspace. Never call it from an implied request, an earlier message, or your own initiative.'
+          ? `Do not initialize a repository, create a branch, commit, push, open a pull request, or wait for GitHub checks. The one exception is beeline-agent upgrade_corner_to_code. ${UPGRADE_INTENT_RULE} That one-way upgrade restarts this same corner with a feature branch and writable checkout, keeps its discussion, and re-delivers that same request in the code session, so end this turn immediately once it succeeds and do not edit this workspace.`
           : 'Do not initialize a repository, create a branch, commit, push, open a pull request, or wait for GitHub checks.',
       ].join('\n'),
   },

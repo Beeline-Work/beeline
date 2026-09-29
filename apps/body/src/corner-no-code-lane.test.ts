@@ -1,8 +1,9 @@
 import { existsSync } from 'node:fs';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createAgentCommand } from '../../server/src/agent-command.js';
@@ -15,11 +16,13 @@ import { commandFixtureApi } from './command-fixture.test-support.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import { MonolithCornerTurnLoop } from './monolith-corner-turn.js';
-import { CORNER_AUTHOR_CONTRACT } from './prompt-assembly.js';
+import { CORNER_AUTHOR_CONTRACT, UPGRADE_INTENT_RULE } from './prompt-assembly.js';
 import { agentToolsFor } from './read-only-mcp.js';
 import { RoomRuntimeCoordinator } from './room-runtime.js';
 import { identityFromKey, stageMonolithAgentRuntime, type AgentRuntimeRecord } from './runtime.js';
 import { SessionScheduler } from './session-scheduler.js';
+
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 
 /**
  * The no-code lane, from the helper's side.
@@ -265,6 +268,99 @@ it('retires a running no-code session and restarts the same corner with a real b
   }
 });
 
+it('refuses to start a promoted corner with no server-assigned feature branch, and leaves its scratch alone', async () => {
+  // room-runtime.ts's guard: a repository-backed corner whose scratch tree
+  // still exists but whose restore state carries no featureBranch must never
+  // cut a worktree GitHub webhooks could never match back to this corner.
+  const staged = await stageRepositoryRoomCorner('no_code');
+  const scratch = join(staged.roomBase, 'rooms', CORNER, 'scratch');
+  await mkdir(scratch, { recursive: true });
+  await writeFile(join(scratch, 'draft.txt'), 'work in progress\n');
+  await staged.database.query(`UPDATE corner_facts SET lane='code' WHERE corner_id=$1`, [CORNER]);
+
+  const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  try {
+    await staged.startCorner();
+
+    expect(
+      error.mock.calls.some((call) =>
+        String(call[1]).includes('promoted corner has no server-assigned feature branch'),
+      ),
+    ).toBe(true);
+    expect(staged.coordinator.activeRoomIds()).not.toContain(CORNER);
+    expect(staged.token).not.toHaveBeenCalled();
+    expect(existsSync(join(scratch, 'draft.txt'))).toBe(true);
+  } finally {
+    error.mockRestore();
+    log.mockRestore();
+    await staged.coordinator.shutdown();
+    await staged.database.close();
+  }
+});
+
+it('carries pre-existing scratch files into the worktree on the exact server-assigned branch', async () => {
+  // The real scratch->worktree carry-over (room-runtime.ts:1338-1372) against
+  // a real git fixture: files written before promotion land on the exact
+  // branch the server recorded, committed in one commit.
+  const fixture = await mkdtemp(join(tmpdir(), 'beeline-lane-upgrade-carryover-'));
+  roots.push(fixture);
+  const seed = join(fixture, 'seed');
+  const remote = join(fixture, 'remote.git');
+  await git('git', ['init', '-b', 'main', seed]);
+  await writeFile(join(seed, 'widget.txt'), 'before\n');
+  await git('git', ['-C', seed, 'add', '.']);
+  await git('git', [
+    '-C',
+    seed,
+    '-c',
+    'user.name=Test',
+    '-c',
+    'user.email=test@example.com',
+    'commit',
+    '-m',
+    'seed',
+  ]);
+  await git('git', ['clone', '--bare', seed, remote]);
+  const staged = await stageRepositoryRoomCorner('no_code', `file://${remote}`);
+  const scratch = join(staged.roomBase, 'rooms', CORNER, 'scratch');
+  await mkdir(scratch, { recursive: true });
+  await writeFile(join(scratch, 'delivered.txt'), 'drafted before promotion\n');
+  const branch = `feature/corner-${CORNER.replaceAll('-', '').slice(0, 12)}`;
+  await staged.database.query(
+    `UPDATE corner_facts SET lane='code',feature_branch=$2 WHERE corner_id=$1`,
+    [CORNER, branch],
+  );
+
+  const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  try {
+    await staged.startCorner();
+
+    const worktree = join(staged.supervisorRoot, 'beeline', 'corners', CORNER);
+    expect(staged.coordinator.activeRoomIds()).toContain(CORNER);
+    expect(
+      (await git('git', ['-C', worktree, 'branch', '--show-current'])).stdout.trim(),
+    ).toBe(branch);
+    expect(existsSync(join(worktree, 'widget.txt'))).toBe(true);
+    expect(existsSync(join(worktree, 'delivered.txt'))).toBe(true);
+    expect((await git('git', ['-C', worktree, 'log', '-1', '--pretty=%s'])).stdout.trim()).toBe(
+      'Carry no-code corner files into code branch',
+    );
+    expect(
+      (
+        await git('git', ['-C', worktree, 'rev-list', '--count', 'origin/main..HEAD'])
+      ).stdout.trim(),
+    ).toBe('1');
+    expect(existsSync(scratch)).toBe(false);
+  } finally {
+    error.mockRestore();
+    log.mockRestore();
+    await staged.coordinator.shutdown();
+    await staged.database.close();
+  }
+});
+
 /** One no-code corner turn, returning the ACP session it opened. */
 async function noCodeCornerSession(
   extra: Partial<ConstructorParameters<typeof MonolithCornerTurnLoop>[0]> = {},
@@ -402,25 +498,56 @@ it('offers the one-way code upgrade to the session that actually mounts the tool
 
   const prompt = String(sessionInput?.systemPrompt);
   expect(prompt).toContain('upgrade_corner_to_code');
-  expect(prompt).toContain('explicitly asks for code edits in this same corner');
-  expect(prompt).toContain('Never call it from an implied request');
+  // A clear ask to change the code is enough - a bug report is named as
+  // sufficient, and the old fixed-phrase requirement is gone.
+  expect(prompt).toContain(UPGRADE_INTENT_RULE);
+  expect(prompt).toContain('a bug report');
+  expect(prompt).not.toContain('explicitly asks for code edits');
   const agentEnvironment = new Map(
     sessionInput?.mcpServers
       .find((server) => server.name === 'beeline-agent')
       ?.env.map(({ name, value }) => [name, value]),
   );
-  expect(
-    agentToolsFor(
-      agentEnvironment.get('BEELINE_MCP_SURFACE') === 'agent',
-      agentEnvironment.get('BEELINE_AGENT_DM') === '1',
-      Boolean(agentEnvironment.get('BEELINE_DAEMON_CORNER_ID')),
-      agentEnvironment.get('BEELINE_CORNER_REVIEWER') === '1',
-      Boolean(agentEnvironment.get('BEELINE_GRANT_RUNNER_URL')),
-      agentEnvironment.get('BEELINE_CORNER_AGENT_CLOSE') === '1',
-      false,
-      agentEnvironment.get('BEELINE_CORNER_CAN_UPGRADE') === '1',
-    ).map((tool) => tool.name),
-  ).toContain('upgrade_corner_to_code');
+  const tools = agentToolsFor(
+    agentEnvironment.get('BEELINE_MCP_SURFACE') === 'agent',
+    agentEnvironment.get('BEELINE_AGENT_DM') === '1',
+    Boolean(agentEnvironment.get('BEELINE_DAEMON_CORNER_ID')),
+    agentEnvironment.get('BEELINE_CORNER_REVIEWER') === '1',
+    Boolean(agentEnvironment.get('BEELINE_GRANT_RUNNER_URL')),
+    agentEnvironment.get('BEELINE_CORNER_AGENT_CLOSE') === '1',
+    false,
+    agentEnvironment.get('BEELINE_CORNER_CAN_UPGRADE') === '1',
+  );
+  expect(tools.map((tool) => tool.name)).toContain('upgrade_corner_to_code');
+  // The tool description and the prompt clause say the same thing in the
+  // same words, so a model reading either surface gets identical guidance.
+  const upgradeTool = tools.find((tool) => tool.name === 'upgrade_corner_to_code');
+  expect(upgradeTool?.description).toContain(UPGRADE_INTENT_RULE);
+  expect(upgradeTool?.description).not.toContain('explicitly asks for code edits');
+});
+
+it('leaves no other copy of the old fixed-phrase upgrade ceremony in the repo', () => {
+  let matches = '';
+  try {
+    matches = execFileSync(
+      'git',
+      [
+        'grep',
+        '-n',
+        '-I',
+        'explicitly asks for code edits',
+        '--',
+        '.',
+        // This file's own negative assertions above name the retired phrase.
+        ':!apps/body/src/corner-no-code-lane.test.ts',
+      ],
+      { cwd: REPO_ROOT, encoding: 'utf8' },
+    );
+  } catch (error) {
+    // `git grep` exits 1 when nothing matches - that is the passing case.
+    if ((error as { status?: number }).status !== 1) throw error;
+  }
+  expect(matches).toBe('');
 });
 
 it('retires a no-code session on reconnect reconciliation when the server already moved it to code', async () => {
@@ -516,6 +643,7 @@ async function upgradeTurn(
     onChunk?: (delta: string, full: string, currentRun?: string) => void;
     onToolCalls?: (calls: ToolCallEntry[]) => void;
   }) => Promise<PromptResult>,
+  sourceText = 'go edit the widget renderer',
 ): Promise<{ written: string[]; execute: ReturnType<typeof vi.fn>; onLaneChanged: () => void }> {
   const root = await mkdtemp(join(tmpdir(), 'beeline-lane-upgrade-turn-'));
   roots.push(root);
@@ -552,7 +680,7 @@ async function upgradeTurn(
     authorId: HUMAN,
     createdAt: 1,
     type: 'message' as const,
-    body: 'go edit the widget renderer',
+    body: sourceText,
     attachments: [],
   };
   const command = {
@@ -706,6 +834,28 @@ it('ends the same way for a harness that reports no tool calls at all', async ()
     onChunk?.(text, text, text);
     return { stopReason: 'end_turn', updates: [], agentText: text, toolCalls: [] };
   });
+
+  expectTextlessUpgradeEnding(result);
+  expect(result.onLaneChanged).toHaveBeenCalledTimes(1);
+});
+
+it('accepts an upgrade the harness triggers from a plain bug description, not just an imperative ask', async () => {
+  // Nothing on this path parses the triggering message's wording - the
+  // prompt only tells the model that clear intent is enough. This scripted
+  // harness stands in for a model that read a bug report and decided to
+  // call the tool; the wiring must accept that call exactly like an
+  // imperative one, proving no code-level phrase gate exists.
+  const result = await upgradeTurn(
+    async ({ commitUpgrade, onChunk, onToolCalls }) => {
+      const calls = [{ id: 'call-1', title: 'upgrade_corner_to_code', status: 'completed' }];
+      commitUpgrade();
+      onToolCalls?.(calls);
+      const text = 'Upgraded this corner so I can fix the crash.';
+      onChunk?.(text, text, text);
+      return { stopReason: 'end_turn', updates: [], agentText: text, toolCalls: calls };
+    },
+    'the widget renderer crashes every time I resize the window',
+  );
 
   expectTextlessUpgradeEnding(result);
   expect(result.onLaneChanged).toHaveBeenCalledTimes(1);

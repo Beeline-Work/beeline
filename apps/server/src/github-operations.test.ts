@@ -129,6 +129,93 @@ describe('GitHub phone operations', () => {
     )).rows).toEqual([{ feature_branch: null }, { feature_branch: null }]);
     expect(app.openPullRequestsForBranch).toHaveBeenCalledTimes(1);
   });
+  it('matches a post-upgrade webhook on its recorded feature branch, never the prefix fallback', async () => {
+    // upgradeCornerLane records feature_branch exactly, so its webhook must
+    // resolve through the exact `fact.feature_branch=$3` join (processCornerEvent
+    // line ~1352), not the prefix-recovery path. Proven by giving this corner
+    // an existing pull request (`has_pr=true`): the prefix path's own
+    // candidate filter (`!target.has_pr`) would refuse to match it, so an
+    // update landing here can only have come from the exact-match branch.
+    const workspace = '11111111-1111-4111-8111-111111111111';
+    const room = '22222222-2222-4222-8222-222222222222';
+    const corner = '33333333-3333-4333-8333-333333333333';
+    const branch = 'feature/corner-333333333333';
+    const headSha = '3'.repeat(40);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+    await database.query(
+      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
+       VALUES(77,$1,'42','owner','User','selected','active')`,
+      [HUMAN],
+    );
+    await database.query(
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch)
+       VALUES(101,77,'owner/widgets','main')`,
+    );
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,created_by,name,repository_remote,github_installation_id)
+       VALUES($1,$2,$3,'General','https://github.com/owner/widgets.git',77)`,
+      [room, workspace, HUMAN],
+    );
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
+       VALUES($1,$2,$3,$4,'Promoted')`,
+      [corner, workspace, room, HUMAN],
+    );
+    await database.query(
+      `INSERT INTO corner_facts(corner_id,objective,lane,feature_branch,lifecycle)
+       VALUES($1,'Promoted work','code',$2,$3::jsonb)`,
+      [
+        corner,
+        branch,
+        JSON.stringify({
+          checks: 'unknown',
+          pr: {
+            number: 9,
+            url: 'https://github.com/owner/widgets/pull/9',
+            headSha,
+          },
+        }),
+      ],
+    );
+    const app = {
+      installationToken: vi.fn(async () => ({ token: 'room-token' })),
+      readCommitCheckRollup: vi.fn(async () => ({
+        state: 'passed',
+        total: 1,
+        failing: [],
+        checks: [{ name: 'build', status: 'passed' }],
+      })),
+      openPullRequestsForBranch: vi.fn(async () => []),
+    } as unknown as GitHubAppClient;
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
+
+    await operations.processWebhook('check_run', {
+      action: 'completed',
+      installation: { id: 77 },
+      repository: { full_name: 'owner/widgets' },
+      check_run: {
+        name: 'build',
+        status: 'completed',
+        conclusion: 'success',
+        head_sha: headSha,
+        check_suite: { head_branch: branch, head_sha: headSha },
+      },
+    });
+
+    expect(
+      (
+        await database.query<{ feature_branch: string; lifecycle: object }>(
+          `SELECT feature_branch,lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0],
+    ).toMatchObject({
+      feature_branch: branch,
+      lifecycle: { checks: 'passing' },
+    });
+    // The prefix-recovery path never ran: it is the only caller of this.
+    expect(app.openPullRequestsForBranch).not.toHaveBeenCalled();
+  });
   it('recovers a missed merge webhook and ignores branch deletion pushes', async () => {
     const workspace = '11111111-1111-4111-8111-111111111111';
     const room = '22222222-2222-4222-8222-222222222222';

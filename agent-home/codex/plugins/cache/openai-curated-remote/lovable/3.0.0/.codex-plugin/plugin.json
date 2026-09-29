@@ -1,0 +1,26 @@
+{
+  "apps": "./.app.json",
+  "author": {
+    "name": "Lovable Labs"
+  },
+  "description": "Lovable builds and edits full-stack web apps from natural language. Describe an app and Lovable creates a project, writes the TypeScript, Tailwind, and shadcn/ui code, and returns a live preview you can watch build. Follow-up messages refine the app, and you can inspect the generated code and diffs, add a PostgreSQL database and third-party connectors, manage reusable project knowledge and skills, and publish the finished app to a public URL.",
+  "interface": {
+    "capabilities": [],
+    "category": "Developer Tools",
+    "defaultPrompt": [
+      "build me an AI-powered customer support app",
+      "build me an AI-powered coaching app",
+      "build me an marketing campaign planner"
+    ],
+    "developerName": "Lovable Labs",
+    "displayName": "Lovable",
+    "longDescription": "Lovable builds and edits full-stack web apps from natural language. Describe an app and Lovable creates a project, writes the TypeScript, Tailwind, and shadcn/ui code, and returns a live preview you can watch build. Follow-up messages refine the app, and you can inspect the generated code and diffs, add a PostgreSQL database and third-party connectors, manage reusable project knowledge and skills, and publish the finished app to a public URL.",
+    "privacyPolicyURL": "https://lovable.dev/privacy",
+    "shortDescription": "Build full-stack apps by chat",
+    "supportURL": "https://lovable.dev/support",
+    "termsOfServiceURL": "https://lovable.dev/terms",
+    "websiteURL": "https://lovable.dev/"
+  },
+  "name": "lovable",
+  "version": "3.0.0"
+}

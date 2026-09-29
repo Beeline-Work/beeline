@@ -381,7 +381,9 @@ jobs:
         if: github.event_name == 'pull_request' && runner.os == 'Windows'
         continue-on-error: true
         timeout-minutes: 3
-        run: pwsh -File scripts/desktop-notification-proof-windows.ps1
+        # Windows PowerShell (not pwsh/Core), so the script's WinRT OCR
+        # verification can use .NET Framework's built-in WinRT projection.
+        run: powershell.exe -File scripts/desktop-notification-proof-windows.ps1
 
       - uses: actions/upload-artifact@v4
         if: github.event_name == 'pull_request' && (runner.os == 'macOS' || runner.os == 'Windows')

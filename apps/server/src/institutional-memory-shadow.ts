@@ -1185,10 +1185,14 @@ function keywordMatches(keywords: readonly string[], words: ReadonlySet<string>)
  * How many of the query's words this item answers: a stored keyword, or a
  * literal appearance in the canonical key or body. Counts distinct query
  * words, not occurrences, so ranking cannot be inflated by a repeated term.
+ * A literal whole-query hit (the query's word extraction is Latin-only, so a
+ * non-Latin-script query such as Korean or Japanese extracts no words at
+ * all) scores at least as high as a perfect word-overlap match.
  */
 function searchRelevance(
   item: { keywords: readonly string[]; canonical_key: string; body: string },
   words: ReadonlySet<string>,
+  literalQuery: string,
 ): number {
   const canonicalKey = item.canonical_key.toLocaleLowerCase('en-US');
   const body = item.body.toLocaleLowerCase('en-US');
@@ -1197,6 +1201,9 @@ function searchRelevance(
     if (item.keywords.includes(word) || canonicalKey.includes(word) || body.includes(word)) {
       score += 1;
     }
+  }
+  if (canonicalKey.includes(literalQuery) || body.includes(literalQuery)) {
+    score = Math.max(score, words.size);
   }
   return score;
 }
@@ -1626,9 +1633,14 @@ export async function searchInstitutionalMemory(
     }
     // The same tokenizer and any-word-overlap semantics as the per-turn
     // snapshot (getInstitutionalContext): a natural-language query matches on
-    // its individual words, not as one literal phrase.
+    // its individual words, not as one literal phrase. Word extraction is
+    // Latin-only, so a non-Latin-script query (Korean, Japanese, ...)
+    // extracts no words at all; the literal whole-query substring match
+    // below is what the old strpos-only code relied on and remains a
+    // standing OR alternative rather than only a fallback, so it keeps
+    // finding non-Latin facts the tokenizer cannot see into.
     const words = institutionalMemoryRequestWords(query);
-    if (words.size === 0) throw new Error('institutional memory search query is invalid');
+    const literalQuery = query.toLocaleLowerCase('en-US');
     const candidates = (
       await db.query<{
         id: string;
@@ -1648,19 +1660,26 @@ export async function searchInstitutionalMemory(
          AND (item.keywords && $3::text[] OR EXISTS (
                SELECT 1 FROM unnest($3::text[]) word
                WHERE strpos(lower(item.canonical_key),word)>0 OR strpos(lower(item.body),word)>0
-             ))
+             ) OR strpos(lower(item.canonical_key),$4)>0 OR strpos(lower(item.body),$4)>0)
          AND NOT EXISTS (
            SELECT 1 FROM institutional_memory_item_sources source
            JOIN messages message ON message.id=source.message_id
            WHERE source.item_id=item.id AND message.deleted_at IS NOT NULL
          )
        ORDER BY item.updated_at DESC,item.id
-       LIMIT $4`,
-        [authority.workspace_id, authority.requester_identity_id, [...words], INSTITUTIONAL_MEMORY_SEARCH_SCAN_MAX],
+       LIMIT $5`,
+        [
+          authority.workspace_id,
+          authority.requester_identity_id,
+          [...words],
+          literalQuery,
+          INSTITUTIONAL_MEMORY_SEARCH_SCAN_MAX,
+        ],
       )
     ).rows;
     const ranked = [...candidates].sort((left, right) => {
-      const relevance = searchRelevance(right, words) - searchRelevance(left, words);
+      const relevance =
+        searchRelevance(right, words, literalQuery) - searchRelevance(left, words, literalQuery);
       if (relevance) return relevance;
       const recency = right.updated_at.getTime() - left.updated_at.getTime();
       return recency || left.id.localeCompare(right.id);

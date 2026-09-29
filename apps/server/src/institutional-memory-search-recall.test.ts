@@ -199,4 +199,116 @@ describe('search_memory recall (institutional memory)', () => {
     );
     expect(result.results).toEqual([]);
   });
+
+  // institutionalMemoryRequestWords only extracts [a-z0-9] runs, so a
+  // non-Latin-script query (this household's own data: a Korean name,
+  // Japanese address) extracts zero words. The whole-trimmed-query literal
+  // substring match (the old, pre-tokenization behavior) is kept as a
+  // standing OR alternative specifically so these keep working.
+  it('finds a fact by a literal Korean query with no extractable Latin words', async () => {
+    const daemon = liveDaemon();
+    await openCommand('cake-order-turn', 'cake-order-generation');
+    const saved = await daemon.execute(
+      'proposeInstitutionalMemory',
+      {
+        agentId: RONNIE,
+        roomId: ROOM,
+        requestId: 'cake-order-turn',
+        generationId: 'cake-order-generation',
+        memoryKind: 'human_profile_fact',
+        canonicalKey: 'requester.wife.daeun_lee.korean_address',
+        body: '다은 주소는 서울시 강남구에 있습니다.',
+        keywords: ['korean', 'address'],
+        sourceMessageIds: [MESSAGE],
+        correction: false,
+        confidence: 0.9,
+        cas: { baseVersion: null },
+      },
+      RONNIE,
+    );
+    const result = await daemon.execute(
+      'searchInstitutionalMemory',
+      {
+        agentId: RONNIE,
+        roomId: ROOM,
+        requestId: 'cake-order-turn',
+        generationId: 'cake-order-generation',
+        query: '다은 주소',
+      },
+      RONNIE,
+    );
+    expect(result.results.map((r) => r.id)).toContain(saved.itemId);
+  });
+
+  it('finds a fact by a literal Japanese query with no extractable Latin words', async () => {
+    const daemon = liveDaemon();
+    await openCommand('cake-order-turn', 'cake-order-generation');
+    const saved = await daemon.execute(
+      'proposeInstitutionalMemory',
+      {
+        agentId: RONNIE,
+        roomId: ROOM,
+        requestId: 'cake-order-turn',
+        generationId: 'cake-order-generation',
+        memoryKind: 'human_profile_fact',
+        canonicalKey: 'requester.wife.daeun_lee.japan_address',
+        body: '受取人: ダウン 電話: 03-4700-2210 元麻布のマンション',
+        keywords: ['japan', 'address'],
+        sourceMessageIds: [MESSAGE],
+        correction: false,
+        confidence: 0.9,
+        cas: { baseVersion: null },
+      },
+      RONNIE,
+    );
+    for (const query of ['元麻布', 'ダウン 電話']) {
+      const result = await daemon.execute(
+        'searchInstitutionalMemory',
+        {
+          agentId: RONNIE,
+          roomId: ROOM,
+          requestId: 'cake-order-turn',
+          generationId: 'cake-order-generation',
+          query,
+        },
+        RONNIE,
+      );
+      expect(result.results.map((r) => r.id), `query: ${query}`).toContain(saved.itemId);
+    }
+  });
+
+  it('finds a fact by a mixed Latin/non-Latin query', async () => {
+    const daemon = liveDaemon();
+    await openCommand('cake-order-turn', 'cake-order-generation');
+    const saved = await daemon.execute(
+      'proposeInstitutionalMemory',
+      {
+        agentId: RONNIE,
+        roomId: ROOM,
+        requestId: 'cake-order-turn',
+        generationId: 'cake-order-generation',
+        memoryKind: 'human_profile_fact',
+        canonicalKey: 'requester.wife.daeun_lee.mixed_address',
+        body: 'Daeun 住所: 東京都港区元麻布',
+        keywords: ['daeun', 'address'],
+        sourceMessageIds: [MESSAGE],
+        correction: false,
+        confidence: 0.9,
+        cas: { baseVersion: null },
+      },
+      RONNIE,
+    );
+    const result = await daemon.execute(
+      'searchInstitutionalMemory',
+      {
+        agentId: RONNIE,
+        roomId: ROOM,
+        requestId: 'cake-order-turn',
+        generationId: 'cake-order-generation',
+        query: 'Daeun 住所',
+      },
+      RONNIE,
+    );
+    expect(result.results.map((r) => r.id)).toContain(saved.itemId);
+  });
 });

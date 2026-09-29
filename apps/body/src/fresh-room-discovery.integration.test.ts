@@ -127,7 +127,10 @@ lines.on('line', async (line) => {
       const body = await response.json();
       const cornerId = body.cornerId ?? ('http-' + response.status + ':' + JSON.stringify(body));
       // Production fidelity: the parent turn keeps running after open_corner.
-      await new Promise((r) => setTimeout(r, 3000));
+      // Short on purpose - this is arbitrary fixture overhead, not something
+      // under test, and it eats directly into the room-turn's own reply
+      // budget under CI contention.
+      await new Promise((r) => setTimeout(r, 250));
       send({
         jsonrpc: '2.0',
         method: 'session/update',
@@ -635,16 +638,25 @@ describe('fresh Room discovery through the live membership wake', () => {
         messageId: 'e'.repeat(64),
         text: '@bee OPEN CORNER now',
       });
-      const room = await vi.waitFor(
+      // createCorner() discovers and starts the new corner's own turn as
+      // soon as its row commits, well before this Room turn's own reply -
+      // the two then share this test's single Node event loop and single
+      // PGlite connection. Polling the full authenticated readRoom (auth,
+      // PhoneService projection, joins) every 500ms adds real load of its
+      // own to that same contended connection; poll a direct, uninstru-
+      // mented query for just the text instead, and pay for the full
+      // projection once, after the row is already known to exist.
+      await vi.waitFor(
         async () => {
-          const room = await readRoom(ROOM);
-          expect(
-            room.messages.some((m) => (m.text ?? '').includes('CORNER OPENED ')),
-          ).toBe(true);
-          return room;
+          const found = await database.query<{ id: string }>(
+            `SELECT id FROM messages WHERE room_id=$1 AND text LIKE '%CORNER OPENED %' LIMIT 1`,
+            [ROOM],
+          );
+          expect(found.rowCount).toBeGreaterThan(0);
         },
-        { timeout: 30_000, interval: 500 },
+        { timeout: 60_000, interval: 200 },
       );
+      const room = await readRoom(ROOM);
       const cornerId = room.messages
         .find((m) => (m.text ?? '').includes('CORNER OPENED '))!
         .text!.match(/CORNER OPENED (\S+)/)![1];

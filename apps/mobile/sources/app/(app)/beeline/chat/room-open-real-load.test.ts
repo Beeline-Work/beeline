@@ -103,12 +103,13 @@ describe('Room open paints a Room, not the last message', () => {
     expect(failedIndex).toContain('scrollToIndex');
     // The first native frame can report a clipped sliver as viewable. A
     // measured re-center keeps that provisional frame from ending the jump —
-    // but exactly ONCE: a fixed [400, 1200]ms retry ladder used to reissue it
-    // unconditionally, producing two extra, humanly-visible corrections after
-    // the landing regardless of whether the first one already needed it. See
-    // `buzz/message-source-landing.ts` and its own tests for the one-shot gate.
+    // but exactly ONCE, and only once the reader's own viewability report
+    // says the target is actually on screen: a fixed [400, 1200]ms retry
+    // ladder (and later a fixed animation-frame delay) used to reissue it on
+    // a clock regardless of whether the target had even rendered yet. See
+    // `buzz/message-source-landing.ts` and its own tests for the settle gate.
     expect(surface).not.toContain('for (const delay of [400, 1200])');
-    expect(surface).toContain('canSettleMessageSourceLanding');
+    expect(surface).toContain('shouldSettleMessageSourceLanding');
     expect(surface).toContain('dragEndSequenceRef.current');
   });
 });

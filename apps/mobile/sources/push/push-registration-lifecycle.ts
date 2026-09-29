@@ -9,6 +9,7 @@ interface PushLifecycle {
   retry(identity: Identity): Promise<BuzzPushRegistrationResult | null>;
   reportUpdate(identity: Identity): Promise<unknown>;
   reportFailure(error: unknown): void;
+  clearIdentity?(): Promise<void>;
 }
 
 /** Start before loading identity so a sign-in during startup cannot be lost.
@@ -33,6 +34,7 @@ export function startPushRegistrationLifecycle(deps: PushLifecycle): () => void 
           if (disposed) return;
           if (!identity) {
             registeredIdentity = null;
+            await deps.clearIdentity?.();
             continue;
           }
           void deps.reportUpdate(identity).catch(deps.reportFailure);

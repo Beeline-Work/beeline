@@ -31,6 +31,7 @@ import { McpRegistryClient } from './mcp-registry.js';
 import { RegistryMcpOAuth } from './registry-mcp-oauth.js';
 import { ReviewAccess } from './review-access.js';
 import { ReleaseNotifier } from './release-notify.js';
+import { createWebPushSender } from './web-push.js';
 import type { MonolithAuthMount } from './monolith-auth.js';
 import { PostgresLiveListener } from './postgres-live.js';
 import { listenAfterBestEffortRecovery } from './startup.js';
@@ -210,8 +211,9 @@ async function main() {
       ? await createFirebasePushSender(process.env)
       : undefined;
   const apnsPushSender = createApnsPushSender(process.env);
-  const push = pushSender
-    ? new PushDeliveryLoop(jobsDatabase, pushSender, apnsPushSender)
+  const webPushSender = createWebPushSender(jobsDatabase, process.env);
+  const push = pushSender || webPushSender
+    ? new PushDeliveryLoop(jobsDatabase, pushSender, apnsPushSender, undefined, undefined, webPushSender)
     : undefined;
   const schedules = new AgentScheduleLoop(jobsDatabase, (roomId) =>
     live.publish({ type: 'invalidate', roomId, reason: 'schedule' }),
@@ -239,8 +241,8 @@ async function main() {
       })
     : new MediaExpiryLoop(jobsDatabase);
   const choiceExpiry = new ChoiceExpiryLoop(jobsDatabase);
-  const sendPushTest = pushSender
-    ? createPushTestSender(database, pushSender, apnsPushSender)
+  const sendPushTest = pushSender || webPushSender
+    ? createPushTestSender(database, pushSender, apnsPushSender, webPushSender)
     : undefined;
   const phone = new PhoneService(
     database,

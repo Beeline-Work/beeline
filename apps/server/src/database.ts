@@ -167,7 +167,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 10;
+export const REQUIRED_SCHEMA_VERSION = 11;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -1774,6 +1774,9 @@ CREATE TABLE IF NOT EXISTS push_devices (
   registered_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE push_devices DROP CONSTRAINT IF EXISTS push_devices_platform_check;
+ALTER TABLE push_devices ADD CONSTRAINT push_devices_platform_check CHECK (platform IN ('android', 'ios', 'web'));
+ALTER TABLE push_devices ADD COLUMN IF NOT EXISTS web_keys jsonb;
 ALTER TABLE push_devices ADD COLUMN IF NOT EXISTS registered_at timestamptz;
 UPDATE push_devices SET registered_at=updated_at WHERE registered_at IS NULL;
 ALTER TABLE push_devices ALTER COLUMN registered_at SET DEFAULT now();

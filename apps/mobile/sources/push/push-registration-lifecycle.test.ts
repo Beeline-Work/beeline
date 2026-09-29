@@ -15,12 +15,14 @@ function setup(initial: Identity | null = null) {
   const loadIdentity = vi.fn(async () => identity);
   const stopIdentity = vi.fn();
   const stopForeground = vi.fn();
+  const clearIdentity = vi.fn(async () => undefined);
   const dispose = startPushRegistrationLifecycle({
     loadIdentity,
     register,
     retry,
     reportUpdate: vi.fn(async () => undefined),
     reportFailure: vi.fn(),
+    clearIdentity,
     subscribeIdentityChange: (listener) => {
       changed = listener;
       return stopIdentity;
@@ -33,6 +35,7 @@ function setup(initial: Identity | null = null) {
   return {
     register,
     retry,
+    clearIdentity,
     loadIdentity,
     dispose,
     stopIdentity,
@@ -68,6 +71,7 @@ describe('push registration follows the signed-in identity', () => {
     await vi.waitFor(() => expect(app.retry).toHaveBeenCalledWith(first));
     app.signIn(null);
     await vi.waitFor(() => expect(app.loadIdentity).toHaveBeenCalledTimes(3));
+    expect(app.clearIdentity).toHaveBeenCalledOnce();
     app.foreground();
     await vi.waitFor(() => expect(app.loadIdentity).toHaveBeenCalledTimes(4));
     expect(app.retry).toHaveBeenCalledOnce();

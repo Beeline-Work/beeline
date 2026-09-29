@@ -6,6 +6,7 @@ import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
+import { registerWebPush, unregisterWebPush } from './web-push-registration';
 
 const REGISTRATION_TIMEOUT_MS = 7_500;
 const PUSH_ENABLED_PREFIX = '@beeline/buzz-push/enabled/';
@@ -199,7 +200,7 @@ export async function registerBuzzPushNotifications(
   identity: Identity,
   options: { automatic?: boolean } = {},
 ): Promise<BuzzPushRegistrationResult> {
-  if (!currentPushPlatform()) {
+  if (!currentPushPlatform() && Platform.OS !== 'web') {
     return { registered: false, retryable: false, phase: 'unsupported-platform' };
   }
   if (!(await getBuzzPushEnabled(identity.publicKey))) {
@@ -208,7 +209,10 @@ export async function registerBuzzPushNotifications(
 
   // Automatic retries never prompt for permission; explicit attempts (cold
   // start, toggle on, manual retry) may request it.
-  const attempt = await attemptRegistration(identity, !options.automatic);
+  const attempt =
+    Platform.OS === 'web'
+      ? await registerWebPush(identity, !options.automatic)
+      : await attemptRegistration(identity, !options.automatic);
   const previous = await getBuzzPushRegistrationState(identity.publicKey);
   const state: BuzzPushRegistrationState = attempt.registered
     ? {
@@ -427,7 +431,7 @@ export async function sendBuzzPushTestNotification(identity: Identity): Promise<
 export async function retryBuzzPushRegistration(
   identity: Identity,
 ): Promise<BuzzPushRegistrationResult | null> {
-  if (!currentPushPlatform()) return null;
+  if (!currentPushPlatform() && Platform.OS !== 'web') return null;
   if (!(await getBuzzPushEnabled(identity.publicKey))) return null;
   const state = await getBuzzPushRegistrationState(identity.publicKey);
   if (!state || state.registered || !state.retryable) return null;
@@ -441,6 +445,21 @@ export async function setBuzzPushEnabled(
 ): Promise<BuzzPushRegistrationResult> {
   await AsyncStorage.setItem(enabledKey(identity.publicKey), enabled ? '1' : '0');
   if (enabled) return registerBuzzPushNotifications(identity);
+
+  if (Platform.OS === 'web') {
+    await unregisterWebPush();
+    const disabledResult: BuzzPushRegistrationResult = {
+      registered: false,
+      retryable: false,
+      phase: 'disabled',
+    };
+    await saveRegistrationState(identity.publicKey, {
+      ...disabledResult,
+      failedAttempts: 0,
+      updatedAt: Date.now(),
+    });
+    return disabledResult;
+  }
 
   let token = await AsyncStorage.getItem(tokenKey(identity.publicKey));
   const platform = currentPushPlatform();

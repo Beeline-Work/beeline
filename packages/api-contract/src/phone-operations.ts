@@ -144,6 +144,7 @@ export type PhoneOperationMap = {
   uploadMedia: { input: UploadMediaInput; output: AttachmentReference };
   registerPushDevice: { input: PushDeviceInput; output: PushRegistrationResult };
   unregisterPushDevice: { input: PushDeviceInput; output: void };
+  readWebPushKey: { input: EmptyInput; output: { publicKey: string | null } };
   sendPushTest: { input: EmptyInput; output: void };
   /** Erases the signed-in account and its personal data. Idempotent: a second
    *  call resolves without effect once the identity row is gone. */
@@ -504,8 +505,9 @@ export type UploadMediaInput = {
 };
 export type PushDeviceInput = {
   readonly token: string;
-  readonly platform: 'android' | 'ios';
+  readonly platform: 'android' | 'ios' | 'web';
   readonly environment: 'physical' | 'emulator';
+  readonly keys?: { readonly p256dh: string; readonly auth: string };
 };
 export type PushRegistrationResult = { readonly accepted: boolean };
 export type RunningUpdateInput = {

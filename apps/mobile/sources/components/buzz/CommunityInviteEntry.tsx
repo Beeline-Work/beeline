@@ -3,7 +3,6 @@ import { Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { Community } from '@beeline/buzz-client';
 import { MEMBERS_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
-import { Typography } from '@/constants/Typography';
 
 type CommunityInviteEntryProps = {
   community: Community | null;
@@ -77,11 +76,10 @@ const styles = StyleSheet.create((theme) => {
     justifyContent: 'center',
     gap: 5,
   },
-  actionIcon: { ...Typography.default(), color: groknight.steel, fontSize: 13 },
+  actionIcon: { ...theme.buzz.type.body, color: groknight.steel },
   actionText: {
-    ...Typography.default('semiBold'),
+    ...theme.buzz.type.bodyStrong,
     color: groknight.textSecondary,
-    fontSize: 13,
   },
   disabled: { backgroundColor: groknight.bgBase },
   });

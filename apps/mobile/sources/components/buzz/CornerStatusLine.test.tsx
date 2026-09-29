@@ -14,13 +14,16 @@ vi.mock('react-native', async () => {
     View: host('View'),
   };
 });
-vi.mock('react-native-unistyles', () => ({
-  StyleSheet: {
-    hairlineWidth: 1,
-    create: (factory: (theme: unknown) => unknown) =>
-      factory({ buzz: { accent: '#gold', ledgerQuiet: '#quiet' } }),
-  },
-}));
+vi.mock('react-native-unistyles', async () => {
+  const { typeRoles } = await import('@/buzz/groknight');
+  return {
+    StyleSheet: {
+      hairlineWidth: 1,
+      create: (factory: (theme: unknown) => unknown) =>
+        factory({ buzz: { accent: '#gold', ledgerQuiet: '#quiet', type: typeRoles } }),
+    },
+  };
+});
 
 import { CornerStatusLine } from './CornerStatusLine';
 

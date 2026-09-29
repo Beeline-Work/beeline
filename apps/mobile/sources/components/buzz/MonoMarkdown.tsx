@@ -2,7 +2,6 @@ import React, { useCallback, useMemo } from 'react';
 import { Text, View, type TextStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { parseMarkdown, type MarkdownSpan } from '@/components/markdown/parseMarkdown';
-import { Typography } from '@/constants/Typography';
 import { CodeBlock } from '@/components/buzz/CodeBlock';
 import {
   findChannelReferences,
@@ -569,7 +568,6 @@ const styles = StyleSheet.create((theme) => ({
   heading: {
     fontFamily: theme.buzz.proseSemibold,
     color: theme.buzz.ledgerBright,
-    letterSpacing: 0.6,
     marginTop: 3,
   },
   documentHeading1: { ...theme.buzz.type.hero, fontFamily: theme.buzz.proseSemibold, color: theme.buzz.textPrimary },
@@ -600,10 +598,8 @@ const styles = StyleSheet.create((theme) => ({
     borderLeftColor: theme.buzz.bgTexturePeak,
   },
   codeBlock: {
-    ...Typography.mono(),
+    ...theme.buzz.type.machine,
     color: theme.buzz.ledgerQuiet,
-    fontSize: 12,
-    lineHeight: 18,
   },
   /**
    * A pipe table keeps the fenced block's machine frame and mono body, but

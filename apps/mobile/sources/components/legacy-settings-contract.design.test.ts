@@ -28,9 +28,13 @@ describe('retained settings leaves use the Beeline design contract', () => {
   });
 
   it('renders settings as a flat hairline index with semantic prose and mono chrome', () => {
-    expect(item).toContain('fontFamily: theme.buzz.proseSemibold');
-    expect(item).toContain('fontFamily: theme.buzz.proseRegular');
-    expect(item).toContain('fontFamily: theme.buzz.monoRegular');
+    // Row title/subtitle/detail read through the shared type roles now
+    // (`theme.buzz.type.*`, DESIGN.md → Type) rather than a bare fontFamily —
+    // bodyStrong/meta/machine resolve to the same proseSemibold/proseRegular/
+    // monoRegular families these families named directly before.
+    expect(item).toContain('...theme.buzz.type.bodyStrong');
+    expect(item).toContain('...theme.buzz.type.meta');
+    expect(item).toContain('...theme.buzz.type.machine');
     expect(item).toContain('backgroundColor: theme.buzz.border');
     expect(itemGroup).toContain("backgroundColor: 'transparent'");
     expect(itemGroup).toContain('borderTopWidth: StyleSheet.hairlineWidth');

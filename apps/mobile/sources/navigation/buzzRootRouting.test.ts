@@ -25,16 +25,19 @@ vi.mock('react-native', async () => {
   return { Text: host('Text'), View: host('View') };
 });
 
-vi.mock('react-native-unistyles', () => ({
-  StyleSheet: {
-    create: (factory: any) =>
-      factory({
-        colors: { text: 'text', textSecondary: 'secondary' },
-        // index.tsx reads the Beeline typography tokens for its prose.
-        buzz: { proseRegular: 'proseRegular', proseSemibold: 'proseSemibold' },
-      }),
-  },
-}));
+vi.mock('react-native-unistyles', async () => {
+  const { typeRoles } = await import('@/buzz/groknight');
+  return {
+    StyleSheet: {
+      create: (factory: any) =>
+        factory({
+          colors: { text: 'text', textSecondary: 'secondary' },
+          // index.tsx reads the Beeline typography tokens for its prose.
+          buzz: { proseRegular: 'proseRegular', proseSemibold: 'proseSemibold', type: typeRoles },
+        }),
+    },
+  };
+});
 
 vi.mock('@/components/RoundButton', async () => {
   const ReactModule = await import('react');

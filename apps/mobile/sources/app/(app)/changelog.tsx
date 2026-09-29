@@ -5,7 +5,6 @@ import { StyleSheet } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
 import { getChangelogEntries, getLatestTitle, setLastViewedTitle } from '@/changelog';
-import { Typography } from '@/constants/Typography';
 import { layout } from '@/components/layout';
 import { t } from '@/text';
 import { useLayoutClass } from '@/utils/responsive';
@@ -103,27 +102,18 @@ const styles = StyleSheet.create((theme) => ({
         marginBottom: 32,
     },
     titleText: {
-        ...Typography.default('semiBold'),
-        fontFamily: theme.buzz.proseSemibold,
-        fontSize: 20,
-        lineHeight: 28,
+        ...theme.buzz.type.hero,
         color: theme.buzz.textPrimary,
         marginBottom: 8,
     },
     summaryText: {
-        ...Typography.default('regular'),
-        fontFamily: theme.buzz.proseRegular,
-        fontSize: 15,
-        lineHeight: 22,
+        ...theme.buzz.type.body,
         color: theme.buzz.textSecondary,
         marginBottom: 16,
     },
     bodyText: {
-        ...Typography.default(),
-        fontFamily: theme.buzz.proseRegular,
+        ...theme.buzz.type.body,
         color: theme.buzz.ledgerBody,
-        fontSize: 16,
-        lineHeight: 25,
     },
     emptyState: {
         flex: 1,
@@ -132,10 +122,7 @@ const styles = StyleSheet.create((theme) => ({
         padding: 40,
     },
     emptyText: {
-        ...Typography.default('regular'),
-        fontFamily: theme.buzz.proseRegular,
-        fontSize: 16,
-        lineHeight: 24,
+        ...theme.buzz.type.body,
         color: theme.buzz.textSecondary,
         textAlign: 'center',
     }

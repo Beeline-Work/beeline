@@ -1,7 +1,6 @@
 import React from 'react';
 import { View, TextInput, Platform } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 interface CommandPaletteInputProps {
@@ -38,7 +37,7 @@ export function CommandPaletteInput({
     <View style={styles.container}>
       <TextInput
         ref={inputRef}
-        style={[styles.input, Typography.default()]}
+        style={styles.input}
         value={value}
         onChangeText={onChangeText}
         placeholder={t('commandPalette.placeholder')}
@@ -62,7 +61,7 @@ const styles = StyleSheet.create((theme) => ({
   input: {
     paddingHorizontal: 32,
     paddingVertical: 24,
-    fontSize: 20,
+    ...theme.buzz.type.hero,
     color: theme.buzz.textPrimary,
     // Remove outline on web
     ...(Platform.OS === 'web'

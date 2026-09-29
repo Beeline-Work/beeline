@@ -33,17 +33,14 @@ export function PinnedConversationsEmpty({
 const styles = StyleSheet.create((theme) => ({
   empty: { alignItems: 'center', paddingHorizontal: 20, paddingVertical: 72, gap: 24 },
   title: {
-    ...theme.buzz.type.bodyStrong,
+    ...theme.buzz.type.hero,
     color: theme.buzz.textPrimary,
     textAlign: 'center',
-    fontSize: 22,
-    lineHeight: 30,
   },
   copy: {
     ...theme.buzz.type.meta,
     color: theme.buzz.ledgerQuiet,
     textAlign: 'center',
-    lineHeight: 24,
   },
   action: {
     flexDirection: 'row',

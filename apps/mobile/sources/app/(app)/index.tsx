@@ -3,7 +3,6 @@ import { Text, View } from 'react-native';
 import * as React from 'react';
 import { router, usePathname } from 'expo-router';
 import { StyleSheet } from 'react-native-unistyles';
-import { Typography } from '@/constants/Typography';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { parseCommunityInviteToken } from '@/buzz/community-invite';
 import { parseReviewSecret } from '@/buzz/review-link';
@@ -163,15 +162,11 @@ const styles = StyleSheet.create((theme) => ({
   title: {
     marginTop: 16,
     textAlign: 'center',
-    fontSize: 24,
-    ...Typography.default('semiBold'),
-    fontFamily: theme.buzz.proseSemibold,
+    ...theme.buzz.type.hero,
     color: theme.colors.text,
   },
   subtitle: {
-    ...Typography.default(),
-    fontFamily: theme.buzz.proseRegular,
-    fontSize: 18,
+    ...theme.buzz.type.body,
     color: theme.colors.textSecondary,
     marginTop: 16,
     textAlign: 'center',

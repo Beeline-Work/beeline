@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { Typography } from '@/constants/Typography';
 import { BeelineMarkSpinner, MARK_CELL } from './BeelineMarkSpinner';
 import { HullLivePulse } from './MonoHull';
 import { SPINNER_STEP_MS, formatWorkingCounter } from '@/buzz/turn-clock';
@@ -220,19 +219,16 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'center',
     },
     label: {
-      ...Typography.mono(),
+      ...groknight.type.machine,
       flexShrink: 1,
       minWidth: 0,
       color: groknight.accent,
-      fontSize: 12,
       lineHeight: TURN_LABEL_LINE_HEIGHT,
-      letterSpacing: 0.4,
     },
     counter: {
-      ...Typography.mono(),
+      ...groknight.type.machine,
       flexShrink: 0,
       color: groknight.accent,
-      fontSize: 12,
       lineHeight: TURN_LABEL_LINE_HEIGHT,
     },
     // One discoverable stop action, shared by Room and corner working lines.

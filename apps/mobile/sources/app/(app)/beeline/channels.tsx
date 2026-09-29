@@ -1218,7 +1218,7 @@ const styles = StyleSheet.create((theme) => {
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: hull.danger,
     },
-    error: { ...Typography.default(), color: hull.danger, fontSize: 12, textAlign: 'center' },
+    error: { ...theme.buzz.type.meta, color: hull.danger, textAlign: 'center' },
     list: { paddingTop: hull.roomCard.gap },
     emptyList: {
       flexGrow: 1,

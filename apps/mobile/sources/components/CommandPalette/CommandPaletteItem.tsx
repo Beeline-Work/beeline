@@ -2,7 +2,6 @@ import React from 'react';
 import { View, Text, Pressable, Platform } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Command } from './types';
-import { Typography } from '@/constants/Typography';
 import { Ionicons } from '@expo/vector-icons';
 
 interface CommandPaletteItemProps {
@@ -63,14 +62,12 @@ export function CommandPaletteItem({
           </View>
         )}
         <View style={styles.textContainer}>
-          <Text style={[styles.title, Typography.default()]}>{command.title}</Text>
-          {command.subtitle && (
-            <Text style={[styles.subtitle, Typography.default()]}>{command.subtitle}</Text>
-          )}
+          <Text style={styles.title}>{command.title}</Text>
+          {command.subtitle && <Text style={styles.subtitle}>{command.subtitle}</Text>}
         </View>
         {command.shortcut && (
           <View style={styles.shortcutContainer}>
-            <Text style={[styles.shortcut, Typography.mono()]}>{command.shortcut}</Text>
+            <Text style={styles.shortcut}>{command.shortcut}</Text>
           </View>
         )}
       </View>
@@ -112,21 +109,19 @@ const styles = StyleSheet.create((theme) => ({
     marginRight: 12,
   },
   title: {
-    fontSize: 15,
+    ...theme.buzz.type.body,
     color: theme.buzz.textPrimary,
     marginBottom: 2,
-    letterSpacing: -0.2,
   },
   subtitle: {
-    fontSize: 13,
+    ...theme.buzz.type.meta,
     color: theme.buzz.textSecondary,
-    letterSpacing: -0.1,
   },
   shortcutContainer: {
     paddingLeft: 10,
   },
   shortcut: {
-    fontSize: 12,
+    ...theme.buzz.type.machine,
     color: theme.buzz.textDisabled,
     fontWeight: '500',
   },

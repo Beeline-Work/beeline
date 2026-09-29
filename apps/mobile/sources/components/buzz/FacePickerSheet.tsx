@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { Typography } from '@/constants/Typography';
 import { type FaceId } from '@/buzz/faces';
 import { FaceGrid } from './FaceGrid';
 import { HullActionSheetCancel, HullActionSheetModal } from './HullActionSheet';
@@ -84,11 +83,8 @@ export function FacePickerSheet({
 const styles = StyleSheet.create((theme) => ({
   gridSlot: { alignItems: 'center', paddingVertical: 12 },
   error: {
-    ...Typography.default(),
-    fontFamily: theme.buzz.proseRegular,
+    ...theme.buzz.type.meta,
     color: theme.buzz.textSecondary,
-    fontSize: 13,
-    lineHeight: 19,
     paddingHorizontal: 22,
     paddingBottom: 8,
   },

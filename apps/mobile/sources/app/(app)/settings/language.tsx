@@ -95,15 +95,7 @@ export default function LanguageSettingsScreen() {
               subtitle={option.subtitle}
               rightElement={
                 currentSelection === option.key ? (
-                  <Text
-                    style={{
-                      color: theme.buzz.accent,
-                      fontFamily: theme.buzz.monoSemibold,
-                      fontSize: 17,
-                    }}
-                  >
-                    ✓
-                  </Text>
+                  <Text style={{ ...theme.buzz.type.body, color: theme.buzz.accent }}>✓</Text>
                 ) : null
               }
               onPress={() => handleLanguageChange(option.key)}

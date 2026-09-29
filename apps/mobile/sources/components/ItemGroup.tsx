@@ -45,12 +45,8 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingTop: 12,
     },
     headerText: {
-        fontFamily: theme.buzz.monoSemibold,
+        ...theme.buzz.type.sectionHead,
         color: theme.buzz.chrome,
-        fontSize: 11,
-        lineHeight: 16,
-        letterSpacing: 1.1,
-        textTransform: 'uppercase',
     },
     contentContainer: {
         backgroundColor: 'transparent',
@@ -64,10 +60,8 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingHorizontal: 20,
     },
     footerText: {
-        fontFamily: theme.buzz.proseRegular,
+        ...theme.buzz.type.meta,
         color: theme.buzz.textMuted,
-        fontSize: 12,
-        lineHeight: 18,
     },
 }));
 

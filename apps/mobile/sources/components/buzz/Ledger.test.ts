@@ -119,7 +119,7 @@ describe('the ledger — an agent turn', () => {
     expect(line.props.style).toMatchObject({
       fontFamily: 'SpaceGrotesk-Regular',
       transform: [{ skewX: '-8deg' }],
-      fontSize: 12,
+      fontSize: 13,
       color: '#90909B',
     });
     expect(line.props.style.fontStyle).toBeUndefined();
@@ -1032,11 +1032,11 @@ describe('the ledger — the byline says who is talking', () => {
     // pinned to the right edge.
     const role = merged(renderer.root.findByProps({ testID: 'chat-byline-role' }));
     expect(role.fontFamily).toBe('IBMPlexMono-Regular');
-    expect(role.fontSize).toBe(10);
+    expect(role.fontSize).toBe(13);
     expect(role.textTransform).toBeUndefined();
     const stamp = merged(renderer.root.findByProps({ testID: 'chat-byline-stamp' }));
     expect(stamp.fontFamily).toBe('IBMPlexMono-Regular');
-    expect(stamp.fontSize).toBe(10);
+    expect(stamp.fontSize).toBe(13);
     expect(stamp.color).toBe('#90909B');
     const status = merged(renderer.root.findByProps({ testID: 'chat-byline-status' }));
     expect(status.marginLeft).toBe('auto');

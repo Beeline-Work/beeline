@@ -191,9 +191,7 @@ const styles = StyleSheet.create((theme) => ({
   heading: { minHeight: 23, flexDirection: 'row', alignItems: 'center' },
   pin: { width: 14, alignItems: 'flex-start', justifyContent: 'center' },
   name: {
-    fontFamily: theme.buzz.proseRegular,
-    fontSize: 16,
-    lineHeight: 23,
+    ...theme.buzz.type.body,
     flex: 1,
     color: theme.buzz.textPrimary,
   },
@@ -207,9 +205,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: 8,
   },
   preview: {
-    fontFamily: theme.buzz.proseRegular,
-    fontSize: 13,
-    lineHeight: 19,
+    ...theme.buzz.type.meta,
     flex: 1,
     color: theme.buzz.textSecondary,
   },
@@ -218,9 +214,7 @@ const styles = StyleSheet.create((theme) => ({
   author: { color: theme.buzz.accent },
   quiet: { color: theme.buzz.ledgerQuiet },
   age: {
-    fontFamily: theme.buzz.proseRegular,
-    fontSize: 13,
-    lineHeight: 19,
+    ...theme.buzz.type.meta,
     color: theme.buzz.ledgerQuiet,
     flexShrink: 0,
   },

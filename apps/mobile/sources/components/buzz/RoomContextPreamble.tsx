@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { Typography } from '@/constants/Typography';
 import type { RoomContextEntry } from '@/buzz/corner-context';
 
 /**
@@ -101,25 +100,19 @@ const styles = StyleSheet.create((theme) => {
     alignItems: 'center',
   },
   disclosure: {
-    ...Typography.mono(),
+    ...groknight.type.machine,
     flexShrink: 1,
     minWidth: 0,
     color: groknight.ledgerGhost,
-    fontSize: 11,
-    lineHeight: 16,
   },
   disclosureAffordance: {
-    ...Typography.mono(),
+    ...groknight.type.machine,
     flexShrink: 0,
     color: groknight.ledgerGhost,
-    fontSize: 11,
-    lineHeight: 16,
   },
   line: {
-    ...Typography.ledger(),
+    ...groknight.type.body,
     color: groknight.ledgerGhost,
-    fontSize: 14,
-    lineHeight: 22,
   },
   });
 });

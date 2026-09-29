@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { HullDialogInput } from './HullDialog';
-import { HullActionSheetCancel, HullActionSheetModal, HullActionSheetRow } from './HullActionSheet';
+import { HULL_SHEET_INSET, HullActionSheetCancel, HullActionSheetModal } from './HullActionSheet';
+import { MonoButton } from './MonoHull';
 
 const CLOSING_TIMES = [
   { label: '5 min', seconds: 300 },
@@ -54,21 +55,25 @@ export function CreatePollSheet({
       testID="create-poll-sheet"
       footer={
         <View>
-          <HullActionSheetRow
-            disabled={busy || !ready}
-            label="Create poll"
-            onPress={() =>
-              onCreate({
-                prompt: prompt.trim(),
-                options: options.map((option) => ({
-                  label: option.trim(),
-                  consequence: option.trim(),
-                })),
-                ttlSeconds,
-              })
-            }
-            testID="create-poll-submit"
-          />
+          <View style={styles.submitInset}>
+            <MonoButton
+              disabled={busy || !ready}
+              label="Create poll"
+              loading={busy}
+              onPress={() =>
+                onCreate({
+                  prompt: prompt.trim(),
+                  options: options.map((option) => ({
+                    label: option.trim(),
+                    consequence: option.trim(),
+                  })),
+                  ttlSeconds,
+                })
+              }
+              testID="create-poll-submit"
+              variant="primary"
+            />
+          </View>
           <HullActionSheetCancel disabled={busy} onPress={onClose} />
         </View>
       }
@@ -139,7 +144,8 @@ export function CreatePollSheet({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  content: { maxHeight: 430 },
+  content: { maxHeight: 470, paddingHorizontal: HULL_SHEET_INSET },
+  submitInset: { paddingHorizontal: HULL_SHEET_INSET, paddingTop: 12, paddingBottom: 8 },
   label: {
     ...theme.buzz.type.meta,
     color: theme.buzz.textPrimary,

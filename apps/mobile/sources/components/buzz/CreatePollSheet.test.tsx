@@ -36,12 +36,16 @@ vi.mock('./HullDialog', async () => {
 vi.mock('./HullActionSheet', async () => {
   const ReactModule = await import('react');
   return {
+    HULL_SHEET_INSET: 22,
     HullActionSheetModal: (props: any) =>
       ReactModule.createElement('HullActionSheetModal', props, props.children, props.footer),
-    HullActionSheetRow: (props: any) => ReactModule.createElement('HullActionSheetRow', props),
     HullActionSheetCancel: (props: any) =>
       ReactModule.createElement('HullActionSheetCancel', props),
   };
+});
+vi.mock('./MonoHull', async () => {
+  const ReactModule = await import('react');
+  return { MonoButton: (props: any) => ReactModule.createElement('MonoButton', props) };
 });
 
 import { CreatePollSheet } from './CreatePollSheet';
@@ -59,6 +63,7 @@ describe('CreatePollSheet', () => {
     });
     const find = (testID: string) => renderer.root.findByProps({ testID });
     expect(renderer.root.findByType('HullActionSheetModal').props.title).toBe('Create poll');
+    expect(find('create-poll-submit').props.variant).toBe('primary');
     expect(find('create-poll-submit').props.disabled).toBe(true);
     act(() => find('create-poll-question').props.onChangeText(' Ship? '));
     act(() => find('create-poll-option-0').props.onChangeText(' Yes '));

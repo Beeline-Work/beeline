@@ -88,6 +88,12 @@ describe('Room and corner actions sheets', () => {
     }
   });
 
+  it('shows Room actions without row subtitles', () => {
+    for (const testID of ROOM_ROWS) {
+      expect(row(roomSheet, testID)).not.toContain('description=');
+    }
+  });
+
   it('puts the membership roster row on both overflow sheets, gated the same way', () => {
     // Trigger: open a Room, tap overflow.
     // Masking: #1432 retired this Room-sheet row for a header diamond that

@@ -85,8 +85,8 @@ describe('RoomRepositoryActions', () => {
     expect(renderer.root.findAllByProps({ testID: 'room-repo-picker' })).toHaveLength(0);
   });
 
-  it('capitalizes the Room and Corner product terms in repository descriptions', () => {
-    const renderDescription = (repositoryName: string | null) =>
+  it('keeps the Repo row to its label and value', () => {
+    const renderRow = (repositoryName: string | null) =>
       render(
         <RoomRepositoryActions
           busy={false}
@@ -96,10 +96,12 @@ describe('RoomRepositoryActions', () => {
           pickerVisible={false}
           repositoryName={repositoryName}
         />,
-      ).root.findByProps({ testID: 'room-repo-action' }).props.description;
+      ).root.findByProps({ testID: 'room-repo-action' }).props;
 
-    expect(renderDescription('beeline')).toBe('Corners in this Room tree off this repo.');
-    expect(renderDescription(null)).toBe('A Room needs a repo before a Corner can open.');
+    expect(renderRow('beeline')).toMatchObject({ label: 'Repo', metadata: 'beeline' });
+    expect(renderRow(null)).toMatchObject({ label: 'Repo', metadata: 'None' });
+    expect(renderRow('beeline').description).toBeUndefined();
+    expect(renderRow(null).description).toBeUndefined();
   });
 
   it('renders only a read-only repository fact for a non-manager', () => {

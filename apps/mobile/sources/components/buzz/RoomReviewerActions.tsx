@@ -78,7 +78,6 @@ export function RoomReviewerActions({
       <HullActionSheetRow
         accessibilityLabel={`Choose reviewer, currently ${reviewerLabel}`}
         chevron="right"
-        description="Reviews every pull request opened from this Room."
         disabled={busy}
         label="Reviewer"
         metadata={reviewerLabel}

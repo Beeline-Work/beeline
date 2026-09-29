@@ -6548,7 +6548,6 @@ export function BuzzChatSurface({
                     ? 'Turn repository notifications on'
                     : 'Turn repository notifications off'
                 }
-                description="Issues and pull requests posted here."
                 disabled={roomRepoBusy}
                 label="Repo notifications"
                 onPress={() => void handleToggleGitHubEvents()}
@@ -6668,7 +6667,6 @@ export function BuzzChatSurface({
             <HullActionSheetRow
               accessibilityLabel={`Rename ${ROOM_LABEL}`}
               chevron="right"
-              description="Change its display name."
               disabled={renameBusy}
               label="Rename"
               onPress={() => {
@@ -6681,7 +6679,6 @@ export function BuzzChatSurface({
           <HullActionSheetRow
             accessibilityLabel={`View ${ROOM_LABEL} scheduled work`}
             chevron="right"
-            description="View or stop Agent-managed recurring work."
             label="Scheduled work"
             onPress={() => {
               setRoomActionsVisible(false);
@@ -6696,7 +6693,6 @@ export function BuzzChatSurface({
         {canManageWorkspace && (
           <HullActionSheetRow
             accessibilityLabel={`Delete ${ROOM_LABEL}`}
-            description={`Permanently remove this ${ROOM_LABEL}.`}
             destructive
             disabled={roomLifecycleBusy}
             label={roomLifecycleBusy ? 'Deleting…' : `Delete ${ROOM_LABEL}`}
@@ -6706,7 +6702,6 @@ export function BuzzChatSurface({
         )}
         <HullActionSheetRow
           accessibilityLabel={`Leave ${ROOM_LABEL}`}
-          description={roomSurface?.leaveDeletesRoom ? 'Leaving deletes it for everyone.' : 'Other members keep their access.'}
           destructive
           disabled={roomLifecycleBusy}
           label={roomLifecycleBusy ? 'Leaving…' : `Leave ${ROOM_LABEL}`}

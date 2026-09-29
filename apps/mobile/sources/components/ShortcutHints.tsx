@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Platform, StyleProp, Text, View, ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import {
     formatShortcut,
@@ -56,9 +55,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surfaceHigh,
     },
     overlayLabel: {
-        ...Typography.default('semiBold'),
+        ...theme.buzz.type.meta,
+        fontFamily: theme.buzz.proseSemibold,
         color: theme.colors.text,
-        fontSize: 12,
     },
     keycap: {
         minWidth: 30,
@@ -72,9 +71,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface,
     },
     keycapText: {
-        ...Typography.mono(),
+        ...theme.buzz.type.machine,
         color: theme.colors.text,
-        fontSize: 11,
         fontWeight: '600',
     },
     badge: {
@@ -86,9 +84,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surfaceHighest,
     },
     badgeText: {
-        ...Typography.mono(),
+        ...theme.buzz.type.machine,
         color: theme.colors.textSecondary,
-        fontSize: 10,
         fontWeight: '700',
     },
 }));

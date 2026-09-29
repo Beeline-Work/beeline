@@ -827,7 +827,7 @@ const styles = StyleSheet.create((theme) => {
     secondaryButton: { backgroundColor: 'transparent', borderColor: groknight.buttonSecondaryText },
     destructiveButton: { borderStyle: 'dashed', borderColor: groknight.borderStrong },
     disabledButton: { backgroundColor: groknight.bgBase, borderColor: groknight.border },
-    monoButtonText: { ...Typography.default('semiBold'), fontSize: 13, lineHeight: 18 },
+    monoButtonText: { ...groknight.type.meta, fontFamily: groknight.proseSemibold },
     primaryButtonText: { color: groknight.buttonPrimaryText },
     brassButtonFrame: { minHeight: 44 },
     brassButton: {
@@ -863,7 +863,11 @@ const styles = StyleSheet.create((theme) => {
     pixelLoaderCompact: { width: 30, height: 10, gap: 3 },
     loaderCell: { width: 7, height: 7, backgroundColor: groknight.signalBright },
     loaderCellCompact: { width: 5, height: 5 },
-    staticLoader: { ...Typography.mono('semiBold'), color: groknight.signalBright, fontSize: 12 },
+    staticLoader: {
+      ...groknight.type.meta,
+      fontFamily: groknight.monoSemibold,
+      color: groknight.signalBright,
+    },
     /**
      * Geometry, not chroma, carries the status: a fixed 2px column at the
      * mechanism indent, so a reader scans one edge instead of reading every
@@ -929,21 +933,17 @@ const styles = StyleSheet.create((theme) => {
     },
     activityTipDot: { width: 5, height: 5, backgroundColor: groknight.accent },
     activityTipLabel: {
-      ...Typography.mono(),
+      ...groknight.type.machine,
       color: groknight.accent,
-      fontSize: 9,
-      lineHeight: 12,
     },
     waveSignal: { minHeight: 20, flexDirection: 'row', alignItems: 'center', gap: 6 },
     waveSegments: { flexDirection: 'row', alignItems: 'center', gap: 2 },
     waveSegment: { width: 3, height: 6, backgroundColor: groknight.signalBright },
     waveSegmentLive: { backgroundColor: groknight.accent },
     waveLabel: {
-      ...Typography.mono('semiBold'),
+      ...groknight.type.machine,
+      fontFamily: groknight.monoSemibold,
       color: groknight.textPrimary,
-      fontSize: 11,
-      lineHeight: 15,
-      letterSpacing: 0.8,
     },
     revealStrip: { position: 'absolute', right: 0, left: 0, backgroundColor: groknight.bgRaised },
   };

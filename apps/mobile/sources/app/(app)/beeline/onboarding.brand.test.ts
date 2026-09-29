@@ -155,8 +155,8 @@ describe('onboarding — canonical brand treatment', () => {
     expect(tagline).toHaveLength(1);
     expect(tagline[0].props.children).toBe('workspace for all intelligence');
     expect(tagline[0].props.style.fontFamily).toBe(beelineThemes.obsidian.proseRegular);
-    expect(tagline[0].props.style.fontSize).toBe(14);
-    expect(tagline[0].props.style.lineHeight).toBe(20);
+    expect(tagline[0].props.style.fontSize).toBe(beelineThemes.obsidian.type.body.fontSize);
+    expect(tagline[0].props.style.lineHeight).toBe(beelineThemes.obsidian.type.body.lineHeight);
 
     // A rendered login action must keep its complete label and original button treatment.
     const signIn = tree.root.findAll(
@@ -192,13 +192,11 @@ describe('onboarding — canonical brand source assertions', () => {
     const titleBlock = src.slice(src.indexOf('  title: {'), src.indexOf('titlePeriod:'));
     expect(titleBlock).toContain('groknight.proseSemibold');
     expect(titleBlock).not.toContain('Typography.logo()');
-    // The tagline and the auth notice body keep the original canonical prose family.
-    expect(src).toMatch(
-      /subtitle: \{\s*\.\.\.Typography\.default\(\),\s*fontFamily: groknight\.proseRegular/,
-    );
-    expect(src).toMatch(
-      /noticeText: \{\s*\.\.\.Typography\.default\(\),\s*fontFamily: groknight\.proseRegular/,
-    );
+    // The tagline and the auth notice body keep the original canonical prose
+    // family, now read through the shared body role (DESIGN.md → Type) rather
+    // than a bare fontFamily line — body's family is still proseRegular.
+    expect(src).toMatch(/subtitle: \{\s*\.\.\.theme\.buzz\.type\.body/);
+    expect(src).toMatch(/noticeText: \{\s*\.\.\.theme\.buzz\.type\.body/);
   });
 
   it('passes the canonical family to every onboarding button label', () => {

@@ -3,7 +3,6 @@ import { View, ScrollView, Text, Platform } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Command, CommandCategory } from './types';
 import { CommandPaletteItem } from './CommandPaletteItem';
-import { Typography } from '@/constants/Typography';
 
 interface CommandPaletteResultsProps {
   categories: CommandCategory[];
@@ -43,7 +42,7 @@ export function CommandPaletteResults({
   if (categories.length === 0 || allCommands.length === 0) {
     return (
       <View style={styles.emptyContainer}>
-        <Text style={[styles.emptyText, Typography.default()]}>No commands found</Text>
+        <Text style={styles.emptyText}>No commands found</Text>
       </View>
     );
   }
@@ -85,9 +84,7 @@ export function CommandPaletteResults({
 
         return (
           <View key={category.id}>
-            <Text style={[styles.categoryTitle, Typography.default('semiBold')]}>
-              {category.title}
-            </Text>
+            <Text style={styles.categoryTitle}>{category.title}</Text>
             {categoryCommands}
           </View>
         );
@@ -113,18 +110,14 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'center',
   },
   emptyText: {
-    fontSize: 15,
+    ...theme.buzz.type.body,
     color: theme.buzz.textDisabled,
-    letterSpacing: -0.2,
   },
   categoryTitle: {
     paddingHorizontal: 32,
     paddingTop: 16,
     paddingBottom: 8,
-    fontSize: 12,
+    ...theme.buzz.type.sectionHead,
     color: theme.buzz.textDisabled,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    fontWeight: '600',
   },
 }));

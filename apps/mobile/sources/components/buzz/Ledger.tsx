@@ -11,7 +11,6 @@ import {
 import { StyleSheet } from 'react-native-unistyles';
 import { useReducedMotion } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
-import { Typography } from '@/constants/Typography';
 import { hasMessageRevealed, markMessageRevealed } from '@/buzz/message-reveal';
 import { identityPalette, isGeneratedAgentAvatarUrl } from '@/buzz/identity-mark';
 import { IdentityMark } from './IdentityMark';
@@ -977,19 +976,14 @@ const styles = StyleSheet.create((theme) => ({
   bylineNameViewer: { color: theme.buzz.accent },
   // The quiet role tag and the clock stamp keep the mono metadata voice.
   bylineTag: {
-    ...Typography.mono(),
+    ...theme.buzz.type.machine,
     maxWidth: '44%',
     flexShrink: 1,
     color: theme.buzz.ledgerQuiet,
-    fontSize: 10,
-    lineHeight: 14,
-    letterSpacing: 0.9,
   },
   bylineStamp: {
-    ...Typography.mono(),
+    ...theme.buzz.type.machine,
     color: theme.buzz.ledgerQuiet,
-    fontSize: 10,
-    lineHeight: 14,
   },
   bylineStatus: { marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', gap: 5 },
   bookmarkMark: { color: theme.buzz.accent },
@@ -1061,6 +1055,7 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: 12,
   },
   roomUpdateLine: {
+    ...theme.buzz.type.meta,
     fontFamily: theme.buzz.proseRegular,
     // Space Grotesk ships without an italic face. Asking React Native for
     // `fontStyle: 'italic'` can therefore substitute a platform/default face;
@@ -1068,19 +1063,15 @@ const styles = StyleSheet.create((theme) => ({
     // geometrically instead.
     transform: [{ skewX: '-8deg' }],
     color: theme.buzz.ledgerQuiet,
-    fontSize: 12,
-    lineHeight: 17,
   },
   roomUpdateLineBrass: { color: theme.buzz.accent },
   roomUpdateStamp: {
-    ...Typography.mono(),
+    ...theme.buzz.type.machine,
     position: 'absolute',
     top: 7,
     right: 0,
     width: LEDGER_MARGINALIA_WIDTH,
     color: theme.buzz.ledgerGhost,
-    fontSize: 9,
-    lineHeight: 12,
     textAlign: 'right',
   },
   historyLine: {
@@ -1118,12 +1109,11 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.buzz.space.xs,
   },
   roomUpdateDigest: {
+    ...theme.buzz.type.meta,
     fontFamily: theme.buzz.proseRegular,
     marginTop: 4,
     marginLeft: 18,
     color: theme.buzz.ledgerBody,
-    fontSize: 13,
-    lineHeight: 18,
   },
   marginalia: {
     position: 'absolute',
@@ -1133,17 +1123,13 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'flex-end',
   },
   marginaliaStamp: {
-    ...Typography.mono(),
+    ...theme.buzz.type.machine,
     color: theme.buzz.ledgerGhost,
-    fontSize: 9,
-    lineHeight: 12,
   },
   marginaliaDetail: {
-    ...Typography.mono(),
+    ...theme.buzz.type.machine,
     marginTop: 1,
     color: theme.buzz.ledgerGhost,
-    fontSize: 8,
-    lineHeight: 11,
   },
   // Tool readouts take the quiet left-rule mono treatment — clearly not
   // conversation.
@@ -1157,26 +1143,20 @@ const styles = StyleSheet.create((theme) => ({
   },
   ghostRow: { minWidth: 0, flexDirection: 'row', alignItems: 'baseline' },
   ghostLine: {
-    ...Typography.mono(),
+    ...theme.buzz.type.machine,
     flexShrink: 1,
     minWidth: 0,
     color: theme.buzz.ledgerGhost,
-    fontSize: 11,
-    lineHeight: 20,
   },
   ghostAffordance: {
-    ...Typography.mono(),
+    ...theme.buzz.type.machine,
     flexShrink: 0,
     color: theme.buzz.ledgerGhost,
-    fontSize: 11,
-    lineHeight: 20,
   },
   ghostBody: {
-    ...Typography.mono(),
+    ...theme.buzz.type.machine,
     marginTop: 4,
     color: theme.buzz.ledgerGhost,
-    fontSize: 10,
-    lineHeight: 15,
   },
 }));
 

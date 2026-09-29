@@ -65,9 +65,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         justifyContent: 'center',
     },
     title: {
-        fontFamily: theme.buzz.proseSemibold,
-        fontSize: 16,
-        lineHeight: 22,
+        ...theme.buzz.type.bodyStrong,
     },
     titleNormal: {
         color: theme.colors.text,
@@ -79,10 +77,8 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         color: theme.colors.textDestructive,
     },
     subtitle: {
-        fontFamily: theme.buzz.proseRegular,
+        ...theme.buzz.type.meta,
         color: theme.buzz.textMuted,
-        fontSize: 13,
-        lineHeight: 18,
         marginTop: 2,
     },
     rightSection: {
@@ -91,9 +87,8 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         marginLeft: 8,
     },
     detail: {
-        fontFamily: theme.buzz.monoRegular,
+        ...theme.buzz.type.machine,
         color: theme.buzz.textMuted,
-        fontSize: 12,
     },
     chevron: { color: theme.buzz.chrome },
     divider: {

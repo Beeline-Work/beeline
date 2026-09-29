@@ -3,7 +3,6 @@ import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { BuiltInSlashVerb, BuiltInSlashVerbId } from '@/buzz/slash-verbs';
 import type { AgentPaletteCommand } from '@/buzz/slash-verbs';
-import { Typography } from '@/constants/Typography';
 
 export type CornerAppPaletteCommand = {
   slug: string;
@@ -221,10 +220,8 @@ const styles = StyleSheet.create((theme) => {
       borderBottomColor: groknight.borderQuiet,
     },
     headingText: {
-      ...Typography.mono('semiBold'),
+      ...groknight.type.sectionHead,
       color: groknight.textMuted,
-      fontSize: 9,
-      letterSpacing: 1.3,
     },
     dismiss: {
       width: 44,
@@ -233,9 +230,8 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'center',
     },
     dismissText: {
-      ...Typography.default(),
+      ...groknight.type.body,
       color: groknight.textSecondary,
-      fontSize: 18,
     },
     list: { maxHeight: 240 },
     row: {
@@ -250,10 +246,10 @@ const styles = StyleSheet.create((theme) => {
     },
     rowSelected: { backgroundColor: groknight.bgHover },
     command: {
-      ...Typography.mono('semiBold'),
+      ...groknight.type.machine,
+      fontFamily: groknight.monoSemibold,
       width: 138,
       color: groknight.textPrimary,
-      fontSize: 11,
     },
     // Android's minimum interactive target is 48dp; iOS's 44pt floor is
     // therefore covered by the same row without adding a second platform path.
@@ -263,30 +259,25 @@ const styles = StyleSheet.create((theme) => {
     },
     copy: { flex: 1, minWidth: 0 },
     label: {
-      ...Typography.default('semiBold'),
+      ...groknight.type.meta,
+      fontFamily: groknight.proseSemibold,
       color: groknight.textSecondary,
-      fontSize: 11,
-      lineHeight: 15,
     },
     description: {
-      ...Typography.default(),
+      ...groknight.type.meta,
       color: groknight.textMuted,
-      fontSize: 10,
-      lineHeight: 14,
     },
     enter: {
-      ...Typography.mono(),
+      ...groknight.type.machine,
       color: groknight.textDisabled,
-      fontSize: 12,
     },
     toggleState: { color: groknight.textMuted },
     toggleOn: { color: groknight.accent },
     empty: {
-      ...Typography.mono(),
+      ...groknight.type.machine,
       paddingHorizontal: 12,
       paddingTop: 14,
       color: groknight.textMuted,
-      fontSize: 10,
     },
     emptyWrap: { paddingHorizontal: 12, paddingVertical: 12 },
     quietWrap: {
@@ -296,10 +287,8 @@ const styles = StyleSheet.create((theme) => {
       borderBottomColor: groknight.borderQuiet,
     },
     emptyHint: {
-      ...Typography.default(),
+      ...groknight.type.meta,
       color: groknight.textMuted,
-      fontSize: 10,
-      lineHeight: 14,
       marginTop: 4,
     },
   };

@@ -595,7 +595,7 @@ const styles = StyleSheet.create((theme) => {
     },
     columnWorkspaceName: {
       ...Typography.default('semiBold'),
-      ...groknight.type.meta,
+      ...theme.buzz.type.meta,
       color: groknight.textMuted,
       width: DRAWER_WIDTH,
     },
@@ -621,10 +621,9 @@ const styles = StyleSheet.create((theme) => {
       backgroundColor: groknight.bgHover,
     },
     exitAffordanceGlyph: {
-      ...Typography.default('semiBold'),
+      ...theme.buzz.type.body,
+      fontFamily: groknight.proseSemibold,
       color: groknight.textPrimary,
-      fontSize: 14,
-      lineHeight: 16,
       textAlign: 'center',
     },
     selectionBar: {
@@ -661,19 +660,15 @@ const styles = StyleSheet.create((theme) => {
      * mono micro-label under it carries the meaning and the glyph sits on the
      * same quiet tier as the rest of the chrome. */
     railCommandGlyph: {
-      ...Typography.default(),
+      ...theme.buzz.type.hero,
       height: 22,
       color: groknight.textSecondary,
-      fontSize: 19,
-      lineHeight: 22,
       textAlign: 'center',
     },
     railCommandLabel: {
-      ...Typography.mono('semiBold'),
+      ...theme.buzz.type.sectionHead,
+      fontFamily: groknight.monoSemibold,
       color: groknight.textMuted,
-      fontSize: 9,
-      lineHeight: 12,
-      letterSpacing: 0.6,
     },
     drawerOverlay: {
       ...StyleSheet.absoluteFillObject,
@@ -733,11 +728,9 @@ const styles = StyleSheet.create((theme) => {
       backgroundColor: groknight.selectedBorder,
     },
     drawerTriggerName: {
-      ...Typography.default('semiBold'),
+      ...theme.buzz.type.hero,
       flexShrink: 1,
       color: groknight.textPrimary,
-      fontSize: 17,
-      lineHeight: 22,
     },
     drawerTriggerCaret: { color: groknight.steel },
   };

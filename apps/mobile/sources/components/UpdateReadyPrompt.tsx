@@ -5,7 +5,6 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Text } from '@/components/StyledText';
-import { Typography } from '@/constants/Typography';
 import { useUpdates } from '@/hooks/useUpdates';
 
 /** A root-level affordance that remains visible over every interactive route. */
@@ -85,13 +84,11 @@ const styles = StyleSheet.create((theme) => ({
     },
     title: {
         color: theme.colors.text,
-        fontSize: 15,
-        ...Typography.default('semiBold'),
+        ...theme.buzz.type.bodyStrong,
     },
     subtitle: {
         color: theme.colors.textSecondary,
-        fontSize: 13,
-        ...Typography.default(),
+        ...theme.buzz.type.meta,
     },
     dismiss: {
         width: 32,

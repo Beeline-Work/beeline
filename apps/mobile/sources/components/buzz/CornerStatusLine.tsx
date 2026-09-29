@@ -3,7 +3,6 @@ import { Pressable, Text } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { CornerLifecycleView } from '@beeline/api-contract/phone';
 import { cornerStatusLine } from '@/buzz/corner-status-line';
-import { Typography } from '@/constants/Typography';
 
 /**
  * A corner's PR state, inscribed above the transcript, never framed: one dim
@@ -55,23 +54,18 @@ const styles = StyleSheet.create((theme) => {
     },
     linePressed: { opacity: 0.6 },
     copy: {
-      ...Typography.mono(),
+      ...hull.type.machine,
       flexShrink: 1,
       minWidth: 0,
       color: hull.ledgerQuiet,
-      fontSize: 12,
-      lineHeight: 18,
-      letterSpacing: 0.4,
     },
     // The ledger's marginalia gutter (`LEDGER_MARGINALIA_WIDTH`), right-aligned.
     affordance: {
-      ...Typography.mono(),
+      ...hull.type.machine,
       flexShrink: 0,
       width: 36,
       textAlign: 'right',
       color: hull.accent,
-      fontSize: 12,
-      lineHeight: 18,
     },
   };
 });

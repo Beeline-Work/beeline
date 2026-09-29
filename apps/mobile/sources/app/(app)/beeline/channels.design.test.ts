@@ -27,11 +27,12 @@ describe('Approved Room list layout', () => {
   });
   it('renders the approved compact preview, unread title and needs-you treatment', () => {
     expect(row).toContain('numberOfLines={1}');
-    expect(row).toContain('fontSize: 16');
-    expect(row).toContain('lineHeight: 23');
+    // Name/preview/age read the body/meta type roles (DESIGN.md → Type) rather
+    // than a bare fontSize/lineHeight — body is 16/23, meta is 13/19.
+    expect(row).toContain('name: {\n    ...theme.buzz.type.body,');
     expect(row).toContain('unreadName: { fontFamily: theme.buzz.proseSemibold }');
-    expect(row).toContain('fontSize: 13');
-    expect(row).toContain('lineHeight: 19');
+    expect(row).toContain('preview: {\n    ...theme.buzz.type.meta,');
+    expect(row).toContain('age: {\n    ...theme.buzz.type.meta,');
     expect(row).toContain('roomRowAttentionReason');
     expect(row).toContain('needsRing');
     expect(row).toContain('backgroundColor: theme.buzz.accent');

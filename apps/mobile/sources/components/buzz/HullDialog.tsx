@@ -12,7 +12,6 @@ import {
 } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Typography } from '@/constants/Typography';
 import { HullSurface } from './MonoHull';
 
 export type HullDialogAction = {
@@ -447,18 +446,14 @@ const styles = StyleSheet.create((theme) => {
     dialogContent: { flexShrink: 1, minHeight: 0 },
     dialogContentFill: { flex: 1 },
     dialogTitle: {
-      ...Typography.default('semiBold'),
-      fontFamily: hull.proseSemibold,
+      ...hull.type.bodyStrong,
       color: hull.textPrimary,
-      fontSize: 16,
       lineHeight: HULL_DIALOG_LAYOUT.titleLineHeight,
     },
     dialogBody: {
-      ...Typography.default(),
-      fontFamily: hull.proseRegular,
+      ...hull.type.meta,
       marginTop: HULL_DIALOG_LAYOUT.bodyMarginTop,
       color: hull.textSecondary,
-      fontSize: 14,
       lineHeight: HULL_DIALOG_LAYOUT.bodyLineHeight,
     },
     dialogActions: {
@@ -486,11 +481,9 @@ const styles = StyleSheet.create((theme) => {
     dialogActionPrimaryPressed: { opacity: 0.78 },
     dialogActionDisabled: { opacity: 0.42 },
     dialogActionText: {
-      ...Typography.mono('semiBold'),
+      ...hull.type.machine,
+      fontFamily: hull.monoSemibold,
       color: hull.buttonSecondaryText,
-      fontSize: 12,
-      lineHeight: 16,
-      letterSpacing: 0.8,
       textTransform: 'uppercase',
     },
     dialogActionPrimaryText: { color: hull.buttonPrimaryText },
@@ -503,13 +496,11 @@ const styles = StyleSheet.create((theme) => {
       borderBottomColor: hull.borderStrong,
     },
     input: {
-      ...Typography.default(),
-      fontFamily: hull.proseRegular,
+      ...hull.type.body,
       minHeight: HULL_DIALOG_LAYOUT.inputMinHeight,
       paddingHorizontal: 0,
       paddingVertical: 8,
       color: hull.textPrimary,
-      fontSize: 15,
     },
   };
 });

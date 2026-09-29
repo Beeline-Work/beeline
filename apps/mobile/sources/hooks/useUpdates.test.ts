@@ -45,23 +45,27 @@ vi.mock('@/components/StyledText', async () => {
   return { Text: (props: any) => ReactModule.createElement('Text', props, props.children) };
 });
 vi.mock('@/constants/Typography', () => ({ Typography: { default: () => ({}) } }));
-vi.mock('react-native-unistyles', () => ({
-  StyleSheet: {
-    hairlineWidth: 1,
-    create: (factory: any) =>
-      factory({
-        colors: {
-          surface: '#111',
-          text: '#fff',
-          textLink: '#fc0',
-          textSecondary: '#aaa',
-        },
-      }),
-  },
-  useUnistyles: () => ({
-    theme: { colors: { textLink: '#fc0', textSecondary: '#aaa' } },
-  }),
-}));
+vi.mock('react-native-unistyles', async () => {
+  const { typeRoles } = await import('@/buzz/groknight');
+  return {
+    StyleSheet: {
+      hairlineWidth: 1,
+      create: (factory: any) =>
+        factory({
+          buzz: { type: typeRoles },
+          colors: {
+            surface: '#111',
+            text: '#fff',
+            textLink: '#fc0',
+            textSecondary: '#aaa',
+          },
+        }),
+    },
+    useUnistyles: () => ({
+      theme: { buzz: { type: typeRoles }, colors: { textLink: '#fc0', textSecondary: '#aaa' } },
+    }),
+  };
+});
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>

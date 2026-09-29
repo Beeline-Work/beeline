@@ -2,7 +2,6 @@ import React from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { Typography } from '@/constants/Typography';
 import { CORNER_STATUS_SIZE, CornerGlyph } from './CornerGlyph';
 import { LEDGER_MARGINALIA_WIDTH } from './Ledger';
 
@@ -92,11 +91,8 @@ const styles = StyleSheet.create((theme) => {
       gap: 8,
     },
     status: {
-      ...Typography.mono(),
+      ...groknight.type.machine,
       color: groknight.ledgerQuiet,
-      fontSize: 11,
-      lineHeight: 18,
-      letterSpacing: 0.5,
     },
   };
 });

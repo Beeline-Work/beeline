@@ -133,9 +133,7 @@ const styles = StyleSheet.create((theme) => ({
     loadingText: {
         marginTop: 50,
         color: theme.buzz.textMuted,
-        fontFamily: theme.buzz.proseRegular,
-        fontSize: 15,
-        lineHeight: 21,
+        ...theme.buzz.type.body,
         textAlign: 'center',
     },
     textContainer: {
@@ -153,9 +151,7 @@ const styles = StyleSheet.create((theme) => ({
         borderWidth: 0,
         backgroundColor: 'transparent',
         color: theme.buzz.textPrimary,
-        fontFamily: theme.buzz.monoRegular,
-        fontSize: 14,
-        lineHeight: 21,
+        ...theme.buzz.type.machine,
         textAlignVertical: 'top',
     },
     copyButton: {
@@ -170,9 +166,8 @@ const styles = StyleSheet.create((theme) => ({
     },
     copyGlyph: {
         color: theme.buzz.chrome,
+        ...theme.buzz.type.meta,
         fontFamily: theme.buzz.monoSemibold,
-        fontSize: 20,
-        lineHeight: 24,
     },
     copyGlyphDisabled: {
         color: theme.buzz.textMuted,

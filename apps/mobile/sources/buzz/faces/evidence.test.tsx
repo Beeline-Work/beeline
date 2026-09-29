@@ -69,8 +69,29 @@ vi.mock('react-native-reanimated', async () => {
 });
 
 // A mutable theme so the same component can be rendered on a dark and on a
-// light ground (the shipped themes are all dark).
-const themeState = vi.hoisted(() => ({ buzz: { dark: true } as Record<string, unknown> }));
+// light ground (the shipped themes are all dark). Seeded with a role-shaped
+// `type` stub (not just `{ dark: true }`) because `StyleSheet.create`
+// factories below run eagerly at import time, before the `it()` blocks below
+// reassign `themeState.buzz` to the real `beelineThemes.obsidian` — a
+// component whose styles read `theme.buzz.type` at module scope would
+// otherwise crash against an incomplete seed theme. `vi.hoisted` runs before
+// any import, so this stub is inlined rather than pulled from groknight.ts.
+const themeState = vi.hoisted(() => {
+  const stubRole = { fontFamily: 'stub', fontSize: 16, lineHeight: 23, letterSpacing: 0 };
+  return {
+    buzz: {
+      dark: true,
+      type: {
+        hero: stubRole,
+        body: stubRole,
+        bodyStrong: stubRole,
+        meta: stubRole,
+        sectionHead: stubRole,
+        machine: stubRole,
+      },
+    } as Record<string, unknown>,
+  };
+});
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: {
     hairlineWidth: 1,

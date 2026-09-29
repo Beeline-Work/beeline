@@ -2389,12 +2389,10 @@ const styles = StyleSheet.create((theme) => ({
   activityGroup: { width: '100%', minWidth: 0 },
   replyReference: { minWidth: 0, marginBottom: 5 },
   replyReferenceText: {
-    ...Typography.mono(),
+    ...theme.buzz.type.machine,
     // The quoted reply excerpt is provenance a reader actually reads, so it
     // takes the lifted quiet tier, not the gutter's ghost tier.
     color: theme.buzz.ledgerQuiet,
-    fontSize: 11,
-    lineHeight: 17,
   },
   connectorReceipt: {
     marginTop: 4,
@@ -2425,10 +2423,9 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.buzz.bgHighlight,
   },
   outboxFailureText: {
-    ...Typography.mono('semiBold'),
+    ...theme.buzz.type.sectionHead,
+    fontFamily: theme.buzz.monoSemibold,
     color: theme.buzz.textPrimary,
-    fontSize: 9,
-    letterSpacing: 0.5,
   },
   outboxFailureActions: { flexDirection: 'row', gap: 8, marginTop: 6 },
   replySwipeContainer: { marginHorizontal: -ALIVE_RING_PAD },
@@ -2455,11 +2452,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   replyDesktopPressed: { backgroundColor: theme.buzz.bgHighlight },
   replyDesktopGlyph: {
-    ...Typography.default('semiBold'),
+    ...theme.buzz.type.meta,
+    fontFamily: theme.buzz.proseSemibold,
     color: theme.buzz.textPrimary,
-    fontSize: 13,
-    lineHeight: 18,
-    letterSpacing: 0,
   },
   replyDesktopBookmark: { color: theme.buzz.accent },
   reactionPicker: {
@@ -2496,12 +2491,9 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.buzz.ledgerQuiet,
   },
   replyDesktopLabel: {
-    ...Typography.default('semiBold'),
+    ...theme.buzz.type.sectionHead,
     marginTop: 1,
     color: theme.buzz.textMuted,
-    fontSize: 10,
-    lineHeight: 14,
-    letterSpacing: 2,
   },
   replySwipeAction: {
     width: 78,
@@ -2523,18 +2515,15 @@ const styles = StyleSheet.create((theme) => ({
   },
   cornerSwipeGlyph: { color: theme.buzz.accent },
   replySwipeGlyph: {
-    ...Typography.default('semiBold'),
+    ...theme.buzz.type.body,
+    fontFamily: theme.buzz.proseSemibold,
     color: theme.buzz.textPrimary,
-    fontSize: 17,
-    lineHeight: 20,
   },
   replySwipeLabel: {
-    ...Typography.mono('semiBold'),
+    ...theme.buzz.type.sectionHead,
+    fontFamily: theme.buzz.monoSemibold,
     marginTop: 2,
     color: theme.buzz.textMuted,
-    fontSize: 8,
-    lineHeight: 11,
-    letterSpacing: 0.6,
   },
   attachmentCard: {
     minWidth: 0,
@@ -2548,27 +2537,24 @@ const styles = StyleSheet.create((theme) => ({
   },
   attachmentThumbnail: { width: 46, height: 46, backgroundColor: theme.buzz.bgHighlight },
   attachmentFileGlyph: { width: 46, height: 46, alignItems: 'center', justifyContent: 'center' },
-  attachmentFileGlyphText: { ...Typography.default(), color: theme.buzz.steel, fontSize: 20 },
+  attachmentFileGlyphText: { ...theme.buzz.type.hero, color: theme.buzz.steel },
   attachmentCopy: { flex: 1, minWidth: 0 },
   attachmentExpired: { color: theme.buzz.textMuted },
   attachmentName: {
-    ...Typography.default('semiBold'),
+    ...theme.buzz.type.body,
+    fontSize: theme.buzz.transcriptCard.rowTitleSize,
     color: theme.buzz.textPrimary,
-    fontSize: 12,
-    lineHeight: 16,
   },
   attachmentMeta: {
-    ...Typography.mono(),
+    ...theme.buzz.type.machine,
+    fontSize: theme.buzz.transcriptCard.rowKindSize,
     marginTop: 3,
     color: theme.buzz.textMuted,
-    fontSize: 8,
-    lineHeight: 11,
   },
   attachmentOpenGlyph: {
-    ...Typography.default(),
+    ...theme.buzz.type.body,
     width: 22,
     color: theme.buzz.steel,
-    fontSize: 14,
     textAlign: 'center',
   },
 
@@ -2635,22 +2621,17 @@ const styles = StyleSheet.create((theme) => ({
     ...theme.buzz.type.sectionHead,
     fontFamily: theme.buzz.monoRegular,
     color: theme.buzz.ledgerQuiet,
-    fontSize: 11,
   },
   ncCellCopy: { flex: 1, minWidth: 0 },
   ncCellTitle: {
-    ...theme.buzz.type.body,
+    ...theme.buzz.type.bodyStrong,
     color: theme.buzz.textPrimary,
-    fontSize: 17,
-    fontWeight: '500',
     minWidth: 0,
     marginBottom: 2,
   },
   ncCellTitleContracted: {
-    ...theme.buzz.type.body,
+    ...theme.buzz.type.bodyStrong,
     color: theme.buzz.textPrimary,
-    fontSize: 15,
-    fontWeight: '500',
     minWidth: 0,
   },
   ncKindLine: {
@@ -2662,13 +2643,11 @@ const styles = StyleSheet.create((theme) => ({
   ncObjective: {
     ...theme.buzz.type.body,
     color: theme.buzz.textSecondary,
-    fontSize: 14,
     marginTop: 8,
   },
   ncAuthor: {
     ...theme.buzz.type.machine,
     color: theme.buzz.ledgerQuiet,
-    fontSize: 12,
     marginTop: 8,
   },
   ncAuthorHighlight: {
@@ -2711,7 +2690,5 @@ const styles = StyleSheet.create((theme) => ({
   ncMoreText: {
     ...theme.buzz.type.machine,
     color: theme.buzz.ledgerQuiet,
-    fontSize: 12,
-    letterSpacing: 0.06,
   },
 }));

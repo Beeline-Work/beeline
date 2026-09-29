@@ -1,7 +1,6 @@
 import React from 'react';
 import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { Typography } from '@/constants/Typography';
 
 /**
  * What the corner was opened for, inscribed beneath the header for the corner's
@@ -63,12 +62,9 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.buzz.humanRail,
   },
   copy: {
-    ...Typography.default(),
-    fontFamily: theme.buzz.proseRegular,
+    ...theme.buzz.type.meta,
     flexShrink: 1,
     minWidth: 0,
     color: theme.buzz.textSecondary,
-    fontSize: 13,
-    lineHeight: 19,
   },
 }));

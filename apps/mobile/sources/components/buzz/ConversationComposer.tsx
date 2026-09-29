@@ -492,6 +492,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   interimText: {
     color: theme.buzz.textSecondary,
+    // Not the body role's lineHeight: this is tuned to stay BELOW Space
+    // Grotesk's real glyph bounds at this size (~22px) on Android/web, so
+    // vertical centering never removes native font padding in a way that
+    // could crop accents or descenders (`chat.composer-layout.test.ts`).
     ...Platform.select({ ios: {}, default: { lineHeight: 20 } }),
   },
   interimPartial: { fontStyle: 'italic' },
@@ -595,6 +599,10 @@ const styles = StyleSheet.create((theme) => ({
     // and suppress iOS TextInput's intrinsic multiline growth. Android gets
     // its controlled height above; iOS remains intrinsic.
     minWidth: 0,
+    // Not the body role's lineHeight: kept below Space Grotesk's real glyph
+    // bounds at this size on Android/web so centering never removes native
+    // font padding in a way that could crop accents or descenders
+    // (`chat.composer-layout.test.ts`).
     ...Platform.select({ ios: {}, default: { lineHeight: 20 } }),
     color: theme.buzz.textSecondary,
     minHeight: COMPOSER_SINGLE_LINE_INPUT_HEIGHT,

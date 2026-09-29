@@ -18,28 +18,32 @@ vi.mock('react-native', async () => {
   };
 });
 
-vi.mock('react-native-unistyles', () => ({
+vi.mock('react-native-unistyles', async () => {
+  const { typeRoles } = await import('@/buzz/groknight');
   // The picker's factory reads only `theme.buzz` tokens; a stub palette keeps
   // StyleSheet.create resolvable without pulling the real theme module.
-  StyleSheet: {
-    create: (factory: (theme: { buzz: Record<string, unknown> }) => unknown) =>
-      factory({
-        buzz: {
-          border: '#000',
-          borderQuiet: '#111',
-          bgBase: '#000',
-          bgHover: '#111',
-          radius: 3,
-          textMuted: '#888',
-          textSecondary: '#999',
-          textPrimary: '#fff',
-          textDisabled: '#555',
-          accent: '#d7af5f',
-        },
-      }),
-    hairlineWidth: 1,
-  },
-}));
+  return {
+    StyleSheet: {
+      create: (factory: (theme: { buzz: Record<string, unknown> }) => unknown) =>
+        factory({
+          buzz: {
+            border: '#000',
+            borderQuiet: '#111',
+            bgBase: '#000',
+            bgHover: '#111',
+            radius: 3,
+            textMuted: '#888',
+            textSecondary: '#999',
+            textPrimary: '#fff',
+            textDisabled: '#555',
+            accent: '#d7af5f',
+            type: typeRoles,
+          },
+        }),
+      hairlineWidth: 1,
+    },
+  };
+});
 
 import type { AgentPaletteCommand } from '@/buzz/slash-verbs';
 import { availableAgentMentionCommands, insertAgentSlashCommand } from '@/buzz/slash-verbs';

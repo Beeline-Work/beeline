@@ -3,13 +3,14 @@ import { ActivityIndicator, Platform, Pressable, StyleProp, Text, TextStyle, Vie
 import { iOSUIKit } from 'react-native-typography';
 import { Typography } from '@/constants/Typography';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { typeRoles } from '@/buzz/groknight';
 import { MobileGlassSurface } from './MobileGlass';
 
 export type RoundButtonSize = 'large' | 'normal' | 'small';
 const sizes: { [key in RoundButtonSize]: { height: number, fontSize: number, hitSlop: number, pad: number } } = {
-    large: { height: 48, fontSize: 21, hitSlop: 0, pad: Platform.OS == 'ios' ? 0 : -1 },
-    normal: { height: 32, fontSize: 16, hitSlop: 8, pad: Platform.OS == 'ios' ? 1 : -2 },
-    small: { height: 24, fontSize: 14, hitSlop: 12, pad: Platform.OS == 'ios' ? -1 : -1 }
+    large: { height: 48, fontSize: typeRoles.hero.fontSize, hitSlop: 0, pad: Platform.OS == 'ios' ? 0 : -1 },
+    normal: { height: 32, fontSize: typeRoles.body.fontSize, hitSlop: 8, pad: Platform.OS == 'ios' ? 1 : -2 },
+    small: { height: 24, fontSize: typeRoles.meta.fontSize, hitSlop: 12, pad: Platform.OS == 'ios' ? -1 : -1 }
 }
 
 export type RoundButtonDisplay = 'default' | 'inverted';

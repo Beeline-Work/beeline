@@ -14,19 +14,23 @@ vi.mock('react-native', async () => {
     View: host('View'),
   };
 });
-vi.mock('react-native-unistyles', () => ({
-  StyleSheet: {
-    hairlineWidth: 1,
-    create: (factory: (theme: unknown) => unknown) =>
-      factory({
-        buzz: {
-          humanRail: '#b08a4a',
-          textSecondary: '#c9c9d1',
-          proseRegular: 'SpaceGrotesk-Regular',
-        },
-      }),
-  },
-}));
+vi.mock('react-native-unistyles', async () => {
+  const { typeRoles } = await import('@/buzz/groknight');
+  return {
+    StyleSheet: {
+      hairlineWidth: 1,
+      create: (factory: (theme: unknown) => unknown) =>
+        factory({
+          buzz: {
+            humanRail: '#b08a4a',
+            textSecondary: '#c9c9d1',
+            proseRegular: 'SpaceGrotesk-Regular',
+            type: typeRoles,
+          },
+        }),
+    },
+  };
+});
 
 import { CornerObjectiveLine } from './CornerObjectiveLine';
 

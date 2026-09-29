@@ -104,10 +104,30 @@ export function startDesktopNotifications(): () => void {
           workspaces.workspaces.map((workspace) => reader.chats(workspace.id)),
         );
         if (disposed || current !== generation) return;
-        rooms = new Map(
-          lists.flatMap((chats) => chats.chats.map((room) => [room.room.id, room] as const)),
+        const parents = lists.flatMap((chats) => chats.chats);
+        // A corner is its own Room and its messages do not ride the parent's
+        // socket filter. Read each active parent with corners so the same
+        // signed-in member can receive an exact tag there too.
+        const cornerReads = await Promise.allSettled(
+          parents
+            .filter((room) => (room.cornerCount ?? room.openCorners?.length ?? 0) > 0)
+            .map((room) => reader.corners(room.room.id)),
         );
-        const filters = lists.flatMap((chats) => chats.watchFilters);
+        if (disposed || current !== generation) return;
+        const corners = cornerReads.flatMap((result) =>
+          result.status === 'fulfilled' ? result.value.corners : [],
+        );
+        rooms = new Map([
+          ...parents.map((room) => [room.room.id, room] as const),
+          ...corners.map(
+            (item) =>
+              [item.corner.id, { room: item.corner, unread: false } as ChatListItem] as const,
+          ),
+        ]);
+        const filters = [
+          ...lists.flatMap((chats) => chats.watchFilters),
+          ...corners.map((item) => ({ '#h': [item.corner.id] })),
+        ];
         const nextKey = chatWatchFiltersKey(filters);
         if (nextKey === watchKey) return;
         const nextStop = filters.length

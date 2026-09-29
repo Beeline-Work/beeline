@@ -46,9 +46,19 @@ vi.mock('@/sync/transport', () => ({
     }
     chats() {
       return Promise.resolve({
-        chats: [{ room: { id: 'room-1', name: 'Test room' }, directMessage: {}, unread: true }],
+        chats: [
+          {
+            room: { id: 'room-1', name: 'Test room' },
+            directMessage: {},
+            cornerCount: 1,
+            unread: true,
+          },
+        ],
         watchFilters: [{ '#h': ['room-1'] }],
       });
+    }
+    corners() {
+      return Promise.resolve({ corners: [{ corner: { id: 'corner-1', name: 'Test corner' } }] });
     }
   },
 }));
@@ -94,5 +104,32 @@ describe('signed-in desktop native notification delivery', () => {
     });
     stop();
     expect(fixture.roomListener).toBeNull();
+  });
+
+  it('fans the parent Room subscription into a corner and notifies an exact tag', async () => {
+    vi.stubGlobal('document', { hasFocus: () => false });
+    const stop = startDesktopNotifications();
+    await vi.waitFor(() => expect(fixture.roomListener).toBeTypeOf('function'));
+    fixture.roomListener?.({
+      monolithLive: {
+        type: 'message-delta',
+        roomId: 'corner-1',
+        message: {
+          id: 'safe-corner-message',
+          text: 'Review this',
+          createdAt: Date.now() / 1000,
+          author: { pubkey: 'other', name: 'Test sender' },
+          presentation: 'message',
+          mentionPubkeys: ['test-viewer'],
+        },
+      },
+    });
+    await vi.waitFor(() =>
+      expect(fixture.send).toHaveBeenCalledWith({
+        title: 'Test corner',
+        body: 'Test sender: Review this',
+      }),
+    );
+    stop();
   });
 });

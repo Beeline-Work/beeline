@@ -18,6 +18,14 @@
  * `outcome` instead of throwing, so a caller never blocks a save or a turn on
  * this network round trip. `embedOne`'s `embed` parameter lets a test replace
  * the network call with a deterministic fake without touching env or fetch.
+ *
+ * NO POLLING: there is no timer that scans the database for unembedded rows.
+ * A save schedules its OWN row's embed (`scheduleEmbedInstitutionalMemoryItem`
+ * / `scheduleEmbedWorkspaceSkillVersion`), retried with in-process backoff
+ * bounded to that one row; the only scan is `backfillInstitutionalMemory
+ * EmbeddingsOnce`, run exactly once at server start (see `index.ts`) to catch
+ * rows saved before this feature shipped, or whose in-process retry died with
+ * a restarted process. It never re-runs on its own.
  */
 import {
   INSTITUTIONAL_MEMORY_EMBEDDING_DIMENSIONS,
@@ -29,9 +37,8 @@ import type { SqlDatabase } from './database.js';
 export const OPENROUTER_EMBEDDINGS_URL = 'https://openrouter.ai/api/v1/embeddings';
 export const EMBEDDING_FETCH_TIMEOUT_MS = 10_000;
 export const EMBEDDING_BACKFILL_BATCH = 20;
-/** Throttle between embedding-cycle passes; the cycle covers both freshly
- *  saved rows (embed on save) and pre-existing ones (backfill) alike. */
-export const EMBEDDING_CYCLE_INTERVAL_MS = 5_000;
+/** Bounded in-process retry for one row's embed, never a database scan. */
+export const EMBED_RETRY_BACKOFF_MS = [5_000, 15_000, 60_000];
 
 export type EmbeddingInputType = 'query' | 'document';
 export type EmbeddingOutcome = 'served' | 'timed-out' | 'disabled' | 'error';
@@ -45,7 +52,7 @@ export interface EmbedResult {
 /** One text in, one vector (or a reason it did not come back) out. */
 export type EmbedFn = (text: string, inputType: EmbeddingInputType) => Promise<EmbedResult>;
 /** Several texts in, one vector (or undefined) per input, in order. Batching
- *  one HTTP call over N rows is why the backfill/embed-on-save cycle stays cheap. */
+ *  one HTTP call over N rows is why the startup backfill stays cheap. */
 export type EmbedBatchFn = (
   texts: readonly string[],
   inputType: EmbeddingInputType,
@@ -153,32 +160,163 @@ export function pgvectorLiteral(vector: readonly number[]): string {
   return `[${vector.join(',')}]`;
 }
 
-interface EmbeddingCycleCounts {
+export async function embedOneInstitutionalMemoryItem(
+  database: SqlDatabase,
+  itemId: string,
+  embedBatch: EmbedBatchFn,
+): Promise<boolean> {
+  const row = (
+    await database.query<{ canonical_key: string; body: string }>(
+      `SELECT canonical_key,body FROM institutional_memory_items
+       WHERE id=$1 AND state='active' AND deleted_at IS NULL`,
+      [itemId],
+    )
+  ).rows[0];
+  if (!row) return true; // gone or no longer active: nothing to embed, not a failure to retry
+  const vectors = await embedBatch([`${row.canonical_key}: ${row.body}`], 'document');
+  const vector = vectors?.[0];
+  if (!vector) return false;
+  await database.query(
+    `UPDATE institutional_memory_items
+     SET embedding=$2::vector,embedding_model=$3,embedded_at=now()
+     WHERE id=$1`,
+    [itemId, pgvectorLiteral(vector), INSTITUTIONAL_MEMORY_EMBEDDING_MODEL],
+  );
+  return true;
+}
+
+export async function embedOneWorkspaceSkillVersion(
+  database: SqlDatabase,
+  skillId: string,
+  embedBatch: EmbedBatchFn,
+): Promise<boolean> {
+  const row = (
+    await database.query<{
+      slug: string;
+      description: string;
+      current_version: number;
+      markdown: string;
+    }>(
+      `SELECT skill.slug,skill.description,skill.current_version,COALESCE(version.markdown,'') markdown
+       FROM workspace_skills skill
+       LEFT JOIN workspace_skill_versions version
+         ON version.skill_id=skill.id AND version.version=skill.current_version
+       WHERE skill.id=$1 AND skill.state='active'`,
+      [skillId],
+    )
+  ).rows[0];
+  if (!row) return true; // gone or no longer active: nothing to embed, not a failure to retry
+  const vectors = await embedBatch(
+    [`${row.slug.replace(/-/g, ' ')}: ${row.description}\n${row.markdown.slice(0, 600)}`],
+    'document',
+  );
+  const vector = vectors?.[0];
+  if (!vector) return false;
+  await database.query(
+    `UPDATE workspace_skills
+     SET embedding=$2::vector,embedding_model=$3,embedding_version=$4,embedded_at=now()
+     WHERE id=$1`,
+    [skillId, pgvectorLiteral(vector), INSTITUTIONAL_MEMORY_EMBEDDING_MODEL, row.current_version],
+  );
+  return true;
+}
+
+/** Pending in-process retry timers, keyed `item:<id>` / `skill:<id>`. A save
+ *  arriving again for the same row (a rapid edit) supersedes its own pending
+ *  retry rather than piling up a second one. Never persisted, never scanned —
+ *  a process restart simply drops whatever was pending; the next server-start
+ *  backfill picks up anything left unembedded. */
+const pendingEmbedRetries = new Map<string, NodeJS.Timeout>();
+
+function scheduleWithRetry(
+  key: string,
+  attemptOnce: () => Promise<boolean>,
+  backoffMs: readonly number[] = EMBED_RETRY_BACKOFF_MS,
+): void {
+  const existing = pendingEmbedRetries.get(key);
+  if (existing) clearTimeout(existing);
+  pendingEmbedRetries.delete(key);
+  const run = (attemptIndex: number): void => {
+    attemptOnce()
+      .catch(() => false)
+      .then((ok) => {
+        if (ok || attemptIndex >= backoffMs.length) {
+          pendingEmbedRetries.delete(key);
+          return;
+        }
+        const timer = setTimeout(() => run(attemptIndex + 1), backoffMs[attemptIndex]);
+        timer.unref?.();
+        pendingEmbedRetries.set(key, timer);
+      });
+  };
+  run(0);
+}
+
+/** Only for tests: true while a row still has a pending retry scheduled. */
+export function hasPendingEmbedRetry(key: string): boolean {
+  return pendingEmbedRetries.has(key);
+}
+
+/**
+ * Embed one just-saved/updated `institutional_memory_items` row. Fire-and-
+ * forget from the caller's perspective (never awaited, never blocks or fails
+ * the save); a failure retries this one row on a bounded in-process backoff.
+ */
+export function scheduleEmbedInstitutionalMemoryItem(
+  database: SqlDatabase,
+  itemId: string,
+  embedBatch: EmbedBatchFn = createDefaultEmbedBatchFn(),
+): void {
+  scheduleWithRetry(`item:${itemId}`, () =>
+    embedOneInstitutionalMemoryItem(database, itemId, embedBatch),
+  );
+}
+
+/** Same as above, for a `workspace_skills` row whose current version just changed. */
+export function scheduleEmbedWorkspaceSkillVersion(
+  database: SqlDatabase,
+  skillId: string,
+  embedBatch: EmbedBatchFn = createDefaultEmbedBatchFn(),
+): void {
+  scheduleWithRetry(`skill:${skillId}`, () =>
+    embedOneWorkspaceSkillVersion(database, skillId, embedBatch),
+  );
+}
+
+export interface EmbeddingBackfillCounts {
   itemsEmbedded: number;
   skillsEmbedded: number;
 }
 
 /**
- * One pass of the embedding cycle: embed whatever `institutional_memory_items`
- * and `workspace_skills` rows are missing a current embedding, a small batch
- * at a time. This single query covers both jobs the task asked for as one
- * mechanism — a freshly saved/updated row has no embedding yet (embed on
- * save), and a pre-existing row from before this feature shipped looks
- * identical to the query (backfill) — so there is nothing else to schedule.
- * A row whose embedding failed stays without one and is picked up again next
- * pass; nothing here can fail a save or throw out of this cycle.
+ * The ONE-TIME startup sweep: embeds every active row missing a current
+ * embedding, a batch at a time, until none remain, then returns. Call this
+ * exactly once, right after `migrate()` at server start (see `index.ts`) —
+ * never on an interval, never again afterward. It exists only to cover rows
+ * saved before this feature shipped, or whose in-process retry died with an
+ * earlier process; every row saved from here on embeds itself on save.
  */
-export async function runInstitutionalMemoryEmbeddingCycle(
+export async function backfillInstitutionalMemoryEmbeddingsOnce(
   database: SqlDatabase,
   embedBatch: EmbedBatchFn = createDefaultEmbedBatchFn(),
   batchSize = EMBEDDING_BACKFILL_BATCH,
-): Promise<EmbeddingCycleCounts> {
-  const itemsEmbedded = await embedInstitutionalMemoryItems(database, embedBatch, batchSize);
-  const skillsEmbedded = await embedWorkspaceSkills(database, embedBatch, batchSize);
+): Promise<EmbeddingBackfillCounts> {
+  let itemsEmbedded = 0;
+  for (;;) {
+    const embedded = await backfillInstitutionalMemoryItemsBatch(database, embedBatch, batchSize);
+    itemsEmbedded += embedded;
+    if (embedded < batchSize) break;
+  }
+  let skillsEmbedded = 0;
+  for (;;) {
+    const embedded = await backfillWorkspaceSkillsBatch(database, embedBatch, batchSize);
+    skillsEmbedded += embedded;
+    if (embedded < batchSize) break;
+  }
   return { itemsEmbedded, skillsEmbedded };
 }
 
-async function embedInstitutionalMemoryItems(
+async function backfillInstitutionalMemoryItemsBatch(
   database: SqlDatabase,
   embedBatch: EmbedBatchFn,
   batchSize: number,
@@ -213,13 +351,7 @@ async function embedInstitutionalMemoryItems(
   return embedded;
 }
 
-/**
- * A workspace_skills row is re-embedded whenever its CURRENT_VERSION moves:
- * `embedding_version` records which version the stored vector answers for,
- * so a new revision (or a future `kind='workflow'` row landing in this same
- * table — see AGENTS.md) is picked up by this same query with no extra code.
- */
-async function embedWorkspaceSkills(
+async function backfillWorkspaceSkillsBatch(
   database: SqlDatabase,
   embedBatch: EmbedBatchFn,
   batchSize: number,
@@ -266,25 +398,4 @@ async function embedWorkspaceSkills(
     embedded += 1;
   }
   return embedded;
-}
-
-/** Throttled `runOnce`, wired into the server's per-tick background section
- *  like `PushDeliveryLoop`/`MediaExpiryLoop` (see `background.ts`). */
-export class InstitutionalMemoryEmbeddingLoop {
-  #lastCompletedAt = Number.NEGATIVE_INFINITY;
-
-  constructor(
-    private readonly database: SqlDatabase,
-    private readonly embedBatch: EmbedBatchFn = createDefaultEmbedBatchFn(),
-    private readonly intervalMs = EMBEDDING_CYCLE_INTERVAL_MS,
-    private readonly batchSize = EMBEDDING_BACKFILL_BATCH,
-    private readonly now: () => number = Date.now,
-  ) {}
-
-  async runIfDue(): Promise<EmbeddingCycleCounts | undefined> {
-    const now = this.now();
-    if (now - this.#lastCompletedAt < this.intervalMs) return undefined;
-    this.#lastCompletedAt = now;
-    return runInstitutionalMemoryEmbeddingCycle(this.database, this.embedBatch, this.batchSize);
-  }
 }

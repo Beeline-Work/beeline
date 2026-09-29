@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
@@ -6,10 +8,15 @@ import {
   createDefaultEmbedBatchFn,
   pgvectorLiteral,
   withDeadline,
-  runInstitutionalMemoryEmbeddingCycle,
-  InstitutionalMemoryEmbeddingLoop,
+  embedOneInstitutionalMemoryItem,
+  embedOneWorkspaceSkillVersion,
+  scheduleEmbedInstitutionalMemoryItem,
+  scheduleEmbedWorkspaceSkillVersion,
+  hasPendingEmbedRetry,
+  backfillInstitutionalMemoryEmbeddingsOnce,
+  EMBED_RETRY_BACKOFF_MS,
   OPENROUTER_EMBEDDINGS_URL,
-  type EmbedFn,
+  type EmbedBatchFn,
 } from './institutional-memory-embeddings.js';
 
 const DIM = 1024;
@@ -24,6 +31,7 @@ function okResponse(body: unknown): Response {
 
 afterEach(() => {
   delete process.env.OPENROUTER_EMBEDDING_API_KEY;
+  vi.useRealTimers();
 });
 
 describe('createDefaultEmbedFn', () => {
@@ -81,14 +89,17 @@ describe('createDefaultEmbedFn', () => {
 
 describe('withDeadline', () => {
   it('passes through a fast, successful embed unchanged', async () => {
-    const fast: EmbedFn = async () => ({ outcome: 'served', vector: VECTOR, ms: 1 });
+    const fast = async () => ({ outcome: 'served' as const, vector: VECTOR, ms: 1 });
     const bounded = withDeadline(fast, 1_000);
     const result = await bounded('x', 'query');
     expect(result.outcome).toBe('served');
   });
 
   it('reports timed-out when the embedder takes longer than the deadline, and never rejects', async () => {
-    const slow: EmbedFn = () => new Promise((resolve) => setTimeout(() => resolve({ outcome: 'served', vector: VECTOR, ms: 500 }), 500));
+    const slow = () =>
+      new Promise<{ outcome: 'served'; vector: number[]; ms: number }>((resolve) =>
+        setTimeout(() => resolve({ outcome: 'served', vector: VECTOR, ms: 500 }), 500),
+      );
     const bounded = withDeadline(slow, 20);
     const result = await bounded('x', 'query');
     expect(result.outcome).toBe('timed-out');
@@ -130,43 +141,73 @@ describe('createDefaultEmbedBatchFn', () => {
   });
 });
 
-describe('runInstitutionalMemoryEmbeddingCycle', () => {
-  const WORKSPACE = '10000000-0000-4000-8000-0000000000e1';
-  const ROOM = '20000000-0000-4000-8000-0000000000e1';
-  const CAPTAIN = 'a'.repeat(64);
-  const MESSAGE = 'b'.repeat(64);
+const WORKSPACE = '10000000-0000-4000-8000-0000000000e1';
+const ROOM = '20000000-0000-4000-8000-0000000000e1';
+const CAPTAIN = 'a'.repeat(64);
+const MESSAGE = 'b'.repeat(64);
 
-  async function seed(database: PgliteDatabase) {
-    await migrate(database);
-    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Captain')`, [
-      CAPTAIN,
-    ]);
-    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'WS')`, [WORKSPACE]);
-    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
-      ROOM,
-      WORKSPACE,
-    ]);
-    await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'hello')`,
-      [MESSAGE, ROOM, CAPTAIN],
-    );
-  }
+async function seed(database: PgliteDatabase) {
+  await migrate(database);
+  await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Captain')`, [
+    CAPTAIN,
+  ]);
+  await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'WS')`, [WORKSPACE]);
+  await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
+    ROOM,
+    WORKSPACE,
+  ]);
+  await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'hello')`, [
+    MESSAGE,
+    ROOM,
+    CAPTAIN,
+  ]);
+}
 
-  it('embeds an unembedded active item and records the model and timestamp', async () => {
+async function insertItem(database: PgliteDatabase, id: string) {
+  await database.query(
+    `INSERT INTO institutional_memory_items
+       (id,workspace_id,kind,canonical_key,body,state,source_room_id,source_message_id,
+        audience_kind,confidence,version,keywords)
+     VALUES($1::uuid,$2,'workspace_fact',$1,'A fact.','active',$3,$4,'workspace',0.9,1,'{}')`,
+    [id, WORKSPACE, ROOM, MESSAGE],
+  );
+}
+
+async function insertSkill(database: PgliteDatabase, skillId: string, jobId: string) {
+  await database.query(
+    `INSERT INTO institutional_memory_jobs
+       (id,workspace_id,trigger_kind,mode,source_room_id,source_message_id,requester_identity_id,
+        source_audience_kind,idempotency_key,status)
+     VALUES($1::uuid,$2,'merge_review','live',$3,$4,$5,'workspace_candidate',$6,'completed')`,
+    [jobId, WORKSPACE, ROOM, MESSAGE, CAPTAIN, `idem-${jobId}`],
+  );
+  await database.query(
+    `INSERT INTO workspace_skills
+       (id,workspace_id,slug,description,state,current_version,revision,source_room_id,
+        repository,target_commit)
+     VALUES($1::uuid,$2,'deploy-app','How to deploy the app','active',1,1,$3,'org/repo','abc')`,
+    [skillId, WORKSPACE, ROOM],
+  );
+  await database.query(
+    `INSERT INTO workspace_skill_versions
+       (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,repository,
+        target_commit,extractor_version,model)
+     VALUES($1::uuid,1,'Run npm run deploy.',$2,$3::uuid,$4,'org/repo','abc','v1','model')`,
+    [skillId, 'c'.repeat(64), jobId, [MESSAGE]],
+  );
+}
+
+describe('embed-on-save (event-driven, no scan)', () => {
+  it('embeds a freshly saved institutional_memory_items row', async () => {
     const database = new PgliteDatabase();
     await seed(database);
     const itemId = 'ffffffff-ffff-4fff-8fff-fffffffffff1';
-    await database.query(
-      `INSERT INTO institutional_memory_items
-         (id,workspace_id,kind,canonical_key,body,state,source_room_id,source_message_id,
-          audience_kind,confidence,version,keywords)
-       VALUES($1::uuid,$2,'workspace_fact','a.fact','A fact.','active',$3,$4,'workspace',0.9,1,'{}')`,
-      [itemId, WORKSPACE, ROOM, MESSAGE],
-    );
-    const embedBatch = vi.fn(async (texts: readonly string[]) => texts.map(() => VECTOR));
-    const counts = await runInstitutionalMemoryEmbeddingCycle(database, embedBatch);
-    expect(counts.itemsEmbedded).toBe(1);
-    expect(embedBatch).toHaveBeenCalledWith(['a.fact: A fact.'], 'document');
+    await insertItem(database, itemId);
+    const ok = await embedOneInstitutionalMemoryItem(database, itemId, async (texts) => {
+      expect(texts).toEqual([`${itemId}: A fact.`]);
+      return texts.map(() => VECTOR);
+    });
+    expect(ok).toBe(true);
     const row = (
       await database.query<{ embedding_model: string; embedded_at: Date | null }>(
         `SELECT embedding_model,embedded_at FROM institutional_memory_items WHERE id=$1`,
@@ -177,101 +218,195 @@ describe('runInstitutionalMemoryEmbeddingCycle', () => {
     expect(row?.embedded_at).toBeTruthy();
   });
 
-  it('does not re-embed a row already embedded with the current model', async () => {
+  it('embeds a freshly saved workspace_skills version', async () => {
     const database = new PgliteDatabase();
     await seed(database);
-    const itemId = 'ffffffff-ffff-4fff-8fff-fffffffffff2';
-    await database.query(
-      `INSERT INTO institutional_memory_items
-         (id,workspace_id,kind,canonical_key,body,state,source_room_id,source_message_id,
-          audience_kind,confidence,version,keywords,embedding,embedding_model,embedded_at)
-       VALUES($1::uuid,$2,'workspace_fact','a.fact','A fact.','active',$3,$4,'workspace',0.9,1,'{}',
-              $5::vector,'voyageai/voyage-4-lite',now())`,
-      [itemId, WORKSPACE, ROOM, MESSAGE, pgvectorLiteral(VECTOR)],
-    );
-    const embedBatch = vi.fn(async (texts: readonly string[]) => texts.map(() => VECTOR));
-    const counts = await runInstitutionalMemoryEmbeddingCycle(database, embedBatch);
-    expect(counts.itemsEmbedded).toBe(0);
-    expect(embedBatch).not.toHaveBeenCalled();
-  });
-
-  it('re-embeds a workspace_skills row whose current_version moved past its stored embedding_version', async () => {
-    const database = new PgliteDatabase();
-    await seed(database);
-    const skillId = 'ffffffff-ffff-4fff-8fff-fffffffffff3';
-    const jobId = 'ffffffff-ffff-4fff-8fff-fffffffffff4';
-    await database.query(
-      `INSERT INTO institutional_memory_jobs
-         (id,workspace_id,trigger_kind,mode,source_room_id,source_message_id,requester_identity_id,
-          source_audience_kind,idempotency_key,status)
-       VALUES($1::uuid,$2,'merge_review','live',$3,$4,$5,'workspace_candidate','idem-1','completed')`,
-      [jobId, WORKSPACE, ROOM, MESSAGE, CAPTAIN],
-    );
-    await database.query(
-      `INSERT INTO workspace_skills
-         (id,workspace_id,slug,description,state,current_version,revision,source_room_id,
-          repository,target_commit,embedding,embedding_model,embedding_version,embedded_at)
-       VALUES($1::uuid,$2,'deploy-app','How to deploy the app','active',2,1,$3,'org/repo','abc',
-              $4::vector,'voyageai/voyage-4-lite',1,now())`,
-      [skillId, WORKSPACE, ROOM, pgvectorLiteral(VECTOR)],
-    );
-    await database.query(
-      `INSERT INTO workspace_skill_versions
-         (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,repository,
-          target_commit,extractor_version,model)
-       VALUES($1::uuid,2,'Run npm run deploy.','${'a'.repeat(64)}',$2::uuid,$3,'org/repo','abc','v1','model')`,
-      [skillId, jobId, [MESSAGE]],
-    );
-    const embedBatch = vi.fn(async (texts: readonly string[]) => texts.map(() => VECTOR));
-    const counts = await runInstitutionalMemoryEmbeddingCycle(database, embedBatch);
-    expect(counts.skillsEmbedded).toBe(1);
-    expect(embedBatch.mock.calls[0]?.[0][0]).toContain('deploy app');
+    const skillId = 'ffffffff-ffff-4fff-8fff-fffffffffff2';
+    await insertSkill(database, skillId, 'ffffffff-ffff-4fff-8fff-fffffffffff3');
+    const ok = await embedOneWorkspaceSkillVersion(database, skillId, async (texts) => {
+      expect(texts[0]).toContain('deploy app');
+      return texts.map(() => VECTOR);
+    });
+    expect(ok).toBe(true);
     const row = (
       await database.query<{ embedding_version: number }>(
         `SELECT embedding_version FROM workspace_skills WHERE id=$1`,
         [skillId],
       )
     ).rows[0];
-    expect(row?.embedding_version).toBe(2);
+    expect(row?.embedding_version).toBe(1);
   });
 
-  it('leaves rows unembedded (for the next pass) when the batch embedder returns nothing', async () => {
+  it('a row already gone or inactive is treated as done, not a failure to retry', async () => {
     const database = new PgliteDatabase();
     await seed(database);
-    const itemId = 'ffffffff-ffff-4fff-8fff-fffffffffff5';
-    await database.query(
-      `INSERT INTO institutional_memory_items
-         (id,workspace_id,kind,canonical_key,body,state,source_room_id,source_message_id,
-          audience_kind,confidence,version,keywords)
-       VALUES($1::uuid,$2,'workspace_fact','a.fact','A fact.','active',$3,$4,'workspace',0.9,1,'{}')`,
-      [itemId, WORKSPACE, ROOM, MESSAGE],
-    );
-    const counts = await runInstitutionalMemoryEmbeddingCycle(
+    const embedBatch = vi.fn();
+    const ok = await embedOneInstitutionalMemoryItem(
       database,
-      async () => undefined,
+      'ffffffff-ffff-4fff-8fff-fffffffffff9',
+      embedBatch,
     );
-    expect(counts.itemsEmbedded).toBe(0);
-    const row = (
+    expect(ok).toBe(true);
+    expect(embedBatch).not.toHaveBeenCalled();
+  });
+});
+
+describe('per-row retry with in-process backoff (no database scan)', () => {
+  it('retries only the failing row, on backoff, until the embedder succeeds', async () => {
+    vi.useFakeTimers();
+    const database = new PgliteDatabase();
+    await seed(database);
+    const itemId = 'ffffffff-ffff-4fff-8fff-fffffffffff4';
+    await insertItem(database, itemId);
+    const embedBatch: EmbedBatchFn = vi
+      .fn()
+      .mockResolvedValueOnce(undefined) // attempt 1: fails
+      .mockResolvedValueOnce(undefined) // attempt 2: fails
+      .mockResolvedValueOnce([VECTOR]); // attempt 3: succeeds
+    scheduleEmbedInstitutionalMemoryItem(database, itemId, embedBatch);
+
+    await vi.advanceTimersByTimeAsync(0); // attempt 1 runs synchronously-ish
+    expect(embedBatch).toHaveBeenCalledTimes(1);
+    expect(hasPendingEmbedRetry(`item:${itemId}`)).toBe(true);
+    let row = (
       await database.query<{ embedding_model: string | null }>(
         `SELECT embedding_model FROM institutional_memory_items WHERE id=$1`,
         [itemId],
       )
     ).rows[0];
     expect(row?.embedding_model).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(EMBED_RETRY_BACKOFF_MS[0]); // attempt 2
+    expect(embedBatch).toHaveBeenCalledTimes(2);
+    expect(hasPendingEmbedRetry(`item:${itemId}`)).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(EMBED_RETRY_BACKOFF_MS[1]); // attempt 3: succeeds
+    expect(embedBatch).toHaveBeenCalledTimes(3);
+    expect(hasPendingEmbedRetry(`item:${itemId}`)).toBe(false);
+    row = (
+      await database.query<{ embedding_model: string | null }>(
+        `SELECT embedding_model FROM institutional_memory_items WHERE id=$1`,
+        [itemId],
+      )
+    ).rows[0];
+    expect(row?.embedding_model).toBe('voyageai/voyage-4-lite');
+  });
+
+  it('gives up after exhausting the bounded backoff, with no further timer left pending', async () => {
+    vi.useFakeTimers();
+    const database = new PgliteDatabase();
+    await seed(database);
+    const itemId = 'ffffffff-ffff-4fff-8fff-fffffffffff5';
+    await insertItem(database, itemId);
+    const embedBatch = vi.fn().mockResolvedValue(undefined);
+    scheduleEmbedInstitutionalMemoryItem(database, itemId, embedBatch);
+    await vi.advanceTimersByTimeAsync(0);
+    for (const backoff of EMBED_RETRY_BACKOFF_MS) {
+      await vi.advanceTimersByTimeAsync(backoff);
+    }
+    expect(embedBatch).toHaveBeenCalledTimes(EMBED_RETRY_BACKOFF_MS.length + 1);
+    expect(hasPendingEmbedRetry(`item:${itemId}`)).toBe(false);
+    // Advancing far past every backoff triggers no further attempt: the
+    // retry is bounded and terminates, never becoming a recurring sweep.
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
+    expect(embedBatch).toHaveBeenCalledTimes(EMBED_RETRY_BACKOFF_MS.length + 1);
+  });
+
+  it('a second save for the same row supersedes its own pending retry rather than piling one up', async () => {
+    vi.useFakeTimers();
+    const database = new PgliteDatabase();
+    await seed(database);
+    const itemId = 'ffffffff-ffff-4fff-8fff-fffffffffff6';
+    await insertItem(database, itemId);
+    const firstEmbedBatch = vi.fn().mockResolvedValue(undefined);
+    scheduleEmbedInstitutionalMemoryItem(database, itemId, firstEmbedBatch);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(hasPendingEmbedRetry(`item:${itemId}`)).toBe(true);
+
+    const secondEmbedBatch = vi.fn().mockResolvedValue([VECTOR]);
+    scheduleEmbedInstitutionalMemoryItem(database, itemId, secondEmbedBatch);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(secondEmbedBatch).toHaveBeenCalledTimes(1);
+    expect(hasPendingEmbedRetry(`item:${itemId}`)).toBe(false);
+
+    // The superseded first attempt's own backoff timer must not fire later.
+    await vi.advanceTimersByTimeAsync(EMBED_RETRY_BACKOFF_MS[0]);
+    expect(firstEmbedBatch).toHaveBeenCalledTimes(1);
   });
 });
 
-describe('InstitutionalMemoryEmbeddingLoop', () => {
-  it('throttles: a second runIfDue before the interval elapses is a no-op', async () => {
+describe('backfillInstitutionalMemoryEmbeddingsOnce (one pass, never repeats itself)', () => {
+  it('embeds every row missing a current embedding, across more than one batch, then stops', async () => {
     const database = new PgliteDatabase();
-    await migrate(database);
-    let now = 0;
-    const embedBatch = vi.fn(async () => undefined);
-    const loop = new InstitutionalMemoryEmbeddingLoop(database, embedBatch, 1_000, 20, () => now);
-    expect(await loop.runIfDue()).toBeDefined();
-    now = 500;
-    expect(await loop.runIfDue()).toBeUndefined();
-    now = 1_100;
-    expect(await loop.runIfDue()).toBeDefined();
+    await seed(database);
+    const ids = Array.from(
+      { length: 3 },
+      (_, index) => `ffffffff-ffff-4fff-8fff-fffffffffe0${index}`,
+    );
+    for (const id of ids) await insertItem(database, id);
+    const embedBatch = vi.fn(async (texts: readonly string[]) => texts.map(() => VECTOR));
+    const counts = await backfillInstitutionalMemoryEmbeddingsOnce(database, embedBatch, 2);
+    expect(counts.itemsEmbedded).toBe(3);
+    // batchSize=2 over 3 rows: two calls (2 then 1), never a third scan once empty.
+    expect(embedBatch).toHaveBeenCalledTimes(2);
+    for (const id of ids) {
+      const row = (
+        await database.query<{ embedding_model: string | null }>(
+          `SELECT embedding_model FROM institutional_memory_items WHERE id=$1`,
+          [id],
+        )
+      ).rows[0];
+      expect(row?.embedding_model).toBe('voyageai/voyage-4-lite');
+    }
+  });
+
+  it('does not repeat: a second call finds nothing left and makes no embedder call', async () => {
+    const database = new PgliteDatabase();
+    await seed(database);
+    const itemId = 'ffffffff-ffff-4fff-8fff-fffffffffff7';
+    await insertItem(database, itemId);
+    await backfillInstitutionalMemoryEmbeddingsOnce(database, async (texts) =>
+      texts.map(() => VECTOR),
+    );
+    const secondPass = vi.fn();
+    const counts = await backfillInstitutionalMemoryEmbeddingsOnce(database, secondPass);
+    expect(counts).toEqual({ itemsEmbedded: 0, skillsEmbedded: 0 });
+    expect(secondPass).not.toHaveBeenCalled();
+  });
+
+  it('covers workspace_skills too, re-embedding a version bump', async () => {
+    const database = new PgliteDatabase();
+    await seed(database);
+    const skillId = 'ffffffff-ffff-4fff-8fff-fffffffffff8';
+    await insertSkill(database, skillId, 'ffffffff-ffff-4fff-8fff-ffffffffffe1');
+    const counts = await backfillInstitutionalMemoryEmbeddingsOnce(database, async (texts) =>
+      texts.map(() => VECTOR),
+    );
+    expect(counts.skillsEmbedded).toBe(1);
+  });
+});
+
+describe('no timer-driven or periodic database sweep', () => {
+  it('the embeddings module sets no interval anywhere', () => {
+    const source = readFileSync(
+      fileURLToPath(new URL('./institutional-memory-embeddings.ts', import.meta.url)),
+      'utf8',
+    );
+    expect(source).not.toMatch(/setInterval\s*\(/);
+    // A recurring scan class/loop must not exist at all: only the one-shot
+    // backfill and per-row event-driven scheduling remain.
+    expect(source).not.toMatch(/class\s+\w*Loop\b/);
+    expect(source).not.toMatch(/runIfDue/);
+  });
+
+  it("index.ts wires the backfill as a one-shot call, not a recurring background job", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL('./index.ts', import.meta.url)),
+      'utf8',
+    );
+    expect(source).not.toMatch(/InstitutionalMemoryEmbeddingLoop/);
+    expect(source).not.toMatch(/institutional-memory-embedding['"]/);
+    // Exactly two calls: once after the release migration, once at server start.
+    expect(source.match(/backfillInstitutionalMemoryEmbeddingsOnce\(/g)).toHaveLength(2);
   });
 });

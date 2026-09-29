@@ -1050,7 +1050,16 @@ export async function applyInstitutionalCuratorProposal(
     proposal: InstitutionalCuratorProposal;
     usage: InstitutionalMemoryJobUsage;
   },
-): Promise<{ consolidatedItems: number; consolidatedSkills: number }> {
+): Promise<{
+  consolidatedItems: number;
+  consolidatedSkills: number;
+  /** ids of rows this call created/updated content for, to schedule an
+   *  event-driven embed against once the caller's transaction commits — see
+   *  institutional-memory-embeddings.ts. Never touched for an archive/stale
+   *  transition alone, since that changes no embeddable content. */
+  embeddedItemIds: string[];
+  embeddedSkillIds: string[];
+}> {
   const parsed = parseInstitutionalCuratorProposal(input.proposal);
   if (parsed.partition !== input.context?.partition) {
     throw new Error('institutional curator partition conflict');
@@ -1058,6 +1067,8 @@ export async function applyInstitutionalCuratorProposal(
   const candidates = contextCandidates(input.context);
   let consolidatedItems = 0;
   let consolidatedSkills = 0;
+  const embeddedItemIds: string[] = [];
+  const embeddedSkillIds: string[] = [];
   for (const action of parsed.actions) {
     const target = candidates.get(action.targetId);
     const duplicates = action.duplicateIds.map((id) => candidates.get(id));
@@ -1202,6 +1213,7 @@ export async function applyInstitutionalCuratorProposal(
           [nextId, allIds],
         );
         consolidatedItems += 1;
+        embeddedItemIds.push(nextId);
       } else {
         // Only a real transition may move the aging anchor. Re-affirming the
         // state a row already holds records curation and nothing else, so a
@@ -1297,7 +1309,7 @@ export async function applyInstitutionalCuratorProposal(
            WHERE id=ANY($1::uuid[])`,
           [action.duplicateIds],
         );
-        await applyWorkspaceSkillProposal(database, {
+        const appliedSkill = await applyWorkspaceSkillProposal(database, {
           workspaceId: input.workspaceId,
           sourceRoomId: current.source_room_id,
           sourceMessageIds: [
@@ -1314,6 +1326,7 @@ export async function applyInstitutionalCuratorProposal(
           current.id,
         ]);
         consolidatedSkills += 1;
+        embeddedSkillIds.push(appliedSkill.skillId);
       } else {
         const nextState = lifecycleTargetState(action.action, current.state);
         if (nextState === current.state) {
@@ -1339,5 +1352,5 @@ export async function applyInstitutionalCuratorProposal(
       [input.workspaceId, cycleKey, consolidatedItems, consolidatedSkills],
     );
   }
-  return { consolidatedItems, consolidatedSkills };
+  return { consolidatedItems, consolidatedSkills, embeddedItemIds, embeddedSkillIds };
 }

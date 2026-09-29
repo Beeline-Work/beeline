@@ -40,6 +40,8 @@ import { applyInstitutionalCuratorProposal } from './institutional-curator.js';
 import {
   createDefaultEmbedFn,
   pgvectorLiteral,
+  scheduleEmbedInstitutionalMemoryItem,
+  scheduleEmbedWorkspaceSkillVersion,
   withDeadline,
   type EmbedFn,
 } from './institutional-memory-embeddings.js';
@@ -840,6 +842,10 @@ export async function completeInstitutionalMemoryJob(
 ): Promise<void> {
   if (!config.enabled) throw new Error('institutional memory shadow is disabled');
   const usage = boundedUsage(input.usage);
+  // Populated inside the transaction below, scheduled for embedding only
+  // after it commits (see the end of this function).
+  const embeddedItemIds: string[] = [];
+  const embeddedSkillIds: string[] = [];
   await database.transaction(async (db) => {
     const job = (
       await db.query<CompletionRow>(
@@ -924,12 +930,13 @@ export async function completeInstitutionalMemoryJob(
         throw new Error('institutional memory profile subject must be the requester');
       }
       if (job.mode === 'live') {
-        await applyMemoryProposal(db, {
+        const applied = await applyMemoryProposal(db, {
           workspaceId: job.workspace_id,
           primarySourceMessageId: job.source_message_id,
           proposal: memoryProposal,
           createdByJobId: job.id,
         });
+        embeddedItemIds.push(applied.itemId);
       } else {
         // Shadow mode still exercises CAS validation without creating an item.
         const current = (
@@ -992,7 +999,7 @@ export async function completeInstitutionalMemoryJob(
         if (liveSkillSources.rowCount !== skillSourceMessageIds.length) {
           throw new Error('workspace skill evidence was deleted before completion');
         }
-        await applyWorkspaceSkillProposal(db, {
+        const appliedSkill = await applyWorkspaceSkillProposal(db, {
           workspaceId: job.workspace_id,
           sourceRoomId: job.source_room_id,
           sourceMessageIds: skillSourceMessageIds,
@@ -1000,6 +1007,7 @@ export async function completeInstitutionalMemoryJob(
           usage,
           proposal: mergeProposal.skill,
         });
+        embeddedSkillIds.push(appliedSkill.skillId);
       }
       if (job.mode === 'live' && mergeProposal.findings.length) {
         for (const finding of mergeProposal.findings) {
@@ -1025,7 +1033,7 @@ export async function completeInstitutionalMemoryJob(
       }
     }
     if (curatorProposal && job.mode === 'live') {
-      await applyInstitutionalCuratorProposal(db, {
+      const curated = await applyInstitutionalCuratorProposal(db, {
         workspaceId: job.workspace_id,
         jobId: job.id,
         sourceMessageId: job.source_message_id,
@@ -1033,6 +1041,8 @@ export async function completeInstitutionalMemoryJob(
         proposal: curatorProposal,
         usage,
       });
+      embeddedItemIds.push(...curated.embeddedItemIds);
+      embeddedSkillIds.push(...curated.embeddedSkillIds);
     }
 
     await db.query(
@@ -1141,6 +1151,12 @@ export async function completeInstitutionalMemoryJob(
       ],
     );
   });
+  // Event-driven, not polled: schedule an embed for every row this job
+  // created/updated, against the outer (non-transactional) `database`
+  // handle now that the transaction above has committed. See
+  // institutional-memory-embeddings.ts.
+  for (const itemId of embeddedItemIds) scheduleEmbedInstitutionalMemoryItem(database, itemId);
+  for (const skillId of embeddedSkillIds) scheduleEmbedWorkspaceSkillVersion(database, skillId);
 }
 
 export async function failInstitutionalMemoryJob(
@@ -1676,6 +1692,10 @@ export async function proposeInstitutionalMemory(
     });
     return applied;
   });
+  // Event-driven, not polled: this save schedules its OWN row's embed against
+  // the outer (non-transactional) `database` handle, never blocking or
+  // failing the save above. See institutional-memory-embeddings.ts.
+  scheduleEmbedInstitutionalMemoryItem(database, proposal.itemId);
   return proposal;
 }
 

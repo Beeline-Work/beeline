@@ -114,9 +114,19 @@ pub fn run() {
                     }
                 });
             }
+            // Preview/dev bundles have no updater endpoint. Registering the
+            // plugin against a null config panics before the window opens.
             #[cfg(desktop)]
-            _app.handle()
-                .plugin(tauri_plugin_updater::Builder::new().build())?;
+            if _app
+                .config()
+                .plugins
+                .0
+                .get("updater")
+                .is_some_and(|config| !config.is_null())
+            {
+                _app.handle()
+                    .plugin(tauri_plugin_updater::Builder::new().build())?;
+            }
             #[cfg(target_os = "linux")]
             {
                 // AppImages have no installer to register their desktop file.

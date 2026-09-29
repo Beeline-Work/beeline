@@ -263,6 +263,11 @@ import { copyEntireTurn } from '@/buzz/message-copy';
 import { storeTempText } from '@/sync/persistence';
 import { useRoomMessageRenderItem } from '@/buzz/room-message-cell';
 import { arrivalFlashTiming, landingFlashesArrival } from '@/buzz/room-arrival-flash';
+import {
+  shouldSettleMessageSourceLanding,
+  startMessageSourceLanding,
+  type MessageSourceLanding,
+} from '@/buzz/message-source-landing';
 import { useRoomTranscriptHistory } from '@/buzz/use-room-transcript-history';
 import {
   markRoomOpen,
@@ -2349,6 +2354,17 @@ export function BuzzChatSurface({
     acknowledgeQueue: boolean;
   } | null>(null);
   const pendingNotificationLandingRef = useRef<{ messageId: string; attempts: number } | null>(null);
+  // The one-shot re-center + brass flash for a message-source jump (quote
+  // reference, forward source, notification target). Settles on the same
+  // viewability report that clears `pendingNotificationLandingRef` above —
+  // never on a clock — so it can't race `onScrollToIndexFailed`'s own
+  // retries for a distant target. See `buzz/message-source-landing.ts`.
+  const messageSourceLandingRef = useRef<MessageSourceLanding | null>(null);
+  // Set only by a genuine touch (`onScrollBeginDrag`, below) — never by
+  // `onScrollToIndexFailed`'s own programmatic `scrollToOffset` retries,
+  // which provoke momentum events on the shared `dragEndSequenceRef` just
+  // like a real gesture would. Reset when a new landing starts.
+  const messageSourceLandingAbandonedRef = useRef(false);
   const visibleTranscriptMessagesRef = useRef<ChatDisplayMessage[]>([]);
   const dragEndSequenceRef = useRef(0);
   const completedUnreadLandingRef = useRef<string | null>(null);
@@ -2357,6 +2373,14 @@ export function BuzzChatSurface({
   // same row is a fresh false→true edge and a re-render is not.
   const [arrivalFlashMessageId, setArrivalFlashMessageId] = useState<string | null>(null);
   const arrivalFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The row a settled message-source jump (a quote reference, a forward
+  // source, a notification target) just centered. Same one-cycle timing as
+  // the arrival pointer above, but its own brass tint — this is a reader
+  // reaching for a specific message, not the passive "you arrived here" mark.
+  const [sourceLandingFlashMessageId, setSourceLandingFlashMessageId] = useState<string | null>(
+    null,
+  );
+  const sourceLandingFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messageAnchorIdRef = useRef(messageAnchorId);
   messageAnchorIdRef.current = messageAnchorId;
   const sourceJumpSequenceRef = useRef(0);
@@ -2381,9 +2405,18 @@ export function BuzzChatSurface({
       // outlast the longer of the two shapes it can take.
     }, arrivalFlashTiming(false).totalMs);
   }, []);
+  const raiseSourceLandingFlash = useCallback((messageId: string) => {
+    if (sourceLandingFlashTimerRef.current !== null) clearTimeout(sourceLandingFlashTimerRef.current);
+    setSourceLandingFlashMessageId(messageId);
+    sourceLandingFlashTimerRef.current = setTimeout(() => {
+      sourceLandingFlashTimerRef.current = null;
+      setSourceLandingFlashMessageId(null);
+    }, arrivalFlashTiming(false).totalMs);
+  }, []);
   useEffect(
     () => () => {
       if (arrivalFlashTimerRef.current !== null) clearTimeout(arrivalFlashTimerRef.current);
+      if (sourceLandingFlashTimerRef.current !== null) clearTimeout(sourceLandingFlashTimerRef.current);
     },
     [],
   );
@@ -2446,6 +2479,38 @@ export function BuzzChatSurface({
       ) {
         pendingNotificationLandingRef.current = null;
       }
+      // The message-source landing settles on this SAME report, once it
+      // actually contains the target — never before, so a distant target
+      // still being brought into range by onScrollToIndexFailed's retries
+      // (above) cannot be re-centered or flashed while still off-window.
+      const landing = messageSourceLandingRef.current;
+      if (landing && !landing.settled) {
+        const visibleMessageIds = new Set<string>();
+        for (const message of visibleTranscriptMessagesRef.current) {
+          visibleMessageIds.add(message.id);
+          if (message.relayId) visibleMessageIds.add(message.relayId);
+        }
+        if (
+          shouldSettleMessageSourceLanding(landing, {
+            messageAnchorId: messageAnchorIdRef.current,
+            abandoned: messageSourceLandingAbandonedRef.current,
+            visibleMessageIds,
+          })
+        ) {
+          landing.settled = true;
+          const measuredIndex = transcriptMessagesRef.current.findIndex(
+            (message) => message.id === landing.messageId || message.relayId === landing.messageId,
+          );
+          if (measuredIndex >= 0) {
+            flatListRef.current?.scrollToIndex({
+              index: measuredIndex,
+              viewPosition: 0.5,
+              animated: false,
+            });
+          }
+          raiseSourceLandingFlash(landing.messageId);
+        }
+      }
       // The list recomputes viewability on scroll AND on every committed
       // update, so an arrival that lands below the fold reports itself unseen
       // without the reader touching anything.
@@ -2457,7 +2522,7 @@ export function BuzzChatSurface({
       advanceReadCursor(chronologicalMessagesRef.current, visibleTranscriptMessagesRef.current);
       completePendingNewMessageLanding();
     },
-    [advanceReadCursor, completePendingNewMessageLanding, observeVisibleMessages],
+    [advanceReadCursor, completePendingNewMessageLanding, observeVisibleMessages, raiseSourceLandingFlash],
   );
   // Follow a new row only from the tail. A reader in history keeps the same
   // position while the arrival joins the compact queue above the composer.
@@ -2795,7 +2860,6 @@ export function BuzzChatSurface({
       (message) => message.id === messageId || message.relayId === messageId,
     );
     if (visibleIndex >= 0) {
-      const dragSequence = dragEndSequenceRef.current;
       scheduleAnimationFrame(() => {
         if (desktopTranscript) {
           desktopRowNodesRef.current
@@ -2804,34 +2868,23 @@ export function BuzzChatSurface({
           return;
         }
         pendingNotificationLandingRef.current = { messageId, attempts: 0 };
+        // A first scroll can mount a distant variable-height row with its
+        // provisional frame; once native measures that row, its real height
+        // can move the same durable id. Re-center it exactly ONCE — but only
+        // once the reader's OWN viewability report says the target is
+        // actually on screen (`observeVisibleTranscriptMessages`), never on
+        // a guessed delay. A fixed wall-clock or animation-frame delay can
+        // fire before a distant target's `onScrollToIndexFailed` retries
+        // (below) have brought it into range, re-centering — or flashing —
+        // a row that is still off-window or clipped. See
+        // `buzz/message-source-landing.ts`.
+        messageSourceLandingAbandonedRef.current = false;
+        messageSourceLandingRef.current = startMessageSourceLanding(messageId);
         flatListRef.current?.scrollToIndex({
           index: visibleIndex,
           viewPosition: 0.5,
           animated: false,
         });
-        // A first scroll can mount a distant variable-height row with its
-        // provisional frame. Once native measures that row, center the same
-        // durable id again; otherwise a sliver at the viewport edge can
-        // count as viewable while the message itself remains clipped.
-        for (const delay of [400, 1200]) {
-          setTimeout(() => {
-            if (
-              messageAnchorIdRef.current !== messageId ||
-              dragEndSequenceRef.current !== dragSequence ||
-              userDraggingRef.current
-            ) return;
-            const measuredIndex = transcriptMessagesRef.current.findIndex(
-              (message) => message.id === messageId || message.relayId === messageId,
-            );
-            if (measuredIndex >= 0) {
-              flatListRef.current?.scrollToIndex({
-                index: measuredIndex,
-                viewPosition: 0.5,
-                animated: false,
-              });
-            }
-          }, delay);
-        }
       });
       handledNotificationAnchorRef.current = anchorKey;
       return;
@@ -5358,6 +5411,7 @@ export function BuzzChatSurface({
     cardMotionStore: transcriptCardMotionStore,
     firstNewMessageId,
     arrivalFlashMessageId,
+    sourceLandingFlashMessageId,
     // The catch-up door rides the unread line, where the run it summarizes
     // begins, rather than in chrome floating over the transcript.
     catchUpOffered: catchUpOfferVisible,
@@ -5745,6 +5799,10 @@ export function BuzzChatSurface({
               dragEndSequenceRef.current += 1;
               userDraggingRef.current = true;
               allowOlderHistoryRef.current = true;
+              // The one signal a message-source landing can trust as a real
+              // touch: this never fires for a programmatic scrollToIndex/
+              // scrollToOffset, only an actual drag gesture.
+              messageSourceLandingAbandonedRef.current = true;
             }}
             onScrollEndDrag={(event) => {
               // Drag-end precedes momentum-begin. Missing optional velocity is

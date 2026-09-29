@@ -41,6 +41,7 @@ export function useRoomMessageRenderItem({
   cardMotionStore,
   firstNewMessageId,
   arrivalFlashMessageId = null,
+  sourceLandingFlashMessageId = null,
   catchUpOffered = false,
   onOpenCatchUp,
 }: {
@@ -53,6 +54,8 @@ export function useRoomMessageRenderItem({
   firstNewMessageId?: string | null;
   /** The row a completed notification landing just put on screen, or null. */
   arrivalFlashMessageId?: string | null;
+  /** The row a settled quote/forward/notification message-source jump just centered, or null. */
+  sourceLandingFlashMessageId?: string | null;
   /** Whether the unread run is long enough to be worth a catch-up offer. */
   catchUpOffered?: boolean;
   onOpenCatchUp?: () => void;
@@ -71,6 +74,7 @@ export function useRoomMessageRenderItem({
         cardArriving={arrivingCardIds.has(item.id)}
         cardMotionStore={resolvedCardMotionStore}
         arrivalFlashing={messageContainsBoundary(item, arrivalFlashMessageId)}
+        sourceLandingFlashing={messageContainsBoundary(item, sourceLandingFlashMessageId)}
         // Resolved per row, so only the boundary row's prop ever changes when
         // the offer comes and goes. A bare `catchUpOffered` here would be a
         // new value on every row of the transcript and re-render all of them.
@@ -89,6 +93,7 @@ export function useRoomMessageRenderItem({
       precedingMessageById,
       render,
       resolvedCardMotionStore,
+      sourceLandingFlashMessageId,
     ],
   );
 }
@@ -104,6 +109,7 @@ export const RoomMessageCell = React.memo(function RoomMessageCell({
   cardArriving = false,
   cardMotionStore,
   arrivalFlashing = false,
+  sourceLandingFlashing = false,
   offersCatchUp = false,
   onOpenCatchUp,
 }: {
@@ -116,6 +122,7 @@ export const RoomMessageCell = React.memo(function RoomMessageCell({
   cardArriving?: boolean;
   cardMotionStore?: TranscriptCardMotionStore;
   arrivalFlashing?: boolean;
+  sourceLandingFlashing?: boolean;
   offersCatchUp?: boolean;
   onOpenCatchUp?: () => void;
 }) {
@@ -127,7 +134,10 @@ export const RoomMessageCell = React.memo(function RoomMessageCell({
       store={cardMotionStore ?? fallbackMotionStore}
     >
       {withLedgerDayCaption(
-        <ArrivalFlashGround flashing={arrivalFlashing}>
+        <ArrivalFlashGround
+          flashing={arrivalFlashing || sourceLandingFlashing}
+          tint={sourceLandingFlashing ? 'brass' : 'pointer'}
+        >
           {startsNewMessages && (
             <NewMessagesDivider offersCatchUp={offersCatchUp} onOpenCatchUp={onOpenCatchUp} />
           )}
@@ -139,6 +149,9 @@ export const RoomMessageCell = React.memo(function RoomMessageCell({
   );
 });
 
+/** The ground's two shapes: the passive arrival pointer, and a reader reaching for one exact message. */
+type FlashTint = 'pointer' | 'brass';
+
 /**
  * The row's ground. At most one row in a transcript is ever flashing, so the
  * fill — and every animation hook that drives it — is mounted only for that
@@ -149,20 +162,24 @@ export const RoomMessageCell = React.memo(function RoomMessageCell({
 function ArrivalFlashGround({
   children,
   flashing,
+  tint = 'pointer',
 }: {
   children: React.ReactNode;
   flashing: boolean;
+  tint?: FlashTint;
 }) {
   return (
     <View>
-      {flashing ? <ArrivalFlashFill /> : null}
+      {flashing ? <ArrivalFlashFill tint={tint} /> : null}
       {children}
     </View>
   );
 }
 
 /**
- * The arrival pointer: `bgHighlight` laid UNDER the row, never around it, so
+ * The arrival pointer: `bgHighlight` (or, for a reader-initiated jump to one
+ * exact message, `brassWash` — the same token the ledger already uses for a
+ * settling card, never a new color) laid UNDER the row, never around it, so
  * nothing about the row itself moves or re-lays-out when it plays. One cycle
  * — hold, then fade — and the fill is gone; under reduce-motion the hold is
  * the whole of it and the fill clears without animating.
@@ -170,7 +187,7 @@ function ArrivalFlashGround({
  * Mounting IS the trigger, and this only mounts for a landing, so a
  * re-render, a refresh or a live arrival replays nothing.
  */
-function ArrivalFlashFill() {
+function ArrivalFlashFill({ tint }: { tint: FlashTint }) {
   const fill = useSharedValue(0);
   // Read once: the cycle is decided when it starts, so a setting toggled
   // mid-flash cannot restart the pointer the reader is already watching.
@@ -188,7 +205,10 @@ function ArrivalFlashFill() {
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
       pointerEvents="none"
-      style={[styles.arrivalFlashGround, groundStyle]}
+      style={[
+        tint === 'brass' ? styles.sourceLandingFlashGround : styles.arrivalFlashGround,
+        groundStyle,
+      ]}
       testID="arrival-flash-ground"
     />
   );
@@ -289,6 +309,13 @@ const styles = StyleSheet.create((theme) => ({
   arrivalFlashGround: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: theme.buzz.bgHighlight,
+  },
+  // A reader-initiated jump to one exact message (a quote reference, a
+  // forward source, a notification target) reads as brass, not the passive
+  // bgHighlight arrival pointer above — the existing token, never a new one.
+  sourceLandingFlashGround: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: theme.buzz.brassWashStrong,
   },
   newMessages: {
     flexDirection: 'row',

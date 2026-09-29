@@ -36,7 +36,7 @@ describe('the arrival flash', () => {
     // so a repeat render of a row that is already flashing replays nothing.
     // The surface clears the id on its own timer, so the NEXT landing on the
     // same row is a fresh mount.
-    expect(cell).toContain('{flashing ? <ArrivalFlashFill /> : null}');
+    expect(cell).toContain('{flashing ? <ArrivalFlashFill tint={tint} /> : null}');
     expect(cell).toContain('fill.value = withDelay(holdMs, withTiming(0, { duration: fadeMs }));');
     // The cycle depends on nothing that can change under it: a setting
     // toggled mid-flash must not restart the pointer.

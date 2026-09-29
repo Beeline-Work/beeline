@@ -387,7 +387,7 @@ jobs:
         if: github.event_name == 'pull_request' && (runner.os == 'macOS' || runner.os == 'Windows')
         with:
           name: desktop-native-notification-${{ matrix.label }}
-          path: ${{ runner.temp }}/desktop-native-notification-*.png
+          path: ${{ runner.temp }}/desktop-native-notification-*
           if-no-files-found: warn
           retention-days: 14
 

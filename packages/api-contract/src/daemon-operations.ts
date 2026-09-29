@@ -9,7 +9,6 @@ import type {
 import type { CornerLifecycleView, MessageReactionEmoji } from './phone-types.js';
 import type { ChoiceOptionInput } from './room-choices.js';
 import type { RoomScheduleCadence } from './phone-operations.js';
-import type { WorkflowDefinition } from './workflows.js';
 import type { CornerAppDefinition } from './corner-apps.js';
 import type {
   ClaimInstitutionalMemoryJobResult,
@@ -117,44 +116,6 @@ export type CommandClaimInput = RoomInput & {
 };
 export type TurnOutputAuthority = { readonly generationId?: string; readonly requestId?: string };
 export type DaemonOperationMap = {
-  putWorkflowDefinition: Operation<
-    RoomInput & TurnOutputAuthority & { readonly definition: WorkflowDefinition; readonly roles?: Readonly<Record<string, string>> },
-    { readonly name: string; readonly revision: number }
-  >;
-  startWorkflowRun: Operation<
-    RoomInput &
-      TurnOutputAuthority & {
-        readonly name: string;
-        readonly roles: Readonly<Record<string, string>>;
-      },
-    { readonly runId: string; readonly state: string; readonly status: string }
-  >;
-  completeWorkflowStep: Operation<
-    RoomInput &
-      TurnOutputAuthority & {
-        readonly runId: string;
-        readonly sequence: number;
-        readonly output: unknown;
-        readonly outcome?: 'success' | 'failure';
-      },
-    { readonly state: string; readonly status: string; readonly error?: string }
-  >;
-  listWorkflowRuns: Operation<
-    RoomInput,
-    {
-      readonly runs: readonly {
-        readonly runId: string;
-        readonly name: string;
-        readonly revision: number;
-        readonly state: string;
-        readonly status: string;
-        readonly deadlineAt?: number;
-        readonly error?: string;
-      }[];
-      readonly triggerErrors: readonly { readonly name: string; readonly revision: number; readonly triggerId: string; readonly error: string; readonly createdAt: number }[];
-    }
-  >;
-  readWorkflowRun: Operation<RoomInput & { readonly runId: string }, { readonly run: { readonly runId: string; readonly name: string; readonly revision: number; readonly state: string; readonly status: string; readonly deadlineAt?: number; readonly error?: string; readonly context: Readonly<Record<string, unknown>> }; readonly log: readonly { readonly sequence: number; readonly state: string; readonly event: string; readonly payload: unknown; readonly createdAt: number }[] }>;
   /** Claims host-side extraction work. The server never calls a model. */
   claimInstitutionalMemoryJob: Operation<AgentInput, ClaimInstitutionalMemoryJobResult>;
   heartbeatInstitutionalMemoryJob: Operation<

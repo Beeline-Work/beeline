@@ -591,58 +591,6 @@ const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
-    name: 'put_workflow',
-    description:
-      'Create a new version of a declarative workflow in this Room during an active turn. The server validates roles, deadlines, transitions, and bounded loops.',
-    inputSchema: {
-      type: 'object',
-      required: ['definition'],
-      properties: { definition: { type: 'object' }, roles: { type: 'object', additionalProperties: { type: 'string' }, description: 'Saved agent bindings for automatic event or schedule triggers.' } },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'start_workflow_run',
-    description:
-      'Start the latest version of a workflow with every role bound to a current Room agent identity. The run pins that version and the server wakes the first agent step.',
-    inputSchema: {
-      type: 'object',
-      required: ['name', 'roles'],
-      properties: {
-        name: { type: 'string' },
-        roles: { type: 'object', additionalProperties: { type: 'string' } },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'complete_workflow_step',
-    description:
-      'Return structured output for the workflow step assigned to this exact turn. The server validates it and routes the next role without relying on a tag.',
-    inputSchema: {
-      type: 'object',
-      required: ['runId', 'sequence', 'output'],
-      properties: {
-        runId: { type: 'string' },
-        sequence: { type: 'integer', minimum: 0 },
-        output: { type: 'object' },
-        outcome: { type: 'string', enum: ['success', 'failure'] },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'list_workflow_runs',
-    description:
-      'Read recent workflow runs in this Room, including their state, deadline, and error.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-  },
-  {
-    name: 'read_workflow_run',
-    description: 'Read one workflow run and its durable transition log in this Room.',
-    inputSchema: { type: 'object', required: ['runId'], properties: { runId: { type: 'string' } }, additionalProperties: false },
-  },
-  {
     name: 'list_schedules',
     description: 'List the schedules you own in this Room, with their cadence and run counts.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
@@ -3671,38 +3619,6 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
     }
     case 'create_schedule':
       return createSchedule(args);
-    case 'put_workflow':
-      return JSON.stringify(
-        await daemonExecute('putWorkflowDefinition', {
-          roomId: agentScheduleRoomId(),
-          definition: args.definition,
-          ...(args.roles ? { roles: args.roles } : {}),
-        }),
-      );
-    case 'start_workflow_run':
-      return JSON.stringify(
-        await daemonExecute('startWorkflowRun', {
-          roomId: agentScheduleRoomId(),
-          name: args.name,
-          roles: args.roles,
-        }),
-      );
-    case 'complete_workflow_step':
-      return JSON.stringify(
-        await daemonExecute('completeWorkflowStep', {
-          roomId: agentScheduleRoomId(),
-          runId: args.runId,
-          sequence: args.sequence,
-          output: args.output,
-          ...(args.outcome ? { outcome: args.outcome } : {}),
-        }),
-      );
-    case 'list_workflow_runs':
-      return JSON.stringify(
-        await daemonExecute('listWorkflowRuns', { roomId: agentScheduleRoomId() }),
-      );
-    case 'read_workflow_run':
-      return JSON.stringify(await daemonExecute('readWorkflowRun', { roomId: agentScheduleRoomId(), runId: args.runId }));
     case 'subscribe_events':
       return subscribeEvents(args);
     case 'list_event_subscriptions':

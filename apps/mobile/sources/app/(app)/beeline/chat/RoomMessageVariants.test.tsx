@@ -318,6 +318,9 @@ describe('Room message variant components', () => {
     );
     expect(JSON.stringify(owner.toJSON())).toContain('Deny');
     expect(JSON.stringify(owner.toJSON())).toContain('Allow');
+    expect(
+      owner.root.findByProps({ testID: 'write-permission-pending-title' }).props.numberOfLines,
+    ).toBeUndefined();
     act(() => owner.root.findByProps({ testID: 'write-permission-allow' }).props.onPress());
     expect(onDecision).toHaveBeenCalledWith(pending, 'allow');
 
@@ -371,6 +374,9 @@ describe('Room message variant components', () => {
         onConfirm={onConfirm}
       />,
     );
+    expect(
+      owner.root.findByProps({ testID: 'target-branch-proposal-title' }).props.numberOfLines,
+    ).toBeUndefined();
     act(() => owner.root.findByProps({ testID: 'target-branch-confirm' }).props.onPress());
     expect(onConfirm).toHaveBeenCalledWith(proposal);
     expect(
@@ -2670,6 +2676,9 @@ describe('Room message variant components', () => {
       },
     });
     const view = render(<SquireApprovalCard message={approval} onOpenSource={onOpenSource} />);
+    expect(
+      view.root.findByProps({ testID: 'squire-approval-card-title' }).props.numberOfLines,
+    ).toBeUndefined();
     expect(view.root.findByProps({ testID: 'squire-approval-detail' }).props.children).toContain(
       'Headphones · at Acme · 199.00 USD',
     );
@@ -2736,6 +2745,9 @@ describe('Room message variant components', () => {
       );
       const json = JSON.stringify(card.toJSON());
       expect(card.root.findByProps({ testID: 'connector-offer-pending' })).toBeDefined();
+      expect(
+        card.root.findByProps({ testID: 'connector-offer-pending-title' }).props.numberOfLines,
+      ).toBeUndefined();
       expect(json).toContain('Add Trusty Squire as a tool?');
       // ONE subtitle: the server-owned consequence + boundary, including the
       // agent's reason. Not a second line of agent prose.
@@ -3182,6 +3194,43 @@ describe('Room message variant components', () => {
       expect(letter.props.style[0].minHeight).toBeGreaterThan(0);
       expect(letter.props.style[0].height).toBeUndefined();
     }
+  });
+
+  it.each([
+    'In the past 13 months, did Giselle have any car insurance claims that Tokyo Marine needs disclosed before the quote?',
+    '過去13か月間に自動車保険の請求はありましたか？見積もりを進める前に必ずこの質問全体を確認してください。',
+  ])('shows the complete question title before its choices: %s', (prompt) => {
+    const renderer = render(
+      <ChoiceCard
+        message={message({
+          choice: {
+            choiceId: 'long-question',
+            mode: 'question',
+            status: 'open',
+            agent: { pubkey: 'agent', kind: 'agent', name: 'Foxy' },
+            prompt,
+            options: [
+              { optionId: 'A', letter: 'A', label: 'No', consequence: 'Continue the quote' },
+              { optionId: 'B', letter: 'B', label: 'Yes', consequence: 'Enter claim details' },
+            ],
+            electorate: ['human'],
+            votedCount: 0,
+            electorateCount: 1,
+            responses: [],
+          },
+        })}
+        viewerIsAgent={false}
+        viewerPubkey="human"
+        actionId={null}
+        onAnswer={vi.fn()}
+        onSkip={vi.fn()}
+      />,
+    );
+    const title = renderer.root.findByProps({ testID: 'choice-long-question-title' });
+    expect(title.props.children).toBe(prompt);
+    expect(title.props.numberOfLines).toBeUndefined();
+    expect(renderer.root.findByProps({ testID: 'choice-long-question-choices' })).toBeTruthy();
+    expect(renderer.root.findByProps({ testID: 'choice-long-question-skip' })).toBeTruthy();
   });
 
   it('opens the message actions sheet on long press while retaining tap dismissal', () => {

@@ -183,6 +183,7 @@ export const WritePermissionCard = React.memo(function WritePermissionCard({
     <TranscriptCard
       tier={pending ? 'ask' : 'record'}
       testID={`write-permission-${permission.status}`}
+      wrapTitle
       identity={
         <IdentityMark
           kind="agent"
@@ -404,6 +405,7 @@ export const SquireApprovalCard = React.memo(function SquireApprovalCard({
     <TranscriptCard
       tier="ask"
       testID="squire-approval-card"
+      wrapTitle
       identity={
         <IdentityMark
           kind="agent"
@@ -545,6 +547,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
     <TranscriptCard
       tier={pending || connecting ? 'ask' : 'record'}
       testID={`connector-offer-${pending ? 'pending' : connecting ? 'connecting' : 'settled'}`}
+      wrapTitle
 
       identity={<IdentityMark kind="agent" seed={display.avatarSeed ?? offer.agent.pubkey} avatarUrl={display.avatarUrl} face={display.face} name={agentName} size={26} />}
       title={connectorOfferTitle(offer.connectorName)}
@@ -660,7 +663,7 @@ export const ChoiceCard = React.memo(function ChoiceCard({
         />
       }
       title={card.prompt}
-      wrapTitle={card.mode === 'poll'}
+      wrapTitle
       subline={subline || card.constraint}
       sublineTestID={`choice-${card.choiceId}-subline`}
       stamp={ledgerStamp(message.timestamp)}
@@ -791,6 +794,7 @@ export const TargetBranchProposalCard = React.memo(function TargetBranchProposal
     <TranscriptCard
       tier={applied ? 'record' : 'ask'}
       testID="target-branch-proposal"
+      wrapTitle
       title={
         askingAgent ? (
           <>

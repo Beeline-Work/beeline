@@ -101,6 +101,7 @@ export function webProofShims(mobile: string): Record<string, string> {
     export const ReduceMotion = { System: 'system' };
     export const useReducedMotion = () => true;
     export const useAnimatedStyle = factory => factory();
+    export const useFrameCallback = () => ({ setActive: () => undefined, isActive: false });
     export const useSharedValue = value => ({ value });
     export const withRepeat = identity; export const withSequence = (...v) => v[0];
     export const withTiming = identity; export const withDelay = (_, value) => value;

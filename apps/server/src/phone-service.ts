@@ -52,6 +52,7 @@ import type {
 } from '@beeline/api-contract/phone';
 import {
   assignSeededAgentIdentity,
+  chatActivityAt,
   uniqueAgentHandle,
   cornerDisplayName,
   createCommunityInviteToken,
@@ -1322,10 +1323,12 @@ export class PhoneService {
           latest_turn_status: string | null;
           commissioned_by_viewer: boolean | null;
           latest_tags_viewer: boolean | null;
+          latest_created_at: Date | null;
         }>(
           `SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,turn.status latest_turn_status,
            initiator.id=$2 commissioned_by_viewer,
-           $2=ANY(${taggedIdentityIdsSql('lm')}) latest_tags_viewer
+           $2=ANY(${taggedIdentityIdsSql('lm')}) latest_tags_viewer,
+           lm.created_at latest_created_at
          FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
          LEFT JOIN identities initiator
            ON initiator.id=f.commissioned_by AND initiator.kind='human'
@@ -1465,7 +1468,9 @@ export class PhoneService {
               },
             }
           : {}),
-      })),
+      }))
+        // A viewer's corner going to waiting lifts its Room like a message does.
+        .sort((left, right) => chatActivityAt(right) - chatActivityAt(left)),
       viewer: await this.requireIdentity(viewerId),
       truncated: rooms.rows.length > 200,
       ...(unavailable.length ? { unavailable } : {}),

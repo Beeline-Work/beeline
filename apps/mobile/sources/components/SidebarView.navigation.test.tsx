@@ -770,14 +770,18 @@ describe('desktop Workspace navigation', () => {
       tree.update(<SidebarView key="room-corners-ready" />);
     });
     await settle();
-    act(() => control('desktop-room-room-a-corners').props.onPress({ stopPropagation: vi.fn() }));
 
+    // The viewer's waiting corner opens the dropdown without a tap.
     expect(control('desktop-corner-glyph-corner-a').props.color).toBeUndefined();
     const label = tree.root.find(
       (node: any) => node.type === 'Text' && node.props.children === 'waiting',
     );
     expect(label.props.style).toContainEqual({ color: '#b08a4a' });
+    expect(tree.root.findAllByProps({ testID: 'corner-waiting-pulse' }).length).toBeGreaterThan(0);
     expect(corners).not.toHaveBeenCalled();
+
+    act(() => control('desktop-room-room-a-corners').props.onPress({ stopPropagation: vi.fn() }));
+    expect(tree.root.findAllByProps({ testID: 'desktop-corner-glyph-corner-a' })).toHaveLength(0);
   });
 
   it('closes without routing when the current Workspace is picked', () => {

@@ -38,11 +38,10 @@ describe('Approved Room list layout', () => {
     expect(row).not.toContain('roomRowNeedsAttention');
     expect(row).not.toContain('presenceDot');
   });
-  it('never passes desktop selection to mobile and sends corner taps to the existing list', () => {
+  it('never passes desktop selection to mobile and toggles the corner dropdown on a tap', () => {
     expect(source).not.toContain('selected={');
-    expect(source).toContain("pathname: '/beeline/corners/[roomId]'");
-    expect(source).toContain('params: { roomId: item.room.id }');
-    expect(source).not.toContain('<DesktopRoomCorners');
+    expect(source).toContain('onToggleCorners={() => cornerDropdowns.toggle(item.room.id)}');
+    expect(source).toContain('<DesktopRoomCorners');
   });
   it('keeps desktop corners independently selectable, waiting first, from the chat list alone', () => {
     const corners = component('DesktopRoomCorners');

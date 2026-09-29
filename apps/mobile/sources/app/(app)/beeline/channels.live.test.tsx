@@ -325,29 +325,35 @@ describe('Room deck live path', () => {
     expect(contentStyles.at(-1)).toMatchObject({ paddingBottom: 58 });
   });
 
-  it('opens the existing Corners page on mobile without a selected conversation state', async () => {
+  it('toggles the Room\'s corner dropdown on mobile without a selected conversation state', async () => {
     const renderer = await mountDeck();
-    const list = renderer.root.find((node: any) => node.type === 'SectionList');
+    const item = {
+      ...paintedRows(renderer)[0],
+      cornerCount: 1,
+      openCorners: [{ id: 'corner-1', name: 'fix', state: 'working' as const, mine: true as const }],
+    };
+    const renderRow = () => {
+      const list = renderer.root.find((node: any) => node.type === 'SectionList');
+      return create(list.props.renderItem({ item, index: 0, section: { data: [item] } }));
+    };
     let row: ReactTestRenderer;
     await act(async () => {
-      row = create(
-        list.props.renderItem({
-          item: { ...paintedRows(renderer)[0], cornerCount: 3, waitingCornerCount: 2 },
-          index: 0,
-          section: { data: [paintedRows(renderer)[0]] },
-        }),
-      );
+      row = renderRow();
     });
-    expect(row!.root.findByType(ConversationRow).props.selected).toBeUndefined();
     const conversation = row!.root.findByType(ConversationRow);
-    expect(conversation.props.onToggleCorners).toBeTypeOf('function');
+    expect(conversation.props.selected).toBeUndefined();
+    expect(conversation.props.cornersExpanded).toBe(false);
     act(() => conversation.props.onToggleCorners());
-    expect(router.push).toHaveBeenCalledWith({
-      pathname: '/beeline/corners/[roomId]',
-      params: { roomId: 'room-a' },
+    expect(router.push).not.toHaveBeenCalled();
+    let opened: ReactTestRenderer;
+    await act(async () => {
+      opened = renderRow();
     });
+    expect(opened!.root.findByType(ConversationRow).props.cornersExpanded).toBe(true);
+    expect(opened!.root.findAllByProps({ testID: 'desktop-corner-corner-1' }).length).toBeGreaterThan(0);
     act(() => {
       row!.unmount();
+      opened!.unmount();
       renderer.unmount();
     });
   });

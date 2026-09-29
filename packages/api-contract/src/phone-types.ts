@@ -649,6 +649,9 @@ export type ChatListCorner = {
   /** Present when the viewer commissioned this corner or it awaits them, the
    * same rule as the corners page's "Mine" filter. */
   readonly mine?: true;
+  /** On the viewer's waiting corners: when the corner last spoke (unix
+   * seconds), the moment it handed back. It counts as Room activity. */
+  readonly waitingSince?: number;
 };
 
 export type ChatListItem = {

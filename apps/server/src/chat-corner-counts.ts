@@ -12,6 +12,7 @@ export function chatCornerCounts(
     latest_turn_status: string | null;
     commissioned_by_viewer?: boolean | null;
     latest_tags_viewer?: boolean | null;
+    latest_created_at?: Date | null;
   }[],
 ): Map<string, { cornerCount: number; waitingCornerCount: number; openCorners: ChatListCorner[] }> {
   const counts = new Map<
@@ -37,7 +38,18 @@ export function chatCornerCounts(
     const mine =
       row.commissioned_by_viewer ||
       (row.latest_tags_viewer && (state === 'waiting' || state === 'review'));
-    count.openCorners.push({ id: row.id, name: row.name, state, ...(mine ? { mine: true } : {}) });
+    // The viewer's corner handing back is activity in its Room.
+    const waitingSince =
+      mine && state === 'waiting' && row.latest_created_at
+        ? Math.floor(row.latest_created_at.getTime() / 1000)
+        : undefined;
+    count.openCorners.push({
+      id: row.id,
+      name: row.name,
+      state,
+      ...(mine ? { mine: true } : {}),
+      ...(waitingSince !== undefined ? { waitingSince } : {}),
+    });
     counts.set(row.parent_id, count);
   }
   return counts;

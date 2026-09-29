@@ -42,6 +42,19 @@ describe('chat corner counts', () => {
       undefined,
     ]);
   });
+  it("stamps only the viewer's waiting corners with when they handed back", () => {
+    const at = new Date('2026-09-29T12:00:00Z');
+    const result = chatCornerCounts([
+      { ...row(), commissioned_by_viewer: true, latest_created_at: at },
+      { ...row({}, 'working'), commissioned_by_viewer: true, latest_created_at: at },
+      { ...row(), latest_created_at: at },
+    ]);
+    expect(result.get('room')?.openCorners.map((corner) => corner.waitingSince)).toEqual([
+      at.getTime() / 1000,
+      undefined,
+      undefined,
+    ]);
+  });
   it('excludes terminal lifecycle even before archived_at is projected', () => {
     expect(
       chatCornerCounts([

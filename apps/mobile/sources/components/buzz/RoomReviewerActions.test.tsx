@@ -73,6 +73,7 @@ describe('RoomReviewerActions', () => {
       label: 'Reviewer',
       metadata: '@echo',
     });
+    expect(renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.description).toBeUndefined();
   });
 
   it('hides the reviewer row without a repository or manager permission', () => {

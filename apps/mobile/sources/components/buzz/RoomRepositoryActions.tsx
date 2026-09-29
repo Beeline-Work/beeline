@@ -51,11 +51,6 @@ export function RoomRepositoryActions({
         repositoryName ? `Change repo, currently ${repositoryName}` : 'Link a repo'
       }
       chevron={pickerVisible ? 'down' : 'right'}
-      description={
-        repositoryName
-          ? 'Corners in this Room tree off this repo.'
-          : 'A Room needs a repo before a Corner can open.'
-      }
       disabled={busy}
       label="Repo"
       metadata={repoMetadata}

@@ -11,7 +11,7 @@ describe('scheduled Agent work', () => {
     expect(chat).toContain('testID="room-schedules-action"');
     expect(chat).toContain("pathname: '/beeline/settings/schedules'");
     expect(chat).toContain('label="Scheduled work"');
-    expect(chat).toContain('View or stop Agent-managed recurring work.');
+    expect(chat).not.toContain('View or stop Agent-managed recurring work.');
   });
 
   it('allows managers to inspect and stop existing work without scheduling it', () => {

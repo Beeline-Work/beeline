@@ -12,6 +12,7 @@
     "opener:default",
     "updater:default",
     "process:allow-restart",
+    "notification:default",
     {
       "identifier": "http:default",
       "allow": [

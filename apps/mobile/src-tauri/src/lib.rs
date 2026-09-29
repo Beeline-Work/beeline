@@ -97,10 +97,42 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|_app| {
+            // CI's safe fixture checks that the installed shell can ask the OS
+            // to display a notification. No network request or real user push.
             #[cfg(desktop)]
-            _app.handle()
-                .plugin(tauri_plugin_updater::Builder::new().build())?;
+            if std::env::var_os("BEELINE_DESKTOP_NOTIFICATION_PROOF").is_some() {
+                use tauri_plugin_notification::NotificationExt;
+                let handle = _app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    if let Err(error) = handle
+                        .notification()
+                        .builder()
+                        .title("Beeline desktop proof")
+                        .body("Safe test fixture: native OS notification")
+                        .show()
+                    {
+                        eprintln!("desktop notification proof failed: {error}");
+                    } else {
+                        eprintln!("desktop notification proof send succeeded");
+                    }
+                });
+            }
+            // Preview/dev bundles have no updater endpoint. Registering the
+            // plugin against a null config panics before the window opens.
+            #[cfg(desktop)]
+            if _app
+                .config()
+                .plugins
+                .0
+                .get("updater")
+                .is_some_and(|config| !config.is_null())
+            {
+                _app.handle()
+                    .plugin(tauri_plugin_updater::Builder::new().build())?;
+            }
             #[cfg(target_os = "linux")]
             {
                 // AppImages have no installer to register their desktop file.

@@ -62,6 +62,47 @@ restores the prior manifest.
 - `http:default`, scoped to the Beeline hosts plus loopback for a self-hosted
   server. The scope is an allowlist: a new host has to be added here before
   the plugin will fetch it.
+- `notification:default` — the signed-in desktop bridge displays native OS
+  notifications through Tauri. It does not use browser web push in the webview.
+
+## Desktop notifications
+
+`sources/push/desktop-notifications.ts` watches the signed-in identity's Room
+list and authenticated live message stream. While the app process and its
+webview are running and connected, an incoming direct message, exact tag, or
+reply can produce a macOS, Windows, or Linux OS notification. The app requests
+native notification permission after sign-in. A focused window and its open
+Room suppress duplicate OS alerts; the stored notification switch and server
+notification level apply. Live events are handled asynchronously so message
+paint does not wait for the OS. The bridge deduplicates replayed events and
+does not notify on old messages when the app starts.
+
+Closing the app process stops the live socket. Tauri's notification plugin is
+a local display API, not a remote push service, so a fully quit desktop app
+cannot receive a new message until it is opened again. The mobile FCM/APNs
+tokens and browser VAPID subscriptions are separate transports. New Room
+subscriptions reconcile every 30 seconds while the app is running.
+
+### CI cannot prove the OS actually renders the banner
+
+`scripts/desktop-notification-proof-macos.sh` and
+`scripts/desktop-notification-proof-windows.ps1` (run from `.github/workflows/desktop.yml`
+on every PR, `continue-on-error: true`) install the real signed/notarized
+bundle, launch it the way a user would (`open -a` on macOS, the installed
+`.exe` on Windows), fire the same `tauri_plugin_notification` call the app
+uses, and OCR the screen (Vision on macOS, `Windows.Media.Ocr` on Windows)
+looking for the fixture's banner text. On GitHub-hosted runners the OS-level
+banner/toast never appears, even after: registering the bundle with
+`lsregister` and launching it via `open` instead of exec'ing the Mach-O
+directly (macOS), and forcing `PushNotifications\ToastEnabled` on before
+launch (Windows Server ships with the toast master switch off). The plugin
+call itself never errors, and the screenshots show the app correctly running
+and signed out at the fixture prompt — the OS simply does not paint a
+banner/toast in these hosted, non-interactive runner sessions. This is a
+runner-environment limitation, not a defect in `desktop-notifications.ts` or
+the plugin wiring; treat a red capture step as informational, not as evidence
+the feature is broken, and do not add more CI-side workarounds for it without
+new evidence pointing at a different cause.
 
 The window is frameless-on-macOS (`titleBarStyle: "Overlay"`,
 `hiddenTitle: true`), which is why `SidebarNavigator.tsx` insets its header by

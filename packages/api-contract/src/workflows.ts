@@ -30,6 +30,7 @@ export type WorkflowState =
       match?: Record<string, string>;
       timeoutSeconds: number;
       on: Record<string, string>;
+      loop?: { to: string; maxIterations: number; onExceeded: string };
     }
   | { kind: 'gate'; human: string; timeoutSeconds: number; on: Record<string, string> }
   | { kind: 'terminal' };
@@ -127,7 +128,7 @@ export function readWorkflowDefinition(value: unknown): WorkflowDefinition | nul
     Object.keys(value.states).length < 2 ||
     Object.keys(value.states).length > 64 ||
     typeof value.start !== 'string' ||
-    !(value.start in value.states)
+    !Object.hasOwn(value.states, value.start)
   )
     return null;
   const states = value.states;
@@ -146,7 +147,8 @@ export function readWorkflowDefinition(value: unknown): WorkflowDefinition | nul
       Object.keys(raw.on).length < 1 ||
       Object.keys(raw.on).length > 16 ||
       !Object.entries(raw.on).every(
-        ([outcome, target]) => slug.test(outcome) && typeof target === 'string' && target in states,
+        ([outcome, target]) =>
+          slug.test(outcome) && typeof target === 'string' && Object.hasOwn(states, target),
       )
     )
       return null;
@@ -179,20 +181,6 @@ export function readWorkflowDefinition(value: unknown): WorkflowDefinition | nul
         )
           return null;
       }
-      if (raw.loop !== undefined) {
-        if (
-          !record(raw.loop) ||
-          !keys(raw.loop, ['to', 'maxIterations', 'onExceeded']) ||
-          typeof raw.loop.to !== 'string' ||
-          !(raw.loop.to in states) ||
-          !positive(raw.loop.maxIterations, 100) ||
-          typeof raw.loop.onExceeded !== 'string' ||
-          !(raw.loop.onExceeded in states)
-        )
-          return null;
-        if (raw.guard === undefined || !Object.values(raw.on).includes(raw.loop.to)) return null;
-        targets.push(raw.loop.to, raw.loop.onExceeded);
-      }
     } else if (raw.kind === 'parallel') {
       if (
         !keys(raw, ['kind', 'steps', 'join', 'quorum', 'deadlineSeconds', 'on']) ||
@@ -212,7 +200,7 @@ export function readWorkflowDefinition(value: unknown): WorkflowDefinition | nul
         return null;
     } else if (raw.kind === 'wait') {
       if (
-        !keys(raw, ['kind', 'event', 'match', 'timeoutSeconds', 'on']) ||
+        !keys(raw, ['kind', 'event', 'match', 'timeoutSeconds', 'on', 'loop']) ||
         typeof raw.event !== 'string' ||
         !eventName.test(raw.event) ||
         !positive(raw.timeoutSeconds, 604_800) ||
@@ -242,9 +230,31 @@ export function readWorkflowDefinition(value: unknown): WorkflowDefinition | nul
       )
         return null;
     } else return null;
+    if ((raw.kind === 'step' || raw.kind === 'wait') && raw.loop !== undefined) {
+      if (
+        !record(raw.loop) ||
+        !keys(raw.loop, ['to', 'maxIterations', 'onExceeded']) ||
+        typeof raw.loop.to !== 'string' ||
+        !Object.hasOwn(states, raw.loop.to) ||
+        !positive(raw.loop.maxIterations, 100) ||
+        typeof raw.loop.onExceeded !== 'string' ||
+        !Object.hasOwn(states, raw.loop.onExceeded) ||
+        raw.loop.onExceeded === raw.loop.to ||
+        !Object.values(raw.on).includes(raw.loop.to)
+      ) return null;
+      targets.push(raw.loop.onExceeded);
+    }
     edges.set(name, targets);
   }
   if (terminalCount < 1 || (states[value.start] as WorkflowState).kind === 'terminal') return null;
+  const reachable = new Set<string>();
+  const visit = (name: string): void => {
+    if (reachable.has(name)) return;
+    reachable.add(name);
+    for (const next of edges.get(name) ?? []) visit(next);
+  };
+  visit(value.start);
+  if (reachable.size !== Object.keys(states).length) return null;
   const visited = new Set<string>();
   const active = new Set<string>();
   const walk = (name: string): boolean => {
@@ -252,16 +262,16 @@ export function readWorkflowDefinition(value: unknown): WorkflowDefinition | nul
     if (visited.has(name)) return true;
     active.add(name);
     for (const next of edges.get(name) ?? []) {
-      // Every back-edge must carry its own explicit cap on the source state.
       const state = states[name] as WorkflowState;
-      if (active.has(next) && !(state.kind === 'step' && state.loop?.to === next)) return false;
-      if (!active.has(next) && !walk(next)) return false;
+      // Capped edges are removed before cycle detection, independent of key order.
+      if ((state.kind === 'step' || state.kind === 'wait') && state.loop?.to === next) continue;
+      if (active.has(next) || !walk(next)) return false;
     }
     active.delete(name);
     visited.add(name);
     return true;
   };
-  if (!walk(value.start) || visited.size !== Object.keys(states).length) return null;
+  if (!walk(value.start)) return null;
   return value as WorkflowDefinition;
 }
 

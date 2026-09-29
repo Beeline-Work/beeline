@@ -1613,6 +1613,10 @@ export class GitHubOperations {
             await signalWorkflowEvent(database, target.corner_id, 'check-passed',
               { sha: checkHeadSha },
               hash(`beeline:${target.corner_id}:github:checks:green:${check.headSha}`));
+          if (becamePassing || becameFailing)
+            await signalWorkflowEvent(database, target.corner_id, 'check-completed',
+              { sha: checkHeadSha, outcome: becameFailing ? 'failure' : 'success' },
+              hash(`beeline:${target.corner_id}:github:checks:${summary.status}:${check.headSha}`));
           if (summary.status === 'failing' && !becameFailing)
             await reconcileCornerMergeBlockers(database, target.corner_id);
         });

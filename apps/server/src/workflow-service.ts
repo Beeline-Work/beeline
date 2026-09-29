@@ -549,6 +549,7 @@ export async function signalWorkflowEvent(
       return payload[key] === resolved;
     });
     if (!matches) continue;
+    if (payload.outcome === 'failure' && !state.on.failure) continue;
     const parent = (
       await db.query<CommandRow>(`SELECT * FROM agent_commands WHERE id=$1`, [
         run.source_command_id,
@@ -561,8 +562,18 @@ export async function signalWorkflowEvent(
       await log(db, run, 'failed', { error: run.error });
       continue;
     }
-    await log(db, run, 'event', { event, payload });
-    run.state = state.on.success!;
+    const outcome = payload.outcome === 'failure' ? 'failure' : 'success';
+    await log(db, run, 'event', { event, payload, outcome });
+    let next = state.on[outcome]!;
+    if (state.loop && next === state.loop.to) {
+      const count = (run.loop_counts[run.state] ?? 0) + 1;
+      run.loop_counts[run.state] = count;
+      if (count > state.loop.maxIterations) {
+        next = state.loop.onExceeded;
+        run.error = 'workflow loop cap exceeded';
+      }
+    }
+    run.state = next;
     run.sequence++;
     try {
       await dispatch(db, run, parent);
@@ -888,8 +899,20 @@ export async function runDueWorkflowDeadlines(db: SqlDatabase, now = new Date())
         if (!next) throw new Error('workflow timeout edge is missing');
         await log(tx, run, 'timeout', { deadlineAt: run.deadline_at?.toISOString() });
         run.sequence++;
-        run.state = next;
-        run.error = `Workflow state timed out`;
+        if (state.kind === 'wait' && state.loop && next === state.loop.to) {
+          const count = (run.loop_counts[run.state] ?? 0) + 1;
+          run.loop_counts[run.state] = count;
+          if (count > state.loop.maxIterations) {
+            run.state = state.loop.onExceeded;
+            run.error = 'workflow loop cap exceeded';
+          } else {
+            run.state = next;
+            run.error = 'Workflow state timed out';
+          }
+        } else {
+          run.state = next;
+          run.error = 'Workflow state timed out';
+        }
         try {
           await dispatch(tx, run, parent);
         } catch (cause) {

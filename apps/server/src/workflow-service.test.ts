@@ -282,6 +282,47 @@ describe('workflow run handoff', () => {
     }
   });
 
+  it('caps a failed CI wait that sends implementation back through another attempt', async () => {
+    const { db, parent } = await fixture();
+    try {
+      const ciDefinition = {
+        ...definition,
+        states: {
+          ...definition.states,
+          write: { ...definition.states.write, on: { ...definition.states.write.on, success: 'wait' } },
+          wait: {
+            kind: 'wait', event: 'check-completed', match: { sha: '$.head' }, timeoutSeconds: 60,
+            on: { success: 'review', failure: 'write', timeout: 'stopped' },
+            loop: { to: 'write', maxIterations: 1, onExceeded: 'stopped' },
+          },
+        },
+      };
+      await db.transaction((tx) => putWorkflowDefinition(tx, ROOM, AUTHOR, ciDefinition, undefined, parent));
+      const run = await db.transaction((tx) =>
+        startWorkflowRun(tx, ROOM, 'review-demo', { author: AUTHOR, reviewer: REVIEWER }, parent));
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const assignment = (await db.query<{ command_id: string }>(
+          `SELECT command_id FROM workflow_run_assignments WHERE run_id=$1 AND sequence=$2`,
+          [run.runId, attempt * 2],
+        )).rows[0]!;
+        const command = (await db.query<typeof parent>(
+          `SELECT * FROM agent_commands WHERE id=$1`, [assignment.command_id],
+        )).rows[0]!;
+        await db.transaction((tx) => completeWorkflowStep(
+          tx, ROOM, run.runId, attempt * 2, { head: `sha-${attempt}` }, 'success', command,
+        ));
+        expect(await db.transaction((tx) => signalWorkflowEvent(
+          tx, ROOM, 'check-completed', { sha: `sha-${attempt}`, outcome: 'failure' }, `ci-${attempt}`,
+        ))).toBe(1);
+      }
+      expect((await listWorkflowRuns(db, ROOM)).runs[0]).toMatchObject({
+        state: 'stopped', status: 'failed', error: 'workflow loop cap exceeded',
+      });
+    } finally {
+      await db.close();
+    }
+  });
+
   it('binds a human choice to the gate and advances on approval', async () => {
     const { db, parent } = await fixture();
     try {

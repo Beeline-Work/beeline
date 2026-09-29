@@ -80,6 +80,53 @@ describe('workflow definition boundary', () => {
     ).toBeNull();
   });
 
+  it('rejects inherited object names as state targets', () => {
+    expect(readWorkflowDefinition({ ...definition, start: 'toString' })).toBeNull();
+    expect(readWorkflowDefinition({
+      ...definition,
+      states: {
+        ...definition.states,
+        implement: {
+          ...definition.states.implement,
+          on: { ...definition.states.implement.on, success: 'toString' },
+        },
+      },
+    })).toBeNull();
+    expect(readWorkflowDefinition({
+      ...definition,
+      states: {
+        ...definition.states,
+        review: { ...definition.states.review, loop: { ...definition.states.review.loop, to: 'constructor' } },
+      },
+    })).toBeNull();
+  });
+
+  it('validates cycles independent of outcome order', () => {
+    const review = {
+      ...definition.states.review,
+      on: { approve: 'closed', failure: 'implement', changes: 'escalate', timeout: 'escalate' },
+      loop: { ...definition.states.review.loop, to: 'implement' },
+    };
+    expect(readWorkflowDefinition({ ...definition, states: { ...definition.states, review } })).not.toBeNull();
+    expect(readWorkflowDefinition({
+      ...definition,
+      states: { ...definition.states, review: { ...review, loop: undefined } },
+    })).toBeNull();
+  });
+
+  it('bounds a wait failure edge back to implementation', () => {
+    const wait = {
+      ...definition.states.wait_ci,
+      on: { success: 'review', failure: 'implement', timeout: 'escalate' },
+      loop: { to: 'implement', maxIterations: 5, onExceeded: 'escalate' },
+    };
+    expect(readWorkflowDefinition({ ...definition, states: { ...definition.states, wait_ci: wait } })).not.toBeNull();
+    expect(readWorkflowDefinition({
+      ...definition,
+      states: { ...definition.states, wait_ci: { ...wait, loop: undefined } },
+    })).toBeNull();
+  });
+
   it('checks structured output fields', () => {
     expect(
       workflowOutputError(definition.states.implement.step, {

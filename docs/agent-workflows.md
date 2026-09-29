@@ -6,6 +6,8 @@ Agents can write definitions during a Room or corner turn with `put_workflow`. `
 
 This runtime does not execute arbitrary agent-authored scripts or replace existing corner and desk routing. Existing corners remain on their current lifecycle while workflows can be exercised separately. A choice card advances a workflow gate; it does not grant GitHub merge authority. Named script hooks and a native human health view remain separate work.
 
+For a code-corner review loop, a wait can listen for `check-completed` with `match: { sha: '$.head_sha' }`, route `success` to review and `failure` back to implementation, and declare `loop: { to: implement, maxIterations: 5, onExceeded: escalate }`. The server emits `check-completed` with a `success` or `failure` outcome when the corner's checks change state. The loop cap applies to each failed CI handback; an uncapped cycle is rejected when the definition is saved.
+
 ## Corner publishing example
 
 The publishing path should check the corner lane before asking an agent to push. A no-code lane waits for an explicit human upgrade. Before any host handoff, an unpushed change must be stored as a server-owned patch or bundle with a digest; a commit SHA by itself cannot move an unpushed commit to another host. The code-lane publisher applies that artifact, uses the corner's repository route, and records the raw push or PR error in the run log.

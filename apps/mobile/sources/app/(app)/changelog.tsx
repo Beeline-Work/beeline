@@ -107,7 +107,7 @@ const styles = StyleSheet.create((theme) => ({
         marginBottom: 8,
     },
     summaryText: {
-        ...theme.buzz.type.meta,
+        ...theme.buzz.type.body,
         color: theme.buzz.textSecondary,
         marginBottom: 16,
     },

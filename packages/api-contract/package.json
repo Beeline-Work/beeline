@@ -58,11 +58,6 @@
       "types": "./dist/wallet.d.ts",
       "import": "./dist/wallet.js",
       "default": "./dist/wallet.js"
-    },
-    "./workflows": {
-      "types": "./dist/workflows.d.ts",
-      "import": "./dist/workflows.js",
-      "default": "./dist/workflows.js"
     }
   },
   "scripts": {

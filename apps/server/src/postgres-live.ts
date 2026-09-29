@@ -194,18 +194,6 @@ BEGIN
         'agentId', COALESCE(NEW.agent_id, OLD.agent_id),
         'scheduleId', COALESCE(NEW.id, OLD.id)
       );
-    WHEN 'workflow_runs' THEN
-      payload = jsonb_build_object(
-        'table', TG_TABLE_NAME, 'operation', TG_OP,
-        'roomId', COALESCE(NEW.room_id, OLD.room_id),
-        'runId', COALESCE(NEW.id, OLD.id)
-      );
-    WHEN 'workflow_definitions' THEN
-      payload = jsonb_build_object(
-        'table', TG_TABLE_NAME, 'operation', TG_OP,
-        'roomId', COALESCE(NEW.room_id, OLD.room_id),
-        'name', COALESCE(NEW.name, OLD.name)
-      );
     WHEN 'institutional_memory_jobs' THEN
       payload = jsonb_build_object(
         'table', TG_TABLE_NAME, 'operation', TG_OP,
@@ -238,7 +226,7 @@ BEGIN
   FOREACH table_name IN ARRAY ARRAY[
     'messages', 'live_outputs', 'agent_turns', 'rooms', 'memberships',
     'corner_facts', 'permission_authority', 'room_read_marks',
-    'agent_grants', 'agent_schedules', 'workflow_runs', 'workflow_definitions', 'agent_commands',
+    'agent_grants', 'agent_schedules', 'agent_commands',
     'institutional_memory_jobs', 'github_installations', 'github_repositories',
     'registry_mcp_oauth_attempts'
   ] LOOP

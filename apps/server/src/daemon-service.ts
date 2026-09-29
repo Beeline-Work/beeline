@@ -164,15 +164,6 @@ import {
 import { searchInstitutionalHistory } from './institutional-history.js';
 import { loadWorkspaceSkill } from './institutional-skills.js';
 
-import {
-  putWorkflowDefinition,
-  startWorkflowRun,
-  completeWorkflowStep,
-  listWorkflowRuns,
-  readWorkflowRun,
-  signalWorkflowEvent,
-} from './workflow-service.js';
-
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
 const id = () => randomBytes(32).toString('hex');
@@ -326,9 +317,6 @@ export class DaemonService {
     if (scopedRoom && isCornerOpenerOnly(name))
       await this.assertCornerOpener(scopedRoom, authenticatedAgentId);
     const turnWrites = new Set([
-      'putWorkflowDefinition',
-      'startWorkflowRun',
-      'completeWorkflowStep',
       'postAgentAvatar',
       'postRoomMessage',
       'postAgentAttachment',
@@ -680,53 +668,6 @@ export class DaemonService {
         return { status: 'permission-required', grantId: permission.grantId } as Output<Name>;
     }
     switch (name) {
-      case 'putWorkflowDefinition': {
-        const request = input as Input<'putWorkflowDefinition'>;
-        if (!this.authorizedCommand)
-          throw new Error('workflow definition requires an active turn');
-        return (await putWorkflowDefinition(
-          this.database,
-          request.roomId,
-          authenticatedAgentId,
-          request.definition,
-          request.roles ? { ...request.roles } : undefined,
-          this.authorizedCommand,
-        )) as Output<Name>;
-      }
-      case 'startWorkflowRun': {
-        const request = input as Input<'startWorkflowRun'>;
-        if (!this.authorizedCommand) throw new Error('workflow start requires an active turn');
-        return (await startWorkflowRun(
-          this.database,
-          request.roomId,
-          request.name,
-          { ...request.roles },
-          this.authorizedCommand,
-        )) as Output<Name>;
-      }
-      case 'completeWorkflowStep': {
-        const request = input as Input<'completeWorkflowStep'>;
-        if (!this.authorizedCommand)
-          throw new Error('workflow completion requires an active turn');
-        return (await completeWorkflowStep(
-          this.database,
-          request.roomId,
-          request.runId,
-          request.sequence,
-          request.output,
-          request.outcome ?? 'success',
-          this.authorizedCommand,
-        )) as Output<Name>;
-      }
-      case 'listWorkflowRuns':
-        return (await listWorkflowRuns(
-          this.database,
-          (input as Input<'listWorkflowRuns'>).roomId,
-        )) as Output<Name>;
-      case 'readWorkflowRun': {
-        const request = input as Input<'readWorkflowRun'>;
-        return (await readWorkflowRun(this.database, request.roomId, request.runId)) as Output<Name>;
-      }
       case 'claimInstitutionalMemoryJob': {
         if (!this.institutionalMemoryShadow.enabled) return { enabled: false } as Output<Name>;
         const job = await claimInstitutionalMemoryJob(
@@ -4507,8 +4448,6 @@ export class DaemonService {
         )
       ).id,
     });
-    if (line.inserted)
-      await signalWorkflowEvent(this.database, input.roomId, input.kind, { consequence }, line.id);
     return { id: line.id, createdAt: Math.floor(Date.now() / 1_000) };
   }
   private async listAgentSchedules(input: Input<'listAgentSchedules'>, agentId: string) {
@@ -6843,11 +6782,6 @@ function laterCursor(
  * failed wake as "resolved" — became a spin against the server.
  */
 const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
-  putWorkflowDefinition: true,
-  startWorkflowRun: true,
-  completeWorkflowStep: true,
-  listWorkflowRuns: true,
-  readWorkflowRun: true,
   claimInstitutionalMemoryJob: true,
   heartbeatInstitutionalMemoryJob: true,
   completeInstitutionalMemoryJob: true,

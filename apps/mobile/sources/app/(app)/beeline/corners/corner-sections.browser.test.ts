@@ -23,7 +23,11 @@ function shims(mobile: string): Record<string, string> {
     '@/buzz/surface-storage': `export const surfaceAddress = () => 'address';
     export const mobileSurfaceCache = { read: async () => null, write: async () => undefined };`,
     '@/components/buzz/CommunityRail': `export const BuzzCommunityShell = ({ children }) => children;`,
-    '@/components/buzz/NewCornerDialog': 'export const NewCornerDialog = () => null;',
+    'expo-haptics': `export const notificationAsync = async () => undefined;
+      export const impactAsync = async () => undefined;
+      export const NotificationFeedbackType = { Success: 'success', Error: 'error' };
+      export const ImpactFeedbackStyle = { Light: 'light' };`,
+    '@/modal': 'export const Modal = { alert: () => undefined };',
     '@/sync/transport/monolith-operation':
       'export const phoneOperationFailureReason = (reason) => String(reason);',
   };

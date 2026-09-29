@@ -7,3 +7,4 @@ export * from './system-events.js';
 export * from './corner-text.js';
 export * from './turn-silence.js';
 export * from './institutional-memory.js';
+export * from './workflow-contracts.js';

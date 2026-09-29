@@ -87,22 +87,57 @@ export function advertisedChoiceId(choice: Record<string, unknown>): string | un
   return undefined;
 }
 
-/** Put versioned model families newest-first while retaining provider order for ties. */
+/**
+ * The family a choice belongs to, so version comparison never mixes
+ * "Opus 5" with "Sonnet 5" just because they share a digit. Read from the
+ * leading letters of the human label (`Opus 5.5` -> `opus`) — an alias like
+ * Claude's `opus`/`sonnet`/`haiku` carries no version in its id at all, only
+ * in its name, so the id cannot be the family key. A choice with no name
+ * (every current non-Claude catalog) falls into one shared bucket, which
+ * reproduces the old flat behaviour exactly.
+ */
+function modelFamilyKey(choice: { id: string; name?: string }): string {
+  return (/^\s*[\p{L}]+/u.exec(choice.name ?? '')?.[0] ?? '').toLowerCase();
+}
+
+/** Digits a choice's version is spelled with: the name's when it has one, else the id's. */
+function modelVersionKey(choice: { id: string; name?: string }): number[] {
+  const digits = choice.name?.match(/\d+/g) ?? choice.id.match(/\d+/g) ?? [];
+  return digits.map(Number);
+}
+
+/**
+ * Put versioned model families newest-first, family by family, retaining
+ * provider order for ties. Sorting the whole list by raw digits used to
+ * interleave unrelated families that happened to share a leading digit, and
+ * left a nameless-in-its-id alias (Claude's `opus` == Opus 5.5) stranded at
+ * the end since it has no digits of its own to compare.
+ */
 export function sortModelChoicesNewestFirst(
   choices: AgentModelConfigOption['options'],
 ): AgentModelConfigOption['options'] {
-  return choices
-    .map((choice, index) => ({ choice, index }))
-    .sort((left, right) => {
-      const leftParts = left.choice.id.match(/\d+/g)?.map(Number) ?? [];
-      const rightParts = right.choice.id.match(/\d+/g)?.map(Number) ?? [];
+  const indexed = choices.map((choice, index) => ({ choice, index }));
+  const families = new Map<string, typeof indexed>();
+  for (const entry of indexed) {
+    const key = modelFamilyKey(entry.choice);
+    const bucket = families.get(key);
+    if (bucket) bucket.push(entry);
+    else families.set(key, [entry]);
+  }
+  const result: AgentModelConfigOption['options'] = [];
+  for (const bucket of families.values()) {
+    bucket.sort((left, right) => {
+      const leftParts = modelVersionKey(left.choice);
+      const rightParts = modelVersionKey(right.choice);
       for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index += 1) {
         const delta = (rightParts[index] ?? -1) - (leftParts[index] ?? -1);
         if (delta !== 0) return delta;
       }
       return left.index - right.index;
-    })
-    .map(({ choice }) => choice);
+    });
+    result.push(...bucket.map(({ choice }) => choice));
+  }
+  return result;
 }
 
 /** Parse safe picker axes from raw `configOptions` and standard session model state. */

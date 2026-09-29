@@ -8668,6 +8668,8 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'disconnectGoogleSignIn',
   'unpairConnector',
   'connectWorkbenchApp',
+  'beginAppSignIn',
+  'completeAppSignIn',
   'disconnectWorkbenchApp',
   'readConnectionDetail',
   'revokeConnectionGrants',

@@ -60,6 +60,13 @@ vi.mock('./MonoHull', async () => {
     HullSurface: (props: any) => ReactModule.createElement('HullSurface', props, props.children),
   };
 });
+vi.mock('./HullActionSheet', async () => {
+  const ReactModule = await import('react');
+  return {
+    HullActionSheetModal: (props: any) =>
+      ReactModule.createElement('HullActionSheetModal', props, props.children),
+  };
+});
 
 vi.mock('./IdentityMark', async () => {
   const ReactModule = await import('react');

@@ -115,6 +115,20 @@ vi.mock('@/components/buzz/HullActionSheet', async () => {
     HullActionSheetRow: host('HullActionSheetRow'),
   };
 });
+vi.mock('@/components/buzz/HullDialog', async () => {
+  const ReactModule = await import('react');
+  return {
+    HullDialog: (props: any) =>
+      ReactModule.createElement(
+        'HullDialog',
+        props,
+        props.children,
+        props.actions.map((action: any) =>
+          ReactModule.createElement('DialogAction', { ...action, key: action.testID }),
+        ),
+      ),
+  };
+});
 vi.mock('@/components/buzz/IdentityMark', async () => {
   const ReactModule = await import('react');
   return { IdentityMark: (props: any) => ReactModule.createElement('IdentityMark', props) };
@@ -291,9 +305,9 @@ describe('Workspace Settings authority', () => {
     expect(renderer.root.findAllByProps({ testID: 'workspace-settings-denied' })).toHaveLength(0);
     expect(renderer.root.findByProps({ testID: 'workspace-settings-load-failed' })).toBeDefined();
     expect(renderer.root.findByProps({ testID: 'workspace-settings-retry' })).toBeDefined();
-    expect(
-      renderer.root.findAllByType('Text').map((node) => node.children.join('')),
-    ).not.toContain('Admin access required');
+    expect(renderer.root.findAllByType('Text').map((node) => node.children.join(''))).not.toContain(
+      'Admin access required',
+    );
   });
 
   it('retries the workspace read from the load-failed screen', async () => {
@@ -606,9 +620,7 @@ describe('Workspace Settings authority', () => {
 
     roomViews.workspace.mockResolvedValue(workspaceView('admin'));
     const adminRenderer = await render();
-    expect(
-      adminRenderer.root.findAllByProps({ testID: 'workspace-delete-row' }),
-    ).toHaveLength(0);
+    expect(adminRenderer.root.findAllByProps({ testID: 'workspace-delete-row' })).toHaveLength(0);
   });
 
   it('requires typing the exact Workspace name before deleting, then navigates home', async () => {
@@ -618,6 +630,7 @@ describe('Workspace Settings authority', () => {
     expect(renderer.root.findByProps({ testID: 'workspace-delete-sheet' }).props.visible).toBe(
       true,
     );
+    expect(renderer.root.findAllByProps({ testID: 'workspace-delete-cancel' })).toHaveLength(1);
     expect(renderer.root.findByProps({ testID: 'workspace-delete-confirm' }).props.disabled).toBe(
       true,
     );
@@ -698,9 +711,9 @@ describe('Workspace Settings authority', () => {
       .findAll((node) => node.props?.title !== undefined)
       .map((node) => node.props.title);
     expect(titles).not.toContain('Picture');
-    expect(
-      renderer.root.findAllByType('Text').map((node) => node.children.join('')),
-    ).not.toContain('Danger zone');
+    expect(renderer.root.findAllByType('Text').map((node) => node.children.join(''))).not.toContain(
+      'Danger zone',
+    );
     expect(renderer.root.findByProps({ testID: 'workspace-picture-change' })).toBeDefined();
     expect(renderer.root.findByProps({ testID: 'workspace-delete-row' }).props.tone).toBe(
       'destructive',

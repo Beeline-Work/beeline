@@ -54,9 +54,9 @@ describe('retained settings leaves use the Beeline design contract', () => {
     expect(backButton).toContain('size={CHEVRON_BACK_SIZE}');
   });
 
-  it('reuses the shared navigation and action-sheet idioms on migrated leaves', () => {
+  it('reuses the shared navigation and dialog idioms on migrated leaves', () => {
     expect(settings.language).toContain('<HullDialog');
-    expect(textSelection).toContain('<HullActionSheet');
+    expect(textSelection).toContain('<HullDialog');
     expect(textSelection).not.toMatch(/MobileGlass|Ionicons|@expo\/vector-icons|@\/modal/);
     expect(appLayout).toContain('name="settings/language"');
     expect(appLayout).toContain("headerTitle: t('settingsLanguage.title')");

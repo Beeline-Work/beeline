@@ -8,7 +8,7 @@ import { roomRosterWindow } from '@/buzz/room-participants';
 import type { AgentPresentation } from '@/buzz/room-view-presentation';
 import { CORNER_LABEL, MEMBERS_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { Typography } from '@/constants/Typography';
-import { HullFloatingSurface, HullModal } from './HullDialog';
+import { HullActionSheetModal } from './HullActionSheet';
 import { MemberRosterRow } from './MemberRosterRow';
 import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
@@ -60,7 +60,7 @@ function rosterRowNote({
  * the one line saying why it cannot — and the list itself shows no remove
  * text. Ten rows show; the rest wait behind one overflow row.
  *
- * The shared HullModal boundary owns the no-flicker guarantee. This additional
+ * The shared sheet boundary owns the no-flicker guarantee. This additional
  * memo remains a roster-specific CPU fast path: an identity-stable member list
  * and collapsed working verdicts avoid rebuilding a potentially long tree.
  */
@@ -114,18 +114,15 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
   const canAddMembers = canManage && !parentChannelId && !isDirectMessage;
   const roster = roomRosterWindow(members, expanded);
   return (
-    <HullModal
+    <HullActionSheetModal
       accessibilityLabel={`Close ${ROOM_LABEL} roster`}
-      contentStyle={{
-        maxHeight: '82%',
-        paddingHorizontal: 16,
-        paddingBottom: Math.max(bottomInset, 18),
-      }}
-      onRequestClose={onClose}
-      placement="bottom"
+      contentStyle={{ maxHeight: '82%', paddingBottom: Math.max(bottomInset, 18) }}
+      onClose={onClose}
       visible={visible}
+      testID="room-roster-sheet"
+      scrollBody={false}
     >
-      <HullFloatingSurface style={styles.rosterModal} testID="room-roster-sheet">
+      <View style={styles.rosterModal}>
         <View style={styles.rosterModalHeading}>
           <View style={styles.rosterModalHeadingCopy}>
             <Text style={styles.rosterModalEyebrow}>In this {ROOM_LABEL}</Text>
@@ -289,8 +286,8 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
             <Text style={styles.membershipErrorText}>! {membershipError}</Text>
           </View>
         )}
-      </HullFloatingSurface>
-    </HullModal>
+      </View>
+    </HullActionSheetModal>
   );
 });
 
@@ -299,12 +296,8 @@ const styles = StyleSheet.create((theme) => {
   return {
     rosterModal: {
       width: '100%',
-      maxWidth: 460,
       maxHeight: '100%',
       padding: hull.space.md,
-      borderWidth: 1,
-      borderColor: hull.borderStrong,
-      backgroundColor: hull.bgRaised,
     },
     rosterModalHeading: { flexDirection: 'row', alignItems: 'flex-start', gap: hull.space.md },
     rosterModalHeadingCopy: { flex: 1, minWidth: 0 },

@@ -7,7 +7,7 @@
   "app/(app)/changelog.tsx": 2,
   "app/(app)/index.tsx": 2,
   "app/(app)/settings/language.tsx": 1,
-  "app/(app)/text-selection.tsx": 7,
+  "app/(app)/text-selection.tsx": 3,
   "components/CommandPalette/CommandPaletteInput.tsx": 1,
   "components/CommandPalette/CommandPaletteItem.tsx": 4,
   "components/CommandPalette/CommandPaletteResults.tsx": 4,

@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { retrieveTempText } from '@/sync/persistence';
 import { t } from '@/text';
 import * as Clipboard from 'expo-clipboard';
-import { HullActionSheet } from '@/components/buzz/HullActionSheet';
+import { HullDialog } from '@/components/buzz/HullDialog';
 
 type Notice = {
     title: string;
@@ -46,7 +46,10 @@ export default function TextSelectionScreen() {
                     accessibilityRole="button"
                     disabled={disabled}
                     onPress={handleCopyAll}
-                    style={({ pressed }) => [styles.copyButton, pressed && styles.copyButtonPressed]}
+                    style={({ pressed }) => [
+                        styles.copyButton,
+                        pressed && styles.copyButtonPressed,
+                    ]}
                 >
                     <Text style={[styles.copyGlyph, disabled && styles.copyGlyphDisabled]}>⧉</Text>
                 </Pressable>
@@ -94,7 +97,10 @@ export default function TextSelectionScreen() {
                 <ScrollView
                     style={styles.textContainer}
                     showsVerticalScrollIndicator
-                    contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 16 }]}
+                    contentContainerStyle={[
+                        styles.scrollContent,
+                        { paddingBottom: insets.bottom + 16 },
+                    ]}
                 >
                     <Text
                         accessibilityLabel={t('textSelection.title')}
@@ -106,24 +112,15 @@ export default function TextSelectionScreen() {
                 </ScrollView>
             )}
 
-            {notice ? (
-                <View style={styles.overlay} testID="text-selection-notice">
-                    <View style={styles.scrim} />
-                    <HullActionSheet style={[styles.sheet, { marginBottom: insets.bottom + 12 }]}>
-                        <View style={styles.sheetCopy}>
-                            <Text style={styles.sheetTitle}>{notice.title}</Text>
-                            {notice.message ? <Text style={styles.sheetBody}>{notice.message}</Text> : null}
-                        </View>
-                        <Pressable
-                            accessibilityRole="button"
-                            onPress={dismissNotice}
-                            style={({ pressed }) => [styles.noticeAction, pressed && styles.noticeActionPressed]}
-                        >
-                            <Text style={styles.noticeActionText}>{t('common.ok')}</Text>
-                        </Pressable>
-                    </HullActionSheet>
-                </View>
-            ) : null}
+            <HullDialog
+                visible={notice !== null}
+                onRequestClose={dismissNotice}
+                dismissOnBackdrop={false}
+                title={notice?.title ?? ''}
+                body={notice?.message}
+                testID="text-selection-notice"
+                actions={[{ label: t('common.ok'), onPress: dismissNotice }]}
+            />
         </View>
     );
 }
@@ -179,53 +176,5 @@ const styles = StyleSheet.create((theme) => ({
     },
     copyGlyphDisabled: {
         color: theme.buzz.textMuted,
-    },
-    overlay: {
-        ...StyleSheet.absoluteFillObject,
-        justifyContent: 'flex-end',
-        paddingHorizontal: 12,
-    },
-    scrim: {
-        ...StyleSheet.absoluteFillObject,
-        backgroundColor: theme.buzz.bgTerminal,
-        opacity: 0.82,
-    },
-    sheet: {
-        width: '100%',
-    },
-    sheetCopy: {
-        paddingHorizontal: 18,
-        paddingTop: 18,
-        paddingBottom: 16,
-    },
-    sheetTitle: {
-        color: theme.buzz.textPrimary,
-        fontFamily: theme.buzz.proseSemibold,
-        fontSize: 18,
-        lineHeight: 24,
-    },
-    sheetBody: {
-        marginTop: 7,
-        color: theme.buzz.textMuted,
-        fontFamily: theme.buzz.proseRegular,
-        fontSize: 14,
-        lineHeight: 20,
-    },
-    noticeAction: {
-        minHeight: 50,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderTopWidth: StyleSheet.hairlineWidth,
-        borderTopColor: theme.buzz.border,
-    },
-    noticeActionPressed: {
-        backgroundColor: theme.buzz.bgPressed,
-    },
-    noticeActionText: {
-        color: theme.buzz.accent,
-        fontFamily: theme.buzz.monoSemibold,
-        fontSize: 12,
-        letterSpacing: 0.7,
-        textTransform: 'uppercase',
     },
 }));

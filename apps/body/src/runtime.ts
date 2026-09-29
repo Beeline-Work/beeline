@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { closeSync, openSync, readFileSync } from 'node:fs';
-import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -143,6 +143,21 @@ export async function readRuntimeRecord(path: string): Promise<AgentRuntimeRecor
   runtimeIdentity(parsed.agent);
   runtimeIdentity(parsed.body);
   return parsed;
+}
+
+/**
+ * One-time, idempotent convergence: an agent's own `runtime.json` and its
+ * containing directory get the private modes {@link writeRuntimeRecord}
+ * writes into a fresh record, even when this record predates that
+ * protection and nothing else has triggered a rewrite since. File modes
+ * alone cannot isolate agents that share one Unix account (the sandbox mask
+ * in `bwrap-sandbox.ts` does that); this only closes the same-machine,
+ * different-account or misconfigured-umask case defense-in-depth asks for.
+ * Each agent runs this only against its OWN directory, never a sibling's.
+ */
+export async function convergeRuntimeRecordFileModes(path: string): Promise<void> {
+  await chmod(dirname(path), 0o700).catch(() => undefined);
+  await chmod(path, 0o600).catch(() => undefined);
 }
 
 export async function migrateRuntimeRecordAccessPolicy(

@@ -62,6 +62,7 @@ import { ForceUpdateCoordinator } from './force-update.js';
 import { hiccupBackoffMs } from '@beeline/api-contract/daemon';
 import {
   clearDaemonPidRecordIfPid,
+  convergeRuntimeRecordFileModes,
   findAgentRuntimeConfigPaths,
   migrateRuntimeRecordAccessPolicy,
   readRuntimeRecord,
@@ -192,6 +193,10 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   // real runtime directory, not the pointer's.
   const configPath = await resolveRuntimeConfigPath(pathOrPointer);
   daemonFailureRuntimeDir = dirname(configPath);
+  // Existing installs converge on the private file modes a fresh runtime
+  // record already gets: defense-in-depth alongside the sandbox mask below,
+  // for the same-machine case file modes alone can actually help with.
+  await convergeRuntimeRecordFileModes(configPath);
   // One-time, idempotent migration: a runtime record that predates per-agent
   // access policies gets an explicit `accessPolicy: 'everyone'` stamped on it,
   // so flipping DEFAULT_ACCESS_POLICY to owner-only never re-gates an

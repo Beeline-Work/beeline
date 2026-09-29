@@ -10,11 +10,9 @@ export type MessageReplyDisplayTarget = {
   preview: string;
 };
 
-/** A message reply carries proof; live activity may instead become a quoted steer. */
+/** A message reply carries proof; live activity may borrow its turn's message. */
 export type MessageReplyTarget = MessageReplyDisplayTarget & {
   reference?: KnownMessageReference;
-  /** Activity is not a message, so keep the exact prose/tool excerpt in-band. */
-  quotedExcerpt?: string;
 };
 
 export type PreparedMessageReply = {
@@ -35,13 +33,8 @@ export function prepareMessageReply(
   target: MessageReplyTarget,
 ): PreparedMessageReply {
   const addressed = replyMessageText(text, target.isAgent ? target.authorHandle : undefined);
-  const quoted = target.quotedExcerpt
-    ?.trim()
-    .split('\n')
-    .map((line) => `> ${line}`)
-    .join('\n');
   return {
-    text: quoted ? `${quoted}\n\n${addressed}` : addressed,
+    text: addressed,
     ...(target.reference ? { reference: target.reference } : {}),
     ...(target.isAgent && target.authorPubkey ? { agentPubkey: target.authorPubkey } : {}),
   };
@@ -89,8 +82,7 @@ export function activityMessageReplyTarget(
   const parent = activityReplyParent(activity, messages);
   return {
     ...display,
-    preview: excerpt,
-    quotedExcerpt: excerpt,
+    preview: parent?.text.trim() || excerpt,
     ...(parent?.reference ? { reference: parent.reference } : {}),
   };
 }

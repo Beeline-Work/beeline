@@ -88,6 +88,24 @@ describe('turn phase trace', () => {
     expect(record.scheduler.atQueue?.maxLive).toBe(4);
   });
 
+  it('records how the institutional-memory snapshot fetch resolved, absent when it never ran', async () => {
+    const { now } = clock();
+    const served = trace(now);
+    served.noteInstitutionalMemory('served');
+    expect((await served.finish('complete')).attempts[0]!.institutionalMemory).toBe('served');
+
+    const empty = trace(now);
+    empty.noteInstitutionalMemory('empty');
+    expect((await empty.finish('complete')).attempts[0]!.institutionalMemory).toBe('empty');
+
+    const timedOut = trace(now);
+    timedOut.noteInstitutionalMemory('timed-out');
+    expect((await timedOut.finish('complete')).attempts[0]!.institutionalMemory).toBe('timed-out');
+
+    const untouched = trace(now);
+    expect((await untouched.finish('complete')).attempts[0]!.institutionalMemory).toBeUndefined();
+  });
+
   it('records a warm turn as zero activation, not as a missing measurement', async () => {
     const { now, advance } = clock();
     const turn = trace(now);

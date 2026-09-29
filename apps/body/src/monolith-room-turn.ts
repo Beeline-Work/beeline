@@ -56,7 +56,7 @@ import {
   beelineAgentMcpServer,
   readOnlyMcpServer,
 } from './room-session.js';
-import { institutionalContextForTurn } from './institutional-context.js';
+import { awaitInstitutionalContext, startInstitutionalContextFetch } from './institutional-context.js';
 import { modelContextWindowTokens } from './model-context-window.js';
 import {
   codegraphFingerprintServers,
@@ -1180,6 +1180,9 @@ export class MonolithRoomTurnLoop {
     // number belonging to somebody else's prompt.
     this.turnMetrics = {};
     const trace = this.beginTurnTrace(item.id);
+    // Kicked off now, alongside activation rather than after it, so its own
+    // network round trip has somewhere to hide (see institutional-context.ts).
+    const institutionalContextFetch = startInstitutionalContextFetch(api, this.options.roomId);
     // The draft lane, held where the catch below can reach it: a turn that
     // throws never reaches its settle, and only this reference can dissolve
     // what the model had already written.
@@ -1237,11 +1240,12 @@ export class MonolithRoomTurnLoop {
                     this.roster(),
                     this.deliver(item),
                     api.execute('listRoomCorners', { roomId: this.options.roomId }),
-                    institutionalContextForTurn(api, this.options.roomId, (message) =>
+                    awaitInstitutionalContext(institutionalContextFetch, (message) =>
                       console.warn(`[thin-core] Room ${this.options.roomId}: ${message}`),
                     ),
                   ]),
                 );
+              trace.noteInstitutionalMemory(institutionalContext.outcome);
               const names = new Map(
                 roster.members.map((member) => [member.identityId, member.name]),
               );

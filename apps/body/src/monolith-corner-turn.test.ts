@@ -2864,6 +2864,133 @@ describe('thin monolith corner turn', () => {
   });
 });
 
+describe('corner turn institutional-memory prefetch', () => {
+  it('starts the snapshot fetch before activation, and serves a snapshot slower than the raw budget when it still beats activation', async () => {
+    vi.stubEnv('BEELINE_INSTITUTIONAL_MEMORY_ENABLED', 'true');
+    const root = await mkdtemp(join(tmpdir(), 'beeline-corner-memory-prefetch-'));
+    roots.push(root);
+    await execFileAsync('git', ['init', root]);
+    const runtime = {
+      agentId: '11'.repeat(32),
+      agent: stored('11'.repeat(32), 'Bee'),
+      rooms: [],
+      supervisorRoot: root,
+      transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'daemon-token' },
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+    } as unknown as AgentRuntimeRecord;
+    const config: BodyConfig = {
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+      readonlyMcpCommand: '/fake-beeline-mcp',
+      agentEnv: {},
+      workspaceRoot: root,
+      autoApprovePermissions: true,
+    };
+    const abort = new AbortController();
+    const order: string[] = [];
+    const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    const receipts: Array<Record<string, unknown>> = [];
+    const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [{ identityId: '11'.repeat(32), kind: 'agent', name: 'Bee', role: 'member' }],
+        };
+      }
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerCloseRequests') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerRestoreState') return { cornerId: 'corner-id' };
+      if (name === 'getInstitutionalContext') {
+        // Activation (below) takes 300ms; this snapshot alone needs 250ms —
+        // longer than the raw 200ms budget on its own, but shorter than
+        // activation, so a fetch started alongside activation (not after it)
+        // has already resolved by the time the turn asks for it.
+        order.push('institutional-context');
+        await delay(250);
+        return {
+          snapshotRevision: 1,
+          text: 'Prefetched institutional snapshot',
+          itemIds: ['memory-1'],
+          totalBytes: 34,
+          omitted: {},
+        };
+      }
+      if (name === 'postAgentTurnReceipt') receipts.push(input);
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const api = {
+      execute,
+      connection: () => ({
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+        agentId: runtime.agent.publicKey,
+      }),
+    } as unknown as DaemonApiClient;
+    const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'start').mockResolvedValue(undefined);
+    const sessionNew = vi.spyOn(acp, 'sessionNew').mockImplementation(async () => {
+      order.push('session-new');
+      await delay(300);
+      return { sessionId: 'corner-session', raw: {} };
+    });
+    const sessionPrompt = vi.spyOn(acp, 'sessionPrompt').mockResolvedValue({
+      stopReason: 'end_turn',
+      updates: [],
+      agentText: 'Done.',
+      toolCalls: [],
+    });
+    const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
+    let loop!: MonolithCornerTurnLoop;
+    loop = new MonolithCornerTurnLoop({
+      cornerId: 'corner-id',
+      parentRoomId: 'room-id',
+      workspaceId: 'workspace',
+      objective: 'Implement the widget',
+      worktreePath: root,
+      repository: {
+        featureBranch: 'feature/widget',
+        targetBranch: 'main',
+        gitCommonDir: join(root, '.git'),
+        githubToken: 'token',
+      },
+      runtime,
+      config,
+      api: closePushAfterReceipt(
+        commandFixtureApi(api, 'corner-id', runtime.agent.publicKey, 'Implement the widget'),
+        () => loop,
+        1,
+      ),
+      scheduler,
+      signal: abort.signal,
+      pollMs: 10,
+      onPoll: vi.fn(),
+      onFailure: vi.fn(),
+      onCloseRequested: vi.fn(async () => undefined),
+      createAcpClient: () => acp,
+    });
+    await loop.run();
+    await scheduler.dispose();
+
+    // The fetch was kicked off before activation was even called, not after
+    // it resolved.
+    expect(order).toEqual(['institutional-context', 'session-new']);
+    expect(sessionNew).toHaveBeenCalledOnce();
+    // A snapshot that took longer than the raw 200ms budget on its own is
+    // still served, because it was already in flight once activation's own
+    // 300ms gave it somewhere to finish.
+    expect(String(sessionPrompt.mock.calls[0]?.[1])).toContain('Prefetched institutional snapshot');
+    expect(receipts.some((receipt) => receipt.status === 'complete')).toBe(true);
+  }, 10_000);
+});
+
 describe('corner turn failure receipt', () => {
   it('reports failed with a distilled, secret-free reason and never a stack trace', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-failure-'));

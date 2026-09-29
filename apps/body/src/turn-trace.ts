@@ -83,6 +83,13 @@ export interface TurnAttemptTrace {
   phases: Partial<Record<TurnPhase, number>>;
   /** Distinct tool calls the harness reported during this attempt. */
   toolCalls: number;
+  /**
+   * How the institutional-memory snapshot fetch resolved: `served` carried
+   * content, `empty` completed with nothing relevant, `timed-out` missed its
+   * budget. Absent when the fetch never ran (memory disabled, or the turn
+   * never reached context-fetch).
+   */
+  institutionalMemory?: 'served' | 'empty' | 'timed-out';
 }
 
 export interface TurnTraceRecord {
@@ -136,6 +143,7 @@ interface MutableAttempt {
   firstOutputAt?: number;
   toolWorkOpenedAt?: number;
   settled?: boolean;
+  institutionalMemory?: 'served' | 'empty' | 'timed-out';
 }
 
 export interface TurnTraceOptions {
@@ -227,6 +235,11 @@ export class TurnTrace {
 
   noteActivation(kind: 'cold' | 'warm'): void {
     this.current.activation = kind;
+  }
+
+  /** How this turn's institutional-memory snapshot fetch resolved (see the field's own doc). */
+  noteInstitutionalMemory(outcome: 'served' | 'empty' | 'timed-out'): void {
+    this.current.institutionalMemory = outcome;
   }
 
   /** What each section of the assembled prompt cost, so growth shows in the trace. */
@@ -331,6 +344,7 @@ export class TurnTrace {
         ...(attempt.capacityWait ? { capacityWait: true } : {}),
         ...(attempt.provider ? { provider: attempt.provider } : {}),
         ...(attempt.retryReason ? { retryReason: attempt.retryReason } : {}),
+        ...(attempt.institutionalMemory ? { institutionalMemory: attempt.institutionalMemory } : {}),
         phases: Object.fromEntries(
           TURN_PHASES.filter((phase) => attempt.phases.has(phase)).map((phase) => [
             phase,
@@ -386,6 +400,7 @@ export function formatTurnAttempt(attempt: TurnAttemptTrace): string {
   const parts = [`attempt ${attempt.attempt} ${attempt.activation}`];
   if (attempt.capacityWait) parts.push('capacity-wait');
   if (attempt.provider) parts.push(`provider ${attempt.provider}`);
+  if (attempt.institutionalMemory) parts.push(`memory ${attempt.institutionalMemory}`);
   for (const phase of TURN_PHASES) {
     const value = attempt.phases[phase];
     if (value === undefined) continue;

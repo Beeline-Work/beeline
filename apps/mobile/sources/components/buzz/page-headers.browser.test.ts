@@ -4,11 +4,9 @@ import { describe, expect, it } from 'vitest';
 import { CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
 
 /**
- * The Corners header is the reference every section page is aligned to: the
- * back chevron at its inset, the same eyebrow over the same title, the same
- * trailing text, and the same divider under it. Workspace settings and
- * What's New carry no eyebrow but share the rest. Each page is painted for
- * real in a phone-width browser and measured.
+ * The Corners header is the reference for ordinary section pages. Workbench
+ * uses the approved app-board treatment within the same PageHeader component.
+ * Each page is painted in a phone-width browser and measured.
  */
 function shims(mobile: string): Record<string, string> {
   return {
@@ -69,7 +67,7 @@ async function measure(page: string): Promise<Record<string, unknown>> {
 }
 
 describe.skipIf(!existsSync(CHROME))('section page headers in a browser', () => {
-  it('draws every section page header the way Corners draws its own', async () => {
+  it('aligns ordinary section page headers with Corners', async () => {
     const { page: _corners, ...corners } = await measure('corners');
     // The Corners header as it stood before the pages were aligned to it.
     expect(corners).toMatchObject({
@@ -83,7 +81,7 @@ describe.skipIf(!existsSync(CHROME))('section page headers in a browser', () => 
       eyebrowAboveTitle: true,
     });
     const { eyebrowFont: _font, eyebrowAboveTitle: _above, trailingFont: _t, ...frame } = corners;
-    for (const page of ['tray', 'workbench', 'workspace', 'changelog']) {
+    for (const page of ['tray', 'workspace', 'changelog']) {
       const { page: _page, ...header } = await measure(page);
       // Pages without an eyebrow or trailing text share everything else.
       const expected = {
@@ -95,5 +93,20 @@ describe.skipIf(!existsSync(CHROME))('section page headers in a browser', () => 
       };
       expect(header, `${page} header differs from Corners`).toEqual(expected);
     }
+  }, 300_000);
+
+  it('keeps the Workbench app-board header in the shared PageHeader frame', async () => {
+    const workbench = await measure('workbench');
+    expect(workbench).toEqual({
+      page: 'workbench',
+      backLeft: 16,
+      backSize: 44,
+      titleLeft: 74,
+      headerMinHeight: '66px',
+      divider: '1px solid',
+      titleFont: '32px SpaceGrotesk-Medium',
+      eyebrowFont: '15px SpaceGrotesk-Regular',
+      eyebrowAboveTitle: true,
+    });
   }, 300_000);
 });

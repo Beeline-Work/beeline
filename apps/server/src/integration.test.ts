@@ -8288,6 +8288,57 @@ describe('monolith integration', () => {
     expect(await listed()).toEqual(expect.objectContaining({ mine: true }));
   });
 
+  it("lifts a Room up the Room list when one of the viewer's corners starts waiting", async () => {
+    const busy = '22222222-2222-4222-8222-2222222222b1';
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Busy')`, [
+      busy,
+      WORKSPACE,
+    ]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`,
+      [WORKSPACE, busy, HUMAN],
+    );
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'corner-lifts-room',
+      name: 'Pick a size',
+      objective: 'Pick a size for the widget',
+    });
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES('busy-chatter',$1,$2,'Chatter.',now()+interval '5 seconds')`,
+      [busy, AGENT],
+    );
+    const listed = async () =>
+      (
+        (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
+          chats: Array<{
+            room: { id: string };
+            openCorners?: Array<{ id: string; state: string; mine?: true }>;
+          }>;
+        }
+      ).chats;
+    const order = async () =>
+      (await listed()).map((item) => item.room.id).filter((id) => id === ROOM || id === busy);
+    expect(await order()).toEqual([busy, ROOM]);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES('corner-hands-back',$1,$2,'Small or large?',now()+interval '10 seconds')`,
+      [cornerId, AGENT],
+    );
+    const corner = (await listed())
+      .find((item) => item.room.id === ROOM)
+      ?.openCorners?.find((item) => item.id === cornerId);
+    expect(corner).toEqual(expect.objectContaining({ state: 'waiting', mine: true }));
+    expect(await order()).toEqual([ROOM, busy]);
+    // Someone else's waiting corner is not the viewer's activity.
+    await database.query(`UPDATE corner_facts SET commissioned_by=NULL WHERE corner_id=$1`, [
+      cornerId,
+    ]);
+    expect(await order()).toEqual([busy, ROOM]);
+  });
+
   it('returns the active corner when the same originating task is opened repeatedly', async () => {
     const input = {
       roomId: ROOM,

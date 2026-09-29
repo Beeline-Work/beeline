@@ -1155,6 +1155,7 @@ function readChatCorner(value: unknown): ChatListCorner | null {
     name: item.name,
     state,
     ...field('mine', item.mine === true ? (true as const) : undefined),
+    ...field('waitingSince', integer(item.waitingSince) ? item.waitingSince : undefined),
   };
 }
 

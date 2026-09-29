@@ -61,6 +61,7 @@ vi.mock('react-native-reanimated', () => ({
   runOnJS: (fn: (...args: unknown[]) => unknown) => fn,
   useAnimatedProps: (factory: () => unknown) => factory(),
   useAnimatedStyle: (factory: () => unknown) => factory(),
+  useFrameCallback: () => ({ setActive: vi.fn(), isActive: false }),
   useReducedMotion: () => false,
   useSharedValue: (value: unknown) => ({ value }),
   withDelay: (_delay: number, value: unknown) => value,

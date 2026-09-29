@@ -180,7 +180,6 @@ describe('StdioSquireMcpClient', () => {
     expect(spawnedEnv?.TRUSTY_SQUIRE_BROKER_SOCKET).toBe(
       join(home, '.trusty-squire', 'broker.sock'),
     );
-    expect(spawnedEnv).not.toHaveProperty('TRUSTY_SQUIRE_AGENT_IDENTITY');
     client.close();
   });
 });

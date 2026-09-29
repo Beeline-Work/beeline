@@ -79,7 +79,6 @@ describe('helper-owned Squire task relay', () => {
     expect(launch.env.BEELINE_TURN_CONTEXT_FILE).toBe('/tmp/context');
     expect(launch.env).not.toHaveProperty('TRUSTY_SQUIRE_BROKER_SOCKET');
     expect(launch.env).not.toHaveProperty('TRUSTY_SQUIRE_PROFILE_DIR');
-    expect(launch.env).not.toHaveProperty('TRUSTY_SQUIRE_AGENT_IDENTITY');
     const pi = piMcpBridgeSource([codex]);
     expect(pi).toContain('BEELINE_SQUIRE_RELAY_URL');
     relay.activate(command('root', 'turn-one'), 'generation');

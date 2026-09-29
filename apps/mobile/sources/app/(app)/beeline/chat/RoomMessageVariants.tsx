@@ -479,14 +479,14 @@ export function AppSignInCard({ message, agentName, canConnect, onConnect, busy 
 const appSignInStyles = StyleSheet.create(theme => {
   const board = appBoardColors(theme.buzz);
   return {
-  wrap: { gap: 8, marginVertical: 8 },
+  wrap: { gap: 8, marginVertical: 8, marginHorizontal: 6 },
   card: { borderWidth: 1, borderColor: board.cardBorder, borderRadius: 14, padding: 14, gap: 12, backgroundColor: board.card },
   heading: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   title: { ...Typography.ledger(), fontSize: 17, color: board.ink },
   detail: { ...Typography.ledger(), fontSize: 14, lineHeight: 20, color: board.secondary },
-  button: { alignSelf: 'flex-start', minHeight: 44, paddingHorizontal: 18, borderRadius: 10, justifyContent: 'center', backgroundColor: board.ink },
-  buttonText: { ...Typography.ledger(), fontSize: 15, color: board.canvas },
-  settled: { ...Typography.mono(), fontSize: 11, letterSpacing: 1, color: board.quiet, marginVertical: 8 },
+  button: { alignSelf: 'flex-start', minHeight: 44, paddingHorizontal: 18, borderRadius: 10, justifyContent: 'center', backgroundColor: board.buttonFill },
+  buttonText: { ...Typography.ledger(), fontSize: 15, color: board.buttonText },
+  settled: { ...Typography.mono(), fontSize: 11, letterSpacing: 1, color: board.quiet, marginVertical: 8, marginHorizontal: 6 },
   };
 });
 

@@ -94,8 +94,8 @@ const styles = StyleSheet.create(theme => {
   row: { minHeight: 54, flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: board.border },
   name: { ...Typography.ledger(), flex: 1, fontSize: 17, color: board.ink },
   connected: { ...Typography.ledger(), fontSize: 14, color: board.quiet },
-  button: { minHeight: 36, paddingHorizontal: 14, justifyContent: 'center', borderRadius: 9, backgroundColor: board.ink },
-  buttonText: { ...Typography.ledger(), fontSize: 14, color: board.canvas },
+  button: { minHeight: 36, paddingHorizontal: 14, justifyContent: 'center', borderRadius: 9, backgroundColor: board.buttonFill },
+  buttonText: { ...Typography.ledger(), fontSize: 14, color: board.buttonText },
   error: { ...Typography.default(), margin: 20, color: theme.buzz.dialogDanger },
   };
 });

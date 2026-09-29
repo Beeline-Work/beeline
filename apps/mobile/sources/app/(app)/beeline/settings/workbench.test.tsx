@@ -317,10 +317,10 @@ describe('Workbench settings screen', () => {
   it('heads the two lists Tools and Keys with their one-line descriptions', async () => {
     const renderer = await render();
     expect(renderer.root.findByProps({ testID: 'workbench-tools-head' }).props.children).toBe(
-      'Tools',
+      'TOOLS',
     );
     expect(renderer.root.findByProps({ testID: 'workbench-keys-head' }).props.children).toBe(
-      'Keys',
+      'KEYS',
     );
   });
 

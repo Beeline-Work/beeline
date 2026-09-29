@@ -3,11 +3,14 @@ export function appBoardColors(buzz: {
   appCanvas: string; appTile: string; appCard: string; appInk: string;
   appSecondary: string; appQuiet: string; appBorder: string;
   appStrongBorder: string; appCardBorder: string; appBrass: string;
+  buttonPrimaryFill: string; buttonPrimaryText: string; buttonSecondaryText: string;
 }) {
   return {
     canvas: buzz.appCanvas, tile: buzz.appTile, card: buzz.appCard,
     ink: buzz.appInk, secondary: buzz.appSecondary, quiet: buzz.appQuiet,
     border: buzz.appBorder, strongBorder: buzz.appStrongBorder,
     cardBorder: buzz.appCardBorder, brass: buzz.appBrass,
+    buttonFill: buzz.buttonPrimaryFill, buttonText: buzz.buttonPrimaryText,
+    buttonOutline: buzz.buttonSecondaryText,
   };
 }

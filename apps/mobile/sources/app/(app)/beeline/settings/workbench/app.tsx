@@ -88,10 +88,10 @@ const styles = StyleSheet.create(theme => {
   account: { ...Typography.ledger(), fontSize: 14, color: board.quiet },
   permission: { ...Typography.ledger(), fontSize: 15, lineHeight: 22, color: board.secondary },
   lastUsed: { ...Typography.ledger(), fontSize: 13, lineHeight: 19, color: board.quiet },
-  outline: { alignSelf: 'flex-start', minHeight: 44, paddingHorizontal: 18, justifyContent: 'center', borderRadius: 10, borderWidth: 2, borderColor: board.ink },
-  outlineText: { ...Typography.ledger(), fontSize: 15, color: board.ink },
-  ink: { alignSelf: 'flex-start', minHeight: 44, paddingHorizontal: 18, justifyContent: 'center', borderRadius: 10, backgroundColor: board.ink },
-  inkText: { ...Typography.ledger(), fontSize: 15, color: board.canvas },
+  outline: { alignSelf: 'flex-start', minHeight: 44, paddingHorizontal: 18, justifyContent: 'center', borderRadius: 10, borderWidth: 2, borderColor: board.buttonOutline },
+  outlineText: { ...Typography.ledger(), fontSize: 15, color: board.buttonOutline },
+  ink: { alignSelf: 'flex-start', minHeight: 44, paddingHorizontal: 18, justifyContent: 'center', borderRadius: 10, backgroundColor: board.buttonFill },
+  inkText: { ...Typography.ledger(), fontSize: 15, color: board.buttonText },
   error: { ...Typography.default(), color: theme.buzz.dialogDanger },
   };
 });

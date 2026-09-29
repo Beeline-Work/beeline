@@ -4,6 +4,10 @@ set -euo pipefail
 bundle="apps/mobile/src-tauri/target/universal-apple-darwin/release/bundle"
 app=$(find "$bundle" -type d -name '*.app' -print -quit)
 test -n "$app"
+# `open -a` only resolves an absolute path or a name it can look up itself; a
+# path relative to this script's cwd silently reads as the latter and fails
+# with "Unable to find application named ...".
+app="$(cd "$(dirname "$app")" && pwd)/$(basename "$app")"
 
 # NSUserNotificationCenter (the backend `notify-rust`/`tauri-plugin-notification`
 # use on macOS) only attributes a banner to this bundle when Launch Services

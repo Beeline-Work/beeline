@@ -51,6 +51,15 @@ export function startDesktopNotifications(): () => void {
       if ((message.createdAtMs ?? message.createdAt * 1000) < startedAt) return;
       const room = rooms.get(roomId);
       if (!room) return;
+      // Most live rows need no network or plugin work. In particular a
+      // foreground message must never wait on the notification path.
+      if (document.hasFocus() || getOpenBuzzChannelId() === roomId) return;
+      if (
+        !room.directMessage &&
+        !message.mentionPubkeys?.includes(identity!.publicKey) &&
+        !message.reply
+      )
+        return;
       const enabled = await getBuzzPushEnabled(identity!.publicKey);
       if (!enabled) return;
       const managed = await monolithPhoneOperation('getManagedIdentity', {}).catch(() => null);

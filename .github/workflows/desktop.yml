@@ -369,8 +369,14 @@ jobs:
           npx tauri build --target "${{ matrix.target }}" ${config[@]+"${config[@]}"} \
             2>&1 | tee "$RUNNER_TEMP/tauri-build.log"
 
-      # This safe local fixture proves the plugin reaches the runner OS. The
-      # TypeScript test covers the signed-in live-message-to-plugin boundary.
+      # This safe local fixture proves the plugin call reaches the runner OS
+      # and OCRs the screen for the banner/toast text. The TypeScript test
+      # covers the signed-in live-message-to-plugin boundary. `continue-on-
+      # error` is deliberate: GitHub-hosted runners on both platforms do not
+      # render an OS notification banner/toast in this session even when the
+      # plugin call succeeds (see apps/mobile/src-tauri/README.md's "CI
+      # cannot prove the OS actually renders the banner"), so a red step here
+      # is informational, not a regression signal.
       - name: Capture macOS native notification
         if: github.event_name == 'pull_request' && runner.os == 'macOS'
         continue-on-error: true

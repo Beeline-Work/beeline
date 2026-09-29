@@ -10,13 +10,13 @@ export function workflowAmbient(workflows: Workflows, runs: Runs, task: string):
     [...new Set(`${name} ${purpose}`.toLowerCase().match(/[a-z][a-z0-9-]{3,}/g) ?? [])].filter(
       (word) => words.has(word),
     ).length;
-  const visible = [...workflows].sort(
+  const visible = [...(Array.isArray(workflows) ? workflows : [])].sort(
     (left, right) =>
       score(right.name, right.purpose) - score(left.name, left.purpose) ||
       left.name.localeCompare(right.name),
   );
   const lines = [
-    ...runs
+    ...(Array.isArray(runs) ? runs : [])
       .filter((run) => run.status === 'running' || run.status === 'waiting')
       .slice(0, 5)
       .map((run) => `- open run ${run.runId}: ${run.name} at ${run.state} (${run.status})`),

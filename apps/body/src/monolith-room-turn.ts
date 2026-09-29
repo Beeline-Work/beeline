@@ -1321,7 +1321,7 @@ export class MonolithRoomTurnLoop {
                   ...(grantDecision ? { resume: resumePrompt(item) } : {}),
                   members: roomMentionDirectory(roster, this.agent.publicKey),
                   memory: institutionalContext.text,
-                  workflows: workflowAmbient(workflows, workflowRuns.runs, inboxItemPromptBody(item)),
+                  workflows: workflowAmbient(workflows ?? [], workflowRuns?.runs ?? [], inboxItemPromptBody(item)),
                   corners: openCorners,
                   closedCorners,
                   task: {

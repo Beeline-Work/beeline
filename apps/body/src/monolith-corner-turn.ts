@@ -1421,7 +1421,7 @@ export class MonolithCornerTurnLoop {
                   },
                   members: roomMentionDirectory(roster, this.agent.publicKey),
                   memory: institutionalContext.text,
-                  workflows: workflowAmbient(workflows, workflowRuns.runs, trigger),
+                  workflows: workflowAmbient(workflows ?? [], workflowRuns?.runs ?? [], trigger),
                   ...(activeReviewerInstruction
                     ? { reviewerTarget: activeReviewerInstruction }
                     : {}),

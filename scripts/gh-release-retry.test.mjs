@@ -37,6 +37,7 @@ record_asset() {
 }
 if [ "$1" != release ]; then
   fail_or_pass "$GHR_FAKE_API_FAILURES" || exit 1
+  [ -z "\${GHR_FAKE_TAG_SHA:-}" ] || printf '%s\\n' "$GHR_FAKE_TAG_SHA"
   exit 0
 fi
 sub="$2"; shift 2
@@ -56,6 +57,7 @@ case "$sub" in
     exit 0
     ;;
   view)
+    fail_or_pass "$GHR_FAKE_VIEW_FAILURES" || exit 1
     if [ ! -f "$GHR_FAKE_RELEASE" ]; then
       echo "release not found: $1" >&2
       exit 1
@@ -96,6 +98,7 @@ const PRESET_COUNTERS = {
   createFailures: 'GHR_FAKE_CREATE_FAILURES',
   deleteFailures: 'GHR_FAKE_DELETE_FAILURES',
   apiFailures: 'GHR_FAKE_API_FAILURES',
+  viewFailures: 'GHR_FAKE_VIEW_FAILURES',
 };
 
 function runHelper(t, body, presets = {}) {
@@ -117,6 +120,7 @@ function runHelper(t, body, presets = {}) {
     GHR_FAKE_ASSETS: paths.assets,
     GHR_FAKE_RELEASE: paths.release,
     SHA: 'a'.repeat(40),
+    GITHUB_REPOSITORY: 'o/r',
   };
   for (const [preset, counter] of Object.entries(PRESET_COUNTERS)) {
     env[counter] = join(dir, counter);
@@ -133,6 +137,7 @@ function runHelper(t, body, presets = {}) {
   env.A = assetA;
   env.B = assetB;
   env.NOTES = notes;
+  if (presets.tagSha) env.GHR_FAKE_TAG_SHA = presets.tagSha;
   if (presets.releaseExists) writeFileSync(paths.release, '');
   if (presets.assets) writeFileSync(paths.assets, presets.assets);
   const driver = join(dir, 'driver.sh');
@@ -264,6 +269,56 @@ test('ghr_api: fails only after every attempt is spent', (t) => {
   });
   assert.match(result.stdout, /failed:1/);
   assert.equal(calls().filter((line) => line.startsWith('api repos/')).length, 5);
+});
+
+test('ghr_requested_version_guard: fails when the existing release tag points at another commit', (t) => {
+  const { result, calls } = runHelper(t, 'ghr_requested_version_guard v0.1.0 "$SHA"', {
+    releaseExists: true, tagSha: 'b'.repeat(40),
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, new RegExp(`::error::requested version v0\\.1\\.0 .*${'b'.repeat(40)}.*${'a'.repeat(40)}`));
+  assert.ok(calls().includes('api repos/o/r/commits/v0.1.0 --jq .sha'));
+});
+
+test('ghr_requested_version_guard: passes a retry whose release tag is already at the release SHA', (t) => {
+  const { result } = runHelper(t, 'ghr_requested_version_guard v0.1.0 "$SHA"', {
+    releaseExists: true, tagSha: 'a'.repeat(40),
+  });
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test('ghr_requested_version_guard: passes a version with no existing release', (t) => {
+  const { result, calls } = runHelper(t, 'ghr_requested_version_guard v0.1.0 "$SHA"', { tagSha: 'b'.repeat(40) });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(!calls().some((line) => line.startsWith('api ')));
+});
+
+test('ghr_requested_version_guard: fails closed when the release lookup keeps failing', (t) => {
+  const { result, calls } = runHelper(t, 'ghr_requested_version_guard v0.1.0 "$SHA"', {
+    viewFailures: 99, tagSha: 'b'.repeat(40),
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /::error::could not confirm whether requested version v0\.1\.0 already has a GitHub release/);
+  assert.equal(calls().filter((line) => line.startsWith('release view v0.1.0')).length, 5);
+});
+
+test('ghr_requested_version_guard: retries a transient lookup failure before checking the tag', (t) => {
+  const { result } = runHelper(t, 'ghr_requested_version_guard v0.1.0 "$SHA"', {
+    viewFailures: 2, releaseExists: true, tagSha: 'b'.repeat(40),
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, new RegExp(`::error::requested version v0\\.1\\.0 .*${'b'.repeat(40)}`));
+});
+
+test('initialize guards only a requested version against an existing release at another commit', () => {
+  const step = WORKFLOW.match(/- name: Assign identity and produce the inspectable release plan[\s\S]*?release_id="/)?.[0];
+  assert.ok(step, 'identity step found in unified-release.yml');
+  assert.match(step, /GH_TOKEN: \$\{\{ github\.token \}\}/);
+  assert.match(step, /\. scripts\/gh-release-retry\.sh/);
+  const requested = step.match(/if \[ -n "\$REQUESTED_VERSION" \]; then([\s\S]*?)\n\s*elif /)?.[1];
+  assert.ok(requested, 'requested-version branch found');
+  assert.match(requested, /ghr_requested_version_guard "\$release_version" "\$\(git rev-parse --verify "\$release_sha\^\{commit\}"\)"/);
+  assert.equal(step.match(/ghr_requested_version_guard/g).length, 1, 'auto-computed and plan-only versions are not guarded');
 });
 
 test('release_result routes every release-mutating gh call through the retry wrappers', () => {

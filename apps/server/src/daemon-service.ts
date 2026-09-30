@@ -6029,13 +6029,25 @@ export class DaemonService {
       throw new Error('invalid corner idempotency key');
     }
     await this.access(input.roomId, agentId);
+    // A turn inside a corner opens its new corner beside it, in the parent
+    // Room: corners do not nest. `commandRoomId` is where the turn's command
+    // lives; `roomId` is the Room the new corner belongs to.
+    const commandRoomId = input.roomId;
+    const host = (
+      await this.database.query<{ parent_id: string | null }>(
+        `SELECT parent_id FROM rooms WHERE id=$1`,
+        [commandRoomId],
+      )
+    ).rows[0];
+    const roomId = host?.parent_id ?? commandRoomId;
+    if (roomId !== commandRoomId) await this.access(roomId, agentId);
     const parent = (
       await this.database.query<{
         workspace_id: string;
         repository_key: string | null;
         repository_resolution: string;
       }>(`SELECT workspace_id,repository_key,repository_resolution FROM rooms WHERE id=$1`, [
-        input.roomId,
+        roomId,
       ])
     ).rows[0]!;
     // A no-code corner is scratch-backed even when its parent Room has a
@@ -6058,7 +6070,7 @@ export class DaemonService {
       // corner remains active. Locking the parent closes the read/insert race:
       // a concurrent retry waits, sees the winner, and returns its id without
       // creating another Room, command, or open card.
-      await db.query(`SELECT id FROM rooms WHERE id=$1 FOR UPDATE`, [input.roomId]);
+      await db.query(`SELECT id FROM rooms WHERE id=$1 FOR UPDATE`, [roomId]);
       const existing = (
         await db.query<{
           corner_id: string;
@@ -6098,7 +6110,7 @@ export class DaemonService {
              AND child.archived_at IS NULL
            ORDER BY child.created_at,child.id
            LIMIT 1`,
-          [input.roomId, idempotencyKey],
+          [roomId, idempotencyKey],
         )
       ).rows[0];
       if (existing) {
@@ -6148,7 +6160,7 @@ export class DaemonService {
       }
       const parentCommand = await authorizeCommandOutput(
         db,
-        input.roomId,
+        commandRoomId,
         agentId,
         input.requestId,
         input.generationId,
@@ -6166,7 +6178,7 @@ export class DaemonService {
         [
           cornerId,
           parent.workspace_id,
-          input.roomId,
+          roomId,
           agentId,
           name,
           input.repository ?? null,
@@ -6177,7 +6189,7 @@ export class DaemonService {
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
          SELECT workspace_id,$2,identity_id,role,event_subscriptions FROM memberships
          WHERE room_id=$1 AND removed_at IS NULL ON CONFLICT DO NOTHING`,
-        [input.roomId, cornerId],
+        [roomId, cornerId],
       );
       await db.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')
@@ -6207,13 +6219,13 @@ export class DaemonService {
           throw new Error('new corners cannot use the legacy opaque brief format');
         const explicitAttachments = await resolveCornerBriefAttachments(
           db,
-          input.roomId,
+          roomId,
           input.brief,
         );
         const attachments = [
           ...explicitAttachments,
           ...(await resolvePendingCornerBriefAttachments(db, {
-            roomId: input.roomId,
+            roomId: commandRoomId,
             agentId,
             requestId: input.requestId,
             generationId: input.generationId,
@@ -6223,7 +6235,7 @@ export class DaemonService {
         if (attachments.length > 16) throw new Error('corner brief has too many attachments');
         const authority = await resolveCornerBriefApproval(
           db,
-          [input.roomId],
+          [...new Set([roomId, commandRoomId])],
           input.brief,
           attachments,
           parentCommand.root_source_message_id,
@@ -6270,7 +6282,7 @@ export class DaemonService {
       // a daemon-fact card. Corner lifecycle is outside the push ceiling
       // (`background.ts`), so this marker never notifies a device.
       await systemLine(db, {
-        roomId: input.roomId,
+        roomId,
         subject: { kind: 'agent', id: agentId, name: opener.name },
         verb: 'opened a corner',
         kind: 'corner-opened',
@@ -6287,7 +6299,7 @@ export class DaemonService {
         implementerAgentId: agentId,
       });
     });
-    this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'corner', agentId });
+    this.live.publish({ type: 'invalidate', roomId, reason: 'corner', agentId });
     return { cornerId };
   }
   private async reviseCornerBrief(input: Input<'reviseCornerBrief'>, agentId: string) {

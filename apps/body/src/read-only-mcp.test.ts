@@ -98,7 +98,7 @@ describe('corner lifecycle tool surfaces', () => {
       expect(names).toContain('close_corner');
       expect(names).toContain('publish_corner_app');
       expect(names).toContain('open_corner_app');
-      expect(names).not.toContain('open_corner');
+      expect(names).toContain('open_corner');
     }
     const noCodeCorner = agentToolsFor(true, false, true, false, true, false);
     expect(noCodeCorner.map((tool) => tool.name)).not.toContain('close_corner');

@@ -614,6 +614,13 @@ export type RoomView = {
       revisionHash: string;
       change?: string;
       approvalKind: string;
+      content: string;
+      intentVerbatim: readonly { sourceMessageId: string; snapshot: string }[];
+      buildSpec: string;
+      criteria: readonly { id: string; text: string }[];
+      nonGoals: readonly string[];
+      references: readonly { label: string; authority: string; description: string; objectId?: string }[];
+      approvalBasis?: { kind: string; sourceMessageId?: string; snapshot?: string; approvedBy?: string; briefHash: string; reason?: string };
     }[];
     readonly attachments: readonly {
       readonly title: string;

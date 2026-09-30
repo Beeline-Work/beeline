@@ -37,6 +37,7 @@ vi.mock('./IdentityMark', async () => {
 });
 
 import { LedgerSystemLine } from './Ledger';
+import { CornerBriefDisclosure } from './CornerBriefDisclosure';
 import { typeRoles } from '@/buzz/groknight';
 
 const originalConsoleError = console.error;
@@ -73,6 +74,46 @@ function flattenText(node: any): string {
  * pinned right, names in brass and tappable, the object linked by its URL.
  */
 describe('the system line', () => {
+  it('shows revision 3 after a person taps its chat notice', () => {
+    function Corner() {
+      const [requestedRevision, setRequestedRevision] = React.useState<{ revision: number }>();
+      return React.createElement(React.Fragment, null,
+        React.createElement(LedgerSystemLine, {
+          id: 'revision-notice', text: 'Niglet revised the corner brief Revision 3',
+          event: { subject: { kind: 'agent', id: 'agent-1', name: 'Niglet' },
+            verb: 'revised the corner brief', object: { text: 'Revision 3', id: 'corner-1' } },
+          stamp: '11:25', onOpenBriefRevision: (revision) => setRequestedRevision({ revision }),
+        }),
+        React.createElement(CornerBriefDisclosure, {
+          brief: { revision: 4, content: 'Fourth revision', attachments: [], history: [
+            { revision: 3, revisionHash: 'c'.repeat(64), approvalKind: 'explicit-human-answer',
+              content: 'Third revision', buildSpec: 'Third revision',
+              intentVerbatim: [{ sourceMessageId: 'human-3', snapshot: 'Show the third brief.' }],
+              criteria: [{ id: 'AC-1', text: 'The third brief is readable.' }],
+              nonGoals: [], references: [] },
+          ] }, requestedRevision, onOpenFile: vi.fn(),
+        }),
+      );
+    }
+    const renderer = render(React.createElement(Corner));
+    expect(renderer.root.findAllByProps({ testID: 'corner-brief-detail' })).toHaveLength(0);
+    act(() => renderer.root.findByProps({ testID: 'system-line-object-revision-notice' }).props.onPress());
+    expect(flattenText(renderer.root.findByProps({ testID: 'corner-brief-detail' })))
+      .toContain('Show the third brief.');
+  });
+  it('opens the revision brief from the revision notice', () => {
+    const onOpenBriefRevision = vi.fn();
+    const onOpenIdentity = vi.fn();
+    const renderer = render(React.createElement(LedgerSystemLine, {
+      id: 'brief-revision', text: 'Niglet revised the corner brief Revision 3',
+      event: { subject: { kind: 'agent', id: 'a'.repeat(64), name: 'Niglet' },
+        verb: 'revised the corner brief', object: { text: 'Revision 3', id: 'corner-id' } },
+      stamp: '11:25', onOpenIdentity, onOpenBriefRevision,
+    }));
+    renderer.root.findByProps({ testID: 'system-line-object-brief-revision' }).props.onPress();
+    expect(onOpenBriefRevision).toHaveBeenCalledWith(3);
+    expect(onOpenIdentity).not.toHaveBeenCalled();
+  });
   const event = {
     subject: { kind: 'person' as const, id: 'o'.repeat(64), name: 'Owner' },
     verb: 'turned yolo on for',

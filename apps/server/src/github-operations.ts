@@ -16,6 +16,7 @@ import {
 } from './workspace-handles.js';
 import { recordCornerMergeApproval } from './corner-merge-approval.js';
 import { reportUnansweredCornerAsks } from './corner-close.js';
+import { noteCornerWorkflowImplicitEdge, noteCornerWorkflowTransition } from './corner-workflow.js';
 import {
   queueCornerMergeConflict,
   reconcileCornerMergeBlockers,
@@ -1518,6 +1519,14 @@ export class GitHubOperations {
             },
             database,
           );
+          await noteCornerWorkflowTransition(database, {
+            cornerId: target.corner_id,
+            expectedFromState: 'implement',
+            outcome: 'pushed',
+            toState: 'checks',
+            contents: { summary: `pushed to ${branch}`, ...(lifecycle.pr?.url ? { prUrl: lifecycle.pr.url } : {}) },
+            dedupeKey: head,
+          });
         }
         await this.systemNote(
           target.corner_id,
@@ -1731,6 +1740,11 @@ export class GitHubOperations {
       );
       if (!changed.rowCount) return;
       archived = true;
+      await noteCornerWorkflowImplicitEdge(database, {
+        cornerId: target.corner_id,
+        toState: 'landed',
+        contents: { mergeVerdict: 'merged', pullRequestUrl: pullRequest.url },
+      });
       await database.query(
         `UPDATE corner_facts SET close_requested=true,
            lifecycle=lifecycle||$2::jsonb,

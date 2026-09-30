@@ -72,6 +72,7 @@ import {
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import { closeCornerState } from './corner-close.js';
+import { startCornerWorkflowRun, noteCornerWorkflowTransition } from './corner-workflow.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import {
   LiveHub,
@@ -6268,6 +6269,12 @@ export class DaemonService {
         cardType: 'daemon-fact',
         card: { type: 'corner-open', cornerId, name, objective },
       });
+      await startCornerWorkflowRun(db, {
+        cornerId,
+        workspaceId: parent.workspace_id,
+        lane,
+        implementerAgentId: agentId,
+      });
     });
     this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'corner', agentId });
     return { cornerId };
@@ -6530,8 +6537,10 @@ export class DaemonService {
           repository_key: string | null;
           repository_remote: string | null;
           repository_resolution: string;
+          repository_target_branch: string;
         }>(
-          `SELECT fact.lane,fact.feature_branch,parent.repository_key,parent.repository_remote,parent.repository_resolution
+          `SELECT fact.lane,fact.feature_branch,parent.repository_key,parent.repository_remote,
+                  parent.repository_resolution,parent.repository_target_branch
            FROM corner_facts fact
            JOIN rooms corner ON corner.id=fact.corner_id
            JOIN rooms parent ON parent.id=corner.parent_id
@@ -6572,6 +6581,25 @@ export class DaemonService {
          WHERE corner_id=$1 AND feature_branch IS NULL AND NOT lifecycle ? 'pr'`,
         [cornerId, featureBranch],
       );
+      await noteCornerWorkflowTransition(db, {
+        cornerId,
+        expectedFromState: 'no_code_work',
+        outcome: 'upgrade_requested',
+        toState: 'upgrade_to_code',
+        contents: {},
+      });
+      await noteCornerWorkflowTransition(db, {
+        cornerId,
+        expectedFromState: 'upgrade_to_code',
+        outcome: 'upgraded',
+        toState: 'implement',
+        contents: {
+          branch: featureBranch,
+          repositoryRoute: target.repository_key ?? target.repository_remote ?? '',
+          ciCallbackRegistered: true,
+          mergeTarget: target.repository_target_branch,
+        },
+      });
       // A repository corner works from a brief. This one already existed as
       // chat, so its discussion so far is what the brief has to carry, written
       // by the server rather than the agent whose work it authorizes. A corner

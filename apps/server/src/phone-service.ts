@@ -123,6 +123,7 @@ import { chatCornerCounts } from './chat-corner-counts.js';
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
 import { retireAgentFromWorkspace, settleGrantCard } from './agent-retirement.js';
 import { ensureFirstRoom, firstAccessibleRoomId } from './first-room.js';
+import { ensureCornerWorkflowSeeded } from './corner-workflow.js';
 import {
   joinRooms,
   joinWorkspaceMembersToPublicRoom,
@@ -4964,7 +4965,9 @@ export class PhoneService {
           [id, viewerId],
         );
       }
-      return ensureFirstRoom(db, id, viewerId);
+      const firstRoomId = await ensureFirstRoom(db, id, viewerId);
+      await ensureCornerWorkflowSeeded(db, id, firstRoomId);
+      return firstRoomId;
     });
     return { id, roomId };
   }

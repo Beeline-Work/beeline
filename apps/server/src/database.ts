@@ -9,6 +9,7 @@ import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { uniqueAgentHandle } from '@beeline/api-contract/phone';
 import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
+import { backfillCornerWorkflowSeed } from './corner-workflow.js';
 import { upgradeGrantPolicy, withdrawSupersededGrantAsks } from './grant-policy-upgrade.js';
 import { backfillRegistryApps } from './app-connections.js';
 import {
@@ -2404,6 +2405,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     console.log(`backfillMessageSearchDocuments: filled ${searchDocuments} message row(s)`);
   await dataStep('corner owner backfill', () => backfillCornerOwners(database));
   await dataStep('inherited corner memberships', () => backfillInheritedCornerMemberships(database));
+  await dataStep('corner workflow seed', () => backfillCornerWorkflowSeed(database));
   const blockers = await dataStep('corner merge blockers', () =>
     reconcileCornerMergeBlockers(database));
   if (blockers)

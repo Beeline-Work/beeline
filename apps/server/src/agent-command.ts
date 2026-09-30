@@ -7,6 +7,7 @@ import type {
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
 import { isResumeKind } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
+import { noteCornerWorkflowReviewOutcome, noteCornerWorkflowTransition } from './corner-workflow.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
 import { dispatchClassReview } from './agent-classes.js';
 import { ensureSystemIdentity, GITHUB_SUBJECT, systemLine } from './system-line.js';
@@ -725,7 +726,24 @@ export async function queueCornerWorkerAfterReview(
         [input.roomId, review.head_sha],
       )
     ).rows[0]?.review_handback_count ?? 1;
+  // The verdict itself isn't decided here — it already happened, if it did,
+  // when `approve_merge` recorded a row for this exact head, earlier in the
+  // reviewer's own just-ended turn. This only reads which of the two already
+  // happened, to bookkeep it.
+  const approvedThisHead = await db.query(
+    `SELECT 1 FROM corner_merge_approvals WHERE corner_id=$1 AND head_sha=$2 LIMIT 1`,
+    [input.roomId, review.head_sha],
+  );
   if (handbacks <= REVIEW_HANDBACK_LIMIT) {
+    await noteCornerWorkflowReviewOutcome(db, {
+      cornerId: input.roomId,
+      outcome: approvedThisHead.rowCount ? 'approved' : 'changes_requested',
+      toState: approvedThisHead.rowCount ? 'land' : 'implement',
+      contents: { verdict: approvedThisHead.rowCount ? 'approved' : 'changes_requested' },
+      // Handbacks may repeat over the SAME head with nothing new pushed, so
+      // the head alone cannot distinguish one round's card from the next.
+      dedupeKey: `${review.head_sha}:${handbacks}`,
+    });
     await createAgentCommand(db, {
       roomId: input.roomId,
       agentId: review.worker_agent_id,
@@ -740,6 +758,13 @@ export async function queueCornerWorkerAfterReview(
     });
     return;
   }
+  await noteCornerWorkflowReviewOutcome(db, {
+    cornerId: input.roomId,
+    outcome: 'exceeded',
+    toState: 'ask_human',
+    contents: {},
+    dedupeKey: `${review.head_sha}:${handbacks}`,
+  });
   // A corner an agent opened off its own root message records no requester,
   // and that corner is just as stuck. So the line is addressed to the corner
   // itself rather than dropped: the loop stopping is the fact worth reading,
@@ -1051,6 +1076,7 @@ export async function routeSystemCommand(
         command_check_state: string | null;
         parent_id: string;
         reviewer_class: string | null;
+        head_sha: string | null;
       }>(
         `SELECT fact.owner_agent_id,parent.id parent_id,parent.reviewer_class,
                 parent.reviewer_agent_id configured_reviewer_id,
@@ -1065,7 +1091,8 @@ export async function routeSystemCommand(
                     AND reviewer_membership.identity_id=parent.reviewer_agent_id
                     AND reviewer_membership.removed_at IS NULL
                 ) reviewer_agent_id,
-                fact.lifecycle->>'checks' state,fact.command_check_state
+                fact.lifecycle->>'checks' state,fact.command_check_state,
+                fact.lifecycle->'pr'->>'headSha' head_sha
          FROM corner_facts fact
          JOIN rooms corner ON corner.id=fact.corner_id
          JOIN rooms parent ON parent.id=corner.parent_id
@@ -1128,11 +1155,20 @@ export async function routeSystemCommand(
           sourceMessageId: input.sourceMessageId,
           reason: 'corner_check',
         });
-        if (command)
+        if (command) {
           await db.query(`UPDATE corner_facts SET command_check_state=$2 WHERE corner_id=$1`, [
             input.roomId,
             fact.state,
           ]);
+          await noteCornerWorkflowTransition(db, {
+            cornerId: input.roomId,
+            expectedFromState: 'checks',
+            outcome: input.kind === 'check-failed' ? 'failing' : 'no_reviewer',
+            toState: 'implement',
+            contents: {},
+            dedupeKey: fact.head_sha ?? input.sourceMessageId,
+          });
+        }
         return;
       }
       const unreachable = {
@@ -1179,6 +1215,14 @@ export async function routeSystemCommand(
         input.roomId,
         fact.state,
       ]);
+      await noteCornerWorkflowTransition(db, {
+        cornerId: input.roomId,
+        expectedFromState: 'checks',
+        outcome: 'passing',
+        toState: 'review',
+        contents: {},
+        dedupeKey: fact.head_sha ?? input.sourceMessageId,
+      });
       return;
     }
   }
@@ -1488,8 +1532,10 @@ export async function reconcileConfiguredCornerReviewers(
     corner_id: string;
     reviewer_agent_id: string;
     source_message_id: string;
+    head_sha: string | null;
   }>(
-    `SELECT corner.id corner_id,parent.reviewer_agent_id,source.id source_message_id
+    `SELECT corner.id corner_id,parent.reviewer_agent_id,source.id source_message_id,
+            fact.lifecycle->'pr'->>'headSha' head_sha
      FROM rooms corner
      JOIN rooms parent ON parent.id=corner.parent_id
      JOIN corner_facts fact ON fact.corner_id=corner.id
@@ -1544,6 +1590,14 @@ export async function reconcileConfiguredCornerReviewers(
       await db.query(`UPDATE corner_facts SET command_check_state='passing' WHERE corner_id=$1`, [
         candidate.corner_id,
       ]);
+      await noteCornerWorkflowTransition(db, {
+        cornerId: candidate.corner_id,
+        expectedFromState: 'checks',
+        outcome: 'passing',
+        toState: 'review',
+        contents: {},
+        dedupeKey: candidate.head_sha ?? candidate.source_message_id,
+      });
     }
   }
   return { subscriptions: subscriptions.rowCount, commands };

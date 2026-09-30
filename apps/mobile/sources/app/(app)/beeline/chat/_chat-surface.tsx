@@ -101,6 +101,7 @@ import { cornerProposalDecision } from '@/buzz/corner-proposal';
 import { anchorCornerMarkers } from '@/buzz/corner-markers';
 import { cornerName } from '@/buzz/corners';
 import { CHANGES_LABEL, CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
+import { buildSpeechLexicon } from '@/buzz/speech-lexicon';
 import {
   COMPOSER_ACK_BOUND_MS,
   STEER_RECEIVED_VISIBLE_MS,
@@ -1396,15 +1397,31 @@ export function BuzzChatSurface({
     () => new Set<string>(roomMembers.map((member) => member.pubkey)),
     [roomMembers],
   );
+  // Only message text shapes the lexicon, so a presence tick that rebuilds the
+  // message array does not re-prime the recogniser.
+  const speechMessageText = useStable(
+    durableMessages
+      .filter((message) => !message.isSystemNotice && !message.deleted)
+      .map((message) => message.text),
+    sameElementRefs,
+  );
   const speechHints = useMemo(
-    () => [
-      ...new Set(
-        [...selectedMembers.map((member) => member.identity.displayName), resolvedChannelName]
-          .map((name) => name?.trim())
-          .filter((name): name is string => Boolean(name)),
-      ),
+    () =>
+      buildSpeechLexicon({
+        roomName: resolvedChannelName,
+        parentRoomName: roomSurface?.parent?.name,
+        repositoryName: roomSurface?.repository?.name,
+        memberNames: selectedMembers.map((member) => member.identity.displayName),
+        memberHandles: selectedMembers.map((member) => member.identity.handle),
+        messages: speechMessageText,
+      }),
+    [
+      resolvedChannelName,
+      roomSurface?.parent?.name,
+      roomSurface?.repository?.name,
+      selectedMembers,
+      speechMessageText,
     ],
-    [resolvedChannelName, selectedMembers],
   );
   const personProfiles = useMemo(
     () =>

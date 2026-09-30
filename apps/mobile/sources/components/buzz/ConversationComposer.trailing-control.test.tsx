@@ -30,6 +30,12 @@ vi.mock('react-native', () => {
   } as any;
 });
 
+vi.mock('./HullDialog', async () => {
+  const ReactModule = await import('react');
+  return {
+    HullDialog: (props: any) => ReactModule.createElement('HullDialog', props),
+  };
+});
 vi.mock('react-native-svg', () => {
   function host(name: string) {
     return (props: any) => React.createElement(name, props, props.children);

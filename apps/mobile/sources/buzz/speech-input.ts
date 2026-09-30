@@ -24,6 +24,12 @@ export interface SpeechInputValue {
   state: SpeechInputState;
   partialText: string;
   volumeLevel: number;
+  /** Android can punctuate once its on-device model is installed; Beeline asks first. */
+  modelDownloadOffered: boolean;
+  /** Requests the on-device model; dictation starts on the next mic tap. */
+  acceptModelDownload(): void;
+  /** Declines the model for this composer and starts dictating without it. */
+  declineModelDownload(): Promise<void>;
   start(): Promise<void>;
   /** Stops native capture and resolves after its final result or bounded fallback. */
   stop(): Promise<boolean | null>;
@@ -41,8 +47,9 @@ const MAX_RESTARTS = 10;
 // Native volume spans roughly -2 (silent) through 10 (loud). Anything above
 // the documented silence floor counts as speech activity.
 const SPEECH_VOLUME_FLOOR = 0;
-// Android 14 downloads a speech model silently; Android 13 opens a dialog.
-const ANDROID_SILENT_MODEL_DOWNLOAD_API = 34;
+// Android 14 downloads a speech model in the background once the platform has
+// its consent; Android 13 hands the whole download to a platform dialog.
+const ANDROID_BACKGROUND_MODEL_DOWNLOAD_API = 34;
 
 function sameLocale(a: string, b: string): boolean {
   return a.replace(/_/g, '-').toLowerCase() === b.replace(/_/g, '-').toLowerCase();
@@ -50,28 +57,19 @@ function sameLocale(a: string, b: string): boolean {
 
 /**
  * Android punctuates only through its on-device recognizer, which rejects a
- * locale whose model is not installed. Report whether the model is there, and
- * ask for a missing one once where that download needs no dialog.
+ * locale whose model is not installed. Report whether the model is there.
  */
 async function androidOnDeviceModelInstalled(
   m: SpeechRecognitionInterface,
   locale: string,
-  modelRequestedRef: { current: boolean },
 ): Promise<boolean> {
   try {
     const support = await m.getSupportedLocales?.({});
-    if (support?.installedLocales.some((installed) => sameLocale(installed, locale))) return true;
-    if (
-      !modelRequestedRef.current &&
-      Number(Platform.Version) >= ANDROID_SILENT_MODEL_DOWNLOAD_API
-    ) {
-      modelRequestedRef.current = true;
-      m.androidTriggerOfflineModelDownload?.({ locale }).catch(() => {});
-    }
+    return Boolean(support?.installedLocales.some((installed) => sameLocale(installed, locale)));
   } catch {
     // The platform recognizer still works without punctuation.
+    return false;
   }
-  return false;
 }
 
 /**
@@ -87,6 +85,7 @@ export function useSpeechInput(
   const [state, setState] = React.useState<SpeechInputState>('idle');
   const [partialText, setPartialText] = React.useState('');
   const [volumeLevel, setVolumeLevel] = React.useState(0);
+  const [modelDownloadOffered, setModelDownloadOffered] = React.useState(false);
 
   const onResultRef = React.useRef(onResult);
   onResultRef.current = onResult;
@@ -357,12 +356,20 @@ export function useSpeechInput(
         }
       }
       if (Platform.OS === 'android' && !androidOnDeviceRef.current) {
-        androidOnDeviceRef.current = await androidOnDeviceModelInstalled(
-          m,
-          startOptions.lang,
-          androidModelRequestedRef,
-        );
+        androidOnDeviceRef.current = await androidOnDeviceModelInstalled(m, startOptions.lang);
         if (attempt !== startAttemptRef.current) return;
+        // Ask once, in Beeline's own dialog, before the platform is asked for
+        // the model. The composer answers through accept/declineModelDownload.
+        if (
+          !androidOnDeviceRef.current &&
+          !androidModelRequestedRef.current &&
+          m.androidTriggerOfflineModelDownload &&
+          Number(Platform.Version) >= ANDROID_BACKGROUND_MODEL_DOWNLOAD_API
+        ) {
+          androidModelRequestedRef.current = true;
+          setModelDownloadOffered(true);
+          return;
+        }
       }
 
       setPartialText('');
@@ -435,5 +442,27 @@ export function useSpeechInput(
     };
   }, [clearSilenceTimer]);
 
-  return { capability, state, partialText, volumeLevel, start, stop };
+  const acceptModelDownload = React.useCallback(() => {
+    setModelDownloadOffered(false);
+    modRef.current
+      ?.androidTriggerOfflineModelDownload?.({ locale: startOptions.lang })
+      .catch(() => {});
+  }, [startOptions.lang]);
+
+  const declineModelDownload = React.useCallback(() => {
+    setModelDownloadOffered(false);
+    return start();
+  }, [start]);
+
+  return {
+    capability,
+    state,
+    partialText,
+    volumeLevel,
+    modelDownloadOffered,
+    acceptModelDownload,
+    declineModelDownload,
+    start,
+    stop,
+  };
 }

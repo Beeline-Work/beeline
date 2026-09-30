@@ -26,7 +26,8 @@ vi.mock('./speech-locale', () => ({
   getDeviceSpeechLocale: () => 'en-GB',
 }));
 
-const platformState = vi.hoisted(() => ({ OS: 'android', Version: 34 }));
+// Android 13 never offers the on-device model, so most tests start straight away.
+const platformState = vi.hoisted(() => ({ OS: 'android', Version: 33 }));
 
 const mockMod = {
   start: vi.fn(),
@@ -96,7 +97,7 @@ beforeEach(() => {
     status: 'download_success',
     message: '',
   });
-  platformState.Version = 34;
+  platformState.Version = 33;
   vi.mocked(getRecognitionModule).mockReturnValue(mockMod as any);
 });
 
@@ -211,20 +212,51 @@ describe('useSpeechInput', () => {
     expect(mockMod.androidTriggerOfflineModelDownload).not.toHaveBeenCalled();
   });
 
-  it('keeps the Android platform recognizer and requests the model on Android 14+', async () => {
+  it('offers the missing model on Android 14+ and requests it only when accepted', async () => {
+    platformState.Version = 34;
     mockMod.getSupportedLocales.mockResolvedValue({ locales: [], installedLocales: ['en-US'] });
     const { speech } = renderHook();
     await act(async () => {
       await speech().start();
     });
+    expect(speech().modelDownloadOffered).toBe(true);
+    expect(mockMod.start).not.toHaveBeenCalled();
+    expect(mockMod.androidTriggerOfflineModelDownload).not.toHaveBeenCalled();
+
+    act(() => speech().acceptModelDownload());
+    expect(speech().modelDownloadOffered).toBe(false);
+    expect(mockMod.androidTriggerOfflineModelDownload).toHaveBeenCalledWith({ locale: 'en-GB' });
+    expect(mockMod.start).not.toHaveBeenCalled();
+
+    // The next mic tap dictates through the platform recognizer, without asking again.
+    await act(async () => {
+      await speech().start();
+    });
+    expect(speech().modelDownloadOffered).toBe(false);
     expect(mockMod.start).toHaveBeenCalledWith(
       expect.objectContaining({ requiresOnDeviceRecognition: false }),
     );
-    expect(mockMod.androidTriggerOfflineModelDownload).toHaveBeenCalledWith({ locale: 'en-GB' });
   });
 
-  it('does not request the model on Android 13, where the download opens a dialog', async () => {
-    platformState.Version = 33;
+  it('starts dictating without the model when its offer is declined', async () => {
+    platformState.Version = 34;
+    const { speech } = renderHook();
+    await act(async () => {
+      await speech().start();
+    });
+    expect(speech().modelDownloadOffered).toBe(true);
+    await act(async () => {
+      await speech().declineModelDownload();
+    });
+    expect(speech().modelDownloadOffered).toBe(false);
+    expect(speech().state).toBe('listening');
+    expect(mockMod.androidTriggerOfflineModelDownload).not.toHaveBeenCalled();
+    expect(mockMod.start).toHaveBeenCalledWith(
+      expect.objectContaining({ requiresOnDeviceRecognition: false }),
+    );
+  });
+
+  it('does not offer the model on Android 13, where the platform owns the whole download', async () => {
     const { speech } = renderHook();
     await act(async () => {
       await speech().start();
@@ -232,6 +264,7 @@ describe('useSpeechInput', () => {
     expect(mockMod.start).toHaveBeenCalledWith(
       expect.objectContaining({ requiresOnDeviceRecognition: false }),
     );
+    expect(speech().modelDownloadOffered).toBe(false);
     expect(mockMod.androidTriggerOfflineModelDownload).not.toHaveBeenCalled();
   });
 

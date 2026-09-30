@@ -21,7 +21,7 @@ import {
 } from './media-ttl.js';
 import { ObjectService } from './object-service.js';
 import { ApnsPushError } from './apns-push.js';
-import { ensureSystemDirectMessageRoom } from './system-line.js';
+import { ensureSystemDirectMessageRoom, ensureSystemIdentity } from './system-line.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
 describe('background advisory-lock ownership', () => {
@@ -1128,6 +1128,220 @@ describe('background advisory-lock ownership', () => {
 
       expect(await loop.runOnce()).toBe(0);
       expect(send).not.toHaveBeenCalled();
+    } finally {
+      await db.close();
+    }
+  });
+  it('pushes a finished corner to its commissioner and nobody else', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const commissioner = 'a'.repeat(64),
+        other = 'b'.repeat(64),
+        agent = 'c'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        room = '22222222-2222-4222-8222-222222222222',
+        corner = '33333333-3333-4333-8333-333333333333';
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle) VALUES
+         ($1,'human','Owner','owner'),($2,'human','Other','other'),($3,'agent','Bee','bee')`,
+        [commissioner, other, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(
+        `INSERT INTO rooms(id,workspace_id,name,parent_id) VALUES
+         ($1,$3,'Room',NULL),($2,$3,'Corner',$1)`,
+        [room, corner, workspace],
+      );
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+         ($1,$2,$4,'owner'),($1,$2,$5,'member'),($1,$2,$6,'member'),
+         ($1,$3,$4,'owner'),($1,$3,$5,'member'),($1,$3,$6,'member')`,
+        [workspace, room, corner, commissioner, other, agent],
+      );
+      await db.query(
+        `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective)
+         VALUES($1,$2,$3,'Ship push policy')`,
+        [corner, agent, commissioner],
+      );
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES
+         ('owner-device-token-12345678901234567890',$1,'android','physical'),
+         ('other-device-token-12345678901234567890',$2,'android','physical')`,
+        [commissioner, other],
+      );
+      const send = vi.fn().mockResolvedValue(undefined);
+      const loop = new PushDeliveryLoop(db, { send });
+      expect(await loop.runOnce()).toBe(0);
+      await ensureSystemIdentity(db);
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card) VALUES
+         ($1,$2,$3,'GitHub merged Ship push policy','card','daemon-fact',$4::jsonb),
+         ($5,$6,$7,'@owner may need to step in','system','corner-review-deadlock',$8::jsonb),
+         ($9,$2,$3,'@bee opened a corner Ship push policy','card','daemon-fact',$10::jsonb)`,
+        [
+          '1'.repeat(64),
+          room,
+          agent,
+          JSON.stringify({ type: 'corner-complete', cornerId: corner, outcome: 'landed' }),
+          '2'.repeat(64),
+          corner,
+          SYSTEM_IDENTITY_ID,
+          JSON.stringify({ cornerId: corner }),
+          '3'.repeat(64),
+          JSON.stringify({ type: 'corner-open', cornerId: corner }),
+        ],
+      );
+
+      expect(await loop.runOnce()).toBe(2);
+      expect(send.mock.calls.map(([token, message]) => [token, message.messageId]).sort()).toEqual([
+        ['owner-device-token-12345678901234567890', '1'.repeat(64)],
+        ['owner-device-token-12345678901234567890', '2'.repeat(64)],
+      ]);
+      expect(send).toHaveBeenCalledWith(
+        'owner-device-token-12345678901234567890',
+        expect.objectContaining({ text: 'GitHub merged Ship push policy', roomId: room }),
+      );
+    } finally {
+      await db.close();
+    }
+  });
+  it('pushes an open question card to the one human it addresses', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const owner = 'a'.repeat(64),
+        other = 'b'.repeat(64),
+        agent = 'c'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        room = '22222222-2222-4222-8222-222222222222';
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle) VALUES
+         ($1,'human','Owner','owner'),($2,'human','Other','other'),($3,'agent','Bee','bee')`,
+        [owner, other, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
+        room,
+        workspace,
+      ]);
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+         ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member')`,
+        [workspace, room, owner, other, agent],
+      );
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES
+         ('owner-device-token-12345678901234567890',$1,'android','physical'),
+         ('other-device-token-12345678901234567890',$2,'android','physical')`,
+        [owner, other],
+      );
+      const send = vi.fn().mockResolvedValue(undefined);
+      const loop = new PushDeliveryLoop(db, { send });
+      expect(await loop.runOnce()).toBe(0);
+      const card = (fields: Record<string, unknown>) =>
+        JSON.stringify({
+          mode: 'question',
+          status: 'open',
+          requester: { pubkey: owner },
+          ...fields,
+        });
+      const cases = {
+        requester: '1'.repeat(64),
+        tagged: '2'.repeat(64),
+        several: '3'.repeat(64),
+        poll: '4'.repeat(64),
+        answered: '5'.repeat(64),
+      } as const;
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card) VALUES
+         ($1,$6,$7,'Bee asked Which one','card','choice',$8::jsonb),
+         ($2,$6,$7,'Bee asked @other which one','card','choice',$9::jsonb),
+         ($3,$6,$7,'Bee asked @owner and @other','card','choice',$10::jsonb),
+         ($4,$6,$7,'Bee asked everyone','card','choice',$11::jsonb),
+         ($5,$6,$7,'Bee asked Already answered','card','choice',$12::jsonb)`,
+        [
+          cases.requester,
+          cases.tagged,
+          cases.several,
+          cases.poll,
+          cases.answered,
+          room,
+          agent,
+          card({}),
+          card({ mentionIds: [other] }),
+          card({ mentionIds: [owner, other] }),
+          JSON.stringify({ mode: 'poll', status: 'open', electorate: [owner, other] }),
+          card({ status: 'answered' }),
+        ],
+      );
+
+      expect(await loop.runOnce()).toBe(2);
+      expect(send.mock.calls.map(([token, message]) => [token, message.messageId]).sort()).toEqual([
+        ['other-device-token-12345678901234567890', cases.tagged],
+        ['owner-device-token-12345678901234567890', cases.requester],
+      ]);
+    } finally {
+      await db.close();
+    }
+  });
+  it('sends one push per recipient per agent turn', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const owner = 'a'.repeat(64),
+        other = 'b'.repeat(64),
+        agent = 'c'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        room = '22222222-2222-4222-8222-222222222222';
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle) VALUES
+         ($1,'human','Owner','owner'),($2,'human','Other','other'),($3,'agent','Bee','bee')`,
+        [owner, other, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
+        room,
+        workspace,
+      ]);
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+         ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member')`,
+        [workspace, room, owner, other, agent],
+      );
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES
+         ('owner-device-token-12345678901234567890',$1,'android','physical'),
+         ('other-device-token-12345678901234567890',$2,'android','physical')`,
+        [owner, other],
+      );
+      const send = vi.fn().mockResolvedValue(undefined);
+      const loop = new PushDeliveryLoop(db, { send });
+      expect(await loop.runOnce()).toBe(0);
+      const turn = 'd'.repeat(64);
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text,request_id,created_at) VALUES
+         ($1,$4,$5,'@owner first',$6,now()),
+         ($2,$4,$5,'@owner second',$6,now()+interval '1 second'),
+         ($3,$4,$5,'@owner @other third',$6,now()+interval '2 seconds')`,
+        ['1'.repeat(64), '2'.repeat(64), '3'.repeat(64), room, agent, turn],
+      );
+
+      expect(await loop.runOnce()).toBe(2);
+      expect(send.mock.calls.map(([token, message]) => [token, message.messageId]).sort()).toEqual([
+        ['other-device-token-12345678901234567890', '3'.repeat(64)],
+        ['owner-device-token-12345678901234567890', '1'.repeat(64)],
+      ]);
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text,request_id) VALUES
+         ($1,$2,$3,'@owner fourth',$4),($5,$2,$3,'@owner next turn',$6)`,
+        ['4'.repeat(64), room, agent, turn, '5'.repeat(64), 'e'.repeat(64)],
+      );
+      expect(await loop.runOnce()).toBe(1);
+      expect(send).toHaveBeenLastCalledWith(
+        'owner-device-token-12345678901234567890',
+        expect.objectContaining({ messageId: '5'.repeat(64) }),
+      );
     } finally {
       await db.close();
     }

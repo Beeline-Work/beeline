@@ -4,6 +4,7 @@ import { PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
+import { PushDeliveryLoop } from './background.js';
 import { systemLine } from './system-line.js';
 import { createAgentCommand, REVIEW_HANDBACK_LIMIT } from './agent-command.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
@@ -423,6 +424,14 @@ describe('corner message attribution', () => {
   }
 
   it('stops waking the worker at the handback limit and names the requester instead', async () => {
+    await db.query(
+      `INSERT INTO push_devices(token,identity_id,platform,environment)
+       VALUES('human-device-token-123456789012345678901',$1,'android','physical')`,
+      [H],
+    );
+    const send = vi.fn().mockResolvedValue(undefined);
+    const push = new PushDeliveryLoop(db, { send });
+    await push.runOnce();
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await greenHead(15, '5'.repeat(40));
     for (let round = 1; round <= REVIEW_HANDBACK_LIMIT + 1; round += 1) {
@@ -441,6 +450,12 @@ describe('corner message attribution', () => {
     ).toEqual([
       `@human may need to step in · review and fix have passed ${REVIEW_HANDBACK_LIMIT} times over this head with nothing new pushed`,
     ]);
+    // The requester's phone hears it, with no agent tag needed.
+    await push.runOnce();
+    await db.query(`DELETE FROM push_devices WHERE identity_id=$1`, [H]);
+    expect(send.mock.calls.map(([, message]) => message.text)).toContain(
+      `@human may need to step in · review and fix have passed ${REVIEW_HANDBACK_LIMIT} times over this head with nothing new pushed`,
+    );
   });
 
   // Reproduction REVIEW-HANDBACK-NULL: a corner an agent opened off its own

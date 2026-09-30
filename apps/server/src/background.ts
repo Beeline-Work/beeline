@@ -5,6 +5,8 @@ import { ARTIFACT_TTL_HOURS, MEDIA_SWEEP_INTERVAL_MS, mediaTtlHours } from './me
 import type { ObjectStorage } from './object-storage.js';
 import type { ObjectService } from './object-service.js';
 import { tagsKnownIdentitySql } from './message-mentions.js';
+import { CORNER_REVIEW_DEADLOCK_CARD_TYPE } from './agent-command.js';
+import { CHOICE_CARD_TYPE } from '@beeline/api-contract/phone';
 import {
   claimReleaseCatchup,
   PUSH_MAX_ATTEMPTS,
@@ -109,6 +111,25 @@ export function isUnregisteredPushToken(error: unknown): boolean {
   );
 }
 
+/**
+ * One push per recipient per agent turn. An agent message is one of its
+ * turn's messages when it shares the Room, the author and the request id.
+ * True when this device was already claimed for another message of the same
+ * turn, so the later ones stay quiet however many of them qualify.
+ */
+function earlierTurnPushSql(message: string, deviceToken: string): string {
+  return `EXISTS (
+    SELECT 1 FROM messages sibling
+    JOIN identities sibling_author ON sibling_author.id=sibling.author_id
+      AND sibling_author.kind='agent'
+    JOIN push_delivery_claims sibling_claim ON sibling_claim.message_id=sibling.id
+      AND sibling_claim.device_token=${deviceToken}
+    WHERE ${message}.request_id IS NOT NULL
+      AND sibling.room_id=${message}.room_id AND sibling.author_id=${message}.author_id
+      AND sibling.request_id=${message}.request_id AND sibling.id<>${message}.id
+  )`;
+}
+
 export class PushDeliveryLoop {
   #lastCompletedAt = Number.NEGATIVE_INFINITY;
 
@@ -190,6 +211,7 @@ export class PushDeliveryLoop {
               AND (claim.status<>'retryable' OR claim.next_retry_at>now()
                 OR claim.attempts>=${PUSH_MAX_ATTEMPTS})
           )
+          AND NOT ${earlierTurnPushSql('m', 'd.token')}
       ), candidates AS (
         SELECT m.id message_id,room.workspace_id::text workspace_id,
           COALESCE(room.parent_id,room.id)::text room_id,
@@ -238,11 +260,12 @@ export class PushDeliveryLoop {
             OR NOT (room.direct_participants @> jsonb_build_array('${SYSTEM_IDENTITY_ID}'::text))
             OR workspace_member.identity_id IS NOT NULL
           )
-          -- The push ceiling is four categories: direct messages, tags,
-          -- replies to you, and member lifecycle (the separate
-          -- workspace-join branch below). Cards and corner lifecycle
-          -- never push on their own. Levels are strict subsets of that
-          -- ceiling: direct = DMs + tags + replies,
+          -- The push ceiling is six categories: direct messages, tags,
+          -- replies to you, a question card addressed to you, the final
+          -- state of a corner you commissioned, and member lifecycle (the
+          -- separate workspace-join branch below). Other cards and corner
+          -- lifecycle never push on their own. Levels are strict subsets of
+          -- that ceiling: direct = everything but member lifecycle,
           -- mine = direct + member lifecycle.
           AND recipient.push_level IN ('direct','mine')
           AND (
@@ -253,6 +276,31 @@ export class PushDeliveryLoop {
                 AND addressed.author_id=m.push_identity_id
             )
             OR ${tagsKnownIdentitySql('m', 'recipient.id', 'recipient.handle', 'recipient.kind')}
+            -- An open question card reaches one person: the one human it
+            -- tags, or the requester when it tags nobody. A question that
+            -- tags several people, and every poll, pushes nobody.
+            OR (
+              m.card_type='${CHOICE_CARD_TYPE}' AND m.card->>'mode'='question'
+              AND COALESCE(m.card->>'status','open')='open'
+              AND CASE jsonb_array_length(COALESCE(m.card->'mentionIds','[]'::jsonb))
+                WHEN 0 THEN m.card->'requester'->>'pubkey'=m.push_identity_id
+                WHEN 1 THEN m.card->'mentionIds'->>0=m.push_identity_id
+                ELSE false
+              END
+            )
+            -- A corner's commissioner hears once when it lands (the parent
+            -- Room's merge card) or stops at the review handback limit,
+            -- whether or not an agent tags them.
+            OR EXISTS (
+              SELECT 1 FROM corner_facts finished
+              WHERE finished.commissioned_by=m.push_identity_id
+                AND (
+                  (m.card_type='daemon-fact' AND m.card->>'type'='corner-complete'
+                    AND finished.corner_id::text=m.card->>'cornerId')
+                  OR (m.card_type='${CORNER_REVIEW_DEADLOCK_CARD_TYPE}'
+                    AND finished.corner_id=m.room_id)
+                )
+            )
           )
         UNION ALL
         SELECT notification.id message_id,notification.workspace_id::text workspace_id,
@@ -339,6 +387,9 @@ export class PushDeliveryLoop {
                  SELECT $1,$2,'claimed'
                  WHERE EXISTS (SELECT 1 FROM push_devices WHERE token=$2 AND identity_id=$3)
                    AND EXISTS (SELECT 1 FROM identities WHERE id=$3 AND push_level<>'off')
+                   AND NOT EXISTS (
+                     SELECT 1 FROM messages m WHERE m.id=$1 AND ${earlierTurnPushSql('m', '$2')}
+                   )
                    AND (
                      ($6='workspace-join' AND EXISTS (
                        SELECT 1 FROM memberships

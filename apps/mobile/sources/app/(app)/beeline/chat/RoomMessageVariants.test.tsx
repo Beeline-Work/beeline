@@ -275,7 +275,8 @@ describe('Room message variant components', () => {
     expect(conversationSource.match(/<OrdinaryLedgerMessage/g)).toHaveLength(1);
     expect(conversationSource).toContain('<ChoiceCard');
     expect(conversationSource).toContain('<ConnectorOfferCard');
-    expect(conversationSource.match(/testID="mention-suggestions"/g)).toHaveLength(1);
+    expect(conversationSource.match(/<MentionSuggestionMenu/g)).toHaveLength(1);
+    expect(conversationSource).toContain('keyboardOpen={keyboardHeight > 0}');
     expect(conversationSource).toContain('agentModel={item.agentModel}');
     // The byline renders the model stamped at generation time; the roster
     // lookup is retired so old rows keep their own turn's model (or none).

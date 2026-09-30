@@ -378,6 +378,7 @@ import {
   LedgerSystemLine,
 } from '@/components/buzz/Ledger';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { MentionSuggestionMenu } from '@/components/buzz/MentionSuggestionMenu';
 import { DirectMessageHeaderIdentity } from '@/components/buzz/DirectMessageHeaderIdentity';
 import { RoomRosterSheet, type RoomRosterParticipant } from '@/components/buzz/RoomRosterSheet';
 import { RepoPicker } from '@/components/buzz/RepoPicker';
@@ -6022,76 +6023,14 @@ export function BuzzChatSurface({
                   );
                 })()}
               {mentionMenuVisible && (
-                <View
-                  accessibilityLabel="Mention a Room participant"
-                  style={styles.mentionMenu}
-                  testID="mention-suggestions"
-                >
-                  <Text style={styles.mentionMenuLabel}>MENTION</Text>
-                  {mentionSuggestions.matches.map((participant, index) => {
-                    const selected = index === highlightedMentionIndex;
-                    const display = participant.agent
-                      ? resolveAgentDisplayIdentity(participant.pubkey, participant.agent)
-                      : undefined;
-                    return (
-                      <TouchableOpacity
-                        accessibilityLabel={`${participant.name}, @${participant.handle}, ${participant.kind}`}
-                        accessibilityRole="button"
-                        accessibilityState={{ selected }}
-                        key={participant.pubkey}
-                        onPress={() => selectMention(participant)}
-                        style={[styles.mentionRow, selected && styles.mentionRowSelected]}
-                        testID={`mention-suggestion-${participant.handle}`}
-                      >
-                        {participant.pubkey === CHANNEL_MENTION_PUBKEY ? (
-                          <View style={styles.mentionChannelGlyph}>
-                            <Text style={styles.mentionChannelGlyphText}>@</Text>
-                          </View>
-                        ) : display ? (
-                          <IdentityMark
-                            kind="agent"
-                            seed={display.avatarSeed ?? participant.pubkey}
-                            avatarUrl={display.avatarUrl}
-                            face={display.face}
-                            name={display.name}
-                            size={28}
-                          />
-                        ) : (
-                          <IdentityMark
-                            kind="human"
-                            seed={participant.pubkey}
-                            avatarUrl={personProfileByPubkey.get(participant.pubkey)?.avatar}
-                            face={participant.face}
-                            name={participant.name}
-                            size={28}
-                          />
-                        )}
-                        <View style={styles.mentionIdentity}>
-                          <Text numberOfLines={1} style={styles.mentionName}>
-                            {participant.pubkey === CHANNEL_MENTION_PUBKEY
-                              ? 'Everyone in this Room'
-                              : participant.name}
-                          </Text>
-                          <Text numberOfLines={1} style={styles.mentionHandle}>
-                            @{participant.handle}
-                          </Text>
-                        </View>
-                        <Text style={styles.mentionKind}>
-                          {participant.pubkey === CHANNEL_MENTION_PUBKEY
-                            ? 'ROOM'
-                            : participant.kind === 'agent'
-                              ? 'AGENT'
-                              : 'PERSON'}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                  {mentionSuggestions.overflow > 0 && (
-                    <Text style={styles.mentionOverflow} testID="mention-suggestion-overflow">
-                      AND {mentionSuggestions.overflow} OTHERS
-                    </Text>
-                  )}
-                </View>
+                <MentionSuggestionMenu
+                  highlightedIndex={highlightedMentionIndex}
+                  keyboardOpen={keyboardHeight > 0}
+                  matches={mentionSuggestions.matches}
+                  onSelect={selectMention}
+                  overflow={mentionSuggestions.overflow}
+                  personAvatar={(pubkey) => personProfileByPubkey.get(pubkey)?.avatar}
+                />
               )}
               {cornerOpenRepoPrompt && (
                 <View style={styles.repoPromptBanner} testID="corner-open-repo-prompt">
@@ -7335,74 +7274,6 @@ const styles = StyleSheet.create((theme) => {
       ...theme.buzz.type.sectionHead,
       fontFamily: groknight.monoSemibold,
       color: groknight.textSecondary,
-    },
-    mentionMenu: {
-      marginBottom: 6,
-      overflow: 'hidden',
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-      borderRadius: groknight.radius,
-      backgroundColor: groknight.bgBase,
-    },
-    mentionMenuLabel: {
-      ...theme.buzz.type.sectionHead,
-      fontFamily: groknight.monoSemibold,
-      paddingHorizontal: 10,
-      paddingVertical: 5,
-      color: groknight.textMuted,
-    },
-    mentionRow: {
-      minHeight: 46,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 9,
-      paddingHorizontal: 9,
-      paddingVertical: 6,
-      borderTopWidth: 1,
-      borderTopColor: groknight.border,
-    },
-    mentionRowSelected: {
-      backgroundColor: groknight.selection,
-    },
-    mentionIdentity: {
-      flex: 1,
-      minWidth: 0,
-    },
-    mentionChannelGlyph: {
-      width: 28,
-      height: 28,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-      borderRadius: groknight.radius,
-    },
-    mentionChannelGlyphText: {
-      ...theme.buzz.type.meta,
-      fontFamily: groknight.proseSemibold,
-      color: groknight.accent,
-    },
-    mentionName: {
-      ...theme.buzz.type.bodyStrong,
-      color: groknight.textPrimary,
-    },
-    mentionHandle: {
-      ...theme.buzz.type.machine,
-      color: groknight.textMuted,
-    },
-    mentionKind: {
-      ...theme.buzz.type.sectionHead,
-      fontFamily: groknight.monoSemibold,
-      color: groknight.faint,
-    },
-    mentionOverflow: {
-      ...theme.buzz.type.sectionHead,
-      fontFamily: groknight.monoSemibold,
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-      borderTopWidth: 1,
-      borderTopColor: groknight.border,
-      color: groknight.textMuted,
     },
     repoPromptBanner: {
       minWidth: 0,

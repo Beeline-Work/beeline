@@ -96,7 +96,6 @@ import {
 } from './message-mentions.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import {
-  dispatchClassStep,
   loadAgentClasses,
   loadTierOverrides,
   settleClassReviewer,
@@ -3296,11 +3295,6 @@ export class PhoneService {
         )) as Output<Name>;
       case 'answerChoice':
         return (await this.answerChoice(input as Input<'answerChoice'>, viewerId)) as Output<Name>;
-      case 'dispatchClassStep':
-        return (await this.dispatchClassStep(
-          input as Input<'dispatchClassStep'>,
-          viewerId,
-        )) as Output<Name>;
       case 'readWorkspaceAgentClasses':
         return (await this.readWorkspaceAgentClasses(
           (input as Input<'readWorkspaceAgentClasses'>).workspaceId,
@@ -6208,22 +6202,6 @@ export class PhoneService {
       return answered;
     });
   }
-  private async dispatchClassStep(input: Input<'dispatchClassStep'>, viewerId: string) {
-    if (!(await this.hasRoomAccess(input.roomId, viewerId))) throw new Error('room access denied');
-    await this.assertRoomIsWritable(input.roomId, viewerId);
-    return this.database.transaction((database) =>
-      dispatchClassStep(database, {
-        roomId: input.roomId,
-        requesterId: viewerId,
-        agentClass: input.agentClass,
-        role: input.role,
-        prompt: input.prompt,
-        runKey: input.runKey,
-        timeoutSeconds: input.timeoutSeconds,
-        messageId: messageId(),
-      }),
-    );
-  }
   private async readWorkspaceAgentClasses(
     workspaceId: string,
     viewerId: string,
@@ -8831,7 +8809,6 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'removeRoomRepository',
   'listRoomWorkflows',
   'dispatchRoomWorkflow',
-  'dispatchClassStep',
   'readWorkspaceAgentClasses',
   'setAgentCustomTag',
   'setModelTierOverride',

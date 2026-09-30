@@ -6,6 +6,8 @@ import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { systemLine } from './system-line.js';
+import { createAgentCommand, type CommandRow } from './agent-command.js';
+import { CLASS_BINDING_PREFIX, handoff, saveWorkflow, startWorkflow } from './workflow-runs.js';
 import {
   loadAgentClasses,
   refreshModelRegistryIfDue,
@@ -252,28 +254,97 @@ describe('tags and tiers', () => {
   });
 });
 
-describe('workflow step by class', () => {
-  it('fails over to the next heavy agent on an instant failure, then asks a human', async () => {
-    // Speedy is pinned light so the heavy class is exactly Niglet and Sol.
+const RELEASE = {
+  version: 1,
+  name: 'release',
+  description: 'Review a release, then summarize it',
+  roles: ['reviewer'],
+  start: 'review',
+  handoffs: {
+    review: { role: 'reviewer', requires: ['notes'], on: { done: 'summarize' } },
+    summarize: {
+      role: 'reviewer',
+      requires: ['summary'],
+      on: { done: 'finished', timeout: 'finished' },
+      timeoutSeconds: 60,
+    },
+    finished: { kind: 'terminal', status: 'done' },
+  },
+};
+
+/** A person asks Speedy (light) to start the release workflow with reviewer = class:heavy. */
+async function startRelease(requester = H, reviewer = `${CLASS_BINDING_PREFIX}heavy`) {
+  const ask = `${requester}-ask-${Math.random().toString(16).slice(2)}`;
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'start the release')`, [
+    ask,
+    R,
+    requester,
+  ]);
+  const command = await createAgentCommand(db, {
+    roomId: R,
+    agentId: SPEEDY,
+    sourceMessageId: ask,
+    reason: 'test',
+  });
+  await saveWorkflow(db, command!, { contract: RELEASE });
+  return startWorkflow(db, command!, { name: 'release', roleBindings: { reviewer } });
+}
+
+async function boundReviewer(runId: string): Promise<string> {
+  return (
+    await db.query<{ agent: string }>(
+      `SELECT card->'roleBindings'->>'reviewer' agent FROM messages
+       WHERE room_id=$1 AND card_type='workflow-handoff' AND card->>'runId'=$2
+       ORDER BY created_at DESC,id DESC LIMIT 1`,
+      [R, runId],
+    )
+  ).rows[0]!.agent;
+}
+
+async function handoffAs(agentId: string, runId: string, outcome: string, contents: object) {
+  const [command] = await pending(agentId);
+  const turn = { roomId: command!.roomId, agentId, requestId: command!.turnRequestId, generationId: 'g1' };
+  await daemon.execute(
+    'claimAgentCommand',
+    { roomId: command!.roomId, commandId: command!.id, generationId: 'g1' },
+    agentId,
+  );
+  await daemon.execute('postAgentTurnReceipt', { ...turn, status: 'working' }, agentId);
+  const row = (
+    await db.query(`SELECT * FROM agent_commands WHERE id=$1`, [command!.id])
+  ).rows[0] as CommandRow;
+  const result = await handoff(db, row, { runId, outcome, contents });
+  await daemon.execute('postAgentTurnReceipt', { ...turn, status: 'complete' }, agentId);
+  return result;
+}
+
+describe('workflow role bound to a class', () => {
+  beforeEach(async () => {
+    await db.query(`DELETE FROM agent_schedules`);
     await phone.execute('setModelTierOverride', { workspaceId: W, scope: 'family', key: 'haiku', tier: 'light' }, H);
-    const result = await phone.execute(
-      'dispatchClassStep',
-      { roomId: R, agentClass: 'heavy', role: 'review', prompt: 'Review PR #1', runKey: 'run-1' },
-      H,
-    );
-    expect([NIGLET, SOL]).toContain(result.agentId);
-    const first = result.agentId!;
+  });
+
+  it('fails over to the next heavy agent on an instant failure, keeps it, then asks a person', async () => {
+    const { runId } = await startRelease();
+    const first = await boundReviewer(runId);
+    expect([NIGLET, SOL]).toContain(first);
     const second = first === NIGLET ? SOL : NIGLET;
     const [firstCommand] = await pending(first);
-    expect(firstCommand?.sourceMessageId).toBe(result.messageId);
-    expect(await pending(second)).toEqual([]);
+    expect(firstCommand?.sourceMessageId).toBe(runId);
 
     await failTurn(firstCommand!, 'model-selection-unavailable', 'model selection unavailable');
+    expect(await boundReviewer(runId)).toBe(second);
     const [secondCommand] = await pending(second);
-    expect(secondCommand?.sourceMessageId).toBe(result.messageId);
-    expect((await systemTexts()).join('\n')).toMatch(/could not take step review · model unavailable · handed to/);
+    expect(secondCommand).toBeDefined();
+    expect((await systemTexts()).join('\n')).toMatch(/took over reviewer at review · (Niglet|Sol): model unavailable/);
 
-    await failTurn(secondCommand!, 'allowance-spent', 'You need more credits');
+    // The new agent is the one the run accepts, and it keeps the role (sticky).
+    expect((await handoffAs(second, runId, 'done', { notes: 'dates fixed' })).state).toBe('summarize');
+    const [summarize] = await pending(second);
+    expect(summarize).toBeDefined();
+    expect(await boundReviewer(runId)).toBe(second);
+
+    await failTurn(summarize!, 'allowance-spent', 'You need more credits');
     const choice = (
       await db.query<{ prompt: string; status: string; constraint_text: string }>(
         `SELECT prompt,status,constraint_text FROM room_choices WHERE room_id=$1`,
@@ -281,71 +352,55 @@ describe('workflow step by class', () => {
       )
     ).rows[0];
     expect(choice?.status).toBe('open');
-    expect(choice?.prompt).toMatch(/No healthy heavy agent took step "review"/);
-    expect(choice?.constraint_text).toMatch(/model unavailable/);
+    expect(choice?.prompt).toMatch(/No healthy heavy agent took step "reviewer"/);
     expect(choice?.constraint_text).toMatch(/out of credits/);
-    const assignment = (
-      await db.query<{ status: string }>(`SELECT status FROM class_assignments WHERE run_key='run-1'`)
-    ).rows[0];
-    expect(assignment?.status).toBe('exhausted');
+    expect(choice?.constraint_text).toMatch(/model unavailable \(skipped\)/);
   });
 
-  it('skips unhealthy candidates and keeps a sticky agent for the run', async () => {
-    await phone.execute('setModelTierOverride', { workspaceId: W, scope: 'family', key: 'haiku', tier: 'light' }, H);
+  it('skips unhealthy candidates at start and keeps the bound agent for later states', async () => {
     await db.query(`DELETE FROM live_outputs WHERE agent_id=$1`, [NIGLET]); // offline
-    const first = await phone.execute(
-      'dispatchClassStep',
-      { roomId: R, agentClass: 'heavy', role: 'build', prompt: 'Step one', runKey: 'run-2' },
-      H,
-    );
-    expect(first.agentId).toBe(SOL);
+    const { runId } = await startRelease();
+    expect(await boundReviewer(runId)).toBe(SOL);
     await online(NIGLET);
-    for (let step = 0; step < 4; step += 1) {
-      const next = await phone.execute(
-        'dispatchClassStep',
-        { roomId: R, agentClass: 'heavy', role: 'build', prompt: `Step ${step + 2}`, runKey: 'run-2' },
-        H,
-      );
-      expect(next.agentId).toBe(SOL);
-    }
+    await handoffAs(SOL, runId, 'done', { notes: 'ok' });
+    expect(await boundReviewer(runId)).toBe(SOL);
+    expect((await pending(SOL)).length).toBe(1);
+    expect(await pending(NIGLET)).toEqual([]);
   });
 
-  it('applies the agent access policy exactly as a mention does', async () => {
-    await phone.execute('setModelTierOverride', { workspaceId: W, scope: 'family', key: 'haiku', tier: 'light' }, H);
+  it('applies the agent access policy for the person who asked, exactly as a mention does', async () => {
     await db.query(`UPDATE agents SET access_policy='{"type":"creator"}'::jsonb WHERE agent_id=$1`, [SOL]);
-    const result = await phone.execute(
-      'dispatchClassStep',
-      { roomId: R, agentClass: 'heavy', role: 'review', prompt: 'Hi', runKey: 'run-3' },
-      M,
-    );
-    expect(result.agentId).toBe(NIGLET);
+    const { runId } = await startRelease(M);
+    expect(await boundReviewer(runId)).toBe(NIGLET);
   });
 
-  it('moves on after silence past the step timeout', async () => {
-    await phone.execute('setModelTierOverride', { workspaceId: W, scope: 'family', key: 'haiku', tier: 'light' }, H);
-    const result = await phone.execute(
-      'dispatchClassStep',
-      { roomId: R, agentClass: 'heavy', role: 'review', prompt: 'Hi', runKey: 'run-4', timeoutSeconds: 30 },
-      H,
-    );
-    const first = result.agentId!;
+  it('refuses to start when no agent in the class is healthy', async () => {
+    await db.query(`UPDATE agents SET model_unavailable='model' WHERE agent_id IN ($1,$2)`, [NIGLET, SOL]);
+    await expect(startRelease()).rejects.toThrow(/no healthy agent in this Room carries class heavy/);
+  });
+
+  it('moves on after silence past the state timeout, moving the timeout reminder too', async () => {
+    const { runId } = await startRelease();
+    const first = await boundReviewer(runId);
+    await handoffAs(first, runId, 'done', { notes: 'ok' });
     await db.query(
-      `UPDATE class_assignments SET attempt_started_at=now()-interval '31 seconds' WHERE run_key='run-4'`,
+      `UPDATE class_assignments SET attempt_started_at=now()-interval '61 seconds' WHERE run_key=$1`,
+      [`workflow:${runId}`],
     );
     expect(await sweepClassAssignmentTimeouts(db)).toBe(1);
     const second = first === NIGLET ? SOL : NIGLET;
+    expect(await boundReviewer(runId)).toBe(second);
     expect((await pending(second)).length).toBe(1);
-    expect((await systemTexts()).join('\n')).toMatch(/no reply before the step timeout · handed to/);
+    expect((await systemTexts()).join('\n')).toMatch(/took over reviewer at summarize · (Niglet|Sol): no reply before the step timeout/);
+    const reminder = (
+      await db.query<{ agent_id: string }>(`SELECT agent_id FROM agent_schedules`)
+    ).rows;
+    expect(reminder).toEqual([{ agent_id: second }]);
   });
 
-  it('lets a human retry reach an agent whose failure window has not expired', async () => {
-    await phone.execute('setModelTierOverride', { workspaceId: W, scope: 'family', key: 'haiku', tier: 'light' }, H);
-    const result = await phone.execute(
-      'dispatchClassStep',
-      { roomId: R, agentClass: 'heavy', role: 'review', prompt: 'Hi', runKey: 'run-6' },
-      H,
-    );
-    const first = result.agentId!;
+  it('lets a person retry the class after it is exhausted', async () => {
+    const { runId } = await startRelease();
+    const first = await boundReviewer(runId);
     const second = first === NIGLET ? SOL : NIGLET;
     await failTurn((await pending(first))[0]!, 'allowance-spent', 'You need more credits');
     await failTurn((await pending(second))[0]!, 'allowance-spent', 'You need more credits');
@@ -357,30 +412,10 @@ describe('workflow step by class', () => {
     ).rows[0]!;
     await db.query(`DELETE FROM agent_commands`);
     await phone.execute('answerChoice', { choiceId: choice.id, optionId: choice.options[0]!.optionId }, H);
-    expect((await pending(first)).length + (await pending(second)).length).toBe(1);
-  });
-
-  it('retries the class when a human answers the exhausted question', async () => {
-    await db.query(`UPDATE agents SET model_unavailable='model' WHERE agent_id IN ($1,$2,$3)`, [
-      NIGLET,
-      SOL,
-      SPEEDY,
-    ]);
-    const result = await phone.execute(
-      'dispatchClassStep',
-      { roomId: R, agentClass: 'heavy', role: 'review', prompt: 'Hi', runKey: 'run-5' },
-      H,
-    );
-    expect(result.agentId).toBeUndefined();
-    const choice = (
-      await db.query<{ id: string; options: { optionId: string }[] }>(
-        `SELECT id,options FROM room_choices WHERE room_id=$1 AND status='open'`,
-        [R],
-      )
-    ).rows[0]!;
-    await db.query(`UPDATE agents SET model_unavailable=NULL WHERE agent_id=$1`, [SOL]);
-    await phone.execute('answerChoice', { choiceId: choice.id, optionId: choice.options[0]!.optionId }, H);
-    expect((await pending(SOL)).length).toBe(1);
+    // The person is the health check now: a fresh failure window does not block the retry.
+    const retried = await boundReviewer(runId);
+    expect([first, second]).toContain(retried);
+    expect((await pending(retried)).length).toBe(1);
   });
 });
 

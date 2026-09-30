@@ -339,7 +339,7 @@ async function main() {
       if (push) await backgroundJobs.run('push', () => push.runIfDue());
       await backgroundJobs.run('schedules', () => schedules.runOnce());
       await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
-      await backgroundJobs.run('class-step-timeouts', () => sweepClassAssignmentTimeouts(jobsDatabase));
+      await backgroundJobs.run('class-assignment-timeouts', () => sweepClassAssignmentTimeouts(jobsDatabase));
       const now = Date.now();
       if (now - lastReconciliationAt >= reconciliationMs) {
         lastReconciliationAt = now;

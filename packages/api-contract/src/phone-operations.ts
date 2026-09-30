@@ -126,8 +126,6 @@ export type PhoneOperationMap = {
   removeRoomRepository: { input: RoomInput; output: void };
   listRoomWorkflows: { input: RoomInput; output: RoomWorkflowListResult };
   dispatchRoomWorkflow: { input: DispatchRoomWorkflowInput; output: void };
-  /** Run one workflow step by agent class, with failover inside the class. */
-  dispatchClassStep: { input: DispatchClassStepInput; output: DispatchClassStepResult };
   /** Workspace admins: every agent's tags and tier, the overrides, and unclassified models. */
   readWorkspaceAgentClasses: { input: WorkspaceInput; output: WorkspaceAgentClassesView };
   /** Workspace admins only. */
@@ -415,23 +413,6 @@ export type SetModelTierOverrideInput = WorkspaceInput & {
   readonly key: string;
   /** null clears the override. */
   readonly tier: AgentTier | null;
-};
-export type DispatchClassStepInput = RoomInput & {
-  /** A tier (`heavy`) or any tag (`reviewer`). */
-  readonly agentClass: string;
-  readonly role: string;
-  readonly prompt: string;
-  /** Steps sharing a run key keep the same agent per role unless it fails. */
-  readonly runKey?: string;
-  /** Silence past this moves the step to the next agent. Default 600. */
-  readonly timeoutSeconds?: number;
-};
-export type DispatchClassStepResult = {
-  readonly runKey: string;
-  readonly assignmentId: string;
-  readonly messageId: string;
-  /** Absent when no healthy agent carried the class and a human was asked. */
-  readonly agentId?: string;
 };
 export type ResolveDirectMessageInput = WorkspaceInput & { readonly participantId: string };
 export type DirectMessageResult = IdResult & { readonly created: boolean };

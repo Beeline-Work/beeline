@@ -313,7 +313,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'start_workflow',
     description:
-      'Start a run of a saved workflow, binding its named roles to current members of this Room. Posts one message whose id is the run id and pins the contract version; call handoff with that runId to move the run forward. Every declared role needs a binding to a current Room member.',
+      'Start a run of a saved workflow, binding its named roles to current members of this Room. Posts one message whose id is the run id and pins the contract version; call handoff with that runId to move the run forward. Every declared role needs a binding: a current Room member\'s id, or "class:<tier-or-tag>" (e.g. "class:heavy", "class:reviewer") to have the server pick a healthy agent in that class and fail over to the next one if it fails.',
     inputSchema: {
       type: 'object',
       required: ['name', 'roleBindings'],

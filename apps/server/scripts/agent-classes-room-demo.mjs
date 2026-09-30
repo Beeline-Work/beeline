@@ -164,24 +164,48 @@ console.log(`   review now with ${review.agent.name} (same source message: ${rev
 await answer(review.agent, review.command, 'Reviewed #42: the notes match the diff. Approve.');
 await transcript(C, 'Corner');
 
-// --- AC-2: a workflow step assigned to class "heavy"
-console.log('\n== AC-2: step "review" assigned to class heavy ==');
-const step = await asPerson('dispatchClassStep', { roomId: R, agentClass: 'heavy', role: 'review',
-  prompt: 'Review the draft release notes for accuracy.', runKey: 'release-1' });
+// --- AC-2: a workflow whose reviewer role is bound to class "heavy"
+const RELEASE = {
+  version: 1,
+  name: 'release',
+  description: 'Review a release, then summarize it',
+  roles: ['reviewer'],
+  start: 'review',
+  handoffs: {
+    review: { role: 'reviewer', requires: ['notes'], on: { done: 'summarize' } },
+    summarize: { role: 'reviewer', requires: ['summary'], on: { done: 'finished' } },
+    finished: { kind: 'terminal', status: 'done' },
+  },
+};
+console.log('\n== AC-2: workflow "release", role reviewer = class:heavy ==');
+await asPerson('sendRoomMessage', { roomId: R, text: '@speedy start the release workflow with reviewer class:heavy' });
+const [ask] = await pendingFor(R);
+await take(ask.agent, ask.command);
+const turn = { roomId: R, requestId: ask.command.turnRequestId, generationId: 'g1' };
+await asHelper(ask.agent, 'saveWorkflow', { ...turn, agentId: ask.agent.id, contract: RELEASE });
+const run = await asHelper(ask.agent, 'startWorkflow', {
+  ...turn, agentId: ask.agent.id, name: 'release', roleBindings: { reviewer: 'class:heavy' },
+});
+await asHelper(ask.agent, 'postAgentTurnReceipt', { ...turn, agentId: ask.agent.id, status: 'complete' });
+console.log(`   ${ask.agent.name} started run ${run.runId.slice(0, 12)}… at state ${run.state}`);
 let [work] = await pendingFor(R);
-console.log(`   picked ${work.agent.name}`);
+console.log(`   class heavy picked ${work.agent.name} for reviewer`);
 await fail(work.agent, work.command, 'model-selection-unavailable', 'model selection unavailable');
 [work] = await pendingFor(R);
-console.log(`   next heavy agent ${work.agent.name} got the same prompt (message ${step.messageId.slice(0, 12)}…): ${work.command.sourceMessageId === step.messageId}`);
-await answer(work.agent, work.command, 'Reviewed: two dates were wrong; fixed in the draft.');
+console.log(`   next heavy agent ${work.agent.name} took over reviewer`);
+await take(work.agent, work.command);
+const handed = await asHelper(work.agent, 'handoff', { roomId: R, agentId: work.agent.id,
+  requestId: work.command.turnRequestId, generationId: 'g1', runId: run.runId, outcome: 'done',
+  contents: { notes: 'Two dates were wrong; fixed in the draft.' } });
+await asHelper(work.agent, 'postAgentTurnReceipt', { roomId: R, agentId: work.agent.id,
+  requestId: work.command.turnRequestId, generationId: 'g1', status: 'complete' });
+console.log(`   ${work.agent.name} handed off → ${handed.state}`);
 
-console.log('\n== AC-2: step "summarize", every heavy agent fails ==');
-await asPerson('dispatchClassStep', { roomId: R, agentClass: 'heavy', role: 'summarize',
-  prompt: 'Summarize the release for the changelog.', runKey: 'release-1' });
+console.log('\n== AC-2: state "summarize": the sticky reviewer and then every heavy agent fail ==');
 for (let guard = 0; guard < 6; guard += 1) {
   const [next] = await pendingFor(R);
   if (!next) break;
-  console.log(`   picked ${next.agent.name}`);
+  console.log(`   reviewer is ${next.agent.name}`);
   await fail(next.agent, next.command, guard % 2 ? 'allowance-spent' : 'not-signed-in',
     guard % 2 ? 'You need more credits' : 'authentication required');
 }

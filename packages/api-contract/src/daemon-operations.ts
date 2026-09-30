@@ -155,7 +155,10 @@ export type DaemonOperationMap = {
     RoomInput & TurnOutputAuthority & { readonly contract: unknown },
     { readonly slug: string; readonly version: number }
   >;
-  /** Bind current Room members to a saved workflow's roles and start a run. */
+  /**
+   * Bind current Room members to a saved workflow's roles and start a run. A
+   * binding of `class:<tier-or-tag>` names a class instead of an agent.
+   */
   startWorkflow: Operation<
     RoomInput &
       TurnOutputAuthority & {

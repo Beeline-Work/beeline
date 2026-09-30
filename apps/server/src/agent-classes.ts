@@ -5,7 +5,6 @@ import {
   harnessDefaultProvider,
   isAgentTier,
   MODELS_DEV_URL,
-  normalizeAgentClass,
   parseModelsDevRegistry,
   resolveRegistryModel,
   type AgentClassView,
@@ -23,6 +22,7 @@ import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { createAgentCommand, repairReviewerCornerMembership } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
 import { postRoomChoice } from './room-choice.js';
+import { rebindWorkflowRole } from './workflow-runs.js';
 import { ensureSystemIdentity, systemLine } from './system-line.js';
 
 /**
@@ -480,7 +480,7 @@ async function announce(
     /** The step's prompt: the line is ordered after it. */
     afterMessageId?: string | null;
   },
-) {
+): Promise<void> {
   await ensureSystemIdentity(database);
   await systemLine(database, {
     roomId,
@@ -602,7 +602,7 @@ export async function dispatchClassReview(
         randomUUID(),
         input.parentRoomId,
         input.cornerId,
-        `corner:${input.cornerId}`,
+        `${CORNER_REVIEW_RUN_KEY_PREFIX}${input.cornerId}`,
         CLASS_REVIEWER_ROLE,
         room.reviewer_class,
         input.sourceMessageId,
@@ -611,6 +611,13 @@ export async function dispatchClassReview(
     )
   ).rows[0]!;
   return advanceAssignment(database, assignment, undefined, random);
+}
+
+const CORNER_REVIEW_RUN_KEY_PREFIX = 'corner:';
+
+/** A corner review is keyed by its corner; a workflow role may also be named "reviewer". */
+function isCornerReview(assignment: Pick<AssignmentRow, 'run_key'>): boolean {
+  return assignment.run_key.startsWith(CORNER_REVIEW_RUN_KEY_PREFIX);
 }
 
 /** Ask the humans in the dispatch Room; never fail silently. */
@@ -624,11 +631,12 @@ async function askHumanForExhaustedClass(
     ...tried.map((entry) => `${entry.name}: ${entry.reason}`),
     ...skipped.map((entry) => `${entry.name}: ${entry.reason ?? 'unavailable'} (skipped)`),
   ];
-  const what = assignment.role === CLASS_REVIEWER_ROLE ? 'the review' : `step "${assignment.role}"`;
+  const what = isCornerReview(assignment) ? 'the review' : `step "${assignment.role}"`;
   const prompt = `No healthy ${assignment.agent_class} agent took ${what}`.slice(0, 120);
   const detail = lines.length
     ? `Tried: ${lines.join('; ')}.`
     : 'No agent in this Room carries that class.';
+  await ensureSystemIdentity(database);
   let choiceId: string | null = null;
   const constraint = detail.length > 160 ? `${detail.slice(0, 159)}…` : detail;
   try {
@@ -685,7 +693,7 @@ async function advanceAssignment(
       reason: failed.reason,
     });
   const excluded = tried.map((entry) => entry.agentId);
-  const reviewer = assignment.role === CLASS_REVIEWER_ROLE;
+  const reviewer = isCornerReview(assignment);
   if (!assignment.source_message_id) {
     await database.query(`UPDATE class_assignments SET status='stopped' WHERE id=$1`, [
       assignment.id,
@@ -723,14 +731,39 @@ async function advanceAssignment(
     await askHumanForExhaustedClass(database, assignment, tried, skipped);
     return undefined;
   }
-  if (reviewer)
-    await repairReviewerCornerMembership(database, assignment.dispatch_room_id, pick);
-  const command = await createAgentCommand(database, {
-    roomId: assignment.dispatch_room_id,
-    agentId: pick,
-    sourceMessageId: assignment.source_message_id,
-    reason: reviewer ? 'subscribed_event' : 'class_step',
-  });
+  let sourceMessageId = assignment.source_message_id;
+  let command: { id: string } | undefined;
+  const runId = workflowRunIdOf(assignment.run_key);
+  if (runId) {
+    // A workflow role is rebound on the run itself, so the new agent is the
+    // one `handoff` accepts; the rebind card is the prompt it is woken on.
+    // The rebind card itself says why, so the Room reads one line per handover.
+    const rebound = await rebindWorkflowRole(database, {
+      roomId: assignment.dispatch_room_id,
+      runId,
+      role: assignment.role,
+      agentId: pick,
+      ...(failed ? { reason: `${tried.at(-1)!.name}: ${failed.reason}` } : {}),
+    });
+    if (!rebound) {
+      await database.query(
+        `UPDATE class_assignments SET status='stopped',updated_at=now() WHERE id=$1`,
+        [assignment.id],
+      );
+      return undefined;
+    }
+    sourceMessageId = rebound.cardId;
+    command = await wakeCommand(database, assignment.dispatch_room_id, rebound.cardId, pick);
+  } else {
+    if (reviewer)
+      await repairReviewerCornerMembership(database, assignment.dispatch_room_id, pick);
+    command = await createAgentCommand(database, {
+      roomId: assignment.dispatch_room_id,
+      agentId: pick,
+      sourceMessageId: assignment.source_message_id,
+      reason: 'subscribed_event',
+    });
+  }
   if (!command) {
     // Membership vanished between the health read and dispatch: skip it.
     return advanceAssignment(
@@ -743,20 +776,29 @@ async function advanceAssignment(
   }
   await database.query(
     `UPDATE class_assignments SET status='active',current_agent_id=$2,current_command_id=$3,
-       attempt_started_at=now(),tried=$4::jsonb,choice_id=NULL,updated_at=now() WHERE id=$1`,
-    [assignment.id, pick, command.id, JSON.stringify(tried)],
+       attempt_started_at=now(),tried=$4::jsonb,choice_id=NULL,source_message_id=$5,
+       updated_at=now() WHERE id=$1`,
+    [assignment.id, pick, command.id, JSON.stringify(tried), sourceMessageId],
   );
-  const name = await agentName(database, pick);
-  if (failed)
-    await announce(database, assignment.dispatch_room_id, {
-      agentId: failed.agentId,
-      name: tried.at(-1)!.name,
-      verb: 'could not take',
-      object: reviewer ? 'the review' : `step ${assignment.role}`,
-      consequence: `${failed.reason} · handed to ${name}`,
-      afterMessageId: assignment.source_message_id,
-    });
+  if (failed && !runId) await announceHandover(database, assignment, tried, pick);
   return pick;
+}
+
+async function announceHandover(
+  database: SqlDatabase,
+  assignment: AssignmentRow,
+  tried: readonly TriedEntry[],
+  pick: string,
+): Promise<void> {
+  const failed = tried.at(-1)!;
+  await announce(database, assignment.dispatch_room_id, {
+    agentId: failed.agentId,
+    name: failed.name,
+    verb: 'could not take',
+    object: isCornerReview(assignment) ? 'the review' : `step ${assignment.role}`,
+    consequence: `${failed.reason} · handed to ${await agentName(database, pick)}`,
+    afterMessageId: assignment.source_message_id,
+  });
 }
 
 /**
@@ -860,132 +902,90 @@ export async function sweepClassAssignmentTimeouts(
   return moved;
 }
 
+const WORKFLOW_RUN_KEY_PREFIX = 'workflow:';
+
+function workflowRunIdOf(runKey: string): string | undefined {
+  return runKey.startsWith(WORKFLOW_RUN_KEY_PREFIX)
+    ? runKey.slice(WORKFLOW_RUN_KEY_PREFIX.length)
+    : undefined;
+}
+
+/** The command a system line's `wakes` created for `agentId`. */
+async function wakeCommand(
+  database: SqlDatabase,
+  roomId: string,
+  sourceMessageId: string,
+  agentId: string,
+): Promise<{ id: string } | undefined> {
+  return (
+    await database.query<{ id: string }>(
+      `SELECT id FROM agent_commands
+       WHERE room_id=$1 AND source_message_id=$2 AND agent_id=$3 AND action='input'`,
+      [roomId, sourceMessageId, agentId],
+    )
+  ).rows[0];
+}
+
 /**
- * Run one workflow step by class: post the prompt as the requester's message
- * and hand it to the run's sticky agent for this role when that agent is
- * still healthy and in the class, otherwise to a random healthy one.
+ * A workflow role bound to a class (`class:<tier-or-tag>`) at run start: a
+ * random healthy Room agent carrying it, under the requester's access
+ * policy exactly as a mention would be. Undefined when none is healthy.
  */
-export async function dispatchClassStep(
+export async function resolveClassBinding(
+  database: SqlDatabase,
+  input: { roomId: string; agentClass: string; requesterId?: string },
+  random: () => number = Math.random,
+): Promise<string | undefined> {
+  const candidates = await classCandidates(database, input);
+  return pickRandom(
+    candidates.filter((candidate) => candidate.healthy),
+    random,
+  )?.agentId;
+}
+
+/**
+ * Record that a class-bound workflow role was just woken for a state, so an
+ * instant failure or silence rebinds it to the next healthy agent in the
+ * class. The run's own bindings keep the agent for later states (sticky).
+ */
+export async function trackWorkflowClassRole(
   database: SqlDatabase,
   input: {
     roomId: string;
-    requesterId: string;
-    agentClass: unknown;
-    role: unknown;
-    prompt: unknown;
-    runKey?: unknown;
-    timeoutSeconds?: unknown;
-    messageId: string;
+    runId: string;
+    role: string;
+    agentClass: string;
+    agentId: string;
+    sourceMessageId: string;
+    requesterId?: string;
+    timeoutSeconds?: number;
   },
-  random: () => number = Math.random,
-): Promise<{ runKey: string; assignmentId: string; messageId: string; agentId?: string }> {
-  const agentClass = normalizeAgentClass(input.agentClass);
-  const role = typeof input.role === 'string' ? input.role.trim().toLowerCase() : '';
-  if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(role)) throw new Error('role is invalid');
-  const prompt = typeof input.prompt === 'string' ? input.prompt.trim() : '';
-  if (!prompt || prompt.length > 8000) throw new Error('step prompt is required');
-  const runKey =
-    input.runKey === undefined || input.runKey === null || input.runKey === ''
-      ? randomUUID()
-      : typeof input.runKey === 'string' && /^[A-Za-z0-9:_-]{1,128}$/.test(input.runKey)
-        ? input.runKey
-        : (() => {
-            throw new Error('runKey is invalid');
-          })();
-  const timeoutSeconds =
-    input.timeoutSeconds === undefined
-      ? DEFAULT_CLASS_STEP_TIMEOUT_SECONDS
-      : typeof input.timeoutSeconds === 'number' &&
-          Number.isInteger(input.timeoutSeconds) &&
-          input.timeoutSeconds >= 30 &&
-          input.timeoutSeconds <= 86_400
-        ? input.timeoutSeconds
-        : (() => {
-            throw new Error('timeoutSeconds is invalid');
-          })();
-  await database.query(
-    `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`,
-    [input.messageId, input.roomId, input.requesterId, prompt],
-  );
-  const existing = (
-    await database.query<AssignmentRow>(
-      `SELECT * FROM class_assignments WHERE candidate_room_id=$1 AND run_key=$2 AND role=$3
-       FOR UPDATE`,
-      [input.roomId, runKey, role],
-    )
-  ).rows[0];
-  const sticky =
-    existing?.current_agent_id && existing.agent_class === agentClass
-      ? existing.current_agent_id
-      : undefined;
-  const assignmentId = existing?.id ?? randomUUID();
+): Promise<void> {
+  const command = await wakeCommand(database, input.roomId, input.sourceMessageId, input.agentId);
   await database.query(
     `INSERT INTO class_assignments(id,candidate_room_id,dispatch_room_id,run_key,role,agent_class,
-       requested_by,source_message_id,timeout_seconds,status,tried)
-     VALUES($1,$2,$2,$3,$4,$5,$6,$7,$8,'active','[]'::jsonb)
+       requested_by,source_message_id,timeout_seconds,status,current_agent_id,current_command_id,
+       attempt_started_at,tried)
+     VALUES($1,$2,$2,$3,$4,$5,$6,$7,$8,'active',$9,$10,now(),'[]'::jsonb)
      ON CONFLICT(candidate_room_id,run_key,role) DO UPDATE SET
        agent_class=EXCLUDED.agent_class,requested_by=EXCLUDED.requested_by,
        source_message_id=EXCLUDED.source_message_id,timeout_seconds=EXCLUDED.timeout_seconds,
-       status='active',current_agent_id=NULL,current_command_id=NULL,tried='[]'::jsonb,
-       choice_id=NULL,updated_at=now()`,
-    [assignmentId, input.roomId, runKey, role, agentClass, input.requesterId, input.messageId, timeoutSeconds],
+       status='active',current_agent_id=EXCLUDED.current_agent_id,
+       current_command_id=EXCLUDED.current_command_id,attempt_started_at=now(),
+       tried='[]'::jsonb,choice_id=NULL,updated_at=now()`,
+    [
+      randomUUID(),
+      input.roomId,
+      `${WORKFLOW_RUN_KEY_PREFIX}${input.runId}`,
+      input.role,
+      input.agentClass,
+      input.requesterId ?? null,
+      input.sourceMessageId,
+      Math.min(86_400, Math.max(30, input.timeoutSeconds ?? DEFAULT_CLASS_STEP_TIMEOUT_SECONDS)),
+      input.agentId,
+      command?.id ?? null,
+    ],
   );
-  const assignment = (
-    await database.query<AssignmentRow>(`SELECT * FROM class_assignments WHERE id=$1`, [
-      assignmentId,
-    ])
-  ).rows[0]!;
-  const candidates = await classCandidates(database, {
-    roomId: input.roomId,
-    agentClass,
-    requesterId: input.requesterId,
-  });
-  const healthy = candidates.filter((candidate) => candidate.healthy);
-  const pick = healthy.find((candidate) => candidate.agentId === sticky) ?? pickRandom(healthy, random);
-  await announce(database, input.roomId, {
-    verb: 'assigned',
-    object: `step ${role} · class ${agentClass}`,
-    consequence: pick
-      ? `${candidates.length} in class, ${healthy.length} healthy · ${sticky && pick.agentId === sticky ? 'kept' : 'picked'} ${pick.name}`
-      : `${candidates.length} in class, none healthy`,
-    afterMessageId: input.messageId,
-  });
-  const agentId = pick
-    ? await dispatchTo(database, assignment, pick.agentId, random)
-    : await advanceAssignment(database, assignment, undefined, random);
-  return {
-    runKey,
-    assignmentId,
-    messageId: input.messageId,
-    ...(agentId ? { agentId } : {}),
-  };
-}
-
-async function dispatchTo(
-  database: SqlDatabase,
-  assignment: AssignmentRow,
-  agentId: string,
-  random: () => number,
-): Promise<string | undefined> {
-  const command = await createAgentCommand(database, {
-    roomId: assignment.dispatch_room_id,
-    agentId,
-    sourceMessageId: assignment.source_message_id!,
-    reason: 'class_step',
-  });
-  if (!command)
-    return advanceAssignment(
-      database,
-      assignment,
-      { agentId, reason: 'not a member of this Room' },
-      random,
-    );
-  await database.query(
-    `UPDATE class_assignments SET current_agent_id=$2,current_command_id=$3,attempt_started_at=now(),
-       updated_at=now() WHERE id=$1`,
-    [assignment.id, agentId, command.id],
-  );
-  return agentId;
 }
 
 /**

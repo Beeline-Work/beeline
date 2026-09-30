@@ -3284,9 +3284,7 @@ export class DaemonService {
     // human-authored one does: the same reading of the text, the same push
     // fan-out, the same highlight. There is no per-turn numeric cap, and no
     // list is frozen here — `message-mentions.ts` reads the tags back out of
-    // this text whenever someone asks who it addresses, and carries the one
-    // rule that is not a cap: a corner agent's turn reply never tags a person,
-    // because the merge summary card already says the work is done.
+    // this text whenever someone asks who it addresses.
     const rootMessageId = input.replyToMessageId
       ? (parent!.root_message_id ?? input.replyToMessageId)
       : null;

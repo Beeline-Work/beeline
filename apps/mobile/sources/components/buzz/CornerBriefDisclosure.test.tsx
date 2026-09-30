@@ -46,6 +46,23 @@ function render(element: React.ReactElement): ReactTestRenderer {
 }
 
 describe('CornerBriefDisclosure', () => {
+  it('shows the requested revision from a tapped revision notice', () => {
+    const brief = {
+      revision: 4, content: 'Fourth brief', attachments: [],
+      history: [{ revision: 3, revisionHash: 'c'.repeat(64), approvalKind: 'explicit-human-answer',
+        content: 'Third brief', buildSpec: 'Third brief',
+        intentVerbatim: [{ sourceMessageId: 'third', snapshot: 'Read the third revision.' }],
+        criteria: [{ id: 'AC-1', text: 'The third revision is readable.' }],
+        nonGoals: [], references: [] }],
+    };
+    const renderer = render(<CornerBriefDisclosure brief={brief} requestedRevision={{ revision: 3 }} onOpenFile={vi.fn()} />);
+    expect(renderer.root.findByProps({ testID: 'corner-brief-toggle' }).props.accessibilityLabel)
+      .toContain('revision 3');
+    const text = renderer.root.findByProps({ testID: 'corner-brief-detail' })
+      .findAllByType('Text').map((node: any) => JSON.stringify(node.props.children)).join('\n');
+    expect(text).toContain('Read the third revision.');
+    expect(text).toContain('The third revision is readable.');
+  });
   it('opens the assigned revision, evidence, and file link from the corner', () => {
     const onOpenFile = vi.fn();
     const renderer = render(

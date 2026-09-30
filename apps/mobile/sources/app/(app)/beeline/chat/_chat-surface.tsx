@@ -612,6 +612,7 @@ export function BuzzChatSurface({
     markRoomOpen('layout-chrome', roomSurface.messages.at(-1)?.id);
   }, [roomSurface]);
   const [inputText, setInputText] = useState('');
+  const [briefRevisionRequest, setBriefRevisionRequest] = useState<{ revision: number }>();
   const [composerInputRevision, setComposerInputRevision] = useState(0);
   const loadedDraftForRef = useRef<string | null>(null);
   const workPaneHandleRef = useRef<React.ElementRef<typeof Pressable>>(null);
@@ -5262,6 +5263,7 @@ export function BuzzChatSurface({
             stamp={ledgerStamp(item.timestamp)}
             onOpenIdentity={handleOpenSystemIdentity}
             onOpenUrl={handleOpenGitHubEvent}
+            onOpenBriefRevision={(revision) => setBriefRevisionRequest({ revision })}
           />
         );
       }
@@ -5697,7 +5699,7 @@ export function BuzzChatSurface({
             carries a short corner name, so without this the objective survives
             only until the first message lands. */}
           {isCorner && <CornerObjectiveLine objective={cornerObjectiveText} />}
-          {isCorner && <CornerBriefDisclosure brief={roomSurface?.cornerBrief} validation={roomSurface?.cornerValidation} onOpenFile={(url) => {
+          {isCorner && <CornerBriefDisclosure brief={roomSurface?.cornerBrief} requestedRevision={briefRevisionRequest} validation={roomSurface?.cornerValidation} onOpenFile={(url) => {
             void openExternalUrl(url).catch(() => {
               Modal.alert('Could not open assignment file', 'Try opening the file again from this corner.');
             });

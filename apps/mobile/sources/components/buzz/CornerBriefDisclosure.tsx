@@ -31,6 +31,13 @@ type Brief = {
     revisionHash: string;
     change?: string;
     approvalKind: string;
+    content?: string;
+    intentVerbatim?: Brief['intentVerbatim'];
+    buildSpec?: string;
+    criteria?: Brief['criteria'];
+    nonGoals?: Brief['nonGoals'];
+    references?: Brief['references'];
+    approvalBasis?: Brief['approvalBasis'];
   }[];
   attachments: readonly { title: string; purpose: string; required: boolean; url: string }[];
 };
@@ -39,40 +46,55 @@ export function CornerBriefDisclosure({
   brief,
   validation,
   onOpenFile,
+  requestedRevision,
 }: {
   brief?: Brief;
   validation?: readonly { stage: string; status: string; evidence: string }[];
   onOpenFile(url: string): void;
+  requestedRevision?: { revision: number };
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [selectedRevision, setSelectedRevision] = useState<number | undefined>();
+  React.useEffect(() => {
+    if (requestedRevision !== undefined) {
+      setSelectedRevision(requestedRevision.revision);
+      setExpanded(true);
+    }
+  }, [requestedRevision]);
   if (!brief) return null;
+  const historical = selectedRevision !== brief.revision
+    ? brief.history?.find((entry) => entry.revision === selectedRevision)
+    : undefined;
+  const shown = historical?.content !== undefined
+    ? { ...brief, ...historical, legacy: !historical.intentVerbatim?.length, attachments: [] }
+    : brief;
   return (
     <View style={styles.wrap} testID="corner-brief">
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Assignment revision ${brief.revision}, ${expanded ? 'hide' : 'show'} brief`}
+        accessibilityLabel={`Assignment revision ${shown.revision}, ${expanded ? 'hide' : 'show'} brief`}
         accessibilityState={{ expanded }}
         onPress={() => setExpanded((value) => !value)}
         style={styles.toggle}
         testID="corner-brief-toggle"
       >
         <Text style={styles.label}>
-          Assignment · revision {brief.revision} {expanded ? '−' : '+'}
+          Assignment · revision {shown.revision} {expanded ? '−' : '+'}
         </Text>
       </Pressable>
       {expanded && (
         <View style={styles.detail} testID="corner-brief-detail">
-          {brief.legacy || !brief.intentVerbatim?.length ? (
+          {shown.legacy || !shown.intentVerbatim?.length ? (
             <>
               <Text style={styles.filePurpose}>Legacy pre-migration assignment</Text>
               <Text style={styles.content} selectable>
-                {brief.content}
+                {shown.content}
               </Text>
             </>
           ) : (
             <>
               <Text style={styles.fileTitle}>Human intent · verbatim</Text>
-              {brief.intentVerbatim.map((item) => (
+              {shown.intentVerbatim.map((item) => (
                 <View key={item.sourceMessageId}>
                   <Text style={styles.content} selectable>
                     {item.snapshot}
@@ -81,15 +103,15 @@ export function CornerBriefDisclosure({
                 </View>
               ))}
               <Text style={styles.fileTitle}>Acceptance criteria</Text>
-              {brief.criteria?.map((criterion) => (
+              {shown.criteria?.map((criterion) => (
                 <Text key={criterion.id} style={styles.content} selectable>
                   {criterion.id} · {criterion.text}
                 </Text>
               ))}
-              {brief.nonGoals?.length ? (
+              {shown.nonGoals?.length ? (
                 <>
                   <Text style={styles.fileTitle}>Non-goals</Text>
-                  {brief.nonGoals.map((item) => (
+                  {shown.nonGoals.map((item) => (
                     <Text key={item} style={styles.filePurpose} selectable>
                       {item}
                     </Text>
@@ -98,25 +120,25 @@ export function CornerBriefDisclosure({
               ) : null}
               <Text style={styles.fileTitle}>Build spec</Text>
               <Text style={styles.content} selectable>
-                {brief.buildSpec ?? brief.content}
+                {shown.buildSpec ?? shown.content}
               </Text>
               <Text style={styles.fileTitle}>Approval basis</Text>
               <Text style={styles.filePurpose} selectable>
-                {brief.approvalBasis?.kind.replaceAll('-', ' ') ?? 'unknown'}
-                {brief.approvalBasis?.sourceMessageId
-                  ? ` · message ${brief.approvalBasis.sourceMessageId}`
+                {shown.approvalBasis?.kind.replaceAll('-', ' ') ?? 'unknown'}
+                {shown.approvalBasis?.sourceMessageId
+                  ? ` · message ${shown.approvalBasis.sourceMessageId}`
                   : ''}
-                {brief.revisionHash ? ` · ${brief.revisionHash.slice(0, 12)}` : ''}
+                {shown.revisionHash ? ` · ${shown.revisionHash.slice(0, 12)}` : ''}
               </Text>
-              {brief.approvalBasis?.snapshot ? (
+              {shown.approvalBasis?.snapshot ? (
                 <Text style={styles.content} selectable>
-                  {brief.approvalBasis.snapshot}
+                  {shown.approvalBasis.snapshot}
                 </Text>
               ) : null}
-              {brief.references?.length ? (
+              {shown.references?.length ? (
                 <>
                   <Text style={styles.fileTitle}>References</Text>
-                  {brief.references.map((reference) => (
+                  {shown.references.map((reference) => (
                     <View key={`${reference.label}:${reference.objectId ?? reference.description}`}>
                       <Text style={styles.content}>{reference.label}</Text>
                       <Text style={styles.filePurpose} selectable>
@@ -143,7 +165,7 @@ export function CornerBriefDisclosure({
               </Text>
             </Pressable>
           ))}
-          {validation?.length ? (
+          {!historical && validation?.length ? (
             <View testID="corner-validation" style={styles.validation}>
               <Text style={styles.fileTitle}>Validation</Text>
               <Text style={styles.filePurpose}>
@@ -167,7 +189,9 @@ export function CornerBriefDisclosure({
             <View testID="corner-brief-history" style={styles.validation}>
               <Text style={styles.fileTitle}>Revision history</Text>
               {brief.history.map((entry) => (
-                <View key={entry.revision}>
+                <Pressable key={entry.revision} accessibilityRole="button"
+                  accessibilityLabel={`Read revision ${entry.revision}`}
+                  onPress={() => setSelectedRevision(entry.revision)}>
                   <Text style={styles.content}>Revision {entry.revision}</Text>
                   <Text style={styles.filePurpose} selectable>
                     {entry.change ?? 'Initial assignment'} ·{' '}
@@ -175,7 +199,7 @@ export function CornerBriefDisclosure({
                     {' · '}
                     {entry.revisionHash.slice(0, 12)}
                   </Text>
-                </View>
+                </Pressable>
               ))}
             </View>
           ) : null}

@@ -140,7 +140,7 @@ export async function runBrowserProof(options: {
       jsx: 'automatic',
       mainFields: ['browser', 'module', 'main'],
       resolveExtensions: ['.web.tsx', '.web.ts', '.web.js', '.tsx', '.ts', '.js', '.json'],
-      loader: { '.js': 'jsx' },
+      loader: { '.js': 'jsx', '.png': 'dataurl' },
       define: { 'process.env.NODE_ENV': '"development"', __DEV__: 'true' },
       plugins: [
         {

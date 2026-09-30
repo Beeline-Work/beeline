@@ -6246,9 +6246,10 @@ export class DaemonService {
       if (input.brief) {
         if (!isStructuredCornerBrief(input.brief))
           throw new Error('new corners cannot use the legacy opaque brief format');
+        const sourceRoomIds = [...new Set([roomId, commandRoomId])];
         const explicitAttachments = await resolveCornerBriefAttachments(
           db,
-          roomId,
+          sourceRoomIds,
           input.brief,
         );
         const attachments = [
@@ -6264,7 +6265,7 @@ export class DaemonService {
         if (attachments.length > 16) throw new Error('corner brief has too many attachments');
         const authority = await resolveCornerBriefApproval(
           db,
-          [...new Set([roomId, commandRoomId])],
+          sourceRoomIds,
           input.brief,
           attachments,
           parentCommand.root_source_message_id,
@@ -6359,7 +6360,11 @@ export class DaemonService {
       const current = await currentCornerBrief(db, input.cornerId);
       if ((current?.revision ?? 0) !== input.expectedRevision)
         throw new Error('corner brief revision changed; read the current assignment');
-      const explicitAttachments = await resolveCornerBriefAttachments(db, corner.parent_id, draft);
+      const explicitAttachments = await resolveCornerBriefAttachments(
+        db,
+        [corner.parent_id],
+        draft,
+      );
       const attachments = [
         ...explicitAttachments,
         ...(await resolvePendingCornerBriefAttachments(db, {

@@ -75,7 +75,12 @@ function brief(sourceMessageId: string, snapshot: string) {
   };
 }
 
-async function openCorner(roomId: string, text: string, name: string) {
+async function openCorner(
+  roomId: string,
+  text: string,
+  name: string,
+  attachments: { objectId: string; purpose: string; required: boolean }[] = [],
+) {
   const command = await commissioned(roomId, text);
   const input = {
     roomId,
@@ -86,7 +91,7 @@ async function openCorner(roomId: string, text: string, name: string) {
     objective: text,
     repository: 'owner/widgets',
     targetBranch: 'main',
-    brief: brief(command.sourceMessageId, text),
+    brief: { ...brief(command.sourceMessageId, text), attachments },
   };
   return { input, created: await daemon.execute('createCorner', input, AGENT) };
 }
@@ -124,4 +129,39 @@ it('opens a sibling corner in the parent Room from a corner turn', async () => {
 
   // A retried tool call returns the same corner rather than opening another.
   expect(await daemon.execute('createCorner', input, AGENT)).toEqual(second);
+}, 30_000);
+
+it('attaches a file shared in the calling corner to the sibling corner brief', async () => {
+  const { created: first } = await openCorner(ROOM, '@hoots fix the sidebar', 'Sidebar fix');
+  const mediaId = '33333333-3333-4333-8333-333333333333';
+  const sha = 'c'.repeat(64);
+  await db.query(
+    `INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
+     VALUES($1,$2,'media',$3,'text/plain','mock.txt',4,$4,'ready',now()+interval '1 hour')`,
+    [mediaId, HUMAN, `media/${HUMAN}/${sha}`, sha],
+  );
+  await db.query(
+    `INSERT INTO messages(id,room_id,author_id,text,attachments) VALUES($1,$2,$3,'Mock',$4::jsonb)`,
+    [
+      'd'.repeat(64),
+      first.cornerId,
+      HUMAN,
+      JSON.stringify([{ url: `http://test/v1/media/${mediaId}`, name: 'mock.txt' }]),
+    ],
+  );
+
+  const { created: second } = await openCorner(
+    first.cornerId,
+    '@hoots open a corner for the sidebar mock',
+    'Sidebar mock',
+    [{ objectId: mediaId, purpose: 'approved mock', required: true }],
+  );
+
+  const stored = (
+    await db.query<{ attachments: { objectId: string }[] }>(
+      `SELECT attachments FROM corner_brief_revisions WHERE corner_id=$1`,
+      [second.cornerId],
+    )
+  ).rows[0];
+  expect(stored?.attachments.map((file) => file.objectId)).toEqual([mediaId]);
 }, 30_000);

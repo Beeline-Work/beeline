@@ -2051,6 +2051,17 @@ export class MonolithCornerTurnLoop {
           this.options.onIntakeError?.(error);
           console.error('[thin-core] corner command failed', error);
         },
+        // See monolith-room-turn.ts (C112): mark busy the instant a claim
+        // attempt starts, before its own network round trip and before
+        // context.enter()'s own file I/O, so a reconcile busy-check landing
+        // anywhere in that window can never see this corner as idle when a
+        // turn was already claimed (or about to be).
+        onClaiming: () => {
+          this.busy = true;
+        },
+        onClaimFailed: () => {
+          this.busy = false;
+        },
         onEnter: (command) => this.squireRelay.activate(command, this.commandContext.generationId),
         onLeave: (command) => this.squireRelay.deactivate(command.turnRequestId),
         stop: (requestId) => this.stopTurn(requestId),

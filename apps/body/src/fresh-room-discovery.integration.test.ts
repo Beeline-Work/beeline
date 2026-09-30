@@ -61,6 +61,29 @@ lines.on('line', async (line) => {
     const text = (message.params.prompt ?? [])
       .map((block) => (typeof block === 'string' ? block : block?.text ?? ''))
       .join('\\n');
+    if (!text.includes('OPEN CORNER') && process.env.BEELINE_TEST_GATE_FILE) {
+      // A freshly-opened corner's own turn starts on commit, before the
+      // parent Room turn (still in this same session/prompt handler below)
+      // finishes posting CORNER OPENED - the two would otherwise run
+      // concurrently in this single-process harness. Only gate when a
+      // repository key was set for this run (only the repository-corner
+      // test does), since every other corner-opening test's own turn has
+      // nothing to wait for and must not block on a file nobody writes.
+      // The test writes the gate file only after it has observed CORNER
+      // OPENED durably persisted, so wait for it here instead of racing
+      // that reply.
+      const { existsSync, readFileSync } = await import('node:fs');
+      let repositoryKeyWasSet = false;
+      try {
+        repositoryKeyWasSet = Boolean(readFileSync(process.env.BEELINE_TEST_REPO_KEY_FILE, 'utf8').trim());
+      } catch {}
+      if (repositoryKeyWasSet) {
+        const deadline = Date.now() + 20000;
+        while (!existsSync(process.env.BEELINE_TEST_GATE_FILE) && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 20));
+        }
+      }
+    }
     send({
       jsonrpc: '2.0',
       method: 'session/update',
@@ -118,16 +141,31 @@ lines.on('line', async (line) => {
                 snapshot: '@bee OPEN CORNER now',
               },
             },
-            ...(process.env.BEELINE_TEST_REPO_KEY
-              ? { repository: process.env.BEELINE_TEST_REPO_KEY, targetBranch: 'main' }
-              : {}),
+            ...(await (async () => {
+              // This Room's own harness session is spawned once, well
+              // before a test can set an env var for it to inherit (AcpClient
+              // does not inherit process.env by default), so the repository
+              // key is read fresh from a file at prompt-handling time
+              // instead - written by the test right before it sends the
+              // OPEN CORNER message.
+              const { readFile: readRepoKeyFile } = await import('node:fs/promises');
+              try {
+                const key = (await readRepoKeyFile(process.env.BEELINE_TEST_REPO_KEY_FILE, 'utf8')).trim();
+                return key ? { repository: key, targetBranch: 'main' } : {};
+              } catch {
+                return {};
+              }
+            })()),
           }),
         },
       );
       const body = await response.json();
       const cornerId = body.cornerId ?? ('http-' + response.status + ':' + JSON.stringify(body));
       // Production fidelity: the parent turn keeps running after open_corner.
-      await new Promise((r) => setTimeout(r, 3000));
+      // Short on purpose - this is arbitrary fixture overhead, not something
+      // under test, and it eats directly into the room-turn's own reply
+      // budget under CI contention.
+      await new Promise((r) => setTimeout(r, 250));
       send({
         jsonrpc: '2.0',
         method: 'session/update',
@@ -317,6 +355,15 @@ describe('fresh Room discovery through the live membership wake', () => {
         BEELINE_DAEMON_TOKEN: daemonToken,
         BEELINE_DAEMON_ROOM_ID: ROOM,
         BEELINE_TEST_CONTEXT_DIR: resolve(supervisorRoot, 'rooms', ROOM, 'agent-home'),
+        // Harmless when unused (no test writes to either path): the harness
+        // only reads a repository key when this file exists and is
+        // non-empty, and only gates a non-open-corner turn on the other
+        // file's existence when a repository key was set. Both are static
+        // per-test paths, not per-test env mutations, since the Room's own
+        // harness session is spawned once in this hook and AcpClient does
+        // not inherit process.env by default.
+        BEELINE_TEST_REPO_KEY_FILE: resolve(supervisorRoot, 'test-repo-key'),
+        BEELINE_TEST_GATE_FILE: resolve(supervisorRoot, 'open-corner-gate'),
       },
       workspaceRoot: join(supervisorRoot, 'workspace'),
       relayBaseUrl: origin,
@@ -627,41 +674,57 @@ describe('fresh Room discovery through the live membership wake', () => {
        WHERE id=$1`,
       [ROOM, 'file://' + origin],
     );
-    process.env.BEELINE_TEST_REPO_KEY = 'owner/widgets';
-    try {
-      await vi.waitFor(() => expect(core.activeRoomIds()).toContain(ROOM), { timeout: 10_000 });
-      await operation('sendRoomMessage', {
-        roomId: ROOM,
-        messageId: 'e'.repeat(64),
-        text: '@bee OPEN CORNER now',
-      });
-      const room = await vi.waitFor(
-        async () => {
-          const room = await readRoom(ROOM);
-          expect(
-            room.messages.some((m) => (m.text ?? '').includes('CORNER OPENED ')),
-          ).toBe(true);
-          return room;
-        },
-        { timeout: 30_000, interval: 500 },
-      );
-      const cornerId = room.messages
-        .find((m) => (m.text ?? '').includes('CORNER OPENED '))!
-        .text!.match(/CORNER OPENED (\S+)/)![1];
-      expect(cornerId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
-      await vi.waitFor(() => expect(core.activeRoomIds()).toContain(cornerId), {
-        timeout: 15_000,
-      });
-      await vi.waitFor(
-        async () => {
-          const corner = await readRoom(cornerId);
-          expect(corner.messages.some((m) => (m.text ?? '').includes('ECHO REPLY'))).toBe(true);
-        },
-        { timeout: 30_000, interval: 500 },
-      );
-    } finally {
-      delete process.env.BEELINE_TEST_REPO_KEY;
-    }
+    // AcpClient does not inherit process.env by default, and this Room's
+    // harness session is already spawned by the time this test body runs -
+    // an env var set here would never reach it. Write the key to the file
+    // the harness reads fresh at prompt-handling time instead (see
+    // BEELINE_TEST_REPO_KEY_FILE above), so this test actually exercises a
+    // repository corner rather than always falling back to a no-code one.
+    await writeFile(resolve(supervisorRoot, 'test-repo-key'), 'owner/widgets');
+    await vi.waitFor(() => expect(core.activeRoomIds()).toContain(ROOM), { timeout: 10_000 });
+    await operation('sendRoomMessage', {
+      roomId: ROOM,
+      messageId: 'e'.repeat(64),
+      text: '@bee OPEN CORNER now',
+    });
+    // createCorner() discovers and starts the new corner's own turn as soon
+    // as its row commits, well before this Room turn's own reply - the two
+    // would otherwise run concurrently, sharing this test's single Node
+    // event loop and single PGlite connection. Polling the full
+    // authenticated readRoom (auth, PhoneService projection, joins) every
+    // 500ms also adds its own load to that same connection; poll a direct,
+    // uninstrumented query for just the text instead, and pay for the full
+    // projection once, after the row is already known to exist. The
+    // corner's own harness turn is separately gated (see BEELINE_TEST_GATE_
+    // FILE / writeFakeHarness) on this exact wait succeeding, so the two
+    // turns no longer overlap at all rather than merely racing a wider
+    // budget.
+    await vi.waitFor(
+      async () => {
+        const found = await database.query<{ id: string }>(
+          `SELECT id FROM messages WHERE room_id=$1 AND text LIKE '%CORNER OPENED %' LIMIT 1`,
+          [ROOM],
+        );
+        expect(found.rowCount).toBeGreaterThan(0);
+      },
+      { timeout: 30_000, interval: 200 },
+    );
+    await writeFile(resolve(supervisorRoot, 'open-corner-gate'), '1');
+    const room = await readRoom(ROOM);
+    const cornerId = room.messages
+      .find((m) => (m.text ?? '').includes('CORNER OPENED '))!
+      .text!.match(/CORNER OPENED (\S+)/)![1];
+    expect(cornerId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    await vi.waitFor(() => expect(core.activeRoomIds()).toContain(cornerId), {
+      timeout: 15_000,
+    });
+    await vi.waitFor(
+      async () => {
+        const corner = await readRoom(cornerId);
+        expect(corner.messages.some((m) => (m.text ?? '').includes('ECHO REPLY'))).toBe(true);
+      },
+      { timeout: 30_000, interval: 500 },
+    );
   });
 
   it('pushes rooms-changed to a connected daemon socket on membership change', { timeout: 60_000 }, async () => {

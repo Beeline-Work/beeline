@@ -148,4 +148,99 @@ describe('command intake mechanics', () => {
     expect(execute).toHaveBeenCalledWith('postAgentAttachment',
       expect.objectContaining({ requestId: 'turn', generationId: ctx.generationId }));
   });
+  // C112: RoomRuntimeCoordinator.reconcile's repository-revision restart
+  // reads a room's `body.isBusy()` to decide whether it is safe to stop and
+  // restart. That flag used to flip only once `run()` got around to calling
+  // `prompt()`, deep inside the caller - leaving a real window, spanning the
+  // claim's own network round trip AND `context.enter()`'s own file I/O,
+  // where the caller's turn had already been claimed (or was about to be)
+  // but every busy check still read `false`. A same-tick repository-
+  // revision reconcile landing in that window stopped the loop (its own
+  // shutdown then cancelled the just-claimed command), reporting "stopped
+  // by the requester" even though nobody asked - reproduced under induced
+  // CPU contention, never without it, since the window is normally a
+  // handful of microtasks wide. `onClaiming` exists to close that window: it
+  // must fire before the claim attempt even starts, and `onClaimFailed`
+  // undoes it if the claim itself is refused, so a caller marks itself busy
+  // for exactly as long as (and no less than) it might actually run a turn.
+  it('marks a command claiming before the claim round trip and context.enter settle (C112)', async () => {
+    const abort = new AbortController();
+    const order: string[] = [];
+    const ctx = await context();
+    const realEnter = ctx.enter.bind(ctx);
+    let releaseEnter = () => {};
+    const entryGate = new Promise<void>((resolve) => {
+      releaseEnter = resolve;
+    });
+    vi.spyOn(ctx, 'enter').mockImplementation(async (cmd) => {
+      order.push('entering');
+      await entryGate;
+      await realEnter(cmd);
+      order.push('entered');
+    });
+    const run = vi.fn(async () => {
+      order.push('run');
+      abort.abort();
+    });
+    let releaseClaim = () => {};
+    const claimGate = new Promise<void>((resolve) => {
+      releaseClaim = resolve;
+    });
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [command()] };
+      if (name === 'claimAgentCommand') {
+        order.push('claiming');
+        await claimGate;
+        return { id: 'ok' };
+      }
+      return { id: 'ok' };
+    });
+    const onClaiming = vi.fn(() => order.push('marked-busy'));
+    const running = runServerCommandIntake({
+      api: { execute } as unknown as DaemonApiClient,
+      roomId: 'room',
+      agentId: 'agent',
+      context: ctx,
+      signal: abort.signal,
+      run,
+      stop: vi.fn(),
+      onClaiming,
+    });
+    await vi.waitFor(() => expect(onClaiming).toHaveBeenCalledOnce());
+    // Marked busy before the claim's own network round trip even starts -
+    // exactly the earlier, wider window a same-tick reconcile busy-check
+    // used to see as idle and stop.
+    expect(order).toEqual(['marked-busy', 'claiming']);
+    releaseClaim();
+    await vi.waitFor(() => expect(order).toContain('entering'));
+    expect(order).toEqual(['marked-busy', 'claiming', 'entering']);
+    releaseEnter();
+    await running;
+    expect(order).toEqual(['marked-busy', 'claiming', 'entering', 'entered', 'run']);
+  });
+  it('undoes the busy mark when the claim itself is refused (C112)', async () => {
+    const abort = new AbortController();
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [command()] };
+      if (name === 'claimAgentCommand') throw new Error('command claim conflict');
+      return { id: 'ok' };
+    });
+    const onClaiming = vi.fn();
+    const onClaimFailed = vi.fn();
+    const onError = vi.fn(() => abort.abort());
+    await runServerCommandIntake({
+      api: { execute } as unknown as DaemonApiClient,
+      roomId: 'room',
+      agentId: 'agent',
+      context: await context(),
+      signal: abort.signal,
+      run: vi.fn(),
+      stop: vi.fn(),
+      onClaiming,
+      onClaimFailed,
+      onError,
+    });
+    expect(onClaiming).toHaveBeenCalledOnce();
+    expect(onClaimFailed).toHaveBeenCalledOnce();
+  });
 });

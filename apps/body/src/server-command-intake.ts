@@ -87,6 +87,22 @@ export async function runServerCommandIntake(options: {
   onWake?: (wake: (() => void) | undefined) => void;
   onPoll?: () => void;
   onSubscriptionState?: (connected: boolean) => void;
+  /**
+   * Fired the instant this caller decides to attempt claiming a real
+   * (non-stop/non-restart) command, strictly before the claim's own network
+   * round trip. A caller's own busy flag must flip here, not merely once
+   * `run()` gets around to setting it deep inside a prompt: reconcile reads
+   * that flag to decide whether a Room mid-claim is idle and safe to
+   * restart, and the gap from "about to claim" through `context.enter()`'s
+   * own file I/O was a real window where a same-tick repository-revision
+   * change could stop this loop while a turn was already claimed (or about
+   * to be) and about to execute. `onClaimFailed` undoes the mark when the
+   * claim itself is refused (lost to a concurrent claimant, a stale
+   * generation, etc.) so a failed attempt never leaves this caller stuck
+   * "busy" over nothing.
+   */
+  onClaiming?: (command: AgentCommand) => void;
+  onClaimFailed?: (command: AgentCommand) => void;
   onError?: (error: unknown) => void;
   onEnter?: (command: AgentCommand) => void;
   onLeave?: (command: AgentCommand) => void;
@@ -162,6 +178,14 @@ export async function runServerCommandIntake(options: {
         // response may contain the same command snapshot while this claim is
         // in flight; it must not put the command back into the local queue.
         claimed.add(command.id);
+        // A real (non-stop/non-restart) command is about to become this
+        // caller's turn the moment this claim attempt succeeds; mark it
+        // before the attempt even starts, not after it resolves - the claim
+        // itself is a real network round trip a same-tick reconcile
+        // busy-check can land inside just as easily as it could land inside
+        // context.enter()'s own I/O afterward (C112).
+        const startingTurn = command.action !== 'restart' && command.action !== 'stop';
+        if (startingTurn) options.onClaiming?.(command);
         try {
           await api.execute('claimAgentCommand', {
             roomId,
@@ -170,6 +194,7 @@ export async function runServerCommandIntake(options: {
           });
         } catch (error) {
           claimed.delete(command.id);
+          if (startingTurn) options.onClaimFailed?.(command);
           options.onError?.(error);
           continue;
         }

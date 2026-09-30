@@ -1063,7 +1063,7 @@ CREATE TABLE IF NOT EXISTS institutional_memory_items (
   subject_identity_id text REFERENCES identities(id) ON DELETE CASCADE,
   canonical_key text NOT NULL CHECK (length(canonical_key) BETWEEN 1 AND 160),
   body text NOT NULL,
-  state text NOT NULL DEFAULT 'active' CHECK (state IN ('active','stale')),
+  state text NOT NULL DEFAULT 'active' CHECK (state IN ('active','stale','archived')),
   source_room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   source_message_id text NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
   source_corner_id uuid REFERENCES rooms(id) ON DELETE CASCADE,
@@ -1303,7 +1303,7 @@ CREATE TABLE IF NOT EXISTS workspace_skills (
   workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   slug text NOT NULL CHECK (slug ~ '^[a-z0-9]+(-[a-z0-9]+)*$' AND length(slug)<=64),
   description text NOT NULL CHECK (length(description) BETWEEN 1 AND 60),
-  state text NOT NULL DEFAULT 'active' CHECK (state IN ('active','stale')),
+  state text NOT NULL DEFAULT 'active' CHECK (state IN ('active','stale','archived')),
   current_version integer NOT NULL CHECK (current_version > 0),
   revision bigint NOT NULL CHECK (revision > 0),
   source_room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -1420,11 +1420,16 @@ CREATE TABLE IF NOT EXISTS institutional_memory_workspace_rollouts (
   workspace_id uuid PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
   stage text NOT NULL DEFAULT 'live' CHECK (stage IN ('off','shadow','pilot','live','paused')),
   auto_advance boolean NOT NULL DEFAULT false,
+  stale_after_days integer NOT NULL DEFAULT 30 CHECK (stale_after_days BETWEEN 7 AND 3650),
+  archive_after_days integer NOT NULL DEFAULT 90 CHECK (archive_after_days BETWEEN 14 AND 7300),
+  retention_days integer NOT NULL DEFAULT 365 CHECK (retention_days BETWEEN 30 AND 7300),
   expire_after_days integer NOT NULL DEFAULT 90 CHECK (expire_after_days BETWEEN 1 AND 7300),
   explicit_expire_after_days integer NOT NULL DEFAULT 365 CHECK (explicit_expire_after_days BETWEEN 1 AND 7300),
   daily_token_budget integer NOT NULL DEFAULT 100000 CHECK (daily_token_budget BETWEEN 1000 AND 10000000),
   availability_observed_at timestamptz,
-  updated_at timestamptz NOT NULL DEFAULT now()
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (archive_after_days > stale_after_days),
+  CHECK (retention_days >= archive_after_days)
 );
 -- Institutional memory is on by default. 'off'/'paused' are the explicit off
 -- switches; nothing starts in 'shadow'/'pilot', and the release migration
@@ -1437,10 +1442,6 @@ ALTER TABLE institutional_memory_workspace_rollouts
   ADD COLUMN IF NOT EXISTS expire_after_days integer NOT NULL DEFAULT 90;
 ALTER TABLE institutional_memory_workspace_rollouts
   ADD COLUMN IF NOT EXISTS explicit_expire_after_days integer NOT NULL DEFAULT 365;
-ALTER TABLE institutional_memory_workspace_rollouts
-  DROP COLUMN IF EXISTS stale_after_days,
-  DROP COLUMN IF EXISTS archive_after_days,
-  DROP COLUMN IF EXISTS retention_days;
 
 -- Every span in which no authorized helper host could serve this Workspace.
 -- Lifecycle aging subtracts these spans, so nothing goes stale, archived or
@@ -2519,20 +2520,16 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     await database.query(`ALTER TABLE institutional_memory_items
       DROP CONSTRAINT IF EXISTS institutional_memory_items_state_check`);
     await database.query(`ALTER TABLE institutional_memory_items
-      ADD CONSTRAINT institutional_memory_items_state_check CHECK (state IN ('active','stale'))`);
-    await database.query(`UPDATE workspace_skill_versions version
-      SET markdown='',source_deleted_at=COALESCE(source_deleted_at,now())
-      WHERE version.skill_id IN (SELECT id FROM workspace_skills WHERE state<>'active')
-        AND (version.markdown<>'' OR version.source_deleted_at IS NULL)`);
+      ADD CONSTRAINT institutional_memory_items_state_check CHECK (state IN ('active','stale','archived'))`);
     await database.query(`UPDATE workspace_skills SET state='stale'
       WHERE state='archived'`);
     await database.query(`ALTER TABLE workspace_skills
       DROP CONSTRAINT IF EXISTS workspace_skills_state_check`);
     await database.query(`ALTER TABLE workspace_skills
-      ADD CONSTRAINT workspace_skills_state_check CHECK (state IN ('active','stale'))`);
+      ADD CONSTRAINT workspace_skills_state_check CHECK (state IN ('active','stale','archived'))`);
     await database.query(`UPDATE institutional_memory_jobs
       SET status='dead',error='curator model jobs removed',updated_at=now()
-      WHERE trigger_kind='curator' AND status IN ('pending','retry')`);
+      WHERE trigger_kind='curator' AND status IN ('pending','retry','claimed')`);
   });
   await backfillAgentHandles(database);
   await dataStep('yolo default', () => backfillYoloModeDefault(database));

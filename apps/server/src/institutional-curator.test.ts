@@ -54,7 +54,7 @@ it('expires reviewer saves after 90 days and explicit saves after 365, blanking 
   expect((await database.query(`SELECT 1 FROM institutional_memory_jobs WHERE trigger_kind='curator'`)).rowCount).toBe(0);
 });
 
-it('marks queued curator jobs dead during migration and backfills explicit-save provenance', async () => {
+it('marks every unfinished curator job dead during migration and backfills explicit-save provenance', async () => {
   const saved = '30000000-0000-4000-8000-000000000304';
   await database.query(`INSERT INTO institutional_memory_items
     (id,workspace_id,kind,canonical_key,body,source_room_id,source_message_id,
@@ -66,12 +66,21 @@ it('marks queued curator jobs dead during migration and backfills explicit-save 
      requester_identity_id,source_audience_kind,idempotency_key)
     VALUES($1,$2,'curator','live',$3,$4,$5,'workspace_candidate','old-curator')`,
     ['50000000-0000-4000-8000-000000000301', WORKSPACE, ROOM, MESSAGE, HUMAN]);
+  await database.query(`INSERT INTO institutional_memory_jobs
+    (id,workspace_id,trigger_kind,mode,source_room_id,source_message_id,
+     requester_identity_id,source_audience_kind,idempotency_key,status,lease_owner_agent_id,
+     lease_owner_machine_id,lease_token,lease_expires_at)
+    VALUES($1,$2,'curator','live',$3,$4,$5,'workspace_candidate','claimed-curator',
+      'claimed',$6,'host-1','lease',now()+interval '1 hour')`,
+    ['50000000-0000-4000-8000-000000000302', WORKSPACE, ROOM, MESSAGE, HUMAN, AGENT]);
   await migrateData(database);
   expect((await database.query<{ explicit_save: boolean }>(
     `SELECT explicit_save FROM institutional_memory_items WHERE id=$1`, [saved])).rows[0]?.explicit_save).toBe(true);
   expect((await database.query<{ status: string; error: string }>(
-    `SELECT status,error FROM institutional_memory_jobs WHERE id=$1`,
-    ['50000000-0000-4000-8000-000000000301'])).rows[0]).toMatchObject({
-      status: 'dead', error: 'curator model jobs removed',
-    });
+    `SELECT status,error FROM institutional_memory_jobs WHERE id=ANY($1::uuid[]) ORDER BY id`,
+    [['50000000-0000-4000-8000-000000000301', '50000000-0000-4000-8000-000000000302']])).rows)
+    .toEqual([
+      { status: 'dead', error: 'curator model jobs removed' },
+      { status: 'dead', error: 'curator model jobs removed' },
+    ]);
 });

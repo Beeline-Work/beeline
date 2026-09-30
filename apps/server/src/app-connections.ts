@@ -839,8 +839,22 @@ export async function completeComposioSignIn(
   sessionUri: string,
   settle?: (database: SqlDatabase, appId: string) => Promise<void>,
 ): Promise<{ appId: string }> {
-  const completed = await composio.completeAuth(sessionUri, viewerId);
-  return database.transaction(async (db) => {
+  let completed: { accountId: string; toolkit: string };
+  try {
+    completed = await composio.completeAuth(sessionUri, viewerId);
+  } catch (error) {
+    await database.query(
+      `UPDATE workspace_apps SET sign_in_error=$2,composio_link_expires_at=NULL,updated_at=now()
+       WHERE id=(SELECT id FROM workspace_apps WHERE owner_identity_id=$1
+         AND transport='composio' AND state='active' AND composio_link_expires_at>now()
+         LIMIT 1)
+         AND (SELECT count(*) FROM workspace_apps WHERE owner_identity_id=$1
+           AND transport='composio' AND state='active' AND composio_link_expires_at>now())=1`,
+      [viewerId, error instanceof Error ? error.message : 'App sign-in failed'],
+    );
+    throw error;
+  }
+  const result = await database.transaction(async (db) => {
     const pending = (
       await db.query<{ id: string; app_key: string }>(
         `SELECT id,app_key FROM workspace_apps
@@ -850,8 +864,21 @@ export async function completeComposioSignIn(
         [viewerId, completed.accountId],
       )
     ).rows.find((row) => composioToolkitForApp(row.app_key) === completed.toolkit);
-    if (!pending || !(await composio.account(completed.accountId, viewerId, completed.toolkit)))
+    if (!pending)
       throw new Error('App sign-in is no longer pending for this person');
+    let verified: boolean;
+    try { verified = await composio.account(completed.accountId, viewerId, completed.toolkit); }
+    catch (error) {
+      await db.query(`UPDATE workspace_apps SET sign_in_error=$2,composio_link_expires_at=NULL,updated_at=now() WHERE id=$1::uuid`,
+        [pending.id, error instanceof Error ? error.message : 'App sign-in failed']);
+      return { error };
+    }
+    if (!verified) {
+      const error = new Error('App sign-in could not be verified');
+      await db.query(`UPDATE workspace_apps SET sign_in_error=$2,composio_link_expires_at=NULL,updated_at=now() WHERE id=$1::uuid`,
+        [pending.id, error.message]);
+      return { error };
+    }
     const updated = await db.query(
       `UPDATE workspace_apps SET composio_link_expires_at=NULL,sign_in_error=NULL,updated_at=now()
        WHERE id=$1::uuid AND owner_identity_id=$2 AND composio_account_id=$3
@@ -862,6 +889,8 @@ export async function completeComposioSignIn(
     await settle?.(db, pending.id);
     return { appId: pending.id };
   });
+  if ('error' in result) throw result.error;
+  return result;
 }
 
 /** A card tap issues a fresh link; the link itself is never persisted in Room history. */

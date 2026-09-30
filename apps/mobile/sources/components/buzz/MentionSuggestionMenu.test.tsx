@@ -174,4 +174,14 @@ describe('MentionSuggestionMenu', () => {
       renderer.root.findByProps({ testID: 'mention-suggestion-channel' }).props.accessibilityState,
     ).toEqual({ selected: true });
   });
+
+  it('scrolls back when the highlight reverses before onScroll reports the new offset', () => {
+    scrollTo.mockClear();
+    const renderer = render(menu({ highlightedIndex: 0 }));
+    act(() => renderer.update(menu({ highlightedIndex: 4 })));
+    expect(scrollTo).toHaveBeenLastCalledWith({ y: 2 * MENTION_ROW_HEIGHT, animated: false });
+    act(() => renderer.update(menu({ highlightedIndex: 0 })));
+    expect(scrollTo).toHaveBeenLastCalledWith({ y: 0, animated: false });
+    expect(scrollTo).toHaveBeenCalledTimes(2);
+  });
 });

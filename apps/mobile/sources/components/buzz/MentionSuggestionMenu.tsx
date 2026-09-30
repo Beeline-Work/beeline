@@ -37,11 +37,13 @@ export function MentionSuggestionMenu({
     const top = highlightedIndex * MENTION_ROW_HEIGHT;
     const bottom = top + MENTION_ROW_HEIGHT;
     const windowHeight = visibleRows * MENTION_ROW_HEIGHT;
-    if (top < scrollOffset.current) {
-      scrollRef.current?.scrollTo({ y: top, animated: false });
-    } else if (bottom > scrollOffset.current + windowHeight) {
-      scrollRef.current?.scrollTo({ y: bottom - windowHeight, animated: false });
-    }
+    let target: number | undefined;
+    if (top < scrollOffset.current) target = top;
+    else if (bottom > scrollOffset.current + windowHeight) target = bottom - windowHeight;
+    if (target === undefined) return;
+    // Record the offset now: onScroll may not fire before the next highlight change.
+    scrollOffset.current = target;
+    scrollRef.current?.scrollTo({ y: target, animated: false });
   }, [highlightedIndex, visibleRows]);
 
   return (

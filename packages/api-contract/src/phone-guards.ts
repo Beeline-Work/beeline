@@ -1,6 +1,12 @@
 import { isSystemEvent } from './system-events.js';
 import { isAgentAccessPolicy } from './agent-access.js';
 import {
+  AGENT_TIERS,
+  type AgentClassView,
+  type AgentTagKind,
+  type AgentTagView,
+} from './agent-classes.js';
+import {
   MESSAGE_REACTION_EMOJIS,
   ROOM_VIEW_AGENT_LIMIT,
   ROOM_VIEW_BRIEFING_LIMIT,
@@ -199,6 +205,50 @@ function readHeader(value: unknown): RoomViewHeader | null {
     ...field('avatar', typeof item.avatar === 'string' ? item.avatar : undefined),
     ...field('visibility', oneOf(item.visibility, ['public', 'invite-only'])),
     ...field('reviewerAgentId', reviewerAgentId),
+    ...field(
+      'reviewerClass',
+      typeof item.reviewerClass === 'string' && /^[a-z0-9][a-z0-9-]{0,31}$/.test(item.reviewerClass)
+        ? item.reviewerClass
+        : undefined,
+    ),
+  };
+}
+
+const AGENT_TAG_KINDS: readonly AgentTagKind[] = [
+  'tier',
+  'status',
+  'family',
+  'harness',
+  'provider',
+  'custom',
+];
+
+function readAgentTag(value: unknown): AgentTagView | null {
+  const item = record(value);
+  const kind = oneOf(item?.kind, AGENT_TAG_KINDS);
+  if (!item || !nonempty(item.tag) || item.tag.length > 128 || !kind) return null;
+  // Only a custom tag is ever removable; a server that says otherwise is not believed.
+  return { tag: item.tag, kind, removable: kind === 'custom' && item.removable === true };
+}
+
+export function readAgentClassView(value: unknown): AgentClassView | null {
+  const item = record(value);
+  const tier = oneOf(item?.tier, AGENT_TIERS);
+  const source = oneOf(item?.source, ['model-override', 'family-override', 'price', 'unlisted']);
+  if (!item || !tier || !source || typeof item.unclassified !== 'boolean') return null;
+  return {
+    tags: readList(item.tags, readAgentTag, 64) ?? [],
+    tier,
+    unclassified: item.unclassified,
+    source,
+    ...field('provider', nonempty(item.provider) ? item.provider : undefined),
+    ...field('modelId', nonempty(item.modelId) ? item.modelId : undefined),
+    ...field(
+      'outputCost',
+      typeof item.outputCost === 'number' && Number.isFinite(item.outputCost)
+        ? item.outputCost
+        : undefined,
+    ),
   };
 }
 
@@ -1736,6 +1786,11 @@ export function readAgentDetailView(value: unknown): AgentDetailView | null {
     ...field(
       'canManageGrants',
       typeof item.canManageGrants === 'boolean' ? item.canManageGrants : undefined,
+    ),
+    ...field('classes', readAgentClassView(item.classes)),
+    ...field(
+      'canManageClasses',
+      typeof item.canManageClasses === 'boolean' ? item.canManageClasses : undefined,
     ),
   };
 }

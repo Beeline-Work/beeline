@@ -164,6 +164,7 @@ import {
 import { searchInstitutionalHistory } from './institutional-history.js';
 import { loadWorkspaceSkill, saveSkill } from './institutional-skills.js';
 import { archiveWorkflow, handoff, saveWorkflow, startWorkflow } from './workflow-runs.js';
+import { failoverOnTurnFailure, settleOnTurnComplete } from './agent-classes.js';
 
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
@@ -3780,7 +3781,19 @@ export class DaemonService {
           reason,
           input.reasonKind,
         );
+        await failoverOnTurnFailure(database, {
+          roomId: input.roomId,
+          agentId,
+          requestId: input.requestId,
+          reason,
+          ...(input.reasonKind ? { reasonKind: input.reasonKind } : {}),
+        });
       } else if (input.status === 'complete') {
+        await settleOnTurnComplete(database, {
+          roomId: input.roomId,
+          agentId,
+          requestId: input.requestId,
+        });
         // A successful turn does not always post a durable message. A textless
         // Room turn that opened a corner settles through the server's corner
         // card alone, so the terminal receipt must own the same durable
@@ -4648,10 +4661,18 @@ export class DaemonService {
        WHERE a.agent_id=$1`,
       [agentId, input.workspaceId],
     )).rows[0];
+    // The harness and provider are facts the helper owns; they feed the
+    // automatic agent tags (agent-classes.ts). An old helper sends neither
+    // and the stored values stand.
+    const harness = typeof input.harness === 'string' && /^[a-z0-9-]{1,32}$/.test(input.harness)
+      ? input.harness : null;
+    const provider = typeof input.provider === 'string' && /^[a-z0-9._-]{1,64}$/.test(input.provider)
+      ? input.provider : null;
     await database.query(
       `UPDATE agents SET model_catalog=$2::jsonb,selected_model=COALESCE($3,selected_model),
          selected_effort=COALESCE($4,selected_effort),model_unavailable=$5,
-         fast_mode=CASE WHEN $6 THEN fast_mode ELSE false END,updated_at=now()
+         fast_mode=CASE WHEN $6 THEN fast_mode ELSE false END,
+         harness=COALESCE($7,harness),provider=COALESCE($8,provider),updated_at=now()
        WHERE agent_id=$1`,
       [
         agentId,
@@ -4666,6 +4687,8 @@ export class DaemonService {
             axis.options.some((choice) => choice.id === 'on') &&
             axis.options.some((choice) => choice.id === 'off'),
         ),
+        harness,
+        provider,
       ],
     );
     // A model/effort choice the owner must replace is the only update-related

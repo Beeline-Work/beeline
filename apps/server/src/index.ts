@@ -1,4 +1,5 @@
 import { assertSchemaCurrent, markSchemaCurrent, migrate, migrateData, PostgresDatabase } from './database.js';
+import { refreshModelRegistryIfDue, sweepClassAssignmentTimeouts } from './agent-classes.js';
 import { retryMigrationStep } from './migration-retry.js';
 import { databaseConnectionBudget } from './database-budget.js';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
@@ -338,11 +339,14 @@ async function main() {
       if (push) await backgroundJobs.run('push', () => push.runIfDue());
       await backgroundJobs.run('schedules', () => schedules.runOnce());
       await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
+      await backgroundJobs.run('class-assignment-timeouts', () => sweepClassAssignmentTimeouts(jobsDatabase));
       const now = Date.now();
       if (now - lastReconciliationAt >= reconciliationMs) {
         lastReconciliationAt = now;
         await backgroundJobs.run('media-expiry', () => mediaExpiry.runOnce(now));
         await backgroundJobs.run('maintenance', () => runMaintenance(jobsDatabase));
+        // Daily at most; a failed fetch keeps the cached registry and waits an hour.
+        await backgroundJobs.run('models-dev', () => refreshModelRegistryIfDue(jobsDatabase));
         await backgroundJobs.run('mention-notices', () => phone.flushPendingMentionNotices(now));
         await backgroundJobs.run('institutional-curator', () =>
           runInstitutionalCuratorCycle(jobsDatabase, institutionalMemory, new Date(now), {

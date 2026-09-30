@@ -155,7 +155,10 @@ export type DaemonOperationMap = {
     RoomInput & TurnOutputAuthority & { readonly contract: unknown },
     { readonly slug: string; readonly version: number }
   >;
-  /** Bind current Room members to a saved workflow's roles and start a run. */
+  /**
+   * Bind current Room members to a saved workflow's roles and start a run. A
+   * binding of `class:<tier-or-tag>` names a class instead of an agent.
+   */
   startWorkflow: Operation<
     RoomInput &
       TurnOutputAuthority & {
@@ -916,6 +919,10 @@ export type PostAgentModelCatalogInput = AgentInput & {
   readonly selection?: { readonly model?: string; readonly effort?: string };
   /** Startup validation verdict for the persisted selection. */
   readonly unavailable?: 'model' | 'effort' | 'selection';
+  /** The helper's agent kind (`claude`, `codex`, `pi`, …), for the automatic harness tag. */
+  readonly harness?: string;
+  /** The provider the harness is configured for, when it names one (e.g. goose). */
+  readonly provider?: string;
 };
 export type PostCornerLifecycleInput = CornerInput & {
   readonly status: string;

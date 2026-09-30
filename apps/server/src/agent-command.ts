@@ -8,6 +8,7 @@ import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-cont
 import { isResumeKind } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
+import { dispatchClassReview } from './agent-classes.js';
 import { ensureSystemIdentity, GITHUB_SUBJECT, systemLine } from './system-line.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
@@ -1048,8 +1049,10 @@ export async function routeSystemCommand(
         reviewer_agent_id: string | null;
         state: string;
         command_check_state: string | null;
+        parent_id: string;
+        reviewer_class: string | null;
       }>(
-        `SELECT fact.owner_agent_id,
+        `SELECT fact.owner_agent_id,parent.id parent_id,parent.reviewer_class,
                 parent.reviewer_agent_id configured_reviewer_id,
                 configured.kind configured_reviewer_kind,
                 configured.name configured_reviewer_name,
@@ -1097,6 +1100,23 @@ export async function routeSystemCommand(
           ],
         );
         if (delivered.rowCount) return;
+      }
+      // A class reviewer is settled per review: the sticky pick while it is
+      // healthy, else the next healthy agent in the class, else a human is
+      // asked. The pick becomes the Room's reviewer, so every later reviewer
+      // path (handback, merge gate, reviewerWake) follows it unchanged.
+      if (input.kind === 'check-passed' && fact.reviewer_class) {
+        const reviewer = await dispatchClassReview(db, {
+          parentRoomId: fact.parent_id,
+          cornerId: input.roomId,
+          sourceMessageId: input.sourceMessageId,
+        });
+        if (reviewer)
+          await db.query(`UPDATE corner_facts SET command_check_state=$2 WHERE corner_id=$1`, [
+            input.roomId,
+            fact.state,
+          ]);
+        return;
       }
       // Failed checks still wake the opener. The author fallback is only for
       // corners with no reviewer configured — a configured id whose parent

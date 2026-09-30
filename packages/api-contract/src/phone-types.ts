@@ -2,6 +2,7 @@ import type { SystemEvent } from './system-events.js';
 import type { AgentGrantKind, AgentGrantStatus, CommandGrantScript } from './agent-grants.js';
 import type { ChoiceMode, ChoiceOptionView, ChoiceStatus } from './room-choices.js';
 import type { AgentAccessPolicy } from './agent-access.js';
+import type { AgentClassView } from './agent-classes.js';
 import type { ConnectorOfferCardView } from './connector-offers.js';
 import type {
   CornerAppBindingView,
@@ -155,6 +156,11 @@ export type RoomViewHeader = {
   readonly visibility?: 'public' | 'invite-only';
   /** Agent configured to review repository corners opened from this Room. */
   readonly reviewerAgentId?: string;
+  /**
+   * When set, the reviewer is a class (a tier or tag): `reviewerAgentId` is
+   * the class's current pick and moves to the next healthy agent on failure.
+   */
+  readonly reviewerClass?: string;
   /** Absent when this bundle could not read it: a Room whose live/closed state
    *  is unknown is never painted as live. */
   readonly archived?: boolean;
@@ -866,6 +872,10 @@ export type AgentDetailView = {
   readonly fastMode?: boolean;
   /** Which persisted selection axis failed the daemon's live startup validation. */
   readonly modelUnavailable?: 'model' | 'effort' | 'selection';
+  /** Automatic and custom tags plus the weight tier. Absent on stacks without classes. */
+  readonly classes?: AgentClassView;
+  /** Server verdict: this viewer is a Workspace admin and may edit custom tags and tier overrides. */
+  readonly canManageClasses?: boolean;
   /**
    * The agent "yolo" switch: grant requests are approved without asking.
    * `canChange` is the server's verdict for this viewer (agent owner or a

@@ -1,0 +1,44 @@
+models.dev: refreshed, 8323 models cached
+
+== Tags (Workspace settings → Agent classes) ==
+Baby     god, fable, claude-code, anthropic  ($50/1M out)
+Charles  heavy, grok, grok-cli, xai  ($6/1M out)
+Hoots    heavy, opus, claude-code, anthropic  ($20/1M out)
+Niglet   heavy, opus, claude-code, anthropic  ($20/1M out)
+Sol      heavy, sol, codex, openai  ($10/1M out)
+Speedy   light, deepseek, pi  ($0.6/1M out)
+
+== AC-4: corner reviewer = class heavy ==
+   reviewer class heavy → current pick Hoots
+   review dispatched to Hoots
+   Hoots fails instantly: model selection unavailable
+   review now with Sol (same source message: 3606d84b264e…)
+   Sol answers
+
+== Corner (as the person's phone reads it) ==
+· @GitHub passed checks aggregate checks
+· @hoots could not answer · the selected model isn't available. Pick another in the agent's settings.
+· @hoots could not take the review · model unavailable · handed to Sol
+Sol: Reviewed #42: the notes match the diff. Approve.
+
+== AC-2: workflow "release", role reviewer = class:heavy ==
+   Speedy started run 0d38d57a4c51… at state review
+   class heavy picked Niglet for reviewer
+   Niglet fails instantly: model selection unavailable
+   next heavy agent Sol took over reviewer
+   Sol handed off → summarize
+
+== AC-2: state "summarize": the sticky reviewer and then every heavy agent fail ==
+   reviewer is Sol; its prompt card carries {"notes":"Two dates were wrong; fixed in the draft."}
+   Sol fails instantly: authentication required
+   reviewer is Charles; its prompt card carries {"notes":"Two dates were wrong; fixed in the draft."}
+   Charles fails instantly: You need more credits
+   a person is asked: "No healthy heavy agent took step "reviewer"" (open)
+
+== Room #workflows (as the person's phone reads it) ==
+Lunchbox: @speedy start the release workflow with reviewer class:heavy
+· @speedy started workflow release
+· @sol took over reviewer at review · Niglet: model unavailable
+· @sol handed off summarize
+· @charles took over reviewer at summarize · Sol: auth error
+· @system asked No healthy heavy agent took step "reviewer" · Tried: Sol: auth error; Charles: out of credits; Niglet: model unavailable (skipped); Hoots: model unavailable (skipped).

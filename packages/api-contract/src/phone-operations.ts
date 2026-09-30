@@ -1,6 +1,7 @@
 import type { AgentGrantDecision, AgentGrantStatus } from './agent-grants.js';
 import type { ChoiceStatus, ChoiceOptionInput } from './room-choices.js';
 import type { AgentAccessPolicy } from './agent-access.js';
+import type { AgentClassView, AgentTier, ModelTierOverride } from './agent-classes.js';
 import type { PushLevel } from './push-level.js';
 import type { GrantWalletDelegationInput, GrantWalletDelegationResult } from './wallet.js';
 import type {
@@ -125,6 +126,12 @@ export type PhoneOperationMap = {
   removeRoomRepository: { input: RoomInput; output: void };
   listRoomWorkflows: { input: RoomInput; output: RoomWorkflowListResult };
   dispatchRoomWorkflow: { input: DispatchRoomWorkflowInput; output: void };
+  /** Workspace admins: every agent's tags and tier, the overrides, and unclassified models. */
+  readWorkspaceAgentClasses: { input: WorkspaceInput; output: WorkspaceAgentClassesView };
+  /** Workspace admins only. */
+  setAgentCustomTag: { input: SetAgentCustomTagInput; output: void };
+  /** Workspace admins only. An override always wins over price. */
+  setModelTierOverride: { input: SetModelTierOverrideInput; output: void };
   approveCornerMerge: { input: ApproveCornerMergeInput; output: ApproveCornerMergeResult };
   getAuthCapabilities: { input: EmptyInput; output: AuthCapabilitiesResult };
   beginGitHubIdentityBind: { input: BeginBrowserAuthInput; output: BrowserAuthStartResult };
@@ -366,6 +373,46 @@ export type UpdateRoomInput = RoomInput & {
   readonly visibility?: 'public' | 'invite-only';
   /** Agent member assigned to review every repository corner in this Room; null clears. */
   readonly reviewerAgentId?: string | null;
+  /**
+   * A class (tier or tag) whose healthy members review every repository
+   * corner in this Room, picked at random and failed over on error. Setting
+   * it replaces a named reviewer; null clears it.
+   */
+  readonly reviewerClass?: string | null;
+};
+export type WorkspaceAgentClassesView = {
+  readonly workspaceId: string;
+  readonly registry: {
+    readonly source: string;
+    /** Absolute Unix timestamp in seconds of the last successful fetch. */
+    readonly fetchedAt?: number;
+    readonly modelCount: number;
+  };
+  readonly agents: readonly {
+    readonly agentId: string;
+    readonly name: string;
+    readonly handle?: string;
+    readonly model?: string;
+    readonly classes: AgentClassView;
+  }[];
+  readonly overrides: readonly ModelTierOverride[];
+  /** Models no registry row covers, with the agents running them. */
+  readonly unclassified: readonly {
+    readonly key: string;
+    readonly agentNames: readonly string[];
+  }[];
+};
+export type SetAgentCustomTagInput = WorkspaceAgentInput & {
+  readonly tag: string;
+  /** true adds the tag, false removes it. */
+  readonly present: boolean;
+};
+export type SetModelTierOverrideInput = WorkspaceInput & {
+  readonly scope: 'model' | 'family';
+  /** `provider/modelId` for a model, the family tag for a family. */
+  readonly key: string;
+  /** null clears the override. */
+  readonly tier: AgentTier | null;
 };
 export type ResolveDirectMessageInput = WorkspaceInput & { readonly participantId: string };
 export type DirectMessageResult = IdResult & { readonly created: boolean };

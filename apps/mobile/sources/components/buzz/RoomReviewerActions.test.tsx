@@ -104,4 +104,31 @@ describe('RoomReviewerActions', () => {
       'None',
     );
   });
+
+  it('sets a class reviewer: tiers always, plus the Room agents custom tags', async () => {
+    const loadClassTags = vi.fn().mockResolvedValue(['reviewer']);
+    const { renderer, updateRoom } = render({ loadClassTags });
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.onPress();
+      await Promise.resolve();
+    });
+    for (const agentClass of ['god', 'heavy', 'light', 'reviewer'])
+      expect(renderer.root.findByProps({ testID: `room-reviewer-class-${agentClass}` })).toBeTruthy();
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'room-reviewer-class-heavy' }).props.onPress();
+      await Promise.resolve();
+    });
+    expect(updateRoom).toHaveBeenLastCalledWith({ roomId: 'room-1', reviewerClass: 'heavy' });
+    expect(renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.metadata).toBe(
+      'Any heavy',
+    );
+  });
+
+  it('shows a configured class and its current pick', () => {
+    const { renderer } = render({ reviewerClass: 'reviewer', reviewerAgentId: BEE });
+    expect(renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.metadata).toBe(
+      'Any reviewer · now @bee',
+    );
+  });
 });

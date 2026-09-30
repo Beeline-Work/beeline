@@ -1012,6 +1012,15 @@ export default function BuzzMembers({
         onSave={() => void saveAgentSoul()}
         onCancel={() => setEditingAgentSoul(false)}
         soul={selectedAgent ? agentSoulCopy(selectedAgent) : ''}
+        onManageClasses={
+          workspaceId
+            ? () =>
+                router.push({
+                  pathname: '/beeline/settings/agent-classes',
+                  params: { communityId: workspaceId },
+                } as unknown as Href)
+            : undefined
+        }
         management={
           selectedAgent ? (
             <View

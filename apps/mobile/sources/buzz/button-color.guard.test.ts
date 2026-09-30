@@ -11,6 +11,7 @@ const sources = resolve(__dirname, '..');
 const decorativeAccentFills = new Set([
   'app/(app)/join/[token].tsx:badgeDot',
   'components/DesktopWorkPaneHandle.tsx:arrived',
+  'components/buzz/AgentTagChips.tsx:tier',
   'components/buzz/ConversationRow.tsx:dot',
   'components/buzz/DesktopWorkspaceRail.tsx:pill',
   'components/buzz/ForegroundNotificationBanner.tsx:face',

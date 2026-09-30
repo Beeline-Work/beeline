@@ -567,6 +567,21 @@ export default function WorkspaceSettings() {
             />
           </View>
 
+          <View style={styles.section} testID="workspace-agent-classes-link">
+            <SettingsRow
+              chevron="right"
+              description="Custom tags, tier overrides, and models the registry does not list."
+              onPress={() =>
+                router.push({
+                  pathname: '/beeline/settings/agent-classes',
+                  params: { communityId },
+                } as unknown as Href)
+              }
+              testID="open-agent-classes"
+              title="Agent classes"
+            />
+          </View>
+
           <View style={styles.section} testID="channel-visibility-settings">
             <Text style={styles.sectionLabel}>{ROOM_LABEL}s</Text>
             {workspaceView?.managerSettings?.roomsTruncated && (

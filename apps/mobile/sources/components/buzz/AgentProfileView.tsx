@@ -12,6 +12,7 @@ import { PageHeader } from './PageHeader';
 import { ProfileActions } from './ProfileActions';
 import { Typography } from '@/constants/Typography';
 import { SoulPortraitControls } from './SoulPortraitControls';
+import { AgentTagChips, agentTierSource } from './AgentTagChips';
 
 export function AgentProfileView({
   detail,
@@ -37,6 +38,7 @@ export function AgentProfileView({
   onCancel,
   soul,
   management,
+  onManageClasses,
 }: {
   detail: AgentDetailView | null;
   loading: boolean;
@@ -61,6 +63,8 @@ export function AgentProfileView({
   onCancel: () => void;
   soul: string;
   management: React.ReactNode;
+  /** Workspace admins only: opens Workspace settings → Agent classes. */
+  onManageClasses?: () => void;
 }) {
   const insets = useSafeAreaInsets();
   const [expanded, setExpanded] = useState(false);
@@ -184,6 +188,25 @@ export function AgentProfileView({
               title="Model / difficulty"
               value={`${label(model, modelAxis)} / ${label(effort, effortAxis)}`}
             />
+            {detail.classes ? (
+              <View style={styles.section} testID="agent-profile-tags">
+                <Text style={styles.sectionLabel}>Tags</Text>
+                <AgentTagChips tags={detail.classes.tags} />
+                <Text style={styles.meta} testID="agent-profile-tier-source">
+                  {agentTierSource(detail.classes)}
+                </Text>
+                {detail.canManageClasses && onManageClasses ? (
+                  <Pressable
+                    accessibilityRole="link"
+                    onPress={onManageClasses}
+                    style={styles.readMore}
+                    testID="agent-profile-manage-classes"
+                  >
+                    <Text style={styles.accent}>Edit custom tags in Workspace settings</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            ) : null}
             {editing && (
               <TextInput
                 accessibilityLabel="Agent name"

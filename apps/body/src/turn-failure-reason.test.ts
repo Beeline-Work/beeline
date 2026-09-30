@@ -133,4 +133,14 @@ describe('distillTurnFailureReason', () => {
       ).kind,
     ).toBe('workspace-failure');
   });
+
+  it('marks a context-window overflow so the server does not restart the helper for it', () => {
+    expect(
+      distillTurnFailureReason(
+        new Error(
+          "provider error 400: This endpoint's maximum context length is 1048576 tokens. However, you requested about 1053212 tokens (109494 of text input, 943718 in the output). · routed to morph",
+        ),
+      ).kind,
+    ).toBe('context-overflow');
+  });
 });

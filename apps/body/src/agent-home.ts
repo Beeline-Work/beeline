@@ -90,6 +90,7 @@ import {
 } from './host-mcp-route.js';
 import { ensureSquireHostDir, squireHostBindPaths } from './squire-host.js';
 import {
+  OPENROUTER_MAX_OUTPUT_TOKENS,
   resolveOpenRouterRouting,
   withOpenRouterModelRouting,
   type OpenRouterRoutingDecision,
@@ -750,6 +751,10 @@ async function provisionPiCustomModelConfig(
         // custom-model entry replaces pi's catalog record and defaults it to
         // text, which strips every image from the prompt (C87).
         ...(decision.input ? { input: decision.input } : {}),
+        // The routed endpoints' window and output cap replace pi's catalog
+        // values, which can ask for more output than the window leaves. With
+        // no listing to read, the output cap alone still applies.
+        limits: decision.limits ?? { maxTokens: OPENROUTER_MAX_OUTPUT_TOKENS },
       }
     : undefined;
   try {

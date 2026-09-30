@@ -482,6 +482,61 @@ describe('Room turn failure receipt', () => {
     expect(reason.length).toBeLessThanOrEqual(200);
   });
 
+  it('retries a context-window overflow once in a fresh session', async () => {
+    const overflow =
+      "400 This endpoint's maximum context length is 1048576 tokens. However, you requested about 1053212 tokens (109494 of text input, 943718 in the output).";
+    const turn = (recovers: boolean) =>
+      async ({ agentHomeRoot, attempt }: { agentHomeRoot: string; attempt: number }) => {
+        const dir = join(agentHomeRoot, 'pi', 'sessions', '--room--');
+        await mkdir(dir, { recursive: true });
+        const answered = recovers && attempt > 1;
+        await writeFile(
+          join(dir, '2026_room-session.jsonl'),
+          [
+            JSON.stringify({ type: 'message', message: { role: 'user', content: [] } }),
+            JSON.stringify({
+              type: 'message',
+              message: answered
+                ? { role: 'assistant', content: [{ type: 'text', text: 'Fresh answer.' }], stopReason: 'stop' }
+                : { role: 'assistant', content: [], stopReason: 'error', errorMessage: overflow },
+            }),
+          ].join('\n'),
+        );
+        return {
+          stopReason: 'end_turn',
+          updates: [],
+          agentText: answered ? 'Fresh answer.' : '',
+          toolCalls: [],
+        };
+      };
+    const warnings: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    });
+    const recovered = await runTurn({
+      agentCommand: '/opt/harness/pi-acp',
+      agentKind: 'pi',
+      prompt: turn(true),
+    });
+    const exhausted = await runTurn({
+      agentCommand: '/opt/harness/pi-acp',
+      agentKind: 'pi',
+      prompt: turn(false),
+    });
+    warn.mockRestore();
+
+    expect(recovered.attempts).toBe(2);
+    expect(recovered.receipts.some((receipt) => receipt.status === 'failed')).toBe(false);
+    expect(JSON.stringify(recovered.posted)).toContain('Fresh answer.');
+    expect(warnings.join('\n')).toContain('retrying once in a fresh session');
+
+    // One fresh session only: a second overflow fails the turn, typed so the
+    // server does not restart the helper for it.
+    expect(exhausted.attempts).toBe(2);
+    const failed = exhausted.receipts.find((receipt) => receipt.status === 'failed')!;
+    expect(failed.reasonKind).toBe('context-overflow');
+  });
+
   it('describes the stream when a non-pi harness ends a turn with reasoning only', async () => {
     const { receipts } = await runTurn({
       agentCommand: '/fake-agent',
@@ -536,10 +591,12 @@ describe('Room turn failure receipt', () => {
         providers: ['venice', 'phala'],
         bar: 98,
         // A post-C87 cache entry always carries `input` (an array, or `null`
-        // when the listing named none); omitting it marks a pre-C87 entry
-        // and forces one live re-ask (`resolveUptimeRouting`), which this
-        // fully-cached, network-free test must never trigger.
+        // when the listing named none), and `limits` the same way; omitting
+        // either marks an older entry and forces one live re-ask
+        // (`resolveUptimeRouting`), which this fully-cached, network-free
+        // test must never trigger.
         input: null,
+        limits: null,
       }),
     );
     await writeFile(

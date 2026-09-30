@@ -48,6 +48,18 @@
  * images)` before the request leaves the process, so a photo never reaches a
  * vision-capable model. `modelOverrides[<model>].input` is applied last, over
  * both layers, so the live modalities are pinned there.
+ *
+ * The listing's context and output limits are pinned there too. pi otherwise
+ * takes them from its bundled catalog, which can promise a far larger output
+ * than the routed endpoints leave room for (DeepSeek V4: a 1,048,576-token
+ * window and up to the whole window as output). pi then asks for
+ * `max_tokens = window - estimated input - 4096`, its chars/4 estimate
+ * undershoots dense code, and OpenRouter refuses the request with 400 "This
+ * endpoint's maximum context length is 1048576 tokens". The pin sets
+ * `contextWindow` to the smallest window among the routed providers and caps
+ * `maxTokens` at `OPENROUTER_MAX_OUTPUT_TOKENS` (lower only when no routed
+ * endpoint accepts that much output). A model the listing names no endpoints
+ * for (a `~vendor/model-latest` router alias) still gets the output cap.
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -64,6 +76,8 @@ export const OPENROUTER_PROBE_TIMEOUT_MS = 20_000;
 export const OPENROUTER_UPTIME_BAR = 98;
 export const OPENROUTER_UPTIME_BAR_RELAXED = 95;
 export const OPENROUTER_MIN_PROVIDERS = 2;
+/** Output ceiling pinned on an OpenRouter model; leaves the window to the input. */
+export const OPENROUTER_MAX_OUTPUT_TOKENS = 32_768;
 
 /** #840's hand-picked pair: the last resort when nothing live or cached exists. */
 export const OPENROUTER_FALLBACK_PROVIDERS = ['deepinfra', 'novita'] as const;
@@ -80,7 +94,15 @@ export interface OpenRouterEndpoint {
   provider: string;
   uptime: number;
   contextLength: number;
+  /** The endpoint's own output ceiling; 0 when the listing names none. */
+  maxCompletionTokens: number;
   tools: boolean;
+}
+
+/** The window and output ceiling pinned on the model (`modelOverrides`). */
+export interface OpenRouterModelLimits {
+  contextWindow: number;
+  maxTokens: number;
 }
 
 export interface OpenRouterProviderSelection {
@@ -102,6 +124,8 @@ export interface OpenRouterRoutingDecision {
    * name them — the pin then leaves `input` alone.
    */
   input?: Array<'text' | 'image'>;
+  /** Context window and output cap of the routed endpoints; `undefined` when unknown. */
+  limits?: OpenRouterModelLimits;
   providers: string[];
   bar: number | null;
   source: OpenRouterRoutingSource;
@@ -127,6 +151,12 @@ interface CachedRouting {
    * entry written before C87 — never fresh, re-asked once.
    */
   input?: Array<'text' | 'image'> | null;
+  /**
+   * The same three states for the routed endpoints' limits: `null` when the
+   * listing named no window, ABSENT for an entry written before the limits
+   * were pinned (never fresh, re-asked once).
+   */
+  limits?: OpenRouterModelLimits | null;
 }
 
 /** One provider's answer to the probe. */
@@ -188,10 +218,18 @@ export function parseOpenRouterEndpoints(payload: unknown): {
     if (!provider) continue;
     const uptime = typeof endpoint.uptime_last_30m === 'number' ? endpoint.uptime_last_30m : 0;
     const contextLength = typeof endpoint.context_length === 'number' ? endpoint.context_length : 0;
+    const maxCompletionTokens =
+      typeof endpoint.max_completion_tokens === 'number' ? endpoint.max_completion_tokens : 0;
     const supported = Array.isArray(endpoint.supported_parameters)
       ? endpoint.supported_parameters
       : [];
-    endpoints.push({ provider, uptime, contextLength, tools: supported.includes('tools') });
+    endpoints.push({
+      provider,
+      uptime,
+      contextLength,
+      maxCompletionTokens,
+      tools: supported.includes('tools'),
+    });
   }
   const architecture =
     record.architecture && typeof record.architecture === 'object'
@@ -277,6 +315,32 @@ export function selectReliableOpenRouterProviders(
   return { providers: [], bar: null, contextLength };
 }
 
+/**
+ * The limits the routed providers can honour: the smallest window among the
+ * providers' endpoints (OpenRouter may serve a request from any of them), and
+ * an output cap of `OPENROUTER_MAX_OUTPUT_TOKENS`, lowered only when no routed
+ * endpoint accepts that much. One endpoint with a tiny output limit does not
+ * shrink every answer. `undefined` when no endpoint names a window.
+ */
+export function openRouterModelLimits(
+  endpoints: readonly OpenRouterEndpoint[],
+  providers: readonly string[],
+): OpenRouterModelLimits | undefined {
+  const routed = endpoints.filter((endpoint) => providers.includes(endpoint.provider));
+  const windows = routed.map((endpoint) => endpoint.contextLength).filter((value) => value > 0);
+  if (windows.length === 0) return undefined;
+  const contextWindow = Math.min(...windows);
+  const outputs = routed
+    .map((endpoint) => endpoint.maxCompletionTokens)
+    .filter((value) => value > 0);
+  const maxTokens = Math.min(
+    OPENROUTER_MAX_OUTPUT_TOKENS,
+    contextWindow,
+    outputs.length ? Math.max(...outputs) : OPENROUTER_MAX_OUTPUT_TOKENS,
+  );
+  return { contextWindow, maxTokens };
+}
+
 export function openRouterRoutingFor(
   providers: readonly string[],
   allowFallbacks = true,
@@ -318,16 +382,26 @@ async function readCache(cacheDir: string, model: string): Promise<CachedRouting
       : cached.input === null
         ? null
         : undefined;
+    const limits = cached.limits === null ? null : cachedLimits(cached.limits);
     return {
       model,
       fetchedAt: cached.fetchedAt,
       providers: cached.providers,
       bar: typeof cached.bar === 'number' ? cached.bar : null,
       ...(input === undefined ? {} : { input: input && input.length ? input : null }),
+      ...(limits === undefined ? {} : { limits }),
     };
   } catch {
     return undefined;
   }
+}
+
+function cachedLimits(value: unknown): OpenRouterModelLimits | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const { contextWindow, maxTokens } = value as Partial<OpenRouterModelLimits>;
+  if (typeof contextWindow !== 'number' || contextWindow <= 0) return undefined;
+  if (typeof maxTokens !== 'number' || maxTokens <= 0) return undefined;
+  return { contextWindow, maxTokens };
 }
 
 async function writeCache(cacheDir: string, value: CachedRouting): Promise<void> {
@@ -500,6 +574,7 @@ function decision(
   note?: string,
   allowFallbacks = true,
   input?: Array<'text' | 'image'>,
+  limits?: OpenRouterModelLimits,
 ): OpenRouterRoutingDecision {
   const criteria = bar === null ? 'fallback pair' : `uptime ≥${bar}%, tools`;
   const suffix = [
@@ -514,6 +589,7 @@ function decision(
     model,
     routing: openRouterRoutingFor(providers, allowFallbacks),
     ...(input ? { input } : {}),
+    ...(limits ? { limits } : {}),
     providers: [...providers],
     bar,
     source,
@@ -560,8 +636,13 @@ async function resolveUptimeRouting(
   const now = input.now ?? Date.now;
   const cached = await readCache(input.cacheDir, input.model);
   // A pre-C87 cache entry has no modality field at all; re-ask once rather
-  // than pin a model whose vision capability we never established.
-  if (cached?.input !== undefined && now() - cached.fetchedAt < OPENROUTER_ROUTING_CACHE_TTL_MS) {
+  // than pin a model whose vision capability we never established. An entry
+  // without limits is re-asked the same way.
+  if (
+    cached?.input !== undefined &&
+    cached.limits !== undefined &&
+    now() - cached.fetchedAt < OPENROUTER_ROUTING_CACHE_TTL_MS
+  ) {
     return decision(
       input.model,
       cached.providers,
@@ -570,6 +651,7 @@ async function resolveUptimeRouting(
       undefined,
       true,
       cached.input ?? undefined,
+      cached.limits ?? undefined,
     );
   }
   let failure: string;
@@ -598,6 +680,7 @@ async function resolveUptimeRouting(
         modelInput,
       );
     }
+    const limits = openRouterModelLimits(endpoints, selected.providers);
     await writeCache(input.cacheDir, {
       model: input.model,
       fetchedAt: now(),
@@ -605,6 +688,7 @@ async function resolveUptimeRouting(
       bar: selected.bar,
       // `null` when the listing named no modalities: an answer, not a gap.
       input: modelInput ?? null,
+      limits: limits ?? null,
     }).catch(() => undefined);
     return decision(
       input.model,
@@ -614,6 +698,7 @@ async function resolveUptimeRouting(
       undefined,
       true,
       modelInput,
+      limits,
     );
   } catch (error) {
     failure = error instanceof Error ? error.message : String(error);
@@ -627,6 +712,7 @@ async function resolveUptimeRouting(
       `api unreachable: ${failure}`,
       true,
       cached.input ?? undefined,
+      cached.limits ?? undefined,
     );
   }
   return decision(
@@ -693,6 +779,7 @@ async function refreshAnswerProbe(
     `answer-probed, fastest first; ${dropped}`,
     true,
     base.input,
+    base.limits,
   );
 }
 
@@ -718,6 +805,7 @@ export async function resolveOpenRouterRouting(
       'pinned to one provider after an empty completion',
       false,
       base.input,
+      base.limits,
     );
   }
   const apiKey = input.apiKey?.trim();
@@ -735,6 +823,7 @@ export async function resolveOpenRouterRouting(
         'answer-probed, cached',
         true,
         base.input,
+        base.limits,
       );
     }
   }
@@ -764,14 +853,21 @@ export async function resolveOpenRouterRouting(
  * `providers.openrouter.modelOverrides[<model>].compat.openRouterRouting`,
  * pi's topmost per-model layer, and the model's live input modalities land
  * beside it on the same override as `input` (C87 — without it a custom-model
- * entry defaults the model to text and pi strips every image from the prompt).
+ * entry defaults the model to text and pi strips every image from the prompt),
+ * and the routed endpoints' `contextWindow` and `maxTokens` land there too.
  * With no model to pin, the object form still gains an empty `providers` map
  * (pi's schema requires the key).
  */
 export function withOpenRouterModelRouting(
   value: unknown,
   pin:
-    | { model: string; routing: OpenRouterRouting; input?: Array<'text' | 'image'> }
+    | {
+        model: string;
+        routing: OpenRouterRouting;
+        input?: Array<'text' | 'image'>;
+        /** `contextWindow` is absent when the listing named no window. */
+        limits?: { contextWindow?: number; maxTokens: number };
+      }
     | undefined,
 ): Record<string, unknown> {
   const root =
@@ -797,6 +893,8 @@ export function withOpenRouterModelRouting(
         : {};
     override.compat = { ...compat, openRouterRouting: pin.routing };
     if (pin.input) override.input = pin.input;
+    if (pin.limits?.contextWindow) override.contextWindow = pin.limits.contextWindow;
+    if (pin.limits) override.maxTokens = pin.limits.maxTokens;
     overrides[pin.model] = override;
     return { ...provider, modelOverrides: overrides };
   };

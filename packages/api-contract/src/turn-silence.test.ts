@@ -11,6 +11,23 @@ import {
 } from './turn-silence.js';
 
 describe('turn silence classification', () => {
+  it('names a context-window overflow and never restarts it as a hiccup', () => {
+    const overflow =
+      "provider error 400: This endpoint's maximum context length is 1048576 tokens. However, you requested about 1053212 tokens (109494 of text input, 943718 in the output). · routed to morph, cloudflare";
+    expect(classifyTurnSilence(overflow)).toEqual({ kind: 'context-overflow' });
+    expect(classifyTurnSilence('turn failed', 'context-overflow')).toEqual({
+      kind: 'context-overflow',
+    });
+    expect(shouldRestartHiccup('context-overflow', 1)).toBe(false);
+    expect(shouldCompletePendingFailedCommand('context-overflow')).toBe(true);
+    const phrase = phraseTurnSilence('Ronnie', { kind: 'context-overflow' });
+    expect(phrase.verb).toBe('could not answer');
+    expect(phrase.consequence).toBe(
+      "the request no longer fits the model's context window. Start a new corner, or pick a model with a larger window.",
+    );
+    expect(phrase.consequence).not.toContain('Restarting');
+  });
+
   it('maps the four hiccup causes onto one restart class', () => {
     expect(classifyTurnSilence(undefined).kind).toBe('hiccup');
     expect(classifyTurnSilence('the turn stalled').kind).toBe('hiccup');

@@ -25,6 +25,7 @@ import {
   ARTIFACT_MIME_TYPES,
   type ArtifactMimeType,
 } from '@beeline/api-contract/daemon';
+import type { AppFile } from './composio-apps.js';
 import type { SqlDatabase } from './database.js';
 import { ARTIFACT_TTL_HOURS, mediaTtlHours } from './media-ttl.js';
 import type { ObjectStorage } from './object-storage.js';
@@ -163,6 +164,44 @@ export class ObjectService {
     if (!row) return undefined;
     const bytes = await this.#requireStorage().getObject(row.key);
     return bytes ?? undefined;
+  }
+
+  /**
+   * A ready object this Room can see, for an app tool upload: attached to a
+   * message in the Room, or queued there by this agent's `post_artifact`. An
+   * object anywhere else answers undefined, the same as a missing one.
+   */
+  async readRoomObject(
+    roomId: string,
+    agentId: string,
+    objectId: string,
+    database: SqlDatabase = this.database,
+  ): Promise<AppFile | undefined> {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(objectId))
+      return undefined;
+    const row = (
+      await database.query<{ key: string; mime: string; title: string | null; size: string }>(
+        `SELECT o.key,o.mime,o.title,o.size FROM objects o
+         WHERE o.id=$1::uuid AND o.state='ready' AND o.expires_at>now() AND (
+           EXISTS (SELECT 1 FROM messages m CROSS JOIN LATERAL jsonb_array_elements(m.attachments) a
+                   WHERE m.room_id=$2::uuid AND a->>'url' LIKE '%/v1/media/' || $1)
+           OR EXISTS (SELECT 1 FROM agent_pending_attachments p
+                      WHERE p.room_id=$2::uuid AND p.agent_id=$3 AND p.url LIKE '%/v1/media/' || $1))`,
+        [objectId.toLowerCase(), roomId, agentId],
+      )
+    ).rows[0];
+    if (!row) return undefined;
+    const storage = this.#requireStorage();
+    return {
+      name: row.title ?? 'file',
+      mimeType: row.mime,
+      size: Number(row.size),
+      read: async () => {
+        const bytes = await storage.getObject(row.key);
+        if (!bytes) throw new Error('Room file is no longer stored');
+        return bytes;
+      },
+    };
   }
 
   async #putReadyObject(

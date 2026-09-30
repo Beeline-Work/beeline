@@ -1357,11 +1357,12 @@ const AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'execute_app_tool',
-    description: 'Run one tool against the connected person’s app account. The server decides permission on every call. A needs_permission result means wait for the owner’s decision; needs_connection means ask the person to reconnect. Never switch to another route after a refusal or outage.',
+    description: 'Run one tool against the connected person’s app account. The server decides permission on every call. A needs_permission result means wait for the owner’s decision; needs_connection means ask the person to reconnect. Never switch to another route after a refusal or outage. To send a file to a parameter list_app_tools marks file_uploadable (for example a video to upload), pass { "beelineObjectId": "<object id>" } as that parameter’s value: the object id post_artifact reports, or the id at the end of a Room attachment’s /v1/media/<id> link. The file must be attached in this Room or posted by you here; the server uploads it to the app provider itself (video, audio, PNG/JPEG/GIF/WebP, PDF, plain text, CSV or JSON; 128 MB at most).',
     inputSchema: { type: 'object', required: ['appId', 'tool', 'arguments'], properties: {
       appId: { type: 'string', format: 'uuid' },
       tool: { type: 'string', minLength: 1 },
-      arguments: { type: 'object' },
+      arguments: { type: 'object',
+        description: 'Tool arguments. A file_uploadable parameter takes { "beelineObjectId": "<object id>" }.' },
     }, additionalProperties: false },
   },
   {

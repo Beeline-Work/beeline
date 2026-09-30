@@ -7,7 +7,9 @@ import { LiveHub } from './live.js';
 import { McpRegistryClient } from './mcp-registry.js';
 import { applyVaultList } from './workbench.js';
 import { readOwnerApps, resolveAppRoute, type AppRouteProbes } from './app-connections.js';
-import type { ComposioApps } from './composio-apps.js';
+import { APP_FILE_MAXIMUM_BYTES, ComposioApps } from './composio-apps.js';
+import { ObjectService } from './object-service.js';
+import type { ObjectStorage } from './object-storage.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
@@ -142,7 +144,7 @@ describe('connect_app', () => {
 
   const daemonWith = (registry: McpRegistryClient, composio: ComposioApps = {
     supportsOAuth: async () => false,
-  } as ComposioApps) =>
+  } as ComposioApps, objects?: ObjectService) =>
     new DaemonService(
       database,
       new LiveHub(),
@@ -158,6 +160,7 @@ describe('connect_app', () => {
       registry,
       undefined,
       composio,
+      objects,
     );
 
   function fakeComposio() {
@@ -561,6 +564,129 @@ describe('connect_app', () => {
   });
 
 
+
+  describe('Room files for app tools', () => {
+    const YOUTUBE_APP = '44444444-4444-4444-8444-444444444444';
+    const OTHER_ROOM = '55555555-5555-4555-8555-555555555555';
+    const IN_ROOM = '66666666-6666-4666-8666-666666666666';
+    const ELSEWHERE = '77777777-7777-4777-8777-777777777777';
+    const HUGE = '88888888-8888-4888-8888-888888888888';
+    const S3KEY = 'uploads/youtube/staged-fixture.mp4';
+    const PRESIGNED = 'https://composio-files.s3.amazonaws.com/uploads/youtube/staged-fixture.mp4?X-Amz-Signature=sig';
+    const VIDEO = new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112, 109, 112, 52, 50]);
+
+    async function youtubeRoom() {
+      await database.query(
+        `INSERT INTO workspace_apps(id,workspace_id,owner_identity_id,app_key,display_name,
+           transport,route,composio_account_id)
+         VALUES($1,$2,$3,'youtube','YouTube','composio','composio','ca_youtube')`,
+        [YOUTUBE_APP, WORKSPACE, OWNER],
+      );
+      await database.query(
+        `INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Elsewhere')`,
+        [OTHER_ROOM, WORKSPACE, OWNER],
+      );
+      const object = (id: string, title: string, size: number) => database.query(
+        `INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
+         VALUES($1,$2,'artifact',$3,'application/octet-stream',$4,$5,$6,'ready',now()+interval '1 day')`,
+        [id, HELPER, `artifact/${id}`, title, size, id.replaceAll('-', '').padEnd(64, '0')],
+      );
+      await object(IN_ROOM, 'song-take-2.mp4', VIDEO.length);
+      await object(ELSEWHERE, 'other.mp4', VIDEO.length);
+      await object(HUGE, 'long-cut.mp4', APP_FILE_MAXIMUM_BYTES + 1);
+      const attach = (id: string, room: string, objectId: string) => database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,attachments) VALUES($1,$2,$3,'take',$4::jsonb)`,
+        [id, room, HELPER, JSON.stringify([{ kind: 'artifact',
+          url: `https://beeline.example/v1/media/${objectId}` }])],
+      );
+      await attach('take-in-room', ROOM, IN_ROOM);
+      await attach('take-elsewhere', OTHER_ROOM, ELSEWHERE);
+      await attach('take-huge', ROOM, HUGE);
+      const getObject = vi.fn(async (key: string) => (key === `artifact/${IN_ROOM}` ? VIDEO : null));
+      const objects = new ObjectService(database, { getObject } as unknown as ObjectStorage,
+        'https://beeline.example');
+      const calls: { method: string; url: string; body?: unknown }[] = [];
+      const transport = vi.fn(async (url: URL | string, init?: RequestInit) => {
+        const href = String(url);
+        calls.push({ method: init?.method ?? 'GET', url: href.split('?')[0]!,
+          ...(init?.body instanceof Uint8Array ? { body: init.body }
+            : init?.body ? { body: JSON.parse(String(init.body)) } : {}) });
+        if (href === PRESIGNED) return new Response(null, { status: 200 });
+        const path = new URL(href).pathname;
+        if (path.endsWith('/connected_accounts/ca_youtube')) return Response.json({
+          id: 'ca_youtube', user_id: OWNER, status: 'ACTIVE', toolkit: { slug: 'youtube' } });
+        if (path.endsWith('/tools/YOUTUBE_UPLOAD_VIDEO')) return Response.json({
+          slug: 'YOUTUBE_UPLOAD_VIDEO', version: '20260930_00', toolkit: { slug: 'youtube' },
+          input_parameters: { type: 'object', properties: { title: { type: 'string' },
+            videoFile: { type: 'object', file_uploadable: true } } } });
+        if (path.endsWith('/tools/YOUTUBE_LIST_CHANNEL_VIDEOS')) return Response.json({
+          slug: 'YOUTUBE_LIST_CHANNEL_VIDEOS', version: '20260930_00', toolkit: { slug: 'youtube' } });
+        if (path === '/api/v3.1/files/upload/request') return Response.json({
+          id: 'file-1', key: S3KEY, new_presigned_url: PRESIGNED, type: 'new' });
+        if (path.endsWith('/tools/execute/YOUTUBE_UPLOAD_VIDEO')) return Response.json({
+          data: { id: 'yt-1', privacyStatus: 'private', source: S3KEY } });
+        if (path.endsWith('/tools/execute/YOUTUBE_LIST_CHANNEL_VIDEOS'))
+          return Response.json({ data: { items: [] } });
+        throw new Error(`unexpected request ${href}`);
+      });
+      const daemon = daemonWith(fakeRegistry([]).client,
+        new ComposioApps('composio-project-key', transport as typeof fetch), objects);
+      const upload = (objectId: string) => daemon.execute('executeAppTool', { ...turn,
+        appId: YOUTUBE_APP, tool: 'YOUTUBE_UPLOAD_VIDEO',
+        arguments: { title: 'Song', videoFile: { beelineObjectId: objectId } } }, HELPER);
+      return { daemon, upload, calls, transport, getObject };
+    }
+
+    it('uploads a Room video: the server stages it and the agent sees no key, URL or s3key', async () => {
+      const { upload, calls } = await youtubeRoom();
+      const result = await upload(IN_ROOM);
+      expect(result).toEqual({ status: 'executed',
+        data: { id: 'yt-1', privacyStatus: 'private', source: '[staged file]' } });
+      expect(calls.map((call) => `${call.method} ${new URL(call.url).pathname}`)).toEqual([
+        'GET /api/v3/connected_accounts/ca_youtube',
+        'GET /api/v3/connected_accounts/ca_youtube',
+        'GET /api/v3/tools/YOUTUBE_UPLOAD_VIDEO',
+        'POST /api/v3.1/files/upload/request',
+        'PUT /uploads/youtube/staged-fixture.mp4',
+        'POST /api/v3/tools/execute/YOUTUBE_UPLOAD_VIDEO',
+      ]);
+      expect(calls[3]!.body).toMatchObject({ toolkit_slug: 'youtube',
+        tool_slug: 'YOUTUBE_UPLOAD_VIDEO', filename: 'song-take-2.mp4', mimetype: 'video/mp4' });
+      expect(calls[4]!.body).toEqual(VIDEO);
+      expect((calls[5]!.body as { arguments: unknown }).arguments).toEqual({ title: 'Song',
+        videoFile: { name: 'song-take-2.mp4', mimetype: 'video/mp4', s3key: S3KEY } });
+      const returned = JSON.stringify(result);
+      for (const hidden of ['composio-project-key', S3KEY, PRESIGNED, 'composio-files'])
+        expect(returned).not.toContain(hidden);
+    });
+
+    it('refuses an oversize Room file with no Composio request', async () => {
+      const { upload, transport, getObject } = await youtubeRoom();
+      await expect(upload(HUGE)).rejects.toThrow('Room file is larger than the 128 MB app tool limit');
+      expect(transport).not.toHaveBeenCalled();
+      expect(getObject).not.toHaveBeenCalled();
+    });
+
+    it('refuses a file from another Room or a missing object with no Composio request', async () => {
+      const { upload, transport } = await youtubeRoom();
+      await expect(upload(ELSEWHERE)).rejects.toThrow(`Room file ${ELSEWHERE} is not in this Room`);
+      await expect(upload('99999999-9999-4999-8999-999999999999'))
+        .rejects.toThrow('is not in this Room');
+      await expect(upload('not-a-uuid')).rejects.toThrow('Room file not-a-uuid is not in this Room');
+      expect(transport).not.toHaveBeenCalled();
+    });
+
+    it('runs a tool without Room files exactly as before', async () => {
+      const { daemon, calls, getObject } = await youtubeRoom();
+      await expect(daemon.execute('executeAppTool', { ...turn, appId: YOUTUBE_APP,
+        tool: 'YOUTUBE_LIST_CHANNEL_VIDEOS', arguments: { maxResults: 5 } }, HELPER))
+        .resolves.toEqual({ status: 'executed', data: { items: [] } });
+      expect(calls.map((call) => call.method)).toEqual(['GET', 'GET', 'GET', 'POST']);
+      expect(calls[3]!.body).toEqual({ connected_account_id: 'ca_youtube', user_id: OWNER,
+        arguments: { maxResults: 5 }, version: '20260930_00' });
+      expect(getObject).not.toHaveBeenCalled();
+    });
+  });
 
   it('lets a person connect from Workbench by handing the sign-in to their agent', async () => {
     await connectSquire();

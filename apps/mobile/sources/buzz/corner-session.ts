@@ -103,8 +103,10 @@ export function resolveCornerViewAgentPubkey(
   const reversedMessages = [...messages].reverse();
   const declaredAgentPubkey = reversedMessages.find((message) => message.agentTurn)?.agentTurn
     ?.agentPubkey;
+  // A system notice (e.g. a GitHub check line) carries a stand-in author, not
+  // the agent working in the corner.
   const knownMessageSignerPubkey = reversedMessages.find(
-    (message) => message.pubkey && isRegisteredAgent(message.pubkey),
+    (message) => !message.isSystemNotice && message.pubkey && isRegisteredAgent(message.pubkey),
   )?.pubkey;
   return resolveCornerCardAgentPubkey(
     declaredAgentPubkey,

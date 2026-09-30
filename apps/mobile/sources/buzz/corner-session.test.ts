@@ -86,18 +86,20 @@ describe('corner session presentation', () => {
     expect(resolveCornerViewAgentPubkey(messages, isRegisteredAgent)).toBe('beebee-pk');
   });
 
-  it('keeps the corner opener in the header after a different agent reviews', () => {
+  it('never takes the header agent from a system notice author', () => {
     const messages = [
       { id: 'opened', text: 'Working', isUser: false, timestamp: 1, pubkey: 'niglet-pk' },
       {
-        id: 'receipt',
-        text: 'Check passed',
+        id: 'check',
+        text: '@GitHub passed a check BUILD',
         isUser: false,
         timestamp: 2,
-        agentTurn: { requestId: 'turn', agentPubkey: 'candy-pk', status: 'complete' as const },
+        pubkey: 'candy-pk',
+        isSystemNotice: true,
       },
     ];
-    expect(resolveCornerViewAgentPubkey(messages, () => true, 'niglet-pk')).toBe('niglet-pk');
+    expect(resolveCornerViewAgentPubkey(messages, () => true)).toBe('niglet-pk');
+    expect(resolveCornerViewAgentPubkey(messages, () => true, 'opener-pk')).toBe('opener-pk');
   });
 });
 

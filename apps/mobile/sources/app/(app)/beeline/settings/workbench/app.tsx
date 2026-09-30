@@ -47,7 +47,7 @@ export default function AppDetailScreen() {
     setError(null);
     try {
       const started = await getWorkbenchSource().beginAppSignIn({ appId: app.id });
-      await openAppSignIn(started.authorizationUrl, { workspaceId, viewerId });
+      await openAppSignIn(started.authorizationUrl, { workspaceId, viewerId, appId: app.id });
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : 'Could not connect app';
       setError(appErrorCopy(message));

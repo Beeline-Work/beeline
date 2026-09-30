@@ -230,7 +230,7 @@ export type ConnectWorkbenchAppResult = {
   readonly authorizationUrl?: string;
 };
 /** Redeem the provider verifier's single-use session under the current phone identity. */
-export type CompleteAppSignInInput = { readonly sessionUri: string };
+export type CompleteAppSignInInput = { readonly sessionUri: string; readonly appId: string };
 export type CompleteAppSignInResult = { readonly appId: string };
 export type BeginAppSignInInput = { readonly appId: string };
 export type BeginAppSignInResult = { readonly authorizationUrl: string };

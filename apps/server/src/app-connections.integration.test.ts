@@ -266,7 +266,7 @@ describe('connect_app', () => {
     const opened = await phone.execute('beginAppSignIn', { appId: first.appId! }, OWNER);
     expect(opened.authorizationUrl).toBe('https://app.composio.dev/connect/fixture');
     expect(provider.link).toHaveBeenCalledWith(OWNER, 'slack');
-    await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture' }, OWNER);
+    await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: first.appId! }, OWNER);
     expect(provider.completeAuth).toHaveBeenCalledWith('session-fixture', OWNER);
     expect((await database.query<{ card: { status: string; continuation?: string } }>(
       `SELECT card FROM messages WHERE room_id=$1 AND card_type='app-sign-in'`, [ROOM],
@@ -345,7 +345,7 @@ describe('connect_app', () => {
       undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
     await phone.execute('beginAppSignIn', { appId: first.appId! }, OWNER);
     provider.completeAuth.mockRejectedValueOnce(new Error('App provider request failed (403)'));
-    await expect(phone.execute('completeAppSignIn', { sessionUri: 'session-fixture' }, OWNER))
+    await expect(phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: first.appId! }, OWNER))
       .rejects.toThrow('App provider request failed (403)');
     expect((await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER)).apps)
       .toContainEqual(expect.objectContaining({ appId: first.appId, status: 'error',
@@ -353,6 +353,29 @@ describe('connect_app', () => {
     await phone.execute('beginAppSignIn', { appId: first.appId! }, OWNER);
     expect((await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER)).apps)
       .toContainEqual(expect.objectContaining({ appId: first.appId, status: 'connecting' }));
+  });
+
+  it('WB-CALLBACK-2: fails only the initiating app when two sign-ins are pending', async () => {
+    const provider = fakeComposio();
+    provider.supportsOAuth.mockResolvedValue(true);
+    const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const linear = await daemon.execute('connectApp',
+      { ...turn, app: 'Linear', reason: 'connect Linear' }, HELPER);
+    const slack = await daemon.execute('connectApp',
+      { ...turn, app: 'Slack', reason: 'connect Slack' }, HELPER);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    await phone.execute('beginAppSignIn', { appId: linear.appId! }, OWNER);
+    await phone.execute('beginAppSignIn', { appId: slack.appId! }, OWNER);
+    provider.completeAuth.mockRejectedValueOnce(new Error('App provider request failed (403)'));
+    await expect(phone.execute('completeAppSignIn',
+      { sessionUri: 'session-fixture', appId: linear.appId! }, OWNER))
+      .rejects.toThrow('App provider request failed (403)');
+    const apps = (await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER)).apps;
+    expect(apps).toContainEqual(expect.objectContaining({ appId: linear.appId,
+      status: 'error', errorMessage: 'App provider request failed (403)' }));
+    expect(apps).toContainEqual(expect.objectContaining({ appId: slack.appId,
+      status: 'connecting' }));
   });
 
   it('rejects invalid card copy before creating a connection or card', async () => {
@@ -383,11 +406,11 @@ describe('connect_app', () => {
     await expect(phone.execute('beginAppSignIn', { appId: connected.appId! }, OTHER))
       .rejects.toThrow(/unavailable for this person/);
     await phone.execute('beginAppSignIn', { appId: connected.appId! }, OWNER);
-    await expect(phone.execute('completeAppSignIn', { sessionUri: 'session-fixture' }, OTHER))
-      .rejects.toThrow(/request failed/);
+    await expect(phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: connected.appId! }, OTHER))
+      .rejects.toThrow(/no longer pending/);
     expect((await database.query(`SELECT 1 FROM workspace_apps WHERE id=$1 AND
       composio_link_expires_at IS NOT NULL`, [connected.appId])).rowCount).toBe(1);
-    await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture' }, OWNER);
+    await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: connected.appId! }, OWNER);
 
     await database.query(`UPDATE agents SET owner_id=$1 WHERE agent_id=$2`, [OTHER, HELPER]);
     const call = { ...turn, appId: connected.appId!, tool: 'SLACK_POST_MESSAGE',
@@ -425,7 +448,7 @@ describe('connect_app', () => {
     const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
       undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
     await phone.execute('beginAppSignIn', { appId: connected.appId! }, OWNER);
-    await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture' }, OWNER);
+    await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: connected.appId! }, OWNER);
     provider.deleteAccount.mockRejectedValueOnce(new Error('provider unavailable'));
     await expect(phone.execute('disconnectWorkbenchApp', {
       workspaceId: WORKSPACE, appId: connected.appId!,

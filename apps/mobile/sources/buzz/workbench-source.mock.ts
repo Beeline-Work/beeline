@@ -399,7 +399,7 @@ export class MockWorkbenchSource implements WorkbenchSource {
     return { authorizationUrl: `https://example.test/connect/${input.appId}` };
   }
 
-  async completeAppSignIn(input: { sessionUri: string }): Promise<{ appId: string }> {
+  async completeAppSignIn(input: { sessionUri: string; appId: string }): Promise<{ appId: string }> {
     const appId = new URL(input.sessionUri).searchParams.get('appId') ?? '';
     const app = this.apps.find((item) => item.id === appId);
     if (app) app.status = 'connected';

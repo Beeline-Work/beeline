@@ -837,34 +837,35 @@ export async function completeComposioSignIn(
   composio: ComposioApps,
   viewerId: string,
   sessionUri: string,
+  appId: string,
   settle?: (database: SqlDatabase, appId: string) => Promise<void>,
 ): Promise<{ appId: string }> {
+  const pending = (await database.query<{ id: string; app_key: string; composio_account_id: string }>(
+    `SELECT id,app_key,composio_account_id FROM workspace_apps
+     WHERE id=$1::uuid AND owner_identity_id=$2 AND transport='composio'
+       AND state='active' AND composio_link_expires_at>now()`, [appId, viewerId],
+  )).rows[0];
+  if (!pending) throw new Error('App sign-in is no longer pending for this person');
   let completed: { accountId: string; toolkit: string };
   try {
     completed = await composio.completeAuth(sessionUri, viewerId);
   } catch (error) {
     await database.query(
-      `UPDATE workspace_apps SET sign_in_error=$2,composio_link_expires_at=NULL,updated_at=now()
-       WHERE id=(SELECT id FROM workspace_apps WHERE owner_identity_id=$1
-         AND transport='composio' AND state='active' AND composio_link_expires_at>now()
-         LIMIT 1)
-         AND (SELECT count(*) FROM workspace_apps WHERE owner_identity_id=$1
-           AND transport='composio' AND state='active' AND composio_link_expires_at>now())=1`,
-      [viewerId, error instanceof Error ? error.message : 'App sign-in failed'],
+      `UPDATE workspace_apps SET sign_in_error=$3,composio_link_expires_at=NULL,updated_at=now()
+       WHERE id=$1::uuid AND owner_identity_id=$2 AND transport='composio'
+         AND state='active' AND composio_account_id=$4 AND composio_link_expires_at>now()`,
+      [appId, viewerId, error instanceof Error ? error.message : 'App sign-in failed', pending.composio_account_id],
     );
     throw error;
   }
   const result = await database.transaction(async (db) => {
-    const pending = (
-      await db.query<{ id: string; app_key: string }>(
-        `SELECT id,app_key FROM workspace_apps
-         WHERE owner_identity_id=$1 AND composio_account_id=$2
-           AND transport='composio' AND state='active' AND composio_link_expires_at>now()
-         FOR UPDATE`,
-        [viewerId, completed.accountId],
-      )
-    ).rows.find((row) => composioToolkitForApp(row.app_key) === completed.toolkit);
-    if (!pending)
+    const current = (await db.query<{ id: string; app_key: string }>(
+      `SELECT id,app_key FROM workspace_apps WHERE id=$1::uuid AND owner_identity_id=$2
+         AND composio_account_id=$3 AND transport='composio' AND state='active'
+         AND composio_link_expires_at>now() FOR UPDATE`,
+      [appId, viewerId, completed.accountId],
+    )).rows[0];
+    if (!current || composioToolkitForApp(current.app_key) !== completed.toolkit)
       throw new Error('App sign-in is no longer pending for this person');
     let verified: boolean;
     try { verified = await composio.account(completed.accountId, viewerId, completed.toolkit); }

@@ -3599,7 +3599,8 @@ export class PhoneService {
         await this.viewerWorkbenchWorkspace(viewerId);
         if (!this.composio) throw new Error('App sign-in is unavailable');
         return (await this.completeAppSignIn(
-          (input as Input<'completeAppSignIn'>).sessionUri, viewerId)) as Output<Name>;
+          (input as Input<'completeAppSignIn'>).sessionUri,
+          (input as Input<'completeAppSignIn'>).appId, viewerId)) as Output<Name>;
       case 'disconnectWorkbenchApp':
         await this.disconnectWorkbenchApp(input as Input<'disconnectWorkbenchApp'>, viewerId);
         return undefined as Output<Name>;
@@ -7636,11 +7637,11 @@ export class PhoneService {
     };
   }
 
-  private async completeAppSignIn(sessionUri: string, viewerId: string) {
+  private async completeAppSignIn(sessionUri: string, appId: string, viewerId: string) {
     if (!this.composio) throw new Error('App sign-in is unavailable');
     let rooms: string[] = [];
     const completed = await completeComposioSignIn(this.database, this.composio,
-      viewerId, sessionUri, async (database, appId) => {
+      viewerId, sessionUri, appId, async (database, appId) => {
       const cards = (await database.query<{ id: string; room_id: string;
         card: { appId: string; name: string; agentId: string; commandId?: string } }>(
         `SELECT id,room_id,card FROM messages WHERE card_type='app-sign-in'

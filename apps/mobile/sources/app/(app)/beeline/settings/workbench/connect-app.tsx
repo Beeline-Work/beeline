@@ -52,7 +52,7 @@ export default function ConnectAppScreen() {
     setError(null);
     try {
       const started = await getWorkbenchSource().connectApp({ workspaceId, app: name, helperId: helper.id, ...(existing?.status === 'error' ? { reconnect: true } : {}) });
-      if (started.authorizationUrl) await openAppSignIn(started.authorizationUrl, { workspaceId, viewerId });
+      if (started.authorizationUrl) await openAppSignIn(started.authorizationUrl, { workspaceId, viewerId, appId: started.appId });
       else router.back();
     } catch (cause) { setError(appErrorCopy(cause instanceof Error ? cause.message : 'Connecting failed')); }
     finally { setBusy(null); }

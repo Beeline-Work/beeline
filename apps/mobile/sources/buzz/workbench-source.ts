@@ -70,7 +70,7 @@ export interface WorkbenchSource {
     reconnect?: boolean;
   }): Promise<{ appId: string; authorizationUrl?: string }>;
   beginAppSignIn(input: { appId: string }): Promise<{ authorizationUrl: string }>;
-  completeAppSignIn(input: { sessionUri: string }): Promise<{ appId: string }>;
+  completeAppSignIn(input: { sessionUri: string; appId: string }): Promise<{ appId: string }>;
   disconnectApp(input: { workspaceId: string; appId: string }): Promise<void>;
 }
 
@@ -405,7 +405,7 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
     return monolithPhoneOperation('beginAppSignIn', input);
   }
 
-  async completeAppSignIn(input: { sessionUri: string }): Promise<{ appId: string }> {
+  async completeAppSignIn(input: { sessionUri: string; appId: string }): Promise<{ appId: string }> {
     return monolithPhoneOperation('completeAppSignIn', input);
   }
 

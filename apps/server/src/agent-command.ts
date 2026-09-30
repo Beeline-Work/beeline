@@ -706,6 +706,24 @@ export async function routeAgentResult(
  */
 export const REVIEW_HANDBACK_LIMIT = 3;
 
+/**
+ * Marks the handback-limit line so push delivery (`background.ts`) can send it
+ * to the corner's commissioner. The phone has no renderer for it, so the line
+ * still shows as a plain system line.
+ */
+export const CORNER_REVIEW_DEADLOCK_CARD_TYPE = 'corner-review-deadlock';
+
+/** Marks the line `noteBlockedCornerChecks` writes; pushed to the commissioner like the one above. */
+export const CORNER_CHECKS_BLOCKED_CARD_TYPE = 'corner-checks-blocked';
+
+/**
+ * How long a failing head must sit after its fix turn ends before the corner
+ * counts as blocked. A fix the worker pushed near the end of its turn reaches
+ * the server through the GitHub webhook, which can land a little after the
+ * turn itself settles.
+ */
+export const CORNER_CHECKS_BLOCKED_AFTER = '2 minutes';
+
 export async function queueCornerWorkerAfterReview(
   db: SqlDatabase,
   input: {
@@ -804,8 +822,10 @@ export async function queueCornerWorkerAfterReview(
   // A corner an agent opened off its own root message records no requester,
   // and that corner is just as stuck. So the line is addressed to the corner
   // itself rather than dropped: the loop stopping is the fact worth reading,
-  // and a review loop that stops must never stop in silence.
-  if (!review.commissioned_by) await ensureSystemIdentity(db);
+  // and a review loop that stops must never stop in silence. The server
+  // authors it either way, because push delivery never sends a person their
+  // own line, and this one is meant to reach the requester.
+  await ensureSystemIdentity(db);
   // Deterministic id per head: the cap is reached once, however many further
   // reviews end on the same commit.
   await systemLine(db, {
@@ -813,13 +833,15 @@ export async function queueCornerWorkerAfterReview(
       .update(`beeline:${input.roomId}:review-handback-limit:${review.head_sha}`)
       .digest('hex'),
     roomId: input.roomId,
-    authorId: review.commissioned_by ?? SYSTEM_IDENTITY_ID,
+    authorId: SYSTEM_IDENTITY_ID,
     subject: review.commissioned_by
       ? { kind: 'person', id: review.commissioned_by, name: 'the requester' }
       : { kind: 'system', name: 'Somebody' },
     verb: 'may need to step in',
     consequence: `review and fix have passed ${REVIEW_HANDBACK_LIMIT} times over this head with nothing new pushed`,
     afterMessageId: input.verdictMessageId,
+    cardType: CORNER_REVIEW_DEADLOCK_CARD_TYPE,
+    card: { cornerId: input.roomId },
   });
 }
 
@@ -1357,6 +1379,70 @@ export async function queueCornerMergeConflict(
     reason: 'corner_merge_conflict',
   });
   return Boolean(command);
+}
+
+/**
+ * Failing checks wake the worker once per head (`routeSystemCommand`), and
+ * nothing wakes anybody again until the head or the check state changes. So
+ * when that one turn ends and the same head is still failing with no other
+ * turn pending, the corner is stuck until a person steps in. This writes one
+ * line per stuck head, naming the requester, and push delivery sends it to
+ * them (`background.ts`). Runs on the background reconciliation cycle.
+ */
+export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> {
+  const blocked = await db.query<{
+    corner_id: string;
+    head_sha: string;
+    title: string | null;
+    number: string | null;
+    url: string | null;
+    commissioned_by: string | null;
+  }>(
+    `SELECT fact.corner_id,fact.commissioned_by,
+            fact.lifecycle->'pr'->>'headSha' head_sha,
+            fact.lifecycle->'pr'->>'title' title,
+            fact.lifecycle->'pr'->>'number' number,
+            fact.lifecycle->'pr'->>'url' url
+     FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
+     WHERE corner.archived_at IS NULL AND fact.owner_agent_id IS NOT NULL
+       AND fact.lifecycle->>'checks'='failing'
+       AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
+       AND EXISTS (
+         SELECT 1 FROM agent_commands command
+         JOIN messages source ON source.id=command.source_message_id
+         WHERE command.room_id=fact.corner_id AND command.agent_id=fact.owner_agent_id
+           AND command.reason='corner_check' AND command.state IN ('complete','cancelled')
+           AND command.completed_at<=now()-interval '${CORNER_CHECKS_BLOCKED_AFTER}'
+           AND source.system_event->'object'->>'headSha'=fact.lifecycle->'pr'->>'headSha'
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM agent_commands working
+         WHERE working.room_id=fact.corner_id AND working.agent_id=fact.owner_agent_id
+           AND working.state IN ('pending','claimed')
+       )`,
+  );
+  let written = 0;
+  for (const row of blocked.rows) {
+    await ensureSystemIdentity(db);
+    const pullRequest = row.title ?? (row.number ? `pull request #${row.number}` : 'this head');
+    const line = await systemLine(db, {
+      // Deterministic id per head: a head is blocked once, however many cycles see it.
+      id: createHash('sha256')
+        .update(`beeline:${row.corner_id}:checks-blocked:${row.head_sha}`)
+        .digest('hex'),
+      roomId: row.corner_id,
+      authorId: SYSTEM_IDENTITY_ID,
+      subject: row.commissioned_by
+        ? { kind: 'person', id: row.commissioned_by, name: 'the requester' }
+        : { kind: 'system', name: 'Somebody' },
+      verb: 'may need to step in',
+      consequence: `checks still fail on ${pullRequest} and the fix turn ended with nothing new pushed`,
+      cardType: CORNER_CHECKS_BLOCKED_CARD_TYPE,
+      card: { cornerId: row.corner_id, headSha: row.head_sha, ...(row.url ? { url: row.url } : {}) },
+    });
+    if (line.inserted) written += 1;
+  }
+  return written;
 }
 
 /** Recover blocker lifecycles whose note or command was lost before delivery. */

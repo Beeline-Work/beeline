@@ -2723,13 +2723,7 @@ describe('thin monolith corner turn', () => {
     expect(repositorySystemPrompt.indexOf(CORNER_AUTHOR_CONTRACT)).toBeLessThan(
       repositorySystemPrompt.indexOf(cornerMergeInstruction(true)),
     );
-    expect(sessionNew).toHaveBeenCalledWith(
-      expect.objectContaining({
-        systemPrompt: expect.stringContaining(
-          'The server merge card and its push announce a finished corner, so do not tag anyone for it.',
-        ),
-      }),
-    );
+    expect(repositorySystemPrompt).not.toContain('do not tag anyone');
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
         systemPrompt: expect.stringContaining(

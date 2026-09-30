@@ -6758,10 +6758,15 @@ describe('monolith integration', () => {
     expect(
       (await webhook('pull_request', 'corner-pr-merged-semantic-retry', mergedPayload)).status,
     ).toBe(202);
-    // Corner lifecycle cards stay in the ledger; only the four push
-    // categories (DMs, tags, replies, member lifecycle) reach a device.
+    // The person who commissioned the corner hears it landed once, from the
+    // parent Room's merge card, however many times GitHub retries the webhook.
+    expect(await pushes.runOnce()).toBe(1);
+    expect(send).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledWith(
+      deviceToken,
+      expect.objectContaining({ roomId: ROOM, channelId: ROOM, target: 'message' }),
+    );
     expect(await pushes.runOnce()).toBe(0);
-    expect(send).not.toHaveBeenCalled();
     expect(
       (
         await database.query<{ count: number }>(
@@ -11891,6 +11896,42 @@ describe('monolith integration', () => {
       { room_id: null, event_subscriptions: [] },
       { room_id: ROOM, event_subscriptions: ['joined'] },
     ]);
+  });
+
+  it('pushes a question card and a tagged reply from the same turn once', async () => {
+    await operation('registerPushDevice', {
+      token: 'owner-choice-turn-device-token-1234567890',
+      platform: 'android',
+      environment: 'physical',
+    });
+    const send = vi.fn().mockResolvedValue(undefined);
+    const loop = new PushDeliveryLoop(database, { send });
+    expect(await loop.runOnce()).toBe(0);
+    const requestId = 'c'.repeat(64);
+    const asked = await daemonOperation('askRoomChoice', {
+      roomId: ROOM,
+      requestId,
+      prompt: 'Which branch should I use?',
+      options: [
+        { label: 'Main', consequence: 'Ships today' },
+        { label: 'Release', consequence: 'Ships Friday' },
+      ],
+    });
+    expect(asked.status).toBe(200);
+    const card = (await asked.json()) as { messageId: string };
+    const replied = await daemonOperation('postRoomMessage', {
+      roomId: ROOM,
+      requestId,
+      text: '@owner the question card above needs your pick.',
+    });
+    expect(replied.status).toBe(200);
+
+    expect(await loop.runOnce()).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(
+      'owner-choice-turn-device-token-1234567890',
+      expect.objectContaining({ messageId: card.messageId }),
+    );
   });
 
   it('posts a choice card, settles it in place, hides the wake, and refuses an undersized poll', async () => {

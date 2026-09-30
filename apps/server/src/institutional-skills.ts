@@ -27,7 +27,7 @@ const PROHIBITED_SKILL_PATTERNS = [
   /\byou\s+must\s+obey\s+(?:this|these)\b/i,
 ] as const;
 
-function assertSkillTextSafe(description: string, markdown: string): void {
+export function assertSkillTextSafe(description: string, markdown: string): void {
   const text = `${description}\n${markdown}`;
   if (PROHIBITED_SKILL_PATTERNS.some((pattern) => pattern.test(text))) {
     throw new Error('workspace skill proposal crosses the restricted guidance boundary');

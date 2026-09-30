@@ -9,7 +9,7 @@ import {
 } from '@beeline/api-contract/daemon';
 import type { CommandRow } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
-import { applySkillRevision } from './institutional-skills.js';
+import { applySkillRevision, assertSkillTextSafe } from './institutional-skills.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import { postRoomChoice } from './room-choice.js';
 import { ensureSystemIdentity, identitySubject, systemLine } from './system-line.js';
@@ -327,12 +327,14 @@ export async function saveWorkflow(
     ])
   ).rows[0];
   if (!room) throw new Error('workflow room not found');
+  const markdown = JSON.stringify(contract);
+  assertSkillTextSafe(contract.description, markdown);
   const { version } = await applySkillRevision(database, {
     workspaceId: room.workspace_id,
     sourceRoomId: command.room_id,
     slug: contract.name,
     description: contract.description,
-    markdown: JSON.stringify(contract),
+    markdown,
     kind: 'workflow',
     sourceMessageIds: [command.root_source_message_id],
   });

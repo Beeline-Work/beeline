@@ -142,6 +142,8 @@ describe('the system line', () => {
     expect(renderer.root.findAllByType('IdentityMark' as never)).toHaveLength(0);
     const stamp = renderer.root.findByProps({ testID: 'system-line-stamp-yolo' });
     expect(stamp.props.style).toMatchObject({ position: 'absolute', right: 0, textAlign: 'right' });
+    // A fixed 36px box truncated `16:41` to `16:…`; the stamp sizes to its text.
+    expect(stamp.props.style.width).toBeUndefined();
     expect(flattenText(line.props.children)).toBe(
       'Owner turned yolo on for Bee · grant requests are now approved automatically',
     );

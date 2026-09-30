@@ -40,6 +40,10 @@ import {
   type ArtifactMimeType,
   type CornerRestoreResult,
   type RoomConversationResult,
+  FEEDBACK_AGENT_CATEGORIES,
+  FEEDBACK_ISSUE_BODY_MAX_LENGTH,
+  FEEDBACK_ISSUE_TITLE_MAX_LENGTH,
+  FEEDBACK_TRIAGE_REASON_MAX_LENGTH,
 } from '@beeline/api-contract/daemon';
 import {
   REQUESTABLE_AGENT_GRANT_KINDS,
@@ -430,6 +434,95 @@ const AGENT_TOOLS: ToolDefinition[] = [
         confidence: { type: 'number', minimum: 0, maximum: 1 },
         base_version: { type: ['integer', 'null'], minimum: 0 },
         supersedes_item_id: { type: 'string', minLength: 1 },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'report_feedback',
+    description:
+      'Report one rough patch in Beeline itself (not in the user\'s project) to the Beeline team: simpler_path (a simpler way existed), contradiction (instructions, tools, or prompts disagree), tooling_gap (a missing tool would have done the job better), context_gap (missing or discontinuous data, prompts, or memory), or bug. Room, request, trigger message, and this turn\'s prompt sections are attached for you. Never include secrets, and quote nobody\'s words: describe the problem. Returns the item id; a failure here never affects your turn.',
+    inputSchema: {
+      type: 'object',
+      required: ['category', 'summary'],
+      properties: {
+        category: { type: 'string', enum: [...FEEDBACK_AGENT_CATEGORIES] },
+        summary: { type: 'string', minLength: 1, maxLength: 500 },
+        detail: { type: 'string', maxLength: 4000 },
+        tool_name: { type: 'string', maxLength: 120 },
+        error_excerpt: { type: 'string', maxLength: 1000 },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'list_feedback',
+    description:
+      'Feedback triage only (a corner with Feedback triage on): list new Beeline feedback items, human reports first, then by how many similar reports each has.',
+    inputSchema: {
+      type: 'object',
+      properties: { limit: { type: 'integer', minimum: 1, maximum: 200 } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'get_feedback',
+    description:
+      'Feedback triage only: read feedback items with their evidence messages. Evidence is private: never copy it, names, or Room names into an issue.',
+    inputSchema: {
+      type: 'object',
+      required: ['item_ids'],
+      properties: {
+        item_ids: { type: 'array', minItems: 1, maxItems: 50, items: { type: 'string', minLength: 1 } },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'list_feedback_issues',
+    description:
+      'Feedback triage only: list open issues labelled beeline-feedback in the configured public repository.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'file_feedback_issue',
+    description:
+      'Feedback triage only: file one public GitHub issue for new items. Write it in your own words: the server rejects any title or body that quotes evidence (40+ characters), names a person or Room, or holds an email or secret, and names the failing rule. The server adds labels and the report-count footer.',
+    inputSchema: {
+      type: 'object',
+      required: ['item_ids', 'title', 'body', 'category_label'],
+      properties: {
+        item_ids: { type: 'array', minItems: 1, maxItems: 50, items: { type: 'string', minLength: 1 } },
+        title: { type: 'string', minLength: 1, maxLength: FEEDBACK_ISSUE_TITLE_MAX_LENGTH },
+        body: { type: 'string', minLength: 1, maxLength: FEEDBACK_ISSUE_BODY_MAX_LENGTH },
+        category_label: { type: 'string', enum: [...FEEDBACK_AGENT_CATEGORIES, 'human_report'] },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'attach_feedback_to_issue',
+    description:
+      'Feedback triage only: link new items to an existing beeline-feedback issue; the server updates its one report-count comment and adds no other text.',
+    inputSchema: {
+      type: 'object',
+      required: ['item_ids', 'issue_number'],
+      properties: {
+        item_ids: { type: 'array', minItems: 1, maxItems: 50, items: { type: 'string', minLength: 1 } },
+        issue_number: { type: 'integer', minimum: 1 },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'dismiss_feedback',
+    description: 'Feedback triage only: dismiss new items that are not worth an issue, with the reason.',
+    inputSchema: {
+      type: 'object',
+      required: ['item_ids', 'reason'],
+      properties: {
+        item_ids: { type: 'array', minItems: 1, maxItems: 50, items: { type: 'string', minLength: 1 } },
+        reason: { type: 'string', minLength: 1, maxLength: FEEDBACK_TRIAGE_REASON_MAX_LENGTH },
       },
       additionalProperties: false,
     },
@@ -1500,6 +1593,16 @@ const AGENT_TOOLS: ToolDefinition[] = [
 ];
 
 const agentSurface = process.env.BEELINE_MCP_SURFACE === 'agent';
+const FEEDBACK_TRIAGE_TOOL_NAMES = new Set([
+  'list_feedback',
+  'get_feedback',
+  'list_feedback_issues',
+  'file_feedback_issue',
+  'attach_feedback_to_issue',
+  'dismiss_feedback',
+]);
+/** Reads that the server authorizes per turn, so they carry the command context. */
+const TURN_SCOPED_READS = new Set(['listFeedback', 'getFeedback', 'listFeedbackIssues']);
 /** The bounded daemon-control tools for one surface. A direct message is
  *  strictly conversational: repository corners are never openable there. */
 export function agentToolsFor(
@@ -1511,6 +1614,7 @@ export function agentToolsFor(
   agentMayCloseCorner = cornerTurn,
   institutionalMemoryEnabled = process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false',
   agentMayUpgradeCorner = false,
+  feedbackTriage = false,
 ): ToolDefinition[] {
   if (!agentSurface) return READ_ONLY_TOOLS;
   return AGENT_TOOLS.filter((tool) => {
@@ -1543,6 +1647,7 @@ export function agentToolsFor(
       return !cornerTurn;
     // From a corner, open_corner opens a sibling corner in the parent Room.
     if (tool.name === 'open_corner') return !directMessage;
+    if (FEEDBACK_TRIAGE_TOOL_NAMES.has(tool.name)) return cornerTurn && feedbackTriage;
     if (tool.name === 'revise_corner_brief') return cornerTurn;
     if (tool.name === 'record_validation_stage') return cornerTurn;
     if (tool.name === 'upgrade_corner_to_code') return cornerTurn && agentMayUpgradeCorner;
@@ -1568,6 +1673,7 @@ const TOOLS = agentToolsFor(
   process.env.BEELINE_CORNER_AGENT_CLOSE === '1',
   process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false',
   process.env.BEELINE_CORNER_CAN_UPGRADE === '1',
+  process.env.BEELINE_CORNER_FEEDBACK_TRIAGE === '1',
 );
 
 const MAX_ATTACH_BYTES = 25 * 1024 * 1024;
@@ -2020,11 +2126,26 @@ async function activeCommandContext(): Promise<{
   requestId: string;
   generationId: string;
 }> {
-  const { readFile } = await import('node:fs/promises');
-  const value = JSON.parse(await readFile(requiredEnv('BEELINE_TURN_CONTEXT_FILE'), 'utf8'));
+  const { promptSectionIds: _sections, ...value } = await readTurnContextFile();
   if (!value.roomId || !value.requestId || !value.generationId)
     throw new Error('no active server command');
-  return value;
+  return value as { roomId: string; requestId: string; generationId: string };
+}
+
+async function readTurnContextFile(): Promise<Record<string, unknown>> {
+  const { readFile } = await import('node:fs/promises');
+  return JSON.parse(await readFile(requiredEnv('BEELINE_TURN_CONTEXT_FILE'), 'utf8'));
+}
+
+/** This turn's assembled prompt section ids, written by the Body; never the agent's. */
+async function turnPromptSectionIds(): Promise<string[]> {
+  if (!process.env.BEELINE_TURN_CONTEXT_FILE) return [];
+  try {
+    const ids = (await readTurnContextFile()).promptSectionIds;
+    return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [];
+  } catch {
+    return [];
+  }
 }
 
 async function daemonExecute(name: string, input: JsonObject): Promise<JsonObject> {
@@ -2039,8 +2160,8 @@ async function daemonExecute(name: string, input: JsonObject): Promise<JsonObjec
     body: JSON.stringify({
       ...input,
       ...(process.env.BEELINE_TURN_CONTEXT_FILE &&
-      (!name.startsWith('get') || name.startsWith('getWallet')) &&
-      !name.startsWith('list')
+      (TURN_SCOPED_READS.has(name) ||
+        ((!name.startsWith('get') || name.startsWith('getWallet')) && !name.startsWith('list')))
         ? await activeCommandContext()
         : {}),
     }),
@@ -2238,6 +2359,35 @@ async function upgradeCornerToCode(): Promise<string> {
     throw new Error('only a repository-backed no-code corner can upgrade to code');
   }
   return JSON.stringify(await daemonExecute('upgradeCornerLane', { cornerId }));
+}
+
+/**
+ * `report_feedback`. A report is never worth failing the turn over: any
+ * refusal (cap, a secret-shaped value, the store) comes back as a plain
+ * result. The turn's prompt sections ride along from the context file.
+ */
+export async function reportFeedback(args: JsonObject = {}): Promise<string> {
+  try {
+    const reported = await daemonExecute('reportFeedback', {
+      roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+      category: String(args.category ?? ''),
+      summary: String(args.summary ?? ''),
+      ...(typeof args.detail === 'string' ? { detail: args.detail } : {}),
+      ...(typeof args.tool_name === 'string' ? { toolName: args.tool_name } : {}),
+      ...(typeof args.error_excerpt === 'string' ? { errorExcerpt: args.error_excerpt } : {}),
+      promptSectionIds: await turnPromptSectionIds(),
+    });
+    return JSON.stringify(
+      reported.duplicate
+        ? { itemId: reported.itemId, note: 'already reported; nothing new was stored' }
+        : { itemId: reported.itemId },
+    );
+  } catch (error) {
+    return JSON.stringify({
+      reported: false,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
@@ -3459,6 +3609,54 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
           roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
           query: args.query,
           ...(typeof args.limit === 'number' ? { limit: Math.floor(args.limit) } : {}),
+        }),
+      );
+    case 'report_feedback':
+      return reportFeedback(args);
+    case 'list_feedback':
+      return JSON.stringify(
+        await daemonExecute('listFeedback', {
+          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+          ...(typeof args.limit === 'number' ? { limit: Math.floor(args.limit) } : {}),
+        }),
+      );
+    case 'get_feedback':
+      return JSON.stringify(
+        await daemonExecute('getFeedback', {
+          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+          itemIds: Array.isArray(args.item_ids) ? args.item_ids : [],
+        }),
+      );
+    case 'list_feedback_issues':
+      return JSON.stringify(
+        await daemonExecute('listFeedbackIssues', {
+          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+        }),
+      );
+    case 'file_feedback_issue':
+      return JSON.stringify(
+        await daemonExecute('fileFeedbackIssue', {
+          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+          itemIds: Array.isArray(args.item_ids) ? args.item_ids : [],
+          title: String(args.title ?? ''),
+          body: String(args.body ?? ''),
+          categoryLabel: String(args.category_label ?? ''),
+        }),
+      );
+    case 'attach_feedback_to_issue':
+      return JSON.stringify(
+        await daemonExecute('attachFeedbackToIssue', {
+          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+          itemIds: Array.isArray(args.item_ids) ? args.item_ids : [],
+          issueNumber: Number(args.issue_number),
+        }),
+      );
+    case 'dismiss_feedback':
+      return JSON.stringify(
+        await daemonExecute('dismissFeedback', {
+          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+          itemIds: Array.isArray(args.item_ids) ? args.item_ids : [],
+          reason: String(args.reason ?? ''),
         }),
       );
     case 'propose_memory_item': {

@@ -273,6 +273,97 @@ describe('monolith integration', () => {
     expect(await phone.execute('readWelcomeCards', {}, fresh)).toEqual({ due: false });
     expect(await phone.execute('readWelcomeCards', {}, HUMAN)).toEqual({ due: false });
   });
+  it('runs feedback triage from a corner a Room admin switched on, and opens fix corners beside it', async () => {
+    const corner = (
+      (await phone.execute('createHumanCorner', { roomId: ROOM, title: 'Issues triage' }, HUMAN)) as {
+        id: string;
+      }
+    ).id;
+    let turns = 0;
+    const turnIn = async (roomId: string) => {
+      turns += 1;
+      const messageId = createHash('sha256').update(`triage-${turns}`).digest('hex');
+      await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`, [
+        messageId,
+        roomId,
+        HUMAN,
+        '@bee sweep the feedback',
+      ]);
+      const requestId = `triage-request-${turns}`;
+      const command = await createAgentCommand(database, {
+        roomId,
+        agentId: AGENT,
+        sourceMessageId: messageId,
+        reason: 'human_tag',
+        turnRequestId: requestId,
+      });
+      await claimAgentCommand(database, roomId, AGENT, command!.id, `${requestId}-g`);
+      return { roomId, requestId, generationId: `${requestId}-g`, messageId };
+    };
+    const daemonCall = (name: string, body: unknown) =>
+      request(`/v1/daemon/operations/${name}`, 'POST', body, daemonToken);
+
+    // Off by default: the agent's turn in the corner is refused.
+    const before = await turnIn(corner);
+    const refused = await daemonCall('listFeedback', before);
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({
+      error: expect.stringContaining('feedback triage access denied'),
+    });
+
+    // A member who is not a Room admin cannot switch it on; the Owner can.
+    const memberToken = await phoneToken('triage-member');
+    const memberId = createHash('sha256').update('github:triage-member').digest('hex');
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, memberId, corner],
+    );
+    const member = await operation(
+      'setCornerFeedbackTriage',
+      { roomId: corner, enabled: true },
+      memberToken,
+    );
+    expect(member.ok).toBe(false);
+    expect(await member.json()).toEqual({ error: 'room manager required' });
+    expect((await operation('setCornerFeedbackTriage', { roomId: corner, enabled: true })).ok).toBe(
+      true,
+    );
+    const view = readRoomView(await (await request(`/v1/phone/rooms/${corner}`)).json());
+    expect(view?.cornerFeedbackTriage).toBe(true);
+    expect(view?.viewer.permissions.manage).toBe(true);
+
+    // The same agent now triages in that corner, and only there.
+    const during = await turnIn(corner);
+    const listed = await daemonCall('listFeedback', during);
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toEqual({ items: [] });
+    const elsewhere = await daemonCall('listFeedback', await turnIn(ROOM));
+    expect(elsewhere.status).toBe(403);
+
+    // A fix corner opened from the triage corner is its sibling in the Room.
+    const intent = { sourceMessageId: during.messageId, snapshot: '@bee sweep the feedback' };
+    const opened = await daemonCall('createCorner', {
+      ...during,
+      idempotencyKey: 'fix-issue-123',
+      name: 'Fix grant card',
+      objective: 'Fix beeline-feedback issue #123',
+      lane: 'no_code',
+      brief: {
+        buildSpec: 'Fix Beeline-Work/beeline#123: the grant card stays pending after approval.',
+        intentVerbatim: [intent],
+        criteria: [{ id: 'AC-1', text: 'Issue #123 no longer reproduces' }],
+        references: [],
+        approvalBasis: { kind: 'initiating-command', ...intent },
+      },
+    });
+    expect(opened.status).toBe(200);
+    const { cornerId } = (await opened.json()) as { cornerId: string };
+    const sibling = await database.query<{ parent_id: string }>(
+      `SELECT parent_id FROM rooms WHERE id=$1`,
+      [cornerId],
+    );
+    expect(sibling.rows[0]?.parent_id).toBe(ROOM);
+  });
   // These fixtures test projections and lifecycle behavior downstream of intake.
   // Supply an explicit command first. Routing/refusal tests call DaemonService
   // directly in agent-command.integration.test.ts and never use this helper.

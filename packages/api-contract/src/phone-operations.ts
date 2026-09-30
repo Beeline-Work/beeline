@@ -52,6 +52,8 @@ export type PhoneOperationMap = {
   reactToMessage: { input: ReactToMessageInput; output: void };
   deleteRoomMessage: { input: DeleteRoomMessageInput; output: void };
   setMessageBookmark: { input: SetMessageBookmarkInput; output: SetMessageBookmarkResult };
+  /** Report issue: files this message with the Beeline feedback loop. One report per message. */
+  reportMessageIssue: { input: ReportMessageIssueInput; output: ReportMessageIssueResult };
   listMessageBookmarks: { input: WorkspaceInput; output: MessageBookmarkListResult };
   /** The viewer's Needs-you cells, newest first. Reading starts each cell's 24-hour clock. */
   readNeedsYou: { input: WorkspaceInput; output: NeedsYouListResult };
@@ -65,6 +67,8 @@ export type PhoneOperationMap = {
   cancelAgentTurn: { input: CancelAgentTurnInput; output: void };
   createHumanCorner: { input: CreateHumanCornerInput; output: IdResult };
   requestCornerClose: { input: RoomInput; output: void };
+  /** Room admins only: turn a corner's Feedback triage setting on or off. */
+  setCornerFeedbackTriage: { input: SetCornerFeedbackTriageInput; output: void };
   decideWritePermission: { input: DecideWritePermissionInput; output: MessageWriteResult };
   decideAgentGrant: { input: DecideAgentGrantInput; output: AgentGrantDecisionResult };
   revokeAgentGrant: { input: RevokeAgentGrantInput; output: AgentGrantDecisionResult };
@@ -279,6 +283,13 @@ export type SetMessageBookmarkInput = RoomInput & {
   readonly bookmarked: boolean;
 };
 export type SetMessageBookmarkResult = { readonly bookmarked: boolean };
+export type ReportMessageIssueInput = RoomInput & {
+  readonly messageId: string;
+  /** Optional words from the reporter; secret-shaped values are refused. */
+  readonly note?: string;
+};
+/** `duplicate` is true when this message was already reported. */
+export type ReportMessageIssueResult = { readonly itemId: string; readonly duplicate: boolean };
 export type MessageBookmarkListResult = { readonly bookmarks: readonly MessageBookmarkView[] };
 export type NeedsYouListResult = { readonly items: readonly NeedsYouItemView[] };
 export type NeedsYouCountResult = { readonly count: number };
@@ -435,6 +446,7 @@ export type SetRoomRepositoryInput = RoomInput & {
 };
 export type SetRoomTargetBranchInput = RoomInput & { readonly targetBranch: string };
 export type SetRoomGitHubEventsInput = RoomInput & { readonly enabled: boolean };
+export type SetCornerFeedbackTriageInput = RoomInput & { readonly enabled: boolean };
 export type ApproveCornerMergeInput = {
   readonly cornerId: string;
   /** Managers may explicitly override a known failing check result. */

@@ -160,6 +160,7 @@ describe('connect_app', () => {
       registry,
       undefined,
       composio,
+      undefined,
       objects,
     );
 

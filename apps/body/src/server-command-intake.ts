@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
+import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { isAgentCommand, type AgentCommand } from '@beeline/api-contract/daemon';
@@ -23,6 +24,26 @@ export class CommandExecutionContext {
         requestId: command.turnRequestId,
         taskId: command.rootCommandId,
         generationId: this.generationId,
+      }),
+      { mode: 0o600 },
+    );
+  }
+  /**
+   * The prompt sections this turn was assembled from, for `report_feedback`
+   * to attach. Rewrites the same context file the tools already read; a
+   * turn that has left keeps its empty file.
+   */
+  notePromptSections(ids: readonly string[]): void {
+    const command = this.current;
+    if (!command) return;
+    writeFileSync(
+      this.path,
+      JSON.stringify({
+        roomId: command.roomId,
+        requestId: command.turnRequestId,
+        taskId: command.rootCommandId,
+        generationId: this.generationId,
+        promptSectionIds: [...new Set(ids)],
       }),
       { mode: 0o600 },
     );

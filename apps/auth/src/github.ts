@@ -37,6 +37,18 @@ function isMissingGitHubResource(error: unknown): boolean {
 
 export class GitHubCredentialRejectedError extends Error {}
 
+/** A GitHub refusal with GitHub's own explanation, when it gave one. */
+export class GitHubRequestError extends GitHubHttpError {
+  constructor(
+    label: string,
+    status: number,
+    readonly reason?: string,
+  ) {
+    super(label, status);
+    if (reason) this.message = `${this.message}: ${reason}`;
+  }
+}
+
 async function jsonResponseObject(
   response: Response,
   label: string,
@@ -801,6 +813,47 @@ export class GitHubAppClient {
       } catch {}
       throw new Error(`GitHub pull request merge failed: HTTP ${response.status}${reason}`);
     }
+  }
+
+  /**
+   * One Issues REST call on `fullName` (the feedback loop's filing path).
+   * `path` is relative to the repository, e.g. `issues` or
+   * `issues/comments/7`. A refusal carries GitHub's own `message` so the
+   * caller can hand the reason back unchanged.
+   */
+  async issuesRequest(
+    accessToken: string,
+    fullName: string,
+    method: 'GET' | 'POST' | 'PATCH',
+    path: string,
+    body?: Record<string, unknown>,
+  ): Promise<unknown> {
+    const response = await fetch(
+      `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/${path}`,
+      {
+        method,
+        headers: {
+          ...githubHeaders(accessToken),
+          ...(body ? { 'content-type': 'application/json' } : {}),
+        },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+    let parsed: unknown;
+    try {
+      parsed = await response.json();
+    } catch {
+      parsed = undefined;
+    }
+    if (!response.ok) {
+      const message =
+        parsed && typeof parsed === 'object' && typeof (parsed as { message?: unknown }).message === 'string'
+          ? (parsed as { message: string }).message
+          : undefined;
+      throw new GitHubRequestError('GitHub issues', response.status, message);
+    }
+    return parsed;
   }
 
   #installationAccountFrom(body: Record<string, unknown>): GitHubInstallationAccount {

@@ -107,6 +107,7 @@ import {
   taggedIdentityIdsSql,
   typedMentionHandles,
 } from './message-mentions.js';
+import { recordSystemReportMention, reportMessageIssue } from './feedback.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import { needsYouExpiresAt, needsYouItems } from './needs-you.js';
 import { tombstoneInstitutionalMemoryForMessage } from './institutional-memory-shadow.js';
@@ -307,6 +308,7 @@ interface MessageRow {
   presentation: RoomViewMessage['presentation'];
   deleted_at?: Date | null;
   bookmarked?: boolean;
+  feedback_reported?: boolean;
   attachments: unknown[];
   reactions?: Record<string, string[]>;
   reaction_identities?: Array<{
@@ -593,6 +595,7 @@ function projectedMessage(
     presentation: row.deleted_at ? 'system' : row.presentation,
     ...(row.deleted_at ? { deleted: true } : {}),
     ...(row.bookmarked ? { bookmarked: true } : {}),
+    ...(row.feedback_reported ? { feedbackReported: true } : {}),
     ...(row.presentation === 'message'
       ? {
           reference: {
@@ -1583,7 +1586,11 @@ export class PhoneService {
             plan: RoomView['cornerPlan'] | null;
             objective: string;
             owner_agent_id: string | null;
-          }>(`SELECT plan,objective,owner_agent_id FROM corner_facts WHERE corner_id=$1`, [roomId])
+            feedback_triage: boolean;
+          }>(
+            `SELECT plan,objective,owner_agent_id,feedback_triage FROM corner_facts WHERE corner_id=$1`,
+            [roomId],
+          )
         ).rows[0],
       undefined,
     );
@@ -1815,6 +1822,7 @@ export class PhoneService {
       ...(room.parent_id && facts?.owner_agent_id
         ? { cornerOpenerAgentId: facts.owner_agent_id }
         : {}),
+      ...(room.parent_id && facts ? { cornerFeedbackTriage: facts.feedback_triage } : {}),
       briefing: decorateAttachments(briefing, attachmentFacts),
       ...(room.parent_id && plan ? { cornerPlan: plan } : {}),
       ...(cornerBrief
@@ -2159,6 +2167,8 @@ export class PhoneService {
              ${reactionIdentitiesSql('m')} reaction_identities,
              EXISTS(SELECT 1 FROM message_bookmarks bookmark
                WHERE bookmark.identity_id=$2 AND bookmark.message_id=m.id) bookmarked,
+             EXISTS(SELECT 1 FROM feedback_items report
+               WHERE report.source_kind='human' AND report.trigger_message_id=m.id) feedback_reported,
              '{}'::text[] tagged_ids
            FROM authorized_room room
            JOIN messages m ON m.room_id=room.id
@@ -2175,6 +2185,8 @@ export class PhoneService {
              ${reactionIdentitiesSql('m')} reaction_identities,
              EXISTS(SELECT 1 FROM message_bookmarks bookmark
                WHERE bookmark.identity_id=$2 AND bookmark.message_id=m.id) bookmarked,
+             EXISTS(SELECT 1 FROM feedback_items report
+               WHERE report.source_kind='human' AND report.trigger_message_id=m.id) feedback_reported,
              '{}'::text[] tagged_ids
            FROM authorized_room room
            JOIN messages m ON m.room_id=room.id
@@ -3282,6 +3294,12 @@ export class PhoneService {
       case 'deleteRoomMessage':
         await this.deleteRoomMessage(input as Input<'deleteRoomMessage'>, viewerId);
         return undefined as Output<Name>;
+      case 'reportMessageIssue':
+        return (await reportMessageIssue(
+          this.database,
+          input as Input<'reportMessageIssue'>,
+          viewerId,
+        )) as Output<Name>;
       case 'setMessageBookmark':
         return (await this.setMessageBookmark(
           input as Input<'setMessageBookmark'>,
@@ -3325,6 +3343,9 @@ export class PhoneService {
         )) as Output<Name>;
       case 'requestCornerClose':
         await this.requestCornerClose((input as Input<'requestCornerClose'>).roomId, viewerId);
+        return undefined as Output<Name>;
+      case 'setCornerFeedbackTriage':
+        await this.setCornerFeedbackTriage(input as Input<'setCornerFeedbackTriage'>, viewerId);
         return undefined as Output<Name>;
       case 'decideWritePermission':
         return (await this.decidePermission(
@@ -3879,6 +3900,12 @@ export class PhoneService {
       const lifecycleCommand = await routeHumanMessage(database, id);
       if (!lifecycleCommand)
         await this.noteUnansweredMentions(input.roomId, author, noticeAgentIds, id);
+      await recordSystemReportMention(database, {
+        roomId: input.roomId,
+        messageId: id,
+        authorId: author,
+        text: input.text,
+      });
       return {
         messageId: id,
         activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
@@ -4021,6 +4048,12 @@ export class PhoneService {
       const lifecycleCommand = await routeHumanMessage(database, id);
       if (!lifecycleCommand)
         await this.noteUnansweredMentions(input.roomId, author, noticeAgentIds, id);
+      await recordSystemReportMention(database, {
+        roomId: input.roomId,
+        messageId: id,
+        authorId: author,
+        text: input.text,
+      });
       return {
         messageId: id,
         activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
@@ -7025,6 +7058,23 @@ export class PhoneService {
     if (!updated.rowCount) throw new Error('room repository not configured');
     return this.roomRepository(input.roomId);
   }
+  /** Feedback triage is a Room admin's switch on one live corner (`feedback.ts`). */
+  private async setCornerFeedbackTriage(
+    input: Input<'setCornerFeedbackTriage'>,
+    viewerId: string,
+  ) {
+    if (typeof input.enabled !== 'boolean') throw new Error('enabled must be a boolean');
+    await this.requireRoomWorkspaceManager(input.roomId, viewerId);
+    const updated = await this.database.query(
+      `UPDATE corner_facts fact SET feedback_triage=$2,updated_at=now()
+       FROM rooms corner
+       WHERE fact.corner_id=$1 AND corner.id=fact.corner_id
+         AND corner.parent_id IS NOT NULL AND corner.archived_at IS NULL`,
+      [input.roomId, input.enabled],
+    );
+    if (!updated.rowCount) throw new Error('corner not found');
+    this.live?.publish({ type: 'invalidate', roomId: input.roomId, reason: 'corner' });
+  }
   private async setGitHubEvents(input: Input<'setRoomGitHubEvents'>, viewerId: string) {
     await this.requireRoomWorkspaceManager(input.roomId, viewerId);
     const updated = await this.database.query(
@@ -8639,7 +8689,16 @@ export class PhoneService {
       [viewerId, [...new Set(rows.map((row) => row.id))]],
     );
     const bookmarked = new Set(result.rows.map((row) => row.message_id));
-    for (const row of rows) row.bookmarked = bookmarked.has(row.id);
+    const reports = await this.database.query<{ trigger_message_id: string }>(
+      `SELECT trigger_message_id FROM feedback_items
+       WHERE source_kind='human' AND trigger_message_id=ANY($1::text[])`,
+      [[...new Set(rows.map((row) => row.id))]],
+    );
+    const reported = new Set(reports.rows.map((row) => row.trigger_message_id));
+    for (const row of rows) {
+      row.bookmarked = bookmarked.has(row.id);
+      row.feedback_reported = reported.has(row.id);
+    }
   }
   private projectRoomMessages(
     transcriptRows: readonly MessageRow[],
@@ -8765,6 +8824,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'completeWelcomeCards',
   'sendRoomMessage',
   'sendRoomReply',
+  'reportMessageIssue',
   'reactToMessage',
   'deleteRoomMessage',
   'setMessageBookmark',
@@ -8778,6 +8838,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'cancelAgentTurn',
   'createHumanCorner',
   'requestCornerClose',
+  'setCornerFeedbackTriage',
   'decideWritePermission',
   'decideAgentGrant',
   'revokeAgentGrant',

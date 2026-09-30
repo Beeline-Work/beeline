@@ -157,6 +157,7 @@ import {
   getInstitutionalContext,
   getInstitutionalMemoryTurnStats,
   heartbeatInstitutionalMemoryJob,
+  precomputeInstitutionalQueryEmbedding,
   proposeInstitutionalMemory,
   searchInstitutionalMemory,
   recordInstitutionalMemoryTurnOutcome,
@@ -164,6 +165,7 @@ import {
   type InstitutionalMemoryShadowConfig,
 } from './institutional-memory-shadow.js';
 import { searchInstitutionalHistory } from './institutional-history.js';
+import type { AfterCommit, EmbedFn } from './institutional-memory-embeddings.js';
 import { loadWorkspaceSkill, saveSkill } from './institutional-skills.js';
 import {
   archiveWorkflow,
@@ -293,6 +295,11 @@ export class DaemonService {
     private readonly composio?: ComposioApps,
   ) {}
 
+  /** A turn's memory query, embedded before its command transaction opened. */
+  private memoryEmbed: EmbedFn | undefined;
+  /** Collects network work that must wait for the command transaction to commit. */
+  private afterCommit: AfterCommit | undefined;
+
   /** When each corner last woke, so `CORNER_WAKE_MIN_INTERVAL_MS` can be held. */
   private readonly lastCornerWake = new Map<string, number>();
 
@@ -420,6 +427,22 @@ export class DaemonService {
       buffered.publish = (event) => {
         events.push(event);
       };
+      const memoryEmbed = !this.institutionalMemoryShadow.live
+        ? undefined
+        : name === 'getInstitutionalContext'
+          ? await precomputeInstitutionalQueryEmbedding(this.database, {
+              kind: 'context',
+              roomId: scopedRoom,
+              agentId: authenticatedAgentId,
+              requestId: String(candidate.requestId ?? candidate.turnId ?? ''),
+            })
+          : name === 'searchInstitutionalMemory'
+            ? await precomputeInstitutionalQueryEmbedding(this.database, {
+                kind: 'search',
+                query: typeof candidate.query === 'string' ? candidate.query : '',
+              })
+            : undefined;
+      const committedTasks: Parameters<AfterCommit>[0][] = [];
       const output = await this.database.transaction(async (db) => {
         const requestId = candidate.requestId ?? candidate.turnId;
         if (name === 'postAgentTurnReceipt' && candidate.status === 'failed') {
@@ -532,6 +555,10 @@ export class DaemonService {
           this.registryMcpOAuth,
           this.composio,
         );
+        scoped.memoryEmbed = memoryEmbed;
+        scoped.afterCommit = (task) => {
+          committedTasks.push(task);
+        };
         const result = await scoped.execute(name, input, authenticatedAgentId);
         if (name === 'requestAgentGrant') {
           await db.query(
@@ -643,6 +670,13 @@ export class DaemonService {
         }
         return result;
       });
+      for (const task of committedTasks) {
+        try {
+          await task(this.database);
+        } catch (error) {
+          console.error('[daemon] post-commit task failed', error);
+        }
+      }
       for (const event of events) {
         if (event.type !== 'invalidate' || !event.committedRow) {
           this.live.publish(event);
@@ -734,6 +768,7 @@ export class DaemonService {
         return (await getInstitutionalContext(
           this.database,
           this.authorizedCommand,
+          this.memoryEmbed,
         )) as Output<Name>;
       case 'proposeInstitutionalMemory':
         if (!this.commandTransaction || !this.authorizedCommand) {
@@ -746,6 +781,7 @@ export class DaemonService {
           this.database,
           this.authorizedCommand,
           input as Input<'proposeInstitutionalMemory'>,
+          this.afterCommit,
         )) as Output<Name>;
       case 'searchInstitutionalMemory':
         if (!this.commandTransaction || !this.authorizedCommand) {
@@ -758,6 +794,7 @@ export class DaemonService {
           this.database,
           this.authorizedCommand,
           input as Input<'searchInstitutionalMemory'>,
+          this.memoryEmbed,
         )) as Output<Name>;
       case 'searchInstitutionalHistory':
         if (!this.commandTransaction || !this.authorizedCommand) {
@@ -800,6 +837,8 @@ export class DaemonService {
           this.database,
           this.authorizedCommand,
           input as Input<'saveSkill'>,
+          undefined,
+          this.afterCommit,
         )) as Output<Name>;
       case 'saveWorkflow':
         if (!this.commandTransaction || !this.authorizedCommand) {
@@ -809,6 +848,7 @@ export class DaemonService {
           this.database,
           this.authorizedCommand,
           input as Input<'saveWorkflow'>,
+          this.afterCommit,
         )) as Output<Name>;
       case 'startWorkflow':
         if (!this.commandTransaction || !this.authorizedCommand) {

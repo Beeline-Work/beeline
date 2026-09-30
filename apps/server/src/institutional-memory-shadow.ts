@@ -47,7 +47,10 @@ import {
   memoryEnvLimit,
   scheduleEmbedInstitutionalMemoryItem,
   scheduleEmbedWorkspaceSkillVersion,
+  precomputedEmbedFn,
+  runAfterCommit,
   withDeadline,
+  type AfterCommit,
   type EmbedFn,
 } from './institutional-memory-embeddings.js';
 import {
@@ -410,6 +413,7 @@ function boundedExistingItems(
     canonical_key: string;
     body: string;
     version: number;
+    explicit_save?: boolean;
   }[],
 ): InstitutionalMemoryShadowJob['existingItems'] {
   const selected: InstitutionalMemoryShadowJob['existingItems'][number][] = [];
@@ -422,6 +426,7 @@ function boundedExistingItems(
       canonicalKey: item.canonical_key,
       body: item.body,
       version: item.version,
+      ...(item.explicit_save ? { explicitSave: true } : {}),
     };
     const itemBytes = Buffer.byteLength(JSON.stringify(projected), 'utf8') + 1;
     if (bytes + itemBytes > INSTITUTIONAL_MEMORY_EXISTING_ITEM_BYTE_LIMIT) break;
@@ -616,7 +621,7 @@ async function nearestInstitutionalMemoryCandidates(
   const lastReply = [...job.messages].reverse().find((message) =>
     message.authorId !== job.requesterIdentityId)?.text ?? '';
   const text = clipUtf8(`${trigger}\n${lastReply}`, 2_000);
-  if (!text) return undefined;
+  if (!text.trim()) return undefined;
   const embedded = await withDeadline(embed, 3_000)(text, 'query');
   if (embedded.outcome !== 'served' || !embedded.vector) return undefined;
   const rows = (await database.query<{
@@ -626,13 +631,14 @@ async function nearestInstitutionalMemoryCandidates(
     canonical_key: string;
     body: string;
     version: number;
+    explicit_save: boolean;
     distance: number;
   }>(
     `SELECT item.id,item.kind,item.subject_identity_id,item.canonical_key,item.body,
-            item.version,(item.embedding <=> $4::vector) distance
+            item.version,item.explicit_save,(item.embedding <=> $4::vector) distance
      FROM institutional_memory_items item
      WHERE item.workspace_id=$1 AND item.state='active' AND item.deleted_at IS NULL
-       AND item.embedding IS NOT NULL
+       AND item.embedding IS NOT NULL AND item.canonical_key<>$7
        AND ((item.kind='human_profile_fact' AND item.subject_identity_id=$2)
          OR ($3::boolean=false AND item.kind='workspace_fact'))
        AND NOT EXISTS (
@@ -645,7 +651,8 @@ async function nearestInstitutionalMemoryCandidates(
     [job.workspaceId, job.requesterIdentityId, job.directMessage,
       pgvectorLiteral(embedded.vector),
       memoryEnvLimit('INSTITUTIONAL_MEMORY_ALIGN_MAX_DISTANCE', INSTITUTIONAL_MEMORY_ALIGN_MAX_DISTANCE),
-      memoryEnvLimit('INSTITUTIONAL_MEMORY_ALIGN_CANDIDATES', INSTITUTIONAL_MEMORY_ALIGN_CANDIDATES)],
+      memoryEnvLimit('INSTITUTIONAL_MEMORY_ALIGN_CANDIDATES', INSTITUTIONAL_MEMORY_ALIGN_CANDIDATES),
+      INSTITUTIONAL_STANDING_PREFERENCE_KEY],
   )).rows;
   return boundedExistingItems(rows).map((item, index) =>
     ({ ...item, distance: rows[index]?.distance }));
@@ -939,18 +946,20 @@ async function applyReviewProposalV2(
   await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
     `institutional-memory:${job.workspace_id}`,
   ]);
-  const previous: Array<{
+  type TargetRow = {
     id: string; version: number; explicit_save: boolean; canonical_key: string; body: string;
-  }> = [];
+    kind: InstitutionalMemoryItem['kind']; subject_identity_id: string | null; audience_kind: string;
+  };
+  const previous: TargetRow[] = [];
+  const retired: NonNullable<InstitutionalMemoryReviewProposalV2['retire']>[number][] = [];
   for (const item of requested) {
     if (!offered.has(item.itemId)) throw new Error('institutional memory proposal CAS conflict');
-    const row = (await db.query<{
-      id: string; version: number; explicit_save: boolean; canonical_key: string; body: string;
-    }>(
-      `SELECT item.id,item.version,item.explicit_save,item.canonical_key,item.body
+    const row = (await db.query<TargetRow>(
+      `SELECT item.id,item.version,item.explicit_save,item.canonical_key,item.body,
+              item.kind,item.subject_identity_id,item.audience_kind
        FROM institutional_memory_items item
        WHERE item.id=$1 AND item.workspace_id=$2 AND item.state='active'
-         AND item.deleted_at IS NULL AND item.version=$3
+         AND item.deleted_at IS NULL AND item.version=$3 AND item.canonical_key<>$6
          AND ((item.kind='human_profile_fact' AND item.subject_identity_id=$4)
            OR ($5::boolean=false AND item.kind='workspace_fact'))
          AND NOT EXISTS (
@@ -959,12 +968,26 @@ async function applyReviewProposalV2(
            WHERE source.item_id=item.id AND message.deleted_at IS NOT NULL)
        FOR UPDATE OF item`,
       [item.itemId, job.workspace_id, item.baseVersion, job.requester_identity_id,
-        Array.isArray(job.direct_participants)],
+        Array.isArray(job.direct_participants), INSTITUTIONAL_STANDING_PREFERENCE_KEY],
     )).rows[0];
     if (!row) throw new Error('institutional memory proposal CAS conflict');
-    if (row.explicit_save &&
-        (item.reason !== null || proposal.candidateType !== 'correction_candidate')) {
-      throw new Error('institutional memory proposal CAS conflict');
+    if (item.reason !== null) {
+      // An explicit save is never retired by save-time review. Skip that one
+      // entry rather than failing the whole proposal: a retry would see the
+      // same items and fail the same way, losing any valid create with it.
+      if (row.explicit_save) continue;
+      retired.push({ itemId: item.itemId, baseVersion: item.baseVersion, reason: item.reason });
+    } else {
+      if (row.explicit_save && proposal.candidateType !== 'correction_candidate') {
+        throw new Error('institutional memory proposal CAS conflict');
+      }
+      // A supersede replaces the fact in place: it may not move a profile fact
+      // into shared workspace memory, or onto another person.
+      if (row.kind !== proposal.memoryKind ||
+          row.subject_identity_id !== (proposal.subjectIdentityId ?? null) ||
+          row.audience_kind !== proposal.audience) {
+        throw new Error('institutional memory proposal CAS conflict');
+      }
     }
     previous.push(row);
   }
@@ -975,8 +998,8 @@ async function applyReviewProposalV2(
        SET state='stale',body='',deleted_at=now(),updated_at=now()
        WHERE id=$1 AND state='active'`, [item.id]);
   }
-  for (const retired of proposal.retire ?? []) {
-    const item = previous.find((row) => row.id === retired.itemId)!;
+  for (const entry of retired) {
+    const item = previous.find((row) => row.id === entry.itemId)!;
     await db.query(
       `INSERT INTO institutional_memory_fact_events
        (id,workspace_id,job_id,source_room_id,source_message_id,canonical_key,body,
@@ -984,7 +1007,7 @@ async function applyReviewProposalV2(
        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
       [randomUUID(), job.workspace_id, job.id, job.source_room_id, job.source_message_id,
         item.canonical_key, 'Retired memory item.', extractorVersion, proposal.confidence,
-        retired.reason, retired.itemId],
+        entry.reason, entry.itemId],
     );
   }
   if (proposal.action === 'retire') return undefined;
@@ -1445,6 +1468,35 @@ function skillMatches(skill: WorkspaceSkillIndexCandidate, words: ReadonlySet<st
  * transparent across the Workspace; only the durable root requester's own
  * profile is loaded. No Room roster is used as a profile fan-out axis.
  */
+/**
+ * Embed a turn's memory query on the pool, before its command transaction
+ * opens, so no transaction or row lock waits on the network. The returned
+ * embedder serves only that text; `getInstitutionalContext` and
+ * `searchInstitutionalMemory` still read and authorize everything themselves.
+ */
+export async function precomputeInstitutionalQueryEmbedding(
+  database: SqlDatabase,
+  input:
+    | { kind: 'context'; roomId: string; agentId: string; requestId: string }
+    | { kind: 'search'; query: string },
+  embed: EmbedFn = createDefaultEmbedFn(),
+): Promise<EmbedFn> {
+  const text = input.kind === 'search'
+    ? input.query.trim()
+    : (await database.query<{ text: string }>(
+      `SELECT root.text FROM agent_commands command
+       JOIN messages root ON root.id=command.root_source_message_id AND root.deleted_at IS NULL
+       WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3
+       ORDER BY command.created_at DESC LIMIT 1`,
+      [input.roomId, input.agentId, input.requestId],
+    )).rows[0]?.text;
+  if (!text) return precomputedEmbedFn('', { outcome: 'error', ms: 0 });
+  const result = await withDeadline(embed, input.kind === 'search'
+    ? SEARCH_MEMORY_EMBEDDING_TIMEOUT_MS
+    : INSTITUTIONAL_CONTEXT_EMBEDDING_TIMEOUT_MS)(text, 'query');
+  return precomputedEmbedFn(text, result);
+}
+
 export async function getInstitutionalContext(
   database: SqlDatabase,
   command: CommandRow,
@@ -1789,6 +1841,7 @@ export async function proposeInstitutionalMemory(
   database: SqlDatabase,
   command: CommandRow,
   input: ProposeInstitutionalMemoryInput,
+  afterCommit?: AfterCommit,
 ): Promise<ProposeInstitutionalMemoryResult> {
   const proposal = await database.transaction(async (db) => {
     const authority = (
@@ -1902,10 +1955,11 @@ export async function proposeInstitutionalMemory(
     });
     return applied;
   });
-  // Event-driven, not polled: this save schedules its OWN row's embed against
-  // the outer (non-transactional) `database` handle, never blocking or
-  // failing the save above. See institutional-memory-embeddings.ts.
-  scheduleEmbedInstitutionalMemoryItem(database, proposal.itemId);
+  // Event-driven, not polled: this save schedules its OWN row's embed once
+  // the caller's transaction commits, on the pool, never blocking or failing
+  // the save above. See institutional-memory-embeddings.ts.
+  runAfterCommit(afterCommit, database, (pool) =>
+    scheduleEmbedInstitutionalMemoryItem(pool, proposal.itemId));
   return proposal;
 }
 

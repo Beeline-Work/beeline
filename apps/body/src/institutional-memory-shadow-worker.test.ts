@@ -3,6 +3,7 @@ import type {
   InstitutionalMemoryProposal,
   InstitutionalMemoryShadowJob,
 } from '@beeline/api-contract/daemon';
+import { parseInstitutionalMemoryReviewProposal } from '@beeline/api-contract/daemon';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import {
   InstitutionalMemoryShadowWorker,
@@ -91,9 +92,21 @@ describe('institutional memory shadow worker', () => {
     const nearest = institutionalMemoryExtractionPrompt({
       ...job, context: { alignment: 'nearest', offeredItemIds: [] },
     });
-    expect(nearest).toContain('proposalVersion 2');
-    expect(nearest).toContain('supersede');
-    expect(nearest).toContain('retire');
+    expect(nearest).toContain('proposalVersion (2)');
+    expect(nearest).toContain('source {roomId,messageIds}');
+    expect(nearest).toContain('classification {subjectIsRequester,rationale}');
+    expect(nearest).toContain('fact_candidate');
+    expect(nearest).toContain('explicitSave');
+    // Output shaped the way the prompt asks, including nulls for fields that
+    // do not apply, passes the server's strict parser.
+    expect(parseInstitutionalMemoryReviewProposal({
+      proposalVersion: 2, action: 'create', candidateType: 'fact_candidate',
+      memoryKind: 'workspace_fact', subjectIdentityId: null, canonicalKey: 'package-manager',
+      body: 'This repository uses pnpm.', keywords: ['pnpm'],
+      source: { roomId: 'room-1', messageIds: ['message-1'] }, audience: 'workspace',
+      confidence: 0.9, classification: { subjectIsRequester: false, rationale: 'Repository fact.' },
+      target: null, retire: null,
+    })).toMatchObject({ proposalVersion: 2, action: 'create' });
     expect(
       institutionalMemoryExtractionPrompt({
         ...job,
@@ -159,6 +172,8 @@ describe('institutional memory shadow worker', () => {
       'claimInstitutionalMemoryJob',
       'completeInstitutionalMemoryJob',
     ]);
+    // Only a worker that says it is v2 gets nearest-memory alignment.
+    expect(calls[0]?.input).toMatchObject({ extractorVersion: 'institutional-shadow-v2' });
     expect(calls[1]?.input).toMatchObject({
       jobId: 'job-1',
       leaseToken: 'lease-1',

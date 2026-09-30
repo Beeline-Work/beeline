@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import { DELIVERY_PICKUP_WINDOW_MS } from './connection-presence.js';
-import { CORNER_WORKFLOW_SLUG } from './corner-workflow.js';
 import type { SqlDatabase } from './database.js';
 import type { InstitutionalMemoryShadowConfig } from './institutional-memory-shadow.js';
 import {
@@ -51,7 +50,6 @@ function agedBeyondSql(anchor: string, days: string): string {
 }
 
 const ITEM_AGE_ANCHOR = `GREATEST(item.updated_at,COALESCE(item.last_served_at,item.updated_at))`;
-const SKILL_AGE_ANCHOR = `GREATEST(skill.updated_at,COALESCE(skill.last_served_at,skill.updated_at))`;
 
 /**
  * Sample whether an authorized helper host can serve this Workspace and record
@@ -575,32 +573,11 @@ async function deterministicLifecycle(
     [workspaceId, now, expireAfterDays, explicitExpireAfterDays],
   );
 
-  // The built-in Corner workflow is system-owned infrastructure, present in
-  // every Workspace whether or not it is ever discovered/loaded like a
-  // user-authored skill — age-based staleness has no meaning for it, and it
-  // must never silently archive out from under running corners.
-  const staleSkills = await database.query<{ id: string }>(
-    `UPDATE workspace_skills skill SET state='stale',updated_at=$2
-     WHERE skill.workspace_id=$1 AND skill.state='active'
-       AND NOT (skill.kind='workflow' AND skill.slug=$4)
-       AND ${agedBeyondSql(SKILL_AGE_ANCHOR, '$3')}
-     RETURNING id`,
-    [workspaceId, now, expireAfterDays, CORNER_WORKFLOW_SLUG],
-  );
-  // Retention ends the CONTENT, not the record: the row, its immutable versions
-  // and every recorded load stay, exactly as the memory-item path keeps its own
-  // sources and supersession. Deleting the skill would cascade its use ledger
-  // away and retroactively shrink the discoverability measurements.
-  await database.query(
-    `UPDATE workspace_skill_versions version
-     SET markdown='',source_deleted_at=$2
-     WHERE version.skill_id=ANY($1::uuid[]) AND version.source_deleted_at IS NULL`,
-    [staleSkills.rows.map((row) => row.id), now],
-  );
+  // Skills and workflows never expire: only memory items age out.
   return {
     staleItems: staleItems.rowCount,
     archivedItems: 0,
-    staleSkills: staleSkills.rowCount,
+    staleSkills: 0,
     archivedSkills: 0,
   };
 }

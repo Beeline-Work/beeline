@@ -101,14 +101,73 @@ it('offers nearest in-scope rows to a v2 worker and links a cross-key supersessi
   console.log(`Memory correction: old body=${JSON.stringify(old?.body)}, new body=${JSON.stringify(replacement?.body)}, linked=${replacement?.supersedes_id===OLD}`);
 });
 
-it('keeps old workers on the recent payload and rejects an unoffered or stale target', async () => {
+it('keeps old workers on the recent payload', async () => {
   const job=await claim();
   expect(job.context?.alignment).toBeUndefined();
+  expect(job.context?.offeredItemIds).toBeUndefined();
   expect(job.existingItems).toHaveLength(2);
-  await expect(complete(job,proposal('supersede','30000000-0000-4000-8000-00000000ffff')))
-    .rejects.toThrow('CAS conflict');
+});
+
+it('rejects a target that exists and is in scope but was not offered', async () => {
+  const job=await claim('institutional-shadow-v2');
+  const later='30000000-0000-4000-8000-00000000a119';
+  await database.query(`INSERT INTO institutional_memory_items
+    (id,workspace_id,kind,canonical_key,body,source_room_id,source_message_id,audience_kind,
+     confidence,version,embedding)
+    VALUES($1,$2,'workspace_fact','daeun.city.osaka','Daeun lives in Osaka.',$3,$4,'workspace',0.9,1,$5::vector)`,
+    [later,WORKSPACE,ROOM,SOURCE,pgvectorLiteral(vector)]);
+  expect(job.context?.offeredItemIds).not.toContain(later);
+  await expect(complete(job,proposal('supersede',later))).rejects.toThrow('CAS conflict');
+});
+
+it('rejects an offered target whose version moved on', async () => {
+  const job=await claim('institutional-shadow-v2');
+  expect(job.context?.offeredItemIds).toContain(OLD);
   await database.query(`UPDATE institutional_memory_items SET version=2 WHERE id=$1`,[OLD]);
   await expect(complete(job,proposal('supersede',OLD))).rejects.toThrow('CAS conflict');
+  expect((await database.query<{body:string}>(
+    `SELECT body FROM institutional_memory_items WHERE id=$1`,[OLD])).rows[0]?.body).toBe('Daeun lives in Tokyo.');
+});
+
+it('marks explicit saves in the offered items', async () => {
+  const job=await claim('institutional-shadow-v2');
+  expect(job.existingItems.find((item) => item.id===EXPLICIT)?.explicitSave).toBe(true);
+  expect(job.existingItems.find((item) => item.id===OLD)?.explicitSave).toBeUndefined();
+});
+
+it('refuses a supersede that changes the kind of the offered fact', async () => {
+  const profile='30000000-0000-4000-8000-00000000a11a';
+  await database.query(`INSERT INTO institutional_memory_items
+    (id,workspace_id,kind,subject_identity_id,canonical_key,body,source_room_id,source_message_id,
+     audience_kind,confidence,version,embedding)
+    VALUES($1,$2,'human_profile_fact',$3,'human.city','Human lives in Busan.',$4,$5,
+      'human_profile',0.9,1,$6::vector)`,
+    [profile,WORKSPACE,HUMAN,ROOM,SOURCE,pgvectorLiteral(vector)]);
+  const job=await claim('institutional-shadow-v2');
+  expect(job.context?.offeredItemIds).toContain(profile);
+  await expect(complete(job,proposal('supersede',profile))).rejects.toThrow('CAS conflict');
+  expect((await database.query<{state:string;body:string}>(
+    `SELECT state,body FROM institutional_memory_items WHERE id=$1`,[profile])).rows[0])
+    .toMatchObject({state:'active',body:'Human lives in Busan.'});
+});
+
+it('never offers or replaces the standing preference', async () => {
+  const standing='30000000-0000-4000-8000-00000000a11b';
+  await database.query(`INSERT INTO institutional_memory_items
+    (id,workspace_id,kind,subject_identity_id,canonical_key,body,source_room_id,source_message_id,
+     audience_kind,confidence,version,embedding,explicit_save)
+    VALUES($1,$2,'human_profile_fact',$3,'standing','Reply in short sentences.',$4,$5,
+      'human_profile',1,1,$6::vector,true)`,
+    [standing,WORKSPACE,HUMAN,ROOM,SOURCE,pgvectorLiteral(vector)]);
+  const job=await claim('institutional-shadow-v2');
+  expect(job.context?.offeredItemIds).not.toContain(standing);
+  await database.query(`UPDATE institutional_memory_jobs
+    SET context=jsonb_set(context,'{offeredItemIds}',(context->'offeredItemIds')||to_jsonb($2::text))
+    WHERE id=$1`,[job.id,standing]);
+  const forged={...proposal('supersede',standing),memoryKind:'human_profile_fact',
+    subjectIdentityId:HUMAN,audience:'human_profile',canonicalKey:'human.style',
+    classification:{subjectIsRequester:true,rationale:'The turn corrected the style.'}};
+  await expect(complete(job,forged)).rejects.toThrow('CAS conflict');
 });
 
 it('gives a v2 worker the recent payload when embedding is unavailable', async () => {
@@ -121,12 +180,33 @@ it('gives a v2 worker the recent payload when embedding is unavailable', async (
 
 it('retires an ordinary item without replacement and protects an explicit save', async () => {
   const job=await claim('institutional-shadow-v2');
-  await expect(complete(job,proposal('retire',EXPLICIT))).rejects.toThrow('CAS conflict');
-  await complete(job,proposal('retire',OLD));
-  expect((await database.query<{body:string;deleted_at:Date|null}>(
-    `SELECT body,deleted_at FROM institutional_memory_items WHERE id=$1`,[OLD])).rows[0])
-    .toMatchObject({body:''});
+  await complete(job,{...proposal('retire',OLD),
+    retire:[{itemId:OLD,baseVersion:1,reason:'obsolete'},{itemId:EXPLICIT,baseVersion:1,reason:'duplicate'}]});
+  expect((await database.query<{state:string;body:string;deleted_at:Date|null}>(
+    `SELECT state,body,deleted_at FROM institutional_memory_items WHERE id=$1`,[OLD])).rows[0])
+    .toMatchObject({state:'stale',body:''});
+  expect((await database.query<{retirement_reason:string}>(
+    `SELECT retirement_reason FROM institutional_memory_fact_events WHERE target_item_id=$1`,[OLD])).rows)
+    .toEqual([{retirement_reason:'obsolete'}]);
   expect((await database.query(`SELECT 1 FROM institutional_memory_items WHERE supersedes_id=$1`,[OLD])).rowCount).toBe(0);
+  expect((await database.query<{state:string;body:string}>(
+    `SELECT state,body FROM institutional_memory_items WHERE id=$1`,[EXPLICIT])).rows[0])
+    .toMatchObject({state:'active',body:'Daeun likes ramen.'});
+});
+
+it('keeps a valid create when the same proposal names an explicit save to retire', async () => {
+  const job=await claim('institutional-shadow-v2');
+  await complete(job,{
+    proposalVersion:2,action:'create',candidateType:'fact_candidate',memoryKind:'workspace_fact',
+    canonicalKey:'daeun.city.seoul',body:'Daeun lives in Seoul.',keywords:['daeun','seoul'],
+    audience:'workspace',source:{roomId:ROOM,messageIds:[MESSAGE]},confidence:0.9,
+    classification:{subjectIsRequester:false,rationale:'The turn states a new city.'},
+    target:null,retire:[{itemId:EXPLICIT,baseVersion:1,reason:'contradicted'}],
+  });
+  expect((await database.query(`SELECT 1 FROM institutional_memory_items
+    WHERE canonical_key='daeun.city.seoul' AND state='active'`)).rowCount).toBe(1);
+  expect((await database.query<{state:string}>(
+    `SELECT state FROM institutional_memory_items WHERE id=$1`,[EXPLICIT])).rows[0]?.state).toBe('active');
 });
 
 it('replaces an explicit save only for a correction and carries its long-lived flag', async () => {

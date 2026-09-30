@@ -54,6 +54,73 @@ it('expires reviewer saves after 90 days and explicit saves after 365, blanking 
   expect((await database.query(`SELECT 1 FROM institutional_memory_jobs WHERE trigger_kind='curator'`)).rowCount).toBe(0);
 });
 
+it('never expires skills or workflows, however long they go unused', async () => {
+  const skills = [
+    ['40000000-0000-4000-8000-000000000301', 'old-procedure', 'procedure'],
+    ['40000000-0000-4000-8000-000000000302', 'old-workflow', 'workflow'],
+  ] as const;
+  for (const [id, slug, kind] of skills) {
+    await database.query(`INSERT INTO workspace_skills
+      (id,workspace_id,slug,description,state,current_version,revision,source_room_id,
+       repository,target_commit,path,kind,updated_at)
+      VALUES($1,$2,$3,'Unused for a long time','active',1,1,$4,'','',NULL,$5,
+        $6::timestamptz-interval '400 days')`,
+      [id, WORKSPACE, slug, ROOM, kind, NOW]);
+    await database.query(`INSERT INTO workspace_skill_versions
+      (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,
+       repository,target_commit,path,extractor_version,model)
+      VALUES($1,1,$2,$3,NULL,ARRAY[$4],'','',NULL,'save-v1','n/a')`,
+      [id, `# ${slug}`, 'b'.repeat(64), MESSAGE]);
+  }
+  await runInstitutionalCuratorCycle(database, config, NOW);
+  expect((await database.query<{ state: string; markdown: string }>(
+    `SELECT skill.state,version.markdown FROM workspace_skills skill
+     JOIN workspace_skill_versions version ON version.skill_id=skill.id
+     WHERE skill.id=ANY($1::uuid[]) ORDER BY skill.id`,
+    [skills.map(([id]) => id)],
+  )).rows).toEqual([
+    { state: 'active', markdown: '# old-procedure' },
+    { state: 'active', markdown: '# old-workflow' },
+  ]);
+});
+
+it('restores items the old curator only aged out, and blanks what was replaced', async () => {
+  const aged = '30000000-0000-4000-8000-000000000311';
+  const archived = '30000000-0000-4000-8000-000000000312';
+  const replaced = '30000000-0000-4000-8000-000000000313';
+  const successor = '30000000-0000-4000-8000-000000000314';
+  const shadowed = '30000000-0000-4000-8000-000000000315';
+  const current = '30000000-0000-4000-8000-000000000316';
+  const rows: [string, string, string, string | null][] = [
+    [aged, 'aged', 'stale', null],
+    [archived, 'archived', 'archived', null],
+    [replaced, 'replaced', 'stale', null],
+    [successor, 'replaced', 'active', replaced],
+    [shadowed, 'shadowed', 'stale', null],
+    [current, 'shadowed', 'active', null],
+  ];
+  for (const [id, key, state, supersedes] of rows) {
+    await database.query(`INSERT INTO institutional_memory_items
+      (id,workspace_id,kind,canonical_key,body,state,source_room_id,source_message_id,
+       audience_kind,confidence,version,supersedes_id,explicit_save)
+      VALUES($1,$2,'workspace_fact',$3,$4,$5,$6,$7,'workspace',0.9,1,$8,true)`,
+      [id, WORKSPACE, key, `Fact ${id.slice(-2)}`, state, ROOM, MESSAGE, supersedes]);
+  }
+  await migrateData(database);
+  const states = (await database.query<{ id: string; state: string; body: string }>(
+    `SELECT id,state,body FROM institutional_memory_items WHERE id=ANY($1::uuid[]) ORDER BY id`,
+    [rows.map(([id]) => id)],
+  )).rows;
+  expect(states.map(({ state, body }) => [state, body])).toEqual([
+    ['active', 'Fact 11'],
+    ['active', 'Fact 12'],
+    ['stale', ''],
+    ['active', 'Fact 14'],
+    ['stale', ''],
+    ['active', 'Fact 16'],
+  ]);
+});
+
 it('marks every unfinished curator job dead during migration and backfills explicit-save provenance', async () => {
   const saved = '30000000-0000-4000-8000-000000000304';
   await database.query(`INSERT INTO institutional_memory_items

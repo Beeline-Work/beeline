@@ -339,7 +339,7 @@ export interface InstitutionalMemoryShadowJob {
   readonly existingItems: readonly (Pick<
     InstitutionalMemoryItem,
     'id' | 'kind' | 'subjectIdentityId' | 'canonicalKey' | 'body' | 'version'
-  > & { readonly distance?: number })[];
+  > & { readonly distance?: number; readonly explicitSave?: boolean })[];
 }
 
 export type ClaimInstitutionalMemoryJobResult =
@@ -373,7 +373,7 @@ export interface InstitutionalContextSnapshot {
   /** The requester's standing preference text, outside the memory budget. */
   readonly standingPreference?: string;
   /** This snapshot's own embedding round trip, for the turn trace. Absent
-   *  when the embedding step never ran (memory disabled, or no key configured). */
+   *  when memory is off for the Workspace; `disabled` when no key is configured. */
   readonly embeddingMs?: number;
   readonly embeddingOutcome?: 'served' | 'timed-out' | 'disabled' | 'error';
 }
@@ -823,7 +823,7 @@ export function parseInstitutionalMemoryReviewProposal(
       typeof classification.stillTrueForAnotherRequester !== 'boolean') {
     throw new Error('institutional memory classification test is invalid');
   }
-  const retire = raw.retire === undefined ? [] : raw.retire;
+  const retire = omitted(raw.retire) ? [] : raw.retire;
   if (!Array.isArray(retire) || retire.length > 3) {
     throw new Error('institutional memory retired items are invalid');
   }
@@ -854,7 +854,7 @@ export function parseInstitutionalMemoryReviewProposal(
       itemId: boundedText(item.itemId, 'institutional memory review target id', 200),
       baseVersion: item.baseVersion as number,
     };
-  } else if (raw.target !== undefined) {
+  } else if (!omitted(raw.target)) {
     throw new Error('institutional memory review target is not allowed');
   }
   if (target && retireItems.some((item) => item.itemId === target!.itemId)) {
@@ -863,7 +863,7 @@ export function parseInstitutionalMemoryReviewProposal(
   if (raw.action === 'retire') {
     if (!retireItems.length || ['body', 'canonicalKey', 'keywords', 'memoryKind', 'audience',
       'candidateType', 'subjectIdentityId']
-      .some((key) => raw[key] !== undefined)) {
+      .some((key) => !omitted(raw[key]))) {
       throw new Error('institutional memory retire action is invalid');
     }
     return {
@@ -873,7 +873,8 @@ export function parseInstitutionalMemoryReviewProposal(
   }
   const fact = parseInstitutionalMemoryProposal({
     proposalVersion: 1, candidateType: raw.candidateType, memoryKind: raw.memoryKind,
-    subjectIdentityId: raw.subjectIdentityId, canonicalKey: raw.canonicalKey,
+    subjectIdentityId: omitted(raw.subjectIdentityId) ? undefined : raw.subjectIdentityId,
+    canonicalKey: raw.canonicalKey,
     body: raw.body, keywords: raw.keywords, source: raw.source,
     audience: raw.audience, confidence: raw.confidence, classification: raw.classification,
     cas: { baseVersion: null },

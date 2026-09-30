@@ -2514,6 +2514,31 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
       )
       UPDATE institutional_memory_items SET explicit_save=true
       WHERE id IN (SELECT id FROM explicit_chain) AND explicit_save=false`);
+    // The old curator marked items stale after 30 unused days. Those rows only
+    // aged out, so they come back and age under the new 90/365-day rule
+    // instead of being blanked. A row that was superseded, whose key has a
+    // current row, or whose source was deleted is really gone.
+    await database.query(`WITH aged AS (
+        SELECT DISTINCT ON (item.workspace_id,item.kind,COALESCE(item.subject_identity_id,''),
+                            item.canonical_key,item.audience_kind) item.id
+        FROM institutional_memory_items item
+        WHERE item.state IN ('stale','archived') AND item.deleted_at IS NULL AND item.body<>''
+          AND NOT EXISTS (SELECT 1 FROM institutional_memory_items newer
+            WHERE newer.supersedes_id=item.id)
+          AND NOT EXISTS (SELECT 1 FROM institutional_memory_items current
+            WHERE current.state='active' AND current.workspace_id=item.workspace_id
+              AND current.kind=item.kind
+              AND COALESCE(current.subject_identity_id,'')=COALESCE(item.subject_identity_id,'')
+              AND current.canonical_key=item.canonical_key
+              AND current.audience_kind=item.audience_kind)
+          AND NOT EXISTS (SELECT 1 FROM institutional_memory_item_sources source
+            JOIN messages message ON message.id=source.message_id
+            WHERE source.item_id=item.id AND message.deleted_at IS NOT NULL)
+        ORDER BY item.workspace_id,item.kind,COALESCE(item.subject_identity_id,''),
+                 item.canonical_key,item.audience_kind,item.updated_at DESC,item.id
+      )
+      UPDATE institutional_memory_items item SET state='active'
+      FROM aged WHERE item.id=aged.id`);
     await database.query(`UPDATE institutional_memory_items
       SET body='',deleted_at=COALESCE(deleted_at,now()),state='stale'
       WHERE state<>'active' AND (body<>'' OR deleted_at IS NULL OR state='archived')`);

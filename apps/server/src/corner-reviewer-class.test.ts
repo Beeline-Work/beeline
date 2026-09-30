@@ -217,3 +217,27 @@ describe('approve_merge with a class-configured reviewer', () => {
     ).rejects.toThrow('NOT_CONFIGURED_REVIEWER');
   });
 });
+
+describe('the end of a class-configured review', () => {
+  it('hands a changes-requested head back to the implementer through the workflow', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerClass: 'heavy' }, H);
+    await greenCheck();
+    const [review] = await commands(HEAVY_A).then((rows) =>
+      rows.length ? rows : commands(HEAVY_B),
+    );
+    expect(review?.reason).toBe('subscribed_event');
+    await claim(review!);
+    await daemon.execute(
+      'postRoomMessage',
+      { roomId: C, requestId: review!.turnRequestId, generationId: 'g1', text: 'Please fix the race.' },
+      review!.agentId,
+    );
+    const handbacks = (await commands(OWNER_AGENT)).filter((c) => c.reason === 'corner_review');
+    expect(handbacks).toHaveLength(1);
+    const state = await db.query<{ workflow_state: string; workflow_outcome: string }>(
+      `SELECT workflow_state,workflow_outcome FROM corner_facts WHERE corner_id=$1`,
+      [C],
+    );
+    expect(state.rows[0]).toEqual({ workflow_state: 'implement', workflow_outcome: 'changes_requested' });
+  });
+});

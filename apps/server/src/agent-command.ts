@@ -7,6 +7,7 @@ import type {
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
 import { isResumeKind } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
+import { isConfiguredReviewer } from './agent-classes.js';
 import { advanceCorner } from './corner-workflow.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
 import { ensureSystemIdentity, GITHUB_SUBJECT, systemLine } from './system-line.js';
@@ -601,7 +602,8 @@ export const CORNER_CHECKS_BLOCKED_AFTER = '2 minutes';
  * Reports a review turn ending to the corner workflow (`advanceCorner`).
  *
  * "The review" is read structurally, never from the verdict's wording: this
- * agent is the configured reviewer on the corner's parent Room, and the turn it
+ * agent is the configured reviewer on the corner's parent Room (a fixed id or a
+ * class, per `isConfiguredReviewer`), and the turn it
  * just ended belongs to the review loop — dispatched either from a
  * `check-passed` fact (the green transition and reconciliation both cite one)
  * or from the worker's own message handing the branch back. A turn the reviewer
@@ -624,8 +626,8 @@ export async function queueCornerWorkerAfterReview(
   },
 ): Promise<void> {
   const review = (
-    await db.query<CommandRow>(
-      `SELECT command.*
+    await db.query<CommandRow & { parent_room_id: string; workspace_id: string }>(
+      `SELECT command.*,parent.id parent_room_id,parent.workspace_id
        FROM agent_commands command
        JOIN rooms corner ON corner.id=command.room_id
        JOIN rooms parent ON parent.id=corner.parent_id
@@ -635,7 +637,6 @@ export async function queueCornerWorkerAfterReview(
          AND worker.kind='agent'
        WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3
          AND command.action IN ('input','resume')
-         AND parent.reviewer_agent_id=command.agent_id
          AND (dispatch.system_event->>'kind'='check-passed'
               OR dispatch.author_id=COALESCE(fact.owner_agent_id,corner.created_by))
          AND COALESCE(fact.owner_agent_id,corner.created_by)<>command.agent_id
@@ -643,7 +644,12 @@ export async function queueCornerWorkerAfterReview(
       [input.roomId, input.reviewerAgentId, input.turnRequestId],
     )
   ).rows[0];
-  if (!review) return;
+  // A fixed reviewer and a class-bound one hold the post the same way.
+  if (
+    !review ||
+    !(await isConfiguredReviewer(db, review.parent_room_id, review.workspace_id, review.agent_id))
+  )
+    return;
   await advanceCorner(db, input.roomId, {
     kind: 'review-ended',
     review,

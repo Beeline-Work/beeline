@@ -28,8 +28,9 @@ vi.mock('expo-router', () => ({
   },
 }));
 
+const safeArea = vi.hoisted(() => ({ bottom: 0 }));
 vi.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
+  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: safeArea.bottom, left: 0 }),
 }));
 
 vi.mock('@/utils/responsive', () => ({
@@ -124,6 +125,7 @@ beforeEach(() => {
   focus.effect = undefined;
   appState.listener = undefined;
   layout.desktop = false;
+  safeArea.bottom = 0;
   setWorkbenchSource(new MockWorkbenchSource());
   setWalletSource(new MockWalletSource());
   searchParams.params = { workspaceId: 'workspace-1', viewerId: 'human-dani' };
@@ -142,6 +144,18 @@ async function render(): Promise<ReactTestRenderer> {
 }
 
 describe('Workbench settings screen', () => {
+  it('pads the bottom of the scroll by the system navigation bar so the last app row can scroll above it', async () => {
+    // Android 3-button navigation reports a 48dp bottom inset; the screen draws
+    // edge to edge behind it, so the scroll content must end above that bar.
+    safeArea.bottom = 48;
+    const renderer = await render();
+    const scroll = renderer.root.findByProps({ testID: 'workbench-scroll' });
+    const contentStyle = Object.assign({}, ...[scroll.props.contentContainerStyle].flat(Infinity as 1));
+
+    expect(contentStyle.paddingBottom).toBe(48 + 48);
+    expect(scroll.findByProps({ testID: 'workbench-connect-app' })).toBeDefined();
+  });
+
   it('refetches edited and deleted keys after focus and Squire-flow returns', async () => {
     vi.useFakeTimers();
     const data = new MockWorkbenchSource();

@@ -157,7 +157,10 @@ vi.mock('expo-router', () => ({
     dispatch: navigation.dispatch,
   }),
 }));
-vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
+const safeArea = vi.hoisted(() => ({ bottom: 0 }));
+vi.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 0, bottom: safeArea.bottom }),
+}));
 vi.mock('react-native-keyboard-controller', async () => {
   const ReactModule = await import('react');
   return {
@@ -507,6 +510,18 @@ function sheet(renderer: ReactTestRenderer) {
 }
 
 describe('Members workspace management', () => {
+  it('lets its last member scroll clear of the system navigation bar', async () => {
+    safeArea.bottom = 48;
+    try {
+      const renderer = await render();
+      const scroll = renderer.root.findByType('KeyboardAwareScrollView' as never);
+      const contentStyle = Object.assign({}, ...[scroll.props.contentContainerStyle].flat(Infinity as 1));
+      expect(contentStyle.paddingBottom).toBe(48 + 48);
+    } finally {
+      safeArea.bottom = 0;
+    }
+  });
+
   it('shows model and owner on the agent row without spending the row on presence', async () => {
     const renderer = await render();
     const agentRow = renderer.root.findByProps({ testID: `agent-${AGENT}-identity` });

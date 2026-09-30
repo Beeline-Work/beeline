@@ -73,8 +73,9 @@ vi.mock('expo-router', () => ({
   useLocalSearchParams: () => ({ communityId: 'ws' }),
   useRouter: () => navigation,
 }));
+const safeArea = vi.hoisted(() => ({ bottom: 0 }));
 vi.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
+  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: safeArea.bottom, left: 0 }),
 }));
 vi.mock('@expo/vector-icons', async () => {
   const ReactModule = await import('react');
@@ -348,6 +349,23 @@ describe('Bookmarks desktop second pane', () => {
     expect(paneText).not.toContain('Avery');
     expect(roomRead).not.toHaveBeenCalled();
   });
+});
+
+describe('Bookmarks mobile list', () => {
+  it('lets its last item scroll clear of the system navigation bar', async () => {
+    safeArea.bottom = 48;
+    try {
+      layout.os = 'android';
+      layout.width = 390;
+      const renderer = await renderTray();
+      const scroll = renderer.root.findByType('FlatList' as never);
+      const contentStyle = Object.assign({}, ...[scroll.props.contentContainerStyle].flat(Infinity as 1));
+      expect(contentStyle.paddingBottom).toBe(24 + 48);
+    } finally {
+      safeArea.bottom = 0;
+    }
+  });
+
 });
 
 describe('Bookmarks empty state', () => {

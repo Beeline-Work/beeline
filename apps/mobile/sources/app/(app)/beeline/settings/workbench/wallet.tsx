@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Image, ScrollView, Text, TouchableOpacity, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Typography } from '@/constants/Typography';
@@ -53,6 +53,7 @@ export default function WalletScreen() {
   const [granting, setGranting] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
 
   useEffect(() => {
@@ -169,7 +170,11 @@ export default function WalletScreen() {
   return (
     <View style={screenStyle}>
       {header}
-      <ScrollView contentContainerStyle={styles.contentInner} style={styles.content}>
+      <ScrollView
+        contentContainerStyle={[styles.contentInner, { paddingBottom: theme.buzz.space.xxl + insets.bottom }]}
+        style={styles.content}
+        testID="wallet-scroll"
+      >
         <View testID="wallet-screen">
           <>
             {needsGrant ? (

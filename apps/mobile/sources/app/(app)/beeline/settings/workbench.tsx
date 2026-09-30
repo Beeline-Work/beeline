@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { AppState, ScrollView, Text, TouchableOpacity, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { router, useFocusEffect, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Typography } from '@/constants/Typography';
@@ -60,6 +60,7 @@ export default function WorkbenchScreen() {
   const workspaceId = firstParam(params.workspaceId) ?? '';
   const viewerId = firstParam(params.viewerId) ?? '';
   const desktop = useIsDesktop();
+  const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const [view, setView] = useState<WorkbenchView | null>(null);
   const [networkFailure, setNetworkFailure] = useState<'load' | 'wallet' | null>(null);
@@ -242,7 +243,11 @@ export default function WorkbenchScreen() {
   return (
     <View style={screenStyle}>
       {header}
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
+      <ScrollView
+        style={styles.content}
+        contentContainerStyle={[styles.contentInner, { paddingBottom: theme.buzz.space.xxl + insets.bottom }]}
+        testID="workbench-scroll"
+      >
         <View testID="workbench-connectors">
           <Text style={styles.sectionLabel} testID="workbench-tools-head">
             TOOLS

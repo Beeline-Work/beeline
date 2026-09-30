@@ -38,14 +38,19 @@ vi.mock('react-native-unistyles', () => ({
       }),
   },
   useUnistyles: () => ({
-    theme: { buzz: { accent: '#b08a4a', chrome: '#888', textDisabled: '#666', space: { lg: 24 } } },
+    theme: {
+      buzz: { accent: '#b08a4a', chrome: '#888', textDisabled: '#666', space: { lg: 24, xxl: 48 } },
+    },
   }),
 }));
 vi.mock('expo-router', () => ({
   router: { push: controls.push, replace: controls.replace, back: vi.fn(), canGoBack: () => true },
   useLocalSearchParams: () => controls.params,
 }));
-vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
+const safeArea = vi.hoisted(() => ({ bottom: 0 }));
+vi.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 0, bottom: safeArea.bottom }),
+}));
 vi.mock('@beeline/buzz-client', () => ({ isWorkspaceListView: () => true }));
 vi.mock('@/sync/transport/room-view-client', () => ({
   RoomViewClient: class {
@@ -117,6 +122,18 @@ describe('the create-or-join choice', () => {
     vi.clearAllMocks();
     controls.params = {};
     controls.workspaces.mockResolvedValue({ workspaces: [], viewer: {} });
+  });
+
+  it('lets its last item scroll clear of the system navigation bar', async () => {
+    safeArea.bottom = 48;
+    try {
+      const renderer = await render();
+      const scroll = find(renderer, 'workspace-choice')[0];
+      const contentStyle = Object.assign({}, ...[scroll.props.contentContainerStyle].flat(Infinity as 1));
+      expect(contentStyle.paddingBottom).toBe(48 + 48);
+    } finally {
+      safeArea.bottom = 0;
+    }
   });
 
   it('gives Create and Join the same weight: one card shape, one style, side by side', async () => {

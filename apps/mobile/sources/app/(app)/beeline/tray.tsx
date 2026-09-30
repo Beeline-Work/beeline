@@ -384,7 +384,7 @@ export default function TrayScreen() {
 
   const list = (
     <FlatList
-      contentContainerStyle={styles.listContent}
+      contentContainerStyle={{ paddingBottom: 24 + insets.bottom }}
       data={rows}
       keyExtractor={(row) => row.key}
       ListEmptyComponent={
@@ -543,7 +543,6 @@ const styles = StyleSheet.create((theme) => ({
     borderRightWidth: StyleSheet.hairlineWidth,
     borderRightColor: theme.buzz.border,
   },
-  listContent: { paddingBottom: 24 },
   sectionHead: {
     minHeight: 30,
     marginTop: 22,

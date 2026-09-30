@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
-import { cp, mkdir, readdir, realpath, rm } from 'node:fs/promises';
+import { mkdir, readdir, realpath, rm } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { BodyConfig } from './config.js';
@@ -269,35 +269,6 @@ export async function materializeCornerWorktree(input: {
     throw new Error(`corner worktree escaped its isolated root: ${top.stdout.trim()}`);
   }
   return { path, gitCommonDir };
-}
-
-async function cornerScratchFiles(root: string): Promise<string[]> {
-  const files: string[] = [];
-  const visit = async (directory: string, prefix: string): Promise<void> => {
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
-      const name = prefix ? `${prefix}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) await visit(resolve(directory, entry.name), name);
-      else files.push(name);
-    }
-  };
-  await visit(root, '');
-  return files;
-}
-
-async function ignoredGitPaths(worktree: string, paths: readonly string[]): Promise<Set<string>> {
-  if (!paths.length) return new Set();
-  return new Promise((resolve, reject) => {
-    const child = execFile(
-      'git', ['-C', worktree, 'check-ignore', '-z', '--stdin'],
-      { maxBuffer: 16 * 1024 * 1024 },
-      (error, stdout) => {
-        if (error && (error as Error & { code?: number }).code !== 1) reject(error);
-        else resolve(new Set(stdout.split('\0').filter(Boolean)));
-      },
-    );
-    child.stdin?.on('error', reject);
-    child.stdin?.end(`${paths.join('\0')}\0`);
-  });
 }
 
 export function reconcileRetryMs(error: unknown, pollMs: number): number {
@@ -589,10 +560,10 @@ export class RoomRuntimeCoordinator {
   private membershipDrain: Promise<void> | undefined;
   /** Set by `shutdown`: a pushed event may no longer start anything. */
   private stopped = false;
-  /** Corners whose start failure has already been said out loud, once each. */
-  private readonly reportedCornerStartFailures = new Set<string>();
-  /** Standing workspace-configuration faults, keyed by the config that failed. */
-  private readonly standingCornerStartFaults = new Map<string, string>();
+  /** Per corner, the requests whose start failure has already been said out loud. */
+  private readonly reportedCornerStartFailures = new Map<string, Set<string>>();
+  /** Standing workspace-configuration faults: the config that failed, and how. */
+  private readonly standingCornerStartFaults = new Map<string, { configKey: string; error: unknown }>();
   private readonly scheduler: SessionScheduler;
   private readonly agent: ReturnType<typeof runtimeIdentity>;
   /** Parent ownership retained so a failed corner listing never authorizes removal. */
@@ -1298,7 +1269,11 @@ export class RoomRuntimeCoordinator {
         (restore.kind === 'human' ? (restore.title ?? '').trim() : '');
       configKey = cornerStartConfigKey(repository, objective);
       const previousStanding = this.standingCornerStartFaults.get(corner.cornerId);
-      if (previousStanding === configKey) return;
+      if (previousStanding?.configKey === configKey) {
+        // Not retried, but a request made since is still told why.
+        await this.reportCornerStartFailure(corner.cornerId, previousStanding.error);
+        return;
+      }
       if (previousStanding) {
         this.standingCornerStartFaults.delete(corner.cornerId);
         this.reportedCornerStartFailures.delete(corner.cornerId);
@@ -1335,42 +1310,11 @@ export class RoomRuntimeCoordinator {
             token: granted!.token,
           })
         : undefined;
-      if (worktree) {
-        if (existsSync(scratchPath)) {
-          const entries = await readdir(scratchPath);
-          if (entries.includes('.git')) throw new Error('corner scratch contains a Git repository');
-          const files = await cornerScratchFiles(scratchPath);
-          // Read the repository's original exclusions before a scratch
-          // .gitignore can replace them in the worktree.
-          const baselineIgnored = await ignoredGitPaths(worktree.path, files);
-          for (const entry of entries)
-            await cp(resolve(scratchPath, entry), resolve(worktree.path, entry), {
-              recursive: true,
-              force: true,
-            });
-          if (entries.length) {
-            const scratchIgnored = await ignoredGitPaths(worktree.path, files);
-            const stageable = files.filter((file) =>
-              !baselineIgnored.has(file) && !scratchIgnored.has(file));
-            // Both sets of ordinary Git rules guard the commit. All ignored
-            // files still live in the worktree for the resumed agent.
-            for (let offset = 0; offset < stageable.length; offset += 256)
-              await execFileAsync('git', [
-                '-C', worktree.path, 'add', '-A', '--', ...stageable.slice(offset, offset + 256),
-              ]);
-            const changed = await execFileAsync('git', ['-C', worktree.path, 'diff', '--cached', '--quiet'])
-              .then(() => false, (error: { code?: number }) => {
-                if (error.code === 1) return true;
-                throw error;
-              });
-            if (changed)
-              await execFileAsync('git', [
-                '-C', worktree.path, 'commit', '-m', 'Carry no-code corner files into code branch',
-              ]);
-          }
-          await this.reapCornerScratch({ path: scratchPath, cornerId: corner.cornerId });
-        }
-      }
+      // A no-code corner's scratch is that session's own workspace, with its
+      // harness home inside it. None of it becomes the code branch: the code
+      // session starts from the target branch alone, and the scratch is reaped.
+      if (worktree && existsSync(scratchPath))
+        await this.reapCornerScratch({ path: scratchPath, cornerId: corner.cornerId });
       const workspacePath = worktree?.path ?? resolve(this.roomRoot(corner.cornerId), 'scratch');
       if (!worktree) await mkdir(workspacePath, { recursive: true, mode: 0o700 });
       if (worktree && shouldPostInitialCornerWorkingState(restore)) {
@@ -1486,7 +1430,7 @@ export class RoomRuntimeCoordinator {
       if (error instanceof CornerCredentialLookupError) return;
       const reported = await this.reportCornerStartFailure(corner.cornerId, error);
       if (reported && isStandingCornerStartFault(error) && configKey) {
-        this.standingCornerStartFaults.set(corner.cornerId, configKey);
+        this.standingCornerStartFaults.set(corner.cornerId, { configKey, error });
       }
     } finally {
       this.startingCorners.delete(corner.cornerId);
@@ -1605,30 +1549,38 @@ export class RoomRuntimeCoordinator {
    *
    * The corner never starts, so no turn ever runs. Report against the actual
    * pending command — never a fabricated generation — so the server can
-   * authorize the failed receipt and inscribe the Room line. Standing
-   * workspace-configuration faults are said once and suppressed until that
-   * configuration changes; clone/network failures keep retrying.
+   * authorize the failed receipt and inscribe the Room line. Every pending
+   * request is told once, so a person who asks again while the corner still
+   * cannot start sees the failure under the new message too. Standing
+   * workspace-configuration faults are not retried until that configuration
+   * changes; clone/network failures keep retrying.
    */
   private async reportCornerStartFailure(cornerId: string, error: unknown): Promise<boolean> {
-    if (this.reportedCornerStartFailures.has(cornerId)) return true;
     try {
       const { commands } = await this.options.daemonApi.execute('getAgentCommands', {
         roomId: cornerId,
       });
-      const pending = commands.find(
-        (command) => command.action === 'input' || command.action === 'resume',
+      const requests = new Set(
+        commands
+          .filter((command) => command.action === 'input' || command.action === 'resume')
+          .map((command) => command.turnRequestId),
       );
-      if (!pending) return false;
+      if (!requests.size) return false;
+      const reported = this.reportedCornerStartFailures.get(cornerId) ?? new Set<string>();
+      this.reportedCornerStartFailures.set(cornerId, reported);
       const reason = distillTurnFailureReason(error);
-      await this.options.daemonApi.execute('postAgentTurnReceipt', {
-        agentId: this.agent.publicKey,
-        roomId: cornerId,
-        requestId: pending.turnRequestId,
-        status: 'failed',
-        reason: reason.text,
-        ...(reason.kind ? { reasonKind: reason.kind } : {}),
-      });
-      this.reportedCornerStartFailures.add(cornerId);
+      for (const requestId of requests) {
+        if (reported.has(requestId)) continue;
+        await this.options.daemonApi.execute('postAgentTurnReceipt', {
+          agentId: this.agent.publicKey,
+          roomId: cornerId,
+          requestId,
+          status: 'failed',
+          reason: reason.text,
+          ...(reason.kind ? { reasonKind: reason.kind } : {}),
+        });
+        reported.add(requestId);
+      }
       return true;
     } catch (reportError) {
       console.error(`[thin-core] corner ${cornerId} start-failure report failed:`, reportError);

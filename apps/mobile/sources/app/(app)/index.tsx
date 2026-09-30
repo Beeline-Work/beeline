@@ -19,6 +19,12 @@ export default function Home() {
   const pathname = usePathname();
   const pathnameRef = React.useRef(pathname);
   pathnameRef.current = pathname;
+  // Once a destination has been on screen, a return here is a back out of it,
+  // and a push's claim on the first landing no longer applies.
+  const leftLandingRef = React.useRef(false);
+  if (pathname !== '/') leftLandingRef.current = true;
+  const landingSuppressed = () =>
+    !leftLandingRef.current && isInitialLandingNavigationSuppressed();
   const [landingStalled, setLandingStalled] = React.useState(false);
   const [buzzCheckDone, setBuzzCheckDone] = React.useState(false);
   const [hasBuzzIdentity, setHasBuzzIdentity] = React.useState(false);
@@ -63,7 +69,7 @@ export default function Home() {
     // A tapped push with a routable destination claimed the navigation while
     // this decision was still pending (the slow-storage path whose wait timed
     // out). Its replace below would overwrite the notification navigation.
-    if (isInitialLandingNavigationSuppressed()) {
+    if (landingSuppressed()) {
       return;
     }
 
@@ -90,13 +96,13 @@ export default function Home() {
     } else if (hasBuzzIdentity && !personNameOnboardingPending) {
       return retryInitialLandingNavigation(
         () => router.replace('/beeline/channels'),
-        () => pathnameRef.current === '/' && !isInitialLandingNavigationSuppressed(),
+        () => pathnameRef.current === '/' && !landingSuppressed(),
         () => setLandingStalled(true),
       );
     } else {
       return retryInitialLandingNavigation(
         () => router.replace('/beeline/onboarding'),
-        () => pathnameRef.current === '/' && !isInitialLandingNavigationSuppressed(),
+        () => pathnameRef.current === '/' && !landingSuppressed(),
         () => setLandingStalled(true),
       );
     }

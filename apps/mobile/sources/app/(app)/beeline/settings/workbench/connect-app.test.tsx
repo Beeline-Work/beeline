@@ -74,8 +74,9 @@ vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
 const signIn = vi.hoisted(() => ({ open: vi.fn() }));
 vi.mock('@/buzz/app-sign-in', () => ({ openAppSignIn: signIn.open }));
 
+const safeArea = vi.hoisted(() => ({ bottom: 0 }));
 vi.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
+  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: safeArea.bottom, left: 0 }),
 }));
 
 vi.mock('@/components/buzz/PulsingText', async () => {
@@ -122,6 +123,18 @@ async function render(): Promise<ReactTestRenderer> {
 }
 
 describe('Connect an app', () => {
+  it('lets its last item scroll clear of the system navigation bar', async () => {
+    safeArea.bottom = 48;
+    try {
+      const renderer = await render();
+      const scroll = renderer.root.findByProps({ testID: 'connect-app-scroll' });
+      const contentStyle = Object.assign({}, ...[scroll.props.contentContainerStyle].flat(Infinity as 1));
+      expect(contentStyle.paddingBottom).toBe(0 + 48);
+    } finally {
+      safeArea.bottom = 0;
+    }
+  });
+
   it('shows a searchable Popular picker with connected state and ink Connect buttons', async () => {
     source.setApps([{ id: 'app-gmail', key: 'gmail', name: 'Gmail', domain: 'gmail.com', transport: 'composio', status: 'connected', useCount: 0 }]);
     const renderer = await render();

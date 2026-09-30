@@ -4,8 +4,13 @@ import { PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
+import { PushDeliveryLoop } from './background.js';
 import { systemLine } from './system-line.js';
-import { createAgentCommand, REVIEW_HANDBACK_LIMIT } from './agent-command.js';
+import {
+  createAgentCommand,
+  noteBlockedCornerChecks,
+  REVIEW_HANDBACK_LIMIT,
+} from './agent-command.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import type { QueryResultRow } from 'pg';
@@ -423,6 +428,14 @@ describe('corner message attribution', () => {
   }
 
   it('stops waking the worker at the handback limit and names the requester instead', async () => {
+    await db.query(
+      `INSERT INTO push_devices(token,identity_id,platform,environment)
+       VALUES('human-device-token-123456789012345678901',$1,'android','physical')`,
+      [H],
+    );
+    const send = vi.fn().mockResolvedValue(undefined);
+    const push = new PushDeliveryLoop(db, { send });
+    await push.runOnce();
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await greenHead(15, '5'.repeat(40));
     for (let round = 1; round <= REVIEW_HANDBACK_LIMIT + 1; round += 1) {
@@ -441,6 +454,141 @@ describe('corner message attribution', () => {
     ).toEqual([
       `@human may need to step in · review and fix have passed ${REVIEW_HANDBACK_LIMIT} times over this head with nothing new pushed`,
     ]);
+    // The requester's phone hears it, with no agent tag needed.
+    await push.runOnce();
+    await db.query(`DELETE FROM push_devices WHERE identity_id=$1`, [H]);
+    expect(send.mock.calls.map(([, message]) => message.text)).toContain(
+      `@human may need to step in · review and fix have passed ${REVIEW_HANDBACK_LIMIT} times over this head with nothing new pushed`,
+    );
+  });
+
+  it('tells the requester when failing checks outlast the fix turn with nothing pushed', async () => {
+    await db.query(
+      `INSERT INTO push_devices(token,identity_id,platform,environment)
+       VALUES('human-device-token-123456789012345678902',$1,'android','physical')`,
+      [H],
+    );
+    const send = vi.fn().mockResolvedValue(undefined);
+    const push = new PushDeliveryLoop(db, { send });
+    await push.runOnce();
+    const head = '7'.repeat(40);
+    await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+      C,
+      JSON.stringify({
+        checks: 'failing',
+        lifecycle: 'in-review',
+        pr: {
+          number: 21,
+          title: 'Fix widget',
+          url: 'https://github.com/acme/repo/pull/21',
+          headSha: head,
+        },
+      }),
+    ]);
+    await systemLine(db, {
+      roomId: C,
+      authorId: A,
+      subject: { kind: 'github', name: 'GitHub' },
+      verb: 'found failing checks on',
+      kind: 'check-failed',
+      object: { text: 'Fix widget', url: 'https://github.com/acme/repo/pull/21', headSha: head },
+    });
+    const [fix] = (await commands(A, C)).filter((command) => command.reason === 'corner_check');
+    expect(fix).toBeDefined();
+    await claim(fix!);
+    // While the fix turn runs, nothing is blocked.
+    expect(await noteBlockedCornerChecks(db)).toBe(0);
+    await result(fix!, 'I could not fix the failing test.');
+    // The turn just ended; a pushed fix may still be on its way from GitHub.
+    expect(await noteBlockedCornerChecks(db)).toBe(0);
+    await db.query(
+      `UPDATE agent_commands SET completed_at=now()-interval '3 minutes' WHERE id=$1`,
+      [fix!.id],
+    );
+    expect(await noteBlockedCornerChecks(db)).toBe(1);
+    expect(await noteBlockedCornerChecks(db)).toBe(0);
+    const line = `@human may need to step in · checks still fail on Fix widget and the fix turn ended with nothing new pushed`;
+    expect(
+      (
+        await db.query<{ text: string; author_id: string }>(
+          `SELECT text,author_id FROM messages WHERE room_id=$1 AND card_type='corner-checks-blocked'`,
+          [C],
+        )
+      ).rows,
+    ).toEqual([{ text: line, author_id: SYSTEM_IDENTITY_ID }]);
+    await push.runOnce();
+    await db.query(`DELETE FROM push_devices WHERE identity_id=$1`, [H]);
+    expect(send.mock.calls.map(([, message]) => message.text)).toContain(line);
+  });
+
+  it('tells the requester when a no-code corner posts its deliverable, tag or no tag', async () => {
+    await db.query(`UPDATE corner_facts SET lane='no_code' WHERE corner_id=$1`, [C]);
+    await db.query(
+      `INSERT INTO push_devices(token,identity_id,platform,environment)
+       VALUES('human-device-token-123456789012345678903',$1,'android','physical')`,
+      [H],
+    );
+    try {
+      const send = vi.fn().mockResolvedValue(undefined);
+      const push = new PushDeliveryLoop(db, { send });
+      await push.runOnce();
+      const source = await systemLine(db, {
+        roomId: C,
+        authorId: H,
+        subject: { kind: 'person', id: H, name: 'Human' },
+        verb: 'requested work',
+      });
+      await createAgentCommand(db, {
+        roomId: C,
+        agentId: A,
+        sourceMessageId: source.id,
+        reason: 'corner_objective',
+      });
+      const [worker] = await commands(A, C);
+      await claim(worker!);
+      // What post_artifact queues for the turn's final reply.
+      await db.query(
+        `INSERT INTO agent_pending_attachments(room_id,agent_id,url,name,mime_type,size,request_id,generation_id)
+         VALUES($1,$2,'https://example.test/media/report','report.pdf','application/pdf',10,$3,'g1')`,
+        [C, A, worker!.turnRequestId],
+      );
+      await result(worker!, 'The report is attached.');
+      await push.runOnce();
+      expect(send.mock.calls.map(([, message]) => message.text)).toEqual([
+        'Hoots: The report is attached.',
+      ]);
+    } finally {
+      await db.query(`UPDATE corner_facts SET lane='code' WHERE corner_id=$1`, [C]);
+      await db.query(`DELETE FROM push_devices WHERE identity_id=$1`, [H]);
+    }
+  });
+
+  it('does not call a corner blocked once a new head replaces the failing one', async () => {
+    const head = '8'.repeat(40);
+    await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+      C,
+      JSON.stringify({ checks: 'failing', pr: { number: 22, headSha: head } }),
+    ]);
+    await systemLine(db, {
+      roomId: C,
+      authorId: A,
+      subject: { kind: 'github', name: 'GitHub' },
+      verb: 'found failing checks on',
+      kind: 'check-failed',
+      object: { text: 'pull request #22', headSha: head },
+    });
+    const [fix] = (await commands(A, C)).filter((command) => command.reason === 'corner_check');
+    await claim(fix!);
+    await result(fix!, 'Pushed a fix.');
+    await db.query(
+      `UPDATE agent_commands SET completed_at=now()-interval '3 minutes' WHERE id=$1`,
+      [fix!.id],
+    );
+    await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+      C,
+      JSON.stringify({ checks: 'pending', pr: { number: 22, headSha: '9'.repeat(40) } }),
+    ]);
+    expect(await noteBlockedCornerChecks(db)).toBe(0);
   });
 
   // Reproduction REVIEW-HANDBACK-NULL: a corner an agent opened off its own

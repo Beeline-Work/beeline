@@ -22,6 +22,7 @@ export const TURN_SILENCE_KINDS = [
   'helper-out-of-date',
   'update-interrupted',
   'offline',
+  'context-overflow',
 ] as const;
 export type TurnSilenceKind = (typeof TURN_SILENCE_KINDS)[number];
 
@@ -35,6 +36,7 @@ export const TURN_RECEIPT_REASON_KINDS = [
   'helper-out-of-date',
   'update-interrupted',
   'offline',
+  'context-overflow',
   'model-selection-unavailable',
 ] as const;
 export type TurnReceiptReasonKind = (typeof TURN_RECEIPT_REASON_KINDS)[number];
@@ -94,6 +96,23 @@ export function isAuthShapedFault(text: string): boolean {
 }
 
 /**
+ * The provider refused the request because input plus the requested output
+ * exceed the model's context window (OpenRouter: "This endpoint's maximum
+ * context length is 1048576 tokens. However, you requested about …"). A
+ * restart resends the same oversized request, so it is not a hiccup.
+ */
+export function isContextOverflowFault(text: string): boolean {
+  return (
+    /maximum context length/i.test(text) ||
+    /context[_ ]length[_ ]exceeded/i.test(text) ||
+    /exceeds the context window/i.test(text) ||
+    /prompt is too long/i.test(text) ||
+    /input token count.*exceeds the maximum/i.test(text) ||
+    /maximum prompt length is \d+/i.test(text)
+  );
+}
+
+/**
  * Classify a distilled helper reason. `reasonKind` from a current helper wins;
  * text matching covers old helpers and the 90s stall path (no receipt).
  */
@@ -123,6 +142,10 @@ export function classifyTurnSilence(
     /not advertised/i.test(text)
   ) {
     return { kind: 'wrong-model' };
+  }
+
+  if (isContextOverflowFault(text)) {
+    return { kind: 'context-overflow' };
   }
 
   if (
@@ -284,6 +307,12 @@ export function phraseTurnSilence(
         agent,
         'is offline',
         "the helper isn't running. Run `beeline start` on the helper's machine.",
+      );
+    case 'context-overflow':
+      return capLine(
+        agent,
+        'could not answer',
+        "the request no longer fits the model's context window. Start a new corner, or pick a model with a larger window.",
       );
     case 'hiccup': {
       const fault = (classified.fault ?? 'the turn stalled').replace(/\s+/g, ' ').trim();

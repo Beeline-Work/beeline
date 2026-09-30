@@ -293,6 +293,7 @@ describe('Room turn phase trace', () => {
         providers: ['venice', 'phala'],
         bar: 98,
         input: null,
+        limits: null,
       }),
     );
     await writeFile(

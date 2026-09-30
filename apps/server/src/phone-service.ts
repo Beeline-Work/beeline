@@ -1574,7 +1574,8 @@ export class PhoneService {
           await this.database.query<{
             plan: RoomView['cornerPlan'] | null;
             objective: string;
-          }>(`SELECT plan,objective FROM corner_facts WHERE corner_id=$1`, [roomId])
+            owner_agent_id: string | null;
+          }>(`SELECT plan,objective,owner_agent_id FROM corner_facts WHERE corner_id=$1`, [roomId])
         ).rows[0],
       undefined,
     );
@@ -1592,8 +1593,16 @@ export class PhoneService {
             revision_hash: string | null;
             change: string | null;
             approval_kind: string | null;
+            content: string;
+            intent_verbatim: NonNullable<RoomView['cornerBrief']>['intentVerbatim'];
+            build_spec: string | null;
+            criteria: NonNullable<RoomView['cornerBrief']>['criteria'];
+            non_goals: string[];
+            brief_references: NonNullable<RoomView['cornerBrief']>['references'];
+            approval_basis: NonNullable<RoomView['cornerBrief']>['approvalBasis'];
           }>(
-            `SELECT revision,revision_hash,change,approval_basis->>'kind' approval_kind
+            `SELECT revision,revision_hash,change,approval_basis->>'kind' approval_kind,
+                    content,intent_verbatim,build_spec,criteria,non_goals,brief_references,approval_basis
              FROM corner_brief_revisions WHERE corner_id=$1
              ORDER BY revision DESC LIMIT 20`,
             [roomId],
@@ -1795,6 +1804,9 @@ export class PhoneService {
         ? { directMessage: { participants: room.direct_participants as [string, string] } }
         : {}),
       ...(parent ? { parent: roomHeader(parent, this.publicOrigin) } : {}),
+      ...(room.parent_id && facts?.owner_agent_id
+        ? { cornerOpenerAgentId: facts.owner_agent_id }
+        : {}),
       briefing: decorateAttachments(briefing, attachmentFacts),
       ...(room.parent_id && plan ? { cornerPlan: plan } : {}),
       ...(cornerBrief
@@ -1817,6 +1829,13 @@ export class PhoneService {
                   (item.revision === cornerBrief.revision ? cornerBrief.revisionHash : 'legacy'),
                 ...(item.change ? { change: item.change } : {}),
                 approvalKind: item.approval_kind ?? 'legacy-pre-migration',
+                content: item.content,
+                intentVerbatim: item.intent_verbatim ?? [],
+                buildSpec: item.build_spec ?? item.content,
+                criteria: item.criteria ?? [],
+                nonGoals: item.non_goals ?? [],
+                references: item.brief_references ?? [],
+                approvalBasis: item.approval_basis ?? undefined,
               })),
               attachments: cornerBrief.attachments.map((file) => ({
                 title: file.title,

@@ -70,6 +70,7 @@ import { type DaemonApiClient } from './daemon-api-client.js';
 import {
   explainEmptyAgentTurn,
   isAccountOrProviderRefusal,
+  isContextOverflowTurn,
   nextPinnedProvider,
   shouldRetryEmptyTurn,
   turnFailureReasonWithProvider,
@@ -1785,6 +1786,22 @@ export class MonolithCornerTurnLoop {
                   trace.promptSettled();
                   explained = await this.explainEmpty(result);
                 }
+              }
+              // A session whose history outgrew the model's window refuses
+              // every retry inside it. One retry in a fresh session; a second
+              // overflow fails the turn as `context-overflow`, never a hiccup.
+              if (explained && isContextOverflowTurn(explained)) {
+                await flushToolCalls(result.toolCalls, '');
+                console.warn(
+                  `[thin-core] corner ${cornerId} turn ${requestId}: ` +
+                    `${explained.reason}; retrying once in a fresh session`,
+                );
+                trace.retry({ reason: 'context overflow' });
+                await this.discardSession();
+                await trace.measure('activation', () => this.activate(trace));
+                result = await runPrompt();
+                trace.promptSettled();
+                explained = await this.explainEmpty(result);
               }
               // One bounded second chance to deliver repository work. Check
               // turns get the narrower merge reminder instead: repeating the

@@ -468,7 +468,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     layer: 'surface',
     surfaces: ['code-corner'],
     render: () =>
-      'A checks turn is one that wakes you about CI or the merge gate. On it, say nothing unless you merge, push a fix, or report checks="unknown", and then use one short line. Never restate server check or merge notes. The server merge card and its push announce a finished corner, so do not tag anyone for it. When asked whether the reviewer was woken, call pr_checks_status and report reviewerWake; do not invent a cause. Never schedule polls of pr_checks_status or the merge gate; the server wakes you when it changes. If a schedule wakes you here anyway, treat it as a checks turn.',
+      'A checks turn is one that wakes you about CI or the merge gate. On it, say nothing unless you merge, push a fix, or report checks="unknown", and then use one short line. Never restate server check or merge notes. When asked whether the reviewer was woken, call pr_checks_status and report reviewerWake; do not invent a cause. Never schedule polls of pr_checks_status or the merge gate; the server wakes you when it changes. If a schedule wakes you here anyway, treat it as a checks turn.',
   },
   {
     id: 'corner.review',

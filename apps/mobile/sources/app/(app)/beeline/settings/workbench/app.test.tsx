@@ -10,7 +10,8 @@ const navigation = vi.hoisted(() => ({ back: vi.fn() }));
 const signIn = vi.hoisted(() => ({ open: vi.fn() }));
 vi.mock('expo-router', () => ({ router: navigation, useLocalSearchParams: () => ({ workspaceId: 'ws', viewerId: 'human-dani', appId: 'app-slack' }), useFocusEffect: (effect: () => void) => React.useEffect(effect, [effect]) }));
 vi.mock('@/buzz/app-sign-in', () => ({ openAppSignIn: signIn.open }));
-vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
+const safeArea = vi.hoisted(() => ({ bottom: 0 }));
+vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: safeArea.bottom, left: 0, right: 0 }) }));
 vi.mock('react-native', async () => {
   const R = await import('react');
   const host = (name: string) => (props: any) => R.createElement(name, props, props.children);
@@ -36,6 +37,18 @@ async function render(): Promise<ReactTestRenderer> {
 }
 
 describe('App detail', () => {
+  it('lets its last item scroll clear of the system navigation bar', async () => {
+    safeArea.bottom = 48;
+    try {
+      const renderer = await render();
+      const scroll = renderer.root.findByProps({ testID: 'app-detail-scroll' });
+      const contentStyle = Object.assign({}, ...[scroll.props.contentContainerStyle].flat(Infinity as 1));
+      expect(contentStyle.paddingBottom).toBe(24 + 48);
+    } finally {
+      safeArea.bottom = 0;
+    }
+  });
+
   it('shows the owner account, permission boundary, last use, and outlined Disconnect', async () => {
     const renderer = await render();
     const tree = JSON.stringify(renderer.toJSON());

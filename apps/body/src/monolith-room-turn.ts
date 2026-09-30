@@ -84,6 +84,7 @@ import type { BodyConfig } from './config.js';
 import { type DaemonApiClient } from './daemon-api-client.js';
 import {
   explainEmptyAgentTurn,
+  isContextOverflowTurn,
   nextPinnedProvider,
   shouldRetryEmptyTurn,
   turnFailureReasonWithProvider,
@@ -1531,6 +1532,23 @@ export class MonolithRoomTurnLoop {
                   cornerOpened = openedACorner(openCornerCall);
                   explained = await this.explainEmpty(result);
                 }
+              }
+              // A session whose history outgrew the model's window refuses
+              // every retry inside it. One retry in a fresh session; a second
+              // overflow fails the turn as `context-overflow`, never a hiccup.
+              if (!cornerOpened && explained && isContextOverflowTurn(explained)) {
+                console.warn(
+                  `[thin-core] monolith Room ${this.options.roomId} turn ${item.id}: ` +
+                    `${explained.reason}; retrying once in a fresh session`,
+                );
+                trace.retry({ reason: 'context overflow' });
+                await this.discardSession();
+                await trace.measure('activation', () => this.activate(trace));
+                result = await runPrompt();
+                trace.promptSettled();
+                openCornerCall = openCornerToolCall(result.toolCalls);
+                cornerOpened = openedACorner(openCornerCall);
+                explained = await this.explainEmpty(result);
               }
               // The requester stopped this turn while it ran. A stopped turn
               // publishes nothing at all — no durable reply, no receipt, and no

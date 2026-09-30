@@ -114,7 +114,10 @@ export function ArtifactViewerScreen({
       </View>
       <View style={styles.body}>
         {format === 'code' && document ? (
-          <ScrollView contentContainerStyle={styles.codeBody} testID="artifact-viewer-code">
+          <ScrollView
+            contentContainerStyle={[styles.codeBody, { paddingBottom: theme.buzz.space.md + insets.bottom }]}
+            testID="artifact-viewer-code"
+          >
             <Text style={styles.codeInscription}>{document.inscription}</Text>
             <CodeHighlighter code={document.code} language={document.language} />
           </ScrollView>
@@ -210,6 +213,8 @@ export function ArtifactViewerSandbox({
 }
 
 function ArtifactViewerMarkdown({ attachment }: { attachment: AttachmentReference }) {
+  const { theme } = useUnistyles();
+  const insets = useSafeAreaInsets();
   const [markdown, setMarkdown] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -240,7 +245,10 @@ function ArtifactViewerMarkdown({ attachment }: { attachment: AttachmentReferenc
     );
   }
   return (
-    <ScrollView contentContainerStyle={styles.markdownBody} testID="artifact-viewer-markdown">
+    <ScrollView
+      contentContainerStyle={[styles.markdownBody, { paddingBottom: theme.buzz.space.xl + insets.bottom }]}
+      testID="artifact-viewer-markdown"
+    >
       <MonoMarkdown markdown={markdown} textStyle={styles.markdownText} document />
     </ScrollView>
   );

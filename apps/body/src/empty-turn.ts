@@ -9,6 +9,7 @@
  * with the failed receipt; the update probe uses the record's class to tell a
  * model-side refusal from a broken bundle.
  */
+import { isContextOverflowFault } from '@beeline/api-contract/daemon';
 import { describeEmptyTurn, isPiAcpHarness, type PromptResult } from './acp.js';
 import { readPiTurnRecord, type PiTurnRecord } from './pi-turn-record.js';
 
@@ -64,6 +65,18 @@ export function shouldRetryEmptyTurn(explanation: EmptyTurnExplanation): boolean
     explanation.record === undefined ||
     explanation.record.kind === 'empty' ||
     explanation.record.kind === 'missing'
+  );
+}
+
+/**
+ * The provider refused the turn because the session's history no longer fits
+ * the model's context window. Retrying in the same session sends the same
+ * oversized request, so the turn loops retry once in a fresh session, whose
+ * first prompt carries only the recent transcript.
+ */
+export function isContextOverflowTurn(explanation: EmptyTurnExplanation): boolean {
+  return (
+    explanation.record?.kind === 'error' && isContextOverflowFault(explanation.record.reason)
   );
 }
 

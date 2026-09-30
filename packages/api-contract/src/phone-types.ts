@@ -580,6 +580,8 @@ export type RoomView = {
   readonly viewer: RoomViewer;
   readonly directMessage?: RoomDirectMessageView;
   readonly parent?: RoomViewHeader;
+  /** The agent that opened this corner, independent of later reviewers and helpers. */
+  readonly cornerOpenerAgentId?: string;
   readonly briefing?: readonly RoomViewMessage[];
   /** Latest corner plan, retained after its live activity rows settle. */
   readonly cornerPlan?: RoomViewActivity['plan'];
@@ -612,6 +614,13 @@ export type RoomView = {
       revisionHash: string;
       change?: string;
       approvalKind: string;
+      content: string;
+      intentVerbatim: readonly { sourceMessageId: string; snapshot: string }[];
+      buildSpec: string;
+      criteria: readonly { id: string; text: string }[];
+      nonGoals: readonly string[];
+      references: readonly { label: string; authority: string; description: string; objectId?: string }[];
+      approvalBasis?: { kind: string; sourceMessageId?: string; snapshot?: string; approvedBy?: string; briefHash: string; reason?: string };
     }[];
     readonly attachments: readonly {
       readonly title: string;

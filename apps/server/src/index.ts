@@ -17,6 +17,7 @@ import {
 import { mediaTtlHours, MEDIA_SWEEP_INTERVAL_MS } from './media-ttl.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { ChoiceExpiryLoop } from './choice-expiry.js';
+import { noteBlockedCornerChecks } from './agent-command.js';
 import { ConnectionPresence } from './connection-presence.js';
 import { createFirebasePushSender } from './firebase-push.js';
 import { createApnsPushSender } from './apns-push.js';
@@ -350,6 +351,8 @@ async function main() {
         lastReconciliationAt = now;
         await backgroundJobs.run('media-expiry', () => mediaExpiry.runOnce(now));
         await backgroundJobs.run('maintenance', () => runMaintenance(jobsDatabase));
+        await backgroundJobs.run('corner-checks-blocked', () =>
+          noteBlockedCornerChecks(jobsDatabase));
         await backgroundJobs.run('mention-notices', () => phone.flushPendingMentionNotices(now));
         await backgroundJobs.run('institutional-curator', () =>
           runInstitutionalCuratorCycle(jobsDatabase, institutionalMemory, new Date(now), {

@@ -358,7 +358,7 @@ import { CornerGlyph } from '@/components/buzz/CornerGlyph';
 import { OverflowGlyph } from '@/components/buzz/OverflowGlyph';
 import { RoomReviewerActions } from '@/components/buzz/RoomReviewerActions';
 import { EmptyLedgerState, type EmptyLedgerVariant } from '@/components/buzz/EmptyLedgerState';
-import { HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
+import { CornerHeaderAgentText, HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
 import { ChannelHeaderTitle } from '@/components/buzz/ChannelHeaderTitle';
 import { HullDialog, HullDialogInput } from '@/components/buzz/HullDialog';
 import type { ChannelHeaderKind } from '@/buzz/channel-header-title';
@@ -378,6 +378,7 @@ import {
   LedgerSystemLine,
 } from '@/components/buzz/Ledger';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { MentionSuggestionMenu } from '@/components/buzz/MentionSuggestionMenu';
 import { DirectMessageHeaderIdentity } from '@/components/buzz/DirectMessageHeaderIdentity';
 import { RoomRosterSheet, type RoomRosterParticipant } from '@/components/buzz/RoomRosterSheet';
 import { RepoPicker } from '@/components/buzz/RepoPicker';
@@ -611,6 +612,7 @@ export function BuzzChatSurface({
     markRoomOpen('layout-chrome', roomSurface.messages.at(-1)?.id);
   }, [roomSurface]);
   const [inputText, setInputText] = useState('');
+  const [briefRevisionRequest, setBriefRevisionRequest] = useState<{ revision: number }>();
   const [composerInputRevision, setComposerInputRevision] = useState(0);
   const loadedDraftForRef = useRef<string | null>(null);
   const workPaneHandleRef = useRef<React.ElementRef<typeof Pressable>>(null);
@@ -2075,8 +2077,12 @@ export function BuzzChatSurface({
     },
   );
   const cornerAgentPubkey = useMemo(
-    () => resolveCornerViewAgentPubkey(messages, (pubkey) => agentByPubkey.has(pubkey)),
-    [agentByPubkey, messages],
+    () => resolveCornerViewAgentPubkey(
+      messages,
+      (pubkey) => agentByPubkey.has(pubkey),
+      roomSurface?.cornerOpenerAgentId,
+    ),
+    [agentByPubkey, messages, roomSurface?.cornerOpenerAgentId],
   );
   const rawSpeakerWorking = useMemo(
     () =>
@@ -2086,8 +2092,7 @@ export function BuzzChatSurface({
     [activeAgentTurns],
   );
   const speakerWorking = useStable(rawSpeakerWorking, shallowEqualRecord);
-  // The corner header names the corner's OWN agent — the server projection's
-  // `agent` (`corners.created_by`, the agent the corner belongs to), never
+  // The corner header names the opener from `corner_facts.owner_agent_id`, never
   // whichever agent currently holds a live turn. While a reviewer works in
   // the corner the transcript attribution is the reviewer's and stays there;
   // the corner does not change hands. The transcript-derived identity fills
@@ -5258,6 +5263,7 @@ export function BuzzChatSurface({
             stamp={ledgerStamp(item.timestamp)}
             onOpenIdentity={handleOpenSystemIdentity}
             onOpenUrl={handleOpenGitHubEvent}
+            onOpenBriefRevision={(revision) => setBriefRevisionRequest({ revision })}
           />
         );
       }
@@ -5523,8 +5529,7 @@ export function BuzzChatSurface({
               </TouchableOpacity>
             )}
             {/*
-            The corner's OWN agent — the server projection's `agent`
-            (`corners.created_by`), stated here once and never repeated on a
+            The corner's opener, stated here once and never repeated on a
             message. A reviewer or helper holding a live turn in the corner
             never swaps this mark or the name under it: their work is
             attributed in the transcript, and the state word reads
@@ -5591,8 +5596,9 @@ export function BuzzChatSurface({
               )}
               {isCorner ? (
                 <HeaderMetaRow>
-                  <Text
-                    numberOfLines={1}
+                  <CornerHeaderAgentText
+                    name={cornerOwnerDisplay?.name ?? 'Agent'}
+                    stateWord={cornerHeaderWord}
                     style={[
                       styles.cornerHeaderAgent,
                       cornerHeaderDisplay.status === 'working'
@@ -5603,9 +5609,7 @@ export function BuzzChatSurface({
                             ? styles.cornerHeaderArchived
                             : styles.cornerHeaderWaiting,
                     ]}
-                  >
-                    {(cornerOwnerDisplay?.name ?? 'AGENT').toUpperCase()} · {cornerHeaderWord}
-                  </Text>
+                  />
                 </HeaderMetaRow>
               ) : isDirectMessage ? (
                 <HeaderMetaCaps testID="room-header-meta">{dmHeaderPresence}</HeaderMetaCaps>
@@ -5695,7 +5699,7 @@ export function BuzzChatSurface({
             carries a short corner name, so without this the objective survives
             only until the first message lands. */}
           {isCorner && <CornerObjectiveLine objective={cornerObjectiveText} />}
-          {isCorner && <CornerBriefDisclosure brief={roomSurface?.cornerBrief} validation={roomSurface?.cornerValidation} onOpenFile={(url) => {
+          {isCorner && <CornerBriefDisclosure brief={roomSurface?.cornerBrief} requestedRevision={briefRevisionRequest} validation={roomSurface?.cornerValidation} onOpenFile={(url) => {
             void openExternalUrl(url).catch(() => {
               Modal.alert('Could not open assignment file', 'Try opening the file again from this corner.');
             });
@@ -6022,76 +6026,14 @@ export function BuzzChatSurface({
                   );
                 })()}
               {mentionMenuVisible && (
-                <View
-                  accessibilityLabel="Mention a Room participant"
-                  style={styles.mentionMenu}
-                  testID="mention-suggestions"
-                >
-                  <Text style={styles.mentionMenuLabel}>MENTION</Text>
-                  {mentionSuggestions.matches.map((participant, index) => {
-                    const selected = index === highlightedMentionIndex;
-                    const display = participant.agent
-                      ? resolveAgentDisplayIdentity(participant.pubkey, participant.agent)
-                      : undefined;
-                    return (
-                      <TouchableOpacity
-                        accessibilityLabel={`${participant.name}, @${participant.handle}, ${participant.kind}`}
-                        accessibilityRole="button"
-                        accessibilityState={{ selected }}
-                        key={participant.pubkey}
-                        onPress={() => selectMention(participant)}
-                        style={[styles.mentionRow, selected && styles.mentionRowSelected]}
-                        testID={`mention-suggestion-${participant.handle}`}
-                      >
-                        {participant.pubkey === CHANNEL_MENTION_PUBKEY ? (
-                          <View style={styles.mentionChannelGlyph}>
-                            <Text style={styles.mentionChannelGlyphText}>@</Text>
-                          </View>
-                        ) : display ? (
-                          <IdentityMark
-                            kind="agent"
-                            seed={display.avatarSeed ?? participant.pubkey}
-                            avatarUrl={display.avatarUrl}
-                            face={display.face}
-                            name={display.name}
-                            size={28}
-                          />
-                        ) : (
-                          <IdentityMark
-                            kind="human"
-                            seed={participant.pubkey}
-                            avatarUrl={personProfileByPubkey.get(participant.pubkey)?.avatar}
-                            face={participant.face}
-                            name={participant.name}
-                            size={28}
-                          />
-                        )}
-                        <View style={styles.mentionIdentity}>
-                          <Text numberOfLines={1} style={styles.mentionName}>
-                            {participant.pubkey === CHANNEL_MENTION_PUBKEY
-                              ? 'Everyone in this Room'
-                              : participant.name}
-                          </Text>
-                          <Text numberOfLines={1} style={styles.mentionHandle}>
-                            @{participant.handle}
-                          </Text>
-                        </View>
-                        <Text style={styles.mentionKind}>
-                          {participant.pubkey === CHANNEL_MENTION_PUBKEY
-                            ? 'ROOM'
-                            : participant.kind === 'agent'
-                              ? 'AGENT'
-                              : 'PERSON'}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                  {mentionSuggestions.overflow > 0 && (
-                    <Text style={styles.mentionOverflow} testID="mention-suggestion-overflow">
-                      AND {mentionSuggestions.overflow} OTHERS
-                    </Text>
-                  )}
-                </View>
+                <MentionSuggestionMenu
+                  highlightedIndex={highlightedMentionIndex}
+                  keyboardOpen={keyboardHeight > 0}
+                  matches={mentionSuggestions.matches}
+                  onSelect={selectMention}
+                  overflow={mentionSuggestions.overflow}
+                  personAvatar={(pubkey) => personProfileByPubkey.get(pubkey)?.avatar}
+                />
               )}
               {cornerOpenRepoPrompt && (
                 <View style={styles.repoPromptBanner} testID="corner-open-repo-prompt">
@@ -7335,74 +7277,6 @@ const styles = StyleSheet.create((theme) => {
       ...theme.buzz.type.sectionHead,
       fontFamily: groknight.monoSemibold,
       color: groknight.textSecondary,
-    },
-    mentionMenu: {
-      marginBottom: 6,
-      overflow: 'hidden',
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-      borderRadius: groknight.radius,
-      backgroundColor: groknight.bgBase,
-    },
-    mentionMenuLabel: {
-      ...theme.buzz.type.sectionHead,
-      fontFamily: groknight.monoSemibold,
-      paddingHorizontal: 10,
-      paddingVertical: 5,
-      color: groknight.textMuted,
-    },
-    mentionRow: {
-      minHeight: 46,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 9,
-      paddingHorizontal: 9,
-      paddingVertical: 6,
-      borderTopWidth: 1,
-      borderTopColor: groknight.border,
-    },
-    mentionRowSelected: {
-      backgroundColor: groknight.selection,
-    },
-    mentionIdentity: {
-      flex: 1,
-      minWidth: 0,
-    },
-    mentionChannelGlyph: {
-      width: 28,
-      height: 28,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-      borderRadius: groknight.radius,
-    },
-    mentionChannelGlyphText: {
-      ...theme.buzz.type.meta,
-      fontFamily: groknight.proseSemibold,
-      color: groknight.accent,
-    },
-    mentionName: {
-      ...theme.buzz.type.bodyStrong,
-      color: groknight.textPrimary,
-    },
-    mentionHandle: {
-      ...theme.buzz.type.machine,
-      color: groknight.textMuted,
-    },
-    mentionKind: {
-      ...theme.buzz.type.sectionHead,
-      fontFamily: groknight.monoSemibold,
-      color: groknight.faint,
-    },
-    mentionOverflow: {
-      ...theme.buzz.type.sectionHead,
-      fontFamily: groknight.monoSemibold,
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-      borderTopWidth: 1,
-      borderTopColor: groknight.border,
-      color: groknight.textMuted,
     },
     repoPromptBanner: {
       minWidth: 0,

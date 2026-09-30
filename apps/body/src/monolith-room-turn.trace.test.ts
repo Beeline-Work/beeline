@@ -33,6 +33,7 @@ async function runTurns(options: {
   agentCommand?: string;
   agentKind?: string;
   advertisedModel?: string;
+  statsDelayMs?: number;
   configOverrides?: Partial<BodyConfig>;
   prompt: (input: {
     attempt: number;
@@ -46,6 +47,7 @@ async function runTurns(options: {
   operations: string[];
   posted: Array<Record<string, unknown>>;
   activations: number;
+  receiptTimes: number[];
 }> {
   const root = await mkdtemp(join(tmpdir(), 'beeline-room-trace-'));
   roots.push(root);
@@ -83,6 +85,7 @@ async function runTurns(options: {
   const operations: string[] = [];
   const posted: Array<Record<string, unknown>> = [];
   const receipts: Array<Record<string, unknown>> = [];
+  const receiptTimes: number[] = [];
   const settled = () => receipts.filter((receipt) => receipt.status !== 'working').length;
   let bootstrapped = false;
   let delivered = 0;
@@ -100,7 +103,14 @@ async function runTurns(options: {
       };
     }
     if (name === 'postRoomMessage') posted.push(input);
-    if (name === 'postAgentTurnReceipt') receipts.push(input);
+    if (name === 'postAgentTurnReceipt') {
+      receipts.push(input);
+      if (input.status !== 'working') receiptTimes.push(Date.now());
+    }
+    if (name === 'getInstitutionalMemoryTurnStats') {
+      if (options.statsDelayMs) await new Promise((resolve) => setTimeout(resolve, options.statsDelayMs));
+      return { searchCalls: 0, searchMisses: 0 };
+    }
     if (name === 'getRoomInbox') {
       // One ask at a time, released only once the previous turn settled, so
       // each measurement is one turn and not a queue behind another.
@@ -202,12 +212,17 @@ async function runTurns(options: {
   await scheduler.dispose();
 
   const day = new Date().toISOString().slice(0, 10);
-  const written = await readFile(join(traceDir, `turns-${day}.jsonl`), 'utf8');
+  const tracePath = join(traceDir, `turns-${day}.jsonl`);
+  await vi.waitFor(async () => {
+    const content = await readFile(tracePath, 'utf8');
+    expect(content.trim().split('\n')).toHaveLength(options.asks.length);
+  }, { timeout: 3_000 });
+  const written = await readFile(tracePath, 'utf8');
   const traces = written
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line) as TurnTraceRecord);
-  return { traces, operations, posted, activations };
+  return { traces, operations, posted, activations, receiptTimes };
 }
 
 const answer = (text: string) => ({
@@ -360,6 +375,7 @@ describe('Room turn phase trace', () => {
         'postAgentActivity',
         'getAgentConfiguration',
         'getInstitutionalContext',
+        'getInstitutionalMemoryTurnStats',
         'listAgentGrants',
         'getRoomRepositoryState',
         'getRoomConversation',
@@ -371,5 +387,19 @@ describe('Room turn phase trace', () => {
       ]),
     );
     expect(traced.posted).toHaveLength(1);
+  });
+
+  it('starts a second turn without waiting for the first turn\'s slow trace stats', async () => {
+    const result = await runTurns({
+      asks: [{id:'ask-1',body:'first'}, {id:'ask-2',body:'second'}],
+      statsDelayMs: 800,
+      prompt: async ({onChunk}) => {
+        onChunk?.('Done','Done');
+        return answer('Done');
+      },
+    });
+    expect(result.receiptTimes).toHaveLength(2);
+    expect(result.receiptTimes[1]! - result.receiptTimes[0]!).toBeLessThan(700);
+    expect(result.traces).toHaveLength(2);
   });
 });

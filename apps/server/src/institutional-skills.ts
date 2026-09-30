@@ -3,6 +3,8 @@ import {
   WORKSPACE_SKILL_DESCRIPTION_MAX_LENGTH,
   WORKSPACE_SKILL_MARKDOWN_MAX_BYTES,
   WORKSPACE_SKILL_SLUG_MAX_LENGTH,
+  INSTITUTIONAL_MEMORY_VECTOR_MAX_DISTANCE,
+  INSTITUTIONAL_MEMORY_ALIGN_MAX_DISTANCE,
   parseInstitutionalMergeReviewProposal,
   type InstitutionalMergeReviewProposal,
   type LoadWorkspaceSkillInput,
@@ -12,6 +14,8 @@ import {
 import type { CommandRow } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
 import { institutionalWorkspaceRolloutStage, rolloutAllowsLive } from './institutional-rollout.js';
+import { scheduleEmbedWorkspaceSkillVersion, memoryEnvLimit, createDefaultEmbedFn,
+  withDeadline, pgvectorLiteral, type EmbedFn } from './institutional-memory-embeddings.js';
 
 export const WORKSPACE_SKILL_ACTIVE_MAX = 100;
 export const WORKSPACE_SKILL_ACTIVE_BYTES_MAX = 1024 * 1024;
@@ -129,7 +133,7 @@ export async function applySkillRevision(
   if (markdownBytes > WORKSPACE_SKILL_MARKDOWN_MAX_BYTES) {
     throw new Error(`workspace ${input.kind} markdown is too large`);
   }
-  return database.transaction(async (db) => {
+  const applied = await database.transaction(async (db) => {
     await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
       `workspace-skill:${input.workspaceId}:${input.slug}`,
     ]);
@@ -207,6 +211,11 @@ export async function applySkillRevision(
     );
     return { skillId, version };
   });
+  // Event-driven, not polled: this save schedules its OWN row's embed
+  // against the outer (post-commit) `database` handle. See
+  // institutional-memory-embeddings.ts.
+  scheduleEmbedWorkspaceSkillVersion(database, applied.skillId);
+  return applied;
 }
 
 /**
@@ -219,7 +228,9 @@ export async function saveSkill(
   database: SqlDatabase,
   command: CommandRow,
   input: { slug: unknown; description: unknown; markdown: unknown },
-): Promise<{ slug: string; version: number }> {
+  embed: EmbedFn = createDefaultEmbedFn(),
+): Promise<{ slug: string; version: number;
+  similarSkills: { slug: string; description: string }[] }> {
   const slug = typeof input.slug === 'string' ? input.slug.trim() : '';
   if (!WORKSPACE_SKILL_SLUG_PATTERN.test(slug) || slug.length > WORKSPACE_SKILL_SLUG_MAX_LENGTH) {
     throw new Error('skill slug is invalid');
@@ -246,7 +257,63 @@ export async function saveSkill(
     kind: 'procedure',
     sourceMessageIds: [command.root_source_message_id],
   });
-  return { slug, version };
+  const query = await withDeadline(embed, 3_000)(
+    `${slug.replace(/-/g, ' ')}: ${description}\n${markdown.slice(0, 600)}`, 'query');
+  const similarSkills = query.outcome === 'served' && query.vector
+    ? (await database.query<{ slug: string; description: string }>(
+      `SELECT slug,description FROM workspace_skills
+       WHERE workspace_id=$1 AND state='active' AND kind='procedure'
+         AND slug<>$2 AND embedding IS NOT NULL
+         AND (embedding <=> $3::vector) <= $4
+       ORDER BY embedding <=> $3::vector LIMIT 3`,
+      [room.workspace_id, slug, pgvectorLiteral(query.vector),
+       memoryEnvLimit('INSTITUTIONAL_MEMORY_ALIGN_MAX_DISTANCE', INSTITUTIONAL_MEMORY_ALIGN_MAX_DISTANCE)],
+    )).rows : [];
+  return { slug, version, similarSkills };
+}
+
+export type WorkspaceSkillVectorCandidate = WorkspaceSkillIndexCandidate & {
+  distance: number;
+};
+
+/**
+ * The nearest authorized skills to an already-computed query embedding
+ * (`[0.1,0.2,...]::vector` literal, see `pgvectorLiteral`), for the per-turn
+ * snapshot's hybrid skill index. Same authority filter as the keyword path
+ * above; a skill with no embedding yet (or the embedding cycle disabled)
+ * simply cannot appear here. Covers a `kind='workflow'` row automatically:
+ * this query has no kind filter, and the caller renders its index line by
+ * `skill.kind` the same way the keyword path already does.
+ */
+export async function vectorWorkspaceSkillCandidates(
+  database: SqlDatabase,
+  input: {
+    workspaceId: string;
+    requesterIdentityId: string;
+    agentId: string;
+    queryEmbedding: string;
+    limit: number;
+  },
+): Promise<WorkspaceSkillVectorCandidate[]> {
+  return (
+    await database.query<WorkspaceSkillVectorCandidate>(
+      `SELECT skill.id,skill.slug,skill.description,skill.current_version,
+              skill.source_room_id,skill.repository,skill.path,skill.updated_at,skill.kind,
+              (skill.embedding <=> $4::vector) distance
+       ${AUTHORIZED_SKILLS_SQL} AND skill.embedding IS NOT NULL
+         AND (skill.embedding <=> $4::vector) <= $6
+       ORDER BY skill.embedding <=> $4::vector
+       LIMIT $5`,
+      [
+        input.workspaceId,
+        input.requesterIdentityId,
+        input.agentId,
+        input.queryEmbedding,
+        input.limit,
+        memoryEnvLimit('INSTITUTIONAL_MEMORY_VECTOR_MAX_DISTANCE', INSTITUTIONAL_MEMORY_VECTOR_MAX_DISTANCE),
+      ],
+    )
+  ).rows;
 }
 
 /** Apply one immutable restricted-procedure revision under logical-key CAS. */

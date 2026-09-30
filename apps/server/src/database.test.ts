@@ -1085,6 +1085,44 @@ describe('the institutional memory rollout migration', () => {
   });
 });
 
+it('keeps the previous server image able to read and write through migration and rollback', async () => {
+  const database = new PgliteDatabase();
+  const workspace = '10000000-0000-4000-8000-000000000021';
+  const room = '20000000-0000-4000-8000-000000000021';
+  const item = '30000000-0000-4000-8000-000000000021';
+  const skill = '40000000-0000-4000-8000-000000000021';
+  const human = 'a'.repeat(64);
+  try {
+    await migrate(database);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner')`, [human]);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Memory')`, [workspace]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Shared')`, [room, workspace]);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('old-source',$1,$2,'Fact')`, [room, human]);
+    await database.query(`INSERT INTO institutional_memory_workspace_rollouts(workspace_id) VALUES($1)`, [workspace]);
+    await database.query(`INSERT INTO institutional_memory_items
+      (id,workspace_id,kind,canonical_key,body,source_room_id,source_message_id,
+       audience_kind,confidence,version)
+      VALUES($1,$2,'workspace_fact','old-key','Fact',$3,'old-source','workspace',0.9,1)`,
+      [item, workspace, room]);
+    await database.query(`INSERT INTO workspace_skills
+      (id,workspace_id,slug,description,current_version,revision,source_room_id,repository,target_commit)
+      VALUES($1,$2,'old-skill','A saved skill',1,1,$3,'','')`, [skill, workspace, room]);
+
+    for (let image = 0; image < 2; image += 1) {
+      await migrateData(database);
+      // These are the previous image's lifecycle columns and state writes.
+      const settings = await database.query<{ stale_after_days: number; archive_after_days: number; retention_days: number }>(
+        `SELECT stale_after_days,archive_after_days,retention_days
+         FROM institutional_memory_workspace_rollouts WHERE workspace_id=$1`, [workspace]);
+      expect(settings.rows[0]).toEqual({ stale_after_days: 30, archive_after_days: 90, retention_days: 365 });
+      await database.query(`UPDATE institutional_memory_items SET state='archived' WHERE id=$1`, [item]);
+      await database.query(`UPDATE workspace_skills SET state='archived' WHERE id=$1`, [skill]);
+    }
+  } finally {
+    await database.close();
+  }
+});
+
 describe('the agent handle migration', () => {
   let database: PgliteDatabase;
   beforeEach(async () => {

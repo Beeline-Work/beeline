@@ -754,8 +754,8 @@ export async function archiveWorkflow(
   ).rows[0];
   if (!room) throw new Error('workflow room not found');
   const result = await database.query(
-    `UPDATE workspace_skills SET state='archived',updated_at=now()
-     WHERE workspace_id=$1 AND slug=$2 AND kind='workflow' AND state<>'archived'`,
+    `UPDATE workspace_skills SET state='stale',updated_at=now()
+     WHERE workspace_id=$1 AND slug=$2 AND kind='workflow' AND state='active'`,
     [room.workspace_id, input.name],
   );
   return { slug: input.name, archived: Boolean(result.rowCount) };

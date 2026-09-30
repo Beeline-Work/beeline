@@ -90,6 +90,12 @@ export interface TurnAttemptTrace {
    * never reached context-fetch).
    */
   institutionalMemory?: 'served' | 'empty' | 'timed-out';
+  /** The snapshot's OWN embedding round trip (server-side, part of the same
+   *  fetch as `institutionalMemory` above): `served` when a vector answered
+   *  in time, `timed-out` when it did not (the snapshot still served keyword
+   *  candidates), `disabled` when no embedding key is configured server-side. */
+  institutionalMemoryEmbeddingMs?: number;
+  institutionalMemoryEmbeddingOutcome?: 'served' | 'timed-out' | 'disabled' | 'error';
 }
 
 export interface TurnTraceRecord {
@@ -118,6 +124,11 @@ export interface TurnTraceRecord {
   };
   /** Bytes per prompt section of the last prompt built (`prompt-assembly.ts`). */
   promptSections?: Record<string, number>;
+  /** How many times this turn called search_memory, and how many came back
+   *  with nothing — read back once after the turn settles (best-effort;
+   *  absent when the read failed or the turn never had a snapshot row). */
+  searchMemoryCalls?: number;
+  searchMemoryMisses?: number;
 }
 
 export interface TurnTraceSink {
@@ -144,6 +155,8 @@ interface MutableAttempt {
   toolWorkOpenedAt?: number;
   settled?: boolean;
   institutionalMemory?: 'served' | 'empty' | 'timed-out';
+  institutionalMemoryEmbeddingMs?: number;
+  institutionalMemoryEmbeddingOutcome?: 'served' | 'timed-out' | 'disabled' | 'error';
 }
 
 export interface TurnTraceOptions {
@@ -172,6 +185,8 @@ export class TurnTrace {
   private atAdmission?: SessionSchedulerSnapshot;
   private finished = false;
   private promptSections?: Record<string, number>;
+  private searchMemoryCalls?: number;
+  private searchMemoryMisses?: number;
   /** Every distinct tool call id this turn has seen, across retries. */
   private readonly toolCallIds = new Set<string>();
 
@@ -240,6 +255,23 @@ export class TurnTrace {
   /** How this turn's institutional-memory snapshot fetch resolved (see the field's own doc). */
   noteInstitutionalMemory(outcome: 'served' | 'empty' | 'timed-out'): void {
     this.current.institutionalMemory = outcome;
+  }
+
+  /** The snapshot's own embedding round trip (see the field's own doc). */
+  noteInstitutionalMemoryEmbedding(
+    outcome: 'served' | 'timed-out' | 'disabled' | 'error',
+    ms: number,
+  ): void {
+    this.current.institutionalMemoryEmbeddingOutcome = outcome;
+    this.current.institutionalMemoryEmbeddingMs = ms;
+  }
+
+  /** This turn's search_memory call/miss counters, read back once after the
+   *  turn settles. Never called when the read itself failed or found nothing
+   *  to report, so the fields stay absent rather than reading as zero calls. */
+  noteSearchMemoryStats(calls: number, misses: number): void {
+    this.searchMemoryCalls = calls;
+    this.searchMemoryMisses = misses;
   }
 
   /** What each section of the assembled prompt cost, so growth shows in the trace. */
@@ -345,6 +377,12 @@ export class TurnTrace {
         ...(attempt.provider ? { provider: attempt.provider } : {}),
         ...(attempt.retryReason ? { retryReason: attempt.retryReason } : {}),
         ...(attempt.institutionalMemory ? { institutionalMemory: attempt.institutionalMemory } : {}),
+        ...(attempt.institutionalMemoryEmbeddingOutcome
+          ? {
+              institutionalMemoryEmbeddingOutcome: attempt.institutionalMemoryEmbeddingOutcome,
+              institutionalMemoryEmbeddingMs: round(attempt.institutionalMemoryEmbeddingMs ?? 0),
+            }
+          : {}),
         phases: Object.fromEntries(
           TURN_PHASES.filter((phase) => attempt.phases.has(phase)).map((phase) => [
             phase,
@@ -358,6 +396,9 @@ export class TurnTrace {
         ...(this.atAdmission ? { atAdmission: this.atAdmission } : {}),
       },
       ...(this.promptSections ? { promptSections: this.promptSections } : {}),
+      ...(this.searchMemoryCalls !== undefined
+        ? { searchMemoryCalls: this.searchMemoryCalls, searchMemoryMisses: this.searchMemoryMisses ?? 0 }
+        : {}),
     };
   }
 
@@ -401,6 +442,14 @@ export function formatTurnAttempt(attempt: TurnAttemptTrace): string {
   if (attempt.capacityWait) parts.push('capacity-wait');
   if (attempt.provider) parts.push(`provider ${attempt.provider}`);
   if (attempt.institutionalMemory) parts.push(`memory ${attempt.institutionalMemory}`);
+  if (attempt.institutionalMemoryEmbeddingOutcome) {
+    parts.push(
+      `embedding ${attempt.institutionalMemoryEmbeddingOutcome}` +
+        (attempt.institutionalMemoryEmbeddingMs !== undefined
+          ? ` ${formatDuration(attempt.institutionalMemoryEmbeddingMs)}`
+          : ''),
+    );
+  }
   for (const phase of TURN_PHASES) {
     const value = attempt.phases[phase];
     if (value === undefined) continue;

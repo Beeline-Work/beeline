@@ -147,6 +147,14 @@ export const RESEARCH_CORNER_HOLD =
 export const UPGRADE_INTENT_RULE =
   'Call this only while answering a human message, in this same corner, that clearly conveys intent to change the code — a bug report, a requested change, or a problem described for you to fix, not a specific required phrase. Never call it from an earlier message, or your own initiative.';
 
+/** Shared verbatim into the search_memory tool description (`read-only-mcp.ts`)
+ *  so it is the one place this rule is stated. Meaning-based matching finds a
+ *  fact even when the current request shares no words with how it was saved
+ *  (see `institutional-memory-embeddings.ts`), so the turn snapshot's keyword
+ *  miss is never sufficient grounds to tell someone a fact was never stored. */
+export const SEARCH_MEMORY_FIRST_RULE =
+  'Call this before telling anyone a fact was never saved, or asking them for information they may already have given you. Meaning-based matching often finds it even when this turn shares no words with how it was originally phrased.';
+
 const handle = (value: string): string => value.replace(/^@/, '');
 
 /**

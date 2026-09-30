@@ -83,14 +83,17 @@ describe('institutional memory shadow worker', () => {
     );
   });
 
-  it('quotes the server-bounded merge and curator context in the isolated prompt', () => {
-    expect(
-      institutionalMemoryExtractionPrompt({
-        ...job,
-        triggerKind: 'curator',
-        context: { partition: 'workspace-facts', candidates: [{ id: 'fact-1' }] },
-      }),
-    ).toContain('"partition":"workspace-facts"');
+  it('uses v2 alignment instructions only for a nearest-memory payload', () => {
+    expect(institutionalMemoryExtractionPrompt(job)).toContain('proposalVersion 1');
+    expect(institutionalMemoryExtractionPrompt({
+      ...job, context: { alignment: 'recent', offeredItemIds: [] },
+    })).toContain('proposalVersion 1');
+    const nearest = institutionalMemoryExtractionPrompt({
+      ...job, context: { alignment: 'nearest', offeredItemIds: [] },
+    });
+    expect(nearest).toContain('proposalVersion 2');
+    expect(nearest).toContain('supersede');
+    expect(nearest).toContain('retire');
     expect(
       institutionalMemoryExtractionPrompt({
         ...job,

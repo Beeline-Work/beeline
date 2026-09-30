@@ -1052,6 +1052,10 @@ CREATE INDEX IF NOT EXISTS institutional_memory_jobs_claim_idx
 CREATE INDEX IF NOT EXISTS institutional_memory_jobs_workspace_created_idx
   ON institutional_memory_jobs(workspace_id,created_at,id);
 
+-- Meaning-based recall (search_memory, the per-turn snapshot, workspace
+-- skills) needs pgvector; Neon supports the extension directly.
+CREATE EXTENSION IF NOT EXISTS vector;
+
 CREATE TABLE IF NOT EXISTS institutional_memory_items (
   id uuid PRIMARY KEY,
   workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -1102,6 +1106,7 @@ ALTER TABLE institutional_memory_items
   ADD CONSTRAINT institutional_memory_items_created_by_job_id_fkey
   FOREIGN KEY (created_by_job_id) REFERENCES institutional_memory_jobs(id) ON DELETE SET NULL;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS created_by_command_id text;
+ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS explicit_save boolean NOT NULL DEFAULT false;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS curated_at timestamptz;
 -- Only a keyword match loads an item into a turn. Rows saved before keywords
@@ -1122,6 +1127,13 @@ ALTER TABLE institutional_memory_items ADD CONSTRAINT institutional_memory_items
 ALTER TABLE institutional_memory_items DROP CONSTRAINT IF EXISTS institutional_memory_items_creator_check;
 ALTER TABLE institutional_memory_items ADD CONSTRAINT institutional_memory_items_creator_check
   CHECK (NOT (created_by_job_id IS NOT NULL AND created_by_command_id IS NOT NULL));
+-- Meaning-based recall: NULL until the embedding cycle fills it (embed on
+-- save and backfill are the same query — see institutional-memory-embeddings.ts).
+-- embedding_model records which model produced it, so a future model change
+-- re-embeds every row instead of silently mixing incompatible vectors.
+ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS embedding vector(1024);
+ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS embedding_model text;
+ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS embedded_at timestamptz;
 CREATE UNIQUE INDEX IF NOT EXISTS institutional_memory_items_current_key_idx
   ON institutional_memory_items(
     workspace_id,kind,COALESCE(subject_identity_id,''),canonical_key,audience_kind
@@ -1179,6 +1191,14 @@ ALTER TABLE institutional_context_serves
   CHECK (prompt_bytes IS NULL OR prompt_bytes > 0);
 ALTER TABLE institutional_context_serves
   ADD COLUMN IF NOT EXISTS agent_id text REFERENCES identities(id) ON DELETE CASCADE;
+-- search_memory is the fallback tool this same turn reaches for when the
+-- snapshot above missed; both counters ride the serve row a turn already has
+-- so the body-side turn trace can read them back after the turn settles
+-- (getInstitutionalMemoryTurnStats) with no new table.
+ALTER TABLE institutional_context_serves
+  ADD COLUMN IF NOT EXISTS search_memory_calls integer NOT NULL DEFAULT 0;
+ALTER TABLE institutional_context_serves
+  ADD COLUMN IF NOT EXISTS search_memory_misses integer NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS institutional_context_serves_turn_idx
   ON institutional_context_serves(room_id,request_id,agent_id) WHERE mode='live';
 CREATE UNIQUE INDEX IF NOT EXISTS institutional_context_serves_shadow_job_idx
@@ -1251,6 +1271,12 @@ CREATE TABLE IF NOT EXISTS institutional_memory_fact_events (
 );
 CREATE INDEX IF NOT EXISTS institutional_memory_facts_workspace_created_idx
   ON institutional_memory_fact_events(workspace_id,created_at,id);
+ALTER TABLE institutional_memory_fact_events
+  DROP CONSTRAINT IF EXISTS institutional_memory_fact_events_job_id_key;
+ALTER TABLE institutional_memory_fact_events
+  ADD COLUMN IF NOT EXISTS retirement_reason text;
+ALTER TABLE institutional_memory_fact_events
+  ADD COLUMN IF NOT EXISTS target_item_id uuid REFERENCES institutional_memory_items(id) ON DELETE SET NULL;
 
 CREATE TABLE IF NOT EXISTS institutional_history_searches (
   id uuid PRIMARY KEY,
@@ -1306,6 +1332,15 @@ ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS anchor_stale_reason text;
 ALTER TABLE workspace_skills DROP CONSTRAINT IF EXISTS workspace_skills_anchor_stale_reason_check;
 ALTER TABLE workspace_skills ADD CONSTRAINT workspace_skills_anchor_stale_reason_check
   CHECK (anchor_stale_reason IS NULL OR length(anchor_stale_reason)<=300);
+-- Meaning-based skill lookup (same hybrid as institutional_memory_items,
+-- extended to workspace_skills per AGENTS.md's core-workflow note). Embeds
+-- slug + description + a short body summary; embedding_version is the
+-- current_version the vector answers for, so a new revision re-embeds
+-- through the same embed-on-save-and-backfill cycle with no separate job.
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS embedding vector(1024);
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS embedding_model text;
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS embedding_version integer;
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS embedded_at timestamptz;
 CREATE INDEX IF NOT EXISTS workspace_skills_catalog_idx
   ON workspace_skills(workspace_id,state,updated_at DESC,id);
 -- A workflow row is a skill row: a declarative contract, saved/discovered/loaded
@@ -1388,6 +1423,8 @@ CREATE TABLE IF NOT EXISTS institutional_memory_workspace_rollouts (
   stale_after_days integer NOT NULL DEFAULT 30 CHECK (stale_after_days BETWEEN 7 AND 3650),
   archive_after_days integer NOT NULL DEFAULT 90 CHECK (archive_after_days BETWEEN 14 AND 7300),
   retention_days integer NOT NULL DEFAULT 365 CHECK (retention_days BETWEEN 30 AND 7300),
+  expire_after_days integer NOT NULL DEFAULT 90 CHECK (expire_after_days BETWEEN 1 AND 7300),
+  explicit_expire_after_days integer NOT NULL DEFAULT 365 CHECK (explicit_expire_after_days BETWEEN 1 AND 7300),
   daily_token_budget integer NOT NULL DEFAULT 100000 CHECK (daily_token_budget BETWEEN 1000 AND 10000000),
   availability_observed_at timestamptz,
   updated_at timestamptz NOT NULL DEFAULT now(),
@@ -1401,6 +1438,10 @@ CREATE TABLE IF NOT EXISTS institutional_memory_workspace_rollouts (
 ALTER TABLE institutional_memory_workspace_rollouts ALTER COLUMN stage SET DEFAULT 'live';
 ALTER TABLE institutional_memory_workspace_rollouts
   ADD COLUMN IF NOT EXISTS availability_observed_at timestamptz;
+ALTER TABLE institutional_memory_workspace_rollouts
+  ADD COLUMN IF NOT EXISTS expire_after_days integer NOT NULL DEFAULT 90;
+ALTER TABLE institutional_memory_workspace_rollouts
+  ADD COLUMN IF NOT EXISTS explicit_expire_after_days integer NOT NULL DEFAULT 365;
 
 -- Every span in which no authorized helper host could serve this Workspace.
 -- Lifecycle aging subtracts these spans, so nothing goes stale, archived or
@@ -2395,6 +2436,28 @@ export async function migrate(
      ON messages USING GIN(search_document)
      WHERE deleted_at IS NULL AND presentation='message'`,
   ));
+  // Embedding-cycle scan: cheap once the backfill converges, for the same
+  // reason as the search backfill index above (a filled row never re-enters
+  // this partial index).
+  await retryMigrationStep('institutional memory embedding backfill index', () =>
+    createIndexConcurrently(
+      database,
+      'institutional_memory_items_embedding_backfill_idx',
+      `CREATE INDEX CONCURRENTLY institutional_memory_items_embedding_backfill_idx
+       ON institutional_memory_items(updated_at ASC)
+       WHERE state='active' AND deleted_at IS NULL AND embedding IS NULL`,
+    ));
+  // Exact distance scans stay inside one Workspace's small active set.
+  await database.query('DROP INDEX IF EXISTS institutional_memory_items_embedding_idx');
+  await retryMigrationStep('workspace skill embedding backfill index', () =>
+    createIndexConcurrently(
+      database,
+      'workspace_skills_embedding_backfill_idx',
+      `CREATE INDEX CONCURRENTLY workspace_skills_embedding_backfill_idx
+       ON workspace_skills(updated_at ASC)
+       WHERE state='active' AND embedding IS NULL`,
+    ));
+  await database.query('DROP INDEX IF EXISTS workspace_skills_embedding_idx');
   // The Needs-you tray finds undecided grant cards without reading transcripts.
   await retryMigrationStep('grant request index', () => createIndexConcurrently(
     database, 'messages_grant_request_idx',
@@ -2442,6 +2505,32 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   // The shared Welcome Workspace is no longer reseeded at boot; a release-
   // owned step retires it (welcome-retirement.ts, run from index.ts).
   await dataStep('institutional rollout', () => backfillInstitutionalMemoryRollout(database));
+  await dataStep('institutional memory lifecycle', async () => {
+    await database.query(`WITH RECURSIVE explicit_chain AS (
+        SELECT id FROM institutional_memory_items WHERE created_by_command_id IS NOT NULL
+        UNION
+        SELECT newer.id FROM institutional_memory_items newer
+        JOIN explicit_chain older ON newer.supersedes_id=older.id
+      )
+      UPDATE institutional_memory_items SET explicit_save=true
+      WHERE id IN (SELECT id FROM explicit_chain) AND explicit_save=false`);
+    await database.query(`UPDATE institutional_memory_items
+      SET body='',deleted_at=COALESCE(deleted_at,now()),state='stale'
+      WHERE state<>'active' AND (body<>'' OR deleted_at IS NULL OR state='archived')`);
+    await database.query(`ALTER TABLE institutional_memory_items
+      DROP CONSTRAINT IF EXISTS institutional_memory_items_state_check`);
+    await database.query(`ALTER TABLE institutional_memory_items
+      ADD CONSTRAINT institutional_memory_items_state_check CHECK (state IN ('active','stale','archived'))`);
+    await database.query(`UPDATE workspace_skills SET state='stale'
+      WHERE state='archived'`);
+    await database.query(`ALTER TABLE workspace_skills
+      DROP CONSTRAINT IF EXISTS workspace_skills_state_check`);
+    await database.query(`ALTER TABLE workspace_skills
+      ADD CONSTRAINT workspace_skills_state_check CHECK (state IN ('active','stale','archived'))`);
+    await database.query(`UPDATE institutional_memory_jobs
+      SET status='dead',error='curator model jobs removed',updated_at=now()
+      WHERE trigger_kind='curator' AND status IN ('pending','retry','claimed')`);
+  });
   await backfillAgentHandles(database);
   await dataStep('yolo default', () => backfillYoloModeDefault(database));
   await dataStep('connector machine IDs', () => backfillConnectorMachineId(database));

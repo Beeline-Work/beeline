@@ -155,6 +155,7 @@ import {
   enqueueInstitutionalMemoryTurnReview,
   failInstitutionalMemoryJob,
   getInstitutionalContext,
+  getInstitutionalMemoryTurnStats,
   heartbeatInstitutionalMemoryJob,
   proposeInstitutionalMemory,
   searchInstitutionalMemory,
@@ -689,6 +690,7 @@ export class DaemonService {
           this.database,
           authenticatedAgentId,
           this.institutionalMemoryShadow,
+          (input as { extractorVersion?: string }).extractorVersion,
         );
         return { enabled: true, ...(job ? { job } : {}) } as Output<Name>;
       }
@@ -768,6 +770,15 @@ export class DaemonService {
           this.database,
           this.authorizedCommand,
           input as Input<'searchInstitutionalHistory'>,
+        )) as Output<Name>;
+      case 'getInstitutionalMemoryTurnStats':
+        if (!this.institutionalMemoryShadow.live) {
+          return { searchCalls: 0, searchMisses: 0 } as Output<Name>;
+        }
+        return (await getInstitutionalMemoryTurnStats(
+          this.database,
+          authenticatedAgentId,
+          input as Input<'getInstitutionalMemoryTurnStats'>,
         )) as Output<Name>;
       case 'loadWorkspaceSkill':
         if (!this.commandTransaction || !this.authorizedCommand) {
@@ -6985,6 +6996,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   proposeInstitutionalMemory: true,
   searchInstitutionalMemory: true,
   searchInstitutionalHistory: true,
+  getInstitutionalMemoryTurnStats: true,
   loadWorkspaceSkill: true,
   saveSkill: true,
   saveWorkflow: true,

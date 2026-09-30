@@ -1322,7 +1322,7 @@ describe('institutional memory phase-0 shadow capture', () => {
       AGENT,
     );
     expect(beyondSnapshot.results.map((item) => item.id)).toContain(thirdParty.itemId);
-    await database.query(`UPDATE institutional_memory_items SET state='archived' WHERE id=$1`, [
+    await database.query(`UPDATE institutional_memory_items SET state='stale',body='',deleted_at=now() WHERE id=$1`, [
       thirdParty.itemId,
     ]);
     const archived = await daemon.execute(
@@ -1337,9 +1337,6 @@ describe('institutional memory phase-0 shadow capture', () => {
       AGENT,
     );
     expect(archived.results).toEqual([]);
-    await database.query(`UPDATE institutional_memory_items SET state='active' WHERE id=$1`, [
-      thirdParty.itemId,
-    ]);
     await database.query(`UPDATE messages SET deleted_at=now() WHERE id=$1`, [source]);
     const deletedSource = await daemon.execute(
       'searchInstitutionalMemory',
@@ -1436,7 +1433,7 @@ describe('institutional memory phase-0 shadow capture', () => {
           `SELECT state,body,deleted_at FROM institutional_memory_items`,
         )
       ).rows[0],
-    ).toMatchObject({ state: 'archived', body: '' });
+    ).toMatchObject({ state: 'stale', body: '' });
     expect((await database.query(`SELECT 1 FROM institutional_memory_fact_events`)).rowCount).toBe(
       0,
     );

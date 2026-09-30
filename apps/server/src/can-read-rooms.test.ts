@@ -1,4 +1,3 @@
-import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { migrate } from './database.js';
 import { PhoneService } from './phone-service.js';
@@ -15,7 +14,7 @@ describe('PhoneService.canReadRooms batch authorization', () => {
   let phone: PhoneService;
 
   beforeAll(async () => {
-    const database = new PgliteDatabase(new PGlite());
+    const database = new PgliteDatabase();
     await migrate(database);
     phone = new PhoneService(database, 'http://local.test');
     await database.query(

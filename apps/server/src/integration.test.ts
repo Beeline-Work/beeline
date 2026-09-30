@@ -2106,7 +2106,7 @@ describe('monolith integration', () => {
           [memoryItemId],
         )
       ).rows[0],
-    ).toMatchObject({ state: 'archived', body: '' });
+    ).toMatchObject({ state: 'stale', body: '' });
 
     const managerMessageId = 'e'.repeat(64);
     await phone.execute(

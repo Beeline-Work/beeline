@@ -47,6 +47,7 @@ import { GitHubOperations } from '../apps/server/src/github-operations.js';
 import { LiveHub } from '../apps/server/src/live.js';
 import { createBeelineServer } from '../apps/server/src/server.js';
 import { createAgentCommand } from '../apps/server/src/agent-command.js';
+import { CORNER_WORKFLOW_HANDOFF_CARD_TYPE } from '../apps/server/src/room-choice.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 
 const HUMAN = 'a'.repeat(64);
@@ -320,8 +321,8 @@ async function main(): Promise<void> {
     cards: { fromState?: string; outcome?: string; toState: string; status?: string }[];
   }> {
     const rows = await db.query<{ card: Record<string, unknown> }>(
-      `SELECT card FROM messages WHERE room_id=$1 AND card_type='workflow-handoff' ORDER BY (card->>'seq')::int`,
-      [cornerId],
+      `SELECT card FROM messages WHERE room_id=$1 AND card_type=$2 ORDER BY (card->>'seq')::int`,
+      [cornerId, CORNER_WORKFLOW_HANDOFF_CARD_TYPE],
     );
     const cards = rows.rows.map((row) => row.card as never as {
       fromState?: string;

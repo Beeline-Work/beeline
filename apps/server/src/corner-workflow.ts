@@ -2,8 +2,23 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { WorkflowContract, WorkflowTerminalState } from '@beeline/api-contract/daemon';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
+import { CORNER_WORKFLOW_HANDOFF_CARD_TYPE } from './room-choice.js';
 import { ensureSystemIdentity, systemLine, type SystemLineInput } from './system-line.js';
-import { WORKFLOW_HANDOFF_CARD_TYPE } from './workflow-runs.js';
+import { WORKFLOW_HANDOFF_CARD_TYPE, workflowRunLockKey } from './workflow-runs.js';
+
+/**
+ * Corner bookkeeping cards use their OWN `card_type`
+ * (`CORNER_WORKFLOW_HANDOFF_CARD_TYPE`, defined in `room-choice.ts` to avoid
+ * a circular import here), distinct from the generic engine's
+ * `WORKFLOW_HANDOFF_CARD_TYPE` (`workflow-handoff`) — the `kind` stays
+ * `workflow-handoff` (still a registered event kind, still zero real wakes,
+ * since corner cards never set `wakes` and nothing subscribes to this kind),
+ * but the card_type lets this one specific shape be excluded from a corner's
+ * visible transcript (`hiddenWakeCardSql`) without touching the generic
+ * engine's own `workflow-handoff` cards, which — for an ordinary Room-based
+ * workflow — ARE the real, intended visible handoff notice, not corner-style
+ * redundant bookkeeping over an unrelated real conversation.
+ */
 
 /**
  * The corner lifecycle expressed as the same declarative workflow contract a
@@ -127,6 +142,24 @@ type CornerWorkflowRunState = {
  * cascade (whose bounded depth is meant for agent wake fan-out, not a single
  * run's own potentially long transition history).
  */
+
+/**
+ * Serializes one corner run's whole read-current-state -> write-next-card
+ * sequence, exactly mirroring `workflow-runs.ts`'s `lockWorkflowRun` (same
+ * key format, `pg_advisory_xact_lock(hashtext('workflow-run:'+runId))`, so a
+ * hypothetical id collision between a corner's own room-id-as-runId and a
+ * generic engine run just serializes harmlessly against the same lock rather
+ * than silently disagreeing about the key). Taken as the transaction's FIRST
+ * statement. Without this, two independent round trips against the same
+ * corner (a push landing the same moment as a close, or a redelivered
+ * webhook) can both read the same prior `seq` before either write commits,
+ * and both insert a card at `seq+1` — `ORDER BY (card->>'seq')::int DESC`
+ * has no secondary key, so which one reads as "current" is arbitrary.
+ */
+async function lockCornerWorkflowRun(db: SqlDatabase, cornerId: string): Promise<void> {
+  await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [workflowRunLockKey(cornerId)]);
+}
+
 async function loadCornerWorkflowRunState(
   db: SqlDatabase,
   cornerId: string,
@@ -143,7 +176,7 @@ async function loadCornerWorkflowRunState(
        FROM messages
        WHERE room_id=$1::uuid AND card_type=$2 AND card->>'runId'=$1::text
        ORDER BY (card->>'seq')::int DESC LIMIT 1`,
-      [cornerId, WORKFLOW_HANDOFF_CARD_TYPE],
+      [cornerId, CORNER_WORKFLOW_HANDOFF_CARD_TYPE],
     )
   ).rows[0];
   if (!row?.to_state) return undefined;
@@ -202,7 +235,9 @@ export async function startCornerWorkflowRun(
   },
 ): Promise<void> {
   try {
-    const workflowVersion = await currentCornerWorkflowVersion(db, input.workspaceId);
+    await db.transaction(async (tx) => {
+    await lockCornerWorkflowRun(tx, input.cornerId);
+    const workflowVersion = await currentCornerWorkflowVersion(tx, input.workspaceId);
     const roleBindings = {
       implementer: input.implementerAgentId,
       // Never a real agent id — a documented marker so the generic
@@ -211,8 +246,8 @@ export async function startCornerWorkflowRun(
       // called that tool against this run's id (report finding 1).
       reviewer: 'live:parent.reviewer_agent_id',
     };
-    const subject = await cornerBookkeepingSubject(db);
-    await systemLine(db, {
+    const subject = await cornerBookkeepingSubject(tx);
+    await systemLine(tx, {
       // Deterministic: the corner's own id doubles as its start card's id,
       // exactly as `startWorkflow` uses the run id for the same card
       // (workflow-runs.ts) — a retried `createCorner` transaction can never
@@ -224,8 +259,14 @@ export async function startCornerWorkflowRun(
       verb: 'started workflow',
       object: CORNER_WORKFLOW_CONTRACT.name,
       kind: WORKFLOW_HANDOFF_CARD_TYPE,
+      // A corner already has its own rich real conversation, and this
+      // bookkeeping is purely an additional, SQL-queryable record of what
+      // already happened there — never something a human is meant to read as
+      // a chat line. `CORNER_WORKFLOW_HANDOFF_CARD_TYPE` (its own card_type,
+      // distinct from the generic engine's) is what `hiddenWakeCardSql`
+      // excludes from `PhoneService.readRoom`'s transcript queries.
       presentation: 'card',
-      cardType: WORKFLOW_HANDOFF_CARD_TYPE,
+      cardType: CORNER_WORKFLOW_HANDOFF_CARD_TYPE,
       card: {
         runId: input.cornerId,
         workflowSlug: CORNER_WORKFLOW_CONTRACT.name,
@@ -237,7 +278,7 @@ export async function startCornerWorkflowRun(
     });
     const toState =
       input.lane === 'no_code' ? 'no_code_work' : input.lane === 'research' ? 'investigate' : 'implement';
-    await writeCornerWorkflowCard(db, {
+    await writeCornerWorkflowCard(tx, {
       cornerId: input.cornerId,
       fromState: 'opened',
       outcome: input.lane,
@@ -248,6 +289,7 @@ export async function startCornerWorkflowRun(
       contents: {},
       subject,
       dedupeKey: 'opened',
+    });
     });
   } catch (error) {
     console.error('[corner-workflow] failed to start bookkeeping run', input.cornerId, error);
@@ -284,9 +326,10 @@ async function writeCornerWorkflowCard(
     // already happened through the existing corner machinery before this
     // card is written, so this card must never itself wake anyone (no
     // `wakes`) — doing so would dispatch a second, redundant turn for
-    // something the corner already handled (report finding 2).
+    // something the corner already handled (report finding 2). Never shown
+    // to a human either — see the identical note on the start card above.
     presentation: 'card',
-    cardType: WORKFLOW_HANDOFF_CARD_TYPE,
+    cardType: CORNER_WORKFLOW_HANDOFF_CARD_TYPE,
     card: {
       runId: input.cornerId,
       workflowSlug: CORNER_WORKFLOW_CONTRACT.name,
@@ -321,23 +364,26 @@ export async function noteCornerWorkflowTransition(
   },
 ): Promise<void> {
   try {
-    const run = await loadCornerWorkflowRunState(db, input.cornerId);
-    if (!run || run.toState !== input.expectedFromState) return;
-    const state = CORNER_WORKFLOW_CONTRACT.handoffs[input.expectedFromState];
-    if (!state || state.kind === 'terminal' || !('on' in state) || !Object.hasOwn(state.on, input.outcome))
-      return;
-    const subject = await cornerBookkeepingSubject(db);
-    await writeCornerWorkflowCard(db, {
-      cornerId: input.cornerId,
-      fromState: input.expectedFromState,
-      outcome: input.outcome,
-      toState: input.toState,
-      roleBindings: run.roleBindings,
-      workflowVersion: run.workflowVersion,
-      seq: run.seq + 1,
-      contents: input.contents,
-      subject,
-      dedupeKey: input.dedupeKey ?? randomBytes(16).toString('hex'),
+    await db.transaction(async (tx) => {
+      await lockCornerWorkflowRun(tx, input.cornerId);
+      const run = await loadCornerWorkflowRunState(tx, input.cornerId);
+      if (!run || run.toState !== input.expectedFromState) return;
+      const state = CORNER_WORKFLOW_CONTRACT.handoffs[input.expectedFromState];
+      if (!state || state.kind === 'terminal' || !('on' in state) || !Object.hasOwn(state.on, input.outcome))
+        return;
+      const subject = await cornerBookkeepingSubject(tx);
+      await writeCornerWorkflowCard(tx, {
+        cornerId: input.cornerId,
+        fromState: input.expectedFromState,
+        outcome: input.outcome,
+        toState: input.toState,
+        roleBindings: run.roleBindings,
+        workflowVersion: run.workflowVersion,
+        seq: run.seq + 1,
+        contents: input.contents,
+        subject,
+        dedupeKey: input.dedupeKey ?? randomBytes(16).toString('hex'),
+      });
     });
   } catch (error) {
     console.error(
@@ -373,22 +419,25 @@ export async function noteCornerWorkflowReviewOutcome(
   },
 ): Promise<void> {
   try {
-    const run = await loadCornerWorkflowRunState(db, input.cornerId);
-    if (!run || (run.toState !== 'review' && run.toState !== 'implement')) return;
-    const reviewState = CORNER_WORKFLOW_CONTRACT.handoffs.review;
-    if (!reviewState || !('on' in reviewState) || !Object.hasOwn(reviewState.on, input.outcome)) return;
-    const subject = await cornerBookkeepingSubject(db);
-    await writeCornerWorkflowCard(db, {
-      cornerId: input.cornerId,
-      fromState: run.toState,
-      outcome: input.outcome,
-      toState: input.toState,
-      roleBindings: run.roleBindings,
-      workflowVersion: run.workflowVersion,
-      seq: run.seq + 1,
-      contents: input.contents,
-      subject,
-      dedupeKey: input.dedupeKey,
+    await db.transaction(async (tx) => {
+      await lockCornerWorkflowRun(tx, input.cornerId);
+      const run = await loadCornerWorkflowRunState(tx, input.cornerId);
+      if (!run || (run.toState !== 'review' && run.toState !== 'implement')) return;
+      const reviewState = CORNER_WORKFLOW_CONTRACT.handoffs.review;
+      if (!reviewState || !('on' in reviewState) || !Object.hasOwn(reviewState.on, input.outcome)) return;
+      const subject = await cornerBookkeepingSubject(tx);
+      await writeCornerWorkflowCard(tx, {
+        cornerId: input.cornerId,
+        fromState: run.toState,
+        outcome: input.outcome,
+        toState: input.toState,
+        roleBindings: run.roleBindings,
+        workflowVersion: run.workflowVersion,
+        seq: run.seq + 1,
+        contents: input.contents,
+        subject,
+        dedupeKey: input.dedupeKey,
+      });
     });
   } catch (error) {
     console.error('[corner-workflow] failed to record review outcome', input.cornerId, input.outcome, error);
@@ -411,21 +460,24 @@ export async function noteCornerWorkflowImplicitEdge(
 ): Promise<void> {
   try {
     if (!CORNER_WORKFLOW_CONTRACT.implicitEdges?.includes(input.toState)) return;
-    const run = await loadCornerWorkflowRunState(db, input.cornerId);
-    if (!run) return;
-    if (terminalStatus(run.toState)) return; // already terminal; nothing to close over
-    const subject = await cornerBookkeepingSubject(db);
-    await writeCornerWorkflowCard(db, {
-      cornerId: input.cornerId,
-      fromState: run.toState,
-      outcome: input.toState,
-      toState: input.toState,
-      roleBindings: run.roleBindings,
-      workflowVersion: run.workflowVersion,
-      seq: run.seq + 1,
-      contents: input.contents ?? {},
-      subject,
-      dedupeKey: input.toState,
+    await db.transaction(async (tx) => {
+      await lockCornerWorkflowRun(tx, input.cornerId);
+      const run = await loadCornerWorkflowRunState(tx, input.cornerId);
+      if (!run) return;
+      if (terminalStatus(run.toState)) return; // already terminal; nothing to close over
+      const subject = await cornerBookkeepingSubject(tx);
+      await writeCornerWorkflowCard(tx, {
+        cornerId: input.cornerId,
+        fromState: run.toState,
+        outcome: input.toState,
+        toState: input.toState,
+        roleBindings: run.roleBindings,
+        workflowVersion: run.workflowVersion,
+        seq: run.seq + 1,
+        contents: input.contents ?? {},
+        subject,
+        dedupeKey: input.toState,
+      });
     });
   } catch (error) {
     console.error('[corner-workflow] failed to record implicit edge', input.cornerId, input.toState, error);

@@ -22,16 +22,30 @@ import { typedMentionHandles } from './message-mentions.js';
 import { identitySubject, systemLine } from './system-line.js';
 
 /**
+ * The corner workflow's own bookkeeping cards (`corner-workflow.ts`) — pure
+ * SQL-queryable record-keeping over a corner's already-real conversation,
+ * never something a human is meant to read as a chat line. Defined here
+ * (not in `corner-workflow.ts`) so `hiddenWakeCardSql` can exclude it without
+ * a circular import: `corner-workflow.ts` already imports from
+ * `workflow-runs.ts`, which imports `postRoomChoice` from this file.
+ */
+export const CORNER_WORKFLOW_HANDOFF_CARD_TYPE = 'corner-workflow-handoff';
+
+/**
  * Decision and wake rows kept only for a daemon and never shown (C101): a
  * grant decision, an accepted connector offer, and a choice/poll settlement
  * all settle their card in place, so the hidden line would read the same
- * answer twice.
+ * answer twice. The corner workflow's bookkeeping card joins this list for
+ * the same reason a different one: it duplicates the corner's own real
+ * conversation rather than a settled card, but a human must never see it
+ * either.
  */
 export function hiddenWakeCardSql(alias?: string): string {
   const column = alias ? `${alias}.card_type` : 'card_type';
   return (
     `${column} IS DISTINCT FROM 'grant-decision' ` +
     `AND ${column} IS DISTINCT FROM 'connector-offer-decision' ` +
+    `AND ${column} IS DISTINCT FROM '${CORNER_WORKFLOW_HANDOFF_CARD_TYPE}' ` +
     CHOICE_WAKE_CARD_TYPES.map((kind) => ` AND ${column} IS DISTINCT FROM '${kind}'`).join('')
   );
 }

@@ -1,7 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { QueryResultRow } from 'pg';
 import { readWorkflowContract } from '@beeline/api-contract/daemon';
-import { migrate } from './database.js';
+import { migrate, type QueryResult, type SqlDatabase } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
@@ -11,7 +12,33 @@ import { systemLine } from './system-line.js';
 import { REVIEW_HANDBACK_LIMIT } from './agent-command.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
-import { CORNER_WORKFLOW_CONTRACT, CORNER_WORKFLOW_SLUG, ensureCornerWorkflowSeeded } from './corner-workflow.js';
+import {
+  CORNER_WORKFLOW_CONTRACT,
+  CORNER_WORKFLOW_SLUG,
+  ensureCornerWorkflowSeeded,
+  noteCornerWorkflowTransition,
+} from './corner-workflow.js';
+import { CORNER_WORKFLOW_HANDOFF_CARD_TYPE } from './room-choice.js';
+import { workflowRunLockKey } from './workflow-runs.js';
+
+/** Records every SQL statement issued, in order — matches workflow-runs.test.ts's own. */
+type RecordedCall = { sql: string; values?: unknown[] };
+class RecordingDatabase implements SqlDatabase {
+  constructor(
+    private readonly inner: SqlDatabase,
+    readonly calls: RecordedCall[] = [],
+  ) {}
+  async query<Row extends QueryResultRow = QueryResultRow>(
+    sql: string,
+    values?: unknown[],
+  ): Promise<QueryResult<Row>> {
+    this.calls.push({ sql: sql.replace(/\s+/g, ' ').trim(), values });
+    return this.inner.query<Row>(sql, values);
+  }
+  transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {
+    return this.inner.transaction((db) => work(new RecordingDatabase(db, this.calls)));
+  }
+}
 
 /**
  * The corner lifecycle expressed as the built-in "corner" workflow contract
@@ -109,7 +136,7 @@ async function cards(
 ): Promise<{ fromState?: string; outcome?: string; toState: string; status?: string }[]> {
   const rows = await db.query<{ card: Record<string, unknown> }>(
     `SELECT card FROM messages WHERE room_id=$1 AND card_type=$2 ORDER BY (card->>'seq')::int`,
-    [cornerId, 'workflow-handoff'],
+    [cornerId, CORNER_WORKFLOW_HANDOFF_CARD_TYPE],
   );
   return rows.rows.map((row) => row.card as never);
 }
@@ -246,6 +273,46 @@ describe('the corner workflow contract itself', () => {
   });
 });
 
+describe('bookkeeping cards never appear in the corner conversation a human reads', () => {
+  it('readRoom shows the real conversation but no workflow-handoff card, through open, upgrade, checks, and review', async () => {
+    const cornerId = await open('no_code', 'owner/widgets');
+    await upgrade(cornerId);
+    await greenHead(cornerId, 21, '5'.repeat(40));
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await greenHead(cornerId, 21, '6'.repeat(40));
+
+    // Confirms the bookkeeping actually ran (otherwise this test would prove
+    // nothing) before asserting none of it is visible.
+    const recorded = await cards(cornerId);
+    expect(recorded.length).toBeGreaterThan(3);
+
+    // The exact reproduction the review used: a real `PhoneService.readRoom`
+    // call, the function that serves the mobile/desktop client.
+    const view = await phone.readRoom(cornerId, H);
+    expect(view).not.toBeNull();
+    for (const message of view!.messages) {
+      expect(message.text).not.toMatch(/started workflow|handed off/);
+    }
+    const raw = await db.query<{ count: string }>(
+      `SELECT count(*)::text count FROM messages WHERE room_id=$1 AND card_type=$2`,
+      [cornerId, CORNER_WORKFLOW_HANDOFF_CARD_TYPE],
+    );
+    // The rows genuinely exist (this isn't "nothing was written") — they are
+    // simply excluded from what a human reads.
+    expect(Number(raw.rows[0]?.count)).toBe(recorded.length);
+    expect(view!.messages.map((message) => message.id)).not.toEqual(
+      expect.arrayContaining(
+        (
+          await db.query<{ id: string }>(`SELECT id FROM messages WHERE room_id=$1 AND card_type=$2`, [
+            cornerId,
+            CORNER_WORKFLOW_HANDOFF_CARD_TYPE,
+          ])
+        ).rows.map((row) => row.id),
+      ),
+    );
+  });
+});
+
 describe('lane decided at open (row 1-3)', () => {
   it('a no-code corner opens straight onto no_code_work', async () => {
     const cornerId = await open('no_code', 'owner/widgets');
@@ -362,6 +429,57 @@ describe('checks dispatch (rows 6-8)', () => {
     // proving the live path (not anything recorded at start) drives dispatch.
     await greenHead(cornerId, 1, '2'.repeat(40));
     expect(await currentState(cornerId)).toBe('review');
+  });
+});
+
+describe('the run lock (a push transition can race a close or another push)', () => {
+  it('takes the run lock as the very first statement, before reading the run current state', async () => {
+    const cornerId = await open(undefined, 'owner/widgets');
+    const recording = new RecordingDatabase(db);
+    await noteCornerWorkflowTransition(recording, {
+      cornerId,
+      expectedFromState: 'implement',
+      outcome: 'pushed',
+      toState: 'checks',
+      contents: {},
+      dedupeKey: 'lock-order-check',
+    });
+    expect(recording.calls[0]).toEqual({
+      sql: 'SELECT pg_advisory_xact_lock(hashtext($1))',
+      values: [workflowRunLockKey(cornerId)],
+    });
+    const readIndex = recording.calls.findIndex((call) => call.sql.includes('FROM messages'));
+    expect(readIndex).toBeGreaterThan(0);
+    // The transition still actually happened — this proves the lock, not a no-op.
+    expect(await currentState(cornerId)).toBe('checks');
+  });
+
+  it('uses the same lock key format the generic workflow engine uses, so a fresh push transaction and a concurrent close serialize against each other', async () => {
+    const cornerId = await open(undefined, 'owner/widgets');
+    // Simulate the exact race the review found: a push transition's read and
+    // write used to be two independent, unlocked round trips. Firing the
+    // real push-triggered transition and a real close "concurrently" against
+    // PGlite's single connection (which serializes everything anyway, so this
+    // proves ordering/correctness, not true concurrency — see workflow-runs
+    // .test.ts's own documented limit for the same caveat) must still leave
+    // the bookkeeping's own `seq` sequence internally consistent: no two
+    // cards at the same seq, and the last one recorded is a real terminal.
+    await Promise.all([
+      noteCornerWorkflowTransition(db, {
+        cornerId,
+        expectedFromState: 'implement',
+        outcome: 'pushed',
+        toState: 'checks',
+        contents: {},
+        dedupeKey: 'race-push',
+      }),
+      (async () => {
+        const { noteCornerWorkflowImplicitEdge } = await import('./corner-workflow.js');
+        await noteCornerWorkflowImplicitEdge(db, { cornerId, toState: 'closed' });
+      })(),
+    ]);
+    const seqs = (await cards(cornerId)).map((card) => (card as unknown as { seq: number }).seq);
+    expect(new Set(seqs).size).toBe(seqs.length);
   });
 });
 

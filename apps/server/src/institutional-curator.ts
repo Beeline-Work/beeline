@@ -6,6 +6,7 @@ import {
   type InstitutionalMemoryJobUsage,
 } from '@beeline/api-contract/daemon';
 import { DELIVERY_PICKUP_WINDOW_MS } from './connection-presence.js';
+import { CORNER_WORKFLOW_SLUG } from './corner-workflow.js';
 import type { SqlDatabase } from './database.js';
 import {
   DEFAULT_INSTITUTIONAL_MEMORY_DAILY_JOB_LIMIT,
@@ -648,17 +649,23 @@ async function deterministicLifecycle(
     [workspaceId, now, retentionDays],
   );
 
+  // The built-in Corner workflow is system-owned infrastructure, present in
+  // every Workspace whether or not it is ever discovered/loaded like a
+  // user-authored skill — age-based staleness has no meaning for it, and it
+  // must never silently archive out from under running corners.
   const staleSkills = await database.query(
     `UPDATE workspace_skills skill SET state='stale',updated_at=$2
      WHERE skill.workspace_id=$1 AND skill.state='active'
+       AND NOT (skill.kind='workflow' AND skill.slug=$4)
        AND ${agedBeyondSql(SKILL_AGE_ANCHOR, '$3')}`,
-    [workspaceId, now, staleAfterDays],
+    [workspaceId, now, staleAfterDays, CORNER_WORKFLOW_SLUG],
   );
   const archivedSkills = await database.query(
     `UPDATE workspace_skills skill SET state='archived',updated_at=$2
      WHERE skill.workspace_id=$1 AND skill.state='stale'
+       AND NOT (skill.kind='workflow' AND skill.slug=$4)
        AND ${agedBeyondSql(SKILL_AGE_ANCHOR, '$3')}`,
-    [workspaceId, now, archiveAfterDays],
+    [workspaceId, now, archiveAfterDays, CORNER_WORKFLOW_SLUG],
   );
   // Retention ends the CONTENT, not the record: the row, its immutable versions
   // and every recorded load stay, exactly as the memory-item path keeps its own

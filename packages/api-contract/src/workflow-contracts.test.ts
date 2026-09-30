@@ -195,6 +195,132 @@ describe('workflow contract validation', () => {
   });
 });
 
+describe('server and waiting states, implicit edges', () => {
+  const base = {
+    version: 1,
+    name: 'corner',
+    description: 'Corner lifecycle',
+    roles: ['implementer', 'reviewer'],
+    start: 'opened',
+    handoffs: {
+      opened: { kind: 'server', requires: [], on: { code: 'implement' } },
+      implement: { role: 'implementer', requires: ['summary'], on: { pushed: 'checks' } },
+      checks: {
+        kind: 'server',
+        requires: [],
+        on: { passing: 'review', failing: 'implement' },
+        loop: { onEdge: 'failing', cap: 5, onExceeded: 'ask_human' },
+      },
+      review: {
+        kind: 'server',
+        role: 'reviewer',
+        requires: [],
+        on: { approved: 'land', changes_requested: 'implement' },
+        loop: { onEdge: 'changes_requested', cap: 3, onExceeded: 'ask_human' },
+      },
+      ask_human: { kind: 'waiting' },
+      land: { role: 'implementer', requires: [], on: { merged: 'landed' } },
+      landed: { kind: 'terminal', status: 'done' },
+      closed: { kind: 'terminal', status: 'failed' },
+    },
+    implicitEdges: ['closed', 'landed'],
+  } as const;
+
+  it('accepts a server-kind state with no role', () => {
+    expect(readWorkflowContract(base)).toEqual(base);
+  });
+
+  it('accepts a server-kind state with an advisory role', () => {
+    expect(readWorkflowContract(base)?.handoffs.review).toEqual(base.handoffs.review);
+  });
+
+  it('rejects a server-kind state whose advisory role is unknown', () => {
+    const review = { ...base.handoffs.review, role: 'ghost' };
+    expect(
+      readWorkflowContract({ ...base, handoffs: { ...base.handoffs, review } }),
+    ).toBeNull();
+  });
+
+  it('accepts a waiting state reached only via implicitEdges, not as an on-target', () => {
+    // ask_human above is never named by any `on` edge, only implicitly
+    // reachable — the contract must still validate.
+    expect(readWorkflowContract(base)).not.toBeNull();
+  });
+
+  it('accepts a waiting state carrying an advisory role', () => {
+    const ask_human = { kind: 'waiting', role: 'implementer' };
+    expect(
+      readWorkflowContract({ ...base, handoffs: { ...base.handoffs, ask_human } }),
+    ).not.toBeNull();
+  });
+
+  it('rejects a waiting state whose advisory role is unknown', () => {
+    const ask_human = { kind: 'waiting', role: 'ghost' };
+    expect(
+      readWorkflowContract({ ...base, handoffs: { ...base.handoffs, ask_human } }),
+    ).toBeNull();
+  });
+
+  it('rejects a waiting state carrying an unrecognized key', () => {
+    const ask_human = { kind: 'waiting', requires: [] };
+    expect(
+      readWorkflowContract({ ...base, handoffs: { ...base.handoffs, ask_human } }),
+    ).toBeNull();
+  });
+
+  it('rejects an implicitEdges entry naming a non-terminal state', () => {
+    expect(
+      readWorkflowContract({ ...base, implicitEdges: ['implement'] }),
+    ).toBeNull();
+  });
+
+  it('rejects an implicitEdges entry naming a state that does not exist', () => {
+    expect(readWorkflowContract({ ...base, implicitEdges: ['nowhere'] })).toBeNull();
+  });
+
+  it('accepts a server-kind loop with a capped onEdge', () => {
+    const contract = readWorkflowContract(base);
+    expect(contract?.handoffs.checks).toEqual(base.handoffs.checks);
+  });
+
+  it('a target reachable only through implicitEdges is not an orphan', () => {
+    // "closed" has no ordinary `on` edge pointing to it anywhere in `base`.
+    const hasOrdinaryEdge = Object.values(base.handoffs).some(
+      (state) => 'on' in state && Object.values(state.on).includes('closed'),
+    );
+    expect(hasOrdinaryEdge).toBe(false);
+    expect(readWorkflowContract(base)).not.toBeNull();
+  });
+
+  it('accepts an ordinary handoff state with a live roleBinding', () => {
+    const { kind: _kind, ...rest } = base.handoffs.review;
+    const review = { ...rest, roleBinding: 'live:parent.reviewer_agent_id' };
+    const contract = { ...base, handoffs: { ...base.handoffs, review } };
+    expect(readWorkflowContract(contract)?.handoffs.review).toEqual(review);
+  });
+
+  it('rejects a malformed roleBinding', () => {
+    const { kind: _kind, ...rest } = base.handoffs.review;
+    const review = { ...rest, roleBinding: 'parent.reviewer_agent_id' };
+    expect(
+      readWorkflowContract({ ...base, handoffs: { ...base.handoffs, review } }),
+    ).toBeNull();
+  });
+
+  it('rejects a roleBinding on a server-kind state', () => {
+    const checks = { ...base.handoffs.checks, roleBinding: 'live:parent.reviewer_agent_id' };
+    expect(
+      readWorkflowContract({ ...base, handoffs: { ...base.handoffs, checks } }),
+    ).toBeNull();
+  });
+
+  it('accepts a terminal state with status abandoned', () => {
+    const closed = { kind: 'terminal', status: 'abandoned' };
+    const contract = { ...base, handoffs: { ...base.handoffs, closed } };
+    expect(readWorkflowContract(contract)?.handoffs.closed).toEqual(closed);
+  });
+});
+
 describe('workflow contents validation', () => {
   const state = { requires: ['summary', 'prUrl'] };
 

@@ -38,6 +38,18 @@ export type WorkflowLoop = {
 export type WorkflowHandoffState = {
   readonly kind?: undefined;
   readonly role: string;
+  /**
+   * Resolve `role`'s bound agent LIVE at each dispatch (format `live:<dotted
+   * path>`, e.g. `live:parent.reviewer_agent_id`) instead of the pinned
+   * `roleBindings` recorded at `start_workflow` time — for a role whose
+   * configuration can change after a run starts. The generic engine does not
+   * interpret the path: only the server code that understands it can resolve
+   * and act on it, and the pinned `roleBindings` value the generic engine
+   * checks against is a non-agent marker string (the path itself), so
+   * `handoff()`'s ordinary `boundAgentId !== command.agent_id` check can
+   * never match a real agent and safely refuses every ordinary call.
+   */
+  readonly roleBinding?: string;
   readonly requires: readonly string[];
   readonly on: Readonly<Record<string, string>>;
   readonly loop?: WorkflowLoop;
@@ -53,12 +65,49 @@ export type WorkflowGateState = {
   readonly on: Readonly<Record<string, string>>;
 };
 
-export type WorkflowTerminalState = {
-  readonly kind: 'terminal';
-  readonly status: 'done' | 'failed';
+/**
+ * A transition the SERVER posts as a side effect of code it already runs
+ * (webhook processing, an existing daemon operation) rather than an agent's
+ * own `handoff()` tool call. `role` is advisory only (who this state is
+ * conceptually "waiting on", for a readable card) and is never checked for
+ * authorization the way a `WorkflowHandoffState`'s role is: `handoff()` and
+ * `start_workflow` both refuse to advance a `kind:'server'` state at all, so
+ * only the server's own write path can move one.
+ */
+export type WorkflowServerState = {
+  readonly kind: 'server';
+  readonly role?: string;
+  readonly requires: readonly string[];
+  readonly on: Readonly<Record<string, string>>;
+  readonly loop?: WorkflowLoop;
 };
 
-export type WorkflowState = WorkflowHandoffState | WorkflowGateState | WorkflowTerminalState;
+export type WorkflowTerminalState = {
+  readonly kind: 'terminal';
+  /** `abandoned` is a human-closed run, distinct from a `failed` escalation. */
+  readonly status: 'done' | 'failed' | 'abandoned';
+};
+
+/**
+ * A parked, non-terminal state with no declared outgoing edges of its own —
+ * used for a loop's ask-a-human escape when there is no real choice card
+ * today, only a plain informational line. Distinct from `kind:'gate'`, which
+ * stays available for a genuine human decision point. Only reachable by
+ * `implicitEdges` after this (e.g. a human closing a stalled run), never by
+ * an ordinary `on` edge or by `handoff()`/`start_workflow`.
+ */
+export type WorkflowWaitingState = {
+  readonly kind: 'waiting';
+  /** Advisory only, exactly like `WorkflowServerState.role` — who is conceptually active here. */
+  readonly role?: string;
+};
+
+export type WorkflowState =
+  | WorkflowHandoffState
+  | WorkflowGateState
+  | WorkflowServerState
+  | WorkflowTerminalState
+  | WorkflowWaitingState;
 
 export type WorkflowContract = {
   readonly version: 1;
@@ -67,6 +116,13 @@ export type WorkflowContract = {
   readonly roles: readonly string[];
   readonly start: string;
   readonly handoffs: Readonly<Record<string, WorkflowState>>;
+  /**
+   * Terminal state names reachable from ANY non-terminal state at any time,
+   * independent of graph position — a merge webhook or a human close request
+   * doesn't wait for a run to be "at" a particular state. Each named state
+   * must itself be `kind:'terminal'`.
+   */
+  readonly implicitEdges?: readonly string[];
 };
 
 /** The workflow's own name, stored as `workspace_skills.slug` (hyphen only, per that column's CHECK). */
@@ -75,6 +131,8 @@ const CONTRACT_NAME_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const IDENTIFIER_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
 /** `requires` field names double as JS/JSON object keys, so camelCase is allowed. */
 const FIELD_NAME_PATTERN = /^[a-zA-Z][a-zA-Z0-9_]{0,63}$/;
+/** `roleBinding`: `live:` followed by a dotted lowercase path, e.g. `live:parent.reviewer_agent_id`. */
+const ROLE_BINDING_PATTERN = /^live:[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$/;
 export const WORKFLOW_DESCRIPTION_MAX_LENGTH = 60;
 
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -96,7 +154,7 @@ const isIdentifierArray = (value: unknown, max: number, pattern: RegExp): value 
 export function readWorkflowContract(value: unknown): WorkflowContract | null {
   if (
     !record(value) ||
-    !keys(value, ['version', 'name', 'description', 'roles', 'start', 'handoffs']) ||
+    !keys(value, ['version', 'name', 'description', 'roles', 'start', 'handoffs', 'implicitEdges']) ||
     value.version !== WORKFLOW_CONTRACT_VERSION
   )
     return null;
@@ -125,19 +183,44 @@ export function readWorkflowContract(value: unknown): WorkflowContract | null {
   for (const [name, raw] of Object.entries(states)) {
     if (!IDENTIFIER_PATTERN.test(name) || !record(raw)) return null;
     if (raw.kind === 'terminal') {
-      if (!keys(raw, ['kind', 'status']) || (raw.status !== 'done' && raw.status !== 'failed'))
+      if (
+        !keys(raw, ['kind', 'status']) ||
+        (raw.status !== 'done' && raw.status !== 'failed' && raw.status !== 'abandoned')
+      )
         return null;
       terminalCount += 1;
       edges.set(name, []);
       continue;
     }
+    if (raw.kind === 'waiting') {
+      if (!keys(raw, ['kind', 'role'])) return null;
+      if (raw.role !== undefined && (typeof raw.role !== 'string' || !roles.has(raw.role)))
+        return null;
+      edges.set(name, []);
+      continue;
+    }
     const isGate = raw.kind === 'gate';
-    if (raw.kind !== undefined && !isGate) return null;
+    const isServer = raw.kind === 'server';
+    if (raw.kind !== undefined && !isGate && !isServer) return null;
     const allowedKeys = isGate
       ? ['kind', 'role', 'requires', 'on']
-      : ['role', 'requires', 'on', 'loop', 'timeoutSeconds'];
+      : isServer
+        ? ['kind', 'role', 'requires', 'on', 'loop']
+        : ['role', 'roleBinding', 'requires', 'on', 'loop', 'timeoutSeconds'];
     if (!keys(raw, allowedKeys)) return null;
-    if (typeof raw.role !== 'string' || !roles.has(raw.role)) return null;
+    if (isServer) {
+      if (raw.role !== undefined && (typeof raw.role !== 'string' || !roles.has(raw.role)))
+        return null;
+    } else if (typeof raw.role !== 'string' || !roles.has(raw.role)) return null;
+    if (
+      !isGate &&
+      !isServer &&
+      raw.roleBinding !== undefined &&
+      (typeof raw.roleBinding !== 'string' ||
+        raw.roleBinding.length > 128 ||
+        !ROLE_BINDING_PATTERN.test(raw.roleBinding))
+    )
+      return null;
     if (!isIdentifierArray(raw.requires, WORKFLOW_REQUIRES_MAX, FIELD_NAME_PATTERN)) return null;
     if (!record(raw.on)) return null;
     const outcomes = Object.entries(raw.on);
@@ -157,7 +240,7 @@ export function readWorkflowContract(value: unknown): WorkflowContract | null {
       return null;
     const on = raw.on as Record<string, string>;
     const targets = outcomes.map(([, target]) => target as string);
-    if (!isGate && raw.timeoutSeconds !== undefined) {
+    if (!isGate && !isServer && raw.timeoutSeconds !== undefined) {
       if (
         !Number.isInteger(raw.timeoutSeconds) ||
         (raw.timeoutSeconds as number) < WORKFLOW_TIMEOUT_SECONDS_MIN ||
@@ -187,7 +270,20 @@ export function readWorkflowContract(value: unknown): WorkflowContract | null {
   }
   if (terminalCount < 1) return null;
   if ((states[value.start as string] as Record<string, unknown>).kind === 'terminal') return null;
-  // Reachability: every declared state must be reached from `start`.
+  if (value.implicitEdges !== undefined) {
+    if (
+      !isIdentifierArray(value.implicitEdges, WORKFLOW_STATES_MAX, IDENTIFIER_PATTERN) ||
+      !(value.implicitEdges as string[]).every(
+        (name) =>
+          Object.hasOwn(states, name) &&
+          (states[name] as Record<string, unknown>).kind === 'terminal',
+      )
+    )
+      return null;
+  }
+  // Reachability: every declared state must be reached from `start`, plus
+  // every `implicitEdges` terminal — reachable from anywhere by definition,
+  // so a target used ONLY by an implicit edge is not an orphan.
   const reachable = new Set<string>();
   const visitReachable = (name: string): void => {
     if (reachable.has(name)) return;
@@ -195,6 +291,7 @@ export function readWorkflowContract(value: unknown): WorkflowContract | null {
     for (const next of edges.get(name) ?? []) visitReachable(next);
   };
   visitReachable(value.start as string);
+  for (const name of (value.implicitEdges as string[] | undefined) ?? []) reachable.add(name);
   if (reachable.size !== Object.keys(states).length) return null;
   // Cycle detection: only a loop's own declared edge, or a path through a
   // gate, may close a cycle. A gate always waits on a fresh human decision
@@ -211,7 +308,10 @@ export function readWorkflowContract(value: unknown): WorkflowContract | null {
       return true;
     }
     active.add(name);
-    const loop = state.kind === undefined ? (state.loop as WorkflowLoop | undefined) : undefined;
+    const loop =
+      state.kind === undefined || state.kind === 'server'
+        ? (state.loop as WorkflowLoop | undefined)
+        : undefined;
     const loopTarget = loop ? (state.on as Record<string, string>)[loop.onEdge] : undefined;
     for (const next of edges.get(name) ?? []) {
       if (loopTarget !== undefined && next === loopTarget) continue;

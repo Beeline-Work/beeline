@@ -151,7 +151,7 @@ export function validateCornerBrief(
 
 export async function resolveCornerBriefAttachments(
   db: SqlDatabase,
-  sourceRoomIds: readonly string[],
+  roomId: string,
   draft: CornerBriefDraft,
   options: { allowLegacy?: boolean } = {},
 ): Promise<CornerBriefAttachment[]> {
@@ -176,12 +176,12 @@ export async function resolveCornerBriefAttachments(
          AND EXISTS (
            SELECT 1 FROM messages m,
              LATERAL jsonb_array_elements(m.attachments) a
-           WHERE m.room_id=ANY($2::uuid[])
+           WHERE m.room_id=$2
              AND m.author_id=o.owner_id
              AND (a->>'url' LIKE '%/v1/media/' || o.id::text
                OR a->>'mediaId'=o.id::text)
          ) FOR SHARE OF o`,
-        [item.objectId, sourceRoomIds],
+        [item.objectId, roomId],
       )
     ).rows[0];
     if (!object)

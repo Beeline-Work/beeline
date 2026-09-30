@@ -475,11 +475,20 @@ it('tells a no-code corner to deliver artifacts and tag the requester, never to 
       agentEnvironment.get('BEELINE_MCP_SURFACE') === 'agent',
       agentEnvironment.get('BEELINE_AGENT_DM') === '1',
       Boolean(agentEnvironment.get('BEELINE_DAEMON_CORNER_ID')),
-      agentEnvironment.get('BEELINE_CORNER_REVIEWER') === '1',
+      agentEnvironment.get('BEELINE_CORNER_LANE') === 'code',
       Boolean(agentEnvironment.get('BEELINE_GRANT_RUNNER_URL')),
       agentEnvironment.get('BEELINE_CORNER_AGENT_CLOSE') === '1',
     ).map((tool) => tool.name),
   ).not.toContain('close_corner');
+  expect(agentEnvironment.get('BEELINE_CORNER_LANE')).toBe('no_code');
+  expect(
+    agentToolsFor(
+      true,
+      false,
+      Boolean(agentEnvironment.get('BEELINE_DAEMON_CORNER_ID')),
+      agentEnvironment.get('BEELINE_CORNER_LANE') === 'code',
+    ).map((tool) => tool.name),
+  ).not.toContain('approve_merge');
   // The requester still has to receive the delivery report.
   expect(prompt).toContain(
     'Tag @ada once, when the deliverable is posted or you need their input.',
@@ -511,7 +520,7 @@ it('offers the one-way code upgrade to the session that actually mounts the tool
     agentEnvironment.get('BEELINE_MCP_SURFACE') === 'agent',
     agentEnvironment.get('BEELINE_AGENT_DM') === '1',
     Boolean(agentEnvironment.get('BEELINE_DAEMON_CORNER_ID')),
-    agentEnvironment.get('BEELINE_CORNER_REVIEWER') === '1',
+    agentEnvironment.get('BEELINE_CORNER_LANE') === 'code',
     Boolean(agentEnvironment.get('BEELINE_GRANT_RUNNER_URL')),
     agentEnvironment.get('BEELINE_CORNER_AGENT_CLOSE') === '1',
     false,

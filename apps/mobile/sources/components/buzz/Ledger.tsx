@@ -1079,13 +1079,12 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.buzz.ledgerQuiet,
   },
   roomUpdateLineBrass: { color: theme.buzz.accent },
-  // No fixed width: a 36px box clips `17:06` (39px in 13px Plex Mono) to
-  // `17:…`. The row's right padding already keeps the clock clear.
   roomUpdateStamp: {
     ...theme.buzz.type.machine,
     position: 'absolute',
     top: 7,
     right: 0,
+    width: LEDGER_MARGINALIA_WIDTH,
     color: theme.buzz.ledgerGhost,
     textAlign: 'right',
   },

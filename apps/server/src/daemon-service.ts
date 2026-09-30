@@ -18,7 +18,7 @@ import type {
   DaemonOperationMap,
   SystemEvent,
 } from '@beeline/api-contract/daemon';
-import { recordCornerMergeApproval } from './corner-merge-approval.js';
+import { CornerVerdictRejectedError, recordCornerMergeApproval } from './corner-merge-approval.js';
 import {
   CORNER_VALIDATION_STAGES,
   composeCornerUpgradeBrief,
@@ -73,7 +73,7 @@ import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedul
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import { closeCornerState } from './corner-close.js';
 import { writeCornerTitle } from './corner-title.js';
-import { startCornerWorkflowRun, noteCornerWorkflowTransition } from './corner-workflow.js';
+import { advanceCorner } from './corner-workflow.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import {
   LiveHub,
@@ -2649,10 +2649,10 @@ export class DaemonService {
    * `owner_agent_id` predates the backfill would otherwise be reported as
    * opened by whoever happens to be polling, and a reviewer told by one query
    * that it holds the post is told by the other that it wrote the code: the
-   * turn boots without `BEELINE_CORNER_REVIEWER`, `approve_merge` is filtered
-   * off its surface, and its PASS can only ever be prose while the gate stays
-   * at `approvalPending=true`. Reconciliation resurrects exactly the old heads
-   * where that record is thinnest, so the two derivations must agree.
+   * turn boots without `BEELINE_CORNER_REVIEWER` and never receives the
+   * reviewer instruction naming the head to review. Reconciliation resurrects
+   * exactly the old heads where that record is thinnest, so the two
+   * derivations must agree.
    */
   private async corners(roomId: string, agentId: string) {
     const rows = await this.database.query<{
@@ -2817,14 +2817,16 @@ export class DaemonService {
       ...(rows.length > 20 ? { nextBeforeRevision: rows[19]!.revision } : {}),
     };
   }
+  /**
+   * The configured reviewer's PASS, from any code-lane corner turn: nothing
+   * here depends on how the reviewer's session booted. The server authorizes
+   * the caller and the exact target, records the verdict, and reports it to
+   * the corner workflow in the same transaction; the server merge follows
+   * from the workflow once the whole gate is open.
+   */
   private async approveCornerMerge(input: Input<'approveCornerMerge'>, agentId: string) {
     return this.database.transaction(async (db) => {
       await db.query(`SELECT id FROM rooms WHERE id=$1 FOR UPDATE`, [input.cornerId]);
-      const currentBrief = await currentCornerBrief(db, input.cornerId);
-      if (currentBrief && input.briefRevision !== currentBrief.revision)
-        throw new Error(
-          'corner brief revision changed; review the current assignment before approving',
-        );
       const target = (
         await db.query<{
           pull_request_number: number | null;
@@ -2838,20 +2840,39 @@ export class DaemonService {
          FROM rooms corner
          JOIN rooms parent ON parent.id=corner.parent_id
          JOIN corner_facts fact ON fact.corner_id=corner.id
-         JOIN memberships reviewer ON reviewer.room_id=parent.id
-           AND reviewer.identity_id=$2 AND reviewer.removed_at IS NULL
-         JOIN identities identity ON identity.id=reviewer.identity_id AND identity.kind='agent'
          WHERE corner.id=$1`,
-          [input.cornerId, agentId],
+          [input.cornerId],
         )
       ).rows[0];
-      if (!target) throw new Error('corner reviewer approval denied');
-      if (!(await isConfiguredReviewer(db, target.parent_room_id, target.workspace_id, agentId)))
-        throw new Error('corner reviewer approval denied');
+      if (
+        !target ||
+        !(await isConfiguredReviewer(db, target.parent_room_id, target.workspace_id, agentId)) ||
+        !(
+          await db.query(
+            `SELECT 1 FROM memberships reviewer
+             JOIN identities identity ON identity.id=reviewer.identity_id AND identity.kind='agent'
+             WHERE reviewer.room_id=$1 AND reviewer.identity_id=$2 AND reviewer.removed_at IS NULL`,
+            [target.parent_room_id, agentId],
+          )
+        ).rowCount
+      )
+        throw new CornerVerdictRejectedError(
+          'NOT_CONFIGURED_REVIEWER',
+          "only this corner's configured reviewer can record PASS",
+        );
       if (!target.pull_request_number || !target.head_sha)
-        throw new Error('corner has no pull request');
+        throw new CornerVerdictRejectedError('NO_PULL_REQUEST', 'corner has no pull request');
       if (target.head_sha !== input.headSha)
-        throw new Error('pull request head changed; review the current head before approving');
+        throw new CornerVerdictRejectedError(
+          'STALE_HEAD',
+          `pull request head is ${target.head_sha}; review the current head before approving`,
+        );
+      const currentBrief = await currentCornerBrief(db, input.cornerId);
+      if (currentBrief && input.briefRevision !== currentBrief.revision)
+        throw new CornerVerdictRejectedError(
+          'STALE_BRIEF_REVISION',
+          `the assigned brief is revision ${currentBrief.revision}; review the current assignment before approving`,
+        );
       await recordCornerMergeApproval(db, {
         cornerId: input.cornerId,
         approvedBy: agentId,
@@ -2859,6 +2880,7 @@ export class DaemonService {
         pullRequestNumber: target.pull_request_number,
         headSha: target.head_sha,
       });
+      await advanceCorner(db, input.cornerId, { kind: 'approval', headSha: target.head_sha });
       return {
         pullRequestNumber: target.pull_request_number,
         headSha: target.head_sha,
@@ -6058,25 +6080,13 @@ export class DaemonService {
       throw new Error('invalid corner idempotency key');
     }
     await this.access(input.roomId, agentId);
-    // A turn inside a corner opens its new corner beside it, in the parent
-    // Room: corners do not nest. `commandRoomId` is where the turn's command
-    // lives; `roomId` is the Room the new corner belongs to.
-    const commandRoomId = input.roomId;
-    const host = (
-      await this.database.query<{ parent_id: string | null }>(
-        `SELECT parent_id FROM rooms WHERE id=$1`,
-        [commandRoomId],
-      )
-    ).rows[0];
-    const roomId = host?.parent_id ?? commandRoomId;
-    if (roomId !== commandRoomId) await this.access(roomId, agentId);
     const parent = (
       await this.database.query<{
         workspace_id: string;
         repository_key: string | null;
         repository_resolution: string;
       }>(`SELECT workspace_id,repository_key,repository_resolution FROM rooms WHERE id=$1`, [
-        roomId,
+        input.roomId,
       ])
     ).rows[0]!;
     // A no-code corner is scratch-backed even when its parent Room has a
@@ -6099,7 +6109,7 @@ export class DaemonService {
       // corner remains active. Locking the parent closes the read/insert race:
       // a concurrent retry waits, sees the winner, and returns its id without
       // creating another Room, command, or open card.
-      await db.query(`SELECT id FROM rooms WHERE id=$1 FOR UPDATE`, [roomId]);
+      await db.query(`SELECT id FROM rooms WHERE id=$1 FOR UPDATE`, [input.roomId]);
       const existing = (
         await db.query<{
           corner_id: string;
@@ -6139,7 +6149,7 @@ export class DaemonService {
              AND child.archived_at IS NULL
            ORDER BY child.created_at,child.id
            LIMIT 1`,
-          [roomId, idempotencyKey],
+          [input.roomId, idempotencyKey],
         )
       ).rows[0];
       if (existing) {
@@ -6189,7 +6199,7 @@ export class DaemonService {
       }
       const parentCommand = await authorizeCommandOutput(
         db,
-        commandRoomId,
+        input.roomId,
         agentId,
         input.requestId,
         input.generationId,
@@ -6207,7 +6217,7 @@ export class DaemonService {
         [
           cornerId,
           parent.workspace_id,
-          roomId,
+          input.roomId,
           agentId,
           name,
           input.repository ?? null,
@@ -6218,7 +6228,7 @@ export class DaemonService {
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
          SELECT workspace_id,$2,identity_id,role,event_subscriptions FROM memberships
          WHERE room_id=$1 AND removed_at IS NULL ON CONFLICT DO NOTHING`,
-        [roomId, cornerId],
+        [input.roomId, cornerId],
       );
       await db.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')
@@ -6246,16 +6256,15 @@ export class DaemonService {
       if (input.brief) {
         if (!isStructuredCornerBrief(input.brief))
           throw new Error('new corners cannot use the legacy opaque brief format');
-        const sourceRoomIds = [...new Set([roomId, commandRoomId])];
         const explicitAttachments = await resolveCornerBriefAttachments(
           db,
-          sourceRoomIds,
+          input.roomId,
           input.brief,
         );
         const attachments = [
           ...explicitAttachments,
           ...(await resolvePendingCornerBriefAttachments(db, {
-            roomId: commandRoomId,
+            roomId: input.roomId,
             agentId,
             requestId: input.requestId,
             generationId: input.generationId,
@@ -6265,7 +6274,7 @@ export class DaemonService {
         if (attachments.length > 16) throw new Error('corner brief has too many attachments');
         const authority = await resolveCornerBriefApproval(
           db,
-          sourceRoomIds,
+          [input.roomId],
           input.brief,
           attachments,
           parentCommand.root_source_message_id,
@@ -6312,7 +6321,7 @@ export class DaemonService {
       // a daemon-fact card. Corner lifecycle is outside the push ceiling
       // (`background.ts`), so this marker never notifies a device.
       await systemLine(db, {
-        roomId,
+        roomId: input.roomId,
         subject: { kind: 'agent', id: agentId, name: opener.name },
         verb: 'opened a corner',
         kind: 'corner-opened',
@@ -6322,14 +6331,14 @@ export class DaemonService {
         cardType: 'daemon-fact',
         card: { type: 'corner-open', cornerId, name, objective },
       });
-      await startCornerWorkflowRun(db, {
-        cornerId,
-        workspaceId: parent.workspace_id,
+      await advanceCorner(db, cornerId, {
+        kind: 'open',
         lane,
+        workspaceId: parent.workspace_id,
         implementerAgentId: agentId,
       });
     });
-    this.live.publish({ type: 'invalidate', roomId, reason: 'corner', agentId });
+    this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'corner', agentId });
     return { cornerId };
   }
   private async reviseCornerBrief(input: Input<'reviseCornerBrief'>, agentId: string) {
@@ -6360,11 +6369,7 @@ export class DaemonService {
       const current = await currentCornerBrief(db, input.cornerId);
       if ((current?.revision ?? 0) !== input.expectedRevision)
         throw new Error('corner brief revision changed; read the current assignment');
-      const explicitAttachments = await resolveCornerBriefAttachments(
-        db,
-        [corner.parent_id],
-        draft,
-      );
+      const explicitAttachments = await resolveCornerBriefAttachments(db, corner.parent_id, draft);
       const attachments = [
         ...explicitAttachments,
         ...(await resolvePendingCornerBriefAttachments(db, {
@@ -6625,6 +6630,16 @@ export class DaemonService {
       )
         throw new Error('corner lane upgrade requires a repository-backed parent Room');
 
+      const featureBranch = `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`;
+      await advanceCorner(db, cornerId, {
+        kind: 'upgrade',
+        contents: {
+          branch: featureBranch,
+          repositoryRoute: target.repository_key ?? target.repository_remote ?? '',
+          ciCallbackRegistered: true,
+          mergeTarget: target.repository_target_branch,
+        },
+      });
       await db.query(
         `UPDATE corner_facts
          SET lane='code',owner_agent_id=COALESCE(owner_agent_id,$2),updated_at=now()
@@ -6634,7 +6649,6 @@ export class DaemonService {
       // GitHub's PR and check events find a corner only by its recorded branch.
       // The daemon records it on start only when it restarts as the corner's
       // owner, so an upgraded corner records it here instead.
-      const featureBranch = `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`;
       await db.query(
         `UPDATE corner_facts
          SET feature_branch=$2,
@@ -6643,25 +6657,6 @@ export class DaemonService {
          WHERE corner_id=$1 AND feature_branch IS NULL AND NOT lifecycle ? 'pr'`,
         [cornerId, featureBranch],
       );
-      await noteCornerWorkflowTransition(db, {
-        cornerId,
-        expectedFromState: 'no_code_work',
-        outcome: 'upgrade_requested',
-        toState: 'upgrade_to_code',
-        contents: {},
-      });
-      await noteCornerWorkflowTransition(db, {
-        cornerId,
-        expectedFromState: 'upgrade_to_code',
-        outcome: 'upgraded',
-        toState: 'implement',
-        contents: {
-          branch: featureBranch,
-          repositoryRoute: target.repository_key ?? target.repository_remote ?? '',
-          ciCallbackRegistered: true,
-          mergeTarget: target.repository_target_branch,
-        },
-      });
       // A repository corner works from a brief. This one already existed as
       // chat, so its discussion so far is what the brief has to carry, written
       // by the server rather than the agent whose work it authorizes. A corner

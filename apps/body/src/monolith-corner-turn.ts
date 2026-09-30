@@ -487,7 +487,7 @@ export class MonolithCornerTurnLoop {
   private modelTakesImages?: boolean;
   /** The one provider re-pinned after an empty completion, until the session ends. */
   private pinnedProviderOverride?: string;
-  /** The merge authority baked into the current session. */
+  /** The worker's yolo mode baked into the current session. */
   private yoloMode = false;
   /** Identity-only reviewer context; the exact PR head is refreshed inside each active turn. */
   private reviewerInstructionInput?: ReviewerInstructionInput;
@@ -1028,6 +1028,7 @@ export class MonolithCornerTurnLoop {
         agentMayCloseCorner: Boolean(repository) && this.options.lane !== 'research',
         agentMayUpgradeCorner: this.options.agentMayUpgradeCorner,
         reviewer: Boolean(reviewerInstruction),
+        lane: this.options.lane ?? (repository ? 'code' : 'no_code'),
         attachRoot: this.options.worktreePath,
         // The whole per-session overlay, not an enumerated subset: see
         // `monolith-room-turn.ts`'s matching comment.
@@ -1812,7 +1813,7 @@ export class MonolithCornerTurnLoop {
                 explained = await this.explainEmpty(result);
               }
               // One bounded second chance to deliver repository work. Check
-              // turns get the narrower merge reminder instead: repeating the
+              // turns get the narrower checks reminder instead: repeating the
               // broad delivery instruction there could invite unrelated branch
               // cleanup. The model remains the authority over whether dirty
               // work belongs to the objective and whether to retain or dispose

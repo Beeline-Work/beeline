@@ -12,7 +12,18 @@ import {
   type PromptSurface,
   type SessionPromptContext,
   type TurnPromptContext,
+  CORNER_REVIEWER_SESSION_INSTRUCTION,
+  CORNER_YOLO_MERGE_NUDGE,
+  cornerMergeInstruction,
+  cornerReviewerInstruction,
+  cornerSelfReviewerInstruction,
 } from './prompt-assembly.js';
+import {
+  beelineReviewSkillMarkdown,
+  beelineSpecSkillMarkdown,
+  beelineTriageSkillMarkdown,
+  usingBeelineSkillMarkdown,
+} from './beeline-skill.js';
 
 const soul = {
   name: 'Bee',
@@ -231,8 +242,15 @@ describe('prompt assembly guards', () => {
 
   it('states one merge condition, the one pr_checks_status enforces, and no other', () => {
     const merges = (name: string) => assembleSessionPrompt(SESSION_VARIANTS[name]!).systemPrompt;
+    expect(merges('code-corner-reviewed')).toContain(
+      'after its PASS the server merges the pull request itself',
+    );
+    expect(merges('code-corner-self-reviewer')).toContain(
+      'The server merges it once checks are green, yolo is on, and no human hold stands',
+    );
     for (const name of ['code-corner-reviewed', 'code-corner-self-reviewer']) {
-      expect(merges(name), name).toContain('checks="passed" and mergeAllowed=true');
+      expect(merges(name), name).toMatch(/never merge it yourself/i);
+      expect(merges(name), name).toContain('a merge GitHub refused');
     }
     for (const name of ['code-corner-reviewed-yolo-off', 'code-corner-no-reviewer']) {
       expect(merges(name), name).toContain('never merge; a person merges it');
@@ -247,6 +265,53 @@ describe('prompt assembly guards', () => {
     expect(review).not.toContain('On a checks turn');
     expect(review).not.toContain('Open the pull request');
     expect(merges('research-corner')).not.toContain('Open the pull request with gh');
+  });
+
+  it('never tells an author or reviewer to run gh pr merge', () => {
+    const texts: Array<[string, string]> = [
+      ...Object.entries(SESSION_VARIANTS).map(
+        ([name, context]): [string, string] => [name, assembleSessionPrompt(context).systemPrompt],
+      ),
+      ...Object.entries(TURN_VARIANTS).map(
+        ([name, context]): [string, string] => [name, assembleTurnPrompt(context).text],
+      ),
+      ['yolo checks nudge', CORNER_YOLO_MERGE_NUDGE],
+      ['reviewer session', CORNER_REVIEWER_SESSION_INSTRUCTION],
+      ...[false, true].flatMap((yolo): Array<[string, string]> => [
+        [`author yolo=${yolo}`, cornerMergeInstruction(yolo, 'sol')],
+        [`author no reviewer yolo=${yolo}`, cornerMergeInstruction(yolo)],
+      ]),
+      [
+        'reviewer turn',
+        cornerReviewerInstruction({
+          reviewerHandle: 'sol',
+          agentHandle: 'sol',
+          authorHandle: 'bee',
+          openedByAgent: false,
+          pullRequestNumber: 7,
+          headSha: 'a'.repeat(40),
+          briefRevision: 2,
+        })!,
+      ],
+      [
+        'self reviewer',
+        cornerSelfReviewerInstruction({
+          reviewerHandle: 'sol',
+          agentHandle: 'sol',
+          openedByAgent: true,
+        })!,
+      ],
+      ['using-beeline skill', usingBeelineSkillMarkdown('test')],
+      ['beeline-review skill', beelineReviewSkillMarkdown('test')],
+      ['beeline-spec skill', beelineSpecSkillMarkdown('test')],
+      ['beeline-triage skill', beelineTriageSkillMarkdown('test')],
+    ];
+    for (const [name, text] of texts) {
+      expect(text, name).not.toContain('gh pr merge');
+      expect(text, name).not.toMatch(/approved [0-9a-f<][^`]*, merge/);
+    }
+    expect(CORNER_YOLO_MERGE_NUDGE).toContain('the server merges this pull request itself');
+    expect(CORNER_YOLO_MERGE_NUDGE).toContain('Never merge it yourself.');
   });
 
   it('keeps Workbench tools out of corners, which do not have them', () => {

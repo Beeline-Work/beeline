@@ -834,13 +834,16 @@ describe('GitHub phone operations', () => {
         )
       ).rows,
     ).toEqual([{ agent_id: REVIEWER, source_kind: 'check-passed' }]);
-    // A previously stored green fact must still route if its command was lost.
+    // A re-run on the same head reopens checks, and its green dispatches the
+    // reviewer again even though this head's green note was already written.
     await database.query(`DELETE FROM agent_commands WHERE room_id=$1`, [corner]);
-    await database.query(
-      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"'),
-       command_check_state=NULL WHERE corner_id=$1`,
-      [corner],
-    );
+    readCommitCheckRollup.mockResolvedValue({
+      state: 'pending',
+      total: 2,
+      failing: [],
+      checks: [{ name: 'lint', status: 'pending' }],
+    });
+    await operations.processWebhook('check_run', payload('lint', 'completed'));
     readCommitCheckRollup.mockResolvedValue({
       state: 'passed',
       total: 2,
@@ -910,9 +913,8 @@ describe('GitHub phone operations', () => {
         )
       ).rows,
     ).toEqual([{ reason: 'corner_check' }]);
-    await database.query(`DELETE FROM agent_commands WHERE room_id=$1 AND reason='corner_check'`, [
-      corner,
-    ]);
+    // A redelivered failure moves nothing: the one wake already went out with
+    // the transition to implement.
     await operations.processWebhook('check_run', failed);
     expect(
       (

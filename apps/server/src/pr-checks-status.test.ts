@@ -286,7 +286,7 @@ describe('PR-scoped check gate', () => {
         },
         REVIEWER,
       ),
-    ).rejects.toThrow('brief revision changed');
+    ).rejects.toThrow('STALE_BRIEF_REVISION');
     await expect(
       daemon.execute(
         'approveCornerMerge',
@@ -315,7 +315,7 @@ describe('PR-scoped check gate', () => {
         },
         REVIEWER,
       ),
-    ).rejects.toThrow('brief revision changed');
+    ).rejects.toThrow('STALE_BRIEF_REVISION');
     await expect(
       daemon.execute(
         'approveCornerMerge',

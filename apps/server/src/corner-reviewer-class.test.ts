@@ -214,6 +214,6 @@ describe('approve_merge with a class-configured reviewer', () => {
         { cornerId: C, briefRevision: 0, headSha: '1'.repeat(40) },
         LIGHT_ONE,
       ),
-    ).rejects.toThrow('corner reviewer approval denied');
+    ).rejects.toThrow('NOT_CONFIGURED_REVIEWER');
   });
 });

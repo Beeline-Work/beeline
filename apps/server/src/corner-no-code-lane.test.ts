@@ -233,7 +233,9 @@ it('refuses a lane the constraint does not name', async () => {
 it('upgrades one repository-backed human corner on its explicit human code request', async () => {
   const cornerId = await humanCorner(CODE_ROOM);
   const beforeMessages = await db.query<{ id: string; text: string }>(
-    `SELECT id,text FROM messages WHERE room_id=$1 ORDER BY created_at,id`,
+    // The corner's workflow cards are hidden bookkeeping, not conversation.
+    `SELECT id,text FROM messages WHERE room_id=$1
+       AND card_type IS DISTINCT FROM 'corner-workflow-handoff' ORDER BY created_at,id`,
     [cornerId],
   );
   const beforeMembers = await db.query<{ identity_id: string }>(
@@ -264,7 +266,9 @@ it('upgrades one repository-backed human corner on its explicit human code reque
     feature_branch: `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`,
   });
   const afterMessages = await db.query<{ id: string; text: string }>(
-    `SELECT id,text FROM messages WHERE room_id=$1 ORDER BY created_at,id`,
+    // The corner's workflow cards are hidden bookkeeping, not conversation.
+    `SELECT id,text FROM messages WHERE room_id=$1
+       AND card_type IS DISTINCT FROM 'corner-workflow-handoff' ORDER BY created_at,id`,
     [cornerId],
   );
   expect(afterMessages.rows.slice(0, beforeMessages.rows.length)).toEqual(beforeMessages.rows);

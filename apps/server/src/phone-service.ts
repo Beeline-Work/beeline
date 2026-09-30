@@ -119,6 +119,7 @@ import type { CommittedMessageLiveRow, CommittedTurnLiveRow, LiveEvent, LiveHub 
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
 import { deriveCornerState } from './corner-state.js';
+import { advanceCorner } from './corner-workflow.js';
 import { chatCornerCounts } from './chat-corner-counts.js';
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
 import { retireAgentFromWorkspace, settleGrantCard } from './agent-retirement.js';
@@ -351,6 +352,9 @@ interface MemberRow extends IdentityRow {
 }
 interface CornerRow extends RoomRow {
   lifecycle: RoomView['cornerLifecycle'] | null;
+  /** The corner workflow run's projected state and the outcome that reached it. */
+  workflow_state: string | null;
+  workflow_outcome: string | null;
   objective: string | null;
   initiator_id: string | null;
   initiator_name: string | null;
@@ -1341,12 +1345,15 @@ export class PhoneService {
           parent_id: string;
           archived_at: Date | null;
           lifecycle: CornerLifecycleView | null;
+          workflow_state: string | null;
+          workflow_outcome: string | null;
           latest_turn_status: string | null;
           commissioned_by_viewer: boolean | null;
           latest_tags_viewer: boolean | null;
           latest_created_at: Date | null;
         }>(
-          `SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,turn.status latest_turn_status,
+          `SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,f.workflow_state,f.workflow_outcome,
+           turn.status latest_turn_status,
            initiator.id=$2 commissioned_by_viewer,
            $2=ANY(${taggedIdentityIdsSql('lm')}) latest_tags_viewer,
            lm.created_at latest_created_at
@@ -2277,7 +2284,7 @@ export class PhoneService {
     return (
       await this.database.query<CornerRow>(
         `
-      SELECT c.*,f.lifecycle,f.objective,lm.id latest_id,lm.text latest_text,lm.created_at latest_created_at,lm.author_id latest_author_id,
+      SELECT c.*,f.lifecycle,f.workflow_state,f.workflow_outcome,f.objective,lm.id latest_id,lm.text latest_text,lm.created_at latest_created_at,lm.author_id latest_author_id,
         initiator.id initiator_id,initiator.name initiator_name,
         initiator.handle initiator_handle,initiator.avatar initiator_avatar,
         initiator.face_id initiator_face,
@@ -2329,6 +2336,9 @@ export class PhoneService {
       const derived = deriveCornerState({
         archived: Boolean(corner.archived_at),
         turnRunning: hasLiveWorkingTurn,
+        ...(corner.workflow_state
+          ? { run: { state: corner.workflow_state, outcome: corner.workflow_outcome ?? undefined } }
+          : {}),
         lifecycle,
       });
       const header = roomHeader(corner, this.publicOrigin);
@@ -5263,6 +5273,12 @@ export class PhoneService {
          VALUES($1,$2,'','no_code','human','{"lifecycle":"working","checks":"unknown"}')`,
         [id, viewerId],
       );
+      await advanceCorner(database, id, {
+        kind: 'open',
+        lane: 'no_code',
+        workspaceId: parent.workspace_id,
+        implementerAgentId: viewerId,
+      });
       if (input.appInstallationId) {
         await database.query(
           `INSERT INTO corner_app_bindings(corner_id,installation_id,instance_id,bound_by)

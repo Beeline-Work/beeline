@@ -6382,6 +6382,111 @@ describe('monolith integration', () => {
     ).toEqual([{ processed: true }]);
   });
 
+  it('credits the branch agent, not a copied parent owner, on a phone-opened corner merge', async () => {
+    processWebhook.mockImplementation((event, payload) =>
+      githubOperations.processWebhook(event, payload),
+    );
+    const candy = 'e'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Candy')`, [
+      candy,
+    ]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'owner')`,
+      [WORKSPACE, candy, ROOM],
+    );
+    await database.query(
+      `INSERT INTO github_installations(
+         installation_id,owner_id,account_id,account_login,account_type,repository_selection,status
+       ) VALUES(77,$1,'42','owner','User','selected','active')`,
+      [HUMAN],
+    );
+    await database.query(
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch)
+       VALUES(101,77,'owner/widgets','main')`,
+    );
+    await database.query(
+      `UPDATE rooms SET repository_key='owner/widgets',
+         repository_remote='https://github.com/owner/widgets.git',
+         repository_resolution='repository',github_installation_id=77 WHERE id=$1`,
+      [ROOM],
+    );
+    // The phone's + button opens a corner with no owner agent and copies the
+    // parent's memberships, so Candy arrives in the corner as an owner.
+    const created = await operation('createHumanCorner', { roomId: ROOM, title: 'Hidden river' });
+    expect(created.status).toBe(200);
+    const { id: cornerId } = (await created.json()) as { id: string };
+    const branch = `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`;
+    expect(
+      (
+        await daemonOperation('postCornerRemoteState', {
+          cornerId,
+          branch,
+          state: 'working',
+          checks: 'unknown',
+        })
+      ).status,
+    ).toBe(200);
+    const merged = await webhook('pull_request', 'phone-corner-pr-merged', {
+      installation: { id: 77 },
+      repository: { id: 101, full_name: 'owner/widgets' },
+      action: 'closed',
+      pull_request: {
+        number: 1,
+        title: 'Hidden river',
+        html_url: 'https://github.com/owner/widgets/pull/1',
+        head: { ref: branch, sha: '1'.repeat(40) },
+        base: { ref: 'main' },
+        merged: true,
+        merged_at: '2026-09-30T14:00:00Z',
+        merge_commit_sha: 'f'.repeat(40),
+        merged_by: { login: 'owner' },
+      },
+    });
+    expect(merged.status).toBe(202);
+    expect(
+      (
+        await database.query<{ card_type: string; author_id: string }>(
+          `SELECT card_type,author_id FROM messages
+           WHERE (room_id=$1 AND card_type='daemon-fact' AND card->>'type'='corner-complete')
+              OR (room_id=$2 AND card_type='github-corner-note' AND system_event->>'verb'='merged')
+           ORDER BY card_type`,
+          [ROOM, cornerId],
+        )
+      ).rows,
+    ).toEqual([
+      { card_type: 'daemon-fact', author_id: AGENT },
+      { card_type: 'github-corner-note', author_id: AGENT },
+    ]);
+    expect(
+      (
+        await database.query<{ owner_agent_id: string | null }>(
+          `SELECT owner_agent_id FROM corner_facts WHERE corner_id=$1`,
+          [cornerId],
+        )
+      ).rows,
+    ).toEqual([{ owner_agent_id: AGENT }]);
+    // A later agent recording a branch never replaces the recorded owner.
+    await database.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [
+      cornerId,
+      candy,
+    ]);
+    await daemonOperation('postCornerRemoteState', {
+      cornerId,
+      branch,
+      state: 'working',
+      checks: 'unknown',
+    });
+    expect(
+      (
+        await database.query<{ owner_agent_id: string | null }>(
+          `SELECT owner_agent_id FROM corner_facts WHERE corner_id=$1`,
+          [cornerId],
+        )
+      ).rows,
+    ).toEqual([{ owner_agent_id: candy }]);
+  });
+
   it('turns signed GitHub branch events into corner notes and closes a merged corner', async () => {
     processWebhook.mockImplementation((event, payload) =>
       githubOperations.processWebhook(event, payload),

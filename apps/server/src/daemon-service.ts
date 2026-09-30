@@ -4881,9 +4881,13 @@ export class DaemonService {
       ...(input.pullRequest ? { pr: input.pullRequest } : {}),
     };
     await this.database.query(
-      `INSERT INTO corner_facts(corner_id,feature_branch,lifecycle) VALUES($1,$2,$3::jsonb)
+      `INSERT INTO corner_facts(corner_id,feature_branch,lifecycle,owner_agent_id)
+       VALUES($1,$2,$3::jsonb,$4)
        ON CONFLICT(corner_id) DO UPDATE SET
          feature_branch=EXCLUDED.feature_branch,
+         -- A corner opened from the phone has no owner agent. The first agent to
+         -- record its branch is the one doing the work; never replace an owner.
+         owner_agent_id=COALESCE(corner_facts.owner_agent_id,EXCLUDED.owner_agent_id),
          lifecycle=CASE
            -- A helper's restart heartbeat is lower authority than GitHub's PR/check facts.
            -- Keep the complete webhook-owned lifecycle so it cannot lose the PR, mergeability,
@@ -4893,7 +4897,7 @@ export class DaemonService {
            ELSE corner_facts.lifecycle || EXCLUDED.lifecycle
          END,
          updated_at=now()`,
-      [input.cornerId, input.branch, JSON.stringify(lifecycle)],
+      [input.cornerId, input.branch, JSON.stringify(lifecycle), agentId],
     );
     return this.writeResult();
   }

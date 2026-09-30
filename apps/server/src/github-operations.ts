@@ -1364,7 +1364,7 @@ export class GitHubOperations {
       has_pr: boolean;
     }>(
       `SELECT corner.id corner_id,parent.id parent_id,corner.name corner_name,
-         COALESCE(fact.owner_agent_id,owner.identity_id,corner.created_by,parent.created_by) author_id,
+         COALESCE(fact.owner_agent_id,first_agent.author_id,corner.created_by,parent.created_by) author_id,
          fact.objective summary,
          fact.feature_branch, fact.lifecycle->>'branch' lifecycle_branch,
          fact.lifecycle->'pr' IS NOT NULL has_pr,
@@ -1374,12 +1374,16 @@ export class GitHubOperations {
        JOIN corner_facts fact ON fact.corner_id=corner.id
        JOIN github_repositories github ON github.installation_id=$1
          AND lower(github.full_name)=lower($2) AND github.active
+       -- Opening a corner copies the parent's memberships, roles included, so an
+       -- owner membership can name a parent owner such as Candy. Without a
+       -- recorded owner, credit the first agent that spoke in the corner; system
+       -- lines are skipped because their author came from this same fallback.
        LEFT JOIN LATERAL(
-         SELECT membership.identity_id FROM memberships membership
-         JOIN identities identity ON identity.id=membership.identity_id AND identity.kind='agent'
-         WHERE membership.room_id=corner.id AND membership.removed_at IS NULL
-         ORDER BY (membership.role='owner') DESC,membership.joined_at LIMIT 1
-       )owner ON true
+         SELECT message.author_id FROM messages message
+         JOIN identities identity ON identity.id=message.author_id AND identity.kind='agent'
+         WHERE message.room_id=corner.id AND message.system_event IS NULL
+         ORDER BY message.created_at,message.id LIMIT 1
+       )first_agent ON fact.owner_agent_id IS NULL
        WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
          AND parent.github_events_enabled
          AND (fact.feature_branch=$3 OR (fact.lane='code' AND $4::text IS NOT NULL

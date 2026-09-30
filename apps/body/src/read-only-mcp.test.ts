@@ -98,6 +98,7 @@ describe('corner lifecycle tool surfaces', () => {
       expect(names).toContain('close_corner');
       expect(names).toContain('publish_corner_app');
       expect(names).toContain('open_corner_app');
+      expect(names).toContain('rename_corner');
       expect(names).not.toContain('open_corner');
     }
     const noCodeCorner = agentToolsFor(true, false, true, false, true, false);
@@ -110,6 +111,7 @@ describe('corner lifecycle tool surfaces', () => {
     for (const tools of [room, directMessage]) {
       expect(tools.map((tool) => tool.name)).not.toContain('publish_corner_app');
       expect(tools.map((tool) => tool.name)).not.toContain('open_corner_app');
+      expect(tools.map((tool) => tool.name)).not.toContain('rename_corner');
     }
   });
 });

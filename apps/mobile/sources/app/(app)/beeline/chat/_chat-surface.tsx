@@ -213,12 +213,12 @@ import {
   saveLastViewedChannel,
 } from '@/buzz/community-storage';
 import {
+  createChatAttachmentUploader,
   formatAttachmentSize,
   MAX_MESSAGE_ATTACHMENTS,
   pastedImageAttachment,
   pickedPhotoAttachments,
   type PickedChatAttachment,
-  uploadChatAttachments,
 } from '@/buzz/chat-attachment';
 import {
   availableSlashVerbs,
@@ -666,6 +666,24 @@ export function BuzzChatSurface({
     },
     [],
   );
+  // Staged photos and files start uploading as soon as they land in the
+  // composer, so send only waits for whatever is still in flight.
+  const [attachmentUploader] = useState(createChatAttachmentUploader);
+  useEffect(() => {
+    attachmentUploader.retain(pendingAttachments);
+    if (!transport || pendingAttachments.length === 0) return;
+    void transport
+      .ensureClient()
+      .then((client) =>
+        attachmentUploader.start(
+          client,
+          pendingAttachments.filter((attachment) =>
+            pendingAttachmentsRef.current.includes(attachment),
+          ),
+        ),
+      )
+      .catch(() => undefined);
+  }, [attachmentUploader, pendingAttachments, transport]);
   const [attachmentPickerVisible, setAttachmentPickerVisible] = useState(false);
   const [messageActionsTarget, setMessageActionsTarget] = useState<ChatDisplayMessage | null>(null);
   const [optimisticBookmarks, setOptimisticBookmarks] = useState<Record<string, boolean>>({});
@@ -3540,7 +3558,7 @@ export function BuzzChatSurface({
       }
       if (!transport) setSessionTransport(sendTransport);
       preparedTransport = sendTransport;
-      const attachments = await uploadChatAttachments(
+      const attachments = await attachmentUploader.uploadAll(
         await sendTransport.ensureClient(),
         activePendingAttachments,
       );
@@ -3681,6 +3699,7 @@ export function BuzzChatSurface({
     }
   }, [
     activeCommunityId,
+    attachmentUploader,
     replacePendingAttachments,
     transport,
     decodedId,

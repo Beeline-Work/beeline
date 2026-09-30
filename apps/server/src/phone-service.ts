@@ -191,6 +191,7 @@ import {
 import { ARTIFACT_TTL_HOURS, mediaIdFromUrl, mediaTtlHours } from './media-ttl.js';
 import type { ObjectService } from './object-service.js';
 import { closeCornerState } from './corner-close.js';
+import { writeCornerTitle } from './corner-title.js';
 import {
   DELETED_ACCOUNT_IDENTITY_ID,
   DELETED_ACCOUNT_NAME,
@@ -5322,19 +5323,7 @@ export class PhoneService {
       ).rows[0];
       if (!access) throw new Error('room access denied');
       if (access.archived_at) throw new Error('room is archived');
-      await database.query(`UPDATE rooms SET name=$2,updated_at=now() WHERE id=$1`, [
-        roomId,
-        title,
-      ]);
-      // The marker beneath a forwarded message names the corner it opened, so
-      // it follows the corner's current name rather than the random one it was
-      // opened under.
-      await database.query(
-        `UPDATE messages SET card=jsonb_set(card,'{name}',to_jsonb($3::text))
-         WHERE room_id=$1 AND card_type='daemon-fact' AND card->>'cornerId'=$2
-           AND card->>'sourceMessageId' IS NOT NULL`,
-        [access.parent_id, roomId, title],
-      );
+      await writeCornerTitle(database, roomId, access.parent_id, title);
       return access.parent_id;
     });
     this.live?.publish({ type: 'invalidate', roomId, reason: 'corner' });

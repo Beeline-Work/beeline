@@ -341,6 +341,11 @@ export type DaemonOperationMap = {
   postCornerPlan: Operation<PostCornerPlanInput, WriteResult>;
   putCornerApp: Operation<PutCornerAppInput, CornerAppWriteResult>;
   requestCornerAppOpen: Operation<RequestCornerAppOpenInput, CornerAppWriteResult>;
+  /** Retitles the corner the calling agent is a member of; the name follows `CreateCornerInput.name`'s limits. */
+  renameCorner: Operation<
+    TurnOutputAuthority & CornerInput & { readonly name: string },
+    { readonly cornerId: string; readonly name: string }
+  >;
   postTargetBranchProposal: Operation<PostTargetBranchProposalInput, WriteResult>;
   requestAgentGrant: Operation<RequestAgentGrantInput, RequestAgentGrantResult>;
   askRoomChoice: Operation<AskRoomChoiceInput, AskRoomChoiceResult>;

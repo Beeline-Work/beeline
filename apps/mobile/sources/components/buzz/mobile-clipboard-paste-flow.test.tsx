@@ -121,7 +121,7 @@ function ComposerWithClipboardPaste() {
 }
 
 describe('a person on iOS/Android pastes a copied image into the composer', () => {
-  it('taps Attach, taps Paste Image, and sees the clipboard image appear as a pending attachment', async () => {
+  it('taps Attach, taps Paste from clipboard, and sees the clipboard image appear as a pending attachment', async () => {
     const base64 = Buffer.from('screenshot-bytes').toString('base64');
     clipboard.hasImageAsync.mockResolvedValue(true);
     clipboard.getImageAsync.mockResolvedValue({
@@ -140,9 +140,9 @@ describe('a person on iOS/Android pastes a copied image into the composer', () =
     // Tap the composer's "+" attach button — the same entry point pickPhoto/pickDocument use.
     act(() => renderer!.root.findByProps({ testID: 'chat-attach-button' }).props.onPress());
 
-    // The sheet now offers "Paste Image" alongside Photos/Document.
+    // The sheet offers "Paste from clipboard" alongside Photos/Files.
     const pasteRow = renderer!.root.findByProps({ testID: 'attachment-picker-paste' });
-    expect(pasteRow.props.label).toBe('Paste Image');
+    expect(pasteRow.props.label).toBe('Paste from clipboard');
 
     // Tap it — this drives the real getImageAsync -> pastedImageAttachment pipeline.
     await act(async () => {

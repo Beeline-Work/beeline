@@ -165,3 +165,26 @@ ghr_delete_asset() {
     attempt=$((attempt + 1))
   done
 }
+
+# ghr_requested_version_guard <version> <release-sha>
+# Sourced by the initialize job, not release_result. release_result treats an
+# existing release as a retry of this identity and only uploads assets onto it,
+# so a manually requested version that collides with an unrelated old release
+# would silently keep that release's tag, title and notes. Fails when a release
+# with that tag exists and its tag resolves to a commit other than
+# <release-sha>; a retry (tag already at <release-sha>) and a version with no
+# release pass.
+ghr_requested_version_guard() {
+  local version="$1"
+  local sha="$2"
+  local tag_sha
+  gh release view "$version" --json tagName >/dev/null 2>&1 || return 0
+  tag_sha=$(ghr_api "repos/$GITHUB_REPOSITORY/commits/$version" --jq .sha) || {
+    echo "::error::requested version $version already has a GitHub release, but its tag commit could not be resolved" >&2
+    return 1
+  }
+  if [ "$tag_sha" != "$sha" ]; then
+    echo "::error::requested version $version already has a GitHub release whose tag points at $tag_sha, not the release SHA $sha. Delete that release and its tag, or request a different version." >&2
+    return 1
+  fi
+}

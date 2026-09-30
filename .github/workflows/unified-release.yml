@@ -180,8 +180,10 @@ jobs:
           SELECTION: ${{ inputs.selection || 'auto' }}
           STORE_TRACK: ${{ inputs.store_track || 'none' }}
           ALLOW_PIN_RESTORE: ${{ inputs.allow_pin_restore || 'false' }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          . scripts/gh-release-retry.sh
           git fetch origin main
           previous="$RUNNER_TEMP/previous/release-attempt.json"
           [ -f "$previous" ] || previous="$RUNNER_TEMP/previous/unified-release.json"
@@ -200,6 +202,8 @@ jobs:
             }
             if [ -n "$REQUESTED_VERSION" ]; then
               release_version="$REQUESTED_VERSION"
+              # Never silently reuse an unrelated old release with this tag.
+              ghr_requested_version_guard "$release_version" "$(git rev-parse --verify "$release_sha^{commit}")"
             elif [ -f "$previous" ]; then
               release_version=$(node scripts/unified-release.mjs release-version --previous "$previous" --sha "$release_sha")
             else

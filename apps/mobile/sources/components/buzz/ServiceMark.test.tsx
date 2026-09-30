@@ -72,13 +72,21 @@ describe('ServiceMark', () => {
 });
 
 describe('AppMark', () => {
-  it('shows a transparent product logo without a letter underneath, then falls back if loading fails', () => {
+  it('shows a bundled product logo without a network request', () => {
     const renderer = render(<AppMark name="Gmail" domain="gmail.com" size={34} />);
     expect(renderer.root.findAllByType('Image')).toHaveLength(1);
+    expect(renderer.root.findByType('Image').props.source).toBeTruthy();
+    expect(renderer.root.findByType('Image').props.source.uri).toBeUndefined();
     expect(renderer.root.findAllByType('Text')).toHaveLength(0);
-    act(() => renderer.root.findByType('Image').props.onError());
-    expect(renderer.root.findAllByType('Image')).toHaveLength(0);
-    expect(renderer.root.findByType('Text').props.children).toBe('G');
+  });
+
+  it('shows Linear branding on Workbench and detail sized marks', () => {
+    for (const size of [36, 48]) {
+      const renderer = render(<AppMark name="Linear" domain="linear.app" size={size} />);
+      expect(renderer.root.findByType('Image').props.source).toBeTruthy();
+      expect(renderer.root.findByType('Image').props.source.uri).toBeUndefined();
+      expect(renderer.root.findAllByType('Text')).toHaveLength(0);
+    }
   });
 
   it('uses a letter tile when an app has no known image', () => {

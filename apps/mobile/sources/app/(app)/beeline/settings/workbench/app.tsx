@@ -47,7 +47,11 @@ export default function AppDetailScreen() {
     try {
       const started = await getWorkbenchSource().beginAppSignIn({ appId: app.id });
       await openAppSignIn(started.authorizationUrl, { workspaceId, viewerId });
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not connect app'); }
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : 'Could not connect app';
+      setError(message);
+      setApp(current => current ? { ...current, status: 'error', errorMessage: message } : current);
+    }
     finally { setWorking(false); }
   };
 
@@ -64,15 +68,15 @@ export default function AppDetailScreen() {
         <View style={styles.identity}>
           <AppMark name={app.name} domain={app.domain} size={48} />
           <View style={styles.identityCopy}>
-            <Text style={styles.status}>{app.status === 'connected' ? 'Connected' : app.status === 'connecting' ? 'Connecting' : 'Needs attention'}</Text>
+            <Text style={styles.status}>{app.status === 'connected' ? 'Connected' : app.status === 'connecting' ? 'Connecting' : 'Connection failed'}</Text>
             {app.accountLabel ? <Text style={styles.account}>{app.accountLabel}{app.workspaceName ? ` · ${app.workspaceName} workspace` : ''}</Text> : null}
           </View>
         </View>
         <Text style={styles.permission}>Your agents can use {app.name} as you. Other people’s agents ask you first.</Text>
         <Text style={styles.lastUsed}>{lastUsed}</Text>
-        {app.status === 'connected' ? <TouchableOpacity accessibilityRole="button" disabled={working} onPress={() => void disconnect()} style={styles.outline} testID="app-detail-disconnect"><Text style={styles.outlineText}>{working ? 'Disconnecting' : 'Disconnect'}</Text></TouchableOpacity> : <TouchableOpacity accessibilityRole="button" disabled={working} onPress={() => void reconnect()} style={styles.ink} testID="app-detail-connect"><Text style={styles.inkText}>{working ? 'Connecting' : `Connect ${app.name}`}</Text></TouchableOpacity>}
+        {app.status === 'connected' ? <TouchableOpacity accessibilityRole="button" disabled={working} onPress={() => void disconnect()} style={styles.outline} testID="app-detail-disconnect"><Text style={styles.outlineText}>{working ? 'Disconnecting' : 'Disconnect'}</Text></TouchableOpacity> : <TouchableOpacity accessibilityRole="button" disabled={working} onPress={() => void reconnect()} style={styles.ink} testID="app-detail-connect"><Text style={styles.inkText}>{working ? 'Connecting' : app.status === 'error' ? `Retry ${app.name}` : `Connect ${app.name}`}</Text></TouchableOpacity>}
       </> : null}
-      {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
+      {error || app?.status === 'error' && app.errorMessage ? <Text accessibilityRole="alert" style={styles.error}>{error ?? app?.errorMessage}</Text> : null}
     </ScrollView>
   </View>;
 }

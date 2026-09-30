@@ -299,6 +299,26 @@ describe('connect_app', () => {
         roomName: 'Tools', usedAt: afterUse.lastUsedAt } });
   });
 
+  it('shows a failed provider link on Workbench and clears it on retry', async () => {
+    const provider = fakeComposio();
+    provider.supportsOAuth.mockResolvedValue(true);
+    const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const first = await daemon.execute('connectApp',
+      { ...turn, app: 'Linear', reason: 'connect Linear' }, HELPER);
+    expect(first).toMatchObject({ status: 'needs_sign_in', transport: 'composio' });
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    provider.link.mockRejectedValueOnce(new Error('App provider request failed (403)'));
+    await expect(phone.execute('beginAppSignIn', { appId: first.appId! }, OWNER))
+      .rejects.toThrow('App provider request failed (403)');
+    expect((await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER)).apps)
+      .toContainEqual(expect.objectContaining({ appId: first.appId, status: 'error',
+        errorMessage: 'App provider request failed (403)' }));
+    await phone.execute('beginAppSignIn', { appId: first.appId! }, OWNER);
+    expect((await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER)).apps)
+      .toContainEqual(expect.objectContaining({ appId: first.appId, status: 'connecting' }));
+  });
+
   it('rejects invalid card copy before creating a connection or card', async () => {
     const daemon = daemonWith(fakeRegistry([]).client, fakeComposio());
     await expect(daemon.execute('connectApp', { ...turn, app: 'Slack',

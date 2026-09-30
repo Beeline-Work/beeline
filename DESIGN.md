@@ -106,9 +106,9 @@ by code blocks, tool readouts, and system lines. No speaker rails anywhere.
 A Room transcript and a Corner transcript are the same thing, rendered by the
 same primitive: `apps/mobile/sources/components/buzz/Ledger.tsx`. Not a Room
 version and a Corner version that resemble each other — one component, fed by
-one branch in `buzz/chat/[channelId].tsx`. If a future change needs a shape only
-one surface has, that is a real design fork and needs its own pass, not a quiet
-second implementation.
+one branch in `app/(app)/beeline/chat/_chat-surface.tsx`. If a future change
+needs a shape only one surface has, that is a real design fork and needs its
+own pass, not a quiet second implementation.
 
 **Type follows content kind — at ONE size.** Every message renders at the same
 size (Space Grotesk 16 / lh ~1.55 in Obsidian); hierarchy on a long agent turn
@@ -169,23 +169,23 @@ attachments keep their attachment rows.
 
 **Expanding a machine run is one line per call, and opening a call is its
 output.** Three levels — fold, line, detail — and each says something the level
-above it did not. A call's line is a **verb** in a fixed narrow column (mono,
-dim chrome: `ran`, `read`, `wrote`, `found`, `git`, or an MCP tool's own short
-name), the **object** it acted on at the content tone, a **duration** only once
-it passes a second (mono, tabular), and an **outcome** pinned right that is
-_nothing at all_ when the call succeeded — absence reads faster than a tick —
-`failed` in the diff red, or `running` in brass. The object comes from the
-command; the harness's own title is a last resort, because a harness will
-happily label a directory listing "Reviewed the current changes". A long
+above it did not. A call's line opens with its **family glyph** (mono, dim
+chrome: `>_` shell, `≡` file work, `⋯` thought, `·` everything else), then the
+**object** it acted on at the content tone — the object comes from the command,
+and the harness's own title is a last resort, because a harness will happily
+label a directory listing "Reviewed the current changes" — then a **duration**
+only once it passes a second (mono, tabular), and a quiet **verdict** pinned
+right: a dim `✓` on success, a brass `✗` on failure with the distilled reason
+inline beside the object, and the one spinner while the call runs. A long
 command truncates in the MIDDLE: the flags at the end are the half that says
-which command this was. Opening one call shows its real output, capped to a few
-lines with the rest one tap away, mono at the dim tone — and if all the wire
-handed us was a transport envelope with a terminal id, it shows _nothing_,
-because a machine identifier is not a result. A failed call arrives already
-open, and the fold counts it. Nothing is coloured by tool kind, the command is
-never printed twice, and there are no tool counters, file-count badges,
-title/body stacks, or failure chips (`buzz/tool-call-row.ts` decides what a
-call is, `components/buzz/ActivityTimeline.tsx` draws it — captain report
+which command this was. Opening one call shows its real output in the full-width
+output sheet, never inline — and if all the wire handed us was a transport
+envelope with a terminal id, the sheet shows _nothing_, because a machine
+identifier is not a result. The run line above it counts the failed steps.
+Nothing is coloured by tool kind, the command is never printed twice, and there
+are no tool counters, file-count badges, title/body stacks, or failure chips
+(`buzz/tool-call-row.ts` decides what a call is, `buzz/tool-ledger.ts` shapes
+the line, `components/buzz/ActivityTimeline.tsx` draws it — captain report
 C88).
 
 A wall of git/CLI output an agent pasted into its own narration remains a
@@ -338,9 +338,9 @@ machine. Membership consumes no
 header width on either surface: the existing overflow sheet carries one Members
 row with the current count and opens the existing roster. The Room header's
 trailing slot carries the **corners door**: the brass `CornerGlyph` ALONE,
-in its own 44pt box, with `space.lg` of bare slab before the overflow dots'
-identical 44pt box. No word rides beside it. The two are **siblings** — same
-box, same baseline, parted by slab — and the mark is sized to read at
+in its own 44pt box, touching the overflow dots' identical 44pt box. No word
+rides beside it. The two are **siblings** — same box, same baseline, their 28pt
+marks parted by the 16pt of slab between them — and the mark is sized to read at
 optically the SAME mark-size as the dots: 28 of ink in the 44 box, the same
 treatment as the Room-list pair, with the stroke held to the weight it painted
 at 16 so the larger box does not read heavier (captain, 2026-09-21). The
@@ -414,16 +414,17 @@ summaries retain a `space.md` bottom margin before the next conversation.
 Wide desktop windows keep a 76px Workspace rail beside the 380px default Room
 sidebar; narrower windows retain the existing Workspace switcher overlay.
 
-Corner summaries read “2 waiting” in brass when any corner waits; otherwise
-they read “5 corners” in quiet ink.
+A Room row that holds open corners carries the brass `CornerGlyph` toggle; the
+count rides the toggle's accessible name (`Expand N corners`), never a second
+visible label.
 The API batches canonical state derivation for visible corners; archived work
-is excluded. On mobile the label opens the existing Room Corners page. On
-desktop it toggles an inline list, waiting first, with each corner independently
-selectable and draggable. Opening a Room row leaves its corner list collapsed;
-opening a corner directly expands its parent Room. Explicit per-Room expansion
-choices persist. Expanded rows use the canonical waiting/working/review/idle
-vocabulary rather than inventing an ambiguous “needs you” state. Long-pressing
-that same summary — never the row, which still pins — opens a new, randomly
+is excluded. The toggle expands an inline list, waiting first, with each corner
+independently selectable and draggable; a tap opens the corner. Opening a Room
+row leaves its corner list collapsed; opening a corner directly expands its
+parent Room. Explicit per-Room expansion choices persist. Expanded rows use the
+canonical waiting/working/review/idle vocabulary rather than inventing an
+ambiguous “needs you” state. Long-pressing that same toggle — never the row,
+which still pins — opens a new, randomly
 named corner in the Room and lands the viewer in it. The long press is offered
 to a human viewer only; an agent's client gets no such affordance.
 
@@ -445,12 +446,12 @@ shape only, which is exactly the encoding a colour-blind reader and a screen
 reader both lose. No explainer paragraph stands above the list; a screen that
 has to describe what its own contents are has not been designed yet.
 
-**The plus is a brass square.** Compose is one 44pt brass square floating at
-the bottom right of the list — ink `+`, no shadow, no rounding, contrast with
-the slab its only affordance — opening the compose sheet. The header carries
-no plus: it is the Workspace name and nothing louder, with `MembersGlyph`
-as the Members door. See [Identity](#identity) for the shared glyph and
-accessible-name contract.
+**The plus is a 44pt brass mark in the header.** On phone, compose is one 44pt
+box in the Room-list header's actions row holding a brass ink `+`, no shadow and
+no rounding — contrast with the slab is its only affordance — and it turns 45°
+into a close mark while the compose sheet is open. Desktop opens the same sheet
+from the Workspace menu's compose rows. The plus rides the header, never the
+list.
 
 The Workspace rail is the same slab with one hairline edge. In the drawer,
 selection reads three redundant ways: an edge bar (never a floating bracket),
@@ -467,10 +468,11 @@ framed workspace picture geometry. Add scrolls with the Workspace tiles;
 neither form carries Workspace Settings, which lives in the Room-list header
 menu.
 
-**Settings is one entry, not two.** The rail's `YOU` command opens the account
-hub (`buzz/settings/`), which is itself an index in this same vocabulary —
-boxless rows, one hairline between them, the three tones, the trailing mark in
-the gutter. Every screen that mounts the rail routes there. Jumping past it
+**Settings is one entry, not two.** The rail's account tile opens the account
+hub (`app/(app)/beeline/settings/`), which is itself an index in this same
+vocabulary — boxless rows, one hairline between them, the three tones, the
+trailing mark in the gutter. Every screen that mounts the rail routes there.
+Jumping past it
 straight into `settings/identity` is what stranded the hub, and the product's
 only sign-out with it.
 
@@ -593,17 +595,21 @@ not a Workspace constant. Coverage: `buzz/workspace-tile.test.ts`,
 `components/buzz/workspace-picture-seat.browser.test.ts`, and
 `app/(app)/beeline/settings/identity-picture-seat.browser.test.ts`.
 
-One concept gets one glyph, product-wide. Members chrome on the Room-list
-header, the desktop workspace heading, and the corner roster row is
-`MembersGlyph` (`components/buzz/MembersGlyph.tsx`), a peer of `RoomGlyph`:
-stroke-only circle over a right-isosceles triangle (equal legs from the apex,
-90° apex angle), no fill, no second person, with a heavier stroke than
-`RoomGlyph`. The desktop work pane no longer offers members. `Members` is the accessible name (`MEMBERS_LABEL`,
-`buzz/vocabulary.ts`). In-list titles (the Members page, Workspace settings, the
-roster sheet) keep the word. The retired hexagon `⌬` and the Ionicons
-`people-outline` stand-in stay gone. That mark stays visually distinct from the
-corner lifecycle glyphs (`◆ ◇ ▲ ✕ ✓ □`, `buzz/corners.ts`), because a diamond on
-any Buzz surface means live corner work, never people.
+One concept gets one glyph, product-wide, and the Members destination is the
+word. `Members` is the accessible name and the label (`MEMBERS_LABEL`,
+`buzz/vocabulary.ts`): the shared Workspace menu carries it as a named row on
+phone and desktop, the Room overflow sheet carries it as a named row with the
+live participant count, and in-list titles (the Members page, Workspace
+settings, the roster sheet) keep it. `MembersGlyph`
+(`components/buzz/MembersGlyph.tsx`), a peer of `RoomGlyph` — stroke-only circle
+over a right-isosceles triangle (equal legs from the apex, 90° apex angle), no
+fill, no second person, with a heavier stroke than `RoomGlyph` — is not Members
+chrome: it marks the join choice on the entry screen and stays off the Room-list
+header, the roster rows, and the desktop work pane, which no longer offers
+members at all. The retired hexagon `⌬` and the Ionicons `people-outline`
+stand-in stay gone. Room and corner state is the drawn `StateCircle`
+(`components/buzz/MonoHull.tsx`), never a typed diamond: the circle is the state
+mark, and no state mark ever means people.
 
 An agent's _name_ is human-authored and never guessed twice. Every surface
 resolves it through `resolveAgentDisplayIdentity` — validated soul overlay, then
@@ -621,8 +627,10 @@ and guessing wrong shows a placeholder rather than nothing. A Room and the
 Members screen must never name the same key differently; if they do, one of them
 is reading an empty roster, not a different name.
 
-Vocabulary: "Room," never "Channel." "Members," never "People." Room and corner
-names carry the `#` channel mark everywhere a surface EXPOSES them — chat
+Vocabulary: "Room," never "Channel." `Members` names the surface and its entry
+rows; the page's two counted sections are `People N` and `Agents N`, the kinds
+inside it. Room and corner names carry the `#` channel mark everywhere a surface
+EXPOSES them — chat
 headers (`#<room>`, corners as `#<room>/<corner>`), push-notification titles
 (gateway `mapping.ts` owns those), Room index rows, the
 Room-list corner dropdown, the standalone corners list, Workspace-settings room
@@ -682,7 +690,8 @@ Primitives live in `apps/mobile/sources/components/buzz/MonoHull.tsx`:
 press), `MonoButton`, `PixelLoader` (four-frame, ~7.5fps — labeled-control busy
 only), `HullWaveSignal`
 (9-segment sin² live wave), `HullLivePulse` (the same wave reduced to one
-mark), `StatusGlyph`, `PixelGateReveal` (176ms strip reveal),
+mark), `StateCircle` (the three-state circle), `PixelGateReveal` (176ms strip
+reveal),
 `NewMessageMaterialize` (140ms fade+rise). All reduced-motion aware via
 `ReduceMotion.System`, and all of the continuous ones also stop when the app
 backgrounds. No primitive exceeds ~240ms except the continuous, low-duty-cycle
@@ -769,9 +778,10 @@ check), never as a page or Room/Corner load gate.
    captain override of the zero-chroma rule for one universally-understood
    convention — it is not an opening to add more domain-convention colors
    elsewhere without the same explicit sign-off.
-3. **Ledger speaker rails** use human blue and agent green only in the dense
-   Ledger theme. They are redundant with speaker position/identity and do not
-   authorize colored prose, chrome, or status decoration.
+3. **Speaker rails stay retired.** No transcript rail carries human blue or
+   agent green: the ledger reads by proximity and byline alone
+   (`components/buzz/Ledger.tsx`), and no rail vocabulary exists to
+   re-litigate.
 4. **Two Inks** (captain 2026-09-19, C composed with B) is the fenced-block
    palette: three roles — structure, name, value — in two theme-tuned hues
    drawn from the canvas family (aubergine lifted, and its cool complement),
@@ -784,4 +794,4 @@ check), never as a page or Room/Corner load gate.
 
 ## Agent and human profiles
 
-Profiles inherit Settings typography, spacing and the shared `SettingsRow` primitive. Agent and human bylines open profiles; mentions and Message retain DM navigation. A phone pushes a page, while a desktop transcript opens an adjacent pane. Human profiles show identity and Workspace role, with explicit Edit, Save and Cancel for authorized role changes; self profiles link to identity Settings. Agent profiles retain the assigned mark or generated portrait, model, effort, owner, expandable soul and paginated merged work. Avatar generation requires confirmation and serializes requests. Bans are persistent Workspace actions, separate from agent retirement, with manager-only lifting in Members. See [agent profiles](docs/agent-profiles.md) for authorization and verification scope.
+Profiles inherit Settings typography, spacing and the shared `SettingsRow` primitive. Agent and human bylines open profiles; mentions and Message retain DM navigation. A phone pushes a page, while a desktop transcript opens an adjacent pane. Human profiles show identity and Workspace role, with explicit Edit, Save and Cancel for authorized role changes; self profiles link to identity Settings. Agent profiles retain the assigned mark or generated portrait, model, effort, owner, expandable soul and paginated merged work. Avatar generation requires confirmation and serializes requests. Bans are persistent Workspace actions, separate from agent retirement; the phone ships no ban or lift control. See [agent profiles](docs/agent-profiles.md) for authorization and verification scope.

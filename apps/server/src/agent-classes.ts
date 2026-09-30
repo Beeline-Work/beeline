@@ -38,6 +38,9 @@ export const AGENT_CLASS_SCHEMA = `
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS harness text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS provider text;
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS reviewer_class text;
+-- The person who named the class: its candidates obey each agent's access
+-- policy for this person, exactly as that person's mention would.
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS reviewer_class_set_by text REFERENCES identities(id);
 CREATE TABLE IF NOT EXISTS model_registry (
   provider text NOT NULL,
   model_id text NOT NULL,
@@ -203,9 +206,23 @@ async function fetchRegistryJson(fetcher: Fetcher): Promise<unknown> {
     if (!response.ok) throw new Error(`models.dev responded ${response.status}`);
     const length = Number(response.headers.get('content-length') ?? '0');
     if (length > MODELS_DEV_MAX_BYTES) throw new Error('models.dev body is too large');
-    const text = await response.text();
-    if (text.length > MODELS_DEV_MAX_BYTES) throw new Error('models.dev body is too large');
-    return JSON.parse(text) as unknown;
+    // Counted while streaming, so a chunked body without a length is refused
+    // before it is buffered past the cap.
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('models.dev returned no body');
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MODELS_DEV_MAX_BYTES) {
+        await reader.cancel();
+        throw new Error('models.dev body is too large');
+      }
+      chunks.push(value);
+    }
+    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
   } finally {
     clearTimeout(timer);
   }
@@ -550,16 +567,24 @@ export async function settleClassReviewer(
   retry = false,
 ): Promise<{ agentClass: string; agentId?: string; candidates: CandidateHealth[] } | undefined> {
   const room = (
-    await database.query<{ reviewer_class: string | null; reviewer_agent_id: string | null }>(
-      `SELECT reviewer_class,reviewer_agent_id FROM rooms WHERE id=$1 AND parent_id IS NULL FOR UPDATE`,
+    await database.query<{
+      reviewer_class: string | null;
+      reviewer_agent_id: string | null;
+      reviewer_class_set_by: string | null;
+    }>(
+      `SELECT reviewer_class,reviewer_agent_id,reviewer_class_set_by FROM rooms
+       WHERE id=$1 AND parent_id IS NULL FOR UPDATE`,
       [roomId],
     )
   ).rows[0];
   if (!room?.reviewer_class) return undefined;
+  // Another person's agent keeps its owner's access policy: a class names
+  // only agents the person who set it could address by mention.
   const candidates = await classCandidates(database, {
     roomId,
     agentClass: room.reviewer_class,
     retry,
+    ...(room.reviewer_class_set_by ? { requesterId: room.reviewer_class_set_by } : {}),
   });
   const healthy = candidates.filter(
     (candidate) => candidate.healthy && !exclude.includes(candidate.agentId),

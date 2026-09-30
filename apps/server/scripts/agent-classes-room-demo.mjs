@@ -205,7 +205,8 @@ console.log('\n== AC-2: state "summarize": the sticky reviewer and then every he
 for (let guard = 0; guard < 6; guard += 1) {
   const [next] = await pendingFor(R);
   if (!next) break;
-  console.log(`   reviewer is ${next.agent.name}`);
+  const card = (await db.query(`SELECT card FROM messages WHERE id=$1`, [next.command.sourceMessageId])).rows[0]?.card;
+  console.log(`   reviewer is ${next.agent.name}; its prompt card carries ${JSON.stringify(card?.contents)}`);
   await fail(next.agent, next.command, guard % 2 ? 'allowance-spent' : 'not-signed-in',
     guard % 2 ? 'You need more credits' : 'authentication required');
 }

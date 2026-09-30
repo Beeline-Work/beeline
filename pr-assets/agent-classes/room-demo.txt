@@ -9,36 +9,36 @@ Sol      heavy, sol, codex, openai  ($10/1M out)
 Speedy   light, deepseek, pi  ($0.6/1M out)
 
 == AC-4: corner reviewer = class heavy ==
-   reviewer class heavy → current pick Sol
-   review dispatched to Sol
-   Sol fails instantly: model selection unavailable
-   review now with Hoots (same source message: 90d2b8ad4ff7…)
-   Hoots answers
+   reviewer class heavy → current pick Hoots
+   review dispatched to Hoots
+   Hoots fails instantly: model selection unavailable
+   review now with Sol (same source message: 3606d84b264e…)
+   Sol answers
 
 == Corner (as the person's phone reads it) ==
 · @GitHub passed checks aggregate checks
-· @sol could not answer · the selected model isn't available. Pick another in the agent's settings.
-· @sol could not take the review · model unavailable · handed to Hoots
-Hoots: Reviewed #42: the notes match the diff. Approve.
+· @hoots could not answer · the selected model isn't available. Pick another in the agent's settings.
+· @hoots could not take the review · model unavailable · handed to Sol
+Sol: Reviewed #42: the notes match the diff. Approve.
 
 == AC-2: workflow "release", role reviewer = class:heavy ==
-   Speedy started run a7dd8fe2f479… at state review
-   class heavy picked Charles for reviewer
-   Charles fails instantly: model selection unavailable
-   next heavy agent Niglet took over reviewer
-   Niglet handed off → summarize
+   Speedy started run 0d38d57a4c51… at state review
+   class heavy picked Niglet for reviewer
+   Niglet fails instantly: model selection unavailable
+   next heavy agent Sol took over reviewer
+   Sol handed off → summarize
 
 == AC-2: state "summarize": the sticky reviewer and then every heavy agent fail ==
-   reviewer is Niglet
-   Niglet fails instantly: authentication required
-   reviewer is Hoots
-   Hoots fails instantly: You need more credits
+   reviewer is Sol; its prompt card carries {"notes":"Two dates were wrong; fixed in the draft."}
+   Sol fails instantly: authentication required
+   reviewer is Charles; its prompt card carries {"notes":"Two dates were wrong; fixed in the draft."}
+   Charles fails instantly: You need more credits
    a person is asked: "No healthy heavy agent took step "reviewer"" (open)
 
 == Room #workflows (as the person's phone reads it) ==
 Lunchbox: @speedy start the release workflow with reviewer class:heavy
 · @speedy started workflow release
-· @niglet took over reviewer at review · Charles: model unavailable
-· @niglet handed off summarize
-· @hoots took over reviewer at summarize · Niglet: auth error
-· @system asked No healthy heavy agent took step "reviewer" · Tried: Niglet: auth error; Hoots: out of credits; Sol: model unavailable (skipped); Charles: model unavailable (skipped).
+· @sol took over reviewer at review · Niglet: model unavailable
+· @sol handed off summarize
+· @charles took over reviewer at summarize · Sol: auth error
+· @system asked No healthy heavy agent took step "reviewer" · Tried: Sol: auth error; Charles: out of credits; Niglet: model unavailable (skipped); Hoots: model unavailable (skipped).

@@ -5347,6 +5347,8 @@ export class PhoneService {
              reviewer_agent_id=CASE WHEN $4::boolean THEN $5 ELSE reviewer_agent_id END,
              reviewer_class=CASE WHEN $6::boolean THEN $7
                WHEN $4::boolean THEN NULL ELSE reviewer_class END,
+             reviewer_class_set_by=CASE WHEN $6::boolean AND $7::text IS NOT NULL THEN $8
+               WHEN $4::boolean OR $6::boolean THEN NULL ELSE reviewer_class_set_by END,
              updated_at=now()
          WHERE id=$1`,
         [
@@ -5357,6 +5359,7 @@ export class PhoneService {
           input.reviewerAgentId ?? null,
           reviewerClass !== undefined,
           reviewerClass ?? null,
+          viewerId,
         ],
       );
       // A class reviewer is picked now (a random healthy member of the class)

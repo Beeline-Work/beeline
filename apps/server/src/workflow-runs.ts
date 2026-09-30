@@ -39,6 +39,10 @@ type WorkflowRunCard = {
   toState: string;
   fromState?: string;
   outcome?: string;
+  /** What the previous state handed over: the prompt for the current state. */
+  contents?: unknown;
+  /** On a rebind card: the state whose handover `contents` came from. */
+  handedOverFrom?: string;
   status?: 'done' | 'failed';
 };
 
@@ -284,6 +288,12 @@ export async function rebindWorkflowRole(
       roleBindings,
       roleClasses: run.roleClasses,
       toState: run.toState,
+      // The new agent's prompt is this card, so it carries the handover it
+      // replaces. No fromState/outcome: a rebind is not a loop edge.
+      ...(run.contents !== undefined ? { contents: run.contents } : {}),
+      ...((run.fromState ?? run.handedOverFrom)
+        ? { handedOverFrom: run.fromState ?? run.handedOverFrom }
+        : {}),
     },
   });
   if (state.timeoutSeconds) {

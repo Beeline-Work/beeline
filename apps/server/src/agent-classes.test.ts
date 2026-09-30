@@ -16,6 +16,7 @@ import {
 
 const H = 'a'.repeat(64); // Workspace owner (admin)
 const M = 'd'.repeat(64); // plain member
+const O = 'e'.repeat(64); // another person, owner of creator-only agents in one test
 const NIGLET = '1'.repeat(64); // heavy (opus alias)
 const SOL = '2'.repeat(64); // heavy (codex, gpt-6.1-sol)
 const BABY = '3'.repeat(64); // god (fable)
@@ -100,10 +101,10 @@ beforeAll(async () => {
   await migrate(db);
   await db.query(
     `INSERT INTO identities(id,kind,name,handle) VALUES
-      ($1,'human','Lunchbox','lunchbox'),($2,'human','Member','member'),
+      ($1,'human','Lunchbox','lunchbox'),($2,'human','Member','member'),($7,'human','Other','other'),
       ($3,'agent','Niglet','niglet'),($4,'agent','Sol','sol'),
       ($5,'agent','Baby','baby'),($6,'agent','Speedy','speedy')`,
-    [H, M, NIGLET, SOL, BABY, SPEEDY],
+    [H, M, NIGLET, SOL, BABY, SPEEDY, O],
   );
   await db.query(
     `INSERT INTO agents(agent_id,owner_id,harness,selected_model,model_catalog) VALUES
@@ -171,7 +172,10 @@ beforeEach(async () => {
   await db.query(`DELETE FROM messages`);
   await db.query(`DELETE FROM agent_custom_tags`);
   await db.query(`DELETE FROM model_tier_overrides`);
-  await db.query(`UPDATE agents SET model_unavailable=NULL,access_policy='{"type":"everyone"}'::jsonb`);
+  await db.query(
+    `UPDATE agents SET model_unavailable=NULL,access_policy='{"type":"everyone"}'::jsonb,owner_id=$1`,
+    [H],
+  );
   await db.query(`UPDATE rooms SET reviewer_agent_id=NULL,reviewer_class=NULL`);
   await db.query(`UPDATE corner_facts SET lifecycle='{"checks":"unknown"}'::jsonb,command_check_state=NULL`);
   await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb`);
@@ -242,6 +246,25 @@ describe('tags and tiers', () => {
     } finally {
       await db.query(`UPDATE agents SET selected_model='claude-fable-5-1',harness='claude',provider=NULL WHERE agent_id=$1`, [BABY]);
     }
+  });
+
+  it('refuses a chunked registry body past the cap without a content length', async () => {
+    const chunk = new Uint8Array(1024 * 1024).fill(32);
+    let sent = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        sent += 1;
+        if (sent > 25) controller.close();
+        else controller.enqueue(chunk);
+      },
+    });
+    const result = await refreshModelRegistryIfDue(db, {
+      force: true,
+      fetcher: async () => new Response(body, { status: 200 }),
+    });
+    expect(result).toBe('failed');
+    expect(sent).toBeLessThanOrEqual(22);
+    expect((await loadAgentClasses(db, W)).get(NIGLET)?.classes.tier).toBe('heavy');
   });
 
   it('keeps the cached registry when a refresh fails', async () => {
@@ -357,6 +380,28 @@ describe('workflow role bound to a class', () => {
     expect(choice?.constraint_text).toMatch(/model unavailable \(skipped\)/);
   });
 
+  it('gives the takeover card the handover it replaces', async () => {
+    const { runId } = await startRelease();
+    const first = await boundReviewer(runId);
+    await handoffAs(first, runId, 'done', { notes: 'Two dates were wrong; fixed in the draft.' });
+    await failTurn((await pending(first))[0]!, 'model-selection-unavailable', 'model selection unavailable');
+    const takeover = (
+      await db.query<{ card: Record<string, unknown> }>(
+        `SELECT card FROM messages WHERE room_id=$1 AND card_type='workflow-handoff'
+           AND card->>'runId'=$2 ORDER BY created_at DESC,id DESC LIMIT 1`,
+        [R, runId],
+      )
+    ).rows[0]!.card;
+    expect(takeover).toMatchObject({
+      toState: 'summarize',
+      handedOverFrom: 'review',
+      contents: { notes: 'Two dates were wrong; fixed in the draft.' },
+    });
+    // A rebind is not a loop edge.
+    expect(takeover.fromState).toBeUndefined();
+    expect(takeover.outcome).toBeUndefined();
+  });
+
   it('skips unhealthy candidates at start and keeps the bound agent for later states', async () => {
     await db.query(`DELETE FROM live_outputs WHERE agent_id=$1`, [NIGLET]); // offline
     const { runId } = await startRelease();
@@ -465,6 +510,25 @@ describe('corner reviewer by class', () => {
     ).rows[0]!;
     expect(room.reviewer_agent_id).toBe(second);
     expect((await systemTexts(C)).join('\n')).toMatch(/could not take the review · model unavailable · handed to/);
+  });
+
+  it('never names another person\'s creator-only agent for whoever set the class', async () => {
+    await phone.execute('setModelTierOverride', { workspaceId: W, scope: 'family', key: 'haiku', tier: 'light' }, H);
+    await db.query(
+      `UPDATE agents SET owner_id=$1,access_policy='{"type":"creator"}'::jsonb WHERE agent_id IN ($2,$3)`,
+      [O, NIGLET, SOL],
+    );
+    await phone.execute('updateRoom', { roomId: R, reviewerClass: 'heavy' }, H);
+    expect(
+      (await db.query(`SELECT reviewer_agent_id FROM rooms WHERE id=$1`, [R])).rows[0]!.reviewer_agent_id,
+    ).toBeNull();
+    await greenHead('0ff1ce');
+    expect(await pending(NIGLET, C)).toEqual([]);
+    expect(await pending(SOL, C)).toEqual([]);
+    const choice = (
+      await db.query<{ prompt: string }>(`SELECT prompt FROM room_choices WHERE room_id=$1`, [C])
+    ).rows[0];
+    expect(choice?.prompt).toMatch(/No healthy heavy agent took the review/);
   });
 
   it('skips an unavailable pick before dispatch and asks a human when none is left', async () => {

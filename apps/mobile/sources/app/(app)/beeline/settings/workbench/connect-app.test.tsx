@@ -155,7 +155,7 @@ describe('Connect an app', () => {
     source.connectApp = async () => ({ appId: 'app-slack', authorizationUrl: 'https://signin.example.test/one' });
     const renderer = await render();
     await act(async () => { renderer.root.findByProps({ testID: 'connect-app-slack' }).findByType('TouchableOpacity' as never).props.onPress(); await Promise.resolve(); });
-    expect(signIn.open).toHaveBeenCalledWith('https://signin.example.test/one', { workspaceId: 'workspace-1', viewerId: 'human-dani' });
+    expect(signIn.open).toHaveBeenCalledWith('https://signin.example.test/one', { workspaceId: 'workspace-1', viewerId: 'human-dani', appId: 'app-slack' });
     expect(navigation.back).not.toHaveBeenCalled();
   });
 

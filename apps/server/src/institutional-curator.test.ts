@@ -36,20 +36,23 @@ async function item(id: string, ageDays: number, explicit: boolean): Promise<voi
     [id, WORKSPACE, `key-${id.slice(-4)}`, `Fact ${id.slice(-4)}`, ROOM, MESSAGE, explicit, NOW, ageDays]);
 }
 
-it('expires reviewer saves after 90 days and explicit saves after 365, blanking text and retaining rows', async () => {
+it('expires agent saves after 90 unused days, blanking text and retaining rows, and never expires explicit saves', async () => {
   const reviewer = '30000000-0000-4000-8000-000000000301';
   const explicitYoung = '30000000-0000-4000-8000-000000000302';
   const explicitOld = '30000000-0000-4000-8000-000000000303';
   await item(reviewer, 91, false);
   await item(explicitYoung, 91, true);
-  await item(explicitOld, 366, true);
+  await item(explicitOld, 3000, true);
+  // The old per-Workspace explicit limit no longer applies.
+  await database.query(`UPDATE institutional_memory_workspace_rollouts
+    SET explicit_expire_after_days=1 WHERE workspace_id=$1`, [WORKSPACE]);
   expect(await runInstitutionalCuratorCycle(database, config, NOW)).toBe(0);
   const rows = (await database.query<{ id: string; state: string; body: string; deleted_at: Date | null }>(
     `SELECT id,state,body,deleted_at FROM institutional_memory_items WHERE id=ANY($1::uuid[]) ORDER BY id`,
     [[reviewer, explicitYoung, explicitOld]],
   )).rows;
   expect(rows.map(({ state, body, deleted_at }) => [state, body, Boolean(deleted_at)])).toEqual([
-    ['stale', '', true], ['active', 'Fact 0302', false], ['stale', '', true],
+    ['stale', '', true], ['active', 'Fact 0302', false], ['active', 'Fact 0303', false],
   ]);
   expect((await database.query(`SELECT 1 FROM institutional_memory_jobs WHERE trigger_kind='curator'`)).rowCount).toBe(0);
 });

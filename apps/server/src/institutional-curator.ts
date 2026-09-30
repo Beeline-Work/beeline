@@ -557,20 +557,21 @@ async function deterministicLifecycle(
   workspaceId: string,
   now: Date,
   expireAfterDays: number,
-  explicitExpireAfterDays: number,
 ): Promise<{
   staleItems: number;
   archivedItems: number;
   staleSkills: number;
   archivedSkills: number;
 }> {
+  // Only what an agent saved on its own ages out. A fact someone asked to
+  // keep (explicit_save) never expires; it changes only when corrected.
   const staleItems = await database.query(
     `UPDATE institutional_memory_items item
      SET state='stale',body='',deleted_at=$2,updated_at=$2
      WHERE item.workspace_id=$1 AND item.state='active' AND item.deleted_at IS NULL
-       AND ${agedBeyondSql(ITEM_AGE_ANCHOR,
-         'CASE WHEN item.explicit_save THEN $4 ELSE $3 END')}`,
-    [workspaceId, now, expireAfterDays, explicitExpireAfterDays],
+       AND NOT item.explicit_save
+       AND ${agedBeyondSql(ITEM_AGE_ANCHOR, '$3')}`,
+    [workspaceId, now, expireAfterDays],
   );
 
   // Skills and workflows never expire: only memory items age out.
@@ -594,11 +595,9 @@ export async function runInstitutionalCuratorCycle(
     workspace_id: string;
     stage: 'shadow' | 'pilot' | 'live';
     expire_after_days: number;
-    explicit_expire_after_days: number;
   }>(
     `SELECT workspace.id workspace_id,COALESCE(rollout.stage,'live') stage,
-            COALESCE(rollout.expire_after_days,90) expire_after_days,
-            COALESCE(rollout.explicit_expire_after_days,365) explicit_expire_after_days
+            COALESCE(rollout.expire_after_days,90) expire_after_days
      FROM workspaces workspace
      LEFT JOIN institutional_memory_workspace_rollouts rollout
        ON rollout.workspace_id=workspace.id
@@ -628,8 +627,7 @@ export async function runInstitutionalCuratorCycle(
         if (!inserted.rowCount) return;
         const lifecycle = !config.live || rollout.stage === 'shadow'
           ? { staleItems: 0, archivedItems: 0, staleSkills: 0, archivedSkills: 0 }
-          : await deterministicLifecycle(db, rollout.workspace_id, now,
-              rollout.expire_after_days, rollout.explicit_expire_after_days);
+          : await deterministicLifecycle(db, rollout.workspace_id, now, rollout.expire_after_days);
         await db.query(
           `UPDATE institutional_curator_cycles
            SET queued_jobs=0,stale_items=$3,archived_items=0,stale_skills=$4,

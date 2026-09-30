@@ -1430,6 +1430,7 @@ CREATE TABLE IF NOT EXISTS institutional_memory_workspace_rollouts (
   archive_after_days integer NOT NULL DEFAULT 90 CHECK (archive_after_days BETWEEN 14 AND 7300),
   retention_days integer NOT NULL DEFAULT 365 CHECK (retention_days BETWEEN 30 AND 7300),
   expire_after_days integer NOT NULL DEFAULT 90 CHECK (expire_after_days BETWEEN 1 AND 7300),
+  -- Unread since explicit saves stopped expiring; kept for older server images.
   explicit_expire_after_days integer NOT NULL DEFAULT 365 CHECK (explicit_expire_after_days BETWEEN 1 AND 7300),
   daily_token_budget integer NOT NULL DEFAULT 100000 CHECK (daily_token_budget BETWEEN 1000 AND 10000000),
   availability_observed_at timestamptz,
@@ -2522,7 +2523,8 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
       UPDATE institutional_memory_items SET explicit_save=true
       WHERE id IN (SELECT id FROM explicit_chain) AND explicit_save=false`);
     // The old curator marked items stale after 30 unused days. Those rows only
-    // aged out, so they come back and age under the new 90/365-day rule
+    // aged out, so they come back under the new rule (agent saves expire after
+    // 90 unused days, explicit saves never)
     // instead of being blanked. A row that was superseded, whose key has a
     // current row, or whose source was deleted is really gone.
     await database.query(`WITH aged AS (

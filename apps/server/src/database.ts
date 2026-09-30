@@ -2594,18 +2594,36 @@ export function keywordsFromBody(body: string): string[] {
  * `standing` row, and the next boot converts it.
  */
 export async function retireStandingPreferences(database: SqlDatabase): Promise<number> {
+  // Every `standing` row of one person shares one destination key, so a
+  // version chain stays under a single key even when that person already has
+  // a `standing-preference` item. The embedding covered the old key, so it is
+  // cleared and the embed cycle computes a fresh one.
   const renamed = await database.query(
-    `UPDATE institutional_memory_items item
-     SET canonical_key='standing-preference' || CASE WHEN EXISTS (
+    `WITH destination AS (
+       SELECT old.workspace_id,old.kind,old.subject_identity_id,old.audience_kind,
+         'standing-preference' || CASE WHEN EXISTS (
            SELECT 1 FROM institutional_memory_items taken
-           WHERE taken.workspace_id=item.workspace_id AND taken.kind=item.kind
-             AND taken.subject_identity_id IS NOT DISTINCT FROM item.subject_identity_id
-             AND taken.audience_kind=item.audience_kind
+           WHERE taken.workspace_id=old.workspace_id AND taken.kind=old.kind
+             AND taken.subject_identity_id IS NOT DISTINCT FROM old.subject_identity_id
+             AND taken.audience_kind=old.audience_kind
              AND taken.canonical_key='standing-preference')
-         THEN '-' || left(item.id::text,8)
-         ELSE '' END,
-         explicit_save=true
-     WHERE item.canonical_key=$1`,
+         THEN '-' || left(min(old.id::text),8)
+         ELSE '' END AS canonical_key
+       FROM institutional_memory_items old
+       WHERE old.canonical_key=$1
+       GROUP BY old.workspace_id,old.kind,old.subject_identity_id,old.audience_kind
+     )
+     UPDATE institutional_memory_items item
+     SET canonical_key=destination.canonical_key,
+         explicit_save=true,
+         embedding=NULL,
+         embedding_model=NULL,
+         embedded_at=NULL
+     FROM destination
+     WHERE item.canonical_key=$1
+       AND item.workspace_id=destination.workspace_id AND item.kind=destination.kind
+       AND item.subject_identity_id IS NOT DISTINCT FROM destination.subject_identity_id
+       AND item.audience_kind=destination.audience_kind`,
     [INSTITUTIONAL_RETIRED_STANDING_KEY],
   );
   const empty = await database.query<{ id: string; body: string }>(

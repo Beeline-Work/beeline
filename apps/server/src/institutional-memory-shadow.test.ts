@@ -1774,4 +1774,79 @@ describe('institutional memory phase-0 shadow capture', () => {
       daemon.execute('proposeInstitutionalMemory', { ...save, canonicalKey: 'standing' }, AGENT),
     ).rejects.toThrow(/retired/);
   });
+
+  it('keeps a standing version chain under one key when the plain key is taken', async () => {
+    await enrollLive();
+    const taken = '30000000-0000-4000-8000-0000000005b1';
+    const first = 'a1000000-0000-4000-8000-0000000005b2';
+    const second = 'b2000000-0000-4000-8000-0000000005b3';
+    await database.query(
+      `INSERT INTO identities(id,kind,name) VALUES($1,'human','Other') ON CONFLICT DO NOTHING`,
+      [OTHER_HUMAN],
+    );
+    const vector = `[${Array.from({ length: 1024 }, () => '0.01').join(',')}]`;
+    const insert = (
+      id: string,
+      key: string,
+      body: string,
+      state: string,
+      version: number,
+      supersedes: string | null,
+    ) =>
+      database.query(
+        `INSERT INTO institutional_memory_items
+           (id,workspace_id,kind,subject_identity_id,canonical_key,body,state,source_room_id,
+            source_message_id,audience_kind,confidence,version,supersedes_id,keywords,
+            embedding,embedding_model,embedded_at)
+         VALUES($1,$2,'human_profile_fact',$3,$4,$5,$6,$7,$8,'human_profile',1,$9,$10,'{}',
+           $11::vector,'voyageai/voyage-4-lite',now())`,
+        [id, WORKSPACE, OTHER_HUMAN, key, body, state, ROOM, MESSAGE, version, supersedes, vector],
+      );
+    // The person already has an item under the plain key, and their standing
+    // preference has two versions with a current embedding.
+    await insert(taken, 'standing-preference', 'Prefers email.', 'active', 1, null);
+    await insert(first, 'standing', 'Use imperial units.', 'stale', 1, null);
+    await insert(second, 'standing', 'Use metric units.', 'active', 2, first);
+
+    await migrateData(database);
+    await migrateData(database);
+
+    const rows = (
+      await database.query<{
+        id: string;
+        canonical_key: string;
+        supersedes_id: string | null;
+        embedded: boolean;
+        embedding_model: string | null;
+      }>(
+        `SELECT id,canonical_key,supersedes_id,embedding IS NOT NULL AS embedded,embedding_model
+         FROM institutional_memory_items WHERE id=ANY($1::uuid[]) ORDER BY id`,
+        [[taken, first, second]],
+      )
+    ).rows;
+    const chainKey = `standing-preference-${first.slice(0, 8)}`;
+    expect(rows).toEqual([
+      {
+        id: taken,
+        canonical_key: 'standing-preference',
+        supersedes_id: null,
+        embedded: true,
+        embedding_model: 'voyageai/voyage-4-lite',
+      },
+      {
+        id: first,
+        canonical_key: chainKey,
+        supersedes_id: null,
+        embedded: false,
+        embedding_model: null,
+      },
+      {
+        id: second,
+        canonical_key: chainKey,
+        supersedes_id: first,
+        embedded: false,
+        embedding_model: null,
+      },
+    ]);
+  });
 });

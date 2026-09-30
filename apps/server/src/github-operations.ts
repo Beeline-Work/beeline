@@ -1364,7 +1364,7 @@ export class GitHubOperations {
       has_pr: boolean;
     }>(
       `SELECT corner.id corner_id,parent.id parent_id,corner.name corner_name,
-         COALESCE(owner.identity_id,corner.created_by,parent.created_by) author_id,
+         COALESCE(fact.owner_agent_id,owner.identity_id,corner.created_by,parent.created_by) author_id,
          fact.objective summary,
          fact.feature_branch, fact.lifecycle->>'branch' lifecycle_branch,
          fact.lifecycle->'pr' IS NOT NULL has_pr,

@@ -580,6 +580,8 @@ export type RoomView = {
   readonly viewer: RoomViewer;
   readonly directMessage?: RoomDirectMessageView;
   readonly parent?: RoomViewHeader;
+  /** The agent that opened this corner, independent of later reviewers and helpers. */
+  readonly cornerOpenerAgentId?: string;
   readonly briefing?: readonly RoomViewMessage[];
   /** Latest corner plan, retained after its live activity rows settle. */
   readonly cornerPlan?: RoomViewActivity['plan'];

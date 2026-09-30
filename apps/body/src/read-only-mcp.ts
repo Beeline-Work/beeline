@@ -1294,7 +1294,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'pr_checks_status',
     description:
-      'Read GitHub checks and the complete merge-authority gate for a pull request. Pass pullRequest (number or full GitHub URL) when reviewing a PR this corner did not author; use the PR named in your objective or conversation. Defaults to this corner’s own PR. The result reports the configured reviewer outcome, worker yolo mode, existing human hold, and whether a reviewer is configured; approvalPending stays true unless all four authorize the merge. reviewerWake says whether the configured reviewer was woken. Never infer passing checks from local git, gh output, or chat prose, and never invent a cause for a missing review.',
+      'Read GitHub checks and the complete merge-authority gate for a pull request. Pass pullRequest (number or full GitHub URL) when reviewing a PR this corner did not author; use the PR named in your objective or conversation. Defaults to this corner’s own PR. The result reports the configured reviewer outcome, worker yolo mode, existing human hold, and whether a reviewer is configured; mergeAllowed is true (and approvalPending false) only when checks pass and all four authorize the merge; the server then squash-merges that exact head itself, so no agent runs gh pr merge. reviewerWake says whether the configured reviewer was woken. Never infer passing checks from local git, gh output, or chat prose, and never invent a cause for a missing review.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1309,7 +1309,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'approve_merge',
     description:
-      'Record the configured reviewer’s PASS for the exact pull-request head you reviewed. This does not merge. Only the parent Room’s configured reviewer_agent_id may call this — no other agent’s call clears the gate, and a corner’s own opener cannot call it unless it is also that reviewer. Call it only after a complete beeline-review PASS, using that review’s full head SHA; then tag the implementer with approval and clearance to merge.',
+      'Record the configured reviewer’s PASS for the exact pull-request head and brief revision you reviewed. The server then squash-merges that head itself once the whole gate is open (checks green, worker yolo on, no human hold); no agent runs gh pr merge. The server rejects a caller who is not the parent Room’s configured reviewer, a head that is not the pull request’s current head, and a stale brief revision. Call it only after a complete beeline-review PASS, using that review’s full head SHA and assigned brief revision; then reply that you approved that SHA without tagging the author. Do not tell the author to merge.',
     inputSchema: {
       type: 'object',
       required: ['headSha'],
@@ -1609,7 +1609,7 @@ export function agentToolsFor(
   agentSurface: boolean,
   directMessage: boolean,
   cornerTurn = false,
-  reviewer = false,
+  codeLane = false,
   commandRunnerAvailable = true,
   agentMayCloseCorner = cornerTurn,
   institutionalMemoryEnabled = process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false',
@@ -1634,7 +1634,9 @@ export function agentToolsFor(
     }
     if (['steer_corner', 'ask_corner', 'get_corner_ask', 'inspect_corner'].includes(tool.name))
       return !directMessage && !cornerTurn;
-    if (tool.name === 'approve_merge') return cornerTurn && reviewer;
+    // Every code-lane corner turn may record a PASS: the server, not the
+    // session's boot role, decides whether this agent is the configured reviewer.
+    if (tool.name === 'approve_merge') return cornerTurn && codeLane;
     // A connector is offered where a person is answering — a Room or a DM —
     // never from a corner, whose work is the branch (R5).
     if (
@@ -1666,7 +1668,7 @@ const TOOLS = agentToolsFor(
   agentSurface,
   process.env.BEELINE_AGENT_DM === '1',
   Boolean(process.env.BEELINE_DAEMON_CORNER_ID),
-  process.env.BEELINE_CORNER_REVIEWER === '1',
+  process.env.BEELINE_CORNER_LANE === 'code',
   Boolean(process.env.BEELINE_GRANT_RUNNER_URL),
   process.env.BEELINE_CORNER_AGENT_CLOSE === '1',
   process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false',
@@ -2359,19 +2361,6 @@ async function upgradeCornerToCode(): Promise<string> {
   return JSON.stringify(await daemonExecute('upgradeCornerLane', { cornerId }));
 }
 
-function cornerMergeAllowed(input: {
-  reviewFailed: boolean;
-  isWorkerYolo: boolean;
-  didHumanSayDontMerge: boolean;
-  reviewerExists: boolean;
-}): boolean {
-  if (input.reviewFailed) return false;
-  if (!input.isWorkerYolo) return false;
-  if (input.didHumanSayDontMerge) return false;
-  if (!input.reviewerExists) return false;
-  return true;
-}
-
 /**
  * `report_feedback`. A report is never worth failing the turn over: any
  * refusal (cap, a secret-shaped value, the store) comes back as a plain
@@ -2403,30 +2392,15 @@ export async function reportFeedback(args: JsonObject = {}): Promise<string> {
 
 export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
   const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
-  const workspaceId = requiredEnv('BEELINE_DAEMON_WORKSPACE_ID');
   const agentId = requiredEnv('BEELINE_DAEMON_AGENT_ID');
-  const [restore, conversation, roster, authority, configuration] = await Promise.all([
+  const [restore, conversation, authority] = await Promise.all([
     daemonExecute('getCornerRestoreState', { cornerId }),
-    // Newest page: a hold, an approval and a PR link are questions about where
-    // the corner stands NOW, and this scan is last-write-wins over the page.
+    // Newest page: a PR link is a question about where the corner stands NOW,
+    // and this scan is last-write-wins over the page.
     daemonExecute('getRoomConversation', { roomId: cornerId, limit: 200 }),
-    daemonExecute('getWorkspaceRoster', { agentId, workspaceId }),
     daemonExecute('getRoomAuthority', { roomId: cornerId, principalId: agentId }),
-    daemonExecute('getAgentConfiguration', { agentId, roomId: cornerId }),
   ]);
-  const humans = new Set(
-    Array.isArray(roster.members)
-      ? roster.members.flatMap((member) => {
-          if (!member || typeof member !== 'object' || Array.isArray(member)) return [];
-          const record = member as Record<string, unknown>;
-          return record.kind === 'human' && typeof record.identityId === 'string'
-            ? [record.identityId]
-            : [];
-        })
-      : [],
-  );
   const lifecycle = restore.lifecycle as CornerLifecycleView | undefined;
-  let held = restore.lane === 'research';
   let pullRequest: unknown = args.pullRequest ?? lifecycle?.pr?.url;
   // An objective URL is a target hint only, never a check verdict.
   if (pullRequest === undefined && typeof restore.objective === 'string')
@@ -2440,14 +2414,6 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
     const body = typeof message.body === 'string' ? message.body : '';
     const url = body.match(/https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/\d+/)?.[0];
     if (url && args.pullRequest === undefined && !lifecycle?.pr?.url) pullRequest = url;
-    if (typeof message.authorId === 'string' && humans.has(message.authorId)) {
-      if (/\bhold\b|\bdo not merge\b|\bdon't merge\b/i.test(body)) held = true;
-      if (
-        restore.lane !== 'research' &&
-        /\bresume\b|\bproceed\b|\bgo ahead\b|\bmerge now\b/i.test(body)
-      )
-        held = false;
-    }
   }
   const verdict =
     pullRequest !== undefined
@@ -2483,19 +2449,17 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
     verdict?.reviewerWake && typeof verdict.reviewerWake === 'object'
       ? verdict.reviewerWake
       : undefined;
+  // The merge gate is the server's: it owns the human hold, the worker's yolo
+  // mode and the reviewer outcome, and it merges the head itself.
   const reviewFailed = verdict ? verdict.approvalPending !== false : true;
-  const isWorkerYolo = configuration.yoloMode === true;
+  const held = verdict ? verdict.held === true : restore.lane === 'research';
+  const isWorkerYolo = verdict?.isWorkerYolo === true;
   const didHumanSayDontMerge = held;
-  const mergeAllowed = cornerMergeAllowed({
-    reviewFailed,
-    isWorkerYolo,
-    didHumanSayDontMerge,
-    reviewerExists,
-  });
+  const mergeAllowed = verdict?.mergeAllowed === true;
   const mergeConditionsRule =
     restore.lane === 'research'
       ? 'This research corner has a durable hold: the agent must never merge it. A human may close the corner.'
-      : "Merge only when checks is passed and mergeAllowed is true — then YOU merge it yourself with gh. mergeAllowed is true only when reviewFailed is false, isWorkerYolo is true, didHumanSayDontMerge is false, and reviewerExists is true; missing state is never consent. The server never merges a corner's pull request and never sends a closing request of any kind. If gh pr merge refuses because the branch is not up to date with its target, bring it up to date (gh pr update-branch, or merge the target branch in) and push, wait for checks to report on the new head, then merge again.";
+      : 'When mergeAllowed is true the server squash-merges this exact head itself; no agent runs gh pr merge. mergeAllowed is true only when checks passed, reviewFailed is false, isWorkerYolo is true, didHumanSayDontMerge is false, and reviewerExists is true; missing state is never consent. If GitHub refuses the merge (branch behind its target, conflict, moved head, permissions), the server wakes the implementer with its reason: bring the branch up to date (gh pr update-branch, or merge the target branch in) and push, and the new head needs green checks and a fresh reviewer PASS before the server merges it.';
   return JSON.stringify({
     checks,
     reason,

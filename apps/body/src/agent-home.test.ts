@@ -593,10 +593,12 @@ describe('operator skills + MCP passthrough', () => {
     expect(readFileSync(managedSkill, 'utf8')).toContain('name: using-beeline');
     const reviewSkill = readFileSync(resolve(skillsDir, 'beeline-review', 'SKILL.md'), 'utf8');
     expect(reviewSkill).toContain('PASS: call `approve_merge` with the reviewed head SHA');
-    expect(reviewSkill).toContain('@author approved <reviewed sha>, merge');
+    expect(reviewSkill).toContain('`approved <reviewed sha>` without tagging the author. Do not tell the author to merge.');
+    expect(reviewSkill).not.toContain('approved <reviewed sha>, merge');
     expect(reviewSkill).toContain(
-      'Approving is your last step as reviewer. The author merges it; you never do, and nothing merges it automatically.',
+      'Approving is your last step as reviewer. The server squash-merges that exact head',
     );
+    expect(reviewSkill).not.toContain('gh pr merge');
     expect(reviewSkill).not.toContain('Never merge');
     expect(reviewSkill).not.toContain('approved pending checks');
     expect(reviewSkill).not.toContain('unknown checks');

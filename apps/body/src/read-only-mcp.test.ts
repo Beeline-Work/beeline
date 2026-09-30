@@ -80,6 +80,48 @@ describe('direct message helper surface', () => {
   });
 });
 
+describe('approve_merge surface', () => {
+  const names = (cornerTurn: boolean, codeLane: boolean, institutionalMemory: boolean) =>
+    agentToolsFor(true, false, cornerTurn, codeLane, true, cornerTurn, institutionalMemory).map(
+      (tool) => tool.name,
+    );
+
+  it('mounts on every code-lane corner turn, whoever the session booted as', () => {
+    // The Sol case: the configured reviewer's session did not boot as the
+    // reviewer and institutional memory is off, yet it can still record PASS.
+    expect(names(true, true, false)).toContain('approve_merge');
+    expect(names(true, true, true)).toContain('approve_merge');
+  });
+
+  it('stays off no-code and research corners and outside corners', () => {
+    // Only the code lane sets codeLane; no_code and research never do.
+    for (const memory of [false, true]) {
+      expect(names(true, false, memory)).not.toContain('approve_merge');
+      expect(names(false, false, memory)).not.toContain('approve_merge');
+      expect(names(false, true, memory)).not.toContain('approve_merge');
+    }
+    expect(agentToolsFor(true, true, false, true).map((tool) => tool.name)).not.toContain(
+      'approve_merge',
+    );
+    expect(agentToolsFor(false, false, true, true).map((tool) => tool.name)).not.toContain(
+      'approve_merge',
+    );
+  });
+
+  it('says the server merges and rejects the wrong caller, head, or revision', () => {
+    const tool = agentToolsFor(true, false, true, true).find(
+      (entry) => entry.name === 'approve_merge',
+    )!;
+    expect(tool.description).toContain('exact pull-request head and brief revision');
+    expect(tool.description).toContain('The server then squash-merges that head itself');
+    expect(tool.description).toContain('not the parent Room’s configured reviewer');
+    expect(tool.description).toContain('not the pull request’s current head');
+    expect(tool.description).toContain('a stale brief revision');
+    expect(tool.description).toContain('Do not tell the author to merge.');
+    expect(tool.description).not.toContain('clearance to merge');
+  });
+});
+
 describe('corner lifecycle tool surfaces', () => {
   it('advertises open and close only where each operation can succeed', () => {
     const room = agentToolsFor(true, false);

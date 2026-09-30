@@ -289,6 +289,16 @@ export type DaemonOperationMap = {
         status: 'unconfigured' | 'unreachable' | 'waiting' | 'dispatched';
         detail: string;
       };
+      /** True when a person in the corner asked to hold the merge, or the corner is a research corner. */
+      held: boolean;
+      /** The corner worker's yolo mode (always off in a public Workspace). */
+      isWorkerYolo: boolean;
+      /**
+       * The complete merge gate: checks passed, reviewer outcome passed,
+       * worker yolo on, no human hold, and a configured reviewer. When it is
+       * true for the corner's current head, the server squash-merges that head.
+       */
+      mergeAllowed: boolean;
       /** States which actor's approve_merge clears the gate, and the human fallback path. */
       rule: string;
     }

@@ -33,7 +33,7 @@ import { DaemonService } from '../apps/server/src/daemon-service.js';
 import { LiveHub } from '../apps/server/src/live.js';
 import { createBeelineServer } from '../apps/server/src/server.js';
 import { GitHubOperations } from '../apps/server/src/github-operations.js';
-import { REVIEW_HANDBACK_LIMIT } from '../apps/server/src/agent-command.js';
+import { REVIEW_HANDBACK_LIMIT } from '../apps/server/src/corner-workflow.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 
 const HUMAN = 'a'.repeat(64);

@@ -133,7 +133,7 @@ export const CORNER_DELIVERY_NUDGE =
   'Before ending this turn, inspect the repository state and finish delivering the work unless a human hold stands: commit and push the intended changes and open the pull request if one does not exist. Decide yourself whether any remaining dirty work belongs to the objective; do not discard it merely to make the worktree clean. The pull request body must carry ## Reproduced and ## Demonstrated; if they are missing, add them before ending the turn.';
 
 export const CORNER_YOLO_MERGE_NUDGE =
-  'Yolo is on. Call pr_checks_status now and merge this pull request with gh pr merge --squash --match-head-commit <sha> only when it returns checks="passed" and mergeAllowed=true. If checks="unknown", reply in this corner with the tool reason and stop instead of retrying. Otherwise stop without merging.';
+  'Yolo is on. Call pr_checks_status now. If checks="failed", fix the failure and push. If checks="unknown", reply in this corner with the tool reason and stop instead of retrying. Otherwise stop: the server merges this pull request itself once mergeAllowed=true. Never merge it yourself.';
 
 export const RESEARCH_CORNER_HOLD =
   'This is a research corner with writable repository access. Investigate and edit files as needed. Do not commit, push, or open a pull request until a human explicitly directs that step. Never merge. Leave the corner open; only a human closes it.';
@@ -159,15 +159,15 @@ const handle = (value: string): string => value.replace(/^@/, '');
 
 /**
  * The one merge rule for an author session: what to do once the pull request
- * exists, and who merges it. It owns the `merge` topic, so no other section
- * may speak about merging on the same surface.
+ * exists, and who merges it (the server, never the author). It owns the
+ * `merge` topic, so no other section may speak about merging on the same surface.
  */
 export function cornerMergeInstruction(yoloMode: boolean, reviewerHandle?: string): string {
   if (!reviewerHandle)
     return 'Once the pull request exists, reply with its full URL and end the turn; do not check or wait for CI. This Room has no configured reviewer, so the merge gate never opens for you: never merge; a person merges it.';
   const reviewer = `the reviewer (${handle(reviewerHandle)})`;
   return yoloMode
-    ? `Once the pull request exists, reply with its full URL and end the turn; do not tag ${reviewer}, check, or wait for CI. Green checks wake ${reviewer}, and the end of that review wakes you, whether or not it tags you. Then call pr_checks_status and merge with gh pr merge --squash --match-head-commit <sha> only when it returns checks="passed" and mergeAllowed=true; otherwise end the turn without merging.`
+    ? `Once the pull request exists, reply with its full URL and end the turn; do not tag ${reviewer}, check, or wait for CI. Green checks wake ${reviewer}; after its PASS the server merges the pull request itself. Never merge it yourself. You are woken only to fix failing checks, requested changes, or a merge GitHub refused; push the fix, and the new head needs green checks and a fresh PASS.`
     : `Once the pull request exists, reply with its full URL and end the turn; do not tag ${reviewer}, check, or wait for CI. Yolo is off, so the merge gate stays closed for you: never merge; a person merges it after ${reviewer} approves.`;
 }
 
@@ -190,7 +190,7 @@ export function cornerReviewerInstruction(input: {
   const author = input.authorHandle ? handle(input.authorHandle) : 'author';
   const number = input.pullRequestNumber ?? 'N';
   const headSha = input.headSha ?? '<head sha>';
-  return `Checks are green on PR #${number} at ${headSha}${input.briefRevision ? ` with assigned brief revision ${input.briefRevision}` : ''}. Review it now with the beeline-review skill against that exact head and current assigned brief. FAIL: reply \`@${author}\` with the confirmed findings to fix. PASS: call the approve_merge tool for ${headSha}${input.briefRevision ? ` with briefRevision=${input.briefRevision}` : ''}, then reply \`@${author} approved ${headSha}, merge\`. Never merge yourself. Never say you are holding or waiting for checks.`;
+  return `Checks are green on PR #${number} at ${headSha}${input.briefRevision ? ` with assigned brief revision ${input.briefRevision}` : ''}. Review it now with the beeline-review skill against that exact head and current assigned brief. FAIL: reply \`@${author}\` with the confirmed findings to fix. PASS: call the approve_merge tool for ${headSha}${input.briefRevision ? ` with briefRevision=${input.briefRevision}` : ''}, then reply \`approved ${headSha}\` without tagging ${author}: the server merges it, and a tag would wake the author for nothing. Never merge yourself or tell the author to merge. Never say you are holding or waiting for checks.`;
 }
 
 /**
@@ -211,7 +211,7 @@ export function cornerSelfReviewerInstruction(input: {
     handle(input.agentHandle) !== handle(input.reviewerHandle)
   )
     return undefined;
-  return 'Once the pull request exists, reply with its full URL and end the turn. You are this Room\'s reviewer, so your own pull request needs no review: do not request one or tag any agent for review. On a later checks turn, call pr_checks_status and merge with gh pr merge --squash --match-head-commit <sha> only when it returns checks="passed" and mergeAllowed=true.';
+  return 'Once the pull request exists, reply with its full URL and end the turn. You are this Room\'s reviewer, so your own pull request needs no review: do not request one or tag any agent for review. The server merges it once checks are green, yolo is on, and no human hold stands; never merge it yourself. You are woken only to fix failing checks or a merge GitHub refused.';
 }
 
 function shellLine(shell: RoomShellState | undefined): string {
@@ -478,7 +478,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     layer: 'surface',
     surfaces: ['code-corner'],
     render: () =>
-      'A checks turn is one that wakes you about CI or the merge gate. On it, say nothing unless you merge, push a fix, or report checks="unknown", and then use one short line. Never restate server check or merge notes. When asked whether the reviewer was woken, call pr_checks_status and report reviewerWake; do not invent a cause. Never schedule polls of pr_checks_status or the merge gate; the server wakes you when it changes. If a schedule wakes you here anyway, treat it as a checks turn.',
+      'A checks turn is one that wakes you about CI or the merge gate. On it, say nothing unless you push a fix or report checks="unknown", and then use one short line. Never restate server check or merge notes. When asked whether the reviewer was woken, call pr_checks_status and report reviewerWake; do not invent a cause. Never schedule polls of pr_checks_status or the merge gate; the server wakes you when it changes. If a schedule wakes you here anyway, treat it as a checks turn.',
   },
   {
     id: 'corner.review',

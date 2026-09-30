@@ -21,7 +21,12 @@ import {
   type FeedbackConfig,
 } from './feedback.js';
 import { reportUnansweredCornerAsks } from './corner-close.js';
-import { noteCornerWorkflowImplicitEdge, noteCornerWorkflowTransition } from './corner-workflow.js';
+import {
+  advanceCorner,
+  claimCornerMergeAttempt,
+  cornerMergeGate,
+  cornersReadyToLand,
+} from './corner-workflow.js';
 import {
   queueCornerMergeConflict,
   reconcileCornerMergeBlockers,
@@ -32,7 +37,7 @@ import {
   recordInstitutionalCornerOutcome,
   type InstitutionalMemoryShadowConfig,
 } from './institutional-memory-shadow.js';
-import { agentCarriesTag, roomMembersWithTag } from './agent-classes.js';
+import { roomMembersWithTag } from './agent-classes.js';
 
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
 
@@ -679,39 +684,12 @@ export class GitHubOperations {
     const checks = completedWithoutChecks ? ('passed' as const) : rollup.state;
     const configuredReviewerId = corner.configured_reviewer_id;
     const reviewerClass = configuredReviewerId ? null : corner.reviewer_class;
-    const approvalRow = (
-      await this.database.query<{ approved_by: string }>(
-        `SELECT a.approved_by FROM corner_merge_approvals a JOIN rooms r ON r.id=a.corner_id
-       WHERE r.parent_id=$1 AND a.pull_request_number=$2 AND a.head_sha=$3
-         AND a.brief_revision IS NOT DISTINCT FROM
-           (SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=a.corner_id) LIMIT 1`,
-        [corner.parent_id, number, pr.headSha],
-      )
-    ).rows[0];
-    const approvedByConfigured = configuredReviewerId
-      ? approvalRow?.approved_by === configuredReviewerId
-      : undefined;
-    const approvedByClass =
-      reviewerClass && approvalRow
-        ? await agentCarriesTag(this.database, corner.workspace_id, approvalRow.approved_by, reviewerClass)
-        : undefined;
-    // The parent Room's reviewer opened this very corner: no OTHER agent's
-    // approve_merge can ever exist for it, so requiring one is a permanent
-    // deadlock, not a real gate.
-    const reviewerIsAuthor = Boolean(
-      corner.owner_agent_id &&
-        (configuredReviewerId
-          ? configuredReviewerId === corner.owner_agent_id
-          : reviewerClass &&
-            (await agentCarriesTag(this.database, corner.workspace_id, corner.owner_agent_id, reviewerClass))),
-    );
-    const approvalPending = reviewerIsAuthor
-      ? false
-      : configuredReviewerId
-        ? !approvedByConfigured
-        : reviewerClass
-          ? !approvedByClass
-          : false;
+    // The same gate the server merges on (`cornerMergeGate`), for this exact head.
+    const gate = await cornerMergeGate(this.database, input.cornerId, {
+      number,
+      headSha: pr.headSha,
+    });
+    const { approvalPending, reviewerIsAuthor, reviewerExists } = gate;
     const classCandidates = reviewerClass
       ? await roomMembersWithTag(this.database, corner.parent_id, corner.workspace_id, reviewerClass)
       : [];
@@ -722,7 +700,6 @@ export class GitHubOperations {
       : reviewerClass
         ? `the "${reviewerClass}" class`
         : null;
-    const reviewerExists = Boolean(configuredReviewerId) || Boolean(reviewerClass);
     const reviewerLabel = reviewer ?? 'the configured reviewer';
     const reviewerWake = reviewerClass
       ? classCandidates.length === 0
@@ -752,12 +729,13 @@ export class GitHubOperations {
           commandCheckState: corner.command_check_state,
         });
     const rule = reviewerIsAuthor
-      ? `You opened this corner and are also this Room's configured reviewer (${reviewerLabel}), so self-review is not required — approve_merge cannot add signal over your own work. The reviewer outcome is PASS; the helper still applies worker yolo mode, human hold, and reviewer-existence conditions.`
+      ? `You opened this corner and are also this Room's configured reviewer (${reviewerLabel}), so self-review is not required — approve_merge cannot add signal over your own work. The reviewer outcome is PASS; the merge gate still applies worker yolo mode, human hold, and reviewer-existence conditions.`
       : configuredReviewerId || reviewerClass
         ? reviewerWake.status === 'unreachable'
           ? `Only ${reviewerLabel}'s approve_merge records PASS for the reviewer outcome; tagging or asking any other agent to review cannot record an approval or change this verdict. ${reviewerWake.detail} Do not invent a cause and do not poll this gate with a schedule. No Room owner/admin approve control exists in the app yet, so only ${reviewerLabel} can record PASS.`
           : `Only ${reviewerLabel}'s approve_merge records PASS for the reviewer outcome; tagging or asking any other agent to review cannot record an approval or change this verdict. Do not create a schedule to poll this gate — the checks-passed transition wakes ${reviewerLabel} automatically. No Room owner/admin approve control exists in the app yet, so only ${reviewerLabel} can record PASS.`
-        : 'This Room has no configured reviewer. The reviewer outcome is not failed, but the complete merge gate still requires reviewerExists=true.';
+        : 'This Room has no configured reviewer. The reviewer outcome is not failed, but the complete merge gate still requires reviewerExists=true, so nothing merges this corner automatically.';
+    const mergeAllowed = checks === 'passed' && gate.open;
     return {
       checks,
       checkCount: rollup.total,
@@ -768,6 +746,9 @@ export class GitHubOperations {
       reviewerExists,
       reviewerIsAuthor,
       reviewerWake,
+      held: gate.held,
+      isWorkerYolo: gate.isWorkerYolo,
+      mergeAllowed,
       rule,
     };
   }
@@ -844,6 +825,100 @@ export class GitHubOperations {
       throw error;
     }
     return { status: 'merge-requested' as const, pullRequestUrl: pullRequest.url };
+  }
+
+  /**
+   * The server merge. Every corner the workflow has moved to `land` whose
+   * gate is open gets one squash-merge attempt at its exact head. Runs on the
+   * background leader, which a new message (the `land` handoff card, a human
+   * lifting a hold) wakes, and on its reconciliation interval (yolo turning
+   * on).
+   */
+  async landReadyCorners(): Promise<number> {
+    let attempted = 0;
+    for (const cornerId of await cornersReadyToLand(this.database)) {
+      if (await this.landCorner(cornerId)) attempted += 1;
+    }
+    return attempted;
+  }
+
+  /**
+   * Squash-merges one `land` corner at its exact head when the complete gate
+   * (`pr_checks_status`'s `mergeAllowed`) is open on GitHub's current head.
+   * At most one attempt per head: the attempt is claimed under the run lock
+   * before GitHub is called. The merge webhook then lands the corner; a
+   * refusal returns it to the implementer with GitHub's reason.
+   */
+  async landCorner(cornerId: string): Promise<boolean> {
+    let status: Awaited<ReturnType<GitHubOperations['prChecksStatus']>>;
+    try {
+      status = await this.prChecksStatus({ cornerId });
+    } catch (error) {
+      console.error(
+        `[server] corner ${cornerId} merge gate read failed:`,
+        error instanceof Error ? error.message : String(error),
+      );
+      return false;
+    }
+    if (!status.mergeAllowed) return false;
+    const target = (
+      await this.database.query<{
+        number: number;
+        feature_branch: string | null;
+        repository_id: string;
+        installation_id: string;
+        full_name: string;
+      }>(
+        `SELECT (fact.lifecycle->'pr'->>'number')::int number,fact.feature_branch,
+           repository.repository_id,repository.installation_id,repository.full_name
+         FROM rooms corner
+         JOIN rooms parent ON parent.id=corner.parent_id
+         JOIN corner_facts fact ON fact.corner_id=corner.id
+         JOIN github_repositories repository ON repository.installation_id=parent.github_installation_id
+           AND repository.active AND lower(repository.full_name)=lower(regexp_replace(regexp_replace(
+             COALESCE(parent.repository_remote,parent.repository_key,''),
+             '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
+         WHERE corner.id=$1 AND corner.archived_at IS NULL
+           AND fact.lifecycle->'pr'->>'headSha'=$2`,
+        [cornerId, status.headSha],
+      )
+    ).rows[0];
+    if (!target) return false;
+    if (!(await claimCornerMergeAttempt(this.database, cornerId, status.headSha))) return false;
+    try {
+      await this.app.mergePullRequest(
+        Number(target.installation_id),
+        Number(target.repository_id),
+        target.full_name,
+        target.number,
+        status.headSha,
+      );
+    } catch (error) {
+      await advanceCorner(this.database, cornerId, {
+        kind: 'merge-refused',
+        headSha: status.headSha,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      this.onRoomChanged?.(cornerId);
+      return true;
+    }
+    if (target.feature_branch) {
+      try {
+        await this.app.deleteBranch(
+          Number(target.installation_id),
+          Number(target.repository_id),
+          target.full_name,
+          target.feature_branch,
+        );
+      } catch (error) {
+        // The merge webhook archives the corner; branch cleanup is best-effort.
+        console.error(
+          `[server] failed to delete merged corner branch ${target.full_name}:${target.feature_branch}:`,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
+    return true;
   }
 
   async processWebhook(event: string, payload: unknown) {
@@ -1573,13 +1648,14 @@ export class GitHubOperations {
             },
             database,
           );
-          await noteCornerWorkflowTransition(database, {
-            cornerId: target.corner_id,
-            expectedFromState: 'implement',
-            outcome: 'pushed',
-            toState: 'checks',
-            contents: { summary: `pushed to ${branch}`, ...(lifecycle.pr?.url ? { prUrl: lifecycle.pr.url } : {}) },
-            dedupeKey: head,
+          await advanceCorner(database, target.corner_id, {
+            kind: 'push',
+            headSha: head,
+            contents: {
+              summary: `pushed to ${branch}`,
+              headSha: head,
+              ...(lifecycle.pr?.url ? { prUrl: lifecycle.pr.url } : {}),
+            },
           });
         }
         await this.systemNote(
@@ -1642,6 +1718,13 @@ export class GitHubOperations {
             },
             database,
           );
+          // A re-run on the same head reopens checks; its verdict is reported
+          // by the check note below once it lands.
+          if (
+            summary.status === 'pending' &&
+            (current.checks === 'passing' || current.checks === 'failing')
+          )
+            await advanceCorner(database, target.corner_id, { kind: 'checks-pending' });
           const label = check.status === 'pending' ? 'started' : check.status;
           const becamePassing = summary.status === 'passing' && current.checks !== 'passing';
           const becameFailing = summary.status === 'failing' && current.checks !== 'failing';
@@ -1794,11 +1877,6 @@ export class GitHubOperations {
       );
       if (!changed.rowCount) return;
       archived = true;
-      await noteCornerWorkflowImplicitEdge(database, {
-        cornerId: target.corner_id,
-        toState: 'landed',
-        contents: { mergeVerdict: 'merged', pullRequestUrl: pullRequest.url },
-      });
       await database.query(
         `UPDATE corner_facts SET close_requested=true,
            lifecycle=lifecycle||$2::jsonb,
@@ -1868,7 +1946,7 @@ export class GitHubOperations {
       }
       const summary = target.summary.trim() || pullRequest.title;
       // The merge summary card in the parent Room: a tap opens the pull request.
-      await systemLine(database, {
+      const parentCard = await systemLine(database, {
         id: hash(`beeline:${target.parent_id}:${mergeKey}`),
         roomId: target.parent_id,
         authorId: target.author_id,
@@ -1896,6 +1974,11 @@ export class GitHubOperations {
         target.parent_id,
         target.corner_name,
       );
+      await advanceCorner(database, target.corner_id, {
+        kind: 'merged',
+        contents: { mergeVerdict: 'merged', pullRequestUrl: pullRequest.url },
+        parentCardId: parentCard.id,
+      });
     });
     if (!archived) return;
     this.onRoomChanged?.(target.corner_id);

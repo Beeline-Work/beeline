@@ -293,11 +293,23 @@ describe('using-beeline human instruction ranking', () => {
 describe('beeline-review reviewer skill', () => {
   const markdown = beelineReviewSkillMarkdown('test-release');
 
-  it("ends the reviewer's authority at approval and leaves the merge to the author", () => {
+  it("ends the reviewer's authority at approval and leaves the merge to the server", () => {
     expect(markdown).toContain('## 8. Gate and verdict');
     expect(markdown).toContain(
-      'Approving is your last step as reviewer. The author merges it; you never do, and nothing merges it automatically.',
+      'then reply `approved <reviewed sha>` without tagging the author. Do not tell the author to merge.',
     );
+    expect(markdown).not.toContain('approved <reviewed sha>, merge');
+    expect(markdown).toContain(
+      'Approving is your last step as reviewer. The server squash-merges that exact head once checks are green',
+    );
+    expect(markdown).toContain('Neither you nor the author merges it.');
+    expect(markdown).toContain(
+      'mergeAllowed true for the current head; the server then merges that head.',
+    );
+  });
+
+  it('never instructs anyone to run gh pr merge', () => {
+    expect(markdown).not.toContain('gh pr merge');
   });
 
   it('carries no bare never-merge sentence the implementer could borrow', () => {

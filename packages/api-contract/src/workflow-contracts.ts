@@ -123,6 +123,14 @@ export type WorkflowContract = {
    * must itself be `kind:'terminal'`.
    */
   readonly implicitEdges?: readonly string[];
+  /**
+   * Outcome names that only an event from outside the run can report — for
+   * the corner, a new commit landing on its branch or GitHub refusing a merge.
+   * The run cannot reach such an edge again on its own, so cycle detection
+   * ignores edges with these outcomes. Each must be an outcome some state
+   * declares.
+   */
+  readonly externalOutcomes?: readonly string[];
 };
 
 /** The workflow's own name, stored as `workspace_skills.slug` (hyphen only, per that column's CHECK). */
@@ -154,7 +162,16 @@ const isIdentifierArray = (value: unknown, max: number, pattern: RegExp): value 
 export function readWorkflowContract(value: unknown): WorkflowContract | null {
   if (
     !record(value) ||
-    !keys(value, ['version', 'name', 'description', 'roles', 'start', 'handoffs', 'implicitEdges']) ||
+    !keys(value, [
+      'version',
+      'name',
+      'description',
+      'roles',
+      'start',
+      'handoffs',
+      'implicitEdges',
+      'externalOutcomes',
+    ]) ||
     value.version !== WORKFLOW_CONTRACT_VERSION
   )
     return null;
@@ -178,7 +195,16 @@ export function readWorkflowContract(value: unknown): WorkflowContract | null {
   )
     return null;
   const states = value.handoffs as Record<string, unknown>;
+  if (
+    value.externalOutcomes !== undefined &&
+    !isIdentifierArray(value.externalOutcomes, WORKFLOW_OUTCOMES_MAX, IDENTIFIER_PATTERN)
+  )
+    return null;
+  const external = new Set((value.externalOutcomes as string[] | undefined) ?? []);
   const edges = new Map<string, string[]>();
+  /** The same edges minus those only an outside event can take (`externalOutcomes`). */
+  const cycleEdges = new Map<string, string[]>();
+  const declaredOutcomes = new Set<string>();
   let terminalCount = 0;
   for (const [name, raw] of Object.entries(states)) {
     if (!IDENTIFIER_PATTERN.test(name) || !record(raw)) return null;
@@ -190,6 +216,7 @@ export function readWorkflowContract(value: unknown): WorkflowContract | null {
         return null;
       terminalCount += 1;
       edges.set(name, []);
+      cycleEdges.set(name, []);
       continue;
     }
     if (raw.kind === 'waiting') {
@@ -197,6 +224,7 @@ export function readWorkflowContract(value: unknown): WorkflowContract | null {
       if (raw.role !== undefined && (typeof raw.role !== 'string' || !roles.has(raw.role)))
         return null;
       edges.set(name, []);
+      cycleEdges.set(name, []);
       continue;
     }
     const isGate = raw.kind === 'gate';
@@ -240,6 +268,10 @@ export function readWorkflowContract(value: unknown): WorkflowContract | null {
       return null;
     const on = raw.on as Record<string, string>;
     const targets = outcomes.map(([, target]) => target as string);
+    const cycleTargets = outcomes
+      .filter(([outcome]) => !external.has(outcome))
+      .map(([, target]) => target as string);
+    for (const [outcome] of outcomes) declaredOutcomes.add(outcome);
     if (!isGate && !isServer && raw.timeoutSeconds !== undefined) {
       if (
         !Number.isInteger(raw.timeoutSeconds) ||
@@ -265,9 +297,12 @@ export function readWorkflowContract(value: unknown): WorkflowContract | null {
       )
         return null;
       targets.push(loop.onExceeded as string);
+      cycleTargets.push(loop.onExceeded as string);
     }
     edges.set(name, targets);
+    cycleEdges.set(name, cycleTargets);
   }
+  if (![...external].every((outcome) => declaredOutcomes.has(outcome))) return null;
   if (terminalCount < 1) return null;
   if ((states[value.start as string] as Record<string, unknown>).kind === 'terminal') return null;
   if (value.implicitEdges !== undefined) {
@@ -293,8 +328,9 @@ export function readWorkflowContract(value: unknown): WorkflowContract | null {
   visitReachable(value.start as string);
   for (const name of (value.implicitEdges as string[] | undefined) ?? []) reachable.add(name);
   if (reachable.size !== Object.keys(states).length) return null;
-  // Cycle detection: only a loop's own declared edge, or a path through a
-  // gate, may close a cycle. A gate always waits on a fresh human decision
+  // Cycle detection: only a loop's own declared edge, an edge only an outside
+  // event can take (`externalOutcomes`), or a path through a gate, may close
+  // a cycle. A gate always waits on a fresh human decision
   // before anything past it can run again, so nothing beyond it can be part
   // of an unbounded AUTOMATIC loop the way two ordinary handoffs could be.
   const visited = new Set<string>();
@@ -313,7 +349,7 @@ export function readWorkflowContract(value: unknown): WorkflowContract | null {
         ? (state.loop as WorkflowLoop | undefined)
         : undefined;
     const loopTarget = loop ? (state.on as Record<string, string>)[loop.onEdge] : undefined;
-    for (const next of edges.get(name) ?? []) {
+    for (const next of cycleEdges.get(name) ?? []) {
       if (loopTarget !== undefined && next === loopTarget) continue;
       if (active.has(next) || !walk(next)) return false;
     }

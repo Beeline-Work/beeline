@@ -9,6 +9,9 @@ export function chatCornerCounts(
     parent_id: string;
     archived_at: Date | null;
     lifecycle: CornerLifecycleView | null;
+    /** The corner workflow run's projected state (`corner_facts.workflow_state`). */
+    workflow_state?: string | null;
+    workflow_outcome?: string | null;
     latest_turn_status: string | null;
     commissioned_by_viewer?: boolean | null;
     latest_tags_viewer?: boolean | null;
@@ -23,6 +26,9 @@ export function chatCornerCounts(
     const { state } = deriveCornerState({
       archived: Boolean(row.archived_at),
       turnRunning: row.latest_turn_status === 'working',
+      ...(row.workflow_state
+        ? { run: { state: row.workflow_state, outcome: row.workflow_outcome ?? undefined } }
+        : {}),
       lifecycle: row.lifecycle ?? undefined,
     });
     if (state === 'archived') continue;

@@ -88,10 +88,16 @@ describe('corner session presentation', () => {
 
   it('keeps the corner opener in the header after a different agent reviews', () => {
     const messages = [
-      { id: 'opened', text: 'Working', isUser: false, timestamp: 1, pubkey: 'bbc-pk' },
-      { id: 'review', text: 'Review complete', isUser: false, timestamp: 2, pubkey: 'candy-pk' },
+      { id: 'opened', text: 'Working', isUser: false, timestamp: 1, pubkey: 'niglet-pk' },
+      {
+        id: 'receipt',
+        text: 'Check passed',
+        isUser: false,
+        timestamp: 2,
+        agentTurn: { requestId: 'turn', agentPubkey: 'candy-pk', status: 'complete' as const },
+      },
     ];
-    expect(resolveCornerViewAgentPubkey(messages, () => true, 'bbc-pk')).toBe('bbc-pk');
+    expect(resolveCornerViewAgentPubkey(messages, () => true, 'niglet-pk')).toBe('niglet-pk');
   });
 });
 

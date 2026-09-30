@@ -13,7 +13,7 @@ vi.mock('react-native', async () => {
     View: (props: any) => ReactModule.createElement('View', props, props.children),
   };
 });
-vi.mock('react-native-unistyles', () => ({ StyleSheet: { create: () => ({ metaRow: {} }) } }));
+vi.mock('react-native-unistyles', () => ({ StyleSheet: { create: () => ({ metaRow: {}, metaCaps: {} }) } }));
 
 import { CornerHeaderAgentText } from './HeaderLadder';
 

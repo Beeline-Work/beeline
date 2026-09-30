@@ -55,7 +55,7 @@ export function CornerHeaderAgentText({
   style?: StyleProp<TextStyle>;
 }) {
   return (
-    <Text numberOfLines={1} style={style}>
+    <Text numberOfLines={1} style={[styles.metaCaps, style]}>
       {name.toUpperCase()} · {stateWord}
     </Text>
   );

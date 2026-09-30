@@ -1693,6 +1693,18 @@ export class MonolithRoomTurnLoop {
           this.options.onIntakeError?.(error);
           console.error('[thin-core] Room command failed', error);
         },
+        // Marks this loop busy the instant it attempts to claim a real
+        // turn, before the claim's own network round trip and before
+        // context.enter()'s own file I/O - closing the window where
+        // RoomRuntimeCoordinator.reconcile's repository-revision restart
+        // could see a claiming-but-not-yet-`busy` Room as idle and stop it,
+        // cancelling a turn that had already begun (or was about to) (C112).
+        onClaiming: () => {
+          this.busy = true;
+        },
+        onClaimFailed: () => {
+          this.busy = false;
+        },
         onEnter: (command) => this.squireRelay.activate(command, this.commandContext.generationId),
         onLeave: (command) =>
           this.squireRelay.deactivate(command.turnRequestId, this.pausedOnGrantRequestId),

@@ -1,32 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import {
-  INSTITUTIONAL_MEMORY_KEYWORDS_MAX,
-  parseInstitutionalCuratorProposal,
-  type InstitutionalCuratorProposal,
-  type InstitutionalMemoryJobUsage,
-} from '@beeline/api-contract/daemon';
 import { DELIVERY_PICKUP_WINDOW_MS } from './connection-presence.js';
 import { CORNER_WORKFLOW_SLUG } from './corner-workflow.js';
 import type { SqlDatabase } from './database.js';
-import {
-  DEFAULT_INSTITUTIONAL_MEMORY_DAILY_JOB_LIMIT,
-  type InstitutionalMemoryShadowConfig,
-} from './institutional-memory-shadow.js';
-import {
-  applyWorkspaceSkillProposal,
-  assertRestrictedWorkspaceSkillSafe,
-} from './institutional-skills.js';
+import type { InstitutionalMemoryShadowConfig } from './institutional-memory-shadow.js';
 import {
   refreshWorkspaceSkillAnchors,
   type InstitutionalSkillAnchorSource,
 } from './institutional-skill-anchors.js';
 
-export const DEFAULT_CURATOR_WEEKLY_JOB_LIMIT = 20;
-export const INSTITUTIONAL_CURATOR_CONTEXT_MAX_BYTES = 64 * 1_024;
-export const INSTITUTIONAL_CURATOR_CANDIDATE_MAX = 50;
-/** Exactly one weekly budget's worth of per-partition candidates, never more. */
-export const CURATOR_CANDIDATE_WINDOW =
-  DEFAULT_CURATOR_WEEKLY_JOB_LIMIT * INSTITUTIONAL_CURATOR_CANDIDATE_MAX;
 /** How much time one repeat-evidence measurement covers, and its comparison. */
 export const INSTITUTIONAL_REPEAT_WINDOW_DAYS = 28;
 /** The per-turn institutional context budget the rollout gate holds p95 to. */
@@ -66,7 +47,7 @@ function unavailableSecondsSql(anchor: string): string {
 /** True once `anchor` is older than `$<days>` days of MEASURED availability. */
 function agedBeyondSql(anchor: string, days: string): string {
   return `extract(epoch FROM ($2::timestamptz-${anchor}))
-            -${unavailableSecondsSql(anchor)}>=${days}*86400`;
+            -${unavailableSecondsSql(anchor)}>=(${days})::integer*86400`;
 }
 
 const ITEM_AGE_ANCHOR = `GREATEST(item.updated_at,COALESCE(item.last_served_at,item.updated_at))`;
@@ -126,49 +107,6 @@ export async function recordWorkspaceHostAvailability(
     );
     return state.available;
   });
-}
-
-const PROHIBITED_CURATOR_SECRET_PATTERNS = [
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----/i,
-  /\bAKIA[0-9A-Z]{16}\b/,
-  /\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,})\b/,
-  /\b(?:password|token|secret|api[_ -]?key)\s*[:=]\s*\S{8,}/i,
-] as const;
-
-type CuratorCandidate = {
-  id: string;
-  targetType: 'memory_item' | 'workspace_skill';
-  version: number;
-  state: 'active' | 'stale';
-  key: string;
-  text: string;
-  repository?: string;
-  path?: string;
-  sourceRoomId: string;
-  sourceMessageId: string;
-  requesterIdentityId: string;
-};
-
-type CuratorPartition = {
-  workspaceId: string;
-  key: string;
-  audience: 'workspace_candidate' | 'human_private';
-  /** Most recent curation of any candidate; null = no candidate ever curated. */
-  curatedAt: number | null;
-  candidates: CuratorCandidate[];
-};
-
-function boundedCuratorCandidates(candidates: readonly CuratorCandidate[]): CuratorCandidate[] {
-  const bounded: CuratorCandidate[] = [];
-  let bytes = 0;
-  for (const candidate of candidates.slice(0, INSTITUTIONAL_CURATOR_CANDIDATE_MAX)) {
-    const candidateBytes = Buffer.byteLength(JSON.stringify(candidate), 'utf8') + 1;
-    // Reserve one KiB for the partition/cycle wrapper surrounding the array.
-    if (bytes + candidateBytes > INSTITUTIONAL_CURATOR_CONTEXT_MAX_BYTES - 1_024) break;
-    bounded.push(candidate);
-    bytes += candidateBytes;
-  }
-  return bounded;
 }
 
 /**
@@ -620,9 +558,8 @@ async function deterministicLifecycle(
   database: SqlDatabase,
   workspaceId: string,
   now: Date,
-  staleAfterDays: number,
-  archiveAfterDays: number,
-  retentionDays: number,
+  expireAfterDays: number,
+  explicitExpireAfterDays: number,
 ): Promise<{
   staleItems: number;
   archivedItems: number;
@@ -630,42 +567,25 @@ async function deterministicLifecycle(
   archivedSkills: number;
 }> {
   const staleItems = await database.query(
-    `UPDATE institutional_memory_items item SET state='stale',updated_at=$2
-     WHERE item.workspace_id=$1 AND item.state='active' AND item.deleted_at IS NULL
-       AND ${agedBeyondSql(ITEM_AGE_ANCHOR, '$3')}`,
-    [workspaceId, now, staleAfterDays],
-  );
-  const archivedItems = await database.query(
-    `UPDATE institutional_memory_items item SET state='archived',updated_at=$2
-     WHERE item.workspace_id=$1 AND item.state='stale' AND item.deleted_at IS NULL
-       AND ${agedBeyondSql(ITEM_AGE_ANCHOR, '$3')}`,
-    [workspaceId, now, archiveAfterDays],
-  );
-  await database.query(
     `UPDATE institutional_memory_items item
-     SET body='',deleted_at=$2,updated_at=$2
-     WHERE item.workspace_id=$1 AND item.state='archived' AND item.deleted_at IS NULL
-       AND ${agedBeyondSql(ITEM_AGE_ANCHOR, '$3')}`,
-    [workspaceId, now, retentionDays],
+     SET state='stale',body='',deleted_at=$2,updated_at=$2
+     WHERE item.workspace_id=$1 AND item.state='active' AND item.deleted_at IS NULL
+       AND ${agedBeyondSql(ITEM_AGE_ANCHOR,
+         'CASE WHEN item.explicit_save THEN $4 ELSE $3 END')}`,
+    [workspaceId, now, expireAfterDays, explicitExpireAfterDays],
   );
 
   // The built-in Corner workflow is system-owned infrastructure, present in
   // every Workspace whether or not it is ever discovered/loaded like a
   // user-authored skill — age-based staleness has no meaning for it, and it
   // must never silently archive out from under running corners.
-  const staleSkills = await database.query(
+  const staleSkills = await database.query<{ id: string }>(
     `UPDATE workspace_skills skill SET state='stale',updated_at=$2
      WHERE skill.workspace_id=$1 AND skill.state='active'
        AND NOT (skill.kind='workflow' AND skill.slug=$4)
-       AND ${agedBeyondSql(SKILL_AGE_ANCHOR, '$3')}`,
-    [workspaceId, now, staleAfterDays, CORNER_WORKFLOW_SLUG],
-  );
-  const archivedSkills = await database.query(
-    `UPDATE workspace_skills skill SET state='archived',updated_at=$2
-     WHERE skill.workspace_id=$1 AND skill.state='stale'
-       AND NOT (skill.kind='workflow' AND skill.slug=$4)
-       AND ${agedBeyondSql(SKILL_AGE_ANCHOR, '$3')}`,
-    [workspaceId, now, archiveAfterDays, CORNER_WORKFLOW_SLUG],
+       AND ${agedBeyondSql(SKILL_AGE_ANCHOR, '$3')}
+     RETURNING id`,
+    [workspaceId, now, expireAfterDays, CORNER_WORKFLOW_SLUG],
   );
   // Retention ends the CONTENT, not the record: the row, its immutable versions
   // and every recorded load stay, exactly as the memory-item path keeps its own
@@ -674,165 +594,15 @@ async function deterministicLifecycle(
   await database.query(
     `UPDATE workspace_skill_versions version
      SET markdown='',source_deleted_at=$2
-     WHERE version.source_deleted_at IS NULL
-       AND version.skill_id IN (
-         SELECT skill.id FROM workspace_skills skill
-         WHERE skill.workspace_id=$1 AND skill.state='archived'
-           AND ${agedBeyondSql(SKILL_AGE_ANCHOR, '$3')}
-       )`,
-    [workspaceId, now, retentionDays],
+     WHERE version.skill_id=ANY($1::uuid[]) AND version.source_deleted_at IS NULL`,
+    [staleSkills.rows.map((row) => row.id), now],
   );
   return {
     staleItems: staleItems.rowCount,
-    archivedItems: archivedItems.rowCount,
+    archivedItems: 0,
     staleSkills: staleSkills.rowCount,
-    archivedSkills: archivedSkills.rowCount,
+    archivedSkills: 0,
   };
-}
-
-async function curatorPartitions(
-  database: SqlDatabase,
-  workspaceId: string,
-): Promise<CuratorPartition[]> {
-  const memory = await database.query<{
-    id: string;
-    kind: 'workspace_fact' | 'human_profile_fact';
-    subject_identity_id: string | null;
-    canonical_key: string;
-    body: string;
-    version: number;
-    state: 'active' | 'stale';
-    source_room_id: string;
-    source_message_id: string;
-    requester_identity_id: string;
-    repository: string | null;
-    path: string | null;
-    curated_at: Date | null;
-  }>(
-    `SELECT * FROM (
-       SELECT item.id,item.kind,item.subject_identity_id,item.canonical_key,item.body,item.version,
-              item.state,item.source_room_id,item.source_message_id,
-              source.author_id requester_identity_id,item.repository,item.path,item.curated_at,
-              item.updated_at,
-              row_number() OVER (
-                PARTITION BY item.kind,COALESCE(item.subject_identity_id,''),
-                  CASE WHEN item.kind='workspace_fact' THEN NULL ELSE item.source_room_id END
-                ORDER BY item.curated_at ASC NULLS FIRST,item.updated_at DESC,item.id
-              ) partition_rank
-       FROM institutional_memory_items item
-       JOIN messages source ON source.id=item.source_message_id AND source.deleted_at IS NULL
-       JOIN identities requester ON requester.id=source.author_id AND requester.kind='human'
-       WHERE item.workspace_id=$1 AND item.state IN ('active','stale') AND item.deleted_at IS NULL
-     ) ranked
-     WHERE partition_rank<=$2
-     ORDER BY curated_at ASC NULLS FIRST,partition_rank,kind,subject_identity_id,
-              source_room_id,updated_at DESC,id
-     LIMIT $3`,
-    [workspaceId, INSTITUTIONAL_CURATOR_CANDIDATE_MAX, CURATOR_CANDIDATE_WINDOW],
-  );
-  const skills = await database.query<{
-    id: string;
-    slug: string;
-    description: string;
-    current_version: number;
-    state: 'active' | 'stale';
-    source_room_id: string;
-    source_message_id: string;
-    requester_identity_id: string;
-    repository: string;
-    path: string | null;
-    curated_at: Date | null;
-  }>(
-    `SELECT * FROM (
-       SELECT skill.id,skill.slug,skill.description,skill.current_version,skill.state,
-              skill.source_room_id,job.source_message_id,job.requester_identity_id,
-              skill.repository,skill.path,skill.curated_at,skill.updated_at,
-              row_number() OVER (
-                PARTITION BY skill.source_room_id
-                ORDER BY skill.curated_at ASC NULLS FIRST,skill.updated_at DESC,skill.id
-              ) partition_rank
-       FROM workspace_skills skill
-       JOIN workspace_skill_versions version
-         ON version.skill_id=skill.id AND version.version=skill.current_version
-       JOIN institutional_memory_jobs job ON job.id=version.source_job_id
-       JOIN messages source ON source.id=job.source_message_id AND source.deleted_at IS NULL
-       WHERE skill.workspace_id=$1 AND skill.state IN ('active','stale')
-         AND version.source_deleted_at IS NULL
-     ) ranked
-     WHERE partition_rank<=$2
-     ORDER BY curated_at ASC NULLS FIRST,partition_rank,source_room_id,updated_at DESC,id
-     LIMIT $3`,
-    [workspaceId, INSTITUTIONAL_CURATOR_CANDIDATE_MAX, CURATOR_CANDIDATE_WINDOW],
-  );
-  const groups = new Map<string, CuratorPartition>();
-  const absorb = (partition: CuratorPartition, curatedAt: Date | null): void => {
-    if (!curatedAt) return;
-    partition.curatedAt = Math.max(partition.curatedAt ?? 0, curatedAt.getTime());
-  };
-  for (const item of memory.rows) {
-    const key =
-      item.kind === 'workspace_fact'
-        ? 'workspace-facts'
-        : `human-profile:${item.subject_identity_id}:${item.source_room_id}`;
-    const partition = groups.get(key) ?? {
-      workspaceId,
-      key,
-      audience: item.kind === 'workspace_fact' ? 'workspace_candidate' : 'human_private',
-      curatedAt: null,
-      candidates: [],
-    };
-    absorb(partition, item.curated_at);
-    partition.candidates.push({
-      id: item.id,
-      targetType: 'memory_item',
-      version: item.version,
-      state: item.state,
-      key: item.canonical_key,
-      text: item.body,
-      ...(item.repository ? { repository: item.repository } : {}),
-      ...(item.path ? { path: item.path } : {}),
-      sourceRoomId: item.source_room_id,
-      sourceMessageId: item.source_message_id,
-      requesterIdentityId: item.requester_identity_id,
-    });
-    groups.set(key, partition);
-  }
-  for (const skill of skills.rows) {
-    const key = `workspace-skills:${skill.source_room_id}`;
-    const partition = groups.get(key) ?? {
-      workspaceId,
-      key,
-      audience: 'workspace_candidate',
-      curatedAt: null,
-      candidates: [],
-    };
-    absorb(partition, skill.curated_at);
-    partition.candidates.push({
-      id: skill.id,
-      targetType: 'workspace_skill',
-      version: skill.current_version,
-      state: skill.state,
-      key: skill.slug,
-      text: skill.description,
-      repository: skill.repository,
-      ...(skill.path ? { path: skill.path } : {}),
-      sourceRoomId: skill.source_room_id,
-      sourceMessageId: skill.source_message_id,
-      requesterIdentityId: skill.requester_identity_id,
-    });
-    groups.set(key, partition);
-  }
-  // The weekly job budget is a prefix of this list, so selection must rotate
-  // across partitions the way candidates already rotate within one.
-  return [...groups.values()]
-    .sort(
-      (left, right) =>
-        (left.curatedAt ?? -1) - (right.curatedAt ?? -1) || left.key.localeCompare(right.key),
-    )
-    .map((partition) => ({
-      ...partition,
-      candidates: boundedCuratorCandidates(partition.candidates),
-    }));
 }
 
 /** One idempotent weekly pass: deterministic aging first, then host-side consolidation jobs. */
@@ -846,518 +616,54 @@ export async function runInstitutionalCuratorCycle(
   const rollouts = await database.query<{
     workspace_id: string;
     stage: 'shadow' | 'pilot' | 'live';
-    auto_advance: boolean;
-    stale_after_days: number;
-    archive_after_days: number;
-    retention_days: number;
+    expire_after_days: number;
+    explicit_expire_after_days: number;
   }>(
     `SELECT workspace.id workspace_id,COALESCE(rollout.stage,'live') stage,
-            COALESCE(rollout.auto_advance,false) auto_advance,
-            COALESCE(rollout.stale_after_days,30) stale_after_days,
-            COALESCE(rollout.archive_after_days,90) archive_after_days,
-            COALESCE(rollout.retention_days,365) retention_days
+            COALESCE(rollout.expire_after_days,90) expire_after_days,
+            COALESCE(rollout.explicit_expire_after_days,365) explicit_expire_after_days
      FROM workspaces workspace
      LEFT JOIN institutional_memory_workspace_rollouts rollout
        ON rollout.workspace_id=workspace.id
      WHERE COALESCE(rollout.stage,'live') IN ('shadow','pilot','live')
      ORDER BY workspace.id`,
   );
-  const week = utcWeekKey(now);
-  let queued = 0;
   for (const rollout of rollouts.rows) {
-    const cycleKey = `weekly:${week}`;
-    let workspaceQueued: number;
     try {
-      // Anchors are checked before the locked transaction, never inside it: the
-      // comparison is network I/O and the lock is the one every settling turn in
-      // this Workspace also takes. Like aging, an anchor contradiction only
-      // matters once the Workspace can actually serve, so the shadow stage is
-      // left alone.
       if (config.live && rollout.stage !== 'shadow') {
         try {
           await refreshWorkspaceSkillAnchors(database, rollout.workspace_id, options.anchors, now);
         } catch (error) {
-          console.error(
-            `[server] institutional skill anchor pass failed (${rollout.workspace_id}):`,
-            error,
-          );
+          console.error(`[server] institutional skill anchor pass failed (${rollout.workspace_id}):`, error);
         }
       }
       await recordWorkspaceHostAvailability(database, rollout.workspace_id, now);
-      workspaceQueued = await database.transaction(async (db) => {
+      await database.transaction(async (db) => {
         await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
           `institutional-memory:${rollout.workspace_id}`,
         ]);
-        // The week's key is spent only by a cycle that can actually do the work.
-        // Claiming it first let a tick that landed after the day's job cap was
-        // already spent mark the week done and queue nothing, losing that
-        // Workspace's consolidation until the next week. A tick with no budget
-        // now leaves the key for the next one, which gets it after midnight
-        // resets the daily count.
-        const jobsToday = Number(
-          (
-            await db.query<{ count: string }>(
-              `SELECT count(*)::text count FROM institutional_memory_jobs
-             WHERE workspace_id=$1 AND created_at>=date_trunc('day',$2::timestamptz)`,
-              [rollout.workspace_id, now],
-            )
-          ).rows[0]?.count ?? 0,
-        );
-        const remainingDailyJobs = Math.max(
-          0,
-          (config.dailyJobLimit ?? DEFAULT_INSTITUTIONAL_MEMORY_DAILY_JOB_LIMIT) - jobsToday,
-        );
-        if (remainingDailyJobs === 0) return 0;
-        const inserted = await db.query<{ id: string }>(
+        const cycleKey = `weekly:${utcWeekKey(now)}`;
+        const inserted = await db.query(
           `INSERT INTO institutional_curator_cycles(id,workspace_id,cycle_key)
-         VALUES($1,$2,$3) ON CONFLICT(workspace_id,cycle_key) DO NOTHING RETURNING id`,
+           VALUES($1,$2,$3) ON CONFLICT(workspace_id,cycle_key) DO NOTHING`,
           [randomUUID(), rollout.workspace_id, cycleKey],
         );
-        if (!inserted.rowCount) return 0;
-        const lifecycle =
-          !config.live || rollout.stage === 'shadow'
-            ? { staleItems: 0, archivedItems: 0, staleSkills: 0, archivedSkills: 0 }
-            : await deterministicLifecycle(
-                db,
-                rollout.workspace_id,
-                now,
-                rollout.stale_after_days,
-                rollout.archive_after_days,
-                rollout.retention_days,
-              );
-        const partitions = await curatorPartitions(db, rollout.workspace_id);
-        let cycleQueued = 0;
-        for (const partition of partitions.slice(
-          0,
-          Math.min(DEFAULT_CURATOR_WEEKLY_JOB_LIMIT, remainingDailyJobs),
-        )) {
-          const source = partition.candidates[0];
-          if (!source) continue;
-          const result = await db.query(
-            `INSERT INTO institutional_memory_jobs
-           (id,workspace_id,trigger_kind,mode,source_room_id,source_message_id,
-            requester_identity_id,source_audience_kind,idempotency_key,context)
-           VALUES($1,$2,'curator',$3,$4,$5,$6,$7,$8,$9::jsonb)
-           ON CONFLICT(idempotency_key) DO NOTHING`,
-            [
-              randomUUID(),
-              rollout.workspace_id,
-              rollout.stage === 'shadow' ? 'shadow' : config.live ? 'live' : 'shadow',
-              source.sourceRoomId,
-              source.sourceMessageId,
-              source.requesterIdentityId,
-              partition.audience,
-              `curator:${rollout.workspace_id}:${partition.key}:${week}`,
-              JSON.stringify({
-                partition: partition.key,
-                cycleKey,
-                candidates: partition.candidates,
-              }),
-            ],
-          );
-          if (!result.rowCount) continue;
-          cycleQueued += 1;
-          // The rotation cursor means "the curator considered this", not "the
-          // model acted on it": a null answer or a dead job must still let the
-          // next cycle reach a different partition.
-          const consideredMemory = partition.candidates
-            .filter((candidate) => candidate.targetType === 'memory_item')
-            .map((candidate) => candidate.id);
-          const consideredSkills = partition.candidates
-            .filter((candidate) => candidate.targetType === 'workspace_skill')
-            .map((candidate) => candidate.id);
-          if (consideredMemory.length) {
-            await db.query(
-              `UPDATE institutional_memory_items SET curated_at=$2 WHERE id=ANY($1::uuid[])`,
-              [consideredMemory, now],
-            );
-          }
-          if (consideredSkills.length) {
-            await db.query(`UPDATE workspace_skills SET curated_at=$2 WHERE id=ANY($1::uuid[])`, [
-              consideredSkills,
-              now,
-            ]);
-          }
-        }
-        const dashboard = await institutionalObjectiveDashboard(db, rollout.workspace_id);
-        const advanceShadow = rollout.stage === 'shadow' && dashboard.shadowReady;
-        const advancePilot = rollout.stage === 'pilot' && dashboard.rolloutReady;
-        if (rollout.auto_advance && (advanceShadow || advancePilot)) {
-          await db.query(
-            `UPDATE institutional_memory_workspace_rollouts
-           SET stage=CASE stage WHEN 'shadow' THEN 'pilot' WHEN 'pilot' THEN 'live' ELSE stage END,
-               updated_at=$2
-           WHERE workspace_id=$1`,
-            [rollout.workspace_id, now],
-          );
-        }
+        if (!inserted.rowCount) return;
+        const lifecycle = !config.live || rollout.stage === 'shadow'
+          ? { staleItems: 0, archivedItems: 0, staleSkills: 0, archivedSkills: 0 }
+          : await deterministicLifecycle(db, rollout.workspace_id, now,
+              rollout.expire_after_days, rollout.explicit_expire_after_days);
         await db.query(
           `UPDATE institutional_curator_cycles
-         SET queued_jobs=$3,stale_items=$4,archived_items=$5,stale_skills=$6,
-             archived_skills=$7,completed_at=$2
-         WHERE workspace_id=$1 AND cycle_key=$8`,
-          [
-            rollout.workspace_id,
-            now,
-            cycleQueued,
-            lifecycle.staleItems,
-            lifecycle.archivedItems,
-            lifecycle.staleSkills,
-            lifecycle.archivedSkills,
-            cycleKey,
-          ],
+           SET queued_jobs=0,stale_items=$3,archived_items=0,stale_skills=$4,
+               archived_skills=0,completed_at=$2
+           WHERE workspace_id=$1 AND cycle_key=$5`,
+          [rollout.workspace_id, now, lifecycle.staleItems, lifecycle.staleSkills, cycleKey],
         );
-        return cycleQueued;
       });
     } catch (error) {
-      console.error(
-        `[server] institutional curator Workspace cycle failed (${rollout.workspace_id}):`,
-        error,
-      );
-      continue;
-    }
-    queued += workspaceQueued;
-  }
-  return queued;
-}
-
-function contextCandidates(context: Record<string, unknown> | null): Map<string, CuratorCandidate> {
-  const values = context?.candidates;
-  if (!Array.isArray(values)) throw new Error('institutional curator context is invalid');
-  return new Map(
-    values
-      .filter(
-        (value): value is CuratorCandidate =>
-          Boolean(value) &&
-          typeof value === 'object' &&
-          typeof (value as CuratorCandidate).id === 'string' &&
-          ((value as CuratorCandidate).targetType === 'memory_item' ||
-            (value as CuratorCandidate).targetType === 'workspace_skill'),
-      )
-      .map((value) => [value.id, value]),
-  );
-}
-
-function lifecycleTargetState(
-  action: 'retain' | 'stale' | 'archive' | 'consolidate',
-  currentState: 'active' | 'stale',
-): 'active' | 'stale' | 'archived' {
-  if (action === 'stale') return 'stale';
-  if (action === 'archive') return 'archived';
-  return currentState;
-}
-
-export async function applyInstitutionalCuratorProposal(
-  database: SqlDatabase,
-  input: {
-    workspaceId: string;
-    jobId: string;
-    sourceMessageId: string;
-    context: Record<string, unknown> | null;
-    proposal: InstitutionalCuratorProposal;
-    usage: InstitutionalMemoryJobUsage;
-  },
-): Promise<{
-  consolidatedItems: number;
-  consolidatedSkills: number;
-  /** ids of rows this call created/updated content for, to schedule an
-   *  event-driven embed against once the caller's transaction commits — see
-   *  institutional-memory-embeddings.ts. Never touched for an archive/stale
-   *  transition alone, since that changes no embeddable content. */
-  embeddedItemIds: string[];
-  embeddedSkillIds: string[];
-}> {
-  const parsed = parseInstitutionalCuratorProposal(input.proposal);
-  if (parsed.partition !== input.context?.partition) {
-    throw new Error('institutional curator partition conflict');
-  }
-  const candidates = contextCandidates(input.context);
-  let consolidatedItems = 0;
-  let consolidatedSkills = 0;
-  const embeddedItemIds: string[] = [];
-  const embeddedSkillIds: string[] = [];
-  for (const action of parsed.actions) {
-    const target = candidates.get(action.targetId);
-    const duplicates = action.duplicateIds.map((id) => candidates.get(id));
-    if (
-      !target ||
-      target.targetType !== action.targetType ||
-      duplicates.some((candidate) => !candidate || candidate.targetType !== action.targetType)
-    ) {
-      throw new Error('institutional curator action escapes its audience partition');
-    }
-    const allIds = [action.targetId, ...action.duplicateIds];
-    if (new Set(allIds).size !== allIds.length) {
-      throw new Error('institutional curator duplicate targets are invalid');
-    }
-    if (action.targetType === 'memory_item') {
-      // The same per-key lock applyMemoryProposal takes, in the same order
-      // relative to the row lock, so neither writer can leave two active rows
-      // under one canonical key.
-      const identity = (
-        await database.query<{
-          kind: string;
-          subject_identity_id: string | null;
-          canonical_key: string;
-          audience_kind: string;
-        }>(
-          `SELECT kind,subject_identity_id,canonical_key,audience_kind
-           FROM institutional_memory_items
-           WHERE workspace_id=$1 AND id=$2 AND deleted_at IS NULL`,
-          [input.workspaceId, action.targetId],
-        )
-      ).rows[0];
-      if (!identity) throw new Error('institutional curator memory target is unavailable');
-      await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-        [
-          'institutional-memory-item',
-          input.workspaceId,
-          identity.kind,
-          identity.subject_identity_id ?? '',
-          identity.canonical_key,
-          identity.audience_kind,
-        ].join(':'),
-      ]);
-      const rows = await database.query<{
-        id: string;
-        kind: 'workspace_fact' | 'human_profile_fact';
-        subject_identity_id: string | null;
-        canonical_key: string;
-        version: number;
-        state: 'active' | 'stale';
-        source_room_id: string;
-        source_message_id: string;
-        source_corner_id: string | null;
-        audience_kind: 'workspace' | 'human_profile';
-        confidence: number;
-        repository: string | null;
-        target_commit: string | null;
-        path: string | null;
-        content_hash: string | null;
-        keywords: string[];
-      }>(
-        `SELECT id,kind,subject_identity_id,canonical_key,version,state,source_room_id,
-                source_message_id,source_corner_id,audience_kind,confidence,repository,
-                target_commit,path,content_hash,keywords
-         FROM institutional_memory_items
-         WHERE workspace_id=$1 AND id=ANY($2::uuid[]) AND deleted_at IS NULL
-           AND state IN ('active','stale')
-         FOR UPDATE`,
-        [input.workspaceId, allIds],
-      );
-      if (rows.rowCount !== allIds.length) {
-        throw new Error('institutional curator memory target is unavailable');
-      }
-      const current = rows.rows.find((row) => row.id === action.targetId)!;
-      if (current.version !== action.baseVersion) {
-        throw new Error('institutional curator memory CAS conflict');
-      }
-      if (action.action === 'archive' && current.state !== 'stale') {
-        throw new Error('institutional curator memory must become stale before archive');
-      }
-      if (action.action === 'consolidate' && current.state !== 'active') {
-        throw new Error('institutional curator memory consolidation target is superseded');
-      }
-      if (action.action === 'consolidate') {
-        if (PROHIBITED_CURATOR_SECRET_PATTERNS.some((pattern) => pattern.test(action.body!))) {
-          throw new Error('institutional curator memory contains prohibited credential material');
-        }
-        if (
-          rows.rows.some(
-            (row) =>
-              row.kind !== current.kind ||
-              row.subject_identity_id !== current.subject_identity_id ||
-              row.audience_kind !== current.audience_kind,
-          )
-        ) {
-          throw new Error('institutional curator cannot merge audience partitions');
-        }
-        await database.query(
-          `UPDATE institutional_memory_items
-           SET state='stale',curated_at=now(),
-               updated_at=CASE WHEN state='stale' THEN updated_at ELSE now() END
-           WHERE id=ANY($1::uuid[])`,
-          [allIds],
-        );
-        const nextId = randomUUID();
-        await database.query(
-          `INSERT INTO institutional_memory_items
-           (id,workspace_id,kind,subject_identity_id,canonical_key,body,state,source_room_id,
-            source_message_id,source_corner_id,audience_kind,confidence,version,supersedes_id,
-            created_by_job_id,repository,target_commit,path,content_hash,curated_at,keywords)
-           VALUES($1,$2,$3,$4,$5,$6,'active',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,now(),
-                  $19::text[])`,
-          [
-            nextId,
-            input.workspaceId,
-            current.kind,
-            current.subject_identity_id,
-            current.canonical_key,
-            action.body,
-            current.source_room_id,
-            current.source_message_id,
-            current.source_corner_id,
-            current.audience_kind,
-            current.confidence,
-            current.version + 1,
-            current.id,
-            input.jobId,
-            current.repository,
-            current.target_commit,
-            current.path,
-            current.content_hash,
-            // The merged item answers to every keyword its duplicates did.
-            [...new Set([current, ...rows.rows].flatMap((row) => row.keywords))].slice(
-              0,
-              INSTITUTIONAL_MEMORY_KEYWORDS_MAX,
-            ),
-          ],
-        );
-        await database.query(
-          `INSERT INTO institutional_memory_item_sources(item_id,message_id)
-           SELECT $1,message_id FROM institutional_memory_item_sources
-           WHERE item_id=ANY($2::uuid[]) ON CONFLICT DO NOTHING`,
-          [nextId, allIds],
-        );
-        consolidatedItems += 1;
-        embeddedItemIds.push(nextId);
-      } else {
-        // Only a real transition may move the aging anchor. Re-affirming the
-        // state a row already holds records curation and nothing else, so a
-        // weekly `stale` on an already-stale row cannot postpone archival.
-        const nextState = lifecycleTargetState(action.action, current.state);
-        if (nextState === current.state) {
-          await database.query(
-            `UPDATE institutional_memory_items SET curated_at=now() WHERE id=$1`,
-            [current.id],
-          );
-        } else {
-          await database.query(
-            `UPDATE institutional_memory_items SET state=$2,curated_at=now(),updated_at=now()
-             WHERE id=$1`,
-            [current.id, nextState],
-          );
-        }
-      }
-    } else {
-      // applyWorkspaceSkillProposal takes the per-slug advisory lock BEFORE its
-      // own row lock, so this branch must too: locking the row first is an ABBA
-      // inversion against every merge-review writing the same slug.
-      const slug = (
-        await database.query<{ slug: string }>(
-          `SELECT slug FROM workspace_skills WHERE workspace_id=$1 AND id=$2`,
-          [input.workspaceId, action.targetId],
-        )
-      ).rows[0]?.slug;
-      if (!slug) throw new Error('institutional curator skill target is unavailable');
-      await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-        `workspace-skill:${input.workspaceId}:${slug}`,
-      ]);
-      const rows = await database.query<{
-        id: string;
-        slug: string;
-        description: string;
-        current_version: number;
-        source_room_id: string;
-        repository: string;
-        target_commit: string;
-        path: string | null;
-        state: 'active' | 'stale';
-        source_message_ids: string[];
-      }>(
-        `SELECT skill.id,skill.slug,skill.description,skill.current_version,skill.source_room_id,
-                skill.repository,skill.target_commit,skill.path,skill.state,
-                version.source_message_ids
-         FROM workspace_skills skill
-         JOIN workspace_skill_versions version
-           ON version.skill_id=skill.id AND version.version=skill.current_version
-         WHERE skill.workspace_id=$1 AND skill.id=ANY($2::uuid[])
-           AND skill.state IN ('active','stale') AND version.source_deleted_at IS NULL
-         FOR UPDATE OF skill`,
-        [input.workspaceId, allIds],
-      );
-      if (rows.rowCount !== allIds.length) {
-        throw new Error('institutional curator skill target is unavailable');
-      }
-      const current = rows.rows.find((row) => row.id === action.targetId)!;
-      if (current.current_version !== action.baseVersion) {
-        throw new Error('institutional curator skill CAS conflict');
-      }
-      if (action.action === 'archive' && current.state !== 'stale') {
-        throw new Error('institutional curator skill must become stale before archive');
-      }
-      if (action.action === 'consolidate') {
-        if (rows.rows.some((row) => row.source_room_id !== current.source_room_id)) {
-          throw new Error('institutional curator cannot merge skill audience partitions');
-        }
-        const restricted = {
-          proposalVersion: 1 as const,
-          skill: {
-            slug: current.slug,
-            description: action.description!,
-            markdown: action.markdown!,
-            baseVersion: current.current_version,
-            anchor: {
-              repository: current.repository,
-              targetCommit: current.target_commit,
-              ...(current.path ? { path: current.path } : {}),
-            },
-          },
-          findings: [],
-        };
-        assertRestrictedWorkspaceSkillSafe(restricted);
-        // Retire the duplicates first: the caps applyWorkspaceSkillProposal
-        // checks sum ACTIVE bytes, so counting rows this consolidation is about
-        // to stale would refuse the merge exactly when it would free space.
-        await database.query(
-          `UPDATE workspace_skills
-           SET state='stale',curated_at=now(),
-               updated_at=CASE WHEN state='stale' THEN updated_at ELSE now() END
-           WHERE id=ANY($1::uuid[])`,
-          [action.duplicateIds],
-        );
-        const appliedSkill = await applyWorkspaceSkillProposal(database, {
-          workspaceId: input.workspaceId,
-          sourceRoomId: current.source_room_id,
-          sourceMessageIds: [
-            ...new Set([
-              input.sourceMessageId,
-              ...rows.rows.flatMap((row) => row.source_message_ids),
-            ]),
-          ],
-          sourceJobId: input.jobId,
-          usage: input.usage,
-          proposal: restricted.skill,
-        });
-        await database.query(`UPDATE workspace_skills SET curated_at=now() WHERE id=$1`, [
-          current.id,
-        ]);
-        consolidatedSkills += 1;
-        embeddedSkillIds.push(appliedSkill.skillId);
-      } else {
-        const nextState = lifecycleTargetState(action.action, current.state);
-        if (nextState === current.state) {
-          await database.query(`UPDATE workspace_skills SET curated_at=now() WHERE id=$1`, [
-            current.id,
-          ]);
-        } else {
-          await database.query(
-            `UPDATE workspace_skills SET state=$2,curated_at=now(),updated_at=now() WHERE id=$1`,
-            [current.id, nextState],
-          );
-        }
-      }
+      console.error(`[server] institutional curator Workspace cycle failed (${rollout.workspace_id}):`, error);
     }
   }
-  const cycleKey = input.context?.cycleKey;
-  if (typeof cycleKey === 'string') {
-    await database.query(
-      `UPDATE institutional_curator_cycles
-       SET consolidated_items=consolidated_items+$3,
-           consolidated_skills=consolidated_skills+$4
-       WHERE workspace_id=$1 AND cycle_key=$2`,
-      [input.workspaceId, cycleKey, consolidatedItems, consolidatedSkills],
-    );
-  }
-  return { consolidatedItems, consolidatedSkills, embeddedItemIds, embeddedSkillIds };
+  return 0;
 }

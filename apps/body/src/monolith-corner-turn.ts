@@ -1312,19 +1312,30 @@ export class MonolithCornerTurnLoop {
     // Best-effort read of this turn's search_memory call/miss counters before
     // the trace writes — bounded so a slow or unreachable server never delays
     // the turn's own completion over a diagnostic.
+    let statsStartedAt = 0;
+    let statsPromise: Promise<{ searchCalls: number; searchMisses: number } | undefined> | undefined;
+    const startTraceStats = (): void => {
+      if (statsPromise) return;
+      statsStartedAt = Date.now();
+      statsPromise = api.execute('getInstitutionalMemoryTurnStats', {
+        roomId: cornerId,
+        agentId: this.agent.publicKey,
+        requestId,
+      }).catch(() => undefined);
+    };
     const finishTrace = async (
       outcome: 'complete' | 'failed' | 'cancelled',
       reason?: string,
     ): Promise<void> => {
       try {
-        const stats = await Promise.race([
-          api.execute('getInstitutionalMemoryTurnStats', {
-            roomId: cornerId,
-            agentId: this.agent.publicKey,
-            requestId,
-          }),
-          new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 800)),
-        ]);
+        const remaining = Math.max(0, 800 - (Date.now() - statsStartedAt));
+        let timer: NodeJS.Timeout | undefined;
+        const stats = statsPromise && remaining > 0
+          ? await Promise.race([
+              statsPromise,
+              new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), remaining); }),
+            ]).finally(() => { if (timer) clearTimeout(timer); })
+          : undefined;
         if (stats) trace.noteSearchMemoryStats(stats.searchCalls, stats.searchMisses);
       } catch {
         // Losing this measurement must never affect the turn.
@@ -1923,9 +1934,10 @@ export class MonolithCornerTurnLoop {
         (error) => console.error(`[thin-core] corner ${cornerId} receipt heartbeat failed:`, error),
       );
       if (laneUpgraded) {
-        await finishTrace('complete');
+        void finishTrace('complete').catch(() => undefined);
         return;
       }
+      startTraceStats();
       await api.execute('postAgentTurnReceipt', {
         agentId: this.agent.publicKey,
         roomId: cornerId,
@@ -1938,14 +1950,14 @@ export class MonolithCornerTurnLoop {
       });
       // After the receipt: an operator artifact never delays the answer, and
       // never becomes one — the trace has no way to post a Room row.
-      await finishTrace('complete');
+      void finishTrace('complete').catch(() => undefined);
     } catch (error) {
       // A stopped turn already has its ending: the server wrote `cancelled` and
       // named who stopped it when it accepted the request. Nothing to post, and
       // nothing the helper is to blame for.
       if (error instanceof TurnStoppedError || this.stoppedTurns.has(requestId)) {
         console.log(`[thin-core] corner ${cornerId} turn ${requestId} stopped by the requester`);
-        await finishTrace('cancelled');
+        void finishTrace('cancelled').catch(() => undefined);
         return;
       }
       // The upgrade already settled this turn complete. A later stumble in a
@@ -1957,10 +1969,11 @@ export class MonolithCornerTurnLoop {
           `[thin-core] corner ${cornerId} turn ${requestId} ended after its lane upgrade:`,
           error,
         );
-        await finishTrace('complete');
+        void finishTrace('complete').catch(() => undefined);
         return;
       }
       const reason = distillTurnFailureReason(error);
+      startTraceStats();
       await api.execute('postAgentTurnReceipt', {
         agentId: this.agent.publicKey,
         roomId: cornerId,
@@ -1972,7 +1985,7 @@ export class MonolithCornerTurnLoop {
         toolCalls: trace.toolCallsTotal,
         ...this.turnMetrics,
       });
-      await finishTrace('failed', reason.text);
+      void finishTrace('failed', reason.text).catch(() => undefined);
       throw error;
     } finally {
       this.busy = false;

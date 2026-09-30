@@ -690,6 +690,7 @@ export class DaemonService {
           this.database,
           authenticatedAgentId,
           this.institutionalMemoryShadow,
+          (input as { extractorVersion?: string }).extractorVersion,
         );
         return { enabled: true, ...(job ? { job } : {}) } as Output<Name>;
       }

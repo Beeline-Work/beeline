@@ -57,12 +57,6 @@ async function runReleaseMigration(): Promise<void> {
       await new AuthStore(database as unknown as TransactionalDatabase).migrate();
     });
     await migrateData(database);
-    // One-time sweep, run here (after the migration) and again at ordinary
-    // server start (`main()` below) — never on an interval. Every row saved
-    // from here on embeds itself on save; this only catches rows from before
-    // the feature shipped or an in-process retry that died with a restart.
-    const embeddingBackfill = await backfillInstitutionalMemoryEmbeddingsOnce(database);
-    console.log(`[migration] institutional memory embedding backfill: ${JSON.stringify(embeddingBackfill)}`);
     // Armed only by the release owner, once the create-or-join onboarding is
     // live on every supported client (docs/welcome-retirement.md).
     const greeterAgentId = process.env.BEELINE_RETIRE_WELCOME_GREETER_ID?.trim();

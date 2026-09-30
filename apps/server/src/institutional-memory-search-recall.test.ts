@@ -7,6 +7,8 @@ import { claimAgentCommand, createAgentCommand } from './agent-command.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { OPENROUTER_EMBEDDINGS_URL } from './institutional-memory-embeddings.js';
+import { pgvectorLiteral } from './institutional-memory-embeddings.js';
+import { searchInstitutionalMemory } from './institutional-memory-shadow.js';
 
 // Regression coverage for the P1 "wife's details not loading" bug (captain
 // bug, corner "Personal/cake order", 2026-09-29 13:49 EDT). Root-caused on
@@ -88,9 +90,56 @@ async function openCommand(requestId: string, generationId: string) {
     turnRequestId: requestId,
   });
   await claimAgentCommand(database, ROOM, RONNIE, command!.id, generationId);
+  return command!;
 }
 
 describe('search_memory recall (institutional memory)', () => {
+  it('returns no unrelated vector row and counts a miss', async () => {
+    const daemon = liveDaemon();
+    await openCommand('floor-turn', 'floor-generation');
+    const unrelated = '30000000-0000-4000-8000-00000000ca11';
+    const vector = [0, 1, ...new Array(1022).fill(0)];
+    await database.query(
+      `INSERT INTO institutional_memory_items
+       (id,workspace_id,kind,canonical_key,body,source_room_id,source_message_id,
+        audience_kind,confidence,version,keywords,embedding)
+       VALUES($1,$2,'workspace_fact','unrelated.fruit','Oranges grow in Spain.',$3,$4,
+         'workspace',0.9,1,ARRAY['orange'],$5::vector)`,
+      [unrelated,WORKSPACE,ROOM,MESSAGE,pgvectorLiteral(vector)],
+    );
+    process.env.OPENROUTER_EMBEDDING_API_KEY='test-key';
+    vi.stubGlobal('fetch',vi.fn(async () => new Response(JSON.stringify({
+      data:[{embedding:[1,...new Array(1023).fill(0)],index:0}],
+    }),{status:200,headers:{'content-type':'application/json'}})));
+    await daemon.execute('getInstitutionalContext',
+      {roomId:ROOM,requestId:'floor-turn',generationId:'floor-generation'},RONNIE);
+    const result = await daemon.execute('searchInstitutionalMemory',{
+      agentId:RONNIE,roomId:ROOM,requestId:'floor-turn',
+      generationId:'floor-generation',query:'semantically distant question',
+    },RONNIE);
+    expect(result.results).toEqual([]);
+    const stats = (await database.query<{ search_memory_misses: number }>(
+      `SELECT search_memory_misses FROM institutional_context_serves
+       WHERE room_id=$1 AND request_id='floor-turn'`,[ROOM])).rows[0];
+    expect(stats?.search_memory_misses).toBe(1);
+    delete process.env.OPENROUTER_EMBEDDING_API_KEY;
+    vi.unstubAllGlobals();
+  });
+
+  it('embeds the query before opening the search transaction', async () => {
+    const command=await openCommand('before-tx','before-gen');
+    const original=database.transaction.bind(database);
+    let inside=false;
+    vi.spyOn(database,'transaction').mockImplementation(async (work) => {
+      inside=true;
+      try { return await original(work); } finally { inside=false; }
+    });
+    await searchInstitutionalMemory(database,command,{agentId:RONNIE,roomId:ROOM,
+      query:'missing fact'},async () => {
+      expect(inside).toBe(false);
+      return {outcome:'disabled',ms:0};
+    });
+  });
   it("finds the active requester profile fact for every one of Ronnie's real natural-language queries", async () => {
     const daemon = liveDaemon();
     await openCommand('cake-order-turn', 'cake-order-generation');
@@ -186,7 +235,8 @@ describe('search_memory recall (institutional memory)', () => {
       },
       RONNIE,
     );
-    await database.query(`UPDATE institutional_memory_items SET state='stale' WHERE id=$1`, [
+    await database.query(`UPDATE institutional_memory_items
+      SET state='stale',body='',deleted_at=now() WHERE id=$1`, [
       saved.itemId,
     ]);
     const result = await daemon.execute(
@@ -423,6 +473,41 @@ describe('search_memory hybrid vector recall (no shared words)', () => {
     expect(result.results.map((r) => r.id)).toContain(saved.itemId);
   });
 
+  it('finds a small workspace after 500 closer vectors in another workspace', async () => {
+    stubEmbeddingFetch();
+    const otherWorkspace = '10000000-0000-4000-8000-00000000ca33';
+    const otherRoom = '20000000-0000-4000-8000-00000000ca33';
+    const otherMessage = 'f'.repeat(64);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Large WS')`,[otherWorkspace]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Large')`,[otherRoom,otherWorkspace]);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Source')`,
+      [otherMessage,otherRoom,CAPTAIN]);
+    await database.query(`INSERT INTO institutional_memory_items
+      (id,workspace_id,kind,canonical_key,body,source_room_id,source_message_id,
+       audience_kind,confidence,version,keywords,embedding)
+      SELECT ('30000000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,$1,'workspace_fact',
+        'large.fact.'||n,'A closer vector fact '||n,$2,$3,'workspace',0.9,1,
+        ARRAY['nomatch'],$4::vector
+      FROM generate_series(1,500) AS n`,
+      [otherWorkspace,otherRoom,otherMessage,pgvectorLiteral(conceptVector(WIFE_CONCEPT))]);
+    const smallVector=[0.98,0.2,...new Array(1022).fill(0)];
+    await database.query(`INSERT INTO institutional_memory_items
+      (id,workspace_id,kind,canonical_key,body,source_room_id,source_message_id,
+       audience_kind,confidence,version,keywords,embedding)
+      SELECT ('40000000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,$1,'workspace_fact',
+        'small.fact.'||n,'Small workspace fact '||n,$2,$3,'workspace',0.9,1,
+        ARRAY['nomatch'],$4::vector
+      FROM generate_series(1,5) AS n`,
+      [WORKSPACE,ROOM,MESSAGE,pgvectorLiteral(smallVector)]);
+    await openCommand('small-workspace-turn','small-workspace-generation');
+    const result=await liveDaemon().execute('searchInstitutionalMemory',{
+      agentId:RONNIE,roomId:ROOM,requestId:'small-workspace-turn',
+      generationId:'small-workspace-generation',query:'where does my wife live',
+    },RONNIE);
+    expect(result.results).toHaveLength(5);
+    expect(result.results.every(row=>row.body.startsWith('Small workspace fact'))).toBe(true);
+  });
+
   it('never surfaces a vector match from another workspace, another requester profile, or a stale item', async () => {
     const fetchImpl = stubEmbeddingFetch();
     const daemon = liveDaemon();
@@ -485,7 +570,8 @@ describe('search_memory hybrid vector recall (no shared words)', () => {
     );
     await database.query(
       `UPDATE institutional_memory_items
-       SET state='stale',embedding=$2::vector,embedding_model='voyageai/voyage-4-lite',embedded_at=now()
+       SET state='stale',body='',deleted_at=now(),
+           embedding=$2::vector,embedding_model='voyageai/voyage-4-lite',embedded_at=now()
        WHERE id=$1`,
       [staleFact.itemId, `[${conceptVector(WIFE_CONCEPT).join(',')}]`],
     );

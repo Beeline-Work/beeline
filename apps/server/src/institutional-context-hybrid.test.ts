@@ -6,6 +6,7 @@ import { claimAgentCommand, createAgentCommand } from './agent-command.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { OPENROUTER_EMBEDDINGS_URL, pgvectorLiteral } from './institutional-memory-embeddings.js';
+import { getInstitutionalContext } from './institutional-memory-shadow.js';
 
 // The per-turn snapshot (getInstitutionalContext) is hybrid the same way
 // search_memory is: its keyword/word-overlap candidates UNION the nearest
@@ -87,6 +88,7 @@ async function openCommand(requestId: string, generationId: string) {
     turnRequestId: requestId,
   });
   await claimAgentCommand(database, ROOM, RONNIE, command!.id, generationId);
+  return command!;
 }
 
 const DIM = INSTITUTIONAL_MEMORY_EMBEDDING_DIMENSIONS;
@@ -115,6 +117,46 @@ function stubEmbeddingFetch(delayMs = 0): void {
 }
 
 describe('getInstitutionalContext hybrid vector snapshot', () => {
+  it('loads nothing beyond the distance floor and caps vector-only memories at three', async () => {
+    stubEmbeddingFetch();
+    const daemon = liveDaemon();
+    await openCommand('floor-1', 'floor-gen');
+    const ids = Array.from({length: 5}, (_, i) =>
+      `30000000-0000-4000-8000-00000000ce0${i}`);
+    for (const [index, id] of ids.entries()) {
+      await database.query(
+        `INSERT INTO institutional_memory_items
+         (id,workspace_id,kind,canonical_key,body,source_room_id,source_message_id,
+          audience_kind,confidence,version,keywords,embedding)
+         VALUES($1,$2,'workspace_fact',$3,$4,$5,$6,'workspace',0.9,1,ARRAY['nomatch'],
+                $7::vector)`,
+        [id, WORKSPACE, `vector-fact-${index}`, `Vector fact ${index}.`, ROOM, MESSAGE,
+          pgvectorLiteral(conceptVector(index===4 ? 1 : 0))],
+      );
+    }
+    const context = await daemon.execute('getInstitutionalContext',
+      {roomId:ROOM,requestId:'floor-1',generationId:'floor-gen'},RONNIE);
+    expect(context.itemIds).toHaveLength(3);
+    expect(context.itemIds).not.toContain(ids[4]);
+    await database.query(`DELETE FROM institutional_memory_items WHERE id=ANY($1::uuid[])`,[ids]);
+    const empty = await daemon.execute('getInstitutionalContext',
+      {roomId:ROOM,requestId:'floor-1',generationId:'floor-gen'},RONNIE);
+    expect(empty.itemIds).toEqual([]);
+  });
+
+  it('finishes embedding before opening the snapshot transaction', async () => {
+    const command = await openCommand('transaction-1', 'transaction-gen');
+    const original = database.transaction.bind(database);
+    let inside = false;
+    vi.spyOn(database, 'transaction').mockImplementation(async (work) => {
+      inside = true;
+      try { return await original(work); } finally { inside = false; }
+    });
+    await getInstitutionalContext(database, command, async () => {
+      expect(inside).toBe(false);
+      return {outcome:'disabled',ms:0};
+    });
+  });
   it('surfaces an item the keyword path alone would miss, and reports a served embedding outcome', async () => {
     stubEmbeddingFetch();
     const daemon = liveDaemon();

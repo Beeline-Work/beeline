@@ -153,6 +153,10 @@ export const INSTITUTIONAL_MEMORY_EMBEDDING_DIMENSIONS = 1024;
 export const INSTITUTIONAL_MEMORY_EMBEDDING_ENV_VAR = 'OPENROUTER_EMBEDDING_API_KEY';
 /** Nearest-neighbor candidates pulled per hybrid search, before the result limit applies. */
 export const INSTITUTIONAL_MEMORY_VECTOR_CANDIDATES_MAX = 20;
+export const INSTITUTIONAL_MEMORY_VECTOR_MAX_DISTANCE = 0.66;
+export const INSTITUTIONAL_CONTEXT_VECTOR_ITEMS_MAX = 3;
+export const INSTITUTIONAL_MEMORY_ALIGN_CANDIDATES = 8;
+export const INSTITUTIONAL_MEMORY_ALIGN_MAX_DISTANCE = 0.75;
 /** A snapshot's embedding call gets a slice of the whole 200ms context-fetch
  *  budget; the rest stays for the DB queries the snapshot already runs. A
  *  miss here degrades to keyword-only candidates, never to an empty snapshot. */
@@ -167,7 +171,7 @@ export type InstitutionalMemoryCandidateType =
   'correction_candidate' | 'fact_candidate' | 'preference_candidate';
 export type InstitutionalMemoryKind = 'workspace_fact' | 'human_profile_fact';
 export type InstitutionalMemoryAudience = 'workspace' | 'human_profile';
-export type InstitutionalMemoryItemState = 'active' | 'stale' | 'archived';
+export type InstitutionalMemoryItemState = 'active' | 'stale';
 export type InstitutionalMemoryJobState = 'pending' | 'claimed' | 'retry' | 'completed' | 'dead';
 
 export interface InstitutionalMemoryJobLedgerEntry {
@@ -281,6 +285,27 @@ export interface InstitutionalMemoryProposal {
   readonly cas: InstitutionalMemoryProposalCas;
 }
 
+export interface InstitutionalMemoryReviewProposalV2 {
+  readonly proposalVersion: 2;
+  readonly action: 'create' | 'supersede' | 'retire';
+  readonly candidateType?: InstitutionalMemoryCandidateType;
+  readonly memoryKind?: InstitutionalMemoryKind;
+  readonly subjectIdentityId?: string;
+  readonly canonicalKey?: string;
+  readonly body?: string;
+  readonly keywords?: readonly string[];
+  readonly source: InstitutionalMemoryProposalSource;
+  readonly audience?: InstitutionalMemoryAudience;
+  readonly confidence: number;
+  readonly classification: InstitutionalMemoryProposal['classification'];
+  readonly target?: { readonly itemId: string; readonly baseVersion: number };
+  readonly retire?: readonly {
+    readonly itemId: string;
+    readonly baseVersion: number;
+    readonly reason: 'contradicted' | 'duplicate' | 'obsolete';
+  }[];
+}
+
 export interface InstitutionalMemoryJobUsage {
   readonly inputTokens?: number;
   readonly outputTokens?: number;
@@ -311,10 +336,10 @@ export interface InstitutionalMemoryShadowJob {
   readonly triggerKind: 'turn_review' | 'merge_review' | 'curator';
   readonly context?: Readonly<Record<string, unknown>>;
   readonly messages: readonly InstitutionalMemoryShadowMessage[];
-  readonly existingItems: readonly Pick<
+  readonly existingItems: readonly (Pick<
     InstitutionalMemoryItem,
     'id' | 'kind' | 'subjectIdentityId' | 'canonicalKey' | 'body' | 'version'
-  >[];
+  > & { readonly distance?: number })[];
 }
 
 export type ClaimInstitutionalMemoryJobResult =
@@ -483,7 +508,7 @@ export interface InstitutionalCuratorProposal {
 }
 
 export type InstitutionalMemoryJobProposal =
-  InstitutionalMemoryProposal | InstitutionalMergeReviewProposal | InstitutionalCuratorProposal;
+  InstitutionalMemoryProposal | InstitutionalMemoryReviewProposalV2 | InstitutionalMergeReviewProposal | InstitutionalCuratorProposal;
 
 export interface LoadWorkspaceSkillInput {
   readonly agentId: string;
@@ -753,6 +778,111 @@ export function parseInstitutionalMemoryProposal(value: unknown): InstitutionalM
       baseVersion: cas.baseVersion as number | null,
       ...(supersedesItemId ? { supersedesItemId } : {}),
     },
+  };
+}
+
+export function parseInstitutionalMemoryReviewProposal(
+  value: unknown,
+): InstitutionalMemoryProposal | InstitutionalMemoryReviewProposalV2 {
+  const raw = record(value, 'institutional memory review proposal');
+  if (raw.proposalVersion !== 2) return parseInstitutionalMemoryProposal(value);
+  exactKeys(raw, [
+    'proposalVersion', 'action', 'candidateType', 'memoryKind', 'subjectIdentityId',
+    'canonicalKey', 'body', 'keywords', 'source', 'audience', 'confidence',
+    'classification', 'target', 'retire',
+  ], 'institutional memory review proposal');
+  if (raw.action !== 'create' && raw.action !== 'supersede' && raw.action !== 'retire') {
+    throw new Error('institutional memory review action is invalid');
+  }
+  const source = record(raw.source, 'institutional memory source');
+  exactKeys(source, ['roomId', 'messageIds'], 'institutional memory source');
+  const roomId = boundedText(source.roomId, 'institutional memory source room', 200);
+  if (!Array.isArray(source.messageIds) || source.messageIds.length < 1 ||
+      source.messageIds.length > INSTITUTIONAL_MEMORY_SOURCE_MESSAGE_MAX) {
+    throw new Error('institutional memory source messages are invalid');
+  }
+  const messageIds = source.messageIds.map((id) =>
+    boundedText(id, 'institutional memory source message', 200));
+  if (new Set(messageIds).size !== messageIds.length) {
+    throw new Error('institutional memory source messages must be unique');
+  }
+  if (typeof raw.confidence !== 'number' || !Number.isFinite(raw.confidence) ||
+      raw.confidence < 0 || raw.confidence > 1) {
+    throw new Error('institutional memory confidence is invalid');
+  }
+  const classification = record(raw.classification, 'institutional memory classification');
+  exactKeys(classification, ['stillTrueForAnotherRequester', 'subjectIsRequester', 'rationale'],
+    'institutional memory classification');
+  const rationale = boundedText(classification.rationale, 'institutional memory classification rationale',
+    INSTITUTIONAL_MEMORY_RATIONALE_MAX_LENGTH);
+  if (classification.subjectIsRequester !== undefined &&
+      typeof classification.subjectIsRequester !== 'boolean') {
+    throw new Error('institutional memory subject classification is invalid');
+  }
+  if (classification.stillTrueForAnotherRequester !== undefined &&
+      typeof classification.stillTrueForAnotherRequester !== 'boolean') {
+    throw new Error('institutional memory classification test is invalid');
+  }
+  const retire = raw.retire === undefined ? [] : raw.retire;
+  if (!Array.isArray(retire) || retire.length > 3) {
+    throw new Error('institutional memory retired items are invalid');
+  }
+  const retireItems = retire.map((entry) => {
+    const item = record(entry, 'institutional memory retired item');
+    exactKeys(item, ['itemId', 'baseVersion', 'reason'], 'institutional memory retired item');
+    if (!Number.isSafeInteger(item.baseVersion) || (item.baseVersion as number) < 1 ||
+        !['contradicted', 'duplicate', 'obsolete'].includes(String(item.reason))) {
+      throw new Error('institutional memory retired item is invalid');
+    }
+    return {
+      itemId: boundedText(item.itemId, 'institutional memory retired item id', 200),
+      baseVersion: item.baseVersion as number,
+      reason: item.reason as 'contradicted' | 'duplicate' | 'obsolete',
+    };
+  });
+  if (new Set(retireItems.map((item) => item.itemId)).size !== retireItems.length) {
+    throw new Error('institutional memory retired items must be unique');
+  }
+  let target: InstitutionalMemoryReviewProposalV2['target'];
+  if (raw.action === 'supersede') {
+    const item = record(raw.target, 'institutional memory review target');
+    exactKeys(item, ['itemId', 'baseVersion'], 'institutional memory review target');
+    if (!Number.isSafeInteger(item.baseVersion) || (item.baseVersion as number) < 1) {
+      throw new Error('institutional memory review target version is invalid');
+    }
+    target = {
+      itemId: boundedText(item.itemId, 'institutional memory review target id', 200),
+      baseVersion: item.baseVersion as number,
+    };
+  } else if (raw.target !== undefined) {
+    throw new Error('institutional memory review target is not allowed');
+  }
+  if (target && retireItems.some((item) => item.itemId === target!.itemId)) {
+    throw new Error('institutional memory review target cannot also be retired');
+  }
+  if (raw.action === 'retire') {
+    if (!retireItems.length || ['body', 'canonicalKey', 'keywords', 'memoryKind', 'audience',
+      'candidateType', 'subjectIdentityId']
+      .some((key) => raw[key] !== undefined)) {
+      throw new Error('institutional memory retire action is invalid');
+    }
+    return {
+      proposalVersion: 2, action: 'retire', source: { roomId, messageIds },
+      confidence: raw.confidence, classification: { rationale }, retire: retireItems,
+    };
+  }
+  const fact = parseInstitutionalMemoryProposal({
+    proposalVersion: 1, candidateType: raw.candidateType, memoryKind: raw.memoryKind,
+    subjectIdentityId: raw.subjectIdentityId, canonicalKey: raw.canonicalKey,
+    body: raw.body, keywords: raw.keywords, source: raw.source,
+    audience: raw.audience, confidence: raw.confidence, classification: raw.classification,
+    cas: { baseVersion: null },
+  });
+  const { cas: _cas, ...validated } = fact;
+  return {
+    ...validated, proposalVersion: 2, action: raw.action,
+    ...(target ? { target } : {}),
+    ...(retireItems.length ? { retire: retireItems } : {}),
   };
 }
 

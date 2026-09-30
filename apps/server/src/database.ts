@@ -1063,7 +1063,7 @@ CREATE TABLE IF NOT EXISTS institutional_memory_items (
   subject_identity_id text REFERENCES identities(id) ON DELETE CASCADE,
   canonical_key text NOT NULL CHECK (length(canonical_key) BETWEEN 1 AND 160),
   body text NOT NULL,
-  state text NOT NULL DEFAULT 'active' CHECK (state IN ('active','stale','archived')),
+  state text NOT NULL DEFAULT 'active' CHECK (state IN ('active','stale')),
   source_room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   source_message_id text NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
   source_corner_id uuid REFERENCES rooms(id) ON DELETE CASCADE,
@@ -1106,6 +1106,7 @@ ALTER TABLE institutional_memory_items
   ADD CONSTRAINT institutional_memory_items_created_by_job_id_fkey
   FOREIGN KEY (created_by_job_id) REFERENCES institutional_memory_jobs(id) ON DELETE SET NULL;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS created_by_command_id text;
+ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS explicit_save boolean NOT NULL DEFAULT false;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS curated_at timestamptz;
 -- Only a keyword match loads an item into a turn. Rows saved before keywords
@@ -1270,6 +1271,12 @@ CREATE TABLE IF NOT EXISTS institutional_memory_fact_events (
 );
 CREATE INDEX IF NOT EXISTS institutional_memory_facts_workspace_created_idx
   ON institutional_memory_fact_events(workspace_id,created_at,id);
+ALTER TABLE institutional_memory_fact_events
+  DROP CONSTRAINT IF EXISTS institutional_memory_fact_events_job_id_key;
+ALTER TABLE institutional_memory_fact_events
+  ADD COLUMN IF NOT EXISTS retirement_reason text;
+ALTER TABLE institutional_memory_fact_events
+  ADD COLUMN IF NOT EXISTS target_item_id uuid REFERENCES institutional_memory_items(id) ON DELETE SET NULL;
 
 CREATE TABLE IF NOT EXISTS institutional_history_searches (
   id uuid PRIMARY KEY,
@@ -1296,7 +1303,7 @@ CREATE TABLE IF NOT EXISTS workspace_skills (
   workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   slug text NOT NULL CHECK (slug ~ '^[a-z0-9]+(-[a-z0-9]+)*$' AND length(slug)<=64),
   description text NOT NULL CHECK (length(description) BETWEEN 1 AND 60),
-  state text NOT NULL DEFAULT 'active' CHECK (state IN ('active','stale','archived')),
+  state text NOT NULL DEFAULT 'active' CHECK (state IN ('active','stale')),
   current_version integer NOT NULL CHECK (current_version > 0),
   revision bigint NOT NULL CHECK (revision > 0),
   source_room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -1413,14 +1420,11 @@ CREATE TABLE IF NOT EXISTS institutional_memory_workspace_rollouts (
   workspace_id uuid PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
   stage text NOT NULL DEFAULT 'live' CHECK (stage IN ('off','shadow','pilot','live','paused')),
   auto_advance boolean NOT NULL DEFAULT false,
-  stale_after_days integer NOT NULL DEFAULT 30 CHECK (stale_after_days BETWEEN 7 AND 3650),
-  archive_after_days integer NOT NULL DEFAULT 90 CHECK (archive_after_days BETWEEN 14 AND 7300),
-  retention_days integer NOT NULL DEFAULT 365 CHECK (retention_days BETWEEN 30 AND 7300),
+  expire_after_days integer NOT NULL DEFAULT 90 CHECK (expire_after_days BETWEEN 1 AND 7300),
+  explicit_expire_after_days integer NOT NULL DEFAULT 365 CHECK (explicit_expire_after_days BETWEEN 1 AND 7300),
   daily_token_budget integer NOT NULL DEFAULT 100000 CHECK (daily_token_budget BETWEEN 1000 AND 10000000),
   availability_observed_at timestamptz,
-  updated_at timestamptz NOT NULL DEFAULT now(),
-  CHECK (archive_after_days > stale_after_days),
-  CHECK (retention_days >= archive_after_days)
+  updated_at timestamptz NOT NULL DEFAULT now()
 );
 -- Institutional memory is on by default. 'off'/'paused' are the explicit off
 -- switches; nothing starts in 'shadow'/'pilot', and the release migration
@@ -1429,6 +1433,14 @@ CREATE TABLE IF NOT EXISTS institutional_memory_workspace_rollouts (
 ALTER TABLE institutional_memory_workspace_rollouts ALTER COLUMN stage SET DEFAULT 'live';
 ALTER TABLE institutional_memory_workspace_rollouts
   ADD COLUMN IF NOT EXISTS availability_observed_at timestamptz;
+ALTER TABLE institutional_memory_workspace_rollouts
+  ADD COLUMN IF NOT EXISTS expire_after_days integer NOT NULL DEFAULT 90;
+ALTER TABLE institutional_memory_workspace_rollouts
+  ADD COLUMN IF NOT EXISTS explicit_expire_after_days integer NOT NULL DEFAULT 365;
+ALTER TABLE institutional_memory_workspace_rollouts
+  DROP COLUMN IF EXISTS stale_after_days,
+  DROP COLUMN IF EXISTS archive_after_days,
+  DROP COLUMN IF EXISTS retention_days;
 
 -- Every span in which no authorized helper host could serve this Workspace.
 -- Lifecycle aging subtracts these spans, so nothing goes stale, archived or
@@ -2434,15 +2446,8 @@ export async function migrate(
        ON institutional_memory_items(updated_at ASC)
        WHERE state='active' AND deleted_at IS NULL AND embedding IS NULL`,
     ));
-  // The ANN index search_memory and the per-turn snapshot query against.
-  await retryMigrationStep('institutional memory embedding ann index', () =>
-    createIndexConcurrently(
-      database,
-      'institutional_memory_items_embedding_idx',
-      `CREATE INDEX CONCURRENTLY institutional_memory_items_embedding_idx
-       ON institutional_memory_items USING hnsw (embedding vector_cosine_ops)
-       WHERE state='active' AND deleted_at IS NULL AND embedding IS NOT NULL`,
-    ));
+  // Exact distance scans stay inside one Workspace's small active set.
+  await database.query('DROP INDEX IF EXISTS institutional_memory_items_embedding_idx');
   await retryMigrationStep('workspace skill embedding backfill index', () =>
     createIndexConcurrently(
       database,
@@ -2451,14 +2456,7 @@ export async function migrate(
        ON workspace_skills(updated_at ASC)
        WHERE state='active' AND embedding IS NULL`,
     ));
-  await retryMigrationStep('workspace skill embedding ann index', () =>
-    createIndexConcurrently(
-      database,
-      'workspace_skills_embedding_idx',
-      `CREATE INDEX CONCURRENTLY workspace_skills_embedding_idx
-       ON workspace_skills USING hnsw (embedding vector_cosine_ops)
-       WHERE state='active' AND embedding IS NOT NULL`,
-    ));
+  await database.query('DROP INDEX IF EXISTS workspace_skills_embedding_idx');
   // The Needs-you tray finds undecided grant cards without reading transcripts.
   await retryMigrationStep('grant request index', () => createIndexConcurrently(
     database, 'messages_grant_request_idx',
@@ -2506,6 +2504,36 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   // The shared Welcome Workspace is no longer reseeded at boot; a release-
   // owned step retires it (welcome-retirement.ts, run from index.ts).
   await dataStep('institutional rollout', () => backfillInstitutionalMemoryRollout(database));
+  await dataStep('institutional memory lifecycle', async () => {
+    await database.query(`WITH RECURSIVE explicit_chain AS (
+        SELECT id FROM institutional_memory_items WHERE created_by_command_id IS NOT NULL
+        UNION
+        SELECT newer.id FROM institutional_memory_items newer
+        JOIN explicit_chain older ON newer.supersedes_id=older.id
+      )
+      UPDATE institutional_memory_items SET explicit_save=true
+      WHERE id IN (SELECT id FROM explicit_chain) AND explicit_save=false`);
+    await database.query(`UPDATE institutional_memory_items
+      SET body='',deleted_at=COALESCE(deleted_at,now()),state='stale'
+      WHERE state<>'active' AND (body<>'' OR deleted_at IS NULL OR state='archived')`);
+    await database.query(`ALTER TABLE institutional_memory_items
+      DROP CONSTRAINT IF EXISTS institutional_memory_items_state_check`);
+    await database.query(`ALTER TABLE institutional_memory_items
+      ADD CONSTRAINT institutional_memory_items_state_check CHECK (state IN ('active','stale'))`);
+    await database.query(`UPDATE workspace_skill_versions version
+      SET markdown='',source_deleted_at=COALESCE(source_deleted_at,now())
+      WHERE version.skill_id IN (SELECT id FROM workspace_skills WHERE state<>'active')
+        AND (version.markdown<>'' OR version.source_deleted_at IS NULL)`);
+    await database.query(`UPDATE workspace_skills SET state='stale'
+      WHERE state='archived'`);
+    await database.query(`ALTER TABLE workspace_skills
+      DROP CONSTRAINT IF EXISTS workspace_skills_state_check`);
+    await database.query(`ALTER TABLE workspace_skills
+      ADD CONSTRAINT workspace_skills_state_check CHECK (state IN ('active','stale'))`);
+    await database.query(`UPDATE institutional_memory_jobs
+      SET status='dead',error='curator model jobs removed',updated_at=now()
+      WHERE trigger_kind='curator' AND status IN ('pending','retry')`);
+  });
   await backfillAgentHandles(database);
   await dataStep('yolo default', () => backfillYoloModeDefault(database));
   await dataStep('connector machine IDs', () => backfillConnectorMachineId(database));

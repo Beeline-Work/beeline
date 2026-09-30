@@ -3,6 +3,8 @@ import {
   WORKSPACE_SKILL_DESCRIPTION_MAX_LENGTH,
   WORKSPACE_SKILL_MARKDOWN_MAX_BYTES,
   WORKSPACE_SKILL_SLUG_MAX_LENGTH,
+  INSTITUTIONAL_MEMORY_VECTOR_MAX_DISTANCE,
+  INSTITUTIONAL_MEMORY_ALIGN_MAX_DISTANCE,
   parseInstitutionalMergeReviewProposal,
   type InstitutionalMergeReviewProposal,
   type LoadWorkspaceSkillInput,
@@ -12,7 +14,8 @@ import {
 import type { CommandRow } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
 import { institutionalWorkspaceRolloutStage, rolloutAllowsLive } from './institutional-rollout.js';
-import { scheduleEmbedWorkspaceSkillVersion } from './institutional-memory-embeddings.js';
+import { scheduleEmbedWorkspaceSkillVersion, memoryEnvLimit, createDefaultEmbedFn,
+  withDeadline, pgvectorLiteral, type EmbedFn } from './institutional-memory-embeddings.js';
 
 export const WORKSPACE_SKILL_ACTIVE_MAX = 100;
 export const WORKSPACE_SKILL_ACTIVE_BYTES_MAX = 1024 * 1024;
@@ -225,7 +228,9 @@ export async function saveSkill(
   database: SqlDatabase,
   command: CommandRow,
   input: { slug: unknown; description: unknown; markdown: unknown },
-): Promise<{ slug: string; version: number }> {
+  embed: EmbedFn = createDefaultEmbedFn(),
+): Promise<{ slug: string; version: number;
+  similarSkills: { slug: string; description: string }[] }> {
   const slug = typeof input.slug === 'string' ? input.slug.trim() : '';
   if (!WORKSPACE_SKILL_SLUG_PATTERN.test(slug) || slug.length > WORKSPACE_SKILL_SLUG_MAX_LENGTH) {
     throw new Error('skill slug is invalid');
@@ -252,7 +257,19 @@ export async function saveSkill(
     kind: 'procedure',
     sourceMessageIds: [command.root_source_message_id],
   });
-  return { slug, version };
+  const query = await withDeadline(embed, 3_000)(
+    `${slug.replace(/-/g, ' ')}: ${description}\n${markdown.slice(0, 600)}`, 'query');
+  const similarSkills = query.outcome === 'served' && query.vector
+    ? (await database.query<{ slug: string; description: string }>(
+      `SELECT slug,description FROM workspace_skills
+       WHERE workspace_id=$1 AND state='active' AND kind='procedure'
+         AND slug<>$2 AND embedding IS NOT NULL
+         AND (embedding <=> $3::vector) <= $4
+       ORDER BY embedding <=> $3::vector LIMIT 3`,
+      [room.workspace_id, slug, pgvectorLiteral(query.vector),
+       memoryEnvLimit('INSTITUTIONAL_MEMORY_ALIGN_MAX_DISTANCE', INSTITUTIONAL_MEMORY_ALIGN_MAX_DISTANCE)],
+    )).rows : [];
+  return { slug, version, similarSkills };
 }
 
 export type WorkspaceSkillVectorCandidate = WorkspaceSkillIndexCandidate & {
@@ -284,6 +301,7 @@ export async function vectorWorkspaceSkillCandidates(
               skill.source_room_id,skill.repository,skill.path,skill.updated_at,skill.kind,
               (skill.embedding <=> $4::vector) distance
        ${AUTHORIZED_SKILLS_SQL} AND skill.embedding IS NOT NULL
+         AND (skill.embedding <=> $4::vector) <= $6
        ORDER BY skill.embedding <=> $4::vector
        LIMIT $5`,
       [
@@ -292,6 +310,7 @@ export async function vectorWorkspaceSkillCandidates(
         input.agentId,
         input.queryEmbedding,
         input.limit,
+        memoryEnvLimit('INSTITUTIONAL_MEMORY_VECTOR_MAX_DISTANCE', INSTITUTIONAL_MEMORY_VECTOR_MAX_DISTANCE),
       ],
     )
   ).rows;

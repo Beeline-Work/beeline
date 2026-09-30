@@ -35,6 +35,17 @@ afterEach(() => {
 });
 
 describe('createDefaultEmbedFn', () => {
+  it('matches batch entries without indexes by array position', async () => {
+    const first = new Array(DIM).fill(0.1);
+    const second = new Array(DIM).fill(0.2);
+    const fetchImpl = vi.fn(async () => okResponse({ data: [
+      { embedding: first }, { embedding: second },
+    ] }));
+    const result = await createDefaultEmbedBatchFn({
+      env: { OPENROUTER_EMBEDDING_API_KEY: 'test-key' }, fetchImpl,
+    })(['first', 'second'], 'document');
+    expect(result).toEqual([first, second]);
+  });
   it('reports disabled and makes no network call when no key is configured', async () => {
     const fetchImpl = vi.fn();
     const embed = createDefaultEmbedFn({ env: {}, fetchImpl });
@@ -88,6 +99,16 @@ describe('createDefaultEmbedFn', () => {
 });
 
 describe('withDeadline', () => {
+  it('aborts the underlying embedding request at its deadline', async () => {
+    let aborted = false;
+    const bounded = withDeadline((_text, _type, signal) =>
+      new Promise((resolve) => signal?.addEventListener('abort', () => {
+        aborted = true;
+        resolve({ outcome: 'timed-out', ms: 1 });
+      }, { once: true })), 10);
+    expect((await bounded('text', 'query')).outcome).toBe('timed-out');
+    expect(aborted).toBe(true);
+  });
   it('passes through a fast, successful embed unchanged', async () => {
     const fast = async () => ({ outcome: 'served' as const, vector: VECTOR, ms: 1 });
     const bounded = withDeadline(fast, 1_000);
@@ -198,6 +219,23 @@ async function insertSkill(database: PgliteDatabase, skillId: string, jobId: str
 }
 
 describe('embed-on-save (event-driven, no scan)', () => {
+  it('does not let an older in-flight vector overwrite a newer item version', async () => {
+    const database = new PgliteDatabase();
+    await seed(database);
+    const itemId = 'ffffffff-ffff-4fff-8fff-fffffffffff0';
+    await insertItem(database, itemId);
+    let release!: (vectors: number[][]) => void;
+    const pending = embedOneInstitutionalMemoryItem(database, itemId,
+      () => new Promise((resolve) => { release = resolve; }));
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+    await database.query(`UPDATE institutional_memory_items
+      SET version=2,body='Newer fact.',updated_at=now() WHERE id=$1`, [itemId]);
+    release([VECTOR]);
+    await pending;
+    expect((await database.query<{ embedding: string | null }>(
+      `SELECT embedding::text embedding FROM institutional_memory_items WHERE id=$1`, [itemId]))
+      .rows[0]?.embedding).toBeNull();
+  });
   it('embeds a freshly saved institutional_memory_items row', async () => {
     const database = new PgliteDatabase();
     await seed(database);
@@ -353,6 +391,38 @@ describe('per-row retry with in-process backoff (no database scan)', () => {
 });
 
 describe('backfillInstitutionalMemoryEmbeddingsOnce (one pass, never repeats itself)', () => {
+  it('runs only one embedding pass when two startups backfill concurrently', async () => {
+    const database = new PgliteDatabase();
+    await seed(database);
+    const itemId='ffffffff-ffff-4fff-8fff-fffffffffeff';
+    await insertItem(database,itemId);
+    let release!: () => void;
+    const embedBatch=vi.fn(async () => {
+      await new Promise<void>((resolve) => { release=resolve; });
+      return [VECTOR];
+    });
+    const first=backfillInstitutionalMemoryEmbeddingsOnce(database,embedBatch,1);
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+    const second=backfillInstitutionalMemoryEmbeddingsOnce(database,embedBatch,1);
+    release();
+    const results=await Promise.all([first,second]);
+    expect(results.reduce((sum,result) => sum+result.itemsEmbedded,0)).toBe(1);
+    expect(embedBatch).toHaveBeenCalledTimes(1);
+  });
+  it('continues past a failed row to embed later rows', async () => {
+    const database = new PgliteDatabase();
+    await seed(database);
+    for (const suffix of ['a1','a2','a3']) {
+      await insertItem(database, `ffffffff-ffff-4fff-8fff-ffffffffff${suffix}`);
+    }
+    let calls = 0;
+    const counts = await backfillInstitutionalMemoryEmbeddingsOnce(database, async () => {
+      calls++;
+      return calls === 1 ? [undefined] : [VECTOR];
+    }, 1);
+    expect(counts.itemsEmbedded).toBe(2);
+    expect(calls).toBe(3);
+  });
   it('embeds every row missing a current embedding, across more than one batch, then stops', async () => {
     const database = new PgliteDatabase();
     await seed(database);
@@ -423,7 +493,7 @@ describe('no timer-driven or periodic database sweep', () => {
     );
     expect(source).not.toMatch(/InstitutionalMemoryEmbeddingLoop/);
     expect(source).not.toMatch(/institutional-memory-embedding['"]/);
-    // Exactly two calls: once after the release migration, once at server start.
-    expect(source.match(/backfillInstitutionalMemoryEmbeddingsOnce\(/g)).toHaveLength(2);
+    // Only the ordinary server start runs a network backfill.
+    expect(source.match(/backfillInstitutionalMemoryEmbeddingsOnce\(/g)).toHaveLength(1);
   });
 });

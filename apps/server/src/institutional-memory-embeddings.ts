@@ -40,6 +40,11 @@ export const EMBEDDING_BACKFILL_BATCH = 20;
 /** Bounded in-process retry for one row's embed, never a database scan. */
 export const EMBED_RETRY_BACKOFF_MS = [5_000, 15_000, 60_000];
 
+export function memoryEnvLimit(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
 export type EmbeddingInputType = 'query' | 'document';
 export type EmbeddingOutcome = 'served' | 'timed-out' | 'disabled' | 'error';
 
@@ -50,7 +55,7 @@ export interface EmbedResult {
 }
 
 /** One text in, one vector (or a reason it did not come back) out. */
-export type EmbedFn = (text: string, inputType: EmbeddingInputType) => Promise<EmbedResult>;
+export type EmbedFn = (text: string, inputType: EmbeddingInputType, signal?: AbortSignal) => Promise<EmbedResult>;
 /** Several texts in, one vector (or undefined) per input, in order. Batching
  *  one HTTP call over N rows is why the startup backfill stays cheap. */
 export type EmbedBatchFn = (
@@ -65,6 +70,7 @@ async function callOpenRouterEmbeddings(
     env?: NodeJS.ProcessEnv;
     fetchImpl?: typeof fetch;
     timeoutMs?: number;
+    signal?: AbortSignal;
   } = {},
 ): Promise<(readonly number[] | undefined)[] | undefined> {
   const env = options.env ?? process.env;
@@ -84,14 +90,14 @@ async function callOpenRouterEmbeddings(
         dimensions: INSTITUTIONAL_MEMORY_EMBEDDING_DIMENSIONS,
         input_type: inputType,
       }),
-      signal: AbortSignal.timeout(options.timeoutMs ?? EMBEDDING_FETCH_TIMEOUT_MS),
+      signal: options.signal ?? AbortSignal.timeout(options.timeoutMs ?? EMBEDDING_FETCH_TIMEOUT_MS),
     });
     if (!response.ok) return undefined;
     const body = (await response.json()) as {
       data?: readonly { embedding?: readonly number[]; index?: number }[];
     };
     if (!Array.isArray(body.data)) return undefined;
-    const byIndex = new Map(body.data.map((entry) => [entry.index ?? 0, entry.embedding]));
+    const byIndex = new Map(body.data.map((entry, position) => [entry.index ?? position, entry.embedding]));
     return texts.map((_, index) => {
       const vector = byIndex.get(index);
       return Array.isArray(vector) && vector.length === INSTITUTIONAL_MEMORY_EMBEDDING_DIMENSIONS
@@ -107,13 +113,13 @@ async function callOpenRouterEmbeddings(
 export function createDefaultEmbedFn(
   options: { env?: NodeJS.ProcessEnv; fetchImpl?: typeof fetch; timeoutMs?: number } = {},
 ): EmbedFn {
-  return async (text, inputType) => {
+  return async (text, inputType, signal) => {
     const env = options.env ?? process.env;
     if (!env[INSTITUTIONAL_MEMORY_EMBEDDING_ENV_VAR]?.trim()) {
       return { outcome: 'disabled', ms: 0 };
     }
     const startedAt = performance.now();
-    const result = await callOpenRouterEmbeddings([text], inputType, options);
+    const result = await callOpenRouterEmbeddings([text], inputType, { ...options, signal });
     const ms = performance.now() - startedAt;
     const vector = result?.[0];
     if (!vector) {
@@ -135,22 +141,24 @@ export function createDefaultEmbedBatchFn(
  *  caller's own budget: past that, it reports `timed-out` and the caller
  *  falls back to keyword-only candidates for this turn. */
 export function withDeadline(embed: EmbedFn, timeoutMs: number): EmbedFn {
-  return async (text, inputType) => {
+  return async (text, inputType, parentSignal) => {
     const startedAt = performance.now();
-    let timer: NodeJS.Timeout | undefined;
+    const controller = new AbortController();
+    const onAbort = () => controller.abort(parentSignal?.reason);
+    parentSignal?.addEventListener('abort', onAbort, { once: true });
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    timer.unref?.();
     try {
       return await Promise.race([
-        embed(text, inputType),
+        embed(text, inputType, controller.signal),
         new Promise<EmbedResult>((resolve) => {
-          timer = setTimeout(
-            () => resolve({ outcome: 'timed-out', ms: performance.now() - startedAt }),
-            timeoutMs,
-          );
-          timer.unref?.();
+          controller.signal.addEventListener('abort', () =>
+            resolve({ outcome: 'timed-out', ms: performance.now() - startedAt }), { once: true });
         }),
       ]);
     } finally {
-      if (timer) clearTimeout(timer);
+      clearTimeout(timer);
+      parentSignal?.removeEventListener('abort', onAbort);
     }
   };
 }
@@ -166,8 +174,8 @@ export async function embedOneInstitutionalMemoryItem(
   embedBatch: EmbedBatchFn,
 ): Promise<boolean> {
   const row = (
-    await database.query<{ canonical_key: string; body: string }>(
-      `SELECT canonical_key,body FROM institutional_memory_items
+    await database.query<{ canonical_key: string; body: string; version: number }>(
+      `SELECT canonical_key,body,version FROM institutional_memory_items
        WHERE id=$1 AND state='active' AND deleted_at IS NULL`,
       [itemId],
     )
@@ -179,8 +187,8 @@ export async function embedOneInstitutionalMemoryItem(
   await database.query(
     `UPDATE institutional_memory_items
      SET embedding=$2::vector,embedding_model=$3,embedded_at=now()
-     WHERE id=$1`,
-    [itemId, pgvectorLiteral(vector), INSTITUTIONAL_MEMORY_EMBEDDING_MODEL],
+     WHERE id=$1 AND version=$4 AND state='active' AND deleted_at IS NULL`,
+    [itemId, pgvectorLiteral(vector), INSTITUTIONAL_MEMORY_EMBEDDING_MODEL, row.version],
   );
   return true;
 }
@@ -215,7 +223,7 @@ export async function embedOneWorkspaceSkillVersion(
   await database.query(
     `UPDATE workspace_skills
      SET embedding=$2::vector,embedding_model=$3,embedding_version=$4,embedded_at=now()
-     WHERE id=$1`,
+     WHERE id=$1 AND current_version=$4 AND state='active'`,
     [skillId, pgvectorLiteral(vector), INSTITUTIONAL_MEMORY_EMBEDDING_MODEL, row.current_version],
   );
   return true;
@@ -310,41 +318,61 @@ export async function backfillInstitutionalMemoryEmbeddingsOnce(
   embedBatch: EmbedBatchFn = createDefaultEmbedBatchFn(),
   batchSize = EMBEDDING_BACKFILL_BATCH,
 ): Promise<EmbeddingBackfillCounts> {
-  let itemsEmbedded = 0;
-  for (;;) {
-    const embedded = await backfillInstitutionalMemoryItemsBatch(database, embedBatch, batchSize);
-    itemsEmbedded += embedded;
-    if (embedded < batchSize) break;
-  }
-  let skillsEmbedded = 0;
-  for (;;) {
-    const embedded = await backfillWorkspaceSkillsBatch(database, embedBatch, batchSize);
-    skillsEmbedded += embedded;
-    if (embedded < batchSize) break;
-  }
-  return { itemsEmbedded, skillsEmbedded };
+  return database.transaction(async (locked) => {
+    const acquired = (await locked.query<{ acquired: boolean }>(
+      `SELECT pg_try_advisory_xact_lock(hashtext('institutional-memory-embedding-backfill')) acquired`,
+    )).rows[0]?.acquired;
+    if (!acquired) return { itemsEmbedded: 0, skillsEmbedded: 0 };
+    const attemptedItems: string[] = [];
+    const attemptedSkills: string[] = [];
+    let itemsEmbedded = 0;
+    let skillsEmbedded = 0;
+    let failedBatches = 0;
+    for (;;) {
+      const batch = await backfillInstitutionalMemoryItemsBatch(
+        locked, embedBatch, batchSize, attemptedItems);
+      attemptedItems.push(...batch.ids);
+      itemsEmbedded += batch.embedded;
+      if (!batch.ids.length) break;
+      failedBatches = batch.embedded === 0 ? failedBatches + 1 : 0;
+      if (failedBatches >= 3) break;
+    }
+    failedBatches = 0;
+    for (;;) {
+      const batch = await backfillWorkspaceSkillsBatch(
+        locked, embedBatch, batchSize, attemptedSkills);
+      attemptedSkills.push(...batch.ids);
+      skillsEmbedded += batch.embedded;
+      if (!batch.ids.length) break;
+      failedBatches = batch.embedded === 0 ? failedBatches + 1 : 0;
+      if (failedBatches >= 3) break;
+    }
+    return { itemsEmbedded, skillsEmbedded };
+  });
 }
 
 async function backfillInstitutionalMemoryItemsBatch(
   database: SqlDatabase,
   embedBatch: EmbedBatchFn,
   batchSize: number,
-): Promise<number> {
+  attempted: readonly string[],
+): Promise<{ ids: string[]; embedded: number }> {
   const rows = (
-    await database.query<{ id: string; canonical_key: string; body: string }>(
-      `SELECT id,canonical_key,body FROM institutional_memory_items
+    await database.query<{ id: string; canonical_key: string; body: string; version: number }>(
+      `SELECT id,canonical_key,body,version FROM institutional_memory_items
        WHERE state='active' AND deleted_at IS NULL
          AND (embedding IS NULL OR embedding_model IS DISTINCT FROM $1)
+         AND NOT (id=ANY($3::uuid[]))
        ORDER BY updated_at ASC LIMIT $2`,
-      [INSTITUTIONAL_MEMORY_EMBEDDING_MODEL, batchSize],
+      [INSTITUTIONAL_MEMORY_EMBEDDING_MODEL, batchSize, attempted],
     )
   ).rows;
-  if (!rows.length) return 0;
+  if (!rows.length) return { ids: [], embedded: 0 };
   const vectors = await embedBatch(
     rows.map((row) => `${row.canonical_key}: ${row.body}`),
     'document',
   );
-  if (!vectors) return 0;
+  if (!vectors) return { ids: rows.map((row) => row.id), embedded: 0 };
   let embedded = 0;
   for (const [index, row] of rows.entries()) {
     const vector = vectors[index];
@@ -352,19 +380,20 @@ async function backfillInstitutionalMemoryItemsBatch(
     await database.query(
       `UPDATE institutional_memory_items
        SET embedding=$2::vector,embedding_model=$3,embedded_at=now()
-       WHERE id=$1`,
-      [row.id, pgvectorLiteral(vector), INSTITUTIONAL_MEMORY_EMBEDDING_MODEL],
+       WHERE id=$1 AND version=$4 AND state='active' AND deleted_at IS NULL`,
+      [row.id, pgvectorLiteral(vector), INSTITUTIONAL_MEMORY_EMBEDDING_MODEL, row.version],
     );
     embedded += 1;
   }
-  return embedded;
+  return { ids: rows.map((row) => row.id), embedded };
 }
 
 async function backfillWorkspaceSkillsBatch(
   database: SqlDatabase,
   embedBatch: EmbedBatchFn,
   batchSize: number,
-): Promise<number> {
+  attempted: readonly string[],
+): Promise<{ ids: string[]; embedded: number }> {
   const rows = (
     await database.query<{
       id: string;
@@ -381,11 +410,12 @@ async function backfillWorkspaceSkillsBatch(
        WHERE skill.state='active'
          AND (skill.embedding IS NULL OR skill.embedding_model IS DISTINCT FROM $1
               OR skill.embedding_version IS DISTINCT FROM skill.current_version)
+         AND NOT (skill.id=ANY($3::uuid[]))
        ORDER BY skill.updated_at ASC LIMIT $2`,
-      [INSTITUTIONAL_MEMORY_EMBEDDING_MODEL, batchSize],
+      [INSTITUTIONAL_MEMORY_EMBEDDING_MODEL, batchSize, attempted],
     )
   ).rows;
-  if (!rows.length) return 0;
+  if (!rows.length) return { ids: [], embedded: 0 };
   const vectors = await embedBatch(
     rows.map(
       (row) =>
@@ -393,7 +423,7 @@ async function backfillWorkspaceSkillsBatch(
     ),
     'document',
   );
-  if (!vectors) return 0;
+  if (!vectors) return { ids: rows.map((row) => row.id), embedded: 0 };
   let embedded = 0;
   for (const [index, row] of rows.entries()) {
     const vector = vectors[index];
@@ -401,10 +431,10 @@ async function backfillWorkspaceSkillsBatch(
     await database.query(
       `UPDATE workspace_skills
        SET embedding=$2::vector,embedding_model=$3,embedding_version=$4,embedded_at=now()
-       WHERE id=$1`,
+       WHERE id=$1 AND current_version=$4 AND state='active'`,
       [row.id, pgvectorLiteral(vector), INSTITUTIONAL_MEMORY_EMBEDDING_MODEL, row.current_version],
     );
     embedded += 1;
   }
-  return embedded;
+  return { ids: rows.map((row) => row.id), embedded };
 }

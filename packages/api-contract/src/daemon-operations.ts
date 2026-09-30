@@ -118,7 +118,7 @@ export type CommandClaimInput = RoomInput & {
 export type TurnOutputAuthority = { readonly generationId?: string; readonly requestId?: string };
 export type DaemonOperationMap = {
   /** Claims host-side extraction work. The server never calls a model. */
-  claimInstitutionalMemoryJob: Operation<AgentInput, ClaimInstitutionalMemoryJobResult>;
+  claimInstitutionalMemoryJob: Operation<AgentInput & { readonly extractorVersion?: string }, ClaimInstitutionalMemoryJobResult>;
   heartbeatInstitutionalMemoryJob: Operation<
     AgentInput & { readonly jobId: string; readonly leaseToken: string },
     WriteResult
@@ -155,7 +155,8 @@ export type DaemonOperationMap = {
         readonly description: string;
         readonly markdown: string;
       },
-    { readonly slug: string; readonly version: number }
+    { readonly slug: string; readonly version: number;
+      readonly similarSkills: readonly { readonly slug: string; readonly description: string }[] }
   >;
   /** Validate and save a workflow contract as a `workspace_skills` row of `kind='workflow'`. */
   saveWorkflow: Operation<

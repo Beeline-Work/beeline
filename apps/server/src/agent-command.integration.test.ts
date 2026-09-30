@@ -14,6 +14,7 @@ import {
   routeSystemCommand,
 } from './agent-command.js';
 import { systemLine } from './system-line.js';
+import { advanceCorner } from './corner-workflow.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 const H = 'a'.repeat(64),
   A = 'b'.repeat(64),
@@ -103,6 +104,9 @@ beforeEach(async () => {
   );
   await db.query(`DELETE FROM live_outputs WHERE kind<>'presence'`);
   await db.query(`DELETE FROM agent_commands`);
+  // The corner's workflow run and its wakes commit together; resetting one
+  // resets the other.
+  await db.query(`DELETE FROM messages WHERE card_type='corner-workflow-handoff'`);
   await db.query(`DELETE FROM agent_turns`);
   await db.query(`DELETE FROM corner_merge_approvals`);
   await db.query(`DELETE FROM corner_brief_revisions`);
@@ -565,7 +569,12 @@ it('wakes the opener for failed checks even after a reviewer turn and retries a 
     expect.objectContaining({ reason: 'corner_check', sourceMessageId: note.id }),
   ]);
   expect(await commands(A, C)).toHaveLength(0);
+  // The wake and the workflow transition commit together, so a command can
+  // only be lost in a corner with no run record: one opened before the
+  // workflow run existed. Its run is rebuilt from the lifecycle and the
+  // missing wake re-sent.
   await db.query(`DELETE FROM agent_commands WHERE room_id=$1`, [C]);
+  await db.query(`DELETE FROM messages WHERE room_id=$1 AND card_type='corner-workflow-handoff'`, [C]);
   await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(1);
   expect(await commands(B, C)).toHaveLength(1);
   await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(0);
@@ -1038,7 +1047,9 @@ it('runs revised-brief refusal, repair, rereview, exact-head approval, and imple
 });
 it('routes a corner merge to its responsible parent Room agent without a subscription', async () => {
   await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb WHERE room_id=$1`, [R]);
-  await systemLine(db, {
+  // The merge webhook writes the parent card, then reports the landing to the
+  // corner workflow, whose landed transition wakes the opener.
+  const landed = await systemLine(db, {
     id: id(),
     roomId: R,
     authorId: H,
@@ -1050,6 +1061,7 @@ it('routes a corner merge to its responsible parent Room agent without a subscri
     cardType: 'daemon-fact',
     card: { type: 'corner-complete', cornerId: C, objective: 'Do work', outcome: 'landed' },
   });
+  await advanceCorner(db, C, { kind: 'merged', contents: {}, parentCardId: landed.id });
   expect(await commands(A, R)).toEqual([]);
   expect(await commands(B, R)).toEqual([
     expect.objectContaining({
@@ -1063,11 +1075,12 @@ it('routes a corner merge to its responsible parent Room agent without a subscri
   ]);
 
   await db.query(`DELETE FROM agent_commands`);
+  await db.query(`DELETE FROM messages WHERE card_type='corner-workflow-handoff'`);
   await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [
     R,
     B,
   ]);
-  await systemLine(db, {
+  const again = await systemLine(db, {
     id: id(),
     roomId: R,
     authorId: H,
@@ -1079,6 +1092,7 @@ it('routes a corner merge to its responsible parent Room agent without a subscri
     cardType: 'daemon-fact',
     card: { type: 'corner-complete', cornerId: C, objective: 'Do work', outcome: 'landed' },
   });
+  await advanceCorner(db, C, { kind: 'merged', contents: {}, parentCardId: again.id });
   expect(
     (
       await db.query(

@@ -29,3 +29,23 @@ export async function recordCornerMergeApproval(
   );
   return Boolean(approval.rowCount);
 }
+
+/**
+ * Why the server refused to record a reviewer's PASS. The code leads the
+ * message, so the agent that called `approve_merge` reads which rule failed.
+ */
+export type CornerVerdictRejection =
+  | 'NOT_CONFIGURED_REVIEWER'
+  | 'NO_PULL_REQUEST'
+  | 'STALE_HEAD'
+  | 'STALE_BRIEF_REVISION';
+
+export class CornerVerdictRejectedError extends Error {
+  constructor(
+    readonly code: CornerVerdictRejection,
+    detail: string,
+  ) {
+    super(`${code}: ${detail}`);
+    this.name = 'CornerVerdictRejectedError';
+  }
+}

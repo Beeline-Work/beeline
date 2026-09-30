@@ -6,11 +6,8 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { PushDeliveryLoop } from './background.js';
 import { systemLine } from './system-line.js';
-import {
-  createAgentCommand,
-  noteBlockedCornerChecks,
-  REVIEW_HANDBACK_LIMIT,
-} from './agent-command.js';
+import { createAgentCommand, noteBlockedCornerChecks } from './agent-command.js';
+import { advanceCorner, REVIEW_HANDBACK_LIMIT } from './corner-workflow.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import type { QueryResultRow } from 'pg';
@@ -317,6 +314,8 @@ describe('corner message attribution', () => {
       `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`,
       [C],
     );
+    // What the check webhook reports when a re-run starts on the same head.
+    await advanceCorner(db, C, { kind: 'checks-pending' });
     await result(review!, 'Checks are still running on this head; I will look when they land.');
     expect(await commands(A, C)).toEqual([]);
     // The next green transition dispatches the reviewer again, unspent.

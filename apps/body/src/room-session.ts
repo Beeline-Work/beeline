@@ -26,6 +26,9 @@ export function beelineAgentMcpServer(
     agentMayUpgradeCorner?: boolean;
     /** This corner session belongs to the parent Room's configured reviewer. */
     reviewer?: boolean;
+    /** The corner's lane. A code-lane corner mounts approve_merge on every
+     *  turn; the server decides whether the caller is the configured reviewer. */
+    lane?: 'code' | 'no_code' | 'research';
     attachRoot?: string;
     /** The session's whole writable home overlay (or, absent one, its
      *  TMPDIR): a second legal post_artifact root covering anywhere the
@@ -66,6 +69,9 @@ export function beelineAgentMcpServer(
         ? [{ name: 'BEELINE_CORNER_CAN_UPGRADE', value: '1' }]
         : []),
       ...(context.reviewer ? [{ name: 'BEELINE_CORNER_REVIEWER', value: '1' }] : []),
+      ...(context.cornerId && context.lane
+        ? [{ name: 'BEELINE_CORNER_LANE', value: context.lane }]
+        : []),
       ...(context.attachRoot ? [{ name: 'BEELINE_ATTACH_ROOT', value: context.attachRoot }] : []),
       ...(context.attachScratchRoot
         ? [{ name: 'BEELINE_ATTACH_SCRATCH_ROOT', value: context.attachScratchRoot }]

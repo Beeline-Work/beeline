@@ -112,8 +112,8 @@ describe('corner merge instructions', () => {
   });
 
   it('selects the no-reviewer and reviewer matrix', () => {
-    // pr_checks_status only sets mergeAllowed with a reviewer AND yolo on, so
-    // only that variant may tell the author to merge.
+    // The server merges once its gate opens; no variant tells the author to
+    // merge, and only a reviewer with yolo on names the server as the merger.
     for (const yolo of [false, true]) {
       expect(cornerMergeInstruction(yolo)).toContain('no configured reviewer');
       expect(cornerMergeInstruction(yolo)).toContain('never merge');
@@ -124,9 +124,12 @@ describe('corner merge instructions', () => {
     expect(off).toContain('never merge');
     expect(off).not.toContain('gh pr merge');
     const on = cornerMergeInstruction(true, 'echo');
-    expect(on).toContain('the end of that review wakes you, whether or not it tags you');
-    expect(on).toContain('checks="passed" and mergeAllowed=true');
-    expect(on).toContain('gh pr merge --squash --match-head-commit <sha>');
+    expect(on).toContain('after its PASS the server merges the pull request itself');
+    expect(on).toContain('Never merge it yourself');
+    expect(on).toContain(
+      'You are woken only to fix failing checks, requested changes, or a merge GitHub refused',
+    );
+    expect(on).not.toContain('gh pr merge');
     for (const instruction of [off, on]) {
       expect(instruction).not.toContain('please review');
       expect(instruction).not.toContain('@echo');
@@ -149,7 +152,12 @@ describe('corner merge instructions', () => {
     expect(instruction).toContain(`call the approve_merge tool for ${'a'.repeat(40)}`);
     expect(instruction).toContain('assigned brief revision 2');
     expect(instruction).toContain('briefRevision=2');
-    expect(instruction).toContain(`@bee approved ${'a'.repeat(40)}, merge`);
+    expect(instruction).toContain(
+      `reply \`approved ${'a'.repeat(40)}\` without tagging bee: the server merges it`,
+    );
+    expect(instruction).not.toContain(`approved ${'a'.repeat(40)}, merge`);
+    expect(instruction).toContain('Never merge yourself or tell the author to merge');
+    expect(instruction).not.toContain('gh pr merge');
     expect(instruction).toContain('Never merge yourself');
     expect(instruction).toContain('Never say you are holding or waiting for checks');
     expect(instruction).not.toContain('pending checks');
@@ -164,7 +172,11 @@ describe('corner merge instructions', () => {
     expect(instruction).toContain("You are this Room's reviewer");
     expect(instruction).toContain('do not request one');
     expect(instruction).toContain('tag any agent for review');
-    expect(instruction).toContain('checks="passed" and mergeAllowed=true');
+    expect(instruction).toContain(
+      'The server merges it once checks are green, yolo is on, and no human hold stands',
+    );
+    expect(instruction).toContain('never merge it yourself');
+    expect(instruction).not.toContain('gh pr merge');
     // A non-reviewer opener (someone else is the configured reviewer): nothing.
     expect(cornerSelfReviewerInstruction({ ...selfReviewer, agentHandle: 'bee' })).toBeUndefined();
     // The reviewer on someone else's corner: `cornerReviewerInstruction` covers
@@ -412,6 +424,7 @@ describe('corner merge instructions', () => {
         { name: 'BEELINE_DAEMON_CORNER_ID', value: 'corner-id' },
         { name: 'BEELINE_CORNER_AGENT_CLOSE', value: '1' },
         { name: 'BEELINE_CORNER_REVIEWER', value: '1' },
+        { name: 'BEELINE_CORNER_LANE', value: 'code' },
       ]),
     );
     const agentEnvironment = new Map(agentServer?.env.map(({ name, value }) => [name, value]));
@@ -420,7 +433,7 @@ describe('corner merge instructions', () => {
         agentEnvironment.get('BEELINE_MCP_SURFACE') === 'agent',
         agentEnvironment.get('BEELINE_AGENT_DM') === '1',
         Boolean(agentEnvironment.get('BEELINE_DAEMON_CORNER_ID')),
-        agentEnvironment.get('BEELINE_CORNER_REVIEWER') === '1',
+        agentEnvironment.get('BEELINE_CORNER_LANE') === 'code',
         Boolean(agentEnvironment.get('BEELINE_GRANT_RUNNER_URL')),
         agentEnvironment.get('BEELINE_CORNER_AGENT_CLOSE') === '1',
       ).map((tool) => tool.name),
@@ -2709,6 +2722,28 @@ describe('thin monolith corner turn', () => {
       }),
     );
     const repositorySystemPrompt = String(sessionNew.mock.calls[0]?.[0].systemPrompt);
+    expect(repositorySystemPrompt).not.toContain('gh pr merge');
+    // A code-lane session that did not boot as the reviewer still mounts
+    // approve_merge, even with institutional memory off: the server decides
+    // whether this caller is the configured reviewer.
+    const codeAgentEnvironment = new Map(
+      sessionNew.mock.calls[0]?.[0].mcpServers
+        .find((server) => server.name === 'beeline-agent')
+        ?.env.map(({ name, value }) => [name, value]),
+    );
+    expect(codeAgentEnvironment.get('BEELINE_CORNER_LANE')).toBe('code');
+    expect(codeAgentEnvironment.has('BEELINE_CORNER_REVIEWER')).toBe(false);
+    expect(
+      agentToolsFor(
+        codeAgentEnvironment.get('BEELINE_MCP_SURFACE') === 'agent',
+        codeAgentEnvironment.get('BEELINE_AGENT_DM') === '1',
+        Boolean(codeAgentEnvironment.get('BEELINE_DAEMON_CORNER_ID')),
+        codeAgentEnvironment.get('BEELINE_CORNER_LANE') === 'code',
+        Boolean(codeAgentEnvironment.get('BEELINE_GRANT_RUNNER_URL')),
+        codeAgentEnvironment.get('BEELINE_CORNER_AGENT_CLOSE') === '1',
+        false,
+      ).map((tool) => tool.name),
+    ).toContain('approve_merge');
     expect(repositorySystemPrompt).toContain(CORNER_AUTHOR_CONTRACT);
     expect(repositorySystemPrompt).toContain("beeline-triage skill's bugfix execution contract");
     expect(repositorySystemPrompt).toContain('record it under Reproduction <id>');
@@ -2748,7 +2783,7 @@ describe('thin monolith corner turn', () => {
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
         systemPrompt: expect.stringContaining(
-          'On it, say nothing unless you merge, push a fix, or report checks="unknown", and then use one short line.',
+          'On it, say nothing unless you push a fix or report checks="unknown", and then use one short line.',
         ),
       }),
     );

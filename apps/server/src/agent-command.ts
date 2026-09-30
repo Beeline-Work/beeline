@@ -7,8 +7,8 @@ import type {
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
 import { isResumeKind } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
-import { pickHealthyClassMember } from './agent-classes.js';
-import { noteCornerWorkflowReviewOutcome, noteCornerWorkflowTransition } from './corner-workflow.js';
+import { isConfiguredReviewer } from './agent-classes.js';
+import { advanceCorner } from './corner-workflow.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
 import { ensureSystemIdentity, GITHUB_SUBJECT, systemLine } from './system-line.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
@@ -99,7 +99,7 @@ export function nextAgentDepth(parentDepth: number): number | undefined {
  * review commands (`DaemonService.access`), but nothing else maintains that
  * projection: a reviewer configured after a corner was opened (or one whose
  * corner membership was never written) leaves every green check in that
- * corner without a reachable reviewer. Left alone, `routeSystemCommand`
+ * corner without a reachable reviewer. Left alone, the green dispatch once
  * rerouted the REVIEW to the corner owner, whose daemon then ran the review
  * and posted its text under the OWNER's name — the producing agent's
  * authorship was lost. This repairs the reviewer's corner membership in the
@@ -150,79 +150,6 @@ export async function repairReviewerCornerMembership(
     [cornerId, reviewerAgentId],
   );
   return member.rowCount > 0;
-}
-
-const REVIEWER_NOT_PARENT_MEMBER = 'not a current member of the parent Room';
-const REVIEWER_NOT_CORNER_MEMBER = 'not a current member of this corner';
-
-/**
- * A configured reviewer that cannot be dispatched must be named in the corner,
- * not collapsed into the no-reviewer author path. Deterministic id so a later
- * retry of the same gap does not spam; leave command_check_state alone so the
- * next transition can still wake them once membership is restored.
- */
-async function noteUnreachableReviewer(
-  db: SqlDatabase,
-  input: {
-    cornerId: string;
-    sourceMessageId: string;
-    reviewerId: string;
-    reviewerKind: string | null;
-    reviewerName: string | null;
-    reason: string;
-  },
-): Promise<void> {
-  const id = createHash('sha256')
-    .update(`beeline:${input.cornerId}:reviewer-unreachable:${input.reviewerId}:${input.reason}`)
-    .digest('hex');
-  await systemLine(db, {
-    id,
-    roomId: input.cornerId,
-    subject: {
-      kind: input.reviewerKind === 'human' ? 'person' : 'agent',
-      id: input.reviewerId,
-      name: input.reviewerName ?? 'the configured reviewer',
-    },
-    verb: 'could not be reached',
-    consequence: input.reason,
-    afterMessageId: input.sourceMessageId,
-  });
-}
-
-/**
- * A class-configured reviewer with no currently healthy member is named in
- * the corner rather than silently falling back to the owner — the same
- * "ask a human" shape as a workflow role's class exhaustion
- * (`workflow-runs.ts`). `command_check_state` is left alone so the next green
- * transition (or a member coming back healthy) retries automatically; a human
- * can also always fall back to setting a fixed `reviewerAgentId`.
- *
- * The id is keyed per EXHAUSTION EPISODE — the head SHA plus the triggering
- * check/command message — not just corner+class: `systemLine`'s
- * `ON CONFLICT(id) DO NOTHING` otherwise dedupes forever after the first
- * exhaustion, so a later independent exhaustion (a new head, or a later green
- * on the same head) would be silently swallowed. A retry of the exact same
- * triggering message still collapses to one line.
- */
-async function noteReviewerClassExhausted(
-  db: SqlDatabase,
-  input: { cornerId: string; sourceMessageId: string; reviewerClass: string; headSha: string | null },
-): Promise<void> {
-  const id = createHash('sha256')
-    .update(
-      `beeline:${input.cornerId}:reviewer-class-exhausted:${input.reviewerClass}:${input.headSha ?? 'no-head'}:${input.sourceMessageId}`,
-    )
-    .digest('hex');
-  await ensureSystemIdentity(db);
-  await systemLine(db, {
-    id,
-    roomId: input.cornerId,
-    authorId: SYSTEM_IDENTITY_ID,
-    subject: { kind: 'system', name: `the "${input.reviewerClass}" reviewer class` },
-    verb: 'has no healthy member to review this',
-    consequence: 'a human can set a specific reviewer, or wait for a member to come back healthy',
-    afterMessageId: input.sourceMessageId,
-  });
 }
 
 export async function createAgentCommand(
@@ -654,66 +581,13 @@ export async function routeAgentResult(
 }
 
 /**
- * Hand a corner back to its worker the moment the review ends.
- *
- * A verdict ends the reviewer's job and starts the worker's — merge on a PASS,
- * fix on a FAIL — and the only thing that used to carry that handoff was the
- * `@implementer` the reviewer chose to type. A review that stated its findings
- * and named nobody left the corner stopped: an approval sat recorded with no
- * one woken to act on it, and the person who asked for the work learned about
- * it by noticing the silence. So the review's own final reply queues the
- * worker, on either verdict. Both of `DaemonService`'s reply paths call this:
- * a verdict with no tag in its text does not even reach `routeAgentResult`,
- * because a reply naming nobody has no tag to route and takes the shorter
- * write instead.
- *
- * The tag still routes first and wins the row when it was typed — the insert
- * conflicts on the same (corner, message, agent, action) and keeps `agent_tag`
- * — so this adds a turn only where there would otherwise be none.
- *
- * "The review" is read structurally, never from the verdict's wording: this
- * agent is the configured reviewer on the corner's parent Room, and the turn it
- * just ended belongs to the review loop — dispatched either from a
- * `check-passed` fact (the green transition and reconciliation both cite one)
- * or from the worker's own message handing the branch back. A turn the reviewer
- * ran because a person asked it something in the corner is neither, and wakes
- * nobody.
- *
- * Nothing records a FAIL. `corner_merge_approvals` holds approvals only, so an
- * explicit rejection, a stale-head refusal and a turn that said nothing are one
- * state to the server: no approval row for the current head. That is why the
- * handback reads the reviewer's TURN ENDING rather than any verdict record, and
- * why it carries the reviewer's own closing text — the worker reads which of
- * the three it was, because the server cannot.
- *
- * Two bounds keep it from firing where it would only cost a turn:
- *
- * A reviewer that ends a turn to WAIT for CI has not finished reviewing, so a
- * handback there would push the worker at a pull request still mid-run. The
- * handback therefore fires only while `lifecycle.checks` is passing, and firing
- * nothing costs the review nothing: `GitHubOperations.updateLifecycle` clears
- * `command_check_state` on every change of the checks value, so the wake this
- * turn spent is reissued by the next green transition.
- *
- * The worker may disagree with the findings, and that conversation runs on tags
- * in both directions. It must not become a loop. Handbacks are counted per head
- * — a push moves the head and resets the count — and at
- * `REVIEW_HANDBACK_LIMIT` the corner stops waking the worker and names the
- * person who commissioned it instead, so a stuck disagreement surfaces. When
- * no requester was recorded the same line still goes up in the corner, naming
- * nobody — there is no person to name, and silence is the one outcome the
- * limit must not produce.
- */
-export const REVIEW_HANDBACK_LIMIT = 3;
-
-/**
  * Marks the handback-limit line so push delivery (`background.ts`) can send it
  * to the corner's commissioner. The phone has no renderer for it, so the line
  * still shows as a plain system line.
  */
 export const CORNER_REVIEW_DEADLOCK_CARD_TYPE = 'corner-review-deadlock';
 
-/** Marks the line `noteBlockedCornerChecks` writes; pushed to the commissioner like the one above. */
+/** Marks the lines `noteBlockedCornerChecks` and the failing-checks cap write; pushed to the commissioner like the one above. */
 export const CORNER_CHECKS_BLOCKED_CARD_TYPE = 'corner-checks-blocked';
 
 /**
@@ -724,6 +598,24 @@ export const CORNER_CHECKS_BLOCKED_CARD_TYPE = 'corner-checks-blocked';
  */
 export const CORNER_CHECKS_BLOCKED_AFTER = '2 minutes';
 
+/**
+ * Reports a review turn ending to the corner workflow (`advanceCorner`).
+ *
+ * "The review" is read structurally, never from the verdict's wording: this
+ * agent is the configured reviewer on the corner's parent Room (a fixed id or a
+ * class, per `isConfiguredReviewer`), and the turn it
+ * just ended belongs to the review loop — dispatched either from a
+ * `check-passed` fact (the green transition and reconciliation both cite one)
+ * or from the worker's own message handing the branch back. A turn the reviewer
+ * ran because a person asked it something in the corner is neither, and
+ * reports nothing. What the end of the review leads to — a handback, the
+ * handback cap, or nothing because the head is approved or checks are not
+ * green — is the transition's decision.
+ *
+ * Both of `DaemonService`'s reply paths reach this for a configured reviewer,
+ * inside the reply's own transaction, so the verdict and the handoff commit
+ * together or not at all.
+ */
 export async function queueCornerWorkerAfterReview(
   db: SqlDatabase,
   input: {
@@ -734,17 +626,8 @@ export async function queueCornerWorkerAfterReview(
   },
 ): Promise<void> {
   const review = (
-    await db.query<
-      CommandRow & {
-        worker_agent_id: string;
-        head_sha: string;
-        checks: string | null;
-        commissioned_by: string | null;
-      }
-    >(
-      `SELECT command.*,COALESCE(fact.owner_agent_id,corner.created_by) worker_agent_id,
-              fact.lifecycle->'pr'->>'headSha' head_sha,fact.lifecycle->>'checks' checks,
-              fact.commissioned_by
+    await db.query<CommandRow & { parent_room_id: string; workspace_id: string }>(
+      `SELECT command.*,parent.id parent_room_id,parent.workspace_id
        FROM agent_commands command
        JOIN rooms corner ON corner.id=command.room_id
        JOIN rooms parent ON parent.id=corner.parent_id
@@ -754,94 +637,23 @@ export async function queueCornerWorkerAfterReview(
          AND worker.kind='agent'
        WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3
          AND command.action IN ('input','resume')
-         AND parent.reviewer_agent_id=command.agent_id
          AND (dispatch.system_event->>'kind'='check-passed'
               OR dispatch.author_id=COALESCE(fact.owner_agent_id,corner.created_by))
-         AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
          AND COALESCE(fact.owner_agent_id,corner.created_by)<>command.agent_id
        ORDER BY command.created_at DESC,command.id DESC LIMIT 1`,
       [input.roomId, input.reviewerAgentId, input.turnRequestId],
     )
   ).rows[0];
-  if (!review) return;
-  if (review.checks !== 'passing') return;
-  // One statement owns the count, so two reviews that somehow land together
-  // cannot both read the same number and both decide they are under the cap.
-  const handbacks =
-    (
-      await db.query<{ review_handback_count: number }>(
-        `UPDATE corner_facts SET
-           review_handback_head=$2,
-           review_handback_count=CASE
-             WHEN review_handback_head IS NOT DISTINCT FROM $2 THEN review_handback_count+1
-             ELSE 1 END
-         WHERE corner_id=$1
-         RETURNING review_handback_count`,
-        [input.roomId, review.head_sha],
-      )
-    ).rows[0]?.review_handback_count ?? 1;
-  // The verdict itself isn't decided here — it already happened, if it did,
-  // when `approve_merge` recorded a row for this exact head, earlier in the
-  // reviewer's own just-ended turn. This only reads which of the two already
-  // happened, to bookkeep it.
-  const approvedThisHead = await db.query(
-    `SELECT 1 FROM corner_merge_approvals WHERE corner_id=$1 AND head_sha=$2 LIMIT 1`,
-    [input.roomId, review.head_sha],
-  );
-  if (handbacks <= REVIEW_HANDBACK_LIMIT) {
-    await noteCornerWorkflowReviewOutcome(db, {
-      cornerId: input.roomId,
-      outcome: approvedThisHead.rowCount ? 'approved' : 'changes_requested',
-      toState: approvedThisHead.rowCount ? 'land' : 'implement',
-      contents: { verdict: approvedThisHead.rowCount ? 'approved' : 'changes_requested' },
-      // Handbacks may repeat over the SAME head with nothing new pushed, so
-      // the head alone cannot distinguish one round's card from the next.
-      dedupeKey: `${review.head_sha}:${handbacks}`,
-    });
-    await createAgentCommand(db, {
-      roomId: input.roomId,
-      agentId: review.worker_agent_id,
-      sourceMessageId: input.verdictMessageId,
-      parent: review,
-      // Handing the branch back is a lifecycle transfer, not one agent
-      // delegating to another, so it keeps the chain's depth. Otherwise the
-      // review loop dies on COMMAND_MAX_DEPTH — silently, mid-argument — before
-      // REVIEW_HANDBACK_LIMIT can reach the person who could settle it.
-      retainDepth: true,
-      reason: 'corner_review',
-    });
+  // A fixed reviewer and a class-bound one hold the post the same way.
+  if (
+    !review ||
+    !(await isConfiguredReviewer(db, review.parent_room_id, review.workspace_id, review.agent_id))
+  )
     return;
-  }
-  await noteCornerWorkflowReviewOutcome(db, {
-    cornerId: input.roomId,
-    outcome: 'exceeded',
-    toState: 'ask_human',
-    contents: {},
-    dedupeKey: `${review.head_sha}:${handbacks}`,
-  });
-  // A corner an agent opened off its own root message records no requester,
-  // and that corner is just as stuck. So the line is addressed to the corner
-  // itself rather than dropped: the loop stopping is the fact worth reading,
-  // and a review loop that stops must never stop in silence. The server
-  // authors it either way, because push delivery never sends a person their
-  // own line, and this one is meant to reach the requester.
-  await ensureSystemIdentity(db);
-  // Deterministic id per head: the cap is reached once, however many further
-  // reviews end on the same commit.
-  await systemLine(db, {
-    id: createHash('sha256')
-      .update(`beeline:${input.roomId}:review-handback-limit:${review.head_sha}`)
-      .digest('hex'),
-    roomId: input.roomId,
-    authorId: SYSTEM_IDENTITY_ID,
-    subject: review.commissioned_by
-      ? { kind: 'person', id: review.commissioned_by, name: 'the requester' }
-      : { kind: 'system', name: 'Somebody' },
-    verb: 'may need to step in',
-    consequence: `review and fix have passed ${REVIEW_HANDBACK_LIMIT} times over this head with nothing new pushed`,
-    afterMessageId: input.verdictMessageId,
-    cardType: CORNER_REVIEW_DEADLOCK_CARD_TYPE,
-    card: { cornerId: input.roomId },
+  await advanceCorner(db, input.roomId, {
+    kind: 'review-ended',
+    review,
+    verdictMessageId: input.verdictMessageId,
   });
 }
 
@@ -1096,209 +908,15 @@ export async function routeSystemCommand(
   },
 ): Promise<void> {
   if (!input.kind) return;
-  if (input.kind === 'merged') {
-    // A corner merge is a lifecycle handoff back to the agent that opened it
-    // from the parent Room. The durable completion card identifies that
-    // corner; command creation still enforces current parent membership, so a
-    // retired or removed opener is never revived by history.
-    const responsible = (
-      await db.query<{ agent_id: string }>(
-        `SELECT fact.owner_agent_id agent_id
-         FROM messages source
-         JOIN rooms corner ON corner.id::text=source.card->>'cornerId'
-         JOIN corner_facts fact ON fact.corner_id=corner.id
-         WHERE source.id=$1 AND source.room_id=$2
-           AND corner.parent_id=source.room_id
-           AND source.card_type='daemon-fact'
-           AND source.card->>'type'='corner-complete'`,
-        [input.sourceMessageId, input.roomId],
-      )
-    ).rows[0]?.agent_id;
-    if (responsible)
-      await createAgentCommand(db, {
-        roomId: input.roomId,
-        agentId: responsible,
-        sourceMessageId: input.sourceMessageId,
-        reason: 'corner_merged',
-      });
-  }
+  // A checks verdict in a corner is a corner workflow event: the transition
+  // decides who wakes, exactly once.
   if (input.kind === 'check-passed' || input.kind === 'check-failed') {
-    const fact = (
-      await db.query<{
-        owner_agent_id: string;
-        configured_reviewer_id: string | null;
-        configured_reviewer_kind: string | null;
-        configured_reviewer_name: string | null;
-        reviewer_agent_id: string | null;
-        reviewer_class: string | null;
-        parent_room_id: string;
-        workspace_id: string;
-        state: string;
-        command_check_state: string | null;
-        parent_id: string;
-        head_sha: string | null;
-      }>(
-        `SELECT fact.owner_agent_id,
-                parent.reviewer_agent_id configured_reviewer_id,
-                configured.kind configured_reviewer_kind,
-                configured.name configured_reviewer_name,
-                (
-                  SELECT reviewer_membership.identity_id
-                  FROM memberships reviewer_membership
-                  JOIN identities reviewer ON reviewer.id=reviewer_membership.identity_id
-                    AND reviewer.kind='agent'
-                  WHERE reviewer_membership.room_id=parent.id
-                    AND reviewer_membership.identity_id=parent.reviewer_agent_id
-                    AND reviewer_membership.removed_at IS NULL
-                ) reviewer_agent_id,
-                fact.lifecycle->>'checks' state,fact.command_check_state,
-                fact.lifecycle->'pr'->>'headSha' head_sha,
-                parent.reviewer_class,parent.id parent_room_id,parent.workspace_id
-
-         FROM corner_facts fact
-         JOIN rooms corner ON corner.id=fact.corner_id
-         JOIN rooms parent ON parent.id=corner.parent_id
-         LEFT JOIN identities configured ON configured.id=parent.reviewer_agent_id
-         WHERE fact.corner_id=$1
-         FOR UPDATE OF fact`,
-        [input.roomId],
-      )
-    ).rows[0];
-    if (fact) {
-      if (
-        fact.state === 'pending' ||
-        fact.state === 'unknown' ||
-        (input.kind === 'check-failed' && fact.state !== 'failing') ||
-        (input.kind === 'check-passed' && fact.state !== 'passing')
-      )
-        return;
-      if (fact.state === fact.command_check_state) {
-        const delivered = await db.query(
-          `SELECT 1 FROM agent_commands command
-           JOIN messages source ON source.id=command.source_message_id
-           JOIN corner_facts fact ON fact.corner_id=command.room_id
-           WHERE command.room_id=$1 AND command.reason=$2
-             AND source.system_event->>'kind'=$3
-             AND (source.system_event->'object'->>'headSha' IS NULL
-                  OR source.system_event->'object'->>'headSha'=fact.lifecycle->'pr'->>'headSha')
-           LIMIT 1`,
-          [
-            input.roomId,
-            input.kind === 'check-failed' ? 'corner_check' : 'subscribed_event',
-            input.kind,
-          ],
-        );
-        if (delivered.rowCount) return;
-      }
-      // A class-configured reviewer resolves to a live healthy candidate at
-      // this exact dispatch (apps/server/src/agent-classes.ts), never sticky
-      // across dispatches — the next green head may pick someone else. The
-      // candidate pool is already scoped to current parent members, so a
-      // resolved id needs no further membership repair before dispatch.
-      let classResolvedReviewerId: string | null = null;
-      let classExhausted = false;
-      if (input.kind === 'check-passed' && !fact.configured_reviewer_id && fact.reviewer_class) {
-        classResolvedReviewerId = await pickHealthyClassMember(
-          db,
-          fact.parent_room_id,
-          fact.workspace_id,
-          fact.reviewer_class,
-        );
-        classExhausted = classResolvedReviewerId === null;
-      }
-      // Failed checks still wake the opener. The author fallback is only for
-      // corners with no reviewer configured at all — a configured id whose
-      // parent membership is missing, or a configured class, is not "no
-      // reviewer".
-      if (
-        input.kind === 'check-failed' ||
-        (!fact.configured_reviewer_id && !fact.reviewer_class)
-      ) {
-        const command = await createAgentCommand(db, {
-          roomId: input.roomId,
-          agentId: fact.owner_agent_id,
-          sourceMessageId: input.sourceMessageId,
-          reason: 'corner_check',
-        });
-        if (command) {
-          await db.query(`UPDATE corner_facts SET command_check_state=$2 WHERE corner_id=$1`, [
-            input.roomId,
-            fact.state,
-          ]);
-          await noteCornerWorkflowTransition(db, {
-            cornerId: input.roomId,
-            expectedFromState: 'checks',
-            outcome: input.kind === 'check-failed' ? 'failing' : 'no_reviewer',
-            toState: 'implement',
-            contents: {},
-            dedupeKey: fact.head_sha ?? input.sourceMessageId,
-          });
-        }
-        return;
-      }
-      if (classExhausted) {
-        await noteReviewerClassExhausted(db, {
-          cornerId: input.roomId,
-          sourceMessageId: input.sourceMessageId,
-          reviewerClass: fact.reviewer_class!,
-          headSha: fact.head_sha,
-        });
-        return;
-      }
-      // classExhausted (returned above) covers the only case where neither of
-      // these is set: a class-configured reviewer with no healthy member.
-      const unreachable = {
-        cornerId: input.roomId,
+    const corner = await db.query(`SELECT 1 FROM corner_facts WHERE corner_id=$1`, [input.roomId]);
+    if (corner.rowCount) {
+      await advanceCorner(db, input.roomId, {
+        kind: 'checks',
+        result: input.kind === 'check-passed' ? 'passing' : 'failing',
         sourceMessageId: input.sourceMessageId,
-        reviewerId: (classResolvedReviewerId ?? fact.configured_reviewer_id)!,
-        reviewerKind: fact.configured_reviewer_kind,
-        reviewerName: fact.configured_reviewer_name,
-      };
-      if (!classResolvedReviewerId && fact.configured_reviewer_id && !fact.reviewer_agent_id) {
-        await noteUnreachableReviewer(db, {
-          ...unreachable,
-          reason: REVIEWER_NOT_PARENT_MEMBER,
-        });
-        return;
-      }
-      const reviewerAgentId = classResolvedReviewerId ?? fact.reviewer_agent_id!;
-      // A green review belongs to the configured reviewer and to nobody else.
-      // Dispatch it only when the reviewer can actually read the corner: the
-      // missing corner-membership projection is repaired above (never an
-      // explicitly removed one). If the reviewer stays unreachable, dispatch
-      // NOTHING — the old reroute handed the review to the corner owner,
-      // whose daemon posted the review text under the owner's name. Leave
-      // command_check_state alone so a later green transition retries, and
-      // name them in the corner instead of staying silent.
-      const deliverable = await repairReviewerCornerMembership(
-        db,
-        input.roomId,
-        reviewerAgentId,
-      );
-      if (!deliverable) {
-        await noteUnreachableReviewer(db, {
-          ...unreachable,
-          reason: REVIEWER_NOT_CORNER_MEMBER,
-        });
-        return;
-      }
-      await createAgentCommand(db, {
-        roomId: input.roomId,
-        agentId: reviewerAgentId,
-        sourceMessageId: input.sourceMessageId,
-        reason: 'subscribed_event',
-      });
-      await db.query(`UPDATE corner_facts SET command_check_state=$2 WHERE corner_id=$1`, [
-        input.roomId,
-        fact.state,
-      ]);
-      await noteCornerWorkflowTransition(db, {
-        cornerId: input.roomId,
-        expectedFromState: 'checks',
-        outcome: 'passing',
-        toState: 'review',
-        contents: {},
-        dedupeKey: fact.head_sha ?? input.sourceMessageId,
       });
       return;
     }
@@ -1382,7 +1000,7 @@ export async function queueCornerMergeConflict(
 }
 
 /**
- * Failing checks wake the worker once per head (`routeSystemCommand`), and
+ * Failing checks wake the worker once per head (`advanceCorner`), and
  * nothing wakes anybody again until the head or the check state changes. So
  * when that one turn ends and the same head is still failing with no other
  * turn pending, the corner is stuck until a person steps in. This writes one
@@ -1720,26 +1338,18 @@ export async function reconcileConfiguredCornerReviewers(
     [parentRoomId ?? null],
   );
   for (const candidate of candidates.rows) {
-    const command = await createAgentCommand(db, {
-      roomId: candidate.corner_id,
-      agentId: candidate.reviewer_agent_id,
+    // Re-report the green head; the transition decides whether it wakes the
+    // reviewer (it does not when the run already moved past checks).
+    await advanceCorner(db, candidate.corner_id, {
+      kind: 'checks',
+      result: 'passing',
       sourceMessageId: candidate.source_message_id,
-      reason: 'subscribed_event',
     });
-    if (command) {
-      commands += 1;
-      await db.query(`UPDATE corner_facts SET command_check_state='passing' WHERE corner_id=$1`, [
-        candidate.corner_id,
-      ]);
-      await noteCornerWorkflowTransition(db, {
-        cornerId: candidate.corner_id,
-        expectedFromState: 'checks',
-        outcome: 'passing',
-        toState: 'review',
-        contents: {},
-        dedupeKey: candidate.head_sha ?? candidate.source_message_id,
-      });
-    }
+    const routed = await db.query(
+      `SELECT 1 FROM agent_commands WHERE room_id=$1 AND source_message_id=$2 AND agent_id=$3`,
+      [candidate.corner_id, candidate.source_message_id, candidate.reviewer_agent_id],
+    );
+    if (routed.rowCount) commands += 1;
   }
   return { subscriptions: subscriptions.rowCount, commands };
 }

@@ -123,6 +123,8 @@ export type WorkbenchAppView = {
   readonly name: string;
   /** Brand domain for the row's mark; absent draws the lettermark. */
   readonly domain?: string;
+  readonly description?: string;
+  readonly logo?: string;
   readonly transport: AppTransport;
   /** The route the server chose most recently for this app. */
   readonly route: AppRoute;
@@ -170,6 +172,8 @@ export type WorkbenchView = {
   readonly connections: readonly WorkbenchConnectionView[];
   /** The VIEWER's apps (the one front door). Absent from an older server. */
   readonly apps?: readonly WorkbenchAppView[];
+  readonly appCatalog?: readonly { readonly appKey: string; readonly description?: string;
+    readonly logo?: string }[];
   /** The viewer's own connected machines — the Workbench's helper candidates. */
   readonly helpers: readonly WorkbenchHelperView[];
   /** Present when the VIEWER has created their wallet (no helper involved).

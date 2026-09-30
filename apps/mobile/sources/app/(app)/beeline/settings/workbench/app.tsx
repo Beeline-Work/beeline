@@ -10,6 +10,7 @@ import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { openAppSignIn } from '@/buzz/app-sign-in';
 import type { WorkbenchApp } from '@/buzz/workbench';
 import { appBoardColors } from '@/buzz/app-board-style';
+import { appErrorCopy } from '@/buzz/app-error-copy';
 
 function first(value: string | string[] | undefined): string | undefined { return Array.isArray(value) ? value[0] : value; }
 
@@ -36,7 +37,7 @@ export default function AppDetailScreen() {
     setWorking(true);
     setError(null);
     try { await getWorkbenchSource().disconnectApp({ workspaceId, appId: app.id }); router.back(); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not disconnect app'); }
+    catch (cause) { setError(appErrorCopy(cause instanceof Error ? cause.message : 'Could not disconnect app')); }
     finally { setWorking(false); }
   };
 
@@ -49,7 +50,7 @@ export default function AppDetailScreen() {
       await openAppSignIn(started.authorizationUrl, { workspaceId, viewerId });
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : 'Could not connect app';
-      setError(message);
+      setError(appErrorCopy(message));
       setApp(current => current ? { ...current, status: 'error', errorMessage: message } : current);
     }
     finally { setWorking(false); }
@@ -66,17 +67,19 @@ export default function AppDetailScreen() {
     <ScrollView contentContainerStyle={styles.content}>
       {app ? <>
         <View style={styles.identity}>
-          <AppMark name={app.name} domain={app.domain} size={48} />
+          <AppMark name={app.name} domain={app.domain} logo={app.logo} size={48} />
           <View style={styles.identityCopy}>
             <Text style={styles.status}>{app.status === 'connected' ? 'Connected' : app.status === 'connecting' ? 'Connecting' : 'Connection failed'}</Text>
             {app.accountLabel ? <Text style={styles.account}>{app.accountLabel}{app.workspaceName ? ` · ${app.workspaceName} workspace` : ''}</Text> : null}
           </View>
         </View>
+        {app.description ? <Text style={styles.permission}>{app.description}</Text> : null}
         <Text style={styles.permission}>Your agents can use {app.name} as you. Other people’s agents ask you first.</Text>
         <Text style={styles.lastUsed}>{lastUsed}</Text>
-        {app.status === 'connected' ? <TouchableOpacity accessibilityRole="button" disabled={working} onPress={() => void disconnect()} style={styles.outline} testID="app-detail-disconnect"><Text style={styles.outlineText}>{working ? 'Disconnecting' : 'Disconnect'}</Text></TouchableOpacity> : <TouchableOpacity accessibilityRole="button" disabled={working} onPress={() => void reconnect()} style={styles.ink} testID="app-detail-connect"><Text style={styles.inkText}>{working ? 'Connecting' : app.status === 'error' ? `Retry ${app.name}` : `Connect ${app.name}`}</Text></TouchableOpacity>}
+        {app.status !== 'connected' ? <TouchableOpacity accessibilityRole="button" disabled={working} onPress={() => void reconnect()} style={styles.ink} testID="app-detail-connect"><Text style={styles.inkText}>{working ? 'Connecting' : app.status === 'error' ? `Retry ${app.name}` : `Connect ${app.name}`}</Text></TouchableOpacity> : null}
+        <TouchableOpacity accessibilityRole="button" disabled={working} onPress={() => void disconnect()} style={styles.outline} testID="app-detail-disconnect"><Text style={styles.outlineText}>{working ? 'Disconnecting' : 'Disconnect'}</Text></TouchableOpacity>
       </> : null}
-      {error || app?.status === 'error' && app.errorMessage ? <Text accessibilityRole="alert" style={styles.error}>{error ?? app?.errorMessage}</Text> : null}
+      {error || app?.status === 'error' && app.errorMessage ? <Text accessibilityRole="alert" style={styles.error}>{error ?? appErrorCopy(app?.errorMessage ?? '')}</Text> : null}
     </ScrollView>
   </View>;
 }

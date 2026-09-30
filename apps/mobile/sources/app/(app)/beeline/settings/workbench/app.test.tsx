@@ -46,6 +46,18 @@ describe('App detail', () => {
     expect(renderer.root.findByProps({ testID: 'app-detail-disconnect' })).toBeTruthy();
   });
 
+  it('shows provider description and logo on detail', async () => {
+    source.setApps([{ id: 'app-slack', key: 'slack', name: 'Slack',
+      description: 'Send messages to your team.', logo: 'https://cdn.composio.dev/slack.png',
+      transport: 'composio', status: 'connecting', useCount: 0 }]);
+    const renderer = await render();
+    expect(JSON.stringify(renderer.toJSON())).toContain('Send messages to your team.');
+    expect(renderer.root.findByType('AppMark' as never).props.logo).toBe('https://cdn.composio.dev/slack.png');
+    expect(renderer.root.findByProps({ testID: 'app-detail-disconnect' })).toBeTruthy();
+    await act(async () => { renderer.root.findByProps({ testID: 'app-detail-disconnect' }).props.onPress(); await Promise.resolve(); });
+    expect((await source.readWorkbench({ workspaceId: 'ws', viewerId: 'human-dani' })).apps).toHaveLength(0);
+  });
+
   it('shows a truthful never-used state', async () => {
     source.setApps([{ id: 'app-slack', key: 'slack', name: 'Slack', transport: 'composio', status: 'connected', accountLabel: 'lunchbox', workspaceName: 'Tubing Crew', useCount: 0 }]);
     const renderer = await render();
@@ -64,7 +76,9 @@ describe('App detail', () => {
     const tree = JSON.stringify(renderer.toJSON());
     expect(tree).toContain('Connection failed');
     expect(tree).toContain('Retry Slack');
-    expect(tree).toContain('App provider request failed (403)');
+    expect(tree).toContain('The app provider refused this connection (403).');
+    expect(tree).not.toContain('Monolith');
+    expect(renderer.root.findByProps({ testID: 'app-detail-disconnect' })).toBeTruthy();
   });
 
   it('disconnects the exact app through the server source', async () => {

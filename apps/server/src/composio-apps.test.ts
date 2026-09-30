@@ -6,6 +6,25 @@ const ACCOUNT = 'ca_fixture';
 const json = (value: unknown, status = 200) => Response.json(value, { status });
 
 describe('managed app provider boundary', () => {
+  it('reads the toolkit description and HTTPS logo from provider metadata', async () => {
+    const transport = vi.fn(async () => json({ slug: 'gmail', enabled: true,
+      composio_managed_auth_schemes: ['OAUTH2'],
+      meta: { description: 'Read and send Gmail messages.', logo: 'https://cdn.composio.dev/gmail.png' } }));
+    const provider = new ComposioApps('fixture-only', transport as typeof fetch);
+    expect(await provider.toolkit('gmail')).toMatchObject({
+      description: 'Read and send Gmail messages.', logo: 'https://cdn.composio.dev/gmail.png',
+    });
+    expect(await provider.supportsOAuth('gmail')).toBe(true);
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it('identifies the provider request that rejects Gmail sign-in', async () => {
+    const transport = vi.fn(async () => json({}, 403));
+    const provider = new ComposioApps('fixture-only', transport as typeof fetch);
+    await expect(provider.link(PERSON, 'gmail')).rejects.toThrow(
+      'App provider request failed (403) at GET /auth_configs');
+  });
+
   it('uses an identity id and v3 Connect Links for a managed OAuth toolkit', async () => {
     const calls: { path: string; body?: Record<string, unknown> }[] = [];
     const transport = vi.fn(async (url: URL | string, init?: RequestInit) => {

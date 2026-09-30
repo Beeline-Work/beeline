@@ -72,6 +72,14 @@ describe('ServiceMark', () => {
 });
 
 describe('AppMark', () => {
+  it('prefers a provider logo and falls back to the letter if loading fails', () => {
+    const renderer = render(<AppMark name="Gmail" logo="https://cdn.composio.dev/gmail.png" size={34} />);
+    expect(renderer.root.findByType('Image').props.source).toEqual({ uri: 'https://cdn.composio.dev/gmail.png' });
+    act(() => renderer.root.findByType('Image').props.onError());
+    expect(renderer.root.findAllByType('Image')).toHaveLength(0);
+    expect(renderer.root.findByType('Text').props.children).toBe('G');
+  });
+
   it('shows a bundled product logo without a network request', () => {
     const renderer = render(<AppMark name="Gmail" domain="gmail.com" size={34} />);
     expect(renderer.root.findAllByType('Image')).toHaveLength(1);

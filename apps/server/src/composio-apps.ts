@@ -37,6 +37,9 @@ function stripSecrets(value: unknown, depth = 0): unknown {
 }
 
 export class ComposioApps {
+  private readonly toolkitCache = new Map<string, { until: number; value: Promise<{
+    slug: string; description?: string; logo?: string; enabled?: boolean;
+    composio_managed_auth_schemes?: unknown }> }>();
   constructor(private readonly apiKey: string, private readonly transport: typeof fetch = fetch) {
     if (!apiKey) throw new Error('App provider is unavailable');
   }
@@ -53,7 +56,7 @@ export class ComposioApps {
       signal: AbortSignal.timeout(20_000),
     });
     if (!response.ok) {
-      const error = new Error(`App provider request failed (${response.status})`);
+      const error = new Error(`App provider request failed (${response.status}) at ${method} ${path.split('?')[0]}`);
       Object.assign(error, { status: response.status });
       throw error;
     }
@@ -63,7 +66,7 @@ export class ComposioApps {
 
   async supportsOAuth(toolkit: string): Promise<boolean> {
     try {
-      const row = await this.request(`/toolkits/${encodeURIComponent(toolkit)}?version=latest`, 'GET');
+      const row = await this.toolkit(toolkit);
       return row.slug === toolkit && row.enabled !== false &&
         Array.isArray(row.composio_managed_auth_schemes) &&
         row.composio_managed_auth_schemes.some((scheme) =>
@@ -72,6 +75,30 @@ export class ComposioApps {
       if ((error as { status?: number }).status === 404) return false;
       throw error;
     }
+  }
+
+  async toolkit(toolkit: string): Promise<{ slug: string; description?: string; logo?: string;
+    enabled?: boolean; composio_managed_auth_schemes?: unknown }> {
+    const cached = this.toolkitCache.get(toolkit);
+    if (cached && cached.until > Date.now()) return cached.value;
+    const value = this.fetchToolkit(toolkit);
+    this.toolkitCache.set(toolkit, { until: Date.now() + 300_000, value });
+    try { return await value; }
+    catch (error) { this.toolkitCache.delete(toolkit); throw error; }
+  }
+
+  private async fetchToolkit(toolkit: string): Promise<{ slug: string; description?: string;
+    logo?: string; enabled?: boolean; composio_managed_auth_schemes?: unknown }> {
+    const row = await this.request(`/toolkits/${encodeURIComponent(toolkit)}?version=latest`, 'GET');
+    const meta = row.meta && typeof row.meta === 'object' && !Array.isArray(row.meta)
+      ? row.meta as Json : {};
+    const logo = typeof meta.logo === 'string' && /^https:\/\//i.test(meta.logo) ? meta.logo : undefined;
+    return { slug: requiredString(row.slug),
+      ...(typeof meta.description === 'string' ? { description: meta.description } : {}),
+      ...(logo ? { logo } : {}),
+      ...(typeof row.enabled === 'boolean' ? { enabled: row.enabled } : {}),
+      ...(Array.isArray(row.composio_managed_auth_schemes)
+        ? { composio_managed_auth_schemes: row.composio_managed_auth_schemes } : {}) };
   }
 
   private async authConfig(toolkit: string): Promise<string> {

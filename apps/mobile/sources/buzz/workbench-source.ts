@@ -218,6 +218,8 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
         key: app.appKey,
         name: app.name,
         ...(app.domain ? { domain: app.domain } : {}),
+        ...(app.description ? { description: app.description } : {}),
+        ...(app.logo ? { logo: app.logo } : {}),
         transport: app.transport,
         status: app.status,
         ...(app.errorMessage ? { errorMessage: app.errorMessage } : {}),
@@ -231,6 +233,7 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
         ...(app.workspaceName ? { workspaceName: app.workspaceName } : {}),
         ...(app.lastUse ? { lastUse: { ...app.lastUse } } : {}),
       })),
+      appCatalog: dto.appCatalog ?? [],
       connections: dto.connections.map((connection) => toConnection(connection, input.viewerId)),
     };
   }

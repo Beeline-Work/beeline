@@ -164,6 +164,8 @@ describe('connect_app', () => {
     let active = false;
     const provider = {
       supportsOAuth: vi.fn(async (toolkit: string) => ['slack', 'gmail'].includes(toolkit)),
+      toolkit: vi.fn(async (toolkit: string) => ({ slug: toolkit,
+        description: `Use ${toolkit} tools.`, logo: `https://cdn.composio.dev/${toolkit}.png` })),
       link: vi.fn(async (_person: string, _toolkit: string) => ({
         url: 'https://app.composio.dev/connect/fixture', accountId: 'ca_fixture',
         expiresAt: new Date(Date.now() + 600_000),
@@ -319,6 +321,20 @@ describe('connect_app', () => {
       .toContainEqual(expect.objectContaining({ appId: first.appId, status: 'connecting' }));
   });
 
+  it('projects provider descriptions and logos to app rows and the connect catalog', async () => {
+    const provider = fakeComposio();
+    const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const first = await daemon.execute('connectApp',
+      { ...turn, app: 'Gmail', reason: 'connect Gmail' }, HELPER);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    const view = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
+    expect(view.apps).toContainEqual(expect.objectContaining({ appId: first.appId,
+      description: 'Use gmail tools.', logo: 'https://cdn.composio.dev/gmail.png' }));
+    expect(view.appCatalog).toContainEqual({ appKey: 'gmail',
+      description: 'Use gmail tools.', logo: 'https://cdn.composio.dev/gmail.png' });
+  });
+
   it('shows a failed callback on Workbench and clears it on retry', async () => {
     const provider = fakeComposio();
     provider.supportsOAuth.mockResolvedValue(true);
@@ -421,6 +437,21 @@ describe('connect_app', () => {
     expect((await database.query<{ state: string }>(
       `SELECT state FROM workspace_apps WHERE id=$1`, [connected.appId])).rows[0]?.state)
       .toBe('disconnected');
+  });
+
+  it('deletes a pending provider account when its app is disconnected', async () => {
+    const provider = fakeComposio();
+    const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const connected = await daemon.execute('connectApp',
+      { ...turn, app: 'Slack', reason: 'post the launch notes' }, HELPER);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    await phone.execute('beginAppSignIn', { appId: connected.appId! }, OWNER);
+    expect((await readOwnerApps(database, OWNER, provider))[0]?.status).toBe('connecting');
+    await phone.execute('disconnectWorkbenchApp', { workspaceId: WORKSPACE,
+      appId: connected.appId! }, OWNER);
+    expect(provider.deleteAccount).toHaveBeenCalledWith('ca_fixture');
+    expect(await readOwnerApps(database, OWNER, provider)).toEqual([]);
   });
 
   it('does not execute from a provider account activated before identity verification', async () => {

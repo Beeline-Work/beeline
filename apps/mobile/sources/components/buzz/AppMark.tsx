@@ -35,11 +35,11 @@ const BUNDLED_MARKS: Record<string, number> = {
 };
 
 /** A consistent tile for apps, with the official public favicon when available. */
-export function AppMark({ name, domain, size = 36, white = false }: { name: string; domain?: string; size?: number; white?: boolean }) {
+export function AppMark({ name, domain, logo, size = 36, white = false }: { name: string; domain?: string; logo?: string; size?: number; white?: boolean }) {
   const [failedUri, setFailedUri] = useState<string | null>(null);
   const imageSize = Math.round(size * 0.56);
-  const bundled = BUNDLED_MARKS[name.toLowerCase()];
-  const uri = bundled ? undefined : domain ? serviceFaviconUrl(domain) : undefined;
+  const bundled = logo ? undefined : BUNDLED_MARKS[name.toLowerCase()];
+  const uri = logo ?? (bundled ? undefined : domain ? serviceFaviconUrl(domain) : undefined);
   const showImage = uri && failedUri !== uri;
   return <View style={[styles.tile, { width: size, height: size, borderRadius: Math.round(size * .22), ...(white ? { backgroundColor: '#FFFFFF' } : {}) }]}>
     {!showImage && !bundled ? <Text style={styles.fallback}>{name.slice(0, 1).toUpperCase()}</Text> : null}

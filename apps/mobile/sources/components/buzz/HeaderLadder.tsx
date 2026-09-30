@@ -1,5 +1,5 @@
 import React from 'react';
-import { Text, View } from 'react-native';
+import { Text, View, type StyleProp, type TextStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 /**
@@ -42,6 +42,22 @@ export function HeaderMetaRow({
     <View style={styles.metaRow} testID={testID}>
       {children}
     </View>
+  );
+}
+
+export function CornerHeaderAgentText({
+  name,
+  stateWord,
+  style,
+}: {
+  name: string;
+  stateWord: string;
+  style?: StyleProp<TextStyle>;
+}) {
+  return (
+    <Text numberOfLines={1} style={style}>
+      {name.toUpperCase()} · {stateWord}
+    </Text>
   );
 }
 

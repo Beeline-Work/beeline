@@ -1574,7 +1574,8 @@ export class PhoneService {
           await this.database.query<{
             plan: RoomView['cornerPlan'] | null;
             objective: string;
-          }>(`SELECT plan,objective FROM corner_facts WHERE corner_id=$1`, [roomId])
+            owner_agent_id: string | null;
+          }>(`SELECT plan,objective,owner_agent_id FROM corner_facts WHERE corner_id=$1`, [roomId])
         ).rows[0],
       undefined,
     );
@@ -1795,6 +1796,9 @@ export class PhoneService {
         ? { directMessage: { participants: room.direct_participants as [string, string] } }
         : {}),
       ...(parent ? { parent: roomHeader(parent, this.publicOrigin) } : {}),
+      ...(room.parent_id && facts?.owner_agent_id
+        ? { cornerOpenerAgentId: facts.owner_agent_id }
+        : {}),
       briefing: decorateAttachments(briefing, attachmentFacts),
       ...(room.parent_id && plan ? { cornerPlan: plan } : {}),
       ...(cornerBrief

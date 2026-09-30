@@ -358,7 +358,7 @@ import { CornerGlyph } from '@/components/buzz/CornerGlyph';
 import { OverflowGlyph } from '@/components/buzz/OverflowGlyph';
 import { RoomReviewerActions } from '@/components/buzz/RoomReviewerActions';
 import { EmptyLedgerState, type EmptyLedgerVariant } from '@/components/buzz/EmptyLedgerState';
-import { HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
+import { CornerHeaderAgentText, HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
 import { ChannelHeaderTitle } from '@/components/buzz/ChannelHeaderTitle';
 import { HullDialog, HullDialogInput } from '@/components/buzz/HullDialog';
 import type { ChannelHeaderKind } from '@/buzz/channel-header-title';
@@ -2075,8 +2075,12 @@ export function BuzzChatSurface({
     },
   );
   const cornerAgentPubkey = useMemo(
-    () => resolveCornerViewAgentPubkey(messages, (pubkey) => agentByPubkey.has(pubkey)),
-    [agentByPubkey, messages],
+    () => resolveCornerViewAgentPubkey(
+      messages,
+      (pubkey) => agentByPubkey.has(pubkey),
+      roomSurface?.cornerOpenerAgentId,
+    ),
+    [agentByPubkey, messages, roomSurface?.cornerOpenerAgentId],
   );
   const rawSpeakerWorking = useMemo(
     () =>
@@ -2086,8 +2090,7 @@ export function BuzzChatSurface({
     [activeAgentTurns],
   );
   const speakerWorking = useStable(rawSpeakerWorking, shallowEqualRecord);
-  // The corner header names the corner's OWN agent — the server projection's
-  // `agent` (`corners.created_by`, the agent the corner belongs to), never
+  // The corner header names the opener from `corner_facts.owner_agent_id`, never
   // whichever agent currently holds a live turn. While a reviewer works in
   // the corner the transcript attribution is the reviewer's and stays there;
   // the corner does not change hands. The transcript-derived identity fills
@@ -5523,8 +5526,7 @@ export function BuzzChatSurface({
               </TouchableOpacity>
             )}
             {/*
-            The corner's OWN agent — the server projection's `agent`
-            (`corners.created_by`), stated here once and never repeated on a
+            The corner's opener, stated here once and never repeated on a
             message. A reviewer or helper holding a live turn in the corner
             never swaps this mark or the name under it: their work is
             attributed in the transcript, and the state word reads
@@ -5591,8 +5593,9 @@ export function BuzzChatSurface({
               )}
               {isCorner ? (
                 <HeaderMetaRow>
-                  <Text
-                    numberOfLines={1}
+                  <CornerHeaderAgentText
+                    name={cornerOwnerDisplay?.name ?? 'Agent'}
+                    stateWord={cornerHeaderWord}
                     style={[
                       styles.cornerHeaderAgent,
                       cornerHeaderDisplay.status === 'working'
@@ -5603,9 +5606,7 @@ export function BuzzChatSurface({
                             ? styles.cornerHeaderArchived
                             : styles.cornerHeaderWaiting,
                     ]}
-                  >
-                    {(cornerOwnerDisplay?.name ?? 'AGENT').toUpperCase()} · {cornerHeaderWord}
-                  </Text>
+                  />
                 </HeaderMetaRow>
               ) : isDirectMessage ? (
                 <HeaderMetaCaps testID="room-header-meta">{dmHeaderPresence}</HeaderMetaCaps>

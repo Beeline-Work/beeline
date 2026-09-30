@@ -7140,6 +7140,8 @@ describe('monolith integration', () => {
         )
       ).rows[0],
     ).toEqual({ owner_agent_id: AGENT });
+    const cornerView = (await (await request(`/v1/phone/rooms/${legacyCornerId}`)).json()) as RoomView;
+    expect(cornerView.cornerOpenerAgentId).toBe(AGENT);
   });
 
   it('settles a working turn when its final untagged agent reply is stored', async () => {

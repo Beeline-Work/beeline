@@ -86,6 +86,13 @@ describe('corner session presentation', () => {
     expect(resolveCornerViewAgentPubkey(messages, isRegisteredAgent)).toBe('beebee-pk');
   });
 
+  it('keeps the corner opener in the header after a different agent reviews', () => {
+    const messages = [
+      { id: 'opened', text: 'Working', isUser: false, timestamp: 1, pubkey: 'bbc-pk' },
+      { id: 'review', text: 'Review complete', isUser: false, timestamp: 2, pubkey: 'candy-pk' },
+    ];
+    expect(resolveCornerViewAgentPubkey(messages, () => true, 'bbc-pk')).toBe('bbc-pk');
+  });
 });
 
 describe('chat header title (the # channel-mark convention)', () => {

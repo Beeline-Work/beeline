@@ -84,7 +84,8 @@ export function channelHeaderTitle(
 }
 
 /**
- * The corner view's own header identity. `agentTurn.agentPubkey` is declared
+ * The corner view's opener owns the header identity. While that projection is
+ * loading, `agentTurn.agentPubkey` is declared
  * data (the same `agent` tag, or its signer fallback, that `corner.agentPubkey`
  * uses) and can be a stale/legacy pubkey even when a later message in the same
  * transcript is actually signed by the current registered agent. Apply the
@@ -96,7 +97,9 @@ export function channelHeaderTitle(
 export function resolveCornerViewAgentPubkey(
   messages: readonly ChatDisplayMessage[],
   isRegisteredAgent: (pubkey: string) => boolean,
+  openerAgentId?: string,
 ): string | undefined {
+  if (openerAgentId) return openerAgentId;
   const reversedMessages = [...messages].reverse();
   const declaredAgentPubkey = reversedMessages.find((message) => message.agentTurn)?.agentTurn
     ?.agentPubkey;

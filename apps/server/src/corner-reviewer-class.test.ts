@@ -5,7 +5,7 @@ import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { systemLine } from './system-line.js';
-import { createAgentCommand } from './agent-command.js';
+import { createAgentCommand, routeSystemCommand } from './agent-command.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 
 const H = 'a'.repeat(64);
@@ -141,6 +141,51 @@ describe('check-passed dispatch with a class-configured reviewer', () => {
       [C],
     );
     expect(notice.rows).toHaveLength(1);
+  });
+
+  it('keys the exhaustion notice per episode (head SHA + triggering message), not per corner+class forever', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerClass: 'heavy' }, H);
+    await reportPresence(HEAVY_A, 'offline');
+    await reportPresence(HEAVY_B, 'offline');
+    const noticeCount = () =>
+      db
+        .query<{ id: string }>(
+          `SELECT id FROM messages WHERE room_id=$1 AND text LIKE '%no healthy member%'`,
+          [C],
+        )
+        .then((r) => r.rows.length);
+
+    await routeSystemCommand(db, {
+      roomId: C,
+      sourceMessageId: 'episode-1-trigger',
+      kind: 'check-passed',
+      targets: [],
+    });
+    expect(await noticeCount()).toBe(1);
+
+    // A retry of the exact same triggering check/command collapses into the
+    // one already posted for this episode.
+    await routeSystemCommand(db, {
+      roomId: C,
+      sourceMessageId: 'episode-1-trigger',
+      kind: 'check-passed',
+      targets: [],
+    });
+    expect(await noticeCount()).toBe(1);
+
+    // A later green on a NEW head is an independent exhaustion episode and
+    // must post its own notice, not be swallowed by the first.
+    await db.query(
+      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`,
+      [C, '2'.repeat(40)],
+    );
+    await routeSystemCommand(db, {
+      roomId: C,
+      sourceMessageId: 'episode-2-trigger',
+      kind: 'check-passed',
+      targets: [],
+    });
+    expect(await noticeCount()).toBe(2);
   });
 });
 

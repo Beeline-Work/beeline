@@ -196,13 +196,22 @@ async function noteUnreachableReviewer(
  * (`workflow-runs.ts`). `command_check_state` is left alone so the next green
  * transition (or a member coming back healthy) retries automatically; a human
  * can also always fall back to setting a fixed `reviewerAgentId`.
+ *
+ * The id is keyed per EXHAUSTION EPISODE — the head SHA plus the triggering
+ * check/command message — not just corner+class: `systemLine`'s
+ * `ON CONFLICT(id) DO NOTHING` otherwise dedupes forever after the first
+ * exhaustion, so a later independent exhaustion (a new head, or a later green
+ * on the same head) would be silently swallowed. A retry of the exact same
+ * triggering message still collapses to one line.
  */
 async function noteReviewerClassExhausted(
   db: SqlDatabase,
-  input: { cornerId: string; sourceMessageId: string; reviewerClass: string },
+  input: { cornerId: string; sourceMessageId: string; reviewerClass: string; headSha: string | null },
 ): Promise<void> {
   const id = createHash('sha256')
-    .update(`beeline:${input.cornerId}:reviewer-class-exhausted:${input.reviewerClass}`)
+    .update(
+      `beeline:${input.cornerId}:reviewer-class-exhausted:${input.reviewerClass}:${input.headSha ?? 'no-head'}:${input.sourceMessageId}`,
+    )
     .digest('hex');
   await ensureSystemIdentity(db);
   await systemLine(db, {
@@ -1105,7 +1114,6 @@ export async function routeSystemCommand(
         state: string;
         command_check_state: string | null;
         parent_id: string;
-        reviewer_class: string | null;
         head_sha: string | null;
       }>(
         `SELECT fact.owner_agent_id,
@@ -1124,6 +1132,7 @@ export async function routeSystemCommand(
                 fact.lifecycle->>'checks' state,fact.command_check_state,
                 fact.lifecycle->'pr'->>'headSha' head_sha,
                 parent.reviewer_class,parent.id parent_room_id,parent.workspace_id
+
          FROM corner_facts fact
          JOIN rooms corner ON corner.id=fact.corner_id
          JOIN rooms parent ON parent.id=corner.parent_id
@@ -1210,6 +1219,7 @@ export async function routeSystemCommand(
           cornerId: input.roomId,
           sourceMessageId: input.sourceMessageId,
           reviewerClass: fact.reviewer_class!,
+          headSha: fact.head_sha,
         });
         return;
       }

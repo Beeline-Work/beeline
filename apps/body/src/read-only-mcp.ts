@@ -1539,7 +1539,8 @@ export function agentToolsFor(
       tool.name === 'connect_app'
     )
       return !cornerTurn;
-    if (tool.name === 'open_corner') return !directMessage && !cornerTurn;
+    // From a corner, open_corner opens a sibling corner in the parent Room.
+    if (tool.name === 'open_corner') return !directMessage;
     if (tool.name === 'revise_corner_brief') return cornerTurn;
     if (tool.name === 'record_validation_stage') return cornerTurn;
     if (tool.name === 'upgrade_corner_to_code') return cornerTurn && agentMayUpgradeCorner;
@@ -2090,8 +2091,8 @@ async function relayMessage(direction: 'down', args: JsonObject, reply = false):
 }
 
 async function openCorner(args: JsonObject, toolCallId: string): Promise<string> {
-  if (process.env.BEELINE_DAEMON_CORNER_ID || process.env.BEELINE_AGENT_DM === '1') {
-    throw new Error('open_corner is available only in a top-level Room');
+  if (process.env.BEELINE_AGENT_DM === '1') {
+    throw new Error('open_corner is not available in a direct message');
   }
   const { name, objective } = cornerCallText(args);
   if (
@@ -2108,6 +2109,7 @@ async function openCorner(args: JsonObject, toolCallId: string): Promise<string>
       : args.lane === 'research'
         ? ('research' as const)
         : ('code' as const);
+  // In a corner turn this is the parent Room, where the new corner opens.
   const roomId = requiredEnv('BEELINE_DAEMON_ROOM_ID');
   const repository = await daemonExecute('getRoomRepositoryState', { roomId });
   if (repository.resolution === 'unverified') {

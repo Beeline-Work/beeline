@@ -654,13 +654,21 @@ export async function fileFeedbackIssue(
   const ids = uniqueIds(input.itemIds);
   const items = await loadItems(database, ids);
   assertAllNew(items);
+  // The limit is GitHub's body as sent, so it counts the server's footer too.
+  const footer = `\n\n---\nBeeline feedback: ${items[0]!.id} · ${reportCounts(items)}`;
+  const issueBody = `${body}${footer}`;
+  if (issueBody.length > FEEDBACK_ISSUE_BODY_MAX_LENGTH)
+    throw new FeedbackRedactionError(
+      'body-length',
+      `body is ${issueBody.length} characters with the ${footer.length}-character server footer; ` +
+        `the limit is ${FEEDBACK_ISSUE_BODY_MAX_LENGTH}, so write at most ${FEEDBACK_ISSUE_BODY_MAX_LENGTH - footer.length}`,
+    );
   assertFeedbackRedaction({ title, body }, await redactionContext(database, items));
-  const footer = `Beeline feedback: ${items[0]!.id} · ${reportCounts(items)}`;
   let created: { number: number; url: string };
   try {
     created = await host.createIssue(config.repository, {
       title,
-      body: `${body}\n\n---\n${footer}`,
+      body: issueBody,
       labels: [FEEDBACK_ISSUE_LABEL, input.categoryLabel],
     });
   } catch (error) {

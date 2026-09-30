@@ -502,6 +502,33 @@ describe('triage tools', () => {
     expect((await items())[0]!.status).toBe('new');
   });
 
+  it('counts the server footer against the 4000-character body limit', async () => {
+    const github = new FakeGitHub();
+    const item = await report({ summary: 'long body' });
+    const turn = await triageTurn();
+    const footer = `\n\n---\nBeeline feedback: ${item.itemId} · 1 report (0 human, 1 agent)`;
+    const file = (body: string) =>
+      daemon(github).execute(
+        'fileFeedbackIssue',
+        { ...turn, itemIds: [item.itemId], title: 'Long', body, categoryLabel: 'bug' } as never,
+        TRIAGE,
+      );
+    // A body at the limit on its own is too long once the footer is added.
+    await expect(file('x'.repeat(4000))).rejects.toThrow(
+      'redaction rule body-length',
+    );
+    await expect(file('x'.repeat(4000 - footer.length + 1))).rejects.toThrow(
+      `write at most ${4000 - footer.length}`,
+    );
+    expect(github.issues.size).toBe(0);
+    expect((await items())[0]!.status).toBe('new');
+
+    const filed = (await file('x'.repeat(4000 - footer.length))) as { issueNumber: number };
+    const sent = github.issues.get(filed.issueNumber)!.body;
+    expect(sent.length).toBe(4000);
+    expect(sent.endsWith(footer)).toBe(true);
+  });
+
   it('refuses a redacted write, naming the rule, and writes nothing', async () => {
     const github = new FakeGitHub();
     await message('The deploy to staging failed because the database password rotated overnight');

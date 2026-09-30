@@ -88,7 +88,7 @@ written, and a failing write names its rule; nothing is rewritten:
 
 | Rule | Refuses |
 | --- | --- |
-| `title-length`, `body-length` | A title over 120 characters or a body over 4000. |
+| `title-length`, `body-length` | A title over 120 characters, or an issue body over 4000 counting the server footer. |
 | `evidence-quote` | Any 40+ character run copied verbatim from the linked evidence or a human note. |
 | `email` | An email address. |
 | `secret` | A secret-shaped value. |

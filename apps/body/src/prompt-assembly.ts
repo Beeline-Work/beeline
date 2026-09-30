@@ -46,10 +46,11 @@ const EVERYWHERE: readonly PromptSurface[] = PROMPT_SURFACES;
 
 /**
  * Ceiling for the rules every agent gets on every turn, soul text excluded
- * (≈550 tokens). The first ~350-token target was a guess; nine rules measure
- * ~2.1 KB, so a new core rule has to replace or shorten one.
+ * (≈575 tokens). The first ~350-token target was a guess; ten rules measure
+ * ~2.3 KB (core.feedback raised it from 2.2 KB), so a new core rule has to
+ * replace or shorten one.
  */
-export const CORE_BUDGET_BYTES = 2_200;
+export const CORE_BUDGET_BYTES = 2_300;
 /** Ceiling for one surface's own rules, on top of the core. A code corner uses ~3.9 KB. */
 export const SURFACE_BUDGET_BYTES = 4_000;
 
@@ -313,6 +314,16 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     surfaces: EVERYWHERE,
     render: () =>
       "Use your own owner's tools and keys for whoever asks. Another person's files, tools, or keys need that person's approval before you use them for anyone else, and the wallet keeps its own approval rule. Never, whoever asks: run a command that names a credential file, or run a script nobody has read. Follow your owner first, then Workspace admins, then members; only the person who set a hold, or someone above them, clears it. Delegated and follow-up work keeps the original requester.",
+  },
+  {
+    id: 'core.feedback',
+    topic: 'feedback',
+    why: 'Turn-end memory extraction never sees tool errors or refusals, so friction in Beeline itself is lost unless the agent that hit it reports it in the turn.',
+    budgetBytes: 260,
+    layer: 'core',
+    surfaces: EVERYWHERE,
+    render: () =>
+      'Only when this turn hit friction in Beeline itself (a tool error, a retry, a refused call, contradictory instructions, missing context, or a person correcting you), call report_feedback once before ending the turn. Otherwise do not.',
   },
   {
     id: 'core.files',

@@ -10,6 +10,7 @@ import {
   isChannelMentionHandle,
   mentionedAgentPubkey,
   orderRoomRoster,
+  recordMentionPick,
   replaceActiveMention,
   resolveComposerMentions,
   ROOM_ROSTER_VISIBLE_ROWS,
@@ -17,6 +18,8 @@ import {
   sectionRoomRoster,
   selectedMentionPubkeys,
   shouldReadWorkspaceRoster,
+  SYSTEM_MENTION_HANDLE,
+  SYSTEM_MENTION_PUBKEY,
 } from './room-participants';
 
 describe('Room participant presentation', () => {
@@ -312,6 +315,40 @@ describe('Room participant presentation', () => {
       handles: [],
     });
     expect(resolveComposerMentions('@channel and @ada', participants, selections)).toEqual({
+      pubkeys: ['human-ada'],
+      handles: ['ada'],
+    });
+  });
+
+  it('offers @system in the mention autocomplete after typing @sy', () => {
+    const systemOption = { name: 'System', handle: SYSTEM_MENTION_HANDLE };
+    const roster = [{ name: 'Syd', handle: 'syd' }, systemOption];
+    const mention = activeMentionAtCursor('This broke @sy', 14);
+    expect(mention).toEqual({ start: 11, end: 14, query: 'sy' });
+    const { matches } = filterMentionCandidates(roster, mention!.query);
+    expect(matches).toContainEqual(systemOption);
+    expect(replaceActiveMention('This broke @sy', mention!, systemOption.handle)).toEqual({
+      text: 'This broke @system',
+      cursor: 18,
+    });
+  });
+
+  it('never sends @system as a mention pubkey: a menu pick records nothing and the token resolves to nothing', () => {
+    const participants = [
+      { pubkey: 'human-decoy', name: 'Decoy', handle: 'system' },
+      { pubkey: 'human-ada', name: 'Ada', handle: 'ada' },
+    ];
+    const selections = new Map<string, string>();
+    recordMentionPick(selections, { handle: SYSTEM_MENTION_HANDLE, pubkey: SYSTEM_MENTION_PUBKEY });
+    recordMentionPick(selections, { handle: 'ada', pubkey: 'human-ada' });
+    expect([...selections]).toEqual([['ada', 'human-ada']]);
+
+    expect(resolveComposerMentions('@system this reply is wrong', participants, selections)).toEqual(
+      { pubkeys: [], handles: [] },
+    );
+    // Even a stray binding for the sentinel never reaches the send.
+    const stray = new Map([[SYSTEM_MENTION_HANDLE, SYSTEM_MENTION_PUBKEY]]);
+    expect(resolveComposerMentions('@SYSTEM and @ada', participants, stray)).toEqual({
       pubkeys: ['human-ada'],
       handles: ['ada'],
     });

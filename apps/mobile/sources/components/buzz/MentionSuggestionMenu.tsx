@@ -2,7 +2,11 @@ import React, { useEffect, useRef } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
-import { CHANNEL_MENTION_PUBKEY } from '@/buzz/room-participants';
+import {
+  CHANNEL_MENTION_PUBKEY,
+  SYSTEM_MENTION_LABEL,
+  SYSTEM_MENTION_PUBKEY,
+} from '@/buzz/room-participants';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import type { RoomRosterParticipant } from '@/components/buzz/RoomRosterSheet';
 
@@ -66,12 +70,21 @@ export function MentionSuggestionMenu({
       >
         {matches.map((participant, index) => {
           const selected = index === highlightedIndex;
+          // The two reserved rows (`@channel`, `@system`) are tokens, not
+          // identities: a glyph instead of a face, and words for what they do.
+          const reserved =
+            participant.pubkey === CHANNEL_MENTION_PUBKEY ||
+            participant.pubkey === SYSTEM_MENTION_PUBKEY;
           const display = participant.agent
             ? resolveAgentDisplayIdentity(participant.pubkey, participant.agent)
             : undefined;
           return (
             <TouchableOpacity
-              accessibilityLabel={`${participant.name}, @${participant.handle}, ${participant.kind}`}
+              accessibilityLabel={
+                participant.pubkey === SYSTEM_MENTION_PUBKEY
+                  ? `${SYSTEM_MENTION_LABEL}, @${participant.handle}`
+                  : `${participant.name}, @${participant.handle}, ${participant.kind}`
+              }
               accessibilityRole="button"
               accessibilityState={{ selected }}
               key={participant.pubkey}
@@ -79,9 +92,11 @@ export function MentionSuggestionMenu({
               style={[styles.mentionRow, selected && styles.mentionRowSelected]}
               testID={`mention-suggestion-${participant.handle}`}
             >
-              {participant.pubkey === CHANNEL_MENTION_PUBKEY ? (
+              {reserved ? (
                 <View style={styles.mentionChannelGlyph}>
-                  <Text style={styles.mentionChannelGlyphText}>@</Text>
+                  <Text style={styles.mentionChannelGlyphText}>
+                    {participant.pubkey === SYSTEM_MENTION_PUBKEY ? '!' : '@'}
+                  </Text>
                 </View>
               ) : display ? (
                 <IdentityMark
@@ -106,7 +121,9 @@ export function MentionSuggestionMenu({
                 <Text numberOfLines={1} style={styles.mentionName}>
                   {participant.pubkey === CHANNEL_MENTION_PUBKEY
                     ? 'Everyone in this Room'
-                    : participant.name}
+                    : participant.pubkey === SYSTEM_MENTION_PUBKEY
+                      ? SYSTEM_MENTION_LABEL
+                      : participant.name}
                 </Text>
                 <Text numberOfLines={1} style={styles.mentionHandle}>
                   @{participant.handle}
@@ -115,7 +132,9 @@ export function MentionSuggestionMenu({
               <Text style={styles.mentionKind}>
                 {participant.pubkey === CHANNEL_MENTION_PUBKEY
                   ? 'ROOM'
-                  : participant.kind === 'agent'
+                  : participant.pubkey === SYSTEM_MENTION_PUBKEY
+                    ? 'REPORT'
+                    : participant.kind === 'agent'
                     ? 'AGENT'
                     : 'PERSON'}
               </Text>

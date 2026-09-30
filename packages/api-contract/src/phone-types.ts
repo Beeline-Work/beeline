@@ -236,6 +236,9 @@ export type RoomViewMessage = {
   readonly deleted?: boolean;
   /** Private viewer state. Omitted unless this viewer saved the message. */
   readonly bookmarked?: boolean;
+  /** Someone reported this message to the Beeline feedback loop (@system or
+   *  Report issue). Visible to every Room member. */
+  readonly feedbackReported?: boolean;
   /** The structured event behind a server-phrased system line or card header;
    *  absent on rows written before the one system-line grammar. */
   readonly systemEvent?: SystemEvent;
@@ -582,6 +585,8 @@ export type RoomView = {
   readonly parent?: RoomViewHeader;
   /** The agent that opened this corner, independent of later reviewers and helpers. */
   readonly cornerOpenerAgentId?: string;
+  /** A corner's Feedback triage setting; absent outside corners. */
+  readonly cornerFeedbackTriage?: boolean;
   readonly briefing?: readonly RoomViewMessage[];
   /** Latest corner plan, retained after its live activity rows settle. */
   readonly cornerPlan?: RoomViewActivity['plan'];

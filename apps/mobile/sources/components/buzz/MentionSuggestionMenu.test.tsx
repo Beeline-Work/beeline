@@ -37,7 +37,7 @@ vi.mock('@/components/buzz/IdentityMark', async () => {
 });
 
 import { typeRoles } from '@/buzz/groknight';
-import { CHANNEL_MENTION_PUBKEY } from '@/buzz/room-participants';
+import { CHANNEL_MENTION_PUBKEY, SYSTEM_MENTION_PUBKEY } from '@/buzz/room-participants';
 import type { RoomRosterParticipant } from './RoomRosterSheet';
 import { MENTION_ROW_HEIGHT, MentionSuggestionMenu } from './MentionSuggestionMenu';
 
@@ -145,6 +145,29 @@ describe('MentionSuggestionMenu', () => {
     expect(
       JSON.stringify(channel.findAllByType('Text' as never).map((t: any) => t.props.children)),
     ).toContain('Everyone in this Room');
+  });
+
+  it('offers @system as a report row, not a person', () => {
+    const system: RoomRosterParticipant = {
+      pubkey: SYSTEM_MENTION_PUBKEY,
+      name: 'System',
+      handle: 'system',
+      kind: 'person',
+    };
+    const onSelect = vi.fn();
+    const renderer = render(menu({ matches: [system], overflow: 0, onSelect }));
+    const row = renderer.root.findByProps({ testID: 'mention-suggestion-system' });
+    expect(row.props.accessibilityLabel).toBe('System — report an issue, @system');
+    const words = JSON.stringify(
+      row.findAllByType('Text' as never).map((text: any) => text.props.children),
+    );
+    expect(words).toContain('System — report an issue');
+    expect(words).toContain('REPORT');
+    expect(words).not.toContain('PERSON');
+    // A token, not an identity: no face.
+    expect(row.findAllByType('IdentityMark' as never)).toHaveLength(0);
+    act(() => row.props.onPress());
+    expect(onSelect).toHaveBeenCalledWith(system);
   });
 
   it('selects on press', () => {

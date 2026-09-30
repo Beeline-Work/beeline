@@ -85,6 +85,9 @@ export type LedgerByline = {
   isViewer?: boolean;
   /** Private viewer state; the marker is status, never a separate control. */
   bookmarked?: boolean;
+  /** Someone reported this message to the Beeline feedback loop. Shared room
+   *  state, shown to every member as a quiet status word, never a control. */
+  feedbackReported?: boolean;
   /** The speaker's identity mark. Omitted → the plain dot fallback renders. */
   mark?: LedgerBylineMark;
 };
@@ -400,6 +403,15 @@ function Byline({ byline }: { byline: LedgerByline }) {
           </Text>
         ) : null}
         <View style={styles.bylineStatus} testID="chat-byline-status">
+          {byline.feedbackReported ? (
+            <Text
+              accessibilityLabel="Reported to Beeline"
+              style={styles.bylineStamp}
+              testID="chat-reported-marker"
+            >
+              Reported
+            </Text>
+          ) : null}
           {byline.bookmarked ? (
             <Ionicons
               accessibilityLabel="Bookmarked"

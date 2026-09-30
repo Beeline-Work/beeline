@@ -1064,6 +1064,10 @@ export function readRoomViewMessage(value: unknown): RoomViewMessage | null {
     ...field('deleted', typeof item.deleted === 'boolean' ? item.deleted : undefined),
     ...field('createdAtMs', integer(item.createdAtMs) ? item.createdAtMs : undefined),
     ...field('bookmarked', typeof item.bookmarked === 'boolean' ? item.bookmarked : undefined),
+    ...field(
+      'feedbackReported',
+      typeof item.feedbackReported === 'boolean' ? item.feedbackReported : undefined,
+    ),
     ...field('reference', projectedReference),
     ...field('reply', projectedReply),
     ...field('liveTurnId', typeof item.liveTurnId === 'string' ? item.liveTurnId : undefined),
@@ -1519,6 +1523,10 @@ export function readRoomView(value: unknown): RoomView | null {
     ...field('directMessage', readDirectMessage(item.directMessage, viewer.identity.pubkey)),
     ...field('parent', readHeader(item.parent)),
     ...field('cornerOpenerAgentId', hex64(item.cornerOpenerAgentId) ? item.cornerOpenerAgentId : undefined),
+    ...field(
+      'cornerFeedbackTriage',
+      typeof item.cornerFeedbackTriage === 'boolean' ? item.cornerFeedbackTriage : undefined,
+    ),
     ...field('briefing', readList(item.briefing, readRoomViewMessage, ROOM_VIEW_BRIEFING_LIMIT)),
     ...field('cornerPlan', readPlan(item.cornerPlan)),
     ...field('repository', readRepository(item.repository)),

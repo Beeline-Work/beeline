@@ -15,7 +15,8 @@ import type { CommandRow } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
 import { institutionalWorkspaceRolloutStage, rolloutAllowsLive } from './institutional-rollout.js';
 import { scheduleEmbedWorkspaceSkillVersion, memoryEnvLimit, createDefaultEmbedFn,
-  withDeadline, pgvectorLiteral, type EmbedFn } from './institutional-memory-embeddings.js';
+  withDeadline, pgvectorLiteral, runAfterCommit, type AfterCommit, type EmbedFn,
+} from './institutional-memory-embeddings.js';
 
 export const WORKSPACE_SKILL_ACTIVE_MAX = 100;
 export const WORKSPACE_SKILL_ACTIVE_BYTES_MAX = 1024 * 1024;
@@ -128,6 +129,7 @@ export async function applySkillRevision(
     kind: 'procedure' | 'workflow';
     sourceMessageIds: readonly string[];
   },
+  afterCommit?: AfterCommit,
 ): Promise<{ skillId: string; version: number }> {
   const markdownBytes = Buffer.byteLength(input.markdown, 'utf8');
   if (markdownBytes > WORKSPACE_SKILL_MARKDOWN_MAX_BYTES) {
@@ -211,10 +213,11 @@ export async function applySkillRevision(
     );
     return { skillId, version };
   });
-  // Event-driven, not polled: this save schedules its OWN row's embed
-  // against the outer (post-commit) `database` handle. See
+  // Event-driven, not polled: this save schedules its OWN row's embed once
+  // the caller's transaction commits, on the pool. See
   // institutional-memory-embeddings.ts.
-  scheduleEmbedWorkspaceSkillVersion(database, applied.skillId);
+  runAfterCommit(afterCommit, database, (pool) =>
+    scheduleEmbedWorkspaceSkillVersion(pool, applied.skillId));
   return applied;
 }
 
@@ -229,6 +232,7 @@ export async function saveSkill(
   command: CommandRow,
   input: { slug: unknown; description: unknown; markdown: unknown },
   embed: EmbedFn = createDefaultEmbedFn(),
+  afterCommit?: AfterCommit,
 ): Promise<{ slug: string; version: number;
   similarSkills: { slug: string; description: string }[] }> {
   const slug = typeof input.slug === 'string' ? input.slug.trim() : '';
@@ -256,20 +260,39 @@ export async function saveSkill(
     markdown,
     kind: 'procedure',
     sourceMessageIds: [command.root_source_message_id],
-  });
+  }, afterCommit);
+  const result = { slug, version, similarSkills: [] as { slug: string; description: string }[] };
+  // The lookup embeds over the network, so inside a command transaction it
+  // waits for the commit and fills the same result object before it returns.
+  const findSimilar = async (pool: SqlDatabase) => {
+    result.similarSkills = await similarWorkspaceSkills(
+      pool, room.workspace_id, slug, description, markdown, embed);
+  };
+  if (afterCommit) afterCommit(findSimilar);
+  else await findSimilar(database);
+  return result;
+}
+
+async function similarWorkspaceSkills(
+  database: SqlDatabase,
+  workspaceId: string,
+  slug: string,
+  description: string,
+  markdown: string,
+  embed: EmbedFn,
+): Promise<{ slug: string; description: string }[]> {
   const query = await withDeadline(embed, 3_000)(
     `${slug.replace(/-/g, ' ')}: ${description}\n${markdown.slice(0, 600)}`, 'query');
-  const similarSkills = query.outcome === 'served' && query.vector
+  return query.outcome === 'served' && query.vector
     ? (await database.query<{ slug: string; description: string }>(
       `SELECT slug,description FROM workspace_skills
        WHERE workspace_id=$1 AND state='active' AND kind='procedure'
          AND slug<>$2 AND embedding IS NOT NULL
          AND (embedding <=> $3::vector) <= $4
        ORDER BY embedding <=> $3::vector LIMIT 3`,
-      [room.workspace_id, slug, pgvectorLiteral(query.vector),
+      [workspaceId, slug, pgvectorLiteral(query.vector),
        memoryEnvLimit('INSTITUTIONAL_MEMORY_ALIGN_MAX_DISTANCE', INSTITUTIONAL_MEMORY_ALIGN_MAX_DISTANCE)],
     )).rows : [];
-  return { slug, version, similarSkills };
 }
 
 export type WorkspaceSkillVectorCandidate = WorkspaceSkillIndexCandidate & {

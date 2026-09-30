@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import { DELIVERY_PICKUP_WINDOW_MS } from './connection-presence.js';
-import { CORNER_WORKFLOW_SLUG } from './corner-workflow.js';
 import type { SqlDatabase } from './database.js';
 import type { InstitutionalMemoryShadowConfig } from './institutional-memory-shadow.js';
 import {
@@ -51,7 +50,6 @@ function agedBeyondSql(anchor: string, days: string): string {
 }
 
 const ITEM_AGE_ANCHOR = `GREATEST(item.updated_at,COALESCE(item.last_served_at,item.updated_at))`;
-const SKILL_AGE_ANCHOR = `GREATEST(skill.updated_at,COALESCE(skill.last_served_at,skill.updated_at))`;
 
 /**
  * Sample whether an authorized helper host can serve this Workspace and record
@@ -559,48 +557,28 @@ async function deterministicLifecycle(
   workspaceId: string,
   now: Date,
   expireAfterDays: number,
-  explicitExpireAfterDays: number,
 ): Promise<{
   staleItems: number;
   archivedItems: number;
   staleSkills: number;
   archivedSkills: number;
 }> {
+  // Only what an agent saved on its own ages out. A fact someone asked to
+  // keep (explicit_save) never expires; it changes only when corrected.
   const staleItems = await database.query(
     `UPDATE institutional_memory_items item
      SET state='stale',body='',deleted_at=$2,updated_at=$2
      WHERE item.workspace_id=$1 AND item.state='active' AND item.deleted_at IS NULL
-       AND ${agedBeyondSql(ITEM_AGE_ANCHOR,
-         'CASE WHEN item.explicit_save THEN $4 ELSE $3 END')}`,
-    [workspaceId, now, expireAfterDays, explicitExpireAfterDays],
+       AND NOT item.explicit_save
+       AND ${agedBeyondSql(ITEM_AGE_ANCHOR, '$3')}`,
+    [workspaceId, now, expireAfterDays],
   );
 
-  // The built-in Corner workflow is system-owned infrastructure, present in
-  // every Workspace whether or not it is ever discovered/loaded like a
-  // user-authored skill — age-based staleness has no meaning for it, and it
-  // must never silently archive out from under running corners.
-  const staleSkills = await database.query<{ id: string }>(
-    `UPDATE workspace_skills skill SET state='stale',updated_at=$2
-     WHERE skill.workspace_id=$1 AND skill.state='active'
-       AND NOT (skill.kind='workflow' AND skill.slug=$4)
-       AND ${agedBeyondSql(SKILL_AGE_ANCHOR, '$3')}
-     RETURNING id`,
-    [workspaceId, now, expireAfterDays, CORNER_WORKFLOW_SLUG],
-  );
-  // Retention ends the CONTENT, not the record: the row, its immutable versions
-  // and every recorded load stay, exactly as the memory-item path keeps its own
-  // sources and supersession. Deleting the skill would cascade its use ledger
-  // away and retroactively shrink the discoverability measurements.
-  await database.query(
-    `UPDATE workspace_skill_versions version
-     SET markdown='',source_deleted_at=$2
-     WHERE version.skill_id=ANY($1::uuid[]) AND version.source_deleted_at IS NULL`,
-    [staleSkills.rows.map((row) => row.id), now],
-  );
+  // Skills and workflows never expire: only memory items age out.
   return {
     staleItems: staleItems.rowCount,
     archivedItems: 0,
-    staleSkills: staleSkills.rowCount,
+    staleSkills: 0,
     archivedSkills: 0,
   };
 }
@@ -617,11 +595,9 @@ export async function runInstitutionalCuratorCycle(
     workspace_id: string;
     stage: 'shadow' | 'pilot' | 'live';
     expire_after_days: number;
-    explicit_expire_after_days: number;
   }>(
     `SELECT workspace.id workspace_id,COALESCE(rollout.stage,'live') stage,
-            COALESCE(rollout.expire_after_days,90) expire_after_days,
-            COALESCE(rollout.explicit_expire_after_days,365) explicit_expire_after_days
+            COALESCE(rollout.expire_after_days,90) expire_after_days
      FROM workspaces workspace
      LEFT JOIN institutional_memory_workspace_rollouts rollout
        ON rollout.workspace_id=workspace.id
@@ -651,8 +627,7 @@ export async function runInstitutionalCuratorCycle(
         if (!inserted.rowCount) return;
         const lifecycle = !config.live || rollout.stage === 'shadow'
           ? { staleItems: 0, archivedItems: 0, staleSkills: 0, archivedSkills: 0 }
-          : await deterministicLifecycle(db, rollout.workspace_id, now,
-              rollout.expire_after_days, rollout.explicit_expire_after_days);
+          : await deterministicLifecycle(db, rollout.workspace_id, now, rollout.expire_after_days);
         await db.query(
           `UPDATE institutional_curator_cycles
            SET queued_jobs=0,stale_items=$3,archived_items=0,stale_skills=$4,

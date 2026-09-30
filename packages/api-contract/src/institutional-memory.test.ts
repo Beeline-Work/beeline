@@ -144,7 +144,7 @@ describe('institutional memory proposal contract', () => {
     rejects({ keywords: ['a', 'b', 'c', 'd', 'e', 'f', 'g'] }, /1 to 6 keywords/);
     rejects({ keywords: ['the'] }, /distinctive/);
     rejects({ keywords: ['release', 'release'] }, /unique/);
-    rejects({ canonicalKey: 'standing' }, /reserved/);
+    rejects({ canonicalKey: 'standing' }, /retired/);
     expect(
       parseInstitutionalMemoryProposal({ ...workspaceFact, keywords: ['Release', ' Marker '] })
         .keywords,

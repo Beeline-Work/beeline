@@ -19,7 +19,7 @@ import { boundRoomTaskBody, budgetTranscript } from './transcript-budget.js';
  * Where new text goes: a rule for every agent on every turn is a core section;
  * a rule for one surface is a surface section; how to call one tool is that
  * tool's description; a long procedure is a skill; one person's preference is
- * a memory item or their standing preference. Adding a section means cutting
+ * a memory item. Adding a section means cutting
  * or shortening another to stay inside `CORE_BUDGET_BYTES` and the surface
  * budgets.
  */
@@ -619,7 +619,6 @@ export interface TurnPromptContext {
   readonly modelContextTokens?: number;
   /** `AssembledSessionPrompt.turnPrefix`. */
   readonly sessionPrefix?: string;
-  readonly standingPreference?: { readonly requesterName: string; readonly text: string };
   readonly objective?: string;
   readonly brief?: {
     readonly brief: CornerBrief;
@@ -661,18 +660,6 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
     layer: 'turn',
     surfaces: EVERYWHERE,
     render: ({ sessionPrefix }) => sessionPrefix ?? '',
-  },
-  {
-    id: 'turn.standing',
-    topic: 'standing-preference',
-    why: 'A person’s every-turn preferences are stored once and must reach whichever agent answers them.',
-    budgetBytes: 480,
-    layer: 'turn',
-    surfaces: EVERYWHERE,
-    render: ({ standingPreference }) =>
-      standingPreference
-        ? `For ${standingPreference.requesterName} (overrides your default style; the rules above still win): ${standingPreference.text}`
-        : '',
   },
   {
     id: 'turn.objective',

@@ -1395,14 +1395,6 @@ export class MonolithRoomTurnLoop {
                   surface: this.sessionSurface,
                   modelContextTokens: this.modelContextTokens,
                   sessionPrefix: this.turnInstructionPrefix,
-                  ...(institutionalContext.standingPreference
-                    ? {
-                        standingPreference: {
-                          requesterName: inboxItemAuthorName(item, names),
-                          text: institutionalContext.standingPreference,
-                        },
-                      }
-                    : {}),
                   ...(checkout?.branch && checkout.commit
                     ? { checkout: { branch: checkout.branch, commit: checkout.commit } }
                     : {}),

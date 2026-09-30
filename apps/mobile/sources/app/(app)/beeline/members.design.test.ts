@@ -73,6 +73,19 @@ describe('Members page layout contract', () => {
     expect(source.slice(agentsStart)).not.toContain('personRow(');
   });
 
+  it('counts its two sections as People N and Agents N (C79)', () => {
+    // The page is titled Members, and its two sections report the kinds inside
+    // it with their live server totals. DESIGN.md must describe this wording,
+    // not "Members, never People." The count is a number beside the word when
+    // the total is known, so a head never disagrees with the rows beneath it.
+    expect(source).toContain('function countedKindLabel(');
+    expect(source).toContain('`${kind} `');
+    expect(source).toContain("countedKindLabel('People', peopleTotal)");
+    expect(source).toContain("countedKindLabel('Agents', agentTotal)");
+    expect(source).toContain('testID="members-people-head"');
+    expect(source).toContain('testID="members-agents-head"');
+  });
+
   it('aligns the section + on the same trailing axis as the row chevron (C99)', () => {
     // The row's trailing chevron sits flush against the row's own padding
     // edge; the section head's + control is a 44pt hit target, so its

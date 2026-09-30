@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { Platform } from 'react-native';
 import Svg, { G, Path } from 'react-native-svg';
 import Animated, {
   Easing,
@@ -46,8 +47,13 @@ export function BeelineMark({ size = 112, shimmer = false }: { size?: number; sh
 
   return (
     <Svg
-      accessible
-      accessibilityLabel="Beeline logo"
+      // `accessible` is a native-only View prop: react-native-svg forwards it to
+      // the DOM on web, where React rejects `accessible={true}` as a non-boolean
+      // attribute. Web gets the same public contract in DOM terms — one element
+      // named as an image; native keeps the prop it actually understands.
+      {...(Platform.OS === 'web'
+        ? { role: 'img' as const, 'aria-label': 'Beeline logo' }
+        : { accessible: true, accessibilityLabel: 'Beeline logo' })}
       width={size}
       height={size}
       viewBox={MARK_VIEWBOX}

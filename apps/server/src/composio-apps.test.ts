@@ -75,4 +75,79 @@ describe('managed app provider boundary', () => {
       'gmail', 'googlecalendar', 'googledrive', 'googledocs', 'googlesheets',
     ]);
   });
+
+  it('surfaces a provider message from a non-2xx JSON body and keeps the status', async () => {
+    const transport = vi.fn(async () => json({
+      error: "Quota exceeded for quota metric 'Video Uploads' and limit 'Video Uploads per day'",
+    }, 429));
+    const provider = new ComposioApps('fixture-only', transport as typeof fetch);
+    const error = await provider.account(ACCOUNT, PERSON, 'youtube').catch((e: unknown) => e);
+    expect((error as Error).message).toContain('Quota exceeded for quota metric');
+    expect((error as { status?: number }).status).toBe(429);
+  });
+
+  it('surfaces a plain-text non-2xx body', async () => {
+    const transport = vi.fn(async () => new Response('quota limit reached for this upload', { status: 429 }));
+    const provider = new ComposioApps('fixture-only', transport as typeof fetch);
+    const error = await provider.account(ACCOUNT, PERSON, 'youtube').catch((e: unknown) => e);
+    expect((error as Error).message).toContain('quota limit reached for this upload');
+    expect((error as { status?: number }).status).toBe(429);
+  });
+
+  it('surfaces a provider reason from a flagged execution error', async () => {
+    const transport = vi.fn(async (url: URL | string) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith(`/connected_accounts/${ACCOUNT}`)) return json({
+        id: ACCOUNT, user_id: PERSON, status: 'ACTIVE', toolkit: { slug: 'slack' },
+      });
+      if (path.endsWith('/tools/SLACK_POST_MESSAGE')) return json({
+        slug: 'SLACK_POST_MESSAGE', version: '20260928_00', toolkit: { slug: 'slack' },
+      });
+      if (path.endsWith('/tools/execute/SLACK_POST_MESSAGE'))
+        return json({ error: 'some provider reason' });
+      throw new Error('unexpected request');
+    });
+    const provider = new ComposioApps('fixture-only', transport as typeof fetch);
+    const error = await provider.execute({ accountId: ACCOUNT, userId: PERSON, toolkit: 'slack',
+      tool: 'SLACK_POST_MESSAGE', arguments: { channel: 'announcements' } }).catch((e: unknown) => e);
+    expect((error as Error).message).toBe('App tool execution failed: some provider reason');
+  });
+
+  it('surfaces a nested flagged error message and strips secret-shaped values', async () => {
+    const transport = vi.fn(async (url: URL | string) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith(`/connected_accounts/${ACCOUNT}`)) return json({
+        id: ACCOUNT, user_id: PERSON, status: 'ACTIVE', toolkit: { slug: 'slack' },
+      });
+      if (path.endsWith('/tools/SLACK_POST_MESSAGE')) return json({
+        slug: 'SLACK_POST_MESSAGE', version: '20260928_00', toolkit: { slug: 'slack' },
+      });
+      if (path.endsWith('/tools/execute/SLACK_POST_MESSAGE'))
+        return json({ error: { message: 'nested reason', secret_key: 'x-secret-value' } });
+      throw new Error('unexpected request');
+    });
+    const provider = new ComposioApps('fixture-only', transport as typeof fetch);
+    const error = await provider.execute({ accountId: ACCOUNT, userId: PERSON, toolkit: 'slack',
+      tool: 'SLACK_POST_MESSAGE', arguments: { channel: 'announcements' } }).catch((e: unknown) => e);
+    expect((error as Error).message).toContain('nested reason');
+    expect((error as Error).message).not.toContain('x-secret-value');
+  });
+
+  it('keeps the fixed execution message when a flag is set without an error detail', async () => {
+    const transport = vi.fn(async (url: URL | string) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith(`/connected_accounts/${ACCOUNT}`)) return json({
+        id: ACCOUNT, user_id: PERSON, status: 'ACTIVE', toolkit: { slug: 'slack' },
+      });
+      if (path.endsWith('/tools/SLACK_POST_MESSAGE')) return json({
+        slug: 'SLACK_POST_MESSAGE', version: '20260928_00', toolkit: { slug: 'slack' },
+      });
+      if (path.endsWith('/tools/execute/SLACK_POST_MESSAGE')) return json({ successful: false });
+      throw new Error('unexpected request');
+    });
+    const provider = new ComposioApps('fixture-only', transport as typeof fetch);
+    const error = await provider.execute({ accountId: ACCOUNT, userId: PERSON, toolkit: 'slack',
+      tool: 'SLACK_POST_MESSAGE', arguments: { channel: 'announcements' } }).catch((e: unknown) => e);
+    expect((error as Error).message).toBe('App tool execution failed');
+  });
 });

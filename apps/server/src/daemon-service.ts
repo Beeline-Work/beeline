@@ -72,6 +72,7 @@ import {
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import { closeCornerState } from './corner-close.js';
+import { writeCornerTitle } from './corner-title.js';
 import { startCornerWorkflowRun, noteCornerWorkflowTransition } from './corner-workflow.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import {
@@ -365,6 +366,7 @@ export class DaemonService {
       'openRoomPoll',
       'putCornerApp',
       'requestCornerAppOpen',
+      'renameCorner',
       'getInstitutionalContext',
       'proposeInstitutionalMemory',
       'searchInstitutionalMemory',
@@ -1266,6 +1268,11 @@ export class DaemonService {
       case 'requestCornerAppOpen':
         return (await this.requestCornerAppOpen(
           input as Input<'requestCornerAppOpen'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'renameCorner':
+        return (await this.renameCorner(
+          input as Input<'renameCorner'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postTargetBranchProposal':
@@ -4881,6 +4888,28 @@ export class DaemonService {
       revision: app.revision,
     };
   }
+  /** Retitles the corner this agent is working in, through the same write a person's rename uses. */
+  private async renameCorner(input: Input<'renameCorner'>, agentId: string) {
+    const refusal = cornerTextRefusal('name', input.name);
+    if (refusal) throw new Error(refusal);
+    const name = normalizeCornerText(input.name);
+    await this.access(input.cornerId, agentId);
+    const parentId = await this.database.transaction(async (db) => {
+      const corner = (
+        await db.query<{ parent_id: string | null; archived_at: Date | null }>(
+          `SELECT parent_id,archived_at FROM rooms WHERE id=$1 FOR UPDATE`,
+          [input.cornerId],
+        )
+      ).rows[0];
+      if (!corner?.parent_id) throw new Error('corner not found');
+      if (corner.archived_at) throw new Error('corner is archived');
+      await writeCornerTitle(db, input.cornerId, corner.parent_id, name);
+      return corner.parent_id;
+    });
+    this.live.publish({ type: 'invalidate', roomId: input.cornerId, reason: 'corner', agentId });
+    this.live.publish({ type: 'invalidate', roomId: parentId, reason: 'corner', agentId });
+    return { cornerId: input.cornerId, name };
+  }
   private async targetProposal(input: Input<'postTargetBranchProposal'>, agentId: string) {
     await this.access(input.roomId, agentId);
     const messageId = id();
@@ -7096,6 +7125,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postCornerPlan: true,
   putCornerApp: true,
   requestCornerAppOpen: true,
+  renameCorner: true,
   postTargetBranchProposal: true,
   requestAgentGrant: true,
   askRoomChoice: true,

@@ -29,6 +29,12 @@ vi.mock('react-native', () => {
 });
 // react-native-svg imports from react-native deeply. An ESM import of the
 // real module triggers vitest to parse react-native's Flow-typed source.
+vi.mock('./HullDialog', async () => {
+  const ReactModule = await import('react');
+  return {
+    HullDialog: (props: any) => ReactModule.createElement('HullDialog', props),
+  };
+});
 vi.mock('react-native-svg', () => {
   function host(name: string) {
     return (props: any) => React.createElement(name, props, props.children);

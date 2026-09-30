@@ -173,6 +173,27 @@ it('persists one declarative app per corner and projects agent open requests', a
   await result(command!, 'The app is ready.');
 });
 
+it('lets the corner agent retitle its corner during its turn', async () => {
+  await send('@hoots plan the launch', C);
+  const [command] = await commands(A, C);
+  await claim(command!);
+  const rename = (name: string) =>
+    daemon.execute(
+      'renameCorner',
+      { cornerId: C, requestId: command!.turnRequestId, generationId: 'g1', name },
+      A,
+    );
+
+  await expect(rename('too many words for a title')).rejects.toThrow(
+    'the name is 6 words; the limit is 3',
+  );
+  await expect(rename('  Launch\n plan ')).resolves.toEqual({ cornerId: C, name: 'Launch plan' });
+  expect((await phone.readRoom(C, H))?.room.name).toBe('Launch plan');
+  await result(command!, 'Renamed.');
+  await expect(rename('Too late')).rejects.toThrow();
+  await db.query(`UPDATE rooms SET name='Corner' WHERE id=$1`, [C]);
+});
+
 describe.each([R, C])('server command authority in %s', (room) => {
   it('acknowledges a committed human steer only while its targeted turn is active', async () => {
     const first = await send('@hoots start', room);

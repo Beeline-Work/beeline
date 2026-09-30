@@ -1174,6 +1174,19 @@ const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: 'rename_corner',
+    description:
+      'Retitle the corner you are working in. Call it once the conversation has settled what this corner is about and its current title no longer says so. The name follows open_corner: at most three words.',
+    inputSchema: {
+      type: 'object',
+      required: ['name'],
+      properties: {
+        name: { type: 'string', description: 'The corner title, at most three words.' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'upgrade_corner_to_code',
     description:
       `Upgrade this repository-backed no-code corner to a writable code corner. ${UPGRADE_INTENT_RULE} The one-way upgrade preserves this corner and its messages, then re-delivers the same request after restarting with a feature branch and checkout. After success, end this turn immediately; do not edit the scratch workspace.`,
@@ -1532,7 +1545,12 @@ export function agentToolsFor(
     if (tool.name === 'record_validation_stage') return cornerTurn;
     if (tool.name === 'upgrade_corner_to_code') return cornerTurn && agentMayUpgradeCorner;
     if (tool.name === 'close_corner') return cornerTurn && agentMayCloseCorner;
-    if (tool.name === 'publish_corner_app' || tool.name === 'open_corner_app') return cornerTurn;
+    if (
+      tool.name === 'publish_corner_app' ||
+      tool.name === 'open_corner_app' ||
+      tool.name === 'rename_corner'
+    )
+      return cornerTurn;
     if (tool.name === 'open_poll') return !directMessage;
     if (tool.name === 'run_granted_command') return commandRunnerAvailable;
     return true;
@@ -3765,6 +3783,17 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
         requestId: context.requestId,
       });
       return `posted app ${String(result.slug ?? args.slug)} at revision ${String(result.revision ?? '?')}`;
+    }
+    case 'rename_corner': {
+      const cornerId = process.env.BEELINE_DAEMON_CORNER_ID?.trim();
+      if (!cornerId) throw new Error('rename_corner requires a corner turn');
+      const refusal = cornerTextRefusal('name', args.name);
+      if (refusal) throw new Error(refusal);
+      const result = await daemonExecute('renameCorner', {
+        cornerId,
+        name: normalizeCornerText(String(args.name)),
+      });
+      return `renamed this corner to ${String(result.name)}`;
     }
     case 'create_schedule':
       return createSchedule(args);

@@ -101,6 +101,7 @@ import { cornerProposalDecision } from '@/buzz/corner-proposal';
 import { anchorCornerMarkers } from '@/buzz/corner-markers';
 import { cornerName } from '@/buzz/corners';
 import { CHANGES_LABEL, CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
+import { buildSpeechLexicon } from '@/buzz/speech-lexicon';
 import {
   COMPOSER_ACK_BOUND_MS,
   STEER_RECEIVED_VISIBLE_MS,
@@ -212,12 +213,12 @@ import {
   saveLastViewedChannel,
 } from '@/buzz/community-storage';
 import {
+  createChatAttachmentUploader,
   formatAttachmentSize,
   MAX_MESSAGE_ATTACHMENTS,
   pastedImageAttachment,
   pickedPhotoAttachments,
   type PickedChatAttachment,
-  uploadChatAttachments,
 } from '@/buzz/chat-attachment';
 import {
   availableSlashVerbs,
@@ -665,6 +666,24 @@ export function BuzzChatSurface({
     },
     [],
   );
+  // Staged photos and files start uploading as soon as they land in the
+  // composer, so send only waits for whatever is still in flight.
+  const [attachmentUploader] = useState(createChatAttachmentUploader);
+  useEffect(() => {
+    attachmentUploader.retain(pendingAttachments);
+    if (!transport || pendingAttachments.length === 0) return;
+    void transport
+      .ensureClient()
+      .then((client) =>
+        attachmentUploader.start(
+          client,
+          pendingAttachments.filter((attachment) =>
+            pendingAttachmentsRef.current.includes(attachment),
+          ),
+        ),
+      )
+      .catch(() => undefined);
+  }, [attachmentUploader, pendingAttachments, transport]);
   const [attachmentPickerVisible, setAttachmentPickerVisible] = useState(false);
   const [messageActionsTarget, setMessageActionsTarget] = useState<ChatDisplayMessage | null>(null);
   const [optimisticBookmarks, setOptimisticBookmarks] = useState<Record<string, boolean>>({});
@@ -1396,15 +1415,31 @@ export function BuzzChatSurface({
     () => new Set<string>(roomMembers.map((member) => member.pubkey)),
     [roomMembers],
   );
+  // Only message text shapes the lexicon, so a presence tick that rebuilds the
+  // message array does not re-prime the recogniser.
+  const speechMessageText = useStable(
+    durableMessages
+      .filter((message) => !message.isSystemNotice && !message.deleted)
+      .map((message) => message.text),
+    sameElementRefs,
+  );
   const speechHints = useMemo(
-    () => [
-      ...new Set(
-        [...selectedMembers.map((member) => member.identity.displayName), resolvedChannelName]
-          .map((name) => name?.trim())
-          .filter((name): name is string => Boolean(name)),
-      ),
+    () =>
+      buildSpeechLexicon({
+        roomName: resolvedChannelName,
+        parentRoomName: roomSurface?.parent?.name,
+        repositoryName: roomSurface?.repository?.name,
+        memberNames: selectedMembers.map((member) => member.identity.displayName),
+        memberHandles: selectedMembers.map((member) => member.identity.handle),
+        messages: speechMessageText,
+      }),
+    [
+      resolvedChannelName,
+      roomSurface?.parent?.name,
+      roomSurface?.repository?.name,
+      selectedMembers,
+      speechMessageText,
     ],
-    [resolvedChannelName, selectedMembers],
   );
   const personProfiles = useMemo(
     () =>
@@ -3523,7 +3558,7 @@ export function BuzzChatSurface({
       }
       if (!transport) setSessionTransport(sendTransport);
       preparedTransport = sendTransport;
-      const attachments = await uploadChatAttachments(
+      const attachments = await attachmentUploader.uploadAll(
         await sendTransport.ensureClient(),
         activePendingAttachments,
       );
@@ -3664,6 +3699,7 @@ export function BuzzChatSurface({
     }
   }, [
     activeCommunityId,
+    attachmentUploader,
     replacePendingAttachments,
     transport,
     decodedId,

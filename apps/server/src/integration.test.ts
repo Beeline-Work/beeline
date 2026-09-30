@@ -11898,6 +11898,42 @@ describe('monolith integration', () => {
     ]);
   });
 
+  it('pushes a question card and a tagged reply from the same turn once', async () => {
+    await operation('registerPushDevice', {
+      token: 'owner-choice-turn-device-token-1234567890',
+      platform: 'android',
+      environment: 'physical',
+    });
+    const send = vi.fn().mockResolvedValue(undefined);
+    const loop = new PushDeliveryLoop(database, { send });
+    expect(await loop.runOnce()).toBe(0);
+    const requestId = 'c'.repeat(64);
+    const asked = await daemonOperation('askRoomChoice', {
+      roomId: ROOM,
+      requestId,
+      prompt: 'Which branch should I use?',
+      options: [
+        { label: 'Main', consequence: 'Ships today' },
+        { label: 'Release', consequence: 'Ships Friday' },
+      ],
+    });
+    expect(asked.status).toBe(200);
+    const card = (await asked.json()) as { messageId: string };
+    const replied = await daemonOperation('postRoomMessage', {
+      roomId: ROOM,
+      requestId,
+      text: '@owner the question card above needs your pick.',
+    });
+    expect(replied.status).toBe(200);
+
+    expect(await loop.runOnce()).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(
+      'owner-choice-turn-device-token-1234567890',
+      expect.objectContaining({ messageId: card.messageId }),
+    );
+  });
+
   it('posts a choice card, settles it in place, hides the wake, and refuses an undersized poll', async () => {
     const posted = await daemonOperation('askRoomChoice', {
       roomId: ROOM,

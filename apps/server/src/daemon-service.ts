@@ -5161,6 +5161,7 @@ export class DaemonService {
       constraint: input.constraint,
       options: input.options,
       ttlSeconds: input.ttlSeconds,
+      ...(input.requestId ? { requestId: input.requestId } : {}),
     });
     this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'choice', agentId });
     return posted;

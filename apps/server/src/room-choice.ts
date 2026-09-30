@@ -213,6 +213,8 @@ export async function postRoomChoice(
     constraint?: unknown;
     options: unknown;
     ttlSeconds?: unknown;
+    /** The asking turn, so the card counts toward that turn's one push per recipient. */
+    requestId?: string;
   },
 ): Promise<{
   choiceId: string;
@@ -295,6 +297,7 @@ export async function postRoomChoice(
     presentation: 'card',
     cardType: CHOICE_CARD_TYPE,
     card: card as unknown as Record<string, unknown>,
+    ...(input.requestId ? { requestId: input.requestId } : {}),
   });
   await database.query(
     `INSERT INTO room_choices(

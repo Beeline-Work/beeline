@@ -299,6 +299,10 @@ import {
 } from '@/sync/transport/monolith-operation';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { promptAndReportMessageIssue, reportIssueToastCopy } from '@/buzz/report-message-issue';
+import {
+  CORNER_FEEDBACK_TRIAGE_DESCRIPTION,
+  cornerFeedbackTriageRow,
+} from '@/buzz/corner-feedback-triage';
 import { useCopiedToast } from '@/components/buzz/CopiedToast';
 import {
   formatForwardedMessage,
@@ -730,6 +734,7 @@ export function BuzzChatSurface({
   const [roomRepoCandidates, setRoomRepoCandidates] = useState<RepoCandidate[]>([]);
   const [githubInstallations, setGitHubInstallations] = useState<GitHubInstallationAccess[]>([]);
   const [roomRepoBusy, setRoomRepoBusy] = useState(false);
+  const [feedbackTriageBusy, setFeedbackTriageBusy] = useState(false);
   const [roomRepoListLoading, setRoomRepoListLoading] = useState(false);
   const [roomRepoError, setRoomRepoError] = useState<string | null>(null);
   const [roomRepoNotice, setRoomRepoNotice] = useState<string | null>(null);
@@ -4710,6 +4715,28 @@ export function BuzzChatSurface({
     else router.replace('/beeline/channels');
   }, [cornerReturnTarget, liveDraftStore, navigation, parentChannelId]);
 
+  const feedbackTriageRow = cornerFeedbackTriageRow({
+    isCorner,
+    viewerIsAgent,
+    canManageWorkspace,
+    enabled: roomSurface?.cornerFeedbackTriage,
+  });
+  const handleToggleFeedbackTriage = useCallback(async () => {
+    if (!feedbackTriageRow || feedbackTriageBusy) return;
+    setFeedbackTriageBusy(true);
+    try {
+      await monolithPhoneOperation('setCornerFeedbackTriage', {
+        roomId: decodedId,
+        enabled: !feedbackTriageRow.value,
+      });
+      refreshSignal.force();
+    } catch (error) {
+      Modal.alert('Could not change Feedback triage', phoneOperationFailureReason(error));
+    } finally {
+      setFeedbackTriageBusy(false);
+    }
+  }, [decodedId, feedbackTriageBusy, feedbackTriageRow]);
+
   const handleCloseCorner = useCallback(async () => {
     // `if (!transport) return` — the shape this replaces — made every press a
     // SILENT no-op until the screen had connected, and permanently if that
@@ -6786,6 +6813,23 @@ export function BuzzChatSurface({
           }}
           testID="room-participant-roster-trigger"
         />
+        {feedbackTriageRow && (
+          <HullActionSheetRow
+            accessibilityLabel={
+              feedbackTriageRow.value ? 'Turn Feedback triage off' : 'Turn Feedback triage on'
+            }
+            description={CORNER_FEEDBACK_TRIAGE_DESCRIPTION}
+            disabled={feedbackTriageBusy}
+            label="Feedback triage"
+            onPress={() => void handleToggleFeedbackTriage()}
+            testID="corner-feedback-triage-toggle"
+            toggle={{
+              disabled: feedbackTriageBusy,
+              onValueChange: () => void handleToggleFeedbackTriage(),
+              value: feedbackTriageRow.value,
+            }}
+          />
+        )}
         <HullActionSheetRow
           accessibilityLabel={`Close ${CORNER_LABEL}`}
           description={`Ends the edit session and archives this ${CORNER_LABEL}. Unmerged work is lost.`}

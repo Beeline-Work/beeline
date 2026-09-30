@@ -459,7 +459,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'list_feedback',
     description:
-      'Feedback triage only (allowlisted agents): list new Beeline feedback items, human reports first, then by how many similar reports each has.',
+      'Feedback triage only (a corner with Feedback triage on): list new Beeline feedback items, human reports first, then by how many similar reports each has.',
     inputSchema: {
       type: 'object',
       properties: { limit: { type: 'integer', minimum: 1, maximum: 200 } },
@@ -1593,6 +1593,16 @@ const AGENT_TOOLS: ToolDefinition[] = [
 ];
 
 const agentSurface = process.env.BEELINE_MCP_SURFACE === 'agent';
+const FEEDBACK_TRIAGE_TOOL_NAMES = new Set([
+  'list_feedback',
+  'get_feedback',
+  'list_feedback_issues',
+  'file_feedback_issue',
+  'attach_feedback_to_issue',
+  'dismiss_feedback',
+]);
+/** Reads that the server authorizes per turn, so they carry the command context. */
+const TURN_SCOPED_READS = new Set(['listFeedback', 'getFeedback', 'listFeedbackIssues']);
 /** The bounded daemon-control tools for one surface. A direct message is
  *  strictly conversational: repository corners are never openable there. */
 export function agentToolsFor(
@@ -1604,6 +1614,7 @@ export function agentToolsFor(
   agentMayCloseCorner = cornerTurn,
   institutionalMemoryEnabled = process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false',
   agentMayUpgradeCorner = false,
+  feedbackTriage = false,
 ): ToolDefinition[] {
   if (!agentSurface) return READ_ONLY_TOOLS;
   return AGENT_TOOLS.filter((tool) => {
@@ -1634,6 +1645,7 @@ export function agentToolsFor(
       return !cornerTurn;
     // From a corner, open_corner opens a sibling corner in the parent Room.
     if (tool.name === 'open_corner') return !directMessage;
+    if (FEEDBACK_TRIAGE_TOOL_NAMES.has(tool.name)) return cornerTurn && feedbackTriage;
     if (tool.name === 'revise_corner_brief') return cornerTurn;
     if (tool.name === 'record_validation_stage') return cornerTurn;
     if (tool.name === 'upgrade_corner_to_code') return cornerTurn && agentMayUpgradeCorner;
@@ -1659,6 +1671,7 @@ const TOOLS = agentToolsFor(
   process.env.BEELINE_CORNER_AGENT_CLOSE === '1',
   process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false',
   process.env.BEELINE_CORNER_CAN_UPGRADE === '1',
+  process.env.BEELINE_CORNER_FEEDBACK_TRIAGE === '1',
 );
 
 const MAX_ATTACH_BYTES = 25 * 1024 * 1024;
@@ -2145,8 +2158,8 @@ async function daemonExecute(name: string, input: JsonObject): Promise<JsonObjec
     body: JSON.stringify({
       ...input,
       ...(process.env.BEELINE_TURN_CONTEXT_FILE &&
-      (!name.startsWith('get') || name.startsWith('getWallet')) &&
-      !name.startsWith('list')
+      (TURN_SCOPED_READS.has(name) ||
+        ((!name.startsWith('get') || name.startsWith('getWallet')) && !name.startsWith('list')))
         ? await activeCommandContext()
         : {}),
     }),

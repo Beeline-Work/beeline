@@ -24,6 +24,8 @@ export function beelineAgentMcpServer(
     agentMayCloseCorner?: boolean;
     /** A repository-backed no-code corner may take its one-way code upgrade. */
     agentMayUpgradeCorner?: boolean;
+    /** A Room admin turned Feedback triage on for this corner. */
+    feedbackTriage?: boolean;
     /** This corner session belongs to the parent Room's configured reviewer. */
     reviewer?: boolean;
     attachRoot?: string;
@@ -65,6 +67,7 @@ export function beelineAgentMcpServer(
       ...(context.agentMayUpgradeCorner
         ? [{ name: 'BEELINE_CORNER_CAN_UPGRADE', value: '1' }]
         : []),
+      ...(context.feedbackTriage ? [{ name: 'BEELINE_CORNER_FEEDBACK_TRIAGE', value: '1' }] : []),
       ...(context.reviewer ? [{ name: 'BEELINE_CORNER_REVIEWER', value: '1' }] : []),
       ...(context.attachRoot ? [{ name: 'BEELINE_ATTACH_ROOT', value: context.attachRoot }] : []),
       ...(context.attachScratchRoot

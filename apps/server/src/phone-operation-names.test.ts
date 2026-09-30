@@ -95,6 +95,7 @@ const ALL_PHONE_OPERATION_NAMES = {
   sendRoomMessage: true,
   sendRoomReply: true,
   setAgentCustomTags: true,
+  setCornerFeedbackTriage: true,
   setMessageBookmark: true,
   setRoomGitHubEvents: true,
   setRoomRepository: true,

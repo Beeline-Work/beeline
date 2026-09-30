@@ -759,6 +759,8 @@ export type AgentConfigurationResult = {
   readonly yoloMode: boolean;
   /** Live reviewer configured on a corner's parent Room; absent for self-review. */
   readonly reviewerHandle?: string;
+  /** This corner has Feedback triage on: its agents may triage feedback and open sibling corners. */
+  readonly feedbackTriage?: true;
   /** Connected Registry remotes mounted through the Body-owned credential broker. */
   readonly registryMcpRoutes?: readonly RegistryMcpRoute[];
 };

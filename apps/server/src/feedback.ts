@@ -34,28 +34,20 @@ import { ensureSystemDirectMessageRoom } from './system-line.js';
 /**
  * The Beeline feedback loop's one store. Two intake paths write it: an
  * agent's in-turn `report_feedback` call, and a person's `@system` tag or
- * Report issue action. An allowlisted triage agent, run on an ordinary Room
- * schedule, files new items as redacted issues in the public repository,
- * attaches them to an existing issue, or dismisses them. The repository's
+ * Report issue action. A triage agent in a corner with Feedback triage on,
+ * run on an ordinary schedule in that corner, files new items as redacted
+ * issues in the public repository, attaches them to an existing issue, or
+ * dismisses them. The repository's
  * issue webhook then resolves them and tells each reporter it was fixed.
  * Items keep message ids only; evidence text is read live.
  */
 
 export type FeedbackConfig = {
   readonly repository: string;
-  readonly triageAgentIds: ReadonlySet<string>;
 };
 
 export function feedbackConfigFromEnv(env: NodeJS.ProcessEnv = process.env): FeedbackConfig {
-  return {
-    repository: env.BEELINE_FEEDBACK_REPOSITORY?.trim() || FEEDBACK_DEFAULT_REPOSITORY,
-    triageAgentIds: new Set(
-      (env.BEELINE_FEEDBACK_TRIAGE_AGENT_IDS ?? '')
-        .split(',')
-        .map((id) => id.trim().toLowerCase())
-        .filter(Boolean),
-    ),
-  };
+  return { repository: env.BEELINE_FEEDBACK_REPOSITORY?.trim() || FEEDBACK_DEFAULT_REPOSITORY };
 }
 
 /** The Issues calls the filing tools make, bound to one repository. */
@@ -342,13 +334,35 @@ export async function reportMessageIssue(
 }
 
 // ---------------------------------------------------------------------------
-// Triage (allowlisted agents only)
+// Triage (turns in a Feedback triage corner only)
 // ---------------------------------------------------------------------------
 
-export function assertFeedbackTriageAgent(config: FeedbackConfig, agentId: string): void {
-  if (!config.triageAgentIds.has(agentId.toLowerCase()))
+/**
+ * The triage tools serve one caller: an agent in a live corner a Room admin
+ * turned Feedback triage on for, during that agent's own turn in that corner.
+ * The setting is read on every call, so turning it off stops the next call.
+ */
+export async function assertFeedbackTriageTurn(
+  database: SqlDatabase,
+  command: CommandRow | undefined,
+  agentId: string,
+): Promise<void> {
+  const allowed =
+    command?.agent_id === agentId &&
+    (
+      await database.query(
+        `SELECT 1 FROM corner_facts fact
+         JOIN rooms corner ON corner.id=fact.corner_id
+           AND corner.parent_id IS NOT NULL AND corner.archived_at IS NULL
+         JOIN memberships member ON member.room_id=corner.id
+           AND member.identity_id=$2 AND member.removed_at IS NULL
+         WHERE fact.corner_id=$1 AND fact.feedback_triage`,
+        [command.room_id, agentId],
+      )
+    ).rowCount;
+  if (!allowed)
     throw new Error(
-      'feedback triage is not authorized for this agent (BEELINE_FEEDBACK_TRIAGE_AGENT_IDS)',
+      'feedback triage access denied: it runs only in your own turn in a corner with Feedback triage on',
     );
 }
 

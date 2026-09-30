@@ -26,8 +26,9 @@ const OUTSIDER = 'e'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
 const CORNER = '33333333-3333-4333-8333-333333333333';
+const TRIAGE_CORNER = '44444444-4444-4444-8444-444444444444';
 const REPOSITORY = 'Beeline-Work/beeline';
-const CONFIG: FeedbackConfig = { repository: REPOSITORY, triageAgentIds: new Set([TRIAGE]) };
+const CONFIG: FeedbackConfig = { repository: REPOSITORY };
 
 let database: PgliteDatabase;
 let sequence = 0;
@@ -56,6 +57,17 @@ beforeEach(async () => {
     `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Fix it')`,
     [CORNER, WORKSPACE, ROOM, PERSON],
   );
+  // The Issues triage corner: a no-code corner a Room admin turned Feedback
+  // triage on for. CORNER is an ordinary corner with it off.
+  await database.query(
+    `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Issues triage')`,
+    [TRIAGE_CORNER, WORKSPACE, ROOM, PERSON],
+  );
+  await database.query(
+    `INSERT INTO corner_facts(corner_id,owner_agent_id,lane,feedback_triage) VALUES
+      ($1,$3,'no_code',false),($2,$3,'no_code',true)`,
+    [CORNER, TRIAGE_CORNER, TRIAGE],
+  );
   await database.query(
     `INSERT INTO agents(agent_id,owner_id) VALUES($1,$2),($3,$2),($4,$2)`,
     [AGENT, PERSON, TRIAGE, OUTSIDER],
@@ -65,6 +77,11 @@ beforeEach(async () => {
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
         ($1,NULL,$2,'member'),($1,$3,$2,'member'),($1,$4,$2,'member')`,
       [WORKSPACE, id, ROOM, CORNER],
+    );
+  for (const id of [PERSON, TRIAGE])
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+      [WORKSPACE, TRIAGE_CORNER, id],
     );
 });
 
@@ -128,6 +145,12 @@ async function report(
     { ...turn, category: 'bug', summary: 'x', ...input } as never,
     agentId,
   ) as Promise<{ itemId: string; duplicate: boolean }>;
+}
+
+/** One turn of the triage agent in the Issues triage corner. */
+async function triageTurn(roomId = TRIAGE_CORNER, agentId = TRIAGE) {
+  const handle = agentId === TRIAGE ? 'sweeper' : 'outsider';
+  return openTurn(await message(`@${handle} sweep`, PERSON, roomId), roomId, agentId);
 }
 
 class FakeGitHub implements FeedbackIssueHost {
@@ -325,19 +348,59 @@ describe('@system and Report issue (human path)', () => {
 });
 
 describe('triage tools', () => {
-  it('refuses every triage operation to an agent outside the allowlist', async () => {
+  const TRIAGE_OPERATIONS = [
+    ['listFeedback', {}],
+    ['getFeedback', { itemIds: ['fb_x'] }],
+    ['listFeedbackIssues', {}],
+    ['fileFeedbackIssue', { itemIds: ['fb_x'], title: 't', body: 'b', categoryLabel: 'bug' }],
+    ['attachFeedbackToIssue', { itemIds: ['fb_x'], issueNumber: 1 }],
+    ['dismissFeedback', { itemIds: ['fb_x'], reason: 'r' }],
+  ] as const;
+
+  it('refuses every triage operation outside a turn in a Feedback triage corner', async () => {
     const service = daemon(new FakeGitHub());
-    for (const [name, input] of [
-      ['listFeedback', {}],
-      ['getFeedback', { itemIds: ['fb_x'] }],
-      ['listFeedbackIssues', {}],
-      ['fileFeedbackIssue', { itemIds: ['fb_x'], title: 't', body: 'b', categoryLabel: 'bug' }],
-      ['attachFeedbackToIssue', { itemIds: ['fb_x'], issueNumber: 1 }],
-      ['dismissFeedback', { itemIds: ['fb_x'], reason: 'r' }],
-    ] as const)
+    // A turn in the top-level Room, a turn in a corner with the setting off,
+    // and the same agent in its triage corner with no turn at all.
+    const roomTurn = await triageTurn(ROOM);
+    const plainCornerTurn = await triageTurn(CORNER);
+    for (const [name, input] of TRIAGE_OPERATIONS) {
+      for (const turn of [roomTurn, plainCornerTurn])
+        await expect(
+          service.execute(name, { ...turn, ...input } as never, TRIAGE),
+        ).rejects.toThrow('feedback triage access denied');
       await expect(
-        service.execute(name, { roomId: ROOM, ...input } as never, OUTSIDER),
-      ).rejects.toThrow('feedback triage is not authorized');
+        service.execute(name, { roomId: TRIAGE_CORNER, ...input } as never, TRIAGE),
+      ).rejects.toThrow();
+      await expect(service.execute(name, input as never, TRIAGE)).rejects.toThrow(
+        'feedback triage access denied',
+      );
+    }
+  });
+
+  it('serves the triage corner until a Room admin turns the setting off', async () => {
+    const turn = await triageTurn();
+    const service = daemon(new FakeGitHub());
+    await expect(service.execute('listFeedback', turn as never, TRIAGE)).resolves.toEqual({
+      items: [],
+    });
+    const phone = new PhoneService(database, 'http://local.test');
+    await expect(
+      phone.execute('setCornerFeedbackTriage', { roomId: TRIAGE_CORNER, enabled: false }, PERSON),
+    ).rejects.toThrow('room manager required');
+    await database.query(
+      `UPDATE memberships SET role='admin' WHERE identity_id=$1 AND room_id IS NULL`,
+      [PERSON],
+    );
+    await phone.execute('setCornerFeedbackTriage', { roomId: TRIAGE_CORNER, enabled: false }, PERSON);
+    expect((await phone.readRoom(TRIAGE_CORNER, PERSON))?.cornerFeedbackTriage).toBe(false);
+    await expect(service.execute('listFeedback', turn as never, TRIAGE)).rejects.toThrow(
+      'feedback triage access denied',
+    );
+    await phone.execute('setCornerFeedbackTriage', { roomId: CORNER, enabled: true }, PERSON);
+    expect((await phone.readRoom(CORNER, PERSON))?.cornerFeedbackTriage).toBe(true);
+    await expect(
+      phone.execute('setCornerFeedbackTriage', { roomId: ROOM, enabled: true }, PERSON),
+    ).rejects.toThrow('corner not found');
   });
 
   it('lists new items with human reports first, then by cluster size', async () => {
@@ -349,7 +412,8 @@ describe('triage tools', () => {
       { roomId: ROOM, messageId: await message('odd') },
       PERSON,
     );
-    const listed = (await daemon().execute('listFeedback', { roomId: ROOM } as never, TRIAGE)) as {
+    const turn = await triageTurn();
+    const listed = (await daemon().execute('listFeedback', turn as never, TRIAGE)) as {
       items: { id: string; clusterSize: number; sourceKind: string }[];
     };
     expect(listed.items.map((item) => item.id)).toEqual([
@@ -361,7 +425,7 @@ describe('triage tools', () => {
     expect(listed.items[1]!.clusterSize).toBe(2);
     const detail = (await daemon().execute(
       'getFeedback',
-      { roomId: ROOM, itemIds: [human.itemId] } as never,
+      { ...turn, itemIds: [human.itemId] } as never,
       TRIAGE,
     )) as { items: { evidence: { text: string }[] }[] };
     expect(detail.items[0]!.evidence[0]!.text).toBe('odd');
@@ -376,10 +440,11 @@ describe('triage tools', () => {
       { roomId: ROOM, messageId: await message('stuck again') },
       OTHER,
     );
+    const turn = await triageTurn();
     const filed = (await service.execute(
       'fileFeedbackIssue',
       {
-        roomId: ROOM,
+        ...turn,
         itemIds: [agentItem.itemId, humanItem.itemId],
         title: 'Grant approval card does not resolve',
         body: 'After approving, the card stays pending until reload.',
@@ -396,12 +461,12 @@ describe('triage tools', () => {
     const other = await report({ category: 'bug', summary: 'one more' });
     await service.execute(
       'attachFeedbackToIssue',
-      { roomId: ROOM, itemIds: [later.itemId], issueNumber: filed.issueNumber } as never,
+      { ...turn, itemIds: [later.itemId], issueNumber: filed.issueNumber } as never,
       TRIAGE,
     );
     await service.execute(
       'attachFeedbackToIssue',
-      { roomId: ROOM, itemIds: [other.itemId], issueNumber: filed.issueNumber } as never,
+      { ...turn, itemIds: [other.itemId], issueNumber: filed.issueNumber } as never,
       TRIAGE,
     );
     expect([...github.comments.values()]).toEqual([
@@ -411,7 +476,7 @@ describe('triage tools', () => {
     const noise = await report({ category: 'simpler_path', summary: 'noise' });
     await service.execute(
       'dismissFeedback',
-      { roomId: ROOM, itemIds: [noise.itemId], reason: 'Working as intended' } as never,
+      { ...turn, itemIds: [noise.itemId], reason: 'Working as intended' } as never,
       TRIAGE,
     );
     const statuses = await items();
@@ -426,10 +491,11 @@ describe('triage tools', () => {
     const github = new FakeGitHub();
     github.fail = 'GitHub issues failed: HTTP 410: Issues are disabled for this repo';
     const item = await report({ summary: 'something broke' });
+    const turn = await triageTurn();
     await expect(
       daemon(github).execute(
         'fileFeedbackIssue',
-        { roomId: ROOM, itemIds: [item.itemId], title: 'T', body: 'B', categoryLabel: 'bug' } as never,
+        { ...turn, itemIds: [item.itemId], title: 'T', body: 'B', categoryLabel: 'bug' } as never,
         TRIAGE,
       ),
     ).rejects.toThrow('Issues are disabled for this repo');
@@ -440,11 +506,12 @@ describe('triage tools', () => {
     const github = new FakeGitHub();
     await message('The deploy to staging failed because the database password rotated overnight');
     const item = await report({ summary: 'deploy failed' });
+    const turn = await triageTurn();
     await expect(
       daemon(github).execute(
         'fileFeedbackIssue',
         {
-          roomId: ROOM,
+          ...turn,
           itemIds: [item.itemId],
           title: 'Deploy failure',
           body: 'User said: the database password rotated overnight and nothing noticed',
@@ -507,9 +574,10 @@ describe('issue webhook (close the loop)', () => {
         OTHER,
       )
     ).itemId;
+    const turn = await triageTurn();
     const result = (await daemon(github).execute(
       'fileFeedbackIssue',
-      { roomId: ROOM, itemIds: [agentItem, humanItem], title: 'Slow', body: 'Tools time out.', categoryLabel: 'bug' } as never,
+      { ...turn, itemIds: [agentItem, humanItem], title: 'Slow', body: 'Tools time out.', categoryLabel: 'bug' } as never,
       TRIAGE,
     )) as { issueNumber: number };
     return { agentItem, humanItem, number: result.issueNumber };
@@ -591,16 +659,86 @@ describe('issue webhook (close the loop)', () => {
 });
 
 describe('feedback config', () => {
-  it('defaults the repository and reads a lowercase allowlist', () => {
-    expect(feedbackConfigFromEnv({})).toEqual({
-      repository: 'Beeline-Work/beeline',
-      triageAgentIds: new Set(),
-    });
+  it('defaults the repository and has no agent allowlist', () => {
+    expect(feedbackConfigFromEnv({})).toEqual({ repository: 'Beeline-Work/beeline' });
     expect(
       feedbackConfigFromEnv({
         BEELINE_FEEDBACK_REPOSITORY: 'o/r',
-        BEELINE_FEEDBACK_TRIAGE_AGENT_IDS: ` ${'A'.repeat(64)} ,`,
-      }).triageAgentIds,
-    ).toEqual(new Set(['a'.repeat(64)]));
+        BEELINE_FEEDBACK_TRIAGE_AGENT_IDS: TRIAGE,
+      }),
+    ).toEqual({ repository: 'o/r' });
+  });
+});
+
+describe('triage corner: sibling fix corners and its sweep schedule', () => {
+  it('opens a fix corner from the triage corner as a sibling in the parent Room, issue number in its brief', async () => {
+    const turn = await triageTurn();
+    const trigger = (
+      await database.query<{ source_message_id: string }>(
+        `SELECT source_message_id FROM agent_commands WHERE turn_request_id=$1`,
+        [turn.requestId],
+      )
+    ).rows[0]!.source_message_id;
+    const intent = { sourceMessageId: trigger, snapshot: '@sweeper sweep' };
+    const { cornerId } = (await daemon().execute(
+      'createCorner',
+      {
+        ...turn,
+        idempotencyKey: `fix-${turn.requestId}`,
+        name: 'Fix grant card',
+        objective: 'Fix beeline-feedback issue #123',
+        lane: 'no_code',
+        brief: {
+          buildSpec: 'Fix GitHub issue Beeline-Work/beeline#123: the grant card stays pending.',
+          intentVerbatim: [intent],
+          criteria: [{ id: 'AC-1', text: 'Issue #123 no longer reproduces' }],
+          references: [],
+          approvalBasis: { kind: 'initiating-command', ...intent },
+        },
+      } as never,
+      TRIAGE,
+    )) as { cornerId: string };
+    const created = (
+      await database.query<{ parent_id: string }>(`SELECT parent_id FROM rooms WHERE id=$1`, [
+        cornerId,
+      ])
+    ).rows[0]!;
+    expect(created.parent_id).toBe(ROOM);
+    const brief = (
+      await database.query<{ build_spec: string }>(
+        `SELECT build_spec FROM corner_brief_revisions WHERE corner_id=$1 AND revision=1`,
+        [cornerId],
+      )
+    ).rows[0]!;
+    expect(brief.build_spec).toContain('#123');
+    // The open card lands in the parent Room, where the sibling is listed.
+    const card = await database.query(
+      `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='daemon-fact' AND card->>'cornerId'=$2`,
+      [ROOM, cornerId],
+    );
+    expect(card.rowCount).toBe(1);
+  });
+
+  it('runs a sweep schedule created inside the triage corner in that corner', async () => {
+    const turn = await triageTurn();
+    const { scheduleId } = (await daemon().execute(
+      'createAgentSchedule',
+      {
+        ...turn,
+        prompt: 'Sweep new Beeline feedback.',
+        cadence: { kind: 'interval', everyMinutes: 60 * 24 * 3 },
+      } as never,
+      TRIAGE,
+    )) as { scheduleId: string };
+    await database.query(`UPDATE agent_schedules SET next_run_at=now()-interval '1 minute' WHERE id=$1`, [
+      scheduleId,
+    ]);
+    const { AgentScheduleLoop } = await import('./agent-schedules.js');
+    expect(await new AgentScheduleLoop(database).runOnce()).toBe(1);
+    const fired = await database.query<{ room_id: string; reason: string }>(
+      `SELECT room_id,reason FROM agent_commands WHERE agent_id=$1 AND reason='schedule'`,
+      [TRIAGE],
+    );
+    expect(fired.rows).toEqual([{ room_id: TRIAGE_CORNER, reason: 'schedule' }]);
   });
 });

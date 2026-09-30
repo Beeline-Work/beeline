@@ -1611,6 +1611,10 @@ ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'ag
 ALTER TABLE corner_facts DROP CONSTRAINT IF EXISTS corner_facts_kind_check;
 ALTER TABLE corner_facts ADD CONSTRAINT corner_facts_kind_check
   CHECK (kind IN ('agent', 'human'));
+-- Feedback triage (apps/server/src/feedback.ts): a Room admin's per-corner
+-- switch. Only agents in a corner with it on, during a turn in that corner,
+-- may use the feedback triage tools or open sibling corners from it.
+ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS feedback_triage boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS corner_facts_owner_agent_idx ON corner_facts(owner_agent_id);
 CREATE INDEX IF NOT EXISTS corner_facts_commissioned_by_idx ON corner_facts(commissioned_by);
 
@@ -2358,7 +2362,7 @@ CREATE INDEX IF NOT EXISTS wallet_transactions_wallet_idx
 
 -- The Beeline feedback loop (apps/server/src/feedback.ts). An agent's
 -- report_feedback call and a person's @system tag or Report issue action land
--- here; the allowlisted triage sweep files, attaches, or dismisses them, and
+-- here; the triage corner's sweep files, attaches, or dismisses them, and
 -- the configured repository's issue webhook resolves or closes them. Message
 -- ids only: evidence text is read live, never copied.
 CREATE TABLE IF NOT EXISTS feedback_items (

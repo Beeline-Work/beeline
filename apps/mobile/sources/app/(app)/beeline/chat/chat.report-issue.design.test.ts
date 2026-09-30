@@ -48,3 +48,25 @@ describe('Report issue on the chat surface', () => {
     expect(chat).toContain('feedbackReported: messageIsReported(item)');
   });
 });
+
+describe('Feedback triage on the corner … sheet', () => {
+  it('offers the switch only through cornerFeedbackTriageRow and saves it with setCornerFeedbackTriage', () => {
+    const sheet = slice('testID="corner-actions-sheet"', '</HullActionSheetModal>');
+    const anchor = sheet.indexOf('testID="corner-feedback-triage-toggle"');
+    expect(anchor).toBeGreaterThanOrEqual(0);
+    expect(sheet.slice(0, anchor)).toContain('{feedbackTriageRow && (');
+    const row = sheet.slice(sheet.lastIndexOf('<HullActionSheetRow', anchor), anchor);
+    expect(row).toContain('label="Feedback triage"');
+
+    const gate = slice('const feedbackTriageRow = cornerFeedbackTriageRow({', '});');
+    expect(gate).toContain('canManageWorkspace');
+    expect(gate).toContain('enabled: roomSurface?.cornerFeedbackTriage');
+    const handler = slice(
+      'const handleToggleFeedbackTriage = useCallback(',
+      'const handleCloseCorner',
+    );
+    expect(handler).toContain("monolithPhoneOperation('setCornerFeedbackTriage', {");
+    expect(handler).toContain('enabled: !feedbackTriageRow.value');
+    expect(handler).toContain("Modal.alert('Could not change Feedback triage'");
+  });
+});

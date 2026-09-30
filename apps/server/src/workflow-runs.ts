@@ -753,16 +753,10 @@ export async function archiveWorkflow(
     ])
   ).rows[0];
   if (!room) throw new Error('workflow room not found');
-  const result = await database.query<{ id: string }>(
+  const result = await database.query(
     `UPDATE workspace_skills SET state='stale',updated_at=now()
-     WHERE workspace_id=$1 AND slug=$2 AND kind='workflow' AND state='active'
-     RETURNING id`,
+     WHERE workspace_id=$1 AND slug=$2 AND kind='workflow' AND state='active'`,
     [room.workspace_id, input.name],
-  );
-  if (result.rows.length) await database.query(
-    `UPDATE workspace_skill_versions SET markdown='',source_deleted_at=now()
-     WHERE skill_id=ANY($1::uuid[]) AND source_deleted_at IS NULL`,
-    [result.rows.map((row) => row.id)],
   );
   return { slug: input.name, archived: Boolean(result.rowCount) };
 }

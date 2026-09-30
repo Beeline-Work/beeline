@@ -2,6 +2,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import {
   readWorkflowContract,
   workflowContentsError,
+  isAgentIdentityReference,
+  isClassOrTagReference,
   type WorkflowContract,
   type WorkflowGateState,
   type WorkflowHandoffState,
@@ -11,14 +13,10 @@ import type { CommandRow } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
 import { applySkillRevision, assertSkillTextSafe } from './institutional-skills.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
+import { agentCarriesTag, pickHealthyClassMember } from './agent-classes.js';
 import { postRoomChoice } from './room-choice.js';
 import { ensureSystemIdentity, identitySubject, systemLine } from './system-line.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
-import { normalizeAgentClass } from '@beeline/api-contract/phone';
-import { resolveClassBinding, trackWorkflowClassRole } from './agent-classes.js';
-
-/** A role binding that names a class of agents instead of one agent. */
-export const CLASS_BINDING_PREFIX = 'class:';
 
 /**
  * No run-state tables: a run is identified by its `start_workflow` message id
@@ -34,16 +32,20 @@ type WorkflowRunCard = {
   workflowSlug: string;
   workflowVersion: number;
   roleBindings: Record<string, string>;
-  /** Roles bound by class (`role -> class`); `roleBindings` holds each one's current agent. */
+  /**
+   * Roles bound to a class/tag rather than one agent, keyed by role name,
+   * value the ORIGINAL class reference — set once on the start card and never
+   * rewritten, so a later reassignment can still find the pool to pick from
+   * again after `roleBindings[role]` has already resolved to a concrete
+   * agent. Absent entirely for a run with no class-bound role.
+   */
   roleClasses?: Record<string, string>;
   toState: string;
   fromState?: string;
   outcome?: string;
-  /** What the previous state handed over: the prompt for the current state. */
-  contents?: unknown;
-  /** On a rebind card: the state whose handover `contents` came from. */
-  handedOverFrom?: string;
   status?: 'done' | 'failed';
+  /** A same-state reassignment card (class failover or `assign_workflow_role`): no outcome, same toState as before. */
+  reassigned?: true;
 };
 
 type IdentityRow = { id: string; kind: 'human' | 'agent'; name: string };
@@ -70,6 +72,68 @@ async function loadRun(
     )
   ).rows[0];
   return row?.card;
+}
+
+/** The start card's immutable class-bound-role map; `{}` for a run with no class-bound role. */
+async function loadRunRoleClasses(
+  db: SqlDatabase,
+  roomId: string,
+  runId: string,
+): Promise<Record<string, string>> {
+  const row = (
+    await db.query<{ role_classes: Record<string, string> | null }>(
+      `SELECT card->'roleClasses' role_classes FROM messages
+       WHERE id=$1 AND room_id=$2 AND card_type=$3`,
+      [runId, roomId, WORKFLOW_HANDOFF_CARD_TYPE],
+    )
+  ).rows[0];
+  return row?.role_classes ?? {};
+}
+
+/**
+ * Resolve `role`'s binding to a concrete agent id, picking a fresh healthy
+ * class member only the FIRST time a class-bound role is dispatched — once
+ * resolved, `roleBindings[role]` already holds a real agent id and is reused
+ * as-is for the rest of the run (sticky), matching "keep the agent that took
+ * a role unless it fails." Mutates `roleBindings` in place on success.
+ */
+async function resolveRoleBinding(
+  db: SqlDatabase,
+  input: { roomId: string; workspaceId: string; roleBindings: Record<string, string>; role: string },
+): Promise<{ agentId: string } | { exhausted: string }> {
+  const current = input.roleBindings[input.role]!;
+  if (isAgentIdentityReference(current)) return { agentId: current };
+  const picked = await pickHealthyClassMember(db, input.roomId, input.workspaceId, current);
+  if (!picked) return { exhausted: current };
+  input.roleBindings[input.role] = picked;
+  return { agentId: picked };
+}
+
+/**
+ * A class-bound role with no healthy member is named in the run rather than
+ * silently stalling — the same "ask a human" shape as a class-configured
+ * corner reviewer (`agent-command.ts`'s `noteReviewerClassExhausted`). The run
+ * stays parked at this state: a human can address any Room member and ask it
+ * to call `assign_workflow_role`, which binds a specific agent and re-wakes it
+ * with no health filter (an explicit human choice overrides "healthy").
+ */
+async function noteWorkflowClassExhausted(
+  db: SqlDatabase,
+  input: { roomId: string; runId: string; role: string; className: string; afterMessageId: string },
+): Promise<void> {
+  const id = createHash('sha256')
+    .update(`beeline:workflow-class-exhausted:v1:${input.runId}:${input.role}:${input.afterMessageId}`)
+    .digest('hex');
+  await ensureSystemIdentity(db);
+  await systemLine(db, {
+    id,
+    roomId: input.roomId,
+    authorId: SYSTEM_IDENTITY_ID,
+    subject: { kind: 'system', name: `the "${input.className}" class` },
+    verb: `has no healthy member for the ${input.role} role`,
+    consequence: 'ask an agent to call assign_workflow_role to take over',
+    afterMessageId: input.afterMessageId,
+  });
 }
 
 /** The exact pinned version, independent of the slug's current/archived state. */
@@ -197,119 +261,6 @@ async function postWorkflowGate(
   });
 }
 
-/** The person at the root of the command chain, whose access the class pick obeys. */
-async function humanRequester(db: SqlDatabase, command: CommandRow): Promise<string | undefined> {
-  return (
-    await db.query<{ id: string }>(
-      `SELECT identity.id FROM messages message
-       JOIN identities identity ON identity.id=message.author_id AND identity.kind='human'
-       WHERE message.id=$1`,
-      [command.root_source_message_id],
-    )
-  ).rows[0]?.id;
-}
-
-async function trackClassRole(
-  db: SqlDatabase,
-  input: {
-    roomId: string;
-    runId: string;
-    state: WorkflowHandoffState;
-    roleBindings: Readonly<Record<string, string>>;
-    roleClasses: Readonly<Record<string, string>>;
-    sourceMessageId: string;
-    requesterId: string | undefined;
-  },
-): Promise<void> {
-  const agentClass = input.roleClasses[input.state.role];
-  if (!agentClass) return;
-  await trackWorkflowClassRole(db, {
-    roomId: input.roomId,
-    runId: input.runId,
-    role: input.state.role,
-    agentClass,
-    agentId: input.roleBindings[input.state.role]!,
-    sourceMessageId: input.sourceMessageId,
-    ...(input.requesterId ? { requesterId: input.requesterId } : {}),
-    ...(input.state.timeoutSeconds ? { timeoutSeconds: input.state.timeoutSeconds } : {}),
-  });
-}
-
-/**
- * Move a class-bound role that failed to another agent: a new run card at
- * the same state with the role rebound, waking the new agent (the card is
- * its prompt), and the state's timeout reminder moved to it. Loop counts
- * are untouched: a rebind carries no outcome. Undefined when the run has
- * moved past a state held by `role`.
- */
-export async function rebindWorkflowRole(
-  db: SqlDatabase,
-  input: {
-    roomId: string;
-    runId: string;
-    role: string;
-    agentId: string;
-    /** Why the role moved, e.g. "Hoots: model unavailable". */
-    reason?: string;
-  },
-): Promise<{ cardId: string } | undefined> {
-  await lockWorkflowRun(db, input.runId);
-  const run = await loadRun(db, input.roomId, input.runId);
-  if (!run?.roleClasses?.[input.role]) return undefined;
-  const contract = await loadPinnedContract(db, input.roomId, run.workflowSlug, run.workflowVersion);
-  const state = contract?.handoffs[run.toState];
-  if (!state || state.kind !== undefined || state.role !== input.role) return undefined;
-  const room = (
-    await db.query<{ workspace_id: string }>(`SELECT workspace_id FROM rooms WHERE id=$1`, [
-      input.roomId,
-    ])
-  ).rows[0];
-  if (!room) return undefined;
-  const roleBindings = { ...run.roleBindings, [input.role]: input.agentId };
-  const agent = await loadIdentityRow(db, input.agentId);
-  const cardId = randomBytes(32).toString('hex');
-  await ensureSystemIdentity(db);
-  await systemLine(db, {
-    id: cardId,
-    roomId: input.roomId,
-    authorId: SYSTEM_IDENTITY_ID,
-    subject: identitySubject(agent),
-    verb: 'took over',
-    object: `${input.role} at ${run.toState}`,
-    ...(input.reason ? { consequence: input.reason } : {}),
-    kind: 'workflow-handoff',
-    wakes: [input.agentId],
-    presentation: 'card',
-    cardType: WORKFLOW_HANDOFF_CARD_TYPE,
-    card: {
-      runId: input.runId,
-      workflowSlug: run.workflowSlug,
-      workflowVersion: run.workflowVersion,
-      roleBindings,
-      roleClasses: run.roleClasses,
-      toState: run.toState,
-      // The new agent's prompt is this card, so it carries the handover it
-      // replaces. No fromState/outcome: a rebind is not a loop edge.
-      ...(run.contents !== undefined ? { contents: run.contents } : {}),
-      ...((run.fromState ?? run.handedOverFrom)
-        ? { handedOverFrom: run.fromState ?? run.handedOverFrom }
-        : {}),
-    },
-  });
-  if (state.timeoutSeconds) {
-    await cancelWorkflowTimeout(db, input.runId, run.toState);
-    await scheduleWorkflowTimeout(db, {
-      workspaceId: room.workspace_id,
-      roomId: input.roomId,
-      runId: input.runId,
-      stateName: run.toState,
-      agentId: input.agentId,
-      seconds: state.timeoutSeconds,
-    });
-  }
-  return { cardId };
-}
-
 export async function saveWorkflow(
   database: SqlDatabase,
   command: CommandRow,
@@ -372,38 +323,30 @@ export async function startWorkflow(
     const contract = JSON.parse(skill.markdown) as WorkflowContract;
     const missingRole = contract.roles.find((role) => !input.roleBindings[role]);
     if (missingRole) throw new Error(`role binding is missing for ${missingRole}`);
-    // `class:<tier-or-tag>` binds a role to a class: a random healthy Room
-    // agent carrying it now, and the next one if it fails (agent-classes.ts).
-    const requesterId = await humanRequester(db, command);
-    const resolvedBindings: Record<string, string> = {};
+    const roleBindings: Record<string, string> = {};
     const roleClasses: Record<string, string> = {};
     for (const role of contract.roles) {
-      const binding = input.roleBindings[role]!;
-      if (!binding.startsWith(CLASS_BINDING_PREFIX)) {
-        resolvedBindings[role] = binding;
-        continue;
+      const raw = input.roleBindings[role]!;
+      if (isAgentIdentityReference(raw)) {
+        roleBindings[role] = raw;
+      } else if (isClassOrTagReference(raw)) {
+        roleBindings[role] = raw;
+        roleClasses[role] = raw;
+      } else {
+        throw new Error(`role binding for ${role} must be an agent id or a valid class/tag`);
       }
-      const agentClass = normalizeAgentClass(binding.slice(CLASS_BINDING_PREFIX.length));
-      const agentId = await resolveClassBinding(db, {
-        roomId: command.room_id,
-        agentClass,
-        ...(requesterId ? { requesterId } : {}),
-      });
-      if (!agentId) throw new Error(`no healthy agent in this Room carries class ${agentClass}`);
-      resolvedBindings[role] = agentId;
-      roleClasses[role] = agentClass;
     }
-    const boundIds = [...new Set(Object.values(resolvedBindings))];
-    const members = await db.query<{ identity_id: string }>(
-      `SELECT identity_id FROM memberships
-       WHERE room_id=$1 AND identity_id=ANY($2::text[]) AND removed_at IS NULL`,
-      [command.room_id, boundIds],
-    );
-    const memberSet = new Set(members.rows.map((row) => row.identity_id));
-    const notMember = boundIds.find((id) => !memberSet.has(id));
-    if (notMember) throw new Error(`${notMember} is not a current member of this Room`);
-    const roleBindings: Record<string, string> = {};
-    for (const role of contract.roles) roleBindings[role] = resolvedBindings[role]!;
+    const boundIds = [...new Set(Object.values(roleBindings).filter(isAgentIdentityReference))];
+    if (boundIds.length) {
+      const members = await db.query<{ identity_id: string }>(
+        `SELECT identity_id FROM memberships
+         WHERE room_id=$1 AND identity_id=ANY($2::text[]) AND removed_at IS NULL`,
+        [command.room_id, boundIds],
+      );
+      const memberSet = new Set(members.rows.map((row) => row.identity_id));
+      const notMember = boundIds.find((id) => !memberSet.has(id));
+      if (notMember) throw new Error(`${notMember} is not a current member of this Room`);
+    }
     const starter = await loadIdentityRow(db, command.agent_id);
     const runId = randomBytes(32).toString('hex');
     // No other writer can already hold this exact fresh, random runId, but
@@ -412,6 +355,14 @@ export async function startWorkflow(
     await lockWorkflowRun(db, runId);
     const startState = contract.handoffs[contract.start]!;
     const isGate = startState.kind === 'gate';
+    const startRole = (startState as WorkflowHandoffState | WorkflowGateState).role;
+    const resolution = await resolveRoleBinding(db, {
+      roomId: command.room_id,
+      workspaceId: room.workspace_id,
+      roleBindings,
+      role: startRole,
+    });
+    const exhausted = 'exhausted' in resolution ? resolution.exhausted : undefined;
     await systemLine(db, {
       id: runId,
       roomId: command.room_id,
@@ -420,7 +371,7 @@ export async function startWorkflow(
       verb: 'started workflow',
       object: contract.name,
       kind: 'workflow-handoff',
-      ...(isGate ? {} : { wakes: [roleBindings[(startState as WorkflowHandoffState).role]!] }),
+      ...(!exhausted && !isGate ? { wakes: [(resolution as { agentId: string }).agentId] } : {}),
       presentation: 'card',
       cardType: WORKFLOW_HANDOFF_CARD_TYPE,
       card: {
@@ -432,17 +383,15 @@ export async function startWorkflow(
         toState: contract.start,
       },
     });
-    if (!isGate)
-      await trackClassRole(db, {
+    if (exhausted) {
+      await noteWorkflowClassExhausted(db, {
         roomId: command.room_id,
         runId,
-        state: startState as WorkflowHandoffState,
-        roleBindings,
-        roleClasses,
-        sourceMessageId: runId,
-        requesterId,
+        role: startRole,
+        className: exhausted,
+        afterMessageId: runId,
       });
-    if (isGate) {
+    } else if (isGate) {
       await postWorkflowGate(db, {
         roomId: command.room_id,
         runId,
@@ -457,7 +406,7 @@ export async function startWorkflow(
         roomId: command.room_id,
         runId,
         stateName: contract.start,
-        agentId: roleBindings[(startState as WorkflowHandoffState).role]!,
+        agentId: (resolution as { agentId: string }).agentId,
         seconds: (startState as WorkflowHandoffState).timeoutSeconds!,
       });
     }
@@ -526,27 +475,31 @@ export async function handoff(
     if (!nextState) throw new Error('workflow contract is internally inconsistent');
     const isTerminal = nextState.kind === 'terminal';
     const isGate = nextState.kind === 'gate';
+    const roleBindings = { ...run.roleBindings };
+    const nextRole = isTerminal ? undefined : (nextState as WorkflowHandoffState | WorkflowGateState).role;
+    const nextResolution = nextRole
+      ? await resolveRoleBinding(db, { roomId: command.room_id, workspaceId: room.workspace_id, roleBindings, role: nextRole })
+      : undefined;
+    const exhausted = nextResolution && 'exhausted' in nextResolution ? nextResolution.exhausted : undefined;
     const actor = await loadIdentityRow(db, command.agent_id);
-    const cardId = randomBytes(32).toString('hex');
     await systemLine(db, {
-      id: cardId,
+      id: randomBytes(32).toString('hex'),
       roomId: command.room_id,
       authorId: command.agent_id,
       subject: identitySubject(actor),
       verb: 'handed off',
       object: toState,
       kind: 'workflow-handoff',
-      ...(isTerminal || isGate
-        ? {}
-        : { wakes: [run.roleBindings[(nextState as WorkflowHandoffState).role]!] }),
+      ...(!isTerminal && !isGate && !exhausted
+        ? { wakes: [(nextResolution as { agentId: string }).agentId] }
+        : {}),
       presentation: 'card',
       cardType: WORKFLOW_HANDOFF_CARD_TYPE,
       card: {
         runId: input.runId,
         workflowSlug: run.workflowSlug,
         workflowVersion: run.workflowVersion,
-        roleBindings: run.roleBindings,
-        ...(run.roleClasses ? { roleClasses: run.roleClasses } : {}),
+        roleBindings,
         fromState: stateName,
         outcome: input.outcome,
         toState,
@@ -554,22 +507,20 @@ export async function handoff(
         ...(isTerminal ? { status: (nextState as { status: 'done' | 'failed' }).status } : {}),
       },
     });
-    if (!isTerminal && !isGate)
-      await trackClassRole(db, {
+    if (exhausted) {
+      await noteWorkflowClassExhausted(db, {
         roomId: command.room_id,
         runId: input.runId,
-        state: nextState as WorkflowHandoffState,
-        roleBindings: run.roleBindings,
-        roleClasses: run.roleClasses ?? {},
-        sourceMessageId: cardId,
-        requesterId: await humanRequester(db, command),
+        role: nextRole!,
+        className: exhausted,
+        afterMessageId: input.runId,
       });
-    if (isGate) {
+    } else if (isGate) {
       await postWorkflowGate(db, {
         roomId: command.room_id,
         runId: input.runId,
         contract,
-        roleBindings: run.roleBindings,
+        roleBindings,
         stateName: toState,
         state: nextState as WorkflowGateState,
       });
@@ -579,7 +530,7 @@ export async function handoff(
         roomId: command.room_id,
         runId: input.runId,
         stateName: toState,
-        agentId: run.roleBindings[(nextState as WorkflowHandoffState).role]!,
+        agentId: (nextResolution as { agentId: string }).agentId,
         seconds: (nextState as WorkflowHandoffState).timeoutSeconds!,
       });
     }
@@ -588,6 +539,205 @@ export async function handoff(
       state: toState,
       ...(isTerminal ? { status: (nextState as { status: 'done' | 'failed' }).status } : {}),
     };
+  });
+}
+
+/**
+ * Same-state reassignment: the run's `toState` does not change, only which
+ * agent holds it. Reused by both automatic class failover and a human's
+ * explicit `assign_workflow_role`; the caller decides `picked` (a random
+ * healthy candidate, or the human's exact choice with no health filter).
+ */
+async function reassignRole(
+  db: SqlDatabase,
+  input: {
+    roomId: string;
+    runId: string;
+    run: WorkflowRunCard;
+    contract: WorkflowContract;
+    role: string;
+    picked: string;
+  },
+): Promise<void> {
+  const roleBindings = { ...input.run.roleBindings, [input.role]: input.picked };
+  const state = input.contract.handoffs[input.run.toState] as WorkflowHandoffState | WorkflowGateState;
+  await ensureSystemIdentity(db);
+  await systemLine(db, {
+    id: randomBytes(32).toString('hex'),
+    roomId: input.roomId,
+    authorId: SYSTEM_IDENTITY_ID,
+    subject: { kind: 'system', name: 'the workflow' },
+    verb: 'reassigned',
+    object: input.role,
+    kind: 'workflow-handoff',
+    ...(state.kind === 'gate' ? {} : { wakes: [input.picked] }),
+    presentation: 'card',
+    cardType: WORKFLOW_HANDOFF_CARD_TYPE,
+    card: {
+      runId: input.runId,
+      workflowSlug: input.run.workflowSlug,
+      workflowVersion: input.run.workflowVersion,
+      roleBindings,
+      toState: input.run.toState,
+      reassigned: true,
+    },
+  });
+  if (state.kind === 'gate') {
+    await postWorkflowGate(db, {
+      roomId: input.roomId,
+      runId: input.runId,
+      contract: input.contract,
+      roleBindings,
+      stateName: input.run.toState,
+      state,
+    });
+  } else if (state.timeoutSeconds) {
+    await cancelWorkflowTimeout(db, input.runId, input.run.toState);
+    const room = (
+      await db.query<{ workspace_id: string }>(`SELECT workspace_id FROM rooms WHERE id=$1`, [
+        input.roomId,
+      ])
+    ).rows[0];
+    if (room) {
+      await scheduleWorkflowTimeout(db, {
+        workspaceId: room.workspace_id,
+        roomId: input.roomId,
+        runId: input.runId,
+        stateName: input.run.toState,
+        agentId: input.picked,
+        seconds: state.timeoutSeconds,
+      });
+    }
+  }
+}
+
+/**
+ * The one hook a failed/silent turn goes through to fail a workflow role over
+ * to the next healthy class member. Called unconditionally from
+ * `turn-silence-notice.ts`'s `noteFirstSilence`, BEFORE its own human-trigger
+ * requirement — a workflow dispatch's triggering message is normally
+ * agent-authored (the previous role holder's handoff, or the run's own start
+ * card), so gating this on "a human is further up the chain" would silently
+ * never fire for the ordinary case. Runs in its own transaction. A no-op for
+ * a fixed-agent role, a stale/superseded dispatch, or a turn that was never a
+ * workflow dispatch at all — this must never throw into the ordinary
+ * silence-notice path.
+ */
+export async function reassignFailedWorkflowRole(
+  db: SqlDatabase,
+  input: { roomId: string; requestId: string; agentId: string },
+): Promise<void> {
+  const trigger = (
+    await db.query<{ run_id: string }>(
+      `SELECT card->>'runId' run_id FROM messages WHERE id=$1 AND room_id=$2 AND card_type=$3`,
+      [input.requestId, input.roomId, WORKFLOW_HANDOFF_CARD_TYPE],
+    )
+  ).rows[0];
+  if (!trigger) return; // not a workflow dispatch
+  // Same discipline as handoff()'s P0-1 fix: lock before reading the run's
+  // current state, so a concurrent handoff/reassignment can never race this
+  // read-validate-write sequence.
+  await lockWorkflowRun(db, trigger.run_id);
+  const latest = (
+    await db.query<{ id: string; card: WorkflowRunCard }>(
+      `SELECT id,card FROM messages WHERE room_id=$1 AND card_type=$2 AND card->>'runId'=$3
+       ORDER BY created_at DESC,id DESC LIMIT 1`,
+      [input.roomId, WORKFLOW_HANDOFF_CARD_TYPE, trigger.run_id],
+    )
+  ).rows[0];
+  // Not a workflow dispatch, or a newer card already superseded this one.
+  if (!latest || latest.id !== input.requestId) return;
+  const run = latest.card;
+  const contract = await loadPinnedContract(db, input.roomId, run.workflowSlug, run.workflowVersion);
+  if (!contract) return;
+  const state = contract.handoffs[run.toState];
+  if (!state || state.kind === 'terminal') return;
+  const role = (state as WorkflowHandoffState | WorkflowGateState).role;
+  if (run.roleBindings[role] !== input.agentId) return;
+  const roleClasses = await loadRunRoleClasses(db, input.roomId, run.runId);
+  const className = roleClasses[role];
+  if (!className) return;
+  const room = (
+    await db.query<{ workspace_id: string }>(`SELECT workspace_id FROM rooms WHERE id=$1`, [
+      input.roomId,
+    ])
+  ).rows[0];
+  if (!room) return;
+  const picked = await pickHealthyClassMember(db, input.roomId, room.workspace_id, className, [
+    input.agentId,
+  ]);
+  if (!picked) {
+    await noteWorkflowClassExhausted(db, {
+      roomId: input.roomId,
+      runId: run.runId,
+      role,
+      className,
+      afterMessageId: input.requestId,
+    });
+    return;
+  }
+  await reassignRole(db, { roomId: input.roomId, runId: run.runId, run, contract, role, picked });
+}
+
+/**
+ * A human's explicit override: bind a specific agent to a class-bound role
+ * this run is currently stuck on — the "ask a human" recovery path when a
+ * class is exhausted, or simply a human's choice at any time. Unlike
+ * automatic failover, the target is not health-filtered (an explicit human
+ * choice overrides "healthy"), but must still carry the configured class tag
+ * and be a current Room member — this is a scoped override, not a way to
+ * bind an arbitrary outsider to the role.
+ */
+export async function assignWorkflowRole(
+  database: SqlDatabase,
+  command: CommandRow,
+  input: { runId: string; role: string; targetAgentId: string },
+): Promise<{ runId: string; state: string }> {
+  if (typeof input.runId !== 'string' || !input.runId) throw new Error('runId is required');
+  if (typeof input.role !== 'string' || !input.role) throw new Error('role is required');
+  if (!isAgentIdentityReference(input.targetAgentId)) {
+    throw new Error('targetAgentId must be an agent identity');
+  }
+  return database.transaction(async (db) => {
+    await lockWorkflowRun(db, input.runId);
+    const run = await loadRun(db, command.room_id, input.runId);
+    if (!run) throw new Error('workflow run is unavailable in this Room');
+    const contract = await loadPinnedContract(db, command.room_id, run.workflowSlug, run.workflowVersion);
+    if (!contract) throw new Error('workflow contract version is unavailable');
+    const state = contract.handoffs[run.toState];
+    if (!state || state.kind === 'terminal') throw new Error('this workflow run has already ended');
+    const currentRole = (state as WorkflowHandoffState | WorkflowGateState).role;
+    if (currentRole !== input.role) {
+      throw new Error(`this run is currently at the ${currentRole} role, not ${input.role}`);
+    }
+    const roleClasses = await loadRunRoleClasses(db, command.room_id, run.runId);
+    const className = roleClasses[input.role];
+    if (!className) throw new Error(`the ${input.role} role is not class-bound; it cannot be reassigned`);
+    const room = (
+      await db.query<{ workspace_id: string }>(`SELECT workspace_id FROM rooms WHERE id=$1`, [
+        command.room_id,
+      ])
+    ).rows[0];
+    if (!room) throw new Error('workflow room not found');
+    const member = await db.query(
+      `SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
+      [command.room_id, input.targetAgentId],
+    );
+    if (!member.rowCount) {
+      throw new Error(`${input.targetAgentId} is not a current member of this Room`);
+    }
+    if (!(await agentCarriesTag(db, room.workspace_id, input.targetAgentId, className))) {
+      throw new Error(`${input.targetAgentId} does not carry the "${className}" tag`);
+    }
+    await reassignRole(db, {
+      roomId: command.room_id,
+      runId: run.runId,
+      run,
+      contract,
+      role: input.role,
+      picked: input.targetAgentId,
+    });
+    return { runId: run.runId, state: run.toState };
   });
 }
 

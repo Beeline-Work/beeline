@@ -1,15 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Text, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { Text, TextInput, View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { RoomViewIdentity } from '@beeline/buzz-client';
-import { AGENT_TIERS } from '@beeline/api-contract/phone';
+import { isClassOrTagReference } from '@beeline/api-contract/phone';
 
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 import { HullActionSheetCancel, HullActionSheetModal, HullActionSheetRow } from './HullActionSheet';
+import { HullDialog } from './HullDialog';
 
-export type RoomReviewerUpdate =
-  | { roomId: string; reviewerAgentId: string | null }
-  | { roomId: string; reviewerClass: string };
+export type RoomReviewerUpdate = {
+  roomId: string;
+  reviewerAgentId?: string | null;
+  reviewerClass?: string | null;
+};
 
 type RoomReviewerActionsProps = {
   agents: readonly RoomViewIdentity[];
@@ -17,10 +20,8 @@ type RoomReviewerActionsProps = {
   hasRepository: boolean;
   onSaved?: () => void;
   reviewerAgentId?: string;
-  /** Set when the reviewer is a class; `reviewerAgentId` is then its current pick. */
+  /** A class/tag instead of one fixed agent; mutually exclusive with `reviewerAgentId`. */
   reviewerClass?: string;
-  /** Custom tags carried by this Room's agents, offered as classes beside the tiers. */
-  loadClassTags?: () => Promise<readonly string[]>;
   roomId: string;
   roomName: string;
   updateRoom: (input: RoomReviewerUpdate) => Promise<unknown>;
@@ -34,59 +35,43 @@ export function RoomReviewerActions({
   onSaved,
   reviewerAgentId,
   reviewerClass,
-  loadClassTags,
   roomId,
   roomName,
   updateRoom,
 }: RoomReviewerActionsProps) {
+  const { theme } = useUnistyles();
   const [pickerVisible, setPickerVisible] = useState(false);
+  const [classDialogVisible, setClassDialogVisible] = useState(false);
+  const [classDraft, setClassDraft] = useState('');
   const [selectedReviewerAgentId, setSelectedReviewerAgentId] = useState(reviewerAgentId);
-  const [selectedClass, setSelectedClass] = useState(reviewerClass);
-  const [classTags, setClassTags] = useState<readonly string[]>([]);
+  const [selectedReviewerClass, setSelectedReviewerClass] = useState(reviewerClass);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => setSelectedReviewerAgentId(reviewerAgentId), [reviewerAgentId]);
-  useEffect(() => setSelectedClass(reviewerClass), [reviewerClass]);
-  useEffect(() => {
-    if (!pickerVisible || !loadClassTags) return;
-    let live = true;
-    loadClassTags().then(
-      (tags) => live && setClassTags(tags),
-      () => undefined,
-    );
-    return () => {
-      live = false;
-    };
-  }, [loadClassTags, pickerVisible]);
+  useEffect(() => setSelectedReviewerClass(reviewerClass), [reviewerClass]);
 
   const selectedReviewer = useMemo(
     () => agents.find((agent) => agent.pubkey === selectedReviewerAgentId),
     [agents, selectedReviewerAgentId],
   );
-  const pickedLabel = selectedReviewer
+  const reviewerLabel = selectedReviewer
     ? `@${selectedReviewer.handle ?? selectedReviewer.name}`
-    : undefined;
-  const reviewerLabel = selectedClass
-    ? `Any ${selectedClass}${pickedLabel ? ` · now ${pickedLabel}` : ''}`
-    : (pickedLabel ?? 'None');
+    : selectedReviewerClass
+      ? `class: ${selectedReviewerClass}`
+      : 'None';
 
-  const save = useCallback(
-    async (input: RoomReviewerUpdate) => {
+  const changeReviewer = useCallback(
+    async (next: Omit<RoomReviewerUpdate, 'roomId'>) => {
       if (busy) return;
       setBusy(true);
       setError(null);
       try {
-        await updateRoom(input);
-        if ('reviewerClass' in input) {
-          // The server picks the class's first reviewer; the refresh names it.
-          setSelectedClass(input.reviewerClass);
-          setSelectedReviewerAgentId(undefined);
-        } else {
-          setSelectedClass(undefined);
-          setSelectedReviewerAgentId(input.reviewerAgentId ?? undefined);
-        }
+        await updateRoom({ roomId, ...next });
+        setSelectedReviewerAgentId(next.reviewerAgentId ?? undefined);
+        setSelectedReviewerClass(next.reviewerClass ?? undefined);
         setPickerVisible(false);
+        setClassDialogVisible(false);
         onSaved?.();
       } catch (caught) {
         setError(`Could not change ${ROOM_LABEL} reviewer: ${String(caught)}`);
@@ -94,29 +79,8 @@ export function RoomReviewerActions({
         setBusy(false);
       }
     },
-    [busy, onSaved, updateRoom],
+    [busy, onSaved, roomId, updateRoom],
   );
-  const changeReviewer = useCallback(
-    async (nextReviewerAgentId: string | null) => {
-      if (!selectedClass && (selectedReviewerAgentId ?? null) === nextReviewerAgentId) {
-        setPickerVisible(false);
-        return;
-      }
-      await save({ roomId, reviewerAgentId: nextReviewerAgentId });
-    },
-    [roomId, save, selectedClass, selectedReviewerAgentId],
-  );
-  const changeClass = useCallback(
-    async (nextClass: string) => {
-      if (selectedClass === nextClass) {
-        setPickerVisible(false);
-        return;
-      }
-      await save({ roomId, reviewerClass: nextClass });
-    },
-    [roomId, save, selectedClass],
-  );
-  const classes = [...AGENT_TIERS, ...classTags.filter((tag) => !AGENT_TIERS.includes(tag as never))];
 
   if (!canManage || !hasRepository) return null;
 
@@ -140,7 +104,7 @@ export function RoomReviewerActions({
         onClose={() => {
           if (!busy) setPickerVisible(false);
         }}
-        subtitle="Reviews every pull request opened from the Room. A class picks a healthy agent at random and moves to the next one if it fails."
+        subtitle="This agent reviews every pull request opened from the Room. A class (a weight tier, harness, provider, model, or custom tag) resolves to a random healthy member carrying it at each dispatch."
         testID="room-reviewer-sheet"
         title={`Reviewer for ${roomName}`}
         visible={pickerVisible}
@@ -148,31 +112,30 @@ export function RoomReviewerActions({
         <HullActionSheetRow
           disabled={busy}
           label="None"
-          onPress={() => void changeReviewer(null)}
-          selected={!selectedClass && !selectedReviewerAgentId}
+          onPress={() => void changeReviewer({ reviewerAgentId: null, reviewerClass: null })}
+          selected={!selectedReviewerAgentId && !selectedReviewerClass}
           testID="room-reviewer-none"
         />
-        {classes.map((agentClass) => (
-          <HullActionSheetRow
-            disabled={busy}
-            key={`class-${agentClass}`}
-            label={`Any ${agentClass} agent`}
-            metadata="class"
-            onPress={() => void changeClass(agentClass)}
-            selected={selectedClass === agentClass}
-            testID={`room-reviewer-class-${agentClass}`}
-          />
-        ))}
         {agents.map((agent) => (
           <HullActionSheetRow
             disabled={busy}
             key={agent.pubkey}
             label={`@${agent.handle ?? agent.name}`}
-            onPress={() => void changeReviewer(agent.pubkey)}
-            selected={!selectedClass && selectedReviewerAgentId === agent.pubkey}
+            onPress={() => void changeReviewer({ reviewerAgentId: agent.pubkey, reviewerClass: null })}
+            selected={selectedReviewerAgentId === agent.pubkey}
             testID={`room-reviewer-agent-${agent.pubkey}`}
           />
         ))}
+        <HullActionSheetRow
+          disabled={busy}
+          label={selectedReviewerClass ? `Class: ${selectedReviewerClass}` : 'Class…'}
+          onPress={() => {
+            setClassDraft(selectedReviewerClass ?? '');
+            setClassDialogVisible(true);
+          }}
+          selected={Boolean(selectedReviewerClass)}
+          testID="room-reviewer-class"
+        />
         {error ? (
           <View accessibilityRole="alert" style={styles.error} testID="room-reviewer-error">
             <Text style={styles.errorText}>! {error}</Text>
@@ -183,6 +146,39 @@ export function RoomReviewerActions({
           testID="room-reviewer-close"
         />
       </HullActionSheetModal>
+      <HullDialog
+        accessibilityLabel="Close reviewer class dialog"
+        body="A word every candidate agent's tag set can match: a weight tier (god, heavy, light), a harness, a provider, an exact model id, or a custom tag."
+        dismissOnBackdrop={!busy}
+        onRequestClose={() => setClassDialogVisible(false)}
+        testID="room-reviewer-class-dialog"
+        title="Reviewer class"
+        visible={classDialogVisible}
+        actions={[
+          { label: 'Cancel', onPress: () => setClassDialogVisible(false), disabled: busy },
+          {
+            label: busy ? 'Saving…' : 'Save',
+            onPress: () =>
+              void changeReviewer({ reviewerClass: classDraft.trim(), reviewerAgentId: null }),
+            busy,
+            disabled: busy || !isClassOrTagReference(classDraft.trim()),
+            testID: 'room-reviewer-class-save',
+          },
+        ]}
+      >
+        <TextInput
+          accessibilityLabel="Reviewer class"
+          autoCapitalize="none"
+          autoCorrect={false}
+          editable={!busy}
+          onChangeText={setClassDraft}
+          placeholder="heavy"
+          placeholderTextColor={theme.buzz.dim}
+          style={styles.classInput}
+          testID="room-reviewer-class-input"
+          value={classDraft}
+        />
+      </HullDialog>
     </>
   );
 }
@@ -198,5 +194,15 @@ const styles = StyleSheet.create((theme) => ({
     ...theme.buzz.type.meta,
     color: theme.buzz.danger,
     fontFamily: theme.buzz.proseRegular,
+  },
+  classInput: {
+    ...theme.buzz.type.body,
+    minHeight: 44,
+    paddingHorizontal: theme.buzz.space.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.buzz.border,
+    borderRadius: theme.buzz.radius,
+    color: theme.buzz.textPrimary,
+    marginTop: theme.buzz.space.sm,
   },
 }));

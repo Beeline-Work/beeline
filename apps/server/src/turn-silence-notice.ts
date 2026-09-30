@@ -16,6 +16,7 @@ import {
 import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
 import { restateSystemLine, systemLine, type SystemPhrase } from './system-line.js';
+import { reassignFailedWorkflowRole } from './workflow-runs.js';
 
 export const TURN_FAILURE_REASON_MAX = 200;
 
@@ -54,6 +55,19 @@ export async function noteFirstSilence(
     readonly helperAlreadyRestarted?: boolean;
   },
 ): Promise<TurnSilenceOutcome> {
+  // Independent of the human-trigger notice below: a workflow dispatch's
+  // triggering message is normally agent-authored (the previous role
+  // holder's handoff card, or the run's own start card), which the notice's
+  // own trigger requirement below would never satisfy. Failing a class-bound
+  // role over must not depend on there being a human further up the chain.
+  await database.transaction((db) =>
+    reassignFailedWorkflowRole(db, {
+      roomId: input.roomId,
+      requestId: input.requestId,
+      agentId: input.agentId,
+    }),
+  );
+
   const trigger = (
     await database.query<{ agent_name: string }>(
       `SELECT COALESCE(NULLIF(agent.name,''),'The agent') agent_name

@@ -1,247 +1,226 @@
 import { describe, expect, it } from 'vitest';
 import {
-  agentTags,
-  classifyModel,
-  familyTag,
-  harnessTag,
-  normalizeCustomAgentTag,
-  parseModelsDevRegistry,
-  resolveRegistryModel,
-  tierFromOutputPrice,
-  type RegistryModel,
+  DEFAULT_WEIGHT_TIER_RULES,
+  agentMatchesClass,
+  agentTagSet,
+  isAgentIdentityReference,
+  isClassOrTagReference,
+  isCustomTag,
+  isWeightTierRule,
+  readCustomTags,
+  readWeightTierRules,
+  resolveProviderTag,
+  resolveWeightTier,
 } from './agent-classes.js';
 
-const registry: RegistryModel[] = [
-  {
-    provider: 'anthropic',
-    modelId: 'claude-fable-5-1',
-    name: 'Claude Fable 5.1',
-    family: 'claude-fable',
-    outputCost: 50,
-  },
-  {
-    provider: 'anthropic',
-    modelId: 'claude-opus-5-5',
-    name: 'Claude Opus 5.5',
-    family: 'claude-opus',
-    outputCost: 20,
-  },
-  {
-    provider: 'anthropic',
-    modelId: 'claude-haiku-4-5',
-    name: 'Claude Haiku 4.5 (latest)',
-    family: 'claude-haiku',
-    outputCost: 5,
-  },
-  { provider: 'openai', modelId: 'gpt-6-astra', name: 'GPT-6 Astra', family: 'gpt-astra', outputCost: 50 },
-  { provider: 'openai', modelId: 'gpt-6.1-sol', name: 'GPT-6.1 Sol', family: 'gpt-sol', outputCost: 10 },
-  { provider: 'xai', modelId: 'grok-4.6', name: 'Grok 4.6', family: 'grok', outputCost: 6 },
-  {
-    provider: 'deepseek',
-    modelId: 'deepseek-v4-flash',
-    name: 'DeepSeek V4 Flash',
-    family: 'deepseek-flash',
-    outputCost: 0.6,
-  },
-];
-
-describe('tierFromOutputPrice', () => {
-  it('classifies at the boundaries', () => {
-    expect(tierFromOutputPrice(4.99)).toBe('light');
-    expect(tierFromOutputPrice(5)).toBe('heavy');
-    expect(tierFromOutputPrice(39.99)).toBe('heavy');
-    expect(tierFromOutputPrice(40)).toBe('god');
-    expect(tierFromOutputPrice(0)).toBe('light');
-  });
-
-  it("matches today's registry prices from the brief", () => {
-    const tier = (provider: string, modelId: string) =>
-      classifyModel({ model: registry.find((m) => m.provider === provider && m.modelId === modelId)! }, [])
-        .tier;
-    expect(tier('anthropic', 'claude-fable-5-1')).toBe('god');
-    expect(tier('openai', 'gpt-6-astra')).toBe('god');
-    expect(tier('anthropic', 'claude-opus-5-5')).toBe('heavy');
-    expect(tier('openai', 'gpt-6.1-sol')).toBe('heavy');
-    expect(tier('xai', 'grok-4.6')).toBe('heavy');
-    expect(tier('deepseek', 'deepseek-v4-flash')).toBe('light');
-  });
-});
-
-describe('classifyModel overrides', () => {
-  const opus = registry.find((m) => m.modelId === 'claude-opus-5-5')!;
-
-  it('uses price when no override applies', () => {
-    expect(classifyModel({ model: opus }, [])).toMatchObject({
-      tier: 'heavy',
-      source: 'price',
+describe('resolveWeightTier', () => {
+  it('classifies the captain-specified defaults', () => {
+    expect(resolveWeightTier('astra-2', DEFAULT_WEIGHT_TIER_RULES)).toEqual({
+      tier: 'god',
       unclassified: false,
-      family: 'opus',
-      provider: 'anthropic',
-      outputCost: 20,
+    });
+    expect(resolveWeightTier('fable-5-1', DEFAULT_WEIGHT_TIER_RULES)).toEqual({
+      tier: 'god',
+      unclassified: false,
+    });
+    expect(resolveWeightTier('grok-4', DEFAULT_WEIGHT_TIER_RULES)).toEqual({
+      tier: 'heavy',
+      unclassified: false,
+    });
+    expect(resolveWeightTier('gpt-5-sol', DEFAULT_WEIGHT_TIER_RULES)).toEqual({
+      tier: 'heavy',
+      unclassified: false,
+    });
+    // The "opus*" default is a prefix pattern on the model's own id, e.g. as a
+    // harness like OpenRouter would report it — not the "claude-opus-..." form.
+    expect(resolveWeightTier('opus-4-5', DEFAULT_WEIGHT_TIER_RULES)).toEqual({
+      tier: 'heavy',
+      unclassified: false,
+    });
+    expect(resolveWeightTier('claude-sonnet-5-5', DEFAULT_WEIGHT_TIER_RULES)).toEqual({
+      tier: 'light',
+      unclassified: true,
     });
   });
 
-  it('lets a family override win over price', () => {
-    expect(
-      classifyModel({ model: opus }, [{ scope: 'family', key: 'opus', tier: 'god' }]),
-    ).toMatchObject({ tier: 'god', source: 'family-override' });
+  it('inherits a family match for a future version string never seen before', () => {
+    // The whole point of family patterns over exact names: a future release
+    // classifies correctly with no map update.
+    expect(resolveWeightTier('opus-7', DEFAULT_WEIGHT_TIER_RULES)).toEqual({
+      tier: 'heavy',
+      unclassified: false,
+    });
+    expect(resolveWeightTier('gpt-6-sol-mini', DEFAULT_WEIGHT_TIER_RULES)).toEqual({
+      tier: 'heavy',
+      unclassified: false,
+    });
+    expect(resolveWeightTier('astra-9-ultra', DEFAULT_WEIGHT_TIER_RULES)).toEqual({
+      tier: 'god',
+      unclassified: false,
+    });
   });
 
-  it('lets a model override win over a family override and price', () => {
-    expect(
-      classifyModel({ model: opus }, [
-        { scope: 'family', key: 'opus', tier: 'god' },
-        { scope: 'model', key: 'anthropic/claude-opus-5-5', tier: 'light' },
-      ]),
-    ).toMatchObject({ tier: 'light', source: 'model-override' });
+  it('is case-insensitive', () => {
+    expect(resolveWeightTier('OPUS-4', DEFAULT_WEIGHT_TIER_RULES).tier).toBe('heavy');
   });
 
-  it('ignores an override for a different model or family', () => {
-    expect(
-      classifyModel({ model: opus }, [
-        { scope: 'model', key: 'anthropic/claude-fable-5-1', tier: 'light' },
-        { scope: 'family', key: 'fable', tier: 'light' },
-      ]),
-    ).toMatchObject({ tier: 'heavy', source: 'price' });
+  it('marks an unrecognized model light and unclassified', () => {
+    expect(resolveWeightTier('some-random-model-9', DEFAULT_WEIGHT_TIER_RULES)).toEqual({
+      tier: 'light',
+      unclassified: true,
+    });
+  });
+
+  it('is not unclassified when no model is selected yet', () => {
+    expect(resolveWeightTier(null, DEFAULT_WEIGHT_TIER_RULES)).toEqual({
+      tier: 'light',
+      unclassified: false,
+    });
+    expect(resolveWeightTier(undefined, DEFAULT_WEIGHT_TIER_RULES)).toEqual({
+      tier: 'light',
+      unclassified: false,
+    });
+  });
+
+  it('first matching rule wins, so custom order controls precedence', () => {
+    const rules = [
+      { pattern: 'opus-mini*', tier: 'light' as const },
+      { pattern: 'opus*', tier: 'heavy' as const },
+    ];
+    expect(resolveWeightTier('opus-mini-1', rules).tier).toBe('light');
+    expect(resolveWeightTier('opus-2', rules).tier).toBe('heavy');
+  });
+
+  it('falls back to defaults for a NULL or invalid rule set', () => {
+    expect(readWeightTierRules(null)).toEqual(DEFAULT_WEIGHT_TIER_RULES);
+    expect(readWeightTierRules(undefined)).toEqual(DEFAULT_WEIGHT_TIER_RULES);
+    expect(readWeightTierRules([{ pattern: 'x', tier: 'bogus' }])).toEqual(DEFAULT_WEIGHT_TIER_RULES);
+    expect(readWeightTierRules('not-an-array')).toEqual(DEFAULT_WEIGHT_TIER_RULES);
+  });
+
+  it('accepts a valid admin-supplied rule set verbatim, in order', () => {
+    const rules = [
+      { pattern: 'astra*', tier: 'god' as const },
+      { pattern: 'night-shift*', tier: 'heavy' as const },
+    ];
+    expect(readWeightTierRules(rules)).toEqual(rules);
+  });
+
+  it('rejects a rule set beyond the count cap', () => {
+    const tooMany = Array.from({ length: 65 }, (_, index) => ({
+      pattern: `p${index}`,
+      tier: 'light' as const,
+    }));
+    expect(readWeightTierRules(tooMany)).toEqual(DEFAULT_WEIGHT_TIER_RULES);
   });
 });
 
-describe('unknown models', () => {
-  it('gives an unlisted model light plus unclassified', () => {
-    const model = resolveRegistryModel(
-      { provider: 'openrouter', modelId: 'gemma-4-31b-it-fabled' },
-      registry,
-    );
-    expect(model).toBeUndefined();
-    const classification = classifyModel(
-      { provider: 'openrouter', modelId: 'gemma-4-31b-it-fabled', model },
-      [],
-    );
-    expect(classification).toMatchObject({ tier: 'light', unclassified: true, source: 'unlisted' });
-    expect(classification.family).toBeUndefined();
-    expect(agentTags({ classification, harness: 'goose' }).map((t) => t.tag)).toEqual([
-      'light',
-      'unclassified',
-      'goose',
-      'openrouter',
+describe('isWeightTierRule', () => {
+  it('accepts only a two-key {pattern, tier} shape with a real tier', () => {
+    expect(isWeightTierRule({ pattern: 'astra*', tier: 'god' })).toBe(true);
+    expect(isWeightTierRule({ pattern: 'astra*', tier: 'bogus' })).toBe(false);
+    expect(isWeightTierRule({ pattern: 'astra*', tier: 'god', extra: 1 })).toBe(false);
+    expect(isWeightTierRule({ tier: 'god' })).toBe(false);
+    expect(isWeightTierRule(null)).toBe(false);
+    expect(isWeightTierRule('astra*')).toBe(false);
+  });
+});
+
+describe('resolveProviderTag', () => {
+  it('uses the harness-native provider when the harness has one', () => {
+    expect(resolveProviderTag('claude', 'claude-opus-4-5')).toBe('anthropic');
+    expect(resolveProviderTag('codex', 'gpt-5')).toBe('openai');
+    expect(resolveProviderTag('grok', 'grok-4')).toBe('xai');
+  });
+
+  it('infers the provider from the model prefix for a proxying harness', () => {
+    expect(resolveProviderTag('pi', 'claude-sonnet-5-5')).toBe('anthropic');
+    expect(resolveProviderTag('pi', 'gemini-2-5-pro')).toBe('google');
+    expect(resolveProviderTag('cursor', 'gpt-5')).toBe('openai');
+    expect(resolveProviderTag('goose', 'some-oss-model')).toBe('openrouter');
+  });
+
+  it('is unknown with no harness and no recognizable model prefix', () => {
+    expect(resolveProviderTag(null, null)).toBe('unknown');
+    expect(resolveProviderTag(null, 'some-oss-model')).toBe('unknown');
+  });
+});
+
+describe('custom tags', () => {
+  it('accepts a lowercase hyphenated tag under the length cap', () => {
+    expect(isCustomTag('night-shift')).toBe(true);
+    expect(isCustomTag('a')).toBe(true);
+  });
+
+  it('rejects uppercase, leading digits, spaces, and over-length tags', () => {
+    expect(isCustomTag('Night-Shift')).toBe(false);
+    expect(isCustomTag('1night')).toBe(false);
+    expect(isCustomTag('night shift')).toBe(false);
+    expect(isCustomTag('a'.repeat(33))).toBe(false);
+  });
+
+  it('readCustomTags drops invalid entries, dedupes, and caps the count', () => {
+    expect(readCustomTags(['night-shift', 'Bad Tag', 'night-shift', 'trusted'])).toEqual([
+      'night-shift',
+      'trusted',
     ]);
-  });
-
-  it('never classifies by a name substring', () => {
-    for (const modelId of ['gemma-4-31b-it-fabled', 'my-opus-finetune', 'fable']) {
-      expect(resolveRegistryModel({ provider: 'anthropic', modelId }, registry)).toBeUndefined();
-    }
-  });
-
-  it('lets an admin model override resolve an unclassified model', () => {
-    expect(
-      classifyModel({ provider: 'openrouter', modelId: 'gemma-4-31b-it-fabled' }, [
-        { scope: 'model', key: 'openrouter/gemma-4-31b-it-fabled', tier: 'heavy' },
-      ]),
-    ).toMatchObject({ tier: 'heavy', unclassified: false, source: 'model-override' });
-  });
-
-  it('treats a listed model with no output price as unclassified', () => {
-    expect(
-      classifyModel(
-        { model: { provider: 'xai', modelId: 'grok-image', name: 'Grok Image', family: 'grok', outputCost: null } },
-        [],
-      ),
-    ).toMatchObject({ tier: 'light', unclassified: true });
+    expect(readCustomTags(Array.from({ length: 20 }, (_, i) => `tag-${i}`))).toHaveLength(16);
+    expect(readCustomTags(null)).toEqual([]);
+    expect(readCustomTags('not-an-array')).toEqual([]);
   });
 });
 
-describe('resolveRegistryModel', () => {
-  it('matches provider plus exact model id', () => {
-    expect(
-      resolveRegistryModel({ provider: 'anthropic', modelId: 'claude-opus-5-5' }, registry)?.modelId,
-    ).toBe('claude-opus-5-5');
+describe('identity vs. class/tag disambiguation', () => {
+  const IDENTITY_ID = 'a'.repeat(64);
+
+  it('a 64-lowercase-hex string is always an identity reference, never a class', () => {
+    expect(isAgentIdentityReference(IDENTITY_ID)).toBe(true);
+    expect(isClassOrTagReference(IDENTITY_ID)).toBe(false);
   });
 
-  it('resolves an alias through its display name, exactly', () => {
-    expect(
-      resolveRegistryModel(
-        { provider: 'anthropic', modelId: 'opus', displayName: 'Opus 5.5' },
-        registry,
-      )?.modelId,
-    ).toBe('claude-opus-5-5');
-    expect(
-      resolveRegistryModel(
-        { provider: 'anthropic', modelId: 'haiku', displayName: 'Haiku 4.5' },
-        registry,
-      )?.modelId,
-    ).toBe('claude-haiku-4-5');
-    expect(
-      resolveRegistryModel({ provider: 'anthropic', modelId: 'opus', displayName: 'Opus' }, registry),
-    ).toBeUndefined();
+  it('a tier name, harness name, or model id is a class/tag reference', () => {
+    expect(isClassOrTagReference('heavy')).toBe(true);
+    expect(isClassOrTagReference('claude')).toBe(true);
+    expect(isClassOrTagReference('claude-opus-4-5')).toBe(true);
+    expect(isClassOrTagReference('night-shift')).toBe(true);
   });
 
-  it('reads a provider/model id', () => {
-    expect(resolveRegistryModel({ modelId: 'xai/grok-4.6' }, registry)?.provider).toBe('xai');
+  it('rejects an empty, over-length, or malformed reference', () => {
+    expect(isClassOrTagReference('')).toBe(false);
+    expect(isClassOrTagReference('a'.repeat(129))).toBe(false);
+    expect(isClassOrTagReference('has spaces')).toBe(false);
+    expect(isClassOrTagReference(42)).toBe(false);
   });
 });
 
-describe('tags', () => {
-  it('derives short family tags from the registry family field', () => {
-    expect(familyTag('claude-opus')).toBe('opus');
-    expect(familyTag('claude-fable')).toBe('fable');
-    expect(familyTag('gpt-sol')).toBe('sol');
-    expect(familyTag('gpt-astra')).toBe('astra');
-    expect(familyTag('grok')).toBe('grok');
-    expect(familyTag('deepseek-flash')).toBe('deepseek');
+describe('agentTagSet / agentMatchesClass', () => {
+  it('a role/reviewer class reference matches any axis: model, harness, provider, tier, or a custom tag', () => {
+    const facts = {
+      model: 'claude-opus-4-5',
+      harness: 'claude' as const,
+      weightTier: 'heavy' as const,
+      provider: 'anthropic',
+      customTags: ['night-shift'],
+    };
+    const tags = agentTagSet(facts);
+    expect(tags).toEqual(new Set(['night-shift', 'claude-opus-4-5', 'claude', 'anthropic', 'heavy']));
+    expect(agentMatchesClass(facts, 'heavy')).toBe(true);
+    expect(agentMatchesClass(facts, 'claude')).toBe(true);
+    expect(agentMatchesClass(facts, 'anthropic')).toBe(true);
+    expect(agentMatchesClass(facts, 'claude-opus-4-5')).toBe(true);
+    expect(agentMatchesClass(facts, 'night-shift')).toBe(true);
+    expect(agentMatchesClass(facts, 'light')).toBe(false);
+    expect(agentMatchesClass(facts, 'god')).toBe(false);
   });
 
-  it('maps harness kinds', () => {
-    expect(harnessTag('claude')).toBe('claude-code');
-    expect(harnessTag('codex')).toBe('codex');
-    expect(harnessTag('pi')).toBe('pi');
-  });
-
-  it('marks only custom tags removable', () => {
-    const classification = classifyModel({ model: registry[1] }, []);
-    expect(agentTags({ classification, harness: 'claude', custom: ['reviewer'] })).toEqual([
-      { tag: 'heavy', kind: 'tier', removable: false },
-      { tag: 'opus', kind: 'family', removable: false },
-      { tag: 'claude-code', kind: 'harness', removable: false },
-      { tag: 'anthropic', kind: 'provider', removable: false },
-      { tag: 'reviewer', kind: 'custom', removable: true },
-    ]);
-  });
-
-  it('refuses reserved and malformed custom tags', () => {
-    expect(normalizeCustomAgentTag(' Reviewer ')).toBe('reviewer');
-    expect(() => normalizeCustomAgentTag('heavy')).toThrow(/reserved/);
-    expect(() => normalizeCustomAgentTag('unclassified')).toThrow(/reserved/);
-    expect(() => normalizeCustomAgentTag('two words')).toThrow(/invalid/);
-  });
-});
-
-describe('parseModelsDevRegistry', () => {
-  it('reads provider -> models -> cost.output and skips malformed rows', () => {
-    expect(
-      parseModelsDevRegistry({
-        anthropic: {
-          id: 'anthropic',
-          models: {
-            'claude-opus-5-5': {
-              id: 'claude-opus-5-5',
-              name: 'Claude Opus 5.5',
-              family: 'claude-opus',
-              cost: { input: 4, output: 20 },
-            },
-            broken: 'nope',
-          },
-        },
-        junk: 7,
-      }),
-    ).toEqual([
-      {
-        provider: 'anthropic',
-        modelId: 'claude-opus-5-5',
-        name: 'Claude Opus 5.5',
-        family: 'claude-opus',
-        outputCost: 20,
-      },
-    ]);
+  it('an agent with no model/harness only carries its provider, tier, and custom tags', () => {
+    const facts = {
+      model: null,
+      harness: null,
+      weightTier: 'light' as const,
+      provider: 'unknown',
+      customTags: [],
+    };
+    expect(agentTagSet(facts)).toEqual(new Set(['unknown', 'light']));
   });
 });

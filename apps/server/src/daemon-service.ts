@@ -164,8 +164,14 @@ import {
 } from './institutional-memory-shadow.js';
 import { searchInstitutionalHistory } from './institutional-history.js';
 import { loadWorkspaceSkill, saveSkill } from './institutional-skills.js';
-import { archiveWorkflow, handoff, saveWorkflow, startWorkflow } from './workflow-runs.js';
-import { failoverOnTurnFailure, settleOnTurnComplete } from './agent-classes.js';
+import {
+  archiveWorkflow,
+  assignWorkflowRole,
+  handoff,
+  saveWorkflow,
+  startWorkflow,
+} from './workflow-runs.js';
+import { agentCarriesTag, isConfiguredReviewer } from './agent-classes.js';
 
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
@@ -368,6 +374,7 @@ export class DaemonService {
       'startWorkflow',
       'handoff',
       'archiveWorkflow',
+      'assignWorkflowRole',
     ]);
     if (
       !this.commandTransaction &&
@@ -818,6 +825,15 @@ export class DaemonService {
           this.database,
           this.authorizedCommand,
           input as Input<'archiveWorkflow'>,
+        )) as Output<Name>;
+      case 'assignWorkflowRole':
+        if (!this.commandTransaction || !this.authorizedCommand) {
+          throw new Error('workflow role assignment requires an active command');
+        }
+        return (await assignWorkflowRole(
+          this.database,
+          this.authorizedCommand,
+          input as Input<'assignWorkflowRole'>,
         )) as Output<Name>;
       case 'getAgentCommands':
         return (await readAgentCommands(
@@ -2795,20 +2811,25 @@ export class DaemonService {
         await db.query<{
           pull_request_number: number | null;
           head_sha: string | null;
+          parent_room_id: string;
+          workspace_id: string;
         }>(
           `SELECT (fact.lifecycle->'pr'->>'number')::int pull_request_number,
-                fact.lifecycle->'pr'->>'headSha' head_sha
+                fact.lifecycle->'pr'->>'headSha' head_sha,
+                parent.id parent_room_id,parent.workspace_id
          FROM rooms corner
          JOIN rooms parent ON parent.id=corner.parent_id
          JOIN corner_facts fact ON fact.corner_id=corner.id
          JOIN memberships reviewer ON reviewer.room_id=parent.id
            AND reviewer.identity_id=$2 AND reviewer.removed_at IS NULL
          JOIN identities identity ON identity.id=reviewer.identity_id AND identity.kind='agent'
-         WHERE corner.id=$1 AND parent.reviewer_agent_id=$2`,
+         WHERE corner.id=$1`,
           [input.cornerId, agentId],
         )
       ).rows[0];
       if (!target) throw new Error('corner reviewer approval denied');
+      if (!(await isConfiguredReviewer(db, target.parent_room_id, target.workspace_id, agentId)))
+        throw new Error('corner reviewer approval denied');
       if (!target.pull_request_number || !target.head_sha)
         throw new Error('corner has no pull request');
       if (target.head_sha !== input.headSha)
@@ -3782,19 +3803,7 @@ export class DaemonService {
           reason,
           input.reasonKind,
         );
-        await failoverOnTurnFailure(database, {
-          roomId: input.roomId,
-          agentId,
-          requestId: input.requestId,
-          reason,
-          ...(input.reasonKind ? { reasonKind: input.reasonKind } : {}),
-        });
       } else if (input.status === 'complete') {
-        await settleOnTurnComplete(database, {
-          roomId: input.roomId,
-          agentId,
-          requestId: input.requestId,
-        });
         // A successful turn does not always post a durable message. A textless
         // Room turn that opened a corner settles through the server's corner
         // card alone, so the terminal receipt must own the same durable
@@ -4662,18 +4671,11 @@ export class DaemonService {
        WHERE a.agent_id=$1`,
       [agentId, input.workspaceId],
     )).rows[0];
-    // The harness and provider are facts the helper owns; they feed the
-    // automatic agent tags (agent-classes.ts). An old helper sends neither
-    // and the stored values stand.
-    const harness = typeof input.harness === 'string' && /^[a-z0-9-]{1,32}$/.test(input.harness)
-      ? input.harness : null;
-    const provider = typeof input.provider === 'string' && /^[a-z0-9._-]{1,64}$/.test(input.provider)
-      ? input.provider : null;
     await database.query(
       `UPDATE agents SET model_catalog=$2::jsonb,selected_model=COALESCE($3,selected_model),
          selected_effort=COALESCE($4,selected_effort),model_unavailable=$5,
-         fast_mode=CASE WHEN $6 THEN fast_mode ELSE false END,
-         harness=COALESCE($7,harness),provider=COALESCE($8,provider),updated_at=now()
+         harness=COALESCE($7,harness),
+         fast_mode=CASE WHEN $6 THEN fast_mode ELSE false END,updated_at=now()
        WHERE agent_id=$1`,
       [
         agentId,
@@ -4688,8 +4690,7 @@ export class DaemonService {
             axis.options.some((choice) => choice.id === 'on') &&
             axis.options.some((choice) => choice.id === 'off'),
         ),
-        harness,
-        provider,
+        input.harness ?? null,
       ],
     );
     // A model/effort choice the owner must replace is the only update-related
@@ -6423,9 +6424,11 @@ export class DaemonService {
       const corner = (
         await db.query<{
           reviewer_agent_id: string | null;
+          parent_room_id: string;
+          workspace_id: string;
           lifecycle: { pr?: { headSha?: string }; checks?: string };
         }>(
-          `SELECT parent.reviewer_agent_id,fact.lifecycle
+          `SELECT parent.reviewer_agent_id,parent.id parent_room_id,parent.workspace_id,fact.lifecycle
          FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
          JOIN corner_facts fact ON fact.corner_id=corner.id
          WHERE corner.id=$1 AND corner.archived_at IS NULL FOR UPDATE OF corner`,
@@ -6447,7 +6450,10 @@ export class DaemonService {
       if (currentHead && input.headSha !== currentHead) throw new Error('validation head changed');
       if (!currentHead && input.headSha !== 'draft')
         throw new Error('validation head is not published');
-      if (input.stage === 'review' && corner.reviewer_agent_id !== agentId)
+      if (
+        input.stage === 'review' &&
+        !(await isConfiguredReviewer(db, corner.parent_room_id, corner.workspace_id, agentId))
+      )
         throw new Error('only the configured reviewer records the review stage');
       if (
         input.stage === 'ci' &&
@@ -6761,17 +6767,44 @@ export class DaemonService {
   ): Promise<{ cornerReviewer: boolean; isCorner: boolean }> {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(roomId))
       throw new Error('daemon room access denied');
-    const result = await this.database.query<{ corner_reviewer: boolean; is_corner: boolean }>(
+    const result = await this.database.query<{
+      corner_reviewer: boolean;
+      is_corner: boolean;
+      reviewer_class: string | null;
+      parent_room_id: string | null;
+      workspace_id: string | null;
+    }>(
       `SELECT EXISTS(
          SELECT 1 FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
          WHERE corner.id=$1 AND parent.reviewer_agent_id=$2
        ) corner_reviewer,
-       EXISTS(SELECT 1 FROM rooms corner WHERE corner.id=$1 AND corner.parent_id IS NOT NULL) is_corner
+       EXISTS(SELECT 1 FROM rooms corner WHERE corner.id=$1 AND corner.parent_id IS NOT NULL) is_corner,
+       (SELECT parent.reviewer_class FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
+        WHERE corner.id=$1) reviewer_class,
+       (SELECT parent.id FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
+        WHERE corner.id=$1) parent_room_id,
+       (SELECT parent.workspace_id FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
+        WHERE corner.id=$1) workspace_id
        FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
       [roomId, agentId],
     );
     if (!result.rowCount) throw new Error('daemon room access denied');
-    return { cornerReviewer: result.rows[0]!.corner_reviewer, isCorner: result.rows[0]!.is_corner };
+    const row = result.rows[0]!;
+    // The class check is a second round trip made only for the rare
+    // class-configured corner — every ordinary Room/corner write stays the
+    // single cheap query above.
+    const cornerReviewer =
+      row.corner_reviewer ||
+      (row.reviewer_class && row.parent_room_id && row.workspace_id
+        ? await agentCarriesTag(this.database, row.workspace_id, agentId, row.reviewer_class) &&
+          (
+            await this.database.query(
+              `SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
+              [row.parent_room_id, agentId],
+            )
+          ).rowCount! > 0
+        : false);
+    return { cornerReviewer, isCorner: row.is_corner };
   }
 
   /** Adds one fixed-vocabulary reaction without turning a retried tool call into an unreact. */
@@ -6959,6 +6992,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   startWorkflow: true,
   handoff: true,
   archiveWorkflow: true,
+  assignWorkflowRole: true,
   getDaemonBootstrap: true,
   getWorkspaceRoster: true,
   getRoomInbox: true,

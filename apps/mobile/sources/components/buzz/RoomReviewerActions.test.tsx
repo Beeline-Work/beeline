@@ -3,17 +3,23 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
+const { mockBuzzTheme } = vi.hoisted(() => ({
+  mockBuzzTheme: {
+    buzz: { type: { meta: {} }, space: {}, border: '', radius: 0, textPrimary: '', dim: '' },
+  },
+}));
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: {
-    create: (styles: any) => styles({ buzz: { type: { meta: {} } } }),
+    create: (styles: any) => styles(mockBuzzTheme),
     hairlineWidth: 1,
   },
+  useUnistyles: () => ({ theme: mockBuzzTheme }),
 }));
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
-  return { Text: host('Text'), View: host('View') };
+  return { Text: host('Text'), View: host('View'), TextInput: host('TextInput') };
 });
 
 vi.mock('./HullActionSheet', async () => {
@@ -23,6 +29,22 @@ vi.mock('./HullActionSheet', async () => {
     HullActionSheetModal: (props: any) =>
       ReactModule.createElement('Sheet', props, props.visible ? props.children : null),
     HullActionSheetRow: (props: any) => ReactModule.createElement('Row', props),
+  };
+});
+vi.mock('./HullDialog', async () => {
+  const ReactModule = await import('react');
+  return {
+    HullDialog: (props: any) =>
+      !props.visible
+        ? null
+        : ReactModule.createElement(
+            'Dialog',
+            props,
+            props.children,
+            ...(props.actions ?? []).map((action: any, index: number) =>
+              ReactModule.createElement('DialogAction', { key: index, ...action }),
+            ),
+          ),
   };
 });
 
@@ -89,7 +111,11 @@ describe('RoomReviewerActions', () => {
       renderer.root.findByProps({ testID: `room-reviewer-agent-${BEE}` }).props.onPress();
       await Promise.resolve();
     });
-    expect(updateRoom).toHaveBeenLastCalledWith({ roomId: 'room-1', reviewerAgentId: BEE });
+    expect(updateRoom).toHaveBeenLastCalledWith({
+      roomId: 'room-1',
+      reviewerAgentId: BEE,
+      reviewerClass: null,
+    });
     expect(renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.metadata).toBe(
       '@bee',
     );
@@ -99,36 +125,44 @@ describe('RoomReviewerActions', () => {
       renderer.root.findByProps({ testID: 'room-reviewer-none' }).props.onPress();
       await Promise.resolve();
     });
-    expect(updateRoom).toHaveBeenLastCalledWith({ roomId: 'room-1', reviewerAgentId: null });
+    expect(updateRoom).toHaveBeenLastCalledWith({
+      roomId: 'room-1',
+      reviewerAgentId: null,
+      reviewerClass: null,
+    });
     expect(renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.metadata).toBe(
       'None',
     );
   });
 
-  it('sets a class reviewer: tiers always, plus the Room agents custom tags', async () => {
-    const loadClassTags = vi.fn().mockResolvedValue(['reviewer']);
-    const { renderer, updateRoom } = render({ loadClassTags });
+  it('sets a class reviewer through the class dialog', async () => {
+    const { renderer, updateRoom } = render();
 
+    act(() => renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.onPress());
+    act(() => renderer.root.findByProps({ testID: 'room-reviewer-class' }).props.onPress());
+    act(() =>
+      renderer.root
+        .findByProps({ testID: 'room-reviewer-class-input' })
+        .props.onChangeText('heavy'),
+    );
     await act(async () => {
-      renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.onPress();
+      renderer.root.findByProps({ testID: 'room-reviewer-class-save' }).props.onPress();
       await Promise.resolve();
     });
-    for (const agentClass of ['god', 'heavy', 'light', 'reviewer'])
-      expect(renderer.root.findByProps({ testID: `room-reviewer-class-${agentClass}` })).toBeTruthy();
-    await act(async () => {
-      renderer.root.findByProps({ testID: 'room-reviewer-class-heavy' }).props.onPress();
-      await Promise.resolve();
+    expect(updateRoom).toHaveBeenLastCalledWith({
+      roomId: 'room-1',
+      reviewerClass: 'heavy',
+      reviewerAgentId: null,
     });
-    expect(updateRoom).toHaveBeenLastCalledWith({ roomId: 'room-1', reviewerClass: 'heavy' });
     expect(renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.metadata).toBe(
-      'Any heavy',
+      'class: heavy',
     );
   });
 
-  it('shows a configured class and its current pick', () => {
-    const { renderer } = render({ reviewerClass: 'reviewer', reviewerAgentId: BEE });
+  it('shows the current reviewer class', () => {
+    const { renderer } = render({ reviewerAgentId: undefined, reviewerClass: 'heavy' });
     expect(renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.metadata).toBe(
-      'Any reviewer · now @bee',
+      'class: heavy',
     );
   });
 });

@@ -1178,7 +1178,8 @@ describe('background advisory-lock ownership', () => {
         `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card) VALUES
          ($1,$2,$3,'GitHub merged Ship push policy','card','daemon-fact',$4::jsonb),
          ($5,$6,$7,'@owner may need to step in','system','corner-review-deadlock',$8::jsonb),
-         ($9,$2,$3,'@bee opened a corner Ship push policy','card','daemon-fact',$10::jsonb)`,
+         ($9,$2,$3,'@bee opened a corner Ship push policy','card','daemon-fact',$10::jsonb),
+         ($11,$6,$7,'@owner may need to step in · checks still fail','system','corner-checks-blocked',$8::jsonb)`,
         [
           '1'.repeat(64),
           room,
@@ -1190,17 +1191,109 @@ describe('background advisory-lock ownership', () => {
           JSON.stringify({ cornerId: corner }),
           '3'.repeat(64),
           JSON.stringify({ type: 'corner-open', cornerId: corner }),
+          '4'.repeat(64),
         ],
       );
 
-      expect(await loop.runOnce()).toBe(2);
+      expect(await loop.runOnce()).toBe(3);
       expect(send.mock.calls.map(([token, message]) => [token, message.messageId]).sort()).toEqual([
         ['owner-device-token-12345678901234567890', '1'.repeat(64)],
         ['owner-device-token-12345678901234567890', '2'.repeat(64)],
+        ['owner-device-token-12345678901234567890', '4'.repeat(64)],
       ]);
       expect(send).toHaveBeenCalledWith(
         'owner-device-token-12345678901234567890',
         expect.objectContaining({ text: 'GitHub merged Ship push policy', roomId: room }),
+      );
+    } finally {
+      await db.close();
+    }
+  });
+  it('pushes a deliverable in a corner without a pull request to its commissioner', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const commissioner = 'a'.repeat(64),
+        other = 'b'.repeat(64),
+        agent = 'c'.repeat(64),
+        helper = 'd'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        room = '22222222-2222-4222-8222-222222222222',
+        noCode = '33333333-3333-4333-8333-333333333333',
+        code = '44444444-4444-4444-8444-444444444444';
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle) VALUES
+         ($1,'human','Owner','owner'),($2,'human','Other','other'),
+         ($3,'agent','Bee','bee'),($4,'agent','Helper','helper')`,
+        [commissioner, other, agent, helper],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(
+        `INSERT INTO rooms(id,workspace_id,name,parent_id) VALUES
+         ($1,$4,'Room',NULL),($2,$4,'Report',$1),($3,$4,'Code',$1)`,
+        [room, noCode, code, workspace],
+      );
+      for (const corner of [room, noCode, code])
+        await db.query(
+          `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+           ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member'),($1,$2,$6,'member')`,
+          [workspace, corner, commissioner, other, agent, helper],
+        );
+      await db.query(
+        `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective,lane) VALUES
+         ($1,$3,$4,'Write the report','no_code'),($2,$3,$4,'Ship code','code')`,
+        [noCode, code, agent, commissioner],
+      );
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES
+         ('owner-device-token-12345678901234567890',$1,'android','physical'),
+         ('other-device-token-12345678901234567890',$2,'android','physical')`,
+        [commissioner, other],
+      );
+      const send = vi.fn().mockResolvedValue(undefined);
+      const loop = new PushDeliveryLoop(db, { send });
+      expect(await loop.runOnce()).toBe(0);
+      const files = JSON.stringify([
+        {
+          url: 'https://example.test/report.pdf',
+          name: 'report.pdf',
+          mimeType: 'application/pdf',
+          size: 10,
+        },
+      ]);
+      const cases = {
+        deliverable: '1'.repeat(64),
+        codeLane: '2'.repeat(64),
+        noFiles: '3'.repeat(64),
+        notWorker: '4'.repeat(64),
+      } as const;
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text,attachments) VALUES
+         ($1,$5,$7,'Here is the report',$9::jsonb),
+         ($2,$6,$7,'Here is a file',$9::jsonb),
+         ($3,$5,$7,'Still working','[]'::jsonb),
+         ($4,$5,$8,'A side file',$9::jsonb)`,
+        [
+          cases.deliverable,
+          cases.codeLane,
+          cases.noFiles,
+          cases.notWorker,
+          noCode,
+          code,
+          agent,
+          helper,
+          files,
+        ],
+      );
+
+      expect(await loop.runOnce()).toBe(1);
+      expect(send).toHaveBeenCalledWith(
+        'owner-device-token-12345678901234567890',
+        expect.objectContaining({
+          messageId: cases.deliverable,
+          text: 'Bee: Here is the report',
+          cornerId: noCode,
+        }),
       );
     } finally {
       await db.close();

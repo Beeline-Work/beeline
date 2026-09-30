@@ -5,7 +5,10 @@ import { ARTIFACT_TTL_HOURS, MEDIA_SWEEP_INTERVAL_MS, mediaTtlHours } from './me
 import type { ObjectStorage } from './object-storage.js';
 import type { ObjectService } from './object-service.js';
 import { tagsKnownIdentitySql } from './message-mentions.js';
-import { CORNER_REVIEW_DEADLOCK_CARD_TYPE } from './agent-command.js';
+import {
+  CORNER_CHECKS_BLOCKED_CARD_TYPE,
+  CORNER_REVIEW_DEADLOCK_CARD_TYPE,
+} from './agent-command.js';
 import { CHOICE_CARD_TYPE } from '@beeline/api-contract/phone';
 import {
   claimReleaseCatchup,
@@ -288,16 +291,23 @@ export class PushDeliveryLoop {
                 ELSE false
               END
             )
-            -- A corner's commissioner hears once when it lands (the parent
-            -- Room's merge card) or stops at the review handback limit,
-            -- whether or not an agent tags them.
+            -- A corner's commissioner hears its final state whether or not
+            -- an agent tags them: it landed (the parent Room's merge card),
+            -- its worker posted a deliverable (files on a reply in a corner
+            -- with no pull request), its checks are failing with nobody left
+            -- to fix them, or it stopped at the review handback limit.
             OR EXISTS (
               SELECT 1 FROM corner_facts finished
               WHERE finished.commissioned_by=m.push_identity_id
                 AND (
                   (m.card_type='daemon-fact' AND m.card->>'type'='corner-complete'
                     AND finished.corner_id::text=m.card->>'cornerId')
-                  OR (m.card_type='${CORNER_REVIEW_DEADLOCK_CARD_TYPE}'
+                  OR (m.presentation='message' AND finished.corner_id=m.room_id
+                    AND finished.lane<>'code' AND m.author_id=finished.owner_agent_id
+                    AND jsonb_typeof(m.attachments)='array'
+                    AND jsonb_array_length(m.attachments)>0)
+                  OR (m.card_type IN ('${CORNER_CHECKS_BLOCKED_CARD_TYPE}',
+                      '${CORNER_REVIEW_DEADLOCK_CARD_TYPE}')
                     AND finished.corner_id=m.room_id)
                 )
             )

@@ -179,6 +179,10 @@ describe('Workspace procedure code anchors', () => {
       state: 'stale',
       anchor_stale_reason: 'the anchored file apps/server/src/release.ts changed on main',
     });
+    // Staling stops serving the procedure; it keeps the text so a fix can restore it.
+    expect((await database.query<{ markdown: string; source_deleted_at: Date | null }>(
+      `SELECT markdown,source_deleted_at FROM workspace_skill_versions WHERE skill_id=$1`, [SKILL],
+    )).rows).toEqual([{ markdown: '# Safe release migrations', source_deleted_at: null }]);
   });
 
   it('stales a procedure whose anchored file is gone from the current branch', async () => {

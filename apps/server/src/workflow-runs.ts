@@ -12,6 +12,7 @@ import {
 import type { CommandRow } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
 import { applySkillRevision, assertSkillTextSafe } from './institutional-skills.js';
+import type { AfterCommit } from './institutional-memory-embeddings.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import { agentCarriesTag, pickHealthyClassMember } from './agent-classes.js';
 import { postRoomChoice } from './room-choice.js';
@@ -265,6 +266,7 @@ export async function saveWorkflow(
   database: SqlDatabase,
   command: CommandRow,
   input: { contract: unknown },
+  afterCommit?: AfterCommit,
 ): Promise<{ slug: string; version: number }> {
   const contract = readWorkflowContract(input.contract);
   if (!contract) {
@@ -288,7 +290,7 @@ export async function saveWorkflow(
     markdown,
     kind: 'workflow',
     sourceMessageIds: [command.root_source_message_id],
-  });
+  }, afterCommit);
   return { slug: contract.name, version };
 }
 

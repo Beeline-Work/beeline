@@ -32,6 +32,7 @@ import {
   INSTITUTIONAL_MEMORY_EMBEDDING_ENV_VAR,
   INSTITUTIONAL_MEMORY_EMBEDDING_MODEL,
 } from '@beeline/api-contract/daemon';
+import type { QueryResultRow } from 'pg';
 import type { SqlDatabase } from './database.js';
 
 export const OPENROUTER_EMBEDDINGS_URL = 'https://openrouter.ai/api/v1/embeddings';
@@ -161,6 +162,32 @@ export function withDeadline(embed: EmbedFn, timeoutMs: number): EmbedFn {
       parentSignal?.removeEventListener('abort', onAbort);
     }
   };
+}
+
+/**
+ * Work that must wait until the caller's transaction commits, run against the
+ * pool rather than the transaction's connection. Callers outside a command
+ * transaction omit it, and the work runs at once on their own handle.
+ */
+export type AfterCommit = (task: (database: SqlDatabase) => void | Promise<void>) => void;
+
+/** Run now on `database` when no transaction owner collected the task. */
+export function runAfterCommit(
+  afterCommit: AfterCommit | undefined,
+  database: SqlDatabase,
+  task: (database: SqlDatabase) => void | Promise<void>,
+): void {
+  if (afterCommit) afterCommit(task);
+  else void Promise.resolve(task(database)).catch(() => undefined);
+}
+
+/**
+ * An embedder that serves one result computed earlier, before a transaction
+ * opened. Any other text reports `error` instead of going to the network, so
+ * the caller falls back to keyword-only candidates.
+ */
+export function precomputedEmbedFn(text: string, result: EmbedResult): EmbedFn {
+  return async (candidate) => (candidate === text ? result : { outcome: 'error', ms: 0 });
 }
 
 /** `[0.1,0.2,...]`, the literal pgvector accepts cast as `$n::vector`. */
@@ -303,6 +330,27 @@ export function scheduleEmbedWorkspaceSkillVersion(
 export interface EmbeddingBackfillCounts {
   itemsEmbedded: number;
   skillsEmbedded: number;
+  /** True when another pass (this process or another machine) held the lock. */
+  skipped?: boolean;
+}
+
+const EMBEDDING_BACKFILL_LOCK = `hashtext('institutional-memory-embedding-backfill')`;
+let embeddingBackfillRunning = false;
+
+/** A pooled session (`pg.PoolClient`) that can hold a session-level advisory lock. */
+interface BackfillSession {
+  query(sql: string, values?: unknown[]): Promise<{ rows: unknown[]; rowCount: number | null }>;
+  release(error?: Error | boolean): void;
+}
+
+function sessionDatabase(session: BackfillSession, database: SqlDatabase): SqlDatabase {
+  return {
+    query: async <Row extends QueryResultRow>(sql: string, values?: unknown[]) => {
+      const result = await session.query(sql, values);
+      return { rows: result.rows as Row[], rowCount: result.rowCount ?? result.rows.length };
+    },
+    transaction: (work) => database.transaction(work),
+  };
 }
 
 /**
@@ -312,43 +360,66 @@ export interface EmbeddingBackfillCounts {
  * never on an interval, never again afterward. It exists only to cover rows
  * saved before this feature shipped, or whose in-process retry died with an
  * earlier process; every row saved from here on embeds itself on save.
+ *
+ * A session advisory lock on one dedicated connection makes it single-machine.
+ * Each batch's reads and writes autocommit on that connection, so no
+ * transaction or row lock is held while the embedder is on the network, and a
+ * failure keeps the batches already written.
  */
 export async function backfillInstitutionalMemoryEmbeddingsOnce(
-  database: SqlDatabase,
+  database: SqlDatabase & { connectDedicated?(): Promise<BackfillSession> },
   embedBatch: EmbedBatchFn = createDefaultEmbedBatchFn(),
   batchSize = EMBEDDING_BACKFILL_BATCH,
 ): Promise<EmbeddingBackfillCounts> {
-  return database.transaction(async (locked) => {
+  if (embeddingBackfillRunning) return { itemsEmbedded: 0, skillsEmbedded: 0, skipped: true };
+  embeddingBackfillRunning = true;
+  let session: BackfillSession | undefined;
+  let sessionError: Error | undefined;
+  try {
+    session = database.connectDedicated ? await database.connectDedicated() : undefined;
+    const locked = session ? sessionDatabase(session, database) : database;
     const acquired = (await locked.query<{ acquired: boolean }>(
-      `SELECT pg_try_advisory_xact_lock(hashtext('institutional-memory-embedding-backfill')) acquired`,
+      `SELECT pg_try_advisory_lock(${EMBEDDING_BACKFILL_LOCK}) acquired`,
     )).rows[0]?.acquired;
-    if (!acquired) return { itemsEmbedded: 0, skillsEmbedded: 0 };
-    const attemptedItems: string[] = [];
-    const attemptedSkills: string[] = [];
-    let itemsEmbedded = 0;
-    let skillsEmbedded = 0;
-    let failedBatches = 0;
-    for (;;) {
-      const batch = await backfillInstitutionalMemoryItemsBatch(
-        locked, embedBatch, batchSize, attemptedItems);
-      attemptedItems.push(...batch.ids);
-      itemsEmbedded += batch.embedded;
-      if (!batch.ids.length) break;
-      failedBatches = batch.embedded === 0 ? failedBatches + 1 : 0;
-      if (failedBatches >= 3) break;
+    if (!acquired) return { itemsEmbedded: 0, skillsEmbedded: 0, skipped: true };
+    try {
+      const attemptedItems: string[] = [];
+      const attemptedSkills: string[] = [];
+      let itemsEmbedded = 0;
+      let skillsEmbedded = 0;
+      let failedBatches = 0;
+      for (;;) {
+        const batch = await backfillInstitutionalMemoryItemsBatch(
+          locked, embedBatch, batchSize, attemptedItems);
+        attemptedItems.push(...batch.ids);
+        itemsEmbedded += batch.embedded;
+        if (!batch.ids.length) break;
+        failedBatches = batch.embedded === 0 ? failedBatches + 1 : 0;
+        if (failedBatches >= 3) break;
+      }
+      failedBatches = 0;
+      for (;;) {
+        const batch = await backfillWorkspaceSkillsBatch(
+          locked, embedBatch, batchSize, attemptedSkills);
+        attemptedSkills.push(...batch.ids);
+        skillsEmbedded += batch.embedded;
+        if (!batch.ids.length) break;
+        failedBatches = batch.embedded === 0 ? failedBatches + 1 : 0;
+        if (failedBatches >= 3) break;
+      }
+      return { itemsEmbedded, skillsEmbedded };
+    } finally {
+      try {
+        await locked.query(`SELECT pg_advisory_unlock(${EMBEDDING_BACKFILL_LOCK})`);
+      } catch (error) {
+        // Destroying the connection releases its session lock.
+        sessionError = error instanceof Error ? error : new Error(String(error));
+      }
     }
-    failedBatches = 0;
-    for (;;) {
-      const batch = await backfillWorkspaceSkillsBatch(
-        locked, embedBatch, batchSize, attemptedSkills);
-      attemptedSkills.push(...batch.ids);
-      skillsEmbedded += batch.embedded;
-      if (!batch.ids.length) break;
-      failedBatches = batch.embedded === 0 ? failedBatches + 1 : 0;
-      if (failedBatches >= 3) break;
-    }
-    return { itemsEmbedded, skillsEmbedded };
-  });
+  } finally {
+    session?.release(sessionError ?? false);
+    embeddingBackfillRunning = false;
+  }
 }
 
 async function backfillInstitutionalMemoryItemsBatch(

@@ -104,9 +104,9 @@ async function main() {
   }
   const enrichmentDatabase = new PostgresDatabase(connectionString, budget.enrichment, { mode: 'enrichment' });
   const jobsDatabase = new PostgresDatabase(connectionString, budget.jobs, { mode: 'long-running' });
-  // One-time sweep at server start (see the release migration's own call for
-  // "after the migration") — never on an interval; fire-and-forget so it
-  // never delays this machine coming up and serving requests.
+  // One-time sweep at server start — never on an interval; fire-and-forget so
+  // it never delays this machine coming up and serving requests. Its session
+  // lock lets only one machine run it; the other logs `skipped:true`.
   void backfillInstitutionalMemoryEmbeddingsOnce(jobsDatabase)
     .then((counts) => console.log(`[startup] institutional memory embedding backfill: ${JSON.stringify(counts)}`))
     .catch((error) => console.error('[startup] institutional memory embedding backfill failed:', error));

@@ -3,7 +3,13 @@ import {
   reconcileConfiguredCornerReviewers,
   reconcileCornerMergeBlockers,
 } from './agent-command.js';
-import { INSTITUTIONAL_HISTORY_MAX_AGE_DAYS } from '@beeline/api-contract/daemon';
+import {
+  INSTITUTIONAL_HISTORY_MAX_AGE_DAYS,
+  INSTITUTIONAL_MEMORY_KEYWORD_PATTERN,
+  INSTITUTIONAL_MEMORY_KEYWORDS_MAX,
+  INSTITUTIONAL_MEMORY_STOPWORDS,
+  INSTITUTIONAL_RETIRED_STANDING_KEY,
+} from '@beeline/api-contract/daemon';
 import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { uniqueAgentHandle } from '@beeline/api-contract/phone';
@@ -1424,6 +1430,7 @@ CREATE TABLE IF NOT EXISTS institutional_memory_workspace_rollouts (
   archive_after_days integer NOT NULL DEFAULT 90 CHECK (archive_after_days BETWEEN 14 AND 7300),
   retention_days integer NOT NULL DEFAULT 365 CHECK (retention_days BETWEEN 30 AND 7300),
   expire_after_days integer NOT NULL DEFAULT 90 CHECK (expire_after_days BETWEEN 1 AND 7300),
+  -- Unread since explicit saves stopped expiring; kept for older server images.
   explicit_expire_after_days integer NOT NULL DEFAULT 365 CHECK (explicit_expire_after_days BETWEEN 1 AND 7300),
   daily_token_budget integer NOT NULL DEFAULT 100000 CHECK (daily_token_budget BETWEEN 1000 AND 10000000),
   availability_observed_at timestamptz,
@@ -2568,6 +2575,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   // owned step retires it (welcome-retirement.ts, run from index.ts).
   await dataStep('institutional rollout', () => backfillInstitutionalMemoryRollout(database));
   await dataStep('institutional memory lifecycle', async () => {
+    await retireStandingPreferences(database);
     await database.query(`WITH RECURSIVE explicit_chain AS (
         SELECT id FROM institutional_memory_items WHERE created_by_command_id IS NOT NULL
         UNION
@@ -2576,6 +2584,32 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
       )
       UPDATE institutional_memory_items SET explicit_save=true
       WHERE id IN (SELECT id FROM explicit_chain) AND explicit_save=false`);
+    // The old curator marked items stale after 30 unused days. Those rows only
+    // aged out, so they come back under the new rule (agent saves expire after
+    // 90 unused days, explicit saves never)
+    // instead of being blanked. A row that was superseded, whose key has a
+    // current row, or whose source was deleted is really gone.
+    await database.query(`WITH aged AS (
+        SELECT DISTINCT ON (item.workspace_id,item.kind,COALESCE(item.subject_identity_id,''),
+                            item.canonical_key,item.audience_kind) item.id
+        FROM institutional_memory_items item
+        WHERE item.state IN ('stale','archived') AND item.deleted_at IS NULL AND item.body<>''
+          AND NOT EXISTS (SELECT 1 FROM institutional_memory_items newer
+            WHERE newer.supersedes_id=item.id)
+          AND NOT EXISTS (SELECT 1 FROM institutional_memory_items current
+            WHERE current.state='active' AND current.workspace_id=item.workspace_id
+              AND current.kind=item.kind
+              AND COALESCE(current.subject_identity_id,'')=COALESCE(item.subject_identity_id,'')
+              AND current.canonical_key=item.canonical_key
+              AND current.audience_kind=item.audience_kind)
+          AND NOT EXISTS (SELECT 1 FROM institutional_memory_item_sources source
+            JOIN messages message ON message.id=source.message_id
+            WHERE source.item_id=item.id AND message.deleted_at IS NOT NULL)
+        ORDER BY item.workspace_id,item.kind,COALESCE(item.subject_identity_id,''),
+                 item.canonical_key,item.audience_kind,item.updated_at DESC,item.id
+      )
+      UPDATE institutional_memory_items item SET state='active'
+      FROM aged WHERE item.id=aged.id`);
     await database.query(`UPDATE institutional_memory_items
       SET body='',deleted_at=COALESCE(deleted_at,now()),state='stale'
       WHERE state<>'active' AND (body<>'' OR deleted_at IS NULL OR state='archived')`);
@@ -2601,6 +2635,74 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   const withdrawn = await dataStep('superseded grant asks', () =>
     withdrawSupersededGrantAsks(database));
   if (withdrawn) console.log(`withdrawSupersededGrantAsks: withdrew ${withdrawn} pending ask(s)`);
+}
+
+/** The first distinct words of a body that can serve as its keywords. */
+export function keywordsFromBody(body: string): string[] {
+  const words = body.toLocaleLowerCase('en-US').split(/[^a-z0-9_]+/);
+  const keywords = [...new Set(words)].filter(
+    (word) =>
+      INSTITUTIONAL_MEMORY_KEYWORD_PATTERN.test(word) && !INSTITUTIONAL_MEMORY_STOPWORDS.has(word),
+  );
+  return keywords.length ? keywords.slice(0, INSTITUTIONAL_MEMORY_KEYWORDS_MAX) : ['preference'];
+}
+
+/**
+ * The standing preference used to go into every prompt for its person. It is
+ * gone, so each old row becomes an ordinary explicit profile fact under an
+ * ordinary key, keeping its version chain, and loads only when a request
+ * matches its keywords or meaning. The embed cycle fills its embedding.
+ * Idempotent: an older server image in a rolling deploy may still write a
+ * `standing` row, and the next boot converts it.
+ */
+export async function retireStandingPreferences(database: SqlDatabase): Promise<number> {
+  // Every `standing` row of one person shares one destination key, so a
+  // version chain stays under a single key even when that person already has
+  // a `standing-preference` item. The embedding covered the old key, so it is
+  // cleared and the embed cycle computes a fresh one.
+  const renamed = await database.query(
+    `WITH destination AS (
+       SELECT old.workspace_id,old.kind,old.subject_identity_id,old.audience_kind,
+         'standing-preference' || CASE WHEN EXISTS (
+           SELECT 1 FROM institutional_memory_items taken
+           WHERE taken.workspace_id=old.workspace_id AND taken.kind=old.kind
+             AND taken.subject_identity_id IS NOT DISTINCT FROM old.subject_identity_id
+             AND taken.audience_kind=old.audience_kind
+             AND taken.canonical_key='standing-preference')
+         THEN '-' || left(min(old.id::text),8)
+         ELSE '' END AS canonical_key
+       FROM institutional_memory_items old
+       WHERE old.canonical_key=$1
+       GROUP BY old.workspace_id,old.kind,old.subject_identity_id,old.audience_kind
+     )
+     UPDATE institutional_memory_items item
+     SET canonical_key=destination.canonical_key,
+         explicit_save=true,
+         embedding=NULL,
+         embedding_model=NULL,
+         embedded_at=NULL
+     FROM destination
+     WHERE item.canonical_key=$1
+       AND item.workspace_id=destination.workspace_id AND item.kind=destination.kind
+       AND item.subject_identity_id IS NOT DISTINCT FROM destination.subject_identity_id
+       AND item.audience_kind=destination.audience_kind`,
+    [INSTITUTIONAL_RETIRED_STANDING_KEY],
+  );
+  const empty = await database.query<{ id: string; body: string }>(
+    `SELECT id,body FROM institutional_memory_items
+     WHERE canonical_key LIKE 'standing-preference%' AND keywords='{}'
+       AND state='active' AND deleted_at IS NULL`,
+  );
+  for (const row of empty.rows) {
+    await database.query(`UPDATE institutional_memory_items SET keywords=$2 WHERE id=$1`, [
+      row.id,
+      keywordsFromBody(row.body),
+    ]);
+  }
+  if (renamed.rowCount) {
+    console.log(`retireStandingPreferences: converted ${renamed.rowCount} standing row(s)`);
+  }
+  return renamed.rowCount ?? 0;
 }
 
 export const MESSAGE_SEARCH_BACKFILL_BATCH = 2_000;

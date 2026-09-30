@@ -416,6 +416,8 @@ export class MonolithRoomTurnLoop {
   private pinnedProviderOverride?: string;
   private busy = false;
   private turnInstructionPrefix = '';
+  /** The session prompt's section ids, for `report_feedback` (with each turn's). */
+  private sessionPromptSectionIds: readonly string[] = [];
   private sessionSurface: PromptSurface = 'room';
   private activeTurn?: ActiveTurn;
   private readonly queuedTurns: HumanMessage[] = [];
@@ -1042,6 +1044,7 @@ export class MonolithRoomTurnLoop {
     });
     this.sessionSurface = directMessage ? 'dm' : 'room';
     this.turnInstructionPrefix = session.turnPrefix;
+    this.sessionPromptSectionIds = session.report.map((section) => section.id);
     const opened = await this.client.sessionNew({
       cwd: this.options.cwd,
       mcpServers: servers,
@@ -1429,6 +1432,10 @@ export class MonolithRoomTurnLoop {
                   },
                 });
                 trace.notePromptSections(assembled.report);
+                this.commandContext.notePromptSections([
+                  ...this.sessionPromptSectionIds,
+                  ...assembled.report.map((section) => section.id),
+                ]);
                 return assembled.text;
               };
               // Rooms and corners stream through ONE presentation (C100): the

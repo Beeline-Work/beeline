@@ -236,6 +236,9 @@ export type RoomViewMessage = {
   readonly deleted?: boolean;
   /** Private viewer state. Omitted unless this viewer saved the message. */
   readonly bookmarked?: boolean;
+  /** Someone reported this message to the Beeline feedback loop (@system or
+   *  Report issue). Visible to every Room member. */
+  readonly feedbackReported?: boolean;
   /** The structured event behind a server-phrased system line or card header;
    *  absent on rows written before the one system-line grammar. */
   readonly systemEvent?: SystemEvent;

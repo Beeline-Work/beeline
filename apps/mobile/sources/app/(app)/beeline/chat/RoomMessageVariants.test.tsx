@@ -958,6 +958,60 @@ describe('Room message variant components', () => {
     expect(onForward).toHaveBeenCalledWith(row);
   });
 
+  it('offers Report issue on desktop only where the surface can file one', () => {
+    const onReportIssue = vi.fn();
+    const row = message({ id: 'desktop-report' });
+    const props = {
+      message: row,
+      desktopLayout: true,
+      participantsHydrated: true,
+      viewerPubkey: 'viewer',
+      speakerWorking: false,
+      continued: false,
+      participantHandles: [],
+      channelIndex: { rooms: [], corners: [] },
+      deliveryFailed: false,
+      onChannelReference: vi.fn(),
+      onReply: vi.fn(),
+      onCopy: vi.fn(),
+      onRetry: vi.fn(),
+      onDismiss: vi.fn(),
+    } satisfies OrdinaryLedgerMessageProps;
+    const renderer = render(<OrdinaryLedgerMessage {...props} onReportIssue={onReportIssue} />);
+
+    const report = renderer.root.findByProps({ testID: 'report-button-desktop-report' });
+    expect(report.props.accessibilityLabel).toBe('Report an issue with this message');
+    act(() => report.props.onPress());
+    expect(onReportIssue).toHaveBeenCalledWith(row);
+
+    act(() => renderer.update(<OrdinaryLedgerMessage {...props} />));
+    expect(
+      renderer.root.findAllByProps({ testID: 'report-button-desktop-report' }),
+    ).toHaveLength(0);
+  });
+
+  it('carries feedbackReported to the byline, even through a continued run', () => {
+    render(
+      <OrdinaryLedgerMessage
+        message={message({ id: 'reported', pubkey: 'ada', feedbackReported: true })}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued
+        immediatelyPrecedingMessage={message({ id: 'before', pubkey: 'ada' })}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+    expect(ledgerEntryRender.mock.lastCall?.[0].byline?.feedbackReported).toBe(true);
+  });
+
   it('shows the original poster beside the source Room on a forwarded message', () => {
     const renderer = render(
       <OrdinaryLedgerMessage

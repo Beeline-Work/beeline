@@ -495,6 +495,8 @@ export class MonolithCornerTurnLoop {
   /** Repository state already given a delivery reminder, until that state changes. */
   private lastDeliveryNudgeState?: string;
   private turnSessionPrefix = '';
+  /** The session prompt's section ids, for `report_feedback` (with each turn's). */
+  private sessionPromptSectionIds: readonly string[] = [];
   private sessionSurface: PromptSurface = 'code-corner';
   private sessionPromptContext?: SessionPromptContext;
   private busy = false;
@@ -1081,6 +1083,7 @@ export class MonolithCornerTurnLoop {
       ...(this.options.agentMayUpgradeCorner ? { agentMayUpgradeCorner: true } : {}),
     });
     this.turnSessionPrefix = session.turnPrefix;
+    this.sessionPromptSectionIds = session.report.map((section) => section.id);
     const opened = await this.client.sessionNew({
       cwd: this.options.worktreePath,
       mcpServers: servers,
@@ -1518,6 +1521,10 @@ export class MonolithCornerTurnLoop {
                   },
                 });
                 trace.notePromptSections(assembled.report);
+                this.commandContext.notePromptSections([
+                  ...this.sessionPromptSectionIds,
+                  ...assembled.report.map((section) => section.id),
+                ]);
                 return assembled.text;
               };
               // Rooms and corners share the provisional draft lane, request-id

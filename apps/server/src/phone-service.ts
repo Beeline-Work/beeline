@@ -107,6 +107,7 @@ import {
   taggedIdentityIdsSql,
   typedMentionHandles,
 } from './message-mentions.js';
+import { recordSystemReportMention, reportMessageIssue } from './feedback.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import { needsYouExpiresAt, needsYouItems } from './needs-you.js';
 import { tombstoneInstitutionalMemoryForMessage } from './institutional-memory-shadow.js';
@@ -306,6 +307,7 @@ interface MessageRow {
   presentation: RoomViewMessage['presentation'];
   deleted_at?: Date | null;
   bookmarked?: boolean;
+  feedback_reported?: boolean;
   attachments: unknown[];
   reactions?: Record<string, string[]>;
   reaction_identities?: Array<{
@@ -589,6 +591,7 @@ function projectedMessage(
     presentation: row.deleted_at ? 'system' : row.presentation,
     ...(row.deleted_at ? { deleted: true } : {}),
     ...(row.bookmarked ? { bookmarked: true } : {}),
+    ...(row.feedback_reported ? { feedbackReported: true } : {}),
     ...(row.presentation === 'message'
       ? {
           reference: {
@@ -2152,6 +2155,8 @@ export class PhoneService {
              ${reactionIdentitiesSql('m')} reaction_identities,
              EXISTS(SELECT 1 FROM message_bookmarks bookmark
                WHERE bookmark.identity_id=$2 AND bookmark.message_id=m.id) bookmarked,
+             EXISTS(SELECT 1 FROM feedback_items report
+               WHERE report.source_kind='human' AND report.trigger_message_id=m.id) feedback_reported,
              '{}'::text[] tagged_ids
            FROM authorized_room room
            JOIN messages m ON m.room_id=room.id
@@ -2168,6 +2173,8 @@ export class PhoneService {
              ${reactionIdentitiesSql('m')} reaction_identities,
              EXISTS(SELECT 1 FROM message_bookmarks bookmark
                WHERE bookmark.identity_id=$2 AND bookmark.message_id=m.id) bookmarked,
+             EXISTS(SELECT 1 FROM feedback_items report
+               WHERE report.source_kind='human' AND report.trigger_message_id=m.id) feedback_reported,
              '{}'::text[] tagged_ids
            FROM authorized_room room
            JOIN messages m ON m.room_id=room.id
@@ -3272,6 +3279,12 @@ export class PhoneService {
       case 'deleteRoomMessage':
         await this.deleteRoomMessage(input as Input<'deleteRoomMessage'>, viewerId);
         return undefined as Output<Name>;
+      case 'reportMessageIssue':
+        return (await reportMessageIssue(
+          this.database,
+          input as Input<'reportMessageIssue'>,
+          viewerId,
+        )) as Output<Name>;
       case 'setMessageBookmark':
         return (await this.setMessageBookmark(
           input as Input<'setMessageBookmark'>,
@@ -3869,6 +3882,12 @@ export class PhoneService {
       const lifecycleCommand = await routeHumanMessage(database, id);
       if (!lifecycleCommand)
         await this.noteUnansweredMentions(input.roomId, author, noticeAgentIds, id);
+      await recordSystemReportMention(database, {
+        roomId: input.roomId,
+        messageId: id,
+        authorId: author,
+        text: input.text,
+      });
       return {
         messageId: id,
         activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
@@ -4011,6 +4030,12 @@ export class PhoneService {
       const lifecycleCommand = await routeHumanMessage(database, id);
       if (!lifecycleCommand)
         await this.noteUnansweredMentions(input.roomId, author, noticeAgentIds, id);
+      await recordSystemReportMention(database, {
+        roomId: input.roomId,
+        messageId: id,
+        authorId: author,
+        text: input.text,
+      });
       return {
         messageId: id,
         activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
@@ -8623,7 +8648,16 @@ export class PhoneService {
       [viewerId, [...new Set(rows.map((row) => row.id))]],
     );
     const bookmarked = new Set(result.rows.map((row) => row.message_id));
-    for (const row of rows) row.bookmarked = bookmarked.has(row.id);
+    const reports = await this.database.query<{ trigger_message_id: string }>(
+      `SELECT trigger_message_id FROM feedback_items
+       WHERE source_kind='human' AND trigger_message_id=ANY($1::text[])`,
+      [[...new Set(rows.map((row) => row.id))]],
+    );
+    const reported = new Set(reports.rows.map((row) => row.trigger_message_id));
+    for (const row of rows) {
+      row.bookmarked = bookmarked.has(row.id);
+      row.feedback_reported = reported.has(row.id);
+    }
   }
   private projectRoomMessages(
     transcriptRows: readonly MessageRow[],
@@ -8749,6 +8783,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'completeWelcomeCards',
   'sendRoomMessage',
   'sendRoomReply',
+  'reportMessageIssue',
   'reactToMessage',
   'deleteRoomMessage',
   'setMessageBookmark',

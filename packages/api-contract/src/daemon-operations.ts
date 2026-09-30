@@ -26,6 +26,13 @@ import type {
   SearchInstitutionalMemoryResult,
 } from './institutional-memory.js';
 import type {
+  FeedbackIssueSummary,
+  FeedbackItemDetail,
+  FeedbackItemSummary,
+  ReportFeedbackInput,
+  ReportFeedbackResult,
+} from './feedback.js';
+import type {
   WalletPayInput,
   WalletSendOutcome,
   WalletSwapInput,
@@ -487,6 +494,38 @@ export type DaemonOperationMap = {
   walletSwap: Operation<
     WalletSwapInput & TurnOutputAuthority & RoomInput,
     WalletSwapResult | { readonly status: 'permission-required'; readonly grantId?: string }
+  >;
+  /** One friction report from the agent's active turn (`report_feedback`). */
+  reportFeedback: Operation<ReportFeedbackInput & TurnOutputAuthority, ReportFeedbackResult>;
+  /** Triage (allowlisted agents only): new items, human first, then by cluster size. */
+  listFeedback: Operation<
+    RoomInput & { readonly limit?: number },
+    { readonly items: readonly FeedbackItemSummary[] }
+  >;
+  getFeedback: Operation<
+    RoomInput & { readonly itemIds: readonly string[] },
+    { readonly items: readonly FeedbackItemDetail[] }
+  >;
+  listFeedbackIssues: Operation<
+    RoomInput,
+    { readonly repository: string; readonly issues: readonly FeedbackIssueSummary[] }
+  >;
+  fileFeedbackIssue: Operation<
+    RoomInput & {
+      readonly itemIds: readonly string[];
+      readonly title: string;
+      readonly body: string;
+      readonly categoryLabel: string;
+    },
+    { readonly issueNumber: number; readonly url: string; readonly itemIds: readonly string[] }
+  >;
+  attachFeedbackToIssue: Operation<
+    RoomInput & { readonly itemIds: readonly string[]; readonly issueNumber: number },
+    { readonly issueNumber: number; readonly url: string; readonly itemIds: readonly string[] }
+  >;
+  dismissFeedback: Operation<
+    RoomInput & { readonly itemIds: readonly string[]; readonly reason: string },
+    { readonly itemIds: readonly string[] }
   >;
 };
 export type Operation<Input, Output> = { readonly input: Input; readonly output: Output };

@@ -713,7 +713,7 @@ function boundedUsage(value: InstitutionalMemoryJobUsage): InstitutionalMemoryJo
   };
 }
 
-const PROHIBITED_SECRET_PATTERNS = [
+export const PROHIBITED_SECRET_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/i,
   /\bAKIA[0-9A-Z]{16}\b/,
   /\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,})\b/,

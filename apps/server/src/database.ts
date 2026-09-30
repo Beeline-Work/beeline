@@ -168,7 +168,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 13;
+export const REQUIRED_SCHEMA_VERSION = 14;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -2355,6 +2355,55 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
 );
 CREATE INDEX IF NOT EXISTS wallet_transactions_wallet_idx
   ON wallet_transactions(identity_id, created_at DESC);
+
+-- The Beeline feedback loop (apps/server/src/feedback.ts). An agent's
+-- report_feedback call and a person's @system tag or Report issue action land
+-- here; the allowlisted triage sweep files, attaches, or dismisses them, and
+-- the configured repository's issue webhook resolves or closes them. Message
+-- ids only: evidence text is read live, never copied.
+CREATE TABLE IF NOT EXISTS feedback_items (
+  id text PRIMARY KEY,
+  source_kind text NOT NULL CHECK (source_kind IN ('agent','human')),
+  reporter_identity_id text NOT NULL,
+  reporter_owner_id text,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  room_id uuid REFERENCES rooms(id) ON DELETE CASCADE,
+  trigger_message_id text,
+  message_ids text[] NOT NULL DEFAULT '{}',
+  request_id text,
+  category text NOT NULL CHECK (category IN
+    ('simpler_path','contradiction','tooling_gap','context_gap','bug','human_report')),
+  summary text NOT NULL,
+  summary_key text NOT NULL,
+  detail text,
+  tool_name text,
+  error_excerpt text,
+  prompt_section_ids text[] NOT NULL DEFAULT '{}',
+  status text NOT NULL DEFAULT 'new' CHECK (status IN
+    ('new','filed','attached','dismissed','resolved','closed')),
+  issue_repository text,
+  issue_number integer,
+  triage_reason text,
+  resolved_notified_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  triaged_at timestamptz
+);
+-- One human report per message, whether it came from a tag or the action.
+CREATE UNIQUE INDEX IF NOT EXISTS feedback_items_human_message_idx
+  ON feedback_items(trigger_message_id) WHERE source_kind='human';
+CREATE INDEX IF NOT EXISTS feedback_items_status_idx ON feedback_items(status, created_at);
+CREATE INDEX IF NOT EXISTS feedback_items_reporter_idx
+  ON feedback_items(reporter_identity_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS feedback_items_issue_idx
+  ON feedback_items(issue_repository, issue_number) WHERE issue_number IS NOT NULL;
+-- The one server-maintained report-count comment per linked issue.
+CREATE TABLE IF NOT EXISTS feedback_issue_comments (
+  repository text NOT NULL,
+  issue_number integer NOT NULL,
+  comment_id bigint NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (repository, issue_number)
+);
 
 -- First-party Google Workspace consent is retired. Existing sealed grants
 -- cannot be moved to a different OAuth client, so disconnect the old rows and

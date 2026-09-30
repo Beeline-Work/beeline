@@ -9,3 +9,4 @@ export * from './turn-silence.js';
 export * from './institutional-memory.js';
 export * from './workflow-contracts.js';
 export * from './agent-classes.js';
+export * from './feedback.js';

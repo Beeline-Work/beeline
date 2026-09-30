@@ -206,6 +206,40 @@ export function isChannelMentionHandle(handle: string): boolean {
   return normalizeMentionSearch(handle) === CHANNEL_MENTION_HANDLE;
 }
 
+/**
+ * `@system` is the feedback loop's report token (the server's
+ * SYSTEM_IDENTITY_HANDLE): a standalone `@system` in a human message files a
+ * report on that message. System is never a Room member, so — like
+ * `@channel` — it never earns a picker selection or a p-tag pubkey.
+ */
+export const SYSTEM_MENTION_HANDLE = 'system';
+/** Sentinel roster pubkey for the synthetic `@system` autocomplete row — never a real identity. */
+export const SYSTEM_MENTION_PUBKEY = '@system';
+/** The `@system` row's menu label: what picking it does, not who it is. */
+export const SYSTEM_MENTION_LABEL = 'System — report an issue';
+
+export function isSystemMentionHandle(handle: string): boolean {
+  return normalizeMentionSearch(handle) === SYSTEM_MENTION_HANDLE;
+}
+
+/** Reserved tokens the menu offers but that never resolve to a member pubkey. */
+export function isReservedMentionHandle(handle: string): boolean {
+  return isChannelMentionHandle(handle) || isSystemMentionHandle(handle);
+}
+
+/**
+ * Record a mention-menu pick as the picker→pubkey binding a send resolves.
+ * A reserved token (`@channel`, `@system`) records nothing: its row carries a
+ * sentinel pubkey that must never reach a send's mention list.
+ */
+export function recordMentionPick(
+  selections: Map<string, string>,
+  pick: { readonly handle: string; readonly pubkey: string },
+): void {
+  if (isReservedMentionHandle(pick.handle)) return;
+  selections.set(pick.handle, pick.pubkey);
+}
+
 /** Every literal, live mention token in composer/tokenizer order (lowercased handles). */
 function typedComposerMentionTokens(text: string): string[] {
   const normalized = text.normalize('NFKC').toLocaleLowerCase();
@@ -238,7 +272,8 @@ export function hasChannelMentionToken(text: string): boolean {
  * tokens remain ordinary prose and must not produce either a p-tag or gold UI.
  * `@channel` never resolves to a pubkey here — it is a broadcast, not an
  * addressable identity — even when a stray selection or roster entry shares
- * its literal handle.
+ * its literal handle. `@system` is skipped the same way: it files a report,
+ * it does not address a member.
  */
 export function resolveComposerMentions(
   text: string,
@@ -262,7 +297,7 @@ export function resolveComposerMentions(
   const seenPubkeys = new Set<string>();
   const seenHandles = new Set<string>();
   for (const handle of typedComposerMentionTokens(text)) {
-    if (isChannelMentionHandle(handle)) continue;
+    if (isReservedMentionHandle(handle)) continue;
     const selectedPubkey = selectedByHandle.get(handle);
     const rosterPubkeys = participantsByHandle.get(handle);
     const pubkey =

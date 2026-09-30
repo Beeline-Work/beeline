@@ -9,7 +9,7 @@ import { isResumeKind } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { pickHealthyClassMember } from './agent-classes.js';
 import { noteCornerWorkflowReviewOutcome, noteCornerWorkflowTransition } from './corner-workflow.js';
-import { taggedIdentityIdsSql } from './message-mentions.js';
+import { hasSystemReportMention, taggedIdentityIdsSql } from './message-mentions.js';
 import { ensureSystemIdentity, GITHUB_SUBJECT, systemLine } from './system-line.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
@@ -583,7 +583,12 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
   // typed tag, or membership of a direct conversation. Nothing routes on
   // transcript adjacency — an untagged top-level message starts no turn.
   const avatarJob = /^(?:@[^\s]+\s+)?\/draw-avatar(?:\s|$)/i.test(source.text.trim());
-  const targets = new Set([...source.tagged_ids, ...(source.direct_participants ?? [])]);
+  // A report to `@system` (feedback.ts) addresses System, which is nobody:
+  // in a DM it wakes only an agent the message also tags by name.
+  const targets = new Set([
+    ...source.tagged_ids,
+    ...(hasSystemReportMention(source.text) ? [] : (source.direct_participants ?? [])),
+  ]);
   targets.delete(source.author_id);
   for (const target of targets) {
     const agent = (

@@ -83,6 +83,7 @@ const ALL_PHONE_OPERATION_NAMES = {
   removeRoomRepository: true,
   removeWorkspaceMember: true,
   reopenChat: true,
+  reportMessageIssue: true,
   reportRunningUpdate: true,
   requestCornerClose: true,
   resolveDirectMessage: true,

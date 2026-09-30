@@ -1470,6 +1470,7 @@ function SwipeToReply({
   onReact,
   onForward,
   onBookmark = () => undefined,
+  onReportIssue,
   onSwipeCorner,
   bookmarked = false,
   isDesktop,
@@ -1486,6 +1487,9 @@ function SwipeToReply({
   onReact(emoji: MessageReactionEmoji): void;
   onForward(): void;
   onBookmark?(): void;
+  /** Report issue — files the message with the Beeline feedback loop. Omitted
+   *  where the row offers no report (the desktop work pane's read-only copy). */
+  onReportIssue?(): void;
   /** Mobile swipe right — forward the message into a new corner. */
   onSwipeCorner?(): void;
   bookmarked?: boolean;
@@ -1605,6 +1609,22 @@ function SwipeToReply({
                   size={14}
                 />
               </Pressable>
+              {onReportIssue ? (
+                <Pressable
+                  accessibilityLabel="Report an issue with this message"
+                  accessibilityRole="button"
+                  onFocus={() => setDesktopActionsVisible(true)}
+                  onBlur={() => setDesktopActionsVisible(false)}
+                  onPress={onReportIssue}
+                  style={({ pressed }) => [
+                    styles.replyDesktopAction,
+                    pressed && styles.replyDesktopPressed,
+                  ]}
+                  testID={`report-button-${messageId}`}
+                >
+                  <Ionicons color={styles.replyDesktopGlyph.color} name="flag-outline" size={14} />
+                </Pressable>
+              ) : null}
               <Pressable
                 accessibilityLabel="Forward message"
                 accessibilityRole="button"
@@ -1802,6 +1822,8 @@ export interface OrdinaryLedgerMessageProps {
   onReact?(message: ChatDisplayMessage, emoji: MessageReactionEmoji): void;
   onForward?(message: ChatDisplayMessage): void;
   onBookmark?(message: ChatDisplayMessage): void;
+  /** Report issue: prompt for a note and file the message with the feedback loop. */
+  onReportIssue?(message: ChatDisplayMessage): void;
   /** Mobile swipe right — forward the message into a new human-owned corner. */
   onForwardToNewCorner?(message: ChatDisplayMessage): void;
   onCornerProposalDecision?(message: ChatDisplayMessage, decision: 'open' | 'cancel'): void;
@@ -1915,6 +1937,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   onReact = () => undefined,
   onForward = () => undefined,
   onBookmark = () => undefined,
+  onReportIssue,
   onForwardToNewCorner,
   onCornerProposalDecision,
   cornerProposalAction = null,
@@ -1974,7 +1997,11 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       (message.pubkey ? fallbackMemberName(message.pubkey) : 'SOMEONE'));
   const markSeed = message.pubkey ?? (isSelfSteer ? viewerPubkey || 'self' : 'unknown-person');
   const byline: LedgerByline | undefined =
-    continuedRun && !isAgent && !announcementFeed && !message.bookmarked
+    continuedRun &&
+    !isAgent &&
+    !announcementFeed &&
+    !message.bookmarked &&
+    !message.feedbackReported
       ? undefined
       : {
           // The viewer is named like every other speaker. Brass on the name
@@ -1995,6 +2022,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
           stamp,
           isViewer: isSelfSteer,
           bookmarked: message.bookmarked,
+          feedbackReported: message.feedbackReported,
           ...(announcementFeed
             ? {}
             : {
@@ -2368,6 +2396,9 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       onReact={(emoji) => onReact(message, emoji)}
       onForward={() => onForward(message)}
       onBookmark={() => onBookmark(message)}
+      {...(onReportIssue && !message.isAgentDraft && !message.isAgentActivity
+        ? { onReportIssue: () => onReportIssue(message) }
+        : {})}
       {...(onForwardToNewCorner && !message.isAgentDraft
         ? // A message someone else wrote can carry the swipe-to-corner tip.
           { onSwipeCorner: () => onForwardToNewCorner(message) }

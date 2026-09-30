@@ -146,13 +146,15 @@ import {
   CHANNEL_MENTION_PUBKEY,
   filterMentionCandidates,
   formatRoomParticipantTotal,
-  isChannelMentionHandle,
   mentionedAgentPubkey,
   orderRoomRoster,
+  recordMentionPick,
   replaceActiveMention,
   resolveComposerMentions,
   selectedMentionAgentPubkey,
   shouldReadWorkspaceRoster,
+  SYSTEM_MENTION_HANDLE,
+  SYSTEM_MENTION_PUBKEY,
 } from '@/buzz/room-participants';
 import { resolveAgentDisplayIdentity, resolvePendingAgentDisplay } from '@/buzz/agent-display';
 import {
@@ -296,6 +298,8 @@ import {
   phoneOperationFailureReason,
 } from '@/sync/transport/monolith-operation';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
+import { promptAndReportMessageIssue, reportIssueToastCopy } from '@/buzz/report-message-issue';
+import { useCopiedToast } from '@/components/buzz/CopiedToast';
 import {
   formatForwardedMessage,
   forwardMessageToRoom,
@@ -410,6 +414,19 @@ const CHANNEL_MENTION_OPTION: RoomMemberOption = {
   pubkey: CHANNEL_MENTION_PUBKEY,
   name: 'channel',
   handle: CHANNEL_MENTION_HANDLE,
+  kind: 'person',
+};
+
+/**
+ * The reserved `@system` autocomplete row: the feedback loop's report token,
+ * offered in every Room, corner and DM. Picking it inserts `@system ` like any
+ * mention, but System is never a member, so `SYSTEM_MENTION_PUBKEY` is a
+ * sentinel that never reaches a send's mention list.
+ */
+const SYSTEM_MENTION_OPTION: RoomMemberOption = {
+  pubkey: SYSTEM_MENTION_PUBKEY,
+  name: 'System',
+  handle: SYSTEM_MENTION_HANDLE,
   kind: 'person',
 };
 
@@ -687,6 +704,10 @@ export function BuzzChatSurface({
   const [attachmentPickerVisible, setAttachmentPickerVisible] = useState(false);
   const [messageActionsTarget, setMessageActionsTarget] = useState<ChatDisplayMessage | null>(null);
   const [optimisticBookmarks, setOptimisticBookmarks] = useState<Record<string, boolean>>({});
+  // Messages this viewer reported here, marked before the next read carries
+  // the server's `feedbackReported`.
+  const [optimisticReports, setOptimisticReports] = useState<Record<string, true>>({});
+  const { showCopied: showReportToast, toast: reportToast } = useCopiedToast('message-report-toast');
   const [forwardTarget, setForwardTarget] = useState<ChatDisplayMessage | null>(null);
   const [forwardRooms, setForwardRooms] = useState<readonly ForwardTarget[] | null>(
     null,
@@ -1690,7 +1711,7 @@ export function BuzzChatSurface({
     ? `${inputText}:${activeMention.start}:${activeMention.end}`
     : null;
   const mentionCandidateRoster = useMemo(
-    () => [CHANNEL_MENTION_OPTION, ...roomParticipants],
+    () => [CHANNEL_MENTION_OPTION, ...roomParticipants, SYSTEM_MENTION_OPTION],
     [roomParticipants],
   );
   const mentionSuggestions = useMemo(
@@ -3370,6 +3391,37 @@ export function BuzzChatSurface({
     [activeCommunityId, decodedId, messageIsBookmarked, refreshSignal],
   );
 
+  const messageIsReported = useCallback(
+    (message: ChatDisplayMessage) =>
+      Boolean(optimisticReports[message.relayId ?? message.id] ?? message.feedbackReported),
+    [optimisticReports],
+  );
+
+  const handleReportMessage = useCallback(
+    async (message: ChatDisplayMessage) => {
+      if (message.isAgentActivity || message.isAgentDraft) return;
+      const messageId = message.relayId ?? message.id;
+      const outcome = await promptAndReportMessageIssue(
+        { roomId: decodedId, messageId },
+        {
+          prompt: (title, body, options) => Modal.prompt(title, body, options),
+          report: (input) => monolithPhoneOperation('reportMessageIssue', input),
+        },
+      );
+      if (outcome.status === 'cancelled') return;
+      if (outcome.status === 'failed') {
+        Modal.alert('Could not report message', phoneOperationFailureReason(outcome.error));
+        return;
+      }
+      setOptimisticReports((current) => ({ ...current, [messageId]: true }));
+      const copy = reportIssueToastCopy(outcome.duplicate);
+      showReportToast(copy);
+      AccessibilityInfo.announceForAccessibility(copy);
+      refreshSignal.force();
+    },
+    [decodedId, refreshSignal, showReportToast],
+  );
+
   const canDeleteMessage = useCallback(
     (message: ChatDisplayMessage) =>
       !message.deleted && !message.isAgentActivity && !message.isAgentDraft &&
@@ -3837,11 +3889,9 @@ export function BuzzChatSurface({
       if (participant.kind === 'agent') {
         selectedAgentMentionsRef.current.set(participant.handle, participant.pubkey);
       }
-      // `@channel` is a broadcast token, never a resolvable identity — it
-      // must not earn a picker→pubkey binding.
-      if (!isChannelMentionHandle(participant.handle)) {
-        selectedMentionsRef.current.set(participant.handle, participant.pubkey);
-      }
+      // `@channel` (a broadcast) and `@system` (a report) are tokens, never
+      // resolvable identities — neither may earn a picker→pubkey binding.
+      recordMentionPick(selectedMentionsRef.current, participant);
       const nextSelection = { start: inserted.cursor, end: inserted.cursor };
       const completedMention = activeMentionAtCursor(inserted.text, inserted.cursor);
       inputTextRef.current = inserted.text;
@@ -5317,9 +5367,14 @@ export function BuzzChatSurface({
 
       const knownAgent = item.pubkey ? agentByPubkey.get(item.pubkey) : undefined;
       const renderedItem =
-        messageIsBookmarked(item) === Boolean(item.bookmarked)
+        messageIsBookmarked(item) === Boolean(item.bookmarked) &&
+        messageIsReported(item) === Boolean(item.feedbackReported)
           ? item
-          : { ...item, bookmarked: messageIsBookmarked(item) };
+          : {
+              ...item,
+              bookmarked: messageIsBookmarked(item),
+              feedbackReported: messageIsReported(item),
+            };
       const personName = item.pubkey ? personProfileByPubkey.get(item.pubkey)?.name : undefined;
       const referencedTarget = referencedMessage
         ? replyTargetForMessage(referencedMessage)
@@ -5359,6 +5414,7 @@ export function BuzzChatSurface({
           onReact={handleReactToMessage}
           onForward={beginForward}
           onBookmark={handleBookmarkMessage}
+          onReportIssue={handleReportMessage}
           {...(!isCorner &&
           !isDirectMessage &&
           !isArchived &&
@@ -5406,6 +5462,8 @@ export function BuzzChatSurface({
       handleReactToMessage,
       handleBookmarkMessage,
       messageIsBookmarked,
+      handleReportMessage,
+      messageIsReported,
       handleCornerProposalDecision,
       cornerProposalAction,
       beginForward,
@@ -6299,6 +6357,7 @@ export function BuzzChatSurface({
             </View>
           )}
           </KeyboardAvoidingView>
+          {reportToast}
         </View>
         {profileAgentId && desktopExperience && activeCommunityId && (
           <View style={styles.agentProfilePane} testID="desktop-agent-profile-pane">
@@ -6371,6 +6430,18 @@ export function BuzzChatSurface({
               if (target) void handleBookmarkMessage(target);
             }}
             testID="message-bookmark-action"
+          />
+        ) : null}
+        {messageActionsTarget && !messageActionsTarget.isAgentActivity ? (
+          <HullActionSheetRow
+            accessibilityLabel="Report an issue with this message"
+            label="Report issue"
+            onPress={() => {
+              const target = messageActionsTarget;
+              setMessageActionsTarget(null);
+              if (target) void handleReportMessage(target);
+            }}
+            testID="message-report-action"
           />
         ) : null}
         {messageActionsTarget ? (

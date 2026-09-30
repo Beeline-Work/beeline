@@ -13,6 +13,7 @@ import {
   type CommandRow,
 } from './agent-command.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { FEEDBACK_ISSUE_LABEL } from '@beeline/api-contract/daemon';
 import type {
   DaemonAttachment,
   DaemonOperationMap,
@@ -165,6 +166,18 @@ import {
   type InstitutionalMemoryShadowConfig,
 } from './institutional-memory-shadow.js';
 import { searchInstitutionalHistory } from './institutional-history.js';
+import {
+  assertFeedbackTriageAgent,
+  attachFeedbackToIssue,
+  dismissFeedback,
+  feedbackConfigFromEnv,
+  fileFeedbackIssue,
+  getFeedback,
+  listFeedback,
+  reportAgentFeedback,
+  type FeedbackConfig,
+  type FeedbackIssueHost,
+} from './feedback.js';
 import { loadWorkspaceSkill, saveSkill } from './institutional-skills.js';
 import {
   archiveWorkflow,
@@ -292,6 +305,10 @@ export class DaemonService {
     private readonly mcpRegistry: McpRegistryClient = new McpRegistryClient(),
     private readonly registryMcpOAuth?: RegistryMcpOAuth,
     private readonly composio?: ComposioApps,
+    private readonly feedback: {
+      readonly config: FeedbackConfig;
+      readonly host?: FeedbackIssueHost;
+    } = { config: feedbackConfigFromEnv() },
   ) {}
 
   /** When each corner last woke, so `CORNER_WAKE_MIN_INTERVAL_MS` can be held. */
@@ -378,6 +395,7 @@ export class DaemonService {
       'handoff',
       'archiveWorkflow',
       'assignWorkflowRole',
+      'reportFeedback',
     ]);
     if (
       !this.commandTransaction &&
@@ -533,6 +551,7 @@ export class DaemonService {
           this.mcpRegistry,
           this.registryMcpOAuth,
           this.composio,
+          this.feedback,
         );
         const result = await scoped.execute(name, input, authenticatedAgentId);
         if (name === 'requestAgentGrant') {
@@ -1424,6 +1443,61 @@ export class DaemonService {
           'swap',
           authenticatedAgentId,
           input as Input<'walletSwap'>,
+        )) as Output<Name>;
+      // The feedback loop (`feedback.ts`). Any agent may report from its own
+      // turn; the rest is the allowlisted triage sweep.
+      case 'reportFeedback':
+        if (!this.commandTransaction || !this.authorizedCommand)
+          throw new Error('feedback reports require an active command');
+        return (await reportAgentFeedback(
+          this.database,
+          this.authorizedCommand,
+          authenticatedAgentId,
+          input as Input<'reportFeedback'>,
+        )) as Output<Name>;
+      case 'listFeedback':
+        assertFeedbackTriageAgent(this.feedback.config, authenticatedAgentId);
+        return (await listFeedback(
+          this.database,
+          (input as Input<'listFeedback'>).limit,
+        )) as Output<Name>;
+      case 'getFeedback':
+        assertFeedbackTriageAgent(this.feedback.config, authenticatedAgentId);
+        return (await getFeedback(
+          this.database,
+          (input as Input<'getFeedback'>).itemIds,
+        )) as Output<Name>;
+      case 'listFeedbackIssues': {
+        assertFeedbackTriageAgent(this.feedback.config, authenticatedAgentId);
+        if (!this.feedback.host)
+          throw new Error('feedback filing is unavailable: the Beeline GitHub App is not configured');
+        const repository = this.feedback.config.repository;
+        return {
+          repository,
+          issues: await this.feedback.host.listOpenIssues(repository, FEEDBACK_ISSUE_LABEL),
+        } as Output<Name>;
+      }
+      case 'fileFeedbackIssue':
+        assertFeedbackTriageAgent(this.feedback.config, authenticatedAgentId);
+        return (await fileFeedbackIssue(
+          this.database,
+          this.feedback.config,
+          this.feedback.host,
+          input as Input<'fileFeedbackIssue'>,
+        )) as Output<Name>;
+      case 'attachFeedbackToIssue':
+        assertFeedbackTriageAgent(this.feedback.config, authenticatedAgentId);
+        return (await attachFeedbackToIssue(
+          this.database,
+          this.feedback.config,
+          this.feedback.host,
+          input as Input<'attachFeedbackToIssue'>,
+        )) as Output<Name>;
+      case 'dismissFeedback':
+        assertFeedbackTriageAgent(this.feedback.config, authenticatedAgentId);
+        return (await dismissFeedback(
+          this.database,
+          input as Input<'dismissFeedback'>,
         )) as Output<Name>;
       default:
         throw new Error(`unsupported daemon operation: ${String(name)}`);
@@ -7160,6 +7234,13 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getWalletToolQuote: true,
   walletPay: true,
   walletSwap: true,
+  reportFeedback: true,
+  listFeedback: true,
+  getFeedback: true,
+  listFeedbackIssues: true,
+  fileFeedbackIssue: true,
+  attachFeedbackToIssue: true,
+  dismissFeedback: true,
 };
 export const DAEMON_OPERATION_NAMES = new Set(
   Object.keys(DAEMON_OPERATION_ROUTES) as (keyof DaemonOperationMap)[],

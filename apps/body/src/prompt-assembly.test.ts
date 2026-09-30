@@ -117,10 +117,6 @@ const memory = [
 const TURN_VARIANTS: Record<string, TurnPromptContext> = {
   'room-turn': {
     surface: 'room',
-    standingPreference: {
-      requesterName: 'lunchboxfortwo',
-      text: 'Plain words first; give a verified fix, not an apology.',
-    },
     checkout: { branch: 'main', commit: 'b1c5baf5' },
     transcript: {
       lines: [

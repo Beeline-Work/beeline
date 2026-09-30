@@ -157,6 +157,58 @@ describe('getInstitutionalContext hybrid vector snapshot', () => {
       return {outcome:'disabled',ms:0};
     });
   });
+  it('keeps every memory embedding call outside the command transaction', async () => {
+    stubEmbeddingFetch();
+    const inner = vi.mocked(fetch).getMockImplementation()!;
+    const original = database.transaction.bind(database);
+    let depth = 0;
+    vi.spyOn(database, 'transaction').mockImplementation(async (work) => {
+      depth += 1;
+      try { return await original(work); } finally { depth -= 1; }
+    });
+    const openAtFetch: boolean[] = [];
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+      openAtFetch.push(depth > 0);
+      return inner(url, init);
+    });
+    const daemon = liveDaemon();
+    await openCommand('no-tx-1', 'no-tx-gen');
+    const turn = { roomId: ROOM, requestId: 'no-tx-1', generationId: 'no-tx-gen' };
+    const context = await daemon.execute('getInstitutionalContext', turn, RONNIE);
+    expect(context.embeddingOutcome).toBe('served');
+    await daemon.execute('searchInstitutionalMemory',
+      { ...turn, agentId: RONNIE, query: 'where does my wife live' }, RONNIE);
+    const saved = await daemon.execute('proposeInstitutionalMemory', {
+      ...turn,
+      agentId: RONNIE,
+      memoryKind: 'human_profile_fact',
+      canonicalKey: 'requester.spouse.city',
+      body: 'Daeun lives in Seoul.',
+      keywords: ['daeun', 'seoul'],
+      sourceMessageIds: [MESSAGE],
+      correction: false,
+      confidence: 0.9,
+      cas: { baseVersion: null },
+    }, RONNIE);
+    await vi.waitFor(async () => {
+      expect((await database.query(`SELECT 1 FROM institutional_memory_items
+        WHERE id=$1 AND embedding IS NOT NULL`, [saved.itemId])).rowCount).toBe(1);
+    });
+    const skill = await daemon.execute('saveSkill', {
+      ...turn,
+      slug: 'find-a-city',
+      description: 'Look up where someone lives',
+      markdown: '# Find a city\nSearch memory first.',
+    }, RONNIE);
+    expect(skill.similarSkills).toEqual([]);
+    await vi.waitFor(async () => {
+      expect((await database.query(`SELECT 1 FROM workspace_skills
+        WHERE slug='find-a-city' AND embedding IS NOT NULL`)).rowCount).toBe(1);
+    });
+    // context, search, the memory item, the similar-skill lookup and the skill.
+    expect(openAtFetch).toEqual([false, false, false, false, false]);
+  });
+
   it('surfaces an item the keyword path alone would miss, and reports a served embedding outcome', async () => {
     stubEmbeddingFetch();
     const daemon = liveDaemon();

@@ -391,7 +391,7 @@ describe('per-row retry with in-process backoff (no database scan)', () => {
 });
 
 describe('backfillInstitutionalMemoryEmbeddingsOnce (one pass, never repeats itself)', () => {
-  it('runs only one embedding pass when two startups backfill concurrently', async () => {
+  it('runs only one embedding pass when this process starts it twice', async () => {
     const database = new PgliteDatabase();
     await seed(database);
     const itemId='ffffffff-ffff-4fff-8fff-fffffffffeff';
@@ -408,6 +408,48 @@ describe('backfillInstitutionalMemoryEmbeddingsOnce (one pass, never repeats its
     const results=await Promise.all([first,second]);
     expect(results.reduce((sum,result) => sum+result.itemsEmbedded,0)).toBe(1);
     expect(embedBatch).toHaveBeenCalledTimes(1);
+  });
+  it('skips when another machine holds the backfill lock, and releases its own lock and session', async () => {
+    const database = new PgliteDatabase();
+    await seed(database);
+    await insertItem(database, 'ffffffff-ffff-4fff-8fff-fffffffffefe');
+    const statements: string[] = [];
+    let released = 0;
+    const withSession = (lockHeldElsewhere: boolean) => Object.assign(database, {
+      connectDedicated: async () => ({
+        query: async (sql: string, values?: unknown[]) => {
+          statements.push(sql);
+          if (lockHeldElsewhere && sql.includes('pg_try_advisory_lock')) {
+            return { rows: [{ acquired: false }], rowCount: 1 };
+          }
+          return database.query(sql, values);
+        },
+        release: () => { released += 1; },
+      }),
+    });
+    const embedBatch = vi.fn(async (texts: readonly string[]) => texts.map(() => VECTOR));
+    expect(await backfillInstitutionalMemoryEmbeddingsOnce(withSession(true), embedBatch))
+      .toEqual({ itemsEmbedded: 0, skillsEmbedded: 0, skipped: true });
+    expect(embedBatch).not.toHaveBeenCalled();
+    expect(released).toBe(1);
+    statements.length = 0;
+    expect(await backfillInstitutionalMemoryEmbeddingsOnce(withSession(false), embedBatch))
+      .toMatchObject({ itemsEmbedded: 1 });
+    expect(statements.some((sql) => sql.includes('pg_try_advisory_lock('))).toBe(true);
+    expect(statements.at(-1)).toContain('pg_advisory_unlock(');
+    expect(statements.some((sql) => /\bBEGIN\b/i.test(sql))).toBe(false);
+    expect(released).toBe(2);
+  });
+  it('stops after three batches in a row fail entirely', async () => {
+    const database = new PgliteDatabase();
+    await seed(database);
+    for (const suffix of ['b1', 'b2', 'b3', 'b4', 'b5']) {
+      await insertItem(database, `ffffffff-ffff-4fff-8fff-ffffffffff${suffix}`);
+    }
+    const embedBatch = vi.fn(async () => undefined);
+    expect(await backfillInstitutionalMemoryEmbeddingsOnce(database, embedBatch, 1))
+      .toMatchObject({ itemsEmbedded: 0 });
+    expect(embedBatch).toHaveBeenCalledTimes(3);
   });
   it('continues past a failed row to embed later rows', async () => {
     const database = new PgliteDatabase();

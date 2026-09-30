@@ -94,8 +94,7 @@ export async function awaitInstitutionalContext(
         timer.unref?.();
       }),
     ]);
-    const served = snapshot.text !== '' || snapshot.standingPreference !== undefined;
-    return { ...snapshot, outcome: served ? 'served' : 'empty' };
+    return { ...snapshot, outcome: snapshot.text !== '' ? 'served' : 'empty' };
   } catch (error) {
     log(
       `institutional context unavailable: ${error instanceof Error ? error.message : String(error)}`,

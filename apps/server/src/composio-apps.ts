@@ -29,6 +29,54 @@ function safeToolSlug(slug: string): boolean {
   return /^[A-Z][A-Z0-9_]{2,119}$/.test(slug);
 }
 
+const BODY_READ_LIMIT = 4096;
+const DETAIL_LIMIT = 500;
+const ERROR_KEY = /^(?:error|message|detail|error_message)$/i;
+
+function boundedDetail(text: string): string {
+  return text.length <= DETAIL_LIMIT ? text : text.slice(0, DETAIL_LIMIT);
+}
+
+/** First string found at a common error key, recursing into objects and arrays. */
+function firstErrorMessage(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  for (const [key, item] of Object.entries(value)) {
+    if (ERROR_KEY.test(key)) {
+      if (typeof item === 'string' && item) return item;
+      const nested = firstErrorMessage(item);
+      if (nested) return nested;
+    }
+  }
+  for (const item of Object.values(value)) {
+    const nested = firstErrorMessage(item);
+    if (nested) return nested;
+  }
+  return undefined;
+}
+
+/** Provider error detail from a string or an object: bounded, secret-stripped. */
+function providerErrorDetail(value: unknown): string | undefined {
+  if (typeof value === 'string' && value) return boundedDetail(value);
+  const found = firstErrorMessage(stripSecrets(value));
+  return found ? boundedDetail(found) : undefined;
+}
+
+/** Read a response body bounded so a huge error dump cannot blow memory. */
+async function readBoundedBody(response: Response, limit = BODY_READ_LIMIT): Promise<string> {
+  if (!response.body) return '';
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let out = '';
+  let done = false;
+  while (!done && out.length < limit) {
+    const next = await reader.read();
+    done = next.done;
+    if (next.value) out += decoder.decode(next.value, { stream: true });
+  }
+  if (!done) await reader.cancel();
+  return out.slice(0, limit);
+}
+
 function stripSecrets(value: unknown, depth = 0): unknown {
   if (depth > 12) return null;
   if (Array.isArray(value)) return value.map((item) => stripSecrets(item, depth + 1));
@@ -177,7 +225,16 @@ export class ComposioApps {
       signal: AbortSignal.timeout(20_000),
     });
     if (!response.ok) {
-      const error = new Error(`App provider request failed (${response.status})`);
+      const body = await readBoundedBody(response);
+      let detail: string | undefined;
+      try {
+        detail = providerErrorDetail(JSON.parse(body) as unknown);
+      } catch {
+        if (body.trim()) detail = boundedDetail(body.trim());
+      }
+      const error = new Error(detail
+        ? `App provider request failed (${response.status}): ${detail}`
+        : `App provider request failed (${response.status})`);
       Object.assign(error, { status: response.status });
       throw error;
     }
@@ -323,8 +380,10 @@ export class ComposioApps {
       arguments: args,
       version: requiredString(definition.version),
     });
-    if (result.error || result.successfull === false || result.successful === false)
-      throw new Error('App tool execution failed');
+    if (result.error || result.successfull === false || result.successful === false) {
+      const detail = providerErrorDetail(result.error);
+      throw new Error(detail ? `App tool execution failed: ${detail}` : 'App tool execution failed');
+    }
     return stripSecrets(result.data);
   }
 

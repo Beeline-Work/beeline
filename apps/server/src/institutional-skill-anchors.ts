@@ -100,14 +100,6 @@ async function recordAnchorCheck(
      WHERE id=$1`,
     [id, now, input.baseline ?? null, input.staleReason ? boundedReason(input.staleReason) : null],
   );
-  if (input.staleReason) {
-    await database.query(
-      `UPDATE workspace_skill_versions
-       SET markdown='',source_deleted_at=COALESCE(source_deleted_at,$2)
-       WHERE skill_id=$1 AND source_deleted_at IS NULL`,
-      [id, now],
-    );
-  }
 }
 
 /**

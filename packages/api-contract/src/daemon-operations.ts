@@ -15,6 +15,7 @@ import type {
   CompleteInstitutionalMemoryJobInput,
   FailInstitutionalMemoryJobInput,
   InstitutionalContextSnapshot,
+  InstitutionalMemoryTurnStats,
   LoadWorkspaceSkillInput,
   LoadWorkspaceSkillResult,
   ProposeInstitutionalMemoryInput,
@@ -138,7 +139,13 @@ export type DaemonOperationMap = {
     SearchInstitutionalHistoryInput,
     SearchInstitutionalHistoryResult
   >;
-  /** Load one restricted procedure after rechecking its source audience. */
+  /** Best-effort read of this turn's search_memory call/miss counters, for
+   *  the daemon's own turn trace; absent counters read as zero. */
+  getInstitutionalMemoryTurnStats: Operation<
+    RoomInput & AgentInput & TurnOutputAuthority,
+    InstitutionalMemoryTurnStats
+  >;
+  /** Load one merge-derived restricted procedure after rechecking its source audience. */
   loadWorkspaceSkill: Operation<LoadWorkspaceSkillInput, LoadWorkspaceSkillResult>;
   /** Save a procedure directly from conversation: no corner, no merge review. */
   saveSkill: Operation<

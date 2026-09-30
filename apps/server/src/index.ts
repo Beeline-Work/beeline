@@ -37,6 +37,7 @@ import { PostgresLiveListener } from './postgres-live.js';
 import { listenAfterBestEffortRecovery } from './startup.js';
 import { institutionalMemoryShadowConfigFromEnv } from './institutional-memory-shadow.js';
 import { runInstitutionalCuratorCycle } from './institutional-curator.js';
+import { backfillInstitutionalMemoryEmbeddingsOnce } from './institutional-memory-embeddings.js';
 import type { InstitutionalSkillAnchorSource } from './institutional-skill-anchors.js';
 import { retireWelcomeWorkspace, welcomeRetirementPreflight } from './welcome-retirement.js';
 
@@ -56,6 +57,12 @@ async function runReleaseMigration(): Promise<void> {
       await new AuthStore(database as unknown as TransactionalDatabase).migrate();
     });
     await migrateData(database);
+    // One-time sweep, run here (after the migration) and again at ordinary
+    // server start (`main()` below) — never on an interval. Every row saved
+    // from here on embeds itself on save; this only catches rows from before
+    // the feature shipped or an in-process retry that died with a restart.
+    const embeddingBackfill = await backfillInstitutionalMemoryEmbeddingsOnce(database);
+    console.log(`[migration] institutional memory embedding backfill: ${JSON.stringify(embeddingBackfill)}`);
     // Armed only by the release owner, once the create-or-join onboarding is
     // live on every supported client (docs/welcome-retirement.md).
     const greeterAgentId = process.env.BEELINE_RETIRE_WELCOME_GREETER_ID?.trim();
@@ -100,6 +107,12 @@ async function main() {
   }
   const enrichmentDatabase = new PostgresDatabase(connectionString, budget.enrichment, { mode: 'enrichment' });
   const jobsDatabase = new PostgresDatabase(connectionString, budget.jobs, { mode: 'long-running' });
+  // One-time sweep at server start (see the release migration's own call for
+  // "after the migration") — never on an interval; fire-and-forget so it
+  // never delays this machine coming up and serving requests.
+  void backfillInstitutionalMemoryEmbeddingsOnce(jobsDatabase)
+    .then((counts) => console.log(`[startup] institutional memory embedding backfill: ${JSON.stringify(counts)}`))
+    .catch((error) => console.error('[startup] institutional memory embedding backfill failed:', error));
   console.log(`[database] connection budget ${JSON.stringify(budget)}`);
   const publicOrigin =
     process.env.PUBLIC_ORIGIN ?? `http://127.0.0.1:${process.env.PORT ?? '8080'}`;

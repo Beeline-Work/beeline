@@ -1,4 +1,3 @@
-import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { migrate } from './database.js';
 import { PhoneService } from './phone-service.js';
@@ -22,7 +21,7 @@ describe('monolith hot-path PhoneService read budgets (deck + transcript)', () =
   let phone: PhoneService;
 
   beforeAll(async () => {
-    database = new PgliteDatabase(new PGlite());
+    database = new PgliteDatabase();
     await migrate(database);
     phone = new PhoneService(database, 'http://local.test');
     await database.query(

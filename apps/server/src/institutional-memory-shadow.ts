@@ -10,6 +10,8 @@ import {
   INSTITUTIONAL_MEMORY_SEARCH_QUERY_MAX_BYTES,
   INSTITUTIONAL_MEMORY_SEARCH_RESULT_MAX,
   INSTITUTIONAL_MEMORY_SEARCH_SCAN_MAX,
+  INSTITUTIONAL_MEMORY_VECTOR_CANDIDATES_MAX,
+  INSTITUTIONAL_CONTEXT_EMBEDDING_TIMEOUT_MS,
   parseInstitutionalCuratorProposal,
   parseInstitutionalMemoryProposal,
   type CompleteInstitutionalMemoryJobInput,
@@ -30,9 +32,19 @@ import {
   applyWorkspaceSkillProposal,
   authorizedWorkspaceSkillCandidates,
   parseAndValidateMergeReviewProposal,
+  vectorWorkspaceSkillCandidates,
   type WorkspaceSkillIndexCandidate,
+  type WorkspaceSkillVectorCandidate,
 } from './institutional-skills.js';
 import { applyInstitutionalCuratorProposal } from './institutional-curator.js';
+import {
+  createDefaultEmbedFn,
+  pgvectorLiteral,
+  scheduleEmbedInstitutionalMemoryItem,
+  scheduleEmbedWorkspaceSkillVersion,
+  withDeadline,
+  type EmbedFn,
+} from './institutional-memory-embeddings.js';
 import {
   institutionalWorkspaceRolloutStage,
   rolloutAllowsJobs,
@@ -830,6 +842,10 @@ export async function completeInstitutionalMemoryJob(
 ): Promise<void> {
   if (!config.enabled) throw new Error('institutional memory shadow is disabled');
   const usage = boundedUsage(input.usage);
+  // Populated inside the transaction below, scheduled for embedding only
+  // after it commits (see the end of this function).
+  const embeddedItemIds: string[] = [];
+  const embeddedSkillIds: string[] = [];
   await database.transaction(async (db) => {
     const job = (
       await db.query<CompletionRow>(
@@ -914,12 +930,13 @@ export async function completeInstitutionalMemoryJob(
         throw new Error('institutional memory profile subject must be the requester');
       }
       if (job.mode === 'live') {
-        await applyMemoryProposal(db, {
+        const applied = await applyMemoryProposal(db, {
           workspaceId: job.workspace_id,
           primarySourceMessageId: job.source_message_id,
           proposal: memoryProposal,
           createdByJobId: job.id,
         });
+        embeddedItemIds.push(applied.itemId);
       } else {
         // Shadow mode still exercises CAS validation without creating an item.
         const current = (
@@ -982,7 +999,7 @@ export async function completeInstitutionalMemoryJob(
         if (liveSkillSources.rowCount !== skillSourceMessageIds.length) {
           throw new Error('workspace skill evidence was deleted before completion');
         }
-        await applyWorkspaceSkillProposal(db, {
+        const appliedSkill = await applyWorkspaceSkillProposal(db, {
           workspaceId: job.workspace_id,
           sourceRoomId: job.source_room_id,
           sourceMessageIds: skillSourceMessageIds,
@@ -990,6 +1007,7 @@ export async function completeInstitutionalMemoryJob(
           usage,
           proposal: mergeProposal.skill,
         });
+        embeddedSkillIds.push(appliedSkill.skillId);
       }
       if (job.mode === 'live' && mergeProposal.findings.length) {
         for (const finding of mergeProposal.findings) {
@@ -1015,7 +1033,7 @@ export async function completeInstitutionalMemoryJob(
       }
     }
     if (curatorProposal && job.mode === 'live') {
-      await applyInstitutionalCuratorProposal(db, {
+      const curated = await applyInstitutionalCuratorProposal(db, {
         workspaceId: job.workspace_id,
         jobId: job.id,
         sourceMessageId: job.source_message_id,
@@ -1023,6 +1041,8 @@ export async function completeInstitutionalMemoryJob(
         proposal: curatorProposal,
         usage,
       });
+      embeddedItemIds.push(...curated.embeddedItemIds);
+      embeddedSkillIds.push(...curated.embeddedSkillIds);
     }
 
     await db.query(
@@ -1131,6 +1151,12 @@ export async function completeInstitutionalMemoryJob(
       ],
     );
   });
+  // Event-driven, not polled: schedule an embed for every row this job
+  // created/updated, against the outer (non-transactional) `database`
+  // handle now that the transaction above has committed. See
+  // institutional-memory-embeddings.ts.
+  for (const itemId of embeddedItemIds) scheduleEmbedInstitutionalMemoryItem(database, itemId);
+  for (const skillId of embeddedSkillIds) scheduleEmbedWorkspaceSkillVersion(database, skillId);
 }
 
 export async function failInstitutionalMemoryJob(
@@ -1171,6 +1197,9 @@ type ContextItemRow = {
   confidence: number;
   version: number;
   updated_at: Date;
+  /** Cosine distance to the snapshot's query embedding; present only for a
+   *  row the vector pass found (see `getInstitutionalContext`'s hybrid merge). */
+  distance?: number;
 };
 
 /** Said once above the items; ~70 bytes of the 1 KB turn budget. */
@@ -1223,6 +1252,7 @@ function skillMatches(skill: WorkspaceSkillIndexCandidate, words: ReadonlySet<st
 export async function getInstitutionalContext(
   database: SqlDatabase,
   command: CommandRow,
+  embed: EmbedFn = createDefaultEmbedFn(),
 ): Promise<InstitutionalContextSnapshot> {
   return database.transaction(async (db) => {
     const authority = (
@@ -1275,6 +1305,15 @@ export async function getInstitutionalContext(
     // Only items whose saved keywords appear in the request load. Nothing
     // fills leftover space, so a request that matches nothing loads nothing.
     const words = institutionalMemoryRequestWords(authority.request_text);
+    // Kicked off alongside the DB queries below, not after: the embedding
+    // call is a separate network round trip, so it costs nothing extra as
+    // long as it resolves before the queries that need it. It still carries
+    // its own short deadline (see the constant's doc) — a slow OpenRouter
+    // response degrades this snapshot to keyword-only, never to empty.
+    const embeddingPromise = withDeadline(embed, INSTITUTIONAL_CONTEXT_EMBEDDING_TIMEOUT_MS)(
+      authority.request_text,
+      'query',
+    );
     const candidates = (
       await db.query<ContextItemRow>(
         `SELECT item.id,item.kind,item.canonical_key,item.body,item.keywords,item.confidence,
@@ -1301,29 +1340,87 @@ export async function getInstitutionalContext(
         ],
       )
     ).rows;
-    const ranked = [...candidates].sort((left, right) => {
-      const relevance =
-        keywordMatches(right.keywords, words) - keywordMatches(left.keywords, words);
-      if (relevance) return relevance;
-      const confidence = right.confidence - left.confidence;
-      if (confidence) return confidence;
-      const recency = right.updated_at.getTime() - left.updated_at.getTime();
-      return recency || left.id.localeCompare(right.id);
-    });
-    const skillCandidates = (
+    const keywordSkillCandidates = (
       await authorizedWorkspaceSkillCandidates(db, {
         workspaceId: authority.workspace_id,
         requesterIdentityId: authority.requester_identity_id,
         agentId: command.agent_id,
       })
-    )
-      .filter((skill) => skillMatches(skill, words) > 0)
-      .sort(
-        (left, right) =>
-          skillMatches(right, words) - skillMatches(left, words) ||
-          right.updated_at.getTime() - left.updated_at.getTime() ||
-          left.id.localeCompare(right.id),
+    ).filter((skill) => skillMatches(skill, words) > 0);
+    const queryEmbedding = await embeddingPromise;
+    const embeddingMs = queryEmbedding.ms;
+    const embeddingOutcome = queryEmbedding.outcome;
+    let vectorItemCandidates: ContextItemRow[] = [];
+    let vectorSkillCandidates: WorkspaceSkillVectorCandidate[] = [];
+    if (queryEmbedding.outcome === 'served' && queryEmbedding.vector) {
+      const vec = pgvectorLiteral(queryEmbedding.vector);
+      vectorItemCandidates = (
+        await db.query<ContextItemRow>(
+          `SELECT item.id,item.kind,item.canonical_key,item.body,item.keywords,item.confidence,
+                  item.version,item.updated_at,(item.embedding <=> $4::vector) distance
+           FROM institutional_memory_items item
+           WHERE item.workspace_id=$1 AND item.state='active' AND item.deleted_at IS NULL
+             AND item.canonical_key<>$3 AND item.embedding IS NOT NULL
+             AND (
+               item.kind='workspace_fact' OR
+               (item.kind='human_profile_fact' AND item.subject_identity_id=$2)
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM institutional_memory_item_sources source
+               JOIN messages message ON message.id=source.message_id
+               WHERE source.item_id=item.id AND message.deleted_at IS NOT NULL
+             )
+           ORDER BY item.embedding <=> $4::vector
+           LIMIT $5`,
+          [
+            authority.workspace_id,
+            authority.requester_identity_id,
+            INSTITUTIONAL_STANDING_PREFERENCE_KEY,
+            vec,
+            INSTITUTIONAL_MEMORY_VECTOR_CANDIDATES_MAX,
+          ],
+        )
+      ).rows;
+      vectorSkillCandidates = await vectorWorkspaceSkillCandidates(db, {
+        workspaceId: authority.workspace_id,
+        requesterIdentityId: authority.requester_identity_id,
+        agentId: command.agent_id,
+        queryEmbedding: vec,
+        limit: INSTITUTIONAL_MEMORY_VECTOR_CANDIDATES_MAX,
+      });
+    }
+    // Hybrid merge: the keyword/word-overlap set UNIONs with the nearest
+    // vector matches under the same scope filters. An item present in both
+    // ranks by keyword overlap first (unchanged from before this feature);
+    // an item the vector pass alone found ranks by how close it is.
+    const mergedItems = new Map<string, ContextItemRow>();
+    for (const item of candidates) mergedItems.set(item.id, item);
+    for (const item of vectorItemCandidates) if (!mergedItems.has(item.id)) mergedItems.set(item.id, item);
+    const ranked = [...mergedItems.values()].sort((left, right) => {
+      const relevance =
+        keywordMatches(right.keywords, words) - keywordMatches(left.keywords, words);
+      if (relevance) return relevance;
+      const leftDistance = left.distance ?? Number.POSITIVE_INFINITY;
+      const rightDistance = right.distance ?? Number.POSITIVE_INFINITY;
+      if (leftDistance !== rightDistance) return leftDistance - rightDistance;
+      const confidence = right.confidence - left.confidence;
+      if (confidence) return confidence;
+      const recency = right.updated_at.getTime() - left.updated_at.getTime();
+      return recency || left.id.localeCompare(right.id);
+    });
+    const mergedSkills = new Map<string, WorkspaceSkillIndexCandidate & { distance?: number }>();
+    for (const skill of keywordSkillCandidates) mergedSkills.set(skill.id, skill);
+    for (const skill of vectorSkillCandidates) if (!mergedSkills.has(skill.id)) mergedSkills.set(skill.id, skill);
+    const skillCandidates = [...mergedSkills.values()].sort((left, right) => {
+      const relevance = skillMatches(right, words) - skillMatches(left, words);
+      if (relevance) return relevance;
+      const leftDistance = left.distance ?? Number.POSITIVE_INFINITY;
+      const rightDistance = right.distance ?? Number.POSITIVE_INFINITY;
+      if (leftDistance !== rightDistance) return leftDistance - rightDistance;
+      return (
+        right.updated_at.getTime() - left.updated_at.getTime() || left.id.localeCompare(right.id)
       );
+    });
     // One list under one header, filled greedily inside the hard cap: an item
     // that does not fit is skipped whole, never cut mid-sentence.
     const lines = [INSTITUTIONAL_CONTEXT_HEADER];
@@ -1354,7 +1451,7 @@ export async function getInstitutionalContext(
     const text = lines.length > 1 ? lines.join('\n') : '';
     const wrapperBytes = text ? Buffer.byteLength(INSTITUTIONAL_CONTEXT_HEADER, 'utf8') : 0;
     const totalBytes = Buffer.byteLength(text, 'utf8');
-    const snapshotRevision = candidates.reduce(
+    const snapshotRevision = ranked.reduce(
       (latest, item) => Math.max(latest, item.updated_at.getTime()),
       0,
     );
@@ -1391,7 +1488,7 @@ export async function getInstitutionalContext(
         wrapperBytes,
         totalBytes,
         Math.ceil(totalBytes / 4),
-        candidates.length + skillCandidates.length,
+        ranked.length + skillCandidates.length,
         JSON.stringify(omitted),
       ],
     );
@@ -1408,6 +1505,8 @@ export async function getInstitutionalContext(
       totalBytes,
       omitted,
       ...(standingPreference ? { standingPreference } : {}),
+      embeddingMs,
+      embeddingOutcome,
     };
   });
 }
@@ -1593,14 +1692,24 @@ export async function proposeInstitutionalMemory(
     });
     return applied;
   });
+  // Event-driven, not polled: this save schedules its OWN row's embed against
+  // the outer (non-transactional) `database` handle, never blocking or
+  // failing the save above. See institutional-memory-embeddings.ts.
+  scheduleEmbedInstitutionalMemoryItem(database, proposal.itemId);
   return proposal;
 }
 
 /** Search the full active item set; snapshot recency and byte limits do not apply. */
+/** search_memory's own embedding call gets a turn-friendly bound — a tool
+ *  call, not the passive snapshot, so it can afford more than the snapshot's
+ *  slice, but must still never hang the turn on a stalled network call. */
+export const SEARCH_MEMORY_EMBEDDING_TIMEOUT_MS = 3_000;
+
 export async function searchInstitutionalMemory(
   database: SqlDatabase,
   command: CommandRow,
   input: SearchInstitutionalMemoryInput,
+  embed: EmbedFn = createDefaultEmbedFn(),
 ): Promise<SearchInstitutionalMemoryResult> {
   const query = typeof input.query === 'string' ? input.query.trim() : '';
   if (
@@ -1644,16 +1753,18 @@ export async function searchInstitutionalMemory(
     // finding non-Latin facts the tokenizer cannot see into.
     const words = institutionalMemoryRequestWords(query);
     const literalQuery = query.toLocaleLowerCase('en-US');
+    type CandidateRow = {
+      id: string;
+      kind: 'workspace_fact' | 'human_profile_fact';
+      canonical_key: string;
+      body: string;
+      keywords: string[];
+      version: number;
+      updated_at: Date;
+      distance?: number;
+    };
     const candidates = (
-      await db.query<{
-        id: string;
-        kind: 'workspace_fact' | 'human_profile_fact';
-        canonical_key: string;
-        body: string;
-        keywords: string[];
-        version: number;
-        updated_at: Date;
-      }>(
+      await db.query<CandidateRow>(
         `SELECT item.id,item.kind,item.canonical_key,item.body,item.keywords,item.version,
                 item.updated_at
        FROM institutional_memory_items item
@@ -1680,14 +1791,69 @@ export async function searchInstitutionalMemory(
         ],
       )
     ).rows;
-    const ranked = [...candidates].sort((left, right) => {
+    // Hybrid: the query's meaning UNIONs with the word-overlap/literal match
+    // above under the SAME scope filters. A query sharing no words with a
+    // stored fact (e.g. "where does my wife live" against a fact keyworded
+    // "daeun,tokyo,delivery,address") still finds it here.
+    const queryEmbedding = await withDeadline(embed, SEARCH_MEMORY_EMBEDDING_TIMEOUT_MS)(
+      query,
+      'query',
+    );
+    const vectorCandidates =
+      queryEmbedding.outcome === 'served' && queryEmbedding.vector
+        ? (
+            await db.query<CandidateRow>(
+              `SELECT item.id,item.kind,item.canonical_key,item.body,item.keywords,item.version,
+                      item.updated_at,(item.embedding <=> $3::vector) distance
+             FROM institutional_memory_items item
+             WHERE item.workspace_id=$1 AND item.state='active' AND item.deleted_at IS NULL
+               AND (item.kind='workspace_fact' OR
+                    (item.kind='human_profile_fact' AND item.subject_identity_id=$2))
+               AND item.embedding IS NOT NULL
+               AND NOT EXISTS (
+                 SELECT 1 FROM institutional_memory_item_sources source
+                 JOIN messages message ON message.id=source.message_id
+                 WHERE source.item_id=item.id AND message.deleted_at IS NOT NULL
+               )
+             ORDER BY item.embedding <=> $3::vector
+             LIMIT $4`,
+              [
+                authority.workspace_id,
+                authority.requester_identity_id,
+                pgvectorLiteral(queryEmbedding.vector),
+                INSTITUTIONAL_MEMORY_VECTOR_CANDIDATES_MAX,
+              ],
+            )
+          ).rows
+        : [];
+    const merged = new Map<string, CandidateRow>();
+    for (const row of candidates) merged.set(row.id, row);
+    for (const row of vectorCandidates) if (!merged.has(row.id)) merged.set(row.id, row);
+    const ranked = [...merged.values()].sort((left, right) => {
       const relevance =
         searchRelevance(right, words, literalQuery) - searchRelevance(left, words, literalQuery);
       if (relevance) return relevance;
+      // Neither side has keyword/literal overlap: a nearer vector match (a
+      // lower cosine distance) wins. A side with no distance at all (found
+      // only by the keyword path, or the vector pass never ran) sorts last
+      // of the two.
+      const leftDistance = left.distance ?? Number.POSITIVE_INFINITY;
+      const rightDistance = right.distance ?? Number.POSITIVE_INFINITY;
+      if (leftDistance !== rightDistance) return leftDistance - rightDistance;
       const recency = right.updated_at.getTime() - left.updated_at.getTime();
       return recency || left.id.localeCompare(right.id);
     });
     const selected = ranked.slice(0, limit);
+    // The serve row this turn's snapshot already wrote (if any) carries how
+    // many times search_memory was called and how many came back empty, for
+    // the daemon-side turn trace to read back after the turn settles.
+    await db.query(
+      `UPDATE institutional_context_serves
+       SET search_memory_calls=search_memory_calls+1,
+           search_memory_misses=search_memory_misses+CASE WHEN $4=0 THEN 1 ELSE 0 END
+       WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+      [command.room_id, command.turn_request_id, command.agent_id, selected.length],
+    );
     return {
       quotedContext: true,
       results: selected.map((row) => ({
@@ -1699,6 +1865,35 @@ export async function searchInstitutionalMemory(
       })),
     };
   });
+}
+
+/**
+ * This turn's search_memory call/miss counters, read back from the serve row
+ * `getInstitutionalContext` (or `searchInstitutionalMemory` itself) already
+ * wrote — for the daemon's own turn trace, after the turn has settled and no
+ * active command remains to authorize through. Scoped to the caller's own
+ * agent identity; a mismatched or turn-less caller reads zero, never throws.
+ */
+export async function getInstitutionalMemoryTurnStats(
+  database: SqlDatabase,
+  authenticatedAgentId: string,
+  input: { roomId: string; agentId: string; requestId?: string },
+): Promise<{ searchCalls: number; searchMisses: number }> {
+  if (authenticatedAgentId !== input.agentId || !input.requestId) {
+    return { searchCalls: 0, searchMisses: 0 };
+  }
+  const row = (
+    await database.query<{ search_memory_calls: number; search_memory_misses: number }>(
+      `SELECT search_memory_calls,search_memory_misses FROM institutional_context_serves
+       WHERE room_id=$1 AND agent_id=$2 AND request_id=$3
+       ORDER BY created_at DESC LIMIT 1`,
+      [input.roomId, input.agentId, input.requestId],
+    )
+  ).rows[0];
+  return {
+    searchCalls: row?.search_memory_calls ?? 0,
+    searchMisses: row?.search_memory_misses ?? 0,
+  };
 }
 
 /** Blank and archive every derivative before a deleted source can be served again. */

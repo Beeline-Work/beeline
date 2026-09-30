@@ -359,6 +359,7 @@ describe('Room turn phase trace', () => {
         'postAgentActivity',
         'getAgentConfiguration',
         'getInstitutionalContext',
+        'getInstitutionalMemoryTurnStats',
         'listAgentGrants',
         'getRoomRepositoryState',
         'getRoomConversation',

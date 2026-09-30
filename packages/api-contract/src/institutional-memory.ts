@@ -139,6 +139,24 @@ export const INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX = 200;
  * in history before the row bound above could apply.
  */
 export const INSTITUTIONAL_HISTORY_MAX_AGE_DAYS = 180;
+/**
+ * Meaning-based recall for saved items, workspace skills and the per-turn
+ * snapshot. voyage-4-lite (OpenRouter, paid — never a `:free` model, whose
+ * inputs a provider may train on) supports Matryoshka embeddings at 2048,
+ * 1024, 512 and 256 dimensions; 1024 is the balance of recall quality against
+ * pgvector index size this codebase uses everywhere an embedding is stored.
+ * The server reads its OpenRouter key from `OPENROUTER_EMBEDDING_API_KEY`
+ * (never printed, never committed); see `institutional-memory-embeddings.ts`.
+ */
+export const INSTITUTIONAL_MEMORY_EMBEDDING_MODEL = 'voyageai/voyage-4-lite';
+export const INSTITUTIONAL_MEMORY_EMBEDDING_DIMENSIONS = 1024;
+export const INSTITUTIONAL_MEMORY_EMBEDDING_ENV_VAR = 'OPENROUTER_EMBEDDING_API_KEY';
+/** Nearest-neighbor candidates pulled per hybrid search, before the result limit applies. */
+export const INSTITUTIONAL_MEMORY_VECTOR_CANDIDATES_MAX = 20;
+/** A snapshot's embedding call gets a slice of the whole 200ms context-fetch
+ *  budget; the rest stays for the DB queries the snapshot already runs. A
+ *  miss here degrades to keyword-only candidates, never to an empty snapshot. */
+export const INSTITUTIONAL_CONTEXT_EMBEDDING_TIMEOUT_MS = 100;
 export const WORKSPACE_SKILL_DESCRIPTION_MAX_LENGTH = 60;
 export const WORKSPACE_SKILL_MARKDOWN_MAX_BYTES = 32 * 1_024;
 export const WORKSPACE_SKILL_SLUG_MAX_LENGTH = 64;
@@ -329,6 +347,10 @@ export interface InstitutionalContextSnapshot {
   readonly omitted: Readonly<Record<string, number>>;
   /** The requester's standing preference text, outside the memory budget. */
   readonly standingPreference?: string;
+  /** This snapshot's own embedding round trip, for the turn trace. Absent
+   *  when the embedding step never ran (memory disabled, or no key configured). */
+  readonly embeddingMs?: number;
+  readonly embeddingOutcome?: 'served' | 'timed-out' | 'disabled' | 'error';
 }
 
 export interface ProposeInstitutionalMemoryInput {
@@ -365,6 +387,15 @@ export interface SearchInstitutionalMemoryInput {
   readonly generationId?: string;
   readonly query: string;
   readonly limit?: number;
+}
+
+/** How many times this turn called search_memory, and how many of those
+ *  calls came back with nothing — read back by the body's turn trace after
+ *  the turn settles (`institutional_context_serves`' own counters; see
+ *  `searchInstitutionalMemory` and `getInstitutionalMemoryTurnStats`). */
+export interface InstitutionalMemoryTurnStats {
+  readonly searchCalls: number;
+  readonly searchMisses: number;
 }
 
 export interface SearchInstitutionalMemoryResult {

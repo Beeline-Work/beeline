@@ -54,7 +54,8 @@ describe('AttachmentPickerSheet', () => {
     expect(source).toContain('<HullActionSheetCancel');
     expect(source).toContain('label="Photos"');
     expect(source).toContain('metadata="Choose up to 10"');
-    expect(source).toContain('label="Send as file"');
+    expect(source).toContain('label="Files"');
+    expect(source).not.toContain('Send as file');
     expect(source).toContain('metadata="Preserve original"');
   });
 
@@ -91,11 +92,11 @@ describe('AttachmentPickerSheet', () => {
     expect(chatSource).toContain('selectionLimit: remaining');
     expect(chatSource).toContain('pickedPhotoAttachments(result.assets)');
     expect(chatSource).toContain('attachments={pendingAttachments.map((attachment) =>');
-    expect(chatSource).toContain('uploadChatAttachments(');
+    expect(chatSource).toContain('attachmentUploader.uploadAll(');
     expect(composerSource).toContain('testID={`pending-chat-attachment-remove-${index}`}');
   });
 
-  it('only offers Paste Image when the screen supplies a clipboard handler', () => {
+  it('only offers Paste from clipboard when the screen supplies a clipboard handler', () => {
     let renderer: ReturnType<typeof create>;
     act(() => {
       renderer = create(
@@ -124,7 +125,7 @@ describe('AttachmentPickerSheet', () => {
     const rows = renderer!.root.findAllByType('HullActionSheetRow' as any);
     expect(rows).toHaveLength(3);
     expect(rows[2].props).toMatchObject({
-      label: 'Paste Image',
+      label: 'Paste from clipboard',
       testID: 'attachment-picker-paste',
     });
   });

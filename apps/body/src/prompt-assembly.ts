@@ -139,13 +139,12 @@ export const RESEARCH_CORNER_HOLD =
 
 /** Shared verbatim between the upgrade_corner_to_code tool description
  *  (`read-only-mcp.ts`) and this corner's own no-code prompt clause below, so
- *  the two surfaces can never say something different. A clear ask to change
- *  the code - a bug report, a requested change, a described problem - is
- *  enough; no specific phrase is required. What still disqualifies a call is
- *  the source of the intent, not its wording: an earlier message (not the one
- *  being answered) or the agent's own initiative. */
+ *  the two surfaces can never say something different. The agent decides when
+ *  the work needs repository changes; nobody has to ask for the upgrade. The
+ *  server still requires the turn to answer a human message in this corner,
+ *  because that message is the approval the upgraded corner's brief quotes. */
 export const UPGRADE_INTENT_RULE =
-  'Call this only while answering a human message, in this same corner, that clearly conveys intent to change the code — a bug report, a requested change, or a problem described for you to fix, not a specific required phrase. Never call it from an earlier message, or your own initiative.';
+  "Call this on your own judgment when the work in this corner needs repository changes; nobody has to ask for the upgrade. Call it while answering a human message in this corner, because that message becomes the code corner's brief.";
 
 /** Shared verbatim into the search_memory tool description (`read-only-mcp.ts`)
  *  so it is the one place this rule is stated. Meaning-based matching finds a

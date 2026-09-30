@@ -21,11 +21,11 @@ vi.mock('expo-file-system/legacy', () => ({
 import { canonicalizeJpeg } from './avatar-png';
 import {
   attachmentOpenUrl,
+  createChatAttachmentUploader,
   formatAttachmentSize,
   pastedImageAttachment,
   pickedPhotoAttachments,
   uploadChatAttachment,
-  uploadChatAttachments,
 } from './chat-attachment';
 import { RAW_PHOTO_FILE_GUIDANCE, RawPhotoDecodeError } from './publish-failure';
 
@@ -249,7 +249,7 @@ describe('chat attachment display metadata', () => {
         type: 'text/plain',
       });
 
-    const uploaded = await uploadChatAttachments({ uploadMedia } as never, [
+    const uploaded = await createChatAttachmentUploader().uploadAll({ uploadMedia } as never, [
       {
         uri: 'file:///first',
         name: 'first.txt',
@@ -271,6 +271,64 @@ describe('chat attachment display metadata', () => {
       'file:///second',
     ]);
     expect(uploaded.map(({ name }) => name)).toEqual(['first.txt', 'second.txt']);
+  });
+
+  it('starts uploading when an attachment is staged, and send reuses that upload', async () => {
+    mocks.readFileBytes.mockResolvedValue(new Uint8Array([1]));
+    let finishUpload!: () => void;
+    const uploadMedia = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          finishUpload = () =>
+            resolve({ url: 'https://relay.example/media/a.txt', sha256: 'a', size: 1 });
+        }),
+    );
+    const client = { uploadMedia } as never;
+    const staged = {
+      uri: 'file:///a',
+      name: 'a.txt',
+      mimeType: 'text/plain',
+      size: 1,
+      source: 'file' as const,
+    };
+    const uploader = createChatAttachmentUploader();
+
+    uploader.start(client, [staged]);
+    await vi.waitFor(() => expect(uploadMedia).toHaveBeenCalledTimes(1));
+
+    const sent = uploader.uploadAll(client, [staged]);
+    finishUpload();
+    await expect(sent).resolves.toEqual([expect.objectContaining({ name: 'a.txt' })]);
+    expect(uploadMedia).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a failed staged upload on send and skips one removed before it started', async () => {
+    mocks.readFileBytes.mockResolvedValue(new Uint8Array([1]));
+    const uploadMedia = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue({ url: 'https://relay.example/media/a.txt', sha256: 'a', size: 1 });
+    const client = { uploadMedia } as never;
+    const file = (name: string) => ({
+      uri: `file:///${name}`,
+      name,
+      mimeType: 'text/plain',
+      size: 1,
+      source: 'file' as const,
+    });
+    const kept = file('kept.txt');
+    const removed = file('removed.txt');
+    const uploader = createChatAttachmentUploader();
+
+    uploader.start(client, [kept, removed]);
+    uploader.retain([kept]);
+    await vi.waitFor(() => expect(uploadMedia).toHaveBeenCalledTimes(1));
+
+    await expect(uploader.uploadAll(client, [kept])).resolves.toEqual([
+      expect.objectContaining({ name: 'kept.txt' }),
+    ]);
+    expect(uploadMedia).toHaveBeenCalledTimes(2);
+    expect(mocks.readFileBytes.mock.calls.map(([uri]) => uri)).not.toContain('file:///removed.txt');
   });
 
   it('accepts a real phone JPEG whose EOI marker is followed by trailing bytes', () => {
@@ -553,7 +611,7 @@ describe('chat attachment display metadata', () => {
     expect(uploaded).toMatchObject({ name: 'photo.jpg', mimeType: 'image/jpeg' });
   });
 
-  it('shows Send as file guidance when a RAW photo cannot decode', async () => {
+  it('shows Files guidance when a RAW photo cannot decode', async () => {
     const decoderFailure = new Error('unsupported RAW variant');
     mocks.manipulateAsync.mockRejectedValueOnce(decoderFailure);
     const uploadMedia = vi.fn();

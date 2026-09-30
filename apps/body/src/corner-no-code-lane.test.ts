@@ -496,10 +496,11 @@ it('offers the one-way code upgrade to the session that actually mounts the tool
 
   const prompt = String(sessionInput?.systemPrompt);
   expect(prompt).toContain('upgrade_corner_to_code');
-  // A clear ask to change the code is enough - a bug report is named as
-  // sufficient, and the old fixed-phrase requirement is gone.
+  // The agent upgrades on its own judgment; no human has to ask for it, and
+  // the old fixed-phrase requirement is gone.
   expect(prompt).toContain(UPGRADE_INTENT_RULE);
-  expect(prompt).toContain('a bug report');
+  expect(prompt).toContain('nobody has to ask for the upgrade');
+  expect(prompt).not.toContain('your own initiative');
   expect(prompt).not.toContain('explicitly asks for code edits');
   const agentEnvironment = new Map(
     sessionInput?.mcpServers

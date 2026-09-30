@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useURL } from 'expo-linking';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -35,6 +35,7 @@ const inviteIsGone = (reason: unknown) =>
   reason instanceof RoomViewHttpError && reason.status === 404;
 
 export default function CommunityInviteJoin() {
+  const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const { token: routeToken } = useLocalSearchParams<{ token?: string | string[] }>();
   const incomingUrl = useURL();
@@ -132,7 +133,10 @@ export default function CommunityInviteJoin() {
 
   return (
     <ScrollView
-      contentContainerStyle={[styles.scroll, { paddingTop: insets.top + 48 }]}
+      contentContainerStyle={[
+        styles.scroll,
+        { paddingTop: insets.top + 48, paddingBottom: theme.buzz.space.xxl + insets.bottom },
+      ]}
       style={styles.container}
       testID="invite-join"
     >

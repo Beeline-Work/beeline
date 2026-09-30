@@ -1,6 +1,7 @@
 import React from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { CornerAppBlock, CornerAppView } from '@beeline/api-contract/phone';
 import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
@@ -19,6 +20,7 @@ export function CornerAppScreen({
   unavailableTitle?: string;
   unavailableMessage?: string;
 }) {
+  const insets = useSafeAreaInsets();
   return (
     <View style={styles.screen} testID="corner-app-screen">
       <View style={styles.header}>
@@ -42,7 +44,7 @@ export function CornerAppScreen({
           ) : null}
         </View>
       </View>
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: 56 + insets.bottom }]} testID="corner-app-scroll">
         {!app ? (
           <Text style={styles.empty}>
             {unavailableMessage ?? 'This app is not available in the corner.'}

@@ -72,8 +72,9 @@ vi.mock('@/components/buzz/PageHeader', async () => {
   };
 });
 
+const safeArea = vi.hoisted(() => ({ bottom: 0 }));
 vi.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
+  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: safeArea.bottom, left: 0 }),
 }));
 
 vi.mock('@/components/buzz/ChevronGlyph', async () => {
@@ -153,6 +154,18 @@ describe('Wallet screens (mock §Screens, pass 4)', () => {
     });
     return renderer;
   }
+
+  it('lets its last item scroll clear of the system navigation bar', async () => {
+    safeArea.bottom = 48;
+    try {
+      const renderer = await render(WalletScreen);
+      const scroll = renderer.root.findByProps({ testID: 'wallet-scroll' });
+      const contentStyle = Object.assign({}, ...[scroll.props.contentContainerStyle].flat(Infinity as 1));
+      expect(contentStyle.paddingBottom).toBe(48 + 48);
+    } finally {
+      safeArea.bottom = 0;
+    }
+  });
 
   it('carries the Wallet heading the other Workbench screens draw', async () => {
     const renderer = await render(WalletScreen);

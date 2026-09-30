@@ -1446,7 +1446,7 @@ export default function BuzzMembers({
         )}
         <KeyboardAwareScrollView
           bottomOffset={16}
-          contentContainerStyle={styles.content}
+          contentContainerStyle={[styles.content, { paddingBottom: theme.buzz.space.xxl + insets.bottom }]}
           keyboardShouldPersistTaps="handled"
         >
           <TextInput

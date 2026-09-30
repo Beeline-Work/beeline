@@ -49,14 +49,17 @@ vi.mock('react-native-unistyles', () => ({
   StyleSheet: {
     create: (factory: any) => factory({ buzz: new Proxy({}, { get: () => '#000' }) }),
   },
-  useUnistyles: () => ({ theme: { buzz: { dim: '#000' } } }),
+  useUnistyles: () => ({ theme: { buzz: { dim: '#000', space: { xxl: 48 } } } }),
 }));
 vi.mock('expo-router', () => ({
   router: { back: vi.fn(), push: vi.fn(), replace: controls.replace },
   useLocalSearchParams: () => ({ token: TOKEN }),
 }));
 vi.mock('expo-linking', () => ({ useURL: () => null }));
-vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
+const safeArea = vi.hoisted(() => ({ bottom: 0 }));
+vi.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 0, bottom: safeArea.bottom }),
+}));
 vi.mock('@/auth/buzz-identity-storage', () => ({
   getEffectiveRelayUrl: vi.fn(async () => 'https://server.example'),
   loadBuzzIdentity: controls.identity,
@@ -169,6 +172,20 @@ describe('CommunityInviteJoin', () => {
       roomId: 'general-1',
     });
     controls.saveActiveCommunityId.mockResolvedValue(undefined);
+  });
+
+  it('lets its last item scroll clear of the system navigation bar', async () => {
+    safeArea.bottom = 48;
+    try {
+      const renderer = await render();
+      const scroll = renderer.root.findAll(
+        (node: any) => node.props?.testID === 'invite-join' && typeof node.type === 'string',
+      )[0];
+      const contentStyle = Object.assign({}, ...[scroll.props.contentContainerStyle].flat(Infinity as 1));
+      expect(contentStyle.paddingBottom).toBe(48 + 48);
+    } finally {
+      safeArea.bottom = 0;
+    }
   });
 
   it('names the Workspace and who invited you, then joins into its first Room', async () => {

@@ -59,7 +59,7 @@ export default function AppDetailScreen() {
 
   return <View style={[styles.screen, { paddingTop: insets.top }]} testID="app-detail-screen">
     <AppPageHeader eyebrow="Workbench" title={app?.name ?? 'App'} backLabel="Back to Workbench" onBack={() => router.back()} />
-    <ScrollView contentContainerStyle={styles.content}>
+    <ScrollView contentContainerStyle={[styles.content, { paddingBottom: 24 + insets.bottom }]} testID="app-detail-scroll">
       {app ? <>
         <View style={styles.identity}>
           <AppMark name={app.name} domain={app.domain} size={48} />

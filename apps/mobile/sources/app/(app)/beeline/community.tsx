@@ -109,7 +109,10 @@ export default function WorkspaceChoice() {
       viewerFace={workspaceList?.viewer.face}
     >
       <ScrollView
-        contentContainerStyle={[styles.scroll, { paddingTop: insets.top + theme.buzz.space.lg }]}
+        contentContainerStyle={[
+          styles.scroll,
+          { paddingTop: insets.top + theme.buzz.space.lg, paddingBottom: theme.buzz.space.xxl + insets.bottom },
+        ]}
         keyboardShouldPersistTaps="handled"
         style={styles.container}
         testID="workspace-choice"

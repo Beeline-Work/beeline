@@ -679,6 +679,43 @@ describe('folded historical transcripts', () => {
     ).toBeTypeOf('function');
   });
 
+  it('shows one group when only hidden rows separate two request ids', () => {
+    const call = (id: string, requestId: string) => ({
+      ...row(id, [
+        {
+          kind: 'tool',
+          id,
+          title: 'Read file',
+          toolKind: 'read',
+          input: `${id}.ts`,
+          status: 'completed',
+        },
+      ]),
+      requestId,
+    });
+    const folded = foldSettledActivityRuns([
+      call('tool-1', 'turn-1'),
+      {
+        ...row('thought-2', [{ kind: 'thinking', title: 'Thinking', text: 'Checking.' }]),
+        requestId: 'turn-2',
+      },
+      ...[3, 4, 5, 6, 7, 8].map((index) => call(`tool-${index}`, 'turn-2')),
+    ]);
+
+    const renderer = render(
+      <>
+        {folded.map((message) => (
+          <ActivityTimeline key={message.id} items={message.activity ?? []} />
+        ))}
+      </>,
+    );
+    expect(
+      hostNodes(renderer, /^tool-run-group-/).map(
+        (node: { props: { accessibilityLabel?: string } }) => node.props.accessibilityLabel,
+      ),
+    ).toEqual(['7 steps, expandable']);
+  });
+
   it('drops thinking-only rows while retaining summary tool lines', () => {
     const [group, ...rest] = foldSettledActivityRuns([
       row('note-1', [{ kind: 'summary', title: 'Summary', rollup: { read: 1 } }]),

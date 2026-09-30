@@ -3,7 +3,13 @@ import {
   reconcileConfiguredCornerReviewers,
   reconcileCornerMergeBlockers,
 } from './agent-command.js';
-import { INSTITUTIONAL_HISTORY_MAX_AGE_DAYS } from '@beeline/api-contract/daemon';
+import {
+  INSTITUTIONAL_HISTORY_MAX_AGE_DAYS,
+  INSTITUTIONAL_MEMORY_KEYWORD_PATTERN,
+  INSTITUTIONAL_MEMORY_KEYWORDS_MAX,
+  INSTITUTIONAL_MEMORY_STOPWORDS,
+  INSTITUTIONAL_RETIRED_STANDING_KEY,
+} from '@beeline/api-contract/daemon';
 import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { uniqueAgentHandle } from '@beeline/api-contract/phone';
@@ -2506,6 +2512,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   // owned step retires it (welcome-retirement.ts, run from index.ts).
   await dataStep('institutional rollout', () => backfillInstitutionalMemoryRollout(database));
   await dataStep('institutional memory lifecycle', async () => {
+    await retireStandingPreferences(database);
     await database.query(`WITH RECURSIVE explicit_chain AS (
         SELECT id FROM institutional_memory_items WHERE created_by_command_id IS NOT NULL
         UNION
@@ -2564,6 +2571,56 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   const withdrawn = await dataStep('superseded grant asks', () =>
     withdrawSupersededGrantAsks(database));
   if (withdrawn) console.log(`withdrawSupersededGrantAsks: withdrew ${withdrawn} pending ask(s)`);
+}
+
+/** The first distinct words of a body that can serve as its keywords. */
+export function keywordsFromBody(body: string): string[] {
+  const words = body.toLocaleLowerCase('en-US').split(/[^a-z0-9_]+/);
+  const keywords = [...new Set(words)].filter(
+    (word) =>
+      INSTITUTIONAL_MEMORY_KEYWORD_PATTERN.test(word) && !INSTITUTIONAL_MEMORY_STOPWORDS.has(word),
+  );
+  return keywords.length ? keywords.slice(0, INSTITUTIONAL_MEMORY_KEYWORDS_MAX) : ['preference'];
+}
+
+/**
+ * The standing preference used to go into every prompt for its person. It is
+ * gone, so each old row becomes an ordinary explicit profile fact under an
+ * ordinary key, keeping its version chain, and loads only when a request
+ * matches its keywords or meaning. The embed cycle fills its embedding.
+ * Idempotent: an older server image in a rolling deploy may still write a
+ * `standing` row, and the next boot converts it.
+ */
+export async function retireStandingPreferences(database: SqlDatabase): Promise<number> {
+  const renamed = await database.query(
+    `UPDATE institutional_memory_items item
+     SET canonical_key='standing-preference' || CASE WHEN EXISTS (
+           SELECT 1 FROM institutional_memory_items taken
+           WHERE taken.workspace_id=item.workspace_id AND taken.kind=item.kind
+             AND taken.subject_identity_id IS NOT DISTINCT FROM item.subject_identity_id
+             AND taken.audience_kind=item.audience_kind
+             AND taken.canonical_key='standing-preference')
+         THEN '-' || left(item.id::text,8)
+         ELSE '' END,
+         explicit_save=true
+     WHERE item.canonical_key=$1`,
+    [INSTITUTIONAL_RETIRED_STANDING_KEY],
+  );
+  const empty = await database.query<{ id: string; body: string }>(
+    `SELECT id,body FROM institutional_memory_items
+     WHERE canonical_key LIKE 'standing-preference%' AND keywords='{}'
+       AND state='active' AND deleted_at IS NULL`,
+  );
+  for (const row of empty.rows) {
+    await database.query(`UPDATE institutional_memory_items SET keywords=$2 WHERE id=$1`, [
+      row.id,
+      keywordsFromBody(row.body),
+    ]);
+  }
+  if (renamed.rowCount) {
+    console.log(`retireStandingPreferences: converted ${renamed.rowCount} standing row(s)`);
+  }
+  return renamed.rowCount ?? 0;
 }
 
 export const MESSAGE_SEARCH_BACKFILL_BATCH = 2_000;

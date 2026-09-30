@@ -1479,14 +1479,6 @@ export class MonolithCornerTurnLoop {
                 const assembled = assembleTurnPrompt({
                   surface: this.sessionSurface,
                   sessionPrefix: this.turnSessionPrefix,
-                  ...(institutionalContext.standingPreference && requestedBy?.name
-                    ? {
-                        standingPreference: {
-                          requesterName: requestedBy.name,
-                          text: institutionalContext.standingPreference,
-                        },
-                      }
-                    : {}),
                   objective: this.options.objective,
                   ...(restored.brief
                     ? {

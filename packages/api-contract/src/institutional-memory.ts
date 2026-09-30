@@ -1,4 +1,6 @@
 /** Institutional-memory extraction, storage, and bounded prompt contract. */
+import type { DaemonAttachment } from './daemon-operations.js';
+
 export const INSTITUTIONAL_MEMORY_PROPOSAL_VERSION = 1 as const;
 /**
  * A saved item is one short sentence. Rows written before this cap may be
@@ -103,19 +105,18 @@ export function institutionalMemoryRequestWords(
   );
 }
 /**
- * One person's every-turn preferences, stored once as their profile item under
- * this reserved key and appended to whichever agent answers them. Only that
- * person or a Workspace owner/admin confirms it; no extractor writes it.
+ * The retired standing-preference key. Startup migration renames every row
+ * that used it to an ordinary profile fact; the key stays reserved so an older
+ * server image in a rolling deploy never serves a new row as every-turn text.
  */
-export const INSTITUTIONAL_STANDING_PREFERENCE_KEY = 'standing';
-export const INSTITUTIONAL_STANDING_PREFERENCE_MAX_BYTES = 300;
+export const INSTITUTIONAL_RETIRED_STANDING_KEY = 'standing';
 export const INSTITUTIONAL_MEMORY_CANONICAL_KEY_MAX_LENGTH = 160;
 export const INSTITUTIONAL_MEMORY_RATIONALE_MAX_LENGTH = 500;
 export const INSTITUTIONAL_MEMORY_SOURCE_MESSAGE_MAX = 16;
 export const INSTITUTIONAL_MEMORY_EXTRACTOR_VERSION_MAX_LENGTH = 120;
 export const INSTITUTIONAL_MEMORY_MODEL_MAX_LENGTH = 160;
 export const INSTITUTIONAL_MEMORY_JOB_ERROR_MAX_LENGTH = 1_000;
-/** Everything memory adds to one turn, header included. Standing preferences are separate. */
+/** Everything memory adds to one turn, header included. */
 export const INSTITUTIONAL_CONTEXT_HARD_MAX_BYTES = 1_000;
 export const INSTITUTIONAL_HISTORY_QUERY_MAX_BYTES = 500;
 export const INSTITUTIONAL_MEMORY_SEARCH_QUERY_MAX_BYTES = 500;
@@ -321,6 +322,12 @@ export interface InstitutionalMemoryShadowMessage {
   readonly authorId: string;
   readonly createdAt: number;
   readonly text: string;
+  /**
+   * Files and pictures on this message, `expired` once their bytes are past
+   * the media TTL. Save-time review reads them before the upload is deleted
+   * and may keep what they say as a fact; the bytes themselves are not kept.
+   */
+  readonly attachments?: readonly DaemonAttachment[];
 }
 
 export interface InstitutionalMemoryShadowJob {
@@ -370,8 +377,6 @@ export interface InstitutionalContextSnapshot {
   readonly itemIds: readonly string[];
   readonly totalBytes: number;
   readonly omitted: Readonly<Record<string, number>>;
-  /** The requester's standing preference text, outside the memory budget. */
-  readonly standingPreference?: string;
   /** This snapshot's own embedding round trip, for the turn trace. Absent
    *  when memory is off for the Workspace; `disabled` when no key is configured. */
   readonly embeddingMs?: number;
@@ -391,13 +396,6 @@ export interface ProposeInstitutionalMemoryInput {
   readonly correction: boolean;
   readonly confidence: number;
   readonly cas: InstitutionalMemoryProposalCas;
-  /**
-   * Saves `body` as the requester's standing preference instead of a keyword
-   * fact. It must name an answered ask_choice card from this agent in this
-   * Room whose prompt quotes `body` and whose chosen option starts with
-   * "Save", picked by the requester or a Workspace owner/admin.
-   */
-  readonly standingChoiceId?: string;
 }
 
 export interface ProposeInstitutionalMemoryResult {
@@ -706,8 +704,8 @@ export function parseInstitutionalMemoryProposal(value: unknown): InstitutionalM
     'institutional memory canonical key',
     INSTITUTIONAL_MEMORY_CANONICAL_KEY_MAX_LENGTH,
   );
-  if (canonicalKey === INSTITUTIONAL_STANDING_PREFERENCE_KEY) {
-    throw new Error('the standing preference key is reserved for owner-confirmed preferences');
+  if (canonicalKey === INSTITUTIONAL_RETIRED_STANDING_KEY) {
+    throw new Error('the canonical key "standing" is retired');
   }
   const rationale = boundedText(
     classification.rationale,

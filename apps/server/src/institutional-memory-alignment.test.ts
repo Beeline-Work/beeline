@@ -151,25 +151,6 @@ it('refuses a supersede that changes the kind of the offered fact', async () => 
     .toMatchObject({state:'active',body:'Human lives in Busan.'});
 });
 
-it('never offers or replaces the standing preference', async () => {
-  const standing='30000000-0000-4000-8000-00000000a11b';
-  await database.query(`INSERT INTO institutional_memory_items
-    (id,workspace_id,kind,subject_identity_id,canonical_key,body,source_room_id,source_message_id,
-     audience_kind,confidence,version,embedding,explicit_save)
-    VALUES($1,$2,'human_profile_fact',$3,'standing','Reply in short sentences.',$4,$5,
-      'human_profile',1,1,$6::vector,true)`,
-    [standing,WORKSPACE,HUMAN,ROOM,SOURCE,pgvectorLiteral(vector)]);
-  const job=await claim('institutional-shadow-v2');
-  expect(job.context?.offeredItemIds).not.toContain(standing);
-  await database.query(`UPDATE institutional_memory_jobs
-    SET context=jsonb_set(context,'{offeredItemIds}',(context->'offeredItemIds')||to_jsonb($2::text))
-    WHERE id=$1`,[job.id,standing]);
-  const forged={...proposal('supersede',standing),memoryKind:'human_profile_fact',
-    subjectIdentityId:HUMAN,audience:'human_profile',canonicalKey:'human.style',
-    classification:{subjectIsRequester:true,rationale:'The turn corrected the style.'}};
-  await expect(complete(job,forged)).rejects.toThrow('CAS conflict');
-});
-
 it('gives a v2 worker the recent payload when embedding is unavailable', async () => {
   delete process.env.OPENROUTER_EMBEDDING_API_KEY;
   const job=await claim('institutional-shadow-v2');

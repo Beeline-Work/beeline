@@ -1,8 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
   INSTITUTIONAL_CONTEXT_HARD_MAX_BYTES,
-  INSTITUTIONAL_STANDING_PREFERENCE_KEY,
-  INSTITUTIONAL_STANDING_PREFERENCE_MAX_BYTES,
   institutionalMemoryRequestWords,
   INSTITUTIONAL_MEMORY_EXTRACTOR_VERSION_MAX_LENGTH,
   INSTITUTIONAL_MEMORY_JOB_ERROR_MAX_LENGTH,
@@ -30,8 +28,10 @@ import {
   type SearchInstitutionalMemoryInput,
   type SearchInstitutionalMemoryResult,
   type InstitutionalMemoryShadowJob,
+  type DaemonAttachment,
 } from '@beeline/api-contract/daemon';
 import type { CommandRow } from './agent-command.js';
+import { mediaIdFromUrl } from './media-ttl.js';
 import type { SqlDatabase } from './database.js';
 import {
   applyWorkspaceSkillProposal,
@@ -108,8 +108,13 @@ type SourceRow = {
   direct_participants: unknown;
   parent_id: string | null;
   text: string;
+  has_attachments: boolean;
   substantive_activity: boolean;
 };
+
+/** A message's attachment array, or none when the column holds anything else. */
+const ATTACHMENTS_SQL = (alias: string) =>
+  `CASE WHEN jsonb_typeof(${alias}.attachments)='array' THEN ${alias}.attachments ELSE '[]'::jsonb END`;
 
 const CORRECTION_CANDIDATE =
   /\b(?:no[, ]|not quite|instead|actually|remember|next time|i prefer|please (?:always|never)|don't|do not)\b/i;
@@ -118,6 +123,7 @@ function eligibleTurnSource(source: SourceRow): boolean {
   return (
     source.parent_id !== null ||
     source.substantive_activity ||
+    source.has_attachments ||
     source.text.trim().length >= 24 ||
     CORRECTION_CANDIDATE.test(source.text)
   );
@@ -138,6 +144,7 @@ export async function enqueueInstitutionalMemoryTurnReview(
     await database.query<SourceRow>(
       `SELECT r.workspace_id,r.id room_id,m.id message_id,m.author_id requester_identity_id,
               r.direct_participants,r.parent_id,m.text,
+              jsonb_array_length(${ATTACHMENTS_SQL('m')})>0 has_attachments,
               EXISTS (
                 SELECT 1 FROM messages activity_message
                 CROSS JOIN LATERAL jsonb_array_elements(
@@ -153,7 +160,8 @@ export async function enqueueInstitutionalMemoryTurnReview(
        JOIN rooms r ON r.id=m.room_id
        JOIN identities requester ON requester.id=m.author_id AND requester.kind='human'
        WHERE m.id=$1 AND m.room_id=$2 AND m.deleted_at IS NULL
-         AND m.presentation='message' AND length(trim(m.text))>0`,
+         AND m.presentation='message'
+         AND (length(trim(m.text))>0 OR jsonb_array_length(${ATTACHMENTS_SQL('m')})>0)`,
       [input.sourceMessageId, input.roomId, input.requestId],
     )
   ).rows[0];
@@ -385,24 +393,65 @@ function clipUtf8(value: string, maximum: number): string {
   return value.slice(0, end);
 }
 
+type ShadowMessageRow = {
+  id: string;
+  author_id: string;
+  created_at: Date;
+  text: string;
+  attachments: DaemonAttachment[];
+};
+
+/** Media ids named by these messages whose bytes the TTL sweep already deleted. */
+async function expiredMediaIds(
+  db: SqlDatabase,
+  rows: readonly ShadowMessageRow[],
+): Promise<ReadonlySet<string>> {
+  const ids = [
+    ...new Set(
+      rows.flatMap((row) =>
+        row.attachments.flatMap((attachment) => {
+          const id = typeof attachment?.url === 'string' ? mediaIdFromUrl(attachment.url) : undefined;
+          return id ? [id] : [];
+        }),
+      ),
+    ),
+  ];
+  if (!ids.length) return new Set();
+  const expired = await db.query<{ id: string }>(
+    `SELECT id::text id FROM object_expirations WHERE id=ANY($1::uuid[])`,
+    [ids],
+  );
+  return new Set(expired.rows.map((row) => row.id));
+}
+
 function boundedMessages(
-  rows: readonly { id: string; author_id: string; created_at: Date; text: string }[],
+  rows: readonly ShadowMessageRow[],
+  expired: ReadonlySet<string> = new Set(),
 ): InstitutionalMemoryShadowJob['messages'] {
   const selected: Array<(typeof rows)[number]> = [];
   let remaining = INSTITUTIONAL_MEMORY_CONTEXT_BYTE_LIMIT;
   for (const row of [...rows].reverse()) {
     if (remaining <= 0) break;
     const text = clipUtf8(row.text, remaining);
-    if (!text) continue;
+    if (!text && !row.attachments.length) continue;
     selected.push({ ...row, text });
     remaining -= Buffer.byteLength(text, 'utf8');
   }
-  return selected.reverse().map((row) => ({
-    id: row.id,
-    authorId: row.author_id,
-    createdAt: Math.floor(row.created_at.getTime() / 1_000),
-    text: row.text,
-  }));
+  return selected.reverse().map((row) => {
+    const attachments = row.attachments
+      .filter((attachment) => typeof attachment?.url === 'string')
+      .map((attachment) => {
+        const id = mediaIdFromUrl(attachment.url);
+        return id && expired.has(id) ? { ...attachment, expired: true } : attachment;
+      });
+    return {
+      id: row.id,
+      authorId: row.author_id,
+      createdAt: Math.floor(row.created_at.getTime() / 1_000),
+      text: row.text,
+      ...(attachments.length ? { attachments } : {}),
+    };
+  });
 }
 
 function boundedExistingItems(
@@ -529,17 +578,13 @@ export async function claimInstitutionalMemoryJob(
       )
     ).rows[0];
     if (!claimed) return undefined;
-    const messages = await db.query<{
-      id: string;
-      author_id: string;
-      created_at: Date;
-      text: string;
-    }>(
-      `SELECT id,author_id,created_at,text FROM (
-         SELECT id,author_id,created_at,text
-         FROM messages
+    const messages = await db.query<ShadowMessageRow>(
+      `SELECT id,author_id,created_at,text,attachments FROM (
+         SELECT id,author_id,created_at,text,${ATTACHMENTS_SQL('message')} attachments
+         FROM messages message
          WHERE room_id=$1 AND deleted_at IS NULL AND presentation='message'
-           AND created_at<=$2 AND length(trim(text))>0
+           AND created_at<=$2
+           AND (length(trim(text))>0 OR jsonb_array_length(${ATTACHMENTS_SQL('message')})>0)
          ORDER BY created_at DESC,id DESC LIMIT $3
        ) recent ORDER BY created_at,id`,
       [claimed.source_room_id, claimed.created_at, INSTITUTIONAL_MEMORY_CONTEXT_MESSAGE_LIMIT],
@@ -567,7 +612,9 @@ export async function claimInstitutionalMemoryJob(
       ],
     );
     const boundedSourceMessages =
-      claimed.trigger_kind === 'curator' ? [] : boundedMessages(messages.rows);
+      claimed.trigger_kind === 'curator'
+        ? []
+        : boundedMessages(messages.rows, await expiredMediaIds(db, messages.rows));
     let context = claimed.context;
     if (claimed.trigger_kind === 'merge_review') {
       const evidenceMessageIds = boundedSourceMessages.map((message) => message.id);
@@ -638,7 +685,7 @@ async function nearestInstitutionalMemoryCandidates(
             item.version,item.explicit_save,(item.embedding <=> $4::vector) distance
      FROM institutional_memory_items item
      WHERE item.workspace_id=$1 AND item.state='active' AND item.deleted_at IS NULL
-       AND item.embedding IS NOT NULL AND item.canonical_key<>$7
+       AND item.embedding IS NOT NULL
        AND ((item.kind='human_profile_fact' AND item.subject_identity_id=$2)
          OR ($3::boolean=false AND item.kind='workspace_fact'))
        AND NOT EXISTS (
@@ -651,8 +698,7 @@ async function nearestInstitutionalMemoryCandidates(
     [job.workspaceId, job.requesterIdentityId, job.directMessage,
       pgvectorLiteral(embedded.vector),
       memoryEnvLimit('INSTITUTIONAL_MEMORY_ALIGN_MAX_DISTANCE', INSTITUTIONAL_MEMORY_ALIGN_MAX_DISTANCE),
-      memoryEnvLimit('INSTITUTIONAL_MEMORY_ALIGN_CANDIDATES', INSTITUTIONAL_MEMORY_ALIGN_CANDIDATES),
-      INSTITUTIONAL_STANDING_PREFERENCE_KEY],
+      memoryEnvLimit('INSTITUTIONAL_MEMORY_ALIGN_CANDIDATES', INSTITUTIONAL_MEMORY_ALIGN_CANDIDATES)],
   )).rows;
   return boundedExistingItems(rows).map((item, index) =>
     ({ ...item, distance: rows[index]?.distance }));
@@ -782,8 +828,8 @@ async function refuseNearDuplicate(
       `SELECT id,canonical_key,version,body,keywords FROM institutional_memory_items
        WHERE workspace_id=$1 AND kind=$2 AND subject_identity_id IS NOT DISTINCT FROM $3
          AND audience_kind=$4 AND state='active' AND deleted_at IS NULL
-         AND canonical_key<>$5 AND canonical_key<>$6 AND keywords && $7::text[]
-         AND id IS DISTINCT FROM $8::uuid
+         AND canonical_key<>$5 AND keywords && $6::text[]
+         AND id IS DISTINCT FROM $7::uuid
        ORDER BY updated_at DESC LIMIT 200`,
       [
         workspaceId,
@@ -791,7 +837,6 @@ async function refuseNearDuplicate(
         proposal.subjectIdentityId ?? null,
         proposal.audience,
         proposal.canonicalKey,
-        INSTITUTIONAL_STANDING_PREFERENCE_KEY,
         [...proposal.keywords],
         supersededId ?? null,
       ],
@@ -822,9 +867,7 @@ async function applyMemoryProposal(
   },
 ): Promise<{ itemId: string; version: number }> {
   const { proposal } = input;
-  if (proposal.canonicalKey !== INSTITUTIONAL_STANDING_PREFERENCE_KEY) {
-    await refuseNearDuplicate(db, input.workspaceId, proposal, input.superseded?.id);
-  }
+  await refuseNearDuplicate(db, input.workspaceId, proposal, input.superseded?.id);
   await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
     [
       'institutional-memory-item',
@@ -959,7 +1002,7 @@ async function applyReviewProposalV2(
               item.kind,item.subject_identity_id,item.audience_kind
        FROM institutional_memory_items item
        WHERE item.id=$1 AND item.workspace_id=$2 AND item.state='active'
-         AND item.deleted_at IS NULL AND item.version=$3 AND item.canonical_key<>$6
+         AND item.deleted_at IS NULL AND item.version=$3
          AND ((item.kind='human_profile_fact' AND item.subject_identity_id=$4)
            OR ($5::boolean=false AND item.kind='workspace_fact'))
          AND NOT EXISTS (
@@ -968,7 +1011,7 @@ async function applyReviewProposalV2(
            WHERE source.item_id=item.id AND message.deleted_at IS NOT NULL)
        FOR UPDATE OF item`,
       [item.itemId, job.workspace_id, item.baseVersion, job.requester_identity_id,
-        Array.isArray(job.direct_participants), INSTITUTIONAL_STANDING_PREFERENCE_KEY],
+        Array.isArray(job.direct_participants)],
     )).rows[0];
     if (!row) throw new Error('institutional memory proposal CAS conflict');
     if (item.reason !== null) {
@@ -1542,24 +1585,6 @@ export async function getInstitutionalContext(
     if (!rolloutAllowsLive(rolloutStage)) {
       return { snapshotRevision: 0, text: '', itemIds: [], totalBytes: 0, omitted: {} };
     }
-    const standing = (
-      await db.query<{ body: string }>(
-        `SELECT body FROM institutional_memory_items
-         WHERE workspace_id=$1 AND kind='human_profile_fact' AND subject_identity_id=$2
-           AND canonical_key=$3 AND state='active' AND deleted_at IS NULL
-         LIMIT 1`,
-        [
-          authority.workspace_id,
-          authority.requester_identity_id,
-          INSTITUTIONAL_STANDING_PREFERENCE_KEY,
-        ],
-      )
-    ).rows[0];
-    const standingPreference =
-      standing &&
-      Buffer.byteLength(standing.body, 'utf8') <= INSTITUTIONAL_STANDING_PREFERENCE_MAX_BYTES
-        ? standing.body
-        : undefined;
     // Only items whose saved keywords appear in the request load. Nothing
     // fills leftover space, so a request that matches nothing loads nothing.
     const words = institutionalMemoryRequestWords(authority.request_text);
@@ -1574,7 +1599,7 @@ export async function getInstitutionalContext(
                 item.version,item.updated_at
          FROM institutional_memory_items item
          WHERE item.workspace_id=$1 AND item.state='active' AND item.deleted_at IS NULL
-           AND item.canonical_key<>$3 AND item.keywords && $4::text[]
+           AND item.keywords && $3::text[]
            AND (
              item.kind='workspace_fact' OR
              (item.kind='human_profile_fact' AND item.subject_identity_id=$2)
@@ -1589,7 +1614,6 @@ export async function getInstitutionalContext(
         [
           authority.workspace_id,
           authority.requester_identity_id,
-          INSTITUTIONAL_STANDING_PREFERENCE_KEY,
           [...words],
         ],
       )
@@ -1610,11 +1634,11 @@ export async function getInstitutionalContext(
       vectorItemCandidates = (
         await db.query<ContextItemRow>(
           `SELECT item.id,item.kind,item.canonical_key,item.body,item.keywords,item.confidence,
-                  item.version,item.updated_at,(item.embedding <=> $4::vector) distance
+                  item.version,item.updated_at,(item.embedding <=> $3::vector) distance
            FROM institutional_memory_items item
            WHERE item.workspace_id=$1 AND item.state='active' AND item.deleted_at IS NULL
-             AND item.canonical_key<>$3 AND item.embedding IS NOT NULL
-             AND item.embedding <=> $4::vector <= $6
+             AND item.embedding IS NOT NULL
+             AND item.embedding <=> $3::vector <= $5
              AND (
                item.kind='workspace_fact' OR
                (item.kind='human_profile_fact' AND item.subject_identity_id=$2)
@@ -1624,12 +1648,11 @@ export async function getInstitutionalContext(
                JOIN messages message ON message.id=source.message_id
                WHERE source.item_id=item.id AND message.deleted_at IS NOT NULL
              )
-           ORDER BY item.embedding <=> $4::vector
-           LIMIT $5`,
+           ORDER BY item.embedding <=> $3::vector
+           LIMIT $4`,
           [
             authority.workspace_id,
             authority.requester_identity_id,
-            INSTITUTIONAL_STANDING_PREFERENCE_KEY,
             vec,
             INSTITUTIONAL_MEMORY_VECTOR_CANDIDATES_MAX,
             memoryEnvLimit('INSTITUTIONAL_MEMORY_VECTOR_MAX_DISTANCE', INSTITUTIONAL_MEMORY_VECTOR_MAX_DISTANCE),
@@ -1766,74 +1789,10 @@ export async function getInstitutionalContext(
       itemIds: selected.map((item) => item.id),
       totalBytes,
       omitted,
-      ...(standingPreference ? { standingPreference } : {}),
       embeddingMs,
       embeddingOutcome,
     };
   });
-}
-
-/**
- * A standing preference changes every agent's prompt for one person, so no
- * model may set it on its own reading of a message. The agent asks with
- * ask_choice, quoting the exact text; only an answered card from this agent in
- * this Room, whose chosen option starts with "Save" and was picked by the
- * requester or a Workspace owner/admin, lets it through.
- */
-async function confirmedStandingPreference(
-  db: SqlDatabase,
-  input: {
-    command: CommandRow;
-    workspaceId: string;
-    requesterIdentityId: string;
-    choiceId: string;
-    body: string;
-  },
-): Promise<string> {
-  const body = typeof input.body === 'string' ? input.body.trim() : '';
-  if (
-    !body ||
-    body.includes('\0') ||
-    Buffer.byteLength(body, 'utf8') > INSTITUTIONAL_STANDING_PREFERENCE_MAX_BYTES
-  ) {
-    throw new Error(
-      `a standing preference is 1 to ${INSTITUTIONAL_STANDING_PREFERENCE_MAX_BYTES} bytes`,
-    );
-  }
-  const choice = (
-    await db.query<{ prompt: string; options: Array<{ optionId: string; label: string }> }>(
-      `SELECT prompt,options FROM room_choices
-       WHERE id::text=$1 AND agent_id=$2 AND room_id=$3 AND mode='question' AND status='answered'`,
-      [input.choiceId, input.command.agent_id, input.command.room_id],
-    )
-  ).rows[0];
-  if (!choice || !choice.prompt.includes(body)) {
-    throw new Error(
-      'a standing preference needs an answered ask_choice card from you in this Room that quotes the exact text',
-    );
-  }
-  const saveOptions = choice.options
-    .filter((option) => /^\s*save\b/i.test(option.label))
-    .map((option) => option.optionId);
-  const confirmed = await db.query(
-    `SELECT 1 FROM room_choice_votes vote
-     WHERE vote.choice_id::text=$1 AND vote.option_id=ANY($2::text[])
-       AND (
-         vote.voter_id=$3 OR EXISTS (
-           SELECT 1 FROM memberships manager
-           WHERE manager.workspace_id=$4 AND manager.room_id IS NULL
-             AND manager.identity_id=vote.voter_id AND manager.removed_at IS NULL
-             AND manager.role IN ('owner','admin')
-         )
-       )`,
-    [input.choiceId, saveOptions, input.requesterIdentityId, input.workspaceId],
-  );
-  if (!confirmed.rowCount) {
-    throw new Error(
-      'the standing preference was not confirmed: the requester or a Workspace owner/admin must pick a Save option on the card',
-    );
-  }
-  return body;
 }
 
 /** Active-command-bound manual proposal path used by the Beeline MCP tool. */
@@ -1891,38 +1850,10 @@ export async function proposeInstitutionalMemory(
     if (validSources.rowCount !== new Set(input.sourceMessageIds).size) {
       throw new Error('institutional memory proposal cites an unavailable source');
     }
-    if (input.standingChoiceId !== undefined) {
-      const body = await confirmedStandingPreference(db, {
-        command,
-        workspaceId: authority.workspace_id,
-        requesterIdentityId: authority.requester_identity_id,
-        choiceId: input.standingChoiceId,
-        body: input.body,
-      });
-      const standing: InstitutionalMemoryProposal = {
-        proposalVersion: 1,
-        candidateType: 'preference_candidate',
-        memoryKind: 'human_profile_fact',
-        subjectIdentityId: authority.requester_identity_id,
-        canonicalKey: INSTITUTIONAL_STANDING_PREFERENCE_KEY,
-        body,
-        keywords: [],
-        source: { roomId: command.room_id, messageIds: input.sourceMessageIds },
-        audience: 'human_profile',
-        confidence: 1,
-        classification: {
-          rationale: 'The requester confirmed this standing preference on a choice card.',
-          subjectIsRequester: true,
-        },
-        cas: input.cas,
-      };
-      assertNoProhibitedSecret(standing);
-      return applyMemoryProposal(db, {
-        workspaceId: authority.workspace_id,
-        primarySourceMessageId: input.sourceMessageIds[0]!,
-        proposal: standing,
-        createdByCommandId: command.id,
-      });
+    if ((input as { standingChoiceId?: unknown }).standingChoiceId !== undefined) {
+      throw new Error(
+        'standing preferences were removed; save this as an ordinary fact with keywords instead',
+      );
     }
     const parsed = parseInstitutionalMemoryProposal({
       proposalVersion: 1,

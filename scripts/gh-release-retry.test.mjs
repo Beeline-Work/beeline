@@ -57,6 +57,7 @@ case "$sub" in
     exit 0
     ;;
   view)
+    fail_or_pass "$GHR_FAKE_VIEW_FAILURES" || exit 1
     if [ ! -f "$GHR_FAKE_RELEASE" ]; then
       echo "release not found: $1" >&2
       exit 1
@@ -97,6 +98,7 @@ const PRESET_COUNTERS = {
   createFailures: 'GHR_FAKE_CREATE_FAILURES',
   deleteFailures: 'GHR_FAKE_DELETE_FAILURES',
   apiFailures: 'GHR_FAKE_API_FAILURES',
+  viewFailures: 'GHR_FAKE_VIEW_FAILURES',
 };
 
 function runHelper(t, body, presets = {}) {
@@ -289,6 +291,23 @@ test('ghr_requested_version_guard: passes a version with no existing release', (
   const { result, calls } = runHelper(t, 'ghr_requested_version_guard v0.1.0 "$SHA"', { tagSha: 'b'.repeat(40) });
   assert.equal(result.status, 0, result.stderr);
   assert.ok(!calls().some((line) => line.startsWith('api ')));
+});
+
+test('ghr_requested_version_guard: fails closed when the release lookup keeps failing', (t) => {
+  const { result, calls } = runHelper(t, 'ghr_requested_version_guard v0.1.0 "$SHA"', {
+    viewFailures: 99, tagSha: 'b'.repeat(40),
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /::error::could not confirm whether requested version v0\.1\.0 already has a GitHub release/);
+  assert.equal(calls().filter((line) => line.startsWith('release view v0.1.0')).length, 5);
+});
+
+test('ghr_requested_version_guard: retries a transient lookup failure before checking the tag', (t) => {
+  const { result } = runHelper(t, 'ghr_requested_version_guard v0.1.0 "$SHA"', {
+    viewFailures: 2, releaseExists: true, tagSha: 'b'.repeat(40),
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, new RegExp(`::error::requested version v0\\.1\\.0 .*${'b'.repeat(40)}`));
 });
 
 test('initialize guards only a requested version against an existing release at another commit', () => {

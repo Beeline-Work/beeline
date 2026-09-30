@@ -173,12 +173,24 @@ ghr_delete_asset() {
 # would silently keep that release's tag, title and notes. Fails when a release
 # with that tag exists and its tag resolves to a commit other than
 # <release-sha>; a retry (tag already at <release-sha>) and a version with no
-# release pass.
+# release pass. A lookup that fails for any reason other than "release not
+# found" (auth, rate limit, transient API error) is retried and then fails
+# closed, so an unconfirmed absence never skips the check.
 ghr_requested_version_guard() {
   local version="$1"
   local sha="$2"
-  local tag_sha
-  gh release view "$version" --json tagName >/dev/null 2>&1 || return 0
+  local tag_sha lookup_err attempt=1
+  while ! lookup_err=$(gh release view "$version" --json tagName 2>&1 >/dev/null); do
+    case "$lookup_err" in
+      *"release not found"*) return 0 ;;
+    esac
+    if [ "$attempt" -ge "$GHR_MAX_ATTEMPTS" ]; then
+      echo "::error::could not confirm whether requested version $version already has a GitHub release after $GHR_MAX_ATTEMPTS attempts: $lookup_err" >&2
+      return 1
+    fi
+    ghr_sleep_backoff "$attempt"
+    attempt=$((attempt + 1))
+  done
   tag_sha=$(ghr_api "repos/$GITHUB_REPOSITORY/commits/$version" --jq .sha) || {
     echo "::error::requested version $version already has a GitHub release, but its tag commit could not be resolved" >&2
     return 1

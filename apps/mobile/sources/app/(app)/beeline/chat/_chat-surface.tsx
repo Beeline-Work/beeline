@@ -6600,31 +6600,6 @@ export function BuzzChatSurface({
               onSaved={() => refreshSignal.force()}
               reviewerAgentId={roomSurface?.room.reviewerAgentId}
               reviewerClass={roomSurface?.room.reviewerClass}
-              loadClassTags={
-                activeCommunityId
-                  ? async () => {
-                      const roomAgents = new Set(
-                        (roomSurface?.members ?? [])
-                          .filter((member) => member.identity.kind === 'agent')
-                          .map((member) => member.identity.pubkey),
-                      );
-                      const view = await monolithPhoneOperation('readWorkspaceAgentClasses', {
-                        workspaceId: activeCommunityId,
-                      });
-                      return [
-                        ...new Set(
-                          view.agents
-                            .filter((agent) => roomAgents.has(agent.agentId))
-                            .flatMap((agent) =>
-                              agent.classes.tags
-                                .filter((tag) => tag.kind === 'custom')
-                                .map((tag) => tag.tag),
-                            ),
-                        ),
-                      ].sort();
-                    }
-                  : undefined
-              }
               roomId={decodedId}
               roomName={displayRoomName}
               updateRoom={(input) => monolithPhoneOperation('updateRoom', input)}

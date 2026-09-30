@@ -155,10 +155,7 @@ export type DaemonOperationMap = {
     RoomInput & TurnOutputAuthority & { readonly contract: unknown },
     { readonly slug: string; readonly version: number }
   >;
-  /**
-   * Bind current Room members to a saved workflow's roles and start a run. A
-   * binding of `class:<tier-or-tag>` names a class instead of an agent.
-   */
+  /** Bind current Room members to a saved workflow's roles and start a run. */
   startWorkflow: Operation<
     RoomInput &
       TurnOutputAuthority & {
@@ -181,6 +178,21 @@ export type DaemonOperationMap = {
   archiveWorkflow: Operation<
     RoomInput & TurnOutputAuthority & { readonly name: string },
     { readonly slug: string; readonly archived: boolean }
+  >;
+  /**
+   * A human's explicit override for a class-bound role this run is currently
+   * on: binds one specific agent (no health filter), the "ask a human"
+   * recovery when the class is exhausted (`apps/server/src/agent-classes.ts`).
+   */
+  assignWorkflowRole: Operation<
+    RoomInput &
+      TurnOutputAuthority & {
+        readonly runId: string;
+        readonly role: string;
+        /** The agent being bound to the role — distinct from the calling (asking) agent. */
+        readonly targetAgentId: string;
+      },
+    { readonly runId: string; readonly state: string }
   >;
   getAgentCommands: Operation<
     RoomInput,
@@ -919,10 +931,8 @@ export type PostAgentModelCatalogInput = AgentInput & {
   readonly selection?: { readonly model?: string; readonly effort?: string };
   /** Startup validation verdict for the persisted selection. */
   readonly unavailable?: 'model' | 'effort' | 'selection';
-  /** The helper's agent kind (`claude`, `codex`, `pi`, …), for the automatic harness tag. */
+  /** The harness kind (`AGENT_KINDS` in `apps/body/src/agent-command.ts`); the automatic "harness" tag. */
   readonly harness?: string;
-  /** The provider the harness is configured for, when it names one (e.g. goose). */
-  readonly provider?: string;
 };
 export type PostCornerLifecycleInput = CornerInput & {
   readonly status: string;

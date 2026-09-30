@@ -122,12 +122,6 @@ export default function RootLayout() {
             headerShown: false,
           }}
         />
-        <Stack.Screen
-          name="beeline/settings/agent-classes"
-          options={{
-            headerShown: false,
-          }}
-        />
         {/* Scheduled work keeps the stack header (its back control); the page draws none. */}
         <Stack.Screen
           name="beeline/settings/schedules"

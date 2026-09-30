@@ -54,7 +54,6 @@ export function modelCatalogHash(
   options: readonly AgentModelConfigOption[],
   selection: Selection | undefined,
   startupUnavailable?: 'model' | 'effort' | 'selection',
-  identity?: { harness?: string; provider?: string },
 ): string {
   return createHash('sha256')
     .update(
@@ -62,9 +61,6 @@ export function modelCatalogHash(
         options,
         selection: selection ?? null,
         startupUnavailable: startupUnavailable ?? null,
-        ...(identity?.harness || identity?.provider
-          ? { harness: identity.harness ?? null, provider: identity.provider ?? null }
-          : {}),
       }),
     )
     .digest('hex');
@@ -121,13 +117,7 @@ export async function syncAgentModelCatalog(
     const effectiveCatalog = input.startupUnavailable
       ? catalog
       : withEffectiveCurrentValues(catalog, selection);
-    // The harness and provider feed the server's automatic agent tags.
-    const harness = input.agent.kind;
-    const provider = input.agentEnv.GOOSE_PROVIDER?.trim().toLowerCase() || undefined;
-    const hash = modelCatalogHash(effectiveCatalog, selection, input.startupUnavailable, {
-      ...(harness ? { harness } : {}),
-      ...(provider ? { provider } : {}),
-    });
+    const hash = modelCatalogHash(effectiveCatalog, selection, input.startupUnavailable);
     const previous = await readFile(hashPath, 'utf8').catch(() => '');
     if (!input.force && previous.trim() === hash) return 'unchanged';
     await input.api.execute('postAgentModelCatalog', {
@@ -137,8 +127,7 @@ export async function syncAgentModelCatalog(
       options: effectiveCatalog as Input<'postAgentModelCatalog'>['options'],
       ...(selection ? { selection } : {}),
       ...(input.startupUnavailable ? { unavailable: input.startupUnavailable } : {}),
-      ...(harness ? { harness } : {}),
-      ...(provider ? { provider } : {}),
+      ...(input.agent.kind ? { harness: input.agent.kind } : {}),
     });
     await writeFile(hashPath, `${hash}\n`, { mode: 0o600 });
     log(

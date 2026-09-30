@@ -27,6 +27,7 @@ import {
   recordInstitutionalCornerOutcome,
   type InstitutionalMemoryShadowConfig,
 } from './institutional-memory-shadow.js';
+import { agentCarriesTag, roomMembersWithTag } from './agent-classes.js';
 
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
 
@@ -610,17 +611,20 @@ export class GitHubOperations {
     const corner = (
       await this.database.query<{
         parent_id: string;
+        workspace_id: string;
         lifecycle: CornerLifecycleView;
         owner_agent_id: string | null;
         command_check_state: string | null;
         configured_reviewer_id: string | null;
+        reviewer_class: string | null;
         reviewer_identity_id: string | null;
         parent_reviewer_id: string | null;
         corner_reviewer_id: string | null;
         reviewer_handle: string | null;
       }>(
-        `SELECT r.parent_id,f.lifecycle,f.owner_agent_id,f.command_check_state,
+        `SELECT r.parent_id,parent.workspace_id,f.lifecycle,f.owner_agent_id,f.command_check_state,
                 parent.reviewer_agent_id configured_reviewer_id,
+                parent.reviewer_class,
                 reviewer_identity.id reviewer_identity_id,
                 parent_member.identity_id parent_reviewer_id,
                 corner_member.identity_id corner_reviewer_id,
@@ -668,45 +672,82 @@ export class GitHubOperations {
       corner.lifecycle.pr?.headSha === pr.headSha;
     const checks = completedWithoutChecks ? ('passed' as const) : rollup.state;
     const configuredReviewerId = corner.configured_reviewer_id;
-    const approval = await this.database.query(
-      `SELECT 1 FROM corner_merge_approvals a JOIN rooms r ON r.id=a.corner_id
+    const reviewerClass = configuredReviewerId ? null : corner.reviewer_class;
+    const approvalRow = (
+      await this.database.query<{ approved_by: string }>(
+        `SELECT a.approved_by FROM corner_merge_approvals a JOIN rooms r ON r.id=a.corner_id
        WHERE r.parent_id=$1 AND a.pull_request_number=$2 AND a.head_sha=$3
          AND a.brief_revision IS NOT DISTINCT FROM
-           (SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=a.corner_id)
-         AND ($4::text IS NULL OR a.approved_by=$4) LIMIT 1`,
-      [corner.parent_id, number, pr.headSha, configuredReviewerId],
-    );
+           (SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=a.corner_id) LIMIT 1`,
+        [corner.parent_id, number, pr.headSha],
+      )
+    ).rows[0];
+    const approvedByConfigured = configuredReviewerId
+      ? approvalRow?.approved_by === configuredReviewerId
+      : undefined;
+    const approvedByClass =
+      reviewerClass && approvalRow
+        ? await agentCarriesTag(this.database, corner.workspace_id, approvalRow.approved_by, reviewerClass)
+        : undefined;
     // The parent Room's reviewer opened this very corner: no OTHER agent's
     // approve_merge can ever exist for it, so requiring one is a permanent
     // deadlock, not a real gate.
     const reviewerIsAuthor = Boolean(
-      configuredReviewerId &&
       corner.owner_agent_id &&
-      configuredReviewerId === corner.owner_agent_id,
+        (configuredReviewerId
+          ? configuredReviewerId === corner.owner_agent_id
+          : reviewerClass &&
+            (await agentCarriesTag(this.database, corner.workspace_id, corner.owner_agent_id, reviewerClass))),
     );
     const approvalPending = reviewerIsAuthor
       ? false
       : configuredReviewerId
-        ? approval.rowCount === 0
-        : false;
-    const reviewer = corner.reviewer_handle ? `@${corner.reviewer_handle}` : null;
-    const reviewerExists = Boolean(configuredReviewerId);
+        ? !approvedByConfigured
+        : reviewerClass
+          ? !approvedByClass
+          : false;
+    const classCandidates = reviewerClass
+      ? await roomMembersWithTag(this.database, corner.parent_id, corner.workspace_id, reviewerClass)
+      : [];
+    const reviewer = configuredReviewerId
+      ? corner.reviewer_handle
+        ? `@${corner.reviewer_handle}`
+        : null
+      : reviewerClass
+        ? `the "${reviewerClass}" class`
+        : null;
+    const reviewerExists = Boolean(configuredReviewerId) || Boolean(reviewerClass);
     const reviewerLabel = reviewer ?? 'the configured reviewer';
-    const reviewerWake = reviewerWakeFromFacts({
-      configuredReviewerId,
-      reviewerHandle: corner.reviewer_handle,
-      parentMember: Boolean(
-        configuredReviewerId && corner.reviewer_identity_id && corner.parent_reviewer_id,
-      ),
-      cornerMember: Boolean(
-        configuredReviewerId && corner.reviewer_identity_id && corner.corner_reviewer_id,
-      ),
-      lifecycleChecks: corner.lifecycle.checks,
-      commandCheckState: corner.command_check_state,
-    });
+    const reviewerWake = reviewerClass
+      ? classCandidates.length === 0
+        ? {
+            status: 'unreachable' as const,
+            detail: `No current member of the parent Room carries the "${reviewerClass}" tag.`,
+          }
+        : classCandidates.some((candidate) => candidate.healthy)
+          ? {
+              status: 'dispatched' as const,
+              detail: `The checks-passed transition resolves ${reviewerLabel} live among ${classCandidates.length} current member(s).`,
+            }
+          : {
+              status: 'unreachable' as const,
+              detail: `Every current member of ${reviewerLabel} is offline, recently failed, or out of credit.`,
+            }
+      : reviewerWakeFromFacts({
+          configuredReviewerId,
+          reviewerHandle: corner.reviewer_handle,
+          parentMember: Boolean(
+            configuredReviewerId && corner.reviewer_identity_id && corner.parent_reviewer_id,
+          ),
+          cornerMember: Boolean(
+            configuredReviewerId && corner.reviewer_identity_id && corner.corner_reviewer_id,
+          ),
+          lifecycleChecks: corner.lifecycle.checks,
+          commandCheckState: corner.command_check_state,
+        });
     const rule = reviewerIsAuthor
       ? `You opened this corner and are also this Room's configured reviewer (${reviewerLabel}), so self-review is not required — approve_merge cannot add signal over your own work. The reviewer outcome is PASS; the helper still applies worker yolo mode, human hold, and reviewer-existence conditions.`
-      : configuredReviewerId
+      : configuredReviewerId || reviewerClass
         ? reviewerWake.status === 'unreachable'
           ? `Only ${reviewerLabel}'s approve_merge records PASS for the reviewer outcome; tagging or asking any other agent to review cannot record an approval or change this verdict. ${reviewerWake.detail} Do not invent a cause and do not poll this gate with a schedule. No Room owner/admin approve control exists in the app yet, so only ${reviewerLabel} can record PASS.`
           : `Only ${reviewerLabel}'s approve_merge records PASS for the reviewer outcome; tagging or asking any other agent to review cannot record an approval or change this verdict. Do not create a schedule to poll this gate — the checks-passed transition wakes ${reviewerLabel} automatically. No Room owner/admin approve control exists in the app yet, so only ${reviewerLabel} can record PASS.`

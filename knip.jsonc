@@ -69,8 +69,6 @@
         "scripts/corner-dropdown-proof.tsx",
         "scripts/new-corner-dialog-proof.tsx",
         "scripts/page-headers-proof.tsx",
-        "scripts/{agent-classes-proof,agent-classes-settings-proof}.tsx",
-        "scripts/render-agent-classes-proof.mjs",
       ],
       "project": [
         "sources/**/*.{js,ts,tsx}",
@@ -97,8 +95,6 @@
       "entry": [
         "src/{index,import-cli,measure-cli}.ts",
         "scripts/{copy-postgres-data,verify-fly-cutover}.mjs",
-        // Run by hand against a built server to demonstrate agent classes.
-        "scripts/agent-classes-room-demo.mjs",
       ],
     },
     "packages/buzz-client": {

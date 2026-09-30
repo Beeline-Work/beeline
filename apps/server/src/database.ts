@@ -3,7 +3,6 @@ import {
   reconcileConfiguredCornerReviewers,
   reconcileCornerMergeBlockers,
 } from './agent-command.js';
-import { AGENT_CLASS_SCHEMA } from './agent-classes.js';
 import { INSTITUTIONAL_HISTORY_MAX_AGE_DAYS } from '@beeline/api-contract/daemon';
 import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
@@ -674,6 +673,11 @@ CREATE TABLE IF NOT EXISTS workspaces (
 -- switch existed. Dropping the column is left for a later migration.
 ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS seeded_souls_enabled boolean NOT NULL DEFAULT true;
 
+-- The weight-tier family-pattern map (agent-classes.ts): NULL means the
+-- shipped defaults (astra*/fable* -> god; grok*, *sol*, opus* -> heavy;
+-- everything else -> light). Admin-editable in workspace settings.
+ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS weight_tier_rules jsonb;
+
 CREATE TABLE IF NOT EXISTS rooms (
   id uuid PRIMARY KEY,
   workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -703,6 +707,10 @@ ALTER TABLE rooms ADD COLUMN IF NOT EXISTS repository_updated_at timestamptz;
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS repository_name text;
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS repository_resolution text NOT NULL DEFAULT 'none';
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS reviewer_agent_id text REFERENCES identities(id);
+-- A class/tag instead of one fixed agent, resolved live at each review
+-- dispatch (apps/server/src/agent-classes.ts). Mutually exclusive with
+-- reviewer_agent_id: PhoneService.updateRoom clears one when the other is set.
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS reviewer_class text;
 CREATE INDEX IF NOT EXISTS rooms_workspace_idx ON rooms(workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS rooms_parent_idx ON rooms(parent_id, updated_at DESC);
 
@@ -794,6 +802,14 @@ ALTER TABLE agents ADD COLUMN IF NOT EXISTS model_unavailable text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS fast_mode boolean NOT NULL DEFAULT false;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS machine_id text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS machine_name text;
+-- Automatic, non-removable agent tags (agent-classes.ts): the harness is
+-- posted alongside the model catalog on every activation (same cadence as
+-- selected_model); provider and weight tier are pure functions of harness/
+-- model/workspace rules and are never stored. custom_tags is the one
+-- admin-editable tag list, set from workspace settings (Workspace-manager
+-- authority, distinct from the agent-owner-only columns above).
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS harness text;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS custom_tags jsonb NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE agents DROP CONSTRAINT IF EXISTS agents_model_unavailable_check;
 ALTER TABLE agents ADD CONSTRAINT agents_model_unavailable_check
   CHECK (model_unavailable IN ('model','effort','selection'));
@@ -2340,7 +2356,6 @@ export async function migrate(
     `ALTER TABLE wallet_bindings ADD COLUMN IF NOT EXISTS delegation_standing boolean NOT NULL DEFAULT false`,
   );
   await ddlScript('agent command schema', AGENT_COMMAND_SCHEMA);
-  await ddlScript('agent class schema', AGENT_CLASS_SCHEMA);
   await retryMigrationStep('message cursor index', () => createIndexConcurrently(
     database, 'messages_room_cursor_idx',
     `CREATE INDEX CONCURRENTLY messages_room_cursor_idx ON messages (room_id,

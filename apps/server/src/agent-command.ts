@@ -7,9 +7,9 @@ import type {
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
 import { isResumeKind } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
+import { pickHealthyClassMember } from './agent-classes.js';
 import { noteCornerWorkflowReviewOutcome, noteCornerWorkflowTransition } from './corner-workflow.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
-import { dispatchClassReview } from './agent-classes.js';
 import { ensureSystemIdentity, GITHUB_SUBJECT, systemLine } from './system-line.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
@@ -185,6 +185,33 @@ async function noteUnreachableReviewer(
     },
     verb: 'could not be reached',
     consequence: input.reason,
+    afterMessageId: input.sourceMessageId,
+  });
+}
+
+/**
+ * A class-configured reviewer with no currently healthy member is named in
+ * the corner rather than silently falling back to the owner — the same
+ * "ask a human" shape as a workflow role's class exhaustion
+ * (`workflow-runs.ts`). `command_check_state` is left alone so the next green
+ * transition (or a member coming back healthy) retries automatically; a human
+ * can also always fall back to setting a fixed `reviewerAgentId`.
+ */
+async function noteReviewerClassExhausted(
+  db: SqlDatabase,
+  input: { cornerId: string; sourceMessageId: string; reviewerClass: string },
+): Promise<void> {
+  const id = createHash('sha256')
+    .update(`beeline:${input.cornerId}:reviewer-class-exhausted:${input.reviewerClass}`)
+    .digest('hex');
+  await ensureSystemIdentity(db);
+  await systemLine(db, {
+    id,
+    roomId: input.cornerId,
+    authorId: SYSTEM_IDENTITY_ID,
+    subject: { kind: 'system', name: `the "${input.reviewerClass}" reviewer class` },
+    verb: 'has no healthy member to review this',
+    consequence: 'a human can set a specific reviewer, or wait for a member to come back healthy',
     afterMessageId: input.sourceMessageId,
   });
 }
@@ -1072,13 +1099,16 @@ export async function routeSystemCommand(
         configured_reviewer_kind: string | null;
         configured_reviewer_name: string | null;
         reviewer_agent_id: string | null;
+        reviewer_class: string | null;
+        parent_room_id: string;
+        workspace_id: string;
         state: string;
         command_check_state: string | null;
         parent_id: string;
         reviewer_class: string | null;
         head_sha: string | null;
       }>(
-        `SELECT fact.owner_agent_id,parent.id parent_id,parent.reviewer_class,
+        `SELECT fact.owner_agent_id,
                 parent.reviewer_agent_id configured_reviewer_id,
                 configured.kind configured_reviewer_kind,
                 configured.name configured_reviewer_name,
@@ -1092,7 +1122,8 @@ export async function routeSystemCommand(
                     AND reviewer_membership.removed_at IS NULL
                 ) reviewer_agent_id,
                 fact.lifecycle->>'checks' state,fact.command_check_state,
-                fact.lifecycle->'pr'->>'headSha' head_sha
+                fact.lifecycle->'pr'->>'headSha' head_sha,
+                parent.reviewer_class,parent.id parent_room_id,parent.workspace_id
          FROM corner_facts fact
          JOIN rooms corner ON corner.id=fact.corner_id
          JOIN rooms parent ON parent.id=corner.parent_id
@@ -1128,27 +1159,30 @@ export async function routeSystemCommand(
         );
         if (delivered.rowCount) return;
       }
-      // A class reviewer is settled per review: the sticky pick while it is
-      // healthy, else the next healthy agent in the class, else a human is
-      // asked. The pick becomes the Room's reviewer, so every later reviewer
-      // path (handback, merge gate, reviewerWake) follows it unchanged.
-      if (input.kind === 'check-passed' && fact.reviewer_class) {
-        const reviewer = await dispatchClassReview(db, {
-          parentRoomId: fact.parent_id,
-          cornerId: input.roomId,
-          sourceMessageId: input.sourceMessageId,
-        });
-        if (reviewer)
-          await db.query(`UPDATE corner_facts SET command_check_state=$2 WHERE corner_id=$1`, [
-            input.roomId,
-            fact.state,
-          ]);
-        return;
+      // A class-configured reviewer resolves to a live healthy candidate at
+      // this exact dispatch (apps/server/src/agent-classes.ts), never sticky
+      // across dispatches — the next green head may pick someone else. The
+      // candidate pool is already scoped to current parent members, so a
+      // resolved id needs no further membership repair before dispatch.
+      let classResolvedReviewerId: string | null = null;
+      let classExhausted = false;
+      if (input.kind === 'check-passed' && !fact.configured_reviewer_id && fact.reviewer_class) {
+        classResolvedReviewerId = await pickHealthyClassMember(
+          db,
+          fact.parent_room_id,
+          fact.workspace_id,
+          fact.reviewer_class,
+        );
+        classExhausted = classResolvedReviewerId === null;
       }
       // Failed checks still wake the opener. The author fallback is only for
-      // corners with no reviewer configured — a configured id whose parent
-      // membership is missing is not "no reviewer".
-      if (input.kind === 'check-failed' || !fact.configured_reviewer_id) {
+      // corners with no reviewer configured at all — a configured id whose
+      // parent membership is missing, or a configured class, is not "no
+      // reviewer".
+      if (
+        input.kind === 'check-failed' ||
+        (!fact.configured_reviewer_id && !fact.reviewer_class)
+      ) {
         const command = await createAgentCommand(db, {
           roomId: input.roomId,
           agentId: fact.owner_agent_id,
@@ -1171,20 +1205,31 @@ export async function routeSystemCommand(
         }
         return;
       }
+      if (classExhausted) {
+        await noteReviewerClassExhausted(db, {
+          cornerId: input.roomId,
+          sourceMessageId: input.sourceMessageId,
+          reviewerClass: fact.reviewer_class!,
+        });
+        return;
+      }
+      // classExhausted (returned above) covers the only case where neither of
+      // these is set: a class-configured reviewer with no healthy member.
       const unreachable = {
         cornerId: input.roomId,
         sourceMessageId: input.sourceMessageId,
-        reviewerId: fact.configured_reviewer_id,
+        reviewerId: (classResolvedReviewerId ?? fact.configured_reviewer_id)!,
         reviewerKind: fact.configured_reviewer_kind,
         reviewerName: fact.configured_reviewer_name,
       };
-      if (!fact.reviewer_agent_id) {
+      if (!classResolvedReviewerId && fact.configured_reviewer_id && !fact.reviewer_agent_id) {
         await noteUnreachableReviewer(db, {
           ...unreachable,
           reason: REVIEWER_NOT_PARENT_MEMBER,
         });
         return;
       }
+      const reviewerAgentId = classResolvedReviewerId ?? fact.reviewer_agent_id!;
       // A green review belongs to the configured reviewer and to nobody else.
       // Dispatch it only when the reviewer can actually read the corner: the
       // missing corner-membership projection is repaired above (never an
@@ -1196,7 +1241,7 @@ export async function routeSystemCommand(
       const deliverable = await repairReviewerCornerMembership(
         db,
         input.roomId,
-        fact.reviewer_agent_id,
+        reviewerAgentId,
       );
       if (!deliverable) {
         await noteUnreachableReviewer(db, {
@@ -1207,7 +1252,7 @@ export async function routeSystemCommand(
       }
       await createAgentCommand(db, {
         roomId: input.roomId,
-        agentId: fact.reviewer_agent_id,
+        agentId: reviewerAgentId,
         sourceMessageId: input.sourceMessageId,
         reason: 'subscribed_event',
       });

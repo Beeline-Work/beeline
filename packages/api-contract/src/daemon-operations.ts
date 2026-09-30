@@ -884,6 +884,7 @@ export type PostTurnReceiptInput = AgentRoomInput & {
     | 'helper-out-of-date'
     | 'update-interrupted'
     | 'offline'
+    | 'context-overflow'
     | 'model-selection-unavailable';
 };
 export type PostAgentActivityInput = TurnOutputAuthority &

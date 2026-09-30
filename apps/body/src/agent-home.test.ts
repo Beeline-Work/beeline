@@ -91,6 +91,11 @@ describe('per-room harness state isolation', () => {
       'text',
       'image',
     ]);
+    // The routed window and an output cap replace pi's catalog limits.
+    expect(models.providers.openrouter.modelOverrides['z-ai/glm-5.3-flash']).toMatchObject({
+      contextWindow: 1_048_576,
+      maxTokens: 32_768,
+    });
 
     // No OpenRouter selection: nothing is pinned, globally or otherwise.
     await prepareRoomAgentHome({ root: roomRoot, operatorHome });
@@ -98,6 +103,34 @@ describe('per-room harness state isolation', () => {
       providers: {},
     });
   });
+  it('caps output even for a model the listing names no endpoints for', async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    const roomRoot = resolve(await scratch('beeline-room-alias-'), 'agent-home');
+    const cacheDir = resolve(await scratch('beeline-routing-cache-'), 'openrouter-routing');
+    const model = '~deepseek/deepseek-v4-flash-latest';
+    // The live listing for a router alias: architecture, no endpoints.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: { id: model, architecture: { input_modalities: ['text'] }, endpoints: [] },
+          }),
+          { status: 200 },
+        ),
+    ) as unknown as typeof fetch;
+
+    await prepareRoomAgentHome({
+      root: roomRoot,
+      operatorHome,
+      openRouterRouting: { model, cacheDir, fetchImpl },
+    });
+
+    const override = JSON.parse(readFileSync(resolve(roomRoot, 'pi/models.json'), 'utf8'))
+      .providers.openrouter.modelOverrides[model];
+    expect(override.maxTokens).toBe(32_768);
+    expect(override.contextWindow).toBeUndefined();
+  });
+
   it("restores vision on the operator's own custom-model entry without touching it", async () => {
     const operatorHome = await scratch('beeline-operator-home-');
     const roomRoot = resolve(await scratch('beeline-room-pin-'), 'agent-home');

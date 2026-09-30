@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Linking, Pressable, Text, TextInput, View } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AGENT_NAME_MAX_LENGTH, type AgentDetailView } from '@beeline/buzz-client';
 import { ProfileIdentity } from './ProfileIdentity';
@@ -62,6 +62,7 @@ export function AgentProfileView({
   soul: string;
   management: React.ReactNode;
 }) {
+  const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const [expanded, setExpanded] = useState(false);
   const [linkError, setLinkError] = useState(false);
@@ -129,7 +130,13 @@ export function AgentProfileView({
         testID="agent-profile-header"
         title="Profile"
       />
-      <KeyboardAwareScrollView contentContainerStyle={styles.content}>
+      <KeyboardAwareScrollView
+        contentContainerStyle={[
+          styles.content,
+          { paddingBottom: theme.buzz.space.xxl + insets.bottom },
+        ]}
+        testID="agent-profile-scroll"
+      >
         {loading && <SurfaceGlyphLoader testID="agent-profile-loader" />}
         {error && (
           <View style={styles.section}>

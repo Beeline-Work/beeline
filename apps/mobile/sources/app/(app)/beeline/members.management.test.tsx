@@ -515,7 +515,26 @@ describe('Members workspace management', () => {
     try {
       const renderer = await render();
       const scroll = renderer.root.findByType('KeyboardAwareScrollView' as never);
-      const contentStyle = Object.assign({}, ...[scroll.props.contentContainerStyle].flat(Infinity as 1));
+      const contentStyle = Object.assign(
+        {},
+        ...[scroll.props.contentContainerStyle].flat(Infinity as 1),
+      );
+      expect(contentStyle.paddingBottom).toBe(48 + 48);
+    } finally {
+      safeArea.bottom = 0;
+    }
+  });
+
+  it('lets an agent profile scroll its last row clear of the system navigation bar', async () => {
+    safeArea.bottom = 48;
+    try {
+      const renderer = await render();
+      await openAgentProfile(renderer);
+      const scroll = renderer.root.findByProps({ testID: 'agent-profile-scroll' });
+      const contentStyle = Object.assign(
+        {},
+        ...[scroll.props.contentContainerStyle].flat(Infinity as 1),
+      );
       expect(contentStyle.paddingBottom).toBe(48 + 48);
     } finally {
       safeArea.bottom = 0;

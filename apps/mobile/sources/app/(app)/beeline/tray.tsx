@@ -517,7 +517,11 @@ export default function TrayScreen() {
         {pane}
       </View>
       {removed ? (
-        <View accessibilityLiveRegion="polite" style={styles.undo} testID="bookmark-undo">
+        <View
+          accessibilityLiveRegion="polite"
+          style={[styles.undo, { bottom: 16 + insets.bottom }]}
+          testID="bookmark-undo"
+        >
           <Text style={styles.undoText}>Bookmark removed</Text>
           {removed.available ? (
             <Pressable

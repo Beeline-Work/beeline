@@ -359,13 +359,34 @@ describe('Bookmarks mobile list', () => {
       layout.width = 390;
       const renderer = await renderTray();
       const scroll = renderer.root.findByType('FlatList' as never);
-      const contentStyle = Object.assign({}, ...[scroll.props.contentContainerStyle].flat(Infinity as 1));
+      const contentStyle = Object.assign(
+        {},
+        ...[scroll.props.contentContainerStyle].flat(Infinity as 1),
+      );
       expect(contentStyle.paddingBottom).toBe(24 + 48);
     } finally {
       safeArea.bottom = 0;
     }
   });
 
+  it('keeps the removed-bookmark undo clear of the system navigation bar', async () => {
+    safeArea.bottom = 48;
+    try {
+      layout.os = 'android';
+      layout.width = 390;
+      serve({ bookmarks: [bookmark({ messageId: 'gone', available: false, text: undefined })] });
+      const renderer = await renderTray();
+      await act(async () => {
+        await renderer.root
+          .findByProps({ accessibilityLabel: 'Remove unavailable bookmark' })
+          .props.onPress();
+      });
+      const undo = renderer.root.findByProps({ testID: 'bookmark-undo' });
+      expect(Object.assign({}, ...[undo.props.style].flat(Infinity as 1)).bottom).toBe(16 + 48);
+    } finally {
+      safeArea.bottom = 0;
+    }
+  });
 });
 
 describe('Bookmarks empty state', () => {

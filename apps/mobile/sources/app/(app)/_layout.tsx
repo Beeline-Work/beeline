@@ -122,11 +122,11 @@ export default function RootLayout() {
             headerShown: false,
           }}
         />
-        {/* Scheduled work keeps the stack header (its back control); the page draws none. */}
+        {/* Scheduled work draws the shared PageHeader (Room over Scheduled Work). */}
         <Stack.Screen
           name="beeline/settings/schedules"
           options={{
-            headerTitle: 'Scheduled work',
+            headerShown: false,
           }}
         />
         <Stack.Screen

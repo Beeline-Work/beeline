@@ -182,7 +182,7 @@ describe('RoomRosterSheet', () => {
     ['Room', null],
     ['corner', 'parent-room'],
   ])(
-    'shows shared human-role and agent-model/owner rows inside a %s',
+    'shows shared human-role and agent-model rows inside a %s',
     (_surface, parentChannelId) => {
       const renderer = render(sheet({ parentChannelId }));
       expect(
@@ -194,7 +194,7 @@ describe('RoomRosterSheet', () => {
       const agentRow = renderer.root.findAllByProps({ testID: `room-roster-agent-${OX}` }).at(-1)!;
       const texts = agentRow.findAllByType('Text' as any).map((node: any) => node.props.children);
       expect(texts[0]).toBe('@ox');
-      expect(texts[1]).toBe('Sonnet · by @ana');
+      expect(texts[1]).toBe('Sonnet');
       // The gold ring is the only state mark: no status square, no kind word.
       expect(agentRow.findByType('IdentityMark' as any).props.alive).toBe(true);
       expect(texts.flat().join(' ')).not.toMatch(/AGENT|PERSON|ONLINE/);

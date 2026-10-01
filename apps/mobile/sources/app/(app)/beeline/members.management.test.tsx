@@ -541,13 +541,13 @@ describe('Members workspace management', () => {
     }
   });
 
-  it('shows model and owner on the agent row without spending the row on presence', async () => {
+  it('shows model on the agent row without spending the row on presence', async () => {
     const renderer = await render();
     const agentRow = renderer.root.findByProps({ testID: `agent-${AGENT}-identity` });
     const mark = agentRow.findByType('IdentityMark' as any);
     expect(mark.props.kind).toBe('agent');
     expect(mark.props.alive).toBeFalsy();
-    expect(agentRow.findAllByType('Text' as any)[1].props.children).toBe('Sonnet · by @viewer');
+    expect(agentRow.findAllByType('Text' as any)[1].props.children).toBe('Sonnet');
     expect(
       agentRow
         .findAllByType('Text' as any)
@@ -656,13 +656,13 @@ describe('Members workspace management', () => {
     expect(texts.flat().join(' ')).not.toMatch(/⌬|ONLINE|OFFLINE|MEMBER\b/);
   });
 
-  it('shows every handle once with role-only human and model-plus-owner agent subtitles', async () => {
+  it('shows every handle once with role-only human and model-only agent subtitles', async () => {
     const renderer = await render();
     const agentRow = renderer.root.findByProps({ testID: `agent-${AGENT}-identity` });
     const agentTexts = agentRow
       .findAllByType('Text' as any)
       .map((node: any) => node.props.children);
-    expect(agentTexts).toEqual(['@clara', 'Sonnet · by @viewer']);
+    expect(agentTexts).toEqual(['@clara', 'Sonnet']);
     expect(chevronDirections(agentRow)).toEqual(['right']);
     expect(agentRow.findByType('IdentityMark' as any).props.alive).toBeFalsy();
     const personRow = renderer.root.findByProps({ testID: `member-${MEMBER}-identity` });
@@ -976,7 +976,7 @@ describe('Members workspace management', () => {
     );
     expect(
       renderer.root.findByProps({ testID: 'model-axis-model' }).props.children[1].props.children,
-    ).toBe('openrouter/z-ai/glm-5.3-flash');
+    ).toBe('glm-5.3-flash');
     expect(
       renderer.root.findByProps({ testID: 'model-axis-effort' }).props.children[1].props.children,
     ).toBe('—');

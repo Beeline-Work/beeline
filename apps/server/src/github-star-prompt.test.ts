@@ -41,7 +41,7 @@ const answer = (action: 'star' | 'later' | 'dismiss', milestone: number) =>
   phone.execute('answerStarPrompt', { action, milestone }, H);
 
 /** One full agent turn: the person tags the agent, the agent claims and replies. */
-async function turn(text = 'hello'): Promise<string> {
+async function turn(text = 'hello', artifact = false): Promise<string> {
   await phone.execute('sendRoomMessage', { roomId: R, text: `@hoots ${text}` }, H);
   const commands = (await daemon.execute('getAgentCommands', { roomId: R }, A)).commands;
   const command = commands.at(-1) as AgentCommand;
@@ -55,6 +55,12 @@ async function turn(text = 'hello'): Promise<string> {
     { roomId: R, agentId: A, requestId: command.turnRequestId, generationId: 'g1', status: 'working' },
     A,
   );
+  if (artifact)
+    await db.query(
+      `INSERT INTO agent_pending_attachments(room_id,agent_id,url,name,mime_type,size,request_id,generation_id)
+       VALUES($1,$2,'https://server.test/media/artifact','report.html','text/html',10,$3,'g1')`,
+      [R, A, command.turnRequestId],
+    );
   const reply = await daemon.execute(
     'postRoomMessage',
     { roomId: R, requestId: command.turnRequestId, generationId: 'g1', text: `answer to ${text}` },
@@ -155,6 +161,20 @@ it('shows the card on the first win after the 3rd reply and stars with the perso
   expect(githubCalls.at(-1)).toBe(`PUT /user/starred/Beeline-Work/beeline Bearer ${USER_TOKEN}`);
   expect(starred).toBe(true);
   expect(await read()).toEqual({ prompt: null });
+});
+
+it('waits for a later win when the milestone reply itself carries the artifact', async () => {
+  await turn('one');
+  await turn('two');
+  await turn('three with a report', true);
+  expect(
+    (await db.query<{ attachments: unknown[] }>(
+      `SELECT attachments FROM messages WHERE text='answer to three with a report'`,
+    )).rows[0]?.attachments,
+  ).toHaveLength(1);
+  expect(await read()).toEqual({ prompt: null });
+  await turn('four with a report', true);
+  expect((await read()).prompt?.milestone).toBe(3);
 });
 
 it('opens the repository instead when GitHub refuses the star', async () => {

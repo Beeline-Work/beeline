@@ -20,13 +20,16 @@ function starPromptBody(milestone: number): string {
 export function useStarPrompt(newestMessageKey: string | undefined, enabled: boolean) {
   const [prompt, setPrompt] = useState<StarPrompt | null>(null);
   const [busy, setBusy] = useState<StarPromptAction | null>(null);
-  const answered = useRef(false);
+  // An answer outdates every read started before it; later reads still ask,
+  // so the next milestone shows in the same open chat after Not now.
+  const answers = useRef(0);
   useEffect(() => {
-    if (!enabled || answered.current) return;
+    if (!enabled) return;
     let current = true;
+    const asked = answers.current;
     monolithPhoneOperation('readStarPrompt', {})
       .then((view) => {
-        if (current && !answered.current) setPrompt(view.prompt);
+        if (current && asked === answers.current) setPrompt(view.prompt);
       })
       .catch(() => undefined);
     return () => {
@@ -42,7 +45,7 @@ export function useStarPrompt(newestMessageKey: string | undefined, enabled: boo
           action,
           milestone: prompt.milestone,
         });
-        answered.current = true;
+        answers.current += 1;
         setPrompt(null);
         if (result.outcome === 'open' && result.url)
           await openExternalUrl(result.url).catch(() => undefined);

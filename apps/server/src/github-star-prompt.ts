@@ -11,7 +11,7 @@ import type { SqlDatabase } from './database.js';
  * Due once per milestone: the viewer's 3rd, 30th and 300th completed agent
  * reply (counted when the reply commits, across every Room and corner; cards
  * and failures never count). It shows on the first win after the milestone,
- * never on the count itself: an agent reply carrying an artifact, the
+ * never on the count itself: a later agent reply carrying an artifact, the
  * viewer's 👍 on an agent message, or a corner they commissioned landing or
  * closing. It stays hidden while the viewer is mid-conversation, right after
  * a failed turn or a correction, and once GitHub says they already starred.
@@ -56,7 +56,7 @@ export function starPromptReplySql(command: string, artifact: string, milestones
      SELECT source.author_id,1,
        CASE WHEN 1=ANY(${milestones}) THEN 1 ELSE 0 END,
        CASE WHEN 1=ANY(${milestones}) THEN now() END,
-       CASE WHEN ${artifact} THEN now() END
+       CASE WHEN ${artifact} AND NOT 1=ANY(${milestones}) THEN now() END
      FROM ${command} command
      JOIN messages source ON source.id=command.root_source_message_id
      JOIN identities person ON person.id=source.author_id
@@ -67,7 +67,9 @@ export function starPromptReplySql(command: string, artifact: string, milestones
        reached_milestone=CASE WHEN prompt.replies+1=ANY(${milestones})
          THEN prompt.replies+1 ELSE prompt.reached_milestone END,
        reached_at=CASE WHEN prompt.replies+1=ANY(${milestones}) THEN now() ELSE prompt.reached_at END,
-       last_win_at=CASE WHEN ${artifact} THEN now() ELSE prompt.last_win_at END,
+       -- An artifact on the milestone reply itself is not a later win.
+       last_win_at=CASE WHEN ${artifact} AND NOT prompt.replies+1=ANY(${milestones})
+         THEN now() ELSE prompt.last_win_at END,
        updated_at=now()`;
 }
 
@@ -124,7 +126,7 @@ export async function readStarPrompt(
              AND card.card_type='corner-workflow-handoff'
              AND card.card->>'toState' IN ('landed','closed')
            WHERE corner.commissioned_by=prompt.identity_id
-         ))>=prompt.reached_at due
+         ))>prompt.reached_at due
        FROM github_star_prompts prompt
        WHERE prompt.identity_id=$1 AND prompt.closed IS NULL
          AND prompt.reached_milestone>prompt.answered_milestone`,

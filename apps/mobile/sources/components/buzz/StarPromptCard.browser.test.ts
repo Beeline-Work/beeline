@@ -14,8 +14,13 @@ function shims(mobile: string, starOutcome: 'starred' | 'open'): Record<string, 
       export const interpolateColor = (_value, _input, output) => output[output.length - 1];`,
     '@/sync/transport/monolith-operation': `
       export const monolithPhoneOperation = async (name, input) => {
-        if (name === 'readStarPrompt') return { prompt: { milestone: 3,
-          repository: 'Beeline-Work/beeline', url: 'https://github.com/Beeline-Work/beeline' } };
+        // Due at 3 until answered; after Not now the server has milestone 30 due.
+        if (name === 'readStarPrompt') {
+          const answers = window.__answers ?? [];
+          if (answers.some((a) => a.action !== 'later')) return { prompt: null };
+          return { prompt: { milestone: answers.length ? 30 : 3,
+            repository: 'Beeline-Work/beeline', url: 'https://github.com/Beeline-Work/beeline' } };
+        }
         if (name !== 'answerStarPrompt') throw new Error('unexpected ' + name);
         window.__answers = [...(window.__answers ?? []), input];
         if (input.action === 'star') return ${JSON.stringify(
@@ -64,6 +69,20 @@ describe.skipIf(!existsSync(CHROME))('GitHub star card in a browser', () => {
     expect(result).toContain(
       'tapped star | card gone | opened: https://github.com/Beeline-Work/beeline',
     );
+  }, 90_000);
+
+  it('shows the next milestone in the same open chat after Not now', async () => {
+    const { result, status, stderr } = await run('later');
+    expect(status, stderr).toBe(0);
+    expect(result).toContain('tapped later | card gone');
+    expect(result).toContain('after a new message: Star Beeline on GitHub');
+    expect(result).toContain('Your agents have answered you 30 times.');
+  }, 90_000);
+
+  it('stays closed in the same open chat after the close button', async () => {
+    const { result, status, stderr } = await run('dismiss');
+    expect(status, stderr).toBe(0);
+    expect(result).toContain('after a new message: no card');
   }, 90_000);
 
   it.each(['later', 'dismiss'])('hides the card after %s', async (tap) => {

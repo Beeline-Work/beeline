@@ -23,7 +23,11 @@ const report = (text: string) => {
 };
 
 function Harness() {
-  const star = useStarPrompt('newest', true);
+  // `window.__newMessage()` stands in for a new message arriving in the open chat.
+  const [newest, setNewest] = React.useState(0);
+  (window as typeof window & { __newMessage?: () => void }).__newMessage = () =>
+    setNewest((value) => value + 1);
+  const star = useStarPrompt(`newest-${newest}`, true);
   return (
     <View style={{ backgroundColor: beelineThemes.obsidian.bgBase, padding: 16 }}>
       {star.prompt ? (
@@ -59,9 +63,14 @@ async function run() {
   await pause();
   await pause();
   const after = document.querySelector('[data-testid="star-prompt"]') ? 'card still shown' : 'card gone';
+  (window as typeof window & { __newMessage?: () => void }).__newMessage?.();
+  await pause();
+  await pause();
+  const next = document.querySelector<HTMLElement>('[data-testid="star-prompt"]');
+  const reread = next ? (next.textContent ?? '').replace(/\s+/g, ' ').trim() : 'no card';
   const answers = (window as typeof window & { __answers?: unknown[] }).__answers;
   report(
-    `PASS shown: ${shown} | tapped ${tap} | ${after} | opened: ${opened.join(',') || 'nothing'}${answers ? ` | sent: ${JSON.stringify(answers)}` : ''}`,
+    `PASS shown: ${shown} | tapped ${tap} | ${after} | opened: ${opened.join(',') || 'nothing'}${answers ? ` | sent: ${JSON.stringify(answers)}` : ''} | after a new message: ${reread}`,
   );
 }
 

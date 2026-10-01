@@ -3722,9 +3722,10 @@ export class DaemonService {
         artifact: saved.attachments.length > 0,
       };
       const count = (database: SqlDatabase) => recordStarPromptReply(database, reply);
+      // Off the reply path: the committed reply returns without a serial tail.
       if (this.afterCommit) this.afterCommit(count);
       else
-        await count(this.database).catch((error) =>
+        void count(this.database).catch((error) =>
           console.error('[daemon] star prompt reply count failed', error),
         );
     }

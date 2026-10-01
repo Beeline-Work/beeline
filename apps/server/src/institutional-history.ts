@@ -10,6 +10,7 @@ import {
 } from '@beeline/api-contract/daemon';
 import type { CommandRow } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
+import { institutionalCornerRequesterAuthority } from './institutional-memory-shadow.js';
 import { institutionalWorkspaceRolloutStage, rolloutAllowsLive } from './institutional-rollout.js';
 
 type SearchRow = {
@@ -131,7 +132,7 @@ export async function searchInstitutionalHistory(
          WHERE output.id=$1`,
         [command.room_id, command.root_source_message_id],
       )
-    ).rows[0];
+    ).rows[0] ?? (await institutionalCornerRequesterAuthority(db, command.room_id));
     if (!authority) throw new Error('institutional history requester authority is unavailable');
     if (!rolloutAllowsLive(await institutionalWorkspaceRolloutStage(db, authority.workspace_id))) {
       throw new Error('institutional history is not enabled for this Workspace');

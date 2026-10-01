@@ -525,8 +525,7 @@ describe('Room turn failure receipt', () => {
   it('retries a context-window overflow once in a fresh session', async () => {
     const overflow =
       "400 This endpoint's maximum context length is 1048576 tokens. However, you requested about 1053212 tokens (109494 of text input, 943718 in the output).";
-    const turn =
-      (recovers: boolean) =>
+    const turn = (recovers: boolean) =>
       async ({ agentHomeRoot, attempt }: { agentHomeRoot: string; attempt: number }) => {
         const dir = join(agentHomeRoot, 'pi', 'sessions', '--room--');
         await mkdir(dir, { recursive: true });
@@ -538,11 +537,7 @@ describe('Room turn failure receipt', () => {
             JSON.stringify({
               type: 'message',
               message: answered
-                ? {
-                    role: 'assistant',
-                    content: [{ type: 'text', text: 'Fresh answer.' }],
-                    stopReason: 'stop',
-                  }
+                ? { role: 'assistant', content: [{ type: 'text', text: 'Fresh answer.' }], stopReason: 'stop' }
                 : { role: 'assistant', content: [], stopReason: 'error', errorMessage: overflow },
             }),
           ].join('\n'),

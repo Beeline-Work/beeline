@@ -125,8 +125,8 @@ describe('per-room harness state isolation', () => {
       openRouterRouting: { model, cacheDir, fetchImpl },
     });
 
-    const override = JSON.parse(readFileSync(resolve(roomRoot, 'pi/models.json'), 'utf8')).providers
-      .openrouter.modelOverrides[model];
+    const override = JSON.parse(readFileSync(resolve(roomRoot, 'pi/models.json'), 'utf8'))
+      .providers.openrouter.modelOverrides[model];
     expect(override.maxTokens).toBe(32_768);
     expect(override.contextWindow).toBeUndefined();
   });
@@ -651,9 +651,7 @@ describe('operator skills + MCP passthrough', () => {
     expect(readFileSync(managedSkill, 'utf8')).toContain('name: using-beeline');
     const reviewSkill = readFileSync(resolve(skillsDir, 'beeline-review', 'SKILL.md'), 'utf8');
     expect(reviewSkill).toContain('PASS: call `approve_merge` with the reviewed head SHA');
-    expect(reviewSkill).toContain(
-      '`approved <reviewed sha>` without tagging the author. Do not tell the author to merge.',
-    );
+    expect(reviewSkill).toContain('`approved <reviewed sha>` without tagging the author. Do not tell the author to merge.');
     expect(reviewSkill).not.toContain('approved <reviewed sha>, merge');
     expect(reviewSkill).toContain(
       'Approving is your last step as reviewer. The server squash-merges that exact head',
@@ -1374,11 +1372,7 @@ describe('mounted imported MCP server names', () => {
         'args = ["-y", "@trusty-squire/mcp@latest", "server"]',
       ].join('\n'),
     );
-    const input = {
-      operatorHome,
-      agentKind: 'codex' as const,
-      squireScope: { agentId: 'agent-a', roomId: 'room-a' },
-    };
+    const input = { operatorHome, agentKind: 'codex' as const, squireScope: { agentId: 'agent-a', roomId: 'room-a' } };
     const preparedEnv = await prepareRoomAgentHome({
       root: agentHomeRoot,
       ...input,
@@ -1420,11 +1414,7 @@ describe('mounted imported MCP server names', () => {
         },
       }),
     );
-    const input = {
-      operatorHome,
-      agentKind: 'pi' as const,
-      squireScope: { agentId: 'agent-a', roomId: 'room-a' },
-    };
+    const input = { operatorHome, agentKind: 'pi' as const, squireScope: { agentId: 'agent-a', roomId: 'room-a' } };
     expect(mountedImportedMcpServerNames(input)).toEqual([]);
     expect(hostImportedMcpServerNames(input)).toEqual(['files', 'trusty-squire']);
     expect(

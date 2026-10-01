@@ -208,6 +208,22 @@ function redact(value: unknown, hidden: readonly string[], depth = 0): unknown {
     [key, redact(item, hidden, depth + 1)]));
 }
 
+/**
+ * Enabled, non-managed OAuth2 configs are created by an operator in the Composio dashboard.
+ * When several exist, the most recently created wins; ties fall back to the lowest id.
+ */
+function customOAuthConfig(items: readonly Json[], toolkit: string): Json | undefined {
+  const created = (item: Json) => {
+    const time = typeof item.created_at === 'string' ? Date.parse(item.created_at) : Number.NaN;
+    return Number.isFinite(time) ? time : Number.NEGATIVE_INFINITY;
+  };
+  return items.filter((item) =>
+    object(item.toolkit).slug === toolkit && item.auth_scheme === 'OAUTH2' &&
+    item.is_composio_managed === false && item.status === 'ENABLED' &&
+    typeof item.id === 'string' && item.id !== '',
+  ).sort((a, b) => created(b) - created(a) || String(a.id).localeCompare(String(b.id)))[0];
+}
+
 export class ComposioApps {
   constructor(private readonly apiKey: string, private readonly transport: typeof fetch = fetch) {
     if (!apiKey) throw new Error('App provider is unavailable');
@@ -243,23 +259,33 @@ export class ComposioApps {
   }
 
   async supportsOAuth(toolkit: string): Promise<boolean> {
+    let row: Json;
     try {
-      const row = await this.request(`/toolkits/${encodeURIComponent(toolkit)}?version=latest`, 'GET');
-      return row.slug === toolkit && row.enabled !== false &&
-        Array.isArray(row.composio_managed_auth_schemes) &&
-        row.composio_managed_auth_schemes.some((scheme) =>
-          typeof scheme === 'string' && scheme.toLowerCase() === 'oauth2');
+      row = await this.request(`/toolkits/${encodeURIComponent(toolkit)}?version=latest`, 'GET');
     } catch (error) {
       if ((error as { status?: number }).status === 404) return false;
       throw error;
     }
+    if (row.slug !== toolkit || row.enabled === false) return false;
+    if (Array.isArray(row.composio_managed_auth_schemes) &&
+      row.composio_managed_auth_schemes.some((scheme) =>
+        typeof scheme === 'string' && scheme.toLowerCase() === 'oauth2')) return true;
+    return customOAuthConfig(await this.authConfigs(toolkit), toolkit) !== undefined;
   }
 
-  private async authConfig(toolkit: string): Promise<string> {
-    const query = new URLSearchParams({ toolkit_slug: toolkit, is_composio_managed: 'true', limit: '200' });
+  private async authConfigs(toolkit: string): Promise<Json[]> {
+    const query = new URLSearchParams({ toolkit_slug: toolkit, limit: '200' });
     const listed = await this.request(`/auth_configs?${query}`, 'GET');
     if (!Array.isArray(listed.items)) throw new Error('App provider returned an invalid response');
-    const existing = listed.items.map(object).find((item) =>
+    return listed.items.map(object);
+  }
+
+  /** An operator-created custom OAuth2 config wins over Composio's shared managed one. */
+  private async authConfig(toolkit: string): Promise<string> {
+    const items = await this.authConfigs(toolkit);
+    const custom = customOAuthConfig(items, toolkit);
+    if (custom) return requiredString(custom.id);
+    const existing = items.find((item) =>
       object(item.toolkit).slug === toolkit && item.auth_scheme === 'OAUTH2' &&
       item.is_composio_managed === true && item.status === 'ENABLED');
     if (existing) return requiredString(existing.id);

@@ -6,7 +6,7 @@ import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
 import { McpRegistryClient } from './mcp-registry.js';
 import { applyVaultList } from './workbench.js';
-import { readOwnerApps, resolveAppRoute, type AppRouteProbes } from './app-connections.js';
+import { beginComposioAppSignIn, connectApp, readOwnerApps, resolveAppRoute, type AppRouteProbes } from './app-connections.js';
 import { APP_FILE_MAXIMUM_BYTES, ComposioApps } from './composio-apps.js';
 import { ObjectService } from './object-service.js';
 import type { ObjectStorage } from './object-storage.js';
@@ -742,5 +742,100 @@ describe('connect_app', () => {
     expect(view.apps).toEqual([
       expect.objectContaining({ appKey: 'resend', name: 'Resend', status: 'connecting' }),
     ]);
+  });
+
+  it('treats a missing upstream account as not connected so reconnect issues a fresh link', async () => {
+    // A real provider boundary: the stored account id 404s upstream, exactly
+    // like the production account that died after the #1945 config change.
+    const transport = vi.fn(async (url: URL | string, init?: RequestInit) => {
+      const parsed = new URL(String(url));
+      const method = init?.method ?? 'GET';
+      if (/^\/api\/v3\/connected_accounts\/[^/]+$/.test(parsed.pathname) &&
+          (method === 'GET' || method === 'DELETE'))
+        return Response.json({ error: 'Connected account "ca_gone" not found' }, { status: 404 });
+      const toolkit = /^\/api\/v3\/toolkits\/([^/?]+)/.exec(parsed.pathname)?.[1];
+      if (toolkit) return Response.json({ slug: toolkit, enabled: true,
+        composio_managed_auth_schemes: ['OAUTH2'] });
+      if (parsed.pathname === '/api/v3/auth_configs' && method === 'GET') {
+        const slug = parsed.searchParams.get('toolkit_slug') ?? '';
+        return Response.json({ items: [{ id: `ac_${slug}`, toolkit: { slug },
+          auth_scheme: 'OAUTH2', is_composio_managed: true, status: 'ENABLED' }] });
+      }
+      if (parsed.pathname === '/api/v3/connected_accounts/link')
+        return Response.json({ redirect_url: 'https://app.composio.dev/connect/fixture',
+          connected_account_id: 'ca_fixture',
+          expires_at: new Date(Date.now() + 600_000).toISOString() }, { status: 201 });
+      throw new Error(`unexpected request ${method} ${parsed.pathname}`);
+    });
+    const provider = new ComposioApps('fixture-only', transport as typeof fetch);
+    const registry = fakeRegistry([]).client;
+    const daemon = daemonWith(registry, provider);
+    const seed = async (appId: string, appKey: string, routeId: string, name: string) => {
+      await database.query(
+        `INSERT INTO workspace_apps(id,workspace_id,owner_identity_id,app_key,display_name,
+           transport,route,state,composio_account_id)
+         VALUES($1,$2,$3,$4,$5,'composio','composio','active','ca_gone')`,
+        [appId, WORKSPACE, OWNER, appKey, name],
+      );
+      await database.query(
+        `INSERT INTO workspace_app_routes(id,app_id,route,transport,reason,requested_by)
+         VALUES($1,$2,'composio','composio','seeded stale fixture',$3)`,
+        [routeId, appId, OWNER],
+      );
+    };
+
+    // YouTube is the exact live production symptom.
+    const youtubeId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    await seed(youtubeId, 'youtube', 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'YouTube');
+
+    // AC-2: the Workbench row names the actual next step, never the generic
+    // could-not-be-checked error.
+    const appBefore = (await readOwnerApps(database, OWNER, provider))[0]!;
+    expect(appBefore).toMatchObject({ status: 'error',
+      errorMessage: 'App sign-in needs attention' });
+    expect(appBefore.errorMessage).not.toBe('App connection could not be checked');
+
+    // AC-3: the agent-side connect_app(reconnect:true) settles on
+    // needs_sign_in against the STILL-stale row (the link arrives only when
+    // the person taps the connection card) instead of the error loop.
+    const daemonOutcome = await daemon.execute('connectApp', { ...turn, app: 'YouTube',
+      reason: 'post the launch notes', reconnect: true }, HELPER);
+    expect(daemonOutcome.status).toBe('needs_sign_in');
+    expect((await database.query<{ composio_account_id: string | null }>(
+      `SELECT composio_account_id FROM workspace_apps WHERE id=$1`, [youtubeId],
+    )).rows[0]?.composio_account_id).toBe('ca_gone'); // still stale: the card path issues no link
+
+    // The phone path: beginComposioAppSignIn returns a fresh authorizationUrl
+    // and replaces the stale id in the same transaction (the Workbench
+    // "Connect youtube" tap that failed with the 404 before the fix).
+    const opened = await beginComposioAppSignIn(database, provider, OWNER, youtubeId);
+    expect(opened.authorizationUrl).toBe('https://app.composio.dev/connect/fixture');
+    const after = (await database.query<{ composio_account_id: string | null;
+      composio_link_expires_at: string | null }>(
+      `SELECT composio_account_id,composio_link_expires_at FROM workspace_apps WHERE id=$1`,
+      [youtubeId],
+    )).rows[0]!;
+    expect(after.composio_account_id).toBe('ca_fixture'); // the stale id was replaced
+    expect(after.composio_link_expires_at).not.toBeNull();
+
+    // The front door's phone reconnect issues the fresh link as well.
+    const slackId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    await seed(slackId, 'slack', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'Slack');
+    const resumed = await connectApp(database, registry, {
+      workspaceId: WORKSPACE,
+      ownerId: OWNER,
+      machineId: 'machine-one',
+      helperAgentId: HELPER,
+      requestedBy: OWNER,
+      app: 'Slack',
+      reconnect: true,
+      composio: provider,
+    });
+    expect(resumed).toMatchObject({ status: 'needs_sign_in', transport: 'composio' });
+    expect(resumed.authorizationUrl).toBe('https://app.composio.dev/connect/fixture');
+    const slackRow = (await database.query<{ composio_account_id: string | null }>(
+      `SELECT composio_account_id FROM workspace_apps WHERE id=$1`, [slackId],
+    )).rows[0]!;
+    expect(slackRow.composio_account_id).toBe('ca_fixture'); // the stale id was replaced
   });
 });

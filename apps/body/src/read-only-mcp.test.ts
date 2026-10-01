@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { agentToolsFor, cornerCallText } from './read-only-mcp.js';
-import { assembleSessionPrompt } from './prompt-assembly.js';
+import { workflowContractError } from '@beeline/api-contract/daemon';
+import { CORNER_BRIEF_PROPERTIES, agentToolsFor, cornerCallText } from './read-only-mcp.js';
+import { assembleSessionPrompt, SEARCH_MEMORY_FIRST_RULE } from './prompt-assembly.js';
 
 describe('direct message helper surface', () => {
   it('opens no corners from a direct message', () => {
@@ -73,6 +74,94 @@ describe('direct message helper surface', () => {
     expect(proposal?.inputSchema.required).toContain('subject_is_requester');
     expect(proposal?.inputSchema.properties).not.toHaveProperty('memory_kind');
   });
+
+  it('tells the agent to call search_memory before ever saying a fact was never saved', () => {
+    const searchMemory = agentToolsFor(true, false).find((tool) => tool.name === 'search_memory');
+    expect(searchMemory?.description).toContain(SEARCH_MEMORY_FIRST_RULE);
+  });
+});
+
+describe('save_workflow description', () => {
+  const description = agentToolsFor(true, false).find((tool) => tool.name === 'save_workflow')!
+    .description;
+
+  it('carries a minimal example that the validator accepts', () => {
+    const example = description.match(/Minimal valid example: (\{.*?\}\}\})\. /)?.[1];
+    expect(example).toBeDefined();
+    expect(workflowContractError(JSON.parse(example!))).toBeNull();
+  });
+
+  it('links every workflow tool to the workflow guide, whose example the validator accepts', () => {
+    const guideUrl = 'https://github.com/Beeline-Work/beeline/blob/main/docs/workflows/README.md';
+    const tools = agentToolsFor(true, false);
+    for (const name of ['save_workflow', 'start_workflow', 'handoff', 'assign_workflow_role', 'archive_workflow'])
+      expect(tools.find((tool) => tool.name === name)!.description, name).toContain(guideUrl);
+    const guide = readFileSync(
+      new URL('../../../docs/workflows/README.md', import.meta.url),
+      'utf8',
+    );
+    const example = guide.match(/```json\n([\s\S]*?)\n```/)?.[1];
+    expect(example).toBeDefined();
+    expect(workflowContractError(JSON.parse(example!))).toBeNull();
+  });
+
+  it('states the name, description, gate, loop and terminal rules', () => {
+    expect(description).toContain('name is lowercase words joined by hyphens');
+    expect(description).toContain('description is 1-60 characters');
+    expect(description).toContain('with 2-4 outcomes');
+    expect(description).toContain('Every cycle must pass through a gate or have a loop cap');
+    expect(description).toContain('at least one terminal is required');
+  });
+});
+
+describe('open_corner lane', () => {
+  it('offers only the code and no_code lanes', () => {
+    const openCorner = agentToolsFor(true, false).find((tool) => tool.name === 'open_corner');
+    const schema = openCorner?.inputSchema as { properties: { lane: { enum: string[] } } };
+    expect(schema.properties.lane.enum).toEqual(['code', 'no_code']);
+  });
+});
+
+describe('approve_merge surface', () => {
+  const names = (cornerTurn: boolean, codeLane: boolean, institutionalMemory: boolean) =>
+    agentToolsFor(true, false, cornerTurn, codeLane, true, cornerTurn, institutionalMemory).map(
+      (tool) => tool.name,
+    );
+
+  it('mounts on every code-lane corner turn, whoever the session booted as', () => {
+    // The Sol case: the configured reviewer's session did not boot as the
+    // reviewer and institutional memory is off, yet it can still record PASS.
+    expect(names(true, true, false)).toContain('approve_merge');
+    expect(names(true, true, true)).toContain('approve_merge');
+  });
+
+  it('stays off no-code corners and outside corners', () => {
+    // Only the code lane sets codeLane; no_code never does.
+    for (const memory of [false, true]) {
+      expect(names(true, false, memory)).not.toContain('approve_merge');
+      expect(names(false, false, memory)).not.toContain('approve_merge');
+      expect(names(false, true, memory)).not.toContain('approve_merge');
+    }
+    expect(agentToolsFor(true, true, false, true).map((tool) => tool.name)).not.toContain(
+      'approve_merge',
+    );
+    expect(agentToolsFor(false, false, true, true).map((tool) => tool.name)).not.toContain(
+      'approve_merge',
+    );
+  });
+
+  it('says the server merges and rejects the wrong caller, head, or revision', () => {
+    const tool = agentToolsFor(true, false, true, true).find(
+      (entry) => entry.name === 'approve_merge',
+    )!;
+    expect(tool.description).toContain('exact pull-request head and brief revision');
+    expect(tool.description).toContain('The server then squash-merges that head itself');
+    expect(tool.description).toContain('not the parent Room’s configured reviewer');
+    expect(tool.description).toContain('not the pull request’s current head');
+    expect(tool.description).toContain('a stale brief revision');
+    expect(tool.description).toContain('Do not tell the author to merge.');
+    expect(tool.description).not.toContain('clearance to merge');
+  });
 });
 
 describe('corner lifecycle tool surfaces', () => {
@@ -93,7 +182,8 @@ describe('corner lifecycle tool surfaces', () => {
       expect(names).toContain('close_corner');
       expect(names).toContain('publish_corner_app');
       expect(names).toContain('open_corner_app');
-      expect(names).not.toContain('open_corner');
+      expect(names).toContain('rename_corner');
+      expect(names).toContain('open_corner');
     }
     const noCodeCorner = agentToolsFor(true, false, true, false, true, false);
     expect(noCodeCorner.map((tool) => tool.name)).not.toContain('close_corner');
@@ -105,6 +195,7 @@ describe('corner lifecycle tool surfaces', () => {
     for (const tools of [room, directMessage]) {
       expect(tools.map((tool) => tool.name)).not.toContain('publish_corner_app');
       expect(tools.map((tool) => tool.name)).not.toContain('open_corner_app');
+      expect(tools.map((tool) => tool.name)).not.toContain('rename_corner');
     }
   });
 });
@@ -130,14 +221,28 @@ describe('open_corner arguments', () => {
       required: string[];
       properties: Record<string, unknown>;
     };
-    expect(brief.required).toEqual([
-      'intentVerbatim',
-      'buildSpec',
-      'criteria',
-      'references',
-      'approvalBasis',
-    ]);
+    expect(brief.required).toEqual(['spec', 'approval']);
     expect(Object.keys(brief.properties)).not.toContain('content');
+  });
+
+  it('shares one brief schema with revise_corner_brief, which adds only its revision and change', () => {
+    const revise = agentToolsFor(true, false, true).find(
+      (tool) => tool.name === 'revise_corner_brief',
+    )!.inputSchema as { required: string[]; properties: Record<string, unknown> };
+    const brief = (openCorner().inputSchema as { properties: Record<string, unknown> }).properties
+      .brief as { properties: Record<string, unknown> };
+    expect(brief.properties).toBe(CORNER_BRIEF_PROPERTIES);
+    for (const [key, value] of Object.entries(CORNER_BRIEF_PROPERTIES))
+      expect(revise.properties[key]).toBe(value);
+    expect(
+      Object.keys(revise.properties).filter((key) => !(key in CORNER_BRIEF_PROPERTIES)),
+    ).toEqual(['expectedRevision', 'change']);
+    expect(revise.required).toEqual(['expectedRevision', 'spec', 'approval', 'change']);
+    expect(CORNER_BRIEF_PROPERTIES.spec).toMatchObject({ minLength: 1, maxLength: 16_000 });
+    expect(CORNER_BRIEF_PROPERTIES.approval).toMatchObject({
+      required: ['sourceMessageId'],
+      additionalProperties: false,
+    });
   });
 
   it('flattens an untidy call instead of refusing it', () => {

@@ -1,3 +1,4 @@
+import { SYSTEM_IDENTITY_HANDLE } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
 
 const MENTION_TOKEN = /@([\p{L}\p{M}\p{N}_]+(?:[.-][\p{L}\p{M}\p{N}_]+)*)/gu;
@@ -28,6 +29,25 @@ export function isChannelMentionToken(handle: string): boolean {
 /** Whether the text addresses the whole Room via a live `@channel` token. */
 export function hasChannelMention(text: string): boolean {
   for (const handle of typedMentionHandles(text)) if (isChannelMentionToken(handle)) return true;
+  return false;
+}
+
+const FENCED_CODE = /```[\s\S]*?(?:```|$)/g;
+const INLINE_CODE = /`[^`\n]*`/g;
+
+/**
+ * `@system` is a report, never a tag: System is not a Room member, so it
+ * resolves to nobody, wakes nobody and pushes nobody. A person who writes it
+ * as a standalone token outside code and quoted lines files a feedback item
+ * (`recordSystemReportMention`, `feedback.ts`). Code is blanked rather than
+ * cut so quoted-line detection still reads each line from its own start.
+ */
+export function hasSystemReportMention(text: string): boolean {
+  const withoutCode = text
+    .replace(FENCED_CODE, (block) => block.replace(/[^\n]/g, ' '))
+    .replace(INLINE_CODE, (span) => ' '.repeat(span.length));
+  for (const handle of typedMentionHandles(withoutCode))
+    if (handle.toLowerCase() === SYSTEM_IDENTITY_HANDLE) return true;
   return false;
 }
 

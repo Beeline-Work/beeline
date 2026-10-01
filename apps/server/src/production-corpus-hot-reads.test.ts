@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
+import { vector } from '@electric-sql/pglite/vector';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { QueryResultRow } from 'pg';
 import { PushDeliveryLoop } from './background.js';
@@ -210,7 +211,10 @@ describe('PRODUCTION-CORPUS REPLAY hot-read gate', () => {
     const cacheDirectory = process.env.PRODUCTION_CORPUS_CACHE_DIR;
     if (cacheDirectory) await mkdir(cacheDirectory, { recursive: true });
     database = new PgliteDatabase(
-      new PGlite(cacheDirectory ? `file://${cacheDirectory}` : undefined),
+      new PGlite({
+        ...(cacheDirectory ? { dataDir: `file://${cacheDirectory}` } : {}),
+        extensions: { vector },
+      }),
     );
     await seedCorpus(database);
     await database.query(

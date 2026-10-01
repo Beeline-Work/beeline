@@ -112,8 +112,8 @@ describe('corner merge instructions', () => {
   });
 
   it('selects the no-reviewer and reviewer matrix', () => {
-    // pr_checks_status only sets mergeAllowed with a reviewer AND yolo on, so
-    // only that variant may tell the author to merge.
+    // The server merges once its gate opens; no variant tells the author to
+    // merge, and only a reviewer with yolo on names the server as the merger.
     for (const yolo of [false, true]) {
       expect(cornerMergeInstruction(yolo)).toContain('no configured reviewer');
       expect(cornerMergeInstruction(yolo)).toContain('never merge');
@@ -124,9 +124,12 @@ describe('corner merge instructions', () => {
     expect(off).toContain('never merge');
     expect(off).not.toContain('gh pr merge');
     const on = cornerMergeInstruction(true, 'echo');
-    expect(on).toContain('the end of that review wakes you, whether or not it tags you');
-    expect(on).toContain('checks="passed" and mergeAllowed=true');
-    expect(on).toContain('gh pr merge --squash --match-head-commit <sha>');
+    expect(on).toContain('after its PASS the server merges the pull request itself');
+    expect(on).toContain('Never merge it yourself');
+    expect(on).toContain(
+      'You are woken only to fix failing checks, requested changes, or a merge GitHub refused',
+    );
+    expect(on).not.toContain('gh pr merge');
     for (const instruction of [off, on]) {
       expect(instruction).not.toContain('please review');
       expect(instruction).not.toContain('@echo');
@@ -149,7 +152,12 @@ describe('corner merge instructions', () => {
     expect(instruction).toContain(`call the approve_merge tool for ${'a'.repeat(40)}`);
     expect(instruction).toContain('assigned brief revision 2');
     expect(instruction).toContain('briefRevision=2');
-    expect(instruction).toContain(`@bee approved ${'a'.repeat(40)}, merge`);
+    expect(instruction).toContain(
+      `reply \`approved ${'a'.repeat(40)}\` without tagging bee: the server merges it`,
+    );
+    expect(instruction).not.toContain(`approved ${'a'.repeat(40)}, merge`);
+    expect(instruction).toContain('Never merge yourself or tell the author to merge');
+    expect(instruction).not.toContain('gh pr merge');
     expect(instruction).toContain('Never merge yourself');
     expect(instruction).toContain('Never say you are holding or waiting for checks');
     expect(instruction).not.toContain('pending checks');
@@ -164,7 +172,11 @@ describe('corner merge instructions', () => {
     expect(instruction).toContain("You are this Room's reviewer");
     expect(instruction).toContain('do not request one');
     expect(instruction).toContain('tag any agent for review');
-    expect(instruction).toContain('checks="passed" and mergeAllowed=true');
+    expect(instruction).toContain(
+      'The server merges it once checks are green, yolo is on, and no human hold stands',
+    );
+    expect(instruction).toContain('never merge it yourself');
+    expect(instruction).not.toContain('gh pr merge');
     // A non-reviewer opener (someone else is the configured reviewer): nothing.
     expect(cornerSelfReviewerInstruction({ ...selfReviewer, agentHandle: 'bee' })).toBeUndefined();
     // The reviewer on someone else's corner: `cornerReviewerInstruction` covers
@@ -227,7 +239,6 @@ describe('corner merge instructions', () => {
 
   it.each([
     { label: 'agent-opened code', lane: 'code', openedBy: undefined },
-    { label: 'agent-opened research', lane: 'research', openedBy: undefined },
     { label: 'agent-opened no-code', lane: 'no_code', openedBy: undefined },
     { label: 'BBC in a forwarded human corner', lane: 'no_code', openedBy: 'human-id' },
   ] as const)('starts $label without a repository or host permission request', async (case_) => {
@@ -412,6 +423,7 @@ describe('corner merge instructions', () => {
         { name: 'BEELINE_DAEMON_CORNER_ID', value: 'corner-id' },
         { name: 'BEELINE_CORNER_AGENT_CLOSE', value: '1' },
         { name: 'BEELINE_CORNER_REVIEWER', value: '1' },
+        { name: 'BEELINE_CORNER_LANE', value: 'code' },
       ]),
     );
     const agentEnvironment = new Map(agentServer?.env.map(({ name, value }) => [name, value]));
@@ -420,7 +432,7 @@ describe('corner merge instructions', () => {
         agentEnvironment.get('BEELINE_MCP_SURFACE') === 'agent',
         agentEnvironment.get('BEELINE_AGENT_DM') === '1',
         Boolean(agentEnvironment.get('BEELINE_DAEMON_CORNER_ID')),
-        agentEnvironment.get('BEELINE_CORNER_REVIEWER') === '1',
+        agentEnvironment.get('BEELINE_CORNER_LANE') === 'code',
         Boolean(agentEnvironment.get('BEELINE_GRANT_RUNNER_URL')),
         agentEnvironment.get('BEELINE_CORNER_AGENT_CLOSE') === '1',
       ).map((tool) => tool.name),
@@ -2524,43 +2536,17 @@ describe('thin monolith corner turn', () => {
           brief: {
             id: 'corner-id',
             revision: 2,
-            legacy: false,
             authorId: runtime.agent.publicKey,
             sourceRoomId: 'room-id',
             sourceMessageId: 'correction-message',
             attachments: [],
-            content: 'Preserve the requested widget size and deliberate amber label.',
-            intentVerbatim: [
-              {
-                sourceMessageId: 'intent-message',
-                snapshot: 'Build the requested widget at the agreed size.',
-              },
-              {
-                sourceMessageId: 'correction-message',
-                snapshot: 'Correction: keep the label amber, not blue.',
-              },
-            ],
-            buildSpec: 'Preserve the requested widget size and deliberate amber label.',
-            criteria: [
-              { id: 'AC-1', text: 'The widget keeps the requested size.' },
-              { id: 'AC-2', text: 'The label remains amber.' },
-            ],
-            nonGoals: ['Changing the label to the conventional blue.'],
-            references: [
-              {
-                label: 'Approved widget mock',
-                authority: 'approved-reference',
-                description: 'The corrected amber visual.',
-              },
-            ],
-            approvalBasis: {
-              kind: 'explicit-human-answer',
+            spec: '## Intent\n> Build the requested widget at the agreed size. (intent-message)\n\n## Checklist\n- The widget keeps the requested size.\n- The label remains amber.\n\n## Non-goals\n- Changing the label to the conventional blue.',
+            approval: {
               sourceMessageId: 'correction-message',
-              snapshot: 'Correction: keep the label amber, not blue.',
+              text: 'Correction: keep the label amber, not blue.',
               approvedBy: 'human-pubkey',
-              briefHash: 'a'.repeat(64),
+              approverName: 'Rae',
             },
-            revisionHash: 'a'.repeat(64),
           },
         };
       if (name === 'getInstitutionalContext') {
@@ -2676,6 +2662,7 @@ describe('thin monolith corner turn', () => {
     expect(secondPrompt).toContain(
       'Corner objective (navigation only, not product authority): Implement the widget',
     );
+    expect(firstPrompt).not.toContain('rename_corner');
     expect(firstPrompt).toContain('Members (exact tag spellings):');
     expect(secondPrompt).toContain('Members (exact tag spellings):');
     expect(firstPrompt).toContain('- @goosy-2 — Goosy (agent)');
@@ -2709,6 +2696,28 @@ describe('thin monolith corner turn', () => {
       }),
     );
     const repositorySystemPrompt = String(sessionNew.mock.calls[0]?.[0].systemPrompt);
+    expect(repositorySystemPrompt).not.toContain('gh pr merge');
+    // A code-lane session that did not boot as the reviewer still mounts
+    // approve_merge, even with institutional memory off: the server decides
+    // whether this caller is the configured reviewer.
+    const codeAgentEnvironment = new Map(
+      sessionNew.mock.calls[0]?.[0].mcpServers
+        .find((server) => server.name === 'beeline-agent')
+        ?.env.map(({ name, value }) => [name, value]),
+    );
+    expect(codeAgentEnvironment.get('BEELINE_CORNER_LANE')).toBe('code');
+    expect(codeAgentEnvironment.has('BEELINE_CORNER_REVIEWER')).toBe(false);
+    expect(
+      agentToolsFor(
+        codeAgentEnvironment.get('BEELINE_MCP_SURFACE') === 'agent',
+        codeAgentEnvironment.get('BEELINE_AGENT_DM') === '1',
+        Boolean(codeAgentEnvironment.get('BEELINE_DAEMON_CORNER_ID')),
+        codeAgentEnvironment.get('BEELINE_CORNER_LANE') === 'code',
+        Boolean(codeAgentEnvironment.get('BEELINE_GRANT_RUNNER_URL')),
+        codeAgentEnvironment.get('BEELINE_CORNER_AGENT_CLOSE') === '1',
+        false,
+      ).map((tool) => tool.name),
+    ).toContain('approve_merge');
     expect(repositorySystemPrompt).toContain(CORNER_AUTHOR_CONTRACT);
     expect(repositorySystemPrompt).toContain("beeline-triage skill's bugfix execution contract");
     expect(repositorySystemPrompt).toContain('record it under Reproduction <id>');
@@ -2723,13 +2732,7 @@ describe('thin monolith corner turn', () => {
     expect(repositorySystemPrompt.indexOf(CORNER_AUTHOR_CONTRACT)).toBeLessThan(
       repositorySystemPrompt.indexOf(cornerMergeInstruction(true)),
     );
-    expect(sessionNew).toHaveBeenCalledWith(
-      expect.objectContaining({
-        systemPrompt: expect.stringContaining(
-          'The server merge card and its push announce a finished corner, so do not tag anyone for it.',
-        ),
-      }),
-    );
+    expect(repositorySystemPrompt).not.toContain('do not tag anyone');
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
         systemPrompt: expect.stringContaining(
@@ -2754,7 +2757,7 @@ describe('thin monolith corner turn', () => {
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
         systemPrompt: expect.stringContaining(
-          'On it, say nothing unless you merge, push a fix, or report checks="unknown", and then use one short line.',
+          'On it, say nothing unless you push a fix or report checks="unknown", and then use one short line.',
         ),
       }),
     );
@@ -2782,14 +2785,11 @@ describe('thin monolith corner turn', () => {
       }),
     );
     for (const call of [sessionPrompt.mock.calls[0], sessionPrompt.mock.calls[1]]) {
-      expect(call[1]).toContain('Assigned corner brief corner-id revision 2');
-      expect(call[1]).toContain('(hash ' + 'a'.repeat(64));
+      expect(call[1]).toContain('Brief revision 2:\n## Intent');
+      expect(call[1]).toContain('- The label remains amber.');
       expect(call[1]).toContain(
-        '[message correction-message] Correction: keep the label amber, not blue.',
+        'Approved by Rae, message correction-message: Correction: keep the label amber, not blue.',
       );
-      expect(call[1]).toContain('AC-2: The label remains amber.');
-      expect(call[1]).toContain('Approval basis bound to this revision:');
-      expect(call[1]).toContain('explicit-human-answer by human-pubkey');
       // This harness drops the session prompt, so the session rules ride every turn.
       expect(call[1]).toContain(
         'You are Bee in Beeline. Stay Bee in every reply, including when a tool or permission blocks you.',
@@ -2991,6 +2991,102 @@ describe('corner turn institutional-memory prefetch', () => {
   }, 10_000);
 });
 
+describe('corner turn rename prompt', () => {
+  it('asks the agent to rename a corner that still has its generated name', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-corner-rename-'));
+    roots.push(root);
+    await execFileAsync('git', ['init', root]);
+    const runtime = {
+      agentId: '11'.repeat(32),
+      agent: stored('11'.repeat(32), 'Bee'),
+      rooms: [],
+      supervisorRoot: root,
+      transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'daemon-token' },
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+    } as unknown as AgentRuntimeRecord;
+    const config: BodyConfig = {
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+      readonlyMcpCommand: '/fake-beeline-mcp',
+      agentEnv: {},
+      workspaceRoot: root,
+      autoApprovePermissions: true,
+    };
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [{ identityId: '11'.repeat(32), kind: 'agent', name: 'Bee', role: 'member' }],
+        };
+      }
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerCloseRequests') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerRestoreState')
+        return {
+          cornerId: 'corner-id',
+          kind: 'human',
+          title: 'still harbor corner',
+          titleGenerated: true,
+        };
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const api = {
+      execute,
+      connection: () => ({
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+        agentId: runtime.agent.publicKey,
+      }),
+    } as unknown as DaemonApiClient;
+    const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'start').mockResolvedValue(undefined);
+    vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'corner-session', raw: {} });
+    const sessionPrompt = vi.spyOn(acp, 'sessionPrompt').mockResolvedValue({
+      stopReason: 'end_turn',
+      updates: [],
+      agentText: 'Done.',
+      toolCalls: [],
+    });
+    const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
+    let loop!: MonolithCornerTurnLoop;
+    loop = new MonolithCornerTurnLoop({
+      cornerId: 'corner-id',
+      parentRoomId: 'room-id',
+      workspaceId: 'workspace',
+      objective: 'still harbor corner',
+      worktreePath: root,
+      runtime,
+      config,
+      api: closePushAfterReceipt(
+        commandFixtureApi(api, 'corner-id', runtime.agent.publicKey, 'Fix the login redirect'),
+        () => loop,
+        1,
+      ),
+      scheduler,
+      signal: new AbortController().signal,
+      pollMs: 10,
+      onPoll: vi.fn(),
+      onFailure: vi.fn(),
+      onCloseRequested: vi.fn(async () => undefined),
+      createAcpClient: () => acp,
+    });
+    await loop.run();
+    await scheduler.dispose();
+
+    expect(String(sessionPrompt.mock.calls[0]?.[1])).toContain(
+      'This corner still has its generated name, "still harbor corner". If the newest message states the work, call rename_corner once before you reply',
+    );
+  }, 10_000);
+});
+
 describe('corner turn failure receipt', () => {
   it('reports failed with a distilled, secret-free reason and never a stack trace', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-failure-'));
@@ -3120,5 +3216,359 @@ describe('corner turn failure receipt', () => {
     expect(reason).toContain('timed out after 120000ms of inactivity');
     expect(reason).toContain('[REDACTED]');
     expect(reason).not.toMatch(/ghp_abc|\n|\bat AcpClient/);
+  });
+});
+
+describe('a context-window overflow', () => {
+  const OVERFLOW =
+    "400 This endpoint's maximum context length is 1048576 tokens. However, you requested about 1053212 tokens (109494 of text input, 943718 in the output).";
+
+  /** A pi-acp corner whose sessions each leave a pi record the test chooses. */
+  async function overflowCorner(answers: Array<'overflow' | string>) {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-corner-overflow-'));
+    roots.push(root);
+    await execFileAsync('git', ['init', root]);
+    const piDir = join(root, 'pi');
+    const sessions = join(piDir, 'sessions', 'corner');
+    await mkdir(sessions, { recursive: true });
+    const runtime = {
+      agentId: '11'.repeat(32),
+      agent: stored('11'.repeat(32), 'Bee'),
+      rooms: [],
+      supervisorRoot: root,
+      transport: {
+        kind: 'monolith',
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+      },
+      agentBinary: '/opt/bin/pi-acp',
+      agentKind: 'codex',
+      agentCommand: '/opt/bin/pi-acp',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+    } as unknown as AgentRuntimeRecord;
+    const config: BodyConfig = {
+      agentBinary: '/opt/bin/pi-acp',
+      agentKind: 'codex',
+      agentCommand: '/opt/bin/pi-acp',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+      readonlyMcpCommand: '/fake-beeline-mcp',
+      agentEnv: { HOME: join(root, 'user'), PI_CODING_AGENT_DIR: piDir },
+      workspaceRoot: root,
+      autoApprovePermissions: true,
+    };
+    const abort = new AbortController();
+    let inboxReads = 0;
+    const writes: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const receipts: Array<Record<string, unknown>> = [];
+    const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [{ identityId: '11'.repeat(32), kind: 'agent', name: 'Bee', role: 'member' }],
+        };
+      }
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerCloseRequests') {
+        inboxReads += 1;
+        if (inboxReads === 1) {
+          return {
+            items: [
+              {
+                id: 'human-msg',
+                authorId: '22'.repeat(32),
+                createdAt: 1,
+                type: 'message',
+                body: 'Go.',
+                attachments: [],
+              },
+            ],
+            cursor: 'human-msg',
+          };
+        }
+        return { items: [], cursor: 'latest' };
+      }
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+      if (name === 'postAgentTurnReceipt') receipts.push(input);
+      writes.push({ name, input });
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const api = {
+      execute,
+      connection: () => ({
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+        agentId: runtime.agent.publicKey,
+      }),
+    } as unknown as DaemonApiClient;
+    const acp = new AcpClient({ agentBinary: '/opt/bin/pi-acp', agentEnv: {} });
+    vi.spyOn(acp, 'start').mockResolvedValue(undefined);
+    let opened = 0;
+    const sessionNew = vi.spyOn(acp, 'sessionNew').mockImplementation(async () => {
+      opened += 1;
+      return { sessionId: `session-${opened}`, raw: {} };
+    });
+    const prompted: string[] = [];
+    vi.spyOn(acp, 'sessionPrompt').mockImplementation(async (sessionId) => {
+      prompted.push(sessionId);
+      const answer = answers[prompted.length - 1] ?? 'overflow';
+      // pi records every turn in its own session file; an overflow is an
+      // assistant message with stopReason "error" and no ACP text at all.
+      await writeFile(
+        join(sessions, `2026_${sessionId}.jsonl`),
+        [
+          JSON.stringify({ type: 'message', message: { role: 'user', content: [] } }),
+          JSON.stringify({
+            type: 'message',
+            message:
+              answer === 'overflow'
+                ? { role: 'assistant', content: [], stopReason: 'error', errorMessage: OVERFLOW }
+                : { role: 'assistant', content: [{ type: 'text', text: answer }], stopReason: 'stop' },
+          }),
+        ].join('\n'),
+      );
+      return {
+        stopReason: 'end_turn',
+        updates: [],
+        agentText: answer === 'overflow' ? '' : answer,
+        toolCalls: [],
+      };
+    });
+    const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
+    const running = new MonolithCornerTurnLoop({
+      cornerId: 'corner-id',
+      parentRoomId: 'room-id',
+      workspaceId: 'workspace',
+      objective: 'Implement the widget',
+      worktreePath: root,
+      repository: {
+        featureBranch: 'feature/widget',
+        targetBranch: 'main',
+        gitCommonDir: join(root, '.git'),
+        githubToken: 'token',
+      },
+      runtime,
+      config,
+      api: commandFixtureApi(api, 'corner-id', runtime.agent.publicKey, 'Implement the widget'),
+      scheduler,
+      signal: abort.signal,
+      pollMs: 10,
+      onPoll: vi.fn(),
+      onFailure: vi.fn(),
+      onCloseRequested: vi.fn(async () => undefined),
+      createAcpClient: () => acp,
+    })
+      .run()
+      .catch((error: unknown) => error);
+    await vi.waitFor(
+      () =>
+        expect(receipts.some((receipt) => ['complete', 'failed'].includes(String(receipt.status)))).toBe(
+          true,
+        ),
+      { timeout: 10_000 },
+    );
+    abort.abort();
+    await running;
+    await scheduler.dispose();
+    return { receipts, writes, prompted, sessionNew };
+  }
+
+  it('answers from a fresh session instead of failing the turn', async () => {
+    const { receipts, writes, prompted, sessionNew } = await overflowCorner([
+      'overflow',
+      'Recovered in a fresh session.',
+    ]);
+    // The overflowed session is dropped once; everything after runs in the
+    // fresh one (a delivery nudge may follow the answer in that same session).
+    expect(prompted.slice(0, 2)).toEqual(['session-1', 'session-2']);
+    expect(new Set(prompted.slice(1))).toEqual(new Set(['session-2']));
+    expect(sessionNew).toHaveBeenCalledTimes(2);
+    expect(receipts.some((receipt) => receipt.status === 'failed')).toBe(false);
+    expect(receipts.some((receipt) => receipt.status === 'complete')).toBe(true);
+    expect(JSON.stringify(writes)).toContain('Recovered in a fresh session.');
+  });
+
+  it('fails as context-overflow after one fresh session, never as a restartable hiccup', async () => {
+    const { receipts, prompted } = await overflowCorner(['overflow', 'overflow', 'overflow']);
+    expect(prompted).toEqual(['session-1', 'session-2']);
+    const failed = receipts.find((receipt) => receipt.status === 'failed')!;
+    expect(failed.reasonKind).toBe('context-overflow');
+    expect(String(failed.reason)).toContain("maximum context length is 1048576 tokens");
+  });
+});
+
+describe('an instantly approved device grant', () => {
+  it('continues the same corner turn in a new session that mounts the device', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-corner-device-'));
+    roots.push(root);
+    await execFileAsync('git', ['init', root]);
+    const runtime = {
+      agentId: '11'.repeat(32),
+      agent: stored('11'.repeat(32), 'Bee'),
+      rooms: [],
+      supervisorRoot: root,
+      transport: {
+        kind: 'monolith',
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+      },
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+    } as unknown as AgentRuntimeRecord;
+    const config: BodyConfig = {
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+      readonlyMcpCommand: '/fake-beeline-mcp',
+      agentEnv: {},
+      workspaceRoot: root,
+      autoApprovePermissions: true,
+      bwrapPath: '/usr/bin/bwrap',
+    };
+    const abort = new AbortController();
+    let inboxReads = 0;
+    let granted = false;
+    const writes: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const receipts: Array<Record<string, unknown>> = [];
+    const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [{ identityId: '11'.repeat(32), kind: 'agent', name: 'Bee', role: 'member' }],
+        };
+      }
+      if (name === 'listAgentGrants') {
+        return {
+          grants: granted
+            ? [{ grantId: 'g-9', kind: 'device', target: '/dev/ttyUSB0', status: 'approved' }]
+            : [],
+        };
+      }
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerCloseRequests') {
+        inboxReads += 1;
+        if (inboxReads === 1) {
+          return {
+            items: [
+              {
+                id: 'human-msg',
+                authorId: '22'.repeat(32),
+                createdAt: 1,
+                type: 'message',
+                body: 'Flash the board on the serial port.',
+                attachments: [],
+              },
+            ],
+            cursor: 'human-msg',
+          };
+        }
+        return { items: [], cursor: 'latest' };
+      }
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+      if (name === 'postAgentTurnReceipt') receipts.push(input);
+      writes.push({ name, input });
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const api = {
+      execute,
+      connection: () => ({
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+        agentId: runtime.agent.publicKey,
+      }),
+    } as unknown as DaemonApiClient;
+    const spawns: Array<ConstructorParameters<typeof AcpClient>[0]> = [];
+    const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'start').mockResolvedValue(undefined);
+    vi.spyOn(acp, 'stop').mockResolvedValue(undefined);
+    let opened = 0;
+    vi.spyOn(acp, 'sessionNew').mockImplementation(async () => {
+      opened += 1;
+      return { sessionId: `session-${opened}`, raw: {} };
+    });
+    const prompts: Array<{ sessionId: string; prompt: string }> = [];
+    vi.spyOn(acp, 'sessionPrompt').mockImplementation(async (sessionId, prompt) => {
+      prompts.push({ sessionId, prompt: String(prompt) });
+      if (prompts.length > 1) {
+        return { stopReason: 'end_turn', updates: [], agentText: 'Flashed the board.', toolCalls: [] };
+      }
+      granted = true;
+      return {
+        stopReason: 'end_turn',
+        updates: [],
+        agentText: 'Got the serial port; continuing.',
+        toolCalls: [
+          {
+            id: 'call-1',
+            title: 'mcp__beeline-agent__request_grant',
+            status: 'completed',
+            content: [
+              {
+                type: 'text',
+                text: 'approved: use /dev/ttyUSB0 [grant g-9]. A running session cannot add a device, so end your turn now with one short line; this same turn continues straight away in a session that has /dev/ttyUSB0. Do not ask anyone to restart.',
+              },
+            ],
+          },
+        ],
+      };
+    });
+    const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
+    const running = new MonolithCornerTurnLoop({
+      cornerId: 'corner-id',
+      parentRoomId: 'room-id',
+      workspaceId: 'workspace',
+      objective: 'Flash the board',
+      worktreePath: root,
+      repository: {
+        featureBranch: 'feature/board',
+        targetBranch: 'main',
+        gitCommonDir: join(root, '.git'),
+        githubToken: 'token',
+      },
+      runtime,
+      config,
+      api: commandFixtureApi(api, 'corner-id', runtime.agent.publicKey, 'Flash the board'),
+      scheduler,
+      signal: abort.signal,
+      pollMs: 10,
+      onPoll: vi.fn(),
+      onFailure: vi.fn(),
+      onCloseRequested: vi.fn(async () => undefined),
+      createAcpClient: (options) => {
+        spawns.push(options);
+        return acp;
+      },
+    })
+      .run()
+      .catch((error: unknown) => error);
+    await vi.waitFor(
+      () =>
+        expect(receipts.some((receipt) => ['complete', 'failed'].includes(String(receipt.status)))).toBe(
+          true,
+        ),
+      { timeout: 10_000 },
+    );
+    abort.abort();
+    await running;
+    await scheduler.dispose();
+
+    expect(receipts.some((receipt) => receipt.status === 'complete')).toBe(true);
+    expect(prompts.slice(0, 2).map((prompt) => prompt.sessionId)).toEqual(['session-1', 'session-2']);
+    expect(prompts[1]!.prompt).toContain('/dev/ttyUSB0 is in this session now');
+    expect(prompts[1]!.prompt).toContain('Newest message:\nFlash the board');
+    expect(JSON.stringify(writes)).toContain('Flashed the board.');
+    const argv = (spawn: ConstructorParameters<typeof AcpClient>[0]) =>
+      [spawn.agentCommand ?? spawn.agentBinary, ...(spawn.agentArgs ?? [])].join(' ');
+    expect(spawns).toHaveLength(2);
+    expect(argv(spawns[0]!)).not.toContain('/dev/ttyUSB0');
+    expect(argv(spawns[1]!)).toContain('--dev-bind-try /dev/ttyUSB0 /dev/ttyUSB0');
   });
 });

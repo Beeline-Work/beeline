@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { groknight } from '@/buzz/groknight';
+import { HullDialog } from './HullDialog';
 import { MicGlyph } from './MicGlyph';
 import { useSpeechInput } from '@/buzz/speech-input';
 
@@ -301,12 +302,7 @@ export function ConversationComposer({
               <Text
                 accessibilityElementsHidden
                 importantForAccessibility="no-hide-descendants"
-                style={[
-                  styles.input,
-                  styles.interimText,
-                  Platform.OS === 'ios' ? undefined : { height: undefined, maxHeight: undefined },
-                  Platform.OS === 'android' && styles.interimTextAndroid,
-                ]}
+                style={[styles.interimText, Platform.OS === 'android' && styles.interimTextAndroid]}
               >
                 <Text style={{ color: theme.buzz.textSecondary }}>
                   {value}
@@ -437,6 +433,26 @@ export function ConversationComposer({
           </Text>
         </TouchableOpacity>
       ) : null}
+      <HullDialog
+        visible={speech.modelDownloadOffered}
+        title="Download the voice model?"
+        body="Android punctuates dictation with its on-device voice model, which is not on this phone yet. Android may ask to confirm the download."
+        onRequestClose={() => void speech.declineModelDownload()}
+        actions={[
+          {
+            label: 'Not now',
+            onPress: () => void speech.declineModelDownload(),
+            testID: `${testIDPrefix}-speech-model-decline`,
+          },
+          {
+            label: 'Download',
+            variant: 'primary',
+            onPress: speech.acceptModelDownload,
+            testID: `${testIDPrefix}-speech-model-download`,
+          },
+        ]}
+        testID={`${testIDPrefix}-speech-model-dialog`}
+      />
     </View>
   );
 }
@@ -485,12 +501,22 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 0,
   },
   interimOverlay: {
-    justifyContent: 'flex-start',
+    // Dictation that outgrows the field keeps its newest words in view.
+    justifyContent: 'flex-end',
+    overflow: 'hidden',
     minHeight: COMPOSER_SINGLE_LINE_INPUT_HEIGHT,
     maxHeight: COMPOSER_MAX_INPUT_HEIGHT,
     pointerEvents: 'none',
   },
+  // The input's typography without its height cap: the overlay caps the
+  // height, so the text grows past it and stays pinned to the newest words.
   interimText: {
+    ...theme.buzz.type.body,
+    flexShrink: 0,
+    minWidth: 0,
+    minHeight: COMPOSER_SINGLE_LINE_INPUT_HEIGHT,
+    paddingVertical: 0,
+    textAlignVertical: 'top',
     color: theme.buzz.textSecondary,
     // Not the body role's lineHeight: this is tuned to stay BELOW Space
     // Grotesk's real glyph bounds at this size (~22px) on Android/web, so

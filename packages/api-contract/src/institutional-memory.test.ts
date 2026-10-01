@@ -4,6 +4,7 @@ import {
   parseInstitutionalCuratorProposal,
   parseInstitutionalMergeReviewProposal,
   parseInstitutionalMemoryProposal,
+  parseInstitutionalMemoryReviewProposal,
   institutionalMemoryRequestWords,
 } from './institutional-memory.js';
 
@@ -25,6 +26,26 @@ const workspaceFact = {
 } as const;
 
 describe('institutional memory proposal contract', () => {
+  it('parses v2 cross-key supersede and retire-only actions, while retaining v1', () => {
+    expect(parseInstitutionalMemoryReviewProposal(workspaceFact)).toEqual(workspaceFact);
+    const { cas: _cas, ...fact } = workspaceFact;
+    const replacement = parseInstitutionalMemoryReviewProposal({
+      ...fact, proposalVersion: 2, action: 'supersede',
+      target: { itemId: 'offered-id', baseVersion: 3 },
+    });
+    expect(replacement).toMatchObject({ action: 'supersede',
+      target: { itemId: 'offered-id', baseVersion: 3 } });
+    const retired = parseInstitutionalMemoryReviewProposal({
+      proposalVersion: 2, action: 'retire', source: workspaceFact.source,
+      confidence: 0.9, classification: { rationale: 'Now obsolete.' },
+      retire: [{ itemId: 'offered-id', baseVersion: 3, reason: 'obsolete' }],
+    });
+    expect(retired).toMatchObject({ action: 'retire',
+      retire: [{ itemId: 'offered-id', reason: 'obsolete' }] });
+    expect(() => parseInstitutionalMemoryReviewProposal({
+      ...fact, proposalVersion: 2, action: 'supersede',
+    })).toThrow('target');
+  });
   it('accepts a bounded workspace fact with source and CAS fields', () => {
     expect(parseInstitutionalMemoryProposal(workspaceFact)).toEqual(workspaceFact);
   });
@@ -123,7 +144,7 @@ describe('institutional memory proposal contract', () => {
     rejects({ keywords: ['a', 'b', 'c', 'd', 'e', 'f', 'g'] }, /1 to 6 keywords/);
     rejects({ keywords: ['the'] }, /distinctive/);
     rejects({ keywords: ['release', 'release'] }, /unique/);
-    rejects({ canonicalKey: 'standing' }, /reserved/);
+    rejects({ canonicalKey: 'standing' }, /retired/);
     expect(
       parseInstitutionalMemoryProposal({ ...workspaceFact, keywords: ['Release', ' Marker '] })
         .keywords,

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 /**
@@ -21,28 +21,61 @@ import { StyleSheet } from 'react-native-unistyles';
  * ever a reminder.
  *
  * It wraps to its full height rather than truncating to a fragment, and renders
- * nothing at all when there is no objective — never a placeholder. The text is
- * whatever `cornerObjectiveItems` has already filtered; raw harness output
- * never reaches this region.
+ * nothing at all when there is neither an objective nor a brief — never a
+ * placeholder. The text is whatever `cornerObjectiveItems` has already
+ * filtered; raw harness output never reaches this region.
+ *
+ * The objective is only a navigation label; the corner's brief carries the
+ * authority. When the corner has one, a `Brief` link hangs in the right gutter
+ * and opens its latest revision full-screen.
  */
 export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
   objective,
+  onOpenBrief,
   testID = 'corner-objective-line',
 }: {
   objective?: string;
+  /** Present only when the corner has a brief. */
+  onOpenBrief?: () => void;
   testID?: string;
 }) {
   const line = objective?.trim();
-  if (!line) return null;
+  if (!line && !onOpenBrief) return null;
   return (
-    <View accessibilityRole="text" style={styles.line} testID={testID}>
+    <View style={styles.line} testID={testID}>
       <View style={styles.rail} />
-      <Text style={styles.copy} testID={`${testID}-copy`}>
+      <Text accessibilityRole="text" style={styles.copy} testID={`${testID}-copy`}>
         {line}
       </Text>
+      {onOpenBrief ? <CornerBriefLink onPress={onOpenBrief} testID={`${testID}-brief`} /> : null}
     </View>
   );
 });
+
+/**
+ * The corner brief's link: one brass word, a 44pt touch target whose extra
+ * height hangs outside the line so the inscription keeps its quiet rhythm.
+ * Shared by the phone's objective line and the desktop work pane.
+ */
+export function CornerBriefLink({
+  onPress,
+  testID = 'corner-brief-link',
+}: {
+  onPress: () => void;
+  testID?: string;
+}) {
+  return (
+    <Pressable
+      accessibilityLabel="Open brief"
+      accessibilityRole="link"
+      onPress={onPress}
+      style={({ pressed }) => [styles.briefLink, pressed && styles.briefLinkPressed]}
+      testID={testID}
+    >
+      <Text style={styles.briefLinkText}>Brief</Text>
+    </Pressable>
+  );
+}
 
 const styles = StyleSheet.create((theme) => ({
   // No border, no fill, no radius: the rail is the whole frame this line gets.
@@ -63,8 +96,23 @@ const styles = StyleSheet.create((theme) => ({
   },
   copy: {
     ...theme.buzz.type.meta,
-    flexShrink: 1,
+    flex: 1,
     minWidth: 0,
     color: theme.buzz.textSecondary,
+  },
+  briefLink: {
+    flexShrink: 0,
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    // Center the word on the first line of copy; the rest of the 44pt target
+    // overhangs the line instead of pushing the transcript down.
+    marginVertical: -(44 - theme.buzz.type.meta.lineHeight) / 2,
+  },
+  briefLinkPressed: { opacity: 0.6 },
+  briefLinkText: {
+    ...theme.buzz.type.meta,
+    color: theme.buzz.accent,
   },
 }));

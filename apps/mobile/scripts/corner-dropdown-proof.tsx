@@ -27,7 +27,13 @@ const corner = (id: number, name: string, state: string, extra: object = {}) => 
   mine: true,
   ...extra,
 });
-const response = (waiting: boolean) => {
+/**
+ * The viewer's corner 4: still working, waiting on them and unseen, waiting
+ * but already opened by them, or idle with nothing owed to anyone.
+ */
+type Phase = 'working' | 'waiting' | 'seen' | 'idle';
+const response = (phase: Phase) => {
+  const waiting = phase === 'waiting' || phase === 'seen';
   const alphaRow = {
     room: { id: alpha, name: 'alpha', workspaceId, updatedAt: 1_790_000_000 },
     unread: false,
@@ -43,12 +49,10 @@ const response = (waiting: boolean) => {
       corner(1, 'short', 'working'),
       corner(2, 'widget-notification-pipeline-rewrite-for-desktop-and-mobile', 'working'),
       corner(3, 'rev', 'review'),
-      corner(
-        4,
-        'needs you',
-        waiting ? 'waiting' : 'working',
-        waiting ? { waitingSince: 1_790_000_900 } : {},
-      ),
+      corner(4, 'needs you', waiting ? 'waiting' : phase, {
+        ...(waiting ? { waitingSince: 1_790_000_900 } : {}),
+        ...(phase === 'waiting' ? { attention: true } : {}),
+      }),
       { id: uuid(5), name: 'theirs', state: 'waiting' },
     ],
   };
@@ -76,7 +80,7 @@ const setters = new Set<(view: ChatListView) => void>();
 const setView = (view: ChatListView) => setters.forEach((set) => set(view));
 
 function RoomList({ desktop }: { desktop: boolean }) {
-  const [view, set] = React.useState<ChatListView>(() => readChatListView(response(false))!);
+  const [view, set] = React.useState<ChatListView>(() => readChatListView(response('working'))!);
   React.useEffect(() => {
     setters.add(set);
     return () => void setters.delete(set);
@@ -199,7 +203,7 @@ async function flows() {
     const s = describe(prefix, '1 nothing waiting');
     check(s.rooms.join() === 'beta,alpha' && !s.open, `${prefix}: collapsed, alpha below beta`);
   }
-  setView(readChatListView(response(true))!);
+  setView(readChatListView(response('waiting'))!);
   await settleOpen(true);
   for (const prefix of ['phone', 'desktop']) {
     const s = describe(prefix, '2 my corner waiting');
@@ -230,10 +234,45 @@ async function flows() {
     await settleOpen(true, [prefix]);
     check(describe(prefix, '4 tap mark again').open, `${prefix}: tapping again opens it`);
   }
-  setView(readChatListView(response(false))!);
+  // The viewer opened the corner: it still waits on them, but stops pulling
+  // the dropdown open.
+  setView(readChatListView(response('seen'))!);
   await settleOpen(false);
   for (const prefix of ['phone', 'desktop']) {
-    const s = describe(prefix, '5 answered');
+    const s = describe(prefix, '5 seen');
+    check(!s.open && s.rooms.join() === 'alpha,beta', `${prefix}: seen, closes on its own`);
+    tap(prefix, 'alpha');
+    await settleOpen(true, [prefix]);
+    const opened = describe(prefix, '6 seen, tap mark');
+    check(opened.corners[0]?.state === 'waiting', `${prefix}: seen corner still reads waiting`);
+    tap(prefix, 'alpha');
+    await settleOpen(false, [prefix]);
+  }
+  // The corner finished with nothing owed to anyone: idle, quiet, closed.
+  setView(readChatListView(response('idle'))!);
+  await pause(150);
+  for (const prefix of ['phone', 'desktop']) {
+    const s = describe(prefix, '7 idle');
+    check(!s.open && s.rooms.join() === 'beta,alpha', `${prefix}: idle, stays closed`);
+    tap(prefix, 'alpha');
+    await settleOpen(true, [prefix]);
+    const opened = describe(prefix, '8 idle, tap mark');
+    check(
+      opened.corners.map((c) => c.state).join() === 'working,working,review,idle' &&
+        opened.corners.every((c) => !c.pulsing),
+      `${prefix}: idle reads idle and does not pulse`,
+    );
+    tap(prefix, 'alpha');
+    await settleOpen(false, [prefix]);
+  }
+  setView(readChatListView(response('waiting'))!);
+  await settleOpen(true);
+  for (const prefix of ['phone', 'desktop'])
+    check(describe(prefix, '9 waiting again').open, `${prefix}: a new ask opens it again`);
+  setView(readChatListView(response('working'))!);
+  await settleOpen(false);
+  for (const prefix of ['phone', 'desktop']) {
+    const s = describe(prefix, '10 answered');
     check(!s.open && s.rooms.join() === 'beta,alpha', `${prefix}: closes once none is waiting`);
   }
   root.unmount();
@@ -245,7 +284,7 @@ async function pulse() {
   const host = document.createElement('div');
   document.body.appendChild(host);
   const root = createRoot(host);
-  const waitingItem = readChatListView(response(true))!.chats[0]!;
+  const waitingItem = readChatListView(response('waiting'))!.chats[0]!;
   const pageItem = {
     corner: { id: uuid(4), name: 'needs you', workspaceId, parentId: alpha },
     lifecycle: { lifecycle: 'working', checks: 'unknown' },

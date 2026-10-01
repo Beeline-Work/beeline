@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { migrate } from './database.js';
 import type { CommandRow } from './agent-command.js';
@@ -15,7 +16,8 @@ import {
   saveSkill,
 } from './institutional-skills.js';
 import { PgliteDatabase } from './test-support.js';
-import { saveWorkflow } from './workflow-runs.js';
+import { saveWorkflow, startWorkflow } from './workflow-runs.js';
+import { pgvectorLiteral } from './institutional-memory-embeddings.js';
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000201';
 const ROOM = '20000000-0000-4000-8000-000000000201';
@@ -312,6 +314,33 @@ describe('merge-derived restricted Workspace procedures', () => {
     expect((await database.query(`SELECT 1 FROM institutional_review_findings`)).rowCount).toBe(0);
   });
 
+  it('lists the saved feedback-triage workflow in a corner turn with no setting, and starts it at notify', async () => {
+    const contract = JSON.parse(
+      readFileSync(new URL('../../../docs/workflows/feedback-triage.json', import.meta.url), 'utf8'),
+    ) as { name: string; description: string };
+    await saveWorkflow(database, command, { contract });
+    // A turn in a corner with no per-corner setting: the workflow is in its index.
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES('triage-ask',$1,$2,'Run feedback triage')`,
+      [CORNER, REQUESTER],
+    );
+    const cornerTurn = {
+      ...command,
+      room_id: CORNER,
+      source_message_id: 'triage-ask',
+      root_source_message_id: 'triage-ask',
+    };
+    const context = await getInstitutionalContext(database, cornerTurn);
+    expect(context.text).toContain(
+      `Workflow feedback-triage (start_workflow): ${contract.description}`,
+    );
+    const started = await startWorkflow(database, cornerTurn, {
+      name: 'feedback-triage',
+      roleBindings: { triager: OTHER_AGENT },
+    });
+    expect(started.state).toBe('notify');
+  });
+
   it('indexes and loads a workflow row with the contract wrapper, distinct from a procedure', async () => {
     const contract = {
       version: 1,
@@ -495,13 +524,36 @@ describe('merge-derived restricted Workspace procedures', () => {
 });
 
 describe('save_skill', () => {
+  it('returns nearby procedures and leaves unrelated ones out', async () => {
+    await saveSkill(database, command, {
+      slug: 'release-checklist', description: 'Check release migrations',
+      markdown: 'Verify the schema marker is last.',
+    });
+    await saveSkill(database, command, {
+      slug: 'cartoon-storyboard', description: 'Draw a cartoon storyboard',
+      markdown: 'Sketch scenes in order.',
+    });
+    const near=[1,...new Array(1023).fill(0)];
+    const far=[0,1,...new Array(1022).fill(0)];
+    await database.query(`UPDATE workspace_skills SET embedding=$2::vector
+      WHERE slug='release-checklist' AND workspace_id=$1`,[WORKSPACE,pgvectorLiteral(near)]);
+    await database.query(`UPDATE workspace_skills SET embedding=$2::vector
+      WHERE slug='cartoon-storyboard' AND workspace_id=$1`,[WORKSPACE,pgvectorLiteral(far)]);
+    const saved=await saveSkill(database,command,{
+      slug:'release-guide',description:'Guide for release migrations',
+      markdown:'Verify the migration and release marker.',
+    },async () => ({outcome:'served',vector:near,ms:1}));
+    expect(saved.similarSkills).toEqual([
+      {slug:'release-checklist',description:'Check release migrations'},
+    ]);
+  });
   it('saves a procedure directly from conversation as version 1, workspace-scoped', async () => {
     const saved = await saveSkill(database, command, {
       slug: 'cartoon-short-video',
       description: 'Storyboard and render a short cartoon clip',
       markdown: '# Cartoon short video\n\n'.padEnd(7_000, 'Keep every shot under four seconds. '),
     });
-    expect(saved).toEqual({ slug: 'cartoon-short-video', version: 1 });
+    expect(saved).toEqual({ slug: 'cartoon-short-video', version: 1, similarSkills: [] });
     const row = await database.query<{
       kind: string;
       state: string;
@@ -531,7 +583,7 @@ describe('save_skill', () => {
       description: 'Storyboard and render a short cartoon clip, v2',
       markdown: 'v2 body',
     });
-    expect(second).toEqual({ slug: 'cartoon-short-video', version: 2 });
+    expect(second).toEqual({ slug: 'cartoon-short-video', version: 2, similarSkills: [] });
   });
 
   it('rejects an invalid slug', async () => {

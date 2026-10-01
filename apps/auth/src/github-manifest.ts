@@ -26,6 +26,8 @@ import { createHash, timingSafeEqual } from 'node:crypto';
  * - contents, pull_requests, issues, actions, workflows, discussions write
  * - checks and statuses read
  * - metadata read (required for every GitHub App)
+ * - starring write, an account permission: the user-token star from the
+ *   in-app GitHub star card (`apps/server/src/github-star-prompt.ts`)
  *
  * Administration, secrets, environments, and organization permissions are
  * deliberately absent. Keep this list pinned by the manifest tests: changing
@@ -53,6 +55,7 @@ export const REQUIRED_GITHUB_APP_PERMISSIONS: Readonly<Record<string, string>> =
   metadata: 'read',
   checks: 'read',
   statuses: 'read',
+  starring: 'write',
 });
 
 export interface GitHubAppManifestInput {

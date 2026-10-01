@@ -318,6 +318,8 @@ export type ChatDisplayMessage = {
   agentModel?: string;
   reactions?: RoomViewMessage['reactions'];
   bookmarked?: boolean;
+  /** Someone reported this message to the Beeline feedback loop; shared, not private. */
+  feedbackReported?: boolean;
   replyToId?: string;
   isNew?: boolean;
   roomUpdate?: { digest?: string };
@@ -449,6 +451,7 @@ export function displayRoomMessage(
       ? { reactions: message.reactions.map((reaction) => ({ ...reaction })) }
       : {}),
     ...(message.bookmarked ? { bookmarked: true } : {}),
+    ...(message.feedbackReported ? { feedbackReported: true } : {}),
     ...(message.reply ? { replyToId: message.reply.eventId } : {}),
     ...(message.durableFact ? { durableFact: { kind: message.durableFact } } : {}),
     ...(message.corner
@@ -578,11 +581,12 @@ export function roomViewTranscriptMessages(
  * the record survives a helper restart. The phone reads every tool call with
  * the same agent + request id back as ONE collapsed disclosure, even when the
  * helper narrated between machine runs. Narration remains in transcript order;
- * its tool items move into the turn's first tool row. Legacy rows without a
- * request id retain the older adjacent-run folding. A human steer, agent prose,
- * or durable-fact card therefore still bounds those legacy runs. The agent's
- * own in-flight draft lane is never swallowed and never breaks a run: it is
- * re-emitted directly below the group it interrupted.
+ * its tool items move into the turn's first tool row. Adjacent tool groups
+ * from the same agent then fold into one, whatever their request ids, because
+ * the reader cannot see a boundary that nothing on screen marks. A human
+ * steer, agent prose, or durable-fact card therefore still bounds a run. The
+ * agent's own in-flight draft lane is never swallowed and never breaks a run:
+ * it is re-emitted directly below the group it interrupted.
  */
 export function foldSettledActivityRuns(
   messages: readonly ChatDisplayMessage[],
@@ -620,7 +624,6 @@ export function foldSettledActivityRuns(
   const folded: ChatDisplayMessage[] = [];
   let run: {
     pubkey: string;
-    requestId?: string;
     activity: AgentActivityItem[];
     drafts: ChatDisplayMessage[];
   } | null = null;
@@ -654,19 +657,13 @@ export function foldSettledActivityRuns(
       folded.push(message);
       continue;
     }
-    if (
-      run &&
-      run.pubkey === message.pubkey &&
-      // A known turn id is an exact disclosure boundary. Only old rows that
-      // predate request ids may fall back to adjacency alone.
-      run.requestId === message.requestId
-    ) {
+    if (run && run.pubkey === message.pubkey) {
       run.activity.push(...message.activity!);
       continue;
     }
     close();
     const activity = [...message.activity!];
-    run = { pubkey: message.pubkey!, requestId: message.requestId, activity, drafts: [] };
+    run = { pubkey: message.pubkey!, activity, drafts: [] };
     folded.push({ ...message, activity });
   }
   close();

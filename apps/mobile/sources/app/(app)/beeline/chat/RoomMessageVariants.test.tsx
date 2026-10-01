@@ -262,7 +262,7 @@ describe('Workbench identities', () => {
 describe('Room message variant components', () => {
   it('replaces the AGENT label with the model, falling back when no model is known', () => {
     expect(agentBylineLabel('  openrouter/deepseek-deepseek-v.4.1-flash  ')).toBe(
-      'openrouter/deepseek-deepseek-v.4.1-flash',
+      'deepseek-deepseek-v.4.1-flash',
     );
     expect(agentBylineLabel()).toBe('AGENT');
     expect(agentBylineLabel('   ')).toBe('AGENT');
@@ -275,7 +275,8 @@ describe('Room message variant components', () => {
     expect(conversationSource.match(/<OrdinaryLedgerMessage/g)).toHaveLength(1);
     expect(conversationSource).toContain('<ChoiceCard');
     expect(conversationSource).toContain('<ConnectorOfferCard');
-    expect(conversationSource.match(/testID="mention-suggestions"/g)).toHaveLength(1);
+    expect(conversationSource.match(/<MentionSuggestionMenu/g)).toHaveLength(1);
+    expect(conversationSource).toContain('keyboardOpen={keyboardHeight > 0}');
     expect(conversationSource).toContain('agentModel={item.agentModel}');
     // The byline renders the model stamped at generation time; the roster
     // lookup is retired so old rows keep their own turn's model (or none).
@@ -955,6 +956,60 @@ describe('Room message variant components', () => {
     expect(forward.props.accessibilityLabel).toBe('Forward message');
     act(() => forward.props.onPress());
     expect(onForward).toHaveBeenCalledWith(row);
+  });
+
+  it('offers Report issue on desktop only where the surface can file one', () => {
+    const onReportIssue = vi.fn();
+    const row = message({ id: 'desktop-report' });
+    const props = {
+      message: row,
+      desktopLayout: true,
+      participantsHydrated: true,
+      viewerPubkey: 'viewer',
+      speakerWorking: false,
+      continued: false,
+      participantHandles: [],
+      channelIndex: { rooms: [], corners: [] },
+      deliveryFailed: false,
+      onChannelReference: vi.fn(),
+      onReply: vi.fn(),
+      onCopy: vi.fn(),
+      onRetry: vi.fn(),
+      onDismiss: vi.fn(),
+    } satisfies OrdinaryLedgerMessageProps;
+    const renderer = render(<OrdinaryLedgerMessage {...props} onReportIssue={onReportIssue} />);
+
+    const report = renderer.root.findByProps({ testID: 'report-button-desktop-report' });
+    expect(report.props.accessibilityLabel).toBe('Report an issue with this message');
+    act(() => report.props.onPress());
+    expect(onReportIssue).toHaveBeenCalledWith(row);
+
+    act(() => renderer.update(<OrdinaryLedgerMessage {...props} />));
+    expect(
+      renderer.root.findAllByProps({ testID: 'report-button-desktop-report' }),
+    ).toHaveLength(0);
+  });
+
+  it('carries feedbackReported to the byline, even through a continued run', () => {
+    render(
+      <OrdinaryLedgerMessage
+        message={message({ id: 'reported', pubkey: 'ada', feedbackReported: true })}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued
+        immediatelyPrecedingMessage={message({ id: 'before', pubkey: 'ada' })}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+    expect(ledgerEntryRender.mock.lastCall?.[0].byline?.feedbackReported).toBe(true);
   });
 
   it('shows the original poster beside the source Room on a forwarded message', () => {
@@ -1989,7 +2044,7 @@ describe('Room message variant components', () => {
 
     expect(ledgerEntryRender.mock.lastCall?.[0].byline).toMatchObject({
       name: 'Lumen',
-      role: 'openrouter/deepseek-deepseek-v.4.1-flash',
+      role: 'deepseek-deepseek-v.4.1-flash',
       mark: { seed: 'agent-lumen', kind: 'agent', face: 'owl' },
     });
   });
@@ -2397,6 +2452,48 @@ describe('Room message variant components', () => {
 
     act(() => ledgerEntryRender.mock.lastCall?.[0].onMention('beebee'));
     expect(onMention).toHaveBeenCalledWith('member-id');
+  });
+
+  it('renders brass links from an agent-written roster handle and the reserved System handle', async () => {
+    const onMention = vi.fn();
+    render(
+      <OrdinaryLedgerMessage
+        message={message({
+          text: '@candy used default · 2 calls\n@system can report an issue',
+          pubkey: 'squire',
+          isAgentAuthor: true,
+          mentionPubkeys: [],
+        })}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[{ pubkey: 'candy-id', handle: 'candy' }]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onMention={onMention}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    expect(ledgerEntryRender.mock.lastCall?.[0].mentionHandles).toEqual(['candy', 'system']);
+    const { LedgerEntry: RenderedLedgerEntry } = await vi.importActual<typeof import('@/components/buzz/Ledger')>('@/components/buzz/Ledger');
+    const entry = render(React.createElement(RenderedLedgerEntry, ledgerEntryRender.mock.lastCall?.[0]));
+    const link = (handle: string) => entry.root.findAllByType('Text' as never).find(
+      (node: ReactTestInstance) => node.props.children === `@${handle}` && node.props.accessibilityRole === 'link',
+    );
+    const candy = link('candy');
+    const system = link('system');
+    expect(candy?.props.style).toContainEqual({ color: beelineThemes.obsidian.accent });
+    expect(system?.props.style).toContainEqual({ color: beelineThemes.obsidian.accent });
+    act(() => candy?.props.onPress());
+    expect(onMention).toHaveBeenCalledWith('candy-id');
+    act(() => system?.props.onPress());
+    expect(onMention).toHaveBeenCalledWith('972a35ec7a6e572c01c5b0a48cbdc82f6137dd7f35435cf9cc0ec305fdafa248');
   });
 
   it('highlights the viewing member while leaving their self-mention inert', () => {

@@ -14,6 +14,7 @@ import {
   routeSystemCommand,
 } from './agent-command.js';
 import { systemLine } from './system-line.js';
+import { advanceCorner } from './corner-workflow.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 const H = 'a'.repeat(64),
   A = 'b'.repeat(64),
@@ -103,6 +104,9 @@ beforeEach(async () => {
   );
   await db.query(`DELETE FROM live_outputs WHERE kind<>'presence'`);
   await db.query(`DELETE FROM agent_commands`);
+  // The corner's workflow run and its wakes commit together; resetting one
+  // resets the other.
+  await db.query(`DELETE FROM messages WHERE card_type='corner-workflow-handoff'`);
   await db.query(`DELETE FROM agent_turns`);
   await db.query(`DELETE FROM corner_merge_approvals`);
   await db.query(`DELETE FROM corner_brief_revisions`);
@@ -171,6 +175,27 @@ it('persists one declarative app per corner and projects agent open requests', a
     }),
   );
   await result(command!, 'The app is ready.');
+});
+
+it('lets the corner agent retitle its corner during its turn', async () => {
+  await send('@hoots plan the launch', C);
+  const [command] = await commands(A, C);
+  await claim(command!);
+  const rename = (name: string) =>
+    daemon.execute(
+      'renameCorner',
+      { cornerId: C, requestId: command!.turnRequestId, generationId: 'g1', name },
+      A,
+    );
+
+  await expect(rename('too many words for a title')).rejects.toThrow(
+    'the name is 6 words; the limit is 3',
+  );
+  await expect(rename('  Launch\n plan ')).resolves.toEqual({ cornerId: C, name: 'Launch plan' });
+  expect((await phone.readRoom(C, H))?.room.name).toBe('Launch plan');
+  await result(command!, 'Renamed.');
+  await expect(rename('Too late')).rejects.toThrow();
+  await db.query(`UPDATE rooms SET name='Corner' WHERE id=$1`, [C]);
 });
 
 describe.each([R, C])('server command authority in %s', (room) => {
@@ -544,7 +569,12 @@ it('wakes the opener for failed checks even after a reviewer turn and retries a 
     expect.objectContaining({ reason: 'corner_check', sourceMessageId: note.id }),
   ]);
   expect(await commands(A, C)).toHaveLength(0);
+  // The wake and the workflow transition commit together, so a command can
+  // only be lost in a corner with no run record: one opened before the
+  // workflow run existed. Its run is rebuilt from the lifecycle and the
+  // missing wake re-sent.
   await db.query(`DELETE FROM agent_commands WHERE room_id=$1`, [C]);
+  await db.query(`DELETE FROM messages WHERE room_id=$1 AND card_type='corner-workflow-handoff'`, [C]);
   await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(1);
   expect(await commands(B, C)).toHaveLength(1);
   await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(0);
@@ -1015,57 +1045,62 @@ it('runs revised-brief refusal, repair, rereview, exact-head approval, and imple
   const [mergeClearance] = await commands(B, C);
   expect(mergeClearance?.source.body).toBe(`@goosy approved ${approvedHead}, merge`);
 });
-it('routes a corner merge to its responsible parent Room agent without a subscription', async () => {
-  await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb WHERE room_id=$1`, [R]);
-  await systemLine(db, {
+// The merge webhook writes the parent card, then reports the landing to the
+// corner workflow. Only the card's `merged` subscribers are woken by it.
+const landCorner = async (title: string) => {
+  const card = await systemLine(db, {
     id: id(),
     roomId: R,
     authorId: H,
     subject: { kind: 'github', name: 'GitHub' },
     verb: 'merged',
     kind: 'merged',
-    object: 'Do work',
+    object: { text: title, url: 'https://github.com/owner/widgets/pull/42' },
     presentation: 'card',
     cardType: 'daemon-fact',
-    card: { type: 'corner-complete', cornerId: C, objective: 'Do work', outcome: 'landed' },
+    durableFact: 'merge',
+    card: {
+      type: 'corner-complete',
+      cornerId: C,
+      name: 'Corner',
+      objective: 'Do work',
+      outcome: 'landed',
+      pullRequest: { number: 42, title, url: 'https://github.com/owner/widgets/pull/42' },
+    },
   });
+  await advanceCorner(db, C, {
+    kind: 'merged',
+    contents: {
+      mergeVerdict: 'merged',
+      pullRequestUrl: 'https://github.com/owner/widgets/pull/42',
+    },
+  });
+  return card;
+};
+it('wakes no parent Room agent on a corner merge without a merged subscription', async () => {
+  await landCorner('Do work');
+  // B opened the corner; opening it no longer earns a turn when it lands.
+  expect(await commands(B, R)).toEqual([]);
   expect(await commands(A, R)).toEqual([]);
-  expect(await commands(B, R)).toEqual([
+  expect((await db.query(`SELECT 1 FROM agent_commands WHERE room_id=$1`, [R])).rowCount).toBe(0);
+});
+it('wakes a parent Room agent subscribed to merged, naming the corner and pull request', async () => {
+  await db.query(
+    `UPDATE memberships SET event_subscriptions='["merged"]'::jsonb WHERE room_id=$1 AND identity_id=$2`,
+    [R, A],
+  );
+  const card = await landCorner('Ship the widget');
+  expect(await commands(B, R)).toEqual([]);
+  expect(await commands(A, R)).toEqual([
     expect.objectContaining({
-      agentId: B,
-      reason: 'corner_merged',
+      agentId: A,
+      sourceMessageId: card.id,
       source: expect.objectContaining({
-        body: '@GitHub merged Do work',
+        body: `@GitHub merged Ship the widget\ncorner Corner (${C}) · pull request #42 https://github.com/owner/widgets/pull/42`,
         systemEvent: expect.objectContaining({ kind: 'merged' }),
       }),
     }),
   ]);
-
-  await db.query(`DELETE FROM agent_commands`);
-  await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [
-    R,
-    B,
-  ]);
-  await systemLine(db, {
-    id: id(),
-    roomId: R,
-    authorId: H,
-    subject: { kind: 'github', name: 'GitHub' },
-    verb: 'merged',
-    kind: 'merged',
-    object: 'Do work again',
-    presentation: 'card',
-    cardType: 'daemon-fact',
-    card: { type: 'corner-complete', cornerId: C, objective: 'Do work', outcome: 'landed' },
-  });
-  expect(
-    (
-      await db.query(
-        `SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND reason='corner_merged'`,
-        [R, B],
-      )
-    ).rowCount,
-  ).toBe(0);
 });
 it('transfers a corner objective to the opener only, without resetting the authorized chain', async () => {
   await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);

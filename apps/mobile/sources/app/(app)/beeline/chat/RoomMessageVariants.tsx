@@ -15,7 +15,9 @@ import type { ChannelReferenceIndex, ChannelReferenceTarget } from '@/buzz/chann
 import { agentActivityReplyExcerpt, type MessageReplyDisplayTarget } from '@/buzz/message-reply';
 import { resolveAgentDisplayIdentity, resolvePendingAgentDisplay } from '@/buzz/agent-display';
 import { fallbackMemberName } from '@/buzz/member-display';
-import { CHANNEL_MENTION_HANDLE, hasChannelMentionToken } from '@/buzz/room-participants';
+import { displayModel } from '@/buzz/model-display';
+import { CHANNEL_MENTION_HANDLE, SYSTEM_MENTION_HANDLE, hasChannelMentionToken } from '@/buzz/room-participants';
+import { SYSTEM_IDENTITY_PUBKEY } from '@/buzz/system-identity';
 import { describeWriteRequest } from '@/buzz/write-request-copy';
 import { emojiTextStyle } from '@/buzz/emoji-text';
 import { grantRequestLine } from '@/buzz/agent-grant-copy';
@@ -421,7 +423,7 @@ export const SquireApprovalCard = React.memo(function SquireApprovalCard({
       subline={`${approval.detail} · requested by @${agentName}`}
       sublineTestID="squire-approval-detail"
       stamp={ledgerStamp(message.timestamp)}
-      footerNote="approval stays with Trusty Squire"
+      footerNote={approval.tool === 'Link' ? 'approval stays with Link' : 'approval stays with Trusty Squire'}
       actions={actions}
     />
   );
@@ -1470,6 +1472,7 @@ function SwipeToReply({
   onReact,
   onForward,
   onBookmark = () => undefined,
+  onReportIssue,
   onSwipeCorner,
   bookmarked = false,
   isDesktop,
@@ -1486,6 +1489,9 @@ function SwipeToReply({
   onReact(emoji: MessageReactionEmoji): void;
   onForward(): void;
   onBookmark?(): void;
+  /** Report issue — files the message with the Beeline feedback loop. Omitted
+   *  where the row offers no report (the desktop work pane's read-only copy). */
+  onReportIssue?(): void;
   /** Mobile swipe right — forward the message into a new corner. */
   onSwipeCorner?(): void;
   bookmarked?: boolean;
@@ -1605,6 +1611,22 @@ function SwipeToReply({
                   size={14}
                 />
               </Pressable>
+              {onReportIssue ? (
+                <Pressable
+                  accessibilityLabel="Report an issue with this message"
+                  accessibilityRole="button"
+                  onFocus={() => setDesktopActionsVisible(true)}
+                  onBlur={() => setDesktopActionsVisible(false)}
+                  onPress={onReportIssue}
+                  style={({ pressed }) => [
+                    styles.replyDesktopAction,
+                    pressed && styles.replyDesktopPressed,
+                  ]}
+                  testID={`report-button-${messageId}`}
+                >
+                  <Ionicons color={styles.replyDesktopGlyph.color} name="flag-outline" size={14} />
+                </Pressable>
+              ) : null}
               <Pressable
                 accessibilityLabel="Forward message"
                 accessibilityRole="button"
@@ -1802,6 +1824,8 @@ export interface OrdinaryLedgerMessageProps {
   onReact?(message: ChatDisplayMessage, emoji: MessageReactionEmoji): void;
   onForward?(message: ChatDisplayMessage): void;
   onBookmark?(message: ChatDisplayMessage): void;
+  /** Report issue: prompt for a note and file the message with the feedback loop. */
+  onReportIssue?(message: ChatDisplayMessage): void;
   /** Mobile swipe right — forward the message into a new human-owned corner. */
   onForwardToNewCorner?(message: ChatDisplayMessage): void;
   onCornerProposalDecision?(message: ChatDisplayMessage, decision: 'open' | 'cancel'): void;
@@ -1821,7 +1845,7 @@ export interface OrdinaryLedgerMessageProps {
  *  with no known model keeps the plain `AGENT` word. */
 export function agentBylineLabel(model?: string): string {
   const selectedModel = model?.trim();
-  return selectedModel || 'AGENT';
+  return selectedModel ? displayModel(selectedModel) : 'AGENT';
 }
 
 /**
@@ -1915,6 +1939,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   onReact = () => undefined,
   onForward = () => undefined,
   onBookmark = () => undefined,
+  onReportIssue,
   onForwardToNewCorner,
   onCornerProposalDecision,
   cornerProposalAction = null,
@@ -1974,7 +1999,11 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       (message.pubkey ? fallbackMemberName(message.pubkey) : 'SOMEONE'));
   const markSeed = message.pubkey ?? (isSelfSteer ? viewerPubkey || 'self' : 'unknown-person');
   const byline: LedgerByline | undefined =
-    continuedRun && !isAgent && !announcementFeed && !message.bookmarked
+    continuedRun &&
+    !isAgent &&
+    !announcementFeed &&
+    !message.bookmarked &&
+    !message.feedbackReported
       ? undefined
       : {
           // The viewer is named like every other speaker. Brass on the name
@@ -1995,6 +2024,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
           stamp,
           isViewer: isSelfSteer,
           bookmarked: message.bookmarked,
+          feedbackReported: message.feedbackReported,
           ...(announcementFeed
             ? {}
             : {
@@ -2056,24 +2086,30 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   );
   const mentionHandles = useMemo(() => {
     const handles = participantHandles
-      .filter((participant) => taggedMentionPubkeys.has(participant.pubkey))
+      .filter((participant) => taggedMentionPubkeys.has(participant.pubkey) ||
+        (isAgent && message.text.toLocaleLowerCase().includes(`@${participant.handle.toLocaleLowerCase()}`)))
       .map((participant) => participant.handle);
     // `@channel` is sent as one literal token, never expanded into names, so
     // it is highlighted by its own reserved handle rather than a roster hit.
     if (hasChannelMentionToken(message.text)) handles.push(CHANNEL_MENTION_HANDLE);
+    if (message.text.toLocaleLowerCase().includes('@system')) handles.push(SYSTEM_MENTION_HANDLE);
     return handles;
-  }, [participantHandles, taggedMentionPubkeys, message.text]);
+  }, [participantHandles, taggedMentionPubkeys, message.text, isAgent]);
   const handleMention = useCallback(
     (handle: string) => {
+      if (handle === SYSTEM_MENTION_HANDLE) {
+        onMention?.(SYSTEM_IDENTITY_PUBKEY);
+        return;
+      }
       const participant = participantHandles.find(
         (candidate) =>
           candidate.pubkey !== viewerPubkey &&
-          taggedMentionPubkeys.has(candidate.pubkey) &&
+          (taggedMentionPubkeys.has(candidate.pubkey) || isAgent) &&
           candidate.handle.normalize('NFKC').toLocaleLowerCase() === handle,
       );
       if (participant) onMention?.(participant.pubkey);
     },
-    [onMention, participantHandles, taggedMentionPubkeys, viewerPubkey],
+    [onMention, participantHandles, taggedMentionPubkeys, viewerPubkey, isAgent],
   );
   if (message.isAgentActivity) {
     const excerpt = agentActivityReplyExcerpt(message);
@@ -2368,6 +2404,9 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       onReact={(emoji) => onReact(message, emoji)}
       onForward={() => onForward(message)}
       onBookmark={() => onBookmark(message)}
+      {...(onReportIssue && !message.isAgentDraft && !message.isAgentActivity
+        ? { onReportIssue: () => onReportIssue(message) }
+        : {})}
       {...(onForwardToNewCorner && !message.isAgentDraft
         ? // A message someone else wrote can carry the swipe-to-corner tip.
           { onSwipeCorner: () => onForwardToNewCorner(message) }

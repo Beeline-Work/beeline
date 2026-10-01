@@ -60,16 +60,19 @@ import {
 } from './codegraph.js';
 import {
   credentialMaskPaths,
+  grantedSandboxDevices,
   harnessHomeStateDirs,
   siblingAgentMaskPaths,
   wrapAgentCommand,
 } from './bwrap-sandbox.js';
 import { harnessIdentityLabel } from './cursor-acp-bridge.js';
+import { approvedDeviceGrant, deviceGrantResumePrompt } from './monolith-room-turn.js';
 import type { BodyConfig } from './config.js';
 import { type DaemonApiClient } from './daemon-api-client.js';
 import {
   explainEmptyAgentTurn,
   isAccountOrProviderRefusal,
+  isContextOverflowTurn,
   nextPinnedProvider,
   shouldRetryEmptyTurn,
   turnFailureReasonWithProvider,
@@ -402,11 +405,10 @@ export interface MonolithCornerTurnOptions {
   objective: string;
   worktreePath: string;
   /**
-   * The server's lane for this session; research has a worktree but no automatic
-   * delivery or agent close. Only `no_code -> code` ever moves, once, and the
-   * session is retired and restarted for it rather than mutated in place.
+   * The server's lane for this session. Only `no_code -> code` ever moves, once,
+   * and the session is retired and restarted for it rather than mutated in place.
    */
-  lane?: 'code' | 'no_code' | 'research';
+  lane?: 'code' | 'no_code';
   /** The parent is repository-backed while this corner is still no-code. */
   agentMayUpgradeCorner?: boolean;
   /** The human who commissioned the corner, as a bare handle. Who a no-code corner reports back to. */
@@ -486,7 +488,7 @@ export class MonolithCornerTurnLoop {
   private modelTakesImages?: boolean;
   /** The one provider re-pinned after an empty completion, until the session ends. */
   private pinnedProviderOverride?: string;
-  /** The merge authority baked into the current session. */
+  /** The worker's yolo mode baked into the current session. */
   private yoloMode = false;
   /** Identity-only reviewer context; the exact PR head is refreshed inside each active turn. */
   private reviewerInstructionInput?: ReviewerInstructionInput;
@@ -494,6 +496,8 @@ export class MonolithCornerTurnLoop {
   /** Repository state already given a delivery reminder, until that state changes. */
   private lastDeliveryNudgeState?: string;
   private turnSessionPrefix = '';
+  /** The session prompt's section ids, for `report_feedback` (with each turn's). */
+  private sessionPromptSectionIds: readonly string[] = [];
   private sessionSurface: PromptSurface = 'code-corner';
   private sessionPromptContext?: SessionPromptContext;
   private busy = false;
@@ -677,17 +681,19 @@ export class MonolithCornerTurnLoop {
   }
 
   private async currentSessionFingerprint(): Promise<string> {
-    const [configuration, roster, grantedHostRoutes] = await Promise.all([
+    const [configuration, roster, grants] = await Promise.all([
       this.options.api.execute('getAgentConfiguration', {
         agentId: this.agent.publicKey,
         roomId: this.options.cornerId,
       }),
       this.roster(),
-      this.grantedHostRoutes(),
+      this.grantedResources(),
     ]);
+    const { hostRoutes: grantedHostRoutes, devices: grantedDevices } = grants;
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
     const registryRoutes = configuration.registryMcpRoutes ?? [];
     return sessionConfigFingerprint({
+      devices: grantedDevices,
       model: configuration.model ?? this.options.config.modelSelection?.model,
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
       fastMode: configuration.fastMode,
@@ -713,29 +719,31 @@ export class MonolithCornerTurnLoop {
     });
   }
 
-  private async grantedHostRoutes(): Promise<string[]> {
+  private async grantedResources(): Promise<{ hostRoutes: string[]; devices: string[] }> {
     try {
-      const approved = await claimGrantedHostRoutes(
-        await this.options.api.execute('listAgentGrants', {
-          agentId: this.agent.publicKey,
-          roomId: this.options.cornerId,
-        }),
-      );
+      const grants = await this.options.api.execute('listAgentGrants', {
+        agentId: this.agent.publicKey,
+        roomId: this.options.cornerId,
+      });
+      const approved = await claimGrantedHostRoutes(grants);
       // Discovery is safe to mount; the transport gate authorizes every use.
       // This also lets an owner use a yolo resource without an activation prompt.
-      return [
-        ...new Set([
-          ...approved,
-          ...Object.keys(
-            hostImportedMcpDeclarations({
-              operatorHome: this.options.config.operatorHome,
-              agentKind: this.options.config.agentKind,
-            }),
-          ),
-        ]),
-      ];
+      return {
+        hostRoutes: [
+          ...new Set([
+            ...approved,
+            ...Object.keys(
+              hostImportedMcpDeclarations({
+                operatorHome: this.options.config.operatorHome,
+                agentKind: this.options.config.agentKind,
+              }),
+            ),
+          ]),
+        ],
+        devices: grantedSandboxDevices(grants),
+      };
     } catch {
-      return [];
+      return { hostRoutes: [], devices: [] };
     }
   }
 
@@ -745,19 +753,21 @@ export class MonolithCornerTurnLoop {
         await repairRoomAgentCredentialLinks({
           root: this.options.config.agentHomeRoot,
           operatorHome: this.options.config.operatorHome,
+          keepNewerDetachedClaudeLogin: this.options.config.agentKind === 'claude',
         });
       }
       return this.sessionId;
     }
     trace?.noteActivation('cold');
-    const [configuration, roster, grantedHostRoutes] = await Promise.all([
+    const [configuration, roster, grants] = await Promise.all([
       this.options.api.execute('getAgentConfiguration', {
         agentId: this.agent.publicKey,
         roomId: this.options.cornerId,
       }),
       this.roster(),
-      this.grantedHostRoutes(),
+      this.grantedResources(),
     ]);
+    const { hostRoutes: grantedHostRoutes, devices: grantedDevices } = grants;
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
     this.yoloMode = configuration.yoloMode;
     const opener = this.options.openedBy
@@ -769,20 +779,16 @@ export class MonolithCornerTurnLoop {
       authorHandle: opener?.handle,
       openedByAgent: !this.options.openedBy || this.options.openedBy === this.agent.publicKey,
     };
-    const reviewerInstruction =
-      this.options.lane !== 'research' && cornerReviewerInstruction(reviewerInput)
-        ? CORNER_REVIEWER_SESSION_INSTRUCTION
-        : undefined;
+    const reviewerInstruction = cornerReviewerInstruction(reviewerInput)
+      ? CORNER_REVIEWER_SESSION_INSTRUCTION
+      : undefined;
     this.reviewerInstructionInput = reviewerInstruction ? reviewerInput : undefined;
-    const selfReviewerInstruction =
-      this.options.lane === 'research' ? undefined : cornerSelfReviewerInstruction(reviewerInput);
+    const selfReviewerInstruction = cornerSelfReviewerInstruction(reviewerInput);
     this.sessionSurface = !this.options.repository
       ? 'no-code-corner'
-      : this.options.lane === 'research'
-        ? 'research-corner'
-        : reviewerInstruction
-          ? 'review-corner'
-          : 'code-corner';
+      : reviewerInstruction
+        ? 'review-corner'
+        : 'code-corner';
     this.sessionPromptContext = {
       surface: this.sessionSurface,
       agentName: self?.name ?? this.agent.name,
@@ -937,6 +943,7 @@ export class MonolithCornerTurnLoop {
           cargoTargetDir,
           ...registryMcpHostBindPaths(configuration.registryMcpRoutes),
         ],
+        devices: grantedDevices,
         maskPaths: [
           ...credentialMaskPaths(this.options.config.sandboxMaskPaths, operatorHome),
           ...siblingAgentMaskPaths(
@@ -976,6 +983,7 @@ export class MonolithCornerTurnLoop {
       this.options.worktreePath,
     );
     const fingerprint = sessionConfigFingerprint({
+      devices: grantedDevices,
       model: configuration.model ?? this.options.config.modelSelection?.model,
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
       fastMode: configuration.fastMode,
@@ -1024,9 +1032,10 @@ export class MonolithCornerTurnLoop {
         roomId: this.options.parentRoomId,
         workspaceId: this.options.workspaceId,
         cornerId: this.options.cornerId,
-        agentMayCloseCorner: Boolean(repository) && this.options.lane !== 'research',
+        agentMayCloseCorner: Boolean(repository),
         agentMayUpgradeCorner: this.options.agentMayUpgradeCorner,
         reviewer: Boolean(reviewerInstruction),
+        lane: this.options.lane ?? (repository ? 'code' : 'no_code'),
         attachRoot: this.options.worktreePath,
         // The whole per-session overlay, not an enumerated subset: see
         // `monolith-room-turn.ts`'s matching comment.
@@ -1080,6 +1089,7 @@ export class MonolithCornerTurnLoop {
       ...(this.options.agentMayUpgradeCorner ? { agentMayUpgradeCorner: true } : {}),
     });
     this.turnSessionPrefix = session.turnPrefix;
+    this.sessionPromptSectionIds = session.report.map((section) => section.id);
     const opened = await this.client.sessionNew({
       cwd: this.options.worktreePath,
       mcpServers: servers,
@@ -1309,6 +1319,39 @@ export class MonolithCornerTurnLoop {
     // Kicked off now, alongside activation rather than after it, so its own
     // network round trip has somewhere to hide (see institutional-context.ts).
     const institutionalContextFetch = startInstitutionalContextFetch(api, cornerId);
+    // Best-effort read of this turn's search_memory call/miss counters before
+    // the trace writes — bounded so a slow or unreachable server never delays
+    // the turn's own completion over a diagnostic.
+    let statsStartedAt = 0;
+    let statsPromise: Promise<{ searchCalls: number; searchMisses: number } | undefined> | undefined;
+    const startTraceStats = (): void => {
+      if (statsPromise) return;
+      statsStartedAt = Date.now();
+      statsPromise = api.execute('getInstitutionalMemoryTurnStats', {
+        roomId: cornerId,
+        agentId: this.agent.publicKey,
+        requestId,
+      }).catch(() => undefined);
+    };
+    const finishTrace = async (
+      outcome: 'complete' | 'failed' | 'cancelled',
+      reason?: string,
+    ): Promise<void> => {
+      try {
+        const remaining = Math.max(0, 800 - (Date.now() - statsStartedAt));
+        let timer: NodeJS.Timeout | undefined;
+        const stats = statsPromise && remaining > 0
+          ? await Promise.race([
+              statsPromise,
+              new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), remaining); }),
+            ]).finally(() => { if (timer) clearTimeout(timer); })
+          : undefined;
+        if (stats) trace.noteSearchMemoryStats(stats.searchCalls, stats.searchMisses);
+      } catch {
+        // Losing this measurement must never affect the turn.
+      }
+      await trace.finish(outcome, reason);
+    };
     let deliberateNoReply = false;
     // Observed LIVE from the stream, where the catch below can reach it: the
     // server settles this turn and its command inside `upgradeCornerLane`, so
@@ -1366,6 +1409,12 @@ export class MonolithCornerTurnLoop {
                 ]),
               );
               trace.noteInstitutionalMemory(institutionalContext.outcome);
+              if (institutionalContext.embeddingOutcome !== undefined) {
+                trace.noteInstitutionalMemoryEmbedding(
+                  institutionalContext.embeddingOutcome,
+                  institutionalContext.embeddingMs ?? 0,
+                );
+              }
               const briefAttachments: DaemonAttachment[] = (restored.brief?.attachments ?? []).map(
                 (file) => ({
                   url: new URL(`/v1/media/${file.objectId}`, api.baseUrl).toString(),
@@ -1440,15 +1489,10 @@ export class MonolithCornerTurnLoop {
                 const assembled = assembleTurnPrompt({
                   surface: this.sessionSurface,
                   sessionPrefix: this.turnSessionPrefix,
-                  ...(institutionalContext.standingPreference && requestedBy?.name
-                    ? {
-                        standingPreference: {
-                          requesterName: requestedBy.name,
-                          text: institutionalContext.standingPreference,
-                        },
-                      }
-                    : {}),
                   objective: this.options.objective,
+                  ...(restored.titleGenerated && restored.title
+                    ? { generatedTitle: restored.title }
+                    : {}),
                   ...(restored.brief
                     ? {
                         brief: {
@@ -1478,6 +1522,10 @@ export class MonolithCornerTurnLoop {
                   },
                 });
                 trace.notePromptSections(assembled.report);
+                this.commandContext.notePromptSections([
+                  ...this.sessionPromptSectionIds,
+                  ...assembled.report.map((section) => section.id),
+                ]);
                 return assembled.text;
               };
               // Rooms and corners share the provisional draft lane, request-id
@@ -1702,6 +1750,12 @@ export class MonolithCornerTurnLoop {
                       'harness login expired; repairing the shared credential and retrying once',
                   );
                   trace.retry({ reason: 'expired harness login' });
+                  if (this.options.config.agentHomeRoot) {
+                    await repairRoomAgentCredentialLinks({
+                      root: this.options.config.agentHomeRoot,
+                      operatorHome: this.options.config.operatorHome,
+                    });
+                  }
                   await this.discardSession();
                   await trace.measure('activation', () => this.activate(trace));
                   try {
@@ -1738,6 +1792,21 @@ export class MonolithCornerTurnLoop {
                 await stream.retract();
                 return;
               }
+              // An instantly approved device grant cannot reach the running
+              // sandbox: replace the session and continue this same turn there.
+              const grantedDevice = approvedDeviceGrant(result.toolCalls);
+              if (grantedDevice) {
+                await flushToolCalls(result.toolCalls, '');
+                trace.retry({ reason: 'device grant' });
+                if (!(await this.sessionIsCurrent())) {
+                  await this.discardSession();
+                  await trace.measure('activation', () => this.activate(trace));
+                }
+                result = await runPrompt(
+                  `${buildPrompt()}\n\n${deviceGrantResumePrompt(grantedDevice, result.agentText)}`,
+                );
+                trace.promptSettled();
+              }
               let explained = await this.explainEmpty(result);
               // A checks turn is told to say nothing when nothing changed; its
               // silence is not a routing failure and must not buy a retry.
@@ -1755,15 +1824,31 @@ export class MonolithCornerTurnLoop {
                   explained = await this.explainEmpty(result);
                 }
               }
+              // A session whose history outgrew the model's window refuses
+              // every retry inside it. One retry in a fresh session; a second
+              // overflow fails the turn as `context-overflow`, never a hiccup.
+              if (explained && isContextOverflowTurn(explained)) {
+                await flushToolCalls(result.toolCalls, '');
+                console.warn(
+                  `[thin-core] corner ${cornerId} turn ${requestId}: ` +
+                    `${explained.reason}; retrying once in a fresh session`,
+                );
+                trace.retry({ reason: 'context overflow' });
+                await this.discardSession();
+                await trace.measure('activation', () => this.activate(trace));
+                result = await runPrompt();
+                trace.promptSettled();
+                explained = await this.explainEmpty(result);
+              }
               // One bounded second chance to deliver repository work. Check
-              // turns get the narrower merge reminder instead: repeating the
+              // turns get the narrower checks reminder instead: repeating the
               // broad delivery instruction there could invite unrelated branch
               // cleanup. The model remains the authority over whether dirty
               // work belongs to the objective and whether to retain or dispose
               // of it; the daemon never rewrites the worktree after a turn.
               const checksTurn = isCornerChecksTurn(trigger, restates);
               const deliveryState =
-                !checksTurn && this.options.repository && this.options.lane !== 'research'
+                !checksTurn && this.options.repository
                   ? await cornerUndeliveredRepositoryState(
                       this.options.worktreePath,
                       this.options.repository.featureBranch,
@@ -1785,9 +1870,7 @@ export class MonolithCornerTurnLoop {
               if (
                 !explained &&
                 (needsDeliveryNudge ||
-                  (checksTurn &&
-                    this.options.lane !== 'research' &&
-                    (Boolean(this.reviewerInstructionInput) || this.yoloMode)))
+                  (checksTurn && (Boolean(this.reviewerInstructionInput) || this.yoloMode)))
               ) {
                 if (needsDeliveryNudge) this.lastDeliveryNudgeState = deliveryState;
                 // The flush comes first: it is what puts this run's narration
@@ -1895,9 +1978,10 @@ export class MonolithCornerTurnLoop {
         (error) => console.error(`[thin-core] corner ${cornerId} receipt heartbeat failed:`, error),
       );
       if (laneUpgraded) {
-        await trace.finish('complete');
+        void finishTrace('complete').catch(() => undefined);
         return;
       }
+      startTraceStats();
       await api.execute('postAgentTurnReceipt', {
         agentId: this.agent.publicKey,
         roomId: cornerId,
@@ -1910,14 +1994,14 @@ export class MonolithCornerTurnLoop {
       });
       // After the receipt: an operator artifact never delays the answer, and
       // never becomes one — the trace has no way to post a Room row.
-      await trace.finish('complete');
+      void finishTrace('complete').catch(() => undefined);
     } catch (error) {
       // A stopped turn already has its ending: the server wrote `cancelled` and
       // named who stopped it when it accepted the request. Nothing to post, and
       // nothing the helper is to blame for.
       if (error instanceof TurnStoppedError || this.stoppedTurns.has(requestId)) {
         console.log(`[thin-core] corner ${cornerId} turn ${requestId} stopped by the requester`);
-        await trace.finish('cancelled');
+        void finishTrace('cancelled').catch(() => undefined);
         return;
       }
       // The upgrade already settled this turn complete. A later stumble in a
@@ -1929,10 +2013,11 @@ export class MonolithCornerTurnLoop {
           `[thin-core] corner ${cornerId} turn ${requestId} ended after its lane upgrade:`,
           error,
         );
-        await trace.finish('complete');
+        void finishTrace('complete').catch(() => undefined);
         return;
       }
       const reason = distillTurnFailureReason(error);
+      startTraceStats();
       await api.execute('postAgentTurnReceipt', {
         agentId: this.agent.publicKey,
         roomId: cornerId,
@@ -1944,7 +2029,7 @@ export class MonolithCornerTurnLoop {
         toolCalls: trace.toolCallsTotal,
         ...this.turnMetrics,
       });
-      await trace.finish('failed', reason.text);
+      void finishTrace('failed', reason.text).catch(() => undefined);
       throw error;
     } finally {
       this.busy = false;

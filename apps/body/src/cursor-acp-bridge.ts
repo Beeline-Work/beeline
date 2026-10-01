@@ -671,6 +671,10 @@ export async function runCursorAcpStdioServer(
 function isDirectBridgeRun(): boolean {
   const entry = process.argv[1];
   if (!entry || entry.includes('.test.')) return false;
+  // Inside a bundle (beeline-readonly-mcp.mjs) import.meta.url is the bundle
+  // itself, so it equals argv[1] and would start a second stdio server that
+  // answers every MCP request with an empty result.
+  if (!/cursor-acp-bridge\.(?:js|ts)$/.test(entry)) return false;
   try {
     return resolvePath(entry) === resolvePath(fileURLToPath(import.meta.url));
   } catch {

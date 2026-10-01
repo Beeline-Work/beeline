@@ -11,6 +11,10 @@
  * and a different agent in a different Room of the same Workspace sees it in
  * its own per-turn index and loads it via `load_workspace_skill`.
  *
+ * A third scenario proves the member-handle role binding fix: a bare handle
+ * (no `@`) binds the member, and a class word no current Room member carries
+ * is refused at start.
+ *
  * These are agent CLIENTS — plain HTTP calls issuing the exact same daemon
  * operations a live LLM-backed harness would call — not live LLM-backed
  * agent harnesses. Stated here plainly, and again in the written transcript.
@@ -81,6 +85,19 @@ type Command = {
   sourceMessageId: string;
   turnRequestId: string;
   reason: string;
+};
+
+/** A one-role flow used to prove a bare member handle binds that member. */
+const CANDY_CONTRACT = {
+  version: 1,
+  name: 'handle-flow',
+  description: 'A triager role bound to a member by bare handle',
+  roles: ['triager'],
+  start: 'triage',
+  handoffs: {
+    triage: { role: 'triager', requires: ['note'], on: { done: 'finished' } },
+    finished: { kind: 'terminal', status: 'done' },
+  },
 };
 
 type LogEntry = { label: string; request?: unknown; response: unknown };
@@ -476,6 +493,92 @@ async function main(): Promise<void> {
     );
   }
   await complete(REVIEWER, reviewerToken, discoveryTurn);
+  const part2LogCount = log.length;
+
+  const handleFailures: string[] = [];
+  // ========== Scenario 3: a bare member handle binds the member at start ==========
+  // The reported defect: "triager: \"candy\"" (a member's handle, no @) was read
+  // as a class/tag word, so the run started and stranded at its first state,
+  // and a class word nobody carries was silently accepted. The fix: a word
+  // matching a current member's handle binds that member, and a class word no
+  // current member carries is refused at start.
+  const handleKickoff = 'handle-kickoff-message';
+  await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`, [
+    handleKickoff,
+    ROOM,
+    HUMAN,
+    'wren, start the handle-flow workflow with triager bound to wren',
+  ]);
+  const handleCommandRow = await createAgentCommand(database, {
+    roomId: ROOM,
+    agentId: WRITER,
+    sourceMessageId: handleKickoff,
+    reason: 'human_tag',
+  });
+  if (!handleCommandRow) throw new Error('failed to seed the writer handle-flow command');
+  const handleCommand: Command = {
+    id: handleCommandRow.id,
+    roomId: handleCommandRow.room_id,
+    agentId: handleCommandRow.agent_id,
+    sourceMessageId: handleCommandRow.source_message_id,
+    turnRequestId: handleCommandRow.turn_request_id,
+    reason: handleCommandRow.reason,
+  };
+  const handleTurn = await claim(WRITER, writerToken, handleCommand);
+  const savedHandleFlow = await call(WRITER + ' saves the handle-flow contract', 'saveWorkflow', {
+    roomId: ROOM,
+    requestId: handleTurn.requestId,
+    generationId: handleTurn.generationId,
+    agentId: WRITER,
+    contract: CANDY_CONTRACT,
+  }, writerToken);
+  if (savedHandleFlow.slug !== 'handle-flow') {
+    handleFailures.push(`unexpected save_workflow result: ${JSON.stringify(savedHandleFlow)}`);
+  }
+  // The reported input, verbatim: a bare member handle with no @.
+  const handleStarted = await call(WRITER + " starts a run binding the triager by bare handle 'wren'", 'startWorkflow', {
+    roomId: ROOM,
+    requestId: handleTurn.requestId,
+    generationId: handleTurn.generationId,
+    agentId: WRITER,
+    name: 'handle-flow',
+    roleBindings: { triager: 'wren' },
+  }, writerToken);
+  const handleRunId = handleStarted.runId as string;
+  if (handleStarted.state !== 'triage' || typeof handleRunId !== 'string') {
+    handleFailures.push(`unexpected start_workflow result: ${JSON.stringify(handleStarted)}`);
+  }
+  const handleBinding = await database.query<{ triager: string }>(
+    `SELECT card->'roleBindings'->>'triager' triager FROM messages WHERE id=$1`,
+    [handleRunId],
+  );
+  if (handleBinding.rows[0]?.triager !== WRITER) {
+    handleFailures.push(
+      `expected the bare handle "wren" to bind the member ${WRITER} (@wren), got ${JSON.stringify(handleBinding.rows[0]?.triager)}`,
+    );
+  }
+  const triagerCommands = await database.query<{ count: string }>(
+    `SELECT count(*)::text count FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND state='pending'`,
+    [ROOM, WRITER],
+  );
+  if (Number(triagerCommands.rows[0]?.count ?? 0) < 1) {
+    handleFailures.push('expected the bound member @wren to be dispatched a pending command for the triage state');
+  }
+  // An unknown class word must be refused at start, before any run is written.
+  const unknownClassError = await call(WRITER + " tries a class word nobody carries", 'startWorkflow', {
+    roomId: ROOM,
+    requestId: handleTurn.requestId,
+    generationId: handleTurn.generationId,
+    agentId: WRITER,
+    name: 'handle-flow',
+    roleBindings: { triager: 'nobodycarriesthis' },
+  }, writerToken).catch((error: Error) => error.message);
+  if (typeof unknownClassError !== 'string' || !unknownClassError.includes('no current Room member carries')) {
+    handleFailures.push(
+      `expected the at-start refusal for an unknown class, got ${JSON.stringify(unknownClassError)}`,
+    );
+  }
+  await complete(WRITER, writerToken, handleTurn);
 
   const transcript = await database.query<{
     id: string;
@@ -586,6 +689,34 @@ async function main(): Promise<void> {
     );
   }
   lines.push('');
+  lines.push(
+    '## Scenario 3: a bare member handle binds the member; an unknown class is refused at start',
+  );
+  lines.push('');
+  lines.push(
+    `@wren starts the one-role \`handle-flow\` workflow with \`roleBindings: { triager: "wren" }\` — a ` +
+      `bare member handle with no @. The member @wren is bound and dispatched; then the same turn tries ` +
+      `\`roleBindings: { triager: "nobodycarriesthis" }\`, a class word no current Room member carries, ` +
+      `which the server refuses at start instead of stranding a run.`,
+  );
+  lines.push('');
+  lines.push('### Requests and responses, in order');
+  lines.push('');
+  lines.push(...requestResponseSection(log.slice(part2LogCount)));
+  lines.push('### Verdict');
+  lines.push('');
+  if (handleFailures.length) {
+    lines.push('**FAILED**');
+    for (const failure of handleFailures) lines.push(`- ${failure}`);
+  } else {
+    lines.push(
+      'PASSED: start_workflow read the bare handle "wren" as the member @wren and bound and dispatched ' +
+        'that exact agent (its id appears in the run card, not a class placeholder), and a class word ' +
+        'no current Room member carries was refused at start with the "no current Room member carries" ' +
+        'refusal before any run card was written.',
+    );
+  }
+  lines.push('');
   lines.push('## Resulting transcript, both Rooms');
   lines.push('');
   for (const row of transcript.rows) {
@@ -598,7 +729,7 @@ async function main(): Promise<void> {
   await new Promise<void>((resolve) => server.close(() => resolve()));
   await database.close();
 
-  const allFailures = [...failures, ...skillFailures];
+  const allFailures = [...failures, ...skillFailures, ...handleFailures];
   const output = lines.join('\n');
   const target = process.argv[2];
   if (target) {

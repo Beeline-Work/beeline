@@ -384,7 +384,7 @@ export default function TrayScreen() {
 
   const list = (
     <FlatList
-      contentContainerStyle={styles.listContent}
+      contentContainerStyle={{ paddingBottom: 24 + insets.bottom }}
       data={rows}
       keyExtractor={(row) => row.key}
       ListEmptyComponent={
@@ -517,7 +517,11 @@ export default function TrayScreen() {
         {pane}
       </View>
       {removed ? (
-        <View accessibilityLiveRegion="polite" style={styles.undo} testID="bookmark-undo">
+        <View
+          accessibilityLiveRegion="polite"
+          style={[styles.undo, { bottom: 16 + insets.bottom }]}
+          testID="bookmark-undo"
+        >
           <Text style={styles.undoText}>Bookmark removed</Text>
           {removed.available ? (
             <Pressable
@@ -543,7 +547,6 @@ const styles = StyleSheet.create((theme) => ({
     borderRightWidth: StyleSheet.hairlineWidth,
     borderRightColor: theme.buzz.border,
   },
-  listContent: { paddingBottom: 24 },
   sectionHead: {
     minHeight: 30,
     marginTop: 22,

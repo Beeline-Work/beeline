@@ -10,7 +10,9 @@ import { createHash } from 'node:crypto';
  * and out of every public-Room membership projection, so it is never a
  * member of a shared Room and therefore never taggable there. Its
  * only memberships are one-per-person read-only DM Rooms created by the
- * server's system notification producers.
+ * server's system notification producers. Typing `@system` anywhere is a
+ * feedback report, not a tag (`apps/server/src/feedback.ts`): it resolves,
+ * wakes and pushes nobody.
  */
 export const SYSTEM_IDENTITY_ID = createHash('sha256')
   .update('beeline:system-identity')

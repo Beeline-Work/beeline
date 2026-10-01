@@ -106,6 +106,40 @@ describe('turn phase trace', () => {
     expect((await untouched.finish('complete')).attempts[0]!.institutionalMemory).toBeUndefined();
   });
 
+  it("records the snapshot's own embedding round trip, absent when it never ran", async () => {
+    const { now } = clock();
+    const served = trace(now);
+    served.noteInstitutionalMemoryEmbedding('served', 42);
+    const servedRecord = await served.finish('complete');
+    expect(servedRecord.attempts[0]!.institutionalMemoryEmbeddingOutcome).toBe('served');
+    expect(servedRecord.attempts[0]!.institutionalMemoryEmbeddingMs).toBe(42);
+
+    const timedOut = trace(now);
+    timedOut.noteInstitutionalMemoryEmbedding('timed-out', 100);
+    expect(
+      (await timedOut.finish('complete')).attempts[0]!.institutionalMemoryEmbeddingOutcome,
+    ).toBe('timed-out');
+
+    const untouched = trace(now);
+    const untouchedRecord = await untouched.finish('complete');
+    expect(untouchedRecord.attempts[0]!.institutionalMemoryEmbeddingOutcome).toBeUndefined();
+    expect(untouchedRecord.attempts[0]!.institutionalMemoryEmbeddingMs).toBeUndefined();
+  });
+
+  it("records this turn's search_memory call/miss counters at the top level, absent when never read", async () => {
+    const { now } = clock();
+    const withStats = trace(now);
+    withStats.noteSearchMemoryStats(3, 2);
+    const record = await withStats.finish('complete');
+    expect(record.searchMemoryCalls).toBe(3);
+    expect(record.searchMemoryMisses).toBe(2);
+
+    const untouched = trace(now);
+    const untouchedRecord = await untouched.finish('complete');
+    expect(untouchedRecord.searchMemoryCalls).toBeUndefined();
+    expect(untouchedRecord.searchMemoryMisses).toBeUndefined();
+  });
+
   it('records a warm turn as zero activation, not as a missing measurement', async () => {
     const { now, advance } = clock();
     const turn = trace(now);

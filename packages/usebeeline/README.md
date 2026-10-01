@@ -166,18 +166,18 @@ Rooms run CodeGraph without a file watcher and keep source files read-only; only
 
 `beeline-agent` — acting, host-governed:
 
-| Tool                                                   | Where           | What it does                                                  |
-| ------------------------------------------------------ | --------------- | ------------------------------------------------------------- |
-| `open_corner`                                          | Top-level Rooms | Open one write-enabled corner with a ≤24-word objective       |
-| `pr_checks_status`                                     | Corners         | Read checks, human hold, and PR/head-bound merge approval     |
-| `post_artifact`                                        | Everywhere      | Upload one file (path or html/bytes) as an attachment         |
-| `fetch_image`                                          | Everywhere      | Download one photograph into scratch for a data: embed        |
-| `create_schedule`, `list_schedules`, `delete_schedule` | Everywhere      | Run a prompt again later — interval minutes or a 5-field cron |
-| `request_grant`                                        | Everywhere      | Ask the correct Room manager or resource owner for access     |
-| `run_granted_command`                                  | Everywhere      | Run a command an approved grant covers, outside the sandbox   |
-| `propose_memory_item`                                  | Live memory     | Propose one sourced fact or requester working preference      |
-| `search_history`                                       | Live memory     | Search history visible to the full output audience            |
-| `load_workspace_skill`                                 | Live memory     | Load one restricted merge-derived Workspace procedure         |
+| Tool                                                   | Where          | What it does                                                  |
+| ------------------------------------------------------ | -------------- | ------------------------------------------------------------- |
+| `open_corner`                                          | Rooms, corners | Open one write-enabled corner with a ≤24-word objective       |
+| `pr_checks_status`                                     | Corners        | Read checks, human hold, and PR/head-bound merge approval     |
+| `post_artifact`                                        | Everywhere     | Upload one file (path or html/bytes) as an attachment         |
+| `fetch_image`                                          | Everywhere     | Download one photograph into scratch for a data: embed        |
+| `create_schedule`, `list_schedules`, `delete_schedule` | Everywhere     | Run a prompt again later — interval minutes or a 5-field cron |
+| `request_grant`                                        | Everywhere     | Ask the correct Room manager or resource owner for access     |
+| `run_granted_command`                                  | Everywhere     | Run a command an approved grant covers, outside the sandbox   |
+| `propose_memory_item`                                  | Live memory    | Propose one sourced fact or requester working preference      |
+| `search_history`                                       | Live memory    | Search history visible to the full output audience            |
+| `load_workspace_skill`                                 | Live memory    | Load one restricted merge-derived Workspace procedure         |
 
 ## The app
 

@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { FACE_NAMES, FACE_SOULS, isFaceId, type FaceId } from '@beeline/api-contract/phone';
 import { AGENT_MENTION_NOTICE_GRACE_MS } from '@beeline/api-contract/agent-access';
+import { CORNER_BRIEF_SPEC_MAX_LENGTH } from '@beeline/api-contract/daemon';
 import { migrate } from './database.js';
 import { upgradeGrantPolicy } from './grant-policy-upgrade.js';
 import { MemoryObjectStorage, PgliteDatabase } from './test-support.js';
@@ -27,8 +28,10 @@ import {
   isAgentDetailView,
   isRoomView,
   isRoomViewMessage,
+  readRoomHistoryOutline,
   readRoomView,
   ROOM_VIEW_MESSAGE_LIMIT,
+  type RoomHistoryOutline,
   type RoomHistoryView,
   type RoomView,
 } from '@beeline/api-contract/phone';
@@ -273,6 +276,76 @@ describe('monolith integration', () => {
     expect(await phone.execute('readWelcomeCards', {}, fresh)).toEqual({ due: false });
     expect(await phone.execute('readWelcomeCards', {}, HUMAN)).toEqual({ due: false });
   });
+  it('has no feedback triage setting or tools, refuses Fixed DMs from a non-sender, and opens fix corners beside the corner', async () => {
+    const corner = (
+      (await phone.execute('createHumanCorner', { roomId: ROOM, title: 'Issues triage' }, HUMAN)) as {
+        id: string;
+      }
+    ).id;
+    let turns = 0;
+    const turnIn = async (roomId: string, authorId = HUMAN) => {
+      turns += 1;
+      const messageId = createHash('sha256').update(`triage-${turns}`).digest('hex');
+      await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`, [
+        messageId,
+        roomId,
+        authorId,
+        '@bee sweep the feedback',
+      ]);
+      const requestId = `triage-request-${turns}`;
+      const command = await createAgentCommand(database, {
+        roomId,
+        agentId: AGENT,
+        sourceMessageId: messageId,
+        reason: 'human_tag',
+        turnRequestId: requestId,
+      });
+      await claimAgentCommand(database, roomId, AGENT, command!.id, `${requestId}-g`);
+      return { roomId, requestId, generationId: `${requestId}-g`, messageId };
+    };
+    const daemonCall = (name: string, body: unknown) =>
+      request(`/v1/daemon/operations/${name}`, 'POST', body, daemonToken);
+
+    // The setting and the triage tools are gone: their routes do not exist.
+    for (const retired of ['listFeedback', 'fileFeedbackIssue', 'setCornerFeedbackTriage']) {
+      const gone = await daemonCall(retired, await turnIn(corner));
+      expect(gone.status).toBe(404);
+    }
+
+    // A Fixed DM needs an owner in BEELINE_SYSTEM_SENDERS; this agent's has none.
+    const during = await turnIn(corner);
+    const refused = await daemonCall('notifyFeedbackFixed', {
+      ...during,
+      itemIds: ['fb_000000000000000000000000'],
+      title: 'Grant card resolves',
+      prUrl: 'https://github.com/Beeline-Work/beeline/pull/1',
+    });
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({
+      error: expect.stringContaining('System DM access denied'),
+    });
+
+    // A fix corner opened from the triage corner is its sibling in the Room.
+    const fix = await turnIn(corner);
+    const opened = await daemonCall('createCorner', {
+      ...fix,
+      idempotencyKey: 'fix-grant-card',
+      name: 'Fix grant card',
+      objective: 'Fix the grant card that stays pending',
+      lane: 'no_code',
+      brief: {
+        spec: 'Fix the grant card that stays pending after approval (feedback fb_000000000000000000000000).\n\n## Checklist\n\n- AC-1: The grant card resolves after approval',
+        approval: { sourceMessageId: fix.messageId },
+      },
+    });
+    expect(opened.status).toBe(200);
+    const { cornerId } = (await opened.json()) as { cornerId: string };
+    const sibling = await database.query<{ parent_id: string }>(
+      `SELECT parent_id FROM rooms WHERE id=$1`,
+      [cornerId],
+    );
+    expect(sibling.rows[0]?.parent_id).toBe(ROOM);
+  });
   // These fixtures test projections and lifecycle behavior downstream of intake.
   // Supply an explicit command first. Routing/refusal tests call DaemonService
   // directly in agent-command.integration.test.ts and never use this helper.
@@ -356,19 +429,12 @@ describe('monolith integration', () => {
           );
       });
       const suppliedBrief = input.brief as
-        | { content?: unknown; attachments?: unknown; change?: unknown; buildSpec?: unknown }
+        | { content?: unknown; attachments?: unknown; change?: unknown; spec?: unknown }
         | undefined;
-      if (suppliedBrief?.content && suppliedBrief.buildSpec === undefined) {
+      if (suppliedBrief?.content && suppliedBrief.spec === undefined) {
         input.brief = {
-          intentVerbatim: [{ sourceMessageId: sourceId, snapshot: 'Fixture command' }],
-          buildSpec: String(suppliedBrief.content),
-          criteria: [{ id: 'AC-1', text: String(suppliedBrief.content) }],
-          references: [],
-          approvalBasis: {
-            kind: 'initiating-command',
-            sourceMessageId: sourceId,
-            snapshot: 'Fixture command',
-          },
+          spec: String(suppliedBrief.content),
+          approval: { sourceMessageId: sourceId },
           ...(suppliedBrief.attachments ? { attachments: suppliedBrief.attachments } : {}),
           ...(suppliedBrief.change ? { change: suppliedBrief.change } : {}),
         };
@@ -380,23 +446,13 @@ describe('monolith integration', () => {
           )
         ).rows[0];
         if (
-          input.lane === 'research' ||
           input.repository ||
           sourceRoom?.repository_key ||
           sourceRoom?.repository_resolution === 'repository'
         ) {
           input.brief = {
-            intentVerbatim: [{ sourceMessageId: sourceId, snapshot: 'Fixture command' }],
-            buildSpec: String(input.objective ?? 'Complete the requested work.'),
-            criteria: [
-              { id: 'AC-1', text: String(input.objective ?? 'Complete the requested work.') },
-            ],
-            references: [],
-            approvalBasis: {
-              kind: 'initiating-command',
-              sourceMessageId: sourceId,
-              snapshot: 'Fixture command',
-            },
+            spec: String(input.objective ?? 'Complete the requested work.'),
+            approval: { sourceMessageId: sourceId },
           };
         }
       }
@@ -1486,6 +1542,13 @@ describe('monolith integration', () => {
     ).json()) as { id: string; created: boolean };
     expect(first).toEqual({ id: retry.id, created: true });
     expect(retry.created).toBe(false);
+    const systemDm = (await (
+      await operation('resolveDirectMessage', { workspaceId, participantId: SYSTEM_IDENTITY_ID })
+    ).json()) as { id: string; created: boolean };
+    expect(systemDm.id).toBeTruthy();
+    expect((await (
+      await operation('resolveDirectMessage', { workspaceId, participantId: SYSTEM_IDENTITY_ID })
+    ).json())).toEqual({ id: systemDm.id, created: false });
     const lastManagerLeave = await operation('leaveRoom', { roomId: room.id });
     expect(lastManagerLeave.status).toBe(400);
     expect(await lastManagerLeave.json()).toEqual({ error: 'last_admin_confirmation_required' });
@@ -1493,6 +1556,48 @@ describe('monolith integration', () => {
       403,
     );
     expect((await operation('leaveWorkspace', { workspaceId })).status).toBe(403);
+  });
+
+  it('reports one creator for concurrent first System direct-message resolutions', async () => {
+    const workspaceId = '0d021e00-0000-4000-8000-000000000001';
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'System DM race')`, [workspaceId]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`,
+      [workspaceId, HUMAN],
+    );
+    const query = database.query.bind(database);
+    let releaseInserts!: () => void;
+    const insertsReady = new Promise<void>((resolve) => { releaseInserts = resolve; });
+    let roomInserts = 0;
+    let preInsertReads = 0;
+    const querySpy = vi.spyOn(database, 'query').mockImplementation(async (sql, values) => {
+      if (sql.includes('SELECT 1 FROM rooms WHERE id=$1')) {
+        const result = await query(sql, values);
+        if (++preInsertReads === 2) releaseInserts();
+        return result;
+      }
+      if (sql.includes('INSERT INTO rooms') && sql.includes("'Direct message'")) {
+        if (++roomInserts === 2) releaseInserts();
+        await insertsReady;
+      }
+      return query(sql, values);
+    });
+    try {
+      const results = await Promise.all(
+        Array.from({ length: 2 }, async () => {
+          const response = await operation('resolveDirectMessage', {
+            workspaceId,
+            participantId: SYSTEM_IDENTITY_ID,
+          });
+          expect(response.status).toBe(200);
+          return (await response.json()) as { id: string; created: boolean };
+        }),
+      );
+      expect(results[0]!.id).toBe(results[1]!.id);
+      expect(results.map((result) => result.created).sort()).toEqual([false, true]);
+    } finally {
+      querySpy.mockRestore();
+    }
   });
 
   it('leaves Rooms atomically while DM close stays non-destructive', async () => {
@@ -2106,7 +2211,7 @@ describe('monolith integration', () => {
           [memoryItemId],
         )
       ).rows[0],
-    ).toMatchObject({ state: 'archived', body: '' });
+    ).toMatchObject({ state: 'stale', body: '' });
 
     const managerMessageId = 'e'.repeat(64);
     await phone.execute(
@@ -2891,6 +2996,105 @@ describe('monolith integration', () => {
     expect(otherRoom.ok).toBe(false);
   });
 
+  it('reads a corner turn’s own transcript message id from the corner Room', async () => {
+    // A corner turn reads messages that live in the corner itself: the active
+    // command carries the corner roomId and the transcript ids belong to it.
+    const cornerId = '22222222-2222-4222-8222-222222222226';
+    const transcriptId = createHash('sha256').update('corner-transcript-row').digest('hex');
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Message corner')`,
+      [cornerId, WORKSPACE, ROOM],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+      [WORKSPACE, cornerId, AGENT],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES
+       ($1,$2,$3,'Corner trigger','message'),
+       ($4,$2,$3,'Corner transcript row the turn must read','message')`,
+      ['corner-trigger', cornerId, HUMAN, transcriptId],
+    );
+    await database.transaction(async (tx) => {
+      const command = await createAgentCommand(tx, {
+        roomId: cornerId,
+        agentId: AGENT,
+        sourceMessageId: 'corner-trigger',
+        turnRequestId: 'corner-request',
+        reason: 'fixture',
+      });
+      expect(command).toBeTruthy();
+      await claimAgentCommand(tx, cornerId, AGENT, command!.id, 'corner-generation');
+    });
+    // The helper sends its turn context with the read, so the server binds it
+    // to the active corner command; the primary lookup scopes to the corner.
+    const read = (await (
+      await daemonOperation('getRoomMessage', {
+        roomId: cornerId,
+        messageId: transcriptId,
+        requestId: 'corner-request',
+        generationId: 'corner-generation',
+      })
+    ).json()) as { body: string };
+    expect(read.body).toBe('Corner transcript row the turn must read');
+    // The parent Room holds no transcript rows of this corner, so a message
+    // id that exists only there must not resolve inside the corner.
+    const absent = await daemonOperation('getRoomMessage', {
+      roomId: cornerId,
+      messageId: createHash('sha256').update('not-in-corner').digest('hex'),
+    });
+    expect(absent.ok).toBe(false);
+  });
+
+  it('fetches a search result from an authorized source Room in a corner turn', async () => {
+    const corner = '22222222-2222-4222-8222-222222222223';
+    const shared = '22222222-2222-4222-8222-222222222224';
+    const privateRoom = '22222222-2222-4222-8222-222222222225';
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES
+       ($1,$4,$5,'Issues triage'),($2,$4,NULL,'Shared'),($3,$4,NULL,'Private')`,
+      [corner, shared, privateRoom, WORKSPACE, ROOM],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+       ($1,$2,$5,'owner'),($1,$2,$6,'member'),
+       ($1,$3,$5,'owner'),($1,$3,$6,'member'),
+       ($1,$4,$6,'member')`,
+      [WORKSPACE, corner, shared, privateRoom, HUMAN, AGENT],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES
+       ('triage-root',$1,$4,'Inspect this result','message'),
+       ('triage-shared',$2,$4,'Authorized result text','message'),
+       ('triage-private',$3,$5,'Private result text','message')`,
+      [ROOM, shared, privateRoom, HUMAN, AGENT],
+    );
+    await database.transaction(async (tx) => {
+      const command = await createAgentCommand(tx, {
+        roomId: corner,
+        agentId: AGENT,
+        sourceMessageId: 'triage-root',
+        turnRequestId: 'triage-request',
+        reason: 'fixture',
+      });
+      expect(command).toBeTruthy();
+      await claimAgentCommand(tx, corner, AGENT, command!.id, 'triage-generation');
+    });
+    const call = (messageId: string) => daemonOperation('getRoomMessage', {
+      roomId: corner,
+      messageId,
+      requestId: 'triage-request',
+      generationId: 'triage-generation',
+    });
+    const sharedResult = await call('triage-shared');
+    expect(sharedResult.status).toBe(200);
+    expect(await sharedResult.json()).toMatchObject({ body: 'Authorized result text' });
+    const parentResult = await call('triage-root');
+    expect(parentResult.status).toBe(200);
+    expect(await parentResult.json()).toMatchObject({ body: 'Inspect this result' });
+    expect((await call('triage-private')).ok).toBe(false);
+  });
+
   it('never reports unread for the viewer’s own latest message', async () => {
     // A live helper is the quiet case: with a fresh presence heartbeat the send
     // writes no unread-mention notice, so the only rows here are the two the
@@ -3108,9 +3312,10 @@ describe('monolith integration', () => {
       }
     ).chats.find((item) => item.room.id === ROOM);
     expect(chat?.cornerCount).toBe(1);
-    expect(chat?.waitingCornerCount).toBe(1);
+    // It owes nobody anything, so it is idle, not waiting.
+    expect(chat?.waitingCornerCount).toBe(0);
     expect(chat?.openCorners).toEqual([
-      { id: '44444444-4444-4444-8444-444444444444', name: 'Open corner', state: 'waiting' },
+      { id: '44444444-4444-4444-8444-444444444444', name: 'Open corner', state: 'idle' },
     ]);
   });
 
@@ -3280,6 +3485,105 @@ describe('monolith integration', () => {
       expect.arrayContaining(ids.slice(0, 2)),
     );
     expect(oldestPage.nextBefore).toBeUndefined();
+  });
+
+  it("outlines every local day of a corner's history in the reader's time zone", async () => {
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'history-outline',
+      name: 'History outline',
+      objective: 'Place the scrubber against every message.',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    const outlineIn = async (tz: string) =>
+      (await (
+        await request(`/v1/phone/rooms/${cornerId}/outline?tz=${encodeURIComponent(tz)}`)
+      ).json()) as RoomHistoryOutline;
+    const before = await outlineIn('Asia/Kolkata');
+    expect(readRoomHistoryOutline(before)).toEqual(before);
+    const ids = ['c', 'd', 'e', 'f'].map((digit) => digit.repeat(64));
+    // 18:20Z and 18:45Z are 23:50 on 1 Jan and 00:15 on 2 Jan in India
+    // (UTC+5:30): one UTC hour, two local days.
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES($1,$5,$6,'Before IST midnight','2040-01-01T18:20:00Z'),
+             ($2,$5,$6,'Same evening','2040-01-01T18:25:00Z'),
+             ($3,$5,$6,'After IST midnight','2040-01-01T18:45:00Z'),
+             ($4,$5,$6,'Same India day','2040-01-02T18:05:00Z')`,
+      [...ids, cornerId, HUMAN],
+    );
+
+    const india = await outlineIn('Asia/Kolkata');
+    expect(readRoomHistoryOutline(india)).toEqual(india);
+    expect(india.timeZone).toBe('Asia/Kolkata');
+    expect(india.total).toBe(before.total + 4);
+    expect(india.newest).toEqual({
+      id: ids[3],
+      createdAt: Date.parse('2040-01-02T18:05:00Z') / 1_000,
+    });
+    const first = (id: string, iso: string) => ({
+      id,
+      createdAt: Date.parse(iso) / 1_000,
+      authorName: 'Owner',
+      authorHandle: 'owner',
+    });
+    expect(india.days.filter((day) => day.day >= '2040-01-01')).toEqual([
+      { day: '2040-01-01', count: 2, first: first(ids[0]!, '2040-01-01T18:20:00Z') },
+      // 00:15 and 23:35 on 2 Jan in India.
+      { day: '2040-01-02', count: 2, first: first(ids[2]!, '2040-01-01T18:45:00Z') },
+    ]);
+    // The same messages fall on two UTC days.
+    expect(
+      (await outlineIn('UTC')).days
+        .filter((day) => day.day >= '2040-01-01')
+        .map((day) => day.count),
+    ).toEqual([3, 1]);
+
+    for (const tz of ['', '+05:30', 'Not/AZone']) {
+      const rejected = await request(
+        `/v1/phone/rooms/${cornerId}/outline?tz=${encodeURIComponent(tz)}`,
+      );
+      expect(rejected.status).toBe(400);
+    }
+  });
+
+  it('outlines every day of a history longer than twenty thousand days', async () => {
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'long-history-outline',
+      name: 'Long history outline',
+      objective: 'Keep the oldest day reachable.',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    const before = (await (
+      await request(`/v1/phone/rooms/${cornerId}/outline?tz=UTC`)
+    ).json()) as RoomHistoryOutline;
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       SELECT lpad(to_hex(day),64,'0'),$1,$2,'Day ' || day,
+              '1980-01-01T12:00:00Z'::timestamptz + (day - 1) * interval '1 day'
+       FROM generate_series(1,20001) AS day`,
+      [cornerId, HUMAN],
+    );
+    const outline = (await (
+      await request(`/v1/phone/rooms/${cornerId}/outline?tz=UTC`)
+    ).json()) as RoomHistoryOutline;
+    expect(readRoomHistoryOutline(outline)).toEqual(outline);
+    expect(outline.total).toBe(before.total + 20_001);
+    const inserted = outline.days.filter((day) => day.day < '2035-01-01');
+    expect(inserted).toHaveLength(20_001);
+    expect(inserted[0]).toEqual({
+      day: '1980-01-01',
+      count: 1,
+      first: {
+        id: '1'.padStart(64, '0'),
+        createdAt: Date.parse('1980-01-01T12:00:00Z') / 1_000,
+        authorName: 'Owner',
+        authorHandle: 'owner',
+      },
+    });
   });
 
   it('restarts history from the current tail when a cached cursor was deleted', async () => {
@@ -6291,6 +6595,111 @@ describe('monolith integration', () => {
     ).toEqual([{ processed: true }]);
   });
 
+  it('credits the branch agent, not a copied parent owner, on a phone-opened corner merge', async () => {
+    processWebhook.mockImplementation((event, payload) =>
+      githubOperations.processWebhook(event, payload),
+    );
+    const candy = 'e'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Candy')`, [
+      candy,
+    ]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'owner')`,
+      [WORKSPACE, candy, ROOM],
+    );
+    await database.query(
+      `INSERT INTO github_installations(
+         installation_id,owner_id,account_id,account_login,account_type,repository_selection,status
+       ) VALUES(77,$1,'42','owner','User','selected','active')`,
+      [HUMAN],
+    );
+    await database.query(
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch)
+       VALUES(101,77,'owner/widgets','main')`,
+    );
+    await database.query(
+      `UPDATE rooms SET repository_key='owner/widgets',
+         repository_remote='https://github.com/owner/widgets.git',
+         repository_resolution='repository',github_installation_id=77 WHERE id=$1`,
+      [ROOM],
+    );
+    // The phone's + button opens a corner with no owner agent and copies the
+    // parent's memberships, so Candy arrives in the corner as an owner.
+    const created = await operation('createHumanCorner', { roomId: ROOM, title: 'Hidden river' });
+    expect(created.status).toBe(200);
+    const { id: cornerId } = (await created.json()) as { id: string };
+    const branch = `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`;
+    expect(
+      (
+        await daemonOperation('postCornerRemoteState', {
+          cornerId,
+          branch,
+          state: 'working',
+          checks: 'unknown',
+        })
+      ).status,
+    ).toBe(200);
+    const merged = await webhook('pull_request', 'phone-corner-pr-merged', {
+      installation: { id: 77 },
+      repository: { id: 101, full_name: 'owner/widgets' },
+      action: 'closed',
+      pull_request: {
+        number: 1,
+        title: 'Hidden river',
+        html_url: 'https://github.com/owner/widgets/pull/1',
+        head: { ref: branch, sha: '1'.repeat(40) },
+        base: { ref: 'main' },
+        merged: true,
+        merged_at: '2026-09-30T14:00:00Z',
+        merge_commit_sha: 'f'.repeat(40),
+        merged_by: { login: 'owner' },
+      },
+    });
+    expect(merged.status).toBe(202);
+    expect(
+      (
+        await database.query<{ card_type: string; author_id: string }>(
+          `SELECT card_type,author_id FROM messages
+           WHERE (room_id=$1 AND card_type='daemon-fact' AND card->>'type'='corner-complete')
+              OR (room_id=$2 AND card_type='github-corner-note' AND system_event->>'verb'='merged')
+           ORDER BY card_type`,
+          [ROOM, cornerId],
+        )
+      ).rows,
+    ).toEqual([
+      { card_type: 'daemon-fact', author_id: AGENT },
+      { card_type: 'github-corner-note', author_id: AGENT },
+    ]);
+    expect(
+      (
+        await database.query<{ owner_agent_id: string | null }>(
+          `SELECT owner_agent_id FROM corner_facts WHERE corner_id=$1`,
+          [cornerId],
+        )
+      ).rows,
+    ).toEqual([{ owner_agent_id: AGENT }]);
+    // A later agent recording a branch never replaces the recorded owner.
+    await database.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [
+      cornerId,
+      candy,
+    ]);
+    await daemonOperation('postCornerRemoteState', {
+      cornerId,
+      branch,
+      state: 'working',
+      checks: 'unknown',
+    });
+    expect(
+      (
+        await database.query<{ owner_agent_id: string | null }>(
+          `SELECT owner_agent_id FROM corner_facts WHERE corner_id=$1`,
+          [cornerId],
+        )
+      ).rows,
+    ).toEqual([{ owner_agent_id: candy }]);
+  });
+
   it('turns signed GitHub branch events into corner notes and closes a merged corner', async () => {
     processWebhook.mockImplementation((event, payload) =>
       githubOperations.processWebhook(event, payload),
@@ -6758,10 +7167,15 @@ describe('monolith integration', () => {
     expect(
       (await webhook('pull_request', 'corner-pr-merged-semantic-retry', mergedPayload)).status,
     ).toBe(202);
-    // Corner lifecycle cards stay in the ledger; only the four push
-    // categories (DMs, tags, replies, member lifecycle) reach a device.
+    // The person who commissioned the corner hears it landed once, from the
+    // parent Room's merge card, however many times GitHub retries the webhook.
+    expect(await pushes.runOnce()).toBe(1);
+    expect(send).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledWith(
+      deviceToken,
+      expect.objectContaining({ roomId: ROOM, channelId: ROOM, target: 'message' }),
+    );
     expect(await pushes.runOnce()).toBe(0);
-    expect(send).not.toHaveBeenCalled();
     expect(
       (
         await database.query<{ count: number }>(
@@ -6771,24 +7185,19 @@ describe('monolith integration', () => {
         )
       ).rows[0]?.count,
     ).toBe(1);
+    // The merge card announces the landing; the opener, which never
+    // subscribed to `merged`, gets no turn from it.
     expect(
       (
-        await database.query<{
-          agent_id: string;
-          reason: string;
-          event_subscriptions: string[];
-        }>(
-          `SELECT command.agent_id,command.reason,member.event_subscriptions
-           FROM agent_commands command
+        await database.query(
+          `SELECT command.agent_id FROM agent_commands command
            JOIN messages source ON source.id=command.source_message_id
-           JOIN memberships member
-             ON member.room_id=command.room_id AND member.identity_id=command.agent_id
            WHERE command.room_id=$1 AND source.card_type='daemon-fact'
              AND source.card->>'type'='corner-complete'`,
           [ROOM],
         )
       ).rows,
-    ).toEqual([{ agent_id: AGENT, reason: 'corner_merged', event_subscriptions: [] }]);
+    ).toEqual([]);
     expect(
       (
         await database.query<{ count: number }>(
@@ -7140,6 +7549,8 @@ describe('monolith integration', () => {
         )
       ).rows[0],
     ).toEqual({ owner_agent_id: AGENT });
+    const cornerView = (await (await request(`/v1/phone/rooms/${legacyCornerId}`)).json()) as RoomView;
+    expect(cornerView.cornerOpenerAgentId).toBe(AGENT);
   });
 
   it('settles a working turn when its final untagged agent reply is stored', async () => {
@@ -8276,10 +8687,17 @@ describe('monolith integration', () => {
       [cornerId, AGENT],
     );
     expect(await listed()).toEqual(expect.objectContaining({ state: 'waiting', mine: true }));
+    // A later agent line does not answer the tag; the viewer's reply does.
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)
        VALUES('chat-mine-later',$1,$2,'Never mind.',now()+interval '3 seconds')`,
       [cornerId, AGENT],
+    );
+    expect(await listed()).toEqual(expect.objectContaining({ state: 'waiting', mine: true }));
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES('chat-mine-answer',$1,$2,'Round.',now()+interval '4 seconds')`,
+      [cornerId, HUMAN],
     );
     expect(await listed()).not.toHaveProperty('mine');
     await database.query(`UPDATE corner_facts SET commissioned_by=$2 WHERE corner_id=$1`, [
@@ -8325,7 +8743,7 @@ describe('monolith integration', () => {
     expect(await order()).toEqual([busy, ROOM]);
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)
-       VALUES('corner-hands-back',$1,$2,'Small or large?',now()+interval '10 seconds')`,
+       VALUES('corner-hands-back',$1,$2,'@owner small or large?',now()+interval '10 seconds')`,
       [cornerId, AGENT],
     );
     const corner = (await listed())
@@ -8333,11 +8751,215 @@ describe('monolith integration', () => {
       ?.openCorners?.find((item) => item.id === cornerId);
     expect(corner).toEqual(expect.objectContaining({ state: 'waiting', mine: true }));
     expect(await order()).toEqual([ROOM, busy]);
-    // Someone else's waiting corner is not the viewer's activity.
-    await database.query(`UPDATE corner_facts SET commissioned_by=NULL WHERE corner_id=$1`, [
-      cornerId,
-    ]);
+    // Answered, the corner owes nobody: idle is not the viewer's activity.
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES('corner-answered',$1,$2,'Large.',now()+interval '11 seconds')`,
+      [cornerId, HUMAN],
+    );
     expect(await order()).toEqual([busy, ROOM]);
+  });
+
+  it('reads a quiet corner idle until it owes someone, and pulls the dropdown open only until seen', async () => {
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'corner-owed-idle',
+      name: 'Pick a finish',
+      objective: 'Pick a finish for the widget',
+    });
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    const listed = async () =>
+      (
+        (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
+          chats: Array<{
+            room: { id: string };
+            openCorners?: Array<{ id: string; state: string; mine?: true; attention?: true }>;
+          }>;
+        }
+      ).chats
+        .find((item) => item.room.id === ROOM)
+        ?.openCorners?.find((item) => item.id === cornerId);
+    const page = async () =>
+      (await new PhoneService(database, origin).readCorners(ROOM, HUMAN))?.corners.find(
+        (item) => item.corner.id === cornerId,
+      );
+    const owed = async () =>
+      (await new PhoneService(database, origin).readRoom(cornerId, HUMAN))?.cornerOwed;
+    const say = (id: string, author: string, text: string, at: string) =>
+      database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,created_at)
+         VALUES($1,$2,$3,$4,now()+$5::interval)`,
+        [id, cornerId, author, text, at],
+      );
+
+    // The agent finished its turn and asks nothing of anyone.
+    await say('owed-done', AGENT, 'Done for now.', '1 second');
+    expect(await listed()).toEqual(expect.objectContaining({ state: 'idle', mine: true }));
+    expect(await listed()).not.toHaveProperty('attention');
+    expect(await page()).toEqual(expect.objectContaining({ state: 'idle' }));
+    expect(await owed()).toBe(false);
+
+    // It tags the viewer: waiting on them, and it pulls their dropdown open.
+    await say('owed-tag', AGENT, '@owner matte or gloss?', '2 seconds');
+    expect(await listed()).toEqual(
+      expect.objectContaining({ state: 'waiting', mine: true, attention: true }),
+    );
+    expect(await page()).toEqual(expect.objectContaining({ state: 'waiting', awaitsViewer: true }));
+    expect(await owed()).toBe(true);
+
+    // The viewer opens the corner: still waiting, but no longer pulling.
+    expect(
+      (await request(`/v1/phone/rooms/${cornerId}/read`, 'POST', { messageId: 'owed-tag' })).status,
+    ).toBe(204);
+    expect(await listed()).toEqual(expect.objectContaining({ state: 'waiting' }));
+    expect(await listed()).not.toHaveProperty('attention');
+
+    // The viewer answers: nothing is owed, the corner is idle.
+    await say('owed-answer', HUMAN, 'Matte.', '3 seconds');
+    expect(await listed()).toEqual(expect.objectContaining({ state: 'idle' }));
+    expect(await owed()).toBe(false);
+  });
+
+  it('expires an unanswered tag after a day but never a question, grant or blocked run', async () => {
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'corner-owed-expiry',
+      name: 'Pick a box',
+      objective: 'Pick a box for the widget',
+    });
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    const state = async () =>
+      (await new PhoneService(database, origin).readCorners(ROOM, HUMAN))?.corners.find(
+        (item) => item.corner.id === cornerId,
+      )?.state;
+    const old = "now()-interval '25 hours'";
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES('expiry-tag',$1,$2,'@owner big or small?',${old})`,
+      [cornerId, AGENT],
+    );
+    expect(await state()).toBe('idle');
+
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card,created_at)
+       VALUES('expiry-question',$1,$2,'Big or small?','card','choice',$3::jsonb,${old})`,
+      [
+        cornerId,
+        AGENT,
+        JSON.stringify({ mode: 'question', status: 'open', requester: { pubkey: HUMAN } }),
+      ],
+    );
+    expect(await state()).toBe('waiting');
+    await database.query(
+      `UPDATE messages SET card=jsonb_set(card,'{status}','"closed"') WHERE id='expiry-question'`,
+    );
+    expect(await state()).toBe('idle');
+
+    const grantId = '99999999-9999-4999-8999-999999999991';
+    await database.query(
+      `INSERT INTO agent_grants(id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status,created_at)
+       VALUES($1,$2,$3,'host','example.com','fetch docs',$2,$4,'pending',${old})`,
+      [grantId, AGENT, WORKSPACE, cornerId],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card,created_at)
+       VALUES('expiry-grant',$1,$2,'Allow Bee to reach example.com','card','grant-request',$3::jsonb,${old})`,
+      [cornerId, AGENT, JSON.stringify({ grants: [{ grantId, kind: 'host', target: 'example.com' }] })],
+    );
+    expect(await state()).toBe('waiting');
+    await database.query(`UPDATE agent_grants SET status='approved' WHERE id=$1`, [grantId]);
+    expect(await state()).toBe('idle');
+
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,created_at)
+       VALUES('expiry-blocked',$1,$2,'@owner may need to step in · checks still fail','system','corner-checks-blocked',${old})`,
+      [cornerId, AGENT],
+    );
+    expect(await state()).toBe('waiting');
+  });
+
+  it('keeps owed tags, questions, grants and blocks waiting past 21 updates', async () => {
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'corner-owed-crowded',
+      name: 'Pick a lid',
+      objective: 'Pick a lid for the widget',
+    });
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    const state = async () =>
+      (await new PhoneService(database, origin).readCorners(ROOM, HUMAN))?.corners.find(
+        (item) => item.corner.id === cornerId,
+      )?.state;
+    let updates = 0;
+    const crowd = async () => {
+      for (let index = 0; index < 21; index += 1) {
+        updates += 1;
+        await database.query(
+          `INSERT INTO messages(id,room_id,author_id,text,created_at)
+           VALUES($1,$2,$3,'Still working.',now()+$4::interval)`,
+          [`crowded-update-${updates}`, cornerId, AGENT, `${updates} seconds`],
+        );
+      }
+    };
+
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES('crowded-tag',$1,$2,'@owner hinged or loose?',now())`,
+      [cornerId, AGENT],
+    );
+    await crowd();
+    expect(await state()).toBe('waiting');
+    updates += 1;
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES('crowded-answer',$1,$2,'Hinged.',now()+$3::interval)`,
+      [cornerId, HUMAN, `${updates} seconds`],
+    );
+    expect(await state()).toBe('idle');
+
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card,created_at)
+       VALUES('crowded-question',$1,$2,'Hinged or loose?','card','choice',$3::jsonb,now())`,
+      [
+        cornerId,
+        AGENT,
+        JSON.stringify({ mode: 'question', status: 'open', requester: { pubkey: HUMAN } }),
+      ],
+    );
+    await crowd();
+    expect(await state()).toBe('waiting');
+    await database.query(
+      `UPDATE messages SET card=jsonb_set(card,'{status}','"closed"') WHERE id='crowded-question'`,
+    );
+    expect(await state()).toBe('idle');
+
+    const grantId = '99999999-9999-4999-8999-999999999992';
+    await database.query(
+      `INSERT INTO agent_grants(id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status)
+       VALUES($1,$2,$3,'host','example.com','fetch docs',$2,$4,'pending')`,
+      [grantId, AGENT, WORKSPACE, cornerId],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card,created_at)
+       VALUES('crowded-grant',$1,$2,'Allow Bee to reach example.com','card','grant-request',$3::jsonb,now())`,
+      [
+        cornerId,
+        AGENT,
+        JSON.stringify({ grants: [{ grantId, kind: 'host', target: 'example.com' }] }),
+      ],
+    );
+    await crowd();
+    expect(await state()).toBe('waiting');
+    await database.query(`UPDATE agent_grants SET status='approved' WHERE id=$1`, [grantId]);
+    expect(await state()).toBe('idle');
+
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,created_at)
+       VALUES('crowded-blocked',$1,$2,'@owner may need to step in · checks still fail','system','corner-checks-blocked',now()+$3::interval)`,
+      [cornerId, AGENT, `${updates} seconds`],
+    );
+    await crowd();
+    expect(await state()).toBe('waiting');
   });
 
   it('returns the active corner when the same originating task is opened repeatedly', async () => {
@@ -8444,18 +9066,8 @@ describe('monolith integration', () => {
     expect(await restore.json()).toMatchObject({
       brief: {
         revision: 1,
-        content: brief.content,
-        legacy: false,
-        intentVerbatim: [{ snapshot: 'Fixture command' }],
-        buildSpec: brief.content,
-        criteria: [{ id: 'AC-1', text: brief.content }],
-        references: [],
-        approvalBasis: {
-          kind: 'initiating-command',
-          snapshot: 'Fixture command',
-          approvedBy: HUMAN,
-        },
-        revisionHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+        spec: brief.content,
+        approval: { text: 'Fixture command', approvedBy: HUMAN, approverName: expect.any(String) },
         attachments: [
           { objectId: mediaId, sha256: sha, purpose: 'approved visual dimensions', required: true },
         ],
@@ -8464,14 +9076,42 @@ describe('monolith integration', () => {
     const viewed = await phone.readRoom(cornerId, HUMAN);
     expect(viewed?.cornerBrief).toMatchObject({
       revision: 1,
-      content: brief.content,
-      legacy: false,
-      buildSpec: brief.content,
-      criteria: [{ id: 'AC-1' }],
-      approvalBasis: { kind: 'initiating-command', approvedBy: HUMAN },
-      history: [{ revision: 1, approvalKind: 'initiating-command' }],
+      spec: brief.content,
+      approval: { text: 'Fixture command' },
       attachments: [{ title: 'approved-mock.txt', purpose: 'approved visual dimensions' }],
     });
+    expect(Object.keys(viewed!.cornerBrief!).sort()).toEqual([
+      'approval',
+      'attachments',
+      'revision',
+      'spec',
+    ]);
+    // A new revision is the spec and its approval; every column the typed
+    // brief used to fill stays empty, and the approval keeps the stored shape.
+    expect(
+      (
+        await database.query(
+          `SELECT spec,content,intent_verbatim,build_spec,criteria,non_goals,brief_references,
+                  approval_basis->>'kind' approval_kind,approval_basis->>'snapshot' snapshot,
+                  revision_hash IS NOT NULL hashed
+           FROM corner_brief_revisions WHERE corner_id=$1`,
+          [cornerId],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        spec: brief.content,
+        content: null,
+        intent_verbatim: null,
+        build_spec: null,
+        criteria: null,
+        non_goals: null,
+        brief_references: null,
+        approval_kind: 'initiating-command',
+        snapshot: 'Fixture command',
+        hashed: true,
+      },
+    ]);
     expect(
       (
         await daemonOperation('postCornerValidationStage', {
@@ -8536,7 +9176,7 @@ describe('monolith integration', () => {
     expect(await history.json()).toMatchObject({
       revisions: [
         { revision: 2, change: 'The requester corrected the label.' },
-        { revision: 1, content: brief.content },
+        { revision: 1, spec: brief.content },
       ],
     });
     const outsider = 'd'.repeat(64);
@@ -8763,88 +9403,184 @@ describe('monolith integration', () => {
     });
   });
 
-  it('refuses new repository and research corners without a structured brief at the server boundary', async () => {
-    for (const [requestId, lane] of [
-      ['missing-code-brief', 'code'],
-      ['missing-research-brief', 'research'],
+  it('refuses new repository corners without a structured brief at the server boundary', async () => {
+    const response = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'missing-code-brief',
+      name: 'Missing brief',
+      objective: 'Do repository work',
+      lane: 'code',
+      repository: 'example/repository',
+      fixtureOmitBrief: true,
+    });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain('a brief is required for repository corners');
+    expect(
+      (await database.query(`SELECT 1 FROM corner_facts WHERE request_id='missing-code-brief'`))
+        .rows,
+    ).toEqual([]);
+  });
+
+  it('rejects an approval that does not name a human Room message, and an over-long spec', async () => {
+    const agentMessage = 'agent-approval-message';
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Looks good to me')`,
+      [agentMessage, ROOM, AGENT],
+    );
+    for (const [requestId, sourceMessageId] of [
+      ['unknown-approval', 'not-a-real-message'],
+      ['agent-approval', agentMessage],
     ] as const) {
       const response = await daemonOperation('createCorner', {
         roomId: ROOM,
         requestId,
-        name: 'Missing brief',
+        name: 'Unapproved brief',
         objective: 'Do repository work',
-        lane,
         repository: 'example/repository',
-        fixtureOmitBrief: true,
+        brief: { spec: '## Checklist\n\n- Ship it.', approval: { sourceMessageId } },
       });
-      expect(response.status).toBe(400);
+      expect(response.status).not.toBe(200);
       expect(await response.text()).toContain(
-        'a structured brief is required for repository and research corners',
+        'corner brief approval must name a human Room message',
       );
+      expect(
+        (await database.query(`SELECT 1 FROM corner_facts WHERE request_id=$1`, [requestId])).rows,
+      ).toEqual([]);
     }
-    expect(
-      (
-        await database.query(
-          `SELECT 1 FROM corner_facts WHERE request_id IN ('missing-code-brief','missing-research-brief')`,
-        )
-      ).rows,
-    ).toEqual([]);
+
+    const tooLong = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'over-long-spec',
+      name: 'Long brief',
+      objective: 'Do repository work',
+      repository: 'example/repository',
+      brief: { content: 'x'.repeat(CORNER_BRIEF_SPEC_MAX_LENGTH + 1) },
+    });
+    expect(tooLong.status).not.toBe(200);
+    expect(await tooLong.text()).toContain(
+      `corner brief spec must contain 1–${CORNER_BRIEF_SPEC_MAX_LENGTH} characters`,
+    );
+    const atLimit = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'limit-length-spec',
+      name: 'Limit brief',
+      objective: 'Do repository work',
+      brief: { content: 'x'.repeat(CORNER_BRIEF_SPEC_MAX_LENGTH) },
+    });
+    expect(atLimit.status).toBe(200);
   });
 
-  it('rejects paraphrased human intent and approval snapshots', async () => {
-    const response = await daemonOperation('createCorner', {
+  it('folds a revision written before the trimmed brief into one Markdown spec', async () => {
+    const opened = await daemonOperation('createCorner', {
       roomId: ROOM,
-      requestId: 'forged-brief-provenance',
-      name: 'Forged brief',
-      objective: 'Do repository work',
-      repository: 'example/repository',
-      brief: {
-        intentVerbatim: [
-          { sourceMessageId: 'not-a-real-message', snapshot: 'A paraphrase written by the agent' },
-        ],
-        buildSpec: 'Implement the paraphrased request.',
-        criteria: [{ id: 'AC-1', text: 'Ship the paraphrase.' }],
-        references: [],
-        approvalBasis: {
-          kind: 'explicit-human-answer',
-          sourceMessageId: 'not-a-real-message',
-          snapshot: 'A paraphrase written by the agent',
-        },
-      },
+      requestId: 'folded-brief-open',
+      name: 'Folded brief',
+      objective: 'Keep the old assignment readable',
+      brief: { content: 'Revision one.' },
     });
-    expect(response.status).not.toBe(200);
-    expect(await response.text()).toContain('must quote an exact human Room message');
-
-    const omittedApproval = await daemonOperation('createCorner', {
-      roomId: ROOM,
-      requestId: 'omitted-approval-intent',
-      name: 'Omitted approval',
-      objective: 'Do repository work',
-      repository: 'example/repository',
-      brief: {
-        intentVerbatim: [
-          { sourceMessageId: 'intent-only', snapshot: 'An alleged intent snapshot' },
-        ],
-        buildSpec: 'Implement it.',
-        criteria: [{ id: 'AC-1', text: 'Implement it.' }],
-        references: [],
-        approvalBasis: {
-          kind: 'explicit-human-answer',
-          sourceMessageId: 'different-message',
-          snapshot: 'Looks good',
-        },
-      },
-    });
-    expect(omittedApproval.status).not.toBe(200);
-    expect(await omittedApproval.text()).toContain(
-      'approval basis must be retained in verbatim human intent',
+    expect(opened.status).toBe(200);
+    const { cornerId } = (await opened.json()) as { cornerId: string };
+    const approval = 'old-approval-message';
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Yes, build that.')`,
+      [approval, ROOM, HUMAN],
     );
+    // Exactly the row shape the structured brief wrote: no spec, every typed field.
+    await database.query(
+      `INSERT INTO corner_brief_revisions(
+         corner_id,revision,content,intent_verbatim,build_spec,criteria,non_goals,
+         brief_references,approval_basis,revision_hash,change,author_id,source_room_id,
+         source_message_id,attachments
+       ) VALUES($1,2,'Old build spec.',$2,'Old build spec.',$3,$4,$5,$6,$7,'Old change',$8,$9,$10,'[]')`,
+      [
+        cornerId,
+        JSON.stringify([{ sourceMessageId: approval, snapshot: 'Yes, build that.' }]),
+        JSON.stringify([
+          { id: 'AC-1', text: 'The widget renders.' },
+          { id: 'AC-2', text: 'Labels stay.' },
+        ]),
+        JSON.stringify(['No redesign.']),
+        JSON.stringify([
+          { label: 'Design doc', authority: 'approved-reference', description: 'The agreed mock.' },
+        ]),
+        JSON.stringify({
+          kind: 'explicit-human-answer',
+          sourceMessageId: approval,
+          snapshot: 'Yes, build that.',
+          approvedBy: HUMAN,
+          briefHash: 'f'.repeat(64),
+        }),
+        'f'.repeat(64),
+        AGENT,
+        ROOM,
+        approval,
+      ],
+    );
+    // And a row from before structured briefs: opaque content only.
+    await database.query(
+      `INSERT INTO corner_brief_revisions(corner_id,revision,content,author_id,source_room_id)
+       VALUES($1,3,'Opaque legacy content.',$2,$3)`,
+      [cornerId, AGENT, ROOM],
+    );
+    const human = (
+      await database.query<{ name: string }>(`SELECT name FROM identities WHERE id=$1`, [HUMAN])
+    ).rows[0]!.name;
+    const folded = [
+      '## Intent',
+      '',
+      '> Yes, build that.',
+      '>',
+      `> — message \`${approval}\``,
+      '',
+      '## Checklist',
+      '',
+      '- AC-1: The widget renders.',
+      '- AC-2: Labels stay.',
+      '',
+      '## Non-goals',
+      '',
+      '- No redesign.',
+      '',
+      '## References',
+      '',
+      '- Design doc [approved-reference]: The agreed mock.',
+      '',
+      'Old build spec.',
+    ].join('\n');
+    const history = (await (
+      await daemonOperation('listCornerBriefRevisions', { cornerId })
+    ).json()) as { revisions: Record<string, unknown>[] };
+    expect(history.revisions).toEqual([
+      expect.objectContaining({ revision: 3, spec: 'Opaque legacy content.' }),
+      expect.objectContaining({
+        revision: 2,
+        spec: folded,
+        change: 'Old change',
+        approval: {
+          sourceMessageId: approval,
+          text: 'Yes, build that.',
+          approvedBy: HUMAN,
+          approverName: human,
+        },
+      }),
+      expect.objectContaining({ revision: 1, spec: 'Revision one.' }),
+    ]);
+    expect(history.revisions[0]).not.toHaveProperty('approval');
+    await database.query(`DELETE FROM corner_brief_revisions WHERE corner_id=$1 AND revision=3`, [
+      cornerId,
+    ]);
+    expect((await phone.readRoom(cornerId, HUMAN))?.cornerBrief).toEqual({
+      revision: 2,
+      spec: folded,
+      approval: { sourceMessageId: approval, text: 'Yes, build that.', approverName: human },
+      attachments: [],
+    });
   });
 
   it('rolls back the corner and worker command when brief persistence fails', async () => {
     await database.query(
       `ALTER TABLE corner_brief_revisions ADD CONSTRAINT reject_test_brief
-       CHECK (content <> 'reject-this-brief')`,
+       CHECK (spec <> 'reject-this-brief')`,
     );
     const response = await daemonOperation('createCorner', {
       roomId: ROOM,
@@ -8967,7 +9703,7 @@ describe('monolith integration', () => {
     ).toMatchObject({
       brief: {
         revision: 2,
-        content: 'A1: keep the agreed behavior. A2: retain the corrected label.',
+        spec: 'A1: keep the agreed behavior. A2: retain the corrected label.',
       },
       validation: expect.arrayContaining([
         expect.objectContaining({ stage: 'review', status: 'passed', actorId: reviewerId }),
@@ -9529,8 +10265,6 @@ describe('monolith integration', () => {
   it.each([
     ['code', false],
     ['code', true],
-    ['research', false],
-    ['research', true],
     ['no_code', false],
     ['no_code', true],
   ] as const)(
@@ -9565,17 +10299,8 @@ describe('monolith integration', () => {
           ? {}
           : {
               brief: {
-                intentVerbatim: [
-                  { sourceMessageId: source.messageId, snapshot: '@bee open this corner' },
-                ],
-                buildSpec: 'Answer this request',
-                criteria: [{ id: 'AC-1', text: 'Answer this request' }],
-                references: [],
-                approvalBasis: {
-                  kind: 'initiating-command',
-                  sourceMessageId: source.messageId,
-                  snapshot: '@bee open this corner',
-                },
+                spec: 'Answer this request',
+                approval: { sourceMessageId: source.messageId },
               },
             }),
       });
@@ -11891,6 +12616,42 @@ describe('monolith integration', () => {
       { room_id: null, event_subscriptions: [] },
       { room_id: ROOM, event_subscriptions: ['joined'] },
     ]);
+  });
+
+  it('pushes a question card and a tagged reply from the same turn once', async () => {
+    await operation('registerPushDevice', {
+      token: 'owner-choice-turn-device-token-1234567890',
+      platform: 'android',
+      environment: 'physical',
+    });
+    const send = vi.fn().mockResolvedValue(undefined);
+    const loop = new PushDeliveryLoop(database, { send });
+    expect(await loop.runOnce()).toBe(0);
+    const requestId = 'c'.repeat(64);
+    const asked = await daemonOperation('askRoomChoice', {
+      roomId: ROOM,
+      requestId,
+      prompt: 'Which branch should I use?',
+      options: [
+        { label: 'Main', consequence: 'Ships today' },
+        { label: 'Release', consequence: 'Ships Friday' },
+      ],
+    });
+    expect(asked.status).toBe(200);
+    const card = (await asked.json()) as { messageId: string };
+    const replied = await daemonOperation('postRoomMessage', {
+      roomId: ROOM,
+      requestId,
+      text: '@owner the question card above needs your pick.',
+    });
+    expect(replied.status).toBe(200);
+
+    expect(await loop.runOnce()).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(
+      'owner-choice-turn-device-token-1234567890',
+      expect.objectContaining({ messageId: card.messageId }),
+    );
   });
 
   it('posts a choice card, settles it in place, hides the wake, and refuses an undersized poll', async () => {

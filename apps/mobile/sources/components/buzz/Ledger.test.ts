@@ -227,6 +227,29 @@ describe('the ledger — an agent turn', () => {
     expect(dots.every((style) => style.backgroundColor !== '#b08a4a')).toBe(true);
   });
 
+  it('shows a quiet Reported marker beside the stamp only on a reported message', () => {
+    const entry = (feedbackReported?: boolean) =>
+      render(
+        React.createElement(LedgerEntry, {
+          itemId: 'reported-message',
+          byline: { name: 'Ada', stamp: '10:02', ...(feedbackReported ? { feedbackReported } : {}) },
+          bodyText: 'The deploy button did nothing.',
+          bodyTestID: 'body',
+        }),
+      );
+
+    const reported = entry(true);
+    const marker = reported.root.findByProps({ testID: 'chat-reported-marker' });
+    expect(marker.props.children).toBe('Reported');
+    expect(marker.props.accessibilityLabel).toBe('Reported to Beeline');
+    // Metadata, not a control: it rides the stamp's own quiet style.
+    expect(marker.props.style).toBe(
+      reported.root.findByProps({ testID: 'chat-byline-stamp' }).props.style,
+    );
+
+    expect(entry().root.findAllByProps({ testID: 'chat-reported-marker' })).toHaveLength(0);
+  });
+
   it('lets the nested profile control claim the row long press', () => {
     const onOpenProfile = vi.fn();
     const onLongPress = vi.fn();

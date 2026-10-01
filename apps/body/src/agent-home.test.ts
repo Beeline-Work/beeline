@@ -91,6 +91,11 @@ describe('per-room harness state isolation', () => {
       'text',
       'image',
     ]);
+    // The routed window and an output cap replace pi's catalog limits.
+    expect(models.providers.openrouter.modelOverrides['z-ai/glm-5.3-flash']).toMatchObject({
+      contextWindow: 1_048_576,
+      maxTokens: 32_768,
+    });
 
     // No OpenRouter selection: nothing is pinned, globally or otherwise.
     await prepareRoomAgentHome({ root: roomRoot, operatorHome });
@@ -98,6 +103,34 @@ describe('per-room harness state isolation', () => {
       providers: {},
     });
   });
+  it('caps output even for a model the listing names no endpoints for', async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    const roomRoot = resolve(await scratch('beeline-room-alias-'), 'agent-home');
+    const cacheDir = resolve(await scratch('beeline-routing-cache-'), 'openrouter-routing');
+    const model = '~deepseek/deepseek-v4-flash-latest';
+    // The live listing for a router alias: architecture, no endpoints.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: { id: model, architecture: { input_modalities: ['text'] }, endpoints: [] },
+          }),
+          { status: 200 },
+        ),
+    ) as unknown as typeof fetch;
+
+    await prepareRoomAgentHome({
+      root: roomRoot,
+      operatorHome,
+      openRouterRouting: { model, cacheDir, fetchImpl },
+    });
+
+    const override = JSON.parse(readFileSync(resolve(roomRoot, 'pi/models.json'), 'utf8'))
+      .providers.openrouter.modelOverrides[model];
+    expect(override.maxTokens).toBe(32_768);
+    expect(override.contextWindow).toBeUndefined();
+  });
+
   it("restores vision on the operator's own custom-model entry without touching it", async () => {
     const operatorHome = await scratch('beeline-operator-home-');
     const roomRoot = resolve(await scratch('beeline-room-pin-'), 'agent-home');
@@ -280,6 +313,70 @@ describe('per-room harness state isolation', () => {
     expect(readFileSync(resolve(roomRoot, 'claude', quarantined[0]!), 'utf8')).toBe(
       '{"token":"stale-room-copy"}',
     );
+  });
+
+  it('keeps a newer Claude refresh when its atomic write detached the shared link', async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    const roomRoot = resolve(await scratch('beeline-room-refreshed-credential-'), 'agent-home');
+    const source = resolve(operatorHome, '.claude/.credentials.json');
+    const target = resolve(roomRoot, 'claude/.credentials.json');
+    const spent = JSON.stringify({ claudeAiOauth: { refreshToken: 'spent', expiresAt: 1_000 } });
+    const rotated = JSON.stringify({
+      claudeAiOauth: { refreshToken: 'rotated', expiresAt: 2_000 },
+    });
+    await mkdir(resolve(operatorHome, '.claude'), { recursive: true });
+    await writeFile(source, spent);
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome, agentKind: 'claude' });
+
+    // Claude refreshed through the isolated path: its atomic rename replaced
+    // the link, so the rotated login exists only in this Room.
+    const refreshed = `${target}.next`;
+    await writeFile(refreshed, rotated);
+    await rename(refreshed, target);
+
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome, agentKind: 'claude' });
+
+    expect(lstatSync(target).isFile()).toBe(true);
+    expect(readFileSync(target, 'utf8')).toBe(rotated);
+    expect(readFileSync(source, 'utf8')).toBe(spent);
+
+    // The operator can refresh concurrently. A later activation switches back
+    // to that credential without this Room ever replacing the operator file.
+    const operatorRefresh = JSON.stringify({
+      claudeAiOauth: { refreshToken: 'operator-refresh', expiresAt: 3_000 },
+    });
+    await writeFile(source, operatorRefresh);
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome, agentKind: 'claude' });
+    expect(lstatSync(target).isSymbolicLink()).toBe(true);
+    expect(realpathSync(target)).toBe(realpathSync(source));
+    expect(readFileSync(source, 'utf8')).toBe(operatorRefresh);
+  });
+
+  it('keeps the operator Claude login when the detached copy expires no later', async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    const roomRoot = resolve(await scratch('beeline-room-older-credential-'), 'agent-home');
+    const source = resolve(operatorHome, '.claude/.credentials.json');
+    const target = resolve(roomRoot, 'claude/.credentials.json');
+    const current = JSON.stringify({
+      claudeAiOauth: { refreshToken: 'current', expiresAt: 2_000 },
+    });
+    await mkdir(resolve(operatorHome, '.claude'), { recursive: true });
+    await writeFile(source, current);
+    await mkdir(resolve(roomRoot, 'claude'), { recursive: true });
+    await writeFile(
+      target,
+      JSON.stringify({ claudeAiOauth: { refreshToken: 'older', expiresAt: 1_000 } }),
+    );
+
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome, agentKind: 'claude' });
+
+    expect(realpathSync(target)).toBe(realpathSync(source));
+    expect(readFileSync(source, 'utf8')).toBe(current);
+    expect(
+      readdirSync(resolve(operatorHome, '.claude')).filter((name) =>
+        name.startsWith('.credentials.json.beeline-'),
+      ),
+    ).toHaveLength(0);
   });
 
   it('repairs stale regular files for every shared credential path', async () => {
@@ -560,15 +657,17 @@ describe('operator skills + MCP passthrough', () => {
     expect(readFileSync(managedSkill, 'utf8')).toContain('name: using-beeline');
     const reviewSkill = readFileSync(resolve(skillsDir, 'beeline-review', 'SKILL.md'), 'utf8');
     expect(reviewSkill).toContain('PASS: call `approve_merge` with the reviewed head SHA');
-    expect(reviewSkill).toContain('@author approved <reviewed sha>, merge');
+    expect(reviewSkill).toContain('`approved <reviewed sha>` without tagging the author. Do not tell the author to merge.');
+    expect(reviewSkill).not.toContain('approved <reviewed sha>, merge');
     expect(reviewSkill).toContain(
-      'Approving is your last step as reviewer. The author merges it; you never do, and nothing merges it automatically.',
+      'Approving is your last step as reviewer. The server squash-merges that exact head',
     );
+    expect(reviewSkill).not.toContain('gh pr merge');
     expect(reviewSkill).not.toContain('Never merge');
     expect(reviewSkill).not.toContain('approved pending checks');
     expect(reviewSkill).not.toContain('unknown checks');
     expect(reviewSkill).not.toContain('--match-head-commit <reviewed sha>');
-    expect(reviewSkill).toContain('P0 - HUMAN INTENT AND CRITERIA FULFILLED, DEMONSTRATED');
+    expect(reviewSkill).toContain('P0 - SPEC AND CHECKLIST FULFILLED, DEMONSTRATED');
     expect(reviewSkill).toContain('If the user-visible Y cannot be produced, FAIL now');
     const triageSkill = readFileSync(resolve(skillsDir, 'beeline-triage', 'SKILL.md'), 'utf8');
     expect(triageSkill).toContain('name: beeline-triage');
@@ -1565,12 +1664,12 @@ describe('skill provision reuse', () => {
       const review = readFileSync(resolve(skills, 'beeline-review', 'SKILL.md'), 'utf8');
       expect(spec).toContain('name: beeline-spec');
       expect(spec).toContain('If one unresolved choice would materially change behavior');
-      expect(spec).toContain('intentVerbatim[]');
+      expect(spec).toContain('`## Checklist`');
       expect(spec).toContain('Bounded adversarial second read (default on)');
       expect(spec).toContain('Do not infer approval from silence');
       expect(review).toContain('Read the server-assigned brief and its current revision');
-      expect(review).toContain('Quote every verbatim human-intent entry');
-      expect(review).toContain('List every current criterion ID exactly once');
+      expect(review).toContain('Quote the approval with its message ID and approver');
+      expect(review).toContain('List every checklist line exactly once');
       expect(review).toContain(
         'Build one visible validation record for the brief revision and code head.',
       );

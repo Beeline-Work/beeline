@@ -5,7 +5,7 @@ const url = 'https://github.com/owner/widgets/pull/614';
 let restore: Record<string, unknown>, items: Record<string, unknown>[];
 let checks: string, approvalPending: boolean;
 let reviewer: string | null, reviewerExists: boolean, reviewerIsAuthor: boolean, gateRule: string;
-let yoloMode: boolean;
+let held: boolean, isWorkerYolo: boolean, mergeAllowed: boolean;
 let reviewerWake: { status: string; detail: string } | undefined;
 let calls: { name: string; input: Record<string, unknown> }[];
 beforeEach(() => {
@@ -24,7 +24,9 @@ beforeEach(() => {
   reviewer = '@reviewer';
   reviewerExists = true;
   reviewerIsAuthor = false;
-  yoloMode = true;
+  held = false;
+  isWorkerYolo = true;
+  mergeAllowed = true;
   gateRule =
     "Only @reviewer's approve_merge clears this gate; tagging or asking any other agent to review cannot record an approval or change this verdict.";
   reviewerWake = {
@@ -40,27 +42,26 @@ beforeEach(() => {
         ? restore
         : name === 'getRoomConversation'
           ? { items }
-          : name === 'getWorkspaceRoster'
-            ? { members: [{ kind: 'human', identityId: 'human' }] }
-            : name === 'getAgentConfiguration'
-              ? { commands: [], yoloMode }
-              : name === 'getRoomAuthority'
-                ? { archived: false }
-                : name === 'getPrChecksStatus'
-                  ? {
-                      checks,
-                      pullRequest: url,
-                      headSha: 'a'.repeat(40),
-                      approvalPending,
-                      reviewer,
-                      reviewerExists,
-                      reviewerIsAuthor,
-                      ...(reviewerWake ? { reviewerWake } : {}),
-                      rule: gateRule,
-                    }
-                  : name === 'approveCornerMerge'
-                    ? { status: 'approved', pullRequestNumber: 614, headSha: 'a'.repeat(40) }
-                    : {};
+          : name === 'getRoomAuthority'
+            ? { archived: false }
+            : name === 'getPrChecksStatus'
+              ? {
+                  checks,
+                  pullRequest: url,
+                  headSha: 'a'.repeat(40),
+                  approvalPending,
+                  reviewer,
+                  reviewerExists,
+                  reviewerIsAuthor,
+                  ...(reviewerWake ? { reviewerWake } : {}),
+                  held,
+                  isWorkerYolo,
+                  mergeAllowed,
+                  rule: gateRule,
+                }
+              : name === 'approveCornerMerge'
+                ? { status: 'approved', pullRequestNumber: 614, headSha: 'a'.repeat(40) }
+                : {};
     return Response.json(result);
   });
 });
@@ -71,16 +72,17 @@ afterEach(() => {
 const gateCalls = () => calls.filter((call) => call.name === 'getPrChecksStatus');
 
 describe('pr_checks_status PR selection and reviewer gate', () => {
-  it('keeps a research hold even after a human says to proceed and a reviewer passes', async () => {
-    restore.lane = 'research';
-    items = [{ authorId: 'human', body: 'proceed and merge now' }];
-    const status = JSON.parse(await prChecksStatus({ pullRequest: 614 }));
+  it('adds no hold of its own to a corner with no pull request yet', async () => {
+    restore = { lane: 'code', objective: 'Investigate' };
+    const status = JSON.parse(await prChecksStatus());
     expect(status).toMatchObject({
-      held: true,
+      held: false,
+      didHumanSayDontMerge: false,
       mergeAllowed: false,
       approvalPending: true,
     });
-    expect(status.rule).toContain('durable hold');
+    expect(status.next).toContain('The PR URL is not yet durable');
+    expect(gateCalls()).toHaveLength(0);
   });
   it.each([614, url])(
     'asks the server about an explicit reviewer target %s',
@@ -121,54 +123,87 @@ describe('pr_checks_status PR selection and reviewer gate', () => {
     });
     expect(gateCalls()[0]!.input.pullRequest).toBe(614);
   });
-  it('retains human holds and the server PR/head-bound approval verdict', async () => {
-    approvalPending = true;
-    items = [
-      { authorId: 'human', body: 'hold' },
-      { authorId: 'agent', body: 'merge now' },
-    ];
-    expect(JSON.parse(await prChecksStatus({ pullRequest: 614 }))).toMatchObject({
-      held: true,
-      approvalPending: true,
-    });
-    items.push({ authorId: 'human', body: 'proceed' });
+  it('takes the human hold from the server, never from its own transcript scan', async () => {
+    items = [{ authorId: 'human', body: 'hold, do not merge' }];
     expect(JSON.parse(await prChecksStatus({ pullRequest: 614 }))).toMatchObject({
       held: false,
+      didHumanSayDontMerge: false,
+      mergeAllowed: true,
+      approvalPending: false,
+    });
+    held = true;
+    mergeAllowed = false;
+    items = [{ authorId: 'human', body: 'proceed' }];
+    expect(JSON.parse(await prChecksStatus({ pullRequest: 614 }))).toMatchObject({
+      held: true,
+      didHumanSayDontMerge: true,
+      mergeAllowed: false,
       approvalPending: true,
     });
+    // The hold and yolo mode are the server's facts: no local lookup remains.
+    expect(calls.map((call) => call.name)).not.toContain('getWorkspaceRoster');
+    expect(calls.map((call) => call.name)).not.toContain('getAgentConfiguration');
   });
   it.each([
     {
       name: 'worker yolo off after reviewer PASS',
       setup: () => {
-        yoloMode = false;
+        isWorkerYolo = false;
+        mergeAllowed = false;
       },
-      expected: true,
+      expected: { isWorkerYolo: false, mergeAllowed: false, approvalPending: true },
     },
     {
       name: 'no configured reviewer with worker yolo on',
       setup: () => {
         reviewer = null;
         reviewerExists = false;
+        mergeAllowed = false;
       },
-      expected: true,
+      expected: { reviewerExists: false, mergeAllowed: false, approvalPending: true },
     },
     {
       name: 'reviewer PASS with worker yolo on and no human hold',
       setup: () => undefined,
-      expected: false,
+      expected: {
+        reviewFailed: false,
+        isWorkerYolo: true,
+        held: false,
+        mergeAllowed: true,
+        approvalPending: false,
+      },
+    },
+    {
+      name: 'reviewer FAIL or no PASS on the current head',
+      setup: () => {
+        approvalPending = true;
+        mergeAllowed = false;
+      },
+      expected: { reviewFailed: true, mergeAllowed: false, approvalPending: true },
     },
     {
       name: 'human hold despite reviewer PASS and worker yolo on',
       setup: () => {
-        items = [{ authorId: 'human', body: 'do not merge' }];
+        held = true;
+        mergeAllowed = false;
       },
-      expected: true,
+      expected: { held: true, didHumanSayDontMerge: true, approvalPending: true },
     },
-  ])('composes the real merge gate: $name', async ({ setup, expected }) => {
+  ])('reports the server merge gate: $name', async ({ setup, expected }) => {
     setup();
+    expect(JSON.parse(await prChecksStatus({ pullRequest: 614 }))).toMatchObject(expected);
+  });
+  it('never opens the gate itself when the server says it is shut', async () => {
+    // Every local fact looks green, but only the server's mergeAllowed counts.
+    mergeAllowed = false;
     expect(JSON.parse(await prChecksStatus({ pullRequest: 614 }))).toMatchObject({
-      approvalPending: expected,
+      checks: 'passed',
+      reviewFailed: false,
+      isWorkerYolo: true,
+      held: false,
+      reviewerExists: true,
+      mergeAllowed: false,
+      approvalPending: true,
     });
   });
   it('passes through the named reviewer and folds the server rule into the merge-conditions rule', async () => {
@@ -182,7 +217,13 @@ describe('pr_checks_status PR selection and reviewer gate', () => {
       },
     });
     expect(result.rule).toContain(gateRule);
-    expect(result.rule).toContain('Merge only when checks is passed');
+    expect(result.rule).toContain(
+      'When mergeAllowed is true the server squash-merges this exact head itself; no agent runs gh pr merge.',
+    );
+    expect(result.rule).toContain('the server wakes the implementer with its reason');
+    expect(result.rule).toContain('missing state is never consent');
+    expect(result.rule).not.toContain('YOU merge');
+    expect(result.rule).not.toContain('The server never merges');
   });
   it('reports self-review as no gate when the opener is also the reviewer', async () => {
     reviewerIsAuthor = true;
@@ -191,6 +232,7 @@ describe('pr_checks_status PR selection and reviewer gate', () => {
     expect(JSON.parse(await prChecksStatus({ pullRequest: 614 }))).toMatchObject({
       reviewer: '@reviewer',
       reviewerIsAuthor: true,
+      mergeAllowed: true,
       approvalPending: false,
     });
   });
@@ -201,11 +243,13 @@ describe('pr_checks_status PR selection and reviewer gate', () => {
   });
   it('reports unknown with the PR and head reason when the server has no check facts', async () => {
     checks = 'unknown';
+    mergeAllowed = false;
     expect(JSON.parse(await prChecksStatus({ pullRequest: 614 }))).toMatchObject({
       checks: 'unknown',
       reason: `no checks are recorded for PR #614 (head ${'a'.repeat(40)}); the PR may have been opened from a branch that is not this corner's, or checks have not reported yet`,
       held: false,
-      approvalPending: false,
+      mergeAllowed: false,
+      approvalPending: true,
     });
   });
   it('asks for a PR when none is known without interpreting chat as authorization', async () => {

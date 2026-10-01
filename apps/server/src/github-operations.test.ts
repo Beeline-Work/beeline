@@ -129,6 +129,165 @@ describe('GitHub phone operations', () => {
     )).rows).toEqual([{ feature_branch: null }, { feature_branch: null }]);
     expect(app.openPullRequestsForBranch).toHaveBeenCalledTimes(1);
   });
+  it('authors corner check notes as the corner opener, not a copied parent owner', async () => {
+    const workspace = '11111111-1111-4111-8111-111111111111';
+    const room = '22222222-2222-4222-8222-222222222222';
+    const corner = '33333333-3333-4333-8333-333333333333';
+    const branch = 'feature/corner-333333333333';
+    const headSha = '1'.repeat(40);
+    const candy = 'c'.repeat(64);
+    const opener = 'd'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name) VALUES($1,'agent','Candy'),($2,'agent','Niglet')`,
+      [candy, opener],
+    );
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+    await database.query(
+      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
+       VALUES(77,$1,'42','owner','User','selected','active')`, [HUMAN],
+    );
+    await database.query(
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch)
+       VALUES(101,77,'owner/widgets','main')`,
+    );
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,created_by,name,repository_remote,github_installation_id)
+       VALUES($1,$2,$3,'General','https://github.com/owner/widgets.git',77)`,
+      [room, workspace, HUMAN],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`,
+      [workspace, room, candy],
+    );
+    // Opening a corner copies the parent's memberships, roles included, then
+    // adds the opener as owner in the same transaction, so both owners share
+    // one joined_at.
+    await database.transaction(async (tx) => {
+      await tx.query(
+        `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Convo chains')`,
+        [corner, workspace, room, opener],
+      );
+      await tx.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
+         SELECT workspace_id,$2,identity_id,role,event_subscriptions FROM memberships
+         WHERE room_id=$1 AND removed_at IS NULL ON CONFLICT DO NOTHING`,
+        [room, corner],
+      );
+      await tx.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`,
+        [workspace, corner, opener],
+      );
+      await tx.query(
+        `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lane,feature_branch,lifecycle)
+         VALUES($1,$2,'Convo chains','code',$3,'{"checks":"unknown"}')`,
+        [corner, opener, branch],
+      );
+    });
+    const app = {
+      installationToken: vi.fn(async () => ({ token: 'room-token' })),
+      readCommitCheckRollup: vi.fn(async () => ({
+        state: 'passed', total: 1, failing: [], checks: [{ name: 'build', status: 'passed' }],
+      })),
+      readPullRequest: vi.fn(async () => ({
+        number: 4, url: 'https://github.com/owner/widgets/pull/4', headSha,
+        headRef: branch, baseRef: 'main', mergeability: 'clean', merged: false,
+      })),
+      readBranchHead: vi.fn(async () => headSha),
+      openPullRequestsForBranch: vi.fn(async () => [4]),
+    } as unknown as GitHubAppClient;
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
+    await operations.processWebhook('check_run', {
+      action: 'completed', installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
+      check_run: {
+        name: 'build', status: 'completed', conclusion: 'success', head_sha: headSha,
+        check_suite: { head_branch: branch, head_sha: headSha },
+      },
+    });
+    const authors = (await database.query<{ author_id: string }>(
+      `SELECT DISTINCT author_id FROM messages WHERE room_id=$1 AND card_type='github-corner-note'`,
+      [corner],
+    )).rows.map((row) => row.author_id);
+    expect(authors).toEqual([opener]);
+  });
+  it('credits the first agent to speak in an ownerless corner on merge, not a copied parent owner', async () => {
+    const workspace = '11111111-1111-4111-8111-111111111111';
+    const room = '22222222-2222-4222-8222-222222222222';
+    const corner = '33333333-3333-4333-8333-333333333333';
+    const branch = 'feature/corner-333333333333';
+    const candy = 'c'.repeat(64);
+    const worker = 'd'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name) VALUES($1,'agent','Candy'),($2,'agent','Niglet')`,
+      [candy, worker],
+    );
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+    await database.query(
+      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
+       VALUES(77,$1,'42','owner','User','selected','active')`, [HUMAN],
+    );
+    await database.query(
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch)
+       VALUES(101,77,'owner/widgets','main')`,
+    );
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,created_by,name,repository_remote,github_installation_id)
+       VALUES($1,$2,$3,'General','https://github.com/owner/widgets.git',77)`,
+      [room, workspace, HUMAN],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+      [workspace, room, candy, worker],
+    );
+    // A person opens the corner: parent memberships are copied with their
+    // roles, and no owner agent is recorded.
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Hidden river')`,
+      [corner, workspace, room, HUMAN],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       SELECT workspace_id,$2,identity_id,role FROM memberships WHERE room_id=$1`,
+      [room, corner],
+    );
+    await database.query(
+      `INSERT INTO corner_facts(corner_id,objective,lane,kind,feature_branch,lifecycle)
+       VALUES($1,'Hidden river','code','human',$2,'{"checks":"unknown"}')`,
+      [corner, branch],
+    );
+    // An earlier system note carries the old fallback's author; it must not count.
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,system_event,created_at)
+       VALUES($1,$2,$3,'@GitHub pushed','system','{"verb":"pushed"}'::jsonb,now()-interval '2 minutes'),
+             ($4,$2,$5,'On it','message',NULL,now()-interval '1 minute')`,
+      ['1'.repeat(64), corner, candy, '2'.repeat(64), worker],
+    );
+    const app = {
+      installationToken: vi.fn(async () => ({ token: 'room-token' })),
+      readCommitCheckRollup: vi.fn(async () => ({ state: 'passed', total: 0, failing: [], checks: [] })),
+      deleteBranch: vi.fn(async () => undefined),
+    } as unknown as GitHubAppClient;
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
+    await operations.processWebhook('pull_request', {
+      action: 'closed', installation: { id: 77 }, repository: { id: 101, full_name: 'owner/widgets' },
+      pull_request: {
+        number: 1, title: 'Hidden river', html_url: 'https://github.com/owner/widgets/pull/1',
+        head: { ref: branch, sha: '1'.repeat(40) }, base: { ref: 'main' },
+        merged: true, merged_at: '2026-09-30T14:00:00Z', merge_commit_sha: 'f'.repeat(40),
+        merged_by: { login: 'owner' },
+      },
+    });
+    expect((await database.query<{ card_type: string; author_id: string }>(
+      `SELECT card_type,author_id FROM messages
+       WHERE (room_id=$1 AND card->>'type'='corner-complete')
+          OR (room_id=$2 AND card_type='github-corner-note' AND system_event->>'verb'='merged')
+       ORDER BY card_type`,
+      [room, corner],
+    )).rows).toEqual([
+      { card_type: 'daemon-fact', author_id: worker },
+      { card_type: 'github-corner-note', author_id: worker },
+    ]);
+  });
   it('matches a post-upgrade webhook on its recorded feature branch, never the prefix fallback', async () => {
     // upgradeCornerLane records feature_branch exactly, so its webhook must
     // resolve through the exact `fact.feature_branch=$3` join (processCornerEvent
@@ -754,13 +913,16 @@ describe('GitHub phone operations', () => {
         )
       ).rows,
     ).toEqual([{ agent_id: REVIEWER, source_kind: 'check-passed' }]);
-    // A previously stored green fact must still route if its command was lost.
+    // A re-run on the same head reopens checks, and its green dispatches the
+    // reviewer again even though this head's green note was already written.
     await database.query(`DELETE FROM agent_commands WHERE room_id=$1`, [corner]);
-    await database.query(
-      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"'),
-       command_check_state=NULL WHERE corner_id=$1`,
-      [corner],
-    );
+    readCommitCheckRollup.mockResolvedValue({
+      state: 'pending',
+      total: 2,
+      failing: [],
+      checks: [{ name: 'lint', status: 'pending' }],
+    });
+    await operations.processWebhook('check_run', payload('lint', 'completed'));
     readCommitCheckRollup.mockResolvedValue({
       state: 'passed',
       total: 2,
@@ -830,9 +992,8 @@ describe('GitHub phone operations', () => {
         )
       ).rows,
     ).toEqual([{ reason: 'corner_check' }]);
-    await database.query(`DELETE FROM agent_commands WHERE room_id=$1 AND reason='corner_check'`, [
-      corner,
-    ]);
+    // A redelivered failure moves nothing: the one wake already went out with
+    // the transition to implement.
     await operations.processWebhook('check_run', failed);
     expect(
       (
@@ -1038,7 +1199,7 @@ describe('GitHub phone operations', () => {
       url: dirty.pull_request.html_url,
       headSha: newestHead,
       baseSha: '5'.repeat(40),
-      mergeability: 'dirty',
+      mergeability: 'clean',
     });
     await operations.refreshUnknownMergeability(corner);
     expect(

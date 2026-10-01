@@ -324,6 +324,9 @@ type Derived = {
   connectionReference?: string;
 };
 
+/** A composio row that is not actually connected — a fresh sign-in is the remedy. */
+const APP_SIGN_IN_NEEDS_ATTENTION = 'App sign-in needs attention';
+
 /** The app's live state, read from whatever serves it — never stored twice. */
 async function deriveStatus(database: SqlDatabase, row: AppRow, composio?: ComposioApps): Promise<Derived> {
   if (row.transport === 'composio') {
@@ -335,12 +338,12 @@ async function deriveStatus(database: SqlDatabase, row: AppRow, composio?: Compo
     if (row.composio_link_expires_at)
       return row.composio_link_expires_at > new Date()
         ? { status: 'connecting' }
-        : { status: 'error', errorMessage: 'App sign-in needs attention' };
+        : { status: 'error', errorMessage: APP_SIGN_IN_NEEDS_ATTENTION };
     try {
       return await composio.account(row.composio_account_id, row.owner_identity_id,
         composioToolkitForApp(row.app_key))
         ? { status: 'connected' }
-        : { status: 'error', errorMessage: 'App sign-in needs attention' };
+        : { status: 'error', errorMessage: APP_SIGN_IN_NEEDS_ATTENTION };
     } catch {
       return { status: 'error', errorMessage: 'App connection could not be checked' };
     }
@@ -753,7 +756,10 @@ export async function connectApp(
       : derived.status === 'connected'
         ? 'connected'
         : derived.status === 'error'
-          ? 'error'
+          ? row.transport === 'composio' &&
+            derived.errorMessage === APP_SIGN_IN_NEEDS_ATTENTION
+            ? 'needs_sign_in'
+            : 'error'
         : row.transport === 'composio'
           ? 'needs_sign_in'
           : authorizationUrl || derived.signInUrl

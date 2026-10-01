@@ -11,6 +11,8 @@ import type { DaemonApiClient } from './daemon-api-client.js';
 import { GrantCommandRunner, type GrantRunnerRoom } from './grant-runner.js';
 import {
   MonolithRoomTurnLoop,
+  approvedDeviceGrant,
+  deviceGrantResumePrompt,
   pendingGrantToolCall,
   resumePrompt,
 } from './monolith-room-turn.js';
@@ -69,6 +71,224 @@ describe('grant decision recognition', () => {
     expect(resumePrompt({ body: answer, systemEvent: { kind: 'grant-decided' } })).toContain(
       'do not restart, schedule another turn, or request the route again',
     );
+  });
+});
+
+describe('device grant continuation', () => {
+  const approved =
+    'approved: use /dev/kvm [grant g-9]. A running session cannot add a device, so end your turn now with one short line; this same turn continues straight away in a session that has /dev/kvm. Do not ask anyone to restart.';
+
+  it('spots an instantly approved device grant from its reply text', () => {
+    expect(
+      approvedDeviceGrant([
+        { title: 'mcp__beeline-agent__request_grant', content: [{ type: 'text', text: approved }] },
+      ]),
+    ).toBe('/dev/kvm');
+    expect(
+      approvedDeviceGrant([
+        {
+          title: 'mcp__beeline-agent__request_grant',
+          content: 'pending, card posted: use /dev/kvm [grant g-9].',
+        },
+        {
+          title: 'mcp__beeline-agent__request_grant',
+          content:
+            'approved: use kvm [grant g-8], but only device nodes under /dev/ are added to your session, so nothing was added.',
+        },
+        { title: 'mcp__beeline-agent__open_corner', content: approved },
+      ]),
+    ).toBeUndefined();
+  });
+
+  it('tells the continued turn the device is present and not to restart', () => {
+    const prompt = deviceGrantResumePrompt('/dev/kvm', 'Got /dev/kvm; continuing.');
+    expect(prompt).toContain('/dev/kvm is in this session now');
+    expect(prompt).toContain('Your reply just before this was: Got /dev/kvm; continuing.');
+    expect(prompt).toContain('Do not request it again or ask anyone to restart');
+  });
+
+  it('tells a card-approved device resume that the device is in this session', () => {
+    const answer = formatGrantDecisionLine({
+      deciderName: 'Captain',
+      decision: 'once',
+      kind: 'device',
+      target: '/dev/kvm',
+    });
+    const prompt = resumePrompt({ body: answer, systemEvent: { kind: 'grant-decided' } });
+    expect(prompt).toContain('The approved device /dev/kvm is in this session');
+    expect(prompt).toContain('do not restart, schedule another turn, or request the device again');
+  });
+
+  it('continues the same Room turn in a new session that mounts the granted device', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-room-device-'));
+    roots.push(root);
+    const identity = identityFromKey(AGENT_HEX, 'Bee');
+    const agent = {
+      name: 'Bee',
+      publicKey: identity.publicKey,
+      secretKeyHex: Buffer.from(identity.secretKey).toString('hex'),
+    };
+    const runtime = {
+      agent,
+      rooms: [],
+      supervisorRoot: root,
+      transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+    } as unknown as AgentRuntimeRecord;
+    const config: BodyConfig = {
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+      readonlyMcpCommand: '/fake-beeline-mcp',
+      agentEnv: {},
+      workspaceRoot: join(root, 'room'),
+      autoApprovePermissions: true,
+      accessPolicy: 'everyone',
+      agentHomeRoot: join(root, 'agent-home'),
+      operatorHome: join(root, 'operator-home'),
+      bwrapPath: '/usr/bin/bwrap',
+    } as BodyConfig;
+    let inboxReads = 0;
+    let granted = false;
+    const execute = vi.fn(async (name: string, _input: Record<string, unknown>) => {
+      if (name === 'getAgentConfiguration') return { commands: [], yoloMode: true };
+      if (name === 'getRoomRepositoryState') return { resolution: 'none' };
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [
+            { identityId: agent.publicKey, kind: 'agent', name: 'Bee', role: 'member' },
+            { identityId: HUMAN, kind: 'human', name: 'Captain', role: 'owner' },
+          ],
+        };
+      }
+      if (name === 'listAgentGrants') {
+        return {
+          grants: granted
+            ? [{ grantId: 'g-9', kind: 'device', target: '/dev/ttyUSB0', status: 'approved' }]
+            : [],
+        };
+      }
+      if (name === 'getRoomInbox') {
+        inboxReads += 1;
+        if (inboxReads === 2) {
+          return {
+            items: [
+              {
+                id: 'ask-1',
+                authorId: HUMAN,
+                createdAt: 1,
+                type: 'message',
+                body: 'Flash the board on the serial port',
+                attachments: [],
+              },
+            ],
+            cursor: 'ask-1',
+          };
+        }
+        return { items: [], cursor: 'latest' };
+      }
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const api = {
+      execute,
+      connection: () => ({
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+        agentId: agent.publicKey,
+      }),
+    } as unknown as DaemonApiClient;
+    const spawns: Array<ConstructorParameters<typeof AcpClient>[0]> = [];
+    const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'start').mockResolvedValue(undefined);
+    vi.spyOn(acp, 'stop').mockResolvedValue(undefined);
+    const sessionNew = vi
+      .spyOn(acp, 'sessionNew')
+      .mockResolvedValueOnce({ sessionId: 'session-1', raw: {} })
+      .mockResolvedValueOnce({ sessionId: 'session-2', raw: {} });
+    vi.spyOn(acp, 'canPromptWithImages').mockReturnValue(false);
+    const sessionPrompt = vi
+      .spyOn(acp, 'sessionPrompt')
+      .mockImplementationOnce(async () => {
+        granted = true;
+        return {
+          stopReason: 'end_turn',
+          updates: [],
+          agentText: 'Got the serial port; continuing.',
+          toolCalls: [
+            {
+              id: 'call-1',
+              title: 'mcp__beeline-agent__request_grant',
+              status: 'completed',
+              content: [
+                {
+                  type: 'text',
+                  text: approved.replaceAll('/dev/kvm', '/dev/ttyUSB0'),
+                },
+              ],
+            },
+          ],
+        };
+      })
+      .mockResolvedValueOnce({
+        stopReason: 'end_turn',
+        updates: [],
+        agentText: 'Flashed the board.',
+        toolCalls: [],
+      });
+    const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
+    const abort = new AbortController();
+    const loop = new MonolithRoomTurnLoop({
+      roomId: 'room-id',
+      workspaceId: 'workspace',
+      cwd: config.workspaceRoot,
+      runtime,
+      config,
+      api: commandFixtureApi(api, 'room-id', runtime.agent.publicKey),
+      scheduler,
+      health: { poll: vi.fn(), failure: vi.fn(), presence: vi.fn() },
+      signal: abort.signal,
+      pollMs: 10,
+      createAcpClient: (options) => {
+        spawns.push(options);
+        return acp;
+      },
+    });
+    const running = loop.run();
+    await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalledTimes(2), { timeout: 5_000 });
+    await vi.waitFor(
+      () =>
+        expect(
+          execute.mock.calls.some(
+            ([name, input]) =>
+              name === 'postRoomMessage' && JSON.stringify(input).includes('Flashed the board.'),
+          ),
+        ).toBe(true),
+      { timeout: 5_000 },
+    );
+    abort.abort();
+    await running;
+    await scheduler.dispose();
+
+    // One inbox item, two prompts: the same turn ran again in a fresh session.
+    expect(sessionNew).toHaveBeenCalledTimes(2);
+    expect(sessionPrompt.mock.calls[1]![0]).toBe('session-2');
+    const continued = sessionPrompt.mock.calls[1]![1] as string;
+    expect(continued).toContain('/dev/ttyUSB0 is in this session now');
+    expect(continued).toContain('Flash the board on the serial port');
+    // Only the second session's sandbox binds the granted device.
+    expect(spawns).toHaveLength(2);
+    const argv = (spawn: ConstructorParameters<typeof AcpClient>[0]) =>
+      [spawn.agentCommand ?? spawn.agentBinary, ...(spawn.agentArgs ?? [])].join(' ');
+    expect(argv(spawns[0]!)).not.toContain('/dev/ttyUSB0');
+    expect(argv(spawns[1]!)).toContain('--dev-bind-try /dev/ttyUSB0 /dev/ttyUSB0');
   });
 });
 

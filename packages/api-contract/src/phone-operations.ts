@@ -47,11 +47,17 @@ export const HUMAN_CORNER_TITLE_MAX_LENGTH = 120;
 export type PhoneOperationMap = {
   readWelcomeCards: { input: Record<string, never>; output: WelcomeCardsView };
   completeWelcomeCards: { input: Record<string, never>; output: WelcomeCardsView };
+  /** The viewer's GitHub star card, when a reply milestone and a later win make it due. */
+  readStarPrompt: { input: Record<string, never>; output: StarPromptView };
+  /** Star (or fall back to the repository link), wait for the next milestone, or stop asking. */
+  answerStarPrompt: { input: AnswerStarPromptInput; output: AnswerStarPromptResult };
   sendRoomMessage: { input: SendRoomMessageInput; output: AgentMessageWriteResult };
   sendRoomReply: { input: SendRoomReplyInput; output: AgentMessageWriteResult };
   reactToMessage: { input: ReactToMessageInput; output: void };
   deleteRoomMessage: { input: DeleteRoomMessageInput; output: void };
   setMessageBookmark: { input: SetMessageBookmarkInput; output: SetMessageBookmarkResult };
+  /** Report issue: files this message with the Beeline feedback loop. One report per message. */
+  reportMessageIssue: { input: ReportMessageIssueInput; output: ReportMessageIssueResult };
   listMessageBookmarks: { input: WorkspaceInput; output: MessageBookmarkListResult };
   /** The viewer's Needs-you cells, newest first. Reading starts each cell's 24-hour clock. */
   readNeedsYou: { input: WorkspaceInput; output: NeedsYouListResult };
@@ -166,6 +172,9 @@ export type PhoneOperationMap = {
     connected: boolean; connectedTypes?: string[]; authorizationUrl?: string;
   } };
   disconnectGoogleSignIn: { input: EmptyInput; output: void };
+  beginLinkSignIn: { input: EmptyInput; output: { authorizationUrl: string } };
+  cancelLinkSignIn: { input: { state?: string }; output: void };
+  disconnectLinkSignIn: { input: EmptyInput; output: void };
   unpairConnector: { input: UnpairConnectorInput; output: void };
   /** The one front door for connecting an app from the Workbench. */
   connectWorkbenchApp: { input: ConnectWorkbenchAppInput; output: ConnectWorkbenchAppResult };
@@ -188,6 +197,25 @@ export type PhoneOperationMap = {
 };
 
 export type WelcomeCardsView = { readonly due: boolean };
+
+export type StarPrompt = {
+  /** The completed-reply milestone (3, 30 or 300) this card answers. */
+  readonly milestone: number;
+  /** `owner/repo` on GitHub. */
+  readonly repository: string;
+  readonly url: string;
+};
+export type StarPromptView = { readonly prompt: StarPrompt | null };
+export type StarPromptAction = 'star' | 'later' | 'dismiss';
+export type AnswerStarPromptInput = { action: StarPromptAction; milestone: number };
+/**
+ * `starred`: GitHub starred the repository with the viewer's token.
+ * `open`: the token cannot star (no Starring permission yet), so the app opens `url`.
+ */
+export type AnswerStarPromptResult = {
+  readonly outcome: 'starred' | 'open' | 'later' | 'dismissed';
+  readonly url?: string;
+};
 
 export type {
   CreateWalletInput,
@@ -279,6 +307,13 @@ export type SetMessageBookmarkInput = RoomInput & {
   readonly bookmarked: boolean;
 };
 export type SetMessageBookmarkResult = { readonly bookmarked: boolean };
+export type ReportMessageIssueInput = RoomInput & {
+  readonly messageId: string;
+  /** Optional words from the reporter; secret-shaped values are refused. */
+  readonly note?: string;
+};
+/** `duplicate` is true when this message was already reported. */
+export type ReportMessageIssueResult = { readonly itemId: string; readonly duplicate: boolean };
 export type MessageBookmarkListResult = { readonly bookmarks: readonly MessageBookmarkView[] };
 export type NeedsYouListResult = { readonly items: readonly NeedsYouItemView[] };
 export type NeedsYouCountResult = { readonly count: number };
@@ -298,6 +333,8 @@ export type CancelAgentTurnInput = RoomInput & {
 };
 export type CreateHumanCornerInput = RoomInput & {
   readonly title: string;
+  /** The phone generated `title`; the corner's agent is asked to rename it from the first steer. */
+  readonly titleGenerated?: boolean;
   readonly appInstallationId?: string;
   /**
    * The parent-Room message this corner was opened from (the mobile

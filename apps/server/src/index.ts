@@ -17,6 +17,7 @@ import {
 import { mediaTtlHours, MEDIA_SWEEP_INTERVAL_MS } from './media-ttl.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { ChoiceExpiryLoop } from './choice-expiry.js';
+import { noteBlockedCornerChecks } from './agent-command.js';
 import { ConnectionPresence } from './connection-presence.js';
 import { createFirebasePushSender } from './firebase-push.js';
 import { createApnsPushSender } from './apns-push.js';
@@ -27,6 +28,7 @@ import { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { GitHubOperations } from './github-operations.js';
 import { createMonolithAuth } from './monolith-auth.js';
 import { ComposioApps } from './composio-apps.js';
+import { LinkAgentWallet } from './link-agent-wallet.js';
 import { McpRegistryClient } from './mcp-registry.js';
 import { RegistryMcpOAuth } from './registry-mcp-oauth.js';
 import { ReviewAccess } from './review-access.js';
@@ -37,8 +39,11 @@ import { PostgresLiveListener } from './postgres-live.js';
 import { listenAfterBestEffortRecovery } from './startup.js';
 import { institutionalMemoryShadowConfigFromEnv } from './institutional-memory-shadow.js';
 import { runInstitutionalCuratorCycle } from './institutional-curator.js';
+import { backfillInstitutionalMemoryEmbeddingsOnce } from './institutional-memory-embeddings.js';
 import type { InstitutionalSkillAnchorSource } from './institutional-skill-anchors.js';
 import { retireWelcomeWorkspace, welcomeRetirementPreflight } from './welcome-retirement.js';
+import { feedbackConfigFromEnv } from './feedback.js';
+import { FeedbackGitHub } from './feedback-github.js';
 
 function required(name: string) {
   const value = process.env[name];
@@ -100,6 +105,12 @@ async function main() {
   }
   const enrichmentDatabase = new PostgresDatabase(connectionString, budget.enrichment, { mode: 'enrichment' });
   const jobsDatabase = new PostgresDatabase(connectionString, budget.jobs, { mode: 'long-running' });
+  // One-time sweep at server start — never on an interval; fire-and-forget so
+  // it never delays this machine coming up and serving requests. Its session
+  // lock lets only one machine run it; the other logs `skipped:true`.
+  void backfillInstitutionalMemoryEmbeddingsOnce(jobsDatabase)
+    .then((counts) => console.log(`[startup] institutional memory embedding backfill: ${JSON.stringify(counts)}`))
+    .catch((error) => console.error('[startup] institutional memory embedding backfill failed:', error));
   console.log(`[database] connection budget ${JSON.stringify(budget)}`);
   const publicOrigin =
     process.env.PUBLIC_ORIGIN ?? `http://127.0.0.1:${process.env.PORT ?? '8080'}`;
@@ -232,6 +243,13 @@ async function main() {
   const composio = process.env.BEELINE_COMPOSIO_API_KEY
     ? new ComposioApps(process.env.BEELINE_COMPOSIO_API_KEY)
     : undefined;
+  const linkWallet = process.env.BEELINE_LINK_CLIENT_ID &&
+    process.env.BEELINE_LINK_CLIENT_SECRET && process.env.BEELINE_LINK_PUBLISHABLE_KEY &&
+    process.env.BEELINE_LINK_TOKEN_KEY
+    ? new LinkAgentWallet(database, process.env.BEELINE_LINK_CLIENT_ID,
+        process.env.BEELINE_LINK_CLIENT_SECRET, process.env.BEELINE_LINK_PUBLISHABLE_KEY,
+        publicOrigin, process.env.BEELINE_LINK_TOKEN_KEY)
+    : undefined;
   const mcpRegistry = new McpRegistryClient();
   const registryMcpOAuth = new RegistryMcpOAuth(database, publicOrigin);
   const mediaExpiry = objectStorage
@@ -256,6 +274,7 @@ async function main() {
     undefined,
     mcpRegistry,
     composio,
+    linkWallet,
   );
   const daemon = new DaemonService(
     database,
@@ -272,6 +291,13 @@ async function main() {
     mcpRegistry,
     registryMcpOAuth,
     composio,
+    {
+      config: feedbackConfigFromEnv(),
+      ...(githubClients ? { pullRequests: new FeedbackGitHub(database, githubClients.app) } : {}),
+    },
+    objectService,
+    linkWallet,
+    github ? (cornerId) => github!.refreshUnknownMergeability(cornerId) : undefined,
   );
   // The Google Play review link. Absent secret = the endpoint refuses like any
   // wrong secret; rotating the value revokes every future use of the link.
@@ -295,6 +321,7 @@ async function main() {
     enrichmentDatabase,
     jobsDatabase,
     databasePools: { app: database, enrichment: enrichmentDatabase, diagnostics: healthDatabase, jobs: jobsDatabase },
+    linkWallet,
     registryMcpOAuth,
     healthDatabase,
     backgroundHealth: () => backgroundJobs.snapshot(),
@@ -338,11 +365,16 @@ async function main() {
       if (push) await backgroundJobs.run('push', () => push.runIfDue());
       await backgroundJobs.run('schedules', () => schedules.runOnce());
       await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
+      // The corner workflow's server merge: a `land` handoff card (or a human
+      // lifting a hold) is a new message, which wakes this loop.
+      if (githubJobs) await backgroundJobs.run('corner-land', () => githubJobs.landReadyCorners());
       const now = Date.now();
       if (now - lastReconciliationAt >= reconciliationMs) {
         lastReconciliationAt = now;
         await backgroundJobs.run('media-expiry', () => mediaExpiry.runOnce(now));
         await backgroundJobs.run('maintenance', () => runMaintenance(jobsDatabase));
+        await backgroundJobs.run('corner-checks-blocked', () =>
+          noteBlockedCornerChecks(jobsDatabase));
         await backgroundJobs.run('mention-notices', () => phone.flushPendingMentionNotices(now));
         await backgroundJobs.run('institutional-curator', () =>
           runInstitutionalCuratorCycle(jobsDatabase, institutionalMemory, new Date(now), {

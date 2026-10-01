@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { migrate } from './database.js';
+import { migrate, migrateData } from './database.js';
 import {
   claimInstitutionalMemoryJob,
   completeInstitutionalMemoryJob,
@@ -284,6 +284,45 @@ describe('institutional memory phase-0 shadow capture', () => {
       ],
     );
     await expect(enqueue(ROOM, shortMessage, requestId)).resolves.toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it('reviews a message that is only an attachment and hands the worker its files', async () => {
+    const fileMessage = '6'.repeat(64);
+    const live = '40000000-0000-4000-8000-0000000006a1';
+    const gone = '40000000-0000-4000-8000-0000000006a2';
+    const attachments = [
+      {
+        url: `https://beeline.test/v1/media/${live}`,
+        name: 'freeze.md',
+        mimeType: 'text/markdown',
+        size: 34,
+      },
+      { url: `https://beeline.test/v1/media/${gone}`, name: 'old.png', mimeType: 'image/png' },
+    ];
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,attachments) VALUES($1,$2,$3,'',$4::jsonb)`,
+      [fileMessage, ROOM, HUMAN, JSON.stringify(attachments)],
+    );
+    await database.query(`INSERT INTO object_expirations(id) VALUES($1)`, [gone]);
+    await expect(enqueue(ROOM, fileMessage, 'attachment-only')).resolves.toMatch(
+      /^[0-9a-f-]{36}$/,
+    );
+    await database.query(`DELETE FROM institutional_memory_jobs WHERE source_message_id<>$1`, [
+      fileMessage,
+    ]);
+    const claimed = (await claimInstitutionalMemoryJob(database, AGENT, config))!;
+    expect(claimed.sourceMessageId).toBe(fileMessage);
+    expect(claimed.messages.find((message) => message.id === fileMessage)).toEqual({
+      id: fileMessage,
+      authorId: HUMAN,
+      createdAt: expect.any(Number),
+      text: '',
+      attachments: [attachments[0], { ...attachments[1], expired: true }],
+    });
+    // A message without files carries no attachment field at all.
+    expect(claimed.messages.find((message) => message.id === MESSAGE)).not.toHaveProperty(
+      'attachments',
+    );
   });
 
   it('does not let a shadow-only worker claim a queued live write', async () => {
@@ -1322,7 +1361,7 @@ describe('institutional memory phase-0 shadow capture', () => {
       AGENT,
     );
     expect(beyondSnapshot.results.map((item) => item.id)).toContain(thirdParty.itemId);
-    await database.query(`UPDATE institutional_memory_items SET state='archived' WHERE id=$1`, [
+    await database.query(`UPDATE institutional_memory_items SET state='stale',body='',deleted_at=now() WHERE id=$1`, [
       thirdParty.itemId,
     ]);
     const archived = await daemon.execute(
@@ -1337,9 +1376,6 @@ describe('institutional memory phase-0 shadow capture', () => {
       AGENT,
     );
     expect(archived.results).toEqual([]);
-    await database.query(`UPDATE institutional_memory_items SET state='active' WHERE id=$1`, [
-      thirdParty.itemId,
-    ]);
     await database.query(`UPDATE messages SET deleted_at=now() WHERE id=$1`, [source]);
     const deletedSource = await daemon.execute(
       'searchInstitutionalMemory',
@@ -1436,7 +1472,7 @@ describe('institutional memory phase-0 shadow capture', () => {
           `SELECT state,body,deleted_at FROM institutional_memory_items`,
         )
       ).rows[0],
-    ).toMatchObject({ state: 'archived', body: '' });
+    ).toMatchObject({ state: 'stale', body: '' });
     expect((await database.query(`SELECT 1 FROM institutional_memory_fact_events`)).rowCount).toBe(
       0,
     );
@@ -1531,7 +1567,6 @@ describe('institutional memory phase-0 shadow capture', () => {
     expect(context.text).not.toMatch(/Invoices|screenshots/);
     expect(context.totalBytes).toBe(Buffer.byteLength(context.text, 'utf8'));
     expect(context.totalBytes).toBeLessThanOrEqual(1_000);
-    expect(context.standingPreference).toBeUndefined();
     expect(
       (
         await database.query<{ item_ids: string[]; total_bytes: number }>(
@@ -1611,134 +1646,207 @@ describe('institutional memory phase-0 shadow capture', () => {
     ).resolves.toMatchObject({ version: 2 });
   });
 
-  it('saves a standing preference only from a Save pick on an answered card', async () => {
+  it('turns an old standing preference into an ordinary explicit fact that loads when relevant', async () => {
     await enrollLive();
-    const turn = await openTurn('standing-turn');
-    const daemon = liveDaemon();
     const text = 'Answer in short bullet points and skip the recap.';
-    const standing = {
-      ...turn,
+    const current = '30000000-0000-4000-8000-0000000005a1';
+    const previous = '30000000-0000-4000-8000-0000000005a2';
+    const taken = '30000000-0000-4000-8000-0000000005a3';
+    const otherStanding = '30000000-0000-4000-8000-0000000005a4';
+    await database.query(
+      `INSERT INTO identities(id,kind,name) VALUES($1,'human','Other') ON CONFLICT DO NOTHING`,
+      [OTHER_HUMAN],
+    );
+    const insert = (
+      id: string,
+      subject: string,
+      key: string,
+      body: string,
+      state: string,
+      version: number,
+      supersedes: string | null,
+      keywords: string[],
+    ) =>
+      database.query(
+        `INSERT INTO institutional_memory_items
+           (id,workspace_id,kind,subject_identity_id,canonical_key,body,state,source_room_id,
+            source_message_id,audience_kind,confidence,version,supersedes_id,keywords,deleted_at)
+         VALUES($1,$2,'human_profile_fact',$3,$4,$5,$6,$7,$8,'human_profile',1,$9,$10,$11::text[],
+           CASE WHEN $5='' THEN now() END)`,
+        [id, WORKSPACE, subject, key, body, state, ROOM, MESSAGE, version, supersedes, keywords],
+      );
+    await insert(previous, HUMAN, 'standing', '', 'stale', 1, null, []);
+    await insert(current, HUMAN, 'standing', text, 'active', 2, previous, []);
+    // Another person already has an item under the new key, so theirs is suffixed.
+    await insert(taken, OTHER_HUMAN, 'standing-preference', 'Prefers email.', 'active', 1, null, [
+      'email',
+    ]);
+    await insert(otherStanding, OTHER_HUMAN, 'standing', 'Use metric units.', 'active', 1, null, []);
+
+    await migrateData(database);
+    await migrateData(database);
+
+    const rows = (
+      await database.query<{
+        id: string;
+        canonical_key: string;
+        explicit_save: boolean;
+        keywords: string[];
+        state: string;
+      }>(
+        `SELECT id,canonical_key,explicit_save,keywords,state FROM institutional_memory_items
+         WHERE id=ANY($1::uuid[]) ORDER BY id`,
+        [[current, previous, taken, otherStanding]],
+      )
+    ).rows;
+    expect(rows).toEqual([
+      {
+        id: current,
+        canonical_key: 'standing-preference',
+        explicit_save: true,
+        keywords: ['answer', 'short', 'bullet', 'points', 'skip', 'recap'],
+        state: 'active',
+      },
+      {
+        id: previous,
+        canonical_key: 'standing-preference',
+        explicit_save: true,
+        keywords: [],
+        state: 'stale',
+      },
+      {
+        id: taken,
+        canonical_key: 'standing-preference',
+        explicit_save: false,
+        keywords: ['email'],
+        state: 'active',
+      },
+      {
+        id: otherStanding,
+        canonical_key: `standing-preference-${otherStanding.slice(0, 8)}`,
+        explicit_save: true,
+        keywords: ['metric', 'units'],
+        state: 'active',
+      },
+    ]);
+
+    // A request that touches it loads it like any other profile fact.
+    const bulletMessage = '7'.repeat(64);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Give me the bullet points.')`,
+      [bulletMessage, ROOM, HUMAN],
+    );
+    const daemon = liveDaemon();
+    const bulletTurn = await openTurn('standing-bullet', bulletMessage);
+    const loaded = await daemon.execute('getInstitutionalContext', bulletTurn, AGENT);
+    expect(loaded.itemIds).toEqual([current]);
+    expect(loaded.text).toContain(text);
+    expect(loaded).not.toHaveProperty('standingPreference');
+    await closeTurn(bulletTurn);
+
+    // One that does not, does not.
+    const unrelated = await openTurn('standing-unrelated');
+    const skipped = await daemon.execute('getInstitutionalContext', unrelated, AGENT);
+    expect(skipped.itemIds).not.toContain(current);
+    expect(skipped.text).not.toContain(text);
+
+    // The card path is gone and the old key cannot come back.
+    const save = {
+      ...unrelated,
       agentId: AGENT,
       memoryKind: 'human_profile_fact',
-      canonicalKey: 'standing',
-      body: text,
-      keywords: [],
+      canonicalKey: 'reply.style',
+      body: 'Answer in one paragraph.',
+      keywords: ['paragraph'],
       sourceMessageIds: [MESSAGE],
       correction: false,
       confidence: 1,
       cas: { baseVersion: null },
     } as const;
-    // No model can write the reserved key through the ordinary path.
-    await expect(
-      daemon.execute('proposeInstitutionalMemory', { ...standing, keywords: ['bullet'] }, AGENT),
-    ).rejects.toThrow(/reserved/);
     await expect(
       daemon.execute(
         'proposeInstitutionalMemory',
-        { ...standing, standingChoiceId: randomUUID() },
+        { ...save, standingChoiceId: randomUUID() } as typeof save,
         AGENT,
       ),
-    ).rejects.toThrow(/answered ask_choice card/);
-
-    const cardMessage = '8'.repeat(64);
-    const choiceId = randomUUID();
-    await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Save this preference?')`,
-      [cardMessage, ROOM, AGENT],
-    );
-    await database.query(
-      `INSERT INTO room_choices(id,room_id,workspace_id,agent_id,message_id,mode,prompt,options,
-                                electorate,status)
-       VALUES($1,$2,$3,$4,$5,'question',$6,$7::jsonb,$8::text[],'open')`,
-      [
-        choiceId,
-        ROOM,
-        WORKSPACE,
-        AGENT,
-        cardMessage,
-        `Save this as your standing preference for every agent? "${text}"`,
-        JSON.stringify([
-          { optionId: 'A', letter: 'A', label: 'Save it', consequence: 'Every agent follows it.' },
-          { optionId: 'B', letter: 'B', label: 'Not now', consequence: 'Nothing is saved.' },
-        ]),
-        [HUMAN],
-      ],
-    );
-    const withCard = { ...standing, standingChoiceId: choiceId };
-    // An unanswered card confirms nothing.
-    await expect(daemon.execute('proposeInstitutionalMemory', withCard, AGENT)).rejects.toThrow(
-      /answered ask_choice card/,
-    );
-    await database.query(`UPDATE room_choices SET status='answered' WHERE id=$1`, [choiceId]);
-    // The card must quote the exact text being saved.
+    ).rejects.toThrow(/standing preferences were removed/);
     await expect(
-      daemon.execute(
-        'proposeInstitutionalMemory',
-        { ...withCard, body: 'Answer in long paragraphs.' },
-        AGENT,
-      ),
-    ).rejects.toThrow(/quotes the exact text/);
-    // A plain member other than the requester cannot confirm it.
-    await database.query(
-      `INSERT INTO room_choice_votes(choice_id,voter_id,option_id) VALUES($1,$2,'A')`,
-      [choiceId, OTHER_HUMAN],
-    );
-    await expect(daemon.execute('proposeInstitutionalMemory', withCard, AGENT)).rejects.toThrow(
-      /not confirmed/,
-    );
-    // The requester declining confirms nothing either.
-    await database.query(
-      `INSERT INTO room_choice_votes(choice_id,voter_id,option_id) VALUES($1,$2,'B')`,
-      [choiceId, HUMAN],
-    );
-    await expect(daemon.execute('proposeInstitutionalMemory', withCard, AGENT)).rejects.toThrow(
-      /not confirmed/,
-    );
-    await database.query(
-      `UPDATE room_choice_votes SET option_id='A' WHERE choice_id=$1 AND voter_id=$2`,
-      [choiceId, HUMAN],
-    );
-    const saved = await daemon.execute('proposeInstitutionalMemory', withCard, AGENT);
-    expect(saved.version).toBe(1);
-    expect(
-      (
-        await database.query<{ kind: string; subject_identity_id: string; keywords: string[] }>(
-          `SELECT kind,subject_identity_id,keywords FROM institutional_memory_items WHERE id=$1`,
-          [saved.itemId],
-        )
-      ).rows[0],
-    ).toEqual({ kind: 'human_profile_fact', subject_identity_id: HUMAN, keywords: [] });
+      daemon.execute('proposeInstitutionalMemory', { ...save, canonicalKey: 'standing' }, AGENT),
+    ).rejects.toThrow(/retired/);
+  });
 
-    const own = await daemon.execute('getInstitutionalContext', turn, AGENT);
-    expect(own.standingPreference).toBe(text);
-    // It rides outside the keyword list and the 1 KB budget.
-    expect(own.itemIds).not.toContain(saved.itemId);
-    expect(own.text).not.toContain(text);
-    await closeTurn(turn);
-
-    // Whichever agent answers the same requester sees it.
-    const nextMessage = '9'.repeat(64);
-    const otherMessage = '0'.repeat(64);
+  it('keeps a standing version chain under one key when the plain key is taken', async () => {
+    await enrollLive();
+    const taken = '30000000-0000-4000-8000-0000000005b1';
+    const first = 'a1000000-0000-4000-8000-0000000005b2';
+    const second = 'b2000000-0000-4000-8000-0000000005b3';
     await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text) VALUES
-         ($1,$3,$4,'Summarize the release plan.'),($2,$3,$5,'Summarize the release plan.')`,
-      [nextMessage, otherMessage, ROOM, HUMAN, OTHER_HUMAN],
+      `INSERT INTO identities(id,kind,name) VALUES($1,'human','Other') ON CONFLICT DO NOTHING`,
+      [OTHER_HUMAN],
     );
-    const otherAgentTurn = await openTurn('standing-other-agent', nextMessage, OTHER_AGENT);
-    expect(
-      (await daemon.execute('getInstitutionalContext', otherAgentTurn, OTHER_AGENT))
-        .standingPreference,
-    ).toBe(text);
-    await closeTurn(otherAgentTurn, OTHER_AGENT);
+    const vector = `[${Array.from({ length: 1024 }, () => '0.01').join(',')}]`;
+    const insert = (
+      id: string,
+      key: string,
+      body: string,
+      state: string,
+      version: number,
+      supersedes: string | null,
+    ) =>
+      database.query(
+        `INSERT INTO institutional_memory_items
+           (id,workspace_id,kind,subject_identity_id,canonical_key,body,state,source_room_id,
+            source_message_id,audience_kind,confidence,version,supersedes_id,keywords,
+            embedding,embedding_model,embedded_at)
+         VALUES($1,$2,'human_profile_fact',$3,$4,$5,$6,$7,$8,'human_profile',1,$9,$10,'{}',
+           $11::vector,'voyageai/voyage-4-lite',now())`,
+        [id, WORKSPACE, OTHER_HUMAN, key, body, state, ROOM, MESSAGE, version, supersedes, vector],
+      );
+    // The person already has an item under the plain key, and their standing
+    // preference has two versions with a current embedding.
+    await insert(taken, 'standing-preference', 'Prefers email.', 'active', 1, null);
+    await insert(first, 'standing', 'Use imperial units.', 'stale', 1, null);
+    await insert(second, 'standing', 'Use metric units.', 'active', 2, first);
 
-    // Nobody else gets it.
-    const otherHumanTurn = await openTurn('standing-other-human', otherMessage, OTHER_AGENT);
-    const otherContext = await daemon.execute(
-      'getInstitutionalContext',
-      otherHumanTurn,
-      OTHER_AGENT,
-    );
-    expect(otherContext.standingPreference).toBeUndefined();
-    expect(otherContext.text).not.toContain(text);
+    await migrateData(database);
+    await migrateData(database);
+
+    const rows = (
+      await database.query<{
+        id: string;
+        canonical_key: string;
+        supersedes_id: string | null;
+        embedded: boolean;
+        embedding_model: string | null;
+      }>(
+        `SELECT id,canonical_key,supersedes_id,embedding IS NOT NULL AS embedded,embedding_model
+         FROM institutional_memory_items WHERE id=ANY($1::uuid[]) ORDER BY id`,
+        [[taken, first, second]],
+      )
+    ).rows;
+    const chainKey = `standing-preference-${first.slice(0, 8)}`;
+    expect(rows).toEqual([
+      {
+        id: taken,
+        canonical_key: 'standing-preference',
+        supersedes_id: null,
+        embedded: true,
+        embedding_model: 'voyageai/voyage-4-lite',
+      },
+      {
+        id: first,
+        canonical_key: chainKey,
+        supersedes_id: null,
+        embedded: false,
+        embedding_model: null,
+      },
+      {
+        id: second,
+        canonical_key: chainKey,
+        supersedes_id: first,
+        embedded: false,
+        embedding_model: null,
+      },
+    ]);
   });
 });

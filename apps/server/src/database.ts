@@ -3,12 +3,20 @@ import {
   reconcileConfiguredCornerReviewers,
   reconcileCornerMergeBlockers,
 } from './agent-command.js';
-import { INSTITUTIONAL_HISTORY_MAX_AGE_DAYS } from '@beeline/api-contract/daemon';
+import { GITHUB_STAR_PROMPT_SCHEMA } from './github-star-prompt.js';
+import {
+  INSTITUTIONAL_HISTORY_MAX_AGE_DAYS,
+  INSTITUTIONAL_MEMORY_KEYWORD_PATTERN,
+  INSTITUTIONAL_MEMORY_KEYWORDS_MAX,
+  INSTITUTIONAL_MEMORY_STOPWORDS,
+  INSTITUTIONAL_RETIRED_STANDING_KEY,
+} from '@beeline/api-contract/daemon';
 import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { uniqueAgentHandle } from '@beeline/api-contract/phone';
 import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
-import { backfillCornerWorkflowSeed } from './corner-workflow.js';
+import { backfillCornerWorkflowRuns, backfillCornerWorkflowSeed } from './corner-workflow.js';
+import { backfillFeedbackTriageWorkflow } from './feedback-triage-workflow.js';
 import { upgradeGrantPolicy, withdrawSupersededGrantAsks } from './grant-policy-upgrade.js';
 import { backfillRegistryApps } from './app-connections.js';
 import {
@@ -168,7 +176,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 13;
+export const REQUIRED_SCHEMA_VERSION = 15;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -1052,6 +1060,10 @@ CREATE INDEX IF NOT EXISTS institutional_memory_jobs_claim_idx
 CREATE INDEX IF NOT EXISTS institutional_memory_jobs_workspace_created_idx
   ON institutional_memory_jobs(workspace_id,created_at,id);
 
+-- Meaning-based recall (search_memory, the per-turn snapshot, workspace
+-- skills) needs pgvector; Neon supports the extension directly.
+CREATE EXTENSION IF NOT EXISTS vector;
+
 CREATE TABLE IF NOT EXISTS institutional_memory_items (
   id uuid PRIMARY KEY,
   workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -1102,6 +1114,7 @@ ALTER TABLE institutional_memory_items
   ADD CONSTRAINT institutional_memory_items_created_by_job_id_fkey
   FOREIGN KEY (created_by_job_id) REFERENCES institutional_memory_jobs(id) ON DELETE SET NULL;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS created_by_command_id text;
+ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS explicit_save boolean NOT NULL DEFAULT false;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS curated_at timestamptz;
 -- Only a keyword match loads an item into a turn. Rows saved before keywords
@@ -1122,6 +1135,13 @@ ALTER TABLE institutional_memory_items ADD CONSTRAINT institutional_memory_items
 ALTER TABLE institutional_memory_items DROP CONSTRAINT IF EXISTS institutional_memory_items_creator_check;
 ALTER TABLE institutional_memory_items ADD CONSTRAINT institutional_memory_items_creator_check
   CHECK (NOT (created_by_job_id IS NOT NULL AND created_by_command_id IS NOT NULL));
+-- Meaning-based recall: NULL until the embedding cycle fills it (embed on
+-- save and backfill are the same query — see institutional-memory-embeddings.ts).
+-- embedding_model records which model produced it, so a future model change
+-- re-embeds every row instead of silently mixing incompatible vectors.
+ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS embedding vector(1024);
+ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS embedding_model text;
+ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS embedded_at timestamptz;
 CREATE UNIQUE INDEX IF NOT EXISTS institutional_memory_items_current_key_idx
   ON institutional_memory_items(
     workspace_id,kind,COALESCE(subject_identity_id,''),canonical_key,audience_kind
@@ -1179,6 +1199,14 @@ ALTER TABLE institutional_context_serves
   CHECK (prompt_bytes IS NULL OR prompt_bytes > 0);
 ALTER TABLE institutional_context_serves
   ADD COLUMN IF NOT EXISTS agent_id text REFERENCES identities(id) ON DELETE CASCADE;
+-- search_memory is the fallback tool this same turn reaches for when the
+-- snapshot above missed; both counters ride the serve row a turn already has
+-- so the body-side turn trace can read them back after the turn settles
+-- (getInstitutionalMemoryTurnStats) with no new table.
+ALTER TABLE institutional_context_serves
+  ADD COLUMN IF NOT EXISTS search_memory_calls integer NOT NULL DEFAULT 0;
+ALTER TABLE institutional_context_serves
+  ADD COLUMN IF NOT EXISTS search_memory_misses integer NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS institutional_context_serves_turn_idx
   ON institutional_context_serves(room_id,request_id,agent_id) WHERE mode='live';
 CREATE UNIQUE INDEX IF NOT EXISTS institutional_context_serves_shadow_job_idx
@@ -1251,6 +1279,12 @@ CREATE TABLE IF NOT EXISTS institutional_memory_fact_events (
 );
 CREATE INDEX IF NOT EXISTS institutional_memory_facts_workspace_created_idx
   ON institutional_memory_fact_events(workspace_id,created_at,id);
+ALTER TABLE institutional_memory_fact_events
+  DROP CONSTRAINT IF EXISTS institutional_memory_fact_events_job_id_key;
+ALTER TABLE institutional_memory_fact_events
+  ADD COLUMN IF NOT EXISTS retirement_reason text;
+ALTER TABLE institutional_memory_fact_events
+  ADD COLUMN IF NOT EXISTS target_item_id uuid REFERENCES institutional_memory_items(id) ON DELETE SET NULL;
 
 CREATE TABLE IF NOT EXISTS institutional_history_searches (
   id uuid PRIMARY KEY,
@@ -1306,6 +1340,15 @@ ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS anchor_stale_reason text;
 ALTER TABLE workspace_skills DROP CONSTRAINT IF EXISTS workspace_skills_anchor_stale_reason_check;
 ALTER TABLE workspace_skills ADD CONSTRAINT workspace_skills_anchor_stale_reason_check
   CHECK (anchor_stale_reason IS NULL OR length(anchor_stale_reason)<=300);
+-- Meaning-based skill lookup (same hybrid as institutional_memory_items,
+-- extended to workspace_skills per AGENTS.md's core-workflow note). Embeds
+-- slug + description + a short body summary; embedding_version is the
+-- current_version the vector answers for, so a new revision re-embeds
+-- through the same embed-on-save-and-backfill cycle with no separate job.
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS embedding vector(1024);
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS embedding_model text;
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS embedding_version integer;
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS embedded_at timestamptz;
 CREATE INDEX IF NOT EXISTS workspace_skills_catalog_idx
   ON workspace_skills(workspace_id,state,updated_at DESC,id);
 -- A workflow row is a skill row: a declarative contract, saved/discovered/loaded
@@ -1388,6 +1431,9 @@ CREATE TABLE IF NOT EXISTS institutional_memory_workspace_rollouts (
   stale_after_days integer NOT NULL DEFAULT 30 CHECK (stale_after_days BETWEEN 7 AND 3650),
   archive_after_days integer NOT NULL DEFAULT 90 CHECK (archive_after_days BETWEEN 14 AND 7300),
   retention_days integer NOT NULL DEFAULT 365 CHECK (retention_days BETWEEN 30 AND 7300),
+  expire_after_days integer NOT NULL DEFAULT 90 CHECK (expire_after_days BETWEEN 1 AND 7300),
+  -- Unread since explicit saves stopped expiring; kept for older server images.
+  explicit_expire_after_days integer NOT NULL DEFAULT 365 CHECK (explicit_expire_after_days BETWEEN 1 AND 7300),
   daily_token_budget integer NOT NULL DEFAULT 100000 CHECK (daily_token_budget BETWEEN 1000 AND 10000000),
   availability_observed_at timestamptz,
   updated_at timestamptz NOT NULL DEFAULT now(),
@@ -1401,6 +1447,10 @@ CREATE TABLE IF NOT EXISTS institutional_memory_workspace_rollouts (
 ALTER TABLE institutional_memory_workspace_rollouts ALTER COLUMN stage SET DEFAULT 'live';
 ALTER TABLE institutional_memory_workspace_rollouts
   ADD COLUMN IF NOT EXISTS availability_observed_at timestamptz;
+ALTER TABLE institutional_memory_workspace_rollouts
+  ADD COLUMN IF NOT EXISTS expire_after_days integer NOT NULL DEFAULT 90;
+ALTER TABLE institutional_memory_workspace_rollouts
+  ADD COLUMN IF NOT EXISTS explicit_expire_after_days integer NOT NULL DEFAULT 365;
 
 -- Every span in which no authorized helper host could serve this Workspace.
 -- Lifecycle aging subtracts these spans, so nothing goes stale, archived or
@@ -1563,15 +1613,42 @@ ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS open_idempotency_key text;
 -- so the default backfills them truthfully. The CHECK rides the same pattern
 -- as agent_turns_status_check: drop by generated name, re-add, idempotent.
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS lane text NOT NULL DEFAULT 'code';
-ALTER TABLE corner_facts DROP CONSTRAINT IF EXISTS corner_facts_lane_check;
-ALTER TABLE corner_facts ADD CONSTRAINT corner_facts_lane_check
-  CHECK (lane IN ('code', 'no_code', 'research'));
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'agent';
 ALTER TABLE corner_facts DROP CONSTRAINT IF EXISTS corner_facts_kind_check;
 ALTER TABLE corner_facts ADD CONSTRAINT corner_facts_kind_check
   CHECK (kind IN ('agent', 'human'));
+-- Retired: the per-corner Feedback triage switch. Feedback triage is now the
+-- saved feedback-triage workflow, and nothing reads this column. It stays so
+-- an older server image keeps working during a rolling update; a later
+-- release can drop it.
+ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS feedback_triage boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS corner_facts_owner_agent_idx ON corner_facts(owner_agent_id);
+-- The corner workflow run's current state, projected from its newest handoff
+-- card in the same transaction (corner-workflow.ts), and the one head the
+-- server has tried to merge.
+ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS workflow_state text;
+ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS workflow_outcome text;
+ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS merge_attempt_head text;
+-- The research lane is gone: a research corner is a code corner, and its run
+-- leaves the removed investigate state for implement. Its newest handoff card
+-- is the run's state (corner-workflow.ts), so that card moves with it.
+UPDATE messages SET card=card || '{"toState":"implement"}'::jsonb
+  || CASE WHEN card->>'outcome'='research' THEN '{"outcome":"code"}'::jsonb ELSE '{}'::jsonb END
+  WHERE card_type='corner-workflow-handoff' AND card->>'toState'='investigate'
+    AND room_id IN (SELECT corner_id FROM corner_facts WHERE lane='research');
+UPDATE corner_facts SET workflow_state='implement',
+    workflow_outcome=CASE WHEN workflow_outcome='research' THEN 'code' ELSE workflow_outcome END
+  WHERE lane='research' AND workflow_state='investigate';
+UPDATE corner_facts SET lane='code' WHERE lane='research';
+ALTER TABLE corner_facts DROP CONSTRAINT IF EXISTS corner_facts_lane_check;
+ALTER TABLE corner_facts ADD CONSTRAINT corner_facts_lane_check
+  CHECK (lane IN ('code', 'no_code'));
+CREATE INDEX IF NOT EXISTS corner_facts_workflow_land_idx ON corner_facts(corner_id)
+  WHERE workflow_state='land';
 CREATE INDEX IF NOT EXISTS corner_facts_commissioned_by_idx ON corner_facts(commissioned_by);
+-- True while a human corner still carries the name the phone generated for it;
+-- any rename clears it (corner-title.ts).
+ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS title_generated boolean NOT NULL DEFAULT false;
 
 -- Assignment revisions are immutable; the current revision is the greatest
 -- committed row. Opening and revising insert the row in the command transaction.
@@ -1590,8 +1667,8 @@ CREATE TABLE IF NOT EXISTS corner_brief_revisions (
 CREATE INDEX IF NOT EXISTS corner_brief_revisions_source_idx ON corner_brief_revisions(source_room_id);
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS source_message_id text;
 -- Structured authority was added after the original opaque content field.
--- Keep that column as the compatibility representation of build_spec; old rows
--- intentionally retain null authority fields and read back as legacy.
+-- Rows from before it keep null authority fields and read back as their
+-- build_spec alone.
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS intent_verbatim jsonb;
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS build_spec text;
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS criteria jsonb;
@@ -1599,7 +1676,13 @@ ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS non_goals jsonb;
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS brief_references jsonb;
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS approval_basis jsonb;
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS revision_hash text;
-UPDATE corner_brief_revisions SET build_spec=content WHERE build_spec IS NULL;
+UPDATE corner_brief_revisions SET build_spec=content
+  WHERE build_spec IS NULL AND content IS NOT NULL;
+-- The trimmed brief is one Markdown spec plus one approving message. New
+-- revisions write spec and approval_basis and leave content and the typed
+-- columns above NULL; older rows keep them and are folded into a spec on read.
+ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS spec text;
+ALTER TABLE corner_brief_revisions ALTER COLUMN content DROP NOT NULL;
 CREATE TABLE IF NOT EXISTS corner_validation_stages (
   corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   brief_revision integer NOT NULL,
@@ -2096,6 +2179,28 @@ ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_squire_relaye
 -- (installConnector), so it never outlives one run.
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS force_relogin_provider text;
 
+-- Hosted Link wallet grants belong to a human. Neither agents nor helpers see OAuth tokens.
+CREATE TABLE IF NOT EXISTS link_oauth_accounts (
+  owner_identity_id text PRIMARY KEY REFERENCES identities(id) ON DELETE CASCADE,
+  state text UNIQUE,
+  code_verifier text,
+  attempt_expires_at timestamptz,
+  sealed_grant text,
+  granted_scopes text[] NOT NULL DEFAULT '{}',
+  ineligible boolean NOT NULL DEFAULT false,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS link_spend_requests (
+  id text PRIMARY KEY,
+  owner_identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  agent_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  merchant text NOT NULL,
+  amount bigint NOT NULL,
+  description text NOT NULL,
+  test boolean NOT NULL DEFAULT false,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS registry_mcp_oauth_attempts (
   state text PRIMARY KEY,
   connector_id uuid NOT NULL REFERENCES workspace_connectors(id) ON DELETE CASCADE,
@@ -2317,6 +2422,57 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
 CREATE INDEX IF NOT EXISTS wallet_transactions_wallet_idx
   ON wallet_transactions(identity_id, created_at DESC);
 
+-- The Beeline feedback loop (apps/server/src/feedback.ts). An agent's
+-- report_feedback call and a person's @system tag or Report issue action land
+-- here. The saved feedback-triage workflow reads this table through a
+-- read-only grant, and notify_feedback_fixed resolves items once a fix merges.
+-- Message ids only, plus the text of a person's own @system report. The
+-- issue_* columns and feedback_issue_comments are retired GitHub-filing state,
+-- kept for rolling-update compatibility.
+CREATE TABLE IF NOT EXISTS feedback_items (
+  id text PRIMARY KEY,
+  source_kind text NOT NULL CHECK (source_kind IN ('agent','human')),
+  reporter_identity_id text NOT NULL,
+  reporter_owner_id text,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  room_id uuid REFERENCES rooms(id) ON DELETE CASCADE,
+  trigger_message_id text,
+  message_ids text[] NOT NULL DEFAULT '{}',
+  request_id text,
+  category text NOT NULL CHECK (category IN
+    ('simpler_path','contradiction','tooling_gap','context_gap','bug','human_report')),
+  summary text NOT NULL,
+  summary_key text NOT NULL,
+  detail text,
+  tool_name text,
+  error_excerpt text,
+  prompt_section_ids text[] NOT NULL DEFAULT '{}',
+  status text NOT NULL DEFAULT 'new' CHECK (status IN
+    ('new','filed','attached','dismissed','resolved','closed')),
+  issue_repository text,
+  issue_number integer,
+  triage_reason text,
+  resolved_notified_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  triaged_at timestamptz
+);
+-- One human report per message, whether it came from a tag or the action.
+CREATE UNIQUE INDEX IF NOT EXISTS feedback_items_human_message_idx
+  ON feedback_items(trigger_message_id) WHERE source_kind='human';
+CREATE INDEX IF NOT EXISTS feedback_items_status_idx ON feedback_items(status, created_at);
+CREATE INDEX IF NOT EXISTS feedback_items_reporter_idx
+  ON feedback_items(reporter_identity_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS feedback_items_issue_idx
+  ON feedback_items(issue_repository, issue_number) WHERE issue_number IS NOT NULL;
+-- The one server-maintained report-count comment per linked issue.
+CREATE TABLE IF NOT EXISTS feedback_issue_comments (
+  repository text NOT NULL,
+  issue_number integer NOT NULL,
+  comment_id bigint NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (repository, issue_number)
+);
+
 -- First-party Google Workspace consent is retired. Existing sealed grants
 -- cannot be moved to a different OAuth client, so disconnect the old rows and
 -- require a fresh managed sign-in through Connect an app. Remove pending offer
@@ -2358,6 +2514,7 @@ export async function migrate(
     `ALTER TABLE wallet_bindings ADD COLUMN IF NOT EXISTS delegation_standing boolean NOT NULL DEFAULT false`,
   );
   await ddlScript('agent command schema', AGENT_COMMAND_SCHEMA);
+  await ddlScript('github star prompt schema', GITHUB_STAR_PROMPT_SCHEMA);
   await retryMigrationStep('message cursor index', () => createIndexConcurrently(
     database, 'messages_room_cursor_idx',
     `CREATE INDEX CONCURRENTLY messages_room_cursor_idx ON messages (room_id,
@@ -2397,6 +2554,28 @@ export async function migrate(
      ON messages USING GIN(search_document)
      WHERE deleted_at IS NULL AND presentation='message'`,
   ));
+  // Embedding-cycle scan: cheap once the backfill converges, for the same
+  // reason as the search backfill index above (a filled row never re-enters
+  // this partial index).
+  await retryMigrationStep('institutional memory embedding backfill index', () =>
+    createIndexConcurrently(
+      database,
+      'institutional_memory_items_embedding_backfill_idx',
+      `CREATE INDEX CONCURRENTLY institutional_memory_items_embedding_backfill_idx
+       ON institutional_memory_items(updated_at ASC)
+       WHERE state='active' AND deleted_at IS NULL AND embedding IS NULL`,
+    ));
+  // Exact distance scans stay inside one Workspace's small active set.
+  await database.query('DROP INDEX IF EXISTS institutional_memory_items_embedding_idx');
+  await retryMigrationStep('workspace skill embedding backfill index', () =>
+    createIndexConcurrently(
+      database,
+      'workspace_skills_embedding_backfill_idx',
+      `CREATE INDEX CONCURRENTLY workspace_skills_embedding_backfill_idx
+       ON workspace_skills(updated_at ASC)
+       WHERE state='active' AND embedding IS NULL`,
+    ));
+  await database.query('DROP INDEX IF EXISTS workspace_skills_embedding_idx');
   // The Needs-you tray finds undecided grant cards without reading transcripts.
   await retryMigrationStep('grant request index', () => createIndexConcurrently(
     database, 'messages_grant_request_idx',
@@ -2423,6 +2602,8 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   await dataStep('corner owner backfill', () => backfillCornerOwners(database));
   await dataStep('inherited corner memberships', () => backfillInheritedCornerMemberships(database));
   await dataStep('corner workflow seed', () => backfillCornerWorkflowSeed(database));
+  await dataStep('corner workflow runs', () => backfillCornerWorkflowRuns(database));
+  await dataStep('feedback triage workflow', () => backfillFeedbackTriageWorkflow(database));
   const blockers = await dataStep('corner merge blockers', () =>
     reconcileCornerMergeBlockers(database));
   if (blockers)
@@ -2444,6 +2625,59 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   // The shared Welcome Workspace is no longer reseeded at boot; a release-
   // owned step retires it (welcome-retirement.ts, run from index.ts).
   await dataStep('institutional rollout', () => backfillInstitutionalMemoryRollout(database));
+  await dataStep('institutional memory lifecycle', async () => {
+    await retireStandingPreferences(database);
+    await database.query(`WITH RECURSIVE explicit_chain AS (
+        SELECT id FROM institutional_memory_items WHERE created_by_command_id IS NOT NULL
+        UNION
+        SELECT newer.id FROM institutional_memory_items newer
+        JOIN explicit_chain older ON newer.supersedes_id=older.id
+      )
+      UPDATE institutional_memory_items SET explicit_save=true
+      WHERE id IN (SELECT id FROM explicit_chain) AND explicit_save=false`);
+    // The old curator marked items stale after 30 unused days. Those rows only
+    // aged out, so they come back under the new rule (agent saves expire after
+    // 90 unused days, explicit saves never)
+    // instead of being blanked. A row that was superseded, whose key has a
+    // current row, or whose source was deleted is really gone.
+    await database.query(`WITH aged AS (
+        SELECT DISTINCT ON (item.workspace_id,item.kind,COALESCE(item.subject_identity_id,''),
+                            item.canonical_key,item.audience_kind) item.id
+        FROM institutional_memory_items item
+        WHERE item.state IN ('stale','archived') AND item.deleted_at IS NULL AND item.body<>''
+          AND NOT EXISTS (SELECT 1 FROM institutional_memory_items newer
+            WHERE newer.supersedes_id=item.id)
+          AND NOT EXISTS (SELECT 1 FROM institutional_memory_items current
+            WHERE current.state='active' AND current.workspace_id=item.workspace_id
+              AND current.kind=item.kind
+              AND COALESCE(current.subject_identity_id,'')=COALESCE(item.subject_identity_id,'')
+              AND current.canonical_key=item.canonical_key
+              AND current.audience_kind=item.audience_kind)
+          AND NOT EXISTS (SELECT 1 FROM institutional_memory_item_sources source
+            JOIN messages message ON message.id=source.message_id
+            WHERE source.item_id=item.id AND message.deleted_at IS NOT NULL)
+        ORDER BY item.workspace_id,item.kind,COALESCE(item.subject_identity_id,''),
+                 item.canonical_key,item.audience_kind,item.updated_at DESC,item.id
+      )
+      UPDATE institutional_memory_items item SET state='active'
+      FROM aged WHERE item.id=aged.id`);
+    await database.query(`UPDATE institutional_memory_items
+      SET body='',deleted_at=COALESCE(deleted_at,now()),state='stale'
+      WHERE state<>'active' AND (body<>'' OR deleted_at IS NULL OR state='archived')`);
+    await database.query(`ALTER TABLE institutional_memory_items
+      DROP CONSTRAINT IF EXISTS institutional_memory_items_state_check`);
+    await database.query(`ALTER TABLE institutional_memory_items
+      ADD CONSTRAINT institutional_memory_items_state_check CHECK (state IN ('active','stale','archived'))`);
+    await database.query(`UPDATE workspace_skills SET state='stale'
+      WHERE state='archived'`);
+    await database.query(`ALTER TABLE workspace_skills
+      DROP CONSTRAINT IF EXISTS workspace_skills_state_check`);
+    await database.query(`ALTER TABLE workspace_skills
+      ADD CONSTRAINT workspace_skills_state_check CHECK (state IN ('active','stale','archived'))`);
+    await database.query(`UPDATE institutional_memory_jobs
+      SET status='dead',error='curator model jobs removed',updated_at=now()
+      WHERE trigger_kind='curator' AND status IN ('pending','retry','claimed')`);
+  });
   await backfillAgentHandles(database);
   await dataStep('yolo default', () => backfillYoloModeDefault(database));
   await dataStep('connector machine IDs', () => backfillConnectorMachineId(database));
@@ -2452,6 +2686,74 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   const withdrawn = await dataStep('superseded grant asks', () =>
     withdrawSupersededGrantAsks(database));
   if (withdrawn) console.log(`withdrawSupersededGrantAsks: withdrew ${withdrawn} pending ask(s)`);
+}
+
+/** The first distinct words of a body that can serve as its keywords. */
+export function keywordsFromBody(body: string): string[] {
+  const words = body.toLocaleLowerCase('en-US').split(/[^a-z0-9_]+/);
+  const keywords = [...new Set(words)].filter(
+    (word) =>
+      INSTITUTIONAL_MEMORY_KEYWORD_PATTERN.test(word) && !INSTITUTIONAL_MEMORY_STOPWORDS.has(word),
+  );
+  return keywords.length ? keywords.slice(0, INSTITUTIONAL_MEMORY_KEYWORDS_MAX) : ['preference'];
+}
+
+/**
+ * The standing preference used to go into every prompt for its person. It is
+ * gone, so each old row becomes an ordinary explicit profile fact under an
+ * ordinary key, keeping its version chain, and loads only when a request
+ * matches its keywords or meaning. The embed cycle fills its embedding.
+ * Idempotent: an older server image in a rolling deploy may still write a
+ * `standing` row, and the next boot converts it.
+ */
+export async function retireStandingPreferences(database: SqlDatabase): Promise<number> {
+  // Every `standing` row of one person shares one destination key, so a
+  // version chain stays under a single key even when that person already has
+  // a `standing-preference` item. The embedding covered the old key, so it is
+  // cleared and the embed cycle computes a fresh one.
+  const renamed = await database.query(
+    `WITH destination AS (
+       SELECT old.workspace_id,old.kind,old.subject_identity_id,old.audience_kind,
+         'standing-preference' || CASE WHEN EXISTS (
+           SELECT 1 FROM institutional_memory_items taken
+           WHERE taken.workspace_id=old.workspace_id AND taken.kind=old.kind
+             AND taken.subject_identity_id IS NOT DISTINCT FROM old.subject_identity_id
+             AND taken.audience_kind=old.audience_kind
+             AND taken.canonical_key='standing-preference')
+         THEN '-' || left(min(old.id::text),8)
+         ELSE '' END AS canonical_key
+       FROM institutional_memory_items old
+       WHERE old.canonical_key=$1
+       GROUP BY old.workspace_id,old.kind,old.subject_identity_id,old.audience_kind
+     )
+     UPDATE institutional_memory_items item
+     SET canonical_key=destination.canonical_key,
+         explicit_save=true,
+         embedding=NULL,
+         embedding_model=NULL,
+         embedded_at=NULL
+     FROM destination
+     WHERE item.canonical_key=$1
+       AND item.workspace_id=destination.workspace_id AND item.kind=destination.kind
+       AND item.subject_identity_id IS NOT DISTINCT FROM destination.subject_identity_id
+       AND item.audience_kind=destination.audience_kind`,
+    [INSTITUTIONAL_RETIRED_STANDING_KEY],
+  );
+  const empty = await database.query<{ id: string; body: string }>(
+    `SELECT id,body FROM institutional_memory_items
+     WHERE canonical_key LIKE 'standing-preference%' AND keywords='{}'
+       AND state='active' AND deleted_at IS NULL`,
+  );
+  for (const row of empty.rows) {
+    await database.query(`UPDATE institutional_memory_items SET keywords=$2 WHERE id=$1`, [
+      row.id,
+      keywordsFromBody(row.body),
+    ]);
+  }
+  if (renamed.rowCount) {
+    console.log(`retireStandingPreferences: converted ${renamed.rowCount} standing row(s)`);
+  }
+  return renamed.rowCount ?? 0;
 }
 
 export const MESSAGE_SEARCH_BACKFILL_BATCH = 2_000;

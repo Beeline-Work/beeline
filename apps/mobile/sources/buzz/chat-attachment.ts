@@ -252,14 +252,45 @@ export async function uploadChatAttachment(
   };
 }
 
-/** Upload one message's files in display order without holding several full photos in memory. */
-export async function uploadChatAttachments(
-  client: BuzzClient,
-  attachments: readonly PickedChatAttachment[],
-): Promise<AttachmentReference[]> {
-  const uploaded: AttachmentReference[] = [];
-  for (const attachment of attachments) {
-    uploaded.push(await uploadChatAttachment(client, attachment));
-  }
-  return uploaded;
+/**
+ * Starts each staged attachment's upload the moment it lands in the composer,
+ * so send only waits for whatever is still in flight. Uploads run one at a time
+ * in the order they were added, so a ten-photo pick never holds ten full
+ * photos in memory. A failed upload is forgotten and retried by the next
+ * `uploadAll`; a removed attachment that has not started yet is skipped.
+ */
+export function createChatAttachmentUploader() {
+  const uploads = new Map<PickedChatAttachment, Promise<AttachmentReference>>();
+  let queue: Promise<unknown> = Promise.resolve();
+  const start = (client: BuzzClient, attachment: PickedChatAttachment) => {
+    const existing = uploads.get(attachment);
+    if (existing) return existing;
+    const upload: Promise<AttachmentReference> = queue.then(() => {
+      if (uploads.get(attachment) !== upload) throw new Error('The attachment was removed.');
+      return uploadChatAttachment(client, attachment);
+    });
+    uploads.set(attachment, upload);
+    queue = upload.catch(() => {
+      if (uploads.get(attachment) === upload) uploads.delete(attachment);
+    });
+    return upload;
+  };
+  return {
+    /** Begins uploading every attachment not already uploading or uploaded. */
+    start(client: BuzzClient, attachments: readonly PickedChatAttachment[]) {
+      for (const attachment of attachments) void start(client, attachment).catch(() => undefined);
+    },
+    /** Drops every attachment no longer staged in the composer. */
+    retain(attachments: readonly PickedChatAttachment[]) {
+      for (const attachment of uploads.keys())
+        if (!attachments.includes(attachment)) uploads.delete(attachment);
+    },
+    /** One message's uploaded references, in display order. */
+    uploadAll(
+      client: BuzzClient,
+      attachments: readonly PickedChatAttachment[],
+    ): Promise<AttachmentReference[]> {
+      return Promise.all(attachments.map((attachment) => start(client, attachment)));
+    },
+  };
 }

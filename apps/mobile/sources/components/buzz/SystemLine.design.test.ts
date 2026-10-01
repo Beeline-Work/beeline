@@ -73,6 +73,21 @@ function flattenText(node: any): string {
  * pinned right, names in brass and tappable, the object linked by its URL.
  */
 describe('the system line', () => {
+  it('opens the latest brief from a brief revision notice', () => {
+    const onOpenBrief = vi.fn();
+    const onOpenIdentity = vi.fn();
+    const renderer = render(React.createElement(LedgerSystemLine, {
+      id: 'brief-revision', text: 'Niglet revised the corner brief Revision 3',
+      event: { subject: { kind: 'agent', id: 'a'.repeat(64), name: 'Niglet' },
+        verb: 'revised the corner brief', object: { text: 'Revision 3', id: 'corner-id' } },
+      stamp: '11:25', onOpenIdentity, onOpenBrief,
+    }));
+    const object = renderer.root.findByProps({ testID: 'system-line-object-brief-revision' });
+    expect(object.props.accessibilityRole).toBe('link');
+    object.props.onPress();
+    expect(onOpenBrief).toHaveBeenCalledTimes(1);
+    expect(onOpenIdentity).not.toHaveBeenCalled();
+  });
   const event = {
     subject: { kind: 'person' as const, id: 'o'.repeat(64), name: 'Owner' },
     verb: 'turned yolo on for',
@@ -101,6 +116,8 @@ describe('the system line', () => {
     expect(renderer.root.findAllByType('IdentityMark' as never)).toHaveLength(0);
     const stamp = renderer.root.findByProps({ testID: 'system-line-stamp-yolo' });
     expect(stamp.props.style).toMatchObject({ position: 'absolute', right: 0, textAlign: 'right' });
+    // A fixed 36px box truncated `16:41` to `16:…`; the stamp sizes to its text.
+    expect(stamp.props.style.width).toBeUndefined();
     expect(flattenText(line.props.children)).toBe(
       'Owner turned yolo on for Bee · grant requests are now approved automatically',
     );

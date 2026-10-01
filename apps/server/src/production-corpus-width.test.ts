@@ -1,4 +1,3 @@
-import { PGlite } from '@electric-sql/pglite';
 import type { QueryResultRow } from 'pg';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { migrate, type QueryResult, type SqlDatabase } from './database.js';
@@ -29,7 +28,7 @@ describe('PRODUCTION-CORPUS width-shaped room-list', () => {
   let phone: PhoneService;
 
   beforeAll(async () => {
-    database = new PgliteDatabase(new PGlite());
+    database = new PgliteDatabase();
     await migrate(database);
     hotReads = new HotReadDatabase(database);
     phone = new PhoneService(hotReads, 'http://local.test');

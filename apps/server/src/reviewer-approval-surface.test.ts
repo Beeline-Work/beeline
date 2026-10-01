@@ -101,8 +101,10 @@ beforeEach(async () => {
     kind: 'check-passed',
   });
   // Clear whatever the configuration tap and the check event already
-  // dispatched, so each test measures the reconcile pass on its own.
+  // dispatched, so each test measures the reconcile pass on its own. The
+  // corner's workflow run moved with that dispatch, so it is cleared with it.
   await db.query(`DELETE FROM agent_commands`);
+  await db.query(`DELETE FROM messages WHERE card_type='corner-workflow-handoff'`);
 });
 
 /** The reconciled wake, as the reviewer's own command poll would see it. */

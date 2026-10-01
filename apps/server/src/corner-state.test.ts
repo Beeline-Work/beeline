@@ -31,3 +31,57 @@ describe('deriveCornerState', () => {
     expect(deriveCornerState({ archived, turnRunning, lifecycle: facts })).toEqual(expected);
   });
 });
+
+describe('deriveCornerState from the workflow run', () => {
+  const pr = { number: 1, url: 'https://example.test/pr/1', title: 'PR', targetBranch: 'main', headSha: 'a' };
+  it.each([
+    ['opened', undefined, { state: 'waiting' }],
+    ['no_code_work', undefined, { state: 'waiting' }],
+    ['upgrade_to_code', 'upgrade_requested', { state: 'waiting' }],
+    ['implement', 'code', { state: 'waiting' }],
+    ['implement', 'no_reviewer', { state: 'waiting' }],
+    ['implement', 'changes_requested', { state: 'waiting' }],
+    ['implement', 'merge_refused', { state: 'waiting' }],
+    ['implement', 'failing', { state: 'review', reason: 'checks-failed' }],
+    ['implement', 'failed', { state: 'waiting', reason: 'failed' }],
+    ['checks', 'pushed', { state: 'review' }],
+    ['review', 'passing', { state: 'review' }],
+    ['land', 'approved', { state: 'review' }],
+    ['ask_human', 'failing', { state: 'waiting', reason: 'question' }],
+    ['landed', 'landed', { state: 'archived' }],
+    ['closed', 'closed', { state: 'archived' }],
+  ] as const)('%s reached by %s', (state, outcome, expected) => {
+    // The lifecycle deliberately disagrees: the run decides.
+    const facts = { archived: false, run: { state, ...(outcome ? { outcome } : {}) }, lifecycle: lifecycle({ checks: 'passing', pr }) };
+    expect(deriveCornerState({ ...facts, turnRunning: false })).toEqual(expected);
+    expect(deriveCornerState({ ...facts, turnRunning: true })).toEqual(
+      expected.state === 'archived' ? expected : { state: 'working' },
+    );
+  });
+
+  it('an archived Room is archived whatever its run says', () => {
+    expect(deriveCornerState({ archived: true, turnRunning: false, run: { state: 'review' } })).toEqual({
+      state: 'archived',
+    });
+  });
+});
+
+describe('deriveCornerState with the owed fact', () => {
+  it.each([
+    ['opened', undefined],
+    ['no_code_work', undefined],
+    ['upgrade_to_code', 'upgrade_requested'],
+    ['implement', 'code'],
+  ] as const)('%s reads idle with nothing owed and waiting with something owed', (state, outcome) => {
+    const run = { state, ...(outcome ? { outcome } : {}) };
+    expect(deriveCornerState({ archived: false, turnRunning: false, run, owed: false })).toEqual({ state: 'idle' });
+    expect(deriveCornerState({ archived: false, turnRunning: false, run, owed: true })).toEqual({ state: 'waiting' });
+    // A projection that cannot tell keeps it waiting, so nothing owed is hidden.
+    expect(deriveCornerState({ archived: false, turnRunning: false, run })).toEqual({ state: 'waiting' });
+  });
+
+  it('keeps blocked runs waiting even with nothing owed', () => {
+    expect(deriveCornerState({ archived: false, turnRunning: false, run: { state: 'ask_human' }, owed: false })).toEqual({ state: 'waiting', reason: 'question' });
+    expect(deriveCornerState({ archived: false, turnRunning: false, run: { state: 'implement', outcome: 'failed' }, owed: false })).toEqual({ state: 'waiting', reason: 'failed' });
+  });
+});

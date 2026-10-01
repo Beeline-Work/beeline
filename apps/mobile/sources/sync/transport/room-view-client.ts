@@ -9,6 +9,7 @@ import {
   readChatListView,
   readCornerListView,
   readInviteView,
+  readRoomHistoryOutline,
   readRoomHistoryView,
   readRoomView,
   readWorkspaceListView,
@@ -20,6 +21,7 @@ import {
   type ChatListView,
   type CornerListView,
   type InviteView,
+  type RoomHistoryOutline,
   type RoomHistoryView,
   type RoomView,
   type WorkspaceListView,
@@ -101,6 +103,12 @@ class MonolithRoomViewClient {
     return this.get(
       `/v1/phone/rooms/${encodeURIComponent(id)}/history${query}`,
       readRoomHistoryView,
+    );
+  }
+  outline(id: string, timeZone: string): Promise<RoomHistoryOutline> {
+    return this.get(
+      `/v1/phone/rooms/${encodeURIComponent(id)}/outline?tz=${encodeURIComponent(timeZone)}`,
+      readRoomHistoryOutline,
     );
   }
   invite(token: string): Promise<InviteView> {
@@ -208,6 +216,12 @@ export class RoomViewClient {
   }
   history(id: string, before?: { createdAt: number; id: string }) {
     return this.implementation.history(id, before);
+  }
+  /** The whole-history outline exists only on the monolith; null elsewhere. */
+  outline(id: string, timeZone: string): Promise<RoomHistoryOutline | null> {
+    return this.implementation instanceof MonolithRoomViewClient
+      ? this.implementation.outline(id, timeZone)
+      : Promise.resolve(null);
   }
   invite(token: string) {
     return this.implementation.invite(token);

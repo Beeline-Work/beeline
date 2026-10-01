@@ -623,7 +623,7 @@ describe('Postgres live fanout', () => {
 
     const corner = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
     await database.query(
-      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'research')`,
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'upgrade')`,
       [corner, WORKSPACE, ROOM, AUTHOR],
     );
     await database.query(

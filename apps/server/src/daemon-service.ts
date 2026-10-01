@@ -18,13 +18,14 @@ import type {
   DaemonOperationMap,
   SystemEvent,
 } from '@beeline/api-contract/daemon';
-import { recordCornerMergeApproval } from './corner-merge-approval.js';
+import { CornerVerdictRejectedError, recordCornerMergeApproval } from './corner-merge-approval.js';
 import {
   CORNER_VALIDATION_STAGES,
+  CORNER_BRIEF_REVISION_SELECT,
+  type CornerBriefRow,
   composeCornerUpgradeBrief,
   cornerBriefRevisionHash,
   currentCornerBrief,
-  isStructuredCornerBrief,
   projectCornerBrief,
   resolveCornerBriefApproval,
   resolveCornerBriefAttachments,
@@ -72,7 +73,8 @@ import {
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import { closeCornerState } from './corner-close.js';
-import { startCornerWorkflowRun, noteCornerWorkflowTransition } from './corner-workflow.js';
+import { writeCornerTitle } from './corner-title.js';
+import { advanceCorner } from './corner-workflow.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import {
   LiveHub,
@@ -105,7 +107,8 @@ import {
 } from './app-connections.js';
 import type { RegistryMcpOAuth } from './registry-mcp-oauth.js';
 import type { ComposioApps } from './composio-apps.js';
-import { composioToolkitForApp } from './composio-apps.js';
+import { composioToolkitForApp, resolveAppFiles } from './composio-apps.js';
+import type { ObjectService } from './object-service.js';
 import {
   applyVaultList,
   connectorCatalog,
@@ -155,14 +158,23 @@ import {
   enqueueInstitutionalMemoryTurnReview,
   failInstitutionalMemoryJob,
   getInstitutionalContext,
+  getInstitutionalMemoryTurnStats,
   heartbeatInstitutionalMemoryJob,
+  precomputeInstitutionalQueryEmbedding,
   proposeInstitutionalMemory,
   searchInstitutionalMemory,
   recordInstitutionalMemoryTurnOutcome,
   recordInstitutionalServeUsage,
   type InstitutionalMemoryShadowConfig,
 } from './institutional-memory-shadow.js';
-import { searchInstitutionalHistory } from './institutional-history.js';
+import { AUTHORIZED_ROOMS_CTE, searchInstitutionalHistory } from './institutional-history.js';
+import {
+  feedbackConfigFromEnv,
+  notifyFeedbackFixed,
+  reportAgentFeedback,
+  type FeedbackLoop,
+} from './feedback.js';
+import type { AfterCommit, EmbedFn } from './institutional-memory-embeddings.js';
 import { loadWorkspaceSkill, saveSkill } from './institutional-skills.js';
 import {
   archiveWorkflow,
@@ -172,6 +184,11 @@ import {
   startWorkflow,
 } from './workflow-runs.js';
 import { agentCarriesTag, isConfiguredReviewer } from './agent-classes.js';
+import {
+  recordStarPromptReply,
+  STAR_PROMPT_MILESTONES,
+  starPromptReplySql,
+} from './github-star-prompt.js';
 
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
@@ -290,7 +307,16 @@ export class DaemonService {
     private readonly mcpRegistry: McpRegistryClient = new McpRegistryClient(),
     private readonly registryMcpOAuth?: RegistryMcpOAuth,
     private readonly composio?: ComposioApps,
+    private readonly feedback: FeedbackLoop = { config: feedbackConfigFromEnv() },
+    private readonly objects?: ObjectService,
+    private readonly linkWallet?: import('./link-agent-wallet.js').LinkAgentWallet,
+    private readonly refreshMergeability?: (cornerId: string) => Promise<void>,
   ) {}
+
+  /** A turn's memory query, embedded before its command transaction opened. */
+  private memoryEmbed: EmbedFn | undefined;
+  /** Collects network work that must wait for the command transaction to commit. */
+  private afterCommit: AfterCommit | undefined;
 
   /** When each corner last woke, so `CORNER_WAKE_MIN_INTERVAL_MS` can be held. */
   private readonly lastCornerWake = new Map<string, number>();
@@ -336,6 +362,8 @@ export class DaemonService {
       'postAgentActivity',
       'postSquireApproval',
       'postSquireLoginWall',
+      'createLinkSpendRequest',
+      'retrieveLinkSpendRequest',
       'createCorner',
       'reviseCornerBrief',
       'postCornerValidationStage',
@@ -364,10 +392,12 @@ export class DaemonService {
       'openRoomPoll',
       'putCornerApp',
       'requestCornerAppOpen',
+      'renameCorner',
       'getInstitutionalContext',
       'proposeInstitutionalMemory',
       'searchInstitutionalMemory',
       'searchInstitutionalHistory',
+      'getRoomMessage',
       'loadWorkspaceSkill',
       'saveSkill',
       'saveWorkflow',
@@ -375,6 +405,8 @@ export class DaemonService {
       'handoff',
       'archiveWorkflow',
       'assignWorkflowRole',
+      'reportFeedback',
+      'notifyFeedbackFixed',
     ]);
     if (
       !this.commandTransaction &&
@@ -412,13 +444,32 @@ export class DaemonService {
         await this.reconcileZeroCheckWorkerCompletion(scopedRoom!, authenticatedAgentId, output.id);
       return output as Output<Name>;
     }
-    if (!this.commandTransaction && scopedRoom && turnWrites.has(name)) {
+    if (
+      !this.commandTransaction && scopedRoom && turnWrites.has(name) &&
+      (name !== 'getRoomMessage' || candidate.requestId !== undefined)
+    ) {
       const writeStartedAt = Date.now();
       const events: LiveEvent[] = [];
       const buffered = new LiveHub();
       buffered.publish = (event) => {
         events.push(event);
       };
+      const memoryEmbed = !this.institutionalMemoryShadow.live
+        ? undefined
+        : name === 'getInstitutionalContext'
+          ? await precomputeInstitutionalQueryEmbedding(this.database, {
+              kind: 'context',
+              roomId: scopedRoom,
+              agentId: authenticatedAgentId,
+              requestId: String(candidate.requestId ?? candidate.turnId ?? ''),
+            })
+          : name === 'searchInstitutionalMemory'
+            ? await precomputeInstitutionalQueryEmbedding(this.database, {
+                kind: 'search',
+                query: typeof candidate.query === 'string' ? candidate.query : '',
+              })
+            : undefined;
+      const committedTasks: Parameters<AfterCommit>[0][] = [];
       const output = await this.database.transaction(async (db) => {
         const requestId = candidate.requestId ?? candidate.turnId;
         if (name === 'postAgentTurnReceipt' && candidate.status === 'failed') {
@@ -530,7 +581,15 @@ export class DaemonService {
           this.mcpRegistry,
           this.registryMcpOAuth,
           this.composio,
+          this.feedback,
+          this.objects,
+          this.linkWallet,
+          this.refreshMergeability,
         );
+        scoped.memoryEmbed = memoryEmbed;
+        scoped.afterCommit = (task) => {
+          committedTasks.push(task);
+        };
         const result = await scoped.execute(name, input, authenticatedAgentId);
         if (name === 'requestAgentGrant') {
           await db.query(
@@ -642,6 +701,13 @@ export class DaemonService {
         }
         return result;
       });
+      for (const task of committedTasks) {
+        try {
+          await task(this.database);
+        } catch (error) {
+          console.error('[daemon] post-commit task failed', error);
+        }
+      }
       for (const event of events) {
         if (event.type !== 'invalidate' || !event.committedRow) {
           this.live.publish(event);
@@ -689,6 +755,7 @@ export class DaemonService {
           this.database,
           authenticatedAgentId,
           this.institutionalMemoryShadow,
+          (input as { extractorVersion?: string }).extractorVersion,
         );
         return { enabled: true, ...(job ? { job } : {}) } as Output<Name>;
       }
@@ -732,6 +799,7 @@ export class DaemonService {
         return (await getInstitutionalContext(
           this.database,
           this.authorizedCommand,
+          this.memoryEmbed,
         )) as Output<Name>;
       case 'proposeInstitutionalMemory':
         if (!this.commandTransaction || !this.authorizedCommand) {
@@ -744,6 +812,7 @@ export class DaemonService {
           this.database,
           this.authorizedCommand,
           input as Input<'proposeInstitutionalMemory'>,
+          this.afterCommit,
         )) as Output<Name>;
       case 'searchInstitutionalMemory':
         if (!this.commandTransaction || !this.authorizedCommand) {
@@ -756,6 +825,7 @@ export class DaemonService {
           this.database,
           this.authorizedCommand,
           input as Input<'searchInstitutionalMemory'>,
+          this.memoryEmbed,
         )) as Output<Name>;
       case 'searchInstitutionalHistory':
         if (!this.commandTransaction || !this.authorizedCommand) {
@@ -768,6 +838,15 @@ export class DaemonService {
           this.database,
           this.authorizedCommand,
           input as Input<'searchInstitutionalHistory'>,
+        )) as Output<Name>;
+      case 'getInstitutionalMemoryTurnStats':
+        if (!this.institutionalMemoryShadow.live) {
+          return { searchCalls: 0, searchMisses: 0 } as Output<Name>;
+        }
+        return (await getInstitutionalMemoryTurnStats(
+          this.database,
+          authenticatedAgentId,
+          input as Input<'getInstitutionalMemoryTurnStats'>,
         )) as Output<Name>;
       case 'loadWorkspaceSkill':
         if (!this.commandTransaction || !this.authorizedCommand) {
@@ -789,6 +868,8 @@ export class DaemonService {
           this.database,
           this.authorizedCommand,
           input as Input<'saveSkill'>,
+          undefined,
+          this.afterCommit,
         )) as Output<Name>;
       case 'saveWorkflow':
         if (!this.commandTransaction || !this.authorizedCommand) {
@@ -798,6 +879,7 @@ export class DaemonService {
           this.database,
           this.authorizedCommand,
           input as Input<'saveWorkflow'>,
+          this.afterCommit,
         )) as Output<Name>;
       case 'startWorkflow':
         if (!this.commandTransaction || !this.authorizedCommand) {
@@ -1179,6 +1261,45 @@ export class DaemonService {
       case 'getGoogleOAuthGrant':
       case 'getRoomGoogleGrant':
         return { status: 'pending' } as Output<Name>;
+      case 'createLinkSpendRequest': {
+        if (!this.linkWallet) throw new Error('Link is not configured');
+        const request = input as Input<'createLinkSpendRequest'>;
+        const owner = (await this.database.query<{ owner_id: string }>(
+          `SELECT owner_id FROM agents WHERE agent_id=$1`, [authenticatedAgentId])).rows[0];
+        if (!owner) throw new Error('agent owner not found');
+        const created = await this.linkWallet.create(owner.owner_id, authenticatedAgentId,
+          request.roomId, request);
+        if (created.approval_url) await this.linkSpendApproval(request, authenticatedAgentId,
+          owner.owner_id, created.id, created.approval_url);
+        return { id: created.id, status: created.status,
+          ...(created.approval_url ? { approvalUrl: created.approval_url } : {}) } as Output<Name>;
+      }
+      case 'retrieveLinkSpendRequest': {
+        if (!this.linkWallet) throw new Error('Link is not configured');
+        const request = input as Input<'retrieveLinkSpendRequest'>;
+        const owner = (await this.database.query<{ owner_id: string }>(
+          `SELECT owner_id FROM agents WHERE agent_id=$1`, [authenticatedAgentId])).rows[0];
+        if (!owner) throw new Error('agent owner not found');
+        const result = await this.linkWallet.retrieve(owner.owner_id, authenticatedAgentId, request.id);
+        return { id: result.id, status: result.status,
+          ...(result.approval_url ? { approvalUrl: result.approval_url } : {}),
+          ...(result.status_details?.requires_action?.next_action ? { nextAction: {
+            resolution: result.status_details.requires_action.next_action.resolution,
+            displayMessage: result.status_details.requires_action.next_action.display_message,
+            actionUrl: result.status_details.requires_action.next_action.action_url } } : {}),
+          ...(result.card ? { card: { number: result.card.number, cvc: result.card.cvc,
+            expMonth: result.card.exp_month, expYear: result.card.exp_year,
+            billingAddress: result.card.billing_address ? {
+              name: result.card.billing_address.name,
+              postalCode: result.card.billing_address.postal_code,
+              line1: result.card.billing_address.line1, city: result.card.billing_address.city,
+              state: result.card.billing_address.state,
+              country: result.card.billing_address.country } : undefined,
+            validUntil: result.card.valid_until } } : {}),
+          ...(result.shared_payment_token ? { sharedPaymentToken: {
+            id: result.shared_payment_token.id,
+            validUntil: result.shared_payment_token.valid_until } } : {}) } as Output<Name>;
+      }
       case 'beginRegistryMcpOAuth': {
         if (!this.registryMcpOAuth) throw new Error('Registry MCP OAuth is unavailable');
         return (await this.registryMcpOAuth.begin(
@@ -1255,6 +1376,11 @@ export class DaemonService {
       case 'requestCornerAppOpen':
         return (await this.requestCornerAppOpen(
           input as Input<'requestCornerAppOpen'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'renameCorner':
+        return (await this.renameCorner(
+          input as Input<'renameCorner'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postTargetBranchProposal':
@@ -1407,6 +1533,25 @@ export class DaemonService {
           authenticatedAgentId,
           input as Input<'walletSwap'>,
         )) as Output<Name>;
+      // The feedback loop (`feedback.ts`). Any agent may report from its own
+      // turn; only a configured System sender's agent may close the loop.
+      case 'reportFeedback':
+        if (!this.commandTransaction || !this.authorizedCommand)
+          throw new Error('feedback reports require an active command');
+        return (await reportAgentFeedback(
+          this.database,
+          this.authorizedCommand,
+          authenticatedAgentId,
+          input as Input<'reportFeedback'>,
+        )) as Output<Name>;
+      case 'notifyFeedbackFixed':
+        return (await notifyFeedbackFixed(
+          this.database,
+          this.feedback,
+          this.authorizedCommand,
+          authenticatedAgentId,
+          input as Input<'notifyFeedbackFixed'>,
+        )) as Output<Name>;
       default:
         throw new Error(`unsupported daemon operation: ${String(name)}`);
     }
@@ -1416,7 +1561,10 @@ export class DaemonService {
    * A repository with no checks emits no check webhook, so its configured
    * reviewer otherwise waits forever. Resolve that absence only after the
    * worker has finished its PR turn; at PR-open time the same empty rollup is
-   * merely a race with GitHub registering workflows.
+   * merely a race with GitHub registering workflows. GitHub also runs no
+   * workflows for a PR that conflicts with its base, so the zero-check result
+   * resolves only once GitHub has computed mergeability and found no conflict;
+   * a conflict, a verdict still computing, or a failed read stays pending.
    */
   private async reconcileZeroCheckWorkerCompletion(
     cornerId: string,
@@ -1451,6 +1599,12 @@ export class DaemonService {
       return;
     }
     if (verdict.checks !== 'pending' || verdict.checkCount !== 0) return;
+    try {
+      await this.refreshMergeability?.(cornerId);
+    } catch (error) {
+      console.error(`[server] zero-check mergeability read failed for corner ${cornerId}:`, error);
+      return;
+    }
 
     await this.database.transaction(async (db) => {
       const current = (
@@ -1472,6 +1626,8 @@ export class DaemonService {
         current.owner_agent_id !== workerAgentId ||
         current.reviewer_agent_id !== candidate.reviewer_agent_id ||
         current.lifecycle.pr?.headSha !== verdict.headSha ||
+        (current.lifecycle.pr.mergeability !== 'clean' &&
+          current.lifecycle.pr.mergeability !== 'other') ||
         current.lifecycle.checks === 'passing'
       )
         return;
@@ -2437,7 +2593,7 @@ export class DaemonService {
     const offset = input.offset ?? 0;
     if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000_000)
       throw new Error('invalid message offset');
-    const row = (
+    let row = (
       await this.database.query<{ body: string; total: number; attachments: DaemonAttachment[] }>(
         `SELECT substring(text FROM $3::integer + 1 FOR 4000) body,
                 char_length(text) total, attachments
@@ -2445,6 +2601,35 @@ export class DaemonService {
         [input.roomId, input.messageId, offset],
       )
     ).rows[0];
+    if (!row && this.authorizedCommand?.room_id === input.roomId) {
+      const authority = (
+        await this.database.query<{ workspace_id: string; requester_identity_id: string }>(
+          `SELECT output.workspace_id,root.author_id requester_identity_id
+           FROM rooms output
+           JOIN messages root ON root.id=$2 AND root.deleted_at IS NULL
+           JOIN rooms root_room ON root_room.id=root.room_id
+             AND root_room.workspace_id=output.workspace_id
+           JOIN identities requester ON requester.id=root.author_id AND requester.kind='human'
+           WHERE output.id=$1`,
+          [input.roomId, this.authorizedCommand.root_source_message_id],
+        )
+      ).rows[0];
+      if (authority) {
+        row = (
+          await this.database.query<{ body: string; total: number; attachments: DaemonAttachment[] }>(
+            `WITH ${AUTHORIZED_ROOMS_CTE}
+             SELECT substring(message.text FROM $6::integer + 1 FOR 4000) body,
+                    char_length(message.text) total,message.attachments
+             FROM messages message
+             JOIN authorized_rooms authorized ON authorized.id=message.room_id
+             WHERE message.id=$5 AND message.deleted_at IS NULL
+               AND message.presentation='message'`,
+            [input.roomId, authority.requester_identity_id, authority.workspace_id, agentId,
+              input.messageId, offset],
+          )
+        ).rows[0];
+      }
+    }
     if (!row) throw new Error('message not found in this Room');
     if (offset > row.total) throw new Error('offset exceeds message body');
     const nextOffset = offset + [...row.body].length;
@@ -2631,10 +2816,10 @@ export class DaemonService {
    * `owner_agent_id` predates the backfill would otherwise be reported as
    * opened by whoever happens to be polling, and a reviewer told by one query
    * that it holds the post is told by the other that it wrote the code: the
-   * turn boots without `BEELINE_CORNER_REVIEWER`, `approve_merge` is filtered
-   * off its surface, and its PASS can only ever be prose while the gate stays
-   * at `approvalPending=true`. Reconciliation resurrects exactly the old heads
-   * where that record is thinnest, so the two derivations must agree.
+   * turn boots without `BEELINE_CORNER_REVIEWER` and never receives the
+   * reviewer instruction naming the head to review. Reconciliation resurrects
+   * exactly the old heads where that record is thinnest, so the two
+   * derivations must agree.
    */
   private async corners(roomId: string, agentId: string) {
     const rows = await this.database.query<{
@@ -2706,6 +2891,7 @@ export class DaemonService {
         archived: boolean;
         objective: string;
         title: string;
+        title_generated: boolean;
         kind: 'agent' | 'human';
         feature_branch: string | null;
         request_id: string | null;
@@ -2717,7 +2903,7 @@ export class DaemonService {
         approval_head_sha: string | null;
       }>(
         `SELECT room.parent_id parent_room_id,room.archived_at IS NOT NULL archived,
-           fact.objective,room.name title,fact.kind,fact.feature_branch,fact.request_id,fact.close_requested,fact.lifecycle,
+           fact.objective,room.name title,fact.title_generated,fact.kind,fact.feature_branch,fact.request_id,fact.close_requested,fact.lifecycle,
            fact.lane,requester.handle requester_handle,
            approval.pull_request_number,approval.head_sha approval_head_sha
          FROM corner_facts fact
@@ -2751,17 +2937,13 @@ export class DaemonService {
           }
         : {}),
       ...(row ? { title: row.title, kind: row.kind } : {}),
+      ...(row?.title_generated ? { titleGenerated: true } : {}),
       ...(row?.feature_branch ? { featureBranch: row.feature_branch } : {}),
       ...(row?.request_id ? { requestId: row.request_id } : {}),
       closeRequested: row?.close_requested ?? false,
       // A row written before the lane existed reads back as its backfilled
       // default, never as an unknown third lane.
-      lane:
-        row?.lane === 'no_code'
-          ? ('no_code' as const)
-          : row?.lane === 'research'
-            ? ('research' as const)
-            : ('code' as const),
+      lane: row?.lane === 'no_code' ? ('no_code' as const) : ('code' as const),
       ...(row?.requester_handle ? { requesterHandle: row.requester_handle } : {}),
       ...(row?.lifecycle ? { lifecycle: row.lifecycle } : {}),
       ...(row?.pull_request_number && row.approval_head_sha
@@ -2785,12 +2967,10 @@ export class DaemonService {
     )
       throw new Error('invalid brief revision cursor');
     const rows = (
-      await this.database.query<Parameters<typeof projectCornerBrief>[1]>(
-        `SELECT revision,content,intent_verbatim,build_spec,criteria,non_goals,
-                brief_references,approval_basis,revision_hash,change,author_id,
-                source_room_id,source_message_id,attachments
-       FROM corner_brief_revisions WHERE corner_id=$1 AND ($2::integer IS NULL OR revision<$2)
-       ORDER BY revision DESC LIMIT 21`,
+      await this.database.query<CornerBriefRow>(
+        `${CORNER_BRIEF_REVISION_SELECT}
+       WHERE brief.corner_id=$1 AND ($2::integer IS NULL OR brief.revision<$2)
+       ORDER BY brief.revision DESC LIMIT 21`,
         [input.cornerId, input.beforeRevision ?? null],
       )
     ).rows;
@@ -2799,14 +2979,16 @@ export class DaemonService {
       ...(rows.length > 20 ? { nextBeforeRevision: rows[19]!.revision } : {}),
     };
   }
+  /**
+   * The configured reviewer's PASS, from any code-lane corner turn: nothing
+   * here depends on how the reviewer's session booted. The server authorizes
+   * the caller and the exact target, records the verdict, and reports it to
+   * the corner workflow in the same transaction; the server merge follows
+   * from the workflow once the whole gate is open.
+   */
   private async approveCornerMerge(input: Input<'approveCornerMerge'>, agentId: string) {
     return this.database.transaction(async (db) => {
       await db.query(`SELECT id FROM rooms WHERE id=$1 FOR UPDATE`, [input.cornerId]);
-      const currentBrief = await currentCornerBrief(db, input.cornerId);
-      if (currentBrief && input.briefRevision !== currentBrief.revision)
-        throw new Error(
-          'corner brief revision changed; review the current assignment before approving',
-        );
       const target = (
         await db.query<{
           pull_request_number: number | null;
@@ -2820,20 +3002,39 @@ export class DaemonService {
          FROM rooms corner
          JOIN rooms parent ON parent.id=corner.parent_id
          JOIN corner_facts fact ON fact.corner_id=corner.id
-         JOIN memberships reviewer ON reviewer.room_id=parent.id
-           AND reviewer.identity_id=$2 AND reviewer.removed_at IS NULL
-         JOIN identities identity ON identity.id=reviewer.identity_id AND identity.kind='agent'
          WHERE corner.id=$1`,
-          [input.cornerId, agentId],
+          [input.cornerId],
         )
       ).rows[0];
-      if (!target) throw new Error('corner reviewer approval denied');
-      if (!(await isConfiguredReviewer(db, target.parent_room_id, target.workspace_id, agentId)))
-        throw new Error('corner reviewer approval denied');
+      if (
+        !target ||
+        !(await isConfiguredReviewer(db, target.parent_room_id, target.workspace_id, agentId)) ||
+        !(
+          await db.query(
+            `SELECT 1 FROM memberships reviewer
+             JOIN identities identity ON identity.id=reviewer.identity_id AND identity.kind='agent'
+             WHERE reviewer.room_id=$1 AND reviewer.identity_id=$2 AND reviewer.removed_at IS NULL`,
+            [target.parent_room_id, agentId],
+          )
+        ).rowCount
+      )
+        throw new CornerVerdictRejectedError(
+          'NOT_CONFIGURED_REVIEWER',
+          "only this corner's configured reviewer can record PASS",
+        );
       if (!target.pull_request_number || !target.head_sha)
-        throw new Error('corner has no pull request');
+        throw new CornerVerdictRejectedError('NO_PULL_REQUEST', 'corner has no pull request');
       if (target.head_sha !== input.headSha)
-        throw new Error('pull request head changed; review the current head before approving');
+        throw new CornerVerdictRejectedError(
+          'STALE_HEAD',
+          `pull request head is ${target.head_sha}; review the current head before approving`,
+        );
+      const currentBrief = await currentCornerBrief(db, input.cornerId);
+      if (currentBrief && input.briefRevision !== currentBrief.revision)
+        throw new CornerVerdictRejectedError(
+          'STALE_BRIEF_REVISION',
+          `the assigned brief is revision ${currentBrief.revision}; review the current assignment before approving`,
+        );
       await recordCornerMergeApproval(db, {
         cornerId: input.cornerId,
         approvedBy: agentId,
@@ -2841,6 +3042,7 @@ export class DaemonService {
         pullRequestNumber: target.pull_request_number,
         headSha: target.head_sha,
       });
+      await advanceCorner(db, input.cornerId, { kind: 'approval', headSha: target.head_sha });
       return {
         pullRequestNumber: target.pull_request_number,
         headSha: target.head_sha,
@@ -3284,9 +3486,7 @@ export class DaemonService {
     // human-authored one does: the same reading of the text, the same push
     // fan-out, the same highlight. There is no per-turn numeric cap, and no
     // list is frozen here — `message-mentions.ts` reads the tags back out of
-    // this text whenever someone asks who it addresses, and carries the one
-    // rule that is not a cap: a corner agent's turn reply never tags a person,
-    // because the merge summary card already says the work is done.
+    // this text whenever someone asks who it addresses.
     const rootMessageId = input.replyToMessageId
       ? (parent!.root_message_id ?? input.replyToMessageId)
       : null;
@@ -3492,6 +3692,12 @@ export class DaemonService {
                state='complete',completed_at=now(),result_message_id=inserted.id
              FROM inserted WHERE command.id=(SELECT id FROM writable)
              RETURNING command.id
+           ), star_count AS (
+             ${starPromptReplySql(
+               `(SELECT writable.root_source_message_id FROM writable,completed WHERE $5='message')`,
+               '(SELECT jsonb_array_length(attachments)>0 FROM attachment_payload)',
+               '$11::int[]',
+             )}
            ), cleared AS (
              DELETE FROM live_outputs output USING completed
              WHERE output.room_id=$2 AND output.agent_id=$3 AND output.turn_id=$6
@@ -3549,6 +3755,7 @@ export class DaemonService {
           input.replyToMessageId ?? null,
           rootMessageId,
           input.generationId,
+          STAR_PROMPT_MILESTONES,
         ],
       );
       if (this.livePaintDiagnostics) databaseAwaitResolvedAt = Date.now();
@@ -3608,6 +3815,22 @@ export class DaemonService {
           }
         : {}),
     });
+    // The atomic reply statement counted it in its own star_count CTE.
+    if (!atomicCommandWrite && input.requestId && input.presentation !== 'card') {
+      const reply = {
+        roomId: input.roomId,
+        agentId,
+        requestId: input.requestId,
+        messageId: saved.id,
+        artifact: saved.attachments.length > 0,
+      };
+      const count = (database: SqlDatabase) => recordStarPromptReply(database, reply);
+      if (this.afterCommit) this.afterCommit(count);
+      else
+        await count(this.database).catch((error) =>
+          console.error('[daemon] star prompt reply count failed', error),
+        );
+    }
     return {
       id: saved.id,
       createdAt: seconds(saved.created_at),
@@ -3969,6 +4192,45 @@ export class DaemonService {
    * page in the resource owner's existing connector DM so Telegram is not a
    * prerequisite for seeing it.
    */
+  private async linkSpendApproval(input: Input<'createLinkSpendRequest'>,
+    agentId: string, ownerId: string, requestId: string, approvalUrl: string): Promise<void> {
+    const url = new URL(approvalUrl);
+    if (url.protocol !== 'https:' || !url.hostname.endsWith('.link.com'))
+      throw new Error('Link returned an invalid approval URL');
+    const context = (await this.database.query<{ workspace_id: string; agent_name: string;
+      agent_handle: string | null; agent_avatar: string | null }>(
+      `SELECT room.workspace_id,identity.name agent_name,identity.handle agent_handle,
+        identity.avatar agent_avatar FROM rooms room JOIN identities identity ON identity.id=$2
+       WHERE room.id=$1`, [input.roomId, agentId])).rows[0];
+    if (!context) throw new Error('Link request Room not found');
+    const member = await this.database.query(`SELECT 1 FROM memberships WHERE workspace_id=$1
+      AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL`,
+      [context.workspace_id, ownerId]);
+    if (!member.rowCount) throw new Error('resource owner access denied');
+    const roomId = await ensureConnectorDirectMessageRoom(this.database,
+      context.workspace_id, 'link', ownerId);
+    const connectorId = connectorIdentityId('link');
+    const title = `Link purchase at ${input.merchant}`;
+    const detail = `${(input.amount / 100).toFixed(2)} USD · ${input.description}`.slice(0, 500);
+    const sourceMessageId = this.authorizedCommand?.root_source_message_id;
+    const line = await systemLine(this.database, {
+      id: createHash('sha256').update(`link-approval:${requestId}`).digest('hex'),
+      roomId, authorId: connectorId,
+      subject: { kind: 'person', id: connectorId, name: 'Link' },
+      verb: 'needs your approval for', object: title, consequence: detail,
+      presentation: 'card', cardType: 'squire-approval',
+      card: {
+        agent: { pubkey: agentId, kind: 'agent', name: context.agent_name,
+          ...(context.agent_handle ? { handle: context.agent_handle } : {}),
+          ...(context.agent_avatar ? { avatar: context.agent_avatar } : {}) },
+        tool: 'Link', title, detail, approvalUrl, approvalId: requestId,
+        linkKind: 'approval', sourceRoomId: input.roomId,
+        ...(sourceMessageId ? { sourceMessageId } : {}),
+      },
+    });
+    if (line.inserted) this.live.publish({ type: 'invalidate', roomId, reason: 'message', agentId });
+  }
+
   private async squireApproval(input: Input<'postSquireApproval'>, agentId: string) {
     if (!input.tool.trim() || input.tool.length > 80) throw new Error('Squire tool is invalid');
     if (!input.title.trim() || input.title.length > 120)
@@ -4781,9 +5043,13 @@ export class DaemonService {
       ...(input.pullRequest ? { pr: input.pullRequest } : {}),
     };
     await this.database.query(
-      `INSERT INTO corner_facts(corner_id,feature_branch,lifecycle) VALUES($1,$2,$3::jsonb)
+      `INSERT INTO corner_facts(corner_id,feature_branch,lifecycle,owner_agent_id)
+       VALUES($1,$2,$3::jsonb,$4)
        ON CONFLICT(corner_id) DO UPDATE SET
          feature_branch=EXCLUDED.feature_branch,
+         -- A corner opened from the phone has no owner agent. The first agent to
+         -- record its branch is the one doing the work; never replace an owner.
+         owner_agent_id=COALESCE(corner_facts.owner_agent_id,EXCLUDED.owner_agent_id),
          lifecycle=CASE
            -- A helper's restart heartbeat is lower authority than GitHub's PR/check facts.
            -- Keep the complete webhook-owned lifecycle so it cannot lose the PR, mergeability,
@@ -4793,7 +5059,7 @@ export class DaemonService {
            ELSE corner_facts.lifecycle || EXCLUDED.lifecycle
          END,
          updated_at=now()`,
-      [input.cornerId, input.branch, JSON.stringify(lifecycle)],
+      [input.cornerId, input.branch, JSON.stringify(lifecycle), agentId],
     );
     return this.writeResult();
   }
@@ -4871,6 +5137,28 @@ export class DaemonService {
       slug: input.slug,
       revision: app.revision,
     };
+  }
+  /** Retitles the corner this agent is working in, through the same write a person's rename uses. */
+  private async renameCorner(input: Input<'renameCorner'>, agentId: string) {
+    const refusal = cornerTextRefusal('name', input.name);
+    if (refusal) throw new Error(refusal);
+    const name = normalizeCornerText(input.name);
+    await this.access(input.cornerId, agentId);
+    const parentId = await this.database.transaction(async (db) => {
+      const corner = (
+        await db.query<{ parent_id: string | null; archived_at: Date | null }>(
+          `SELECT parent_id,archived_at FROM rooms WHERE id=$1 FOR UPDATE`,
+          [input.cornerId],
+        )
+      ).rows[0];
+      if (!corner?.parent_id) throw new Error('corner not found');
+      if (corner.archived_at) throw new Error('corner is archived');
+      await writeCornerTitle(db, input.cornerId, corner.parent_id, name);
+      return corner.parent_id;
+    });
+    this.live.publish({ type: 'invalidate', roomId: input.cornerId, reason: 'corner', agentId });
+    this.live.publish({ type: 'invalidate', roomId: parentId, reason: 'corner', agentId });
+    return { cornerId: input.cornerId, name };
   }
   private async targetProposal(input: Input<'postTargetBranchProposal'>, agentId: string) {
     await this.access(input.roomId, agentId);
@@ -5163,6 +5451,7 @@ export class DaemonService {
       constraint: input.constraint,
       options: input.options,
       ttlSeconds: input.ttlSeconds,
+      ...(input.requestId ? { requestId: input.requestId } : {}),
     });
     this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'choice', agentId });
     return posted;
@@ -5700,6 +5989,16 @@ export class DaemonService {
 
   private async executeAppTool(input: Input<'executeAppTool'>, agentId: string) {
     if (!this.composio) throw new Error('App tools are unavailable');
+    // Room files are checked before any provider request, including the account check.
+    const files = input.arguments && typeof input.arguments === 'object'
+      ? await resolveAppFiles(input.arguments, async (objectId) => {
+        if (!this.objects) throw new Error('Room files are unavailable for app tools');
+        const file = await this.objects.readRoomObject(input.roomId, agentId, objectId,
+          this.database);
+        if (!file) throw new Error(`Room file ${objectId.slice(0, 64)} is not in this Room`);
+        return file;
+      })
+      : undefined;
     const row = await this.connectedAppForTool(input.appId, input.roomId, agentId);
     if (row.composio_link_expires_at || !row.composio_account_id ||
       !(await this.composio.account(row.composio_account_id,
@@ -5737,7 +6036,7 @@ export class DaemonService {
       throw new Error('App tool arguments are invalid');
     const data = await this.composio.execute({ accountId: row.composio_account_id,
       userId: row.owner_identity_id, toolkit: composioToolkitForApp(row.app_key),
-      tool: input.tool, arguments: args });
+      tool: input.tool, arguments: args, files });
     await recordAppUsage(this.database, { appId: row.id, agentId,
       roomId: input.roomId, requesterId: requester.id, transport: 'composio',
       operation: input.tool, ...(grantId ? { grantId } : {}) });
@@ -6019,13 +6318,25 @@ export class DaemonService {
       throw new Error('invalid corner idempotency key');
     }
     await this.access(input.roomId, agentId);
+    // A turn inside a corner opens its new corner beside it, in the parent
+    // Room: corners do not nest. `commandRoomId` is where the turn's command
+    // lives; `roomId` is the Room the new corner belongs to.
+    const commandRoomId = input.roomId;
+    const host = (
+      await this.database.query<{ parent_id: string | null }>(
+        `SELECT parent_id FROM rooms WHERE id=$1`,
+        [commandRoomId],
+      )
+    ).rows[0];
+    const roomId = host?.parent_id ?? commandRoomId;
+    if (roomId !== commandRoomId) await this.access(roomId, agentId);
     const parent = (
       await this.database.query<{
         workspace_id: string;
         repository_key: string | null;
         repository_resolution: string;
       }>(`SELECT workspace_id,repository_key,repository_resolution FROM rooms WHERE id=$1`, [
-        input.roomId,
+        roomId,
       ])
     ).rows[0]!;
     // A no-code corner is scratch-backed even when its parent Room has a
@@ -6033,14 +6344,11 @@ export class DaemonService {
     // existing lane available without pretending it is repository work.
     const repositoryWork =
       input.lane !== 'no_code' &&
-      (input.lane === 'research' ||
-        Boolean(input.repository) ||
+      (Boolean(input.repository) ||
         parent.repository_resolution === 'repository' ||
         Boolean(parent.repository_key));
     if (repositoryWork && !input.brief)
-      throw new Error('a structured brief is required for repository and research corners');
-    if (input.brief && !isStructuredCornerBrief(input.brief))
-      throw new Error('the legacy opaque brief format is invalid for new corners');
+      throw new Error('a brief is required for repository corners');
     let cornerId: string = randomUUID();
     const opener = await this.identity(agentId);
     await this.database.transaction(async (db) => {
@@ -6048,7 +6356,7 @@ export class DaemonService {
       // corner remains active. Locking the parent closes the read/insert race:
       // a concurrent retry waits, sees the winner, and returns its id without
       // creating another Room, command, or open card.
-      await db.query(`SELECT id FROM rooms WHERE id=$1 FOR UPDATE`, [input.roomId]);
+      await db.query(`SELECT id FROM rooms WHERE id=$1 FOR UPDATE`, [roomId]);
       const existing = (
         await db.query<{
           corner_id: string;
@@ -6059,24 +6367,14 @@ export class DaemonService {
           repository_key: string | null;
           repository_target_branch: string;
           lane: string;
-          brief_content: string | null;
-          brief_intent: import('@beeline/api-contract/daemon').CornerBrief['intentVerbatim'] | null;
-          brief_build_spec: string | null;
-          brief_criteria: import('@beeline/api-contract/daemon').CornerBrief['criteria'] | null;
-          brief_non_goals: string[] | null;
-          brief_references: import('@beeline/api-contract/daemon').CornerBrief['references'] | null;
-          brief_approval_basis:
-            import('@beeline/api-contract/daemon').CornerBrief['approvalBasis'] | null;
+          brief_revision: number | null;
           brief_revision_hash: string | null;
           brief_change: string | null;
           brief_attachments: import('@beeline/api-contract/daemon').CornerBriefAttachment[] | null;
         }>(
           `SELECT child.id::text corner_id,child.name,fact.objective,fact.owner_agent_id,
                   fact.request_id,child.repository_key,child.repository_target_branch,fact.lane,
-                  initial.content brief_content,initial.intent_verbatim brief_intent,
-                  initial.build_spec brief_build_spec,initial.criteria brief_criteria,
-                  initial.non_goals brief_non_goals,initial.brief_references,
-                  initial.approval_basis brief_approval_basis,
+                  initial.revision brief_revision,
                   initial.revision_hash brief_revision_hash,initial.change brief_change,
                   initial.attachments brief_attachments
            FROM rooms child
@@ -6088,7 +6386,7 @@ export class DaemonService {
              AND child.archived_at IS NULL
            ORDER BY child.created_at,child.id
            LIMIT 1`,
-          [input.roomId, idempotencyKey],
+          [roomId, idempotencyKey],
         )
       ).rows[0];
       if (existing) {
@@ -6102,13 +6400,12 @@ export class DaemonService {
               saved.required === item.required
             );
           });
-        const sameBrief =
-          input.brief && isStructuredCornerBrief(input.brief)
-            ? existing.brief_revision_hash ===
-                cornerBriefRevisionHash(input.brief, existing.brief_attachments ?? []) &&
-              existing.brief_change === (input.brief.change ?? null) &&
-              sameAttachments
-            : existing.brief_content === null;
+        const sameBrief = input.brief
+          ? existing.brief_revision_hash ===
+              cornerBriefRevisionHash(input.brief, existing.brief_attachments ?? []) &&
+            existing.brief_change === (input.brief.change ?? null) &&
+            sameAttachments
+          : existing.brief_revision === null;
         if (
           existing.owner_agent_id !== agentId ||
           existing.request_id !== input.requestId ||
@@ -6138,7 +6435,7 @@ export class DaemonService {
       }
       const parentCommand = await authorizeCommandOutput(
         db,
-        input.roomId,
+        commandRoomId,
         agentId,
         input.requestId,
         input.generationId,
@@ -6156,7 +6453,7 @@ export class DaemonService {
         [
           cornerId,
           parent.workspace_id,
-          input.roomId,
+          roomId,
           agentId,
           name,
           input.repository ?? null,
@@ -6167,7 +6464,7 @@ export class DaemonService {
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
          SELECT workspace_id,$2,identity_id,role,event_subscriptions FROM memberships
          WHERE room_id=$1 AND removed_at IS NULL ON CONFLICT DO NOTHING`,
-        [input.roomId, cornerId],
+        [roomId, cornerId],
       );
       await db.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')
@@ -6193,17 +6490,16 @@ export class DaemonService {
         ],
       );
       if (input.brief) {
-        if (!isStructuredCornerBrief(input.brief))
-          throw new Error('new corners cannot use the legacy opaque brief format');
+        const sourceRoomIds = [...new Set([roomId, commandRoomId])];
         const explicitAttachments = await resolveCornerBriefAttachments(
           db,
-          input.roomId,
+          sourceRoomIds,
           input.brief,
         );
         const attachments = [
           ...explicitAttachments,
           ...(await resolvePendingCornerBriefAttachments(db, {
-            roomId: input.roomId,
+            roomId: commandRoomId,
             agentId,
             requestId: input.requestId,
             generationId: input.generationId,
@@ -6213,31 +6509,25 @@ export class DaemonService {
         if (attachments.length > 16) throw new Error('corner brief has too many attachments');
         const authority = await resolveCornerBriefApproval(
           db,
-          [input.roomId],
+          sourceRoomIds,
           input.brief,
           attachments,
           parentCommand.root_source_message_id,
         );
         await db.query(
           `INSERT INTO corner_brief_revisions(
-             corner_id,revision,content,intent_verbatim,build_spec,criteria,non_goals,
-             brief_references,approval_basis,revision_hash,change,author_id,
+             corner_id,revision,spec,approval_basis,revision_hash,change,author_id,
              source_room_id,source_message_id,attachments
-           ) VALUES($1,1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+           ) VALUES($1,1,$2,$3,$4,$5,$6,$7,$8,$9)`,
           [
             cornerId,
-            input.brief.buildSpec.trim(),
-            JSON.stringify(input.brief.intentVerbatim),
-            input.brief.buildSpec.trim(),
-            JSON.stringify(input.brief.criteria),
-            JSON.stringify(input.brief.nonGoals ?? []),
-            JSON.stringify(input.brief.references),
+            input.brief.spec.trim(),
             JSON.stringify(authority.approvalBasis),
             authority.revisionHash,
             input.brief.change ?? null,
             agentId,
             authority.sourceRoomId,
-            input.brief.approvalBasis.sourceMessageId,
+            input.brief.approval.sourceMessageId,
             JSON.stringify(attachments),
           ],
         );
@@ -6260,7 +6550,7 @@ export class DaemonService {
       // a daemon-fact card. Corner lifecycle is outside the push ceiling
       // (`background.ts`), so this marker never notifies a device.
       await systemLine(db, {
-        roomId: input.roomId,
+        roomId,
         subject: { kind: 'agent', id: agentId, name: opener.name },
         verb: 'opened a corner',
         kind: 'corner-opened',
@@ -6270,20 +6560,18 @@ export class DaemonService {
         cardType: 'daemon-fact',
         card: { type: 'corner-open', cornerId, name, objective },
       });
-      await startCornerWorkflowRun(db, {
-        cornerId,
-        workspaceId: parent.workspace_id,
+      await advanceCorner(db, cornerId, {
+        kind: 'open',
         lane,
+        workspaceId: parent.workspace_id,
         implementerAgentId: agentId,
       });
     });
-    this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'corner', agentId });
+    this.live.publish({ type: 'invalidate', roomId, reason: 'corner', agentId });
     return { cornerId };
   }
   private async reviseCornerBrief(input: Input<'reviseCornerBrief'>, agentId: string) {
     validateCornerBrief(input.brief);
-    if (!isStructuredCornerBrief(input.brief))
-      throw new Error('corner brief revisions require the structured authority contract');
     const draft = input.brief;
     if (!draft.change?.trim())
       throw new Error('corner brief revision requires a change description');
@@ -6308,7 +6596,11 @@ export class DaemonService {
       const current = await currentCornerBrief(db, input.cornerId);
       if ((current?.revision ?? 0) !== input.expectedRevision)
         throw new Error('corner brief revision changed; read the current assignment');
-      const explicitAttachments = await resolveCornerBriefAttachments(db, corner.parent_id, draft);
+      const explicitAttachments = await resolveCornerBriefAttachments(
+        db,
+        [corner.parent_id],
+        draft,
+      );
       const attachments = [
         ...explicitAttachments,
         ...(await resolvePendingCornerBriefAttachments(db, {
@@ -6330,25 +6622,19 @@ export class DaemonService {
       const revision = input.expectedRevision + 1;
       await db.query(
         `INSERT INTO corner_brief_revisions(
-           corner_id,revision,content,intent_verbatim,build_spec,criteria,non_goals,
-           brief_references,approval_basis,revision_hash,change,author_id,
+           corner_id,revision,spec,approval_basis,revision_hash,change,author_id,
            source_room_id,source_message_id,attachments
-         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
         [
           input.cornerId,
           revision,
-          draft.buildSpec.trim(),
-          JSON.stringify(draft.intentVerbatim),
-          draft.buildSpec.trim(),
-          JSON.stringify(draft.criteria),
-          JSON.stringify(draft.nonGoals ?? []),
-          JSON.stringify(draft.references),
+          draft.spec.trim(),
           JSON.stringify(authority.approvalBasis),
           authority.revisionHash,
           draft.change?.trim() ?? null,
           agentId,
           authority.sourceRoomId,
-          draft.approvalBasis.sourceMessageId,
+          draft.approval.sourceMessageId,
           JSON.stringify(attachments),
         ],
       );
@@ -6488,12 +6774,6 @@ export class DaemonService {
   }
   private async archiveCorner(cornerId: string, agentId: string) {
     const parentId = await this.database.transaction(async (database) => {
-      const fact = await database.query<{ lane: string }>(
-        `SELECT lane FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
-        [cornerId],
-      );
-      if (fact.rows[0]?.lane === 'research')
-        throw new Error('research corners require a human to close them');
       return (await closeCornerState(database, cornerId)).parentId;
     });
     this.live.publish({ type: 'invalidate', roomId: cornerId, reason: 'corner', agentId });
@@ -6569,6 +6849,16 @@ export class DaemonService {
       )
         throw new Error('corner lane upgrade requires a repository-backed parent Room');
 
+      const featureBranch = `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`;
+      await advanceCorner(db, cornerId, {
+        kind: 'upgrade',
+        contents: {
+          branch: featureBranch,
+          repositoryRoute: target.repository_key ?? target.repository_remote ?? '',
+          ciCallbackRegistered: true,
+          mergeTarget: target.repository_target_branch,
+        },
+      });
       await db.query(
         `UPDATE corner_facts
          SET lane='code',owner_agent_id=COALESCE(owner_agent_id,$2),updated_at=now()
@@ -6578,7 +6868,6 @@ export class DaemonService {
       // GitHub's PR and check events find a corner only by its recorded branch.
       // The daemon records it on start only when it restarts as the corner's
       // owner, so an upgraded corner records it here instead.
-      const featureBranch = `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`;
       await db.query(
         `UPDATE corner_facts
          SET feature_branch=$2,
@@ -6587,25 +6876,6 @@ export class DaemonService {
          WHERE corner_id=$1 AND feature_branch IS NULL AND NOT lifecycle ? 'pr'`,
         [cornerId, featureBranch],
       );
-      await noteCornerWorkflowTransition(db, {
-        cornerId,
-        expectedFromState: 'no_code_work',
-        outcome: 'upgrade_requested',
-        toState: 'upgrade_to_code',
-        contents: {},
-      });
-      await noteCornerWorkflowTransition(db, {
-        cornerId,
-        expectedFromState: 'upgrade_to_code',
-        outcome: 'upgraded',
-        toState: 'implement',
-        contents: {
-          branch: featureBranch,
-          repositoryRoute: target.repository_key ?? target.repository_remote ?? '',
-          ciCallbackRegistered: true,
-          mergeTarget: target.repository_target_branch,
-        },
-      });
       // A repository corner works from a brief. This one already existed as
       // chat, so its discussion so far is what the brief has to carry, written
       // by the server rather than the agent whose work it authorizes. A corner
@@ -6617,32 +6887,30 @@ export class DaemonService {
         await ensureSystemIdentity(db);
         const draft = await composeCornerUpgradeBrief(db, cornerId, {
           sourceMessageId: command.source_message_id,
-          snapshot: requester.text,
+          text: requester.text,
         });
+        const attachments = await resolveCornerBriefAttachments(db, [cornerId], draft);
         const authority = await resolveCornerBriefApproval(
           db,
           [cornerId],
           draft,
-          [],
+          attachments,
           command.source_message_id,
         );
         await db.query(
           `INSERT INTO corner_brief_revisions(
-             corner_id,revision,content,intent_verbatim,build_spec,criteria,non_goals,
-             brief_references,approval_basis,revision_hash,author_id,
+             corner_id,revision,spec,approval_basis,revision_hash,author_id,
              source_room_id,source_message_id,attachments
-           ) VALUES($1,1,$2,$3,$4,$5,'[]'::jsonb,'[]'::jsonb,$6,$7,$8,$9,$10,'[]'::jsonb)`,
+           ) VALUES($1,1,$2,$3,$4,$5,$6,$7,$8::jsonb)`,
           [
             cornerId,
-            draft.buildSpec.trim(),
-            JSON.stringify(draft.intentVerbatim),
-            draft.buildSpec.trim(),
-            JSON.stringify(draft.criteria),
+            draft.spec.trim(),
             JSON.stringify(authority.approvalBasis),
             authority.revisionHash,
             SYSTEM_IDENTITY_ID,
             authority.sourceRoomId,
             command.source_message_id,
+            JSON.stringify(attachments),
           ],
         );
       }
@@ -6986,6 +7254,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   proposeInstitutionalMemory: true,
   searchInstitutionalMemory: true,
   searchInstitutionalHistory: true,
+  getInstitutionalMemoryTurnStats: true,
   loadWorkspaceSkill: true,
   saveSkill: true,
   saveWorkflow: true,
@@ -7057,6 +7326,8 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postAgentMachineReport: true,
   getConnectorAssignments: true,
   getGoogleOAuthGrant: true,
+  createLinkSpendRequest: true,
+  retrieveLinkSpendRequest: true,
   getRoomGoogleGrant: true,
   beginRegistryMcpOAuth: true,
   claimRegistryMcpOAuthCode: true,
@@ -7073,6 +7344,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postCornerPlan: true,
   putCornerApp: true,
   requestCornerAppOpen: true,
+  renameCorner: true,
   postTargetBranchProposal: true,
   requestAgentGrant: true,
   askRoomChoice: true,
@@ -7102,6 +7374,8 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getWalletToolQuote: true,
   walletPay: true,
   walletSwap: true,
+  reportFeedback: true,
+  notifyFeedbackFixed: true,
 };
 export const DAEMON_OPERATION_NAMES = new Set(
   Object.keys(DAEMON_OPERATION_ROUTES) as (keyof DaemonOperationMap)[],

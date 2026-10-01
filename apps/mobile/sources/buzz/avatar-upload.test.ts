@@ -1,5 +1,16 @@
-import { describe, expect, it } from 'vitest';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
 import { canonicalizeAvatarPng } from './avatar-png';
+
+const imagePicker = vi.hoisted(() => ({
+  requestMediaLibraryPermissionsAsync: vi.fn(),
+  launchImageLibraryAsync: vi.fn(async () => ({ canceled: true, assets: null })),
+}));
+
+vi.mock('expo-image-picker', () => imagePicker);
+vi.mock('expo-image-manipulator', () => ({ manipulateAsync: vi.fn(), SaveFormat: { PNG: 'png' } }));
+vi.mock('@/utils/readFileBytes', () => ({ readFileBytes: vi.fn() }));
 
 const signature = [137, 80, 78, 71, 13, 10, 26, 10];
 
@@ -54,5 +65,33 @@ describe('avatar PNG normalization', () => {
 
   it('rejects incomplete containers before the relay request', () => {
     expect(() => canonicalizeAvatarPng(new Uint8Array(signature))).toThrow('incomplete PNG');
+  });
+});
+
+describe('photo picker permission', () => {
+  it('opens the system picker without asking for photo library access', async () => {
+    const { pickAndUploadAvatar } = await import('./avatar-upload');
+
+    await expect(pickAndUploadAvatar({} as never)).resolves.toBeNull();
+
+    expect(imagePicker.launchImageLibraryAsync).toHaveBeenCalledTimes(1);
+    expect(imagePicker.requestMediaLibraryPermissionsAsync).not.toHaveBeenCalled();
+  });
+
+  it('keeps library and camera permission requests out of the app sources', () => {
+    const root = join(__dirname, '..');
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) walk(path);
+        else if (/\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name)) {
+          const text = readFileSync(path, 'utf8');
+          if (/request(MediaLibrary|Camera)PermissionsAsync/.test(text)) offenders.push(path);
+        }
+      }
+    };
+    walk(root);
+    expect(offenders).toEqual([]);
   });
 });

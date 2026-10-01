@@ -1,6 +1,5 @@
 import * as ImagePicker from 'expo-image-picker';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
-import { Platform } from 'react-native';
 import type { BuzzClient } from '@beeline/buzz-client';
 import { canonicalizeAvatarPng } from '@/buzz/avatar-png';
 import { readFileBytes } from '@/utils/readFileBytes';
@@ -10,13 +9,8 @@ const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
 /** Pick and crop an avatar. The workspace setter promotes the upload into
  * durable server-owned avatar storage before acknowledging the change. */
 export async function pickAndUploadAvatar(client: BuzzClient): Promise<string | null> {
-  // Android's system photo picker grants access to the selected URI without a
-  // broad media-library permission. The app intentionally blocks READ_MEDIA_*.
-  if (Platform.OS === 'ios') {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (permission.status !== 'granted')
-      throw new Error('Photo access is required to choose a picture.');
-  }
+  // The system photo picker grants access to the selected image without a
+  // broad library permission on iOS and Android.
   const result = await ImagePicker.launchImageLibraryAsync({
     mediaTypes: ['images'],
     allowsMultipleSelection: false,

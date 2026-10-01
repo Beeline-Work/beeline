@@ -50,7 +50,7 @@ describe('using-beeline Room guidance', () => {
     expect(room).toContain('If nothing is actionable for you, do not reply.');
     // The Room asks for the corner's NAME as well as its objective (C89).
     expect(room).toContain(
-      'call open_corner with a name of at most three words, an objective of at most 24 words, and the typed brief',
+      'call open_corner with a name of at most three words, an objective of at most 24 words, and the brief (a spec plus the approving message)',
     );
     expect(room).toContain('Before opening one, consult beeline-triage and beeline-spec');
     expect(room).toContain('If a shell command is refused, say so plainly');
@@ -69,6 +69,17 @@ describe('using-beeline Room guidance', () => {
     expect(markdown).toContain('joined');
     expect(markdown).toContain('You do this yourself');
     expect(markdown).toContain('beeline-agent emit_event');
+  });
+
+  it('tells a model with post-merge work to subscribe to merged, and never to acknowledge a merge', () => {
+    const markdown = usingBeelineSkillMarkdown('test-release');
+    expect(markdown).toContain('A corner merging wakes nobody in its parent Room by default.');
+    expect(markdown).toContain('subscribe to merged in the parent Room, from a turn there, before the merge');
+    expect(markdown).toContain('act only on the corner you are waiting for, post nothing for any other merge');
+    expect(markdown).toContain('take merged back out of your list once nothing is left to wait for');
+    expect(markdown).toContain(
+      'Never post just to acknowledge a merge: the merge card already announces it.',
+    );
   });
 
   it('derives the subscribable kinds from SERVER_EVENT_KINDS so the list cannot drift', () => {
@@ -293,11 +304,23 @@ describe('using-beeline human instruction ranking', () => {
 describe('beeline-review reviewer skill', () => {
   const markdown = beelineReviewSkillMarkdown('test-release');
 
-  it("ends the reviewer's authority at approval and leaves the merge to the author", () => {
+  it("ends the reviewer's authority at approval and leaves the merge to the server", () => {
     expect(markdown).toContain('## 8. Gate and verdict');
     expect(markdown).toContain(
-      'Approving is your last step as reviewer. The author merges it; you never do, and nothing merges it automatically.',
+      'then reply `approved <reviewed sha>` without tagging the author. Do not tell the author to merge.',
     );
+    expect(markdown).not.toContain('approved <reviewed sha>, merge');
+    expect(markdown).toContain(
+      'Approving is your last step as reviewer. The server squash-merges that exact head once checks are green',
+    );
+    expect(markdown).toContain('Neither you nor the author merges it.');
+    expect(markdown).toContain(
+      'mergeAllowed true for the current head; the server then merges that head.',
+    );
+  });
+
+  it('never instructs anyone to run gh pr merge', () => {
+    expect(markdown).not.toContain('gh pr merge');
   });
 
   it('carries no bare never-merge sentence the implementer could borrow', () => {
@@ -334,13 +357,17 @@ describe('beeline-review reviewer skill', () => {
     expect(markdown).toContain('proof of that reproduction (or none obtained + regression):');
   });
 
-  it('treats verbatim intent and every criterion as product truth', () => {
-    expect(markdown).toContain(
-      'Quote every verbatim human-intent entry with its source message ID',
-    );
+  it('treats the spec checklist as scope and lets the approval quote win', () => {
+    expect(markdown).toContain('Quote the approval with its message ID and approver');
+    expect(markdown).toContain("The spec's checklist is the scope");
+    expect(markdown).toContain('it wins any conflict with the spec');
     expect(markdown).toContain('short objective is navigation-only text');
-    expect(markdown).toContain('List every current criterion ID exactly once');
-    expect(markdown).toContain('criterion ledger (every current ID + status + evidence):');
+    expect(markdown).toContain('List every checklist line exactly once');
+    expect(markdown).toContain(
+      'checklist ledger (every checklist line + status + evidence):',
+    );
+    expect(markdown).toContain('the affected checklist line or `engineering`');
+    expect(markdown).not.toMatch(/criteri|AC-\d|revision and hash/);
     expect(markdown).toContain('product-completeness findings (block):');
     expect(markdown).toContain('engineering findings (block):');
     expect(markdown).toContain('stable ID that survives rereview');
@@ -364,18 +391,21 @@ describe('beeline-spec planning skill', () => {
     expect(markdown).toContain('Do not recursively review the review');
   });
 
-  it('defines typed authority and proportional durable approval without blanket go', () => {
-    for (const field of [
-      'intentVerbatim[]',
-      'buildSpec',
-      'criteria[]',
-      'references[]',
-      'approvalBasis',
+  it('defines a spec, files, and one approving message without blanket go', () => {
+    for (const part of [
+      '`spec`',
+      '`## Intent`',
+      '`## Checklist`',
+      '`## Non-goals`',
+      '`## References`',
+      '`attachments`',
+      '`approval`: one human Room message ID',
     ])
-      expect(markdown).toContain(field);
+      expect(markdown).toContain(part);
+    expect(markdown).not.toMatch(/intentVerbatim|buildSpec|approvalBasis|criteria\[\]/);
     expect(markdown).toContain('Do not infer approval from silence');
     expect(markdown).toContain('Dispatch without a proposal/go ceremony');
-    expect(markdown).toContain('server records it against the exact revision hash');
+    expect(markdown).toContain("ask the corner's opener to approve it");
     expect(markdown).toContain('added automatically to the brief attachment manifest');
   });
 });

@@ -336,6 +336,13 @@ describe('phone surface readers', () => {
     expect(view?.messages.map((row) => row.text)).toEqual(['Change course', 'kept']);
   });
 
+  it('preserves a corner opener and drops an invalid opener id', () => {
+    expect(readRoomView({ ...currentRoom, cornerOpenerAgentId: 'b'.repeat(64) })?.cornerOpenerAgentId)
+      .toBe('b'.repeat(64));
+    expect(readRoomView({ ...currentRoom, cornerOpenerAgentId: 'invalid' })?.cornerOpenerAgentId)
+      .toBeUndefined();
+  });
+
   it('keeps valid read-cursor counts and drops malformed turn counts', () => {
     const cursor = { messageId: null, firstUnreadMessageId: 'b'.repeat(64), unreadCount: 15 };
     expect(

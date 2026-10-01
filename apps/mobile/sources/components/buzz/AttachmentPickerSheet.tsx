@@ -43,15 +43,14 @@ export function AttachmentPickerSheet({
           testID="attachment-picker-photo"
         />
         <HullActionSheetRow
-          label="Send as file"
+          label="Files"
           metadata="Preserve original"
           onPress={() => choose(onPickDocument)}
           testID="attachment-picker-document"
         />
         {onPickPasted && (
           <HullActionSheetRow
-            label="Paste Image"
-            metadata="From clipboard"
+            label="Paste from clipboard"
             onPress={() => choose(onPickPasted)}
             testID="attachment-picker-paste"
           />
@@ -76,15 +75,14 @@ export function AttachmentPickerSheet({
         testID="attachment-picker-photo"
       />
       <HullActionSheetRow
-        label="Send as file"
+        label="Files"
         metadata="Preserve original"
         onPress={() => choose(onPickDocument)}
         testID="attachment-picker-document"
       />
       {onPickPasted && (
         <HullActionSheetRow
-          label="Paste Image"
-          metadata="From clipboard"
+          label="Paste from clipboard"
           onPress={() => choose(onPickPasted)}
           testID="attachment-picker-paste"
         />

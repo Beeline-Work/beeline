@@ -231,6 +231,195 @@ describe('save_workflow', () => {
   });
 });
 
+/** The MM desk contract from the experiments Room; it passes the validator as written. */
+const MM_DESK = {
+  version: 1,
+  name: 'mm-desk-day',
+  description: 'One UTC day of the MM desk: watch, risk, summary',
+  roles: ['watcher', 'risk', 'summarizer'],
+  start: 'watch',
+  handoffs: {
+    watch: {
+      role: 'watcher',
+      requires: ['note'],
+      on: { escalate: 'risk', kill: 'kill_switch', close_day: 'summary' },
+    },
+    risk: {
+      role: 'risk',
+      requires: ['assessment'],
+      on: { resume: 'watch', kill: 'kill_switch' },
+      loop: { onEdge: 'resume', cap: 30, onExceeded: 'too_many_escalations' },
+    },
+    too_many_escalations: {
+      kind: 'gate',
+      role: 'risk',
+      requires: ['decision'],
+      on: { keep_going: 'watch', stop: 'stopped' },
+    },
+    kill_switch: {
+      kind: 'gate',
+      role: 'risk',
+      requires: ['reason'],
+      on: { resume: 'watch', stop: 'stopped' },
+    },
+    summary: { role: 'summarizer', requires: ['summary'], on: { posted: 'done' } },
+    done: { kind: 'terminal', status: 'done' },
+    stopped: { kind: 'terminal', status: 'failed' },
+  },
+};
+
+describe('save_workflow error reasons', () => {
+  const withStates = (states: Record<string, unknown>) => ({
+    ...MM_DESK,
+    handoffs: { ...MM_DESK.handoffs, ...states },
+  });
+
+  it('saves the MM desk contract', async () => {
+    const command = await commandFor(IMPLEMENTER);
+    await expect(saveWorkflow(database, command, { contract: MM_DESK })).resolves.toEqual({
+      slug: 'mm-desk-day',
+      version: 1,
+    });
+  });
+
+  it('names the rule that failed', async () => {
+    const command = await commandFor(IMPLEMENTER);
+    const cases: Record<string, unknown> = {
+      'handoffs.watch: unknown key "schedule" (a handoff allows role, roleBinding, requires, on, loop, timeoutSeconds)':
+        withStates({
+          watch: { ...MM_DESK.handoffs.watch, schedule: '*/3 * * * *' },
+        }),
+      'description must be 1-60 characters (got 61)': { ...MM_DESK, description: 'x'.repeat(61) },
+      'name must be lowercase words joined by hyphens, at most 64 characters (got "mm_desk_day")': {
+        ...MM_DESK,
+        name: 'mm_desk_day',
+      },
+      'cycle watch -> risk -> watch has no loop cap': withStates({
+        risk: {
+          role: 'risk',
+          requires: ['assessment'],
+          on: { resume: 'watch', kill: 'kill_switch', overflow: 'too_many_escalations' },
+        },
+      }),
+      'state "orphan" is not reachable from start': withStates({
+        orphan: { role: 'watcher', requires: [], on: { done: 'done' } },
+      }),
+      'handoffs.kill_switch: a gate needs 2-4 outcomes (got 1)': withStates({
+        kill_switch: { ...MM_DESK.handoffs.kill_switch, on: { stop: 'stopped' } },
+      }),
+      'handoffs.kill_switch: a gate needs 2-4 outcomes (got 5)': withStates({
+        kill_switch: {
+          ...MM_DESK.handoffs.kill_switch,
+          on: { a: 'watch', b: 'watch', c: 'watch', d: 'stopped', e: 'stopped' },
+        },
+      }),
+      'at least one terminal state is required': withStates({
+        done: { role: 'summarizer', requires: [], on: { again: 'stopped' } },
+        stopped: { role: 'risk', requires: [], on: { again: 'done' } },
+      }),
+      'contract must be a JSON object': [],
+      'unknown key "schedule" at the top level': { ...MM_DESK, schedule: '*/3 * * * *' },
+      'version must be 1': { ...MM_DESK, version: 2 },
+      'description must be a string': { ...MM_DESK, description: 5 },
+      'description must be 1-60 characters (got 0)': { ...MM_DESK, description: '' },
+      'roles must be 1-16 unique lowercase names (letters, digits, _ or -)': { ...MM_DESK, roles: [] },
+      'handoffs must be an object of named states': { ...MM_DESK, handoffs: [] },
+      'handoffs must have 2-64 states (got 1)': { ...MM_DESK, handoffs: { watch: MM_DESK.handoffs.watch } },
+      'start must name a state in handoffs (got "nowhere")': { ...MM_DESK, start: 'nowhere' },
+      'externalOutcomes must be up to 16 unique outcome names': { ...MM_DESK, externalOutcomes: ['Bad'] },
+      'handoffs: state name "Bad" must be lowercase letters, digits, _ or -': withStates({
+        Bad: { kind: 'terminal', status: 'done' },
+      }),
+      'handoffs.orphan must be an object': withStates({ orphan: 'x' }),
+      'handoffs.done: unknown key "note" (a terminal allows kind, status)': withStates({
+        done: { kind: 'terminal', status: 'done', note: 'x' },
+      }),
+      'handoffs.done: terminal status must be done, failed or abandoned': withStates({
+        done: { kind: 'terminal', status: 'ok' },
+      }),
+      'handoffs.parked: unknown key "on" (a waiting state allows kind, role)': withStates({
+        parked: { kind: 'waiting', on: {} },
+      }),
+      'handoffs.parked: role "ghost" is not in roles': withStates({
+        parked: { kind: 'waiting', role: 'ghost' },
+      }),
+      'handoffs.summary: kind must be gate, server, terminal or waiting, or omitted for a handoff': withStates({
+        summary: { ...MM_DESK.handoffs.summary, kind: 'timer' },
+      }),
+      'handoffs.kill_switch: unknown key "loop" (a gate allows kind, role, requires, on)': withStates({
+        kill_switch: {
+          ...MM_DESK.handoffs.kill_switch,
+          loop: { onEdge: 'resume', cap: 3, onExceeded: 'stopped' },
+        },
+      }),
+      'handoffs.summary: role "ghost" is not in roles': withStates({
+        summary: { kind: 'server', role: 'ghost', requires: [], on: { posted: 'done' } },
+      }),
+      'handoffs.watch: role "ghost" is not in roles': withStates({
+        watch: { ...MM_DESK.handoffs.watch, role: 'ghost' },
+      }),
+      'handoffs.watch: roleBinding must look like live:parent.field': withStates({
+        watch: { ...MM_DESK.handoffs.watch, roleBinding: 'parent.watcher' },
+      }),
+      'handoffs.summary: requires must be a list of up to 32 unique field names': withStates({
+        summary: { ...MM_DESK.handoffs.summary, requires: ['summary', 'summary'] },
+      }),
+      'handoffs.summary: on must be an object of outcome -> state': withStates({
+        summary: { ...MM_DESK.handoffs.summary, on: 'done' },
+      }),
+      'handoffs.summary: on needs 1-16 outcomes (got 0)': withStates({
+        summary: { ...MM_DESK.handoffs.summary, on: {} },
+      }),
+      'handoffs.summary: outcome "Posted" must be lowercase letters, digits, _ or -': withStates({
+        summary: { ...MM_DESK.handoffs.summary, on: { Posted: 'done' } },
+      }),
+      [`handoffs.kill_switch: outcome "${'a'.repeat(33)}" is longer than 32 characters`]: withStates({
+        kill_switch: { ...MM_DESK.handoffs.kill_switch, on: { ['a'.repeat(33)]: 'watch', stop: 'stopped' } },
+      }),
+      'handoffs.summary: outcome "posted" goes to "nowhere", which is not a state': withStates({
+        summary: { ...MM_DESK.handoffs.summary, on: { posted: 'nowhere' } },
+      }),
+      'handoffs.summary: timeoutSeconds must be a whole number from 60 to 2592000': withStates({
+        summary: { ...MM_DESK.handoffs.summary, timeoutSeconds: 30, on: { posted: 'done', timeout: 'done' } },
+      }),
+      'handoffs.summary: timeoutSeconds needs a "timeout" outcome in on': withStates({
+        summary: { ...MM_DESK.handoffs.summary, timeoutSeconds: 600 },
+      }),
+      'handoffs.risk: loop must be { onEdge, cap, onExceeded }': withStates({
+        risk: { ...MM_DESK.handoffs.risk, loop: { ...MM_DESK.handoffs.risk.loop, every: '3m' } },
+      }),
+      'handoffs.risk: loop.onEdge "escalate" is not an outcome in on': withStates({
+        risk: { ...MM_DESK.handoffs.risk, loop: { ...MM_DESK.handoffs.risk.loop, onEdge: 'escalate' } },
+      }),
+      'handoffs.risk: loop.cap must be a whole number from 1 to 100': withStates({
+        risk: { ...MM_DESK.handoffs.risk, loop: { ...MM_DESK.handoffs.risk.loop, cap: 101 } },
+      }),
+      'handoffs.risk: loop.onExceeded "nowhere" is not a state': withStates({
+        risk: { ...MM_DESK.handoffs.risk, loop: { ...MM_DESK.handoffs.risk.loop, onExceeded: 'nowhere' } },
+      }),
+      'handoffs.risk: loop.onExceeded must differ from where loop.onEdge goes': withStates({
+        risk: { ...MM_DESK.handoffs.risk, loop: { ...MM_DESK.handoffs.risk.loop, onExceeded: 'watch' } },
+      }),
+      'externalOutcomes: "merged" is not an outcome of any state': { ...MM_DESK, externalOutcomes: ['merged'] },
+      'start state "done" must not be a terminal': { ...MM_DESK, start: 'done' },
+      'implicitEdges must be a list of unique state names': { ...MM_DESK, implicitEdges: 'done' },
+      'implicitEdges: "watch" is not a terminal state': { ...MM_DESK, implicitEdges: ['watch'] },
+    };
+    const reasons: Record<string, string> = {};
+    for (const [reason, contract] of Object.entries(cases)) {
+      reasons[reason] = await saveWorkflow(database, command, { contract }).then(
+        () => 'saved',
+        (error: Error) => error.message,
+      );
+    }
+    expect(reasons).toEqual(
+      Object.fromEntries(
+        Object.keys(cases).map((reason) => [reason, `workflow contract is invalid: ${reason}`]),
+      ),
+    );
+  });
+});
+
 describe('start_workflow', () => {
   it('rejects a role with no binding', async () => {
     const command = await commandFor(IMPLEMENTER);
@@ -252,6 +441,27 @@ describe('start_workflow', () => {
         roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: 'f'.repeat(64) },
       }),
     ).rejects.toThrow('is not a current member of this Room');
+  });
+
+  it('binds an @handle role to the current Room member with that handle', async () => {
+    await database.query(`UPDATE identities SET handle='ravi' WHERE id=$1`, [REVIEWER]);
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: CONTRACT });
+    const started = await startWorkflow(database, command, {
+      name: 'corner',
+      roleBindings: { implementer: IMPLEMENTER, reviewer: '@ravi', approver: APPROVER },
+    });
+    const card = await database.query<{ card: { roleBindings: Record<string, string> } }>(
+      `SELECT card FROM messages WHERE id=$1`,
+      [started.runId],
+    );
+    expect(card.rows[0]?.card.roleBindings.reviewer).toBe(REVIEWER);
+    await expect(
+      startWorkflow(database, command, {
+        name: 'corner',
+        roleBindings: { implementer: IMPLEMENTER, reviewer: '@nobody', approver: APPROVER },
+      }),
+    ).rejects.toThrow('@nobody is not a current member of this Room');
   });
 
   it('posts a run and wakes the start role agent', async () => {
@@ -733,6 +943,19 @@ describe('class roles', () => {
     ).rejects.toThrow('does not carry the "heavy" tag');
   });
 
+  it('assign_workflow_role binds the Room member a handle from the member list names', async () => {
+    await database.query(`UPDATE identities SET handle='heavya' WHERE id=$1`, [HEAVY_A]);
+    await reportPresence(HEAVY_A, 'offline');
+    await reportPresence(HEAVY_B, 'offline');
+    const { runId } = await startedClassRun();
+    const command = await commandFor(IMPLEMENTER);
+    await assignWorkflowRole(database, command, { runId, role: 'worker', targetAgentId: '@heavya' });
+    expect((await classRunCard(runId)).roleBindings.worker).toBe(HEAVY_A);
+    await expect(
+      assignWorkflowRole(database, command, { runId, role: 'worker', targetAgentId: 'nobody' }),
+    ).rejects.toThrow('@nobody is not a current member of this Room');
+  });
+
   it('rejects assign_workflow_role for a role bound to one fixed agent', async () => {
     const { runId } = await startedClassRun();
     const worker = (await classRunCard(runId)).roleBindings.worker;
@@ -747,5 +970,81 @@ describe('class roles', () => {
     await expect(
       assignWorkflowRole(database, command, { runId, role: 'closer', targetAgentId: HEAVY_A }),
     ).rejects.toThrow('not class-bound');
+  });
+});
+
+describe('member handles as workflow role bindings', () => {
+  it('binds a bare member handle to that member instead of reading it as a class/tag', async () => {
+    await database.query(`UPDATE identities SET handle='candy' WHERE id=$1`, [HEAVY_A]);
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: CLASS_CONTRACT });
+    const started = await startWorkflow(database, command, {
+      name: 'class-flow',
+      roleBindings: { worker: 'candy', closer: APPROVER },
+    });
+    expect(started.state).toBe('work');
+    const card = await classRunCard(started.runId);
+    expect(card.roleBindings.worker).toBe(HEAVY_A);
+    expect(card.roleBindings.closer).toBe(APPROVER);
+    // The bound member is the one dispatched, never a class placeholder.
+    expect(await pendingCommandsFor(HEAVY_A)).toBeGreaterThan(0);
+  });
+
+  it('refuses a class word no current Room member carries, at start, before any card is written', async () => {
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: CLASS_CONTRACT });
+    await expect(
+      startWorkflow(database, command, {
+        name: 'class-flow',
+        roleBindings: { worker: 'nosuchclass', closer: APPROVER },
+      }),
+    ).rejects.toThrow('no current Room member carries');
+    const cards = await database.query(
+      `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='workflow-handoff'`,
+      [ROOM],
+    );
+    expect(cards.rowCount).toBe(0);
+    expect(await pendingCommandsFor(HEAVY_A)).toBe(0);
+    expect(await pendingCommandsFor(HEAVY_B)).toBe(0);
+  });
+
+  it('a member handle wins over a custom tag of the same word (a tag never shares a member handle)', async () => {
+    await database.query(`UPDATE identities SET handle='candy' WHERE id=$1`, [HEAVY_A]);
+    await database.query(`UPDATE agents SET custom_tags=$2::jsonb WHERE agent_id=$1`, [
+      HEAVY_B,
+      JSON.stringify(['candy']),
+    ]);
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: CLASS_CONTRACT });
+    const started = await startWorkflow(database, command, {
+      name: 'class-flow',
+      roleBindings: { worker: 'candy', closer: APPROVER },
+    });
+    const card = await classRunCard(started.runId);
+    // The word names the member by handle, not the tag's carrier.
+    expect(card.roleBindings.worker).toBe(HEAVY_A);
+    expect(await pendingCommandsFor(HEAVY_A)).toBeGreaterThan(0);
+    expect(await pendingCommandsFor(HEAVY_B)).toBe(0);
+  });
+
+  it('assign_workflow_role names who may take the role when the target does not carry the tag', async () => {
+    await database.query(`UPDATE identities SET handle='heavya' WHERE id=$1`, [HEAVY_A]);
+    await database.query(`UPDATE identities SET handle='heavyb' WHERE id=$1`, [HEAVY_B]);
+    await reportPresence(HEAVY_A, 'offline');
+    await reportPresence(HEAVY_B, 'offline');
+    const { runId } = await startedClassRun();
+    const command = await commandFor(IMPLEMENTER);
+    const error = await assignWorkflowRole(database, command, {
+      runId,
+      role: 'worker',
+      targetAgentId: REVIEWER,
+    }).then(
+      () => null,
+      (e: Error) => e.message,
+    );
+    expect(error).toContain('does not carry the "heavy" tag');
+    // The eligibility error names the exact agents that carry the class.
+    expect(error).toContain('@heavya');
+    expect(error).toContain('@heavyb');
   });
 });

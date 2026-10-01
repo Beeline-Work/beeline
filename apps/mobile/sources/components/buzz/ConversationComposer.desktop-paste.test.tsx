@@ -21,6 +21,12 @@ vi.mock('expo-haptics', () => ({
   impactAsync: vi.fn(),
   ImpactFeedbackStyle: { Medium: 'medium' },
 }));
+vi.mock('./HullDialog', async () => {
+  const ReactModule = await import('react');
+  return {
+    HullDialog: (props: any) => ReactModule.createElement('HullDialog', props),
+  };
+});
 vi.mock('react-native-svg', () => ({
   default: (props: any) => null,
   Svg: (props: any) => null,

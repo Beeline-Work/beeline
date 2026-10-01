@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { execFile, execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -243,15 +243,11 @@ it('retires a running no-code session and restarts the same corner with a real b
     expect(staged.coordinator.activeRoomIds()).toContain(CORNER);
     expect(staged.token).toHaveBeenCalledWith(ROOM);
     expect(existsSync(join(worktree, 'widget.txt'))).toBe(true);
-    expect(existsSync(join(worktree, 'pending.txt'))).toBe(true);
-    expect(existsSync(join(worktree, '.env'))).toBe(true);
-    expect(existsSync(join(worktree, 'node_modules', 'local.txt'))).toBe(true);
-    expect((await git('git', ['-C', worktree, 'show', 'HEAD:pending.txt'])).stdout).toBe(
-      'written before promotion\n',
-    );
-    expect((await git('git', ['-C', worktree, 'rev-list', '--count', 'origin/main..HEAD'])).stdout.trim()).toBe('1');
-    await expect(git('git', ['-C', worktree, 'cat-file', '-e', 'HEAD:.env'])).rejects.toThrow();
-    await expect(git('git', ['-C', worktree, 'cat-file', '-e', 'HEAD:node_modules/local.txt'])).rejects.toThrow();
+    // The no-code scratch is that session's own; the code branch starts clean.
+    expect(existsSync(join(worktree, 'pending.txt'))).toBe(false);
+    expect(existsSync(join(worktree, '.env'))).toBe(false);
+    expect(existsSync(join(worktree, 'node_modules', 'local.txt'))).toBe(false);
+    expect((await git('git', ['-C', worktree, 'rev-list', '--count', 'origin/main..HEAD'])).stdout.trim()).toBe('0');
     expect(existsSync(scratch)).toBe(false);
     expect((await git('git', ['-C', worktree, 'branch', '--show-current'])).stdout.trim()).toBe(
       featureBranch,
@@ -299,11 +295,11 @@ it('refuses to start a promoted corner with no server-assigned feature branch, a
   }
 });
 
-it('carries pre-existing scratch files into the worktree on the exact server-assigned branch', async () => {
-  // The real scratch->worktree carry-over (room-runtime.ts:1338-1372) against
-  // a real git fixture: files written before promotion land on the exact
-  // branch the server recorded, committed in one commit.
-  const fixture = await mkdtemp(join(tmpdir(), 'beeline-lane-upgrade-carryover-'));
+it('starts a promoted corner on the exact server-assigned branch without its no-code scratch', async () => {
+  // The scratch holds the no-code session's home, whose credential symlinks
+  // once collided with another member's identical carried symlink in the one
+  // shared worktree, and Node's cp threw ERR_FS_CP_EINVAL on every start.
+  const fixture = await mkdtemp(join(tmpdir(), 'beeline-lane-upgrade-scratch-'));
   roots.push(fixture);
   const seed = join(fixture, 'seed');
   const remote = join(fixture, 'remote.git');
@@ -324,34 +320,36 @@ it('carries pre-existing scratch files into the worktree on the exact server-ass
   await git('git', ['clone', '--bare', seed, remote]);
   const staged = await stageRepositoryRoomCorner('no_code', `file://${remote}`);
   const scratch = join(staged.roomBase, 'rooms', CORNER, 'scratch');
-  await mkdir(scratch, { recursive: true });
+  const credentials = join(scratch, 'agent-home', 'user', '.local', 'share', 'opencode');
+  await mkdir(credentials, { recursive: true });
+  await symlink(join(fixture, 'operator-auth.json'), join(credentials, 'auth.json'));
   await writeFile(join(scratch, 'delivered.txt'), 'drafted before promotion\n');
   const branch = `feature/corner-${CORNER.replaceAll('-', '').slice(0, 12)}`;
   await staged.database.query(
     `UPDATE corner_facts SET lane='code',feature_branch=$2 WHERE corner_id=$1`,
     [CORNER, branch],
   );
+  const worktree = join(staged.supervisorRoot, 'beeline', 'corners', CORNER);
 
   const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
   const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
   try {
     await staged.startCorner();
 
-    const worktree = join(staged.supervisorRoot, 'beeline', 'corners', CORNER);
     expect(staged.coordinator.activeRoomIds()).toContain(CORNER);
     expect(
       (await git('git', ['-C', worktree, 'branch', '--show-current'])).stdout.trim(),
     ).toBe(branch);
     expect(existsSync(join(worktree, 'widget.txt'))).toBe(true);
-    expect(existsSync(join(worktree, 'delivered.txt'))).toBe(true);
-    expect((await git('git', ['-C', worktree, 'log', '-1', '--pretty=%s'])).stdout.trim()).toBe(
-      'Carry no-code corner files into code branch',
-    );
+    expect(existsSync(join(worktree, 'delivered.txt'))).toBe(false);
+    await expect(
+      lstat(join(worktree, 'agent-home', 'user', '.local', 'share', 'opencode', 'auth.json')),
+    ).rejects.toThrow();
     expect(
       (
         await git('git', ['-C', worktree, 'rev-list', '--count', 'origin/main..HEAD'])
       ).stdout.trim(),
-    ).toBe('1');
+    ).toBe('0');
     expect(existsSync(scratch)).toBe(false);
   } finally {
     error.mockRestore();
@@ -477,11 +475,20 @@ it('tells a no-code corner to deliver artifacts and tag the requester, never to 
       agentEnvironment.get('BEELINE_MCP_SURFACE') === 'agent',
       agentEnvironment.get('BEELINE_AGENT_DM') === '1',
       Boolean(agentEnvironment.get('BEELINE_DAEMON_CORNER_ID')),
-      agentEnvironment.get('BEELINE_CORNER_REVIEWER') === '1',
+      agentEnvironment.get('BEELINE_CORNER_LANE') === 'code',
       Boolean(agentEnvironment.get('BEELINE_GRANT_RUNNER_URL')),
       agentEnvironment.get('BEELINE_CORNER_AGENT_CLOSE') === '1',
     ).map((tool) => tool.name),
   ).not.toContain('close_corner');
+  expect(agentEnvironment.get('BEELINE_CORNER_LANE')).toBe('no_code');
+  expect(
+    agentToolsFor(
+      true,
+      false,
+      Boolean(agentEnvironment.get('BEELINE_DAEMON_CORNER_ID')),
+      agentEnvironment.get('BEELINE_CORNER_LANE') === 'code',
+    ).map((tool) => tool.name),
+  ).not.toContain('approve_merge');
   // The requester still has to receive the delivery report.
   expect(prompt).toContain(
     'Tag @ada once, when the deliverable is posted or you need their input.',
@@ -498,10 +505,11 @@ it('offers the one-way code upgrade to the session that actually mounts the tool
 
   const prompt = String(sessionInput?.systemPrompt);
   expect(prompt).toContain('upgrade_corner_to_code');
-  // A clear ask to change the code is enough - a bug report is named as
-  // sufficient, and the old fixed-phrase requirement is gone.
+  // The agent upgrades on its own judgment; no human has to ask for it, and
+  // the old fixed-phrase requirement is gone.
   expect(prompt).toContain(UPGRADE_INTENT_RULE);
-  expect(prompt).toContain('a bug report');
+  expect(prompt).toContain('then write the brief in the restarted code session');
+  expect(prompt).not.toContain('your own initiative');
   expect(prompt).not.toContain('explicitly asks for code edits');
   const agentEnvironment = new Map(
     sessionInput?.mcpServers
@@ -512,7 +520,7 @@ it('offers the one-way code upgrade to the session that actually mounts the tool
     agentEnvironment.get('BEELINE_MCP_SURFACE') === 'agent',
     agentEnvironment.get('BEELINE_AGENT_DM') === '1',
     Boolean(agentEnvironment.get('BEELINE_DAEMON_CORNER_ID')),
-    agentEnvironment.get('BEELINE_CORNER_REVIEWER') === '1',
+    agentEnvironment.get('BEELINE_CORNER_LANE') === 'code',
     Boolean(agentEnvironment.get('BEELINE_GRANT_RUNNER_URL')),
     agentEnvironment.get('BEELINE_CORNER_AGENT_CLOSE') === '1',
     false,

@@ -32,6 +32,9 @@ import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
  * screens never read either implementation directly.
  */
 export interface WorkbenchSource {
+  beginLinkSignIn(): Promise<{ authorizationUrl: string }>;
+  cancelLinkSignIn(state?: string): Promise<void>;
+  disconnectLinkSignIn(): Promise<void>;
   readWorkbench(input: {
     workspaceId: string;
     viewerId: string;
@@ -154,6 +157,18 @@ function toSteps(
  * through the session's own viewer on the server.
  */
 export class MonolithWorkbenchSource implements WorkbenchSource {
+  beginLinkSignIn(): Promise<{ authorizationUrl: string }> {
+    return monolithPhoneOperation('beginLinkSignIn', {});
+  }
+
+  async cancelLinkSignIn(state?: string): Promise<void> {
+    await monolithPhoneOperation('cancelLinkSignIn', { state });
+  }
+
+  async disconnectLinkSignIn(): Promise<void> {
+    await monolithPhoneOperation('disconnectLinkSignIn', {});
+  }
+
   async readWorkbench(input: {
     workspaceId: string;
     viewerId: string;
@@ -164,6 +179,7 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
       ...(input.refreshVault ? { refreshVault: true } : {}),
     });
     return {
+      ...(dto.linkAccount ? { linkAccount: dto.linkAccount } : {}),
       helpers: dto.helpers.map((helper): WorkbenchHelper => ({
         id: helper.id,
         name: helper.name,

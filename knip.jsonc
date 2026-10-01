@@ -69,7 +69,12 @@
         "scripts/corner-sections-proof.tsx",
         "scripts/corner-dropdown-proof.tsx",
         "scripts/new-corner-dialog-proof.tsx",
+        "scripts/composer-dictation-proof.tsx",
         "scripts/page-headers-proof.tsx",
+        "scripts/connect-app-nav-inset-proof.tsx",
+        "scripts/workbench-nav-inset-proof.tsx",
+        "scripts/star-prompt-proof.tsx",
+        "scripts/scheduled-work-proof.tsx",
       ],
       "project": [
         "sources/**/*.{js,ts,tsx}",

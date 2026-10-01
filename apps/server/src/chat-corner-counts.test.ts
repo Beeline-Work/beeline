@@ -42,6 +42,23 @@ describe('chat corner counts', () => {
       undefined,
     ]);
   });
+  it('reads idle with nothing owed and flags only unseen asks for the viewer', () => {
+    const result = chatCornerCounts([
+      { ...row(), commissioned_by_viewer: true, owed: false, owed_viewer: false, attention: false },
+      { ...row(), owed: true, owed_viewer: true, attention: true },
+      { ...row(), owed: true, owed_viewer: true, attention: false },
+      { ...row({}, 'working'), owed: true, owed_viewer: true, attention: true },
+    ]);
+    expect(result.get('room')).toMatchObject({ cornerCount: 4, waitingCornerCount: 2 });
+    expect(
+      result.get('room')?.openCorners.map(({ state, mine, attention }) => [state, mine, attention]),
+    ).toEqual([
+      ['idle', true, undefined],
+      ['waiting', true, true],
+      ['waiting', true, undefined],
+      ['working', true, undefined],
+    ]);
+  });
   it("stamps only the viewer's waiting corners with when they handed back", () => {
     const at = new Date('2026-09-29T12:00:00Z');
     const result = chatCornerCounts([

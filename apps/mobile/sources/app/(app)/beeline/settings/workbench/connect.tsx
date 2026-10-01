@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { Typography } from '@/constants/Typography';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -85,6 +85,7 @@ function ConnectToolFlow() {
   const [install, setInstall] = useState<ConnectorInstallState | null>(null);
   const [selectedHelperName, setSelectedHelperName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pairedHelperRef = useRef<string | null>(null);
@@ -243,7 +244,11 @@ function ConnectToolFlow() {
         testID="connect-header"
         title={connectorName}
       />
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
+      <ScrollView
+        style={styles.content}
+        contentContainerStyle={[styles.contentInner, { paddingBottom: theme.buzz.space.xxl + insets.bottom }]}
+        testID="connect-scroll"
+      >
         {helpers === null && !offerCeremony ? (
           <View style={styles.loading} testID="connect-loading">
             <SurfaceGlyphLoader testID="connect-loader" />

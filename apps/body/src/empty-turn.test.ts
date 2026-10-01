@@ -7,6 +7,7 @@ import {
   describeTurnProviders,
   explainEmptyAgentTurn,
   isAccountOrProviderRefusal,
+  isContextOverflowTurn,
   nextPinnedProvider,
   shouldRetryEmptyTurn,
   turnFailureReasonWithProvider,
@@ -121,6 +122,52 @@ describe('explainEmptyAgentTurn', () => {
     expect(unknown.reason).toBe(
       'pi left no readable turn record; harness ended the turn (end_turn) with no answer text; the stream carried no content updates',
     );
+  });
+
+  it("names pi's recorded context-window refusal as an overflow, and nothing else", async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-empty-turn-'));
+    roots.push(root);
+    const piDir = join(root, 'pi');
+    const sessions = join(piDir, 'sessions', 'p');
+    await mkdir(sessions, { recursive: true });
+    const refusal =
+      "This endpoint's maximum context length is 1048576 tokens. However, you requested about 1053212 tokens (109494 of text input, 943718 in the output).";
+    await writeFile(
+      join(sessions, '2026_overflow.jsonl'),
+      [
+        JSON.stringify({ type: 'message', message: { role: 'user', content: [] } }),
+        JSON.stringify({
+          type: 'message',
+          message: {
+            role: 'assistant',
+            content: [],
+            stopReason: 'error',
+            errorMessage: `400 ${refusal}`,
+          },
+        }),
+      ].join('\n'),
+    );
+    const explained = await explainEmptyAgentTurn({
+      agentLabel: '/opt/bin/pi-acp',
+      agentEnv: { HOME: join(root, 'user'), PI_CODING_AGENT_DIR: piDir },
+      sessionId: 'overflow',
+      result: result([]),
+    });
+    expect(isContextOverflowTurn(explained)).toBe(true);
+    expect(shouldRetryEmptyTurn(explained)).toBe(false);
+    expect(
+      isContextOverflowTurn({
+        reason: 'x',
+        record: { kind: 'error', reason: `provider error 400: ${refusal}`, status: 400 },
+      }),
+    ).toBe(true);
+    expect(
+      isContextOverflowTurn({
+        reason: 'x',
+        record: { kind: 'error', reason: 'provider error 402: no credits', status: 402 },
+      }),
+    ).toBe(false);
+    expect(isContextOverflowTurn({ reason: `harness said: ${refusal}` })).toBe(false);
   });
 
   it('classifies only account/provider-owned HTTP refusals as the model’s own answer', () => {

@@ -20,8 +20,10 @@ import type { ReleaseNotifier } from './release-notify.js';
 import { isMediaId } from './media-ttl.js';
 import type { ObjectService } from './object-service.js';
 import { connectorLogo } from './workbench.js';
+import type { LinkAgentWallet } from './link-agent-wallet.js';
 import type { RegistryMcpOAuth } from './registry-mcp-oauth.js';
 import { InvitePreviewAccess } from './invite-preview.js';
+import { phoneReadLimits, type PhoneReadLimits } from './phone-read-limit.js';
 import type { ConnectionPresence } from './connection-presence.js';
 import { parseDashboardPlatforms, readOperatorDashboard, recordOperatorFunctionEvent } from './operator-dashboard.js';
 import { HelperVersionGate, helperVersionBelowMinimum } from './helper-version-gate.js';
@@ -86,6 +88,7 @@ export interface ServerOptions {
    *  clear 503. */
   objectService?: ObjectService;
   github?: GitHubServerHooks;
+  linkWallet?: LinkAgentWallet;
   registryMcpOAuth?: RegistryMcpOAuth;
   /** Absent when no review secret is configured; the endpoint then refuses like any wrong secret. */
   review?: ReviewAccess;
@@ -100,6 +103,8 @@ export interface ServerOptions {
   authHandler?: (request: IncomingMessage, response: ServerResponse) => void;
   /** Exact browser origins allowed to call the bearer-authenticated HTTP API. */
   webAppOrigins?: readonly string[];
+  /** Per-identity limits on phone history and outline reads; defaults in phone-read-limit.ts. */
+  phoneReadLimits?: PhoneReadLimits;
 }
 
 function applyWebAppCors(
@@ -183,6 +188,18 @@ function tokenFromProtocol(request: IncomingMessage): string | null {
     .find((item) => item.startsWith('bearer.'));
   return value ? value.slice('bearer.'.length) : null;
 }
+/** A named zone such as `Asia/Kolkata`, never a bare offset: Postgres reads
+ * `+05:30` with the POSIX sign, the opposite of ISO. */
+function isIanaTimeZone(value: string): boolean {
+  if (value !== 'UTC' && !/^[A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)+$/.test(value)) return false;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function isInboxCursor(value: unknown): value is string {
   return typeof value === 'string' && /^\d+,[0-9a-f]{64}$/.test(value);
 }
@@ -252,6 +269,7 @@ export function createBeelineServer(options: ServerOptions): Server {
     return releaseLiveDbTask;
   };
   const invitePreview = new InvitePreviewAccess(options.database);
+  const readLimits = options.phoneReadLimits ?? phoneReadLimits();
   const server = createServer((request, response) => {
     const url = exactPath(request.url);
     const method = request.method ?? 'GET';
@@ -288,7 +306,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       return;
     }
     if (isWebAppCorsPath(url.pathname) && applyWebAppCors(request, response, options)) return;
-    void route(request, response, options, invitePreview, liveHealth, helperVersionGate).catch((error) => {
+    void route(request, response, options, invitePreview, readLimits, liveHealth, helperVersionGate).catch((error) => {
       const message = error instanceof Error ? error.message : 'request failed';
       const status =
         message.includes('required') ||
@@ -1037,11 +1055,33 @@ async function route(
   response: ServerResponse,
   options: ServerOptions,
   invitePreview: InvitePreviewAccess,
+  readLimits: PhoneReadLimits,
   liveHealth: () => object,
   helperVersionGate: HelperVersionGate,
 ): Promise<void> {
   const url = exactPath(request.url);
   const method = request.method ?? 'GET';
+  if (method === 'GET' && url.pathname === '/v1/link/oauth/callback') {
+    if (!options.linkWallet) { json(response, 503, { error: 'Link is unavailable' }); return; }
+    const state = url.searchParams.get('state');
+    if (!state) { json(response, 400, { error: 'Link authorization was not completed' }); return; }
+    const result = await options.linkWallet.complete(state,
+      url.searchParams.get('code') ?? undefined, url.searchParams.get('error') ?? undefined,
+      url.searchParams.get('error_description') ?? undefined);
+    if (/\b(?:Android|iPhone|iPad|iPod)\b/i.test(request.headers['user-agent'] ?? '')) {
+      const appReturn = new URL('beeline://beeline/settings/workbench');
+      if (result.ownerId) appReturn.searchParams.set('viewerId', result.ownerId);
+      response.writeHead(302, { location: appReturn.toString(),
+        'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+      response.end();
+    } else {
+      response.writeHead(result.completed ? 200 : 400, { 'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+      response.end(result.completed ? '<p>Link connected. Return to Beeline.</p>'
+        : '<p>Link sign-in did not complete. Return to Beeline and retry.</p>');
+    }
+    return;
+  }
   if (method === 'GET' && url.pathname === '/v1/apps/oauth/verify') {
     const sessionUri = url.searchParams.get('session_uri');
     if (!sessionUri || sessionUri.length > 4096) {
@@ -1561,6 +1601,10 @@ async function route(
   }
   match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)\/history$/);
   if (method === 'GET' && match) {
+    if (!readLimits.history.admit(identityId!)) {
+      json(response, 429, { error: 'too_many_requests' });
+      return;
+    }
     const beforeRaw = url.searchParams.get('before');
     const parsed = beforeRaw?.match(/^(\d+),([0-9a-f]{64})$/);
     const result = await options.phone.readHistory(
@@ -1568,6 +1612,21 @@ async function route(
       identityId!,
       parsed ? { createdAt: Number(parsed[1]), id: parsed[2]! } : undefined,
     );
+    json(response, result ? 200 : 404, result ?? { error: 'not_found' });
+    return;
+  }
+  match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)\/outline$/);
+  if (method === 'GET' && match) {
+    if (!readLimits.outline.admit(identityId!)) {
+      json(response, 429, { error: 'too_many_requests' });
+      return;
+    }
+    const timeZone = url.searchParams.get('tz') ?? '';
+    if (!isIanaTimeZone(timeZone)) {
+      json(response, 400, { error: 'invalid_time_zone' });
+      return;
+    }
+    const result = await options.phone.readHistoryOutline(match[1]!, identityId!, timeZone);
     json(response, result ? 200 : 404, result ?? { error: 'not_found' });
     return;
   }

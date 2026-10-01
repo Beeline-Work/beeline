@@ -15,6 +15,7 @@ import type {
   CompleteInstitutionalMemoryJobInput,
   FailInstitutionalMemoryJobInput,
   InstitutionalContextSnapshot,
+  InstitutionalMemoryTurnStats,
   LoadWorkspaceSkillInput,
   LoadWorkspaceSkillResult,
   ProposeInstitutionalMemoryInput,
@@ -24,6 +25,12 @@ import type {
   SearchInstitutionalMemoryInput,
   SearchInstitutionalMemoryResult,
 } from './institutional-memory.js';
+import type {
+  NotifyFeedbackFixedInput,
+  NotifyFeedbackFixedResult,
+  ReportFeedbackInput,
+  ReportFeedbackResult,
+} from './feedback.js';
 import type {
   WalletPayInput,
   WalletSendOutcome,
@@ -117,7 +124,7 @@ export type CommandClaimInput = RoomInput & {
 export type TurnOutputAuthority = { readonly generationId?: string; readonly requestId?: string };
 export type DaemonOperationMap = {
   /** Claims host-side extraction work. The server never calls a model. */
-  claimInstitutionalMemoryJob: Operation<AgentInput, ClaimInstitutionalMemoryJobResult>;
+  claimInstitutionalMemoryJob: Operation<AgentInput & { readonly extractorVersion?: string }, ClaimInstitutionalMemoryJobResult>;
   heartbeatInstitutionalMemoryJob: Operation<
     AgentInput & { readonly jobId: string; readonly leaseToken: string },
     WriteResult
@@ -138,7 +145,13 @@ export type DaemonOperationMap = {
     SearchInstitutionalHistoryInput,
     SearchInstitutionalHistoryResult
   >;
-  /** Load one restricted procedure after rechecking its source audience. */
+  /** Best-effort read of this turn's search_memory call/miss counters, for
+   *  the daemon's own turn trace; absent counters read as zero. */
+  getInstitutionalMemoryTurnStats: Operation<
+    RoomInput & AgentInput & TurnOutputAuthority,
+    InstitutionalMemoryTurnStats
+  >;
+  /** Load one merge-derived restricted procedure after rechecking its source audience. */
   loadWorkspaceSkill: Operation<LoadWorkspaceSkillInput, LoadWorkspaceSkillResult>;
   /** Save a procedure directly from conversation: no corner, no merge review. */
   saveSkill: Operation<
@@ -148,7 +161,8 @@ export type DaemonOperationMap = {
         readonly description: string;
         readonly markdown: string;
       },
-    { readonly slug: string; readonly version: number }
+    { readonly slug: string; readonly version: number;
+      readonly similarSkills: readonly { readonly slug: string; readonly description: string }[] }
   >;
   /** Validate and save a workflow contract as a `workspace_skills` row of `kind='workflow'`. */
   saveWorkflow: Operation<
@@ -204,9 +218,14 @@ export type DaemonOperationMap = {
   getWorkspaceRoster: Operation<WorkspaceRosterInput, WorkspaceRosterResult>;
   getRoomInbox: Operation<RoomCursorInput, RoomInboxResult>;
   getRoomConversation: Operation<RoomConversationInput, RoomConversationResult>;
-  /** One bounded page of an exact Room message, under current membership. */
+  /** One bounded page of an exact message in this Room or a source authorized for the active turn. */
   getRoomMessage: Operation<
-    RoomInput & { readonly messageId: string; readonly offset?: number },
+    RoomInput & {
+      readonly messageId: string;
+      readonly offset?: number;
+      readonly requestId?: string;
+      readonly generationId?: string;
+    },
     {
       readonly messageId: string;
       readonly body: string;
@@ -274,6 +293,16 @@ export type DaemonOperationMap = {
         status: 'unconfigured' | 'unreachable' | 'waiting' | 'dispatched';
         detail: string;
       };
+      /** True when a person in the corner asked to hold the merge. */
+      held: boolean;
+      /** The corner worker's yolo mode (always off in a public Workspace). */
+      isWorkerYolo: boolean;
+      /**
+       * The complete merge gate: checks passed, reviewer outcome passed,
+       * worker yolo on, no human hold, and a configured reviewer. When it is
+       * true for the corner's current head, the server squash-merges that head.
+       */
+      mergeAllowed: boolean;
       /** States which actor's approve_merge clears the gate, and the human fallback path. */
       rule: string;
     }
@@ -333,6 +362,11 @@ export type DaemonOperationMap = {
   postCornerPlan: Operation<PostCornerPlanInput, WriteResult>;
   putCornerApp: Operation<PutCornerAppInput, CornerAppWriteResult>;
   requestCornerAppOpen: Operation<RequestCornerAppOpenInput, CornerAppWriteResult>;
+  /** Retitles the corner the calling agent is a member of; the name follows `CreateCornerInput.name`'s limits. */
+  renameCorner: Operation<
+    TurnOutputAuthority & CornerInput & { readonly name: string },
+    { readonly cornerId: string; readonly name: string }
+  >;
   postTargetBranchProposal: Operation<PostTargetBranchProposalInput, WriteResult>;
   requestAgentGrant: Operation<RequestAgentGrantInput, RequestAgentGrantResult>;
   askRoomChoice: Operation<AskRoomChoiceInput, AskRoomChoiceResult>;
@@ -407,6 +441,19 @@ export type DaemonOperationMap = {
       };
     }
   >;
+  createLinkSpendRequest: Operation<AgentRoomInput & {
+    merchant: string; merchantUrl?: string; amount: number; description: string;
+    test?: boolean; idempotencyKey: string;
+    credentialType?: 'card' | 'shared_payment_token'; networkId?: string;
+  }, { id: string; status: string; approvalUrl?: string }>;
+  retrieveLinkSpendRequest: Operation<AgentRoomInput & { id: string }, {
+    id: string; status: string; approvalUrl?: string;
+    nextAction?: { resolution?: string; displayMessage?: string; actionUrl?: string };
+    card?: { number: string; cvc?: string; expMonth: number; expYear: number;
+      billingAddress?: { name?: string; postalCode?: string; line1?: string; city?: string;
+        state?: string; country?: string }; validUntil?: string };
+    sharedPaymentToken?: { id: string; validUntil?: string };
+  }>;
   /** A connected Google grant for this agent's current Room, renewed server-side. */
   getRoomGoogleGrant: Operation<RoomInput, {
     readonly status: 'pending' | 'ready';
@@ -474,6 +521,13 @@ export type DaemonOperationMap = {
   walletSwap: Operation<
     WalletSwapInput & TurnOutputAuthority & RoomInput,
     WalletSwapResult | { readonly status: 'permission-required'; readonly grantId?: string }
+  >;
+  /** One friction report from the agent's active turn (`report_feedback`). */
+  reportFeedback: Operation<ReportFeedbackInput & TurnOutputAuthority, ReportFeedbackResult>;
+  /** A merged fix resolved these items; System DMs their human reporters (`notify_feedback_fixed`). */
+  notifyFeedbackFixed: Operation<
+    NotifyFeedbackFixedInput & TurnOutputAuthority,
+    NotifyFeedbackFixedResult
   >;
 };
 export type Operation<Input, Output> = { readonly input: Input; readonly output: Output };
@@ -664,6 +718,8 @@ export type CornerRestoreResult = {
   readonly validation?: readonly CornerValidationStage[];
   /** Human-created corners are title-only; their title supplies runtime context after a tag. */
   readonly title?: string;
+  /** True while `title` is still the generated one the corner was opened under. */
+  readonly titleGenerated?: boolean;
   readonly kind?: 'agent' | 'human';
   readonly featureBranch?: string;
   readonly requestId?: string;
@@ -884,6 +940,7 @@ export type PostTurnReceiptInput = AgentRoomInput & {
     | 'helper-out-of-date'
     | 'update-interrupted'
     | 'offline'
+    | 'context-overflow'
     | 'model-selection-unavailable';
 };
 export type PostAgentActivityInput = TurnOutputAuthority &
@@ -989,7 +1046,6 @@ export type CreateCornerInput = TurnOutputAuthority &
      * worktree, the commit, the pull request and the merge: the work comes back
      * as artifacts and a reply tagging the requester. A corner with no
      * repository is `no_code` whatever this says.
-     * `research` keeps a writable worktree under a durable delivery and merge hold.
      * The one later change is `upgradeCornerLane`'s one-way `no_code -> code`.
      */
     readonly lane?: CornerLane;
@@ -1003,61 +1059,16 @@ export type CornerBriefAttachment = {
   readonly sha256: string;
   readonly size: number;
 };
-export type CornerBriefIntentVerbatim = {
-  /** Durable provenance for the exact human words below. */
-  readonly sourceMessageId: string;
-  /** Exact message text at assignment time; never an agent paraphrase. */
-  readonly snapshot: string;
-};
-export type CornerBriefCriterion = {
-  /** Stable numbered identifier such as AC-1; retained across revisions. */
-  readonly id: string;
-  readonly text: string;
-};
-export type CornerBriefReferenceAuthority =
-  | 'human-authoritative'
-  | 'repository-authoritative'
-  | 'approved-reference'
-  | 'informational'
-  | 'agent-recommendation';
-export type CornerBriefReference = {
-  readonly label: string;
-  readonly authority: CornerBriefReferenceAuthority;
-  readonly description: string;
-  readonly objectId?: string;
-};
-export type CornerBriefApprovalBasisDraft =
-  | {
-      /** The initiating human command already settled this exact material scope. */
-      readonly kind: 'initiating-command';
-      readonly sourceMessageId: string;
-      readonly snapshot: string;
-    }
-  | {
-      /** A later human answer settled the named choice or requested brief slice. */
-      readonly kind: 'explicit-human-answer';
-      readonly sourceMessageId: string;
-      readonly snapshot: string;
-    };
-export type CornerBriefApprovalBasis =
-  | (CornerBriefApprovalBasisDraft & {
-      readonly approvedBy: string;
-      /** SHA-256 of the complete stored revision this evidence authorizes. */
-      readonly briefHash: string;
-    })
-  | {
-      /** Read-only marker for rows created before structured briefs existed. */
-      readonly kind: 'legacy-pre-migration';
-      readonly reason: string;
-      readonly briefHash: string;
-    };
-export type CornerBriefStructuredDraft = {
-  readonly intentVerbatim: readonly CornerBriefIntentVerbatim[];
-  readonly buildSpec: string;
-  readonly criteria: readonly CornerBriefCriterion[];
-  readonly nonGoals?: readonly string[];
-  readonly references: readonly CornerBriefReference[];
-  readonly approvalBasis: CornerBriefApprovalBasisDraft;
+/** Spec length cap shared by `open_corner`, `revise_corner_brief` and the server. */
+export const CORNER_BRIEF_SPEC_MAX_LENGTH = 16_000;
+export type CornerBriefDraft = {
+  /**
+   * Agent-written Markdown: what to build, a checklist of what done looks
+   * like, what is out of scope, and references, as headings inside one doc.
+   */
+  readonly spec: string;
+  /** The human Room message that approved this spec. The server quotes it. */
+  readonly approval: { readonly sourceMessageId: string };
   readonly attachments?: readonly {
     readonly objectId: string;
     readonly purpose: string;
@@ -1065,26 +1076,24 @@ export type CornerBriefStructuredDraft = {
   }[];
   readonly change?: string;
 };
-/** Accepted only when revising a pre-migration brief; new assignments must be structured. */
-export type CornerBriefLegacyDraft = {
-  readonly content: string;
-  readonly attachments?: CornerBriefStructuredDraft['attachments'];
-  readonly change?: string;
+export type CornerBriefApproval = {
+  readonly sourceMessageId: string;
+  /** The approving message's exact text, resolved by the server. */
+  readonly text: string;
+  readonly approvedBy: string;
+  readonly approverName: string;
 };
-export type CornerBriefDraft = CornerBriefStructuredDraft | CornerBriefLegacyDraft;
 export type CornerBrief = {
   readonly id: string;
   readonly revision: number;
-  /** Compatibility projection: the build spec, or the old opaque content for legacy rows. */
-  readonly content: string;
-  readonly legacy: boolean;
-  readonly intentVerbatim: readonly CornerBriefIntentVerbatim[];
-  readonly buildSpec: string;
-  readonly criteria: readonly CornerBriefCriterion[];
-  readonly nonGoals: readonly string[];
-  readonly references: readonly CornerBriefReference[];
-  readonly approvalBasis: CornerBriefApprovalBasis;
-  readonly revisionHash: string;
+  /**
+   * Markdown. Revisions written before the trimmed brief fold their typed
+   * fields into it on read (## Intent, ## Checklist, ## Non-goals,
+   * ## References, then the old build spec).
+   */
+  readonly spec: string;
+  /** Absent only on revisions that predate approvals. */
+  readonly approval?: CornerBriefApproval;
   readonly change?: string;
   readonly authorId: string;
   readonly sourceRoomId: string;
@@ -1125,7 +1134,7 @@ export type PostCornerValidationStageInput = TurnOutputAuthority &
     readonly evidence: string;
   };
 export type CornerResult = { readonly cornerId: string };
-export type CornerLane = 'code' | 'no_code' | 'research';
+export type CornerLane = 'code' | 'no_code';
 
 /** ask_choice / open_poll: a lettered preference, never a grant. */
 export type ChoiceOptionArg = ChoiceOptionInput;

@@ -45,11 +45,13 @@ export function cornerDisplayFromRoomView(view: {
   readonly room: { readonly archived?: boolean };
   readonly latestAgentTurns: readonly { readonly status: string }[];
   readonly cornerLifecycle?: CornerLifecycleView;
+  readonly cornerOwed?: boolean;
 }): CornerDisplayItem {
   const derived = deriveCornerState({
     archived: view.room.archived !== false,
     turnRunning: view.latestAgentTurns.some((turn) => turn.status === 'working'),
     lifecycle: view.cornerLifecycle,
+    ...(view.cornerOwed !== undefined ? { owed: view.cornerOwed } : {}),
   });
   return {
     ...derived,

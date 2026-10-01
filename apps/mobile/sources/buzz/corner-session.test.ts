@@ -86,6 +86,21 @@ describe('corner session presentation', () => {
     expect(resolveCornerViewAgentPubkey(messages, isRegisteredAgent)).toBe('beebee-pk');
   });
 
+  it('never takes the header agent from a system notice author', () => {
+    const messages = [
+      { id: 'opened', text: 'Working', isUser: false, timestamp: 1, pubkey: 'niglet-pk' },
+      {
+        id: 'check',
+        text: '@GitHub passed a check BUILD',
+        isUser: false,
+        timestamp: 2,
+        pubkey: 'candy-pk',
+        isSystemNotice: true,
+      },
+    ];
+    expect(resolveCornerViewAgentPubkey(messages, () => true)).toBe('niglet-pk');
+    expect(resolveCornerViewAgentPubkey(messages, () => true, 'opener-pk')).toBe('opener-pk');
+  });
 });
 
 describe('chat header title (the # channel-mark convention)', () => {

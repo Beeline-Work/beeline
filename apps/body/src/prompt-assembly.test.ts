@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import type { CornerBrief } from '@beeline/api-contract/daemon';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import {
   CORE_BUDGET_BYTES,
   PROMPT_SURFACES,
@@ -12,7 +14,21 @@ import {
   type PromptSurface,
   type SessionPromptContext,
   type TurnPromptContext,
+  CORNER_REVIEWER_SESSION_INSTRUCTION,
+  CORNER_YOLO_MERGE_NUDGE,
+  cornerMergeInstruction,
+  cornerReviewerInstruction,
+  cornerSelfReviewerInstruction,
+  CORNER_PLACEHOLDER_BRIEF_RULE,
+  UPGRADE_INTENT_RULE,
+  renderAssignedCornerBrief,
 } from './prompt-assembly.js';
+import {
+  beelineReviewSkillMarkdown,
+  beelineSpecSkillMarkdown,
+  beelineTriageSkillMarkdown,
+  usingBeelineSkillMarkdown,
+} from './beeline-skill.js';
 
 const soul = {
   name: 'Bee',
@@ -75,13 +91,6 @@ const SESSION_VARIANTS: Record<string, SessionPromptContext> = {
     agentCommand: 'claude-agent-acp',
     worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
   },
-  'research-corner': {
-    surface: 'research-corner',
-    agentName: 'Bee',
-    soul,
-    agentCommand: 'claude-agent-acp',
-    worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
-  },
   'no-code-corner': {
     surface: 'no-code-corner',
     agentName: 'Bee',
@@ -106,10 +115,6 @@ const memory = [
 const TURN_VARIANTS: Record<string, TurnPromptContext> = {
   'room-turn': {
     surface: 'room',
-    standingPreference: {
-      requesterName: 'lunchboxfortwo',
-      text: 'Plain words first; give a verified fix, not an apology.',
-    },
     checkout: { branch: 'main', commit: 'b1c5baf5' },
     transcript: {
       lines: [
@@ -231,8 +236,15 @@ describe('prompt assembly guards', () => {
 
   it('states one merge condition, the one pr_checks_status enforces, and no other', () => {
     const merges = (name: string) => assembleSessionPrompt(SESSION_VARIANTS[name]!).systemPrompt;
+    expect(merges('code-corner-reviewed')).toContain(
+      'after its PASS the server merges the pull request itself',
+    );
+    expect(merges('code-corner-self-reviewer')).toContain(
+      'The server merges it once checks are green, yolo is on, and no human hold stands',
+    );
     for (const name of ['code-corner-reviewed', 'code-corner-self-reviewer']) {
-      expect(merges(name), name).toContain('checks="passed" and mergeAllowed=true');
+      expect(merges(name), name).toMatch(/never merge it yourself/i);
+      expect(merges(name), name).toContain('a merge GitHub refused');
     }
     for (const name of ['code-corner-reviewed-yolo-off', 'code-corner-no-reviewer']) {
       expect(merges(name), name).toContain('never merge; a person merges it');
@@ -246,7 +258,53 @@ describe('prompt assembly guards', () => {
     expect(review).toContain('Never merge yourself');
     expect(review).not.toContain('On a checks turn');
     expect(review).not.toContain('Open the pull request');
-    expect(merges('research-corner')).not.toContain('Open the pull request with gh');
+  });
+
+  it('never tells an author or reviewer to run gh pr merge', () => {
+    const texts: Array<[string, string]> = [
+      ...Object.entries(SESSION_VARIANTS).map(
+        ([name, context]): [string, string] => [name, assembleSessionPrompt(context).systemPrompt],
+      ),
+      ...Object.entries(TURN_VARIANTS).map(
+        ([name, context]): [string, string] => [name, assembleTurnPrompt(context).text],
+      ),
+      ['yolo checks nudge', CORNER_YOLO_MERGE_NUDGE],
+      ['reviewer session', CORNER_REVIEWER_SESSION_INSTRUCTION],
+      ...[false, true].flatMap((yolo): Array<[string, string]> => [
+        [`author yolo=${yolo}`, cornerMergeInstruction(yolo, 'sol')],
+        [`author no reviewer yolo=${yolo}`, cornerMergeInstruction(yolo)],
+      ]),
+      [
+        'reviewer turn',
+        cornerReviewerInstruction({
+          reviewerHandle: 'sol',
+          agentHandle: 'sol',
+          authorHandle: 'bee',
+          openedByAgent: false,
+          pullRequestNumber: 7,
+          headSha: 'a'.repeat(40),
+          briefRevision: 2,
+        })!,
+      ],
+      [
+        'self reviewer',
+        cornerSelfReviewerInstruction({
+          reviewerHandle: 'sol',
+          agentHandle: 'sol',
+          openedByAgent: true,
+        })!,
+      ],
+      ['using-beeline skill', usingBeelineSkillMarkdown('test')],
+      ['beeline-review skill', beelineReviewSkillMarkdown('test')],
+      ['beeline-spec skill', beelineSpecSkillMarkdown('test')],
+      ['beeline-triage skill', beelineTriageSkillMarkdown('test')],
+    ];
+    for (const [name, text] of texts) {
+      expect(text, name).not.toContain('gh pr merge');
+      expect(text, name).not.toMatch(/approved [0-9a-f<][^`]*, merge/);
+    }
+    expect(CORNER_YOLO_MERGE_NUDGE).toContain('the server merges this pull request itself');
+    expect(CORNER_YOLO_MERGE_NUDGE).toContain('Never merge it yourself.');
   });
 
   it('keeps Workbench tools out of corners, which do not have them', () => {
@@ -286,9 +344,78 @@ describe('prompt assembly guards', () => {
     expect(turn).not.toContain('Continue the current assigned brief');
   });
 
+  it('asks for a rename only while the corner still has its generated name', () => {
+    const named = assembleTurnPrompt(TURN_VARIANTS['code-corner-turn']!).text;
+    const generated = assembleTurnPrompt({
+      ...TURN_VARIANTS['code-corner-turn']!,
+      generatedTitle: 'still harbor corner',
+    }).text;
+    expect(named).not.toContain('rename_corner');
+    expect(generated).toContain(
+      'This corner still has its generated name, "still harbor corner". If the newest message states the work, call rename_corner once before you reply',
+    );
+    expect(generated.indexOf('Corner objective')).toBeLessThan(
+      generated.indexOf('still has its generated name'),
+    );
+  });
+
   it('puts the trigger in the prompt once', () => {
     const turn = assembleTurnPrompt(TURN_VARIANTS['room-turn']!).text;
     expect(turn.split('Why did the release migration fail?')).toHaveLength(2);
+  });
+});
+
+describe('assigned corner brief', () => {
+  const brief: CornerBrief = {
+    id: 'brief-id',
+    revision: 3,
+    spec: '## Intent\n> Keep the marker write last. (m2)\n\n## Checklist\n- The marker is written last.',
+    approval: {
+      sourceMessageId: 'm2',
+      text: 'Also keep the marker write last.',
+      approvedBy: 'human-id',
+      approverName: 'lunchboxfortwo',
+    },
+    authorId: 'agent-id',
+    sourceRoomId: 'room-id',
+    attachments: [],
+  };
+  const turnWith = (value: CornerBrief, surface: PromptSurface = 'code-corner') =>
+    assembleTurnPrompt({
+      ...TURN_VARIANTS['code-corner-turn']!,
+      surface,
+      brief: { brief: value, fileLines: [], missingRequiredFile: false },
+    }).text;
+
+  it('renders the revision, the spec, then the approving message in the human words', () => {
+    expect(renderAssignedCornerBrief(brief)).toBe(
+      `Brief revision 3:\n${brief.spec}\n\nApproved by lunchboxfortwo, message m2: Also keep the marker write last.`,
+    );
+    const { approval: _approval, ...unapproved } = brief;
+    expect(renderAssignedCornerBrief(unapproved)).toBe(
+      `Brief revision 3:\n${brief.spec}\n\nThis revision predates recorded approvals.`,
+    );
+    expect(turnWith(brief)).toContain(
+      'Approved by lunchboxfortwo, message m2: Also keep the marker write last.\n\nAssigned files:\n(none)',
+    );
+  });
+
+  it('asks for the real spec only on the upgrade placeholder in a code corner', () => {
+    const placeholder = { ...brief, revision: 1, authorId: SYSTEM_IDENTITY_ID };
+    expect(turnWith(placeholder)).toContain(CORNER_PLACEHOLDER_BRIEF_RULE);
+    expect(CORNER_PLACEHOLDER_BRIEF_RULE).toContain('best effort');
+    expect(turnWith(placeholder, 'review-corner')).not.toContain(CORNER_PLACEHOLDER_BRIEF_RULE);
+    expect(turnWith({ ...placeholder, revision: 2 })).not.toContain(
+      CORNER_PLACEHOLDER_BRIEF_RULE,
+    );
+    expect(turnWith({ ...brief, revision: 1 })).not.toContain(CORNER_PLACEHOLDER_BRIEF_RULE);
+  });
+
+  it('lets the agent upgrade on its own judgment and write the brief afterwards', () => {
+    expect(UPGRADE_INTENT_RULE).not.toContain("becomes the code corner's brief");
+    expect(UPGRADE_INTENT_RULE).toContain('on your own judgment');
+    expect(UPGRADE_INTENT_RULE).toContain('nobody has to ask');
+    expect(UPGRADE_INTENT_RULE).toContain('then write the brief');
   });
 });
 

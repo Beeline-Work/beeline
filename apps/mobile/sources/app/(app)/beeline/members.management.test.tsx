@@ -157,7 +157,10 @@ vi.mock('expo-router', () => ({
     dispatch: navigation.dispatch,
   }),
 }));
-vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
+const safeArea = vi.hoisted(() => ({ bottom: 0 }));
+vi.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 0, bottom: safeArea.bottom }),
+}));
 vi.mock('react-native-keyboard-controller', async () => {
   const ReactModule = await import('react');
   return {
@@ -507,13 +510,44 @@ function sheet(renderer: ReactTestRenderer) {
 }
 
 describe('Members workspace management', () => {
-  it('shows model and owner on the agent row without spending the row on presence', async () => {
+  it('lets its last member scroll clear of the system navigation bar', async () => {
+    safeArea.bottom = 48;
+    try {
+      const renderer = await render();
+      const scroll = renderer.root.findByType('KeyboardAwareScrollView' as never);
+      const contentStyle = Object.assign(
+        {},
+        ...[scroll.props.contentContainerStyle].flat(Infinity as 1),
+      );
+      expect(contentStyle.paddingBottom).toBe(48 + 48);
+    } finally {
+      safeArea.bottom = 0;
+    }
+  });
+
+  it('lets an agent profile scroll its last row clear of the system navigation bar', async () => {
+    safeArea.bottom = 48;
+    try {
+      const renderer = await render();
+      await openAgentProfile(renderer);
+      const scroll = renderer.root.findByProps({ testID: 'agent-profile-scroll' });
+      const contentStyle = Object.assign(
+        {},
+        ...[scroll.props.contentContainerStyle].flat(Infinity as 1),
+      );
+      expect(contentStyle.paddingBottom).toBe(48 + 48);
+    } finally {
+      safeArea.bottom = 0;
+    }
+  });
+
+  it('shows model on the agent row without spending the row on presence', async () => {
     const renderer = await render();
     const agentRow = renderer.root.findByProps({ testID: `agent-${AGENT}-identity` });
     const mark = agentRow.findByType('IdentityMark' as any);
     expect(mark.props.kind).toBe('agent');
     expect(mark.props.alive).toBeFalsy();
-    expect(agentRow.findAllByType('Text' as any)[1].props.children).toBe('Sonnet · by @viewer');
+    expect(agentRow.findAllByType('Text' as any)[1].props.children).toBe('Sonnet');
     expect(
       agentRow
         .findAllByType('Text' as any)
@@ -622,13 +656,13 @@ describe('Members workspace management', () => {
     expect(texts.flat().join(' ')).not.toMatch(/⌬|ONLINE|OFFLINE|MEMBER\b/);
   });
 
-  it('shows every handle once with role-only human and model-plus-owner agent subtitles', async () => {
+  it('shows every handle once with role-only human and model-only agent subtitles', async () => {
     const renderer = await render();
     const agentRow = renderer.root.findByProps({ testID: `agent-${AGENT}-identity` });
     const agentTexts = agentRow
       .findAllByType('Text' as any)
       .map((node: any) => node.props.children);
-    expect(agentTexts).toEqual(['@clara', 'Sonnet · by @viewer']);
+    expect(agentTexts).toEqual(['@clara', 'Sonnet']);
     expect(chevronDirections(agentRow)).toEqual(['right']);
     expect(agentRow.findByType('IdentityMark' as any).props.alive).toBeFalsy();
     const personRow = renderer.root.findByProps({ testID: `member-${MEMBER}-identity` });
@@ -942,7 +976,7 @@ describe('Members workspace management', () => {
     );
     expect(
       renderer.root.findByProps({ testID: 'model-axis-model' }).props.children[1].props.children,
-    ).toBe('openrouter/z-ai/glm-5.3-flash');
+    ).toBe('glm-5.3-flash');
     expect(
       renderer.root.findByProps({ testID: 'model-axis-effort' }).props.children[1].props.children,
     ).toBe('—');

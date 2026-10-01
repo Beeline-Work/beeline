@@ -75,6 +75,7 @@ import {
 } from './read-only-policy.js';
 import {
   credentialMaskPaths,
+  grantedSandboxDevices,
   harnessHomeStateDirs,
   siblingAgentMaskPaths,
   wrapAgentCommand,
@@ -84,6 +85,7 @@ import type { BodyConfig } from './config.js';
 import { type DaemonApiClient } from './daemon-api-client.js';
 import {
   explainEmptyAgentTurn,
+  isContextOverflowTurn,
   nextPinnedProvider,
   shouldRetryEmptyTurn,
   turnFailureReasonWithProvider,
@@ -288,6 +290,33 @@ export function pendingGrantToolCall(call: { title?: string; content?: unknown }
 }
 
 /**
+ * The device an instantly approved `request_grant` added this turn, if any.
+ * bwrap fixes `/dev` when a session starts, so the turn loop runs the same turn
+ * again in a fresh session that has it (`deviceGrantResumePrompt`).
+ */
+export function approvedDeviceGrant(
+  calls: readonly { title?: string; content?: unknown }[],
+): string | undefined {
+  for (const call of calls) {
+    if (!/(?:^|[._:/-])request_grant$/i.test(call.title ?? '')) continue;
+    const text = typeof call.content === 'string' ? call.content : JSON.stringify(call.content ?? '');
+    const device = /approved: use (\/dev\/\S+) \[grant [^\]]*\]\. A running session cannot add a device/.exec(text)?.[1];
+    if (device) return device;
+  }
+  return undefined;
+}
+
+/** The prompt that continues a turn after an instantly approved device grant. */
+export function deviceGrantResumePrompt(device: string, earlierReply: string): string {
+  const earlier = earlierReply.trim();
+  return [
+    `Your device grant for ${device} was approved and ${device} is in this session now; this is the same turn continuing.`,
+    ...(earlier ? [`Your reply just before this was: ${earlier}`] : []),
+    'Continue the work that needed the device. Do not request it again or ask anyone to restart.',
+  ].join(' ');
+}
+
+/**
  * The resume prompt for the answer that woke a paused turn. A grant answer and
  * a connector-offer answer resume the same way (`RESUME_KINDS`), but the model
  * must be told which question was answered — the connector one arrives as
@@ -303,6 +332,13 @@ export function resumePrompt(item: { body: string; systemEvent?: SystemEvent }):
     ].join(' ');
   }
   const grant = parseGrantDecisionLine(item.body);
+  if (grant?.kind === 'device' && grant.decision !== 'deny') {
+    return [
+      'This is the answer to your grant request; your paused work resumes now.',
+      `The approved device ${grant.target} is in this session.`,
+      'Continue the paused work with it now; do not restart, schedule another turn, or request the device again.',
+    ].join(' ');
+  }
   if (grant?.kind === 'mcp' && grant.decision !== 'deny') {
     return [
       'This is the answer to your grant request; your paused work resumes now.',
@@ -415,6 +451,8 @@ export class MonolithRoomTurnLoop {
   private pinnedProviderOverride?: string;
   private busy = false;
   private turnInstructionPrefix = '';
+  /** The session prompt's section ids, for `report_feedback` (with each turn's). */
+  private sessionPromptSectionIds: readonly string[] = [];
   private sessionSurface: PromptSurface = 'room';
   private activeTurn?: ActiveTurn;
   private readonly queuedTurns: HumanMessage[] = [];
@@ -677,17 +715,19 @@ export class MonolithRoomTurnLoop {
   }
 
   private async currentSessionFingerprint(): Promise<string> {
-    const [configuration, roster, grantedHostRoutes] = await Promise.all([
+    const [configuration, roster, grants] = await Promise.all([
       this.options.api.execute('getAgentConfiguration', {
         agentId: this.agent.publicKey,
         roomId: this.options.roomId,
       }),
       this.roster(),
-      this.grantedHostRoutes(),
+      this.grantedResources(),
     ]);
+    const { hostRoutes: grantedHostRoutes, devices: grantedDevices } = grants;
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
     const registryRoutes = configuration.registryMcpRoutes ?? [];
     return sessionConfigFingerprint({
+      devices: grantedDevices,
       model: configuration.model ?? this.options.config.modelSelection?.model,
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
       fastMode: configuration.fastMode,
@@ -711,29 +751,31 @@ export class MonolithRoomTurnLoop {
     });
   }
 
-  private async grantedHostRoutes(): Promise<string[]> {
+  private async grantedResources(): Promise<{ hostRoutes: string[]; devices: string[] }> {
     try {
-      const approved = await claimGrantedHostRoutes(
-        await this.options.api.execute('listAgentGrants', {
-          agentId: this.agent.publicKey,
-          roomId: this.options.roomId,
-        }),
-      );
+      const grants = await this.options.api.execute('listAgentGrants', {
+        agentId: this.agent.publicKey,
+        roomId: this.options.roomId,
+      });
+      const approved = await claimGrantedHostRoutes(grants);
       // Discovery is safe to mount; the transport gate authorizes every use.
       // This also lets an owner use a yolo resource without an activation prompt.
-      return [
-        ...new Set([
-          ...approved,
-          ...Object.keys(
-            hostImportedMcpDeclarations({
-              operatorHome: this.options.config.operatorHome,
-              agentKind: this.options.config.agentKind,
-            }),
-          ),
-        ]),
-      ];
+      return {
+        hostRoutes: [
+          ...new Set([
+            ...approved,
+            ...Object.keys(
+              hostImportedMcpDeclarations({
+                operatorHome: this.options.config.operatorHome,
+                agentKind: this.options.config.agentKind,
+              }),
+            ),
+          ]),
+        ],
+        devices: grantedSandboxDevices(grants),
+      };
     } catch {
-      return [];
+      return { hostRoutes: [], devices: [] };
     }
   }
 
@@ -752,12 +794,13 @@ export class MonolithRoomTurnLoop {
         await repairRoomAgentCredentialLinks({
           root: this.options.config.agentHomeRoot,
           operatorHome: this.options.config.operatorHome,
+          keepNewerDetachedClaudeLogin: this.options.config.agentKind === 'claude',
         });
       }
       return this.sessionId;
     }
     trace?.noteActivation('cold');
-    const [configuration, roster, repositoryState, grantedHostRoutes] =
+    const [configuration, roster, repositoryState, grants] =
       await Promise.all([
         this.options.api.execute('getAgentConfiguration', {
           agentId: this.agent.publicKey,
@@ -765,8 +808,9 @@ export class MonolithRoomTurnLoop {
         }),
         this.roster(),
         this.repositoryState(),
-        this.grantedHostRoutes(),
+        this.grantedResources(),
         ]);
+    const { hostRoutes: grantedHostRoutes, devices: grantedDevices } = grants;
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
     const directMessage =
       Array.isArray(repositoryState.directParticipants) &&
@@ -870,6 +914,7 @@ export class MonolithRoomTurnLoop {
     // need its generated .codegraph directory writable while the MCP lives.
     const codegraphReady = await prepareCodegraphIndex(this.options.config, this.options.cwd);
     const fingerprint = sessionConfigFingerprint({
+      devices: grantedDevices,
       model: configuration.model ?? this.options.config.modelSelection?.model,
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
       fastMode: configuration.fastMode,
@@ -901,6 +946,7 @@ export class MonolithRoomTurnLoop {
           ...(codegraphReady ? [codegraphIndexDirectory(this.options.cwd)] : []),
           ...registryMcpHostBindPaths(configuration.registryMcpRoutes),
         ],
+        devices: grantedDevices,
         maskPaths: [
           ...credentialMaskPaths(this.options.config.sandboxMaskPaths, operatorHome),
           ...siblingAgentMaskPaths(
@@ -1041,6 +1087,7 @@ export class MonolithRoomTurnLoop {
     });
     this.sessionSurface = directMessage ? 'dm' : 'room';
     this.turnInstructionPrefix = session.turnPrefix;
+    this.sessionPromptSectionIds = session.report.map((section) => section.id);
     const opened = await this.client.sessionNew({
       cwd: this.options.cwd,
       mcpServers: servers,
@@ -1234,6 +1281,39 @@ export class MonolithRoomTurnLoop {
     // Kicked off now, alongside activation rather than after it, so its own
     // network round trip has somewhere to hide (see institutional-context.ts).
     const institutionalContextFetch = startInstitutionalContextFetch(api, this.options.roomId);
+    // Best-effort read of this turn's search_memory call/miss counters before
+    // the trace writes — bounded so a slow or unreachable server never delays
+    // the turn's own completion over a diagnostic.
+    let statsStartedAt = 0;
+    let statsPromise: Promise<{ searchCalls: number; searchMisses: number } | undefined> | undefined;
+    const startTraceStats = (): void => {
+      if (statsPromise) return;
+      statsStartedAt = Date.now();
+      statsPromise = api.execute('getInstitutionalMemoryTurnStats', {
+        roomId: this.options.roomId,
+        agentId: this.agent.publicKey,
+        requestId: item.id,
+      }).catch(() => undefined);
+    };
+    const finishTrace = async (
+      outcome: 'complete' | 'failed' | 'cancelled',
+      reason?: string,
+    ): Promise<void> => {
+      try {
+        const remaining = Math.max(0, 800 - (Date.now() - statsStartedAt));
+        let timer: NodeJS.Timeout | undefined;
+        const stats = statsPromise && remaining > 0
+          ? await Promise.race([
+              statsPromise,
+              new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), remaining); }),
+            ]).finally(() => { if (timer) clearTimeout(timer); })
+          : undefined;
+        if (stats) trace.noteSearchMemoryStats(stats.searchCalls, stats.searchMisses);
+      } catch {
+        // Losing this measurement must never affect the turn.
+      }
+      await trace.finish(outcome, reason);
+    };
     // The draft lane, held where the catch below can reach it: a turn that
     // throws never reaches its settle, and only this reference can dissolve
     // what the model had already written.
@@ -1297,6 +1377,12 @@ export class MonolithRoomTurnLoop {
                   ]),
                 );
               trace.noteInstitutionalMemory(institutionalContext.outcome);
+              if (institutionalContext.embeddingOutcome !== undefined) {
+                trace.noteInstitutionalMemoryEmbedding(
+                  institutionalContext.embeddingOutcome,
+                  institutionalContext.embeddingMs ?? 0,
+                );
+              }
               const names = new Map(
                 roster.members.map((member) => [member.identityId, member.name]),
               );
@@ -1345,6 +1431,7 @@ export class MonolithRoomTurnLoop {
                     corner.closedAt >= closedSince,
                 )
                 .sort((a, b) => (b.closedAt ?? 0) - (a.closedAt ?? 0));
+              let deviceResume: string | undefined;
               const buildPrompt = (): string => {
                 const transcript = this.warmTranscript.select(
                   this.sessionId,
@@ -1355,14 +1442,6 @@ export class MonolithRoomTurnLoop {
                   surface: this.sessionSurface,
                   modelContextTokens: this.modelContextTokens,
                   sessionPrefix: this.turnInstructionPrefix,
-                  ...(institutionalContext.standingPreference
-                    ? {
-                        standingPreference: {
-                          requesterName: inboxItemAuthorName(item, names),
-                          text: institutionalContext.standingPreference,
-                        },
-                      }
-                    : {}),
                   ...(checkout?.branch && checkout.commit
                     ? { checkout: { branch: checkout.branch, commit: checkout.commit } }
                     : {}),
@@ -1370,7 +1449,11 @@ export class MonolithRoomTurnLoop {
                     lines: transcript.rows.map((row) => row.line),
                     sinceLastTurn: transcript.warm,
                   },
-                  ...(grantDecision ? { resume: resumePrompt(item) } : {}),
+                  ...(deviceResume
+                    ? { resume: deviceResume }
+                    : grantDecision
+                      ? { resume: resumePrompt(item) }
+                      : {}),
                   members: roomMentionDirectory(roster, this.agent.publicKey),
                   memory: institutionalContext.text,
                   corners: openCorners,
@@ -1389,6 +1472,10 @@ export class MonolithRoomTurnLoop {
                   },
                 });
                 trace.notePromptSections(assembled.report);
+                this.commandContext.notePromptSections([
+                  ...this.sessionPromptSectionIds,
+                  ...assembled.report.map((section) => section.id),
+                ]);
                 return assembled.text;
               };
               // Rooms and corners stream through ONE presentation (C100): the
@@ -1446,6 +1533,12 @@ export class MonolithRoomTurnLoop {
                           'harness login expired; repairing the shared credential and retrying once',
                       );
                       trace.retry({ reason: 'expired harness login' });
+                      if (this.options.config.agentHomeRoot) {
+                        await repairRoomAgentCredentialLinks({
+                          root: this.options.config.agentHomeRoot,
+                          operatorHome: this.options.config.operatorHome,
+                        });
+                      }
                       await this.discardSession();
                       await trace.measure('activation', () => this.activate(trace));
                       continue;
@@ -1483,6 +1576,19 @@ export class MonolithRoomTurnLoop {
               };
               let result = await runPrompt();
               trace.promptSettled();
+              // An instantly approved device grant cannot reach the running
+              // sandbox: replace the session and continue this same turn there.
+              const grantedDevice = approvedDeviceGrant(result.toolCalls);
+              if (grantedDevice) {
+                trace.retry({ reason: 'device grant' });
+                if (!(await this.sessionIsCurrent())) {
+                  await this.discardSession();
+                  await trace.measure('activation', () => this.activate(trace));
+                }
+                deviceResume = deviceGrantResumePrompt(grantedDevice, result.agentText);
+                result = await runPrompt();
+                trace.promptSettled();
+              }
               let openCornerCall = openCornerToolCall(result.toolCalls);
               let cornerOpened = openedACorner(openCornerCall);
               let explained = await this.explainEmpty(result);
@@ -1500,6 +1606,23 @@ export class MonolithRoomTurnLoop {
                   cornerOpened = openedACorner(openCornerCall);
                   explained = await this.explainEmpty(result);
                 }
+              }
+              // A session whose history outgrew the model's window refuses
+              // every retry inside it. One retry in a fresh session; a second
+              // overflow fails the turn as `context-overflow`, never a hiccup.
+              if (!cornerOpened && explained && isContextOverflowTurn(explained)) {
+                console.warn(
+                  `[thin-core] monolith Room ${this.options.roomId} turn ${item.id}: ` +
+                    `${explained.reason}; retrying once in a fresh session`,
+                );
+                trace.retry({ reason: 'context overflow' });
+                await this.discardSession();
+                await trace.measure('activation', () => this.activate(trace));
+                result = await runPrompt();
+                trace.promptSettled();
+                openCornerCall = openCornerToolCall(result.toolCalls);
+                cornerOpened = openedACorner(openCornerCall);
+                explained = await this.explainEmpty(result);
               }
               // The requester stopped this turn while it ran. A stopped turn
               // publishes nothing at all — no durable reply, no receipt, and no
@@ -1588,6 +1711,7 @@ export class MonolithRoomTurnLoop {
             error,
           ),
       );
+      startTraceStats();
       await api.execute('postAgentTurnReceipt', {
         agentId: this.agent.publicKey,
         roomId: this.options.roomId,
@@ -1599,7 +1723,7 @@ export class MonolithRoomTurnLoop {
       });
       // After the receipt: an operator artifact must never delay the answer,
       // and it never becomes one — the trace has no way to post a Room row.
-      await trace.finish('complete');
+      void finishTrace('complete').catch(() => undefined);
     } catch (error) {
       // A stopped turn already has its ending — the server wrote `cancelled`
       // and named who stopped it the moment it accepted the request. There is
@@ -1613,7 +1737,7 @@ export class MonolithRoomTurnLoop {
         console.log(
           `[thin-core] monolith Room ${this.options.roomId} turn ${item.id} stopped by the requester`,
         );
-        await trace.finish('cancelled');
+        void finishTrace('cancelled').catch(() => undefined);
         return;
       }
       // An inactivity timeout on a turn that already opened a corner is not a
@@ -1657,6 +1781,7 @@ export class MonolithRoomTurnLoop {
           // this arm is about to report complete. The retract is idempotent.
           await liveStream.retract();
         }
+        startTraceStats();
         await api.execute('postAgentTurnReceipt', {
           agentId: this.agent.publicKey,
           roomId: this.options.roomId,
@@ -1666,7 +1791,7 @@ export class MonolithRoomTurnLoop {
           toolCalls: trace.toolCallsTotal,
           ...this.turnMetrics,
         });
-        await trace.finish('complete');
+        void finishTrace('complete').catch(() => undefined);
         return;
       }
       // A failed turn ends owning no live output. Only `settle` dissolves the
@@ -1683,6 +1808,7 @@ export class MonolithRoomTurnLoop {
         );
       });
       const reason = distillTurnFailureReason(error);
+      startTraceStats();
       await api.execute('postAgentTurnReceipt', {
         agentId: this.agent.publicKey,
         roomId: this.options.roomId,
@@ -1694,7 +1820,7 @@ export class MonolithRoomTurnLoop {
         toolCalls: trace.toolCallsTotal,
         ...this.turnMetrics,
       });
-      await trace.finish('failed', reason.text);
+      void finishTrace('failed', reason.text).catch(() => undefined);
       throw error;
     } finally {
       this.busy = false;

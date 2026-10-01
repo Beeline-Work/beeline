@@ -37,6 +37,18 @@ function isMissingGitHubResource(error: unknown): boolean {
 
 export class GitHubCredentialRejectedError extends Error {}
 
+/** A GitHub refusal with GitHub's own explanation, when it gave one. */
+export class GitHubRequestError extends GitHubHttpError {
+  constructor(
+    label: string,
+    status: number,
+    readonly reason?: string,
+  ) {
+    super(label, status);
+    if (reason) this.message = `${this.message}: ${reason}`;
+  }
+}
+
 async function jsonResponseObject(
   response: Response,
   label: string,
@@ -803,6 +815,47 @@ export class GitHubAppClient {
     }
   }
 
+  /**
+   * One Issues REST call on `fullName` (the feedback loop's filing path).
+   * `path` is relative to the repository, e.g. `issues` or
+   * `issues/comments/7`. A refusal carries GitHub's own `message` so the
+   * caller can hand the reason back unchanged.
+   */
+  async issuesRequest(
+    accessToken: string,
+    fullName: string,
+    method: 'GET' | 'POST' | 'PATCH',
+    path: string,
+    body?: Record<string, unknown>,
+  ): Promise<unknown> {
+    const response = await fetch(
+      `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/${path}`,
+      {
+        method,
+        headers: {
+          ...githubHeaders(accessToken),
+          ...(body ? { 'content-type': 'application/json' } : {}),
+        },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+    let parsed: unknown;
+    try {
+      parsed = await response.json();
+    } catch {
+      parsed = undefined;
+    }
+    if (!response.ok) {
+      const message =
+        parsed && typeof parsed === 'object' && typeof (parsed as { message?: unknown }).message === 'string'
+          ? (parsed as { message: string }).message
+          : undefined;
+      throw new GitHubRequestError('GitHub issues', response.status, message);
+    }
+    return parsed;
+  }
+
   #installationAccountFrom(body: Record<string, unknown>): GitHubInstallationAccount {
     const account = body.account;
     const accountRecord =
@@ -1046,6 +1099,43 @@ export class GitHubAppClient {
     if (state === 'active') return 'active';
     // 'pending' is an unaccepted invitation: a real answer, but not membership.
     return state === 'pending' ? 'pending' : 'unknown';
+  }
+
+  /**
+   * Whether the authenticated user has starred `owner/repo`
+   * (GET /user/starred/{owner}/{repo}). 204 is yes and 404 is no. Anything
+   * else, including 403 for a token without the Starring permission, is
+   * 'unknown'. Never throws.
+   */
+  async repositoryStarred(accessToken: string, fullName: string): Promise<boolean | 'unknown'> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.#config.apiBaseUrl}/user/starred/${fullName}`, {
+        headers: githubHeaders(accessToken),
+      });
+    } catch {
+      return 'unknown';
+    }
+    if (response.status === 204) return true;
+    if (response.status === 404) return false;
+    return 'unknown';
+  }
+
+  /**
+   * Star `owner/repo` as the authenticated user (PUT /user/starred/{owner}/{repo}).
+   * Returns false when GitHub refuses, e.g. a 403 for a user token whose App
+   * install has not approved the Starring permission yet. Never throws.
+   */
+  async starRepository(accessToken: string, fullName: string): Promise<boolean> {
+    try {
+      const response = await fetch(`${this.#config.apiBaseUrl}/user/starred/${fullName}`, {
+        method: 'PUT',
+        headers: { ...githubHeaders(accessToken), 'content-length': '0' },
+      });
+      return response.status === 204;
+    } catch {
+      return false;
+    }
   }
 
   private async userInstallationIds(

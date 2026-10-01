@@ -546,7 +546,7 @@ describe('Room view presentation', () => {
     ]);
   });
 
-  it('keeps adjacent tools from separate turns in separate disclosures', () => {
+  it('folds adjacent tools from separate turns when nothing visible separates them', () => {
     const agent = 'b'.repeat(64);
     const tool = (id: string, requestId: string): ChatDisplayMessage => ({
       id,
@@ -565,8 +565,7 @@ describe('Room view presentation', () => {
     ]);
 
     expect(folded.map((message) => [message.id, message.activity?.length])).toEqual([
-      ['turn-one-tool', 1],
-      ['turn-two-tool', 1],
+      ['turn-one-tool', 2],
     ]);
   });
 

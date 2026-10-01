@@ -25,24 +25,36 @@ import { useCopiedToast } from '@/components/buzz/CopiedToast';
  * app's own renderer and plain text through the mono reader; an image fits the
  * screen; a PDF rides a local cache file on iOS and the fitted pdf.js document
  * on Android. Script stays off for everything except that document, which is
- * the renderer itself rather than anything an artifact's author wrote.
+ * the renderer itself rather than anything an artifact's author wrote. A
+ * document the app composes itself (the corner brief) arrives as `markdown`
+ * text and reads through the same Markdown renderer as a Markdown artifact.
  */
 export function ArtifactViewerScreen({
   attachment,
   document,
+  markdown,
   notice,
   onClose,
 }: (
-  | { attachment: AttachmentReference; document?: never; notice?: never }
-  | { attachment?: never; document: CodeDocument; notice?: never }
-  | { attachment?: never; document?: never; notice: { title: string; message: string } }
+  | { attachment: AttachmentReference; document?: never; markdown?: never; notice?: never }
+  | { attachment?: never; document: CodeDocument; markdown?: never; notice?: never }
+  | { attachment?: never; document?: never; markdown: { title: string; text: string }; notice?: never }
+  | { attachment?: never; document?: never; markdown?: never; notice: { title: string; message: string } }
 ) & { authorHandle?: string; onClose: () => void }) {
-  const format = attachment ? artifactFormat(attachment.mimeType) : document ? 'code' : 'notice';
+  const format = attachment
+    ? artifactFormat(attachment.mimeType)
+    : document
+      ? 'code'
+      : markdown
+        ? 'markdown'
+        : 'notice';
   const title = attachment
     ? (attachment.title ?? attachment.name)
     : document
       ? document.title
-      : notice.title;
+      : markdown
+        ? markdown.title
+        : notice.title;
   // The viewer fills the whole screen (HullModal placement 'fill', which is
   // translucent under both system bars on Android's mandatory edge-to-edge),
   // so the header row — title and the ✕ that closes the viewer — must clear
@@ -114,7 +126,10 @@ export function ArtifactViewerScreen({
       </View>
       <View style={styles.body}>
         {format === 'code' && document ? (
-          <ScrollView contentContainerStyle={styles.codeBody} testID="artifact-viewer-code">
+          <ScrollView
+            contentContainerStyle={[styles.codeBody, { paddingBottom: theme.buzz.space.md + insets.bottom }]}
+            testID="artifact-viewer-code"
+          >
             <Text style={styles.codeInscription}>{document.inscription}</Text>
             <CodeHighlighter code={document.code} language={document.language} />
           </ScrollView>
@@ -122,6 +137,8 @@ export function ArtifactViewerScreen({
           <View style={styles.placeholder} testID="artifact-viewer-notice">
             <Text style={styles.placeholderText}>{notice!.message}</Text>
           </View>
+        ) : markdown ? (
+          <ArtifactViewerMarkdownBody markdown={markdown.text} />
         ) : format === 'markdown' ? (
           <ArtifactViewerMarkdown attachment={attachment!} />
         ) : format === 'image' ? (
@@ -239,8 +256,17 @@ function ArtifactViewerMarkdown({ attachment }: { attachment: AttachmentReferenc
       </View>
     );
   }
+  return <ArtifactViewerMarkdownBody markdown={markdown} />;
+}
+
+function ArtifactViewerMarkdownBody({ markdown }: { markdown: string }) {
+  const { theme } = useUnistyles();
+  const insets = useSafeAreaInsets();
   return (
-    <ScrollView contentContainerStyle={styles.markdownBody} testID="artifact-viewer-markdown">
+    <ScrollView
+      contentContainerStyle={[styles.markdownBody, { paddingBottom: theme.buzz.space.xl + insets.bottom }]}
+      testID="artifact-viewer-markdown"
+    >
       <MonoMarkdown markdown={markdown} textStyle={styles.markdownText} document />
     </ScrollView>
   );

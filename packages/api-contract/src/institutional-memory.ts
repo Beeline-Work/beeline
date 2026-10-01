@@ -1,4 +1,6 @@
 /** Institutional-memory extraction, storage, and bounded prompt contract. */
+import type { DaemonAttachment } from './daemon-operations.js';
+
 export const INSTITUTIONAL_MEMORY_PROPOSAL_VERSION = 1 as const;
 /**
  * A saved item is one short sentence. Rows written before this cap may be
@@ -103,19 +105,18 @@ export function institutionalMemoryRequestWords(
   );
 }
 /**
- * One person's every-turn preferences, stored once as their profile item under
- * this reserved key and appended to whichever agent answers them. Only that
- * person or a Workspace owner/admin confirms it; no extractor writes it.
+ * The retired standing-preference key. Startup migration renames every row
+ * that used it to an ordinary profile fact; the key stays reserved so an older
+ * server image in a rolling deploy never serves a new row as every-turn text.
  */
-export const INSTITUTIONAL_STANDING_PREFERENCE_KEY = 'standing';
-export const INSTITUTIONAL_STANDING_PREFERENCE_MAX_BYTES = 300;
+export const INSTITUTIONAL_RETIRED_STANDING_KEY = 'standing';
 export const INSTITUTIONAL_MEMORY_CANONICAL_KEY_MAX_LENGTH = 160;
 export const INSTITUTIONAL_MEMORY_RATIONALE_MAX_LENGTH = 500;
 export const INSTITUTIONAL_MEMORY_SOURCE_MESSAGE_MAX = 16;
 export const INSTITUTIONAL_MEMORY_EXTRACTOR_VERSION_MAX_LENGTH = 120;
 export const INSTITUTIONAL_MEMORY_MODEL_MAX_LENGTH = 160;
 export const INSTITUTIONAL_MEMORY_JOB_ERROR_MAX_LENGTH = 1_000;
-/** Everything memory adds to one turn, header included. Standing preferences are separate. */
+/** Everything memory adds to one turn, header included. */
 export const INSTITUTIONAL_CONTEXT_HARD_MAX_BYTES = 1_000;
 export const INSTITUTIONAL_HISTORY_QUERY_MAX_BYTES = 500;
 export const INSTITUTIONAL_MEMORY_SEARCH_QUERY_MAX_BYTES = 500;
@@ -139,6 +140,28 @@ export const INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX = 200;
  * in history before the row bound above could apply.
  */
 export const INSTITUTIONAL_HISTORY_MAX_AGE_DAYS = 180;
+/**
+ * Meaning-based recall for saved items, workspace skills and the per-turn
+ * snapshot. voyage-4-lite (OpenRouter, paid — never a `:free` model, whose
+ * inputs a provider may train on) supports Matryoshka embeddings at 2048,
+ * 1024, 512 and 256 dimensions; 1024 is the balance of recall quality against
+ * pgvector index size this codebase uses everywhere an embedding is stored.
+ * The server reads its OpenRouter key from `OPENROUTER_EMBEDDING_API_KEY`
+ * (never printed, never committed); see `institutional-memory-embeddings.ts`.
+ */
+export const INSTITUTIONAL_MEMORY_EMBEDDING_MODEL = 'voyageai/voyage-4-lite';
+export const INSTITUTIONAL_MEMORY_EMBEDDING_DIMENSIONS = 1024;
+export const INSTITUTIONAL_MEMORY_EMBEDDING_ENV_VAR = 'OPENROUTER_EMBEDDING_API_KEY';
+/** Nearest-neighbor candidates pulled per hybrid search, before the result limit applies. */
+export const INSTITUTIONAL_MEMORY_VECTOR_CANDIDATES_MAX = 20;
+export const INSTITUTIONAL_MEMORY_VECTOR_MAX_DISTANCE = 0.66;
+export const INSTITUTIONAL_CONTEXT_VECTOR_ITEMS_MAX = 3;
+export const INSTITUTIONAL_MEMORY_ALIGN_CANDIDATES = 8;
+export const INSTITUTIONAL_MEMORY_ALIGN_MAX_DISTANCE = 0.75;
+/** A snapshot's embedding call gets a slice of the whole 200ms context-fetch
+ *  budget; the rest stays for the DB queries the snapshot already runs. A
+ *  miss here degrades to keyword-only candidates, never to an empty snapshot. */
+export const INSTITUTIONAL_CONTEXT_EMBEDDING_TIMEOUT_MS = 100;
 export const WORKSPACE_SKILL_DESCRIPTION_MAX_LENGTH = 60;
 export const WORKSPACE_SKILL_MARKDOWN_MAX_BYTES = 32 * 1_024;
 export const WORKSPACE_SKILL_SLUG_MAX_LENGTH = 64;
@@ -149,7 +172,7 @@ export type InstitutionalMemoryCandidateType =
   'correction_candidate' | 'fact_candidate' | 'preference_candidate';
 export type InstitutionalMemoryKind = 'workspace_fact' | 'human_profile_fact';
 export type InstitutionalMemoryAudience = 'workspace' | 'human_profile';
-export type InstitutionalMemoryItemState = 'active' | 'stale' | 'archived';
+export type InstitutionalMemoryItemState = 'active' | 'stale';
 export type InstitutionalMemoryJobState = 'pending' | 'claimed' | 'retry' | 'completed' | 'dead';
 
 export interface InstitutionalMemoryJobLedgerEntry {
@@ -263,6 +286,27 @@ export interface InstitutionalMemoryProposal {
   readonly cas: InstitutionalMemoryProposalCas;
 }
 
+export interface InstitutionalMemoryReviewProposalV2 {
+  readonly proposalVersion: 2;
+  readonly action: 'create' | 'supersede' | 'retire';
+  readonly candidateType?: InstitutionalMemoryCandidateType;
+  readonly memoryKind?: InstitutionalMemoryKind;
+  readonly subjectIdentityId?: string;
+  readonly canonicalKey?: string;
+  readonly body?: string;
+  readonly keywords?: readonly string[];
+  readonly source: InstitutionalMemoryProposalSource;
+  readonly audience?: InstitutionalMemoryAudience;
+  readonly confidence: number;
+  readonly classification: InstitutionalMemoryProposal['classification'];
+  readonly target?: { readonly itemId: string; readonly baseVersion: number };
+  readonly retire?: readonly {
+    readonly itemId: string;
+    readonly baseVersion: number;
+    readonly reason: 'contradicted' | 'duplicate' | 'obsolete';
+  }[];
+}
+
 export interface InstitutionalMemoryJobUsage {
   readonly inputTokens?: number;
   readonly outputTokens?: number;
@@ -278,6 +322,12 @@ export interface InstitutionalMemoryShadowMessage {
   readonly authorId: string;
   readonly createdAt: number;
   readonly text: string;
+  /**
+   * Files and pictures on this message, `expired` once their bytes are past
+   * the media TTL. Save-time review reads them before the upload is deleted
+   * and may keep what they say as a fact; the bytes themselves are not kept.
+   */
+  readonly attachments?: readonly DaemonAttachment[];
 }
 
 export interface InstitutionalMemoryShadowJob {
@@ -293,10 +343,10 @@ export interface InstitutionalMemoryShadowJob {
   readonly triggerKind: 'turn_review' | 'merge_review' | 'curator';
   readonly context?: Readonly<Record<string, unknown>>;
   readonly messages: readonly InstitutionalMemoryShadowMessage[];
-  readonly existingItems: readonly Pick<
+  readonly existingItems: readonly (Pick<
     InstitutionalMemoryItem,
     'id' | 'kind' | 'subjectIdentityId' | 'canonicalKey' | 'body' | 'version'
-  >[];
+  > & { readonly distance?: number; readonly explicitSave?: boolean })[];
 }
 
 export type ClaimInstitutionalMemoryJobResult =
@@ -327,8 +377,10 @@ export interface InstitutionalContextSnapshot {
   readonly itemIds: readonly string[];
   readonly totalBytes: number;
   readonly omitted: Readonly<Record<string, number>>;
-  /** The requester's standing preference text, outside the memory budget. */
-  readonly standingPreference?: string;
+  /** This snapshot's own embedding round trip, for the turn trace. Absent
+   *  when memory is off for the Workspace; `disabled` when no key is configured. */
+  readonly embeddingMs?: number;
+  readonly embeddingOutcome?: 'served' | 'timed-out' | 'disabled' | 'error';
 }
 
 export interface ProposeInstitutionalMemoryInput {
@@ -344,13 +396,6 @@ export interface ProposeInstitutionalMemoryInput {
   readonly correction: boolean;
   readonly confidence: number;
   readonly cas: InstitutionalMemoryProposalCas;
-  /**
-   * Saves `body` as the requester's standing preference instead of a keyword
-   * fact. It must name an answered ask_choice card from this agent in this
-   * Room whose prompt quotes `body` and whose chosen option starts with
-   * "Save", picked by the requester or a Workspace owner/admin.
-   */
-  readonly standingChoiceId?: string;
 }
 
 export interface ProposeInstitutionalMemoryResult {
@@ -365,6 +410,15 @@ export interface SearchInstitutionalMemoryInput {
   readonly generationId?: string;
   readonly query: string;
   readonly limit?: number;
+}
+
+/** How many times this turn called search_memory, and how many of those
+ *  calls came back with nothing — read back by the body's turn trace after
+ *  the turn settles (`institutional_context_serves`' own counters; see
+ *  `searchInstitutionalMemory` and `getInstitutionalMemoryTurnStats`). */
+export interface InstitutionalMemoryTurnStats {
+  readonly searchCalls: number;
+  readonly searchMisses: number;
 }
 
 export interface SearchInstitutionalMemoryResult {
@@ -452,7 +506,7 @@ export interface InstitutionalCuratorProposal {
 }
 
 export type InstitutionalMemoryJobProposal =
-  InstitutionalMemoryProposal | InstitutionalMergeReviewProposal | InstitutionalCuratorProposal;
+  InstitutionalMemoryProposal | InstitutionalMemoryReviewProposalV2 | InstitutionalMergeReviewProposal | InstitutionalCuratorProposal;
 
 export interface LoadWorkspaceSkillInput {
   readonly agentId: string;
@@ -650,8 +704,8 @@ export function parseInstitutionalMemoryProposal(value: unknown): InstitutionalM
     'institutional memory canonical key',
     INSTITUTIONAL_MEMORY_CANONICAL_KEY_MAX_LENGTH,
   );
-  if (canonicalKey === INSTITUTIONAL_STANDING_PREFERENCE_KEY) {
-    throw new Error('the standing preference key is reserved for owner-confirmed preferences');
+  if (canonicalKey === INSTITUTIONAL_RETIRED_STANDING_KEY) {
+    throw new Error('the canonical key "standing" is retired');
   }
   const rationale = boundedText(
     classification.rationale,
@@ -722,6 +776,112 @@ export function parseInstitutionalMemoryProposal(value: unknown): InstitutionalM
       baseVersion: cas.baseVersion as number | null,
       ...(supersedesItemId ? { supersedesItemId } : {}),
     },
+  };
+}
+
+export function parseInstitutionalMemoryReviewProposal(
+  value: unknown,
+): InstitutionalMemoryProposal | InstitutionalMemoryReviewProposalV2 {
+  const raw = record(value, 'institutional memory review proposal');
+  if (raw.proposalVersion !== 2) return parseInstitutionalMemoryProposal(value);
+  exactKeys(raw, [
+    'proposalVersion', 'action', 'candidateType', 'memoryKind', 'subjectIdentityId',
+    'canonicalKey', 'body', 'keywords', 'source', 'audience', 'confidence',
+    'classification', 'target', 'retire',
+  ], 'institutional memory review proposal');
+  if (raw.action !== 'create' && raw.action !== 'supersede' && raw.action !== 'retire') {
+    throw new Error('institutional memory review action is invalid');
+  }
+  const source = record(raw.source, 'institutional memory source');
+  exactKeys(source, ['roomId', 'messageIds'], 'institutional memory source');
+  const roomId = boundedText(source.roomId, 'institutional memory source room', 200);
+  if (!Array.isArray(source.messageIds) || source.messageIds.length < 1 ||
+      source.messageIds.length > INSTITUTIONAL_MEMORY_SOURCE_MESSAGE_MAX) {
+    throw new Error('institutional memory source messages are invalid');
+  }
+  const messageIds = source.messageIds.map((id) =>
+    boundedText(id, 'institutional memory source message', 200));
+  if (new Set(messageIds).size !== messageIds.length) {
+    throw new Error('institutional memory source messages must be unique');
+  }
+  if (typeof raw.confidence !== 'number' || !Number.isFinite(raw.confidence) ||
+      raw.confidence < 0 || raw.confidence > 1) {
+    throw new Error('institutional memory confidence is invalid');
+  }
+  const classification = record(raw.classification, 'institutional memory classification');
+  exactKeys(classification, ['stillTrueForAnotherRequester', 'subjectIsRequester', 'rationale'],
+    'institutional memory classification');
+  const rationale = boundedText(classification.rationale, 'institutional memory classification rationale',
+    INSTITUTIONAL_MEMORY_RATIONALE_MAX_LENGTH);
+  if (classification.subjectIsRequester !== undefined &&
+      typeof classification.subjectIsRequester !== 'boolean') {
+    throw new Error('institutional memory subject classification is invalid');
+  }
+  if (classification.stillTrueForAnotherRequester !== undefined &&
+      typeof classification.stillTrueForAnotherRequester !== 'boolean') {
+    throw new Error('institutional memory classification test is invalid');
+  }
+  const retire = omitted(raw.retire) ? [] : raw.retire;
+  if (!Array.isArray(retire) || retire.length > 3) {
+    throw new Error('institutional memory retired items are invalid');
+  }
+  const retireItems = retire.map((entry) => {
+    const item = record(entry, 'institutional memory retired item');
+    exactKeys(item, ['itemId', 'baseVersion', 'reason'], 'institutional memory retired item');
+    if (!Number.isSafeInteger(item.baseVersion) || (item.baseVersion as number) < 1 ||
+        !['contradicted', 'duplicate', 'obsolete'].includes(String(item.reason))) {
+      throw new Error('institutional memory retired item is invalid');
+    }
+    return {
+      itemId: boundedText(item.itemId, 'institutional memory retired item id', 200),
+      baseVersion: item.baseVersion as number,
+      reason: item.reason as 'contradicted' | 'duplicate' | 'obsolete',
+    };
+  });
+  if (new Set(retireItems.map((item) => item.itemId)).size !== retireItems.length) {
+    throw new Error('institutional memory retired items must be unique');
+  }
+  let target: InstitutionalMemoryReviewProposalV2['target'];
+  if (raw.action === 'supersede') {
+    const item = record(raw.target, 'institutional memory review target');
+    exactKeys(item, ['itemId', 'baseVersion'], 'institutional memory review target');
+    if (!Number.isSafeInteger(item.baseVersion) || (item.baseVersion as number) < 1) {
+      throw new Error('institutional memory review target version is invalid');
+    }
+    target = {
+      itemId: boundedText(item.itemId, 'institutional memory review target id', 200),
+      baseVersion: item.baseVersion as number,
+    };
+  } else if (!omitted(raw.target)) {
+    throw new Error('institutional memory review target is not allowed');
+  }
+  if (target && retireItems.some((item) => item.itemId === target!.itemId)) {
+    throw new Error('institutional memory review target cannot also be retired');
+  }
+  if (raw.action === 'retire') {
+    if (!retireItems.length || ['body', 'canonicalKey', 'keywords', 'memoryKind', 'audience',
+      'candidateType', 'subjectIdentityId']
+      .some((key) => !omitted(raw[key]))) {
+      throw new Error('institutional memory retire action is invalid');
+    }
+    return {
+      proposalVersion: 2, action: 'retire', source: { roomId, messageIds },
+      confidence: raw.confidence, classification: { rationale }, retire: retireItems,
+    };
+  }
+  const fact = parseInstitutionalMemoryProposal({
+    proposalVersion: 1, candidateType: raw.candidateType, memoryKind: raw.memoryKind,
+    subjectIdentityId: omitted(raw.subjectIdentityId) ? undefined : raw.subjectIdentityId,
+    canonicalKey: raw.canonicalKey,
+    body: raw.body, keywords: raw.keywords, source: raw.source,
+    audience: raw.audience, confidence: raw.confidence, classification: raw.classification,
+    cas: { baseVersion: null },
+  });
+  const { cas: _cas, ...validated } = fact;
+  return {
+    ...validated, proposalVersion: 2, action: raw.action,
+    ...(target ? { target } : {}),
+    ...(retireItems.length ? { retire: retireItems } : {}),
   };
 }
 

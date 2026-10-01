@@ -14,14 +14,19 @@ function shims(mobile: string): Record<string, string> {
     'expo-router': `import React from 'react';
     export const useFocusEffect = (effect) => React.useEffect(effect, [effect]);
     export const useLocalSearchParams = () => ({ communityId: 'workspace-1',
-      roomId: '11111111-1111-4111-8111-111111111111' });
+      workspaceId: 'workspace-1', roomId: '11111111-1111-4111-8111-111111111111' });
     export const useRouter = () => ({ back: () => undefined, push: () => undefined });
     export const router = { push: () => undefined, replace: () => undefined, back: () => undefined };`,
-    '@/sync/transport/monolith-operation': `export const monolithPhoneOperation = async (name) =>
-      name === 'readNeedsYou' ? { items: [] } : { bookmarks: [] };
+    '@/sync/transport/monolith-operation': `export class MonolithPhoneOperationError extends Error {}
+    export const monolithPhoneOperation = async (name) =>
+      name === 'readNeedsYou' ? { items: [] }
+        : name === 'listRoomSchedules' ? { schedules: [] } : { bookmarks: [] };
     export const phoneOperationFailureReason = (reason) => String(reason);`,
     '@/sync/transport/room-view-client': `export class RoomViewClient {
       async corners(_id, options) { return globalThis.cornerSectionsView(options); }
+      async room() {
+        return { room: { name: 'alpha' }, viewer: { permissions: { manage: true } }, members: [] };
+      }
     }`,
     '@/sync/transport': `export class BuzzRigTransport {
       async ensureClient() { return { surfaceSubscribe: async () => () => undefined }; }
@@ -83,7 +88,7 @@ describe.skipIf(!existsSync(CHROME))('section page headers in a browser', () => 
       eyebrowAboveTitle: true,
     });
     const { eyebrowFont: _font, eyebrowAboveTitle: _above, ...frame } = corners;
-    for (const page of ['tray', 'workbench', 'workspace', 'changelog']) {
+    for (const page of ['tray', 'workbench', 'workspace', 'changelog', 'schedules']) {
       const { page: _page, ...header } = await measure(page);
       // Pages without an eyebrow or trailing text share everything else.
       const expected = {

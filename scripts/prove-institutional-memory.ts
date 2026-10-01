@@ -18,7 +18,7 @@
  *   3. A shared fact reaches everyone's agents.
  *   4. Authorized history search returns audience-correct results.
  *   5. A completed corner's review produces a restricted procedure another agent can load.
- *   6. The curator ages, consolidates and retains memory over a simulated cycle.
+ *   6. The curator expires memory by age without model jobs.
  *   7. (the ledger those measures read) each step leaves its own rows behind.
  *
  * Local invocation:
@@ -344,6 +344,7 @@ async function main(): Promise<void> {
       subjectIdentityId: HUMAN_A,
       canonicalKey: 'release-notes-internal-only',
       body: CORRECTION,
+      keywords: ['release', 'notes'],
       source: { roomId: ROOM, messageIds: [correctionMessage.messageId] },
       audience: 'human_profile',
       confidence: 0.9,
@@ -428,6 +429,7 @@ async function main(): Promise<void> {
     memoryKind: 'workspace_fact',
     canonicalKey: 'release-migration-transactions',
     body: SHARED_FACT,
+    keywords: ['release', 'migration'],
     sourceMessageIds: [factMessage.messageId],
     correction: false,
     confidence: 0.8,
@@ -633,7 +635,7 @@ async function main(): Promise<void> {
     markdownBytes: loaded.markdown.length,
   });
 
-  // ── Step 6: the curator ages, consolidates and retains ───────────────────
+  // ── Step 6: age-only expiration, with no curator model jobs ───────────────
   const secondMessage = (await phoneOperation('sendRoomMessage', {
     roomId: ROOM,
     messageId: randomBytes(32).toString('hex'),
@@ -658,6 +660,7 @@ async function main(): Promise<void> {
       subjectIdentityId: HUMAN_A,
       canonicalKey: 'release-notes-keep-same-preference',
       body: 'Keep the same release-note preference for internal-only changes.',
+      keywords: ['release', 'notes'],
       source: { roomId: ROOM, messageIds: [secondTask.sourceMessageId] },
       audience: 'human_profile',
       confidence: 0.7,
@@ -674,73 +677,18 @@ async function main(): Promise<void> {
       extractorVersion: 'proof-extractor',
     },
   });
-  // One simulated week: the curator queues its consolidation work, the host
-  // answers it with a merge, and the aging clock runs on top of it.
+  // The weekly cycle only ages records. No model job is queued.
   const weekOne = new Date(Date.now() + 1_000);
   await advanceHostTo(weekOne);
   const queued = await runInstitutionalCuratorCycle(database, recordInstitutionalMemory, weekOne, {
     anchors: {
       resolveRoomRepository: async () => ({
-        token: 'installation-token',
-        repository: 'proof-owner/proof-repo',
-        defaultBranch: 'main',
+        token: 'installation-token', repository: 'proof-owner/proof-repo', defaultBranch: 'main',
       }),
       fileBlobSha: async () => ANCHOR_BLOB,
     },
   });
-  const curatorJob = (
-    await database.query<{
-      id: string;
-      context: { partition: string; candidates: { id: string }[] };
-    }>(
-      `SELECT id,context FROM institutional_memory_jobs
-       WHERE workspace_id=$1 AND trigger_kind='curator'
-         AND jsonb_array_length(context->'candidates')>1
-       ORDER BY created_at,id LIMIT 1`,
-      [WORKSPACE],
-    )
-  ).rows[0];
-  assert(curatorJob, 'the cycle queued curator work');
-  // The partition under proof is the one holding duplicate preferences.
-  const claimedCurator = await claimJobOfKind(
-    'curator',
-    AGENT_A,
-    (job) => job.id === curatorJob.id,
-  );
-  const candidates = curatorJob.context.candidates ?? [];
-  await workerOperation('completeInstitutionalMemoryJob', {
-    agentId: AGENT_A,
-    jobId: claimedCurator.id,
-    leaseToken: claimedCurator.leaseToken,
-    proposal: {
-      proposalVersion: 1,
-      partition: curatorJob.context.partition,
-      actions:
-        candidates.length > 1
-          ? [
-              {
-                action: 'consolidate',
-                targetType: 'memory_item',
-                targetId: candidates[0]!.id,
-                baseVersion: 1,
-                duplicateIds: candidates.slice(1).map((candidate) => candidate.id),
-                body: `${CORRECTION} Keep one canonical statement of it.`,
-                rationale: 'The same preference was recorded twice.',
-              },
-            ]
-          : [],
-    },
-    usage: {
-      inputBytes: 200,
-      outputBytes: 60,
-      model: 'proof-model',
-      extractorVersion: 'proof-extractor',
-    },
-  });
-
-  // Later simulated cycles at the measured cadence: the deterministic lifecycle
-  // ages what was never re-affirmed, archives it, and finally ends its CONTENT —
-  // the row and its sources stay, so the ledger still explains what was served.
+  assert(queued === 0, 'the cycle must not queue model work');
   const cycleTimes = [40, 80, 150].map((days) => new Date(Date.now() + days * 86_400_000));
   const queuedLater: number[] = [];
   for (const at of cycleTimes) {
@@ -749,15 +697,12 @@ async function main(): Promise<void> {
   }
   const lifecycle = (
     await database.query<{
-      stale_state: string;
-      archived_state: string;
+      gone: string;
       retained_without_body: string;
       versions_retained: string;
     }>(
       `SELECT (SELECT count(*) FROM institutional_memory_items
-               WHERE workspace_id=$1 AND state='stale')::text stale_state,
-              (SELECT count(*) FROM institutional_memory_items
-               WHERE workspace_id=$1 AND state='archived')::text archived_state,
+               WHERE workspace_id=$1 AND state='stale')::text gone,
               (SELECT count(*) FROM institutional_memory_items
                WHERE workspace_id=$1 AND deleted_at IS NOT NULL AND body='')::text retained_without_body,
               (SELECT count(*) FROM workspace_skill_versions version
@@ -766,21 +711,19 @@ async function main(): Promise<void> {
       [WORKSPACE],
     )
   ).rows[0]!;
+  const curatorJobs = (await database.query(
+    `SELECT 1 FROM institutional_memory_jobs WHERE workspace_id=$1 AND trigger_kind='curator'`,
+    [WORKSPACE],
+  )).rowCount;
+  assert(curatorJobs === 0, 'no curator job should exist');
   const dashboard = await institutionalObjectiveDashboard(database, WORKSPACE);
-  record('the curator ages, consolidates and retains over simulated cycles', {
+  record('age-only expiration retains the ledger without curator jobs', {
     firstCycleQueuedJobs: queued,
     laterCycleQueuedJobs: queuedLater,
-    staleItems: Number(lifecycle.stale_state),
-    archivedItems: Number(lifecycle.archived_state),
+    goneItems: Number(lifecycle.gone),
     retainedWithoutBody: Number(lifecycle.retained_without_body),
     procedureVersionsRetained: Number(lifecycle.versions_retained),
-    consolidatedItems: (
-      await database.query<{ consolidated_items: number }>(
-        `SELECT consolidated_items FROM institutional_curator_cycles
-         WHERE workspace_id=$1 ORDER BY created_at`,
-        [WORKSPACE],
-      )
-    ).rows.map((row) => row.consolidated_items),
+    curatorJobs,
     staleServeRate: dashboard.staleServeRate,
     contextServes: dashboard.contextServes,
     p95ContextTokens: dashboard.p95ContextTokens,
@@ -948,8 +891,8 @@ async function seed(database: PgliteDatabase): Promise<void> {
     );
   await database.query(
     `INSERT INTO institutional_memory_workspace_rollouts(
-       workspace_id,stage,stale_after_days,archive_after_days,retention_days,availability_observed_at
-     ) VALUES($1,'live',7,14,30,$2)`,
+       workspace_id,stage,expire_after_days,explicit_expire_after_days,availability_observed_at
+     ) VALUES($1,'live',7,30,$2)`,
     [WORKSPACE, new Date()],
   );
   // A host that is online from the first sample, so every simulated span below

@@ -85,6 +85,9 @@ export type LedgerByline = {
   isViewer?: boolean;
   /** Private viewer state; the marker is status, never a separate control. */
   bookmarked?: boolean;
+  /** Someone reported this message to the Beeline feedback loop. Shared room
+   *  state, shown to every member as a quiet status word, never a control. */
+  feedbackReported?: boolean;
   /** The speaker's identity mark. Omitted → the plain dot fallback renders. */
   mark?: LedgerBylineMark;
 };
@@ -400,6 +403,15 @@ function Byline({ byline }: { byline: LedgerByline }) {
           </Text>
         ) : null}
         <View style={styles.bylineStatus} testID="chat-byline-status">
+          {byline.feedbackReported ? (
+            <Text
+              accessibilityLabel="Reported to Beeline"
+              style={styles.bylineStamp}
+              testID="chat-reported-marker"
+            >
+              Reported
+            </Text>
+          ) : null}
           {byline.bookmarked ? (
             <Ionicons
               accessibilityLabel="Bookmarked"
@@ -734,6 +746,7 @@ export function LedgerSystemLine({
   stamp,
   onOpenIdentity,
   onOpenUrl,
+  onOpenBrief,
 }: {
   id: string;
   text: string;
@@ -743,6 +756,8 @@ export function LedgerSystemLine({
   stamp: string;
   onOpenIdentity?: (identityId: string) => void;
   onOpenUrl?: (url: string) => void;
+  /** Opens the corner's latest brief; a revision notice links to it. */
+  onOpenBrief?: () => void;
 }) {
   const [summaryExpanded, setSummaryExpanded] = useState(false);
   const names = event ? (subjects?.length ? subjects : [event.subject]) : [];
@@ -766,7 +781,20 @@ export function LedgerSystemLine({
     const object = event.object;
     if (object?.text) {
       spans.push(' ');
-      if (object.id) {
+      // The brief keeps no history on the phone: any revision notice opens
+      // the latest brief.
+      const briefRevision = event.verb === 'revised the corner brief'
+        && /^Revision [1-9]\d*$/.test(object.text);
+      if (briefRevision && onOpenBrief) {
+        spans.push(
+          <Text key="object" style={styles.systemLineLink}
+            accessibilityRole="link"
+            onPress={onOpenBrief}
+            testID={`system-line-object-${id}`}>
+            {object.text}
+          </Text>,
+        );
+      } else if (object.id) {
         spans.push(
           <Text
             key="object"
@@ -1065,12 +1093,13 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.buzz.ledgerQuiet,
   },
   roomUpdateLineBrass: { color: theme.buzz.accent },
+  // No fixed width: a 36px box clips `17:06` (39px in 13px Plex Mono) to
+  // `17:…`. The row's right padding already keeps the clock clear.
   roomUpdateStamp: {
     ...theme.buzz.type.machine,
     position: 'absolute',
     top: 7,
     right: 0,
-    width: LEDGER_MARGINALIA_WIDTH,
     color: theme.buzz.ledgerGhost,
     textAlign: 'right',
   },

@@ -101,6 +101,7 @@ import { cornerProposalDecision } from '@/buzz/corner-proposal';
 import { anchorCornerMarkers } from '@/buzz/corner-markers';
 import { cornerName } from '@/buzz/corners';
 import { CHANGES_LABEL, CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
+import { buildSpeechLexicon } from '@/buzz/speech-lexicon';
 import {
   COMPOSER_ACK_BOUND_MS,
   STEER_RECEIVED_VISIBLE_MS,
@@ -145,13 +146,15 @@ import {
   CHANNEL_MENTION_PUBKEY,
   filterMentionCandidates,
   formatRoomParticipantTotal,
-  isChannelMentionHandle,
   mentionedAgentPubkey,
   orderRoomRoster,
+  recordMentionPick,
   replaceActiveMention,
   resolveComposerMentions,
   selectedMentionAgentPubkey,
   shouldReadWorkspaceRoster,
+  SYSTEM_MENTION_HANDLE,
+  SYSTEM_MENTION_PUBKEY,
 } from '@/buzz/room-participants';
 import { resolveAgentDisplayIdentity, resolvePendingAgentDisplay } from '@/buzz/agent-display';
 import {
@@ -190,6 +193,7 @@ import {
   ownerGrantShareMessage,
   type OwnerGrantNeeded,
 } from '@/components/buzz/OwnerGrantNeededCard';
+import { StarPromptCard, useStarPrompt } from '@/components/buzz/StarPromptCard';
 import { selectWorkingAgents } from '@/buzz/room-indicators';
 import {
   roomBottomChromeStyles,
@@ -212,12 +216,12 @@ import {
   saveLastViewedChannel,
 } from '@/buzz/community-storage';
 import {
+  createChatAttachmentUploader,
   formatAttachmentSize,
   MAX_MESSAGE_ATTACHMENTS,
   pastedImageAttachment,
   pickedPhotoAttachments,
   type PickedChatAttachment,
-  uploadChatAttachments,
 } from '@/buzz/chat-attachment';
 import {
   availableSlashVerbs,
@@ -295,6 +299,8 @@ import {
   phoneOperationFailureReason,
 } from '@/sync/transport/monolith-operation';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
+import { promptAndReportMessageIssue, reportIssueToastCopy } from '@/buzz/report-message-issue';
+import { useCopiedToast } from '@/components/buzz/CopiedToast';
 import {
   formatForwardedMessage,
   forwardMessageToRoom,
@@ -317,6 +323,9 @@ import {
 } from '@/buzz/room-new-message-boundary';
 import { useNewMessageControl } from '@/buzz/use-new-message-control';
 import { RoomCatchUpControls } from '@/components/buzz/RoomCatchUpControls';
+import { TranscriptScrubber } from '@/components/buzz/TranscriptScrubber';
+import type { ScrubberDay } from '@/buzz/transcript-scrubber';
+import { useTranscriptScrubber } from '@/buzz/use-transcript-scrubber';
 import { RoomCatchUpSheet } from '@/components/buzz/RoomCatchUpSheet';
 import { buildCatchUpReport } from '@/buzz/room-catch-up-report';
 import { createTranscriptCardMotionStore } from '@/components/buzz/transcript-card-motion-context';
@@ -338,7 +347,7 @@ import {
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
 import { CornerObjectiveLine } from '@/components/buzz/CornerObjectiveLine';
-import { CornerBriefDisclosure } from '@/components/buzz/CornerBriefDisclosure';
+import { openCornerBriefViewer } from '@/components/buzz/corner-brief-viewer';
 import { CornerStatusLine } from '@/components/buzz/CornerStatusLine';
 import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import { AttachmentPickerSheet } from '@/components/buzz/AttachmentPickerSheet';
@@ -358,7 +367,7 @@ import { CornerGlyph } from '@/components/buzz/CornerGlyph';
 import { OverflowGlyph } from '@/components/buzz/OverflowGlyph';
 import { RoomReviewerActions } from '@/components/buzz/RoomReviewerActions';
 import { EmptyLedgerState, type EmptyLedgerVariant } from '@/components/buzz/EmptyLedgerState';
-import { HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
+import { CornerHeaderAgentText, HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
 import { ChannelHeaderTitle } from '@/components/buzz/ChannelHeaderTitle';
 import { HullDialog, HullDialogInput } from '@/components/buzz/HullDialog';
 import type { ChannelHeaderKind } from '@/buzz/channel-header-title';
@@ -378,6 +387,7 @@ import {
   LedgerSystemLine,
 } from '@/components/buzz/Ledger';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { MentionSuggestionMenu } from '@/components/buzz/MentionSuggestionMenu';
 import { DirectMessageHeaderIdentity } from '@/components/buzz/DirectMessageHeaderIdentity';
 import { RoomRosterSheet, type RoomRosterParticipant } from '@/components/buzz/RoomRosterSheet';
 import { RepoPicker } from '@/components/buzz/RepoPicker';
@@ -408,6 +418,19 @@ const CHANNEL_MENTION_OPTION: RoomMemberOption = {
   pubkey: CHANNEL_MENTION_PUBKEY,
   name: 'channel',
   handle: CHANNEL_MENTION_HANDLE,
+  kind: 'person',
+};
+
+/**
+ * The reserved `@system` autocomplete row: the feedback loop's report token,
+ * offered in every Room, corner and DM. Picking it inserts `@system ` like any
+ * mention, but System is never a member, so `SYSTEM_MENTION_PUBKEY` is a
+ * sentinel that never reaches a send's mention list.
+ */
+const SYSTEM_MENTION_OPTION: RoomMemberOption = {
+  pubkey: SYSTEM_MENTION_PUBKEY,
+  name: 'System',
+  handle: SYSTEM_MENTION_HANDLE,
   kind: 'person',
 };
 
@@ -663,9 +686,31 @@ export function BuzzChatSurface({
     },
     [],
   );
+  // Staged photos and files start uploading as soon as they land in the
+  // composer, so send only waits for whatever is still in flight.
+  const [attachmentUploader] = useState(createChatAttachmentUploader);
+  useEffect(() => {
+    attachmentUploader.retain(pendingAttachments);
+    if (!transport || pendingAttachments.length === 0) return;
+    void transport
+      .ensureClient()
+      .then((client) =>
+        attachmentUploader.start(
+          client,
+          pendingAttachments.filter((attachment) =>
+            pendingAttachmentsRef.current.includes(attachment),
+          ),
+        ),
+      )
+      .catch(() => undefined);
+  }, [attachmentUploader, pendingAttachments, transport]);
   const [attachmentPickerVisible, setAttachmentPickerVisible] = useState(false);
   const [messageActionsTarget, setMessageActionsTarget] = useState<ChatDisplayMessage | null>(null);
   const [optimisticBookmarks, setOptimisticBookmarks] = useState<Record<string, boolean>>({});
+  // Messages this viewer reported here, marked before the next read carries
+  // the server's `feedbackReported`.
+  const [optimisticReports, setOptimisticReports] = useState<Record<string, true>>({});
+  const { showCopied: showReportToast, toast: reportToast } = useCopiedToast('message-report-toast');
   const [forwardTarget, setForwardTarget] = useState<ChatDisplayMessage | null>(null);
   const [forwardRooms, setForwardRooms] = useState<readonly ForwardTarget[] | null>(
     null,
@@ -1315,6 +1360,14 @@ export function BuzzChatSurface({
   // The same objective as one line, for the inscription under the header and
   // for the empty state's steering copy — derived once so the two never drift.
   const cornerObjectiveText = useMemo(() => cornerObjective.join(' '), [cornerObjective]);
+  // The brief's latest revision opens full-screen in the artifact viewer, from
+  // the objective line and from a "revised the corner brief" system line. No
+  // brief, no link.
+  const cornerBrief = roomSurface?.cornerBrief;
+  const openCurrentBrief = useMemo(
+    () => (cornerBrief ? () => openCornerBriefViewer(cornerBrief) : undefined),
+    [cornerBrief],
+  );
 
   const loadOlderTranscriptMessages = useCallback(() => {
     const visibleRowCount = visibleTranscriptWindow(foldedMessages, Number.MAX_SAFE_INTEGER).length;
@@ -1394,15 +1447,31 @@ export function BuzzChatSurface({
     () => new Set<string>(roomMembers.map((member) => member.pubkey)),
     [roomMembers],
   );
+  // Only message text shapes the lexicon, so a presence tick that rebuilds the
+  // message array does not re-prime the recogniser.
+  const speechMessageText = useStable(
+    durableMessages
+      .filter((message) => !message.isSystemNotice && !message.deleted)
+      .map((message) => message.text),
+    sameElementRefs,
+  );
   const speechHints = useMemo(
-    () => [
-      ...new Set(
-        [...selectedMembers.map((member) => member.identity.displayName), resolvedChannelName]
-          .map((name) => name?.trim())
-          .filter((name): name is string => Boolean(name)),
-      ),
+    () =>
+      buildSpeechLexicon({
+        roomName: resolvedChannelName,
+        parentRoomName: roomSurface?.parent?.name,
+        repositoryName: roomSurface?.repository?.name,
+        memberNames: selectedMembers.map((member) => member.identity.displayName),
+        memberHandles: selectedMembers.map((member) => member.identity.handle),
+        messages: speechMessageText,
+      }),
+    [
+      resolvedChannelName,
+      roomSurface?.parent?.name,
+      roomSurface?.repository?.name,
+      selectedMembers,
+      speechMessageText,
     ],
-    [resolvedChannelName, selectedMembers],
   );
   const personProfiles = useMemo(
     () =>
@@ -1595,23 +1664,26 @@ export function BuzzChatSurface({
       return kind === participantPickerKind;
     }).length;
   }, [participantPickerKind, userPubkey, workspaceRoster]);
-  const visibleRosterMembers = useMemo(() => {
+  // Agents carry their model and owner for the roster sheet and @-mention menu.
+  const describedRoomParticipants = useMemo(() => {
     const workspaceAgents = new Map(
       (workspaceRoster?.agents ?? []).map((agent) => [agent.identity.pubkey, agent]),
     );
-    return orderRoomRoster(
-      roomParticipants.map((participant) => {
-        if (participant.kind !== 'agent') return participant;
-        const workspaceAgent = workspaceAgents.get(participant.pubkey);
-        const ownerHandle = workspaceAgent?.owner?.handle;
-        return {
-          ...participant,
-          ...(workspaceAgent?.model ? { model: workspaceAgent.model } : {}),
-          ...(ownerHandle ? { ownerHandle } : {}),
-        };
-      }),
-    );
+    return roomParticipants.map((participant) => {
+      if (participant.kind !== 'agent') return participant;
+      const workspaceAgent = workspaceAgents.get(participant.pubkey);
+      const ownerHandle = workspaceAgent?.owner?.handle;
+      return {
+        ...participant,
+        ...(workspaceAgent?.model ? { model: workspaceAgent.model } : {}),
+        ...(ownerHandle ? { ownerHandle } : {}),
+      };
+    });
   }, [roomParticipants, workspaceRoster]);
+  const visibleRosterMembers = useMemo(
+    () => orderRoomRoster(describedRoomParticipants),
+    [describedRoomParticipants],
+  );
   const roomParticipantTotal = roomParticipants.length;
   const roomAgents = useMemo(
     () => roomParticipants.filter((participant) => participant.kind === 'agent'),
@@ -1653,8 +1725,8 @@ export function BuzzChatSurface({
     ? `${inputText}:${activeMention.start}:${activeMention.end}`
     : null;
   const mentionCandidateRoster = useMemo(
-    () => [CHANNEL_MENTION_OPTION, ...roomParticipants],
-    [roomParticipants],
+    () => [CHANNEL_MENTION_OPTION, ...describedRoomParticipants, SYSTEM_MENTION_OPTION],
+    [describedRoomParticipants],
   );
   const mentionSuggestions = useMemo(
     () =>
@@ -1745,6 +1817,15 @@ export function BuzzChatSurface({
   // false there and only there for a direct message, since a DM can never be
   // archived).
   const isReadOnlyDirectMessage = isDirectMessage && roomSurface?.viewer.permissions.send === false;
+  // A win (a new reply, or the viewer's own 👍) can make the GitHub star card due.
+  const starPromptKey = useMemo(() => {
+    const messages = roomSurface?.messages ?? [];
+    const thumbs = messages.filter((message) =>
+      message.reactions?.some((reaction) => reaction.emoji === '👍' && reaction.reacted),
+    ).length;
+    return `${messages.at(-1)?.id ?? ''}:${thumbs}`;
+  }, [roomSurface?.messages]);
+  const starPrompt = useStarPrompt(starPromptKey, Boolean(roomSurface) && !isReadOnlyDirectMessage);
   useEffect(() => {
     const humanUi = roomSurface?.boundApp?.manifest.humanUi;
     if (!isFocused || !isCorner || !humanUi) return;
@@ -2075,8 +2156,12 @@ export function BuzzChatSurface({
     },
   );
   const cornerAgentPubkey = useMemo(
-    () => resolveCornerViewAgentPubkey(messages, (pubkey) => agentByPubkey.has(pubkey)),
-    [agentByPubkey, messages],
+    () => resolveCornerViewAgentPubkey(
+      messages,
+      (pubkey) => agentByPubkey.has(pubkey),
+      roomSurface?.cornerOpenerAgentId,
+    ),
+    [agentByPubkey, messages, roomSurface?.cornerOpenerAgentId],
   );
   const rawSpeakerWorking = useMemo(
     () =>
@@ -2086,8 +2171,7 @@ export function BuzzChatSurface({
     [activeAgentTurns],
   );
   const speakerWorking = useStable(rawSpeakerWorking, shallowEqualRecord);
-  // The corner header names the corner's OWN agent — the server projection's
-  // `agent` (`corners.created_by`, the agent the corner belongs to), never
+  // The corner header names the opener from `corner_facts.owner_agent_id`, never
   // whichever agent currently holds a live turn. While a reviewer works in
   // the corner the transcript attribution is the reviewer's and stays there;
   // the corner does not change hands. The transcript-derived identity fills
@@ -2151,6 +2235,22 @@ export function BuzzChatSurface({
   // durable boundary away from the numeric index we retry.
   const transcriptMessagesRef = useRef(transcriptMessages);
   transcriptMessagesRef.current = transcriptMessages;
+  // The server rows held here, which is what the history outline counts.
+  const serverTranscriptMessages = useMemo(
+    () => mergeDisplayPages(olderMessages, cachedMessages),
+    [cachedMessages, olderMessages],
+  );
+  const {
+    history: scrubberHistory,
+    position: scrubberPosition,
+    visible: scrubberVisible,
+    observeVisibleRows: observeScrubberRows,
+    revealOnScroll: revealScrubber,
+  } = useTranscriptScrubber({
+    roomId: decodedId,
+    roomClient,
+    durableMessages: serverTranscriptMessages,
+  });
   // The read cursor ranks rows by index to decide which is newest, so it reads
   // the chronological order for the same reason the jump control does: on the
   // phone `transcriptMessages` IS the reversed list, and ranking that array
@@ -2479,6 +2579,7 @@ export function BuzzChatSurface({
       visibleTranscriptMessagesRef.current = viewableItems
         .filter((token) => token.isViewable)
         .map((token) => token.item);
+      observeScrubberRows(visibleTranscriptMessagesRef.current);
       const notification = pendingNotificationLandingRef.current;
       if (
         notification &&
@@ -2532,7 +2633,13 @@ export function BuzzChatSurface({
       advanceReadCursor(chronologicalMessagesRef.current, visibleTranscriptMessagesRef.current);
       completePendingNewMessageLanding();
     },
-    [advanceReadCursor, completePendingNewMessageLanding, observeVisibleMessages, raiseSourceLandingFlash],
+    [
+      advanceReadCursor,
+      completePendingNewMessageLanding,
+      observeScrubberRows,
+      observeVisibleMessages,
+      raiseSourceLandingFlash,
+    ],
   );
   // Follow a new row only from the tail. A reader in history keeps the same
   // position while the arrival joins the compact queue above the composer.
@@ -2803,6 +2910,56 @@ export function BuzzChatSurface({
   // all — gets back to the live end in one tap, and a reader with unread mail
   // arrives where the next message will land. Any queue behind it is settled
   // here: the tap is the reader saying they are done being behind.
+  // The list follows the scrubber's day while the finger is down. A day
+  // released before its rows are loaded stays the target while older pages
+  // come in, until it lands or the history runs out.
+  const [scrubTargetId, setScrubTargetId] = useState<string | null>(null);
+  useEffect(() => setScrubTargetId(null), [decodedId]);
+  const landAtScrubbedMessage = useCallback((messageId: string) => {
+    const index = boundaryRowIndex(transcriptMessagesRef.current, messageId);
+    if (index < 0) return false;
+    // Reuses the notification landing's retry for rows native has not measured.
+    pendingNotificationLandingRef.current = {
+      messageId: transcriptMessagesRef.current[index]!.id,
+      attempts: 0,
+    };
+    flatListRef.current?.scrollToIndex({ index, viewPosition: 0.5, animated: false });
+    return true;
+  }, []);
+  const followScrubbedDay = useCallback(
+    (day: ScrubberDay) => {
+      landAtScrubbedMessage(day.firstMessageId);
+    },
+    [landAtScrubbedMessage],
+  );
+  const landAtScrubbedDay = useCallback(
+    (day: ScrubberDay) => {
+      setScrubTargetId(landAtScrubbedMessage(day.firstMessageId) ? null : day.firstMessageId);
+    },
+    [landAtScrubbedMessage],
+  );
+  useEffect(() => {
+    if (!scrubTargetId) return;
+    if (landAtScrubbedMessage(scrubTargetId)) {
+      setScrubTargetId(null);
+      return;
+    }
+    const residentIndex = boundaryRowIndex(foldedMessages, scrubTargetId);
+    if (residentIndex >= 0) {
+      revealTranscriptThrough(foldedMessages.length - residentIndex);
+      return;
+    }
+    if (transcriptHistoryStatus === 'idle') loadOlderTranscriptMessages();
+    else if (transcriptHistoryStatus !== 'loading') setScrubTargetId(null);
+  }, [
+    foldedMessages,
+    landAtScrubbedMessage,
+    loadOlderTranscriptMessages,
+    revealTranscriptThrough,
+    scrubTargetId,
+    transcriptHistoryStatus,
+    transcriptMessages,
+  ]);
   const landAtNewestMessage = useCallback(() => {
     pendingNewMessageLandingRef.current = null;
     scrollToNewestMessage();
@@ -3330,6 +3487,37 @@ export function BuzzChatSurface({
     [activeCommunityId, decodedId, messageIsBookmarked, refreshSignal],
   );
 
+  const messageIsReported = useCallback(
+    (message: ChatDisplayMessage) =>
+      Boolean(optimisticReports[message.relayId ?? message.id] ?? message.feedbackReported),
+    [optimisticReports],
+  );
+
+  const handleReportMessage = useCallback(
+    async (message: ChatDisplayMessage) => {
+      if (message.isAgentActivity || message.isAgentDraft) return;
+      const messageId = message.relayId ?? message.id;
+      const outcome = await promptAndReportMessageIssue(
+        { roomId: decodedId, messageId },
+        {
+          prompt: (title, body, options) => Modal.prompt(title, body, options),
+          report: (input) => monolithPhoneOperation('reportMessageIssue', input),
+        },
+      );
+      if (outcome.status === 'cancelled') return;
+      if (outcome.status === 'failed') {
+        Modal.alert('Could not report message', phoneOperationFailureReason(outcome.error));
+        return;
+      }
+      setOptimisticReports((current) => ({ ...current, [messageId]: true }));
+      const copy = reportIssueToastCopy(outcome.duplicate);
+      showReportToast(copy);
+      AccessibilityInfo.announceForAccessibility(copy);
+      refreshSignal.force();
+    },
+    [decodedId, refreshSignal, showReportToast],
+  );
+
   const canDeleteMessage = useCallback(
     (message: ChatDisplayMessage) =>
       !message.deleted && !message.isAgentActivity && !message.isAgentDraft &&
@@ -3518,7 +3706,7 @@ export function BuzzChatSurface({
       }
       if (!transport) setSessionTransport(sendTransport);
       preparedTransport = sendTransport;
-      const attachments = await uploadChatAttachments(
+      const attachments = await attachmentUploader.uploadAll(
         await sendTransport.ensureClient(),
         activePendingAttachments,
       );
@@ -3659,6 +3847,7 @@ export function BuzzChatSurface({
     }
   }, [
     activeCommunityId,
+    attachmentUploader,
     replacePendingAttachments,
     transport,
     decodedId,
@@ -3714,13 +3903,6 @@ export function BuzzChatSurface({
         `A message can include up to ${MAX_MESSAGE_ATTACHMENTS} attachments.`,
       );
       return;
-    }
-    if (Platform.OS === 'ios') {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (permission.status !== 'granted') {
-        Modal.alert('Photo access needed', 'Allow photo access to attach an image.');
-        return;
-      }
     }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
@@ -3796,11 +3978,9 @@ export function BuzzChatSurface({
       if (participant.kind === 'agent') {
         selectedAgentMentionsRef.current.set(participant.handle, participant.pubkey);
       }
-      // `@channel` is a broadcast token, never a resolvable identity — it
-      // must not earn a picker→pubkey binding.
-      if (!isChannelMentionHandle(participant.handle)) {
-        selectedMentionsRef.current.set(participant.handle, participant.pubkey);
-      }
+      // `@channel` (a broadcast) and `@system` (a report) are tokens, never
+      // resolvable identities — neither may earn a picker→pubkey binding.
+      recordMentionPick(selectedMentionsRef.current, participant);
       const nextSelection = { start: inserted.cursor, end: inserted.cursor };
       const completedMention = activeMentionAtCursor(inserted.text, inserted.cursor);
       inputTextRef.current = inserted.text;
@@ -4240,7 +4420,7 @@ export function BuzzChatSurface({
     setOpeningRandomCorner(true);
     try {
       await openRandomNamedCorner({
-        createCorner: (roomId, title) => transport.createHumanCorner(roomId, title),
+        createCorner: (roomId, title) => transport.createHumanCorner(roomId, title, undefined, undefined, true),
         roomId: decodedId,
         openCorner: (cornerId, title) => {
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -4307,7 +4487,7 @@ export function BuzzChatSurface({
         ),
         sourceMessageId: target.relayId ?? target.id,
         createCorner: (roomId, title, sourceMessageId) =>
-          transport.createHumanCorner(roomId, title, undefined, sourceMessageId),
+          transport.createHumanCorner(roomId, title, undefined, sourceMessageId, true),
         roomId: decodedId,
         openCorner: (cornerId, title) => {
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -5258,6 +5438,7 @@ export function BuzzChatSurface({
             stamp={ledgerStamp(item.timestamp)}
             onOpenIdentity={handleOpenSystemIdentity}
             onOpenUrl={handleOpenGitHubEvent}
+            onOpenBrief={openCurrentBrief}
           />
         );
       }
@@ -5275,9 +5456,14 @@ export function BuzzChatSurface({
 
       const knownAgent = item.pubkey ? agentByPubkey.get(item.pubkey) : undefined;
       const renderedItem =
-        messageIsBookmarked(item) === Boolean(item.bookmarked)
+        messageIsBookmarked(item) === Boolean(item.bookmarked) &&
+        messageIsReported(item) === Boolean(item.feedbackReported)
           ? item
-          : { ...item, bookmarked: messageIsBookmarked(item) };
+          : {
+              ...item,
+              bookmarked: messageIsBookmarked(item),
+              feedbackReported: messageIsReported(item),
+            };
       const personName = item.pubkey ? personProfileByPubkey.get(item.pubkey)?.name : undefined;
       const referencedTarget = referencedMessage
         ? replyTargetForMessage(referencedMessage)
@@ -5317,6 +5503,7 @@ export function BuzzChatSurface({
           onReact={handleReactToMessage}
           onForward={beginForward}
           onBookmark={handleBookmarkMessage}
+          onReportIssue={handleReportMessage}
           {...(!isCorner &&
           !isDirectMessage &&
           !isArchived &&
@@ -5359,11 +5546,14 @@ export function BuzzChatSurface({
       handleChoiceAnswer,
       handleChoiceSkip,
       handleOpenSystemIdentity,
+      openCurrentBrief,
       handleOpenCode,
       handleOpenMessageSource,
       handleReactToMessage,
       handleBookmarkMessage,
       messageIsBookmarked,
+      handleReportMessage,
+      messageIsReported,
       handleCornerProposalDecision,
       cornerProposalAction,
       beginForward,
@@ -5523,8 +5713,7 @@ export function BuzzChatSurface({
               </TouchableOpacity>
             )}
             {/*
-            The corner's OWN agent — the server projection's `agent`
-            (`corners.created_by`), stated here once and never repeated on a
+            The corner's opener, stated here once and never repeated on a
             message. A reviewer or helper holding a live turn in the corner
             never swaps this mark or the name under it: their work is
             attributed in the transcript, and the state word reads
@@ -5591,8 +5780,9 @@ export function BuzzChatSurface({
               )}
               {isCorner ? (
                 <HeaderMetaRow>
-                  <Text
-                    numberOfLines={1}
+                  <CornerHeaderAgentText
+                    name={cornerOwnerDisplay?.name ?? 'Agent'}
+                    stateWord={cornerHeaderWord}
                     style={[
                       styles.cornerHeaderAgent,
                       cornerHeaderDisplay.status === 'working'
@@ -5603,9 +5793,7 @@ export function BuzzChatSurface({
                             ? styles.cornerHeaderArchived
                             : styles.cornerHeaderWaiting,
                     ]}
-                  >
-                    {(cornerOwnerDisplay?.name ?? 'AGENT').toUpperCase()} · {cornerHeaderWord}
-                  </Text>
+                  />
                 </HeaderMetaRow>
               ) : isDirectMessage ? (
                 <HeaderMetaCaps testID="room-header-meta">{dmHeaderPresence}</HeaderMetaCaps>
@@ -5694,12 +5882,7 @@ export function BuzzChatSurface({
             the human's own request, inscribed rather than framed. The header
             carries a short corner name, so without this the objective survives
             only until the first message lands. */}
-          {isCorner && <CornerObjectiveLine objective={cornerObjectiveText} />}
-          {isCorner && <CornerBriefDisclosure brief={roomSurface?.cornerBrief} validation={roomSurface?.cornerValidation} onOpenFile={(url) => {
-            void openExternalUrl(url).catch(() => {
-              Modal.alert('Could not open assignment file', 'Try opening the file again from this corner.');
-            });
-          }} />}
+          {isCorner && <CornerObjectiveLine objective={cornerObjectiveText} onOpenBrief={openCurrentBrief} />}
 
           {/* The corner's PR state, inscribed above the transcript: one line
             that links to GitHub, where review and merge happen. */}
@@ -5797,8 +5980,11 @@ export function BuzzChatSurface({
             }}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode={transcriptKeyboardDismissMode(Platform.OS)}
+            // The transcript scrubber below is this list's scroll bar.
+            showsVerticalScrollIndicator={false}
             onScroll={(event) => {
               observePhoneTailOffset(event.nativeEvent.contentOffset.y);
+              revealScrubber();
             }}
             // One frame, the list's own default. A wider window leaves the
             // viewability report (which settles the badge and the unread
@@ -5806,6 +5992,8 @@ export function BuzzChatSurface({
             scrollEventThrottle={16}
             onViewableItemsChanged={observeVisibleTranscriptMessages}
             onScrollBeginDrag={() => {
+              // The reader's own drag abandons a scrubbed day still paging in.
+              setScrubTargetId(null);
               dragEndSequenceRef.current += 1;
               userDraggingRef.current = true;
               allowOlderHistoryRef.current = true;
@@ -5923,10 +6111,30 @@ export function BuzzChatSurface({
                 />
               </View>
             }
-            ListHeaderComponent={null}
+            // Inverted native list: the header is the newest end of the transcript.
+            ListHeaderComponent={
+              starPrompt.prompt ? (
+                <View style={styles.starPrompt}>
+                  <StarPromptCard
+                    prompt={starPrompt.prompt}
+                    busy={starPrompt.busy}
+                    onAnswer={(action) => void starPrompt.answer(action)}
+                  />
+                </View>
+              ) : null
+            }
             // Inverted native list: the footer is the visual top.
             ListFooterComponent={transcriptHistoryLine}
           />
+          )}
+          {!desktopTranscript && (
+            <TranscriptScrubber
+              history={scrubberHistory}
+              position={scrubberPosition}
+              visible={scrubberVisible}
+              onScrub={followScrubbedDay}
+              onScrubEnd={landAtScrubbedDay}
+            />
           )}
           <RoomCatchUpControls
             corner={isCorner}
@@ -6022,76 +6230,14 @@ export function BuzzChatSurface({
                   );
                 })()}
               {mentionMenuVisible && (
-                <View
-                  accessibilityLabel="Mention a Room participant"
-                  style={styles.mentionMenu}
-                  testID="mention-suggestions"
-                >
-                  <Text style={styles.mentionMenuLabel}>MENTION</Text>
-                  {mentionSuggestions.matches.map((participant, index) => {
-                    const selected = index === highlightedMentionIndex;
-                    const display = participant.agent
-                      ? resolveAgentDisplayIdentity(participant.pubkey, participant.agent)
-                      : undefined;
-                    return (
-                      <TouchableOpacity
-                        accessibilityLabel={`${participant.name}, @${participant.handle}, ${participant.kind}`}
-                        accessibilityRole="button"
-                        accessibilityState={{ selected }}
-                        key={participant.pubkey}
-                        onPress={() => selectMention(participant)}
-                        style={[styles.mentionRow, selected && styles.mentionRowSelected]}
-                        testID={`mention-suggestion-${participant.handle}`}
-                      >
-                        {participant.pubkey === CHANNEL_MENTION_PUBKEY ? (
-                          <View style={styles.mentionChannelGlyph}>
-                            <Text style={styles.mentionChannelGlyphText}>@</Text>
-                          </View>
-                        ) : display ? (
-                          <IdentityMark
-                            kind="agent"
-                            seed={display.avatarSeed ?? participant.pubkey}
-                            avatarUrl={display.avatarUrl}
-                            face={display.face}
-                            name={display.name}
-                            size={28}
-                          />
-                        ) : (
-                          <IdentityMark
-                            kind="human"
-                            seed={participant.pubkey}
-                            avatarUrl={personProfileByPubkey.get(participant.pubkey)?.avatar}
-                            face={participant.face}
-                            name={participant.name}
-                            size={28}
-                          />
-                        )}
-                        <View style={styles.mentionIdentity}>
-                          <Text numberOfLines={1} style={styles.mentionName}>
-                            {participant.pubkey === CHANNEL_MENTION_PUBKEY
-                              ? 'Everyone in this Room'
-                              : participant.name}
-                          </Text>
-                          <Text numberOfLines={1} style={styles.mentionHandle}>
-                            @{participant.handle}
-                          </Text>
-                        </View>
-                        <Text style={styles.mentionKind}>
-                          {participant.pubkey === CHANNEL_MENTION_PUBKEY
-                            ? 'ROOM'
-                            : participant.kind === 'agent'
-                              ? 'AGENT'
-                              : 'PERSON'}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                  {mentionSuggestions.overflow > 0 && (
-                    <Text style={styles.mentionOverflow} testID="mention-suggestion-overflow">
-                      AND {mentionSuggestions.overflow} OTHERS
-                    </Text>
-                  )}
-                </View>
+                <MentionSuggestionMenu
+                  highlightedIndex={highlightedMentionIndex}
+                  keyboardOpen={keyboardHeight > 0}
+                  matches={mentionSuggestions.matches}
+                  onSelect={selectMention}
+                  overflow={mentionSuggestions.overflow}
+                  personAvatar={(pubkey) => personProfileByPubkey.get(pubkey)?.avatar}
+                />
               )}
               {cornerOpenRepoPrompt && (
                 <View style={styles.repoPromptBanner} testID="corner-open-repo-prompt">
@@ -6321,6 +6467,7 @@ export function BuzzChatSurface({
             </View>
           )}
           </KeyboardAvoidingView>
+          {reportToast}
         </View>
         {profileAgentId && desktopExperience && activeCommunityId && (
           <View style={styles.agentProfilePane} testID="desktop-agent-profile-pane">
@@ -6393,6 +6540,18 @@ export function BuzzChatSurface({
               if (target) void handleBookmarkMessage(target);
             }}
             testID="message-bookmark-action"
+          />
+        ) : null}
+        {messageActionsTarget && !messageActionsTarget.isAgentActivity ? (
+          <HullActionSheetRow
+            accessibilityLabel="Report an issue with this message"
+            label="Report issue"
+            onPress={() => {
+              const target = messageActionsTarget;
+              setMessageActionsTarget(null);
+              if (target) void handleReportMessage(target);
+            }}
+            testID="message-report-action"
           />
         ) : null}
         {messageActionsTarget ? (
@@ -6532,10 +6691,55 @@ export function BuzzChatSurface({
             slot="row"
           />
         }
+        onTitlePress={canRenameTitle ? startRenameFromTitle : undefined}
         testID="room-actions-sheet"
         title={displayRoomName}
+        titleAccessibilityLabel={`Rename ${displayRoomName}`}
+        titleTestID="room-actions-title"
         visible={roomActionsVisible}
       >
+        {!isCorner && canRenameTitle && renameEditing && (
+          <View style={styles.roomRenameEditor} testID="rename-room-editor">
+            <Text style={styles.roomRenameLabel}>New {ROOM_LABEL.toLowerCase()} name</Text>
+            <TextInput
+              accessibilityLabel={`New ${ROOM_LABEL} name`}
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!renameBusy}
+              onChangeText={(value) => {
+                setRenameDraft(value);
+                if (value.trim()) setRenameError(null);
+              }}
+              onSubmitEditing={() => void handleRenameRoom()}
+              returnKeyType="done"
+              selectTextOnFocus
+              style={styles.roomRenameInput}
+              testID="rename-room-input"
+              value={renameDraft}
+            />
+            {!validRoomSlug(renameDraft.trim()) && (
+              <Text style={styles.roomRenameLabel}>{ROOM_SLUG_HINT}</Text>
+            )}
+            <View style={styles.roomRenameControls}>
+              <MonoButton
+                disabled={renameBusy}
+                label="Cancel"
+                onPress={() => {
+                  setRenameEditing(false);
+                  setRenameError(null);
+                }}
+                variant="secondary"
+              />
+              <MonoButton
+                disabled={renameBusy || !validRoomSlug(renameDraft.trim())}
+                label={renameBusy ? 'Renaming…' : 'Apply'}
+                loading={renameBusy}
+                onPress={() => void handleRenameRoom()}
+                testID="apply-room-rename"
+              />
+            </View>
+          </View>
+        )}
         <RoomRepositoryActions
           busy={roomRepoBusy}
           canManage={canManageWorkspace}
@@ -6622,60 +6826,6 @@ export function BuzzChatSurface({
           }}
           testID="room-participant-roster-trigger"
         />
-        {canManageWorkspace &&
-          (renameEditing ? (
-            <View style={styles.roomRenameEditor} testID="rename-room-editor">
-              <Text style={styles.roomRenameLabel}>New {ROOM_LABEL.toLowerCase()} name</Text>
-              <TextInput
-                accessibilityLabel={`New ${ROOM_LABEL} name`}
-                autoCapitalize="none"
-                autoCorrect={false}
-                editable={!renameBusy}
-                onChangeText={(value) => {
-                  setRenameDraft(value);
-                  if (value.trim()) setRenameError(null);
-                }}
-                onSubmitEditing={() => void handleRenameRoom()}
-                returnKeyType="done"
-                selectTextOnFocus
-                style={styles.roomRenameInput}
-                testID="rename-room-input"
-                value={renameDraft}
-              />
-              {!validRoomSlug(renameDraft.trim()) && (
-                <Text style={styles.roomRenameLabel}>{ROOM_SLUG_HINT}</Text>
-              )}
-              <View style={styles.roomRenameControls}>
-                <MonoButton
-                  disabled={renameBusy}
-                  label="Cancel"
-                  onPress={() => {
-                    setRenameEditing(false);
-                    setRenameError(null);
-                  }}
-                  variant="secondary"
-                />
-                <MonoButton
-                  disabled={renameBusy || !validRoomSlug(renameDraft.trim())}
-                  label={renameBusy ? 'Renaming…' : 'Apply'}
-                  loading={renameBusy}
-                  onPress={() => void handleRenameRoom()}
-                  testID="apply-room-rename"
-                />
-              </View>
-            </View>
-          ) : (
-            <HullActionSheetRow
-              accessibilityLabel={`Rename ${ROOM_LABEL}`}
-              chevron="right"
-              disabled={renameBusy}
-              label="Rename"
-              onPress={() => {
-                startRenameFromTitle();
-              }}
-              testID="rename-room-action"
-            />
-          ))}
         {canManageWorkspace && getBuzzRuntimeConfig().monolithEnabled && (
           <HullActionSheetRow
             accessibilityLabel={`View ${ROOM_LABEL} scheduled work`}
@@ -6723,20 +6873,6 @@ export function BuzzChatSurface({
         title={headerTitle ?? cornerOwnerDisplay?.name ?? CORNER_LABEL}
         visible={cornerActionsVisible}
       >
-        <HullActionSheetRow
-          accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)}`}
-          chevron="right"
-          disabled={!memberManagement.canOpenRoster}
-          label="Members"
-          metadata={
-            participantsHydrated ? formatRoomParticipantTotal(roomParticipantTotal) : 'Loading'
-          }
-          onPress={() => {
-            setCornerActionsVisible(false);
-            setRosterVisible(true);
-          }}
-          testID="room-participant-roster-trigger"
-        />
         <HullActionSheetRow
           accessibilityLabel={`Close ${CORNER_LABEL}`}
           description={`Ends the edit session and archives this ${CORNER_LABEL}. Unmerged work is lost.`}
@@ -6858,6 +6994,7 @@ const styles = StyleSheet.create((theme) => {
     keyboardBody: {
       flex: 1,
     },
+    starPrompt: { paddingTop: 12 },
     agentProfilePane: { width: 380, maxWidth: '50%', borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: groknight.border },
     desktopConversationFrame: {
       flex: 1,
@@ -7335,74 +7472,6 @@ const styles = StyleSheet.create((theme) => {
       ...theme.buzz.type.sectionHead,
       fontFamily: groknight.monoSemibold,
       color: groknight.textSecondary,
-    },
-    mentionMenu: {
-      marginBottom: 6,
-      overflow: 'hidden',
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-      borderRadius: groknight.radius,
-      backgroundColor: groknight.bgBase,
-    },
-    mentionMenuLabel: {
-      ...theme.buzz.type.sectionHead,
-      fontFamily: groknight.monoSemibold,
-      paddingHorizontal: 10,
-      paddingVertical: 5,
-      color: groknight.textMuted,
-    },
-    mentionRow: {
-      minHeight: 46,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 9,
-      paddingHorizontal: 9,
-      paddingVertical: 6,
-      borderTopWidth: 1,
-      borderTopColor: groknight.border,
-    },
-    mentionRowSelected: {
-      backgroundColor: groknight.selection,
-    },
-    mentionIdentity: {
-      flex: 1,
-      minWidth: 0,
-    },
-    mentionChannelGlyph: {
-      width: 28,
-      height: 28,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-      borderRadius: groknight.radius,
-    },
-    mentionChannelGlyphText: {
-      ...theme.buzz.type.meta,
-      fontFamily: groknight.proseSemibold,
-      color: groknight.accent,
-    },
-    mentionName: {
-      ...theme.buzz.type.bodyStrong,
-      color: groknight.textPrimary,
-    },
-    mentionHandle: {
-      ...theme.buzz.type.machine,
-      color: groknight.textMuted,
-    },
-    mentionKind: {
-      ...theme.buzz.type.sectionHead,
-      fontFamily: groknight.monoSemibold,
-      color: groknight.faint,
-    },
-    mentionOverflow: {
-      ...theme.buzz.type.sectionHead,
-      fontFamily: groknight.monoSemibold,
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-      borderTopWidth: 1,
-      borderTopColor: groknight.border,
-      color: groknight.textMuted,
     },
     repoPromptBanner: {
       minWidth: 0,

@@ -55,4 +55,12 @@ describe('sessionConfigFingerprint', () => {
     expect(revoked).toBe(withoutRoute);
     expect(revoked).not.toBe(granted);
   });
+
+  it('retires a retained session when a device grant is approved or revoked', () => {
+    const without = sessionConfigFingerprint({ model: 'model' });
+    const granted = sessionConfigFingerprint({ model: 'model', devices: ['/dev/bus/usb'] });
+
+    expect(granted).not.toBe(without);
+    expect(sessionConfigFingerprint({ model: 'model', devices: [] })).toBe(without);
+  });
 });

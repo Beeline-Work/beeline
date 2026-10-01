@@ -90,6 +90,7 @@ import {
 } from './host-mcp-route.js';
 import { ensureSquireHostDir, squireHostBindPaths } from './squire-host.js';
 import {
+  OPENROUTER_MAX_OUTPUT_TOKENS,
   resolveOpenRouterRouting,
   withOpenRouterModelRouting,
   type OpenRouterRoutingDecision,
@@ -383,17 +384,36 @@ export interface RoomAgentHomeInput {
   resourceAuthFile?: string;
 }
 
+function claudeLoginExpiresAt(text: string): number | undefined {
+  try {
+    const expiresAt = (JSON.parse(text) as { claudeAiOauth?: { expiresAt?: unknown } } | null)
+      ?.claudeAiOauth?.expiresAt;
+    return typeof expiresAt === 'number' && Number.isFinite(expiresAt) ? expiresAt : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function hasNewerDetachedClaudeLogin(detached: string, source: string): Promise<boolean> {
+  const detachedExpiresAt = claudeLoginExpiresAt(await readFile(detached, 'utf8'));
+  if (detachedExpiresAt === undefined) return false;
+  const sourceExpiresAt = claudeLoginExpiresAt(await readFile(source, 'utf8'));
+  return sourceExpiresAt !== undefined && detachedExpiresAt > sourceExpiresAt;
+}
+
 /**
- * Restore every shared login as a direct link to the operator credential.
+ * Restore shared login links, except a newer detached Claude login on activation.
  *
  * Harnesses commonly persist refreshed tokens with rename(2). When they do
  * that through an isolated path, the rename replaces the symlink itself and
- * leaves one Room holding a detached regular file. Preserve that file beside
- * the repaired path for diagnosis/recovery; credentials are never deleted.
+ * leaves one Room holding a detached regular file. A failed-login retry
+ * quarantines that file and restores the link; activation keeps a newer Claude
+ * login in the isolated home so a concurrent operator refresh cannot be lost.
  */
 export async function repairRoomAgentCredentialLinks(input: {
   root: string;
   operatorHome?: string;
+  keepNewerDetachedClaudeLogin?: boolean;
 }): Promise<void> {
   const root = resolve(input.root);
   const operatorHome = input.operatorHome ?? homedir();
@@ -411,6 +431,18 @@ export async function repairRoomAgentCredentialLinks(input: {
       if (resolve(dirname(target), linked) === source) continue;
     }
     if (stats) {
+      // A successful Claude refresh can replace the isolated symlink. Keep
+      // that login for the next activation without writing over a concurrent
+      // refresh of the operator's credential. Failure retries use the shared
+      // source instead, so a failed detached refresh cannot trap the session.
+      if (
+        input.keepNewerDetachedClaudeLogin &&
+        credential.dir === 'claude' &&
+        stats.isFile() &&
+        (await hasNewerDetachedClaudeLogin(target, source))
+      ) {
+        continue;
+      }
       const quarantine = `${target}.beeline-quarantine-${Date.now()}-${randomUUID()}`;
       await rename(target, quarantine);
     }
@@ -449,7 +481,11 @@ export async function prepareRoomAgentHome(
   }
 
   try {
-    await repairRoomAgentCredentialLinks({ root, operatorHome });
+    await repairRoomAgentCredentialLinks({
+      root,
+      operatorHome,
+      keepNewerDetachedClaudeLogin: input.agentKind === 'claude',
+    });
   } catch (error) {
     if (input.failClosed || input.resourceAuthFile) throw error;
     console.error(`[body] could not repair shared credentials under ${root}:`, error);
@@ -750,6 +786,10 @@ async function provisionPiCustomModelConfig(
         // custom-model entry replaces pi's catalog record and defaults it to
         // text, which strips every image from the prompt (C87).
         ...(decision.input ? { input: decision.input } : {}),
+        // The routed endpoints' window and output cap replace pi's catalog
+        // values, which can ask for more output than the window leaves. With
+        // no listing to read, the output cap alone still applies.
+        limits: decision.limits ?? { maxTokens: OPENROUTER_MAX_OUTPUT_TOKENS },
       }
     : undefined;
   try {

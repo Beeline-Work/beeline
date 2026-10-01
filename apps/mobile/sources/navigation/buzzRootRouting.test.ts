@@ -47,6 +47,8 @@ vi.mock('@/components/RoundButton', async () => {
 vi.mock('@/constants/Typography', () => ({ Typography: { default: () => ({}) } }));
 
 import Home from '../app/(app)/index';
+import { routeBuzzNotificationResponse } from '@/push/notification-response';
+import { markInitialLandingResolved, resetInitialLandingForTests } from './initial-landing';
 
 const originalConsoleError = console.error;
 
@@ -65,6 +67,7 @@ afterAll(() => vi.restoreAllMocks());
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetInitialLandingForTests();
   routing.pathname = '/';
   auth.isAuthenticated = false;
   buzzIdentityStorage.loadBuzzIdentity.mockResolvedValue(null);
@@ -165,5 +168,66 @@ describe('Buzz root launch routing', () => {
         .findAllByType('Text' as any)
         .some((node) => node.props.children === 'Secure storage unavailable'),
     ).toBe(true);
+  });
+
+  it('opens the Room list when back from a tapped-push Room reveals this route', async () => {
+    // Reproduction back-out-blank: this process already landed once, this
+    // route is mounted again, and a tapped push opens its Room on top before
+    // the identity read settles. Back pops to this route, which used to stay
+    // blank because the push's claim on the first landing never lapsed.
+    markInitialLandingResolved();
+    let identityRead!: (identity: { publicKey: string }) => void;
+    buzzIdentityStorage.loadBuzzIdentity.mockReturnValue(
+      new Promise((resolve) => {
+        identityRead = resolve;
+      }),
+    );
+    const renderer = await renderHome();
+
+    const room = 'room-beeline';
+    await routeBuzzNotificationResponse(
+      {
+        actionIdentifier: 'default',
+        notification: {
+          request: {
+            identifier: 'push-1',
+            content: {
+              data: {
+                type: 'mention',
+                target: 'message',
+                workspaceId: 'workspace-1',
+                roomId: room,
+                channelId: room,
+                messageId: 'message-1',
+              },
+            },
+          },
+        },
+      },
+      {
+        router: {
+          navigate: () => {
+            routing.pathname = `/beeline/chat/${room}`;
+          },
+        },
+        handled: new Set(),
+        defaultActionIdentifier: 'default',
+        waitForInitialLanding: async () => 'committed',
+        suppressPendingInitialLanding: (await import('./initial-landing'))
+          .suppressInitialLandingNavigation,
+        clearLastResponse: async () => undefined,
+        resolveTarget: async (target) => target,
+        log: () => undefined,
+      },
+    );
+    expect(routing.pathname).toBe(`/beeline/chat/${room}`);
+    await act(async () => renderer.update(React.createElement(Home)));
+    await act(async () => identityRead({ publicKey: 'buzz-user' }));
+    expect(navigation.replace).not.toHaveBeenCalled();
+
+    routing.pathname = '/';
+    await act(async () => renderer.update(React.createElement(Home)));
+
+    expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
   });
 });

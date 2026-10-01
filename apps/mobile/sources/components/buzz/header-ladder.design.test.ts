@@ -61,13 +61,14 @@ describe('Chat header — one language for Room and Corner', () => {
     );
     expect(directMessageMeta, 'missing Direct Message metadata').toBeTruthy();
     expect(directMessageMeta![0]).not.toContain('formatRoomParticipantTotal');
-    // Room overflow and corner overflow each carry one Members row. The
-    // header diamond opens corners, not the roster (#1432 masking).
-    expect(chatSource.match(/testID="room-participant-roster-trigger"/g)).toHaveLength(2);
-    expect(chatSource.match(/label="Members"/g)).toHaveLength(2);
+    // Room overflow carries the one Members row; a corner inherits the Room's
+    // membership and shows none. The header diamond opens corners, not the
+    // roster (#1432 masking).
+    expect(chatSource.match(/testID="room-participant-roster-trigger"/g)).toHaveLength(1);
+    expect(chatSource.match(/label="Members"/g)).toHaveLength(1);
     expect(
       chatSource.match(/formatRoomParticipantTotal\(roomParticipantTotal\)/g).length,
-    ).toBeGreaterThanOrEqual(2);
+    ).toBeGreaterThanOrEqual(1);
   });
 
   it('keeps the repository subtitle in the shared meta token', () => {

@@ -101,6 +101,22 @@ describe('corner-start standing faults against the real server', () => {
     };
     await start.startCorner({ cornerId: CORNER, parentRoomId: ROOM });
     await start.startCorner({ cornerId: CORNER, parentRoomId: ROOM });
+    // Someone asks again while the fault stands: not retried, but still told.
+    const AGAIN = 'e'.repeat(64);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@candy are you there?')`,
+      [AGAIN, CORNER, HUMAN],
+    );
+    await createAgentCommand(database, {
+      roomId: CORNER,
+      agentId: AGENT,
+      sourceMessageId: AGAIN,
+      reason: 'human_tag',
+    });
+    await start.startCorner({ cornerId: CORNER, parentRoomId: ROOM });
+    expect(
+      error.mock.calls.filter((call) => String(call[0]).includes('failed to start corner')),
+    ).toHaveLength(1);
     expect(coordinator.surfaceHealthSnapshot()).toContainEqual({
       id: CORNER,
       kind: 'corner',
@@ -111,13 +127,13 @@ describe('corner-start standing faults against the real server', () => {
     await coordinator.shutdown();
 
     const receipts = execute.mock.calls.filter(([name]) => name === 'postAgentTurnReceipt');
-    expect(receipts).toHaveLength(1);
-    expect(receipts[0]![1]).toMatchObject({
-      roomId: CORNER,
-      requestId: REQUEST,
-      status: 'failed',
-      reasonKind: 'workspace-failure',
-    });
+    expect(receipts.map(([, input]) => input.requestId)).toEqual([REQUEST, AGAIN]);
+    for (const [, input] of receipts)
+      expect(input).toMatchObject({
+        roomId: CORNER,
+        status: 'failed',
+        reasonKind: 'workspace-failure',
+      });
     expect(receipts[0]![1]).not.toHaveProperty('generationId');
     expect(
       (

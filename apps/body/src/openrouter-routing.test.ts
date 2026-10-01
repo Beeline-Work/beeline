@@ -7,9 +7,11 @@ import { resolve } from 'node:path';
 import { OPENROUTER_GLM_5_3_FLASH_ENDPOINTS } from './fixtures/openrouter-endpoints-glm-5.3-flash.js';
 import {
   OPENROUTER_FALLBACK_PROVIDERS,
+  OPENROUTER_MAX_OUTPUT_TOKENS,
   OPENROUTER_PROBE_CACHE_TTL_MS,
   OPENROUTER_ROUTING_CACHE_TTL_MS,
   openRouterModelId,
+  openRouterModelLimits,
   openRouterRoutingInput,
   parseOpenRouterEndpoints,
   piInputModalities,
@@ -112,10 +114,10 @@ describe('selectReliableOpenRouterProviders', () => {
 
   it('lowers the bar to 95 when fewer than two providers clear 98', () => {
     const endpoints = [
-      { provider: 'a', uptime: 99, contextLength: 1000, tools: true },
-      { provider: 'b', uptime: 96.5, contextLength: 1000, tools: true },
-      { provider: 'c', uptime: 95, contextLength: 1000, tools: true },
-      { provider: 'd', uptime: 94.9, contextLength: 1000, tools: true },
+      { provider: 'a', uptime: 99, contextLength: 1000, maxCompletionTokens: 0, tools: true },
+      { provider: 'b', uptime: 96.5, contextLength: 1000, maxCompletionTokens: 0, tools: true },
+      { provider: 'c', uptime: 95, contextLength: 1000, maxCompletionTokens: 0, tools: true },
+      { provider: 'd', uptime: 94.9, contextLength: 1000, maxCompletionTokens: 0, tools: true },
     ];
     expect(selectReliableOpenRouterProviders(endpoints, 1000)).toEqual({
       providers: ['a', 'b', 'c'],
@@ -125,15 +127,15 @@ describe('selectReliableOpenRouterProviders', () => {
   });
 
   it('reports no provider when nothing clears even the relaxed bar', () => {
-    const endpoints = [{ provider: 'a', uptime: 90, contextLength: 1000, tools: true }];
+    const endpoints = [{ provider: 'a', uptime: 90, contextLength: 1000, maxCompletionTokens: 0, tools: true }];
     expect(selectReliableOpenRouterProviders(endpoints, 1000).providers).toEqual([]);
   });
 
   it('dedupes a provider serving the model on two endpoints', () => {
     const endpoints = [
-      { provider: 'a', uptime: 99, contextLength: 1000, tools: true },
-      { provider: 'a', uptime: 98.5, contextLength: 1000, tools: true },
-      { provider: 'b', uptime: 98, contextLength: 1000, tools: true },
+      { provider: 'a', uptime: 99, contextLength: 1000, maxCompletionTokens: 0, tools: true },
+      { provider: 'a', uptime: 98.5, contextLength: 1000, maxCompletionTokens: 0, tools: true },
+      { provider: 'b', uptime: 98, contextLength: 1000, maxCompletionTokens: 0, tools: true },
     ];
     expect(selectReliableOpenRouterProviders(endpoints, 1000).providers).toEqual(['a', 'b']);
   });
@@ -161,6 +163,7 @@ describe('resolveOpenRouterRouting', () => {
     );
     // C87: the listing's own input modalities ride with the pin.
     expect(decision.input).toEqual(['text', 'image']);
+    expect(decision.limits).toEqual({ contextWindow: 1_048_576, maxTokens: 32_768 });
     const cached = JSON.parse(readFileSync(resolve(cacheDir, 'z-ai_glm-5.3-flash.json'), 'utf8'));
     expect(cached).toEqual({
       model: MODEL,
@@ -168,6 +171,7 @@ describe('resolveOpenRouterRouting', () => {
       providers: EXPECTED_PROVIDERS,
       bar: 98,
       input: ['text', 'image'],
+      limits: { contextWindow: 1_048_576, maxTokens: 32_768 },
     });
   });
 
@@ -484,6 +488,109 @@ describe('the model input modalities the pin carries (C87)', () => {
   });
 });
 
+describe('the context window and output cap the pin carries', () => {
+  const endpoint = (provider: string, contextLength: number, maxCompletionTokens: number) => ({
+    provider,
+    uptime: 100,
+    contextLength,
+    maxCompletionTokens,
+    tools: true,
+  });
+
+  it('pins the smallest routed window and caps output well below it', () => {
+    expect(
+      openRouterModelLimits(
+        [
+          endpoint('a', 1_048_576, 943_718),
+          endpoint('b', 1_000_000, 384_000),
+          endpoint('unrouted', 262_144, 131_072),
+        ],
+        ['a', 'b'],
+      ),
+    ).toEqual({ contextWindow: 1_000_000, maxTokens: OPENROUTER_MAX_OUTPUT_TOKENS });
+  });
+
+  it('lets no single small endpoint shrink every answer, but never asks more than any accepts', () => {
+    expect(
+      openRouterModelLimits([endpoint('a', 1_048_576, 2_048), endpoint('b', 1_048_576, 131_072)], [
+        'a',
+        'b',
+      ]),
+    ).toEqual({ contextWindow: 1_048_576, maxTokens: OPENROUTER_MAX_OUTPUT_TOKENS });
+    expect(
+      openRouterModelLimits([endpoint('a', 1_048_576, 4_096), endpoint('b', 1_048_576, 2_048)], [
+        'a',
+        'b',
+      ]),
+    ).toEqual({ contextWindow: 1_048_576, maxTokens: 4_096 });
+    expect(openRouterModelLimits([endpoint('a', 0, 4_096)], ['a'])).toBeUndefined();
+  });
+
+  it('reads each endpoint output limit from the listing', () => {
+    const parsed = parseOpenRouterEndpoints(OPENROUTER_GLM_5_3_FLASH_ENDPOINTS);
+    expect(parsed.endpoints.find((entry) => entry.provider === 'morph')?.maxCompletionTokens).toBe(
+      943_718,
+    );
+  });
+
+  it('writes them on the model override, where pi applies them over its catalog', () => {
+    const routing = {
+      only: ['morph'],
+      order: ['morph'],
+      allow_fallbacks: true,
+      require_parameters: false,
+    };
+    const composed = withOpenRouterModelRouting(
+      {},
+      { model: MODEL, routing, limits: { contextWindow: 1_048_576, maxTokens: 32_768 } },
+    ) as any;
+    expect(composed.providers.openrouter.modelOverrides[MODEL]).toEqual({
+      compat: { openRouterRouting: routing },
+      contextWindow: 1_048_576,
+      maxTokens: 32_768,
+    });
+  });
+
+  it('re-asks rather than trusting a cache entry written before the limits were recorded', async () => {
+    const cacheDir = await scratch();
+    const fetchImpl = fetchStub();
+    const now = () => 1_000_000;
+    writeFileSync(
+      resolve(cacheDir, 'z-ai_glm-5.3-flash.json'),
+      JSON.stringify({
+        model: MODEL,
+        fetchedAt: 1_000_000,
+        providers: ['baseten'],
+        bar: 98,
+        input: ['text', 'image'],
+      }),
+    );
+    const decision = await resolveOpenRouterRouting({ model: MODEL, cacheDir, fetchImpl, now });
+    expect(decision.source).toBe('live');
+    expect(decision.limits).toEqual({ contextWindow: 1_048_576, maxTokens: 32_768 });
+  });
+
+  it('carries them through the cache and a one-provider override', async () => {
+    const cacheDir = await scratch();
+    const fetchImpl = fetchStub();
+    let clock = 1_000_000;
+    const now = () => clock;
+    await resolveOpenRouterRouting({ model: MODEL, cacheDir, fetchImpl, now });
+    clock += 1;
+    const cached = await resolveOpenRouterRouting({ model: MODEL, cacheDir, fetchImpl, now });
+    expect(cached.source).toBe('cache');
+    expect(cached.limits).toEqual({ contextWindow: 1_048_576, maxTokens: 32_768 });
+    const pinned = await resolveOpenRouterRouting({
+      model: MODEL,
+      cacheDir,
+      fetchImpl,
+      now,
+      providerOverride: 'baseten',
+    });
+    expect(pinned.limits).toEqual({ contextWindow: 1_048_576, maxTokens: 32_768 });
+  });
+});
+
 describe('openRouterRoutingInput', () => {
   it('names the model and cache dir only for an OpenRouter selection', () => {
     const config = { agentEnv: { OPENROUTER_API_KEY: 'k' }, openRouterRoutingCacheDir: '/cache' };
@@ -508,6 +615,7 @@ async function seedUptimeCache(cacheDir: string, providers: string[]): Promise<v
       providers,
       bar: 98,
       input: ['text', 'image'],
+      limits: { contextWindow: 1_048_576, maxTokens: 32_768 },
     }),
   );
 }

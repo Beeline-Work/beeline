@@ -1,14 +1,19 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { PGlite, type PGliteInterface, type Transaction } from '@electric-sql/pglite';
+import { vector } from '@electric-sql/pglite/vector';
 import type { QueryResultRow } from 'pg';
 import type { SqlDatabase, QueryResult } from './database.js';
 import type { ObjectStorage } from './object-storage.js';
 
 export class PgliteDatabase implements SqlDatabase {
-  constructor(readonly client: PGliteInterface = new PGlite()) {}
+  // The vector extension is loaded unconditionally: institutional_memory_items
+  // and workspace_skills declare `vector(...)` columns in the shared server
+  // schema, so every test that runs `migrate()` needs it available, not only
+  // the tests that exercise embeddings.
+  constructor(readonly client: PGliteInterface = new PGlite({ extensions: { vector } })) {}
   static fromSnapshot(snapshot: Blob | File): PgliteDatabase {
-    return new PgliteDatabase(new PGlite({ loadDataDir: snapshot }));
+    return new PgliteDatabase(new PGlite({ loadDataDir: snapshot, extensions: { vector } }));
   }
   snapshot(): Promise<Blob | File> {
     return this.client.dumpDataDir();

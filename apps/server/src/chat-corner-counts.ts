@@ -9,10 +9,17 @@ export function chatCornerCounts(
     parent_id: string;
     archived_at: Date | null;
     lifecycle: CornerLifecycleView | null;
+    /** The corner workflow run's projected state (`corner_facts.workflow_state`). */
+    workflow_state?: string | null;
+    workflow_outcome?: string | null;
     latest_turn_status: string | null;
     commissioned_by_viewer?: boolean | null;
     latest_tags_viewer?: boolean | null;
     latest_created_at?: Date | null;
+    /** `cornerOwedLateralSql`'s facts for this corner and viewer. */
+    owed?: boolean | null;
+    owed_viewer?: boolean | null;
+    attention?: boolean | null;
   }[],
 ): Map<string, { cornerCount: number; waitingCornerCount: number; openCorners: ChatListCorner[] }> {
   const counts = new Map<
@@ -23,7 +30,11 @@ export function chatCornerCounts(
     const { state } = deriveCornerState({
       archived: Boolean(row.archived_at),
       turnRunning: row.latest_turn_status === 'working',
+      ...(row.workflow_state
+        ? { run: { state: row.workflow_state, outcome: row.workflow_outcome ?? undefined } }
+        : {}),
       lifecycle: row.lifecycle ?? undefined,
+      ...(typeof row.owed === 'boolean' ? { owed: row.owed } : {}),
     });
     if (state === 'archived') continue;
     const count = counts.get(row.parent_id) ?? {
@@ -33,10 +44,11 @@ export function chatCornerCounts(
     };
     count.cornerCount += 1;
     if (state === 'waiting') count.waitingCornerCount += 1;
-    // Mine: the viewer commissioned it, or it is parked on a person and its
-    // latest message tags the viewer.
+    // Mine: the viewer commissioned it, it owes them something, or it is
+    // parked on a person and its latest message tags the viewer.
     const mine =
       row.commissioned_by_viewer ||
+      row.owed_viewer ||
       (row.latest_tags_viewer && (state === 'waiting' || state === 'review'));
     // The viewer's corner handing back is activity in its Room.
     const waitingSince =
@@ -49,6 +61,8 @@ export function chatCornerCounts(
       state,
       ...(mine ? { mine: true } : {}),
       ...(waitingSince !== undefined ? { waitingSince } : {}),
+      // Owed to the viewer and not seen since: only this opens their dropdown.
+      ...(row.attention && state === 'waiting' ? { attention: true as const } : {}),
     });
     counts.set(row.parent_id, count);
   }

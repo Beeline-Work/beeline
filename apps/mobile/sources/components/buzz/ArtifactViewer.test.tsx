@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   platformOS: { value: 'android' as string },
   safeAreaTop: { value: 42 },
+  safeAreaBottom: { value: 0 },
   artifactImageSource: vi.fn(),
   fetchArtifactBytes: vi.fn(),
   fetchArtifactText: vi.fn(),
@@ -26,7 +27,7 @@ const theme = vi.hoisted(() => ({
     bgBase: '#111',
     textPrimary: '#eee',
     ledgerQuiet: '#777',
-    space: { sm: 8, md: 12 },
+    space: { sm: 8, md: 12, xl: 32 },
     layout: { row: 64 },
     type: { body: {}, bodyStrong: {}, meta: {} },
   },
@@ -62,7 +63,12 @@ vi.mock('react-native-unistyles', () => ({
   useUnistyles: () => ({ theme }),
 }));
 vi.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({ top: mocks.safeAreaTop.value, right: 0, bottom: 0, left: 0 }),
+  useSafeAreaInsets: () => ({
+    top: mocks.safeAreaTop.value,
+    right: 0,
+    bottom: mocks.safeAreaBottom.value,
+    left: 0,
+  }),
 }));
 vi.mock('@/buzz/artifact-link', () => ({
   artifactImageSource: mocks.artifactImageSource,
@@ -469,6 +475,55 @@ describe('the full-screen artifact viewer (mock 1c)', () => {
     expect(renderer.root.findByProps({ testID: 'artifact-viewer-markdown' })).toBeDefined();
     expect(renderer.root.findByType('MonoMarkdown')).toBeDefined();
     expect(renderer.root.findByType('MonoMarkdown').props.document).toBe(true);
+  });
+
+  it('renders app-composed markdown (the corner brief) without fetching anything', () => {
+    mocks.fetchArtifactText.mockClear();
+    const renderer = render(
+      <ArtifactViewerScreen
+        markdown={{ title: 'Brief · revision 2', text: '# Spec\n\n> Approved.' }}
+        onClose={mocks.onClose}
+      />,
+    );
+    expect(renderer.root.findAllByType('Text' as any)[0].props.children).toBe('Brief · revision 2');
+    expect(renderer.root.findByProps({ testID: 'artifact-viewer-markdown' })).toBeDefined();
+    expect(renderer.root.findByType('MonoMarkdown').props).toMatchObject({
+      markdown: '# Spec\n\n> Approved.',
+      document: true,
+    });
+    expect(renderer.root.findAllByProps({ testID: 'artifact-viewer-copy' })).toHaveLength(0);
+    expect(mocks.fetchArtifactText).not.toHaveBeenCalled();
+  });
+
+  it('lets the end of a code or markdown document scroll clear of the system navigation bar', async () => {
+    const bottomPadding = (style: unknown) =>
+      Object.assign({}, ...[style].flat(Infinity as 1)).paddingBottom;
+    mocks.safeAreaBottom.value = 48;
+    try {
+      const code = render(
+        <ArtifactViewerScreen
+          document={{ type: 'code', title: 'ts', inscription: 'ts', code: 'x();', language: 'typescript' }}
+          onClose={mocks.onClose}
+        />,
+      );
+      expect(
+        bottomPadding(code.root.findByProps({ testID: 'artifact-viewer-code' }).props.contentContainerStyle),
+      ).toBe(theme.buzz.space.md + 48);
+
+      mocks.fetchArtifactText.mockResolvedValue('# Heading');
+      const markdown = render(
+        <ArtifactViewerScreen
+          attachment={attachment({ mimeType: 'text/markdown', name: 'notes.md' })}
+          onClose={mocks.onClose}
+        />,
+      );
+      await flush();
+      expect(
+        bottomPadding(markdown.root.findByProps({ testID: 'artifact-viewer-markdown' }).props.contentContainerStyle),
+      ).toBe(theme.buzz.space.xl + 48);
+    } finally {
+      mocks.safeAreaBottom.value = 0;
+    }
   });
 
   // The audit found Android had no PDF viewer: opening one threw the reader

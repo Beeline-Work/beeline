@@ -17,6 +17,9 @@ import airtableMark from '../../../assets/app-logos/airtable.png';
 import asanaMark from '../../../assets/app-logos/asana.png';
 import jiraMark from '../../../assets/app-logos/jira.png';
 import supabaseMark from '../../../assets/app-logos/supabase.png';
+import neonMark from '../../../assets/app-logos/neon.png';
+import youtubeMark from '../../../assets/app-logos/youtube.png';
+import runwayMark from '../../../assets/app-logos/runway.png';
 
 const BUNDLED_MARKS: Record<string, number> = {
   linear: linearMark,
@@ -32,19 +35,22 @@ const BUNDLED_MARKS: Record<string, number> = {
   asana: asanaMark,
   jira: jiraMark,
   supabase: supabaseMark,
+  neon: neonMark,
+  youtube: youtubeMark,
+  runway: runwayMark,
 };
 
 /** A consistent tile for apps, with the official public favicon when available. */
 export function AppMark({ name, domain, logo, size = 36, white = false }: { name: string; domain?: string; logo?: string; size?: number; white?: boolean }) {
-  const [failedUri, setFailedUri] = useState<string | null>(null);
+  const [failedUris, setFailedUris] = useState<string[]>([]);
   const imageSize = Math.round(size * 0.56);
-  const bundled = logo ? undefined : BUNDLED_MARKS[name.toLowerCase()];
-  const uri = logo ?? (bundled ? undefined : domain ? serviceFaviconUrl(domain) : undefined);
-  const showImage = uri && failedUri !== uri;
+  const bundled = BUNDLED_MARKS[name.toLowerCase()];
+  const uri = bundled ? undefined : logo && !failedUris.includes(logo) ? logo : domain ? serviceFaviconUrl(domain) : undefined;
+  const showImage = uri && !failedUris.includes(uri);
   return <View style={[styles.tile, { width: size, height: size, borderRadius: Math.round(size * .22), ...(white ? { backgroundColor: '#FFFFFF' } : {}) }]}>
     {!showImage && !bundled ? <Text style={styles.fallback}>{name.slice(0, 1).toUpperCase()}</Text> : null}
     {bundled ? <Image accessibilityIgnoresInvertColors source={bundled} style={{ width: imageSize, height: imageSize }} /> : null}
-    {showImage ? <Image accessibilityIgnoresInvertColors source={{ uri }} onError={() => setFailedUri(uri)} style={{ width: imageSize, height: imageSize }} /> : null}
+    {showImage ? <Image accessibilityIgnoresInvertColors source={{ uri }} onError={() => setFailedUris(current => [...current, uri])} style={{ width: imageSize, height: imageSize }} /> : null}
   </View>;
 }
 

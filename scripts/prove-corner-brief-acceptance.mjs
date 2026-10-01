@@ -21,8 +21,28 @@ if (!liveOptIn) {
   );
 }
 
-run('npm', ['run', 'build', '-w', '@beeline/api-contract']);
-run('npm', ['run', 'build', '-w', '@beeline/auth']);
+// Build the full workspace export closure the deterministic boundaries import:
+// server tests reach @beeline/auth/* and @beeline/push-gateway/projection, body
+// and gate tests reach @beeline/nostr and @beeline/buzz-client. A bare `npm ci`
+// worktree has none of these dist/ trees, so the proof builds them itself in
+// dependency order (same chain BODY SUITE uses) before any test runs.
+const buildPackages = [
+  '@beeline/nostr',
+  '@beeline/api-contract',
+  '@beeline/buzz-client',
+  '@beeline/gate',
+  '@beeline/auth',
+  '@beeline/body',
+  '@beeline/push-gateway',
+];
+run('npm', ['run', 'build', ...buildPackages.flatMap((pkg) => ['-w', pkg])]);
+
+// Generous explicit test timeouts: the heavy body/corner integration tests
+// cold-transform their module graph on a fresh worktree and share the machine
+// with other corners, so the 5s vitest default can blow under load. Tests that
+// set their own explicit timeouts keep them; this only raises the default.
+const SERVER_TEST_TIMEOUT = 120_000;
+const BODY_TEST_TIMEOUT = 180_000;
 
 run('npm', [
   'test',
@@ -34,6 +54,7 @@ run('npm', [
   '--reporter=dot',
   '-t',
   'commits a full brief|automatically binds a planning artifact|refuses new repository and research|rejects paraphrased human intent|wakes the configured reviewer with a revised brief',
+  `--testTimeout=${SERVER_TEST_TIMEOUT}`,
 ]);
 
 run('npm', [
@@ -44,6 +65,7 @@ run('npm', [
   '--run',
   'src/agent-command.integration.test.ts',
   'src/pr-checks-status.test.ts',
+  `--testTimeout=${SERVER_TEST_TIMEOUT}`,
 ]);
 
 run('npm', [
@@ -59,6 +81,7 @@ run('npm', [
   'src/monolith-corner-turn.test.ts',
   'src/corner-no-code-lane.test.ts',
   'src/no-code-lane.integration.test.ts',
+  `--testTimeout=${BODY_TEST_TIMEOUT}`,
 ]);
 
 const mobileInstalled = existsSync(join(root, 'apps/mobile/node_modules'));

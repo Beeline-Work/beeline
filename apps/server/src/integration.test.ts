@@ -2996,6 +2996,56 @@ describe('monolith integration', () => {
     expect(otherRoom.ok).toBe(false);
   });
 
+  it('reads a corner turn’s own transcript message id from the corner Room', async () => {
+    // A corner turn reads messages that live in the corner itself: the active
+    // command carries the corner roomId and the transcript ids belong to it.
+    const cornerId = '22222222-2222-4222-8222-222222222226';
+    const transcriptId = createHash('sha256').update('corner-transcript-row').digest('hex');
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Message corner')`,
+      [cornerId, WORKSPACE, ROOM],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+      [WORKSPACE, cornerId, AGENT],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES
+       ($1,$2,$3,'Corner trigger','message'),
+       ($4,$2,$3,'Corner transcript row the turn must read','message')`,
+      ['corner-trigger', cornerId, HUMAN, transcriptId],
+    );
+    await database.transaction(async (tx) => {
+      const command = await createAgentCommand(tx, {
+        roomId: cornerId,
+        agentId: AGENT,
+        sourceMessageId: 'corner-trigger',
+        turnRequestId: 'corner-request',
+        reason: 'fixture',
+      });
+      expect(command).toBeTruthy();
+      await claimAgentCommand(tx, cornerId, AGENT, command!.id, 'corner-generation');
+    });
+    // The helper sends its turn context with the read, so the server binds it
+    // to the active corner command; the primary lookup scopes to the corner.
+    const read = (await (
+      await daemonOperation('getRoomMessage', {
+        roomId: cornerId,
+        messageId: transcriptId,
+        requestId: 'corner-request',
+        generationId: 'corner-generation',
+      })
+    ).json()) as { body: string };
+    expect(read.body).toBe('Corner transcript row the turn must read');
+    // The parent Room holds no transcript rows of this corner, so a message
+    // id that exists only there must not resolve inside the corner.
+    const absent = await daemonOperation('getRoomMessage', {
+      roomId: cornerId,
+      messageId: createHash('sha256').update('not-in-corner').digest('hex'),
+    });
+    expect(absent.ok).toBe(false);
+  });
+
   it('fetches a search result from an authorized source Room in a corner turn', async () => {
     const corner = '22222222-2222-4222-8222-222222222223';
     const shared = '22222222-2222-4222-8222-222222222224';

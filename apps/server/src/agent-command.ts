@@ -796,6 +796,31 @@ export async function authorizeFailedTurnOutput(
   return row;
 }
 
+type MergeCard = {
+  cornerId?: string;
+  name?: string;
+  pullRequest?: { number?: number; url?: string };
+};
+
+/**
+ * A parent-Room merge card's sentence names only the pull request title, so an
+ * agent woken by a `merged` subscription reads which corner and pull request
+ * landed from the card itself.
+ */
+function mergeCardDetail(card: MergeCard | null): string {
+  if (!card) return '';
+  const corner = card.cornerId
+    ? `corner ${card.name ? `${card.name} (${card.cornerId})` : card.cornerId}`
+    : '';
+  const pr = card.pullRequest;
+  const pullRequest =
+    pr?.number || pr?.url
+      ? ['pull request', pr.number ? `#${pr.number}` : '', pr.url ?? ''].filter(Boolean).join(' ')
+      : '';
+  const detail = [corner, pullRequest].filter(Boolean).join(' · ');
+  return detail ? `\n${detail}` : '';
+}
+
 export async function readAgentCommands(
   db: SqlDatabase,
   roomId: string,
@@ -811,10 +836,11 @@ export async function readAgentCommands(
       corner_ask_id: string | null;
       reply_to_message_id: string | null;
       reply_to_author_id: string | null;
+      merge_card: MergeCard | null;
       created_at: Date;
     }
   >(
-    `SELECT c.*,CASE WHEN c.reason='corner_objective' THEN f.objective ELSE m.text END text,m.author_id,m.attachments,m.system_event,m.presentation,m.card->>'askId' corner_ask_id,m.reply_to_message_id,(SELECT author_id FROM messages WHERE id=m.reply_to_message_id) reply_to_author_id FROM agent_commands c JOIN messages m ON m.id=c.source_message_id LEFT JOIN corner_facts f ON f.corner_id=c.room_id
+    `SELECT c.*,CASE WHEN c.reason='corner_objective' THEN f.objective ELSE m.text END text,CASE WHEN m.card_type='daemon-fact' AND m.card->>'type'='corner-complete' THEN m.card END merge_card,m.author_id,m.attachments,m.system_event,m.presentation,m.card->>'askId' corner_ask_id,m.reply_to_message_id,(SELECT author_id FROM messages WHERE id=m.reply_to_message_id) reply_to_author_id FROM agent_commands c JOIN messages m ON m.id=c.source_message_id LEFT JOIN corner_facts f ON f.corner_id=c.room_id
  WHERE c.room_id=$1 AND c.agent_id=$2 AND (c.state='pending' OR (c.state='claimed' AND c.lease_expires_at<=now()))
    AND NOT (
      -- A review wake waits for the corner to go quiet. The checks-passed
@@ -857,7 +883,7 @@ export async function readAgentCommands(
       source: {
         id: r.source_message_id,
         authorId: r.author_id,
-        body: r.text,
+        body: r.text + mergeCardDetail(r.merge_card),
         attachments: r.attachments ?? [],
         createdAt: Math.floor(r.created_at.getTime() / 1000),
         type: r.presentation,

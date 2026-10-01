@@ -29,7 +29,7 @@ type SearchRow = {
  * A source Room qualifies only when the requester, the agent, and every current
  * human of the output Room can all read it.
  */
-const AUTHORIZED_ROOMS_CTE = `authorized_rooms AS (
+export const AUTHORIZED_ROOMS_CTE = `authorized_rooms AS (
          SELECT source.id
          FROM rooms source
          WHERE source.workspace_id=$3

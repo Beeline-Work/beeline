@@ -1988,7 +1988,7 @@ export class GitHubOperations {
       }
       const summary = target.summary.trim() || pullRequest.title;
       // The merge summary card in the parent Room: a tap opens the pull request.
-      const parentCard = await systemLine(database, {
+      await systemLine(database, {
         id: hash(`beeline:${target.parent_id}:${mergeKey}`),
         roomId: target.parent_id,
         authorId: target.author_id,
@@ -2019,7 +2019,6 @@ export class GitHubOperations {
       await advanceCorner(database, target.corner_id, {
         kind: 'merged',
         contents: { mergeVerdict: 'merged', pullRequestUrl: pullRequest.url },
-        parentCardId: parentCard.id,
       });
     });
     if (!archived) return;

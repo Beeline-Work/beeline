@@ -71,6 +71,17 @@ describe('using-beeline Room guidance', () => {
     expect(markdown).toContain('beeline-agent emit_event');
   });
 
+  it('tells a model with post-merge work to subscribe to merged, and never to acknowledge a merge', () => {
+    const markdown = usingBeelineSkillMarkdown('test-release');
+    expect(markdown).toContain('A corner merging wakes nobody in its parent Room by default.');
+    expect(markdown).toContain('subscribe to merged in the parent Room, from a turn there, before the merge');
+    expect(markdown).toContain('act only on the corner you are waiting for, post nothing for any other merge');
+    expect(markdown).toContain('take merged back out of your list once nothing is left to wait for');
+    expect(markdown).toContain(
+      'Never post just to acknowledge a merge: the merge card already announces it.',
+    );
+  });
+
   it('derives the subscribable kinds from SERVER_EVENT_KINDS so the list cannot drift', () => {
     const markdown = usingBeelineSkillMarkdown('test-release');
     for (const kind of SERVER_EVENT_KINDS) {

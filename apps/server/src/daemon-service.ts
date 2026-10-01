@@ -167,7 +167,7 @@ import {
   recordInstitutionalServeUsage,
   type InstitutionalMemoryShadowConfig,
 } from './institutional-memory-shadow.js';
-import { searchInstitutionalHistory } from './institutional-history.js';
+import { AUTHORIZED_ROOMS_CTE, searchInstitutionalHistory } from './institutional-history.js';
 import {
   feedbackConfigFromEnv,
   notifyFeedbackFixed,
@@ -396,6 +396,7 @@ export class DaemonService {
       'proposeInstitutionalMemory',
       'searchInstitutionalMemory',
       'searchInstitutionalHistory',
+      'getRoomMessage',
       'loadWorkspaceSkill',
       'saveSkill',
       'saveWorkflow',
@@ -442,7 +443,10 @@ export class DaemonService {
         await this.reconcileZeroCheckWorkerCompletion(scopedRoom!, authenticatedAgentId, output.id);
       return output as Output<Name>;
     }
-    if (!this.commandTransaction && scopedRoom && turnWrites.has(name)) {
+    if (
+      !this.commandTransaction && scopedRoom && turnWrites.has(name) &&
+      (name !== 'getRoomMessage' || candidate.requestId !== undefined)
+    ) {
       const writeStartedAt = Date.now();
       const events: LiveEvent[] = [];
       const buffered = new LiveHub();
@@ -2580,7 +2584,7 @@ export class DaemonService {
     const offset = input.offset ?? 0;
     if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000_000)
       throw new Error('invalid message offset');
-    const row = (
+    let row = (
       await this.database.query<{ body: string; total: number; attachments: DaemonAttachment[] }>(
         `SELECT substring(text FROM $3::integer + 1 FOR 4000) body,
                 char_length(text) total, attachments
@@ -2588,6 +2592,35 @@ export class DaemonService {
         [input.roomId, input.messageId, offset],
       )
     ).rows[0];
+    if (!row && this.authorizedCommand?.room_id === input.roomId) {
+      const authority = (
+        await this.database.query<{ workspace_id: string; requester_identity_id: string }>(
+          `SELECT output.workspace_id,root.author_id requester_identity_id
+           FROM rooms output
+           JOIN messages root ON root.id=$2 AND root.deleted_at IS NULL
+           JOIN rooms root_room ON root_room.id=root.room_id
+             AND root_room.workspace_id=output.workspace_id
+           JOIN identities requester ON requester.id=root.author_id AND requester.kind='human'
+           WHERE output.id=$1`,
+          [input.roomId, this.authorizedCommand.root_source_message_id],
+        )
+      ).rows[0];
+      if (authority) {
+        row = (
+          await this.database.query<{ body: string; total: number; attachments: DaemonAttachment[] }>(
+            `WITH ${AUTHORIZED_ROOMS_CTE}
+             SELECT substring(message.text FROM $6::integer + 1 FOR 4000) body,
+                    char_length(message.text) total,message.attachments
+             FROM messages message
+             JOIN authorized_rooms authorized ON authorized.id=message.room_id
+             WHERE message.id=$5 AND message.deleted_at IS NULL
+               AND message.presentation='message'`,
+            [input.roomId, authority.requester_identity_id, authority.workspace_id, agentId,
+              input.messageId, offset],
+          )
+        ).rows[0];
+      }
+    }
     if (!row) throw new Error('message not found in this Room');
     if (offset > row.total) throw new Error('offset exceeds message body');
     const nextOffset = offset + [...row.body].length;

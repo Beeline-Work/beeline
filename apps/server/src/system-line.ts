@@ -138,15 +138,26 @@ export async function ensureSystemDirectMessageRoom(
   workspaceId: string,
   personId: string,
 ): Promise<string> {
+  return (await ensureSystemDirectMessageRoomResult(database, workspaceId, personId)).id;
+}
+
+export async function ensureSystemDirectMessageRoomResult(
+  database: SqlDatabase,
+  workspaceId: string,
+  personId: string,
+): Promise<{ id: string; created: boolean }> {
   await ensureSystemIdentity(database);
   const participants = [SYSTEM_IDENTITY_ID, personId].sort() as [string, string];
   const roomId = directMessageRoomId(workspaceId, participants);
-  await database.query(
+  const inserted = await database.query(
     `INSERT INTO rooms(id,workspace_id,created_by,name,visibility,direct_participants)
      VALUES ($1,$2,$3,'Direct message','invite-only',$4::jsonb)
-     ON CONFLICT(id) DO UPDATE SET visibility='invite-only'`,
+     ON CONFLICT(id) DO NOTHING RETURNING id`,
     [roomId, workspaceId, SYSTEM_IDENTITY_ID, JSON.stringify(participants)],
   );
+  if (!inserted.rowCount) {
+    await database.query(`UPDATE rooms SET visibility='invite-only' WHERE id=$1`, [roomId]);
+  }
   for (const memberId of participants)
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
@@ -155,7 +166,7 @@ export async function ensureSystemDirectMessageRoom(
        DO UPDATE SET removed_at=NULL`,
       [workspaceId, roomId, memberId],
     );
-  return roomId;
+  return { id: roomId, created: Boolean(inserted.rowCount) };
 }
 
 /**

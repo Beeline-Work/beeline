@@ -1045,62 +1045,62 @@ it('runs revised-brief refusal, repair, rereview, exact-head approval, and imple
   const [mergeClearance] = await commands(B, C);
   expect(mergeClearance?.source.body).toBe(`@goosy approved ${approvedHead}, merge`);
 });
-it('routes a corner merge to its responsible parent Room agent without a subscription', async () => {
-  await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb WHERE room_id=$1`, [R]);
-  // The merge webhook writes the parent card, then reports the landing to the
-  // corner workflow, whose landed transition wakes the opener.
-  const landed = await systemLine(db, {
+// The merge webhook writes the parent card, then reports the landing to the
+// corner workflow. Only the card's `merged` subscribers are woken by it.
+const landCorner = async (title: string) => {
+  const card = await systemLine(db, {
     id: id(),
     roomId: R,
     authorId: H,
     subject: { kind: 'github', name: 'GitHub' },
     verb: 'merged',
     kind: 'merged',
-    object: 'Do work',
+    object: { text: title, url: 'https://github.com/owner/widgets/pull/42' },
     presentation: 'card',
     cardType: 'daemon-fact',
-    card: { type: 'corner-complete', cornerId: C, objective: 'Do work', outcome: 'landed' },
+    durableFact: 'merge',
+    card: {
+      type: 'corner-complete',
+      cornerId: C,
+      name: 'Corner',
+      objective: 'Do work',
+      outcome: 'landed',
+      pullRequest: { number: 42, title, url: 'https://github.com/owner/widgets/pull/42' },
+    },
   });
-  await advanceCorner(db, C, { kind: 'merged', contents: {}, parentCardId: landed.id });
+  await advanceCorner(db, C, {
+    kind: 'merged',
+    contents: {
+      mergeVerdict: 'merged',
+      pullRequestUrl: 'https://github.com/owner/widgets/pull/42',
+    },
+  });
+  return card;
+};
+it('wakes no parent Room agent on a corner merge without a merged subscription', async () => {
+  await landCorner('Do work');
+  // B opened the corner; opening it no longer earns a turn when it lands.
+  expect(await commands(B, R)).toEqual([]);
   expect(await commands(A, R)).toEqual([]);
-  expect(await commands(B, R)).toEqual([
+  expect((await db.query(`SELECT 1 FROM agent_commands WHERE room_id=$1`, [R])).rowCount).toBe(0);
+});
+it('wakes a parent Room agent subscribed to merged, naming the corner and pull request', async () => {
+  await db.query(
+    `UPDATE memberships SET event_subscriptions='["merged"]'::jsonb WHERE room_id=$1 AND identity_id=$2`,
+    [R, A],
+  );
+  const card = await landCorner('Ship the widget');
+  expect(await commands(B, R)).toEqual([]);
+  expect(await commands(A, R)).toEqual([
     expect.objectContaining({
-      agentId: B,
-      reason: 'corner_merged',
+      agentId: A,
+      sourceMessageId: card.id,
       source: expect.objectContaining({
-        body: '@GitHub merged Do work',
+        body: `@GitHub merged Ship the widget\ncorner Corner (${C}) · pull request #42 https://github.com/owner/widgets/pull/42`,
         systemEvent: expect.objectContaining({ kind: 'merged' }),
       }),
     }),
   ]);
-
-  await db.query(`DELETE FROM agent_commands`);
-  await db.query(`DELETE FROM messages WHERE card_type='corner-workflow-handoff'`);
-  await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [
-    R,
-    B,
-  ]);
-  const again = await systemLine(db, {
-    id: id(),
-    roomId: R,
-    authorId: H,
-    subject: { kind: 'github', name: 'GitHub' },
-    verb: 'merged',
-    kind: 'merged',
-    object: 'Do work again',
-    presentation: 'card',
-    cardType: 'daemon-fact',
-    card: { type: 'corner-complete', cornerId: C, objective: 'Do work', outcome: 'landed' },
-  });
-  await advanceCorner(db, C, { kind: 'merged', contents: {}, parentCardId: again.id });
-  expect(
-    (
-      await db.query(
-        `SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND reason='corner_merged'`,
-        [R, B],
-      )
-    ).rowCount,
-  ).toBe(0);
 });
 it('transfers a corner objective to the opener only, without resetting the authorized chain', async () => {
   await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);

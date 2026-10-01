@@ -8,6 +8,7 @@ import {
   SYSTEM_MENTION_PUBKEY,
 } from '@/buzz/room-participants';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { memberRosterSubtitle } from '@/components/buzz/MemberRosterRow';
 import type { RoomRosterParticipant } from '@/components/buzz/RoomRosterSheet';
 
 /** One-line mention row height; also the unit of the scroll cap. */
@@ -78,12 +79,24 @@ export function MentionSuggestionMenu({
           const display = participant.agent
             ? resolveAgentDisplayIdentity(participant.pubkey, participant.agent)
             : undefined;
+          // An agent's name is its handle, so its row reads like the roster:
+          // the handle, then model and owner.
+          const agentSubtitle =
+            participant.kind === 'agent'
+              ? memberRosterSubtitle({
+                  kind: 'agent',
+                  model: participant.model,
+                  ownerHandle: participant.ownerHandle,
+                })
+              : undefined;
           return (
             <TouchableOpacity
               accessibilityLabel={
                 participant.pubkey === SYSTEM_MENTION_PUBKEY
                   ? `${SYSTEM_MENTION_LABEL}, @${participant.handle}`
-                  : `${participant.name}, @${participant.handle}, ${participant.kind}`
+                  : agentSubtitle !== undefined
+                    ? `@${participant.handle}, ${agentSubtitle}, agent`
+                    : `${participant.name}, @${participant.handle}, ${participant.kind}`
               }
               accessibilityRole="button"
               accessibilityState={{ selected }}
@@ -117,27 +130,38 @@ export function MentionSuggestionMenu({
                   size={24}
                 />
               )}
-              <View style={styles.mentionIdentity}>
-                <Text numberOfLines={1} style={styles.mentionName}>
-                  {participant.pubkey === CHANNEL_MENTION_PUBKEY
-                    ? 'Everyone in this Room'
-                    : participant.pubkey === SYSTEM_MENTION_PUBKEY
-                      ? SYSTEM_MENTION_LABEL
-                      : participant.name}
-                </Text>
-                <Text numberOfLines={1} style={styles.mentionHandle}>
-                  @{participant.handle}
-                </Text>
-              </View>
-              <Text style={styles.mentionKind}>
-                {participant.pubkey === CHANNEL_MENTION_PUBKEY
-                  ? 'ROOM'
-                  : participant.pubkey === SYSTEM_MENTION_PUBKEY
-                    ? 'REPORT'
-                    : participant.kind === 'agent'
-                    ? 'AGENT'
-                    : 'PERSON'}
-              </Text>
+              {agentSubtitle !== undefined ? (
+                <View style={styles.mentionIdentity}>
+                  <Text numberOfLines={1} style={styles.mentionName}>
+                    @{participant.handle}
+                  </Text>
+                  <Text numberOfLines={1} style={styles.mentionHandle}>
+                    {agentSubtitle}
+                  </Text>
+                </View>
+              ) : (
+                <>
+                  <View style={styles.mentionIdentity}>
+                    <Text numberOfLines={1} style={styles.mentionName}>
+                      {participant.pubkey === CHANNEL_MENTION_PUBKEY
+                        ? 'Everyone in this Room'
+                        : participant.pubkey === SYSTEM_MENTION_PUBKEY
+                          ? SYSTEM_MENTION_LABEL
+                          : participant.name}
+                    </Text>
+                    <Text numberOfLines={1} style={styles.mentionHandle}>
+                      @{participant.handle}
+                    </Text>
+                  </View>
+                  <Text style={styles.mentionKind}>
+                    {participant.pubkey === CHANNEL_MENTION_PUBKEY
+                      ? 'ROOM'
+                      : participant.pubkey === SYSTEM_MENTION_PUBKEY
+                        ? 'REPORT'
+                        : 'PERSON'}
+                  </Text>
+                </>
+              )}
             </TouchableOpacity>
           );
         })}

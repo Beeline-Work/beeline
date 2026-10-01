@@ -50,6 +50,7 @@ import type {
   CornerLifecycleView,
   InviteView,
   RoomLiveDelta,
+  RoomHistoryOutline,
   RoomHistoryView,
   RoomView,
   RoomViewIdentity,
@@ -1917,6 +1918,58 @@ export class PhoneService {
       ...(rows.length > 30 && tail
         ? { nextBefore: { createdAt: unix(tail.created_at), id: tail.id } }
         : {}),
+    };
+  }
+
+  /**
+   * Every message `readHistory` can page through, counted per local calendar
+   * day in the reader's time zone with each day's oldest message, so the phone
+   * can place the transcript scrubber and a marker for every day against the
+   * whole history. `timeZone` is an IANA name the route has already checked.
+   */
+  async readHistoryOutline(
+    roomId: string,
+    viewerId: string,
+    timeZone: string,
+  ): Promise<RoomHistoryOutline | null> {
+    if (!(await this.hasRoomAccess(roomId, viewerId))) return null;
+    const rows = (
+      await this.database.query<{
+        local_day: string;
+        message_count: string;
+        id: string;
+        created_at: Date;
+        author_name: string;
+        author_handle: string | null;
+      }>(
+        `SELECT DISTINCT ON (local.day) local.day::text AS local_day,
+           count(*) OVER (PARTITION BY local.day)::text AS message_count,
+           m.id,m.created_at,i.name author_name,i.handle author_handle
+         FROM messages m JOIN identities i ON i.id=m.author_id
+         CROSS JOIN LATERAL (SELECT (m.created_at AT TIME ZONE $2)::date AS day) local
+         WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
+           AND ${hiddenWakeCardSql('m')}
+         ORDER BY local.day,m.created_at,m.id`,
+        [roomId, timeZone],
+      )
+    ).rows;
+    const days = rows.map((row) => ({
+      day: row.local_day,
+      count: Number(row.message_count),
+      first: {
+        id: row.id,
+        createdAt: unix(row.created_at),
+        authorName: row.author_name,
+        ...(row.author_handle ? { authorHandle: row.author_handle } : {}),
+      },
+    }));
+    const [newest] = await this.messageRows(roomId, undefined, 1);
+    return {
+      roomId,
+      timeZone,
+      total: days.reduce((sum, day) => sum + day.count, 0),
+      ...(newest ? { newest: { id: newest.id, createdAt: unix(newest.created_at) } } : {}),
+      days,
     };
   }
 

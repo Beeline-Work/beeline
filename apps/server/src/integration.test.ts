@@ -28,8 +28,10 @@ import {
   isAgentDetailView,
   isRoomView,
   isRoomViewMessage,
+  readRoomHistoryOutline,
   readRoomView,
   ROOM_VIEW_MESSAGE_LIMIT,
+  type RoomHistoryOutline,
   type RoomHistoryView,
   type RoomView,
 } from '@beeline/api-contract/phone';
@@ -3334,6 +3336,105 @@ describe('monolith integration', () => {
       expect.arrayContaining(ids.slice(0, 2)),
     );
     expect(oldestPage.nextBefore).toBeUndefined();
+  });
+
+  it("outlines every local day of a corner's history in the reader's time zone", async () => {
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'history-outline',
+      name: 'History outline',
+      objective: 'Place the scrubber against every message.',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    const outlineIn = async (tz: string) =>
+      (await (
+        await request(`/v1/phone/rooms/${cornerId}/outline?tz=${encodeURIComponent(tz)}`)
+      ).json()) as RoomHistoryOutline;
+    const before = await outlineIn('Asia/Kolkata');
+    expect(readRoomHistoryOutline(before)).toEqual(before);
+    const ids = ['c', 'd', 'e', 'f'].map((digit) => digit.repeat(64));
+    // 18:20Z and 18:45Z are 23:50 on 1 Jan and 00:15 on 2 Jan in India
+    // (UTC+5:30): one UTC hour, two local days.
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES($1,$5,$6,'Before IST midnight','2040-01-01T18:20:00Z'),
+             ($2,$5,$6,'Same evening','2040-01-01T18:25:00Z'),
+             ($3,$5,$6,'After IST midnight','2040-01-01T18:45:00Z'),
+             ($4,$5,$6,'Same India day','2040-01-02T18:05:00Z')`,
+      [...ids, cornerId, HUMAN],
+    );
+
+    const india = await outlineIn('Asia/Kolkata');
+    expect(readRoomHistoryOutline(india)).toEqual(india);
+    expect(india.timeZone).toBe('Asia/Kolkata');
+    expect(india.total).toBe(before.total + 4);
+    expect(india.newest).toEqual({
+      id: ids[3],
+      createdAt: Date.parse('2040-01-02T18:05:00Z') / 1_000,
+    });
+    const first = (id: string, iso: string) => ({
+      id,
+      createdAt: Date.parse(iso) / 1_000,
+      authorName: 'Owner',
+      authorHandle: 'owner',
+    });
+    expect(india.days.filter((day) => day.day >= '2040-01-01')).toEqual([
+      { day: '2040-01-01', count: 2, first: first(ids[0]!, '2040-01-01T18:20:00Z') },
+      // 00:15 and 23:35 on 2 Jan in India.
+      { day: '2040-01-02', count: 2, first: first(ids[2]!, '2040-01-01T18:45:00Z') },
+    ]);
+    // The same messages fall on two UTC days.
+    expect(
+      (await outlineIn('UTC')).days
+        .filter((day) => day.day >= '2040-01-01')
+        .map((day) => day.count),
+    ).toEqual([3, 1]);
+
+    for (const tz of ['', '+05:30', 'Not/AZone']) {
+      const rejected = await request(
+        `/v1/phone/rooms/${cornerId}/outline?tz=${encodeURIComponent(tz)}`,
+      );
+      expect(rejected.status).toBe(400);
+    }
+  });
+
+  it('outlines every day of a history longer than twenty thousand days', async () => {
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'long-history-outline',
+      name: 'Long history outline',
+      objective: 'Keep the oldest day reachable.',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    const before = (await (
+      await request(`/v1/phone/rooms/${cornerId}/outline?tz=UTC`)
+    ).json()) as RoomHistoryOutline;
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       SELECT lpad(to_hex(day),64,'0'),$1,$2,'Day ' || day,
+              '1980-01-01T12:00:00Z'::timestamptz + (day - 1) * interval '1 day'
+       FROM generate_series(1,20001) AS day`,
+      [cornerId, HUMAN],
+    );
+    const outline = (await (
+      await request(`/v1/phone/rooms/${cornerId}/outline?tz=UTC`)
+    ).json()) as RoomHistoryOutline;
+    expect(readRoomHistoryOutline(outline)).toEqual(outline);
+    expect(outline.total).toBe(before.total + 20_001);
+    const inserted = outline.days.filter((day) => day.day < '2035-01-01');
+    expect(inserted).toHaveLength(20_001);
+    expect(inserted[0]).toEqual({
+      day: '1980-01-01',
+      count: 1,
+      first: {
+        id: '1'.padStart(64, '0'),
+        createdAt: Date.parse('1980-01-01T12:00:00Z') / 1_000,
+        authorName: 'Owner',
+        authorHandle: 'owner',
+      },
+    });
   });
 
   it('restarts history from the current tail when a cached cursor was deleted', async () => {

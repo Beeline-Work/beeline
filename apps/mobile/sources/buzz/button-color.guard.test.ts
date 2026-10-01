@@ -33,6 +33,7 @@ const decorativeAccentFills = new Set([
   'components/buzz/TranscriptCard.tsx:choiceWash',
   'components/buzz/TranscriptCard.tsx:choiceWashLeader',
   'components/buzz/TranscriptCard.tsx:choiceLetterSelected',
+  'components/buzz/TranscriptScrubber.tsx:handle',
 ]);
 
 function filesUnder(directory: string): string[] {

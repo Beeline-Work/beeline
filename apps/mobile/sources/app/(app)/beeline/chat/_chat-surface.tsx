@@ -323,6 +323,9 @@ import {
 } from '@/buzz/room-new-message-boundary';
 import { useNewMessageControl } from '@/buzz/use-new-message-control';
 import { RoomCatchUpControls } from '@/components/buzz/RoomCatchUpControls';
+import { TranscriptScrubber } from '@/components/buzz/TranscriptScrubber';
+import type { ScrubberDay } from '@/buzz/transcript-scrubber';
+import { useTranscriptScrubber } from '@/buzz/use-transcript-scrubber';
 import { RoomCatchUpSheet } from '@/components/buzz/RoomCatchUpSheet';
 import { buildCatchUpReport } from '@/buzz/room-catch-up-report';
 import { createTranscriptCardMotionStore } from '@/components/buzz/transcript-card-motion-context';
@@ -1661,23 +1664,26 @@ export function BuzzChatSurface({
       return kind === participantPickerKind;
     }).length;
   }, [participantPickerKind, userPubkey, workspaceRoster]);
-  const visibleRosterMembers = useMemo(() => {
+  // Agents carry their model and owner for the roster sheet and @-mention menu.
+  const describedRoomParticipants = useMemo(() => {
     const workspaceAgents = new Map(
       (workspaceRoster?.agents ?? []).map((agent) => [agent.identity.pubkey, agent]),
     );
-    return orderRoomRoster(
-      roomParticipants.map((participant) => {
-        if (participant.kind !== 'agent') return participant;
-        const workspaceAgent = workspaceAgents.get(participant.pubkey);
-        const ownerHandle = workspaceAgent?.owner?.handle;
-        return {
-          ...participant,
-          ...(workspaceAgent?.model ? { model: workspaceAgent.model } : {}),
-          ...(ownerHandle ? { ownerHandle } : {}),
-        };
-      }),
-    );
+    return roomParticipants.map((participant) => {
+      if (participant.kind !== 'agent') return participant;
+      const workspaceAgent = workspaceAgents.get(participant.pubkey);
+      const ownerHandle = workspaceAgent?.owner?.handle;
+      return {
+        ...participant,
+        ...(workspaceAgent?.model ? { model: workspaceAgent.model } : {}),
+        ...(ownerHandle ? { ownerHandle } : {}),
+      };
+    });
   }, [roomParticipants, workspaceRoster]);
+  const visibleRosterMembers = useMemo(
+    () => orderRoomRoster(describedRoomParticipants),
+    [describedRoomParticipants],
+  );
   const roomParticipantTotal = roomParticipants.length;
   const roomAgents = useMemo(
     () => roomParticipants.filter((participant) => participant.kind === 'agent'),
@@ -1719,8 +1725,8 @@ export function BuzzChatSurface({
     ? `${inputText}:${activeMention.start}:${activeMention.end}`
     : null;
   const mentionCandidateRoster = useMemo(
-    () => [CHANNEL_MENTION_OPTION, ...roomParticipants, SYSTEM_MENTION_OPTION],
-    [roomParticipants],
+    () => [CHANNEL_MENTION_OPTION, ...describedRoomParticipants, SYSTEM_MENTION_OPTION],
+    [describedRoomParticipants],
   );
   const mentionSuggestions = useMemo(
     () =>
@@ -2229,6 +2235,22 @@ export function BuzzChatSurface({
   // durable boundary away from the numeric index we retry.
   const transcriptMessagesRef = useRef(transcriptMessages);
   transcriptMessagesRef.current = transcriptMessages;
+  // The server rows held here, which is what the history outline counts.
+  const serverTranscriptMessages = useMemo(
+    () => mergeDisplayPages(olderMessages, cachedMessages),
+    [cachedMessages, olderMessages],
+  );
+  const {
+    history: scrubberHistory,
+    position: scrubberPosition,
+    visible: scrubberVisible,
+    observeVisibleRows: observeScrubberRows,
+    revealOnScroll: revealScrubber,
+  } = useTranscriptScrubber({
+    roomId: decodedId,
+    roomClient,
+    durableMessages: serverTranscriptMessages,
+  });
   // The read cursor ranks rows by index to decide which is newest, so it reads
   // the chronological order for the same reason the jump control does: on the
   // phone `transcriptMessages` IS the reversed list, and ranking that array
@@ -2557,6 +2579,7 @@ export function BuzzChatSurface({
       visibleTranscriptMessagesRef.current = viewableItems
         .filter((token) => token.isViewable)
         .map((token) => token.item);
+      observeScrubberRows(visibleTranscriptMessagesRef.current);
       const notification = pendingNotificationLandingRef.current;
       if (
         notification &&
@@ -2610,7 +2633,13 @@ export function BuzzChatSurface({
       advanceReadCursor(chronologicalMessagesRef.current, visibleTranscriptMessagesRef.current);
       completePendingNewMessageLanding();
     },
-    [advanceReadCursor, completePendingNewMessageLanding, observeVisibleMessages, raiseSourceLandingFlash],
+    [
+      advanceReadCursor,
+      completePendingNewMessageLanding,
+      observeScrubberRows,
+      observeVisibleMessages,
+      raiseSourceLandingFlash,
+    ],
   );
   // Follow a new row only from the tail. A reader in history keeps the same
   // position while the arrival joins the compact queue above the composer.
@@ -2881,6 +2910,56 @@ export function BuzzChatSurface({
   // all — gets back to the live end in one tap, and a reader with unread mail
   // arrives where the next message will land. Any queue behind it is settled
   // here: the tap is the reader saying they are done being behind.
+  // The list follows the scrubber's day while the finger is down. A day
+  // released before its rows are loaded stays the target while older pages
+  // come in, until it lands or the history runs out.
+  const [scrubTargetId, setScrubTargetId] = useState<string | null>(null);
+  useEffect(() => setScrubTargetId(null), [decodedId]);
+  const landAtScrubbedMessage = useCallback((messageId: string) => {
+    const index = boundaryRowIndex(transcriptMessagesRef.current, messageId);
+    if (index < 0) return false;
+    // Reuses the notification landing's retry for rows native has not measured.
+    pendingNotificationLandingRef.current = {
+      messageId: transcriptMessagesRef.current[index]!.id,
+      attempts: 0,
+    };
+    flatListRef.current?.scrollToIndex({ index, viewPosition: 0.5, animated: false });
+    return true;
+  }, []);
+  const followScrubbedDay = useCallback(
+    (day: ScrubberDay) => {
+      landAtScrubbedMessage(day.firstMessageId);
+    },
+    [landAtScrubbedMessage],
+  );
+  const landAtScrubbedDay = useCallback(
+    (day: ScrubberDay) => {
+      setScrubTargetId(landAtScrubbedMessage(day.firstMessageId) ? null : day.firstMessageId);
+    },
+    [landAtScrubbedMessage],
+  );
+  useEffect(() => {
+    if (!scrubTargetId) return;
+    if (landAtScrubbedMessage(scrubTargetId)) {
+      setScrubTargetId(null);
+      return;
+    }
+    const residentIndex = boundaryRowIndex(foldedMessages, scrubTargetId);
+    if (residentIndex >= 0) {
+      revealTranscriptThrough(foldedMessages.length - residentIndex);
+      return;
+    }
+    if (transcriptHistoryStatus === 'idle') loadOlderTranscriptMessages();
+    else if (transcriptHistoryStatus !== 'loading') setScrubTargetId(null);
+  }, [
+    foldedMessages,
+    landAtScrubbedMessage,
+    loadOlderTranscriptMessages,
+    revealTranscriptThrough,
+    scrubTargetId,
+    transcriptHistoryStatus,
+    transcriptMessages,
+  ]);
   const landAtNewestMessage = useCallback(() => {
     pendingNewMessageLandingRef.current = null;
     scrollToNewestMessage();
@@ -5908,8 +5987,11 @@ export function BuzzChatSurface({
             }}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode={transcriptKeyboardDismissMode(Platform.OS)}
+            // The transcript scrubber below is this list's scroll bar.
+            showsVerticalScrollIndicator={false}
             onScroll={(event) => {
               observePhoneTailOffset(event.nativeEvent.contentOffset.y);
+              revealScrubber();
             }}
             // One frame, the list's own default. A wider window leaves the
             // viewability report (which settles the badge and the unread
@@ -5917,6 +5999,8 @@ export function BuzzChatSurface({
             scrollEventThrottle={16}
             onViewableItemsChanged={observeVisibleTranscriptMessages}
             onScrollBeginDrag={() => {
+              // The reader's own drag abandons a scrubbed day still paging in.
+              setScrubTargetId(null);
               dragEndSequenceRef.current += 1;
               userDraggingRef.current = true;
               allowOlderHistoryRef.current = true;
@@ -6049,6 +6133,15 @@ export function BuzzChatSurface({
             // Inverted native list: the footer is the visual top.
             ListFooterComponent={transcriptHistoryLine}
           />
+          )}
+          {!desktopTranscript && (
+            <TranscriptScrubber
+              history={scrubberHistory}
+              position={scrubberPosition}
+              visible={scrubberVisible}
+              onScrub={followScrubbedDay}
+              onScrubEnd={landAtScrubbedDay}
+            />
           )}
           <RoomCatchUpControls
             corner={isCorner}

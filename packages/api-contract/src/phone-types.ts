@@ -627,6 +627,36 @@ export type RoomHistoryView = {
   readonly nextBefore?: { readonly createdAt: number; readonly id: string };
 };
 
+/**
+ * The whole Room history, one entry per local calendar day in the reader's
+ * time zone, so the transcript scrubber can place its handle and a marker for
+ * every day against every message, not only the pages loaded so far. Counts
+ * use the same rows `RoomHistoryView` pages through.
+ */
+export type RoomHistoryOutline = {
+  readonly roomId: string;
+  /** The IANA time zone the days were cut in, as the reader asked. */
+  readonly timeZone: string;
+  readonly total: number;
+  /** The newest message counted, so later arrivals can extend `total`. */
+  readonly newest?: { readonly id: string; readonly createdAt: number };
+  /** Every day with a message, oldest first. */
+  readonly days: readonly RoomHistoryOutlineDay[];
+};
+
+export type RoomHistoryOutlineDay = {
+  /** `YYYY-MM-DD` in `timeZone`. */
+  readonly day: string;
+  readonly count: number;
+  /** The day's oldest message. */
+  readonly first: {
+    readonly id: string;
+    readonly createdAt: number;
+    readonly authorName: string;
+    readonly authorHandle?: string;
+  };
+};
+
 /** Prompt-ready conversation rows supplied directly by the Room endpoint. */
 export type AgentHistoryEntry = {
   readonly eventId: string;

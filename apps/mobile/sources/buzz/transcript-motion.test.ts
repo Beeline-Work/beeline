@@ -39,6 +39,28 @@ describe('transcript brass-glow decisions', () => {
     ]).toEqual([]);
   });
 
+  it('does not call an older page that loads above the transcript an arrival', () => {
+    const initial = observeTranscriptArrivals(EMPTY_TRANSCRIPT_ARRIVAL_STATE, {
+      surfaceId: 'room-1',
+      hydrated: true,
+      ids: ['m-20', 'm-21'],
+    });
+    const older = Array.from({ length: 20 }, (_, index) => `m-${index}`);
+    const paged = observeTranscriptArrivals(initial.state, {
+      surfaceId: 'room-1',
+      hydrated: true,
+      ids: [...older, 'm-20', 'm-21'],
+    });
+    expect([...paged.arrivingIds]).toEqual([]);
+    expect(paged.state.seenIds.has('m-0')).toBe(true);
+    const appended = observeTranscriptArrivals(paged.state, {
+      surfaceId: 'room-1',
+      hydrated: true,
+      ids: [...older, 'm-20', 'm-21', 'm-22'],
+    });
+    expect([...appended.arrivingIds]).toEqual(['m-22']);
+  });
+
   it('collapses a same-card burst into the settle already in flight', () => {
     expect(transcriptSettleDecision(null, 1_000, false)).toEqual({
       animate: true,

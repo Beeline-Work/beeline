@@ -44,6 +44,12 @@ export function ledgerDate(seconds: number | undefined): string {
   return `${at.getDate()} ${MONTHS[at.getMonth()]}`;
 }
 
+/** The month a scrubber rail marker names, e.g. `SEP`. */
+export function ledgerMonth(seconds: number | undefined): string {
+  const at = atDate(seconds);
+  return at ? MONTHS[at.getMonth()]! : '';
+}
+
 /** Absolute weekday+date caption, or null when this row is not a day opener. */
 export function ledgerDayCaption(
   timestamp: number | undefined,

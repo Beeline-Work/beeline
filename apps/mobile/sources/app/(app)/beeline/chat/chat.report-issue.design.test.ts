@@ -22,7 +22,7 @@ function slice(from: string, to: string): string {
 describe('Report issue on the chat surface', () => {
   it('offers @system in every conversation’s mention menu without binding a pubkey', () => {
     expect(chat).toContain(
-      '() => [CHANNEL_MENTION_OPTION, ...roomParticipants, SYSTEM_MENTION_OPTION]',
+      '() => [CHANNEL_MENTION_OPTION, ...describedRoomParticipants, SYSTEM_MENTION_OPTION]',
     );
     const selectMention = slice('const selectMention = useCallback(', '[activeMention]');
     expect(selectMention).toContain('recordMentionPick(selectedMentionsRef.current, participant)');

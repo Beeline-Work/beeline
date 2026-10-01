@@ -38,6 +38,8 @@ import {
   type GrantRequestCardView,
   type InviteView,
   type MessageReactionView,
+  type RoomHistoryOutline,
+  type RoomHistoryOutlineHour,
   type RoomHistoryView,
   type RoomRepositoryResolution,
   type RoomRepositoryView,
@@ -1560,6 +1562,57 @@ export function readRoomHistoryView(value: unknown): RoomHistoryView | null {
 
 export function isRoomHistoryView(value: unknown): value is RoomHistoryView {
   return readRoomHistoryView(value) !== null;
+}
+
+/** An outline is only useful whole: one dropped hour would misplace every day after it. */
+export const ROOM_HISTORY_OUTLINE_HOUR_LIMIT = 20_000;
+
+function readRoomHistoryOutlineHour(value: unknown): RoomHistoryOutlineHour | null {
+  const item = record(value);
+  const first = record(item?.first);
+  if (
+    !item ||
+    !first ||
+    !integer(item.hour) ||
+    !integer(item.count) ||
+    item.count < 1 ||
+    !hex64(first.id) ||
+    !integer(first.createdAt) ||
+    typeof first.authorName !== 'string'
+  )
+    return null;
+  const authorHandle = typeof first.authorHandle === 'string' ? first.authorHandle : undefined;
+  return {
+    hour: item.hour,
+    count: item.count,
+    first: {
+      id: first.id,
+      createdAt: first.createdAt,
+      authorName: first.authorName,
+      ...field('authorHandle', authorHandle),
+    },
+  };
+}
+
+export function readRoomHistoryOutline(value: unknown): RoomHistoryOutline | null {
+  const item = record(value);
+  if (!item || !uuid(item.roomId) || !integer(item.total) || !Array.isArray(item.hours))
+    return null;
+  if (item.hours.length > ROOM_HISTORY_OUTLINE_HOUR_LIMIT) return null;
+  const hours = readList(item.hours, readRoomHistoryOutlineHour) ?? [];
+  if (hours.length !== item.hours.length) return null;
+  const newest = record(item.newest);
+  if (item.newest !== undefined && (!newest || !hex64(newest.id) || !integer(newest.createdAt)))
+    return null;
+  return {
+    roomId: item.roomId,
+    total: item.total,
+    ...field(
+      'newest',
+      newest ? { id: newest.id as string, createdAt: newest.createdAt as number } : undefined,
+    ),
+    hours,
+  };
 }
 
 export function readWorkspaceListView(value: unknown): WorkspaceListView | null {

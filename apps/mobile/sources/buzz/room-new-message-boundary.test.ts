@@ -13,6 +13,7 @@ import {
   newestTranscriptRowId,
   queueIncomingMessages,
 } from './room-new-message-boundary';
+import { EMPTY_TRANSCRIPT_ARRIVAL_STATE, observeTranscriptArrivals } from './transcript-motion';
 
 function message(id: string, isUser = false): ChatDisplayMessage {
   return { id, text: id, timestamp: 1, isUser };
@@ -50,6 +51,33 @@ describe('what counts as unread', () => {
     });
     // One piece of mail arrived, not three.
     expect(queue).toEqual({ boundaryId: 'real', count: 1 });
+  });
+});
+
+describe('loading older history', () => {
+  it('leaves the chevron badge empty when a page of older messages loads above the reader', () => {
+    const tail = [message('m-20'), message('m-21')];
+    const opened = observeTranscriptArrivals(EMPTY_TRANSCRIPT_ARRIVAL_STATE, {
+      surfaceId: 'room-1',
+      hydrated: true,
+      ids: tail.map((row) => row.id),
+    });
+    // The reader scrolls up, off the tail, and the next page of history loads.
+    const transcript = [
+      ...Array.from({ length: 20 }, (_, index) => message(`m-${index}`)),
+      ...tail,
+    ];
+    const paged = observeTranscriptArrivals(opened.state, {
+      surfaceId: 'room-1',
+      hydrated: true,
+      ids: transcript.map((row) => row.id),
+    });
+    const queue = queueIncomingMessages(EMPTY_NEW_MESSAGE_QUEUE, {
+      messages: transcript,
+      arrivingIds: paged.arrivingIds,
+      isPinnedToTail: false,
+    });
+    expect(newMessageBadgeCount(queue, false)).toBe(0);
   });
 });
 

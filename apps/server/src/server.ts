@@ -1571,6 +1571,12 @@ async function route(
     json(response, result ? 200 : 404, result ?? { error: 'not_found' });
     return;
   }
+  match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)\/outline$/);
+  if (method === 'GET' && match) {
+    const result = await options.phone.readHistoryOutline(match[1]!, identityId!);
+    json(response, result ? 200 : 404, result ?? { error: 'not_found' });
+    return;
+  }
   match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)\/corners$/);
   if (method === 'GET' && match) {
     const before = url.searchParams.get('before');

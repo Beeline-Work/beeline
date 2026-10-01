@@ -28,8 +28,10 @@ import {
   isAgentDetailView,
   isRoomView,
   isRoomViewMessage,
+  readRoomHistoryOutline,
   readRoomView,
   ROOM_VIEW_MESSAGE_LIMIT,
+  type RoomHistoryOutline,
   type RoomHistoryView,
   type RoomView,
 } from '@beeline/api-contract/phone';
@@ -3355,6 +3357,63 @@ describe('monolith integration', () => {
       expect.arrayContaining(ids.slice(0, 2)),
     );
     expect(oldestPage.nextBefore).toBeUndefined();
+  });
+
+  it("outlines the whole corner history by hour with each hour's first message", async () => {
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'history-outline',
+      name: 'History outline',
+      objective: 'Place the scrubber against every message.',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    const before = (await (
+      await request(`/v1/phone/rooms/${cornerId}/outline`)
+    ).json()) as RoomHistoryOutline;
+    expect(readRoomHistoryOutline(before)).toEqual(before);
+    const ids = ['c', 'd', 'e'].map((digit) => digit.repeat(64));
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES($1,$4,$5,'Day one, first','2040-01-01T09:15:00Z'),
+             ($2,$4,$5,'Day one, later','2040-01-01T09:40:00Z'),
+             ($3,$4,$5,'Day two','2040-01-02T18:05:00Z')`,
+      [...ids, cornerId, HUMAN],
+    );
+
+    const outline = (await (
+      await request(`/v1/phone/rooms/${cornerId}/outline`)
+    ).json()) as RoomHistoryOutline;
+    expect(readRoomHistoryOutline(outline)).toEqual(outline);
+    expect(outline.total).toBe(before.total + 3);
+    expect(outline.newest).toEqual({
+      id: ids[2],
+      createdAt: Date.parse('2040-01-02T18:05:00Z') / 1_000,
+    });
+    const nineAm = Date.parse('2040-01-01T09:00:00Z') / 1_000;
+    const sixPm = Date.parse('2040-01-02T18:00:00Z') / 1_000;
+    expect(outline.hours.filter((hour) => hour.hour >= nineAm)).toEqual([
+      {
+        hour: nineAm,
+        count: 2,
+        first: {
+          id: ids[0],
+          createdAt: Date.parse('2040-01-01T09:15:00Z') / 1_000,
+          authorName: 'Owner',
+          authorHandle: 'owner',
+        },
+      },
+      {
+        hour: sixPm,
+        count: 1,
+        first: {
+          id: ids[2],
+          createdAt: Date.parse('2040-01-02T18:05:00Z') / 1_000,
+          authorName: 'Owner',
+          authorHandle: 'owner',
+        },
+      },
+    ]);
   });
 
   it('restarts history from the current tail when a cached cursor was deleted', async () => {

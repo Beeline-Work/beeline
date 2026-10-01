@@ -627,6 +627,33 @@ export type RoomHistoryView = {
   readonly nextBefore?: { readonly createdAt: number; readonly id: string };
 };
 
+/**
+ * The whole Room history in hourly buckets, so the transcript scrubber can
+ * place its handle and day markers against every message, not only the pages
+ * loaded so far. Counts use the same rows `RoomHistoryView` pages through.
+ */
+export type RoomHistoryOutline = {
+  readonly roomId: string;
+  readonly total: number;
+  /** The newest message counted, so later arrivals can extend `total`. */
+  readonly newest?: { readonly id: string; readonly createdAt: number };
+  /** Oldest first; empty hours are omitted. */
+  readonly hours: readonly RoomHistoryOutlineHour[];
+};
+
+export type RoomHistoryOutlineHour = {
+  /** Unix seconds at the start of the UTC hour. */
+  readonly hour: number;
+  readonly count: number;
+  /** The hour's oldest message. */
+  readonly first: {
+    readonly id: string;
+    readonly createdAt: number;
+    readonly authorName: string;
+    readonly authorHandle?: string;
+  };
+};
+
 /** Prompt-ready conversation rows supplied directly by the Room endpoint. */
 export type AgentHistoryEntry = {
   readonly eventId: string;

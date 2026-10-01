@@ -22,6 +22,7 @@ import {
   ROOM_VIEW_CHAT_LIMIT,
   ROOM_VIEW_MEMBER_LIMIT,
   ROOM_VIEW_MESSAGE_LIMIT,
+  ROOM_HISTORY_OUTLINE_HOUR_LIMIT,
   ROOM_VIEW_TOOL_ROW_LIMIT,
   WORKSPACE_MEMBER_PAGE_SIZE,
   readCornerAppDefinition,
@@ -50,6 +51,7 @@ import type {
   CornerLifecycleView,
   InviteView,
   RoomLiveDelta,
+  RoomHistoryOutline,
   RoomHistoryView,
   RoomView,
   RoomViewIdentity,
@@ -1916,6 +1918,55 @@ export class PhoneService {
       ...(rows.length > 30 && tail
         ? { nextBefore: { createdAt: unix(tail.created_at), id: tail.id } }
         : {}),
+    };
+  }
+
+  /**
+   * Every message `readHistory` can page through, counted per UTC hour with
+   * each hour's oldest message, so the phone can place the transcript
+   * scrubber and its day markers against the whole history.
+   */
+  async readHistoryOutline(roomId: string, viewerId: string): Promise<RoomHistoryOutline | null> {
+    if (!(await this.hasRoomAccess(roomId, viewerId))) return null;
+    const rows = (
+      await this.database.query<{
+        hour_start: string;
+        message_count: string;
+        id: string;
+        created_at: Date;
+        author_name: string;
+        author_handle: string | null;
+      }>(
+        `SELECT DISTINCT ON (bucket.hour_start) bucket.hour_start::text AS hour_start,
+           count(*) OVER (PARTITION BY bucket.hour_start)::text AS message_count,
+           m.id,m.created_at,i.name author_name,i.handle author_handle
+         FROM messages m JOIN identities i ON i.id=m.author_id
+         CROSS JOIN LATERAL (
+           SELECT (floor(extract(epoch FROM m.created_at)/3600)*3600)::bigint AS hour_start
+         ) bucket
+         WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
+           AND ${hiddenWakeCardSql('m')}
+         ORDER BY bucket.hour_start,m.created_at,m.id
+         LIMIT ${ROOM_HISTORY_OUTLINE_HOUR_LIMIT}`,
+        [roomId],
+      )
+    ).rows;
+    const hours = rows.map((row) => ({
+      hour: Number(row.hour_start),
+      count: Number(row.message_count),
+      first: {
+        id: row.id,
+        createdAt: unix(row.created_at),
+        authorName: row.author_name,
+        ...(row.author_handle ? { authorHandle: row.author_handle } : {}),
+      },
+    }));
+    const [newest] = await this.messageRows(roomId, undefined, 1);
+    return {
+      roomId,
+      total: hours.reduce((sum, hour) => sum + hour.count, 0),
+      ...(newest ? { newest: { id: newest.id, createdAt: unix(newest.created_at) } } : {}),
+      hours,
     };
   }
 

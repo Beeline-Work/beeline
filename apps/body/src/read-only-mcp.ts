@@ -336,7 +336,11 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'save_workflow',
     description:
-      'Save a declarative workflow contract for a multi-agent (or agent+human) team: named roles, handoffs between roles with required contents, loop caps with an ask-a-human escape, human decision points via gate states, and done/failed terminals. Validated synchronously (roles, handoffs, required contents, every loop capped, reachable from start, at least one terminal) and stored Workspace-wide, versioned by name; a run already in progress keeps the version it started with. Pass the whole contract as one JSON object under "contract" - see load_workspace_skill for the shape once one is saved, or ask for an example.',
+      'Save a declarative workflow contract for a multi-agent (or agent+human) team: named roles, handoffs between roles with required contents, loop caps with an ask-a-human escape, human decision points via gate states, and done/failed terminals. Stored Workspace-wide, versioned by name; a run already in progress keeps the version it started with. Pass the whole contract as one JSON object under "contract". Minimal valid example: ' +
+      '{"version":1,"name":"draft-and-approve","description":"Draft a note and get a human yes or no","roles":["writer"],"start":"draft","handoffs":{"draft":{"role":"writer","requires":["text"],"on":{"drafted":"approve"}},"approve":{"kind":"gate","role":"writer","requires":["decision"],"on":{"publish":"done","redo":"draft"}},"done":{"kind":"terminal","status":"done"}}}. ' +
+      'Rules: name is lowercase words joined by hyphens (a-z, 0-9, no underscores), at most 64 characters; description is 1-60 characters; roles are 1-16 lowercase names; start is a non-terminal state; handoffs has 2-64 states keyed by lowercase name. ' +
+      'A handoff state allows only role, requires (field names the handoff must carry), on (outcome -> next state, 1-16 outcomes), loop, timeoutSeconds and roleBinding. A gate is {"kind":"gate", role, requires, on} with 2-4 outcomes; a human picks one. A terminal is {"kind":"terminal","status":"done"|"failed"|"abandoned"}. No other keys. ' +
+      'Every state must be reachable from start, and at least one terminal is required. Every cycle must pass through a gate or have a loop cap on a state in it: "loop":{"onEdge":"<outcome>","cap":1-100,"onExceeded":"<another state>"}. A rejected contract returns the rule that failed and where.',
     inputSchema: {
       type: 'object',
       required: ['contract'],

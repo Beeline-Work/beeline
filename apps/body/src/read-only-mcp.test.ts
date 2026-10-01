@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { workflowContractError } from '@beeline/api-contract/daemon';
 import { CORNER_BRIEF_PROPERTIES, agentToolsFor, cornerCallText } from './read-only-mcp.js';
 import { assembleSessionPrompt, SEARCH_MEMORY_FIRST_RULE } from './prompt-assembly.js';
 
@@ -77,6 +78,25 @@ describe('direct message helper surface', () => {
   it('tells the agent to call search_memory before ever saying a fact was never saved', () => {
     const searchMemory = agentToolsFor(true, false).find((tool) => tool.name === 'search_memory');
     expect(searchMemory?.description).toContain(SEARCH_MEMORY_FIRST_RULE);
+  });
+});
+
+describe('save_workflow description', () => {
+  const description = agentToolsFor(true, false).find((tool) => tool.name === 'save_workflow')!
+    .description;
+
+  it('carries a minimal example that the validator accepts', () => {
+    const example = description.match(/Minimal valid example: (\{.*?\}\}\})\. /)?.[1];
+    expect(example).toBeDefined();
+    expect(workflowContractError(JSON.parse(example!))).toBeNull();
+  });
+
+  it('states the name, description, gate, loop and terminal rules', () => {
+    expect(description).toContain('name is lowercase words joined by hyphens');
+    expect(description).toContain('description is 1-60 characters');
+    expect(description).toContain('with 2-4 outcomes');
+    expect(description).toContain('Every cycle must pass through a gate or have a loop cap');
+    expect(description).toContain('at least one terminal is required');
   });
 });
 

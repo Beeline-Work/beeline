@@ -188,22 +188,31 @@ async function operatorSecretsLockOwner(lockDir: string): Promise<string | undef
 /**
  * Take over a stale lock directory. The lock's ownership is verified and
  * removed with ATOMIC primitives, never by a bare pathname unlink:
- * a stale lock is a directory whose only contents are the dead holder's
- * marker; we unlink that marker, then `rmdir` — which succeeds only on an
- * EMPTY directory. If a rival removed the marker and re-created the
+ * a stale lock is a directory aged past `SECRETS_LOCK_STALE_MS` containing
+ * either the dead holder's marker, or NOTHING — a holder crashed between
+ * `mkdir` and writing its marker, or a prior takeover crashed between
+ * unlink and `rmdir`. In both cases we then `rmdir`, which succeeds only on
+ * an EMPTY directory. If a rival removed the marker and re-created the
  * directory with its own marker first, our `rmdir` sees ENOTEMPTY and
  * removes nothing. There is no read-then-replace window in which a newly
  * acquired lock can be deleted.
+ *
+ * Freshness is judged BEFORE the contents are read: a FRESH directory —
+ * even an empty one — is a live `mkdir`→marker handshake in progress, so it
+ * is always left alone for the acquirer to finish writing its marker.
  *
  * Returns true when the stale lock was removed (the caller should retry
  * `mkdir` at once); false when the lock is fresh, gone, or already claimed.
  */
 async function takeOverStaleOperatorSecretsLock(lockDir: string): Promise<boolean> {
-  const owner = await operatorSecretsLockOwner(lockDir);
-  if (!owner) return false;
   const info = await stat(lockDir).catch(() => undefined);
   if (!info || Date.now() - info.mtimeMs <= SECRETS_LOCK_STALE_MS) return false;
-  await rm(joinDirSafe(lockDir, owner));
+  const owner = await operatorSecretsLockOwner(lockDir);
+  if (owner) {
+    // `force` so a rival waiter that already unlinked the marker makes this
+    // a no-op, not an ENOENT that aborts our wait.
+    await rm(joinDirSafe(lockDir, owner), { force: true });
+  }
   try {
     await rmdir(lockDir);
   } catch {

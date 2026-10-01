@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, rmdir, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -437,6 +437,54 @@ describe('GrantCommandRunner', () => {
     const release2 = await waiting;
     expect(readdirSync(lockDir)[0]).not.toBe(owner);
     await release2();
+  });
+
+  it('reclaims a stale EMPTY lock directory left by a crash between mkdir and the marker', async () => {
+    const config = await mkdtemp(join(tmpdir(), 'beeline-keys-'));
+    roots.push(config);
+    const xdg = join(config, '.config');
+    const env: NodeJS.ProcessEnv = { XDG_CONFIG_HOME: xdg };
+    const storePath = join(xdg, 'beeline', 'secrets.json');
+    const lockDir = `${storePath}.lock`;
+    await mkdir(dirname(storePath), { recursive: true });
+    // A holder crashed after `mkdir` but before writing its owner marker (or
+    // a prior takeover crashed between unlink and rmdir): an EMPTY lock
+    // directory aged past the stale threshold. The next store must reclaim it
+    // and complete, not wedge until the lock timeout.
+    await mkdir(lockDir, { mode: 0o700 });
+    const dead = Date.now() - 20_000;
+    await utimes(lockDir, new Date(dead), new Date(dead));
+    await storeOperatorSecret('RECOVERED2', 'survived', env);
+    await expect(operatorSecretResolver(env)('RECOVERED2')).resolves.toBe('survived');
+    // The takeover completed and the holder released; no lock is left behind.
+    expect(existsSync(lockDir)).toBe(false);
+  });
+
+  it('a fresh EMPTY lock directory is left alone while its acquirer finishes the handshake', async () => {
+    const config = await mkdtemp(join(tmpdir(), 'beeline-keys-'));
+    roots.push(config);
+    const xdg = join(config, '.config');
+    const env: NodeJS.ProcessEnv = { XDG_CONFIG_HOME: xdg };
+    const storePath = join(xdg, 'beeline', 'secrets.json');
+    const lockDir = `${storePath}.lock`;
+    await mkdir(dirname(storePath), { recursive: true });
+    // `mkdir` and the marker write are two steps; a live acquirer sits in the
+    // gap with a FRESH empty directory. A waiter must never reclaim it, or it
+    // would delete a live lock that still has its marker to write.
+    await mkdir(lockDir, { mode: 0o700 });
+    const waiting = acquireOperatorSecretStoreLock(storePath);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(existsSync(lockDir)).toBe(true);
+    expect(readdirSync(lockDir)).toEqual([]);
+    // The gap closes: the acquirer writes its marker, then releases the way
+    // releaseOperatorSecretsLock does — remove its own marker, then rmdir,
+    // which succeeds only while the directory is truly empty.
+    await writeFile(join(lockDir, 'live:1'), '1\n', { mode: 0o600 });
+    await rm(join(lockDir, 'live:1'), { force: true });
+    await rmdir(lockDir);
+    const release = await waiting;
+    await release();
+    expect(existsSync(lockDir)).toBe(false);
   });
 
   it('reports a non-zero exit and a command that does not start, still with a ledger row', async () => {

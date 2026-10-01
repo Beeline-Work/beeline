@@ -301,12 +301,12 @@ describe('connect_app', () => {
         roomName: 'Tools', usedAt: afterUse.lastUsedAt } });
   });
 
-  it('shows a failed provider link on Workbench and clears it on retry', async () => {
+  it.each(['Linear', 'Example App'])('shows a failed provider link for %s on Workbench and clears it on retry', async (app) => {
     const provider = fakeComposio();
     provider.supportsOAuth.mockResolvedValue(true);
     const daemon = daemonWith(fakeRegistry([]).client, provider);
     const first = await daemon.execute('connectApp',
-      { ...turn, app: 'Linear', reason: 'connect Linear' }, HELPER);
+      { ...turn, app, reason: `connect ${app}` }, HELPER);
     expect(first).toMatchObject({ status: 'needs_sign_in', transport: 'composio' });
     const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
       undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);

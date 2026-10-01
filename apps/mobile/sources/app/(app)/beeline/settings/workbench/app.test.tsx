@@ -64,8 +64,8 @@ describe('App detail', () => {
     expect(JSON.stringify(renderer.toJSON())).toContain('Not used yet.');
   });
 
-  it('shows a failed retry as an error with another retry action', async () => {
-    source.setApps([{ id: 'app-slack', key: 'slack', name: 'Slack', transport: 'composio',
+  it.each(['Slack', 'Example App'])('shows a failed %s retry as an error with another retry action', async (name) => {
+    source.setApps([{ id: 'app-slack', key: name.toLowerCase().replace(/\s/g, ''), name, transport: 'composio',
       status: 'connecting', accountLabel: 'lunchbox', workspaceName: 'Tubing Crew', useCount: 0 }]);
     source.beginAppSignIn = vi.fn().mockRejectedValue(new Error('App provider request failed (403)'));
     const renderer = await render();
@@ -75,7 +75,7 @@ describe('App detail', () => {
     });
     const tree = JSON.stringify(renderer.toJSON());
     expect(tree).toContain('Connection failed');
-    expect(tree).toContain('Retry Slack');
+    expect(tree).toContain(`Retry ${name}`);
     expect(tree).toContain('The app provider refused this connection (403).');
     expect(tree).not.toContain('Monolith');
     expect(renderer.root.findByProps({ testID: 'app-detail-disconnect' })).toBeTruthy();

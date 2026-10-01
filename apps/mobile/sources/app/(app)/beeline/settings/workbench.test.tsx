@@ -316,6 +316,21 @@ describe('Workbench settings screen', () => {
     expect(renderer.root.findByProps({ testID: 'workbench-app-runway' }).props.value).toBe('error');
   });
 
+  it('falls back to a favicon for an unlisted Composio app and shows its failed connection', async () => {
+    const source = new MockWorkbenchSource();
+    source.setApps([{ id: 'app-example', key: 'example', name: 'Example App', domain: 'example.com',
+      logo: 'https://invalid.example/logo.png', transport: 'composio', status: 'error',
+      errorMessage: 'App provider request failed (403)', useCount: 0 }]);
+    setWorkbenchSource(source);
+    const renderer = await render();
+    const row = renderer.root.findByProps({ testID: 'workbench-app-example' });
+    expect(row.props.value).toBe('error');
+    const firstImage = row.findByType('Image');
+    expect(firstImage.props.source.uri).toBe('https://invalid.example/logo.png');
+    act(() => firstImage.props.onError());
+    expect(row.findByType('Image').props.source.uri).toContain('domain=example.com');
+  });
+
   it('collapses an expanded cell on a second tap', async () => {
     const renderer = await render();
     const row = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' });

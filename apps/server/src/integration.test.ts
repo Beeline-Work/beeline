@@ -2947,6 +2947,44 @@ describe('monolith integration', () => {
     expect(otherRoom.ok).toBe(false);
   });
 
+  it('reads a corner turn’s own transcript message id from the corner Room', async () => {
+    // A corner turn reads messages that live in the corner itself: the active
+    // command carries the corner roomId and the transcript ids belong to it.
+    const cornerId = '22222222-2222-4222-8222-222222222226';
+    const transcriptId = createHash('sha256').update('corner-transcript-row').digest('hex');
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Message corner')`,
+      [cornerId, WORKSPACE, ROOM],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+      [WORKSPACE, cornerId, AGENT],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES($1,$2,$3,$4,'message')`,
+      [transcriptId, cornerId, HUMAN, 'Corner transcript row the turn must read'],
+    );
+    // The helper now sends its turn context with the read, as a corner session
+    // does on the wire; the server ignores the extra fields and scopes the
+    // lookup to the corner the command names.
+    const read = (await (
+      await daemonOperation('getRoomMessage', {
+        roomId: cornerId,
+        messageId: transcriptId,
+        requestId: 'corner-request',
+        generationId: 'corner-generation',
+      })
+    ).json()) as { body: string };
+    expect(read.body).toBe('Corner transcript row the turn must read');
+    // The parent Room holds no transcript rows of this corner, so a message
+    // id that exists only there must not resolve inside the corner.
+    const absent = await daemonOperation('getRoomMessage', {
+      roomId: cornerId,
+      messageId: createHash('sha256').update('not-in-corner').digest('hex'),
+    });
+    expect(absent.ok).toBe(false);
+  });
+
   it('never reports unread for the viewer’s own latest message', async () => {
     // A live helper is the quiet case: with a fresh presence heartbeat the send
     // writes no unread-mention notice, so the only rows here are the two the

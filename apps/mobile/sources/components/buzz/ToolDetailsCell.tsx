@@ -29,6 +29,7 @@ export type ToolDetailsCellProps = {
   leading?: React.ReactNode;
   logoUrl?: string;
   errorText?: string;
+  descriptionText?: string;
   extraActions?: readonly {
     label: string;
     onPress: () => void;
@@ -56,6 +57,7 @@ export function ToolDetailsCell({
   leading,
   logoUrl,
   errorText,
+  descriptionText,
   extraActions,
   onAction,
   value,
@@ -83,7 +85,7 @@ export function ToolDetailsCell({
           ) : undefined)
         }
         action={action}
-        description={errorText}
+        description={errorText ?? descriptionText}
         descriptionTone={errorText ? 'danger' : undefined}
         onPress={toggle}
         testID={`${testID}-head`}

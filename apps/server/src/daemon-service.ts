@@ -315,6 +315,7 @@ export class DaemonService {
       readonly host?: FeedbackIssueHost;
     } = { config: feedbackConfigFromEnv() },
     private readonly objects?: ObjectService,
+    private readonly linkWallet?: import('./link-agent-wallet.js').LinkAgentWallet,
   ) {}
 
   /** A turn's memory query, embedded before its command transaction opened. */
@@ -366,6 +367,8 @@ export class DaemonService {
       'postAgentActivity',
       'postSquireApproval',
       'postSquireLoginWall',
+      'createLinkSpendRequest',
+      'retrieveLinkSpendRequest',
       'createCorner',
       'reviseCornerBrief',
       'postCornerValidationStage',
@@ -589,6 +592,7 @@ export class DaemonService {
           this.composio,
           this.feedback,
           this.objects,
+          this.linkWallet,
         );
         scoped.memoryEmbed = memoryEmbed;
         scoped.afterCommit = (task) => {
@@ -1265,6 +1269,45 @@ export class DaemonService {
       case 'getGoogleOAuthGrant':
       case 'getRoomGoogleGrant':
         return { status: 'pending' } as Output<Name>;
+      case 'createLinkSpendRequest': {
+        if (!this.linkWallet) throw new Error('Link is not configured');
+        const request = input as Input<'createLinkSpendRequest'>;
+        const owner = (await this.database.query<{ owner_id: string }>(
+          `SELECT owner_id FROM agents WHERE agent_id=$1`, [authenticatedAgentId])).rows[0];
+        if (!owner) throw new Error('agent owner not found');
+        const created = await this.linkWallet.create(owner.owner_id, authenticatedAgentId,
+          request.roomId, request);
+        if (created.approval_url) await this.linkSpendApproval(request, authenticatedAgentId,
+          owner.owner_id, created.id, created.approval_url);
+        return { id: created.id, status: created.status,
+          ...(created.approval_url ? { approvalUrl: created.approval_url } : {}) } as Output<Name>;
+      }
+      case 'retrieveLinkSpendRequest': {
+        if (!this.linkWallet) throw new Error('Link is not configured');
+        const request = input as Input<'retrieveLinkSpendRequest'>;
+        const owner = (await this.database.query<{ owner_id: string }>(
+          `SELECT owner_id FROM agents WHERE agent_id=$1`, [authenticatedAgentId])).rows[0];
+        if (!owner) throw new Error('agent owner not found');
+        const result = await this.linkWallet.retrieve(owner.owner_id, authenticatedAgentId, request.id);
+        return { id: result.id, status: result.status,
+          ...(result.approval_url ? { approvalUrl: result.approval_url } : {}),
+          ...(result.status_details?.requires_action?.next_action ? { nextAction: {
+            resolution: result.status_details.requires_action.next_action.resolution,
+            displayMessage: result.status_details.requires_action.next_action.display_message,
+            actionUrl: result.status_details.requires_action.next_action.action_url } } : {}),
+          ...(result.card ? { card: { number: result.card.number, cvc: result.card.cvc,
+            expMonth: result.card.exp_month, expYear: result.card.exp_year,
+            billingAddress: result.card.billing_address ? {
+              name: result.card.billing_address.name,
+              postalCode: result.card.billing_address.postal_code,
+              line1: result.card.billing_address.line1, city: result.card.billing_address.city,
+              state: result.card.billing_address.state,
+              country: result.card.billing_address.country } : undefined,
+            validUntil: result.card.valid_until } } : {}),
+          ...(result.shared_payment_token ? { sharedPaymentToken: {
+            id: result.shared_payment_token.id,
+            validUntil: result.shared_payment_token.valid_until } } : {}) } as Output<Name>;
+      }
       case 'beginRegistryMcpOAuth': {
         if (!this.registryMcpOAuth) throw new Error('Registry MCP OAuth is unavailable');
         return (await this.registryMcpOAuth.begin(
@@ -4140,6 +4183,45 @@ export class DaemonService {
    * page in the resource owner's existing connector DM so Telegram is not a
    * prerequisite for seeing it.
    */
+  private async linkSpendApproval(input: Input<'createLinkSpendRequest'>,
+    agentId: string, ownerId: string, requestId: string, approvalUrl: string): Promise<void> {
+    const url = new URL(approvalUrl);
+    if (url.protocol !== 'https:' || !url.hostname.endsWith('.link.com'))
+      throw new Error('Link returned an invalid approval URL');
+    const context = (await this.database.query<{ workspace_id: string; agent_name: string;
+      agent_handle: string | null; agent_avatar: string | null }>(
+      `SELECT room.workspace_id,identity.name agent_name,identity.handle agent_handle,
+        identity.avatar agent_avatar FROM rooms room JOIN identities identity ON identity.id=$2
+       WHERE room.id=$1`, [input.roomId, agentId])).rows[0];
+    if (!context) throw new Error('Link request Room not found');
+    const member = await this.database.query(`SELECT 1 FROM memberships WHERE workspace_id=$1
+      AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL`,
+      [context.workspace_id, ownerId]);
+    if (!member.rowCount) throw new Error('resource owner access denied');
+    const roomId = await ensureConnectorDirectMessageRoom(this.database,
+      context.workspace_id, 'link', ownerId);
+    const connectorId = connectorIdentityId('link');
+    const title = `Link purchase at ${input.merchant}`;
+    const detail = `${(input.amount / 100).toFixed(2)} USD · ${input.description}`.slice(0, 500);
+    const sourceMessageId = this.authorizedCommand?.root_source_message_id;
+    const line = await systemLine(this.database, {
+      id: createHash('sha256').update(`link-approval:${requestId}`).digest('hex'),
+      roomId, authorId: connectorId,
+      subject: { kind: 'person', id: connectorId, name: 'Link' },
+      verb: 'needs your approval for', object: title, consequence: detail,
+      presentation: 'card', cardType: 'squire-approval',
+      card: {
+        agent: { pubkey: agentId, kind: 'agent', name: context.agent_name,
+          ...(context.agent_handle ? { handle: context.agent_handle } : {}),
+          ...(context.agent_avatar ? { avatar: context.agent_avatar } : {}) },
+        tool: 'Link', title, detail, approvalUrl, approvalId: requestId,
+        linkKind: 'approval', sourceRoomId: input.roomId,
+        ...(sourceMessageId ? { sourceMessageId } : {}),
+      },
+    });
+    if (line.inserted) this.live.publish({ type: 'invalidate', roomId, reason: 'message', agentId });
+  }
+
   private async squireApproval(input: Input<'postSquireApproval'>, agentId: string) {
     if (!input.tool.trim() || input.tool.length > 80) throw new Error('Squire tool is invalid');
     if (!input.title.trim() || input.title.length > 120)
@@ -7233,6 +7315,8 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postAgentMachineReport: true,
   getConnectorAssignments: true,
   getGoogleOAuthGrant: true,
+  createLinkSpendRequest: true,
+  retrieveLinkSpendRequest: true,
   getRoomGoogleGrant: true,
   beginRegistryMcpOAuth: true,
   claimRegistryMcpOAuthCode: true,

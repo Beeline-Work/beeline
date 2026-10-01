@@ -174,7 +174,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 14;
+export const REQUIRED_SCHEMA_VERSION = 15;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -2173,6 +2173,28 @@ ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_squire_relaye
 -- (installConnector), so it never outlives one run.
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS force_relogin_provider text;
 
+-- Hosted Link wallet grants belong to a human. Neither agents nor helpers see OAuth tokens.
+CREATE TABLE IF NOT EXISTS link_oauth_accounts (
+  owner_identity_id text PRIMARY KEY REFERENCES identities(id) ON DELETE CASCADE,
+  state text UNIQUE,
+  code_verifier text,
+  attempt_expires_at timestamptz,
+  sealed_grant text,
+  granted_scopes text[] NOT NULL DEFAULT '{}',
+  ineligible boolean NOT NULL DEFAULT false,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS link_spend_requests (
+  id text PRIMARY KEY,
+  owner_identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  agent_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  merchant text NOT NULL,
+  amount bigint NOT NULL,
+  description text NOT NULL,
+  test boolean NOT NULL DEFAULT false,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS registry_mcp_oauth_attempts (
   state text PRIMARY KEY,
   connector_id uuid NOT NULL REFERENCES workspace_connectors(id) ON DELETE CASCADE,

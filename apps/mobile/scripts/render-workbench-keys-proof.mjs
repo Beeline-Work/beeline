@@ -23,10 +23,11 @@ import { build } from 'esbuild';
 
 const mobileRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = path.resolve(mobileRoot, '../..');
-const outDir = path.join(repoRoot, '.scratch/workbench-keys-proof');
+const proofName = process.env.WORKBENCH_PROOF_NAME ?? 'workbench-keys-proof';
+const outDir = path.join(repoRoot, `.scratch/${proofName}`);
 const bundlePath = path.join(outDir, 'bundle.js');
 const htmlPath = path.join(outDir, 'index.html');
-const port = Number(process.env.WORKBENCH_KEYS_PROOF_PORT ?? 4179);
+const port = Number(process.env.WORKBENCH_PROOF_PORT ?? process.env.WORKBENCH_KEYS_PROOF_PORT ?? 4179);
 
 await mkdir(outDir, { recursive: true });
 
@@ -76,7 +77,7 @@ export const useAnimatedProps = (factory) => factory();
 `;
 
 await build({
-  entryPoints: [path.join(mobileRoot, 'scripts/workbench-keys-proof.tsx')],
+  entryPoints: [path.join(mobileRoot, 'scripts', `${proofName}.tsx`)],
   bundle: true,
   define: { 'process.env.NODE_ENV': '"production"' },
   outfile: bundlePath,
@@ -151,7 +152,7 @@ await build({
 
 await writeFile(
   htmlPath,
-  '<!doctype html><html><head><meta charset="utf-8"><title>workbench keys proof</title>' +
+  `<!doctype html><html><head><meta charset="utf-8"><title>${proofName}</title>` +
     '<style>html,body{margin:0;height:100%;background:#14091A}#root{height:100vh}</style>' +
     '</head><body><div id="root"></div><script src="bundle.js"></script></body></html>',
 );
@@ -163,5 +164,5 @@ const server = createServer((request, response) => {
   createReadStream(filePath).pipe(response);
 });
 server.listen(port, '127.0.0.1', () => {
-  console.log(`Workbench keys proof: http://127.0.0.1:${port}`);
+  console.log(`${proofName}: http://127.0.0.1:${port}`);
 });

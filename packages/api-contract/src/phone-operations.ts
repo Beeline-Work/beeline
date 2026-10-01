@@ -168,6 +168,11 @@ export type PhoneOperationMap = {
     connected: boolean; connectedTypes?: string[]; authorizationUrl?: string;
   } };
   disconnectGoogleSignIn: { input: EmptyInput; output: void };
+  beginLinkSignIn: { input: EmptyInput; output: { authorizationUrl: string } };
+  readLinkSignIn: { input: EmptyInput; output: {
+    connected: boolean; pending: boolean; ineligible: boolean } };
+  cancelLinkSignIn: { input: { state?: string }; output: void };
+  disconnectLinkSignIn: { input: EmptyInput; output: void };
   unpairConnector: { input: UnpairConnectorInput; output: void };
   /** The one front door for connecting an app from the Workbench. */
   connectWorkbenchApp: { input: ConnectWorkbenchAppInput; output: ConnectWorkbenchAppResult };

@@ -14,7 +14,7 @@
  * edit-corner worktree after the signed human ALLOW flow.
  */
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   existsSync,
   lstatSync,
@@ -1266,6 +1266,24 @@ const AGENT_TOOLS: ToolDefinition[] = [
     description:
       "Read the Workbench of the machine and owner you actually run on: the connector catalog (each tool, what it is for, whether it can be added today and whether you may offer it from here), which of those tools this owner already has on this machine, and the connections (provisioned keys) they hold — by service and label only, never a value. Call this BEFORE you tell anyone a tool is missing and before offer_connector: a tool they already have is used, not offered again. When you cannot use a tool, answer in one sentence: I can/can't reach X on this machine because Y; to fix it, Z. Free to call; it changes nothing.",
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'create_link_spend_request',
+    description: 'Create a Link purchase request for the owner of this agent. Link asks the owner to approve the exact merchant and amount. Give merchant name, HTTPS merchant URL, amount in USD cents, and a clear description of what the owner asked to buy. For a seller that accepts a Shared Payment Token, set credentialType=shared_payment_token and provide its networkId; Link resolves the merchant and omits merchant URL in that API call. The owner gets a private Link approval card. No Beeline spending limit or approval is added. Use the returned ID with wait_link_spend_request.',
+    inputSchema: { type: 'object', required: ['merchant', 'amount', 'description'],
+      properties: { merchant: { type: 'string' }, merchantUrl: { type: 'string' },
+        amount: { type: 'integer', minimum: 1 }, description: { type: 'string' },
+        test: { type: 'boolean', description: 'Link test mode: no real charge.' },
+        credentialType: { type: 'string', enum: ['card', 'shared_payment_token'] },
+        networkId: { type: 'string', description: 'Required for shared_payment_token.' } },
+      additionalProperties: false },
+  },
+  {
+    name: 'wait_link_spend_request',
+    description: 'Wait for the owner to approve a Link spend request. Polls briefly; call again while pending. After approval the result contains a one-time merchant-and-amount scoped card number, expiry, CVC and billing fields, or a shared payment token. Fill ordinary checkout fields with Squire operate_type/operate_drive using those approved details. Never reuse the card for another purchase.',
+    inputSchema: { type: 'object', required: ['id'], properties: {
+      id: { type: 'string', description: 'The lsrq_... ID from create_link_spend_request.' } },
+      additionalProperties: false },
   },
   {
     name: 'connect_app',
@@ -3817,6 +3835,40 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       return requestGrant(args);
     case 'workbench_status':
       return workbenchStatus();
+    case 'create_link_spend_request': {
+      const context = await activeCommandContext();
+      const merchant = stringArg(args, 'merchant')?.trim();
+      const merchantUrl = stringArg(args, 'merchantUrl')?.trim();
+      const description = stringArg(args, 'description')?.trim();
+      const amount = args.amount;
+      if (!merchant || (args.credentialType !== 'shared_payment_token' && !merchantUrl)
+        || !description || typeof amount !== 'number'
+        || !Number.isSafeInteger(amount) || amount <= 0)
+        throw new Error('merchant, merchantUrl, positive amount in cents, and description are required');
+      const idempotencyKey = createHash('sha256').update(
+        `link:${context.requestId}:${context.generationId}:${toolCallId || randomUUID()}`).digest('hex');
+      return JSON.stringify(await daemonExecute('createLinkSpendRequest', {
+        ...context, agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
+        merchant, ...(merchantUrl ? { merchantUrl } : {}), amount, description, idempotencyKey,
+        ...(args.test === true ? { test: true } : {}),
+        ...(args.credentialType === 'shared_payment_token'
+          ? { credentialType: 'shared_payment_token', networkId: stringArg(args, 'networkId') }
+          : {}),
+      }));
+    }
+    case 'wait_link_spend_request': {
+      const id = stringArg(args, 'id')?.trim();
+      if (!id || !/^lsrq_[A-Za-z0-9]+$/.test(id)) throw new Error('valid Link request ID required');
+      const context = await activeCommandContext();
+      for (let attempt = 0; attempt < 20; attempt++) {
+        const result = await daemonExecute('retrieveLinkSpendRequest', {
+          ...context, agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'), id });
+        if (result.status !== 'pending_approval' && result.status !== 'created')
+          return JSON.stringify(result);
+        if (attempt < 19) await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+      return JSON.stringify({ id, status: 'pending_approval' });
+    }
     case 'connect_app': {
       const app = stringArg(args, 'app')?.trim();
       const reason = stringArg(args, 'reason')?.trim();

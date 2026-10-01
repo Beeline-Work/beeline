@@ -279,7 +279,6 @@ import {
   type RoomSurfaceSessionBindings,
   type UseRoomSurfaceSessionResult,
 } from './useRoomSurfaceSession';
-import { chatUploadTransport } from '@/buzz/chat-upload-transport';
 import {
   GitHubEventCard,
   DaemonFactCard,
@@ -692,18 +691,19 @@ export function BuzzChatSurface({
   const [attachmentUploader] = useState(createChatAttachmentUploader);
   useEffect(() => {
     attachmentUploader.retain(pendingAttachments);
-    if (pendingAttachments.length === 0) return;
-    void chatUploadTransport(transport, setSessionTransport)
-      .then((uploadTransport) =>
+    if (!transport || pendingAttachments.length === 0) return;
+    void transport
+      .ensureClient()
+      .then((client) =>
         attachmentUploader.start(
-          uploadTransport,
+          client,
           pendingAttachments.filter((attachment) =>
             pendingAttachmentsRef.current.includes(attachment),
           ),
         ),
       )
       .catch(() => undefined);
-  }, [attachmentUploader, pendingAttachments, setSessionTransport, transport]);
+  }, [attachmentUploader, pendingAttachments, transport]);
   const [attachmentPickerVisible, setAttachmentPickerVisible] = useState(false);
   const [messageActionsTarget, setMessageActionsTarget] = useState<ChatDisplayMessage | null>(null);
   const [optimisticBookmarks, setOptimisticBookmarks] = useState<Record<string, boolean>>({});
@@ -3698,10 +3698,16 @@ export function BuzzChatSurface({
       // published its transport state. Sending is still a valid operation:
       // construct the monolith transport on demand rather than
       // leaving the enabled send control as a silent no-op.
-      const sendTransport = await chatUploadTransport(transport, setSessionTransport);
+      let sendTransport = transport;
+      if (!sendTransport) {
+        const identity = await loadBuzzIdentity();
+        if (!identity) throw new Error('Beeline identity is unavailable');
+        sendTransport = new BuzzRigTransport(identity);
+      }
+      if (!transport) setSessionTransport(sendTransport);
       preparedTransport = sendTransport;
       const attachments = await attachmentUploader.uploadAll(
-        sendTransport,
+        await sendTransport.ensureClient(),
         activePendingAttachments,
       );
       // Sign before append. The authoritative event id is the optimistic row

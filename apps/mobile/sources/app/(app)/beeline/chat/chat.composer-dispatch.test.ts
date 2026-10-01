@@ -35,7 +35,7 @@ describe('composer dispatch transaction', () => {
       'const activePendingAttachments = sendShortcut ? [] : pendingAttachmentsRef.current;',
     );
     expect(send).toContain(
-      'sendTransport,\n        activePendingAttachments,',
+      'await sendTransport.ensureClient(),\n        activePendingAttachments,',
     );
     expect(send).toContain(
       'current.filter((attachment) => !activePendingAttachments.includes(attachment))',

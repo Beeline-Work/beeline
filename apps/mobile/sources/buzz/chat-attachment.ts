@@ -195,7 +195,7 @@ async function prepareImageForUpload(attachment: PickedChatAttachment): Promise<
 }
 
 async function uploadImageThumbnail(
-  client: Pick<BuzzClient, 'uploadMedia'>,
+  client: BuzzClient,
   attachment: PickedChatAttachment,
 ): Promise<string | undefined> {
   if (!attachment.mimeType.startsWith('image/')) return undefined;
@@ -218,7 +218,7 @@ async function uploadImageThumbnail(
 
 /** Uploads bytes to Buzz media, then returns only a durable URL and bounded metadata. */
 export async function uploadChatAttachment(
-  client: Pick<BuzzClient, 'uploadMedia'>,
+  client: BuzzClient,
   attachment: PickedChatAttachment,
 ): Promise<AttachmentReference> {
   const prepared =
@@ -256,13 +256,14 @@ export async function uploadChatAttachment(
  * Starts each staged attachment's upload the moment it lands in the composer,
  * so send only waits for whatever is still in flight. Uploads run one at a time
  * in the order they were added, so a ten-photo pick never holds ten full
- * photos in memory. A failed upload is forgotten and retried by the next
- * `uploadAll`; a removed attachment that has not started yet is skipped.
+ * photos in memory. A failed upload is forgotten and retried by `uploadAll`,
+ * including one that fails while send is waiting on it; a removed attachment
+ * that has not started yet is skipped.
  */
 export function createChatAttachmentUploader() {
   const uploads = new Map<PickedChatAttachment, Promise<AttachmentReference>>();
   let queue: Promise<unknown> = Promise.resolve();
-  const start = (client: Pick<BuzzClient, 'uploadMedia'>, attachment: PickedChatAttachment) => {
+  const start = (client: BuzzClient, attachment: PickedChatAttachment) => {
     const existing = uploads.get(attachment);
     if (existing) return existing;
     const upload: Promise<AttachmentReference> = queue.then(() => {
@@ -277,7 +278,7 @@ export function createChatAttachmentUploader() {
   };
   return {
     /** Begins uploading every attachment not already uploading or uploaded. */
-    start(client: Pick<BuzzClient, 'uploadMedia'>, attachments: readonly PickedChatAttachment[]) {
+    start(client: BuzzClient, attachments: readonly PickedChatAttachment[]) {
       for (const attachment of attachments) void start(client, attachment).catch(() => undefined);
     },
     /** Drops every attachment no longer staged in the composer. */
@@ -285,12 +286,21 @@ export function createChatAttachmentUploader() {
       for (const attachment of uploads.keys())
         if (!attachments.includes(attachment)) uploads.delete(attachment);
     },
-    /** One message's uploaded references, in display order. */
+    /**
+     * One message's uploaded references, in display order. An upload that was
+     * already running when send began gets one fresh attempt if it fails.
+     */
     uploadAll(
-      client: Pick<BuzzClient, 'uploadMedia'>,
+      client: BuzzClient,
       attachments: readonly PickedChatAttachment[],
     ): Promise<AttachmentReference[]> {
-      return Promise.all(attachments.map((attachment) => start(client, attachment)));
+      return Promise.all(
+        attachments.map((attachment) => {
+          const staged = uploads.has(attachment);
+          const upload = start(client, attachment);
+          return staged ? upload.catch(() => start(client, attachment)) : upload;
+        }),
+      );
     },
   };
 }

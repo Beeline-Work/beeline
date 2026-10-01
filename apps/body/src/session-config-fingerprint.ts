@@ -45,6 +45,8 @@ export interface SessionConfigInput {
   mcpServers?: readonly string[] | undefined;
   /** Reviewer identity baked into a corner session's Git workflow prompt. */
   reviewerHandle?: string | undefined;
+  /** Device nodes approved `device` grants bind into the session sandbox. */
+  devices?: readonly string[] | undefined;
 }
 
 export function sessionConfigFingerprint(input: SessionConfigInput): string {
@@ -59,6 +61,7 @@ export function sessionConfigFingerprint(input: SessionConfigInput): string {
     mountedMcpSet(input.mcpServers),
   ];
   if (input.reviewerHandle !== undefined) fingerprint.push(input.reviewerHandle);
+  if (input.devices?.length) fingerprint.push({ devices: [...new Set(input.devices)].sort() });
   return JSON.stringify(fingerprint);
 }
 

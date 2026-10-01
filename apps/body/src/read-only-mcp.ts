@@ -93,6 +93,7 @@ import {
   fetchBoundedBytes,
 } from './attachment-delivery.js';
 import { describeTailscaleReach } from './connector-tailscale.js';
+import { sandboxDevicePath } from './bwrap-sandbox.js';
 import { SEARCH_MEMORY_FIRST_RULE, UPGRADE_INTENT_RULE } from './prompt-assembly.js';
 
 type JsonObject = Record<string, unknown>;
@@ -1184,7 +1185,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'request_grant',
     description:
-      "Request one resource outside the sandbox: kind path|host|secret|device|command|mcp with one target and reason. Your own owner's files, secrets, tools and connections are available regardless of the root requester or yolo; another person's files or tools require that person's approval. The wallet keeps its separate rule. A command target is one exact line without shell metacharacters; secrets use a `--with SECRET_NAME` suffix. A mounted MCP route uses its exact harness name. A granted route mounts on the next session. A pending card pauses the turn until its owner answers. Exactly two command shapes always wait for a person: a script nobody has read and a named credential or environment file.",
+      "Request one resource outside the sandbox: kind path|host|secret|device|command|mcp with one target and reason. Your own owner's files, secrets, tools and connections are available regardless of the root requester or yolo; another person's files or tools require that person's approval. The wallet keeps its separate rule. A command target is one exact line without shell metacharacters; secrets use a `--with SECRET_NAME` suffix. A mounted MCP route uses its exact harness name. A granted route mounts on the next session. A granted device under /dev/ is in the session your turn continues in. A pending card pauses the turn until its owner answers. Exactly two command shapes always wait for a person: a script nobody has read and a named credential or environment file.",
     inputSchema: {
       type: 'object',
       required: ['kind', 'target', 'reason'],
@@ -2982,9 +2983,16 @@ export async function requestGrant(
   const grantId = typeof result.grantId === 'string' ? result.grantId : 'unknown';
   const ask = `${AGENT_GRANT_VERBS[kind]} ${target}`;
   if (result.auto === true) {
-    return kind === 'command'
-      ? `approved: ${ask} [grant ${grantId}]. Run it now with run_granted_command and the argv.`
-      : `approved: ${ask} [grant ${grantId}]; applies at the agent's next session.`;
+    if (kind === 'command')
+      return `approved: ${ask} [grant ${grantId}]. Run it now with run_granted_command and the argv.`;
+    if (kind === 'device') {
+      // bwrap fixes /dev when a session starts, so the turn loop continues
+      // this same turn in a fresh session that has it (`approvedDeviceGrant`).
+      return sandboxDevicePath(target)
+        ? `approved: ${ask} [grant ${grantId}]. A running session cannot add a device, so end your turn now with one short line; this same turn continues straight away in a session that has ${target}. Do not ask anyone to restart.`
+        : `approved: ${ask} [grant ${grantId}], but only device nodes under /dev/ are added to your session, so nothing was added.`;
+    }
+    return `approved: ${ask} [grant ${grantId}]; applies at the agent's next session.`;
   }
   // Yolo covers most asks; these two shapes never do, and saying which one this
   // is stops the model retrying the same line expecting a different answer.

@@ -63,6 +63,11 @@
  *                        enumerate any of them.
  *   --dev /dev           a minimal private /dev (the ro-bind above would
  *                        otherwise hand the child a read-only /dev/null).
+ *                        Host `/dev/kvm` and approved `device` grants are
+ *                        bound into it with `--dev-bind-try`, so an emulator
+ *                        gets hardware acceleration and an absent node is
+ *                        skipped. A device carries only the access this
+ *                        account already has on the host.
  *   --proc /proc         a private /proc for the new namespace.
  *   --tmpfs /tmp         a private, writable, discarded-at-exit /tmp.
  * ```
@@ -382,6 +387,8 @@ export interface SandboxMountPlan {
    * so a deliberate harness-state bind always wins over a mask.
    */
   masks: MaskedPath[];
+  /** Host device nodes bound into the private `/dev` beyond {@link DEFAULT_SANDBOX_DEVICES}. */
+  devices?: string[];
 }
 
 export interface SandboxSessionSpec {
@@ -415,6 +422,41 @@ export interface SandboxSessionSpec {
    * Both modes get them: a Room reading the operator's gh token is the same
    * out-of-band-push hole a corner would be. */
   maskPaths?: MaskedPath[];
+  /** Approved `device` grants ({@link grantedSandboxDevices}). */
+  devices?: string[];
+}
+
+/** Host device nodes every session reaches through its private `/dev`. */
+export const DEFAULT_SANDBOX_DEVICES = ['/dev/kvm'] as const;
+
+/**
+ * The device nodes an approved `device` grant mounts on the agent's next
+ * session. Only absolute paths under `/dev/` qualify; any other target is
+ * ignored rather than bound.
+ */
+export function grantedSandboxDevices(result: unknown): string[] {
+  if (!result || typeof result !== 'object' || !('grants' in result)) return [];
+  const grants = (result as { grants?: unknown }).grants;
+  if (!Array.isArray(grants)) return [];
+  const devices = new Set<string>();
+  for (const entry of grants) {
+    if (!entry || typeof entry !== 'object') continue;
+    const grant = entry as Record<string, unknown>;
+    if (grant.kind !== 'device') continue;
+    if (grant.status !== 'approved' && grant.status !== 'once') continue;
+    if (typeof grant.target !== 'string') continue;
+    const path = sandboxDevicePath(grant.target);
+    if (path) devices.add(path);
+  }
+  return [...devices].sort();
+}
+
+/** The `/dev/` node a device grant target mounts, or undefined when it mounts nothing. */
+export function sandboxDevicePath(target: string): string | undefined {
+  const trimmed = target.trim();
+  if (!isAbsolute(trimmed)) return undefined;
+  const path = resolve(trimmed);
+  return path.startsWith('/dev/') ? path : undefined;
 }
 
 /** `/tmp` is always a private tmpfs, so a path under it is the shadowed case. */
@@ -487,6 +529,7 @@ export function sandboxMountPlan(spec: SandboxSessionSpec): SandboxMountPlan {
         ]
       : [],
     masks: [...(spec.maskPaths ?? [])],
+    ...(spec.devices?.length ? { devices: normalize(spec.devices) } : {}),
   };
 }
 
@@ -537,11 +580,12 @@ export function buildBwrapArgv(input: {
     '/',
     '--dev',
     '/dev',
-    '--proc',
-    '/proc',
-    '--tmpfs',
-    '/tmp',
   ];
+  // `--dev-bind-try`: a host without the node still spawns the session.
+  for (const device of new Set([...DEFAULT_SANDBOX_DEVICES, ...(input.plan.devices ?? [])])) {
+    args.push('--dev-bind-try', device, device);
+  }
+  args.push('--proc', '/proc', '--tmpfs', '/tmp');
   for (const path of input.plan.readOnly) args.push('--ro-bind', path, path);
   // Credential masks: applied after the ro-bind they override and before the
   // writable binds a deliberate harness-state bind would win with. A masked

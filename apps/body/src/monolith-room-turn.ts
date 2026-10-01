@@ -75,6 +75,7 @@ import {
 } from './read-only-policy.js';
 import {
   credentialMaskPaths,
+  grantedSandboxDevices,
   harnessHomeStateDirs,
   siblingAgentMaskPaths,
   wrapAgentCommand,
@@ -289,6 +290,33 @@ export function pendingGrantToolCall(call: { title?: string; content?: unknown }
 }
 
 /**
+ * The device an instantly approved `request_grant` added this turn, if any.
+ * bwrap fixes `/dev` when a session starts, so the turn loop runs the same turn
+ * again in a fresh session that has it (`deviceGrantResumePrompt`).
+ */
+export function approvedDeviceGrant(
+  calls: readonly { title?: string; content?: unknown }[],
+): string | undefined {
+  for (const call of calls) {
+    if (!/(?:^|[._:/-])request_grant$/i.test(call.title ?? '')) continue;
+    const text = typeof call.content === 'string' ? call.content : JSON.stringify(call.content ?? '');
+    const device = /approved: use (\/dev\/\S+) \[grant [^\]]*\]\. A running session cannot add a device/.exec(text)?.[1];
+    if (device) return device;
+  }
+  return undefined;
+}
+
+/** The prompt that continues a turn after an instantly approved device grant. */
+export function deviceGrantResumePrompt(device: string, earlierReply: string): string {
+  const earlier = earlierReply.trim();
+  return [
+    `Your device grant for ${device} was approved and ${device} is in this session now; this is the same turn continuing.`,
+    ...(earlier ? [`Your reply just before this was: ${earlier}`] : []),
+    'Continue the work that needed the device. Do not request it again or ask anyone to restart.',
+  ].join(' ');
+}
+
+/**
  * The resume prompt for the answer that woke a paused turn. A grant answer and
  * a connector-offer answer resume the same way (`RESUME_KINDS`), but the model
  * must be told which question was answered — the connector one arrives as
@@ -304,6 +332,13 @@ export function resumePrompt(item: { body: string; systemEvent?: SystemEvent }):
     ].join(' ');
   }
   const grant = parseGrantDecisionLine(item.body);
+  if (grant?.kind === 'device' && grant.decision !== 'deny') {
+    return [
+      'This is the answer to your grant request; your paused work resumes now.',
+      `The approved device ${grant.target} is in this session.`,
+      'Continue the paused work with it now; do not restart, schedule another turn, or request the device again.',
+    ].join(' ');
+  }
   if (grant?.kind === 'mcp' && grant.decision !== 'deny') {
     return [
       'This is the answer to your grant request; your paused work resumes now.',
@@ -680,17 +715,19 @@ export class MonolithRoomTurnLoop {
   }
 
   private async currentSessionFingerprint(): Promise<string> {
-    const [configuration, roster, grantedHostRoutes] = await Promise.all([
+    const [configuration, roster, grants] = await Promise.all([
       this.options.api.execute('getAgentConfiguration', {
         agentId: this.agent.publicKey,
         roomId: this.options.roomId,
       }),
       this.roster(),
-      this.grantedHostRoutes(),
+      this.grantedResources(),
     ]);
+    const { hostRoutes: grantedHostRoutes, devices: grantedDevices } = grants;
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
     const registryRoutes = configuration.registryMcpRoutes ?? [];
     return sessionConfigFingerprint({
+      devices: grantedDevices,
       model: configuration.model ?? this.options.config.modelSelection?.model,
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
       fastMode: configuration.fastMode,
@@ -714,29 +751,31 @@ export class MonolithRoomTurnLoop {
     });
   }
 
-  private async grantedHostRoutes(): Promise<string[]> {
+  private async grantedResources(): Promise<{ hostRoutes: string[]; devices: string[] }> {
     try {
-      const approved = await claimGrantedHostRoutes(
-        await this.options.api.execute('listAgentGrants', {
-          agentId: this.agent.publicKey,
-          roomId: this.options.roomId,
-        }),
-      );
+      const grants = await this.options.api.execute('listAgentGrants', {
+        agentId: this.agent.publicKey,
+        roomId: this.options.roomId,
+      });
+      const approved = await claimGrantedHostRoutes(grants);
       // Discovery is safe to mount; the transport gate authorizes every use.
       // This also lets an owner use a yolo resource without an activation prompt.
-      return [
-        ...new Set([
-          ...approved,
-          ...Object.keys(
-            hostImportedMcpDeclarations({
-              operatorHome: this.options.config.operatorHome,
-              agentKind: this.options.config.agentKind,
-            }),
-          ),
-        ]),
-      ];
+      return {
+        hostRoutes: [
+          ...new Set([
+            ...approved,
+            ...Object.keys(
+              hostImportedMcpDeclarations({
+                operatorHome: this.options.config.operatorHome,
+                agentKind: this.options.config.agentKind,
+              }),
+            ),
+          ]),
+        ],
+        devices: grantedSandboxDevices(grants),
+      };
     } catch {
-      return [];
+      return { hostRoutes: [], devices: [] };
     }
   }
 
@@ -761,7 +800,7 @@ export class MonolithRoomTurnLoop {
       return this.sessionId;
     }
     trace?.noteActivation('cold');
-    const [configuration, roster, repositoryState, grantedHostRoutes] =
+    const [configuration, roster, repositoryState, grants] =
       await Promise.all([
         this.options.api.execute('getAgentConfiguration', {
           agentId: this.agent.publicKey,
@@ -769,8 +808,9 @@ export class MonolithRoomTurnLoop {
         }),
         this.roster(),
         this.repositoryState(),
-        this.grantedHostRoutes(),
+        this.grantedResources(),
         ]);
+    const { hostRoutes: grantedHostRoutes, devices: grantedDevices } = grants;
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
     const directMessage =
       Array.isArray(repositoryState.directParticipants) &&
@@ -874,6 +914,7 @@ export class MonolithRoomTurnLoop {
     // need its generated .codegraph directory writable while the MCP lives.
     const codegraphReady = await prepareCodegraphIndex(this.options.config, this.options.cwd);
     const fingerprint = sessionConfigFingerprint({
+      devices: grantedDevices,
       model: configuration.model ?? this.options.config.modelSelection?.model,
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
       fastMode: configuration.fastMode,
@@ -905,6 +946,7 @@ export class MonolithRoomTurnLoop {
           ...(codegraphReady ? [codegraphIndexDirectory(this.options.cwd)] : []),
           ...registryMcpHostBindPaths(configuration.registryMcpRoutes),
         ],
+        devices: grantedDevices,
         maskPaths: [
           ...credentialMaskPaths(this.options.config.sandboxMaskPaths, operatorHome),
           ...siblingAgentMaskPaths(
@@ -1389,6 +1431,7 @@ export class MonolithRoomTurnLoop {
                     corner.closedAt >= closedSince,
                 )
                 .sort((a, b) => (b.closedAt ?? 0) - (a.closedAt ?? 0));
+              let deviceResume: string | undefined;
               const buildPrompt = (): string => {
                 const transcript = this.warmTranscript.select(
                   this.sessionId,
@@ -1406,7 +1449,11 @@ export class MonolithRoomTurnLoop {
                     lines: transcript.rows.map((row) => row.line),
                     sinceLastTurn: transcript.warm,
                   },
-                  ...(grantDecision ? { resume: resumePrompt(item) } : {}),
+                  ...(deviceResume
+                    ? { resume: deviceResume }
+                    : grantDecision
+                      ? { resume: resumePrompt(item) }
+                      : {}),
                   members: roomMentionDirectory(roster, this.agent.publicKey),
                   memory: institutionalContext.text,
                   corners: openCorners,
@@ -1529,6 +1576,19 @@ export class MonolithRoomTurnLoop {
               };
               let result = await runPrompt();
               trace.promptSettled();
+              // An instantly approved device grant cannot reach the running
+              // sandbox: replace the session and continue this same turn there.
+              const grantedDevice = approvedDeviceGrant(result.toolCalls);
+              if (grantedDevice) {
+                trace.retry({ reason: 'device grant' });
+                if (!(await this.sessionIsCurrent())) {
+                  await this.discardSession();
+                  await trace.measure('activation', () => this.activate(trace));
+                }
+                deviceResume = deviceGrantResumePrompt(grantedDevice, result.agentText);
+                result = await runPrompt();
+                trace.promptSettled();
+              }
               let openCornerCall = openCornerToolCall(result.toolCalls);
               let cornerOpened = openedACorner(openCornerCall);
               let explained = await this.explainEmpty(result);

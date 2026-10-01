@@ -15,6 +15,7 @@ import type { ChannelReferenceIndex, ChannelReferenceTarget } from '@/buzz/chann
 import { agentActivityReplyExcerpt, type MessageReplyDisplayTarget } from '@/buzz/message-reply';
 import { resolveAgentDisplayIdentity, resolvePendingAgentDisplay } from '@/buzz/agent-display';
 import { fallbackMemberName } from '@/buzz/member-display';
+import { displayModel } from '@/buzz/model-display';
 import { CHANNEL_MENTION_HANDLE, hasChannelMentionToken } from '@/buzz/room-participants';
 import { describeWriteRequest } from '@/buzz/write-request-copy';
 import { emojiTextStyle } from '@/buzz/emoji-text';
@@ -1843,7 +1844,7 @@ export interface OrdinaryLedgerMessageProps {
  *  with no known model keeps the plain `AGENT` word. */
 export function agentBylineLabel(model?: string): string {
   const selectedModel = model?.trim();
-  return selectedModel || 'AGENT';
+  return selectedModel ? displayModel(selectedModel) : 'AGENT';
 }
 
 /**

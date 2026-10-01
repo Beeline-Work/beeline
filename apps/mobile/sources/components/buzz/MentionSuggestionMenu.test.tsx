@@ -151,25 +151,26 @@ describe('MentionSuggestionMenu', () => {
     ).toContain('Everyone in this Room');
   });
 
-  it('shows an agent as its handle, then model by @owner, without repeating its name', () => {
+  it('shows an agent as its full handle and model without provider or owner', () => {
     const agent: RoomRosterParticipant = {
       pubkey: 'a-niglet',
       name: 'Niglet',
-      handle: 'niglet',
+      handle: 'nigletverylonghandle',
       kind: 'agent',
       agent: { pubkey: 'a-niglet', displayName: 'Niglet' },
-      model: 'claude-opus-5-5',
+      model: 'openrouter/anthropic/claude-opus-5-5',
       ownerHandle: 'lunchboxfortwo',
     };
     const renderer = render(menu({ matches: [agent], overflow: 0 }));
-    const row = renderer.root.findByProps({ testID: 'mention-suggestion-niglet' });
+    const row = renderer.root.findByProps({ testID: 'mention-suggestion-nigletverylonghandle' });
     const words = row
       .findAllByType('Text' as never)
       .map((text: any) => [text.props.children].flat().join(''));
-    expect(words).toEqual(['@niglet', 'claude-opus-5-5 · by @lunchboxfortwo']);
-    expect(row.props.accessibilityLabel).toBe(
-      '@niglet, claude-opus-5-5 · by @lunchboxfortwo, agent',
-    );
+    expect(words).toEqual(['@nigletverylonghandle', 'claude-opus-5-5']);
+    expect(row.props.accessibilityLabel).toBe('@nigletverylonghandle, claude-opus-5-5, agent');
+    const handle = row.findAllByType('Text' as never)[0];
+    expect(handle.props.numberOfLines).toBeUndefined();
+    expect(flat(handle.props.style).flexShrink).toBe(0);
   });
 
   it('offers @system as a report row, not a person', () => {

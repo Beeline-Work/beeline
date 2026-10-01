@@ -13,6 +13,7 @@ import {
 } from '@/buzz/corners';
 import type { CornerState } from '@beeline/api-contract/phone';
 import { isMachinePreview } from '@/buzz/room-list-summary';
+import { displayModel } from '@/buzz/model-display';
 import {
   isRetiredAgentNotice,
   type ChatListItem,
@@ -540,7 +541,7 @@ export function roomRowPresentation(
   if (needsYou) {
     pills.push({ kind: 'status', label: needsYouAction(needsYou) });
   }
-  if (room.modelLabel) pills.push({ kind: 'model', label: room.modelLabel });
+  if (room.modelLabel) pills.push({ kind: 'model', label: displayModel(room.modelLabel) });
   if (corners.length > 0) {
     pills.push({
       kind: 'corner',

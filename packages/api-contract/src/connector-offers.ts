@@ -106,6 +106,8 @@ function connectorOfferBoundary(kind: ConnectorKind): string {
  */
 export function connectorPurpose(kind: ConnectorKind): string {
   switch (kind) {
+    case 'link':
+      return 'The owner approves a specific purchase in Link, then I can use its one-time payment credential.';
     case 'trusty-squire':
       return 'A credential vault and browser broker on this machine: it signs up for services, provisions API keys into its vault, and lets me use them without a raw key ever reaching chat.';
     case 'wallet':

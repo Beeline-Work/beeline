@@ -115,6 +115,7 @@ export type WorkbenchApp = {
 };
 
 export type WorkbenchView = {
+  linkAccount?: { connected: boolean; pending: boolean; ineligible: boolean };
   connectors: readonly WorkbenchConnector[];
   connections: readonly WorkbenchConnection[];
   /** The viewer's apps, one row each. */

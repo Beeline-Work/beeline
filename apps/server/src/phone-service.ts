@@ -9,6 +9,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { ComposioApps } from './composio-apps.js';
 import { beginComposioAppSignIn, completeComposioSignIn } from './app-connections.js';
 import { CORNER_VALIDATION_STAGES, currentCornerBrief } from './corner-brief.js';
+import type { LinkAgentWallet } from './link-agent-wallet.js';
 import { storeWorkspaceAvatar } from './durable-avatar.js';
 import { queueLatestReleasePush } from './release-push-catchup.js';
 import { validateWebPushSubscription, webPushPublicKey } from './web-push.js';
@@ -779,6 +780,7 @@ export class PhoneService {
     _legacyProviderSlot?: unknown,
     private readonly mcpRegistry: McpRegistryClient = new McpRegistryClient(),
     private readonly composio?: ComposioApps,
+    private readonly linkWallet?: LinkAgentWallet,
   ) {}
 
   private async optionalEnrichment<T>(name: string, work: Promise<T>): Promise<T | undefined> {
@@ -3647,6 +3649,18 @@ export class PhoneService {
       case 'readGoogleSignIn':
         return { connected: false, connectedTypes: [] } as Output<Name>;
       case 'disconnectGoogleSignIn':
+        return undefined as Output<Name>;
+      case 'beginLinkSignIn':
+        await this.viewerWorkbenchWorkspace(viewerId);
+        if (!this.linkWallet) throw new Error('Link is not configured');
+        return { authorizationUrl: await this.linkWallet.begin(viewerId) } as Output<Name>;
+      case 'cancelLinkSignIn':
+        await this.viewerWorkbenchWorkspace(viewerId);
+        await this.linkWallet?.cancel(viewerId, (input as Input<'cancelLinkSignIn'>).state);
+        return undefined as Output<Name>;
+      case 'disconnectLinkSignIn':
+        await this.viewerWorkbenchWorkspace(viewerId);
+        await this.linkWallet?.disconnect(viewerId);
         return undefined as Output<Name>;
       case 'unpairConnector':
         await this.unpairConnector(input as Input<'unpairConnector'>, viewerId);
@@ -7359,6 +7373,7 @@ export class PhoneService {
     input: Input<'readWorkbench'>,
     viewerId: string,
   ): Promise<Output<'readWorkbench'>> {
+    const linkAccount = await this.linkWallet?.status(viewerId);
     if (input.refreshVault) {
       const refreshes = await this.database.transaction(async (database) => {
         const rows = (
@@ -7496,6 +7511,7 @@ export class PhoneService {
     ).rows[0];
     return {
       workspaceId: input.workspaceId,
+      ...(linkAccount ? { linkAccount } : {}),
       catalog: connectorCatalog(),
       ...(walletRow
         ? {
@@ -8916,6 +8932,9 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'beginGoogleSignIn',
   'readGoogleSignIn',
   'disconnectGoogleSignIn',
+  'beginLinkSignIn',
+  'cancelLinkSignIn',
+  'disconnectLinkSignIn',
   'unpairConnector',
   'connectWorkbenchApp',
   'beginAppSignIn',

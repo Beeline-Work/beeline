@@ -421,7 +421,7 @@ export const SquireApprovalCard = React.memo(function SquireApprovalCard({
       subline={`${approval.detail} · requested by @${agentName}`}
       sublineTestID="squire-approval-detail"
       stamp={ledgerStamp(message.timestamp)}
-      footerNote="approval stays with Trusty Squire"
+      footerNote={approval.tool === 'Link' ? 'approval stays with Link' : 'approval stays with Trusty Squire'}
       actions={actions}
     />
   );

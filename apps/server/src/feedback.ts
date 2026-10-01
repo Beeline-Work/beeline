@@ -366,6 +366,43 @@ export async function assertFeedbackTriageTurn(
     );
 }
 
+/**
+ * A Room admin turns Feedback triage on or off by asking an agent in the
+ * corner (`set_feedback_triage`). The change serves only that agent's own turn
+ * in a live corner it is a member of, and only when the turn's root requester
+ * is a human owner or admin of the corner's workspace.
+ */
+export async function setCornerFeedbackTriage(
+  database: SqlDatabase,
+  command: CommandRow | undefined,
+  agentId: string,
+  enabled: boolean,
+): Promise<{ readonly cornerId: string; readonly enabled: boolean }> {
+  if (typeof enabled !== 'boolean') throw new Error('enabled must be a boolean');
+  const updated =
+    command?.agent_id === agentId
+      ? await database.query(
+          `UPDATE corner_facts fact SET feedback_triage=$3,updated_at=now()
+           FROM rooms corner
+           JOIN memberships member ON member.room_id=corner.id
+             AND member.identity_id=$2 AND member.removed_at IS NULL
+           JOIN messages root ON root.id=$4
+           JOIN identities requester ON requester.id=root.author_id AND requester.kind='human'
+           JOIN memberships manager ON manager.workspace_id=corner.workspace_id
+             AND manager.room_id IS NULL AND manager.identity_id=requester.id
+             AND manager.role IN ('owner','admin') AND manager.removed_at IS NULL
+           WHERE fact.corner_id=$1 AND corner.id=fact.corner_id
+             AND corner.parent_id IS NOT NULL AND corner.archived_at IS NULL`,
+          [command.room_id, agentId, enabled, command.root_source_message_id],
+        )
+      : undefined;
+  if (!updated?.rowCount)
+    throw new Error(
+      'feedback triage change access denied: only a Room admin can ask for it, in your own turn in a corner',
+    );
+  return { cornerId: command!.room_id, enabled };
+}
+
 type ItemRow = {
   id: string;
   source_kind: 'agent' | 'human';

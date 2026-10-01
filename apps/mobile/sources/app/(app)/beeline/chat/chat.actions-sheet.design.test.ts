@@ -94,29 +94,27 @@ describe('Room and corner actions sheets', () => {
     }
   });
 
-  it('puts the membership roster row on both overflow sheets, gated the same way', () => {
+  it('puts the membership roster row on the Room sheet and none on the corner sheet', () => {
     // Trigger: open a Room, tap overflow.
     // Masking: #1432 retired this Room-sheet row for a header diamond that
     // opens corners; #1436 then removed MEMBERS from the desktop work pane.
     // Symptom: overflow showed Rename / Repo / Scheduled work / Delete, and
     // no path reached the roster to add or remove members.
-    for (const source of [roomSheet, cornerSheet]) {
-      const members = row(source, 'room-participant-roster-trigger');
-      expect(members).toContain('label="Members"');
-      expect(members).not.toContain('leading=');
-      expect(members).not.toContain('MembersGlyph');
-      expect(members).toContain('metadata=');
-      expect(members).toContain('formatRoomParticipantTotal(roomParticipantTotal)');
-      expect(members).toContain('disabled={!memberManagement.canOpenRoster}');
-      expect(members).toContain('setRosterVisible(true)');
-    }
-    expect(row(roomSheet, 'room-participant-roster-trigger')).toContain(
-      'setRoomActionsVisible(false)',
-    );
-    expect(row(cornerSheet, 'room-participant-roster-trigger')).toContain(
-      'setCornerActionsVisible(false)',
-    );
+    const members = row(roomSheet, 'room-participant-roster-trigger');
+    expect(members).toContain('label="Members"');
+    expect(members).not.toContain('leading=');
+    expect(members).not.toContain('MembersGlyph');
+    expect(members).toContain('metadata=');
+    expect(members).toContain('formatRoomParticipantTotal(roomParticipantTotal)');
+    expect(members).toContain('disabled={!memberManagement.canOpenRoster}');
+    expect(members).toContain('setRosterVisible(true)');
+    expect(members).toContain('setRoomActionsVisible(false)');
     for (const testID of ROOM_ROWS) expect(roomSheet).toContain(`testID="${testID}"`);
+    // Corner membership is the parent Room's, so the corner sheet repeats no
+    // roster and carries no Feedback triage switch (an agent turns that on).
+    expect(cornerSheet).not.toContain('room-participant-roster-trigger');
+    expect(cornerSheet).not.toContain('label="Members"');
+    expect(cornerSheet).not.toContain('corner-feedback-triage-toggle');
     expect(cornerSheet).toContain('testID="close-corner-action"');
   });
 

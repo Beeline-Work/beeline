@@ -172,6 +172,7 @@ import {
   assertFeedbackTriageTurn,
   attachFeedbackToIssue,
   dismissFeedback,
+  setCornerFeedbackTriage,
   feedbackConfigFromEnv,
   fileFeedbackIssue,
   getFeedback,
@@ -413,6 +414,7 @@ export class DaemonService {
       'fileFeedbackIssue',
       'attachFeedbackToIssue',
       'dismissFeedback',
+      'setCornerFeedbackTriage',
     ]);
     if (
       !this.commandTransaction &&
@@ -1550,6 +1552,16 @@ export class DaemonService {
           this.database,
           input as Input<'dismissFeedback'>,
         )) as Output<Name>;
+      case 'setCornerFeedbackTriage': {
+        const output = await setCornerFeedbackTriage(
+          this.database,
+          this.authorizedCommand,
+          authenticatedAgentId,
+          (input as Input<'setCornerFeedbackTriage'>).enabled,
+        );
+        this.live.publish({ type: 'invalidate', roomId: output.cornerId, reason: 'corner' });
+        return output as Output<Name>;
+      }
       default:
         throw new Error(`unsupported daemon operation: ${String(name)}`);
     }
@@ -7320,6 +7332,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   fileFeedbackIssue: true,
   attachFeedbackToIssue: true,
   dismissFeedback: true,
+  setCornerFeedbackTriage: true,
 };
 export const DAEMON_OPERATION_NAMES = new Set(
   Object.keys(DAEMON_OPERATION_ROUTES) as (keyof DaemonOperationMap)[],

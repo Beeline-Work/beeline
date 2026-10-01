@@ -50,11 +50,12 @@ working in (below).
 1. In the Room where fixes should happen, open a **no-code** corner named
    "Issues triage". A no-code corner never opens a pull request, so no merge
    archives it; it stays open until someone closes it.
-2. As a Room admin (Workspace owner or admin), open the corner's **…** menu and
-   turn on **Feedback triage**. The setting is stored on the corner and is off
-   by default. Other members do not see the switch, and the server refuses
-   their changes.
-3. Add the triage agent to the corner.
+2. Add the triage agent to the corner.
+3. As a Room admin (Workspace owner or admin), ask that agent in the corner to
+   turn on Feedback triage. It calls `set_feedback_triage`, and the triage
+   tools load on its next turn there. The setting is stored on the corner and
+   is off by default. The server refuses the change when anyone else asks; ask
+   the agent again to turn it off.
 4. Ask it to create the sweep schedule in the corner with `create_schedule`,
    every few days (for example every 3 days), using the default prompt below.
    The schedule runs in the corner and wakes that agent there.

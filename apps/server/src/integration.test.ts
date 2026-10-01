@@ -273,20 +273,20 @@ describe('monolith integration', () => {
     expect(await phone.execute('readWelcomeCards', {}, fresh)).toEqual({ due: false });
     expect(await phone.execute('readWelcomeCards', {}, HUMAN)).toEqual({ due: false });
   });
-  it('runs feedback triage from a corner a Room admin switched on, and opens fix corners beside it', async () => {
+  it('runs feedback triage from a corner after a Room admin asks its agent, and opens fix corners beside it', async () => {
     const corner = (
       (await phone.execute('createHumanCorner', { roomId: ROOM, title: 'Issues triage' }, HUMAN)) as {
         id: string;
       }
     ).id;
     let turns = 0;
-    const turnIn = async (roomId: string) => {
+    const turnIn = async (roomId: string, authorId = HUMAN) => {
       turns += 1;
       const messageId = createHash('sha256').update(`triage-${turns}`).digest('hex');
       await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`, [
         messageId,
         roomId,
-        HUMAN,
+        authorId,
         '@bee sweep the feedback',
       ]);
       const requestId = `triage-request-${turns}`;
@@ -311,26 +311,30 @@ describe('monolith integration', () => {
       error: expect.stringContaining('feedback triage access denied'),
     });
 
-    // A member who is not a Room admin cannot switch it on; the Owner can.
-    const memberToken = await phoneToken('triage-member');
+    // A member who is not a Room admin asks the agent to switch it on: refused.
+    // The Owner asks: on.
     const memberId = createHash('sha256').update('github:triage-member').digest('hex');
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Member')`, [
+      memberId,
+    ]);
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
       [WORKSPACE, memberId, corner],
     );
-    const member = await operation(
-      'setCornerFeedbackTriage',
-      { roomId: corner, enabled: true },
-      memberToken,
-    );
-    expect(member.ok).toBe(false);
-    expect(await member.json()).toEqual({ error: 'room manager required' });
-    expect((await operation('setCornerFeedbackTriage', { roomId: corner, enabled: true })).ok).toBe(
-      true,
-    );
-    const view = readRoomView(await (await request(`/v1/phone/rooms/${corner}`)).json());
-    expect(view?.cornerFeedbackTriage).toBe(true);
-    expect(view?.viewer.permissions.manage).toBe(true);
+    const member = await daemonCall('setCornerFeedbackTriage', {
+      ...(await turnIn(corner, memberId)),
+      enabled: true,
+    });
+    expect(member.status).toBe(403);
+    expect(await member.json()).toMatchObject({
+      error: expect.stringContaining('feedback triage change access denied'),
+    });
+    const owner = await daemonCall('setCornerFeedbackTriage', {
+      ...(await turnIn(corner)),
+      enabled: true,
+    });
+    expect(owner.status).toBe(200);
+    expect(await owner.json()).toEqual({ cornerId: corner, enabled: true });
 
     // The same agent now triages in that corner, and only there.
     const during = await turnIn(corner);

@@ -67,8 +67,6 @@ export type PhoneOperationMap = {
   cancelAgentTurn: { input: CancelAgentTurnInput; output: void };
   createHumanCorner: { input: CreateHumanCornerInput; output: IdResult };
   requestCornerClose: { input: RoomInput; output: void };
-  /** Room admins only: turn a corner's Feedback triage setting on or off. */
-  setCornerFeedbackTriage: { input: SetCornerFeedbackTriageInput; output: void };
   decideWritePermission: { input: DecideWritePermissionInput; output: MessageWriteResult };
   decideAgentGrant: { input: DecideAgentGrantInput; output: AgentGrantDecisionResult };
   revokeAgentGrant: { input: RevokeAgentGrantInput; output: AgentGrantDecisionResult };
@@ -446,7 +444,6 @@ export type SetRoomRepositoryInput = RoomInput & {
 };
 export type SetRoomTargetBranchInput = RoomInput & { readonly targetBranch: string };
 export type SetRoomGitHubEventsInput = RoomInput & { readonly enabled: boolean };
-export type SetCornerFeedbackTriageInput = RoomInput & { readonly enabled: boolean };
 export type ApproveCornerMergeInput = {
   readonly cornerId: string;
   /** Managers may explicitly override a known failing check result. */

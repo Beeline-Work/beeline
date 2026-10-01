@@ -2454,7 +2454,7 @@ describe('Room message variant components', () => {
     expect(onMention).toHaveBeenCalledWith('member-id');
   });
 
-  it('links an agent-written roster handle and the reserved System handle', () => {
+  it('renders brass links from an agent-written roster handle and the reserved System handle', async () => {
     const onMention = vi.fn();
     render(
       <OrdinaryLedgerMessage
@@ -2481,9 +2481,18 @@ describe('Room message variant components', () => {
     );
 
     expect(ledgerEntryRender.mock.lastCall?.[0].mentionHandles).toEqual(['candy', 'system']);
-    act(() => ledgerEntryRender.mock.lastCall?.[0].onMention('candy'));
+    const { LedgerEntry: RenderedLedgerEntry } = await vi.importActual<typeof import('@/components/buzz/Ledger')>('@/components/buzz/Ledger');
+    const entry = render(React.createElement(RenderedLedgerEntry, ledgerEntryRender.mock.lastCall?.[0]));
+    const link = (handle: string) => entry.root.findAllByType('Text' as never).find(
+      (node: ReactTestInstance) => node.props.children === `@${handle}` && node.props.accessibilityRole === 'link',
+    );
+    const candy = link('candy');
+    const system = link('system');
+    expect(candy?.props.style).toContainEqual({ color: beelineThemes.obsidian.accent });
+    expect(system?.props.style).toContainEqual({ color: beelineThemes.obsidian.accent });
+    act(() => candy?.props.onPress());
     expect(onMention).toHaveBeenCalledWith('candy-id');
-    act(() => ledgerEntryRender.mock.lastCall?.[0].onMention('system'));
+    act(() => system?.props.onPress());
     expect(onMention).toHaveBeenCalledWith('972a35ec7a6e572c01c5b0a48cbdc82f6137dd7f35435cf9cc0ec305fdafa248');
   });
 

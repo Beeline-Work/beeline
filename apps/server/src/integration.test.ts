@@ -7135,24 +7135,19 @@ describe('monolith integration', () => {
         )
       ).rows[0]?.count,
     ).toBe(1);
+    // The merge card announces the landing; the opener, which never
+    // subscribed to `merged`, gets no turn from it.
     expect(
       (
-        await database.query<{
-          agent_id: string;
-          reason: string;
-          event_subscriptions: string[];
-        }>(
-          `SELECT command.agent_id,command.reason,member.event_subscriptions
-           FROM agent_commands command
+        await database.query(
+          `SELECT command.agent_id FROM agent_commands command
            JOIN messages source ON source.id=command.source_message_id
-           JOIN memberships member
-             ON member.room_id=command.room_id AND member.identity_id=command.agent_id
            WHERE command.room_id=$1 AND source.card_type='daemon-fact'
              AND source.card->>'type'='corner-complete'`,
           [ROOM],
         )
       ).rows,
-    ).toEqual([{ agent_id: AGENT, reason: 'corner_merged', event_subscriptions: [] }]);
+    ).toEqual([]);
     expect(
       (
         await database.query<{ count: number }>(

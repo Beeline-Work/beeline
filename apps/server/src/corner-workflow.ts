@@ -177,7 +177,7 @@ export type CornerEvent =
   | { kind: 'approval'; headSha: string }
   | { kind: 'review-ended'; review: CommandRow; verdictMessageId: string }
   | { kind: 'merge-refused'; headSha: string; reason: string }
-  | { kind: 'merged'; contents: Record<string, unknown>; parentCardId?: string }
+  | { kind: 'merged'; contents: Record<string, unknown> }
   | { kind: 'closed' };
 
 export type CornerAdvance = {
@@ -634,20 +634,11 @@ async function applyEvent(
       return reviewEnded(db, cornerId, corner, transition, event);
     case 'merge-refused':
       return mergeRefused(db, cornerId, corner, transition, event);
-    case 'merged': {
+    case 'merged':
+      // Landing wakes no one in the parent Room: the merge card announces it,
+      // and an agent with work left after the merge subscribes to `merged`.
       await transition.take('landed', event.contents);
-      // Landing hands the result back to the agent that opened the corner, in
-      // the parent Room. Command creation still enforces current parent
-      // membership, so a retired or removed opener is never revived.
-      if (event.parentCardId && corner.owner_agent_id)
-        await createAgentCommand(db, {
-          roomId: corner.parent_id,
-          agentId: corner.owner_agent_id,
-          sourceMessageId: event.parentCardId,
-          reason: 'corner_merged',
-        });
       return OK;
-    }
     case 'closed':
       await transition.take('closed');
       return OK;

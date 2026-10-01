@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
-  readWorkflowContract,
+  workflowContractError,
   workflowContentsError,
   isAgentIdentityReference,
   isClassOrTagReference,
@@ -268,12 +268,9 @@ export async function saveWorkflow(
   input: { contract: unknown },
   afterCommit?: AfterCommit,
 ): Promise<{ slug: string; version: number }> {
-  const contract = readWorkflowContract(input.contract);
-  if (!contract) {
-    throw new Error(
-      'workflow contract is invalid: check roles, handoffs, required contents, loop caps, and terminals',
-    );
-  }
+  const reason = workflowContractError(input.contract);
+  if (reason !== null) throw new Error(`workflow contract is invalid: ${reason}`);
+  const contract = input.contract as WorkflowContract;
   const room = (
     await database.query<{ workspace_id: string }>(`SELECT workspace_id FROM rooms WHERE id=$1`, [
       command.room_id,

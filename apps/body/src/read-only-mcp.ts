@@ -259,6 +259,8 @@ const READ_ONLY_TOOLS: ToolDefinition[] = [
 ];
 
 /** One brief shape for open_corner.brief and revise_corner_brief, so the two cannot drift. */
+const WORKFLOW_GUIDE_URL = 'https://github.com/Beeline-Work/beeline/blob/main/docs/workflows/README.md';
+
 export const CORNER_BRIEF_PROPERTIES = {
   spec: {
     type: 'string',
@@ -336,7 +338,12 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'save_workflow',
     description:
-      'Save a declarative workflow contract for a multi-agent (or agent+human) team: named roles, handoffs between roles with required contents, loop caps with an ask-a-human escape, human decision points via gate states, and done/failed terminals. Validated synchronously (roles, handoffs, required contents, every loop capped, reachable from start, at least one terminal) and stored Workspace-wide, versioned by name; a run already in progress keeps the version it started with. Pass the whole contract as one JSON object under "contract" - see load_workspace_skill for the shape once one is saved, or ask for an example.',
+      'Save a declarative workflow contract for a multi-agent (or agent+human) team: named roles, handoffs between roles with required contents, loop caps with an ask-a-human escape, human decision points via gate states, and done/failed terminals. Stored Workspace-wide, versioned by name; a run already in progress keeps the version it started with. Pass the whole contract as one JSON object under "contract". Minimal valid example: ' +
+      '{"version":1,"name":"draft-and-approve","description":"Draft a note and get a human yes or no","roles":["writer"],"start":"draft","handoffs":{"draft":{"role":"writer","requires":["text"],"on":{"drafted":"approve"}},"approve":{"kind":"gate","role":"writer","requires":["decision"],"on":{"publish":"done","redo":"draft"}},"done":{"kind":"terminal","status":"done"}}}. ' +
+      'Rules: name is lowercase words joined by hyphens (a-z, 0-9, no underscores), at most 64 characters; description is 1-60 characters; roles are 1-16 lowercase names; start is a non-terminal state; handoffs has 2-64 states keyed by lowercase name. ' +
+      'A handoff state allows only role, requires (field names the handoff must carry), on (outcome -> next state, 1-16 outcomes), loop, timeoutSeconds and roleBinding. A gate is {"kind":"gate", role, requires, on} with 2-4 outcomes; a human picks one. A terminal is {"kind":"terminal","status":"done"|"failed"|"abandoned"}. No other keys. ' +
+      'Every state must be reachable from start, and at least one terminal is required. Every cycle must pass through a gate or have a loop cap on a state in it: "loop":{"onEdge":"<outcome>","cap":1-100,"onExceeded":"<another state>"}. A rejected contract returns the rule that failed and where.' +
+      ` How to write and run workflows: ${WORKFLOW_GUIDE_URL}`,
     inputSchema: {
       type: 'object',
       required: ['contract'],
@@ -349,7 +356,8 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'start_workflow',
     description:
-      'Start a run of a saved workflow, binding its named roles to current members of this Room. Posts one message whose id is the run id and pins the contract version; call handoff with that runId to move the run forward. Every declared role needs a binding to a current Room member OR a class/tag word (e.g. "heavy", "light", "god", a harness name, a provider name, an exact model id, or a custom tag) - a class binding is resolved to a random currently healthy Room member carrying that tag each time the role is dispatched, skipping offline/recently-failed/out-of-credit members, and stays with whoever it picked for the rest of the run unless that agent later fails, in which case it moves to the next healthy member automatically. If the class has no healthy member, the run names this in the Room and waits for a human (see assign_workflow_role).',
+      'Start a run of a saved workflow, binding its named roles to current members of this Room. Posts one message whose id is the run id and pins the contract version; call handoff with that runId to move the run forward. Every declared role needs a binding to a current Room member OR a class/tag word (e.g. "heavy", "light", "god", a harness name, a provider name, an exact model id, or a custom tag) - a class binding is resolved to a random currently healthy Room member carrying that tag each time the role is dispatched, skipping offline/recently-failed/out-of-credit members, and stays with whoever it picked for the rest of the run unless that agent later fails, in which case it moves to the next healthy member automatically. If the class has no healthy member, the run names this in the Room and waits for a human (see assign_workflow_role).' +
+      ` How to write and run workflows: ${WORKFLOW_GUIDE_URL}`,
     inputSchema: {
       type: 'object',
       required: ['name', 'roleBindings'],
@@ -363,7 +371,8 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'handoff',
     description:
-      'Advance a workflow run you are currently holding: validated against the run\'s pinned contract (you must be bound to the current state\'s role, the outcome must be one the state declares, and contents must satisfy its required fields). Posted as a normal message and deterministically wakes whichever agent is bound to the next state\'s role - no @mention needed. A capped loop is enforced from the transcript itself: exceeding it is redirected to the loop\'s own escape state instead of your requested outcome. A state that reaches a human decision point posts a card instead of waking anyone directly; that role\'s agent is woken once a human answers it.',
+      'Advance a workflow run you are currently holding: validated against the run\'s pinned contract (you must be bound to the current state\'s role, the outcome must be one the state declares, and contents must satisfy its required fields). Posted as a normal message and deterministically wakes whichever agent is bound to the next state\'s role - no @mention needed. A capped loop is enforced from the transcript itself: exceeding it is redirected to the loop\'s own escape state instead of your requested outcome. A state that reaches a human decision point posts a card instead of waking anyone directly; that role\'s agent is woken once a human answers it.' +
+      ` How to write and run workflows: ${WORKFLOW_GUIDE_URL}`,
     inputSchema: {
       type: 'object',
       required: ['runId', 'outcome', 'contents'],
@@ -378,7 +387,8 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'archive_workflow',
     description:
-      'Retire a saved workflow by name so it drops out of discovery and can no longer be started. A run already in progress is unaffected - it keeps running on its pinned contract version.',
+      'Retire a saved workflow by name so it drops out of discovery and can no longer be started. A run already in progress is unaffected - it keeps running on its pinned contract version.' +
+      ` How to write and run workflows: ${WORKFLOW_GUIDE_URL}`,
     inputSchema: {
       type: 'object',
       required: ['name'],
@@ -391,7 +401,8 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'assign_workflow_role',
     description:
-      'Bind one specific agent to a class/tag-bound role this run is currently on - the human-directed recovery when a class has no healthy member (the run names this in the Room and asks a human; that human can then tag you and ask you to call this). No health filter applies - an explicit choice overrides "healthy". The target must currently carry the role\'s configured tag and be a member of this Room. Not for a role bound to one fixed agent; that role never fails over.',
+      'Bind one specific agent to a class/tag-bound role this run is currently on - the human-directed recovery when a class has no healthy member (the run names this in the Room and asks a human; that human can then tag you and ask you to call this). No health filter applies - an explicit choice overrides "healthy". The target must currently carry the role\'s configured tag and be a member of this Room. Not for a role bound to one fixed agent; that role never fails over.' +
+      ` How to write and run workflows: ${WORKFLOW_GUIDE_URL}`,
     inputSchema: {
       type: 'object',
       required: ['runId', 'role', 'agentId'],

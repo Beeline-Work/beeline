@@ -198,14 +198,14 @@ function substitute(value: unknown, staged: Map<unknown, Json>, depth = 0): unkn
     [key, substitute(item, staged, depth + 1)]));
 }
 
-/** Staging handles (presigned URL, s3key) are the server's; they never reach the agent. */
-function redact(value: unknown, hidden: readonly string[], depth = 0): unknown {
+/** The API key and staging handles (presigned URL, s3key) are the server's; they never reach the agent. */
+function redact(value: unknown, hidden: readonly string[], label: string, depth = 0): unknown {
   if (typeof value === 'string')
-    return hidden.reduce((text, secret) => text.replaceAll(secret, '[staged file]'), value);
+    return hidden.reduce((text, secret) => text.replaceAll(secret, label), value);
   if (depth > 12 || !value || typeof value !== 'object') return value;
-  if (Array.isArray(value)) return value.map((item) => redact(item, hidden, depth + 1));
+  if (Array.isArray(value)) return value.map((item) => redact(item, hidden, label, depth + 1));
   return Object.fromEntries(Object.entries(value).map(([key, item]) =>
-    [key, redact(item, hidden, depth + 1)]));
+    [key, redact(item, hidden, label, depth + 1)]));
 }
 
 /**
@@ -378,11 +378,12 @@ export class ComposioApps {
   async execute(input: { accountId: string; userId: string; toolkit: string;
     tool: string; arguments: Json; files?: AppFiles }): Promise<unknown> {
     const hidden: string[] = [];
+    const conceal = (value: unknown) =>
+      redact(redact(value, [this.apiKey], '[redacted]'), hidden, '[staged file]');
     try {
-      const data = await this.executeStaged(input, hidden);
-      return hidden.length ? redact(data, hidden) : data;
+      return conceal(await this.executeStaged(input, hidden));
     } catch (error) {
-      if (hidden.length && error instanceof Error) error.message = redact(error.message, hidden) as string;
+      if (error instanceof Error) error.message = conceal(error.message) as string;
       throw error;
     }
   }

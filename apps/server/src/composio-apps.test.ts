@@ -325,6 +325,35 @@ describe('managed app provider boundary', () => {
     expect((error as Error).message).toBe('App tool execution failed: some provider reason');
   });
 
+  it('keeps the API key out of execution results and every provider error message', async () => {
+    const KEY = 'ak_fixture_project_key';
+    const slack = (execute: () => Response) => vi.fn(async (url: URL | string) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith(`/connected_accounts/${ACCOUNT}`)) return json({
+        id: ACCOUNT, user_id: PERSON, status: 'ACTIVE', toolkit: { slug: 'slack' },
+      });
+      if (path.endsWith('/tools/SLACK_POST_MESSAGE')) return json({
+        slug: 'SLACK_POST_MESSAGE', version: '20260928_00', toolkit: { slug: 'slack' },
+      });
+      if (path.endsWith('/tools/execute/SLACK_POST_MESSAGE')) return execute();
+      throw new Error('unexpected request');
+    });
+    const run = (execute: () => Response) => new ComposioApps(KEY, slack(execute) as typeof fetch)
+      .execute({ accountId: ACCOUNT, userId: PERSON, toolkit: 'slack',
+        tool: 'SLACK_POST_MESSAGE', arguments: { channel: 'announcements' } });
+    const flagged = await run(() => json({ error: `invalid x-api-key ${KEY}` }))
+      .catch((e: unknown) => e as Error);
+    expect(flagged.message).toBe('App tool execution failed: invalid x-api-key [redacted]');
+    const rejected = await run(() => json({ message: `key ${KEY} is not allowed` }, 401))
+      .catch((e: unknown) => e as Error);
+    expect(rejected.message).toBe('App provider request failed (401): key [redacted] is not allowed');
+    const plain = await run(() => new Response(`bad key ${KEY}`, { status: 403 }))
+      .catch((e: unknown) => e as Error);
+    expect(plain.message).toBe('App provider request failed (403): bad key [redacted]');
+    await expect(run(() => json({ successful: true, data: { echo: `used ${KEY}` } })))
+      .resolves.toEqual({ echo: 'used [redacted]' });
+  });
+
   it('surfaces a nested flagged error message and strips secret-shaped values', async () => {
     const transport = vi.fn(async (url: URL | string) => {
       const path = new URL(String(url)).pathname;

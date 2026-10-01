@@ -8735,7 +8735,7 @@ describe('monolith integration', () => {
     expect(await state()).toBe('waiting');
   });
 
-  it('keeps a corner waiting on a question, grant or blocked run however many updates follow it', async () => {
+  it('keeps owed tags, questions, grants and blocks waiting past 21 updates', async () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-owed-crowded',
@@ -8758,6 +8758,21 @@ describe('monolith integration', () => {
         );
       }
     };
+
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES('crowded-tag',$1,$2,'@owner hinged or loose?',now())`,
+      [cornerId, AGENT],
+    );
+    await crowd();
+    expect(await state()).toBe('waiting');
+    updates += 1;
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES('crowded-answer',$1,$2,'Hinged.',now()+$3::interval)`,
+      [cornerId, HUMAN, `${updates} seconds`],
+    );
+    expect(await state()).toBe('idle');
 
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card,created_at)

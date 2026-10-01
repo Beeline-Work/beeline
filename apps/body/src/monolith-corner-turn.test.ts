@@ -2662,6 +2662,7 @@ describe('thin monolith corner turn', () => {
     expect(secondPrompt).toContain(
       'Corner objective (navigation only, not product authority): Implement the widget',
     );
+    expect(firstPrompt).not.toContain('rename_corner');
     expect(firstPrompt).toContain('Members (exact tag spellings):');
     expect(secondPrompt).toContain('Members (exact tag spellings):');
     expect(firstPrompt).toContain('- @goosy-2 — Goosy (agent)');
@@ -2987,6 +2988,102 @@ describe('corner turn institutional-memory prefetch', () => {
     // 300ms gave it somewhere to finish.
     expect(String(sessionPrompt.mock.calls[0]?.[1])).toContain('Prefetched institutional snapshot');
     expect(receipts.some((receipt) => receipt.status === 'complete')).toBe(true);
+  }, 10_000);
+});
+
+describe('corner turn rename prompt', () => {
+  it('asks the agent to rename a corner that still has its generated name', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-corner-rename-'));
+    roots.push(root);
+    await execFileAsync('git', ['init', root]);
+    const runtime = {
+      agentId: '11'.repeat(32),
+      agent: stored('11'.repeat(32), 'Bee'),
+      rooms: [],
+      supervisorRoot: root,
+      transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'daemon-token' },
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+    } as unknown as AgentRuntimeRecord;
+    const config: BodyConfig = {
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+      readonlyMcpCommand: '/fake-beeline-mcp',
+      agentEnv: {},
+      workspaceRoot: root,
+      autoApprovePermissions: true,
+    };
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [{ identityId: '11'.repeat(32), kind: 'agent', name: 'Bee', role: 'member' }],
+        };
+      }
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerCloseRequests') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerRestoreState')
+        return {
+          cornerId: 'corner-id',
+          kind: 'human',
+          title: 'still harbor corner',
+          titleGenerated: true,
+        };
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const api = {
+      execute,
+      connection: () => ({
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+        agentId: runtime.agent.publicKey,
+      }),
+    } as unknown as DaemonApiClient;
+    const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'start').mockResolvedValue(undefined);
+    vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'corner-session', raw: {} });
+    const sessionPrompt = vi.spyOn(acp, 'sessionPrompt').mockResolvedValue({
+      stopReason: 'end_turn',
+      updates: [],
+      agentText: 'Done.',
+      toolCalls: [],
+    });
+    const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
+    let loop!: MonolithCornerTurnLoop;
+    loop = new MonolithCornerTurnLoop({
+      cornerId: 'corner-id',
+      parentRoomId: 'room-id',
+      workspaceId: 'workspace',
+      objective: 'still harbor corner',
+      worktreePath: root,
+      runtime,
+      config,
+      api: closePushAfterReceipt(
+        commandFixtureApi(api, 'corner-id', runtime.agent.publicKey, 'Fix the login redirect'),
+        () => loop,
+        1,
+      ),
+      scheduler,
+      signal: new AbortController().signal,
+      pollMs: 10,
+      onPoll: vi.fn(),
+      onFailure: vi.fn(),
+      onCloseRequested: vi.fn(async () => undefined),
+      createAcpClient: () => acp,
+    });
+    await loop.run();
+    await scheduler.dispose();
+
+    expect(String(sessionPrompt.mock.calls[0]?.[1])).toContain(
+      'This corner still has its generated name, "still harbor corner". If the newest message states the work, call rename_corner once before you reply',
+    );
   }, 10_000);
 });
 

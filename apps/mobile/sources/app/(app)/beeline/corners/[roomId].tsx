@@ -174,7 +174,7 @@ export default function BuzzCorners() {
       if (!identity) throw new Error('Beeline identity is unavailable');
       await openRoomListCorner({
         roomId: decodedId,
-        createCorner: (roomId, title) => new BuzzRigTransport(identity).createHumanCorner(roomId, title),
+        createCorner: (roomId, title) => new BuzzRigTransport(identity).createHumanCorner(roomId, title, undefined, undefined, true),
         openCorner: (cornerId, title) =>
           router.push(cornerHref(cornerId, decodedId, title, 'corners')),
       });

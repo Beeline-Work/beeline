@@ -398,7 +398,7 @@ export const SidebarView = React.memo(function SidebarView() {
         const transport = identity ? new BuzzRigTransport(identity) : null;
         await openRoomListCorner({
           roomId,
-          createCorner: transport ? (id, title) => transport.createHumanCorner(id, title) : null,
+          createCorner: transport ? (id, title) => transport.createHumanCorner(id, title, undefined, undefined, true) : null,
           openCorner: (cornerId) => openCornerInRoom(roomId, cornerId),
         });
       } finally {

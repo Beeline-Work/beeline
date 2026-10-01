@@ -344,6 +344,21 @@ describe('prompt assembly guards', () => {
     expect(turn).not.toContain('Continue the current assigned brief');
   });
 
+  it('asks for a rename only while the corner still has its generated name', () => {
+    const named = assembleTurnPrompt(TURN_VARIANTS['code-corner-turn']!).text;
+    const generated = assembleTurnPrompt({
+      ...TURN_VARIANTS['code-corner-turn']!,
+      generatedTitle: 'still harbor corner',
+    }).text;
+    expect(named).not.toContain('rename_corner');
+    expect(generated).toContain(
+      'This corner still has its generated name, "still harbor corner". If the newest message states the work, call rename_corner once before you reply',
+    );
+    expect(generated.indexOf('Corner objective')).toBeLessThan(
+      generated.indexOf('still has its generated name'),
+    );
+  });
+
   it('puts the trigger in the prompt once', () => {
     const turn = assembleTurnPrompt(TURN_VARIANTS['room-turn']!).text;
     expect(turn.split('Why did the release migration fail?')).toHaveLength(2);

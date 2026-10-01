@@ -1481,6 +1481,9 @@ export class MonolithCornerTurnLoop {
                   surface: this.sessionSurface,
                   sessionPrefix: this.turnSessionPrefix,
                   objective: this.options.objective,
+                  ...(restored.titleGenerated && restored.title
+                    ? { generatedTitle: restored.title }
+                    : {}),
                   ...(restored.brief
                     ? {
                         brief: {

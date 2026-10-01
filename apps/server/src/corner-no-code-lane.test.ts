@@ -210,6 +210,37 @@ it('restores a corner opened before the lane column as code', async () => {
   });
 });
 
+it('restores a generated human-corner title as generated until the corner is renamed', async () => {
+  const generated = ((await phone.execute(
+    'createHumanCorner',
+    { roomId: CHAT_ROOM, title: 'still harbor corner', titleGenerated: true },
+    HUMAN,
+  )) as { id: string }).id;
+  const chosen = await humanCorner(CHAT_ROOM, 'Reading corner');
+
+  expect(
+    await daemon.execute('getCornerRestoreState', { cornerId: generated }, AGENT),
+  ).toMatchObject({ title: 'still harbor corner', titleGenerated: true });
+  expect(
+    await daemon.execute('getCornerRestoreState', { cornerId: chosen }, AGENT),
+  ).not.toHaveProperty('titleGenerated');
+
+  const command = await commissioned(generated);
+  await daemon.execute(
+    'renameCorner',
+    {
+      cornerId: generated,
+      requestId: command.turnRequestId,
+      generationId: 'g1',
+      name: 'rename after steer',
+    },
+    AGENT,
+  );
+  const renamed = await daemon.execute('getCornerRestoreState', { cornerId: generated }, AGENT);
+  expect(renamed.title).toBe('rename after steer');
+  expect(renamed).not.toHaveProperty('titleGenerated');
+});
+
 it('refuses a lane the constraint does not name', async () => {
   const cornerId = await open(CODE_ROOM, 'no_code', 'owner/widgets');
 

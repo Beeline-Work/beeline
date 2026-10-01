@@ -71,7 +71,7 @@ export default {
         scheme,
         userInterfaceStyle: "automatic",
         ios: {
-            runtimeVersion: runtimeVersionOverride || "31",
+            runtimeVersion: runtimeVersionOverride || "32",
             // Keep the launcher identity stable across system appearance modes.
             // iOS masks this full-size source; only Android adaptive layers need
             // the separately inset safe-zone treatment.
@@ -89,6 +89,7 @@ export default {
                 // Free platform speech recognition
                 NSSpeechRecognitionUsageDescription: "Allow Beeline to recognize your speech so it can type what you say.",
                 NSMicrophoneUsageDescription: "Allow Beeline to use the microphone for speech input.",
+                NSPhotoLibraryUsageDescription: "Beeline uses your photo library so you can attach images to messages and choose a profile picture. For example, you can pick a screenshot to share in a Room.",
                 NSLocalNetworkUsageDescription: "Allow $(PRODUCT_NAME) to find and connect to local devices on your network.",
                 NSBonjourServices: ["_http._tcp", "_https._tcp"],
                 // ATS:
@@ -105,7 +106,7 @@ export default {
             }
         },
         android: {
-            runtimeVersion: runtimeVersionOverride || "32",
+            runtimeVersion: runtimeVersionOverride || "33",
             versionCode: 27,
             adaptiveIcon: {
                 foregroundImage: "./sources/assets/images/icon-adaptive.png",

@@ -38,7 +38,7 @@ describe('production iOS capabilities', () => {
         modResults?: {
           ios?: {
             entitlements?: Record<string, unknown>;
-            infoPlist?: { UIBackgroundModes?: string[] };
+            infoPlist?: { UIBackgroundModes?: string[]; NSPhotoLibraryUsageDescription?: string };
           };
         };
       };
@@ -108,6 +108,11 @@ describe('production iOS capabilities', () => {
       'applinks:relay.buzzrouter.com',
     ]);
     expect(nativeIos?.infoPlist?.UIBackgroundModes).toContain('remote-notification');
+    // App Review rejected 0.2.21 (81) under Guideline 5.1.1(ii) for
+    // expo-image-picker's default "Allow $(PRODUCT_NAME) to access your photos".
+    expect(nativeIos?.infoPlist?.NSPhotoLibraryUsageDescription).toBe(
+      'Beeline uses your photo library so you can attach images to messages and choose a profile picture. For example, you can pick a screenshot to share in a Room.',
+    );
     expect(mobileAssociation).toEqual(relayAssociation);
     expect(relayAssociation.applinks?.details?.[0]?.appID).toBe(
       '89KT3SWYAF.app.usebeeline.mobile',

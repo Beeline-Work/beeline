@@ -200,7 +200,15 @@ export class ComposioApps {
   }
 
   async account(accountId: string, userId: string, toolkit: string): Promise<boolean> {
-    const row = await this.request(`/connected_accounts/${encodeURIComponent(accountId)}`, 'GET');
+    let row: Json;
+    try {
+      row = await this.request(`/connected_accounts/${encodeURIComponent(accountId)}`, 'GET');
+    } catch (error) {
+      // A stored account id that no longer exists upstream is "not connected",
+      // never a checked error. Reconnect must issue a fresh sign-in link.
+      if ((error as { status?: number }).status === 404) return false;
+      throw error;
+    }
     return row.id === accountId && row.user_id === userId && row.status === 'ACTIVE' &&
       object(row.toolkit).slug === toolkit && row.is_disabled !== true;
   }

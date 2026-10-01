@@ -161,6 +161,14 @@ describe('managed app provider boundary', () => {
     expect((error as { status?: number }).status).toBe(429);
   });
 
+  it('treats a missing connected account as not connected instead of throwing', async () => {
+    const body = 'Connected account "ca_gone" not found';
+    const transport = vi.fn(async () => json({ error: body }, 404));
+    const provider = new ComposioApps('fixture-only', transport as typeof fetch);
+    await expect(provider.account('ca_gone', PERSON, 'youtube')).resolves.toBe(false);
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+
   it('surfaces a provider reason from a flagged execution error', async () => {
     const transport = vi.fn(async (url: URL | string) => {
       const path = new URL(String(url)).pathname;

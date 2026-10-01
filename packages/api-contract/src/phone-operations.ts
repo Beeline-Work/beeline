@@ -3,6 +3,7 @@ import type { ChoiceStatus, ChoiceOptionInput } from './room-choices.js';
 import type { AgentAccessPolicy } from './agent-access.js';
 import type { WeightTierRule } from './agent-classes.js';
 import type { PushLevel } from './push-level.js';
+import type { WorkflowContract, WorkflowTerminalState } from './workflow-contracts.js';
 import type { GrantWalletDelegationInput, GrantWalletDelegationResult } from './wallet.js';
 import type {
   AgentModelSelection,
@@ -42,6 +43,13 @@ import type {
   WorkbenchView,
 } from './workbench.js';
 
+export type {
+  WorkflowContract,
+  WorkflowLoop,
+  WorkflowState,
+  WorkflowTerminalState,
+} from './workflow-contracts.js';
+
 export const HUMAN_CORNER_TITLE_MAX_LENGTH = 120;
 
 export type PhoneOperationMap = {
@@ -68,6 +76,10 @@ export type PhoneOperationMap = {
   createRoomSchedule: { input: CreateRoomScheduleInput; output: RoomScheduleView };
   listRoomSchedules: { input: RoomInput; output: RoomScheduleListResult };
   deleteRoomSchedule: { input: DeleteRoomScheduleInput; output: void };
+  /** The newest run of each agent workflow in a Room and its corners, live runs first. */
+  listRoomWorkflowRuns: { input: RoomInput; output: WorkflowRunListResult };
+  /** One run with its pinned contract and ordered handoff history, for the run page's graph. */
+  readWorkflowRun: { input: ReadWorkflowRunInput; output: WorkflowRunDetailView };
   cancelAgentTurn: { input: CancelAgentTurnInput; output: void };
   createHumanCorner: { input: CreateHumanCornerInput; output: IdResult };
   requestCornerClose: { input: RoomInput; output: void };
@@ -289,6 +301,55 @@ export type CreateRoomScheduleInput = RoomInput & {
 };
 export type RoomScheduleListResult = { readonly schedules: readonly RoomScheduleView[] };
 export type DeleteRoomScheduleInput = RoomInput & { readonly scheduleId: string };
+/** Who holds a workflow role, or who wrote a handoff card. */
+export type WorkflowActorView = {
+  readonly id: string;
+  readonly name: string;
+  readonly kind: 'human' | 'agent';
+};
+/** `live` until the run reaches a terminal state, then that terminal's status. */
+export type WorkflowRunStatus = 'live' | WorkflowTerminalState['status'];
+export type WorkflowRunSummaryView = {
+  /** The `start_workflow` message id (a corner's own lifecycle run uses the corner id). */
+  readonly runId: string;
+  readonly workflowSlug: string;
+  readonly description: string;
+  /** The Room or corner the run's cards are written in. */
+  readonly roomId: string;
+  readonly roomName: string;
+  /** Set when the run lives in a corner: that corner's parent Room. */
+  readonly parentRoomId?: string;
+  /** The run's current state (its terminal state once it has ended). */
+  readonly state: string;
+  readonly status: WorkflowRunStatus;
+  /** Whoever holds the current state's role; absent for a server, waiting, or terminal state. */
+  readonly holder?: WorkflowActorView;
+  /** True when the current state waits on the viewer: their role, or a gate a person answers. */
+  readonly viewerHolds: boolean;
+  readonly startedAt: number;
+  readonly updatedAt: number;
+  /** Runs of the same workflow in the same Room and its corners that started before this one. */
+  readonly earlierRunCount: number;
+};
+export type WorkflowRunListResult = { readonly workflows: readonly WorkflowRunSummaryView[] };
+export type ReadWorkflowRunInput = RoomInput & { readonly runId: string };
+/** One `workflow-handoff` card. The first has only `toState` (the run's start). */
+export type WorkflowRunStepView = {
+  readonly fromState?: string;
+  readonly outcome?: string;
+  readonly toState: string;
+  readonly status?: WorkflowTerminalState['status'];
+  readonly actor?: WorkflowActorView;
+  readonly at: number;
+};
+export type WorkflowRunDetailView = {
+  readonly run: WorkflowRunSummaryView;
+  /** The contract version the run is pinned to. */
+  readonly contract: WorkflowContract;
+  readonly history: readonly WorkflowRunStepView[];
+  /** The run's role holders as of its newest card, by role name. */
+  readonly roleHolders: Readonly<Record<string, WorkflowActorView>>;
+};
 export type SendRoomMessageInput = RoomInput & {
   /** Client-generated retry/optimistic identity. Random 32-byte hex. */
   readonly messageId?: string;

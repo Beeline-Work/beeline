@@ -20,7 +20,8 @@ function shims(mobile: string): Record<string, string> {
     '@/sync/transport/monolith-operation': `export class MonolithPhoneOperationError extends Error {}
     export const monolithPhoneOperation = async (name) =>
       name === 'readNeedsYou' ? { items: [] }
-        : name === 'listRoomSchedules' ? { schedules: [] } : { bookmarks: [] };
+        : name === 'listRoomSchedules' ? { schedules: [] }
+        : name === 'listRoomWorkflowRuns' ? { workflows: [] } : { bookmarks: [] };
     export const phoneOperationFailureReason = (reason) => String(reason);`,
     '@/sync/transport/room-view-client': `export class RoomViewClient {
       async corners(_id, options) { return globalThis.cornerSectionsView(options); }
@@ -88,7 +89,7 @@ describe.skipIf(!existsSync(CHROME))('section page headers in a browser', () => 
       eyebrowAboveTitle: true,
     });
     const { eyebrowFont: _font, eyebrowAboveTitle: _above, ...frame } = corners;
-    for (const page of ['tray', 'workbench', 'workspace', 'changelog', 'schedules']) {
+    for (const page of ['tray', 'workbench', 'workspace', 'changelog']) {
       const { page: _page, ...header } = await measure(page);
       // Pages without an eyebrow or trailing text share everything else.
       const expected = {
@@ -100,5 +101,14 @@ describe.skipIf(!existsSync(CHROME))('section page headers in a browser', () => 
       };
       expect(header, `${page} header differs from Corners`).toEqual(expected);
     }
+    // Scheduled Work shares the corner and workflow-run pages' title role
+    // (bodyStrong under a meta eyebrow) and otherwise the Corners frame.
+    const { page: _schedules, ...schedules } = await measure('schedules');
+    expect(schedules).toEqual({
+      ...frame,
+      titleFont: '16px SpaceGrotesk-SemiBold',
+      eyebrowFont: corners.eyebrowFont,
+      eyebrowAboveTitle: true,
+    });
   }, 300_000);
 });

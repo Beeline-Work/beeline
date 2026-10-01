@@ -6,7 +6,7 @@ import ScheduledWork from '../sources/app/(app)/beeline/settings/schedules';
 /**
  * Paints the real Scheduled work page over the schedules the shimmed
  * `listRoomSchedules` returns, and reports every word it shows, in order,
- * plus the header's eyebrow and title type.
+ * plus the header's eyebrow and title type, and where a workflow's Open → went.
  */
 const pause = () => new Promise((resolve) => setTimeout(resolve, 100));
 const report = (text: string) => {
@@ -24,6 +24,10 @@ async function run() {
   const find = (text: string) => nodes.find((node) => node.textContent === text);
   const font = (node: HTMLElement | undefined) =>
     node ? `${getComputedStyle(node).fontSize} ${getComputedStyle(node).fontFamily}` : null;
+  document
+    .querySelector<HTMLElement>('[data-testid="open-scheduled-workflow-feedback-triage"]')
+    ?.click();
+  await pause();
   const eyebrow = find('#beeline');
   const title = find('Scheduled Work');
   report(
@@ -36,6 +40,7 @@ async function run() {
         eyebrow && title
           ? eyebrow.getBoundingClientRect().bottom <= title.getBoundingClientRect().top + 1
           : null,
+      pushed: (globalThis as { __pushed?: unknown[] }).__pushed ?? [],
     }),
   );
 }

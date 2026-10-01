@@ -1,6 +1,11 @@
 import React from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import type { WorkflowRunSummaryView } from '@beeline/api-contract/phone';
+import { workflowDisplayName, workflowStateLabel } from '@/buzz/workflow-graph';
+import { workflowRunStateWord } from '@/buzz/workflow-run-copy';
+import { CORNER_META_SIZE } from './CornerGlyph';
+import { WorkflowGlyph } from './WorkflowGlyph';
 
 /**
  * What the corner was opened for, inscribed beneath the header for the corner's
@@ -28,29 +33,85 @@ import { StyleSheet } from 'react-native-unistyles';
  * The objective is only a navigation label; the corner's brief carries the
  * authority. When the corner has one, a `Brief` link hangs in the right gutter
  * and opens its latest revision full-screen.
+ *
+ * When a workflow run is live in the corner, one more line sits under the
+ * objective on the same rail: the workflow, its current step, and whose move
+ * it is, with → to the run page. The corner never draws the graph itself.
  */
 export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
   objective,
   onOpenBrief,
+  workflow,
+  onOpenWorkflow,
   testID = 'corner-objective-line',
 }: {
   objective?: string;
   /** Present only when the corner has a brief. */
   onOpenBrief?: () => void;
+  /** The corner's live workflow run, if any. */
+  workflow?: WorkflowRunSummaryView;
+  onOpenWorkflow?: () => void;
   testID?: string;
 }) {
   const line = objective?.trim();
-  if (!line && !onOpenBrief) return null;
+  const run = workflow?.status === 'live' && onOpenWorkflow ? workflow : undefined;
+  if (!line && !onOpenBrief && !run) return null;
   return (
     <View style={styles.line} testID={testID}>
       <View style={styles.rail} />
-      <Text accessibilityRole="text" style={styles.copy} testID={`${testID}-copy`}>
-        {line}
-      </Text>
-      {onOpenBrief ? <CornerBriefLink onPress={onOpenBrief} testID={`${testID}-brief`} /> : null}
+      <View style={styles.inner}>
+        {line || onOpenBrief ? (
+          <View style={styles.objective}>
+            <Text accessibilityRole="text" style={styles.copy} testID={`${testID}-copy`}>
+              {line}
+            </Text>
+            {onOpenBrief ? (
+              <CornerBriefLink onPress={onOpenBrief} testID={`${testID}-brief`} />
+            ) : null}
+          </View>
+        ) : null}
+        {run ? (
+          <CornerWorkflowLine onPress={onOpenWorkflow!} run={run} testID={`${testID}-workflow`} />
+        ) : null}
+      </View>
     </View>
   );
 });
+
+/** `Feedback triage · Approve · waiting on you   →`, one tappable line. */
+function CornerWorkflowLine({
+  run,
+  onPress,
+  testID,
+}: {
+  run: WorkflowRunSummaryView;
+  onPress: () => void;
+  testID: string;
+}) {
+  const name = workflowDisplayName(run.workflowSlug);
+  const step = workflowStateLabel(run.state);
+  const state = workflowRunStateWord(run);
+  return (
+    <Pressable
+      accessibilityLabel={`Open ${name} workflow, ${step}, ${state}`}
+      accessibilityRole="link"
+      hitSlop={WORKFLOW_HIT_SLOP}
+      onPress={onPress}
+      style={({ pressed }) => [styles.workflow, pressed && styles.briefLinkPressed]}
+      testID={testID}
+    >
+      <WorkflowGlyph size={CORNER_META_SIZE} />
+      <Text numberOfLines={1} style={styles.workflowCopy} testID={`${testID}-copy`}>
+        {name} · <Text style={styles.workflowStep}>{step}</Text> ·{' '}
+        <Text style={run.viewerHolds ? styles.workflowYou : undefined}>{state}</Text>
+      </Text>
+      <Text style={styles.workflowArrow}>→</Text>
+    </Pressable>
+  );
+}
+
+/** The line is one meta row tall; the slop makes its touch target 44pt. */
+const WORKFLOW_HIT_SLOP = { top: 12, bottom: 12 };
 
 /**
  * The corner brief's link: one brass word, a 44pt touch target whose extra
@@ -93,6 +154,29 @@ const styles = StyleSheet.create((theme) => ({
     alignSelf: 'stretch',
     width: 2,
     backgroundColor: theme.buzz.humanRail,
+  },
+  inner: { flex: 1, minWidth: 0 },
+  objective: { flexDirection: 'row', alignItems: 'flex-start', minWidth: 0, gap: 8 },
+  workflow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minWidth: 0,
+    gap: 8,
+    marginTop: 8,
+  },
+  workflowCopy: {
+    ...theme.buzz.type.meta,
+    flex: 1,
+    minWidth: 0,
+    color: theme.buzz.textSecondary,
+  },
+  workflowStep: { color: theme.buzz.textPrimary },
+  workflowYou: { color: theme.buzz.accent },
+  workflowArrow: {
+    ...theme.buzz.type.meta,
+    minWidth: 44,
+    textAlign: 'right',
+    color: theme.buzz.accent,
   },
   copy: {
     ...theme.buzz.type.meta,

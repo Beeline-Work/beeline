@@ -483,6 +483,56 @@ small Settings over large Workbench, and each tool or key page is small
 Workbench over the large tool or key name. `PageHeader` is the one
 component. The stack header is not a second title.
 
+## Workflows
+
+**The workflow glyph is a stem standing on the corner mark.**
+`WorkflowGlyph` is one filled polygon in the corner's 24 viewBox: the corner
+polygon turned 135° so its elbow points up, with a stem rising from the elbow
+to the top edge (`9.93 3 14.07 3 14.07 13.81 21.76 21.5 15.9 21.5 12 17.6 8.1
+21.5 2.24 21.5 9.93 13.81`). It is brand mark gold while a run is live and
+`ledgerGhost` when the workflow is idle. Inline it sits at `CORNER_META_SIZE`
+beside `meta` text, exactly where a corner glyph would.
+
+**A run is shown in three places, and only one draws the graph.** Scheduled
+Work lists each workflow's newest run in a Workflows section above Schedules:
+glyph and name, the current step in brass (`· you` when it waits on the
+viewer), the role holder, the description, the corner glyph with the corner
+name, and Open → to the run page. A corner with a live run adds one line under
+its objective, on the same rail: glyph · workflow · current step · whose move
+it is (`waiting on you` in brass), and → to the run page. The corner never
+draws the graph; the run page does. Scheduled Work, the corner, and the run
+page share one header title role: `bodyStrong` under a `meta` eyebrow.
+
+**The run page draws the whole state machine, one circle per row.**
+`layoutWorkflowGraph` (`buzz/workflow-graph.ts`) turns a contract and the
+run's handoff history into rows, lanes and edges; `WorkflowRunGraph` paints
+them in one SVG gutter beside the rows. The rules:
+
+- Every state is one circle on one 64pt row. Circles only — no boxes,
+  diamonds, or condition labels.
+- A state's first outcome continues down its own lane. Every other outcome
+  curves onto a lane to the right, and the state it reaches is drawn on that
+  lane, so every branch ends in a state. A branch from a branch nests one
+  lane further right.
+- A terminal is drawn once at the end of each branch that reaches it. An
+  `implicitEdges` terminal (reachable from anywhere) is one row at the end with
+  no line into it, until the run actually takes that jump.
+- An outcome that targets an earlier row, including `loop.onExceeded`, is a
+  back edge: it leaves the circle to the left and returns up a loop lane with
+  one up chevron at the state it repeats. Lines to the same state share a
+  lane; overlapping loops take separate lanes, short ones innermost.
+- Brass is the path this run took, edges and circles both. The current step
+  is a slightly larger brass dot under a ring that breathes on
+  `HullLivePulse`. A state the run can still reach is a hollow `textMuted`
+  ring; one it can no longer reach is ghosted, circle and copy.
+- Each row is the state name (`body`, `bodyStrong` for the current step) and
+  one `meta` line: the holder and the outcome taken for a passed state,
+  `Waiting on you` or the holder for the current one, and the reason and
+  status (`Skip · Done`) for a terminal. A capped loop adds its count to its
+  own state, `round 2 of 4`: cap trips back plus the first. Passed rows carry
+  their time (`machine`) on the right; the current row carries Open → to the
+  corner the run works in.
+
 ## Identity
 
 A person or an agent is one of Speakeasy's twelve creatures — fox, owl,

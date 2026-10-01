@@ -199,6 +199,7 @@ import { ARTIFACT_TTL_HOURS, mediaIdFromUrl, mediaTtlHours } from './media-ttl.j
 import type { ObjectService } from './object-service.js';
 import { closeCornerState } from './corner-close.js';
 import { writeCornerTitle } from './corner-title.js';
+import { listRoomWorkflowRuns, readWorkflowRun } from './workflow-run-views.js';
 import { answerStarPrompt, readStarPrompt, recordStarPromptWin } from './github-star-prompt.js';
 import {
   DELETED_ACCOUNT_IDENTITY_ID,
@@ -3369,6 +3370,16 @@ export class PhoneService {
       case 'deleteRoomSchedule':
         await this.deleteRoomSchedule(input as Input<'deleteRoomSchedule'>, viewerId);
         return undefined as Output<Name>;
+      case 'listRoomWorkflowRuns':
+        return (await this.listRoomWorkflowRuns(
+          (input as Input<'listRoomWorkflowRuns'>).roomId,
+          viewerId,
+        )) as Output<Name>;
+      case 'readWorkflowRun':
+        return (await this.readWorkflowRun(
+          input as Input<'readWorkflowRun'>,
+          viewerId,
+        )) as Output<Name>;
       case 'cancelAgentTurn':
         await this.cancelAgentTurn(input as Input<'cancelAgentTurn'>, viewerId);
         return undefined as Output<Name>;
@@ -4008,6 +4019,16 @@ export class PhoneService {
       [roomId],
     );
     return { schedules: schedules.rows.map(roomSchedule) };
+  }
+  private async listRoomWorkflowRuns(roomId: string, viewerId: string) {
+    if (!(await this.hasRoomAccess(roomId, viewerId))) throw new Error('room access denied');
+    return listRoomWorkflowRuns(this.database, roomId, viewerId);
+  }
+  private async readWorkflowRun(input: Input<'readWorkflowRun'>, viewerId: string) {
+    if (!(await this.hasRoomAccess(input.roomId, viewerId))) throw new Error('room access denied');
+    const run = await readWorkflowRun(this.database, input, viewerId);
+    if (!run) throw new Error('workflow run not found');
+    return run;
   }
   private async deleteRoomSchedule(
     input: Input<'deleteRoomSchedule'>,
@@ -8885,6 +8906,8 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'createRoomSchedule',
   'listRoomSchedules',
   'deleteRoomSchedule',
+  'listRoomWorkflowRuns',
+  'readWorkflowRun',
   'cancelAgentTurn',
   'createHumanCorner',
   'requestCornerClose',

@@ -14,6 +14,12 @@ vi.mock('react-native', async () => {
     View: host('View'),
   };
 });
+vi.mock('react-native-svg', async () => {
+  const ReactModule = await import('react');
+  const host = (name: string) => (props: any) =>
+    ReactModule.createElement(name, props, props.children);
+  return { default: host('Svg'), Polygon: host('Polygon') };
+});
 vi.mock('react-native-unistyles', async () => {
   const { typeRoles } = await import('@/buzz/groknight');
   return {
@@ -25,6 +31,7 @@ vi.mock('react-native-unistyles', async () => {
             humanRail: '#b08a4a',
             accent: '#c49a52',
             textSecondary: '#c9c9d1',
+            textPrimary: '#f0f0f3',
             proseRegular: 'SpaceGrotesk-Regular',
             type: typeRoles,
           },
@@ -33,7 +40,30 @@ vi.mock('react-native-unistyles', async () => {
   };
 });
 
+import type { WorkflowRunSummaryView } from '@beeline/api-contract/phone';
+import { workflowRunHref } from '@/buzz/workflow-run-copy';
 import { CornerObjectiveLine } from './CornerObjectiveLine';
+
+const RUN: WorkflowRunSummaryView = {
+  runId: 'r'.repeat(64),
+  workflowSlug: 'feedback-triage',
+  description: 'Daily feedback sweep',
+  roomId: 'corner-1',
+  roomName: 'Issues triage',
+  parentRoomId: 'room-1',
+  state: 'approve',
+  status: 'live',
+  holder: { id: 'b'.repeat(64), name: 'Candy', kind: 'agent' },
+  viewerHolds: true,
+  startedAt: 1,
+  updatedAt: 2,
+  earlierRunCount: 0,
+};
+
+const flatText = (node: any): string =>
+  (Array.isArray(node.props.children) ? node.props.children : [node.props.children])
+    .map((child: any) => (typeof child === 'string' ? child : child?.props ? flatText(child) : ''))
+    .join('');
 
 const originalConsoleError = console.error;
 beforeAll(() => {
@@ -109,5 +139,50 @@ describe('CornerObjectiveLine', () => {
     expect(
       render(<CornerObjectiveLine objective="Ship it" />).root.findAllByType('Pressable' as any),
     ).toHaveLength(0);
+  });
+
+  it('names a live workflow run under the objective and opens its run page', () => {
+    const onOpenWorkflow = vi.fn();
+    const renderer = render(
+      <CornerObjectiveLine objective="Run the sweep" onOpenWorkflow={onOpenWorkflow} workflow={RUN} />,
+    );
+    const line = renderer.root
+      .findAllByType('Pressable' as any)
+      .find((node: any) => node.props.testID === 'corner-objective-line-workflow');
+    expect(line.props.accessibilityRole).toBe('link');
+    expect(line.props.hitSlop).toEqual({ top: 12, bottom: 12 });
+    expect(line.findAllByType('Polygon' as any)).toHaveLength(1);
+    expect(flatText(line.findByProps({ testID: 'corner-objective-line-workflow-copy' }))).toBe(
+      'Feedback triage · Approve · waiting on you',
+    );
+    expect(line.findAllByType('Text' as any).at(-1).props.children).toBe('→');
+    act(() => line.props.onPress());
+    expect(onOpenWorkflow).toHaveBeenCalledTimes(1);
+    expect(workflowRunHref(RUN)).toEqual({
+      pathname: '/beeline/workflow-run',
+      params: { roomId: 'corner-1', runId: RUN.runId },
+    });
+  });
+
+  it('names the holder when the step is not the viewer’s, and hides the line once the run ends', () => {
+    const renderer = render(
+      <CornerObjectiveLine
+        objective="Run the sweep"
+        onOpenWorkflow={() => undefined}
+        workflow={{ ...RUN, viewerHolds: false, state: 'dispatch' }}
+      />,
+    );
+    expect(
+      flatText(renderer.root.findByProps({ testID: 'corner-objective-line-workflow-copy' })),
+    ).toBe('Feedback triage · Dispatch · Candy');
+    const ended = render(
+      <CornerObjectiveLine
+        objective="Run the sweep"
+        onOpenWorkflow={() => undefined}
+        workflow={{ ...RUN, status: 'done', state: 'done' }}
+      />,
+    );
+    expect(ended.root.findAllByProps({ testID: 'corner-objective-line-workflow' })).toHaveLength(0);
+    expect(render(<CornerObjectiveLine workflow={{ ...RUN, status: 'done' }} onOpenWorkflow={() => undefined} />).toJSON()).toBeNull();
   });
 });

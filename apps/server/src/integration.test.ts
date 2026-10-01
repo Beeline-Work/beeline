@@ -1542,6 +1542,13 @@ describe('monolith integration', () => {
     ).json()) as { id: string; created: boolean };
     expect(first).toEqual({ id: retry.id, created: true });
     expect(retry.created).toBe(false);
+    const systemDm = (await (
+      await operation('resolveDirectMessage', { workspaceId, participantId: SYSTEM_IDENTITY_ID })
+    ).json()) as { id: string; created: boolean };
+    expect(systemDm.id).toBeTruthy();
+    expect((await (
+      await operation('resolveDirectMessage', { workspaceId, participantId: SYSTEM_IDENTITY_ID })
+    ).json())).toEqual({ id: systemDm.id, created: false });
     const lastManagerLeave = await operation('leaveRoom', { roomId: room.id });
     expect(lastManagerLeave.status).toBe(400);
     expect(await lastManagerLeave.json()).toEqual({ error: 'last_admin_confirmation_required' });
@@ -1549,6 +1556,48 @@ describe('monolith integration', () => {
       403,
     );
     expect((await operation('leaveWorkspace', { workspaceId })).status).toBe(403);
+  });
+
+  it('reports one creator for concurrent first System direct-message resolutions', async () => {
+    const workspaceId = '0d021e00-0000-4000-8000-000000000001';
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'System DM race')`, [workspaceId]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`,
+      [workspaceId, HUMAN],
+    );
+    const query = database.query.bind(database);
+    let releaseInserts!: () => void;
+    const insertsReady = new Promise<void>((resolve) => { releaseInserts = resolve; });
+    let roomInserts = 0;
+    let preInsertReads = 0;
+    const querySpy = vi.spyOn(database, 'query').mockImplementation(async (sql, values) => {
+      if (sql.includes('SELECT 1 FROM rooms WHERE id=$1')) {
+        const result = await query(sql, values);
+        if (++preInsertReads === 2) releaseInserts();
+        return result;
+      }
+      if (sql.includes('INSERT INTO rooms') && sql.includes("'Direct message'")) {
+        if (++roomInserts === 2) releaseInserts();
+        await insertsReady;
+      }
+      return query(sql, values);
+    });
+    try {
+      const results = await Promise.all(
+        Array.from({ length: 2 }, async () => {
+          const response = await operation('resolveDirectMessage', {
+            workspaceId,
+            participantId: SYSTEM_IDENTITY_ID,
+          });
+          expect(response.status).toBe(200);
+          return (await response.json()) as { id: string; created: boolean };
+        }),
+      );
+      expect(results[0]!.id).toBe(results[1]!.id);
+      expect(results.map((result) => result.created).sort()).toEqual([false, true]);
+    } finally {
+      querySpy.mockRestore();
+    }
   });
 
   it('leaves Rooms atomically while DM close stays non-destructive', async () => {

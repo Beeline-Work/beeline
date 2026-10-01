@@ -474,6 +474,18 @@ export class GitHubOperations {
     return { ...(githubReconnectNeeded ? { githubReconnectNeeded } : {}) };
   }
 
+  /** Whether the viewer starred `fullName`; 'unknown' without a usable token or answer. */
+  async repositoryStarred(viewerId: string, fullName: string): Promise<boolean | 'unknown'> {
+    const token = (await this.userCredential(viewerId, this.database))?.token;
+    return token ? this.app.repositoryStarred(token, fullName) : 'unknown';
+  }
+
+  /** Star `fullName` with the viewer's own token. False when GitHub refuses. */
+  async starRepository(viewerId: string, fullName: string): Promise<boolean> {
+    const token = (await this.userCredential(viewerId, this.database))?.token;
+    return token ? this.app.starRepository(token, fullName) : false;
+  }
+
   async createRepository(viewerId: string, input: Input<'createGitHubRepository'>) {
     const installation = (
       await this.database.query<{ account_login: string; account_type: 'User' | 'Organization' }>(

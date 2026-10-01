@@ -194,6 +194,7 @@ import { ARTIFACT_TTL_HOURS, mediaIdFromUrl, mediaTtlHours } from './media-ttl.j
 import type { ObjectService } from './object-service.js';
 import { closeCornerState } from './corner-close.js';
 import { writeCornerTitle } from './corner-title.js';
+import { answerStarPrompt, readStarPrompt, recordStarPromptWin } from './github-star-prompt.js';
 import {
   DELETED_ACCOUNT_IDENTITY_ID,
   DELETED_ACCOUNT_NAME,
@@ -3236,6 +3237,15 @@ export class PhoneService {
         return (await this.readWelcomeCards(viewerId)) as Output<Name>;
       case 'completeWelcomeCards':
         return (await this.completeWelcomeCards(viewerId)) as Output<Name>;
+      case 'readStarPrompt':
+        return (await readStarPrompt(this.database, viewerId, this.github)) as Output<Name>;
+      case 'answerStarPrompt':
+        return (await answerStarPrompt(
+          this.database,
+          viewerId,
+          input as Input<'answerStarPrompt'>,
+          this.github,
+        )) as Output<Name>;
       case 'sendRoomMessage':
         return (await this.sendMessage(
           input as Input<'sendRoomMessage'>,
@@ -4017,8 +4027,11 @@ export class PhoneService {
     if (!MESSAGE_REACTION_EMOJIS.includes(input.emoji)) throw new Error('reaction is invalid');
     await this.database.transaction(async (database) => {
       const row = (
-        await database.query<{ reactions: Record<string, string[]> }>(
-          `SELECT message.reactions FROM messages message
+        await database.query<{ reactions: Record<string, string[]>; agent_author: boolean }>(
+          `SELECT message.reactions,
+             EXISTS(SELECT 1 FROM identities author
+               WHERE author.id=message.author_id AND author.kind='agent') agent_author
+           FROM messages message
            JOIN memberships membership ON membership.room_id=message.room_id
              AND membership.identity_id=$3 AND membership.removed_at IS NULL
            JOIN memberships workspace_member ON workspace_member.workspace_id=membership.workspace_id
@@ -4034,7 +4047,10 @@ export class PhoneService {
       const reactions = { ...(row.reactions ?? {}) };
       const reactors = new Set(reactions[input.emoji] ?? []);
       if (reactors.has(viewerId)) reactors.delete(viewerId);
-      else reactors.add(viewerId);
+      else {
+        reactors.add(viewerId);
+        if (input.emoji === '👍' && row.agent_author) await recordStarPromptWin(database, viewerId);
+      }
       if (reactors.size) reactions[input.emoji] = [...reactors];
       else delete reactions[input.emoji];
       await database.query(`UPDATE messages SET reactions=$3::jsonb WHERE id=$1 AND room_id=$2`, [
@@ -8757,6 +8773,8 @@ export const REVIEW_LOCKED_OPERATIONS = new Set<keyof PhoneOperationMap>([
 export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'readWelcomeCards',
   'completeWelcomeCards',
+  'readStarPrompt',
+  'answerStarPrompt',
   'sendRoomMessage',
   'sendRoomReply',
   'reportMessageIssue',

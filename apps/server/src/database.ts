@@ -3,6 +3,7 @@ import {
   reconcileConfiguredCornerReviewers,
   reconcileCornerMergeBlockers,
 } from './agent-command.js';
+import { GITHUB_STAR_PROMPT_SCHEMA } from './github-star-prompt.js';
 import {
   INSTITUTIONAL_HISTORY_MAX_AGE_DAYS,
   INSTITUTIONAL_MEMORY_KEYWORD_PATTERN,
@@ -2489,6 +2490,7 @@ export async function migrate(
     `ALTER TABLE wallet_bindings ADD COLUMN IF NOT EXISTS delegation_standing boolean NOT NULL DEFAULT false`,
   );
   await ddlScript('agent command schema', AGENT_COMMAND_SCHEMA);
+  await ddlScript('github star prompt schema', GITHUB_STAR_PROMPT_SCHEMA);
   await retryMigrationStep('message cursor index', () => createIndexConcurrently(
     database, 'messages_room_cursor_idx',
     `CREATE INDEX CONCURRENTLY messages_room_cursor_idx ON messages (room_id,

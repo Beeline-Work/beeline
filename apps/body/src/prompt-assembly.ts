@@ -594,6 +594,8 @@ export interface TurnPromptContext {
   /** `AssembledSessionPrompt.turnPrefix`. */
   readonly sessionPrefix?: string;
   readonly objective?: string;
+  /** The corner's current name, set only while it is still the generated one it opened under. */
+  readonly generatedTitle?: string;
   readonly brief?: {
     readonly brief: CornerBrief;
     readonly fileLines: readonly string[];
@@ -644,6 +646,18 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
     surfaces: CORNERS,
     render: ({ objective }) =>
       objective ? `Corner objective (navigation only, not product authority): ${objective}` : '',
+  },
+  {
+    id: 'turn.rename',
+    topic: 'corner-rename',
+    why: 'A generated corner name says nothing about the work; only the server knows the name is still generated, so the ask rides only on those turns.',
+    budgetBytes: 600,
+    layer: 'turn',
+    surfaces: CORNERS,
+    render: ({ generatedTitle }) =>
+      generatedTitle
+        ? `This corner still has its generated name, "${generatedTitle}". If the newest message states the work, call rename_corner once before you reply, with a name of at most three words taken from that message. A bare mention does not state the work; leave the name until a message does.`
+        : '',
   },
   {
     id: 'turn.brief',

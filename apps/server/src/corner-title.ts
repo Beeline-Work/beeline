@@ -11,6 +11,9 @@ export async function writeCornerTitle(
   title: string,
 ) {
   await database.query(`UPDATE rooms SET name=$2,updated_at=now() WHERE id=$1`, [cornerId, title]);
+  await database.query(`UPDATE corner_facts SET title_generated=false WHERE corner_id=$1`, [
+    cornerId,
+  ]);
   // The marker beneath a forwarded message names the corner it opened, so
   // it follows the corner's current name rather than the random one it was
   // opened under.

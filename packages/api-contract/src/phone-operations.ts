@@ -307,6 +307,8 @@ export type CancelAgentTurnInput = RoomInput & {
 };
 export type CreateHumanCornerInput = RoomInput & {
   readonly title: string;
+  /** The phone generated `title`; the corner's agent is asked to rename it from the first steer. */
+  readonly titleGenerated?: boolean;
   readonly appInstallationId?: string;
   /**
    * The parent-Room message this corner was opened from (the mobile

@@ -2862,6 +2862,7 @@ export class DaemonService {
         archived: boolean;
         objective: string;
         title: string;
+        title_generated: boolean;
         kind: 'agent' | 'human';
         feature_branch: string | null;
         request_id: string | null;
@@ -2873,7 +2874,7 @@ export class DaemonService {
         approval_head_sha: string | null;
       }>(
         `SELECT room.parent_id parent_room_id,room.archived_at IS NOT NULL archived,
-           fact.objective,room.name title,fact.kind,fact.feature_branch,fact.request_id,fact.close_requested,fact.lifecycle,
+           fact.objective,room.name title,fact.title_generated,fact.kind,fact.feature_branch,fact.request_id,fact.close_requested,fact.lifecycle,
            fact.lane,requester.handle requester_handle,
            approval.pull_request_number,approval.head_sha approval_head_sha
          FROM corner_facts fact
@@ -2907,6 +2908,7 @@ export class DaemonService {
           }
         : {}),
       ...(row ? { title: row.title, kind: row.kind } : {}),
+      ...(row?.title_generated ? { titleGenerated: true } : {}),
       ...(row?.feature_branch ? { featureBranch: row.feature_branch } : {}),
       ...(row?.request_id ? { requestId: row.request_id } : {}),
       closeRequested: row?.close_requested ?? false,

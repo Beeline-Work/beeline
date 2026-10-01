@@ -4338,7 +4338,7 @@ export function BuzzChatSurface({
     setOpeningRandomCorner(true);
     try {
       await openRandomNamedCorner({
-        createCorner: (roomId, title) => transport.createHumanCorner(roomId, title),
+        createCorner: (roomId, title) => transport.createHumanCorner(roomId, title, undefined, undefined, true),
         roomId: decodedId,
         openCorner: (cornerId, title) => {
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -4405,7 +4405,7 @@ export function BuzzChatSurface({
         ),
         sourceMessageId: target.relayId ?? target.id,
         createCorner: (roomId, title, sourceMessageId) =>
-          transport.createHumanCorner(roomId, title, undefined, sourceMessageId),
+          transport.createHumanCorner(roomId, title, undefined, sourceMessageId, true),
         roomId: decodedId,
         openCorner: (cornerId, title) => {
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);

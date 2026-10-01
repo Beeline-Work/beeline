@@ -731,6 +731,8 @@ export type CornerRestoreResult = {
   readonly validation?: readonly CornerValidationStage[];
   /** Human-created corners are title-only; their title supplies runtime context after a tag. */
   readonly title?: string;
+  /** True while `title` is still the generated one the corner was opened under. */
+  readonly titleGenerated?: boolean;
   readonly kind?: 'agent' | 'human';
   readonly featureBranch?: string;
   readonly requestId?: string;

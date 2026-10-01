@@ -1643,6 +1643,9 @@ ALTER TABLE corner_facts ADD CONSTRAINT corner_facts_lane_check
 CREATE INDEX IF NOT EXISTS corner_facts_workflow_land_idx ON corner_facts(corner_id)
   WHERE workflow_state='land';
 CREATE INDEX IF NOT EXISTS corner_facts_commissioned_by_idx ON corner_facts(commissioned_by);
+-- True while a human corner still carries the name the phone generated for it;
+-- any rename clears it (corner-title.ts).
+ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS title_generated boolean NOT NULL DEFAULT false;
 
 -- Assignment revisions are immutable; the current revision is the greatest
 -- committed row. Opening and revising insert the row in the command transaction.

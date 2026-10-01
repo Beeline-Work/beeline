@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { migrate } from './database.js';
 import type { CommandRow } from './agent-command.js';
@@ -15,7 +16,7 @@ import {
   saveSkill,
 } from './institutional-skills.js';
 import { PgliteDatabase } from './test-support.js';
-import { saveWorkflow } from './workflow-runs.js';
+import { saveWorkflow, startWorkflow } from './workflow-runs.js';
 import { pgvectorLiteral } from './institutional-memory-embeddings.js';
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000201';
@@ -311,6 +312,33 @@ describe('merge-derived restricted Workspace procedures', () => {
       ).rows[0],
     ).toMatchObject({ markdown: '', source_deleted_at: expect.any(Date) });
     expect((await database.query(`SELECT 1 FROM institutional_review_findings`)).rowCount).toBe(0);
+  });
+
+  it('lists the saved feedback-triage workflow in a corner turn with no setting, and starts it at notify', async () => {
+    const contract = JSON.parse(
+      readFileSync(new URL('../../../docs/workflows/feedback-triage.json', import.meta.url), 'utf8'),
+    ) as { name: string; description: string };
+    await saveWorkflow(database, command, { contract });
+    // A turn in a corner with no per-corner setting: the workflow is in its index.
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES('triage-ask',$1,$2,'Run feedback triage')`,
+      [CORNER, REQUESTER],
+    );
+    const cornerTurn = {
+      ...command,
+      room_id: CORNER,
+      source_message_id: 'triage-ask',
+      root_source_message_id: 'triage-ask',
+    };
+    const context = await getInstitutionalContext(database, cornerTurn);
+    expect(context.text).toContain(
+      `Workflow feedback-triage (start_workflow): ${contract.description}`,
+    );
+    const started = await startWorkflow(database, cornerTurn, {
+      name: 'feedback-triage',
+      roleBindings: { triager: OTHER_AGENT },
+    });
+    expect(started.state).toBe('notify');
   });
 
   it('indexes and loads a workflow row with the contract wrapper, distinct from a procedure', async () => {

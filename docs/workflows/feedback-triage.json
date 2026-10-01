@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "name": "feedback-triage",
+  "description": "Daily Beeline feedback sweep; steps: feedback-triage-steps",
+  "roles": ["triager"],
+  "start": "notify",
+  "handoffs": {
+    "notify": {
+      "role": "triager",
+      "requires": ["fixedPullRequests"],
+      "on": { "notified": "pull" }
+    },
+    "pull": {
+      "role": "triager",
+      "requires": ["problems"],
+      "on": { "ranked": "approve", "nothing_new": "done" }
+    },
+    "approve": {
+      "kind": "gate",
+      "role": "triager",
+      "requires": ["decision"],
+      "on": { "dispatch": "dispatch", "skip": "done" }
+    },
+    "dispatch": {
+      "role": "triager",
+      "requires": ["corners"],
+      "on": { "dispatched": "done" }
+    },
+    "done": { "kind": "terminal", "status": "done" }
+  }
+}

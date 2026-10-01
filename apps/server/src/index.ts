@@ -173,7 +173,6 @@ async function main() {
     },
   );
   const institutionalMemory = institutionalMemoryShadowConfigFromEnv();
-  const feedbackConfig = feedbackConfigFromEnv();
   github = githubClients
     ? new GitHubOperations(
         database,
@@ -183,7 +182,6 @@ async function main() {
         mountedAuth.sealedGitHubUserToken,
         (roomId) => live.publish({ type: 'invalidate', roomId, reason: 'github' }),
         institutionalMemory,
-        feedbackConfig,
       )
     : undefined;
   const githubJobs = githubClients
@@ -195,7 +193,6 @@ async function main() {
         mountedAuth.sealedGitHubUserToken,
         (roomId) => live.publish({ type: 'invalidate', roomId, reason: 'github' }),
         institutionalMemory,
-        feedbackConfig,
       )
     : undefined;
   // Generated procedures are anchored to real code, so the curator's staleness
@@ -286,8 +283,8 @@ async function main() {
     registryMcpOAuth,
     composio,
     {
-      config: feedbackConfig,
-      ...(githubClients ? { host: new FeedbackGitHub(database, githubClients.app) } : {}),
+      config: feedbackConfigFromEnv(),
+      ...(githubClients ? { pullRequests: new FeedbackGitHub(database, githubClients.app) } : {}),
     },
     objectService,
   );

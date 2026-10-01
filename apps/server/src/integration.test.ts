@@ -274,7 +274,7 @@ describe('monolith integration', () => {
     expect(await phone.execute('readWelcomeCards', {}, fresh)).toEqual({ due: false });
     expect(await phone.execute('readWelcomeCards', {}, HUMAN)).toEqual({ due: false });
   });
-  it('runs feedback triage from a corner after a Room admin asks its agent, and opens fix corners beside it', async () => {
+  it('has no feedback triage setting or tools, refuses Fixed DMs from a non-sender, and opens fix corners beside the corner', async () => {
     const corner = (
       (await phone.execute('createHumanCorner', { roomId: ROOM, title: 'Issues triage' }, HUMAN)) as {
         id: string;
@@ -304,57 +304,36 @@ describe('monolith integration', () => {
     const daemonCall = (name: string, body: unknown) =>
       request(`/v1/daemon/operations/${name}`, 'POST', body, daemonToken);
 
-    // Off by default: the agent's turn in the corner is refused.
-    const before = await turnIn(corner);
-    const refused = await daemonCall('listFeedback', before);
+    // The setting and the triage tools are gone: their routes do not exist.
+    for (const retired of ['listFeedback', 'fileFeedbackIssue', 'setCornerFeedbackTriage']) {
+      const gone = await daemonCall(retired, await turnIn(corner));
+      expect(gone.status).toBe(404);
+    }
+
+    // A Fixed DM needs an owner in BEELINE_SYSTEM_SENDERS; this agent's has none.
+    const during = await turnIn(corner);
+    const refused = await daemonCall('notifyFeedbackFixed', {
+      ...during,
+      itemIds: ['fb_000000000000000000000000'],
+      title: 'Grant card resolves',
+      prUrl: 'https://github.com/Beeline-Work/beeline/pull/1',
+    });
     expect(refused.status).toBe(403);
     expect(await refused.json()).toMatchObject({
-      error: expect.stringContaining('feedback triage access denied'),
+      error: expect.stringContaining('System DM access denied'),
     });
-
-    // A member who is not a Room admin asks the agent to switch it on: refused.
-    // The Owner asks: on.
-    const memberId = createHash('sha256').update('github:triage-member').digest('hex');
-    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Member')`, [
-      memberId,
-    ]);
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
-      [WORKSPACE, memberId, corner],
-    );
-    const member = await daemonCall('setCornerFeedbackTriage', {
-      ...(await turnIn(corner, memberId)),
-      enabled: true,
-    });
-    expect(member.status).toBe(403);
-    expect(await member.json()).toMatchObject({
-      error: expect.stringContaining('feedback triage change access denied'),
-    });
-    const owner = await daemonCall('setCornerFeedbackTriage', {
-      ...(await turnIn(corner)),
-      enabled: true,
-    });
-    expect(owner.status).toBe(200);
-    expect(await owner.json()).toEqual({ cornerId: corner, enabled: true });
-
-    // The same agent now triages in that corner, and only there.
-    const during = await turnIn(corner);
-    const listed = await daemonCall('listFeedback', during);
-    expect(listed.status).toBe(200);
-    expect(await listed.json()).toEqual({ items: [] });
-    const elsewhere = await daemonCall('listFeedback', await turnIn(ROOM));
-    expect(elsewhere.status).toBe(403);
 
     // A fix corner opened from the triage corner is its sibling in the Room.
+    const fix = await turnIn(corner);
     const opened = await daemonCall('createCorner', {
-      ...during,
-      idempotencyKey: 'fix-issue-123',
+      ...fix,
+      idempotencyKey: 'fix-grant-card',
       name: 'Fix grant card',
-      objective: 'Fix beeline-feedback issue #123',
+      objective: 'Fix the grant card that stays pending',
       lane: 'no_code',
       brief: {
-        spec: 'Fix Beeline-Work/beeline#123: the grant card stays pending after approval.\n\n## Checklist\n\n- AC-1: Issue #123 no longer reproduces',
-        approval: { sourceMessageId: during.messageId },
+        spec: 'Fix the grant card that stays pending after approval (feedback fb_000000000000000000000000).\n\n## Checklist\n\n- AC-1: The grant card resolves after approval',
+        approval: { sourceMessageId: fix.messageId },
       },
     });
     expect(opened.status).toBe(200);

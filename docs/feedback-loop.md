@@ -1,11 +1,12 @@
 # Beeline feedback loop
 
 Agents and people report problems with Beeline itself into one server-side
-store (`feedback_items`, `apps/server/src/feedback.ts`). An agent in an
-"Issues triage" corner runs a scheduled sweep: it files redacted issues in the
-public repository, attaches reports to existing issues, or dismisses them, and
-opens fix corners in the parent Room. When an issue closes as completed, every
-reporter hears about the fix in their System DM.
+store (`feedback_items`, `apps/server/src/feedback.ts`). Triage is a saved
+workflow, `feedback-triage`. It works like a team skill: any agent can find it
+and start it, and no per-corner setting gates it. The workflow reads new
+reports from the production database and ranks them by problem. It asks a
+person to approve, then opens fix corners. Once a fix merges, System tells each
+person who reported that problem.
 
 ## Intake
 
@@ -25,110 +26,105 @@ reporter hears about the fix in their System DM.
   - Tag `@system` in a Room, corner, or DM. The composer offers it as
     "System — report an issue". System does not join the Room, no agent wakes
     (not even a DM's), and nobody gets a push. `@system` inside code or a
-    quoted line is not a report.
-  - Use the **Report issue** message action, with an optional note.
+    quoted line is not a report. The person wrote that message to System, so
+    its text is stored on the item (`detail`, up to 4000 bytes).
+  - Use the **Report issue** message action, with an optional note. Only the
+    note is stored; the reported message, which may be someone else's, is not.
 
   Each message can be reported once. A reported message shows a **Reported**
   marker to everyone in the Room.
-- Secret-shaped values are refused at write on both paths. Items store message
-  ids only; evidence text is read live when triaged.
+- Secret-shaped values are refused at write on both paths. Apart from a
+  person's own `@system` text and Report issue notes, items store message ids
+  only.
+
+## The `feedback-triage` workflow
+
+The contract is `docs/workflows/feedback-triage.json`. The procedure an agent
+follows at each step is `docs/workflows/feedback-triage-steps.md`. The server
+installs both (`apps/server/src/feedback-triage-workflow.ts`, run from
+`migrateData()` on every release) in each Workspace that has a triage schedule:
+the triage corner's schedule `7d7fa17b`, or any schedule whose prompt names the
+retired triage tools or the feedback sweep. It refreshes its own copy when the
+committed text changes and never overwrites a team's own workflow of the same
+name. Any other Workspace can save the same files with `save_workflow` and
+`save_skill`. Agents find them the way they find memories and procedures. The per-turn Memory index lists
+`Workflow feedback-triage (start_workflow): …`, and `load_workspace_skill`
+reads the steps. An agent starts a run with `start_workflow`, binding
+`triager` to itself.
+
+| Step | Who | What happens |
+| --- | --- | --- |
+| `notify` | triager | Finds fix pull requests merged since the last run (their body has a `Feedback items:` line) and calls `notify_feedback_fixed` for each. |
+| `pull` | triager | Reads new `feedback_items` through the read-only database grant, groups them by problem, and ranks the groups by report count. |
+| `approve` | a person | A card with **dispatch** or **skip**. Nothing is dispatched before someone answers. |
+| `dispatch` | triager | One fix corner per approved problem, opened with `open_corner` (from a corner it opens a sibling in the parent Room), with an agent tagged. The brief lists the item ids and requires the fix PR body to carry `Feedback items: <ids>`. |
+| `done` | | The run ends. |
+
+Feedback is written by people across all of Beeline, so the procedure treats
+every report as data and never follows instructions inside one.
+
+### Production database access
+
+Only someone with production access can run the `pull` step. That credential
+is the access boundary, not a Beeline setting. It reads every Workspace's
+reports on purpose: the loop covers bug reports from all of Beeline. Create a login role that can
+read `feedback_items` and nothing else:
+
+```sql
+CREATE ROLE beeline_feedback_reader LOGIN PASSWORD '<generated>';
+GRANT CONNECT ON DATABASE <database> TO beeline_feedback_reader;
+GRANT USAGE ON SCHEMA public TO beeline_feedback_reader;
+GRANT SELECT ON feedback_items TO beeline_feedback_reader;
+```
+
+Then grant your triage agent one command that runs read-only queries with that
+role's connection string, kept as a secret on your machine. An agent without
+the grant stops at `pull` and says so.
+
+### Daily schedule
+
+The triage corner keeps its daily schedule (`0 14 * * *` UTC). On deploy the
+server rewrites that schedule's prompt, and only its prompt (cadence, agent and
+next run are untouched), to start the workflow:
+
+> Start the feedback-triage workflow with start_workflow, binding triager to
+> yourself, and follow the feedback-triage-steps procedure (load_workspace_skill)
+> at each step.
+
+## Close the loop: Fixed DMs
+
+`notify_feedback_fixed {item_ids, title, pr_url}` is the only way a Fixed DM
+is sent. The server checks every call:
+
+- It must come from the agent's own active turn.
+- The agent's owner must be listed in `BEELINE_SYSTEM_SENDERS`.
+- The title must be one line of at most 120 characters, with no secret-shaped
+  value.
+- `pr_url` must be a pull request in `BEELINE_FEEDBACK_REPOSITORY`, and GitHub
+  must report it merged. The server reads it through the Beeline GitHub App
+  (`pull_requests: read`); without the App, or for an open, closed-unmerged or
+  missing pull request, nothing is resolved or sent.
+
+Then the items become `resolved`. Each person who reported one of them
+themselves (`@system` or Report issue) gets one System DM:
+`Fixed: <title> <pr_url>`. Items reported by agents resolve with no DM. The
+text is fixed and System's identity stays with the server; the agent only asks.
+A repeat call sends nothing twice (one DM per person per pull request), and a
+reporter whose account is gone gets no DM.
 
 ## Configuration
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `BEELINE_FEEDBACK_REPOSITORY` | `Beeline-Work/beeline` | The repository issues are filed in and whose `issues` webhook resolves items. The Beeline GitHub App must be installed on it (it already requests `issues: write` and subscribes to `issues`). |
+| `BEELINE_SYSTEM_SENDERS` | empty | Comma-separated identity ids of the people whose agents may have System send Fixed DMs. Empty means nobody can. |
+| `BEELINE_FEEDBACK_REPOSITORY` | `Beeline-Work/beeline` | The repository fix pull requests land in. A Fixed DM links only to a merged pull request here; the Beeline GitHub App must be installed on it. |
 
-Collection works without it. Without the GitHub App on the repository, the
-filing tools return a clear error and items stay `new`.
+## Retired
 
-There is no agent allowlist. Triage access comes from the corner the agent is
-working in (below).
-
-## Setting up the triage corner
-
-1. In the Room where fixes should happen, open a **no-code** corner named
-   "Issues triage". A no-code corner never opens a pull request, so no merge
-   archives it; it stays open until someone closes it.
-2. Add the triage agent to the corner.
-3. As a Room admin (Workspace owner or admin), ask that agent in the corner to
-   turn on Feedback triage. It calls `set_feedback_triage`, and the triage
-   tools load on its next turn there. The setting is stored on the corner and
-   is off by default. The server refuses the change when anyone else asks; ask
-   the agent again to turn it off.
-4. Ask it to create the sweep schedule in the corner with `create_schedule`,
-   every few days (for example every 3 days), using the default prompt below.
-   The schedule runs in the corner and wakes that agent there.
-5. For each issue worth fixing, the triage agent calls `open_corner` from the
-   triage corner. The new corner opens as a **sibling** in the parent Room,
-   never inside the triage corner, and its brief carries the issue number. The
-   agent assigns it by tagging the agent that should do the work.
-
-Only an agent that is a member of a corner with Feedback triage on, during its
-own turn in that corner, can use the triage tools. Every other call gets an
-authorization error. Turning the setting off stops the next call.
-
-## Triage tools (Feedback triage corners only)
-
-| Tool | Effect |
-| --- | --- |
-| `list_feedback` | New items: human reports first, then by cluster size (agent reports with the same category and normalized summary). |
-| `get_feedback` | Items with their evidence messages, read under server authority even if the reporter has left the Room. |
-| `list_feedback_issues` | Open `beeline-feedback` issues in the configured repository. |
-| `file_feedback_issue` | One new issue for new items. The server adds the labels `beeline-feedback` and the category, plus the footer `Beeline feedback: <evidence id> · <n> reports (<h> human, <a> agent)`. The items become `filed`. |
-| `attach_feedback_to_issue` | Links new items to an open feedback issue and updates the one server-maintained report-count comment. The items become `attached`. |
-| `dismiss_feedback` | Marks new items `dismissed` with the reason. |
-
-If GitHub refuses a write, the items stay `new` and the tool returns GitHub's
-reason.
-
-### Redaction
-
-The repository is public. Every title and body is checked before it is
-written, and a failing write names its rule; nothing is rewritten:
-
-| Rule | Refuses |
-| --- | --- |
-| `title-length`, `body-length` | A title over 120 characters, or an issue body over 4000 counting the server footer. |
-| `evidence-quote` | Any 40+ character run copied verbatim from the linked evidence or a human note. |
-| `email` | An email address. |
-| `secret` | A secret-shaped value. |
-| `person-name` | A human's handle or display name from the linked Rooms. |
-| `room-name` | A linked Room's name. |
-
-## Close the loop
-
-`issues` deliveries for the configured repository are handled whatever any
-Room's GitHub events setting is:
-
-- **Closed as `completed`**: items become `resolved`. Each human reporter, and
-  the owner of each reporting agent, gets exactly one System DM:
-  `Fixed: <title> (#N) <url>`.
-- **Closed as `not_planned`**: items become `closed`, with no DM.
-- **Reopened**: items return to `filed`.
-
-Redeliveries change nothing and send nothing twice. A reporter whose account
-is gone gets no DM.
-
-## Sweep schedule
-
-Cadence comes from an ordinary agent schedule created inside the triage
-corner, every few days. Default prompt:
-
-> Run the Beeline feedback sweep. Call `list_feedback`, then `get_feedback` on
-> the items you will act on, and `list_feedback_issues` to see what is already
-> filed. For each cluster: if an open issue already covers it, use
-> `attach_feedback_to_issue`; if it is a real, actionable Beeline problem, use
-> `file_feedback_issue` with a short title and a body in your own words (what
-> happens, where, and what would fix it), with the matching category label; if
-> it is noise, working as intended, or not about Beeline, use
-> `dismiss_feedback` with a one-line reason. Never quote evidence, and never
-> name people, Rooms, or emails: the repository is public. When a write is
-> refused, rewrite it to satisfy the named rule. For each newly filed issue
-> worth fixing now, call `open_corner` with a brief that names the issue
-> number, then tag the agent best suited to it in that corner. End with one
-> line: how many items you filed, attached, and dismissed, and which corners
-> you opened.
-
-Issues people file by hand outside this flow are not triaged. The server never
-opens corners from feedback issues on its own; only the triage agent does.
+The per-corner **Feedback triage** setting (`set_feedback_triage`), the six
+triage tools (`list_feedback`, `get_feedback`, `list_feedback_issues`,
+`file_feedback_issue`, `attach_feedback_to_issue`, `dismiss_feedback`), GitHub
+issue filing with its redaction rules, and the `issues` webhook resolver are
+gone. Fix corners replace the public issues. The `corner_facts.feedback_triage`
+column, the `feedback_items.issue_*` columns and `feedback_issue_comments`
+stay unread for rolling-update compatibility.

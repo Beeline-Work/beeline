@@ -111,7 +111,7 @@ describe('Room and corner actions sheets', () => {
     expect(members).toContain('setRoomActionsVisible(false)');
     for (const testID of ROOM_ROWS) expect(roomSheet).toContain(`testID="${testID}"`);
     // Corner membership is the parent Room's, so the corner sheet repeats no
-    // roster and carries no Feedback triage switch (an agent turns that on).
+    // roster and carries no Feedback triage switch (the setting is retired).
     expect(cornerSheet).not.toContain('room-participant-roster-trigger');
     expect(cornerSheet).not.toContain('label="Members"');
     expect(cornerSheet).not.toContain('corner-feedback-triage-toggle');

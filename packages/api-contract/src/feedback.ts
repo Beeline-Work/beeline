@@ -1,9 +1,9 @@
 /**
- * The Beeline feedback loop's shared vocabulary: what an agent or a person
- * may report, the states an item moves through, and the limits every writer
- * and the triage sweep enforce. The server (`apps/server/src/feedback.ts`) is
- * the only store; the agent tool (`report_feedback`) and the phone's report
- * action are its two intake paths.
+ * The Beeline feedback loop's shared vocabulary: what an agent may report and
+ * the limits every writer enforces. The server (`apps/server/src/feedback.ts`)
+ * is the only store; the agent tool (`report_feedback`) and the phone's report
+ * action are its two intake paths, and `notify_feedback_fixed` is the one
+ * write that closes it.
  */
 
 /** The five agent categories, one per question an agent asks of its own turn. */
@@ -14,22 +14,6 @@ export const FEEDBACK_AGENT_CATEGORIES = [
   'context_gap',
   'bug',
 ] as const;
-export type FeedbackAgentCategory = (typeof FEEDBACK_AGENT_CATEGORIES)[number];
-export type FeedbackCategory = FeedbackAgentCategory | 'human_report';
-export const FEEDBACK_CATEGORIES: readonly FeedbackCategory[] = [
-  ...FEEDBACK_AGENT_CATEGORIES,
-  'human_report',
-];
-
-export const FEEDBACK_STATUSES = [
-  'new',
-  'filed',
-  'attached',
-  'dismissed',
-  'resolved',
-  'closed',
-] as const;
-export type FeedbackStatus = (typeof FEEDBACK_STATUSES)[number];
 
 export const FEEDBACK_SUMMARY_MAX_BYTES = 500;
 export const FEEDBACK_DETAIL_MAX_BYTES = 4_000;
@@ -40,13 +24,11 @@ export const FEEDBACK_PROMPT_SECTION_IDS_MAX = 64;
 export const FEEDBACK_AGENT_DAILY_CAP = 10;
 /** The trigger plus this many preceding message ids ride a human report. */
 export const FEEDBACK_PRECEDING_MESSAGES = 20;
-export const FEEDBACK_TRIAGE_REASON_MAX_LENGTH = 500;
-
-export const FEEDBACK_ISSUE_TITLE_MAX_LENGTH = 120;
-export const FEEDBACK_ISSUE_BODY_MAX_LENGTH = 4_000;
-/** A verbatim run of evidence text this long may never reach a GitHub write. */
-export const FEEDBACK_EVIDENCE_RUN_LENGTH = 40;
-export const FEEDBACK_ISSUE_LABEL = 'beeline-feedback';
+/** One Fixed DM title: a single line this long at most. */
+export const FEEDBACK_FIXED_TITLE_MAX_LENGTH = 120;
+/** Items one `notify_feedback_fixed` call may resolve. */
+export const FEEDBACK_FIXED_ITEMS_MAX = 50;
+/** Where fix pull requests land; a Fixed DM links only to a pull request here. */
 export const FEEDBACK_DEFAULT_REPOSITORY = 'Beeline-Work/beeline';
 
 export type ReportFeedbackInput = {
@@ -65,35 +47,16 @@ export type ReportFeedbackResult = {
   readonly duplicate: boolean;
 };
 
-export type FeedbackItemSummary = {
-  readonly id: string;
-  readonly sourceKind: 'agent' | 'human';
-  readonly category: FeedbackCategory;
-  readonly summary: string;
-  readonly status: FeedbackStatus;
-  readonly clusterSize: number;
-  readonly createdAt: number;
-  readonly toolName?: string;
-  readonly issueNumber?: number;
-};
-export type FeedbackEvidenceMessage = {
-  readonly id: string;
-  readonly authorKind: 'agent' | 'human' | 'unknown';
-  readonly text: string;
-  readonly createdAt: number;
-};
-export type FeedbackItemDetail = FeedbackItemSummary & {
-  readonly detail?: string;
-  readonly errorExcerpt?: string;
-  readonly promptSectionIds: readonly string[];
-  readonly requestId?: string;
-  readonly triggerMessageId?: string;
-  readonly triageReason?: string;
-  readonly evidence: readonly FeedbackEvidenceMessage[];
-};
-export type FeedbackIssueSummary = {
-  readonly number: number;
+/** A merged pull request fixed these items (`notify_feedback_fixed`). */
+export type NotifyFeedbackFixedInput = {
+  readonly roomId: string;
+  readonly itemIds: readonly string[];
   readonly title: string;
-  readonly url: string;
-  readonly labels: readonly string[];
+  readonly prUrl: string;
+};
+export type NotifyFeedbackFixedResult = {
+  /** Items this call moved to resolved; already-resolved items count zero. */
+  readonly resolved: number;
+  /** People System DMed by this call. */
+  readonly notified: number;
 };

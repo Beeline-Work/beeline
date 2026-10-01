@@ -130,8 +130,8 @@ async function inscribeSilence(
   const givingUp = classified.kind === 'hiccup' && canIncrement && attempt >= 3;
   // An auth-shaped fault gets the same bounded hiccup retries as any other
   // transient condition; only once those are exhausted does the Room line
-  // (and the card it carries) read as the plain, standing not-signed-in
-  // verdict instead of a generic "stopped restarting" hiccup give-up.
+  // (and the card it carries) identify failed provider authentication
+  // without assuming whether the helper's login expired.
   const renderClassified = givingUp ? escalateExhaustedHiccup(classified) : classified;
   const phrase = phraseTurnSilence(agentName, renderClassified, {
     givingUp,

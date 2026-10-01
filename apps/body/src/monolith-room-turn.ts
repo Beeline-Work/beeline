@@ -755,6 +755,7 @@ export class MonolithRoomTurnLoop {
         await repairRoomAgentCredentialLinks({
           root: this.options.config.agentHomeRoot,
           operatorHome: this.options.config.operatorHome,
+          keepNewerDetachedClaudeLogin: this.options.config.agentKind === 'claude',
         });
       }
       return this.sessionId;
@@ -1485,6 +1486,12 @@ export class MonolithRoomTurnLoop {
                           'harness login expired; repairing the shared credential and retrying once',
                       );
                       trace.retry({ reason: 'expired harness login' });
+                      if (this.options.config.agentHomeRoot) {
+                        await repairRoomAgentCredentialLinks({
+                          root: this.options.config.agentHomeRoot,
+                          operatorHome: this.options.config.operatorHome,
+                        });
+                      }
                       await this.discardSession();
                       await trace.measure('activation', () => this.activate(trace));
                       continue;

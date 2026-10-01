@@ -208,10 +208,9 @@ export function shouldRestartHiccup(kind: TurnSilenceKind, nextAttempt: number):
 
 /**
  * A hiccup that has exhausted its restart budget AND still looks auth-shaped
- * is escalated to the plain not-signed-in verdict instead of the generic
- * "stopped restarting" line — a genuinely expired/missing credential is
- * still named plainly, just after giving a transient token-refresh race the
- * same bounded retries any other hiccup gets. Only called once restarting is
+ * is escalated to the authentication notice instead of the generic
+ * "stopped restarting" line. The notice cannot infer whether a credential
+ * expired or a transient refresh race persisted. Only called once restarting is
  * over (`!shouldRestartHiccup(...)`); an auth-shaped fault mid-retry stays a
  * quiet hiccup so it never reports a standing failure prematurely.
  */
@@ -286,7 +285,7 @@ export function phraseTurnSilence(
       return capLine(
         agent,
         'could not answer',
-        "the helper isn't signed in to the provider. Run `beeline connect` on the helper's machine.",
+        "the helper could not authenticate with the provider. Check its log for the failed turn; if its login expired, run `beeline connect` on the helper's machine.",
       );
     case 'workspace-failure':
       return capLine(

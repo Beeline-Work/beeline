@@ -8,8 +8,17 @@ import { grantDecidedBySql } from './needs-you.js';
 
 /** A tag, a reply, or a deliverable stops keeping its corner waiting this long after it was posted. */
 const CORNER_OWED_EXPIRY_HOURS = 24;
-/** How many of a corner's newest candidate messages are read for owed items. */
+/** How many of a corner's newest expiring messages are read for owed items. */
 const CORNER_OWED_CANDIDATES = 20;
+/** Card types owed until resolved, read outside the recent window. */
+const NEVER_EXPIRES = [
+  CHOICE_CARD_TYPE,
+  'grant-request',
+  CORNER_CHECKS_BLOCKED_CARD_TYPE,
+  CORNER_REVIEW_DEADLOCK_CARD_TYPE,
+]
+  .map((type) => `'${type}'`)
+  .join(',');
 
 /**
  * Whether message `m` is addressed to one known person: it replies to them,
@@ -93,13 +102,20 @@ export function cornerOwedLateralSql(corner: string, viewerExpr: string): string
           AND (seen.message_created_at,seen.message_id)>=(item.created_at,item.id)
       )),false) attention
     FROM (
-      SELECT * FROM messages candidate
+      (SELECT * FROM messages candidate
       WHERE candidate.room_id=${corner}.id AND candidate.deleted_at IS NULL
-        AND (candidate.created_at>now()-interval '${CORNER_OWED_EXPIRY_HOURS} hours'
-          OR candidate.card_type IN ('${CHOICE_CARD_TYPE}','grant-request',
-            '${CORNER_CHECKS_BLOCKED_CARD_TYPE}','${CORNER_REVIEW_DEADLOCK_CARD_TYPE}'))
+        AND candidate.created_at>now()-interval '${CORNER_OWED_EXPIRY_HOURS} hours'
+        AND (candidate.card_type IS NULL OR candidate.card_type NOT IN (${NEVER_EXPIRES}))
       ORDER BY candidate.created_at DESC,candidate.id DESC
-      LIMIT ${CORNER_OWED_CANDIDATES}
+      LIMIT ${CORNER_OWED_CANDIDATES})
+      UNION ALL
+      -- Items that never expire are read whatever came after them, so a
+      -- busy corner cannot push an open question out of the window.
+      SELECT * FROM messages lasting
+      WHERE lasting.room_id=${corner}.id AND lasting.deleted_at IS NULL
+        AND lasting.card_type IN (${NEVER_EXPIRES})
+        AND (lasting.card_type<>'${CHOICE_CARD_TYPE}'
+          OR COALESCE(lasting.card->>'status','open')='open')
     ) item
     JOIN memberships person_member ON person_member.room_id=item.room_id
       AND person_member.removed_at IS NULL

@@ -367,6 +367,16 @@ export type DaemonOperationMap = {
   askRoomChoice: Operation<AskRoomChoiceInput, AskRoomChoiceResult>;
   openRoomPoll: Operation<OpenRoomPollInput, AskRoomChoiceResult>;
   listAgentGrants: Operation<AgentInput & { readonly roomId?: string }, AgentGrantListResult>;
+  /**
+   * The inspect surface behind the agent's `list_grants` tool: every grant this
+   * agent raised — pending, approved, and once — with reason and age. The run
+   * gate (`listTurnAgentGrants`) keeps its approved-only view; this operation
+   * never authorizes anything.
+   */
+  listAgentGrantRequests: Operation<
+    AgentInput & { readonly roomId?: string },
+    AgentGrantRequestListResult
+  >;
   consumeAgentGrant: Operation<ConsumeAgentGrantInput, WriteResult>;
   /**
    * Per-call Squire gate: an agent may use its owner's connected Squire
@@ -1202,6 +1212,27 @@ export type AgentGrantListResult = {
     /** The script bytes this approval was bound to, for the runner's re-check. */
     readonly script?: CommandGrantScript;
   }[];
+};
+/** One grant row for the agent's own inspection (`list_grants`), never authority. */
+export type AgentGrantRequestView = {
+  readonly grantId: string;
+  readonly workspaceId: string;
+  readonly roomId: string;
+  readonly kind: AgentGrantKind;
+  readonly target: string;
+  readonly reason: string;
+  readonly status: AgentGrantStatus;
+  /** True when yolo approved it on the spot with no card. */
+  readonly auto: boolean;
+  readonly requestedBy: string;
+  readonly requestedByName?: string;
+  /** Absolute Unix seconds when the request was raised. */
+  readonly createdAt: number;
+  readonly expiresAt?: number;
+};
+/** Every grant this agent raised, pending and live, for inspection. */
+export type AgentGrantRequestListResult = {
+  readonly grants: readonly AgentGrantRequestView[];
 };
 /** A 'once' grant is spent by its first run. */
 export type ConsumeAgentGrantInput = { readonly grantId: string };

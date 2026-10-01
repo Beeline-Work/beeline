@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -15,6 +15,8 @@ import {
   GrantRunnerServer,
   ROOM_SANDBOX_UNAVAILABLE,
   matchCommandGrant,
+  operatorSecretResolver,
+  storeOperatorSecret,
   type GrantWritePolicy,
 } from './grant-runner.js';
 
@@ -247,6 +249,61 @@ describe('GrantCommandRunner', () => {
       'secret MISSING_SECRET is not in the operator key store',
     );
     expect(calls.map((call) => call.name)).toEqual(['listTurnAgentGrants']);
+  });
+
+  it('resolves a secret from the daemon environment as a fallback when the store has none', async () => {
+    const config = await mkdtemp(join(tmpdir(), 'beeline-keys-'));
+    roots.push(config);
+    const env: NodeJS.ProcessEnv = {
+      XDG_CONFIG_HOME: join(config, '.config'),
+      ENV_ONLY_SECRET: 'env-only-value-42',
+    };
+    const resolve = operatorSecretResolver(env);
+    await expect(resolve('ENV_ONLY_SECRET')).resolves.toBe('env-only-value-42');
+    await expect(resolve('NEVER_ANYWHERE')).resolves.toBeUndefined();
+  });
+
+  it('resolves provider keys and secrets.json before the environment, and never invents values', async () => {
+    const config = await mkdtemp(join(tmpdir(), 'beeline-keys-'));
+    roots.push(config);
+    const dict = join(config, '.config', 'beeline');
+    await mkdir(dict, { recursive: true });
+    await writeFile(
+      join(dict, 'providers.json'),
+      JSON.stringify({ openrouter: 'sk-or-stored' }),
+      { mode: 0o600 },
+    );
+    await writeFile(join(dict, 'secrets.json'), JSON.stringify({ STORED: 'from-json' }), {
+      mode: 0o600,
+    });
+    const env: NodeJS.ProcessEnv = {
+      XDG_CONFIG_HOME: join(config, '.config'),
+      OPENROUTER_API_KEY: 'sk-or-env',
+      STORED: 'from-env',
+    };
+    const resolve = operatorSecretResolver(env);
+    // The store wins over the environment: a stored value is the operator's
+    // explicit standing choice, an env var may be incidental.
+    await expect(resolve('OPENROUTER_API_KEY')).resolves.toBe('sk-or-stored');
+    await expect(resolve('STORED')).resolves.toBe('from-json');
+    await expect(resolve('EMPTY_STORED')).resolves.toBeUndefined();
+  });
+
+  it('storeOperatorSecret writes mode-0600 and the resolver reads it back', async () => {
+    const config = await mkdtemp(join(tmpdir(), 'beeline-keys-'));
+    roots.push(config);
+    const env: NodeJS.ProcessEnv = { XDG_CONFIG_HOME: join(config, '.config') };
+    await storeOperatorSecret('DEPLOY_TOKEN', 'token-value-9', env);
+    const path = join(config, '.config', 'beeline', 'secrets.json');
+    expect(existsSync(path)).toBe(true);
+    const mode = (await import('node:fs')).statSync(path).mode & 0o777;
+    expect(mode).toBe(0o600);
+    await expect(operatorSecretResolver(env)('DEPLOY_TOKEN')).resolves.toBe('token-value-9');
+    // Storing the same name replaces its value.
+    await storeOperatorSecret('DEPLOY_TOKEN', 'token-value-10', env);
+    await expect(operatorSecretResolver(env)('DEPLOY_TOKEN')).resolves.toBe('token-value-10');
+    // The raw file never contains anything but the JSON pair.
+    expect(readFileSync(path, 'utf8')).toBe(JSON.stringify({ DEPLOY_TOKEN: 'token-value-10' }, null, 2) + '\n');
   });
 
   it('reports a non-zero exit and a command that does not start, still with a ledger row', async () => {

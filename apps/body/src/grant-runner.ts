@@ -41,14 +41,15 @@
  * so it stops matching immediately.
  *
  * Secrets are resolved from the operator key store (`provider-key-store.ts`,
- * `~/.config/beeline/providers.json`, addressed by the provider's env var name)
- * or from the saved-secrets file beside it (`secrets.json`, `{ NAME: value }`).
- * Values are injected into the child's env and scrubbed from its output; they
- * never reach the transcript, the ledger, or the model.
+ * `~/.config/beeline/providers.json`, addressed by the provider's env var name),
+ * from the saved-secrets file beside it (`secrets.json`, `{ NAME: value }`, the
+ * one `store_secret` writes), then from the daemon's own environment as a
+ * last-resort fallback. Values are injected into the child's env and scrubbed
+ * from its output; they never reach the transcript, the ledger, or the model.
  */
 import { execFile } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { dirname, resolve } from 'node:path';
@@ -135,7 +136,52 @@ export const ROOM_WRITE_REFUSED_NOTE =
 
 export type SecretResolver = (name: string) => Promise<string | undefined>;
 
-/** Resolve one named secret from the operator key store, never echoing it. */
+/** The saved-secrets file beside the operator key store: `{ NAME: value }`. */
+function operatorSecretsPath(env: NodeJS.ProcessEnv = process.env): string {
+  return resolve(dirname(providerKeyStorePath(env)), 'secrets.json');
+}
+
+/** The store's current `{ NAME: value }` map, never the file's history. */
+async function readOperatorSecrets(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<Record<string, string>> {
+  const raw = await readFile(operatorSecretsPath(env), 'utf8').catch(() => undefined);
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>).filter(
+        (entry): entry is [string, string] =>
+          typeof entry[1] === 'string' && entry[1].length > 0,
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Store one operator secret by name so a command grant's `--with NAME` resolves
+ * at run time. Written to secrets.json beside the operator key store, mode
+ * 0600, value never echoed. Storing the same name replaces its value.
+ */
+export async function storeOperatorSecret(
+  name: string,
+  value: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
+  const path = operatorSecretsPath(env);
+  const store = { ...(await readOperatorSecrets(env)), [name]: value };
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  await writeFile(path, `${JSON.stringify(store, null, 2)}\n`, { mode: 0o600 });
+  await chmod(path, 0o600);
+}
+
+/**
+ * Resolve one named secret from the operator key store, then the daemon
+ * environment, never echoing it.
+ */
 export function operatorSecretResolver(env: NodeJS.ProcessEnv = process.env): SecretResolver {
   const providerByEnvVar = new Map(
     (Object.entries(PROVIDER_KEY_ENV_VARS) as [ProviderKeyProvider, string][]).map(
@@ -148,19 +194,16 @@ export function operatorSecretResolver(env: NodeJS.ProcessEnv = process.env): Se
       const saved = (await readProviderKeyStore(env))[provider];
       if (saved) return saved;
     }
-    const raw = await readFile(
-      resolve(dirname(providerKeyStorePath(env)), 'secrets.json'),
-      'utf8',
-    ).catch(() => undefined);
-    if (!raw) return undefined;
-    try {
-      const parsed = JSON.parse(raw) as unknown;
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
-      const value = (parsed as Record<string, unknown>)[name];
-      return typeof value === 'string' && value.length > 0 ? value : undefined;
-    } catch {
-      return undefined;
-    }
+    const store = await readOperatorSecrets(env);
+    const saved = store[name];
+    if (saved) return saved;
+    // Last-resort fallback: a secret the daemon itself runs with (an env file
+    // systemd sourced, a CI-style injected var) is a real secret the operator
+    // already chose to expose to this process, so a `--with NAME` grant may use
+    // it without a separate copy in the store.
+    const fromEnv = env[name]?.trim();
+    if (fromEnv) return fromEnv;
+    return undefined;
   };
 }
 

@@ -1407,6 +1407,11 @@ export class DaemonService {
           input as Input<'consumeAgentGrant'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'listAgentGrantRequests':
+        return (await this.listAgentGrantRequests(
+          authenticatedAgentId,
+          (input as Input<'listAgentGrantRequests'>).roomId,
+        )) as Output<Name>;
       case 'listTurnAgentGrants': {
         const requester = await this.grantRequester();
         const roomId = (input as Input<'listTurnAgentGrants'>).roomId;
@@ -5493,6 +5498,54 @@ export class DaemonService {
     return this.writeResult();
   }
 
+  /**
+   * The inspect surface behind the agent's `list_grants` tool: every grant this
+   * agent raised, pending included, so an agent can see what it asked for, what
+   * is still awaiting a decision, and what is live. This never authorizes
+   * anything — the run gate keeps its approved-only view.
+   */
+  private async listAgentGrantRequests(agentId: string, roomId?: string) {
+    const rows = await this.database.query<{
+      id: string;
+      workspace_id: string;
+      room_id: string;
+      kind: AgentGrantKind;
+      target: string;
+      reason: string;
+      status: 'pending' | 'approved' | 'once';
+      auto: boolean;
+      requested_by: string;
+      requester_name: string | null;
+      created_at: Date;
+      expires_at: Date | null;
+    }>(
+      `SELECT g.id,g.workspace_id,g.room_id,g.kind,g.target,g.reason,g.status,g.auto,
+              g.requested_by,requester.name requester_name,g.created_at,g.expires_at
+       FROM agent_grants g LEFT JOIN identities requester ON requester.id=g.requested_by
+       WHERE g.agent_id=$1 AND g.status IN ('pending','approved','once')
+         AND (g.expires_at IS NULL OR g.expires_at>now())
+         AND ($2::uuid IS NULL OR g.workspace_id=(SELECT workspace_id FROM rooms WHERE id=$2))
+       ORDER BY g.created_at DESC,g.id`,
+      [agentId, roomId ?? null],
+    );
+    return {
+      grants: rows.rows.map((row) => ({
+        grantId: row.id,
+        workspaceId: row.workspace_id,
+        roomId: row.room_id,
+        kind: row.kind,
+        target: row.target,
+        reason: row.reason,
+        status: row.status,
+        auto: row.auto,
+        requestedBy: row.requested_by,
+        ...(row.requester_name ? { requestedByName: row.requester_name } : {}),
+        createdAt: seconds(row.created_at),
+        ...(row.expires_at ? { expiresAt: seconds(row.expires_at) } : {}),
+      })),
+    };
+  }
+
   /** Root command provenance is the authority even after delegation and resumes. */
   private async grantRequester() {
     const command = this.authorizedCommand;
@@ -7304,6 +7357,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   askRoomChoice: true,
   openRoomPoll: true,
   listAgentGrants: true,
+  listAgentGrantRequests: true,
   consumeAgentGrant: true,
   authorizeSquireCall: true,
   authorizeResourceCall: true,

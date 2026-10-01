@@ -195,7 +195,7 @@ async function prepareImageForUpload(attachment: PickedChatAttachment): Promise<
 }
 
 async function uploadImageThumbnail(
-  client: BuzzClient,
+  client: Pick<BuzzClient, 'uploadMedia'>,
   attachment: PickedChatAttachment,
 ): Promise<string | undefined> {
   if (!attachment.mimeType.startsWith('image/')) return undefined;
@@ -218,7 +218,7 @@ async function uploadImageThumbnail(
 
 /** Uploads bytes to Buzz media, then returns only a durable URL and bounded metadata. */
 export async function uploadChatAttachment(
-  client: BuzzClient,
+  client: Pick<BuzzClient, 'uploadMedia'>,
   attachment: PickedChatAttachment,
 ): Promise<AttachmentReference> {
   const prepared =
@@ -262,7 +262,7 @@ export async function uploadChatAttachment(
 export function createChatAttachmentUploader() {
   const uploads = new Map<PickedChatAttachment, Promise<AttachmentReference>>();
   let queue: Promise<unknown> = Promise.resolve();
-  const start = (client: BuzzClient, attachment: PickedChatAttachment) => {
+  const start = (client: Pick<BuzzClient, 'uploadMedia'>, attachment: PickedChatAttachment) => {
     const existing = uploads.get(attachment);
     if (existing) return existing;
     const upload: Promise<AttachmentReference> = queue.then(() => {
@@ -277,7 +277,7 @@ export function createChatAttachmentUploader() {
   };
   return {
     /** Begins uploading every attachment not already uploading or uploaded. */
-    start(client: BuzzClient, attachments: readonly PickedChatAttachment[]) {
+    start(client: Pick<BuzzClient, 'uploadMedia'>, attachments: readonly PickedChatAttachment[]) {
       for (const attachment of attachments) void start(client, attachment).catch(() => undefined);
     },
     /** Drops every attachment no longer staged in the composer. */
@@ -287,7 +287,7 @@ export function createChatAttachmentUploader() {
     },
     /** One message's uploaded references, in display order. */
     uploadAll(
-      client: BuzzClient,
+      client: Pick<BuzzClient, 'uploadMedia'>,
       attachments: readonly PickedChatAttachment[],
     ): Promise<AttachmentReference[]> {
       return Promise.all(attachments.map((attachment) => start(client, attachment)));

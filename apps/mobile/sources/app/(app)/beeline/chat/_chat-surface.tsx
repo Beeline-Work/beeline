@@ -691,19 +691,27 @@ export function BuzzChatSurface({
   const [attachmentUploader] = useState(createChatAttachmentUploader);
   useEffect(() => {
     attachmentUploader.retain(pendingAttachments);
-    if (!transport || pendingAttachments.length === 0) return;
-    void transport
-      .ensureClient()
-      .then((client) =>
+    if (pendingAttachments.length === 0) return;
+    void (async () => {
+      let uploadTransport = transport;
+      if (!uploadTransport) {
+        const identity = await loadBuzzIdentity();
+        if (!identity) throw new Error('Beeline identity is unavailable');
+        uploadTransport = new BuzzRigTransport(identity);
+        setSessionTransport(uploadTransport);
+      }
+      return uploadTransport;
+    })()
+      .then((uploadTransport) =>
         attachmentUploader.start(
-          client,
+          uploadTransport,
           pendingAttachments.filter((attachment) =>
             pendingAttachmentsRef.current.includes(attachment),
           ),
         ),
       )
       .catch(() => undefined);
-  }, [attachmentUploader, pendingAttachments, transport]);
+  }, [attachmentUploader, pendingAttachments, setSessionTransport, transport]);
   const [attachmentPickerVisible, setAttachmentPickerVisible] = useState(false);
   const [messageActionsTarget, setMessageActionsTarget] = useState<ChatDisplayMessage | null>(null);
   const [optimisticBookmarks, setOptimisticBookmarks] = useState<Record<string, boolean>>({});
@@ -3707,7 +3715,7 @@ export function BuzzChatSurface({
       if (!transport) setSessionTransport(sendTransport);
       preparedTransport = sendTransport;
       const attachments = await attachmentUploader.uploadAll(
-        await sendTransport.ensureClient(),
+        sendTransport,
         activePendingAttachments,
       );
       // Sign before append. The authoritative event id is the optimistic row

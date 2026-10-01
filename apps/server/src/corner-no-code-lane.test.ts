@@ -105,7 +105,7 @@ function brief(sourceMessageId: string, buildSpec: string) {
 
 async function open(
   roomId: string,
-  lane?: 'code' | 'no_code' | 'research',
+  lane?: 'code' | 'no_code',
   repository?: string,
 ): Promise<string> {
   const command = await commissioned(roomId);
@@ -119,9 +119,9 @@ async function open(
       objective: 'Survey the five nearest competitors and write it up',
       ...(lane ? { lane } : {}),
       ...(repository ? { repository, targetBranch: 'main' } : {}),
-      // Repository and research corners open from a typed brief; the no-code
+      // Repository corners open from a typed brief; the no-code
       // lane is the one that may open without one.
-      ...(lane !== 'no_code' && (lane === 'research' || roomId === CODE_ROOM)
+      ...(lane !== 'no_code' && roomId === CODE_ROOM
         ? { brief: brief(command.sourceMessageId, 'Survey the competitors') }
         : {}),
     },
@@ -182,20 +182,14 @@ it('leaves a repository Room on the code lane when the corner does not ask other
   });
 });
 
-it('restores a research worktree lane and refuses agent closure while allowing human closure', async () => {
-  const cornerId = await open(CODE_ROOM, 'research', 'owner/widgets');
-  expect(await lane(cornerId)).toBe('research');
-  expect(await daemon.execute('getCornerRestoreState', { cornerId }, AGENT)).toMatchObject({
-    lane: 'research',
-    closeRequested: false,
-  });
-  await expect(daemon.execute('archiveCorner', { cornerId }, AGENT)).rejects.toThrow(
-    'research corners require a human to close them',
-  );
-  await phone.execute('requestCornerClose', { roomId: cornerId }, HUMAN);
-  expect(await daemon.execute('getCornerRestoreState', { cornerId }, AGENT)).toMatchObject({
-    closeRequested: true,
-  });
+it('refuses a research lane at open and lets the agent close a code corner with nothing to ship', async () => {
+  await expect(open(CODE_ROOM, 'research' as never, 'owner/widgets')).rejects.toThrow();
+  const cornerId = await open(CODE_ROOM, 'code', 'owner/widgets');
+  await daemon.execute('archiveCorner', { cornerId }, AGENT);
+  expect(
+    (await db.query(`SELECT 1 FROM rooms WHERE id=$1 AND archived_at IS NOT NULL`, [cornerId]))
+      .rowCount,
+  ).toBe(1);
 });
 
 it('records a Room with no repository as no-code however the corner asked', async () => {
@@ -353,11 +347,6 @@ it('rejects an upgrade backed by an agent-authored ask, however live the command
   expect(
     (await daemon.execute('listCornerBriefRevisions', { cornerId }, AGENT)).revisions,
   ).toHaveLength(0);
-});
-
-it('rejects a lane transition on a corner that never was no_code or code', async () => {
-  const research = await open(CODE_ROOM, 'research', 'owner/widgets');
-  await expect(upgrade(research)).rejects.toThrow('requires no_code, found research');
 });
 
 it('answers a second upgrade of an already fully-upgraded corner with an idempotent no-op, never a restart', async () => {

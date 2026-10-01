@@ -86,13 +86,6 @@ const SESSION_VARIANTS: Record<string, SessionPromptContext> = {
     agentCommand: 'claude-agent-acp',
     worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
   },
-  'research-corner': {
-    surface: 'research-corner',
-    agentName: 'Bee',
-    soul,
-    agentCommand: 'claude-agent-acp',
-    worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
-  },
   'no-code-corner': {
     surface: 'no-code-corner',
     agentName: 'Bee',
@@ -260,7 +253,6 @@ describe('prompt assembly guards', () => {
     expect(review).toContain('Never merge yourself');
     expect(review).not.toContain('On a checks turn');
     expect(review).not.toContain('Open the pull request');
-    expect(merges('research-corner')).not.toContain('Open the pull request with gh');
   });
 
   it('never tells an author or reviewer to run gh pr merge', () => {

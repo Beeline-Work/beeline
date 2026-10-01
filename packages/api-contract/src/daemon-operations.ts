@@ -289,7 +289,7 @@ export type DaemonOperationMap = {
         status: 'unconfigured' | 'unreachable' | 'waiting' | 'dispatched';
         detail: string;
       };
-      /** True when a person in the corner asked to hold the merge, or the corner is a research corner. */
+      /** True when a person in the corner asked to hold the merge. */
       held: boolean;
       /** The corner worker's yolo mode (always off in a public Workspace). */
       isWorkerYolo: boolean;
@@ -1054,7 +1054,6 @@ export type CreateCornerInput = TurnOutputAuthority &
      * worktree, the commit, the pull request and the merge: the work comes back
      * as artifacts and a reply tagging the requester. A corner with no
      * repository is `no_code` whatever this says.
-     * `research` keeps a writable worktree under a durable delivery and merge hold.
      * The one later change is `upgradeCornerLane`'s one-way `no_code -> code`.
      */
     readonly lane?: CornerLane;
@@ -1190,7 +1189,7 @@ export type PostCornerValidationStageInput = TurnOutputAuthority &
     readonly evidence: string;
   };
 export type CornerResult = { readonly cornerId: string };
-export type CornerLane = 'code' | 'no_code' | 'research';
+export type CornerLane = 'code' | 'no_code';
 
 /** ask_choice / open_poll: a lettered preference, never a grant. */
 export type ChoiceOptionArg = ChoiceOptionInput;

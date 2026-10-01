@@ -30,7 +30,7 @@ export function beelineAgentMcpServer(
     reviewer?: boolean;
     /** The corner's lane. A code-lane corner mounts approve_merge on every
      *  turn; the server decides whether the caller is the configured reviewer. */
-    lane?: 'code' | 'no_code' | 'research';
+    lane?: 'code' | 'no_code';
     attachRoot?: string;
     /** The session's whole writable home overlay (or, absent one, its
      *  TMPDIR): a second legal post_artifact root covering anywhere the

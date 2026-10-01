@@ -968,9 +968,9 @@ const AGENT_TOOLS: ToolDefinition[] = [
         },
         lane: {
           type: 'string',
-          enum: ['code', 'no_code', 'research'],
+          enum: ['code', 'no_code'],
           description:
-            'Defaults to "code". Use "no_code" for artifact work without a repository checkout. Use "research" for a writable repository worktree held open for investigation: do not commit, push, or open a pull request until a human directs it.',
+            'Defaults to "code". Use "no_code" for artifact work without a repository checkout.',
         },
       },
       additionalProperties: false,
@@ -2217,20 +2217,10 @@ async function openCorner(args: JsonObject, toolCallId: string): Promise<string>
     throw new Error('open_corner is not available in a direct message');
   }
   const { name, objective } = cornerCallText(args);
-  if (
-    args.lane !== undefined &&
-    args.lane !== 'code' &&
-    args.lane !== 'no_code' &&
-    args.lane !== 'research'
-  ) {
-    throw new Error('lane must be "code", "no_code", or "research"');
+  if (args.lane !== undefined && args.lane !== 'code' && args.lane !== 'no_code') {
+    throw new Error('lane must be "code" or "no_code"');
   }
-  const lane =
-    args.lane === 'no_code'
-      ? ('no_code' as const)
-      : args.lane === 'research'
-        ? ('research' as const)
-        : ('code' as const);
+  const lane = args.lane === 'no_code' ? ('no_code' as const) : ('code' as const);
   // In a corner turn this is the parent Room, where the new corner opens.
   const roomId = requiredEnv('BEELINE_DAEMON_ROOM_ID');
   const repository = await daemonExecute('getRoomRepositoryState', { roomId });
@@ -2451,14 +2441,12 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
   // The merge gate is the server's: it owns the human hold, the worker's yolo
   // mode and the reviewer outcome, and it merges the head itself.
   const reviewFailed = verdict ? verdict.approvalPending !== false : true;
-  const held = verdict ? verdict.held === true : restore.lane === 'research';
+  const held = verdict?.held === true;
   const isWorkerYolo = verdict?.isWorkerYolo === true;
   const didHumanSayDontMerge = held;
   const mergeAllowed = verdict?.mergeAllowed === true;
   const mergeConditionsRule =
-    restore.lane === 'research'
-      ? 'This research corner has a durable hold: the agent must never merge it. A human may close the corner.'
-      : 'When mergeAllowed is true the server squash-merges this exact head itself; no agent runs gh pr merge. mergeAllowed is true only when checks passed, reviewFailed is false, isWorkerYolo is true, didHumanSayDontMerge is false, and reviewerExists is true; missing state is never consent. If GitHub refuses the merge (branch behind its target, conflict, moved head, permissions), the server wakes the implementer with its reason: bring the branch up to date (gh pr update-branch, or merge the target branch in) and push, and the new head needs green checks and a fresh reviewer PASS before the server merges it.';
+    'When mergeAllowed is true the server squash-merges this exact head itself; no agent runs gh pr merge. mergeAllowed is true only when checks passed, reviewFailed is false, isWorkerYolo is true, didHumanSayDontMerge is false, and reviewerExists is true; missing state is never consent. If GitHub refuses the merge (branch behind its target, conflict, moved head, permissions), the server wakes the implementer with its reason: bring the branch up to date (gh pr update-branch, or merge the target branch in) and push, and the new head needs green checks and a fresh reviewer PASS before the server merges it.';
   return JSON.stringify({
     checks,
     reason,
@@ -2477,10 +2465,7 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
     ...(pullRequest ? { pullRequest } : {}),
     ...(!pullRequest
       ? {
-          next:
-            restore.lane === 'research'
-              ? 'Keep investigating in the writable worktree. Do not commit, push, or open a pull request until a human explicitly directs it.'
-              : 'The PR URL is not yet durable in the corner. Print its full URL as your final response and end this turn now; do not call pr_checks_status again in this turn.',
+          next: 'The PR URL is not yet durable in the corner. Print its full URL as your final response and end this turn now; do not call pr_checks_status again in this turn.',
         }
       : {}),
     rule: [reviewerRule, mergeConditionsRule].filter(Boolean).join(' '),

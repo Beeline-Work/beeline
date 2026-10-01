@@ -217,7 +217,7 @@ description: Prepare or revise a durable corner assignment from Room decisions b
 
 # Durable corner brief
 
-Create an assignment a fresh session can execute without the parent transcript. The typed outer contract is mandatory for repository and research work:
+Create an assignment a fresh session can execute without the parent transcript. The typed outer contract is mandatory for repository work:
 
 - \`intentVerbatim[]\`: exact human words plus each Room message ID. Copy snapshots exactly; never substitute a summary.
 - \`buildSpec\`: agent-authored Markdown implementation guidance.

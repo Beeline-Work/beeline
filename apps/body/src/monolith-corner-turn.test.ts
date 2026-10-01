@@ -239,7 +239,6 @@ describe('corner merge instructions', () => {
 
   it.each([
     { label: 'agent-opened code', lane: 'code', openedBy: undefined },
-    { label: 'agent-opened research', lane: 'research', openedBy: undefined },
     { label: 'agent-opened no-code', lane: 'no_code', openedBy: undefined },
     { label: 'BBC in a forwarded human corner', lane: 'no_code', openedBy: 'human-id' },
   ] as const)('starts $label without a repository or host permission request', async (case_) => {

@@ -471,7 +471,6 @@ describe('monolith integration', () => {
           )
         ).rows[0];
         if (
-          input.lane === 'research' ||
           input.repository ||
           sourceRoom?.repository_key ||
           sourceRoom?.repository_resolution === 'repository'
@@ -8966,31 +8965,21 @@ describe('monolith integration', () => {
     });
   });
 
-  it('refuses new repository and research corners without a structured brief at the server boundary', async () => {
-    for (const [requestId, lane] of [
-      ['missing-code-brief', 'code'],
-      ['missing-research-brief', 'research'],
-    ] as const) {
-      const response = await daemonOperation('createCorner', {
-        roomId: ROOM,
-        requestId,
-        name: 'Missing brief',
-        objective: 'Do repository work',
-        lane,
-        repository: 'example/repository',
-        fixtureOmitBrief: true,
-      });
-      expect(response.status).toBe(400);
-      expect(await response.text()).toContain(
-        'a structured brief is required for repository and research corners',
-      );
-    }
+  it('refuses new repository corners without a structured brief at the server boundary', async () => {
+    const response = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'missing-code-brief',
+      name: 'Missing brief',
+      objective: 'Do repository work',
+      lane: 'code',
+      repository: 'example/repository',
+      fixtureOmitBrief: true,
+    });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain('a structured brief is required for repository corners');
     expect(
-      (
-        await database.query(
-          `SELECT 1 FROM corner_facts WHERE request_id IN ('missing-code-brief','missing-research-brief')`,
-        )
-      ).rows,
+      (await database.query(`SELECT 1 FROM corner_facts WHERE request_id='missing-code-brief'`))
+        .rows,
     ).toEqual([]);
   });
 
@@ -9732,8 +9721,6 @@ describe('monolith integration', () => {
   it.each([
     ['code', false],
     ['code', true],
-    ['research', false],
-    ['research', true],
     ['no_code', false],
     ['no_code', true],
   ] as const)(

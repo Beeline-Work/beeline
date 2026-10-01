@@ -2896,12 +2896,7 @@ export class DaemonService {
       closeRequested: row?.close_requested ?? false,
       // A row written before the lane existed reads back as its backfilled
       // default, never as an unknown third lane.
-      lane:
-        row?.lane === 'no_code'
-          ? ('no_code' as const)
-          : row?.lane === 'research'
-            ? ('research' as const)
-            : ('code' as const),
+      lane: row?.lane === 'no_code' ? ('no_code' as const) : ('code' as const),
       ...(row?.requester_handle ? { requesterHandle: row.requester_handle } : {}),
       ...(row?.lifecycle ? { lifecycle: row.lifecycle } : {}),
       ...(row?.pull_request_number && row.approval_head_sha
@@ -6234,12 +6229,11 @@ export class DaemonService {
     // existing lane available without pretending it is repository work.
     const repositoryWork =
       input.lane !== 'no_code' &&
-      (input.lane === 'research' ||
-        Boolean(input.repository) ||
+      (Boolean(input.repository) ||
         parent.repository_resolution === 'repository' ||
         Boolean(parent.repository_key));
     if (repositoryWork && !input.brief)
-      throw new Error('a structured brief is required for repository and research corners');
+      throw new Error('a structured brief is required for repository corners');
     if (input.brief && !isStructuredCornerBrief(input.brief))
       throw new Error('the legacy opaque brief format is invalid for new corners');
     let cornerId: string = randomUUID();
@@ -6694,12 +6688,6 @@ export class DaemonService {
   }
   private async archiveCorner(cornerId: string, agentId: string) {
     const parentId = await this.database.transaction(async (database) => {
-      const fact = await database.query<{ lane: string }>(
-        `SELECT lane FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
-        [cornerId],
-      );
-      if (fact.rows[0]?.lane === 'research')
-        throw new Error('research corners require a human to close them');
       return (await closeCornerState(database, cornerId)).parentId;
     });
     this.live.publish({ type: 'invalidate', roomId: cornerId, reason: 'corner', agentId });

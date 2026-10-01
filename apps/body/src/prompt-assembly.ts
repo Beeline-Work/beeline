@@ -31,7 +31,6 @@ export const PROMPT_SURFACES = [
   'dm',
   'code-corner',
   'review-corner',
-  'research-corner',
   'no-code-corner',
 ] as const;
 export type PromptSurface = (typeof PROMPT_SURFACES)[number];
@@ -39,7 +38,6 @@ export type PromptSurface = (typeof PROMPT_SURFACES)[number];
 const CORNERS: readonly PromptSurface[] = [
   'code-corner',
   'review-corner',
-  'research-corner',
   'no-code-corner',
 ];
 const EVERYWHERE: readonly PromptSurface[] = PROMPT_SURFACES;
@@ -134,9 +132,6 @@ export const CORNER_DELIVERY_NUDGE =
 
 export const CORNER_YOLO_MERGE_NUDGE =
   'Yolo is on. Call pr_checks_status now. If checks="failed", fix the failure and push. If checks="unknown", reply in this corner with the tool reason and stop instead of retrying. Otherwise stop: the server merges this pull request itself once mergeAllowed=true. Never merge it yourself.';
-
-export const RESEARCH_CORNER_HOLD =
-  'This is a research corner with writable repository access. Investigate and edit files as needed. Do not commit, push, or open a pull request until a human explicitly directs that step. Never merge. Leave the corner open; only a human closes it.';
 
 /** Shared verbatim between the upgrade_corner_to_code tool description
  *  (`read-only-mcp.ts`) and this corner's own no-code prompt clause below, so
@@ -424,7 +419,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     why: 'The agent must know its branch and target; only a code-corner author is told to push and open the pull request.',
     budgetBytes: 520,
     layer: 'surface',
-    surfaces: ['code-corner', 'review-corner', 'research-corner'],
+    surfaces: ['code-corner', 'review-corner'],
     render: ({ worktree, surface }) =>
       [
         `You are in an isolated git worktree on ${worktree?.featureBranch ?? 'the feature branch'}, targeting ${worktree?.targetBranch ?? 'the target branch'}.`,
@@ -434,15 +429,6 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
       ]
         .filter(Boolean)
         .join('\n'),
-  },
-  {
-    id: 'corner.research',
-    topic: 'merge',
-    why: 'Research corners explore; nothing leaves the worktree until a human says so.',
-    budgetBytes: 320,
-    layer: 'surface',
-    surfaces: ['research-corner'],
-    render: () => RESEARCH_CORNER_HOLD,
   },
   {
     id: 'corner.contract',

@@ -80,6 +80,14 @@ describe('direct message helper surface', () => {
   });
 });
 
+describe('open_corner lane', () => {
+  it('offers only the code and no_code lanes', () => {
+    const openCorner = agentToolsFor(true, false).find((tool) => tool.name === 'open_corner');
+    const schema = openCorner?.inputSchema as { properties: { lane: { enum: string[] } } };
+    expect(schema.properties.lane.enum).toEqual(['code', 'no_code']);
+  });
+});
+
 describe('approve_merge surface', () => {
   const names = (cornerTurn: boolean, codeLane: boolean, institutionalMemory: boolean) =>
     agentToolsFor(true, false, cornerTurn, codeLane, true, cornerTurn, institutionalMemory).map(
@@ -93,8 +101,8 @@ describe('approve_merge surface', () => {
     expect(names(true, true, true)).toContain('approve_merge');
   });
 
-  it('stays off no-code and research corners and outside corners', () => {
-    // Only the code lane sets codeLane; no_code and research never do.
+  it('stays off no-code corners and outside corners', () => {
+    // Only the code lane sets codeLane; no_code never does.
     for (const memory of [false, true]) {
       expect(names(true, false, memory)).not.toContain('approve_merge');
       expect(names(false, false, memory)).not.toContain('approve_merge');

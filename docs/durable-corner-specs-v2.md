@@ -6,7 +6,7 @@ This document describes the shipped contract and its acceptance proof.
 
 ## Current contract
 
-Every new repository/code or research corner starts with a typed, human-authorized brief. A
+Every new repository/code corner starts with a typed, human-authorized brief. A
 revision contains:
 
 - `intentVerbatim`: exact human message snapshots and their message IDs;
@@ -21,7 +21,7 @@ message to remain in `intentVerbatim`, computes a deterministic revision hash, a
 brief, corner, and initial worker command together. It automatically adds ready artifacts posted
 by the planner in that command turn to the manifest. The old `content` column is retained as a
 legacy `buildSpec` projection for pre-migration rows; it is not accepted as the contract for a new
-repository or research corner.
+repository corner.
 
 A no-code corner that a person upgrades into the code lane is the one repository corner nobody
 typed a brief for, so the server composes its first revision inside that upgrade's own transaction

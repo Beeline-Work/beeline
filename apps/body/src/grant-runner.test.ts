@@ -1,8 +1,10 @@
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import {
@@ -323,6 +325,56 @@ describe('GrantCommandRunner', () => {
     }
     const keep = Object.keys(JSON.parse(readFileSync(join(config, '.config', 'beeline', 'secrets.json'), 'utf8')));
     expect(keep.sort()).toEqual(names.slice().sort());
+  });
+
+  it('concurrent storeOperatorSecret writes across separate processes never drop a secret (regression: 6 of 48 survived)', async () => {
+    const config = await mkdtemp(join(tmpdir(), 'beeline-keys-'));
+    roots.push(config);
+    const xdg = join(config, '.config');
+    // Two daemon processes share one operator config directory, so an
+    // in-process write tail cannot serialize them. Run the real
+    // storeOperatorSecret from grant-runner.ts in separate node processes
+    // (loaded through tsx) against one store, each writing a distinct name.
+    const modulePath = fileURLToPath(new URL('./grant-runner.ts', import.meta.url));
+    const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
+    const worker = join(config, 'store-worker.mjs');
+    await writeFile(
+      worker,
+      [
+        `const { storeOperatorSecret } = await import(${JSON.stringify(modulePath)});`,
+        `const [name, value, xdg] = process.argv.slice(2);`,
+        `await storeOperatorSecret(name, value, { XDG_CONFIG_HOME: xdg });`,
+        '',
+      ].join('\n'),
+      { mode: 0o600 },
+    );
+    const names = Array.from({ length: 24 }, (_, i) => `PROCESS_SECRET_${i}`);
+    await Promise.all(
+      names.map((name, i) => {
+        return new Promise<void>((resolve, reject) => {
+          const child = spawn(
+            process.execPath,
+            ['--import', 'tsx', worker, name, `value-${i}`, xdg],
+            { cwd: repoRoot, stdio: ['ignore', 'ignore', 'pipe'] },
+          );
+          let stderr = '';
+          child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+          child.on('error', reject);
+          child.on('exit', (code) => {
+            if (code === 0) resolve();
+            else reject(new Error(`worker ${name} exited ${code}: ${stderr}`));
+          });
+        });
+      }),
+    );
+    const resolveSecret = operatorSecretResolver({ XDG_CONFIG_HOME: xdg });
+    for (const [i, name] of names.entries()) {
+      await expect(resolveSecret(name)).resolves.toBe(`value-${i}`);
+    }
+    const store = JSON.parse(
+      readFileSync(join(xdg, 'beeline', 'secrets.json'), 'utf8'),
+    ) as Record<string, string>;
+    expect(Object.keys(store).sort()).toEqual(names.slice().sort());
   });
 
   it('reports a non-zero exit and a command that does not start, still with a ledger row', async () => {

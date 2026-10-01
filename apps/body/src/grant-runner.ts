@@ -49,7 +49,7 @@
  */
 import { execFile } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { dirname, resolve } from 'node:path';
@@ -162,35 +162,88 @@ async function readOperatorSecrets(
 }
 
 /**
+ * How long a stale lock may sit before a waiter takes it over. A live store
+ * write takes milliseconds, so a lock older than this was left by a crashed
+ * holder; without the takeover a dead process would wedge the store forever.
+ */
+const SECRETS_LOCK_STALE_MS = 15_000;
+/** Ceiling on waiting for the lock; the caller gets an error, not a hang. */
+const SECRETS_LOCK_TIMEOUT_MS = 30_000;
+/** Base poll interval while the lock is held by someone else. */
+const SECRETS_LOCK_POLL_MS = 25;
+
+/**
+ * Hold the operator-store lock for one read-modify-write. The lock is a
+ * sibling `secrets.json.lock` file created with `O_EXCL`, so it serializes
+ * the store across separate daemon processes sharing one operator config
+ * directory, not just across calls in one process. Returns a release
+ * function; call it in `finally`. A crashed holder leaves a stale lock that
+ * any waiter takes over after `SECRETS_LOCK_STALE_MS`.
+ */
+async function acquireOperatorSecretsLock(path: string): Promise<() => Promise<void>> {
+  const lockPath = `${path}.lock`;
+  const deadline = Date.now() + SECRETS_LOCK_TIMEOUT_MS;
+  for (;;) {
+    try {
+      const handle = await open(lockPath, 'wx', 0o600);
+      await handle.writeFile(`${process.pid}\n`);
+      await handle.close();
+      let released = false;
+      return async () => {
+        if (released) return;
+        released = true;
+        await rm(lockPath, { force: true });
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      try {
+        const info = await stat(lockPath);
+        if (Date.now() - info.mtimeMs > SECRETS_LOCK_STALE_MS) {
+          await rm(lockPath, { force: true });
+          continue;
+        }
+      } catch {
+        continue; // the lock vanished between attempts; just retry
+      }
+      if (Date.now() > deadline) {
+        throw new Error(`timed out waiting for the operator secret store lock at ${lockPath}`);
+      }
+      await new Promise((resolve) =>
+        setTimeout(resolve, SECRETS_LOCK_POLL_MS + Math.floor(Math.random() * 25)),
+      );
+    }
+  }
+}
+
+/**
  * Store one operator secret by name so a command grant's `--with NAME` resolves
  * at run time. Written to secrets.json beside the operator key store, mode
  * 0600, value never echoed. Storing the same name replaces its value.
  *
- * The write is a read-modify-write of one shared file, so concurrent calls are
- * serialized through this tail: without it, two stores in flight both write
- * from the same snapshot and the last one drops the other's secret.
+ * The write is a read-modify-write of one shared file, so it is serialized
+ * under an exclusive lockfile that coordinates across processes; without it
+ * two stores in flight both write from the same snapshot and the last one
+ * drops the other's secret. The file is written to a sibling temp and renamed
+ * into place so a concurrent reader never sees a torn file.
  */
-let operatorSecretsWriteTail: Promise<void> = Promise.resolve();
-
 export async function storeOperatorSecret(
   name: string,
   value: string,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
-  const prior = operatorSecretsWriteTail;
-  let release: (() => void) | undefined;
-  operatorSecretsWriteTail = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  await prior;
+  const path = operatorSecretsPath(env);
+  // The lock file lives beside the store, so the directory must exist first;
+  // recursive mkdir is idempotent and safe when several processes race to it.
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const release = await acquireOperatorSecretsLock(path);
   try {
-    const path = operatorSecretsPath(env);
     const store = { ...(await readOperatorSecrets(env)), [name]: value };
-    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-    await writeFile(path, `${JSON.stringify(store, null, 2)}\n`, { mode: 0o600 });
+    const tmp = `${path}.tmp`;
+    await writeFile(tmp, `${JSON.stringify(store, null, 2)}\n`, { mode: 0o600 });
+    await rename(tmp, path);
     await chmod(path, 0o600);
   } finally {
-    release?.();
+    await release();
   }
 }
 

@@ -6691,10 +6691,55 @@ export function BuzzChatSurface({
             slot="row"
           />
         }
+        onTitlePress={canRenameTitle ? startRenameFromTitle : undefined}
         testID="room-actions-sheet"
         title={displayRoomName}
+        titleAccessibilityLabel={`Rename ${displayRoomName}`}
+        titleTestID="room-actions-title"
         visible={roomActionsVisible}
       >
+        {!isCorner && canRenameTitle && renameEditing && (
+          <View style={styles.roomRenameEditor} testID="rename-room-editor">
+            <Text style={styles.roomRenameLabel}>New {ROOM_LABEL.toLowerCase()} name</Text>
+            <TextInput
+              accessibilityLabel={`New ${ROOM_LABEL} name`}
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!renameBusy}
+              onChangeText={(value) => {
+                setRenameDraft(value);
+                if (value.trim()) setRenameError(null);
+              }}
+              onSubmitEditing={() => void handleRenameRoom()}
+              returnKeyType="done"
+              selectTextOnFocus
+              style={styles.roomRenameInput}
+              testID="rename-room-input"
+              value={renameDraft}
+            />
+            {!validRoomSlug(renameDraft.trim()) && (
+              <Text style={styles.roomRenameLabel}>{ROOM_SLUG_HINT}</Text>
+            )}
+            <View style={styles.roomRenameControls}>
+              <MonoButton
+                disabled={renameBusy}
+                label="Cancel"
+                onPress={() => {
+                  setRenameEditing(false);
+                  setRenameError(null);
+                }}
+                variant="secondary"
+              />
+              <MonoButton
+                disabled={renameBusy || !validRoomSlug(renameDraft.trim())}
+                label={renameBusy ? 'Renaming…' : 'Apply'}
+                loading={renameBusy}
+                onPress={() => void handleRenameRoom()}
+                testID="apply-room-rename"
+              />
+            </View>
+          </View>
+        )}
         <RoomRepositoryActions
           busy={roomRepoBusy}
           canManage={canManageWorkspace}
@@ -6781,60 +6826,6 @@ export function BuzzChatSurface({
           }}
           testID="room-participant-roster-trigger"
         />
-        {canManageWorkspace &&
-          (renameEditing ? (
-            <View style={styles.roomRenameEditor} testID="rename-room-editor">
-              <Text style={styles.roomRenameLabel}>New {ROOM_LABEL.toLowerCase()} name</Text>
-              <TextInput
-                accessibilityLabel={`New ${ROOM_LABEL} name`}
-                autoCapitalize="none"
-                autoCorrect={false}
-                editable={!renameBusy}
-                onChangeText={(value) => {
-                  setRenameDraft(value);
-                  if (value.trim()) setRenameError(null);
-                }}
-                onSubmitEditing={() => void handleRenameRoom()}
-                returnKeyType="done"
-                selectTextOnFocus
-                style={styles.roomRenameInput}
-                testID="rename-room-input"
-                value={renameDraft}
-              />
-              {!validRoomSlug(renameDraft.trim()) && (
-                <Text style={styles.roomRenameLabel}>{ROOM_SLUG_HINT}</Text>
-              )}
-              <View style={styles.roomRenameControls}>
-                <MonoButton
-                  disabled={renameBusy}
-                  label="Cancel"
-                  onPress={() => {
-                    setRenameEditing(false);
-                    setRenameError(null);
-                  }}
-                  variant="secondary"
-                />
-                <MonoButton
-                  disabled={renameBusy || !validRoomSlug(renameDraft.trim())}
-                  label={renameBusy ? 'Renaming…' : 'Apply'}
-                  loading={renameBusy}
-                  onPress={() => void handleRenameRoom()}
-                  testID="apply-room-rename"
-                />
-              </View>
-            </View>
-          ) : (
-            <HullActionSheetRow
-              accessibilityLabel={`Rename ${ROOM_LABEL}`}
-              chevron="right"
-              disabled={renameBusy}
-              label="Rename"
-              onPress={() => {
-                startRenameFromTitle();
-              }}
-              testID="rename-room-action"
-            />
-          ))}
         {canManageWorkspace && getBuzzRuntimeConfig().monolithEnabled && (
           <HullActionSheetRow
             accessibilityLabel={`View ${ROOM_LABEL} scheduled work`}

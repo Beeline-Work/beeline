@@ -4,12 +4,7 @@ import type { PushActionPayload } from '@beeline/api-contract/phone';
 import { ARTIFACT_TTL_HOURS, MEDIA_SWEEP_INTERVAL_MS, mediaTtlHours } from './media-ttl.js';
 import type { ObjectStorage } from './object-storage.js';
 import type { ObjectService } from './object-service.js';
-import { tagsKnownIdentitySql } from './message-mentions.js';
-import {
-  CORNER_CHECKS_BLOCKED_CARD_TYPE,
-  CORNER_REVIEW_DEADLOCK_CARD_TYPE,
-} from './agent-command.js';
-import { CHOICE_CARD_TYPE } from '@beeline/api-contract/phone';
+import { addressedToPersonSql } from './corner-owed.js';
 import {
   claimReleaseCatchup,
   PUSH_MAX_ATTEMPTS,
@@ -273,44 +268,7 @@ export class PushDeliveryLoop {
           AND recipient.push_level IN ('direct','mine')
           AND (
             room.direct_participants IS NOT NULL
-            OR EXISTS (
-              SELECT 1 FROM messages addressed
-              WHERE addressed.id = m.reply_to_message_id
-                AND addressed.author_id=m.push_identity_id
-            )
-            OR ${tagsKnownIdentitySql('m', 'recipient.id', 'recipient.handle', 'recipient.kind')}
-            -- An open question card reaches one person: the one human it
-            -- tags, or the requester when it tags nobody. A question that
-            -- tags several people, and every poll, pushes nobody.
-            OR (
-              m.card_type='${CHOICE_CARD_TYPE}' AND m.card->>'mode'='question'
-              AND COALESCE(m.card->>'status','open')='open'
-              AND CASE jsonb_array_length(COALESCE(m.card->'mentionIds','[]'::jsonb))
-                WHEN 0 THEN m.card->'requester'->>'pubkey'=m.push_identity_id
-                WHEN 1 THEN m.card->'mentionIds'->>0=m.push_identity_id
-                ELSE false
-              END
-            )
-            -- A corner's commissioner hears its final state whether or not
-            -- an agent tags them: it landed (the parent Room's merge card),
-            -- its worker posted a deliverable (files on a reply in a corner
-            -- with no pull request), its checks are failing with nobody left
-            -- to fix them, or it stopped at the review handback limit.
-            OR EXISTS (
-              SELECT 1 FROM corner_facts finished
-              WHERE finished.commissioned_by=m.push_identity_id
-                AND (
-                  (m.card_type='daemon-fact' AND m.card->>'type'='corner-complete'
-                    AND finished.corner_id::text=m.card->>'cornerId')
-                  OR (m.presentation='message' AND finished.corner_id=m.room_id
-                    AND finished.lane<>'code' AND m.author_id=finished.owner_agent_id
-                    AND jsonb_typeof(m.attachments)='array'
-                    AND jsonb_array_length(m.attachments)>0)
-                  OR (m.card_type IN ('${CORNER_CHECKS_BLOCKED_CARD_TYPE}',
-                      '${CORNER_REVIEW_DEADLOCK_CARD_TYPE}')
-                    AND finished.corner_id=m.room_id)
-                )
-            )
+            OR ${addressedToPersonSql('m', 'recipient.id', 'recipient.handle', 'recipient.kind')}
           )
         UNION ALL
         SELECT notification.id message_id,notification.workspace_id::text workspace_id,

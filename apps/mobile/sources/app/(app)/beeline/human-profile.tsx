@@ -21,6 +21,7 @@ import { MemberGrantRow } from '@/components/buzz/MemberGrantRow';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { Modal } from '@/modal/ModalManager';
 import { navigateToRoom } from '@/buzz/corner-navigation';
+import { displayModel } from '@/buzz/model-display';
 
 export function HumanProfile({
   workspaceId,
@@ -277,7 +278,7 @@ export function HumanProfile({
                 <SettingsRow
                   key={agent.identity.pubkey}
                   title={agent.identity.handle ? `@${agent.identity.handle}` : 'Handle unavailable'}
-                  description={agent.model}
+                  description={agent.model ? displayModel(agent.model) : undefined}
                   chevron="right"
                   onPress={() =>
                     router.push({

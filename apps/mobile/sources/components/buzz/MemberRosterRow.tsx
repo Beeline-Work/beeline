@@ -2,6 +2,7 @@ import React, { type ReactNode } from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { fallbackMemberHandle } from '@/buzz/member-display';
+import { displayModel } from '@/buzz/model-display';
 import { Typography } from '@/constants/Typography';
 import { IdentityMark } from './IdentityMark';
 
@@ -42,9 +43,7 @@ export function memberRosterSubtitle(
     { kind: 'human'; role?: string } | { kind: 'agent'; model?: string; ownerHandle?: string },
 ): string {
   if (member.kind === 'human') return member.role ?? 'member';
-  return [member.model ?? '—', member.ownerHandle ? `by @${member.ownerHandle}` : undefined]
-    .filter((part): part is string => Boolean(part))
-    .join(' · ');
+  return member.model ? displayModel(member.model) : '—';
 }
 
 /**

@@ -79,14 +79,12 @@ export function MentionSuggestionMenu({
           const display = participant.agent
             ? resolveAgentDisplayIdentity(participant.pubkey, participant.agent)
             : undefined;
-          // An agent's name is its handle, so its row reads like the roster:
-          // the handle, then model and owner.
+          // An agent's name is its handle, followed by its model.
           const agentSubtitle =
             participant.kind === 'agent'
               ? memberRosterSubtitle({
                   kind: 'agent',
                   model: participant.model,
-                  ownerHandle: participant.ownerHandle,
                 })
               : undefined;
           return (
@@ -131,10 +129,8 @@ export function MentionSuggestionMenu({
                 />
               )}
               {agentSubtitle !== undefined ? (
-                <View style={styles.mentionIdentity}>
-                  <Text numberOfLines={1} style={styles.mentionName}>
-                    @{participant.handle}
-                  </Text>
+                <View style={styles.mentionAgentIdentity}>
+                  <Text style={styles.mentionName}>@{participant.handle}</Text>
                   <Text numberOfLines={1} style={styles.mentionHandle}>
                     {agentSubtitle}
                   </Text>
@@ -212,6 +208,11 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       gap: 6,
     },
+    mentionAgentIdentity: {
+      flex: 1,
+      minWidth: 0,
+      justifyContent: 'center',
+    },
     mentionChannelGlyph: {
       width: 24,
       height: 24,
@@ -229,8 +230,7 @@ const styles = StyleSheet.create((theme) => {
     mentionName: {
       ...groknight.type.meta,
       fontFamily: groknight.proseSemibold,
-      flexShrink: 1,
-      maxWidth: '60%',
+      flexShrink: 0,
       color: groknight.textPrimary,
     },
     mentionHandle: {

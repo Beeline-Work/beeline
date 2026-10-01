@@ -6,6 +6,7 @@ import WorkbenchScreen from '../sources/app/(app)/beeline/settings/workbench';
 import BuzzCorners from '../sources/app/(app)/beeline/corners/[roomId]';
 import WorkspaceSettings from '../sources/app/(app)/beeline/settings/workspace';
 import ChangelogScreen from '../sources/app/(app)/changelog';
+import ScheduledWork from '../sources/app/(app)/beeline/settings/schedules';
 import { cornerSectionsView } from './corner-sections-fixture';
 
 // The shimmed RoomViewClient reads corners through this seam.
@@ -13,7 +14,7 @@ import { cornerSectionsView } from './corner-sections-fixture';
   cornerSectionsView;
 
 /**
- * Paints one real section page (`?page=tray|workbench|corners|workspace|changelog`)
+ * Paints one real section page (`?page=tray|workbench|corners|workspace|changelog|schedules`)
  * and reports
  * how its top header is drawn: where the back chevron sits, the title,
  * eyebrow and trailing type, and the divider under the header. The browser test compares
@@ -34,6 +35,7 @@ const screens: Record<
   corners: { Screen: BuzzCorners, title: 'Corners', eyebrow: '#alpha' },
   workspace: { Screen: WorkspaceSettings, title: 'Workspace' },
   changelog: { Screen: ChangelogScreen, title: "What's New" },
+  schedules: { Screen: ScheduledWork, title: 'Scheduled Work', eyebrow: '#alpha' },
 };
 
 const pause = () => new Promise((resolve) => setTimeout(resolve, 100));

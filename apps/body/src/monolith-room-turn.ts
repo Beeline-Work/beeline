@@ -290,6 +290,33 @@ export function pendingGrantToolCall(call: { title?: string; content?: unknown }
 }
 
 /**
+ * The device an instantly approved `request_grant` added this turn, if any.
+ * bwrap fixes `/dev` when a session starts, so the turn loop runs the same turn
+ * again in a fresh session that has it (`deviceGrantResumePrompt`).
+ */
+export function approvedDeviceGrant(
+  calls: readonly { title?: string; content?: unknown }[],
+): string | undefined {
+  for (const call of calls) {
+    if (!/(?:^|[._:/-])request_grant$/i.test(call.title ?? '')) continue;
+    const text = typeof call.content === 'string' ? call.content : JSON.stringify(call.content ?? '');
+    const device = /approved: use (\/dev\/\S+) \[grant [^\]]*\]\. A running session cannot add a device/.exec(text)?.[1];
+    if (device) return device;
+  }
+  return undefined;
+}
+
+/** The prompt that continues a turn after an instantly approved device grant. */
+export function deviceGrantResumePrompt(device: string, earlierReply: string): string {
+  const earlier = earlierReply.trim();
+  return [
+    `Your device grant for ${device} was approved and ${device} is in this session now; this is the same turn continuing.`,
+    ...(earlier ? [`Your reply just before this was: ${earlier}`] : []),
+    'Continue the work that needed the device. Do not request it again or ask anyone to restart.',
+  ].join(' ');
+}
+
+/**
  * The resume prompt for the answer that woke a paused turn. A grant answer and
  * a connector-offer answer resume the same way (`RESUME_KINDS`), but the model
  * must be told which question was answered — the connector one arrives as
@@ -305,6 +332,13 @@ export function resumePrompt(item: { body: string; systemEvent?: SystemEvent }):
     ].join(' ');
   }
   const grant = parseGrantDecisionLine(item.body);
+  if (grant?.kind === 'device' && grant.decision !== 'deny') {
+    return [
+      'This is the answer to your grant request; your paused work resumes now.',
+      `The approved device ${grant.target} is in this session.`,
+      'Continue the paused work with it now; do not restart, schedule another turn, or request the device again.',
+    ].join(' ');
+  }
   if (grant?.kind === 'mcp' && grant.decision !== 'deny') {
     return [
       'This is the answer to your grant request; your paused work resumes now.',
@@ -1397,6 +1431,7 @@ export class MonolithRoomTurnLoop {
                     corner.closedAt >= closedSince,
                 )
                 .sort((a, b) => (b.closedAt ?? 0) - (a.closedAt ?? 0));
+              let deviceResume: string | undefined;
               const buildPrompt = (): string => {
                 const transcript = this.warmTranscript.select(
                   this.sessionId,
@@ -1414,7 +1449,11 @@ export class MonolithRoomTurnLoop {
                     lines: transcript.rows.map((row) => row.line),
                     sinceLastTurn: transcript.warm,
                   },
-                  ...(grantDecision ? { resume: resumePrompt(item) } : {}),
+                  ...(deviceResume
+                    ? { resume: deviceResume }
+                    : grantDecision
+                      ? { resume: resumePrompt(item) }
+                      : {}),
                   members: roomMentionDirectory(roster, this.agent.publicKey),
                   memory: institutionalContext.text,
                   corners: openCorners,
@@ -1537,6 +1576,19 @@ export class MonolithRoomTurnLoop {
               };
               let result = await runPrompt();
               trace.promptSettled();
+              // An instantly approved device grant cannot reach the running
+              // sandbox: replace the session and continue this same turn there.
+              const grantedDevice = approvedDeviceGrant(result.toolCalls);
+              if (grantedDevice) {
+                trace.retry({ reason: 'device grant' });
+                if (!(await this.sessionIsCurrent())) {
+                  await this.discardSession();
+                  await trace.measure('activation', () => this.activate(trace));
+                }
+                deviceResume = deviceGrantResumePrompt(grantedDevice, result.agentText);
+                result = await runPrompt();
+                trace.promptSettled();
+              }
               let openCornerCall = openCornerToolCall(result.toolCalls);
               let cornerOpened = openedACorner(openCornerCall);
               let explained = await this.explainEmpty(result);

@@ -11,6 +11,7 @@ import {
   type AgentGrantDeps,
   type GrantRunDeps,
 } from './read-only-mcp.js';
+import { approvedDeviceGrant } from './monolith-room-turn.js';
 
 function deps(
   answer: Record<string, unknown>,
@@ -152,6 +153,28 @@ describe('beeline-agent request_grant', () => {
     );
     expect(host).toBe(
       "approved: reach api.fly.io [grant g-3]; applies at the agent's next session.",
+    );
+  });
+
+  it('tells an instantly approved /dev/ device grant that this same turn continues with it', async () => {
+    const device = await requestGrant(
+      { kind: 'device', target: '/dev/kvm', reason: 'run the Android emulator' },
+      deps({ grantId: 'g-4', status: 'approved', auto: true }),
+    );
+    expect(device).toBe(
+      'approved: use /dev/kvm [grant g-4]. A running session cannot add a device, so end your turn now with one short line; this same turn continues straight away in a session that has /dev/kvm. Do not ask anyone to restart.',
+    );
+    expect(device).not.toContain('next session');
+    // The turn loop recognises exactly this reply and continues the turn.
+    expect(approvedDeviceGrant([{ title: 'mcp__beeline-agent__request_grant', content: device }])).toBe(
+      '/dev/kvm',
+    );
+    const outside = await requestGrant(
+      { kind: 'device', target: 'kvm', reason: 'run the Android emulator' },
+      deps({ grantId: 'g-5', status: 'approved', auto: true }),
+    );
+    expect(outside).toBe(
+      'approved: use kvm [grant g-5], but only device nodes under /dev/ are added to your session, so nothing was added.',
     );
   });
 

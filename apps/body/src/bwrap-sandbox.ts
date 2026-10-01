@@ -445,12 +445,18 @@ export function grantedSandboxDevices(result: unknown): string[] {
     if (grant.kind !== 'device') continue;
     if (grant.status !== 'approved' && grant.status !== 'once') continue;
     if (typeof grant.target !== 'string') continue;
-    const target = grant.target.trim();
-    if (!isAbsolute(target)) continue;
-    const path = resolve(target);
-    if (path.startsWith('/dev/')) devices.add(path);
+    const path = sandboxDevicePath(grant.target);
+    if (path) devices.add(path);
   }
   return [...devices].sort();
+}
+
+/** The `/dev/` node a device grant target mounts, or undefined when it mounts nothing. */
+export function sandboxDevicePath(target: string): string | undefined {
+  const trimmed = target.trim();
+  if (!isAbsolute(trimmed)) return undefined;
+  const path = resolve(trimmed);
+  return path.startsWith('/dev/') ? path : undefined;
 }
 
 /** `/tmp` is always a private tmpfs, so a path under it is the shadowed case. */

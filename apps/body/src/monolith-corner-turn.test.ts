@@ -3398,3 +3398,177 @@ describe('a context-window overflow', () => {
     expect(String(failed.reason)).toContain("maximum context length is 1048576 tokens");
   });
 });
+
+describe('an instantly approved device grant', () => {
+  it('continues the same corner turn in a new session that mounts the device', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-corner-device-'));
+    roots.push(root);
+    await execFileAsync('git', ['init', root]);
+    const runtime = {
+      agentId: '11'.repeat(32),
+      agent: stored('11'.repeat(32), 'Bee'),
+      rooms: [],
+      supervisorRoot: root,
+      transport: {
+        kind: 'monolith',
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+      },
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+    } as unknown as AgentRuntimeRecord;
+    const config: BodyConfig = {
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+      readonlyMcpCommand: '/fake-beeline-mcp',
+      agentEnv: {},
+      workspaceRoot: root,
+      autoApprovePermissions: true,
+      bwrapPath: '/usr/bin/bwrap',
+    };
+    const abort = new AbortController();
+    let inboxReads = 0;
+    let granted = false;
+    const writes: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const receipts: Array<Record<string, unknown>> = [];
+    const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [{ identityId: '11'.repeat(32), kind: 'agent', name: 'Bee', role: 'member' }],
+        };
+      }
+      if (name === 'listAgentGrants') {
+        return {
+          grants: granted
+            ? [{ grantId: 'g-9', kind: 'device', target: '/dev/ttyUSB0', status: 'approved' }]
+            : [],
+        };
+      }
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerCloseRequests') {
+        inboxReads += 1;
+        if (inboxReads === 1) {
+          return {
+            items: [
+              {
+                id: 'human-msg',
+                authorId: '22'.repeat(32),
+                createdAt: 1,
+                type: 'message',
+                body: 'Flash the board on the serial port.',
+                attachments: [],
+              },
+            ],
+            cursor: 'human-msg',
+          };
+        }
+        return { items: [], cursor: 'latest' };
+      }
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+      if (name === 'postAgentTurnReceipt') receipts.push(input);
+      writes.push({ name, input });
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const api = {
+      execute,
+      connection: () => ({
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+        agentId: runtime.agent.publicKey,
+      }),
+    } as unknown as DaemonApiClient;
+    const spawns: Array<ConstructorParameters<typeof AcpClient>[0]> = [];
+    const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'start').mockResolvedValue(undefined);
+    vi.spyOn(acp, 'stop').mockResolvedValue(undefined);
+    let opened = 0;
+    vi.spyOn(acp, 'sessionNew').mockImplementation(async () => {
+      opened += 1;
+      return { sessionId: `session-${opened}`, raw: {} };
+    });
+    const prompts: Array<{ sessionId: string; prompt: string }> = [];
+    vi.spyOn(acp, 'sessionPrompt').mockImplementation(async (sessionId, prompt) => {
+      prompts.push({ sessionId, prompt: String(prompt) });
+      if (prompts.length > 1) {
+        return { stopReason: 'end_turn', updates: [], agentText: 'Flashed the board.', toolCalls: [] };
+      }
+      granted = true;
+      return {
+        stopReason: 'end_turn',
+        updates: [],
+        agentText: 'Got the serial port; continuing.',
+        toolCalls: [
+          {
+            id: 'call-1',
+            title: 'mcp__beeline-agent__request_grant',
+            status: 'completed',
+            content: [
+              {
+                type: 'text',
+                text: 'approved: use /dev/ttyUSB0 [grant g-9]. A running session cannot add a device, so end your turn now with one short line; this same turn continues straight away in a session that has /dev/ttyUSB0. Do not ask anyone to restart.',
+              },
+            ],
+          },
+        ],
+      };
+    });
+    const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
+    const running = new MonolithCornerTurnLoop({
+      cornerId: 'corner-id',
+      parentRoomId: 'room-id',
+      workspaceId: 'workspace',
+      objective: 'Flash the board',
+      worktreePath: root,
+      repository: {
+        featureBranch: 'feature/board',
+        targetBranch: 'main',
+        gitCommonDir: join(root, '.git'),
+        githubToken: 'token',
+      },
+      runtime,
+      config,
+      api: commandFixtureApi(api, 'corner-id', runtime.agent.publicKey, 'Flash the board'),
+      scheduler,
+      signal: abort.signal,
+      pollMs: 10,
+      onPoll: vi.fn(),
+      onFailure: vi.fn(),
+      onCloseRequested: vi.fn(async () => undefined),
+      createAcpClient: (options) => {
+        spawns.push(options);
+        return acp;
+      },
+    })
+      .run()
+      .catch((error: unknown) => error);
+    await vi.waitFor(
+      () =>
+        expect(receipts.some((receipt) => ['complete', 'failed'].includes(String(receipt.status)))).toBe(
+          true,
+        ),
+      { timeout: 10_000 },
+    );
+    abort.abort();
+    await running;
+    await scheduler.dispose();
+
+    expect(receipts.some((receipt) => receipt.status === 'complete')).toBe(true);
+    expect(prompts.slice(0, 2).map((prompt) => prompt.sessionId)).toEqual(['session-1', 'session-2']);
+    expect(prompts[1]!.prompt).toContain('/dev/ttyUSB0 is in this session now');
+    expect(prompts[1]!.prompt).toContain('Newest message:\nFlash the board');
+    expect(JSON.stringify(writes)).toContain('Flashed the board.');
+    const argv = (spawn: ConstructorParameters<typeof AcpClient>[0]) =>
+      [spawn.agentCommand ?? spawn.agentBinary, ...(spawn.agentArgs ?? [])].join(' ');
+    expect(spawns).toHaveLength(2);
+    expect(argv(spawns[0]!)).not.toContain('/dev/ttyUSB0');
+    expect(argv(spawns[1]!)).toContain('--dev-bind-try /dev/ttyUSB0 /dev/ttyUSB0');
+  });
+});

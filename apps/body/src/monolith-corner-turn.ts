@@ -66,6 +66,7 @@ import {
   wrapAgentCommand,
 } from './bwrap-sandbox.js';
 import { harnessIdentityLabel } from './cursor-acp-bridge.js';
+import { approvedDeviceGrant, deviceGrantResumePrompt } from './monolith-room-turn.js';
 import type { BodyConfig } from './config.js';
 import { type DaemonApiClient } from './daemon-api-client.js';
 import {
@@ -1790,6 +1791,21 @@ export class MonolithCornerTurnLoop {
                 );
                 await stream.retract();
                 return;
+              }
+              // An instantly approved device grant cannot reach the running
+              // sandbox: replace the session and continue this same turn there.
+              const grantedDevice = approvedDeviceGrant(result.toolCalls);
+              if (grantedDevice) {
+                await flushToolCalls(result.toolCalls, '');
+                trace.retry({ reason: 'device grant' });
+                if (!(await this.sessionIsCurrent())) {
+                  await this.discardSession();
+                  await trace.measure('activation', () => this.activate(trace));
+                }
+                result = await runPrompt(
+                  `${buildPrompt()}\n\n${deviceGrantResumePrompt(grantedDevice, result.agentText)}`,
+                );
+                trace.promptSettled();
               }
               let explained = await this.explainEmpty(result);
               // A checks turn is told to say nothing when nothing changed; its

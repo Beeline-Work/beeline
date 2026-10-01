@@ -179,7 +179,7 @@ import {
   type MemberPickerCandidate,
 } from '@/components/buzz/MemberPickerSheet';
 import { useVerifiedNip05Status } from '@/buzz/nip05-verification';
-import { confirmRoomRepositoryLink } from '@/buzz/room-management';
+import { confirmRoomRepositoryLink, normalizedRoomRole } from '@/buzz/room-management';
 import {
   looksLikeCornerOpenIntent,
   GITHUB_REPOSITORY_SELECTION_INSTRUCTION,
@@ -1664,13 +1664,18 @@ export function BuzzChatSurface({
       return kind === participantPickerKind;
     }).length;
   }, [participantPickerKind, userPubkey, workspaceRoster]);
-  // Agents carry their model and owner for the roster sheet and @-mention menu.
+  // Agents carry their model and owner, people their Room role, for the
+  // roster sheet and @-mention menu.
   const describedRoomParticipants = useMemo(() => {
     const workspaceAgents = new Map(
       (workspaceRoster?.agents ?? []).map((agent) => [agent.identity.pubkey, agent]),
     );
+    const roomRoles = new Map(roomMembers.map((member) => [member.pubkey, member]));
     return roomParticipants.map((participant) => {
-      if (participant.kind !== 'agent') return participant;
+      if (participant.kind !== 'agent') {
+        const role = normalizedRoomRole(roomRoles.get(participant.pubkey));
+        return role ? { ...participant, role } : participant;
+      }
       const workspaceAgent = workspaceAgents.get(participant.pubkey);
       const ownerHandle = workspaceAgent?.owner?.handle;
       return {
@@ -1679,7 +1684,7 @@ export function BuzzChatSurface({
         ...(ownerHandle ? { ownerHandle } : {}),
       };
     });
-  }, [roomParticipants, workspaceRoster]);
+  }, [roomMembers, roomParticipants, workspaceRoster]);
   const visibleRosterMembers = useMemo(
     () => orderRoomRoster(describedRoomParticipants),
     [describedRoomParticipants],

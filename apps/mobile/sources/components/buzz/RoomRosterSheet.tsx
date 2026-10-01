@@ -22,6 +22,8 @@ export type RoomRosterParticipant = {
   model?: string;
   /** The owner's raw handle; the shared subtitle formatter owns the "by @" copy. */
   ownerHandle?: string;
+  /** People only: the Room role the roster and @-mention menu show. */
+  role?: string;
   /** People only: the chosen face on record. An agent's assigned face rides
    *  on `agent` and is read through `resolveAgentDisplayIdentity`. */
   face?: string;

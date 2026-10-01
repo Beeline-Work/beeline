@@ -79,23 +79,24 @@ export function MentionSuggestionMenu({
           const display = participant.agent
             ? resolveAgentDisplayIdentity(participant.pubkey, participant.agent)
             : undefined;
-          // An agent's name is its handle, so its row reads like the roster:
-          // the handle, then model and owner.
-          const agentSubtitle =
-            participant.kind === 'agent'
+          // A member row reads like the roster: the handle, then model and
+          // owner for an agent, or the Room role for a person.
+          const subtitle = reserved
+            ? undefined
+            : participant.kind === 'agent'
               ? memberRosterSubtitle({
                   kind: 'agent',
                   model: participant.model,
                   ownerHandle: participant.ownerHandle,
                 })
-              : undefined;
+              : memberRosterSubtitle({ kind: 'human', role: participant.role });
           return (
             <TouchableOpacity
               accessibilityLabel={
                 participant.pubkey === SYSTEM_MENTION_PUBKEY
                   ? `${SYSTEM_MENTION_LABEL}, @${participant.handle}`
-                  : agentSubtitle !== undefined
-                    ? `@${participant.handle}, ${agentSubtitle}, agent`
+                  : subtitle !== undefined
+                    ? `@${participant.handle}, ${subtitle}, ${participant.kind}`
                     : `${participant.name}, @${participant.handle}, ${participant.kind}`
               }
               accessibilityRole="button"
@@ -130,13 +131,13 @@ export function MentionSuggestionMenu({
                   size={24}
                 />
               )}
-              {agentSubtitle !== undefined ? (
+              {subtitle !== undefined ? (
                 <View style={styles.mentionIdentity}>
                   <Text numberOfLines={1} style={styles.mentionName}>
                     @{participant.handle}
                   </Text>
                   <Text numberOfLines={1} style={styles.mentionHandle}>
-                    {agentSubtitle}
+                    {subtitle}
                   </Text>
                 </View>
               ) : (
@@ -145,20 +146,14 @@ export function MentionSuggestionMenu({
                     <Text numberOfLines={1} style={styles.mentionName}>
                       {participant.pubkey === CHANNEL_MENTION_PUBKEY
                         ? 'Everyone in this Room'
-                        : participant.pubkey === SYSTEM_MENTION_PUBKEY
-                          ? SYSTEM_MENTION_LABEL
-                          : participant.name}
+                        : SYSTEM_MENTION_LABEL}
                     </Text>
                     <Text numberOfLines={1} style={styles.mentionHandle}>
                       @{participant.handle}
                     </Text>
                   </View>
                   <Text style={styles.mentionKind}>
-                    {participant.pubkey === CHANNEL_MENTION_PUBKEY
-                      ? 'ROOM'
-                      : participant.pubkey === SYSTEM_MENTION_PUBKEY
-                        ? 'REPORT'
-                        : 'PERSON'}
+                    {participant.pubkey === CHANNEL_MENTION_PUBKEY ? 'ROOM' : 'REPORT'}
                   </Text>
                 </>
               )}

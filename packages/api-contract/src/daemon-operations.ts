@@ -64,6 +64,9 @@ export type AgentScheduleResult = {
 };
 export type AgentScheduleEntry = {
   readonly scheduleId: string;
+  /** The agent the schedule mentions on every run. */
+  readonly agentId: string;
+  readonly agentHandle?: string;
   readonly prompt: string;
   readonly cadence: RoomScheduleCadence;
   readonly maxRuns?: number;
@@ -72,6 +75,13 @@ export type AgentScheduleEntry = {
 };
 export type AgentScheduleListResult = { readonly schedules: readonly AgentScheduleEntry[] };
 export type DeleteAgentScheduleInput = AgentRoomInput & { readonly scheduleId: string };
+/** Replaces only the fields given; a new cadence restarts the next run from now. */
+export type UpdateAgentScheduleInput = AgentRoomInput & {
+  readonly scheduleId: string;
+  readonly prompt?: string;
+  readonly cadence?: RoomScheduleCadence;
+  readonly maxRuns?: number;
+};
 
 /**
  * What this agent reacts to in ONE Room, written by the agent itself.
@@ -248,6 +258,7 @@ export type DaemonOperationMap = {
   postRoomEvent: Operation<PostRoomEventInput, WriteResult>;
   listAgentSchedules: Operation<AgentRoomInput, AgentScheduleListResult>;
   deleteAgentSchedule: Operation<DeleteAgentScheduleInput, WriteResult>;
+  updateAgentSchedule: Operation<UpdateAgentScheduleInput, AgentScheduleResult>;
   getWorkScheduleAuthority: Operation<WorkScheduleAuthorityInput, AuthorityDecisionResult>;
   listAgentToolSchedules: Operation<AgentRoomInput, WorkScheduleListResult>;
   getAgentToolMandate: Operation<AgentRoomInput, AgentToolMandateResult>;

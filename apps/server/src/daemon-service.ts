@@ -1024,6 +1024,10 @@ export class DaemonService {
           input as Input<'deleteAgentSchedule'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'updateAgentSchedule':
+        return (await this.updateAgentSchedule(
+          input as Input<'updateAgentSchedule'>,
+        )) as Output<Name>;
       case 'getAgentToolMandate':
         return (await this.mandate(
           input as Input<'getAgentToolMandate'>,
@@ -4740,22 +4744,34 @@ export class DaemonService {
     });
     return { id: line.id, createdAt: Math.floor(Date.now() / 1_000) };
   }
+  /**
+   * The schedules an agent in this Room may manage: every schedule that
+   * mentions it, and every schedule any agent created for itself here. A
+   * schedule a person created for another agent stays that person's.
+   */
   private async listAgentSchedules(input: Input<'listAgentSchedules'>, agentId: string) {
     const rows = await this.database.query<{
       id: string;
+      agent_id: string;
+      agent_handle: string | null;
       cadence: import('@beeline/api-contract/phone').RoomScheduleCadence;
       message: string;
       max_runs: number | null;
       run_count: number;
       next_run_at: Date;
     }>(
-      `SELECT id,cadence,message,max_runs,run_count,next_run_at
-       FROM agent_schedules WHERE room_id=$1 AND agent_id=$2 ORDER BY created_at,id`,
+      `SELECT schedule.id,schedule.agent_id,agent.handle agent_handle,schedule.cadence,
+         schedule.message,schedule.max_runs,schedule.run_count,schedule.next_run_at
+       FROM agent_schedules schedule JOIN identities agent ON agent.id=schedule.agent_id
+       WHERE schedule.room_id=$1 AND (schedule.agent_id=$2 OR schedule.creator_id=schedule.agent_id)
+       ORDER BY schedule.created_at,schedule.id`,
       [input.roomId, agentId],
     );
     return {
       schedules: rows.rows.map((row) => ({
         scheduleId: row.id,
+        agentId: row.agent_id,
+        ...(row.agent_handle ? { agentHandle: row.agent_handle } : {}),
         prompt: row.message,
         cadence: row.cadence,
         ...(row.max_runs !== null ? { maxRuns: row.max_runs } : {}),
@@ -4766,11 +4782,54 @@ export class DaemonService {
   }
   private async deleteAgentSchedule(input: Input<'deleteAgentSchedule'>, agentId: string) {
     const deleted = await this.database.query(
-      `DELETE FROM agent_schedules WHERE id=$1 AND room_id=$2 AND agent_id=$3`,
+      `DELETE FROM agent_schedules
+       WHERE id=$1 AND room_id=$2 AND (agent_id=$3 OR creator_id=agent_id)`,
       [input.scheduleId, input.roomId, agentId],
     );
     if (!deleted.rowCount) throw new Error('schedule not found');
     return this.writeResult();
+  }
+  /**
+   * Any agent in the Room may edit a schedule an agent created for itself.
+   * Its runs are posted as the scheduler's line, never in a person's name, so
+   * an edit cannot put words in anybody's mouth; a person's schedule is not
+   * editable here.
+   */
+  private async updateAgentSchedule(input: Input<'updateAgentSchedule'>) {
+    if (input.prompt === undefined && input.cadence === undefined && input.maxRuns === undefined)
+      throw new Error('give a prompt, cadence, or maxRuns to change');
+    if (input.prompt !== undefined && (typeof input.prompt !== 'string' || !input.prompt.trim()))
+      throw new Error('schedule prompt is required');
+    if (input.cadence !== undefined) validateScheduleCadence(input.cadence);
+    if (
+      input.maxRuns !== undefined &&
+      (!Number.isSafeInteger(input.maxRuns) || (input.maxRuns as number) < 1)
+    ) {
+      throw new Error('maxRuns must be a positive integer');
+    }
+    const nextRunAt =
+      input.cadence === undefined ? null : nextScheduleOccurrence(input.cadence, new Date());
+    const updated = await this.database.query<{ next_run_at: Date }>(
+      `UPDATE agent_schedules SET message=COALESCE($3,message),
+         cadence=COALESCE($4::jsonb,cadence),max_runs=COALESCE($5,max_runs),
+         next_run_at=COALESCE($6,next_run_at),updated_at=now()
+       WHERE id=$1 AND room_id=$2 AND creator_id=agent_id
+       RETURNING next_run_at`,
+      [
+        input.scheduleId,
+        input.roomId,
+        input.prompt?.trim() ?? null,
+        input.cadence === undefined ? null : JSON.stringify(input.cadence),
+        input.maxRuns ?? null,
+        nextRunAt,
+      ],
+    );
+    const row = updated.rows[0];
+    if (!row) throw new Error('schedule not found');
+    return {
+      scheduleId: input.scheduleId,
+      nextRunAt: Math.floor(row.next_run_at.getTime() / 1_000),
+    };
   }
   private async scheduleReceipt(input: Input<'postWorkScheduleReceipt'>, agentId: string) {
     await this.database.query(
@@ -7232,6 +7291,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postRoomEvent: true,
   listAgentSchedules: true,
   deleteAgentSchedule: true,
+  updateAgentSchedule: true,
   getAgentToolMandate: true,
   getTargetAgentAuthority: true,
   listRoomCorners: true,

@@ -4922,8 +4922,8 @@ export class PhoneService {
    */
   private async requestCornerClose(roomId: string, viewerId: string) {
     const parentId = await this.database.transaction(async (database) => {
-      const access = await database.query(
-        `SELECT room_member.identity_id FROM memberships room_member
+      const access = await database.query<{ workspace_role: string }>(
+        `SELECT workspace_member.role workspace_role FROM memberships room_member
          JOIN rooms room ON room.id=room_member.room_id
          JOIN memberships workspace_member
            ON workspace_member.workspace_id=room.workspace_id
@@ -4946,8 +4946,11 @@ export class PhoneService {
         )
       ).rows[0];
       if (!room) throw new Error('corner not found');
-      if (room.kind === 'human' && room.created_by !== viewerId)
-        throw new Error('corner close access denied: only the creator can close this corner');
+      const manager = ['owner', 'admin'].includes(access.rows[0]!.workspace_role);
+      if (room.kind === 'human' && room.created_by !== viewerId && !manager)
+        throw new Error(
+          'corner close access denied: only the creator or a workspace owner or admin can close this corner',
+        );
 
       if (!room.archived) {
         const active = await database.query<CommandRow>(

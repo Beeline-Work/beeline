@@ -4378,6 +4378,8 @@ describe('monolith integration', () => {
       schedules: [
         {
           scheduleId,
+          agentId: AGENT,
+          agentHandle: 'bee',
           prompt: "message 'hello @bananaman614305'",
           cadence: { kind: 'interval', everyMinutes: 1 },
           maxRuns: 5,
@@ -5755,7 +5757,7 @@ describe('monolith integration', () => {
     });
   });
 
-  it('creates title-only human corners that only their creator can close', async () => {
+  it('creates title-only human corners that only their creator or a Workspace owner or admin can close', async () => {
     const created = await operation('createHumanCorner', {
       roomId: ROOM,
       title: '  Release   notes  ',
@@ -5833,10 +5835,23 @@ describe('monolith integration', () => {
     const refused = await operation('requestCornerClose', { roomId: cornerId }, otherToken);
     expect(refused.status).toBe(403);
     expect(await refused.json()).toEqual({
-      error: 'corner close access denied: only the creator can close this corner',
+      error:
+        'corner close access denied: only the creator or a workspace owner or admin can close this corner',
     });
 
-    expect((await operation('requestCornerClose', { roomId: cornerId })).status).toBe(204);
+    // A Workspace admin controls every corner in the Workspace, including one
+    // another person created.
+    const adminLogin = 'human-corner-admin';
+    const adminId = createHash('sha256').update(`github:${adminLogin}`).digest('hex');
+    const adminToken = await phoneToken(adminLogin);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'admin'),($1,$3,$2,'member'),($1,$4,$2,'member')`,
+      [WORKSPACE, adminId, ROOM, cornerId],
+    );
+    expect((await operation('requestCornerClose', { roomId: cornerId }, adminToken)).status).toBe(
+      204,
+    );
     expect(
       (
         await database.query<{ archived: boolean }>(

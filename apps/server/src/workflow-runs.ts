@@ -350,7 +350,7 @@ export async function startWorkflow(
       );
       if (!agents) {
         throw new Error(
-          `role binding for ${role} must be an agent id or @handle, or a list of 1-${WORKFLOW_ROLE_AGENTS_MAX} distinct ones`,
+          `role binding for ${role} must be an agent id or a member handle, or a list of 1-${WORKFLOW_ROLE_AGENTS_MAX} distinct ones`,
         );
       }
       if (agents.length === 1) roleBindings[role] = agents[0]!;
@@ -692,14 +692,24 @@ export async function reassignFailedWorkflowRole(
   await reassignRole(db, { roomId: input.roomId, runId: run.runId, run, contract, role, picked });
 }
 
-/** An `@handle` binding entry resolved to that Room member's id; anything else is returned unchanged. */
+/**
+ * A binding entry resolved to a Room member's id: an agent id is kept, and a
+ * word matching a current member's handle (with or without the @) binds that
+ * member. Any other word is returned unchanged and refused by `roleAgentList`.
+ */
 async function resolveHandleBinding(db: SqlDatabase, roomId: string, entry: string): Promise<string> {
-  return typeof entry === 'string' && entry.startsWith('@') ? memberIdForHandle(db, roomId, entry) : entry;
+  if (typeof (entry as unknown) !== 'string') return entry;
+  if (entry.startsWith('@')) return memberIdForHandle(db, roomId, entry);
+  if (isAgentIdentityReference(entry)) return entry;
+  return (await roomMemberIdForHandle(db, roomId, entry)) ?? entry;
 }
 
-/** The identity id of the current Room member with this handle (as agents see it in their member list). */
-async function memberIdForHandle(db: SqlDatabase, roomId: string, raw: string): Promise<string> {
-  const handle = raw.replace(/^@/, '');
+/** The identity id of a current Room member with this handle, or undefined when none has it. */
+async function roomMemberIdForHandle(
+  db: SqlDatabase,
+  roomId: string,
+  handle: string,
+): Promise<string | undefined> {
   const row = (
     await db.query<{ identity_id: string }>(
       `SELECT m.identity_id FROM memberships m JOIN identities i ON i.id=m.identity_id
@@ -707,8 +717,15 @@ async function memberIdForHandle(db: SqlDatabase, roomId: string, raw: string): 
       [roomId, handle],
     )
   ).rows[0];
-  if (!row) throw new Error(`@${handle} is not a current member of this Room`);
-  return row.identity_id;
+  return row?.identity_id;
+}
+
+/** The identity id of the current Room member with this handle (as agents see it in their member list). */
+async function memberIdForHandle(db: SqlDatabase, roomId: string, raw: string): Promise<string> {
+  const handle = raw.replace(/^@/, '');
+  const id = await roomMemberIdForHandle(db, roomId, handle);
+  if (!id) throw new Error(`@${handle} is not a current member of this Room`);
+  return id;
 }
 
 /**

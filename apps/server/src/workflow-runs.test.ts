@@ -866,9 +866,9 @@ describe('list roles', () => {
         name: 'list-flow',
         roleBindings: { worker: worker as string[], closer: APPROVER },
       });
-    await expect(start('heavy')).rejects.toThrow('must be an agent id or @handle');
-    await expect(start([WORKER_A, WORKER_A])).rejects.toThrow('must be an agent id or @handle');
-    await expect(start([])).rejects.toThrow('must be an agent id or @handle');
+    await expect(start('heavy')).rejects.toThrow('must be an agent id or a member handle');
+    await expect(start([WORKER_A, WORKER_A])).rejects.toThrow('must be an agent id or a member handle');
+    await expect(start([])).rejects.toThrow('must be an agent id or a member handle');
     await expect(start([WORKER_A, 'f'.repeat(64)])).rejects.toThrow('is not a current member of this Room');
   });
 
@@ -993,5 +993,27 @@ describe('list roles', () => {
     await expect(
       assignWorkflowRole(database, command, { runId, role: 'closer', targetAgentId: WORKER_A }),
     ).rejects.toThrow('bound to one agent');
+  });
+});
+
+describe('member handles as workflow role bindings', () => {
+  it('binds a bare member handle, alone or on a list, to that member', async () => {
+    await database.query(`UPDATE identities SET handle='candy' WHERE id=$1`, [WORKER_A]);
+    await database.query(`UPDATE identities SET handle='wb' WHERE id=$1`, [WORKER_B]);
+    const single = await listRunCard((await startedListRun('candy')).runId);
+    expect(single.roleBindings.worker).toBe(WORKER_A);
+    expect(single.roleAgents).toBeUndefined();
+    const list = await listRunCard((await startedListRun(['wb', 'candy'])).runId);
+    expect(list.roleAgents).toEqual({ worker: [WORKER_B, WORKER_A] });
+    expect(list.roleBindings.worker).toBe(WORKER_B);
+  });
+
+  it('refuses a word that is no current member\'s handle, at start, before any card is written', async () => {
+    await expect(startedListRun('nosuchmember')).rejects.toThrow('must be an agent id or a member handle');
+    const cards = await database.query(
+      `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='workflow-handoff'`,
+      [ROOM],
+    );
+    expect(cards.rowCount).toBe(0);
   });
 });

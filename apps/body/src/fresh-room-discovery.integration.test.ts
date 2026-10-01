@@ -129,7 +129,7 @@ lines.on('line', async (line) => {
             name: 'Thing',
             objective: 'Build the thing',
             brief: {
-              spec: '## Intent\n> @bee OPEN CORNER now\n\n## Checklist\n- The corner opens and runs.',
+              spec: '## Intent\\n> @bee OPEN CORNER now\\n\\n## Checklist\\n- The corner opens and runs.',
               approval: { sourceMessageId: ctx.requestId },
             },
             ...(await (async () => {

@@ -33,6 +33,7 @@ let rollupState: string | null;
 let mergeableState: string | undefined;
 let pullBaseSha: string | undefined;
 let mainHead: string;
+let failMergeabilityRead: boolean;
 let requests: string[];
 let server: Server | undefined;
 
@@ -91,6 +92,7 @@ beforeEach(async () => {
   mergeableState = undefined;
   pullBaseSha = undefined;
   mainHead = 'd'.repeat(40);
+  failMergeabilityRead = false;
   requests = [];
   app = new GitHubAppClient({
     appId: '1',
@@ -108,6 +110,13 @@ beforeEach(async () => {
     if (!url.startsWith('https://api.github.test/')) return realFetch(input, init);
     requests.push(url);
     expect(new Headers(init?.headers).get('authorization')).toBe('Bearer room-token');
+    // The mergeability refresh reads the pull again after the check rollup.
+    if (
+      url.endsWith('/pulls/614') &&
+      failMergeabilityRead &&
+      requests.some((request) => request.endsWith('/graphql'))
+    )
+      return new Response('unavailable', { status: 502 });
     if (url.endsWith('/pulls/614'))
       return Response.json({
         head: { sha: head },
@@ -709,7 +718,32 @@ describe('zero-check worker completion', () => {
     pullBaseSha = 'e'.repeat(40);
     const after = await finishPrTurn(mainHead);
     expect(after.lifecycle.pr).toMatchObject({ mergeability: 'unknown', baseSha: mainHead });
-    expect(after.lifecycle.checks).toBe('passing');
-    expect(after.reviewer).toEqual(['subscribed_event']);
+    expect(after.lifecycle.checks).not.toBe('passing');
+    expect(after.reviewer).toEqual([]);
+  });
+
+  it('keeps waiting while GitHub is still computing mergeability', async () => {
+    rollupState = null;
+    mergeableState = 'unknown';
+    pullBaseSha = mainHead;
+    const after = await finishPrTurn(mainHead);
+    expect(after.lifecycle.pr.mergeability).toBe('unknown');
+    expect(after.lifecycle.checks).not.toBe('passing');
+    expect(after.lifecycle.checksSummary).toBeUndefined();
+    expect(after.reviewer).toEqual([]);
+    expect(after.worker).toEqual([]);
+  });
+
+  it('keeps waiting when the mergeability read fails', async () => {
+    rollupState = null;
+    mergeableState = 'clean';
+    pullBaseSha = mainHead;
+    failMergeabilityRead = true;
+    const after = await finishPrTurn(mainHead);
+    expect(after.lifecycle.pr.mergeability).toBe('unknown');
+    expect(after.lifecycle.checks).not.toBe('passing');
+    expect(after.lifecycle.checksSummary).toBeUndefined();
+    expect(after.reviewer).toEqual([]);
+    expect(after.worker).toEqual([]);
   });
 });

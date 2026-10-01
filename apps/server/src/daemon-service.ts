@@ -1558,8 +1558,9 @@ export class DaemonService {
    * reviewer otherwise waits forever. Resolve that absence only after the
    * worker has finished its PR turn; at PR-open time the same empty rollup is
    * merely a race with GitHub registering workflows. GitHub also runs no
-   * workflows for a PR that conflicts with its base, so a conflict is read
-   * first and never resolved as a repository without checks.
+   * workflows for a PR that conflicts with its base, so the zero-check result
+   * resolves only once GitHub has computed mergeability and found no conflict;
+   * a conflict, a verdict still computing, or a failed read stays pending.
    */
   private async reconcileZeroCheckWorkerCompletion(
     cornerId: string,
@@ -1621,7 +1622,8 @@ export class DaemonService {
         current.owner_agent_id !== workerAgentId ||
         current.reviewer_agent_id !== candidate.reviewer_agent_id ||
         current.lifecycle.pr?.headSha !== verdict.headSha ||
-        current.lifecycle.pr.mergeability === 'dirty' ||
+        (current.lifecycle.pr.mergeability !== 'clean' &&
+          current.lifecycle.pr.mergeability !== 'other') ||
         current.lifecycle.checks === 'passing'
       )
         return;

@@ -26,7 +26,7 @@
     "dead-code": "node scripts/check-dead-code.mjs",
     "predead-code:baseline": "npm run dead-code:prepare",
     "dead-code:baseline": "node scripts/check-dead-code.mjs --write-baseline",
-    "test:dead-code": "node --test scripts/dead-code.test.mjs",
+    "test:dead-code": "node --test scripts/dead-code.test.mjs scripts/review-exact-head.test.mjs",
     "typecheck": "turbo run typecheck && npm run typecheck --prefix apps/mobile && tsc -p tsconfig.scripts.json",
     "test": "turbo run test",
     "stack:up": "docker compose -f relay-stack/compose.yml up -d --build",

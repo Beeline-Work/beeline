@@ -256,8 +256,9 @@ export async function uploadChatAttachment(
  * Starts each staged attachment's upload the moment it lands in the composer,
  * so send only waits for whatever is still in flight. Uploads run one at a time
  * in the order they were added, so a ten-photo pick never holds ten full
- * photos in memory. A failed upload is forgotten and retried by the next
- * `uploadAll`; a removed attachment that has not started yet is skipped.
+ * photos in memory. A failed upload is forgotten and retried by `uploadAll`,
+ * including one that fails while send is waiting on it; a removed attachment
+ * that has not started yet is skipped.
  */
 export function createChatAttachmentUploader() {
   const uploads = new Map<PickedChatAttachment, Promise<AttachmentReference>>();
@@ -285,12 +286,21 @@ export function createChatAttachmentUploader() {
       for (const attachment of uploads.keys())
         if (!attachments.includes(attachment)) uploads.delete(attachment);
     },
-    /** One message's uploaded references, in display order. */
+    /**
+     * One message's uploaded references, in display order. An upload that was
+     * already running when send began gets one fresh attempt if it fails.
+     */
     uploadAll(
       client: BuzzClient,
       attachments: readonly PickedChatAttachment[],
     ): Promise<AttachmentReference[]> {
-      return Promise.all(attachments.map((attachment) => start(client, attachment)));
+      return Promise.all(
+        attachments.map((attachment) => {
+          const staged = uploads.has(attachment);
+          const upload = start(client, attachment);
+          return staged ? upload.catch(() => start(client, attachment)) : upload;
+        }),
+      );
     },
   };
 }

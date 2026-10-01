@@ -702,6 +702,59 @@ it('carries the corner discussion into a first brief the human ask approves', as
   ).toHaveLength(1);
 });
 
+it('carries files posted in the corner discussion into the upgrade brief', async () => {
+  const cornerId = await humanCorner(CODE_ROOM);
+  const spec = '44444444-4444-4444-8444-000000000001';
+  const expired = '44444444-4444-4444-8444-000000000002';
+  for (const [id, title, sha, expiresAt] of [
+    [spec, 'Spec: corner waiting vs idle', 'e'.repeat(64), "now()+interval '1 hour'"],
+    [expired, 'Old draft', 'f'.repeat(64), "now()-interval '1 hour'"],
+  ] as const)
+    await db.query(
+      `INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
+       VALUES($1,$2,'media',$3,'text/markdown',$4,4,$5,'ready',${expiresAt})`,
+      [id, AGENT, `media/${AGENT}/${sha}`, title, sha],
+    );
+  await db.query(
+    `INSERT INTO messages(id,room_id,author_id,text,attachments) VALUES($1,$2,$3,'I posted the spec',$4::jsonb)`,
+    [
+      randomBytes(32).toString('hex'),
+      cornerId,
+      AGENT,
+      JSON.stringify([
+        { url: `http://test/v1/media/${spec}`, name: 'spec.md' },
+        { url: `http://test/v1/media/${expired}`, name: 'old.md' },
+      ]),
+    ],
+  );
+
+  await upgrade(cornerId);
+
+  const { brief } = await daemon.execute('getCornerRestoreState', { cornerId }, AGENT);
+  // The spec doc posted before the upgrade reaches the code agent as a brief
+  // file; the expired one is skipped instead of failing the upgrade.
+  expect(brief?.attachments).toEqual([
+    {
+      objectId: spec,
+      title: 'Spec: corner waiting vs idle',
+      purpose: 'Posted in the corner discussion before the upgrade',
+      required: false,
+      mime: 'text/markdown',
+      sha256: 'e'.repeat(64),
+      size: 4,
+    },
+  ]);
+  // The person opening the corner's Brief sees the same doc listed.
+  expect((await phone.readRoom(cornerId, HUMAN))?.cornerBrief?.attachments).toEqual([
+    {
+      title: 'Spec: corner waiting vs idle',
+      purpose: 'Posted in the corner discussion before the upgrade',
+      required: false,
+      url: expect.stringMatching(new RegExp(`/v1/media/${spec}$`)),
+    },
+  ]);
+});
+
 it('keeps the brief a no-code corner already had when it upgrades', async () => {
   const command = await commissioned(CODE_ROOM);
   const { cornerId } = await daemon.execute(

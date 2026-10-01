@@ -462,4 +462,38 @@ describe('ObjectService', () => {
     expect(isArtifactMimeType('audio/mpeg')).toBe(false);
     expect(isArtifactMimeType('application/x-thing')).toBe(false);
   });
+
+  it('reads a Room object for an app tool only where the Room can see it', async () => {
+    const workspace = '11111111-1111-4111-8111-111111111111';
+    const room = '22222222-2222-4222-8222-222222222222';
+    const other = '33333333-3333-4333-8333-333333333333';
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$3,$4,'Here'),($2,$3,$4,'There')`,
+      [room, other, workspace, AGENT],
+    );
+    const bytes = new Uint8Array(Buffer.from('video-bytes'));
+    const queued = await service.uploadArtifact(AGENT, bytes, 'application/octet-stream', 'take.mp4');
+    const foreign = await service.uploadArtifact(OTHER, new Uint8Array([1, 2]),
+      'application/octet-stream', 'theirs.mp4');
+    await database.query(
+      `INSERT INTO agent_pending_attachments(room_id,agent_id,url,name,mime_type,size)
+       VALUES($1,$2,$3,'take.mp4','application/octet-stream',$4),
+             ($1,$5,$6,'theirs.mp4','application/octet-stream',2)`,
+      [room, AGENT, queued.url, bytes.length, OTHER, foreign.url],
+    );
+    const file = await service.readRoomObject(room, AGENT, queued.objectId);
+    expect(file).toMatchObject({ name: 'take.mp4', mimeType: 'application/octet-stream',
+      size: bytes.length });
+    // Another agent's queued artifact is not yet in the Room; nothing is visible in another Room.
+    await expect(service.readRoomObject(room, AGENT, foreign.objectId)).resolves.toBeUndefined();
+    await expect(service.readRoomObject(other, AGENT, queued.objectId)).resolves.toBeUndefined();
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,attachments) VALUES('m1',$1,$2,'take',$3::jsonb)`,
+      [other, OTHER, JSON.stringify([{ url: foreign.url }])],
+    );
+    await expect(service.readRoomObject(other, AGENT, foreign.objectId)).resolves.toMatchObject({
+      name: 'theirs.mp4' });
+    await expect(service.readRoomObject(room, AGENT, foreign.objectId)).resolves.toBeUndefined();
+  });
 });

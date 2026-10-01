@@ -48,7 +48,7 @@
  * from its output; they never reach the transcript, the ledger, or the model.
  */
 import { execFile } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { chmod, mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -161,50 +161,90 @@ async function readOperatorSecrets(
   }
 }
 
-/**
- * How long a stale lock may sit before a waiter takes it over. A live store
- * write takes milliseconds, so a lock older than this was left by a crashed
- * holder; without the takeover a dead process would wedge the store forever.
- */
+/** How long a stale lock may sit before a waiter takes it over. */
 const SECRETS_LOCK_STALE_MS = 15_000;
 /** Ceiling on waiting for the lock; the caller gets an error, not a hang. */
 const SECRETS_LOCK_TIMEOUT_MS = 30_000;
 /** Base poll interval while the lock is held by someone else. */
 const SECRETS_LOCK_POLL_MS = 25;
 
+/** The lock file's content: `<pid>:<uuid>`, the holder's unguessable owner token. */
+function operatorSecretsLockToken(): string {
+  return `${process.pid}:${randomUUID()}`;
+}
+
+/** The lock's current owner token, or undefined if there is no lock. */
+async function operatorSecretsLockOwner(lockPath: string): Promise<string | undefined> {
+  const raw = await readFile(lockPath, 'utf8').catch(() => undefined);
+  if (!raw) return undefined;
+  const token = raw.trim();
+  return token || undefined;
+}
+
+/**
+ * Take over a stale lock. The lock's content is re-read immediately before
+ * the unlink so a pathname unlink can never delete a lock a NEW holder
+ * created between our first stale sighting and the delete: we only remove
+ * the file if it still carries the exact token we judged stale.
+ *
+ * Returns true when a stale lock was removed (the caller should retry the
+ * exclusive create at once); false when the lock is fresh, gone, or carries
+ * a token different from the stale one we observed.
+ */
+async function takeOverStaleOperatorSecretsLock(lockPath: string): Promise<boolean> {
+  const first = await operatorSecretsLockOwner(lockPath);
+  if (!first) return false;
+  const info = await stat(lockPath).catch(() => undefined);
+  if (!info || Date.now() - info.mtimeMs <= SECRETS_LOCK_STALE_MS) return false;
+  const second = await operatorSecretsLockOwner(lockPath);
+  if (second !== first) return false;
+  await rm(lockPath, { force: true });
+  return true;
+}
+
+/**
+ * Release the lock this holder owns. The lock is unlinked only while it
+ * still carries our exact owner token: a contender that took over a stale
+ * copy of our lock owns the path now, and a pathname unlink would break its
+ * mutual exclusion while it is mid-write.
+ */
+async function releaseOperatorSecretsLock(lockPath: string, owner: string): Promise<void> {
+  const current = await operatorSecretsLockOwner(lockPath);
+  if (current !== owner) return;
+  await rm(lockPath, { force: true });
+}
+
 /**
  * Hold the operator-store lock for one read-modify-write. The lock is a
- * sibling `secrets.json.lock` file created with `O_EXCL`, so it serializes
- * the store across separate daemon processes sharing one operator config
- * directory, not just across calls in one process. Returns a release
- * function; call it in `finally`. A crashed holder leaves a stale lock that
- * any waiter takes over after `SECRETS_LOCK_STALE_MS`.
+ * sibling `secrets.json.lock` file created with `O_EXCL`: the exclusive
+ * create is the fence, and the file's content is the holder's unguessable
+ * owner token, used to make every unlink ownership-safe (see the takeover
+ * and release helpers above). Cross-process by construction, since separate
+ * daemon processes sharing one operator config directory contend on the
+ * same inode. Returns a release function; call it in `finally`. A crashed
+ * holder leaves a stale lock that any waiter takes over after
+ * `SECRETS_LOCK_STALE_MS`.
  */
-async function acquireOperatorSecretsLock(path: string): Promise<() => Promise<void>> {
+export async function acquireOperatorSecretStoreLock(
+  path: string,
+): Promise<() => Promise<void>> {
   const lockPath = `${path}.lock`;
+  const owner = operatorSecretsLockToken();
   const deadline = Date.now() + SECRETS_LOCK_TIMEOUT_MS;
   for (;;) {
     try {
       const handle = await open(lockPath, 'wx', 0o600);
-      await handle.writeFile(`${process.pid}\n`);
+      await handle.writeFile(`${owner}\n`);
       await handle.close();
       let released = false;
       return async () => {
         if (released) return;
         released = true;
-        await rm(lockPath, { force: true });
+        await releaseOperatorSecretsLock(lockPath, owner);
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      try {
-        const info = await stat(lockPath);
-        if (Date.now() - info.mtimeMs > SECRETS_LOCK_STALE_MS) {
-          await rm(lockPath, { force: true });
-          continue;
-        }
-      } catch {
-        continue; // the lock vanished between attempts; just retry
-      }
+      if (await takeOverStaleOperatorSecretsLock(lockPath)) continue;
       if (Date.now() > deadline) {
         throw new Error(`timed out waiting for the operator secret store lock at ${lockPath}`);
       }
@@ -235,7 +275,7 @@ export async function storeOperatorSecret(
   // The lock file lives beside the store, so the directory must exist first;
   // recursive mkdir is idempotent and safe when several processes race to it.
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const release = await acquireOperatorSecretsLock(path);
+  const release = await acquireOperatorSecretStoreLock(path);
   try {
     const store = { ...(await readOperatorSecrets(env)), [name]: value };
     const tmp = `${path}.tmp`;

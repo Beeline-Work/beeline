@@ -1,9 +1,9 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
@@ -16,6 +16,7 @@ import {
   GrantCommandRunner,
   GrantRunnerServer,
   ROOM_SANDBOX_UNAVAILABLE,
+  acquireOperatorSecretStoreLock,
   matchCommandGrant,
   operatorSecretResolver,
   storeOperatorSecret,
@@ -375,6 +376,58 @@ describe('GrantCommandRunner', () => {
       readFileSync(join(xdg, 'beeline', 'secrets.json'), 'utf8'),
     ) as Record<string, string>;
     expect(Object.keys(store).sort()).toEqual(names.slice().sort());
+  });
+
+  it('a holder whose lock was taken over does not unlink the new owner lock on release', async () => {
+    const config = await mkdtemp(join(tmpdir(), 'beeline-keys-'));
+    roots.push(config);
+    const xdg = join(config, '.config');
+    const storePath = join(xdg, 'beeline', 'secrets.json');
+    const lockPath = `${storePath}.lock`;
+    await mkdir(dirname(storePath), { recursive: true });
+    const release = await acquireOperatorSecretStoreLock(storePath);
+    // Simulate a contender that took over a stale copy of our lock while we
+    // are mid-write: the path now carries a different, fresh owner token.
+    // Without an ownership check, our release would unlink by pathname and
+    // break the contender's mutual exclusion.
+    await writeFile(lockPath, `contender:0\n`, { mode: 0o600 });
+    expect(readFileSync(lockPath, 'utf8')).toBe(`contender:0\n`);
+    await release();
+    // The contender's lock must survive the original holder's release.
+    expect(readFileSync(lockPath, 'utf8')).toBe(`contender:0\n`);
+    // And the original holder can no longer release/drop it either.
+    await release();
+    expect(readFileSync(lockPath, 'utf8')).toBe(`contender:0\n`);
+  });
+
+  it('takes over a genuinely stale lock and a fresh lock is never removed by a waiter', async () => {
+    const config = await mkdtemp(join(tmpdir(), 'beeline-keys-'));
+    roots.push(config);
+    const xdg = join(config, '.config');
+    const env: NodeJS.ProcessEnv = { XDG_CONFIG_HOME: xdg };
+    const storePath = join(xdg, 'beeline', 'secrets.json');
+    const lockPath = `${storePath}.lock`;
+    await mkdir(dirname(storePath), { recursive: true });
+    // A dead holder left a lock aged past the stale threshold; the next store
+    // must take it over and complete instead of wedging forever.
+    const dead = Date.now() - 20_000;
+    await writeFile(lockPath, `dead:9\n`, { mode: 0o600 });
+    await utimes(lockPath, new Date(dead), new Date(dead));
+    await storeOperatorSecret('RECOVERED', 'survived', env);
+    await expect(operatorSecretResolver(env)('RECOVERED')).resolves.toBe('survived');
+    // The takeover completed and the holder released; no lock is left behind.
+    expect(existsSync(lockPath)).toBe(false);
+    // Now hold the lock and ask another caller to acquire while it is fresh:
+    // the waiter must wait, never remove the held lock.
+    const release = await acquireOperatorSecretStoreLock(storePath);
+    const owner = readFileSync(lockPath, 'utf8').trim();
+    const waiting = acquireOperatorSecretStoreLock(storePath);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(readFileSync(lockPath, 'utf8').trim()).toBe(owner);
+    await release();
+    const release2 = await waiting;
+    expect(readFileSync(lockPath, 'utf8').trim()).not.toBe(owner);
+    await release2();
   });
 
   it('reports a non-zero exit and a command that does not start, still with a ledger row', async () => {

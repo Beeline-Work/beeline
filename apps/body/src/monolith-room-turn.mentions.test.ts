@@ -72,6 +72,18 @@ describe('who an agent can tag, and how it is spelled', () => {
     expect(directory.split('\n').at(-1)).toBe('You are @greeter, a member of this Room; you are not listed above.');
   });
 
+  it('tells the agent its own handle when it is the only taggable member', () => {
+    const roster = {
+      members: [
+        { identityId: 'self', kind: 'agent' as const, name: 'Sol', handle: 'sol', role: 'member' as const },
+        { identityId: 'nameless', kind: 'human' as const, name: 'Ada', role: 'member' as const },
+      ],
+    };
+    expect(roomMentionDirectory(roster, 'self')).toBe(
+      'Members (exact tag spellings):\nYou are @sol, a member of this Room; you are not listed above.',
+    );
+  });
+
   it('omits a member with no handle and says nothing when no member is taggable', () => {
     const roster = {
       members: [

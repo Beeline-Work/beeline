@@ -587,9 +587,9 @@ export function roomMentionDirectory(roster: WorkspaceRoster, selfId: string): s
     const kind = member.kind === 'agent' ? 'agent' : 'person';
     rows.push(`- @${memberHandle}${name && name !== memberHandle ? ` — ${name}` : ''} (${kind})`);
   }
-  if (!rows.length) return '';
   // Without this line an agent reading the list concludes it is not a member.
   if (selfHandle) rows.push(`You are @${selfHandle}, a member of this Room; you are not listed above.`);
+  if (!rows.length) return '';
   return ['Members (exact tag spellings):', ...rows].join('\n');
 }
 

@@ -342,9 +342,11 @@ export async function startWorkflow(
     for (const role of contract.roles) {
       const raw = input.roleBindings[role]!;
       const agents = roleAgentList(
-        Array.isArray(raw)
-          ? await Promise.all(raw.map((entry) => resolveHandleBinding(db, command.room_id, entry)))
-          : await resolveHandleBinding(db, command.room_id, raw),
+        typeof raw === 'string'
+          ? await resolveHandleBinding(db, command.room_id, raw)
+          : Array.isArray(raw)
+            ? await Promise.all(raw.map((entry) => resolveHandleBinding(db, command.room_id, entry)))
+            : raw,
       );
       if (!agents) {
         throw new Error(

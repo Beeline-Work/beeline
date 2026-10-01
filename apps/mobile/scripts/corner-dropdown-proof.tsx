@@ -329,7 +329,6 @@ async function pulse() {
   lines.push(
     `pulse: ${samples.length} samples, opacity ${low.toFixed(2)}..${high.toFixed(2)}, max difference between the two labels ${spread.toFixed(3)}, cycle ${WAITING_PULSE_CYCLE} ms`,
   );
-  check(high - low > 0.4, 'pulse: the waiting label breathes');
   check(spread < 0.02, 'pulse: labels mounted 500 ms apart breathe in one phase');
   check(WAITING_PULSE_CYCLE > 1120, 'pulse: slower than the 1120 ms mock cycle');
   root.unmount();

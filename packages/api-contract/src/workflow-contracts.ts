@@ -27,6 +27,22 @@ export const WORKFLOW_CONTENTS_MAX_BYTES = 16_384;
 /** `agent_schedules` interval granularity is whole minutes; timeouts round up to it. */
 export const WORKFLOW_TIMEOUT_SECONDS_MIN = 60;
 export const WORKFLOW_TIMEOUT_SECONDS_MAX = 30 * 24 * 60 * 60;
+/** Agents one `start_workflow` role binding may list, tried in order. */
+export const WORKFLOW_ROLE_AGENTS_MAX = 16;
+
+const IDENTITY_ID_PATTERN = /^[0-9a-f]{64}$/;
+
+/** True for a real identity id (always 64 lowercase hex characters). */
+export function isAgentIdentityReference(value: unknown): value is string {
+  return typeof value === 'string' && IDENTITY_ID_PATTERN.test(value);
+}
+
+/**
+ * A `start_workflow` role binding: one agent, or an ordered list of agents.
+ * A list role goes to the first healthy agent on it and fails over down the
+ * list in order when the agent holding it fails or goes silent.
+ */
+export type WorkflowRoleBinding = string | readonly string[];
 
 export type WorkflowLoop = {
   readonly onEdge: string;

@@ -29,11 +29,6 @@ import {
 import { MonoButton, PixelGateReveal } from '@/components/buzz/MonoHull';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
-import {
-  DEFAULT_WEIGHT_TIER_RULES,
-  isWeightTier,
-  type WeightTierRule,
-} from '@beeline/api-contract/phone';
 import { Typography } from '@/constants/Typography';
 import { BuzzRigTransport } from '@/sync/transport';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
@@ -129,28 +124,6 @@ function roomCreatedQualifier(createdAt: number | undefined): string | undefined
   return `Created ${ROOM_DATE_FORMATTER.format(created)} · ${created.toISOString().slice(11, 19)} UTC`;
 }
 
-/** One rule per line: `pattern -> tier`, first match wins (top to bottom). */
-function formatWeightTierRules(rules: readonly WeightTierRule[]): string {
-  return rules.map((rule) => `${rule.pattern} -> ${rule.tier}`).join('\n');
-}
-
-function parseWeightTierRules(text: string): WeightTierRule[] | null {
-  const lines = text
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const rules: WeightTierRule[] = [];
-  for (const line of lines) {
-    const match = line.match(/^([a-z0-9*.-]{1,32})\s*->\s*([a-z]+)$/i);
-    if (!match) return null;
-    const pattern = match[1]!.toLowerCase();
-    const tier = match[2]!.toLowerCase();
-    if (!isWeightTier(tier)) return null;
-    rules.push({ pattern, tier });
-  }
-  return rules;
-}
-
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
@@ -176,9 +149,6 @@ export default function WorkspaceSettings() {
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [workingKey, setWorkingKey] = useState<string | null>(null);
-  const [editingWeightTiers, setEditingWeightTiers] = useState(false);
-  const [weightTierDraft, setWeightTierDraft] = useState('');
-  const [weightTierError, setWeightTierError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retryGeneration, setRetryGeneration] = useState(0);
@@ -386,31 +356,6 @@ export default function WorkspaceSettings() {
       }
     },
     [client],
-  );
-
-  const weightTierRules = workspaceView?.managerSettings?.weightTierRules ?? DEFAULT_WEIGHT_TIER_RULES;
-  const isDefaultWeightTierRules =
-    JSON.stringify(weightTierRules) === JSON.stringify(DEFAULT_WEIGHT_TIER_RULES);
-
-  const saveWeightTierRules = useCallback(
-    async (rules: WeightTierRule[] | null) => {
-      if (!communityId) return;
-      setWorkingKey('weight-tiers');
-      setWeightTierError(null);
-      try {
-        await monolithPhoneOperation('setWorkspaceWeightTierRules', {
-          workspaceId: communityId,
-          rules,
-        });
-        workspaceSchedulerRef.current?.force();
-        setEditingWeightTiers(false);
-      } catch (caught) {
-        setWeightTierError(`Could not save weight tiers: ${String(caught)}`);
-      } finally {
-        setWorkingKey(null);
-      }
-    },
-    [communityId],
   );
 
   const showRoomDetails = useCallback((room: WorkspaceRoomSetting) => {
@@ -661,88 +606,6 @@ export default function WorkspaceSettings() {
             })}
           </View>
 
-          <View style={styles.section} testID="weight-tier-settings">
-            <Text style={styles.sectionLabel}>Weight tiers</Text>
-            {!editingWeightTiers && (
-              <Text style={styles.sectionNote}>
-                Family-pattern rules classifying an agent&apos;s selected model as god, heavy, or
-                light for workflow classes. First match wins.
-              </Text>
-            )}
-            {editingWeightTiers ? (
-              <View style={styles.inlineEditor} testID="weight-tier-editor">
-                <TextInput
-                  accessibilityLabel="Weight tier rules, one per line: pattern -> tier"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  editable={workingKey !== 'weight-tiers'}
-                  multiline
-                  onChangeText={setWeightTierDraft}
-                  placeholder={'astra* -> god\nopus* -> heavy'}
-                  placeholderTextColor={theme.buzz.dim}
-                  style={[styles.input, styles.weightTierInput]}
-                  testID="weight-tier-input"
-                  value={weightTierDraft}
-                />
-                {weightTierError && <Text style={styles.errorText}>{weightTierError}</Text>}
-                <View style={styles.inlineEditorControls}>
-                  <MonoButton
-                    disabled={workingKey === 'weight-tiers'}
-                    label="Cancel"
-                    onPress={() => setEditingWeightTiers(false)}
-                    variant="secondary"
-                  />
-                  <MonoButton
-                    disabled={workingKey === 'weight-tiers'}
-                    label={workingKey === 'weight-tiers' ? 'Saving…' : 'Save'}
-                    loading={workingKey === 'weight-tiers'}
-                    onPress={() => {
-                      const parsed = parseWeightTierRules(weightTierDraft);
-                      if (!parsed) {
-                        setWeightTierError(
-                          'Each line must read "pattern -> tier" (tier is god, heavy, or light).',
-                        );
-                        return;
-                      }
-                      void saveWeightTierRules(parsed);
-                    }}
-                    testID="weight-tier-save"
-                  />
-                </View>
-              </View>
-            ) : (
-              <>
-                {weightTierRules.map((rule) => (
-                  <SettingsRow
-                    key={rule.pattern}
-                    title={rule.pattern}
-                    value={rule.tier}
-                    testID={`weight-tier-rule-${rule.pattern}`}
-                  />
-                ))}
-                <SettingsRow
-                  onPress={() => {
-                    setWeightTierDraft(formatWeightTierRules(weightTierRules));
-                    setWeightTierError(null);
-                    setEditingWeightTiers(true);
-                  }}
-                  testID="weight-tier-edit"
-                  title="Edit rules"
-                  tone="action"
-                />
-                {!isDefaultWeightTierRules && (
-                  <SettingsRow
-                    disabled={workingKey === 'weight-tiers'}
-                    onPress={() => void saveWeightTierRules(null)}
-                    testID="weight-tier-reset"
-                    title="Reset to defaults"
-                    tone="action"
-                  />
-                )}
-              </>
-            )}
-          </View>
-
           {isWorkspaceOwner && (
             <View style={styles.section}>
               <SettingsRow
@@ -881,7 +744,6 @@ const styles = StyleSheet.create((theme) => {
       borderRadius: hull.radius,
       color: hull.textPrimary,
     },
-    weightTierInput: { minHeight: 120, textAlignVertical: 'top', paddingVertical: hull.space.sm },
     denied: {
       flex: 1,
       paddingHorizontal: hull.space.lg,

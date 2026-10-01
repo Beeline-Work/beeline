@@ -32,7 +32,7 @@ import {
   recordInstitutionalCornerOutcome,
   type InstitutionalMemoryShadowConfig,
 } from './institutional-memory-shadow.js';
-import { roomMembersWithTag } from './agent-classes.js';
+import { reviewerList, roomAgentHealth } from './agent-health.js';
 
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
 
@@ -633,7 +633,7 @@ export class GitHubOperations {
         owner_agent_id: string | null;
         command_check_state: string | null;
         configured_reviewer_id: string | null;
-        reviewer_class: string | null;
+        reviewer_fallback_ids: string[];
         reviewer_identity_id: string | null;
         parent_reviewer_id: string | null;
         corner_reviewer_id: string | null;
@@ -641,7 +641,7 @@ export class GitHubOperations {
       }>(
         `SELECT r.parent_id,parent.workspace_id,f.lifecycle,f.owner_agent_id,f.command_check_state,
                 parent.reviewer_agent_id configured_reviewer_id,
-                parent.reviewer_class,
+                parent.reviewer_fallback_ids,
                 reviewer_identity.id reviewer_identity_id,
                 parent_member.identity_id parent_reviewer_id,
                 corner_member.identity_id corner_reviewer_id,
@@ -689,39 +689,43 @@ export class GitHubOperations {
       corner.lifecycle.pr?.headSha === pr.headSha;
     const checks = completedWithoutChecks ? ('passed' as const) : rollup.state;
     const configuredReviewerId = corner.configured_reviewer_id;
-    const reviewerClass = configuredReviewerId ? null : corner.reviewer_class;
     // The same gate the server merges on (`cornerMergeGate`), for this exact head.
     const gate = await cornerMergeGate(this.database, input.cornerId, {
       number,
       headSha: pr.headSha,
     });
     const { approvalPending, reviewerIsAuthor, reviewerExists } = gate;
-    const classCandidates = reviewerClass
-      ? await roomMembersWithTag(this.database, corner.parent_id, corner.workspace_id, reviewerClass)
+    const listed = corner.reviewer_fallback_ids.length
+      ? reviewerList({
+          reviewer_agent_id: configuredReviewerId,
+          reviewer_fallback_ids: corner.reviewer_fallback_ids,
+        })
       : [];
-    const reviewer = configuredReviewerId
-      ? corner.reviewer_handle
+    const listLabel = listed.length
+      ? `the reviewer list (${(
+          await this.database.query<{ id: string; handle: string | null }>(
+            `SELECT id,handle FROM identities WHERE id=ANY($1::text[])`,
+            [listed],
+          )
+        ).rows
+          .sort((a, b) => listed.indexOf(a.id) - listed.indexOf(b.id))
+          .map((row) => (row.handle ? `@${row.handle}` : row.id))
+          .join(', ')})`
+      : null;
+    const reviewer = listLabel
+      ? `an agent on ${listLabel}`
+      : configuredReviewerId && corner.reviewer_handle
         ? `@${corner.reviewer_handle}`
-        : null
-      : reviewerClass
-        ? `the "${reviewerClass}" class`
         : null;
     const reviewerLabel = reviewer ?? 'the configured reviewer';
-    const reviewerWake = reviewerClass
-      ? classCandidates.length === 0
-        ? {
-            status: 'unreachable' as const,
-            detail: `No current member of the parent Room carries the "${reviewerClass}" tag.`,
-          }
-        : classCandidates.some((candidate) => candidate.healthy)
-          ? {
-              status: 'dispatched' as const,
-              detail: `The checks-passed transition resolves ${reviewerLabel} live among ${classCandidates.length} current member(s).`,
-            }
-          : {
-              status: 'unreachable' as const,
-              detail: `Every current member of ${reviewerLabel} is offline, recently failed, or out of credit.`,
-            }
+    const reviewerWake = listLabel
+      ? await this.listReviewerWake({
+          parentId: corner.parent_id,
+          candidates: listed.filter((id) => id !== corner.owner_agent_id),
+          listLabel,
+          lifecycleChecks: corner.lifecycle.checks,
+          commandCheckState: corner.command_check_state,
+        })
       : reviewerWakeFromFacts({
           configuredReviewerId,
           reviewerHandle: corner.reviewer_handle,
@@ -734,12 +738,14 @@ export class GitHubOperations {
           lifecycleChecks: corner.lifecycle.checks,
           commandCheckState: corner.command_check_state,
         });
+    const approval = listLabel ? `approve_merge from ${reviewerLabel}` : `${reviewerLabel}'s approve_merge`;
+    const woken = listLabel ? `the first healthy agent on ${listLabel}` : reviewerLabel;
     const rule = reviewerIsAuthor
       ? `You opened this corner and are also this Room's configured reviewer (${reviewerLabel}), so self-review is not required — approve_merge cannot add signal over your own work. The reviewer outcome is PASS; the merge gate still applies worker yolo mode, human hold, and reviewer-existence conditions.`
-      : configuredReviewerId || reviewerClass
+      : configuredReviewerId
         ? reviewerWake.status === 'unreachable'
-          ? `Only ${reviewerLabel}'s approve_merge records PASS for the reviewer outcome; tagging or asking any other agent to review cannot record an approval or change this verdict. ${reviewerWake.detail} Do not invent a cause and do not poll this gate with a schedule. No Room owner/admin approve control exists in the app yet, so only ${reviewerLabel} can record PASS.`
-          : `Only ${reviewerLabel}'s approve_merge records PASS for the reviewer outcome; tagging or asking any other agent to review cannot record an approval or change this verdict. Do not create a schedule to poll this gate — the checks-passed transition wakes ${reviewerLabel} automatically. No Room owner/admin approve control exists in the app yet, so only ${reviewerLabel} can record PASS.`
+          ? `Only ${approval} records PASS for the reviewer outcome; tagging or asking any other agent to review cannot record an approval or change this verdict. ${reviewerWake.detail} Do not invent a cause and do not poll this gate with a schedule. No Room owner/admin approve control exists in the app yet, so only ${reviewerLabel} can record PASS.`
+          : `Only ${approval} records PASS for the reviewer outcome; tagging or asking any other agent to review cannot record an approval or change this verdict. Do not create a schedule to poll this gate — the checks-passed transition wakes ${woken} automatically. No Room owner/admin approve control exists in the app yet, so only ${reviewerLabel} can record PASS.`
         : 'This Room has no configured reviewer. The reviewer outcome is not failed, but the complete merge gate still requires reviewerExists=true, so nothing merges this corner automatically.';
     const mergeAllowed = checks === 'passed' && gate.open;
     return {
@@ -756,6 +762,39 @@ export class GitHubOperations {
       isWorkerYolo: gate.isWorkerYolo,
       mergeAllowed,
       rule,
+    };
+  }
+
+  /** `reviewerWake` for a Room with fallback reviewers: the list's health, then the dispatch state. */
+  private async listReviewerWake(input: {
+    parentId: string;
+    candidates: readonly string[];
+    listLabel: string;
+    lifecycleChecks: string | undefined;
+    commandCheckState: string | null;
+  }): Promise<{ status: ReviewerWakeStatus; detail: string }> {
+    const health = await roomAgentHealth(this.database, input.parentId, input.candidates);
+    if (!health.size)
+      return {
+        status: 'unreachable',
+        detail: `No agent on ${input.listLabel} is a current member of the parent Room, so the checks-passed transition cannot wake anyone.`,
+      };
+    if (![...health.values()].some((agent) => agent.healthy))
+      return {
+        status: 'unreachable',
+        detail: `Every agent on ${input.listLabel} is offline, recently failed, or out of credit.`,
+      };
+    if (input.lifecycleChecks === 'passing' && input.commandCheckState === 'passing')
+      return {
+        status: 'dispatched',
+        detail: `The checks-passed transition woke the first healthy agent on ${input.listLabel}.`,
+      };
+    return {
+      status: 'waiting',
+      detail:
+        input.lifecycleChecks === 'pending' || input.lifecycleChecks === 'unknown'
+          ? `Checks are still ${input.lifecycleChecks}, so nobody on ${input.listLabel} has been woken yet.`
+          : `A review turn has not been dispatched to ${input.listLabel} yet.`,
     };
   }
 

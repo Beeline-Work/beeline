@@ -51,8 +51,8 @@ const IMPLEMENTER = 'b'.repeat(64);
 const REVIEWER = 'c'.repeat(64);
 const APPROVER = 'd'.repeat(64);
 const OUTSIDER = 'e'.repeat(64);
-const HEAVY_A = '1'.repeat(64);
-const HEAVY_B = '2'.repeat(64);
+const WORKER_A = '1'.repeat(64);
+const WORKER_B = '2'.repeat(64);
 
 let database: PgliteDatabase;
 
@@ -143,8 +143,8 @@ beforeEach(async () => {
   await database.query(
     `INSERT INTO identities(id,kind,name) VALUES
        ($1,'human','Owner'),($2,'agent','Impy'),($3,'agent','Ravi'),($4,'agent','Ada'),($5,'human','Outsider'),
-       ($6,'agent','HeavyA'),($7,'agent','HeavyB')`,
-    [OWNER, IMPLEMENTER, REVIEWER, APPROVER, OUTSIDER, HEAVY_A, HEAVY_B],
+       ($6,'agent','WorkerA'),($7,'agent','WorkerB')`,
+    [OWNER, IMPLEMENTER, REVIEWER, APPROVER, OUTSIDER, WORKER_A, WORKER_B],
   );
   await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Workspace')`, [WORKSPACE]);
   await database.query(`INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Team')`, [
@@ -156,14 +156,14 @@ beforeEach(async () => {
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
        ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member'),($1,$2,$6,'member'),
        ($1,$2,$7,'member'),($1,$2,$8,'member')`,
-    [WORKSPACE, ROOM, OWNER, IMPLEMENTER, REVIEWER, APPROVER, HEAVY_A, HEAVY_B],
+    [WORKSPACE, ROOM, OWNER, IMPLEMENTER, REVIEWER, APPROVER, WORKER_A, WORKER_B],
   );
   await database.query(
     `INSERT INTO agents(agent_id,owner_id,selected_model) VALUES($1,$2,'opus-4-5'),($3,$2,'opus-4-5')`,
-    [HEAVY_A, OWNER, HEAVY_B],
+    [WORKER_A, OWNER, WORKER_B],
   );
-  await reportPresence(HEAVY_A, 'online');
-  await reportPresence(HEAVY_B, 'online');
+  await reportPresence(WORKER_A, 'online');
+  await reportPresence(WORKER_B, 'online');
 });
 
 describe('save_workflow', () => {
@@ -767,12 +767,12 @@ describe('handoff run-level locking (P0-1)', () => {
   });
 });
 
-// A class role names a tag ("heavy") instead of one agent; the run resolves
-// it to a random current healthy Room member carrying that tag.
-const CLASS_CONTRACT = {
+// A list role names an ordered list of agents instead of one; the run gives
+// it to the first healthy agent on the list and fails over down the list.
+const LIST_CONTRACT = {
   version: 1,
-  name: 'class-flow',
-  description: 'A worker role bound to a class instead of one agent',
+  name: 'list-flow',
+  description: 'A worker role bound to an ordered list of agents',
   roles: ['worker', 'closer'],
   start: 'work',
   handoffs: {
@@ -793,9 +793,10 @@ const CLASS_CONTRACT = {
   },
 };
 
-async function classRunCard(runId: string): Promise<{
+async function listRunCard(runId: string): Promise<{
   toState: string;
   roleBindings: Record<string, string>;
+  roleAgents?: Record<string, string[]>;
   reassigned?: true;
 }> {
   const row = await database.query<{ card: any }>(
@@ -806,127 +807,140 @@ async function classRunCard(runId: string): Promise<{
   return row.rows[0]!.card;
 }
 
-async function startedClassRun(closer = APPROVER): Promise<{ runId: string }> {
+async function startedListRun(
+  worker: string | string[] = [WORKER_A, WORKER_B],
+  closer = APPROVER,
+): Promise<{ runId: string }> {
   const command = await commandFor(IMPLEMENTER);
-  await saveWorkflow(database, command, { contract: CLASS_CONTRACT });
+  await saveWorkflow(database, command, { contract: LIST_CONTRACT });
   return startWorkflow(database, command, {
-    name: 'class-flow',
-    roleBindings: { worker: 'heavy', closer },
+    name: 'list-flow',
+    roleBindings: { worker, closer },
   });
 }
 
-describe('class roles', () => {
-  it('accepts a class/tag reference in place of an agent id, skipping the membership check for it', async () => {
-    const { runId, state } = await startedClassRun();
+describe('list roles', () => {
+  it('gives a list role to the first agent on the list and records the list on the start card', async () => {
+    const { runId, state } = await startedListRun();
     expect(state).toBe('work');
-    const card = await classRunCard(runId);
-    expect(card.roleBindings.closer).toBe(APPROVER);
-    expect([HEAVY_A, HEAVY_B]).toContain(card.roleBindings.worker);
-    expect(await pendingCommandsFor(card.roleBindings.worker)).toBeGreaterThan(0);
+    const card = await listRunCard(runId);
+    expect(card.roleBindings).toEqual({ worker: WORKER_A, closer: APPROVER });
+    expect(card.roleAgents).toEqual({ worker: [WORKER_A, WORKER_B] });
+    expect(await pendingCommandsFor(WORKER_A)).toBeGreaterThan(0);
+    expect(await pendingCommandsFor(WORKER_B)).toBe(0);
+  });
+
+  it('skips an unhealthy agent at the head of the list', async () => {
+    await reportPresence(WORKER_A, 'offline');
+    const { runId } = await startedListRun();
+    expect((await listRunCard(runId)).roleBindings.worker).toBe(WORKER_B);
+    expect(await pendingCommandsFor(WORKER_A)).toBe(0);
+  });
+
+  it('rejects a class word, a duplicate, an empty list, and a non-member on the list', async () => {
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: LIST_CONTRACT });
+    const start = (worker: unknown) =>
+      startWorkflow(database, command, {
+        name: 'list-flow',
+        roleBindings: { worker: worker as string[], closer: APPROVER },
+      });
+    await expect(start('heavy')).rejects.toThrow('must be an agent id or a list');
+    await expect(start([WORKER_A, WORKER_A])).rejects.toThrow('must be an agent id or a list');
+    await expect(start([])).rejects.toThrow('must be an agent id or a list');
+    await expect(start([WORKER_A, 'f'.repeat(64)])).rejects.toThrow('is not a current member of this Room');
+  });
+
+  it('treats a one-agent list as a single-agent role', async () => {
+    const { runId } = await startedListRun([WORKER_B]);
+    const card = await listRunCard(runId);
+    expect(card.roleBindings.worker).toBe(WORKER_B);
+    expect(card.roleAgents).toBeUndefined();
   });
 
   it('is sticky: a loop back to the same role reuses the resolved agent', async () => {
-    const { runId } = await startedClassRun();
-    const first = await classRunCard(runId);
-    const resolved = first.roleBindings.worker;
-    const command = await commandFor(resolved);
+    const { runId } = await startedListRun();
+    const command = await commandFor(WORKER_A);
     const looped = await handoff(database, command, {
       runId,
       outcome: 'retry',
       contents: { note: 'not done yet' },
     });
     expect(looped.state).toBe('work');
-    const second = await classRunCard(runId);
-    expect(second.roleBindings.worker).toBe(resolved);
+    expect((await listRunCard(runId)).roleBindings.worker).toBe(WORKER_A);
   });
 
-  it('fails over to the next healthy class member on an instant failure of the current holder', async () => {
-    const { runId } = await startedClassRun();
-    const first = await classRunCard(runId);
-    const failedAgent = first.roleBindings.worker;
-    const expectedNext = failedAgent === HEAVY_A ? HEAVY_B : HEAVY_A;
-    await reassignFailedWorkflowRole(database, { roomId: ROOM, requestId: runId, agentId: failedAgent });
-    const reassigned = await classRunCard(runId);
+  it('fails over to the next healthy agent on the list on an instant failure of the current holder', async () => {
+    const { runId } = await startedListRun();
+    await reassignFailedWorkflowRole(database, { roomId: ROOM, requestId: runId, agentId: WORKER_A });
+    const reassigned = await listRunCard(runId);
     expect(reassigned.reassigned).toBe(true);
     expect(reassigned.toState).toBe('work');
-    expect(reassigned.roleBindings.worker).toBe(expectedNext);
-    expect(await pendingCommandsFor(expectedNext)).toBeGreaterThan(0);
+    expect(reassigned.roleBindings.worker).toBe(WORKER_B);
+    expect(await pendingCommandsFor(WORKER_B)).toBeGreaterThan(0);
     // A late response from the failed-over agent no longer owns the state.
-    const staleCommand = await commandFor(failedAgent);
+    const staleCommand = await commandFor(WORKER_A);
     await expect(
       handoff(database, staleCommand, { runId, outcome: 'done', contents: { note: 'too late' } }),
     ).rejects.toThrow('not you');
   });
 
   it('the same mechanism covers a silent turn past the state timeout, not only an instant failure', async () => {
-    const { runId } = await startedClassRun();
-    const first = await classRunCard(runId);
-    const resolvedAgent = first.roleBindings.worker;
-    // The armed timeout schedule targets the RESOLVED concrete agent, never the class string.
+    const { runId } = await startedListRun();
+    // The armed timeout schedule targets the resolved agent.
     const schedule = await database.query<{ agent_id: string }>(
       `SELECT agent_id FROM agent_schedules WHERE room_id=$1`,
       [ROOM],
     );
     expect(schedule.rows).toHaveLength(1);
-    expect(schedule.rows[0]!.agent_id).toBe(resolvedAgent);
-    // The schedule fires, the agent stays silent, and the generic silence path
-    // (the same one an instant failure goes through) reassigns the role.
-    await reassignFailedWorkflowRole(database, {
-      roomId: ROOM,
-      requestId: runId,
-      agentId: resolvedAgent,
-    });
-    const reassigned = await classRunCard(runId);
-    expect(reassigned.roleBindings.worker).not.toBe(resolvedAgent);
+    expect(schedule.rows[0]!.agent_id).toBe(WORKER_A);
+    await reassignFailedWorkflowRole(database, { roomId: ROOM, requestId: runId, agentId: WORKER_A });
+    expect((await listRunCard(runId)).roleBindings.worker).toBe(WORKER_B);
   });
 
-  it('asks a human when the class is exhausted, leaving the run parked with no agent dispatched', async () => {
-    await reportPresence(HEAVY_A, 'offline');
-    await reportPresence(HEAVY_B, 'offline');
-    const { runId } = await startedClassRun();
-    expect(await pendingCommandsFor(HEAVY_A)).toBe(0);
-    expect(await pendingCommandsFor(HEAVY_B)).toBe(0);
-    const card = await classRunCard(runId);
-    // Unresolved: still the class string, not a concrete agent.
-    expect(card.roleBindings.worker).toBe('heavy');
-    const notice = await database.query(
-      `SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%no healthy member%'`,
+  it('asks a human when nobody on the list is healthy, leaving the run parked with no agent dispatched', async () => {
+    await reportPresence(WORKER_A, 'offline');
+    await reportPresence(WORKER_B, 'offline');
+    const { runId } = await startedListRun();
+    expect(await pendingCommandsFor(WORKER_A)).toBe(0);
+    expect(await pendingCommandsFor(WORKER_B)).toBe(0);
+    expect((await listRunCard(runId)).roleBindings.worker).toBeUndefined();
+    const notice = await database.query<{ text: string }>(
+      `SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%worker role''s list%'`,
       [ROOM],
     );
     expect(notice.rows).toHaveLength(1);
+    expect(notice.rows[0]!.text).not.toMatch(/class|tag|tier/i);
   });
 
-  it('assign_workflow_role lets a human-directed agent take over an exhausted class role', async () => {
-    await reportPresence(HEAVY_A, 'offline');
-    await reportPresence(HEAVY_B, 'offline');
-    const { runId } = await startedClassRun();
+  it('assign_workflow_role binds any agent in the Room to a parked list role, on the list or not', async () => {
+    await reportPresence(WORKER_A, 'offline');
+    await reportPresence(WORKER_B, 'offline');
+    const { runId } = await startedListRun();
     const command = await commandFor(IMPLEMENTER);
     const result = await assignWorkflowRole(database, command, {
       runId,
       role: 'worker',
-      targetAgentId: HEAVY_A,
+      targetAgentId: REVIEWER,
     });
     expect(result.state).toBe('work');
-    const card = await classRunCard(runId);
-    expect(card.roleBindings.worker).toBe(HEAVY_A);
-    expect(await pendingCommandsFor(HEAVY_A)).toBeGreaterThan(0);
+    expect((await listRunCard(runId)).roleBindings.worker).toBe(REVIEWER);
+    expect(await pendingCommandsFor(REVIEWER)).toBeGreaterThan(0);
   });
 
-  it('rejects assign_workflow_role targeting an agent that does not carry the class tag', async () => {
-    await reportPresence(HEAVY_A, 'offline');
-    await reportPresence(HEAVY_B, 'offline');
-    const { runId } = await startedClassRun();
+  it('rejects assign_workflow_role targeting a person or someone outside the Room', async () => {
+    await reportPresence(WORKER_A, 'offline');
+    await reportPresence(WORKER_B, 'offline');
+    const { runId } = await startedListRun();
     const command = await commandFor(IMPLEMENTER);
     await expect(
-      assignWorkflowRole(database, command, { runId, role: 'worker', targetAgentId: REVIEWER }),
-    ).rejects.toThrow('does not carry the "heavy" tag');
+      assignWorkflowRole(database, command, { runId, role: 'worker', targetAgentId: OWNER }),
+    ).rejects.toThrow('is not a current agent member of this Room');
   });
 
-  it('rejects assign_workflow_role for a role bound to one fixed agent', async () => {
-    const { runId } = await startedClassRun();
-    const worker = (await classRunCard(runId)).roleBindings.worker;
-    const workerCommand = await commandFor(worker);
-    const advanced = await handoff(database, workerCommand, {
+  it('rejects assign_workflow_role for a role bound to one agent', async () => {
+    const { runId } = await startedListRun();
+    const advanced = await handoff(database, await commandFor(WORKER_A), {
       runId,
       outcome: 'done',
       contents: { note: 'finished' },
@@ -934,7 +948,7 @@ describe('class roles', () => {
     expect(advanced.state).toBe('close');
     const command = await commandFor(IMPLEMENTER);
     await expect(
-      assignWorkflowRole(database, command, { runId, role: 'closer', targetAgentId: HEAVY_A }),
-    ).rejects.toThrow('not class-bound');
+      assignWorkflowRole(database, command, { runId, role: 'closer', targetAgentId: WORKER_A }),
+    ).rejects.toThrow('bound to one agent');
   });
 });

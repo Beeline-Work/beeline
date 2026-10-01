@@ -4895,7 +4895,6 @@ describe('monolith integration', () => {
       visibility: expect.any(String),
       rooms: expect.any(Array),
       roomsTruncated: false,
-      weightTierRules: expect.any(Array),
     });
     expect(await soulOf()).toMatchObject({ instructions: 'You are a fox.' });
     expect(await rosterSoulOf()).toBeDefined();

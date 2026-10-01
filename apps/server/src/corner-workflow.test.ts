@@ -151,7 +151,7 @@ beforeEach(async () => {
   await db.query(`DELETE FROM rooms WHERE parent_id IS NOT NULL`);
   await db.query(`UPDATE memberships SET removed_at=NULL`);
   await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb`);
-  await db.query(`UPDATE rooms SET reviewer_agent_id=NULL,reviewer_class=NULL WHERE id=$1`, [R]);
+  await db.query(`UPDATE rooms SET reviewer_agent_id=NULL WHERE id=$1`, [R]);
   await db.query(`UPDATE agents SET yolo_mode=true`);
   githubRollupState = 'pending';
   githubHead = '';

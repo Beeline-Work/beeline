@@ -10,6 +10,7 @@ import type { CornerLifecycleView, MessageReactionEmoji } from './phone-types.js
 import type { ChoiceOptionInput } from './room-choices.js';
 import type { RoomScheduleCadence } from './phone-operations.js';
 import type { CornerAppDefinition } from './corner-apps.js';
+import type { WorkflowRoleBinding } from './workflow-contracts.js';
 import type {
   ClaimInstitutionalMemoryJobResult,
   CompleteInstitutionalMemoryJobInput,
@@ -184,7 +185,7 @@ export type DaemonOperationMap = {
     RoomInput &
       TurnOutputAuthority & {
         readonly name: string;
-        readonly roleBindings: Readonly<Record<string, string>>;
+        readonly roleBindings: Readonly<Record<string, WorkflowRoleBinding>>;
       },
     { readonly runId: string; readonly state: string }
   >;
@@ -204,9 +205,9 @@ export type DaemonOperationMap = {
     { readonly slug: string; readonly archived: boolean }
   >;
   /**
-   * A human's explicit override for a class-bound role this run is currently
-   * on: binds one specific agent (no health filter), the "ask a human"
-   * recovery when the class is exhausted (`apps/server/src/agent-classes.ts`).
+   * A human's explicit override for a list-bound role this run is currently
+   * on: binds any agent in the Room (no health filter), the "ask a human"
+   * recovery when no agent on the role's list is healthy.
    */
   assignWorkflowRole: Operation<
     RoomInput &

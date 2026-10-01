@@ -183,7 +183,7 @@ import {
   saveWorkflow,
   startWorkflow,
 } from './workflow-runs.js';
-import { agentCarriesTag, isConfiguredReviewer } from './agent-classes.js';
+import { isConfiguredReviewer } from './agent-health.js';
 import {
   recordStarPromptReply,
   STAR_PROMPT_MILESTONES,
@@ -2966,7 +2966,7 @@ export class DaemonService {
       ).rows[0];
       if (
         !target ||
-        !(await isConfiguredReviewer(db, target.parent_room_id, target.workspace_id, agentId)) ||
+        !(await isConfiguredReviewer(db, target.parent_room_id, agentId)) ||
         !(
           await db.query(
             `SELECT 1 FROM memberships reviewer
@@ -3077,10 +3077,16 @@ export class DaemonService {
       }>(
         `SELECT a.soul,a.selected_model,a.selected_effort,a.fast_mode,a.commands,
                 CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode,
-                CASE WHEN room.parent_id IS NOT NULL
-                           AND reviewer.id<>COALESCE(fact.owner_agent_id,room.created_by)
+                CASE WHEN room.parent_id IS NULL THEN NULL
+                     -- A fallback reviewer is told it holds the post itself.
+                     WHEN parent.reviewer_agent_id IS NOT NULL
+                          AND a.agent_id=ANY(parent.reviewer_fallback_ids)
+                          AND a.agent_id<>COALESCE(fact.owner_agent_id,room.created_by)
+                     THEN self.handle
+                     WHEN reviewer.id<>COALESCE(fact.owner_agent_id,room.created_by)
                      THEN reviewer.handle END reviewer_handle
          FROM agents a
+         JOIN identities self ON self.id=a.agent_id
          LEFT JOIN rooms room ON room.id=$2
          LEFT JOIN workspaces workspace ON workspace.id=room.workspace_id
          LEFT JOIN rooms parent ON parent.id=room.parent_id
@@ -6751,7 +6757,7 @@ export class DaemonService {
         throw new Error('validation head is not published');
       if (
         input.stage === 'review' &&
-        !(await isConfiguredReviewer(db, corner.parent_room_id, corner.workspace_id, agentId))
+        !(await isConfiguredReviewer(db, corner.parent_room_id, agentId))
       )
         throw new Error('only the configured reviewer records the review stage');
       if (
@@ -7046,44 +7052,23 @@ export class DaemonService {
   ): Promise<{ cornerReviewer: boolean; isCorner: boolean }> {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(roomId))
       throw new Error('daemon room access denied');
-    const result = await this.database.query<{
-      corner_reviewer: boolean;
-      is_corner: boolean;
-      reviewer_class: string | null;
-      parent_room_id: string | null;
-      workspace_id: string | null;
-    }>(
+    const result = await this.database.query<{ corner_reviewer: boolean; is_corner: boolean }>(
       `SELECT EXISTS(
          SELECT 1 FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
-         WHERE corner.id=$1 AND parent.reviewer_agent_id=$2
+         WHERE corner.id=$1 AND (
+           parent.reviewer_agent_id=$2 OR (
+             parent.reviewer_agent_id IS NOT NULL AND $2=ANY(parent.reviewer_fallback_ids)
+             AND EXISTS(SELECT 1 FROM memberships parent_member
+                        WHERE parent_member.room_id=parent.id AND parent_member.identity_id=$2
+                          AND parent_member.removed_at IS NULL)))
        ) corner_reviewer,
-       EXISTS(SELECT 1 FROM rooms corner WHERE corner.id=$1 AND corner.parent_id IS NOT NULL) is_corner,
-       (SELECT parent.reviewer_class FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
-        WHERE corner.id=$1) reviewer_class,
-       (SELECT parent.id FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
-        WHERE corner.id=$1) parent_room_id,
-       (SELECT parent.workspace_id FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
-        WHERE corner.id=$1) workspace_id
+       EXISTS(SELECT 1 FROM rooms corner WHERE corner.id=$1 AND corner.parent_id IS NOT NULL) is_corner
        FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
       [roomId, agentId],
     );
     if (!result.rowCount) throw new Error('daemon room access denied');
     const row = result.rows[0]!;
-    // The class check is a second round trip made only for the rare
-    // class-configured corner — every ordinary Room/corner write stays the
-    // single cheap query above.
-    const cornerReviewer =
-      row.corner_reviewer ||
-      (row.reviewer_class && row.parent_room_id && row.workspace_id
-        ? await agentCarriesTag(this.database, row.workspace_id, agentId, row.reviewer_class) &&
-          (
-            await this.database.query(
-              `SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
-              [row.parent_room_id, agentId],
-            )
-          ).rowCount! > 0
-        : false);
-    return { cornerReviewer, isCorner: row.is_corner };
+    return { cornerReviewer: row.corner_reviewer, isCorner: row.is_corner };
   }
 
   /** Adds one fixed-vocabulary reaction without turning a retried tool call into an unreact. */

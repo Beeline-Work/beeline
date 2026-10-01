@@ -19,7 +19,7 @@ vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
-  return { Text: host('Text'), View: host('View'), TextInput: host('TextInput') };
+  return { Text: host('Text'), View: host('View') };
 });
 
 vi.mock('./HullActionSheet', async () => {
@@ -31,23 +31,6 @@ vi.mock('./HullActionSheet', async () => {
     HullActionSheetRow: (props: any) => ReactModule.createElement('Row', props),
   };
 });
-vi.mock('./HullDialog', async () => {
-  const ReactModule = await import('react');
-  return {
-    HullDialog: (props: any) =>
-      !props.visible
-        ? null
-        : ReactModule.createElement(
-            'Dialog',
-            props,
-            props.children,
-            ...(props.actions ?? []).map((action: any, index: number) =>
-              ReactModule.createElement('DialogAction', { key: index, ...action }),
-            ),
-          ),
-  };
-});
-
 import { RoomReviewerActions } from './RoomReviewerActions';
 
 const ECHO = 'echo-agent';
@@ -103,66 +86,56 @@ describe('RoomReviewerActions', () => {
     expect(render({ canManage: false }).renderer.root.findAllByType('Row')).toHaveLength(0);
   });
 
-  it('picks and clears Room agents through updateRoom', async () => {
+  it('adds agents to the end of the reviewer list, takes them off, and clears it', async () => {
     const { renderer, updateRoom } = render();
+    const press = async (testID: string) => {
+      await act(async () => {
+        renderer.root.findByProps({ testID }).props.onPress();
+        await Promise.resolve();
+      });
+    };
+    const metadata = () =>
+      renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.metadata;
 
     act(() => renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.onPress());
-    await act(async () => {
-      renderer.root.findByProps({ testID: `room-reviewer-agent-${BEE}` }).props.onPress();
-      await Promise.resolve();
+    await press(`room-reviewer-agent-${BEE}`);
+    expect(updateRoom).toHaveBeenLastCalledWith({
+      roomId: 'room-1',
+      reviewerAgentId: ECHO,
+      reviewerFallbackIds: [BEE],
     });
+    expect(metadata()).toBe('@echo, then @bee');
+    expect(renderer.root.findByProps({ testID: `room-reviewer-agent-${BEE}` }).props.metadata).toBe('#2');
+
+    await press(`room-reviewer-agent-${ECHO}`);
     expect(updateRoom).toHaveBeenLastCalledWith({
       roomId: 'room-1',
       reviewerAgentId: BEE,
-      reviewerClass: null,
+      reviewerFallbackIds: [],
     });
-    expect(renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.metadata).toBe(
-      '@bee',
-    );
+    expect(metadata()).toBe('@bee');
 
-    act(() => renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.onPress());
-    await act(async () => {
-      renderer.root.findByProps({ testID: 'room-reviewer-none' }).props.onPress();
-      await Promise.resolve();
-    });
+    await press('room-reviewer-none');
     expect(updateRoom).toHaveBeenLastCalledWith({
       roomId: 'room-1',
       reviewerAgentId: null,
-      reviewerClass: null,
+      reviewerFallbackIds: [],
     });
-    expect(renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.metadata).toBe(
-      'None',
-    );
+    expect(metadata()).toBe('None');
   });
 
-  it('sets a class reviewer through the class dialog', async () => {
-    const { renderer, updateRoom } = render();
-
+  it('shows the saved reviewer list in order and offers no class option', () => {
+    const { renderer } = render({ reviewerAgentId: BEE, reviewerFallbackIds: [ECHO] });
+    expect(renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.metadata).toBe(
+      '@bee, then @echo',
+    );
     act(() => renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.onPress());
-    act(() => renderer.root.findByProps({ testID: 'room-reviewer-class' }).props.onPress());
-    act(() =>
+    expect(renderer.root.findAllByProps({ testID: 'room-reviewer-class' })).toHaveLength(0);
+    expect(
       renderer.root
-        .findByProps({ testID: 'room-reviewer-class-input' })
-        .props.onChangeText('heavy'),
-    );
-    await act(async () => {
-      renderer.root.findByProps({ testID: 'room-reviewer-class-save' }).props.onPress();
-      await Promise.resolve();
-    });
-    expect(updateRoom).toHaveBeenLastCalledWith({
-      roomId: 'room-1',
-      reviewerClass: 'heavy',
-      reviewerAgentId: null,
-    });
-    expect(renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.metadata).toBe(
-      'class: heavy',
-    );
-  });
-
-  it('shows the current reviewer class', () => {
-    const { renderer } = render({ reviewerAgentId: undefined, reviewerClass: 'heavy' });
-    expect(renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.metadata).toBe(
-      'class: heavy',
-    );
+        .findAllByType('Row')
+        .map((row: { props: { label: string } }) => row.props.label)
+        .filter((label: string) => /class/i.test(label)),
+    ).toEqual([]);
   });
 });

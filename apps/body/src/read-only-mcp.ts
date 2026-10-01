@@ -356,14 +356,27 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'start_workflow',
     description:
-      'Start a run of a saved workflow, binding its named roles to current members of this Room. Posts one message whose id is the run id and pins the contract version; call handoff with that runId to move the run forward. Every declared role needs a binding to a current Room member OR a class/tag word (e.g. "heavy", "light", "god", a harness name, a provider name, an exact model id, or a custom tag) - a class binding is resolved to a random currently healthy Room member carrying that tag each time the role is dispatched, skipping offline/recently-failed/out-of-credit members, and stays with whoever it picked for the rest of the run unless that agent later fails, in which case it moves to the next healthy member automatically. If the class has no healthy member, the run names this in the Room and waits for a human (see assign_workflow_role).' +
+      'Start a run of a saved workflow, binding its named roles to current members of this Room. Posts one message whose id is the run id and pins the contract version; call handoff with that runId to move the run forward. Every declared role needs a binding: one current Room member\'s agent id, or an ordered list of up to 16 agent ids. A list role goes to the first healthy agent on the list when it is first dispatched, skipping offline/recently-failed/out-of-credit agents, and stays with that agent for the rest of the run unless it later fails or goes silent, in which case it moves to the next healthy agent on the list automatically. If nobody on the list is healthy, the run names this in the Room and waits for a human (see assign_workflow_role).' +
       ` How to write and run workflows: ${WORKFLOW_GUIDE_URL}`,
     inputSchema: {
       type: 'object',
       required: ['name', 'roleBindings'],
       properties: {
         name: { type: 'string', minLength: 1, maxLength: 64 },
-        roleBindings: { type: 'object' },
+        roleBindings: {
+          type: 'object',
+          additionalProperties: {
+            anyOf: [
+              { type: 'string', minLength: 64, maxLength: 64 },
+              {
+                type: 'array',
+                minItems: 1,
+                maxItems: 16,
+                items: { type: 'string', minLength: 64, maxLength: 64 },
+              },
+            ],
+          },
+        },
       },
       additionalProperties: false,
     },
@@ -401,7 +414,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'assign_workflow_role',
     description:
-      'Bind one specific agent to a class/tag-bound role this run is currently on - the human-directed recovery when a class has no healthy member (the run names this in the Room and asks a human; that human can then tag you and ask you to call this). No health filter applies - an explicit choice overrides "healthy". The target must currently carry the role\'s configured tag and be a member of this Room. Not for a role bound to one fixed agent; that role never fails over.' +
+      'Bind one specific agent to a list-bound role this run is currently on - the human-directed recovery when nobody on the role\'s list is healthy (the run names this in the Room and asks a human; that human can then tag you and ask you to call this). No health filter applies - an explicit choice overrides "healthy". The target can be any agent member of this Room, on the list or not. Not for a role bound to one agent; that role never fails over.' +
       ` How to write and run workflows: ${WORKFLOW_GUIDE_URL}`,
     inputSchema: {
       type: 'object',

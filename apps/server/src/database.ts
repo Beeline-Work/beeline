@@ -17,6 +17,7 @@ import { uniqueAgentHandle } from '@beeline/api-contract/phone';
 import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
 import { backfillCornerWorkflowRuns, backfillCornerWorkflowSeed } from './corner-workflow.js';
 import { backfillFeedbackTriageWorkflow } from './feedback-triage-workflow.js';
+import { retireAgentClasses } from './agent-class-retirement.js';
 import { upgradeGrantPolicy, withdrawSupersededGrantAsks } from './grant-policy-upgrade.js';
 import { backfillRegistryApps } from './app-connections.js';
 import {
@@ -176,7 +177,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 15;
+export const REQUIRED_SCHEMA_VERSION = 16;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -681,9 +682,9 @@ CREATE TABLE IF NOT EXISTS workspaces (
 -- switch existed. Dropping the column is left for a later migration.
 ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS seeded_souls_enabled boolean NOT NULL DEFAULT true;
 
--- The weight-tier family-pattern map (agent-classes.ts): NULL means the
--- shipped defaults (astra*/fable* -> god; grok*, *sol*, opus* -> heavy;
--- everything else -> light). Admin-editable in workspace settings.
+-- Retained but unused: agent classes and weight tiers were removed
+-- (retireAgentClasses clears it). Kept so an older server image stays
+-- compatible during a rolling update; a later migration can drop it.
 ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS weight_tier_rules jsonb;
 
 CREATE TABLE IF NOT EXISTS rooms (
@@ -715,10 +716,12 @@ ALTER TABLE rooms ADD COLUMN IF NOT EXISTS repository_updated_at timestamptz;
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS repository_name text;
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS repository_resolution text NOT NULL DEFAULT 'none';
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS reviewer_agent_id text REFERENCES identities(id);
--- A class/tag instead of one fixed agent, resolved live at each review
--- dispatch (apps/server/src/agent-classes.ts). Mutually exclusive with
--- reviewer_agent_id: PhoneService.updateRoom clears one when the other is set.
+-- Retained but unused: a reviewer class, replaced by reviewer_fallback_ids
+-- (retireAgentClasses converts it). A later migration can drop it.
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS reviewer_class text;
+-- Agents tried in order after reviewer_agent_id when it is unhealthy or its
+-- review turn fails (agent-health.ts). Empty unless reviewer_agent_id is set.
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS reviewer_fallback_ids text[] NOT NULL DEFAULT '{}';
 CREATE INDEX IF NOT EXISTS rooms_workspace_idx ON rooms(workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS rooms_parent_idx ON rooms(parent_id, updated_at DESC);
 
@@ -810,12 +813,9 @@ ALTER TABLE agents ADD COLUMN IF NOT EXISTS model_unavailable text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS fast_mode boolean NOT NULL DEFAULT false;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS machine_id text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS machine_name text;
--- Automatic, non-removable agent tags (agent-classes.ts): the harness is
--- posted alongside the model catalog on every activation (same cadence as
--- selected_model); provider and weight tier are pure functions of harness/
--- model/workspace rules and are never stored. custom_tags is the one
--- admin-editable tag list, set from workspace settings (Workspace-manager
--- authority, distinct from the agent-owner-only columns above).
+-- The harness is posted alongside the model catalog on every activation
+-- (same cadence as selected_model). custom_tags is retained but unused:
+-- agent tags were removed (retireAgentClasses clears it).
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS harness text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS custom_tags jsonb NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE agents DROP CONSTRAINT IF EXISTS agents_model_unavailable_check;
@@ -2606,6 +2606,16 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     reconcileCornerMergeBlockers(database));
   if (blockers)
     console.log(`reconcileCornerMergeBlockers: dispatched ${blockers} implementer command(s)`);
+  const classes = await dataStep('agent class retirement', () => retireAgentClasses(database));
+  if (classes.convertedRooms || classes.clearedRooms.length || classes.runs)
+    console.log(
+      `retireAgentClasses: converted ${classes.convertedRooms} Room reviewer class(es) to agent lists, ` +
+        `cleared ${classes.clearedRooms.length} with no matching agent` +
+        (classes.clearedRooms.length
+          ? ` (${classes.clearedRooms.map((room) => `${room.name} ${room.id}`).join(', ')})`
+          : '') +
+        `, converted ${classes.runs} workflow run(s)`,
+    );
   const reviewers = await dataStep('corner reviewers', () =>
     reconcileConfiguredCornerReviewers(database));
   console.log(

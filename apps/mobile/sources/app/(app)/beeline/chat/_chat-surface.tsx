@@ -6770,7 +6770,7 @@ export function BuzzChatSurface({
               hasRepository={roomRepository !== null}
               onSaved={() => refreshSignal.force()}
               reviewerAgentId={roomSurface?.room.reviewerAgentId}
-              reviewerClass={roomSurface?.room.reviewerClass}
+              reviewerFallbackIds={roomSurface?.room.reviewerFallbackIds}
               roomId={decodedId}
               roomName={displayRoomName}
               updateRoom={(input) => monolithPhoneOperation('updateRoom', input)}

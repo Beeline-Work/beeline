@@ -1,7 +1,6 @@
 import type { AgentGrantDecision, AgentGrantStatus } from './agent-grants.js';
 import type { ChoiceStatus, ChoiceOptionInput } from './room-choices.js';
 import type { AgentAccessPolicy } from './agent-access.js';
-import type { WeightTierRule } from './agent-classes.js';
 import type { PushLevel } from './push-level.js';
 import type { GrantWalletDelegationInput, GrantWalletDelegationResult } from './wallet.js';
 import type {
@@ -121,12 +120,6 @@ export type PhoneOperationMap = {
   refreshAgentModelCatalog: { input: WorkspaceAgentInput; output: void };
   updateAgentYolo: { input: UpdateAgentYoloInput; output: void };
   updateAgentAccessPolicy: { input: UpdateAgentAccessPolicyInput; output: void };
-  /** Workspace-admin authority (not the agent's own owner) — distinct from `updateAgentAccessPolicy`. */
-  setAgentCustomTags: { input: SetAgentCustomTagsInput; output: { readonly tags: readonly string[] } };
-  setWorkspaceWeightTierRules: {
-    input: SetWorkspaceWeightTierRulesInput;
-    output: { readonly rules: readonly WeightTierRule[] };
-  };
   removeAgent: { input: WorkspaceAgentInput; output: void };
   updatePersonProfile: { input: UpdatePersonProfileInput; output: PersonProfileResult };
   updateIdentityFace: { input: UpdateIdentityFaceInput; output: void };
@@ -411,11 +404,11 @@ export type UpdateRoomInput = RoomInput & {
   /** Agent member assigned to review every repository corner in this Room; null clears. */
   readonly reviewerAgentId?: string | null;
   /**
-   * A class/tag instead of one fixed agent: resolved live to a healthy member
-   * at each review dispatch (`apps/server/src/agent-classes.ts`). Mutually
-   * exclusive with `reviewerAgentId` — setting one clears the other.
+   * Agent members tried in order after `reviewerAgentId` when it is unhealthy
+   * or its review turn fails; `[]` clears. Cleared whenever `reviewerAgentId`
+   * is cleared.
    */
-  readonly reviewerClass?: string | null;
+  readonly reviewerFallbackIds?: readonly string[];
 };
 export type ResolveDirectMessageInput = WorkspaceInput & { readonly participantId: string };
 export type DirectMessageResult = IdResult & { readonly created: boolean };
@@ -438,11 +431,6 @@ export type UpdateAgentModelInput = WorkspaceAgentInput &
     readonly fastMode?: boolean;
   };
 export type UpdateAgentYoloInput = WorkspaceAgentInput & { readonly enabled: boolean };
-export type SetAgentCustomTagsInput = WorkspaceAgentInput & { readonly tags: readonly string[] };
-/** `null` resets the workspace to `DEFAULT_WEIGHT_TIER_RULES`. */
-export type SetWorkspaceWeightTierRulesInput = WorkspaceInput & {
-  readonly rules: readonly WeightTierRule[] | null;
-};
 /** The owner's answer to "who may address this agent" (`agent-access.ts`). */
 export type UpdateAgentAccessPolicyInput = WorkspaceAgentInput & {
   readonly policy: AgentAccessPolicy;

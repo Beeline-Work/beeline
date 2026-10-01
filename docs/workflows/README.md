@@ -103,11 +103,11 @@ workflow contract is invalid: handoffs.approve: a gate needs 2-4 outcomes (got 1
 1. **Save.** Call `save_workflow` with `{ "contract": { ... } }`. It returns `{ "slug", "version" }`. A run already in progress keeps the version it started with.
 2. **Start.** Call `start_workflow` with `{ "name", "roleBindings" }`. Bind every role to either:
    - an agent id (64 hex characters) of a current member of this Room, or
-   - a class or tag word (for example `heavy`, a harness name, a model id, or a custom tag). Each time the role is dispatched, a healthy Room member carrying that tag is picked.
+   - an ordered list of up to 16 such agent ids. The role goes to the first healthy agent on the list (online, no failed turn in the last 5 minutes, not out of credit). That agent keeps the role unless its turn fails or goes silent; then the role moves to the next healthy agent on the list.
 
    The run posts a card whose message id is the `runId` and wakes the agent bound to the start state. If the start state is a gate, it posts the gate's choice card instead.
 3. **Hand off.** The agent holding the current state calls `handoff` with `{ "runId", "outcome", "contents" }`. The outcome must be one the state declares. `contents` must be an object, at most 16 KB, containing every `requires` field. The next state's agent is woken automatically, so no @mention is needed.
 4. **Gates.** When a run reaches a gate, a choice card is posted for a human. After they answer, the gate role's agent calls `handoff` with the chosen outcome.
-5. **No healthy member.** If a tag-bound role has no healthy member, the run says so in the Room and waits. A human can ask an agent to call `assign_workflow_role` with `{ "runId", "role", "agentId" }`.
+5. **No healthy agent.** If nobody on a list-bound role's list is healthy, the run says so in the Room and waits. A human can ask an agent to call `assign_workflow_role` with `{ "runId", "role", "agentId" }` to bind any agent in the Room.
 6. **End.** The run ends when it reaches a terminal state. `handoff` on an ended run is refused.
 7. **Retire.** `archive_workflow` with `{ "name" }` stops new runs of that workflow.

@@ -27,23 +27,10 @@ import {
   WORKSPACE_MEMBER_PAGE_SIZE,
   readCornerAppDefinition,
   readCornerAppManifest,
-  isCustomTag,
-  CUSTOM_TAGS_PER_AGENT_MAX,
-  isWeightTierRule,
-  readWeightTierRules,
-  WEIGHT_TIER_RULES_MAX,
-  isAgentHarness,
-  resolveWeightTier,
-  resolveProviderTag,
-  readCustomTags,
-  isClassOrTagReference,
-  type WeightTierRule,
 } from '@beeline/api-contract/phone';
-import { readWorkspaceWeightTierRulesView } from './agent-classes.js';
 import type {
   AgentGrantView,
   AgentDetailView,
-  AgentTagsView,
   AgentPairingClaimView,
   ChatListView,
   CornerAppView,
@@ -214,6 +201,8 @@ const CONNECT_RENAME_WINDOW_MS = 15 * 60 * 1_000;
 const SLOW_ROOM_READ_MS = 500;
 /** Archived corners come ten at a time, newest closure first. */
 const ARCHIVED_CORNER_PAGE = 10;
+/** Agents a Room may list after its reviewer, tried in order (`agent-health.ts`). */
+const REVIEWER_FALLBACKS_MAX = 15;
 
 /** Where the next archived page starts: the last row's exact closure time and id. */
 export type ArchivedCornerCursor = { readonly micros: string; readonly id: string };
@@ -298,7 +287,7 @@ interface RoomRow {
   github_installation_id: string | null;
   github_events_enabled: boolean;
   reviewer_agent_id: string | null;
-  reviewer_class: string | null;
+  reviewer_fallback_ids: string[] | null;
   created_at: Date;
   updated_at: Date;
   leave_deletes_room?: boolean;
@@ -497,7 +486,9 @@ function roomHeader(row: RoomRow, publicOrigin: string) {
     ...(row.avatar ? { avatar: assetUrl(row.avatar, publicOrigin) } : {}),
     visibility: row.visibility,
     ...(row.reviewer_agent_id ? { reviewerAgentId: row.reviewer_agent_id } : {}),
-    ...(row.reviewer_class ? { reviewerClass: row.reviewer_class } : {}),
+    ...(row.reviewer_agent_id && row.reviewer_fallback_ids?.length
+      ? { reviewerFallbackIds: row.reviewer_fallback_ids }
+      : {}),
     archived: Boolean(row.archived_at),
     createdAt: unix(row.created_at),
     updatedAt: unix(row.updated_at),
@@ -1087,9 +1078,6 @@ export class PhoneService {
     }));
     const roster = await this.workspaceRoster(workspaceId);
     const viewerIdentity = await this.requireIdentity(viewerId);
-    const weightTierRules = managedRooms
-      ? (await readWorkspaceWeightTierRulesView(this.database, workspaceId)).rules
-      : undefined;
     return {
       workspace: {
         id: row.id,
@@ -1107,7 +1095,6 @@ export class PhoneService {
               visibility: row.visibility,
               rooms: managedRooms,
               roomsTruncated: managedRoomRows!.length > ROOM_VIEW_CHAT_LIMIT,
-              weightTierRules,
             },
           }
         : {}),
@@ -2473,16 +2460,12 @@ export class PhoneService {
         avatar_generation_pending: boolean;
         can_change_yolo: boolean;
         can_manage_grants: boolean;
-        can_manage_tags: boolean;
-        harness: string | null;
-        custom_tags: unknown;
         access_policy: unknown;
         owner_id: string | null;
         owner_name: string | null;
         owner_handle: string | null;
       }>(
         `SELECT a.soul,a.model_catalog,a.commands,a.selected_model,a.selected_effort,a.fast_mode,a.model_unavailable,
-                a.harness,a.custom_tags,
                 (SELECT id::text FROM agent_avatars WHERE agent_id=a.agent_id) avatar_generation_id,
                 EXISTS(SELECT 1 FROM agent_commands c WHERE c.agent_id=a.agent_id AND c.avatar_job AND c.state IN ('pending','claimed')) avatar_generation_pending,
                 CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode,
@@ -2490,8 +2473,7 @@ export class PhoneService {
                 setter.name yolo_set_by_name,a.access_policy,a.owner_id,
                 owner.name owner_name,owner.handle owner_handle,
                 a.owner_id=$3 can_change_yolo,
-                (a.owner_id=$3 OR viewer_membership.role IN ('owner','admin')) can_manage_grants,
-                viewer_membership.role IN ('owner','admin') can_manage_tags
+                (a.owner_id=$3 OR viewer_membership.role IN ('owner','admin')) can_manage_grants
          FROM agents a
          JOIN memberships agent_membership ON agent_membership.identity_id=a.agent_id
            AND agent_membership.workspace_id=$2 AND agent_membership.room_id IS NULL
@@ -2621,32 +2603,7 @@ export class PhoneService {
       ),
       // Grant decisions retain their separate owner-or-Workspace-manager axis.
       canManageGrants: config?.can_manage_grants ?? false,
-      ...(config
-        ? {
-            tags: await this.agentTagsView(workspaceId, agentId, config),
-            tagsCanChange: config.can_manage_tags,
-          }
-        : {}),
       watchFilters: [],
-    };
-  }
-  private async agentTagsView(
-    workspaceId: string,
-    agentId: string,
-    config: { selected_model: string | null; harness: string | null; custom_tags: unknown },
-  ): Promise<AgentTagsView> {
-    const harness = isAgentHarness(config.harness) ? config.harness : null;
-    const tierResolution = resolveWeightTier(
-      config.selected_model,
-      (await readWorkspaceWeightTierRulesView(this.database, workspaceId)).rules,
-    );
-    return {
-      ...(config.selected_model ? { model: config.selected_model } : {}),
-      ...(harness ? { harness } : {}),
-      provider: resolveProviderTag(harness, config.selected_model),
-      weightTier: tierResolution.tier,
-      unclassified: tierResolution.unclassified,
-      custom: readCustomTags(config.custom_tags),
     };
   }
   /** The grant store as the profile lists it: every non-pending grant, newest first. */
@@ -3514,16 +3471,6 @@ export class PhoneService {
       case 'updateAgentAccessPolicy':
         await this.updateAgentAccessPolicy(input as Input<'updateAgentAccessPolicy'>, viewerId);
         return undefined as Output<Name>;
-      case 'setAgentCustomTags':
-        return (await this.setAgentCustomTags(
-          input as Input<'setAgentCustomTags'>,
-          viewerId,
-        )) as Output<Name>;
-      case 'setWorkspaceWeightTierRules':
-        return (await this.setWorkspaceWeightTierRules(
-          input as Input<'setWorkspaceWeightTierRules'>,
-          viewerId,
-        )) as Output<Name>;
       case 'removeAgent':
         await this.removeAgent(input as Input<'removeAgent'>, viewerId);
         return undefined as Output<Name>;
@@ -5428,33 +5375,27 @@ export class PhoneService {
       if (
         input.visibility !== undefined ||
         input.reviewerAgentId !== undefined ||
-        input.reviewerClass !== undefined
+        input.reviewerFallbackIds !== undefined
       ) {
         throw new Error('room lifecycle cannot target a corner');
       }
       await this.renameCorner(input.roomId, input.name, viewerId);
       return;
     }
-    if (input.reviewerClass != null && !isClassOrTagReference(input.reviewerClass)) {
-      throw new Error('reviewer class is invalid');
+    const fallbackIds = input.reviewerFallbackIds;
+    if (
+      fallbackIds !== undefined &&
+      (!Array.isArray(fallbackIds) ||
+        fallbackIds.length > REVIEWER_FALLBACKS_MAX ||
+        !fallbackIds.every((id) => typeof id === 'string' && /^[0-9a-f]{64}$/.test(id)) ||
+        new Set(fallbackIds).size !== fallbackIds.length)
+    ) {
+      throw new Error(`reviewer fallbacks must be at most ${REVIEWER_FALLBACKS_MAX} distinct agent ids`);
     }
     const room = await this.requireTopLevelRoom(input.roomId);
     await this.requireWorkspaceManager(room.workspace_id, viewerId);
     const name = input.name === undefined ? undefined : requireRoomSlug(input.name);
-    // Mutually exclusive: setting one to a real value clears the other, unless
-    // the caller is explicitly touching both in the same call.
-    const reviewerAgentId =
-      input.reviewerAgentId !== undefined
-        ? input.reviewerAgentId
-        : input.reviewerClass != null
-          ? null
-          : undefined;
-    const reviewerClass =
-      input.reviewerClass !== undefined
-        ? input.reviewerClass
-        : input.reviewerAgentId != null
-          ? null
-          : undefined;
+    const reviewerAgentId = input.reviewerAgentId;
     await this.database.transaction(async (database) => {
       if (name !== undefined)
         await reserveRoomName(database, room.workspace_id, name, input.roomId);
@@ -5464,23 +5405,35 @@ export class PhoneService {
           reviewer_agent_id: string | null;
         }>('SELECT visibility,reviewer_agent_id FROM rooms WHERE id=$1 FOR UPDATE', [input.roomId])
       ).rows[0];
-      if (reviewerAgentId !== undefined && reviewerAgentId !== null) {
-        const reviewer = await database.query(
-          `SELECT 1
+      const nextReviewer = reviewerAgentId !== undefined ? reviewerAgentId : (current?.reviewer_agent_id ?? null);
+      // Fallbacks only exist behind a reviewer; clearing the reviewer clears them.
+      const nextFallbacks = !nextReviewer
+        ? []
+        : fallbackIds !== undefined
+          ? fallbackIds.filter((id) => id !== nextReviewer)
+          : undefined;
+      const required = [
+        ...(reviewerAgentId ? [reviewerAgentId] : []),
+        ...(fallbackIds !== undefined ? (nextFallbacks ?? []) : []),
+      ];
+      if (required.length) {
+        const reviewers = await database.query<{ identity_id: string }>(
+          `SELECT membership.identity_id
            FROM memberships membership
            JOIN identities identity ON identity.id=membership.identity_id AND identity.kind='agent'
-           WHERE membership.room_id=$1 AND membership.identity_id=$2
+           WHERE membership.room_id=$1 AND membership.identity_id=ANY($2::text[])
              AND membership.removed_at IS NULL
            FOR SHARE OF membership`,
-          [input.roomId, reviewerAgentId],
+          [input.roomId, required],
         );
-        if (!reviewer.rowCount) throw new Error('reviewer agent Room membership required');
+        if (reviewers.rowCount !== new Set(required).size)
+          throw new Error('reviewer agent Room membership required');
       }
       await database.query(
         `UPDATE rooms
          SET name=COALESCE($2,name),visibility=COALESCE($3,visibility),
              reviewer_agent_id=CASE WHEN $4::boolean THEN $5 ELSE reviewer_agent_id END,
-             reviewer_class=CASE WHEN $6::boolean THEN $7 ELSE reviewer_class END,
+             reviewer_fallback_ids=CASE WHEN $6::boolean THEN $7::text[] ELSE reviewer_fallback_ids END,
              updated_at=now()
          WHERE id=$1`,
         [
@@ -5489,8 +5442,8 @@ export class PhoneService {
           input.visibility ?? null,
           reviewerAgentId !== undefined,
           reviewerAgentId ?? null,
-          reviewerClass !== undefined,
-          reviewerClass ?? null,
+          nextFallbacks !== undefined,
+          nextFallbacks ?? [],
         ],
       );
       if (reviewerAgentId !== undefined && reviewerAgentId !== current?.reviewer_agent_id) {
@@ -6647,57 +6600,6 @@ export class PhoneService {
         cardType: 'agent-access',
       });
     });
-  }
-  /**
-   * Custom agent tags: Workspace-ADMIN authority (owner|admin), distinct from
-   * `updateAgentAccessPolicy`/`updateAgentYolo` above which are the agent's
-   * own connected-owner authority. This is the one CRUD surface for the
-   * admin-editable half of an agent's class/tag set — the other three
-   * (model, harness, weight tier) are automatic and never written here.
-   */
-  private async setAgentCustomTags(
-    input: Input<'setAgentCustomTags'>,
-    viewerId: string,
-  ): Promise<{ tags: readonly string[] }> {
-    if (!Array.isArray(input.tags) || input.tags.length > CUSTOM_TAGS_PER_AGENT_MAX) {
-      throw new Error(`at most ${CUSTOM_TAGS_PER_AGENT_MAX} tags`);
-    }
-    if (!input.tags.every(isCustomTag)) {
-      throw new Error('every tag must be lowercase, start with a letter, and be at most 32 characters');
-    }
-    const tags = [...new Set(input.tags)];
-    const agent = await this.database.query(
-      `SELECT 1 FROM agents a
-       JOIN memberships m ON m.identity_id=a.agent_id
-         AND m.workspace_id=$2 AND m.room_id IS NULL AND m.removed_at IS NULL
-       WHERE a.agent_id=$1`,
-      [input.agentId, input.workspaceId],
-    );
-    if (!agent.rowCount) throw new Error('agent not found in workspace');
-    await this.requireWorkspaceManager(input.workspaceId, viewerId);
-    await this.database.query(
-      `UPDATE agents SET custom_tags=$2::jsonb,updated_at=now() WHERE agent_id=$1`,
-      [input.agentId, JSON.stringify(tags)],
-    );
-    return { tags };
-  }
-  /** The workspace's weight-tier family-pattern map; `null` resets to the shipped defaults. */
-  private async setWorkspaceWeightTierRules(
-    input: Input<'setWorkspaceWeightTierRules'>,
-    viewerId: string,
-  ): Promise<{ rules: readonly WeightTierRule[] }> {
-    await this.requireWorkspaceManager(input.workspaceId, viewerId);
-    if (input.rules !== null && !input.rules.every(isWeightTierRule)) {
-      throw new Error('invalid weight tier rule: each needs a pattern and a tier');
-    }
-    if (input.rules !== null && input.rules.length > WEIGHT_TIER_RULES_MAX) {
-      throw new Error(`at most ${WEIGHT_TIER_RULES_MAX} weight tier rules`);
-    }
-    await this.database.query(
-      `UPDATE workspaces SET weight_tier_rules=$2::jsonb,updated_at=now() WHERE id=$1`,
-      [input.workspaceId, input.rules === null ? null : JSON.stringify(input.rules)],
-    );
-    return { rules: readWeightTierRules(input.rules) };
   }
   /**
    * Roll back an agent registration whose connect helper never came up. Only
@@ -8244,40 +8146,29 @@ export class PhoneService {
 
   private async enrichWorkspaceAgents(
     members: readonly RoomViewMember[],
-    workspaceId?: string,
   ): Promise<WorkspaceAgentView[]> {
     const agentMembers = members.filter((member) => member.identity.kind === 'agent');
     if (!agentMembers.length) return [];
-    const [configs, tierRules] = await Promise.all([
-      this.database.query<{
-        agent_id: string;
-        selected_model: string | null;
-        model_catalog: AgentDetailView['catalog'];
-        harness: string | null;
-        custom_tags: unknown;
-        owner_id: string;
-        owner_name: string;
-        owner_handle: string | null;
-      }>(
-        `SELECT agent.agent_id,agent.selected_model,agent.model_catalog,agent.harness,agent.custom_tags,
-                owner.id owner_id,owner.name owner_name,owner.handle owner_handle
-         FROM agents agent JOIN identities owner ON owner.id=agent.owner_id
-         WHERE agent.agent_id=ANY($1::text[])`,
-        [agentMembers.map((member) => member.identity.pubkey)],
-      ),
-      workspaceId ? readWorkspaceWeightTierRulesView(this.database, workspaceId) : undefined,
-    ]);
+    const configs = await this.database.query<{
+      agent_id: string;
+      selected_model: string | null;
+      model_catalog: AgentDetailView['catalog'];
+      owner_id: string;
+      owner_name: string;
+      owner_handle: string | null;
+    }>(
+      `SELECT agent.agent_id,agent.selected_model,agent.model_catalog,
+              owner.id owner_id,owner.name owner_name,owner.handle owner_handle
+       FROM agents agent JOIN identities owner ON owner.id=agent.owner_id
+       WHERE agent.agent_id=ANY($1::text[])`,
+      [agentMembers.map((member) => member.identity.pubkey)],
+    );
     const configByAgent = new Map(configs.rows.map((config) => [config.agent_id, config]));
-    const rules = tierRules?.rules;
     return agentMembers.map((member) => {
       const config = configByAgent.get(member.identity.pubkey);
       const model = config
         ? selectedModelLabel(config.selected_model, config.model_catalog ?? [])
         : undefined;
-      const harness = config && isAgentHarness(config.harness) ? config.harness : null;
-      const tierResolution = rules
-        ? resolveWeightTier(config?.selected_model, rules)
-        : resolveWeightTier(config?.selected_model);
       return {
         ...member,
         ...(model ? { model } : {}),
@@ -8288,14 +8179,6 @@ export class PhoneService {
                 kind: 'human' as const,
                 name: config.owner_name,
                 ...(config.owner_handle ? { handle: config.owner_handle } : {}),
-              },
-              tags: {
-                ...(config.selected_model ? { model: config.selected_model } : {}),
-                ...(harness ? { harness } : {}),
-                provider: resolveProviderTag(harness, config.selected_model),
-                weightTier: tierResolution.tier,
-                unclassified: tierResolution.unclassified,
-                custom: readCustomTags(config.custom_tags),
               },
             }
           : {}),
@@ -8378,10 +8261,7 @@ export class PhoneService {
       }
     }
     const people = this.projectMembers(peoplePage.rows, null);
-    const agents = await this.enrichWorkspaceAgents(
-      this.projectMembers(agentPage.rows, null),
-      workspaceId,
-    );
+    const agents = await this.enrichWorkspaceAgents(this.projectMembers(agentPage.rows, null));
     const [peopleTotal, agentTotal] = await Promise.all([
       kind === 'agent'
         ? this.workspaceRosterCount(workspaceId, 'human', needle)
@@ -8898,8 +8778,6 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'refreshAgentModelCatalog',
   'updateAgentYolo',
   'updateAgentAccessPolicy',
-  'setAgentCustomTags',
-  'setWorkspaceWeightTierRules',
   'removeAgent',
   'updatePersonProfile',
   'updateIdentityFace',

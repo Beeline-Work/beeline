@@ -49,7 +49,7 @@
  */
 import { execFile } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { chmod, mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, readdir, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { dirname, resolve } from 'node:path';
@@ -168,85 +168,109 @@ const SECRETS_LOCK_TIMEOUT_MS = 30_000;
 /** Base poll interval while the lock is held by someone else. */
 const SECRETS_LOCK_POLL_MS = 25;
 
-/** The lock file's content: `<pid>:<uuid>`, the holder's unguessable owner token. */
+/** The holder's unguessable owner token, which also names its lock marker file. */
 function operatorSecretsLockToken(): string {
   return `${process.pid}:${randomUUID()}`;
 }
 
-/** The lock's current owner token, or undefined if there is no lock. */
-async function operatorSecretsLockOwner(lockPath: string): Promise<string | undefined> {
-  const raw = await readFile(lockPath, 'utf8').catch(() => undefined);
-  if (!raw) return undefined;
-  const token = raw.trim();
-  return token || undefined;
+/** The lock directory's current owner marker, or undefined if there is no lock. */
+async function operatorSecretsLockOwner(lockDir: string): Promise<string | undefined> {
+  let entries: string[];
+  try {
+    entries = await readdir(lockDir);
+  } catch {
+    return undefined;
+  }
+  const marker = entries.find((entry) => !entry.endsWith('/'));
+  return marker ?? undefined;
 }
 
 /**
- * Take over a stale lock. The lock's content is re-read immediately before
- * the unlink so a pathname unlink can never delete a lock a NEW holder
- * created between our first stale sighting and the delete: we only remove
- * the file if it still carries the exact token we judged stale.
+ * Take over a stale lock directory. The lock's ownership is verified and
+ * removed with ATOMIC primitives, never by a bare pathname unlink:
+ * a stale lock is a directory whose only contents are the dead holder's
+ * marker; we unlink that marker, then `rmdir` — which succeeds only on an
+ * EMPTY directory. If a rival removed the marker and re-created the
+ * directory with its own marker first, our `rmdir` sees ENOTEMPTY and
+ * removes nothing. There is no read-then-replace window in which a newly
+ * acquired lock can be deleted.
  *
- * Returns true when a stale lock was removed (the caller should retry the
- * exclusive create at once); false when the lock is fresh, gone, or carries
- * a token different from the stale one we observed.
+ * Returns true when the stale lock was removed (the caller should retry
+ * `mkdir` at once); false when the lock is fresh, gone, or already claimed.
  */
-async function takeOverStaleOperatorSecretsLock(lockPath: string): Promise<boolean> {
-  const first = await operatorSecretsLockOwner(lockPath);
-  if (!first) return false;
-  const info = await stat(lockPath).catch(() => undefined);
+async function takeOverStaleOperatorSecretsLock(lockDir: string): Promise<boolean> {
+  const owner = await operatorSecretsLockOwner(lockDir);
+  if (!owner) return false;
+  const info = await stat(lockDir).catch(() => undefined);
   if (!info || Date.now() - info.mtimeMs <= SECRETS_LOCK_STALE_MS) return false;
-  const second = await operatorSecretsLockOwner(lockPath);
-  if (second !== first) return false;
-  await rm(lockPath, { force: true });
+  await rm(joinDirSafe(lockDir, owner));
+  try {
+    await rmdir(lockDir);
+  } catch {
+    return false; // a rival re-created the directory with its own marker
+  }
   return true;
 }
 
 /**
- * Release the lock this holder owns. The lock is unlinked only while it
- * still carries our exact owner token: a contender that took over a stale
- * copy of our lock owns the path now, and a pathname unlink would break its
- * mutual exclusion while it is mid-write.
+ * Release the lock this holder owns. We unlink our own uniquely named marker
+ * (a no-op if the directory was taken over), then `rmdir` the directory —
+ * which succeeds only while it is still EMPTY, i.e. still ours. If a rival
+ * re-created it with its own marker, `rmdir` returns ENOTEMPTY and removes
+ * nothing. No interleaving of another process can make this release delete
+ * somebody else's lock.
  */
-async function releaseOperatorSecretsLock(lockPath: string, owner: string): Promise<void> {
-  const current = await operatorSecretsLockOwner(lockPath);
-  if (current !== owner) return;
-  await rm(lockPath, { force: true });
+async function releaseOperatorSecretsLock(lockDir: string, owner: string): Promise<void> {
+  await rm(joinDirSafe(lockDir, owner), { force: true }).catch(() => {});
+  await rmdir(lockDir).catch(() => {});
+}
+
+/** `join(dir, name)` for a lock marker, with no path traversal. */
+function joinDirSafe(dir: string, name: string): string {
+  return /^[A-Za-z0-9:._-]+$/.test(name) ? `${dir}/${name}` : dir;
 }
 
 /**
  * Hold the operator-store lock for one read-modify-write. The lock is a
- * sibling `secrets.json.lock` file created with `O_EXCL`: the exclusive
- * create is the fence, and the file's content is the holder's unguessable
- * owner token, used to make every unlink ownership-safe (see the takeover
- * and release helpers above). Cross-process by construction, since separate
- * daemon processes sharing one operator config directory contend on the
- * same inode. Returns a release function; call it in `finally`. A crashed
- * holder leaves a stale lock that any waiter takes over after
+ * sibling `secrets.json.lock` DIRECTORY: `mkdir` is the atomic acquire
+ * fence (only one process wins), the holder drops an unguessably named
+ * owner marker inside, and every removal goes through `rmdir`, which
+ * succeeds only on an empty directory — so release and stale takeover are
+ * ownership-safe by construction, with no unlink-by-pathname that a
+ * concurrent replacement can race. Cross-process by construction, since
+ * separate daemon processes sharing one operator config directory contend
+ * on the same path. Returns a release function; call it in `finally`. A
+ * crashed holder leaves a stale lock that any waiter takes over after
  * `SECRETS_LOCK_STALE_MS`.
  */
 export async function acquireOperatorSecretStoreLock(
   path: string,
 ): Promise<() => Promise<void>> {
-  const lockPath = `${path}.lock`;
+  const lockDir = `${path}.lock`;
   const owner = operatorSecretsLockToken();
   const deadline = Date.now() + SECRETS_LOCK_TIMEOUT_MS;
   for (;;) {
     try {
-      const handle = await open(lockPath, 'wx', 0o600);
-      await handle.writeFile(`${owner}\n`);
-      await handle.close();
+      await mkdir(lockDir, { mode: 0o700 });
+      // A rival could have stolen an old lock and be re-creating this path;
+      // if our marker write fails the lock is no longer ours — retry fresh.
+      await writeFile(`${lockDir}/${owner}`, `${process.pid}\n`, { mode: 0o600 });
       let released = false;
       return async () => {
         if (released) return;
         released = true;
-        await releaseOperatorSecretsLock(lockPath, owner);
+        await releaseOperatorSecretsLock(lockDir, owner);
       };
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      if (await takeOverStaleOperatorSecretsLock(lockPath)) continue;
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+        if (await takeOverStaleOperatorSecretsLock(lockDir)) continue;
+      } else {
+        // The empty-dir window of a concurrent stale takeover: our marker
+        // could not be written, so this acquire must be retried, not held.
+        await rmdir(lockDir).catch(() => {});
+      }
       if (Date.now() > deadline) {
-        throw new Error(`timed out waiting for the operator secret store lock at ${lockPath}`);
+        throw new Error(`timed out waiting for the operator secret store lock at ${lockDir}`);
       }
       await new Promise((resolve) =>
         setTimeout(resolve, SECRETS_LOCK_POLL_MS + Math.floor(Math.random() * 25)),

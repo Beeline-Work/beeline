@@ -377,30 +377,59 @@ describe('triage tools', () => {
     }
   });
 
-  it('serves the triage corner until a Room admin turns the setting off', async () => {
-    const turn = await triageTurn();
+  it('turns the setting on and off when a Room admin asks the corner agent, and for no one else', async () => {
     const service = daemon(new FakeGitHub());
+    const setting = async (corner: string) =>
+      (
+        await database.query<{ feedback_triage: boolean }>(
+          `SELECT feedback_triage FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]!.feedback_triage;
+    const turn = await triageTurn();
     await expect(service.execute('listFeedback', turn as never, TRIAGE)).resolves.toEqual({
       items: [],
     });
-    const phone = new PhoneService(database, 'http://local.test');
+    // A member who is not a Room admin asks: refused, the setting stays on.
     await expect(
-      phone.execute('setCornerFeedbackTriage', { roomId: TRIAGE_CORNER, enabled: false }, PERSON),
-    ).rejects.toThrow('room manager required');
+      service.execute('setCornerFeedbackTriage', { ...(await triageTurn()), enabled: false } as never, TRIAGE),
+    ).rejects.toThrow('feedback triage change access denied');
+    expect(await setting(TRIAGE_CORNER)).toBe(true);
+    // Another agent's request is refused even when its owner is an admin.
     await database.query(
       `UPDATE memberships SET role='admin' WHERE identity_id=$1 AND room_id IS NULL`,
       [PERSON],
     );
-    await phone.execute('setCornerFeedbackTriage', { roomId: TRIAGE_CORNER, enabled: false }, PERSON);
-    expect((await phone.readRoom(TRIAGE_CORNER, PERSON))?.cornerFeedbackTriage).toBe(false);
+    const agentAsked = await openTurn(
+      await message('@sweeper turn triage off', AGENT, TRIAGE_CORNER),
+      TRIAGE_CORNER,
+      TRIAGE,
+    );
+    await expect(
+      service.execute('setCornerFeedbackTriage', { ...agentAsked, enabled: false } as never, TRIAGE),
+    ).rejects.toThrow('feedback triage change access denied');
+    // The Room admin asks: off, and the next triage call is refused.
+    await expect(
+      service.execute('setCornerFeedbackTriage', { ...(await triageTurn()), enabled: false } as never, TRIAGE),
+    ).resolves.toEqual({ cornerId: TRIAGE_CORNER, enabled: false });
+    expect(await setting(TRIAGE_CORNER)).toBe(false);
     await expect(service.execute('listFeedback', turn as never, TRIAGE)).rejects.toThrow(
       'feedback triage access denied',
     );
-    await phone.execute('setCornerFeedbackTriage', { roomId: CORNER, enabled: true }, PERSON);
-    expect((await phone.readRoom(CORNER, PERSON))?.cornerFeedbackTriage).toBe(true);
+    // On in an ordinary corner; never on a top-level Room or with no turn.
+    await service.execute(
+      'setCornerFeedbackTriage',
+      { ...(await triageTurn(CORNER)), enabled: true } as never,
+      TRIAGE,
+    );
+    expect(await setting(CORNER)).toBe(true);
     await expect(
-      phone.execute('setCornerFeedbackTriage', { roomId: ROOM, enabled: true }, PERSON),
-    ).rejects.toThrow('corner not found');
+      service.execute('setCornerFeedbackTriage', { ...(await triageTurn(ROOM)), enabled: true } as never, TRIAGE),
+    ).rejects.toThrow('feedback triage change access denied');
+    await expect(
+      service.execute('setCornerFeedbackTriage', { roomId: CORNER, enabled: false } as never, TRIAGE),
+    ).rejects.toThrow('command output authority rejected');
+    expect(await setting(CORNER)).toBe(true);
   });
 
   it('lists new items with human reports first, then by cluster size', async () => {

@@ -537,6 +537,11 @@ export type DaemonOperationMap = {
     RoomInput & { readonly itemIds: readonly string[]; readonly reason: string },
     { readonly itemIds: readonly string[] }
   >;
+  /** A Room admin asked the agent in this corner to turn Feedback triage on or off. */
+  setCornerFeedbackTriage: Operation<
+    RoomInput & TurnOutputAuthority & { readonly enabled: boolean },
+    { readonly cornerId: string; readonly enabled: boolean }
+  >;
 };
 export type Operation<Input, Output> = { readonly input: Input; readonly output: Output };
 export type RoomInput = { readonly roomId: string };

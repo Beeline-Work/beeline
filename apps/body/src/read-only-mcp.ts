@@ -456,6 +456,17 @@ const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: 'set_feedback_triage',
+    description:
+      'Turn Feedback triage on or off for the corner you are working in, when a Room admin asks you to. With it on, your next turn here has the triage tools (list_feedback, file_feedback_issue, and the rest). The server refuses anyone but a Room admin.',
+    inputSchema: {
+      type: 'object',
+      required: ['enabled'],
+      properties: { enabled: { type: 'boolean' } },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'list_feedback',
     description:
       'Feedback triage only (a corner with Feedback triage on): list new Beeline feedback items, human reports first, then by how many similar reports each has.',
@@ -1648,6 +1659,7 @@ export function agentToolsFor(
     if (tool.name === 'open_corner') return !directMessage;
     if (FEEDBACK_TRIAGE_TOOL_NAMES.has(tool.name)) return cornerTurn && feedbackTriage;
     if (tool.name === 'revise_corner_brief') return cornerTurn;
+    if (tool.name === 'set_feedback_triage') return cornerTurn;
     if (tool.name === 'record_validation_stage') return cornerTurn;
     if (tool.name === 'upgrade_corner_to_code') return cornerTurn && agentMayUpgradeCorner;
     if (tool.name === 'close_corner') return cornerTurn && agentMayCloseCorner;
@@ -3612,6 +3624,16 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       );
     case 'report_feedback':
       return reportFeedback(args);
+    case 'set_feedback_triage': {
+      if (typeof args.enabled !== 'boolean') throw new Error('enabled must be a boolean');
+      const result = await daemonExecute('setCornerFeedbackTriage', {
+        roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+        enabled: args.enabled,
+      });
+      return result.enabled
+        ? 'Feedback triage is on for this corner; the triage tools load on your next turn here.'
+        : 'Feedback triage is off for this corner.';
+    }
     case 'list_feedback':
       return JSON.stringify(
         await daemonExecute('listFeedback', {

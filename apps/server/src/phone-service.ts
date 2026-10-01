@@ -1586,9 +1586,8 @@ export class PhoneService {
             plan: RoomView['cornerPlan'] | null;
             objective: string;
             owner_agent_id: string | null;
-            feedback_triage: boolean;
           }>(
-            `SELECT plan,objective,owner_agent_id,feedback_triage FROM corner_facts WHERE corner_id=$1`,
+            `SELECT plan,objective,owner_agent_id FROM corner_facts WHERE corner_id=$1`,
             [roomId],
           )
         ).rows[0],
@@ -1822,7 +1821,6 @@ export class PhoneService {
       ...(room.parent_id && facts?.owner_agent_id
         ? { cornerOpenerAgentId: facts.owner_agent_id }
         : {}),
-      ...(room.parent_id && facts ? { cornerFeedbackTriage: facts.feedback_triage } : {}),
       briefing: decorateAttachments(briefing, attachmentFacts),
       ...(room.parent_id && plan ? { cornerPlan: plan } : {}),
       ...(cornerBrief
@@ -3343,9 +3341,6 @@ export class PhoneService {
         )) as Output<Name>;
       case 'requestCornerClose':
         await this.requestCornerClose((input as Input<'requestCornerClose'>).roomId, viewerId);
-        return undefined as Output<Name>;
-      case 'setCornerFeedbackTriage':
-        await this.setCornerFeedbackTriage(input as Input<'setCornerFeedbackTriage'>, viewerId);
         return undefined as Output<Name>;
       case 'decideWritePermission':
         return (await this.decidePermission(
@@ -7058,23 +7053,6 @@ export class PhoneService {
     if (!updated.rowCount) throw new Error('room repository not configured');
     return this.roomRepository(input.roomId);
   }
-  /** Feedback triage is a Room admin's switch on one live corner (`feedback.ts`). */
-  private async setCornerFeedbackTriage(
-    input: Input<'setCornerFeedbackTriage'>,
-    viewerId: string,
-  ) {
-    if (typeof input.enabled !== 'boolean') throw new Error('enabled must be a boolean');
-    await this.requireRoomWorkspaceManager(input.roomId, viewerId);
-    const updated = await this.database.query(
-      `UPDATE corner_facts fact SET feedback_triage=$2,updated_at=now()
-       FROM rooms corner
-       WHERE fact.corner_id=$1 AND corner.id=fact.corner_id
-         AND corner.parent_id IS NOT NULL AND corner.archived_at IS NULL`,
-      [input.roomId, input.enabled],
-    );
-    if (!updated.rowCount) throw new Error('corner not found');
-    this.live?.publish({ type: 'invalidate', roomId: input.roomId, reason: 'corner' });
-  }
   private async setGitHubEvents(input: Input<'setRoomGitHubEvents'>, viewerId: string) {
     await this.requireRoomWorkspaceManager(input.roomId, viewerId);
     const updated = await this.database.query(
@@ -8838,7 +8816,6 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'cancelAgentTurn',
   'createHumanCorner',
   'requestCornerClose',
-  'setCornerFeedbackTriage',
   'decideWritePermission',
   'decideAgentGrant',
   'revokeAgentGrant',

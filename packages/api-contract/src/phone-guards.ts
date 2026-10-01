@@ -1523,10 +1523,6 @@ export function readRoomView(value: unknown): RoomView | null {
     ...field('directMessage', readDirectMessage(item.directMessage, viewer.identity.pubkey)),
     ...field('parent', readHeader(item.parent)),
     ...field('cornerOpenerAgentId', hex64(item.cornerOpenerAgentId) ? item.cornerOpenerAgentId : undefined),
-    ...field(
-      'cornerFeedbackTriage',
-      typeof item.cornerFeedbackTriage === 'boolean' ? item.cornerFeedbackTriage : undefined,
-    ),
     ...field('briefing', readList(item.briefing, readRoomViewMessage, ROOM_VIEW_BRIEFING_LIMIT)),
     ...field('cornerPlan', readPlan(item.cornerPlan)),
     ...field('repository', readRepository(item.repository)),

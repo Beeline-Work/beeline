@@ -54,6 +54,15 @@ describe('feedback tools', () => {
     ])
       for (const name of TRIAGE_TOOLS) expect(tools.map((tool) => tool.name)).not.toContain(name);
   });
+
+  it('offers set_feedback_triage in every corner turn and nowhere else', () => {
+    // A Room admin asks the corner's agent; there is no switch in the app.
+    expect(agentToolsFor(true, false, true).map((tool) => tool.name)).toContain(
+      'set_feedback_triage',
+    );
+    for (const tools of [agentToolsFor(true, false), agentToolsFor(true, true)])
+      expect(tools.map((tool) => tool.name)).not.toContain('set_feedback_triage');
+  });
 });
 
 describe('report_feedback', () => {
@@ -135,6 +144,23 @@ describe('report_feedback', () => {
         requestId: 'request-1',
         generationId: context.generationId,
       });
+  });
+
+  it('sends set_feedback_triage with the turn it runs in', async () => {
+    answer = () => Response.json({ cornerId: 'corner-1', enabled: true });
+    expect(await callAgentTool('set_feedback_triage', { enabled: true }, 'call-1')).toBe(
+      'Feedback triage is on for this corner; the triage tools load on your next turn here.',
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      name: 'setCornerFeedbackTriage',
+      input: {
+        roomId: 'room-1',
+        enabled: true,
+        requestId: 'request-1',
+        generationId: context.generationId,
+      },
+    });
   });
 
   it('returns a refusal as a result instead of failing the turn', async () => {

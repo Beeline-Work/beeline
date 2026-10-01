@@ -585,8 +585,6 @@ export type RoomView = {
   readonly parent?: RoomViewHeader;
   /** The agent that opened this corner, independent of later reviewers and helpers. */
   readonly cornerOpenerAgentId?: string;
-  /** A corner's Feedback triage setting; absent outside corners. */
-  readonly cornerFeedbackTriage?: boolean;
   readonly briefing?: readonly RoomViewMessage[];
   /** Latest corner plan, retained after its live activity rows settle. */
   readonly cornerPlan?: RoomViewActivity['plan'];

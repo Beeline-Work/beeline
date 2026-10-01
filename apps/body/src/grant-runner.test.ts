@@ -306,6 +306,25 @@ describe('GrantCommandRunner', () => {
     expect(readFileSync(path, 'utf8')).toBe(JSON.stringify({ DEPLOY_TOKEN: 'token-value-10' }, null, 2) + '\n');
   });
 
+  it('concurrent storeOperatorSecret writes never drop a secret (regression: 1 of 24 survived)', async () => {
+    const config = await mkdtemp(join(tmpdir(), 'beeline-keys-'));
+    roots.push(config);
+    const env: NodeJS.ProcessEnv = { XDG_CONFIG_HOME: join(config, '.config') };
+    // All stores share one secrets.json and each is a read-modify-write, so
+    // without serialization every call writes from the same snapshot and only
+    // the last one survives.
+    const names = Array.from({ length: 24 }, (_, i) => `SECRET_${i}`);
+    await Promise.all(
+      names.map((name, i) => storeOperatorSecret(name, `value-${i}`, env)),
+    );
+    const resolve = operatorSecretResolver(env);
+    for (const [i, name] of names.entries()) {
+      await expect(resolve(name)).resolves.toBe(`value-${i}`);
+    }
+    const keep = Object.keys(JSON.parse(readFileSync(join(config, '.config', 'beeline', 'secrets.json'), 'utf8')));
+    expect(keep.sort()).toEqual(names.slice().sort());
+  });
+
   it('reports a non-zero exit and a command that does not start, still with a ledger row', async () => {
     const { runner, calls } = await harness([
       grant({ grantId: 'fail', target: `${process.execPath} exit3.mjs` }),

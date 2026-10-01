@@ -165,17 +165,33 @@ async function readOperatorSecrets(
  * Store one operator secret by name so a command grant's `--with NAME` resolves
  * at run time. Written to secrets.json beside the operator key store, mode
  * 0600, value never echoed. Storing the same name replaces its value.
+ *
+ * The write is a read-modify-write of one shared file, so concurrent calls are
+ * serialized through this tail: without it, two stores in flight both write
+ * from the same snapshot and the last one drops the other's secret.
  */
+let operatorSecretsWriteTail: Promise<void> = Promise.resolve();
+
 export async function storeOperatorSecret(
   name: string,
   value: string,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
-  const path = operatorSecretsPath(env);
-  const store = { ...(await readOperatorSecrets(env)), [name]: value };
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  await writeFile(path, `${JSON.stringify(store, null, 2)}\n`, { mode: 0o600 });
-  await chmod(path, 0o600);
+  const prior = operatorSecretsWriteTail;
+  let release: (() => void) | undefined;
+  operatorSecretsWriteTail = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await prior;
+  try {
+    const path = operatorSecretsPath(env);
+    const store = { ...(await readOperatorSecrets(env)), [name]: value };
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    await writeFile(path, `${JSON.stringify(store, null, 2)}\n`, { mode: 0o600 });
+    await chmod(path, 0o600);
+  } finally {
+    release?.();
+  }
 }
 
 /**

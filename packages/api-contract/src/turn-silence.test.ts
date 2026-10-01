@@ -118,7 +118,7 @@ describe('turn silence phrasing', () => {
       'Candy could not answer · the turn stalled. Restarting the agent and resending your message.',
       "Candy could not answer · the selected model isn't available. Pick another in the agent's settings.",
       'Candy could not answer · the provider allowance is spent until Sep 19th, 2026 4:09 AM. Top up, or move the agent to another provider.',
-      "Candy could not answer · the helper isn't signed in to the provider. Run `beeline connect` on the helper's machine.",
+      "Candy could not answer · the helper could not authenticate with the provider. Check its log for the failed turn; if its login expired, run `beeline connect` on the helper's machine.",
       "Candy could not answer · the helper couldn't get a working copy of acme/widgets. Check the repository is reachable.",
       "Candy could not answer · the helper is out of date. Run `beeline start` on the helper's machine.",
       "Candy is offline · the helper isn't running. Run `beeline start` on the helper's machine.",

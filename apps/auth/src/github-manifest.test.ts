@@ -80,6 +80,7 @@ describe('GitHub App manifest flow', () => {
       metadata: 'read',
       checks: 'read',
       statuses: 'read',
+      starring: 'write',
     });
     expect(REQUIRED_GITHUB_APP_PERMISSIONS).toEqual(manifest.default_permissions);
     expect(manifest.default_permissions).not.toHaveProperty('administration');
@@ -185,6 +186,7 @@ describe('GitHub App configuration drift', () => {
       metadata: 'read',
       checks: 'read',
       statuses: 'read',
+      starring: 'write',
     },
   };
 

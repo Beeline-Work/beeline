@@ -193,6 +193,7 @@ import {
   ownerGrantShareMessage,
   type OwnerGrantNeeded,
 } from '@/components/buzz/OwnerGrantNeededCard';
+import { StarPromptCard, useStarPrompt } from '@/components/buzz/StarPromptCard';
 import { selectWorkingAgents } from '@/buzz/room-indicators';
 import {
   roomBottomChromeStyles,
@@ -1810,6 +1811,15 @@ export function BuzzChatSurface({
   // false there and only there for a direct message, since a DM can never be
   // archived).
   const isReadOnlyDirectMessage = isDirectMessage && roomSurface?.viewer.permissions.send === false;
+  // A win (a new reply, or the viewer's own 👍) can make the GitHub star card due.
+  const starPromptKey = useMemo(() => {
+    const messages = roomSurface?.messages ?? [];
+    const thumbs = messages.filter((message) =>
+      message.reactions?.some((reaction) => reaction.emoji === '👍' && reaction.reacted),
+    ).length;
+    return `${messages.at(-1)?.id ?? ''}:${thumbs}`;
+  }, [roomSurface?.messages]);
+  const starPrompt = useStarPrompt(starPromptKey, Boolean(roomSurface) && !isReadOnlyDirectMessage);
   useEffect(() => {
     const humanUi = roomSurface?.boundApp?.manifest.humanUi;
     if (!isFocused || !isCorner || !humanUi) return;
@@ -6024,7 +6034,18 @@ export function BuzzChatSurface({
                 />
               </View>
             }
-            ListHeaderComponent={null}
+            // Inverted native list: the header is the newest end of the transcript.
+            ListHeaderComponent={
+              starPrompt.prompt ? (
+                <View style={styles.starPrompt}>
+                  <StarPromptCard
+                    prompt={starPrompt.prompt}
+                    busy={starPrompt.busy}
+                    onAnswer={(action) => void starPrompt.answer(action)}
+                  />
+                </View>
+              ) : null
+            }
             // Inverted native list: the footer is the visual top.
             ListFooterComponent={transcriptHistoryLine}
           />
@@ -6896,6 +6917,7 @@ const styles = StyleSheet.create((theme) => {
     keyboardBody: {
       flex: 1,
     },
+    starPrompt: { paddingTop: 12 },
     agentProfilePane: { width: 380, maxWidth: '50%', borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: groknight.border },
     desktopConversationFrame: {
       flex: 1,

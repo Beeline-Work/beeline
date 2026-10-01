@@ -184,6 +184,7 @@ import {
   startWorkflow,
 } from './workflow-runs.js';
 import { agentCarriesTag, isConfiguredReviewer } from './agent-classes.js';
+import { recordStarPromptReply } from './github-star-prompt.js';
 
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
@@ -3712,6 +3713,21 @@ export class DaemonService {
           }
         : {}),
     });
+    if (input.requestId && input.presentation !== 'card') {
+      const reply = {
+        roomId: input.roomId,
+        agentId,
+        requestId: input.requestId,
+        messageId: saved.id,
+        artifact: saved.attachments.length > 0,
+      };
+      const count = (database: SqlDatabase) => recordStarPromptReply(database, reply);
+      if (this.afterCommit) this.afterCommit(count);
+      else
+        await count(this.database).catch((error) =>
+          console.error('[daemon] star prompt reply count failed', error),
+        );
+    }
     return {
       id: saved.id,
       createdAt: seconds(saved.created_at),

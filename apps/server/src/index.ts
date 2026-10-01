@@ -289,6 +289,7 @@ async function main() {
       config: feedbackConfig,
       ...(githubClients ? { host: new FeedbackGitHub(database, githubClients.app) } : {}),
     },
+    objectService,
   );
   // The Google Play review link. Absent secret = the endpoint refuses like any
   // wrong secret; rotating the value revokes every future use of the link.

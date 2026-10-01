@@ -107,7 +107,8 @@ import {
 } from './app-connections.js';
 import type { RegistryMcpOAuth } from './registry-mcp-oauth.js';
 import type { ComposioApps } from './composio-apps.js';
-import { composioToolkitForApp } from './composio-apps.js';
+import { composioToolkitForApp, resolveAppFiles } from './composio-apps.js';
+import type { ObjectService } from './object-service.js';
 import {
   applyVaultList,
   connectorCatalog,
@@ -311,6 +312,7 @@ export class DaemonService {
       readonly config: FeedbackConfig;
       readonly host?: FeedbackIssueHost;
     } = { config: feedbackConfigFromEnv() },
+    private readonly objects?: ObjectService,
   ) {}
 
   /** A turn's memory query, embedded before its command transaction opened. */
@@ -583,6 +585,7 @@ export class DaemonService {
           this.registryMcpOAuth,
           this.composio,
           this.feedback,
+          this.objects,
         );
         scoped.memoryEmbed = memoryEmbed;
         scoped.afterCommit = (task) => {
@@ -5889,6 +5892,16 @@ export class DaemonService {
 
   private async executeAppTool(input: Input<'executeAppTool'>, agentId: string) {
     if (!this.composio) throw new Error('App tools are unavailable');
+    // Room files are checked before any provider request, including the account check.
+    const files = input.arguments && typeof input.arguments === 'object'
+      ? await resolveAppFiles(input.arguments, async (objectId) => {
+        if (!this.objects) throw new Error('Room files are unavailable for app tools');
+        const file = await this.objects.readRoomObject(input.roomId, agentId, objectId,
+          this.database);
+        if (!file) throw new Error(`Room file ${objectId.slice(0, 64)} is not in this Room`);
+        return file;
+      })
+      : undefined;
     const row = await this.connectedAppForTool(input.appId, input.roomId, agentId);
     if (row.composio_link_expires_at || !row.composio_account_id ||
       !(await this.composio.account(row.composio_account_id,
@@ -5926,7 +5939,7 @@ export class DaemonService {
       throw new Error('App tool arguments are invalid');
     const data = await this.composio.execute({ accountId: row.composio_account_id,
       userId: row.owner_identity_id, toolkit: composioToolkitForApp(row.app_key),
-      tool: input.tool, arguments: args });
+      tool: input.tool, arguments: args, files });
     await recordAppUsage(this.database, { appId: row.id, agentId,
       roomId: input.roomId, requesterId: requester.id, transport: 'composio',
       operation: input.tool, ...(grantId ? { grantId } : {}) });

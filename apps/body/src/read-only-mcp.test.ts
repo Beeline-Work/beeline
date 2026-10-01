@@ -91,6 +91,20 @@ describe('save_workflow description', () => {
     expect(workflowContractError(JSON.parse(example!))).toBeNull();
   });
 
+  it('links every workflow tool to the workflow guide, whose example the validator accepts', () => {
+    const guideUrl = 'https://github.com/Beeline-Work/beeline/blob/main/docs/workflows/README.md';
+    const tools = agentToolsFor(true, false);
+    for (const name of ['save_workflow', 'start_workflow', 'handoff', 'assign_workflow_role', 'archive_workflow'])
+      expect(tools.find((tool) => tool.name === name)!.description, name).toContain(guideUrl);
+    const guide = readFileSync(
+      new URL('../../../docs/workflows/README.md', import.meta.url),
+      'utf8',
+    );
+    const example = guide.match(/```json\n([\s\S]*?)\n```/)?.[1];
+    expect(example).toBeDefined();
+    expect(workflowContractError(JSON.parse(example!))).toBeNull();
+  });
+
   it('states the name, description, gate, loop and terminal rules', () => {
     expect(description).toContain('name is lowercase words joined by hyphens');
     expect(description).toContain('description is 1-60 characters');

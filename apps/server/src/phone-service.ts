@@ -139,6 +139,7 @@ import { REVIEW_IDENTITY_ID } from './review-access.js';
 import {
   deletedMessageEvent,
   directMessageRoomId,
+  ensureSystemDirectMessageRoom,
   identitySubject,
   systemIdentityMention,
   systemLine,
@@ -5834,6 +5835,13 @@ export class PhoneService {
     });
   }
   private async resolveDirectMessage(input: Input<'resolveDirectMessage'>, viewerId: string) {
+    if (input.participantId === SYSTEM_IDENTITY_ID) {
+      await this.requireWorkspaceMember(input.workspaceId, viewerId);
+      const id = directMessageRoomId(input.workspaceId, [viewerId, SYSTEM_IDENTITY_ID].sort() as [string, string]);
+      const found = await this.database.query(`SELECT 1 FROM rooms WHERE id=$1`, [id]);
+      await ensureSystemDirectMessageRoom(this.database, input.workspaceId, viewerId);
+      return { id, created: !found.rowCount };
+    }
     const participants = [viewerId, input.participantId].sort();
     if (participants[0] === participants[1]) throw new Error('direct message requires two members');
     const members = await this.database.query<{ identity_id: string }>(

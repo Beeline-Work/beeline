@@ -1581,6 +1581,13 @@ describe('monolith integration', () => {
     ).json()) as { id: string; created: boolean };
     expect(first).toEqual({ id: retry.id, created: true });
     expect(retry.created).toBe(false);
+    const systemDm = (await (
+      await operation('resolveDirectMessage', { workspaceId, participantId: SYSTEM_IDENTITY_ID })
+    ).json()) as { id: string; created: boolean };
+    expect(systemDm.id).toBeTruthy();
+    expect((await (
+      await operation('resolveDirectMessage', { workspaceId, participantId: SYSTEM_IDENTITY_ID })
+    ).json())).toEqual({ id: systemDm.id, created: false });
     const lastManagerLeave = await operation('leaveRoom', { roomId: room.id });
     expect(lastManagerLeave.status).toBe(400);
     expect(await lastManagerLeave.json()).toEqual({ error: 'last_admin_confirmation_required' });

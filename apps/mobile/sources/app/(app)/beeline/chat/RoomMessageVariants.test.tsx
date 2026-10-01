@@ -2454,6 +2454,39 @@ describe('Room message variant components', () => {
     expect(onMention).toHaveBeenCalledWith('member-id');
   });
 
+  it('links an agent-written roster handle and the reserved System handle', () => {
+    const onMention = vi.fn();
+    render(
+      <OrdinaryLedgerMessage
+        message={message({
+          text: '@candy used default · 2 calls\n@system can report an issue',
+          pubkey: 'squire',
+          isAgentAuthor: true,
+          mentionPubkeys: [],
+        })}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[{ pubkey: 'candy-id', handle: 'candy' }]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onMention={onMention}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    expect(ledgerEntryRender.mock.lastCall?.[0].mentionHandles).toEqual(['candy', 'system']);
+    act(() => ledgerEntryRender.mock.lastCall?.[0].onMention('candy'));
+    expect(onMention).toHaveBeenCalledWith('candy-id');
+    act(() => ledgerEntryRender.mock.lastCall?.[0].onMention('system'));
+    expect(onMention).toHaveBeenCalledWith('972a35ec7a6e572c01c5b0a48cbdc82f6137dd7f35435cf9cc0ec305fdafa248');
+  });
+
   it('highlights the viewing member while leaving their self-mention inert', () => {
     const onMention = vi.fn();
     render(

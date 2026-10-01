@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
-import { firstHealthyAgent, isConfiguredReviewer, roomAgentHealth } from './agent-health.js';
+import { firstHealthyAgent, isConfiguredReviewer, nextHealthyAgent, roomAgentHealth } from './agent-health.js';
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000002';
 const ROOM = '20000000-0000-4000-8000-000000000002';
@@ -159,6 +159,22 @@ describe('firstHealthyAgent', () => {
     await reportPresence(AGENT_ONE, 'offline');
     await reportPresence(AGENT_TWO, 'offline');
     expect(await firstHealthyAgent(database, ROOM, ALL())).toBeNull();
+  });
+});
+
+describe('nextHealthyAgent', () => {
+  it('only looks after the failed agent, never before it', async () => {
+    await reportPresence(AGENT_ONE, 'online');
+    await reportPresence(AGENT_TWO, 'online');
+    await reportPresence(AGENT_THREE, 'online');
+    expect(await nextHealthyAgent(database, ROOM, [AGENT_ONE, AGENT_TWO, AGENT_THREE], AGENT_TWO)).toBe(AGENT_THREE);
+    expect(await nextHealthyAgent(database, ROOM, [AGENT_ONE, AGENT_TWO, AGENT_THREE], AGENT_THREE)).toBeNull();
+  });
+
+  it('starts from the top for an agent not on the list', async () => {
+    await reportPresence(AGENT_ONE, 'online');
+    await reportPresence(AGENT_TWO, 'online');
+    expect(await nextHealthyAgent(database, ROOM, [AGENT_ONE, AGENT_TWO], AGENT_THREE)).toBe(AGENT_ONE);
   });
 });
 

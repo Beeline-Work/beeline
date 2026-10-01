@@ -10,7 +10,7 @@ import {
   repairReviewerCornerMembership,
   type CommandRow,
 } from './agent-command.js';
-import { firstHealthyAgent, isConfiguredReviewer, reviewerList } from './agent-health.js';
+import { firstHealthyAgent, isConfiguredReviewer, nextHealthyAgent, reviewerList } from './agent-health.js';
 import { CORNER_WORKFLOW_HANDOFF_CARD_TYPE } from './room-choice.js';
 import { ensureSystemIdentity, GITHUB_SUBJECT, systemLine, type SystemLineInput } from './system-line.js';
 import { WORKFLOW_HANDOFF_CARD_TYPE, workflowRunLockKey } from './workflow-runs.js';
@@ -769,8 +769,8 @@ async function reachableReviewer(
 
 /**
  * The first healthy agent on the parent Room's reviewer list, never the
- * corner's own author, skipping `exclude`. Names the gap in the corner when
- * nobody on the list can take the review.
+ * corner's own author; after `failed` on the list when one is given. Names
+ * the gap in the corner when nobody on the list can take the review.
  */
 async function dispatchableListReviewer(
   db: SqlDatabase,
@@ -778,13 +778,15 @@ async function dispatchableListReviewer(
   corner: CornerRow,
   sourceMessageId: string,
   headSha: string | null,
-  exclude: readonly string[] = [],
+  failed?: string,
 ): Promise<string | undefined> {
   const list = reviewerList({
     reviewer_agent_id: corner.configured_reviewer_id,
     reviewer_fallback_ids: corner.reviewer_fallback_ids,
   }).filter((id) => id !== corner.owner_agent_id);
-  const reviewerAgentId = await firstHealthyAgent(db, corner.parent_id, list, exclude);
+  const reviewerAgentId = failed
+    ? await nextHealthyAgent(db, corner.parent_id, list, failed)
+    : await firstHealthyAgent(db, corner.parent_id, list);
   if (!reviewerAgentId) {
     await noteReviewerListExhausted(db, { cornerId, sourceMessageId, headSha });
     return undefined;
@@ -855,7 +857,7 @@ export async function reassignFailedCornerReviewer(
       corner,
       input.requestId,
       corner.lifecycle.pr?.headSha ?? null,
-      [input.agentId],
+      input.agentId,
     );
     if (!next) return;
     await createAgentCommand(db, {

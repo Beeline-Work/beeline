@@ -915,6 +915,21 @@ describe('list roles', () => {
     ).rejects.toThrow('not you');
   });
 
+  it('fails over down the list only, never back to an earlier agent that recovered', async () => {
+    await database.query(`INSERT INTO agents(agent_id,owner_id,selected_model) VALUES($1,$2,'opus-4-5')`, [
+      REVIEWER,
+      OWNER,
+    ]);
+    await reportPresence(WORKER_A, 'offline');
+    await reportPresence(REVIEWER, 'online');
+    const { runId } = await startedListRun([WORKER_A, WORKER_B, REVIEWER]);
+    expect((await listRunCard(runId)).roleBindings.worker).toBe(WORKER_B);
+    await reportPresence(WORKER_A, 'online');
+    await reassignFailedWorkflowRole(database, { roomId: ROOM, requestId: runId, agentId: WORKER_B });
+    expect((await listRunCard(runId)).roleBindings.worker).toBe(REVIEWER);
+    expect(await pendingCommandsFor(WORKER_A)).toBe(0);
+  });
+
   it('the same mechanism covers a silent turn past the state timeout, not only an instant failure', async () => {
     const { runId } = await startedListRun();
     // The armed timeout schedule targets the resolved agent.

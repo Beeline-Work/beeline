@@ -15,7 +15,7 @@ import type { SqlDatabase } from './database.js';
 import { applySkillRevision, assertSkillTextSafe } from './institutional-skills.js';
 import type { AfterCommit } from './institutional-memory-embeddings.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
-import { firstHealthyAgent } from './agent-health.js';
+import { firstHealthyAgent, nextHealthyAgent } from './agent-health.js';
 import { postRoomChoice } from './room-choice.js';
 import { ensureSystemIdentity, identitySubject, systemLine } from './system-line.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
@@ -679,7 +679,7 @@ export async function reassignFailedWorkflowRole(
   if (run.roleBindings[role] !== input.agentId) return;
   const agents = (await loadRunRoleAgents(db, input.roomId, run.runId))[role];
   if (!agents) return;
-  const picked = await firstHealthyAgent(db, input.roomId, agents, [input.agentId]);
+  const picked = await nextHealthyAgent(db, input.roomId, agents, input.agentId);
   if (!picked) {
     await noteWorkflowRoleExhausted(db, {
       roomId: input.roomId,

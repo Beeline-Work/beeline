@@ -11,7 +11,7 @@ A workflow does not run on a timer. It moves only when a bound agent calls `hand
 | `save_workflow` | Validates a contract and saves it Workspace-wide, versioned by `name`. Saving the same name again makes a new version. |
 | `start_workflow` | Starts a run of a saved workflow in this Room. You bind every role, and it returns a `runId`. |
 | `handoff` | Moves a run you hold to its next state. You give an `outcome` and the `contents` the state requires. |
-| `assign_workflow_role` | Binds one specific agent to a tag-bound role that has no healthy member. |
+| `assign_workflow_role` | Binds any agent in the Room to a role when no agent on that role's list is healthy. |
 | `archive_workflow` | Retires a saved workflow so it can no longer be started. Runs in progress keep going. |
 
 ## Contract format

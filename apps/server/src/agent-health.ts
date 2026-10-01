@@ -93,6 +93,20 @@ export async function firstHealthyAgent(
   return ordered.find((id) => !exclude.includes(id) && health.get(id)?.healthy) ?? null;
 }
 
+/**
+ * Failover from `failed`: the first healthy agent after it on `ordered`, never
+ * one before it, so a list only moves forward. An agent not on the list (a
+ * human's `assign_workflow_role` pick) fails over from the top of the list.
+ */
+export async function nextHealthyAgent(
+  db: SqlDatabase,
+  roomId: string,
+  ordered: readonly string[],
+  failed: string,
+): Promise<string | null> {
+  return firstHealthyAgent(db, roomId, ordered.slice(ordered.indexOf(failed) + 1), [failed]);
+}
+
 /** A Room's reviewer list in order: the configured reviewer, then its fallbacks. */
 export function reviewerList(room: {
   reviewer_agent_id: string | null;

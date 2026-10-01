@@ -233,6 +233,18 @@ describe('a failed review turn', () => {
     expect(await reviews(OWNER_AGENT)).toHaveLength(0);
   });
 
+  it('never moves back up the list to an agent that recovered after being skipped', async () => {
+    await reportPresence(REVIEWER_A, 'offline');
+    await setReviewers(REVIEWER_A, REVIEWER_B);
+    await greenCheck();
+    const [first] = await reviews(REVIEWER_B);
+    expect(first).toBeDefined();
+    await reportPresence(REVIEWER_A, 'online');
+    await failTurn(first!);
+    expect(await reviews(REVIEWER_A)).toHaveLength(0);
+    expect(await exhaustedNotices()).toHaveLength(1);
+  });
+
   it('leaves a single reviewer alone, as before', async () => {
     await setReviewers(REVIEWER_A);
     await greenCheck();

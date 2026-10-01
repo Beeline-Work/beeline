@@ -23,6 +23,7 @@ import { connectorLogo } from './workbench.js';
 import type { LinkAgentWallet } from './link-agent-wallet.js';
 import type { RegistryMcpOAuth } from './registry-mcp-oauth.js';
 import { InvitePreviewAccess } from './invite-preview.js';
+import { phoneReadLimits, type PhoneReadLimits } from './phone-read-limit.js';
 import type { ConnectionPresence } from './connection-presence.js';
 import { parseDashboardPlatforms, readOperatorDashboard, recordOperatorFunctionEvent } from './operator-dashboard.js';
 import { HelperVersionGate, helperVersionBelowMinimum } from './helper-version-gate.js';
@@ -102,6 +103,8 @@ export interface ServerOptions {
   authHandler?: (request: IncomingMessage, response: ServerResponse) => void;
   /** Exact browser origins allowed to call the bearer-authenticated HTTP API. */
   webAppOrigins?: readonly string[];
+  /** Per-identity limits on phone history and outline reads; defaults in phone-read-limit.ts. */
+  phoneReadLimits?: PhoneReadLimits;
 }
 
 function applyWebAppCors(
@@ -266,6 +269,7 @@ export function createBeelineServer(options: ServerOptions): Server {
     return releaseLiveDbTask;
   };
   const invitePreview = new InvitePreviewAccess(options.database);
+  const readLimits = options.phoneReadLimits ?? phoneReadLimits();
   const server = createServer((request, response) => {
     const url = exactPath(request.url);
     const method = request.method ?? 'GET';
@@ -302,7 +306,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       return;
     }
     if (isWebAppCorsPath(url.pathname) && applyWebAppCors(request, response, options)) return;
-    void route(request, response, options, invitePreview, liveHealth, helperVersionGate).catch((error) => {
+    void route(request, response, options, invitePreview, readLimits, liveHealth, helperVersionGate).catch((error) => {
       const message = error instanceof Error ? error.message : 'request failed';
       const status =
         message.includes('required') ||
@@ -1051,6 +1055,7 @@ async function route(
   response: ServerResponse,
   options: ServerOptions,
   invitePreview: InvitePreviewAccess,
+  readLimits: PhoneReadLimits,
   liveHealth: () => object,
   helperVersionGate: HelperVersionGate,
 ): Promise<void> {
@@ -1596,6 +1601,10 @@ async function route(
   }
   match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)\/history$/);
   if (method === 'GET' && match) {
+    if (!readLimits.history.admit(identityId!)) {
+      json(response, 429, { error: 'too_many_requests' });
+      return;
+    }
     const beforeRaw = url.searchParams.get('before');
     const parsed = beforeRaw?.match(/^(\d+),([0-9a-f]{64})$/);
     const result = await options.phone.readHistory(
@@ -1608,6 +1617,10 @@ async function route(
   }
   match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)\/outline$/);
   if (method === 'GET' && match) {
+    if (!readLimits.outline.admit(identityId!)) {
+      json(response, 429, { error: 'too_many_requests' });
+      return;
+    }
     const timeZone = url.searchParams.get('tz') ?? '';
     if (!isIanaTimeZone(timeZone)) {
       json(response, 400, { error: 'invalid_time_zone' });

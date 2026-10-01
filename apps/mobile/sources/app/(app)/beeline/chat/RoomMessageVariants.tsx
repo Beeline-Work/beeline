@@ -16,7 +16,8 @@ import { agentActivityReplyExcerpt, type MessageReplyDisplayTarget } from '@/buz
 import { resolveAgentDisplayIdentity, resolvePendingAgentDisplay } from '@/buzz/agent-display';
 import { fallbackMemberName } from '@/buzz/member-display';
 import { displayModel } from '@/buzz/model-display';
-import { CHANNEL_MENTION_HANDLE, hasChannelMentionToken } from '@/buzz/room-participants';
+import { CHANNEL_MENTION_HANDLE, SYSTEM_MENTION_HANDLE, hasChannelMentionToken } from '@/buzz/room-participants';
+import { SYSTEM_IDENTITY_PUBKEY } from '@/buzz/system-identity';
 import { describeWriteRequest } from '@/buzz/write-request-copy';
 import { emojiTextStyle } from '@/buzz/emoji-text';
 import { grantRequestLine } from '@/buzz/agent-grant-copy';
@@ -2085,24 +2086,30 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   );
   const mentionHandles = useMemo(() => {
     const handles = participantHandles
-      .filter((participant) => taggedMentionPubkeys.has(participant.pubkey))
+      .filter((participant) => taggedMentionPubkeys.has(participant.pubkey) ||
+        (isAgent && message.text.toLocaleLowerCase().includes(`@${participant.handle.toLocaleLowerCase()}`)))
       .map((participant) => participant.handle);
     // `@channel` is sent as one literal token, never expanded into names, so
     // it is highlighted by its own reserved handle rather than a roster hit.
     if (hasChannelMentionToken(message.text)) handles.push(CHANNEL_MENTION_HANDLE);
+    if (message.text.toLocaleLowerCase().includes('@system')) handles.push(SYSTEM_MENTION_HANDLE);
     return handles;
-  }, [participantHandles, taggedMentionPubkeys, message.text]);
+  }, [participantHandles, taggedMentionPubkeys, message.text, isAgent]);
   const handleMention = useCallback(
     (handle: string) => {
+      if (handle === SYSTEM_MENTION_HANDLE) {
+        onMention?.(SYSTEM_IDENTITY_PUBKEY);
+        return;
+      }
       const participant = participantHandles.find(
         (candidate) =>
           candidate.pubkey !== viewerPubkey &&
-          taggedMentionPubkeys.has(candidate.pubkey) &&
+          (taggedMentionPubkeys.has(candidate.pubkey) || isAgent) &&
           candidate.handle.normalize('NFKC').toLocaleLowerCase() === handle,
       );
       if (participant) onMention?.(participant.pubkey);
     },
-    [onMention, participantHandles, taggedMentionPubkeys, viewerPubkey],
+    [onMention, participantHandles, taggedMentionPubkeys, viewerPubkey, isAgent],
   );
   if (message.isAgentActivity) {
     const excerpt = agentActivityReplyExcerpt(message);

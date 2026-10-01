@@ -2,7 +2,7 @@ import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import type { RoomHistoryView, RoomViewMessage } from '@beeline/buzz-client';
+import { RoomViewHttpError, type RoomHistoryView, type RoomViewMessage } from '@beeline/buzz-client';
 
 import { useRoomTranscriptHistory } from './use-room-transcript-history';
 
@@ -247,5 +247,32 @@ describe('Room transcript history', () => {
     });
     expect(textRows(renderer, 'HistoryLine')).toEqual(['Beginning of corner']);
     expect(history).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows a rate-limited page as an ordinary failed page and keeps the loaded rows', async () => {
+    const history = vi
+      .fn()
+      .mockResolvedValueOnce({
+        roomId: 'corner',
+        messages: [message('2', 20)],
+        nextBefore: { createdAt: 20, id: '2'.repeat(64) },
+      })
+      .mockRejectedValueOnce(new RoomViewHttpError(429, 'too_many_requests'))
+      .mockResolvedValueOnce({ roomId: 'corner', messages: [message('1', 10)] });
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<Transcript tail={[message('3', 30)]} history={history} />);
+    });
+
+    await act(async () => renderer.root.findByType('Transcript').props.onEndReached());
+    await act(async () => renderer.root.findByType('Transcript').props.onEndReached());
+    expect(textRows(renderer, 'HistoryLine')).toEqual([
+      "Couldn't load earlier messages · tap to retry",
+    ]);
+    expect(textRows(renderer, 'Message')).toEqual(['message-2', 'message-3']);
+
+    await act(async () => renderer.root.findByType('Transcript').props.onRetry());
+    expect(textRows(renderer, 'Message')).toEqual(['message-1', 'message-2', 'message-3']);
+    expect(textRows(renderer, 'HistoryLine')).toEqual(['Beginning of corner']);
   });
 });

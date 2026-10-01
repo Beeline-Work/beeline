@@ -119,6 +119,7 @@ import {
   POSTGRES_LIVE_CHANNEL,
 } from './postgres-live.js';
 import type { CommittedMessageLiveRow, CommittedTurnLiveRow, LiveEvent, LiveHub } from './live.js';
+import { HistoryOutlineCache } from './history-outline-cache.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
 import { deriveCornerState } from './corner-state.js';
@@ -773,6 +774,8 @@ function roomSchedule(row: RoomScheduleRow): Output<'createRoomSchedule'> {
 
 export class PhoneService {
   private readonly lastEnrichmentLogAt = new Map<string, number>();
+  /** Only with a live hub: the cache is unsound without its message invalidations. */
+  private readonly outlineCache?: HistoryOutlineCache;
 
   constructor(
     private readonly database: SqlDatabase,
@@ -787,7 +790,9 @@ export class PhoneService {
     private readonly mcpRegistry: McpRegistryClient = new McpRegistryClient(),
     private readonly composio?: ComposioApps,
     private readonly linkWallet?: LinkAgentWallet,
-  ) {}
+  ) {
+    if (live) this.outlineCache = new HistoryOutlineCache(live);
+  }
 
   private async optionalEnrichment<T>(name: string, work: Promise<T>): Promise<T | undefined> {
     let deadline: ReturnType<typeof setTimeout> | undefined;
@@ -1947,6 +1952,20 @@ export class PhoneService {
     timeZone: string,
   ): Promise<RoomHistoryOutline | null> {
     if (!(await this.hasRoomAccess(roomId, viewerId))) return null;
+    if (!this.outlineCache) return this.countHistoryOutline(roomId, timeZone);
+    const newest = await this.database.query<{ id: string }>(
+      `SELECT m.id FROM messages m
+       WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
+         AND ${hiddenWakeCardSql('m')}
+       ORDER BY m.created_at DESC,m.id DESC LIMIT 1`,
+      [roomId],
+    );
+    return this.outlineCache.read(roomId, timeZone, newest.rows[0]?.id ?? null, () =>
+      this.countHistoryOutline(roomId, timeZone),
+    );
+  }
+
+  private async countHistoryOutline(roomId: string, timeZone: string): Promise<RoomHistoryOutline> {
     const rows = (
       await this.database.query<{
         local_day: string;

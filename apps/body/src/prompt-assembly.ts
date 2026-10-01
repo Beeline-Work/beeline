@@ -575,8 +575,12 @@ export function renderAssignedCornerBrief(brief: CornerBrief): string {
  */
 export function roomMentionDirectory(roster: WorkspaceRoster, selfId: string): string {
   const rows: string[] = [];
+  let selfHandle: string | undefined;
   for (const member of roster.members) {
-    if (member.identityId === selfId) continue;
+    if (member.identityId === selfId) {
+      selfHandle = member.handle?.trim().replace(/^@/, '');
+      continue;
+    }
     const memberHandle = member.handle?.trim().replace(/^@/, '');
     if (!memberHandle) continue;
     const name = member.name?.trim() ?? '';
@@ -584,6 +588,8 @@ export function roomMentionDirectory(roster: WorkspaceRoster, selfId: string): s
     rows.push(`- @${memberHandle}${name && name !== memberHandle ? ` — ${name}` : ''} (${kind})`);
   }
   if (!rows.length) return '';
+  // Without this line an agent reading the list concludes it is not a member.
+  if (selfHandle) rows.push(`You are @${selfHandle}, a member of this Room; you are not listed above.`);
   return ['Members (exact tag spellings):', ...rows].join('\n');
 }
 

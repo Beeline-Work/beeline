@@ -64,6 +64,14 @@ describe('who an agent can tag, and how it is spelled', () => {
     expect(directory.split('\n')[0]).toBe('Members (exact tag spellings):');
   });
 
+  it('tells the agent its own handle so it never reports itself missing', () => {
+    const roster = ROSTER('self');
+    const self = { ...roster.members[0]!, handle: 'greeter' };
+    const directory = roomMentionDirectory({ members: [self, ...roster.members.slice(1)] }, 'self');
+    expect(directory).not.toContain('- @greeter');
+    expect(directory.split('\n').at(-1)).toBe('You are @greeter, a member of this Room; you are not listed above.');
+  });
+
   it('omits a member with no handle and says nothing when no member is taggable', () => {
     const roster = {
       members: [

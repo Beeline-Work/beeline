@@ -6843,18 +6843,19 @@ export class DaemonService {
           sourceMessageId: command.source_message_id,
           text: requester.text,
         });
+        const attachments = await resolveCornerBriefAttachments(db, [cornerId], draft);
         const authority = await resolveCornerBriefApproval(
           db,
           [cornerId],
           draft,
-          [],
+          attachments,
           command.source_message_id,
         );
         await db.query(
           `INSERT INTO corner_brief_revisions(
              corner_id,revision,spec,approval_basis,revision_hash,author_id,
              source_room_id,source_message_id,attachments
-           ) VALUES($1,1,$2,$3,$4,$5,$6,$7,'[]'::jsonb)`,
+           ) VALUES($1,1,$2,$3,$4,$5,$6,$7,$8::jsonb)`,
           [
             cornerId,
             draft.spec.trim(),
@@ -6863,6 +6864,7 @@ export class DaemonService {
             SYSTEM_IDENTITY_ID,
             authority.sourceRoomId,
             command.source_message_id,
+            JSON.stringify(attachments),
           ],
         );
       }

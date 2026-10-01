@@ -53,6 +53,18 @@ vi.mock('react-native', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
+    Animated: {
+      View: host('AnimatedView'),
+      Value: class {
+        interpolate() {
+          return 1;
+        }
+        setValue() {}
+      },
+      timing: () => ({}),
+      loop: () => ({ start() {}, stop() {} }),
+    },
+    Easing: { linear: (t: number) => t },
     Platform: { OS: 'web' },
     Pressable: host('Pressable'),
     TouchableOpacity: host('TouchableOpacity'),

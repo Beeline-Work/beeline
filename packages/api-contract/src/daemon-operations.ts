@@ -26,9 +26,8 @@ import type {
   SearchInstitutionalMemoryResult,
 } from './institutional-memory.js';
 import type {
-  FeedbackIssueSummary,
-  FeedbackItemDetail,
-  FeedbackItemSummary,
+  NotifyFeedbackFixedInput,
+  NotifyFeedbackFixedResult,
   ReportFeedbackInput,
   ReportFeedbackResult,
 } from './feedback.js';
@@ -507,40 +506,10 @@ export type DaemonOperationMap = {
   >;
   /** One friction report from the agent's active turn (`report_feedback`). */
   reportFeedback: Operation<ReportFeedbackInput & TurnOutputAuthority, ReportFeedbackResult>;
-  /** Triage (allowlisted agents only): new items, human first, then by cluster size. */
-  listFeedback: Operation<
-    RoomInput & { readonly limit?: number },
-    { readonly items: readonly FeedbackItemSummary[] }
-  >;
-  getFeedback: Operation<
-    RoomInput & { readonly itemIds: readonly string[] },
-    { readonly items: readonly FeedbackItemDetail[] }
-  >;
-  listFeedbackIssues: Operation<
-    RoomInput,
-    { readonly repository: string; readonly issues: readonly FeedbackIssueSummary[] }
-  >;
-  fileFeedbackIssue: Operation<
-    RoomInput & {
-      readonly itemIds: readonly string[];
-      readonly title: string;
-      readonly body: string;
-      readonly categoryLabel: string;
-    },
-    { readonly issueNumber: number; readonly url: string; readonly itemIds: readonly string[] }
-  >;
-  attachFeedbackToIssue: Operation<
-    RoomInput & { readonly itemIds: readonly string[]; readonly issueNumber: number },
-    { readonly issueNumber: number; readonly url: string; readonly itemIds: readonly string[] }
-  >;
-  dismissFeedback: Operation<
-    RoomInput & { readonly itemIds: readonly string[]; readonly reason: string },
-    { readonly itemIds: readonly string[] }
-  >;
-  /** A Room admin asked the agent in this corner to turn Feedback triage on or off. */
-  setCornerFeedbackTriage: Operation<
-    RoomInput & TurnOutputAuthority & { readonly enabled: boolean },
-    { readonly cornerId: string; readonly enabled: boolean }
+  /** A merged fix resolved these items; System DMs their human reporters (`notify_feedback_fixed`). */
+  notifyFeedbackFixed: Operation<
+    NotifyFeedbackFixedInput & TurnOutputAuthority,
+    NotifyFeedbackFixedResult
   >;
 };
 export type Operation<Input, Output> = { readonly input: Input; readonly output: Output };
@@ -774,8 +743,6 @@ export type AgentConfigurationResult = {
   readonly yoloMode: boolean;
   /** Live reviewer configured on a corner's parent Room; absent for self-review. */
   readonly reviewerHandle?: string;
-  /** This corner has Feedback triage on: its agents may triage feedback and open sibling corners. */
-  readonly feedbackTriage?: true;
   /** Connected Registry remotes mounted through the Body-owned credential broker. */
   readonly registryMcpRoutes?: readonly RegistryMcpRoute[];
 };

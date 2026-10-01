@@ -1618,9 +1618,10 @@ ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'ag
 ALTER TABLE corner_facts DROP CONSTRAINT IF EXISTS corner_facts_kind_check;
 ALTER TABLE corner_facts ADD CONSTRAINT corner_facts_kind_check
   CHECK (kind IN ('agent', 'human'));
--- Feedback triage (apps/server/src/feedback.ts): a Room admin's per-corner
--- switch. Only agents in a corner with it on, during a turn in that corner,
--- may use the feedback triage tools or open sibling corners from it.
+-- Retired: the per-corner Feedback triage switch. Feedback triage is now the
+-- saved feedback-triage workflow, and nothing reads this column. It stays so
+-- an older server image keeps working during a rolling update; a later
+-- release can drop it.
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS feedback_triage boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS corner_facts_owner_agent_idx ON corner_facts(owner_agent_id);
 -- The corner workflow run's current state, projected from its newest handoff
@@ -2377,9 +2378,11 @@ CREATE INDEX IF NOT EXISTS wallet_transactions_wallet_idx
 
 -- The Beeline feedback loop (apps/server/src/feedback.ts). An agent's
 -- report_feedback call and a person's @system tag or Report issue action land
--- here; the triage corner's sweep files, attaches, or dismisses them, and
--- the configured repository's issue webhook resolves or closes them. Message
--- ids only: evidence text is read live, never copied.
+-- here. The saved feedback-triage workflow reads this table through a
+-- read-only grant, and notify_feedback_fixed resolves items once a fix merges.
+-- Message ids only, plus the text of a person's own @system report. The
+-- issue_* columns and feedback_issue_comments are retired GitHub-filing state,
+-- kept for rolling-update compatibility.
 CREATE TABLE IF NOT EXISTS feedback_items (
   id text PRIMARY KEY,
   source_kind text NOT NULL CHECK (source_kind IN ('agent','human')),

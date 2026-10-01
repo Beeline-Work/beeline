@@ -1,18 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { claimAgentCommand, createAgentCommand } from './agent-command.js';
-import { DaemonService } from './daemon-service.js';
+import { DAEMON_OPERATION_NAMES, DaemonService } from './daemon-service.js';
 import { migrate } from './database.js';
-import {
-  assertFeedbackRedaction,
-  FeedbackRedactionError,
-  feedbackConfigFromEnv,
-  processFeedbackIssueEvent,
-  type FeedbackConfig,
-  type FeedbackIssueHost,
-} from './feedback.js';
-import { GitHubOperations } from './github-operations.js';
+import { feedbackConfigFromEnv, type FeedbackConfig } from './feedback.js';
 import { LiveHub } from './live.js';
 import { hasSystemReportMention, taggedIdentityIdsSql } from './message-mentions.js';
 import { PhoneService } from './phone-service.js';
@@ -23,12 +14,15 @@ const OTHER = 'b'.repeat(64);
 const AGENT = 'c'.repeat(64);
 const TRIAGE = 'd'.repeat(64);
 const OUTSIDER = 'e'.repeat(64);
+/** The one owner configured as a System sender; TRIAGE is this person's agent. */
+const CREATOR = '9'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
 const CORNER = '33333333-3333-4333-8333-333333333333';
 const TRIAGE_CORNER = '44444444-4444-4444-8444-444444444444';
 const REPOSITORY = 'Beeline-Work/beeline';
-const CONFIG: FeedbackConfig = { repository: REPOSITORY };
+const CONFIG: FeedbackConfig = { repository: REPOSITORY, systemSenders: [CREATOR] };
+const FIX_URL = `https://github.com/${REPOSITORY}/pull/7`;
 
 let database: PgliteDatabase;
 let sequence = 0;
@@ -44,8 +38,9 @@ beforeEach(async () => {
   await database.query(
     `INSERT INTO identities(id,kind,name,handle) VALUES
       ($1,'human','Priya Raman','priya'),($2,'human','Other Person','other'),
-      ($3,'agent','Worker','worker'),($4,'agent','Sweeper','sweeper'),($5,'agent','Outsider','outsider')`,
-    [PERSON, OTHER, AGENT, TRIAGE, OUTSIDER],
+      ($3,'agent','Worker','worker'),($4,'agent','Sweeper','sweeper'),($5,'agent','Outsider','outsider'),
+      ($6,'human','Creator','creator')`,
+    [PERSON, OTHER, AGENT, TRIAGE, OUTSIDER, CREATOR],
   );
   await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [WORKSPACE]);
   await database.query(
@@ -57,22 +52,21 @@ beforeEach(async () => {
     `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Fix it')`,
     [CORNER, WORKSPACE, ROOM, PERSON],
   );
-  // The Issues triage corner: a no-code corner a Room admin turned Feedback
-  // triage on for. CORNER is an ordinary corner with it off.
+  // The Issues triage corner: an ordinary no-code corner, with no setting.
   await database.query(
     `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Issues triage')`,
     [TRIAGE_CORNER, WORKSPACE, ROOM, PERSON],
   );
   await database.query(
-    `INSERT INTO corner_facts(corner_id,owner_agent_id,lane,feedback_triage) VALUES
-      ($1,$3,'no_code',false),($2,$3,'no_code',true)`,
+    `INSERT INTO corner_facts(corner_id,owner_agent_id,lane) VALUES
+      ($1,$3,'no_code'),($2,$3,'no_code')`,
     [CORNER, TRIAGE_CORNER, TRIAGE],
   );
   await database.query(
-    `INSERT INTO agents(agent_id,owner_id) VALUES($1,$2),($3,$2),($4,$2)`,
-    [AGENT, PERSON, TRIAGE, OUTSIDER],
+    `INSERT INTO agents(agent_id,owner_id) VALUES($1,$2),($3,$4),($5,$2)`,
+    [AGENT, PERSON, TRIAGE, CREATOR, OUTSIDER],
   );
-  for (const id of [PERSON, OTHER, AGENT, TRIAGE, OUTSIDER])
+  for (const id of [PERSON, OTHER, AGENT, TRIAGE, OUTSIDER, CREATOR])
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
         ($1,NULL,$2,'member'),($1,$3,$2,'member'),($1,$4,$2,'member')`,
@@ -113,7 +107,7 @@ async function openTurn(sourceMessageId: string, roomId = ROOM, agentId = AGENT)
   return { roomId, requestId, generationId };
 }
 
-function daemon(host?: FeedbackIssueHost, config = CONFIG): DaemonService {
+function daemon(config = CONFIG): DaemonService {
   return new DaemonService(
     database,
     new LiveHub(),
@@ -129,7 +123,7 @@ function daemon(host?: FeedbackIssueHost, config = CONFIG): DaemonService {
     undefined,
     undefined,
     undefined,
-    { config, ...(host ? { host } : {}) },
+    config,
   );
 }
 
@@ -153,59 +147,13 @@ async function triageTurn(roomId = TRIAGE_CORNER, agentId = TRIAGE) {
   return openTurn(await message(`@${handle} sweep`, PERSON, roomId), roomId, agentId);
 }
 
-class FakeGitHub implements FeedbackIssueHost {
-  issues = new Map<number, { title: string; body: string; labels: string[]; state: string }>();
-  comments = new Map<number, { issue: number; body: string }>();
-  fail?: string;
-  next = 100;
-  async createIssue(_repository: string, issue: { title: string; body: string; labels: readonly string[] }) {
-    if (this.fail) throw new Error(this.fail);
-    const number = this.next++;
-    this.issues.set(number, { ...issue, labels: [...issue.labels], state: 'open' });
-    return { number, url: `https://github.com/${REPOSITORY}/issues/${number}` };
-  }
-  async readIssue(_repository: string, number: number) {
-    const issue = this.issues.get(number);
-    if (!issue) throw new Error('GitHub issues failed: HTTP 404: Not Found');
-    return {
-      number,
-      title: issue.title,
-      url: `https://github.com/${REPOSITORY}/issues/${number}`,
-      labels: issue.labels,
-      state: issue.state,
-      pullRequest: false,
-    };
-  }
-  async listOpenIssues() {
-    return [...this.issues.entries()].map(([number, issue]) => ({
-      number,
-      title: issue.title,
-      url: `https://github.com/${REPOSITORY}/issues/${number}`,
-      labels: issue.labels,
-    }));
-  }
-  async createComment(_repository: string, issue: number, body: string) {
-    if (this.fail) throw new Error(this.fail);
-    const id = this.next++;
-    this.comments.set(id, { issue, body });
-    return { id };
-  }
-  async updateComment(_repository: string, commentId: number, body: string) {
-    const comment = this.comments.get(commentId);
-    if (!comment) return false;
-    comment.body = body;
-    return true;
-  }
-}
-
 async function items() {
   return (
     await database.query<{
       id: string;
       status: string;
-      issue_number: number | null;
-      triage_reason: string | null;
       source_kind: string;
+      detail: string | null;
       room_id: string;
       trigger_message_id: string;
       request_id: string | null;
@@ -286,6 +234,8 @@ describe('@system and Report issue (human path)', () => {
       room_id: ROOM,
     });
     expect(item!.message_ids).toHaveLength(21);
+    // The person's own report text rides the item, for the triage workflow.
+    expect(item!.detail).toBe('@system the send button froze');
     // Pushes go to the identities a message tags; @system tags nobody.
     const side = await database.query<{ members: number; commands: number; tagged: string[] }>(
       `SELECT (SELECT count(*)::int FROM memberships WHERE identity_id=$1 AND room_id=$2) members,
@@ -347,310 +297,52 @@ describe('@system and Report issue (human path)', () => {
   });
 });
 
-describe('triage tools', () => {
-  const TRIAGE_OPERATIONS = [
-    ['listFeedback', {}],
-    ['getFeedback', { itemIds: ['fb_x'] }],
-    ['listFeedbackIssues', {}],
-    ['fileFeedbackIssue', { itemIds: ['fb_x'], title: 't', body: 'b', categoryLabel: 'bug' }],
-    ['attachFeedbackToIssue', { itemIds: ['fb_x'], issueNumber: 1 }],
-    ['dismissFeedback', { itemIds: ['fb_x'], reason: 'r' }],
-  ] as const;
-
-  it('refuses every triage operation outside a turn in a Feedback triage corner', async () => {
-    const service = daemon(new FakeGitHub());
-    // A turn in the top-level Room, a turn in a corner with the setting off,
-    // and the same agent in its triage corner with no turn at all.
-    const roomTurn = await triageTurn(ROOM);
-    const plainCornerTurn = await triageTurn(CORNER);
-    for (const [name, input] of TRIAGE_OPERATIONS) {
-      for (const turn of [roomTurn, plainCornerTurn])
-        await expect(
-          service.execute(name, { ...turn, ...input } as never, TRIAGE),
-        ).rejects.toThrow('feedback triage access denied');
-      await expect(
-        service.execute(name, { roomId: TRIAGE_CORNER, ...input } as never, TRIAGE),
-      ).rejects.toThrow();
-      await expect(service.execute(name, input as never, TRIAGE)).rejects.toThrow(
-        'feedback triage access denied',
-      );
-    }
-  });
-
-  it('turns the setting on and off when a Room admin asks the corner agent, and for no one else', async () => {
-    const service = daemon(new FakeGitHub());
-    const setting = async (corner: string) =>
-      (
-        await database.query<{ feedback_triage: boolean }>(
-          `SELECT feedback_triage FROM corner_facts WHERE corner_id=$1`,
-          [corner],
-        )
-      ).rows[0]!.feedback_triage;
-    const turn = await triageTurn();
-    await expect(service.execute('listFeedback', turn as never, TRIAGE)).resolves.toEqual({
-      items: [],
-    });
-    // A member who is not a Room admin asks: refused, the setting stays on.
-    await expect(
-      service.execute('setCornerFeedbackTriage', { ...(await triageTurn()), enabled: false } as never, TRIAGE),
-    ).rejects.toThrow('feedback triage change access denied');
-    expect(await setting(TRIAGE_CORNER)).toBe(true);
-    // Another agent's request is refused even when its owner is an admin.
-    await database.query(
-      `UPDATE memberships SET role='admin' WHERE identity_id=$1 AND room_id IS NULL`,
-      [PERSON],
-    );
-    const agentAsked = await openTurn(
-      await message('@sweeper turn triage off', AGENT, TRIAGE_CORNER),
-      TRIAGE_CORNER,
-      TRIAGE,
-    );
-    await expect(
-      service.execute('setCornerFeedbackTriage', { ...agentAsked, enabled: false } as never, TRIAGE),
-    ).rejects.toThrow('feedback triage change access denied');
-    // The Room admin asks: off, and the next triage call is refused.
-    await expect(
-      service.execute('setCornerFeedbackTriage', { ...(await triageTurn()), enabled: false } as never, TRIAGE),
-    ).resolves.toEqual({ cornerId: TRIAGE_CORNER, enabled: false });
-    expect(await setting(TRIAGE_CORNER)).toBe(false);
-    await expect(service.execute('listFeedback', turn as never, TRIAGE)).rejects.toThrow(
-      'feedback triage access denied',
-    );
-    // On in an ordinary corner; never on a top-level Room or with no turn.
-    await service.execute(
+describe('no triage tools or setting', () => {
+  it('has no daemon route for the retired triage operations', () => {
+    for (const retired of [
+      'listFeedback',
+      'getFeedback',
+      'listFeedbackIssues',
+      'fileFeedbackIssue',
+      'attachFeedbackToIssue',
+      'dismissFeedback',
       'setCornerFeedbackTriage',
-      { ...(await triageTurn(CORNER)), enabled: true } as never,
-      TRIAGE,
-    );
-    expect(await setting(CORNER)).toBe(true);
-    await expect(
-      service.execute('setCornerFeedbackTriage', { ...(await triageTurn(ROOM)), enabled: true } as never, TRIAGE),
-    ).rejects.toThrow('feedback triage change access denied');
-    await expect(
-      service.execute('setCornerFeedbackTriage', { roomId: CORNER, enabled: false } as never, TRIAGE),
-    ).rejects.toThrow('command output authority rejected');
-    expect(await setting(CORNER)).toBe(true);
+    ])
+      expect(DAEMON_OPERATION_NAMES.has(retired as never)).toBe(false);
+    expect(DAEMON_OPERATION_NAMES.has('notifyFeedbackFixed')).toBe(true);
   });
+});
 
-  it('lists new items with human reports first, then by cluster size', async () => {
-    const lone = await report({ category: 'bug', summary: 'lone bug' });
-    const clustered = await report({ category: 'context_gap', summary: 'memory lost the brief' });
-    await report({ category: 'context_gap', summary: 'Memory lost the brief!' }, ROOM, OUTSIDER);
-    const human = await new PhoneService(database, 'http://local.test').execute(
-      'reportMessageIssue',
-      { roomId: ROOM, messageId: await message('odd') },
+describe('notify_feedback_fixed (close the loop)', () => {
+  async function reported() {
+    const phone = new PhoneService(database, 'http://local.test');
+    const agentItem = (await report({ summary: 'timeout' })).itemId;
+    const tagged = await phone.execute(
+      'sendRoomMessage',
+      { roomId: ROOM, text: '@system the tools keep timing out' },
       PERSON,
     );
-    const turn = await triageTurn();
-    const listed = (await daemon().execute('listFeedback', turn as never, TRIAGE)) as {
-      items: { id: string; clusterSize: number; sourceKind: string }[];
-    };
-    expect(listed.items.map((item) => item.id)).toEqual([
-      human.itemId,
-      clustered.itemId,
-      expect.any(String),
-      lone.itemId,
-    ]);
-    expect(listed.items[1]!.clusterSize).toBe(2);
-    const detail = (await daemon().execute(
-      'getFeedback',
-      { ...turn, itemIds: [human.itemId] } as never,
-      TRIAGE,
-    )) as { items: { evidence: { text: string }[] }[] };
-    expect(detail.items[0]!.evidence[0]!.text).toBe('odd');
-  });
-
-  it('files a labelled issue with the server footer, attaches with one count comment, and dismisses', async () => {
-    const github = new FakeGitHub();
-    const service = daemon(github);
-    const agentItem = await report({ category: 'bug', summary: 'grant card stuck' });
-    const humanItem = await new PhoneService(database, 'http://local.test').execute(
-      'reportMessageIssue',
-      { roomId: ROOM, messageId: await message('stuck again') },
-      OTHER,
-    );
-    const turn = await triageTurn();
-    const filed = (await service.execute(
-      'fileFeedbackIssue',
-      {
-        ...turn,
-        itemIds: [agentItem.itemId, humanItem.itemId],
-        title: 'Grant approval card does not resolve',
-        body: 'After approving, the card stays pending until reload.',
-        categoryLabel: 'bug',
-      } as never,
-      TRIAGE,
-    )) as { issueNumber: number };
-    const issue = github.issues.get(filed.issueNumber)!;
-    expect(issue.labels).toEqual(['beeline-feedback', 'bug']);
-    expect(issue.body).toContain(`Beeline feedback: ${agentItem.itemId} · 2 reports (1 human, 1 agent)`);
-    expect((await items()).map((item) => item.status)).toEqual(['filed', 'filed']);
-
-    const later = await report({ category: 'bug', summary: 'grant card stuck again' });
-    const other = await report({ category: 'bug', summary: 'one more' });
-    await service.execute(
-      'attachFeedbackToIssue',
-      { ...turn, itemIds: [later.itemId], issueNumber: filed.issueNumber } as never,
-      TRIAGE,
-    );
-    await service.execute(
-      'attachFeedbackToIssue',
-      { ...turn, itemIds: [other.itemId], issueNumber: filed.issueNumber } as never,
-      TRIAGE,
-    );
-    expect([...github.comments.values()]).toEqual([
-      { issue: filed.issueNumber, body: 'Beeline feedback: 4 reports (1 human, 3 agent)' },
-    ]);
-
-    const noise = await report({ category: 'simpler_path', summary: 'noise' });
-    await service.execute(
-      'dismissFeedback',
-      { ...turn, itemIds: [noise.itemId], reason: 'Working as intended' } as never,
-      TRIAGE,
-    );
-    const statuses = await items();
-    expect(statuses.find((item) => item.id === later.itemId)?.status).toBe('attached');
-    expect(statuses.find((item) => item.id === noise.itemId)).toMatchObject({
-      status: 'dismissed',
-      triage_reason: 'Working as intended',
-    });
-  });
-
-  it("leaves items new and returns GitHub's reason when GitHub refuses", async () => {
-    const github = new FakeGitHub();
-    github.fail = 'GitHub issues failed: HTTP 410: Issues are disabled for this repo';
-    const item = await report({ summary: 'something broke' });
-    const turn = await triageTurn();
-    await expect(
-      daemon(github).execute(
-        'fileFeedbackIssue',
-        { ...turn, itemIds: [item.itemId], title: 'T', body: 'B', categoryLabel: 'bug' } as never,
-        TRIAGE,
-      ),
-    ).rejects.toThrow('Issues are disabled for this repo');
-    expect((await items())[0]!.status).toBe('new');
-  });
-
-  it('counts the server footer against the 4000-character body limit', async () => {
-    const github = new FakeGitHub();
-    const item = await report({ summary: 'long body' });
-    const turn = await triageTurn();
-    const footer = `\n\n---\nBeeline feedback: ${item.itemId} · 1 report (0 human, 1 agent)`;
-    const file = (body: string) =>
-      daemon(github).execute(
-        'fileFeedbackIssue',
-        { ...turn, itemIds: [item.itemId], title: 'Long', body, categoryLabel: 'bug' } as never,
-        TRIAGE,
-      );
-    // A body at the limit on its own is too long once the footer is added.
-    await expect(file('x'.repeat(4000))).rejects.toThrow(
-      'redaction rule body-length',
-    );
-    await expect(file('x'.repeat(4000 - footer.length + 1))).rejects.toThrow(
-      `write at most ${4000 - footer.length}`,
-    );
-    expect(github.issues.size).toBe(0);
-    expect((await items())[0]!.status).toBe('new');
-
-    const filed = (await file('x'.repeat(4000 - footer.length))) as { issueNumber: number };
-    const sent = github.issues.get(filed.issueNumber)!.body;
-    expect(sent.length).toBe(4000);
-    expect(sent.endsWith(footer)).toBe(true);
-  });
-
-  it('refuses a redacted write, naming the rule, and writes nothing', async () => {
-    const github = new FakeGitHub();
-    await message('The deploy to staging failed because the database password rotated overnight');
-    const item = await report({ summary: 'deploy failed' });
-    const turn = await triageTurn();
-    await expect(
-      daemon(github).execute(
-        'fileFeedbackIssue',
-        {
-          ...turn,
-          itemIds: [item.itemId],
-          title: 'Deploy failure',
-          body: 'User said: the database password rotated overnight and nothing noticed',
-          categoryLabel: 'bug',
-        } as never,
-        TRIAGE,
-      ),
-    ).rejects.toThrow('redaction rule evidence-quote');
-    expect(github.issues.size).toBe(0);
-    expect((await items())[0]!.status).toBe('new');
-  });
-});
-
-describe('redaction rules', () => {
-  const context = {
-    evidence: ['Please never show this exact private sentence to anyone else ok'],
-    personNames: ['Priya Raman', 'priya'],
-    roomNames: ['Moonbase Launch'],
-  };
-  const cases: [string, { title?: string; body: string }][] = [
-    ['title-length', { title: 'x'.repeat(121), body: 'fine' }],
-    ['body-length', { body: 'x'.repeat(4001) }],
-    ['evidence-quote', { body: 'Quote: never show this exact private sentence to anyone' }],
-    ['email', { body: 'Reach them at someone@example.com' }],
-    ['secret', { body: 'key sk-abcdefghijklmnopqrstuvwxyz' }],
-    ['person-name', { body: 'Reported by @priya yesterday' }],
-    ['person-name', { body: 'priya raman saw it' }],
-    ['room-name', { body: 'Happens in moonbase launch only' }],
-  ];
-  for (const [rule, write] of cases)
-    it(`rejects ${rule}`, () => {
-      let caught: unknown;
-      try {
-        assertFeedbackRedaction(write, context);
-      } catch (error) {
-        caught = error;
-      }
-      expect(caught).toBeInstanceOf(FeedbackRedactionError);
-      expect((caught as FeedbackRedactionError).rule).toBe(rule);
-    });
-
-  it('accepts a description in the triager’s own words', () => {
-    expect(() =>
-      assertFeedbackRedaction(
-        { title: 'Card stays pending', body: 'The approval card does not update after a decision.' },
-        context,
-      ),
-    ).not.toThrow();
-  });
-});
-
-describe('issue webhook (close the loop)', () => {
-  async function filed(): Promise<{ agentItem: string; humanItem: string; number: number }> {
-    const github = new FakeGitHub();
-    const agentItem = (await report({ summary: 'timeout' })).itemId;
-    const humanItem = (
-      await new PhoneService(database, 'http://local.test').execute(
-        'reportMessageIssue',
-        { roomId: ROOM, messageId: await message('slow') },
-        OTHER,
-      )
+    const taggedItem = (await items()).find((item) => item.trigger_message_id === tagged.messageId)!.id;
+    const actionItem = (
+      await phone.execute('reportMessageIssue', { roomId: ROOM, messageId: await message('slow') }, OTHER)
     ).itemId;
-    const turn = await triageTurn();
-    const result = (await daemon(github).execute(
-      'fileFeedbackIssue',
-      { ...turn, itemIds: [agentItem, humanItem], title: 'Slow', body: 'Tools time out.', categoryLabel: 'bug' } as never,
-      TRIAGE,
-    )) as { issueNumber: number };
-    return { agentItem, humanItem, number: result.issueNumber };
+    const repeatItem = (
+      await phone.execute('reportMessageIssue', { roomId: ROOM, messageId: await message('slower') }, PERSON)
+    ).itemId;
+    return { agentItem, taggedItem, actionItem, repeatItem };
   }
 
-  function event(action: string, number: number, stateReason?: string) {
-    return {
-      action,
-      installation: { id: 42 },
-      repository: { full_name: REPOSITORY },
-      issue: {
-        number,
-        title: 'Slow tools',
-        html_url: `https://github.com/${REPOSITORY}/issues/${number}`,
-        ...(stateReason ? { state_reason: stateReason } : {}),
-      },
-    };
+  async function notify(input: Record<string, unknown>, agentId = TRIAGE, roomId = TRIAGE_CORNER) {
+    const turn = await openTurn(
+      await message(`@${agentId === TRIAGE ? 'sweeper' : 'worker'} notify`, PERSON, roomId),
+      roomId,
+      agentId,
+    );
+    return daemon().execute(
+      'notifyFeedbackFixed',
+      { ...turn, title: 'Slow tools', prUrl: FIX_URL, ...input } as never,
+      agentId,
+    );
   }
 
   async function fixedDms() {
@@ -658,76 +350,118 @@ describe('issue webhook (close the loop)', () => {
       await database.query<{ text: string; participants: string[] }>(
         `SELECT message.text,room.direct_participants participants FROM messages message
          JOIN rooms room ON room.id=message.room_id
-         WHERE message.author_id=$1 AND message.text LIKE 'Fixed:%'`,
+         WHERE message.author_id=$1 AND message.text LIKE 'Fixed:%'
+         ORDER BY message.created_at,message.id`,
         [SYSTEM_IDENTITY_ID],
       )
     ).rows;
   }
 
-  it('resolves on a completed close and DMs each human reporter and agent owner exactly once, whatever the Room GitHub setting', async () => {
-    const { number } = await filed();
-    const github = new GitHubOperations(
-      database,
-      {} as GitHubOAuthClient,
-      {} as GitHubAppClient,
-      's',
-      undefined,
-      undefined,
-      { enabled: false },
-      CONFIG,
-    );
-    await github.processWebhook('issues', event('closed', number, 'completed'));
-    await github.processWebhook('issues', event('closed', number, 'completed'));
-    expect((await items()).map((item) => item.status)).toEqual(['resolved', 'resolved']);
-    const dms = await fixedDms();
-    expect(dms.map((dm) => dm.text)).toEqual([
-      `Fixed: Slow tools (#${number}) https://github.com/${REPOSITORY}/issues/${number}`,
-      `Fixed: Slow tools (#${number}) https://github.com/${REPOSITORY}/issues/${number}`,
+  it("has System DM each person who reported an item once, resolves agent items silently, and repeats nothing", async () => {
+    const ids = Object.values(await reported());
+    await expect(notify({ itemIds: ids })).resolves.toEqual({ resolved: 4, notified: 2 });
+    expect((await items()).map((item) => item.status)).toEqual([
+      'resolved',
+      'resolved',
+      'resolved',
+      'resolved',
     ]);
+    const dms = await fixedDms();
+    expect(dms.map((dm) => dm.text)).toEqual([`Fixed: Slow tools ${FIX_URL}`, `Fixed: Slow tools ${FIX_URL}`]);
+    // PERSON reported two items and owns the reporting agent: one DM. OTHER: one.
     expect(dms.flatMap((dm) => dm.participants).filter((id) => id !== SYSTEM_IDENTITY_ID).sort()).toEqual(
       [PERSON, OTHER].sort(),
     );
-    // Reopen returns items to filed; closing again sends no second DM.
-    await github.processWebhook('issues', event('reopened', number));
-    expect((await items()).map((item) => item.status)).toEqual(['filed', 'filed']);
-    await github.processWebhook('issues', event('closed', number, 'completed'));
+    await expect(notify({ itemIds: ids })).resolves.toEqual({ resolved: 0, notified: 0 });
     expect(await fixedDms()).toHaveLength(2);
   });
 
-  it('closes without a DM when not planned, and ignores other repositories', async () => {
-    const { number } = await filed();
-    await processFeedbackIssueEvent(database, CONFIG, {
-      ...event('closed', number, 'completed'),
-      repository: { full_name: 'someone/else' },
-    });
-    expect((await items()).map((item) => item.status)).toEqual(['filed', 'filed']);
-    await processFeedbackIssueEvent(database, CONFIG, event('closed', number, 'not_planned'));
-    expect((await items()).map((item) => item.status)).toEqual(['closed', 'closed']);
+  it('sends no DM when only agent reports are fixed', async () => {
+    const { agentItem } = await reported();
+    await expect(notify({ itemIds: [agentItem] })).resolves.toEqual({ resolved: 1, notified: 0 });
     expect(await fixedDms()).toEqual([]);
   });
 
+  it('refuses an agent whose owner is not a System sender, or a call outside its own turn', async () => {
+    const { actionItem } = await reported();
+    await expect(notify({ itemIds: [actionItem] }, AGENT, ROOM)).rejects.toThrow(
+      'System DM access denied',
+    );
+    await expect(
+      daemon().execute(
+        'notifyFeedbackFixed',
+        { roomId: TRIAGE_CORNER, itemIds: [actionItem], title: 'Slow tools', prUrl: FIX_URL } as never,
+        TRIAGE,
+      ),
+    ).rejects.toThrow('command output authority rejected');
+    await expect(
+      daemon({ repository: REPOSITORY, systemSenders: [] }).execute(
+        'notifyFeedbackFixed',
+        {
+          ...(await openTurn(await message('@sweeper notify', PERSON, TRIAGE_CORNER), TRIAGE_CORNER, TRIAGE)),
+          itemIds: [actionItem],
+          title: 'Slow tools',
+          prUrl: FIX_URL,
+        } as never,
+        TRIAGE,
+      ),
+    ).rejects.toThrow('System DM access denied');
+    expect((await items()).map((item) => item.status)).not.toContain('resolved');
+    expect(await fixedDms()).toEqual([]);
+  });
+
+  it('refuses a link outside the repository pulls, a multi-line or secret title, and unknown items', async () => {
+    const { actionItem } = await reported();
+    for (const prUrl of [
+      'https://github.com/someone/else/pull/7',
+      `https://github.com/${REPOSITORY}/issues/7`,
+      `https://evil.test/${REPOSITORY}/pull/7`,
+      `${FIX_URL}?next=https://evil.test`,
+    ])
+      await expect(notify({ itemIds: [actionItem], prUrl })).rejects.toThrow(
+        `pr_url must be a pull request in ${REPOSITORY}`,
+      );
+    await expect(notify({ itemIds: [actionItem], title: 'Slow\nclick here' })).rejects.toThrow('one line');
+    await expect(notify({ itemIds: [actionItem], title: 'x'.repeat(121) })).rejects.toThrow('one line');
+    await expect(
+      notify({ itemIds: [actionItem], title: 'ghp_abcdefghijklmnopqrstuvwxyz0123' }),
+    ).rejects.toThrow('secret-shaped');
+    await expect(notify({ itemIds: [actionItem, 'fb_missing'] })).rejects.toThrow('unknown feedback item');
+    await expect(notify({ itemIds: [] })).rejects.toThrow('item_ids must list');
+    expect((await items()).map((item) => item.status)).not.toContain('resolved');
+    expect(await fixedDms()).toEqual([]);
+  });
+
+  it('accepts the repository name in any case and links the configured spelling', async () => {
+    const { actionItem } = await reported();
+    await notify({ itemIds: [actionItem], prUrl: 'https://github.com/beeline-work/BEELINE/pull/7' });
+    expect((await fixedDms()).map((dm) => dm.text)).toEqual([`Fixed: Slow tools ${FIX_URL}`]);
+  });
+
   it('skips the DM for a reporter with no Workspace left', async () => {
-    const { number } = await filed();
+    const { actionItem, taggedItem } = await reported();
     await database.query(`UPDATE memberships SET removed_at=now() WHERE identity_id=$1`, [OTHER]);
-    const result = await processFeedbackIssueEvent(database, CONFIG, event('closed', number, 'completed'));
-    expect(result).toEqual({ changed: 2, notified: 1 });
+    await expect(notify({ itemIds: [actionItem, taggedItem] })).resolves.toEqual({
+      resolved: 2,
+      notified: 1,
+    });
   });
 });
 
 describe('feedback config', () => {
-  it('defaults the repository and has no agent allowlist', () => {
-    expect(feedbackConfigFromEnv({})).toEqual({ repository: 'Beeline-Work/beeline' });
+  it('defaults the repository and has no System sender unless configured', () => {
+    expect(feedbackConfigFromEnv({})).toEqual({ repository: 'Beeline-Work/beeline', systemSenders: [] });
     expect(
       feedbackConfigFromEnv({
         BEELINE_FEEDBACK_REPOSITORY: 'o/r',
-        BEELINE_FEEDBACK_TRIAGE_AGENT_IDS: TRIAGE,
+        BEELINE_SYSTEM_SENDERS: ` ${CREATOR}, ,${PERSON} `,
       }),
-    ).toEqual({ repository: 'o/r' });
+    ).toEqual({ repository: 'o/r', systemSenders: [CREATOR, PERSON] });
   });
 });
 
-describe('triage corner: sibling fix corners and its sweep schedule', () => {
-  it('opens a fix corner from the triage corner as a sibling in the parent Room, issue number in its brief', async () => {
+describe('triage corner: sibling fix corners and its daily schedule, with no setting', () => {
+  it('opens a fix corner from the triage corner as a sibling in the parent Room', async () => {
     const turn = await triageTurn();
     const trigger = (
       await database.query<{ source_message_id: string }>(
@@ -742,12 +476,12 @@ describe('triage corner: sibling fix corners and its sweep schedule', () => {
         ...turn,
         idempotencyKey: `fix-${turn.requestId}`,
         name: 'Fix grant card',
-        objective: 'Fix beeline-feedback issue #123',
+        objective: 'Fix the grant card that stays pending',
         lane: 'no_code',
         brief: {
-          buildSpec: 'Fix GitHub issue Beeline-Work/beeline#123: the grant card stays pending.',
+          buildSpec: 'Fix the grant card that stays pending (feedback fb_123).',
           intentVerbatim: [intent],
-          criteria: [{ id: 'AC-1', text: 'Issue #123 no longer reproduces' }],
+          criteria: [{ id: 'AC-1', text: 'The grant card resolves after approval' }],
           references: [],
           approvalBasis: { kind: 'initiating-command', ...intent },
         },
@@ -766,7 +500,7 @@ describe('triage corner: sibling fix corners and its sweep schedule', () => {
         [cornerId],
       )
     ).rows[0]!;
-    expect(brief.build_spec).toContain('#123');
+    expect(brief.build_spec).toContain('fb_123');
     // The open card lands in the parent Room, where the sibling is listed.
     const card = await database.query(
       `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='daemon-fact' AND card->>'cornerId'=$2`,
@@ -775,14 +509,14 @@ describe('triage corner: sibling fix corners and its sweep schedule', () => {
     expect(card.rowCount).toBe(1);
   });
 
-  it('runs a sweep schedule created inside the triage corner in that corner', async () => {
+  it('runs a daily schedule created inside the triage corner in that corner', async () => {
     const turn = await triageTurn();
     const { scheduleId } = (await daemon().execute(
       'createAgentSchedule',
       {
         ...turn,
-        prompt: 'Sweep new Beeline feedback.',
-        cadence: { kind: 'interval', everyMinutes: 60 * 24 * 3 },
+        prompt: 'Start the feedback-triage workflow.',
+        cadence: { kind: 'cron', expression: '0 14 * * *', timeZone: 'UTC' },
       } as never,
       TRIAGE,
     )) as { scheduleId: string };

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { readWorkflowContract, workflowContentsError } from './workflow-contracts.js';
 
@@ -43,6 +44,20 @@ const contract = {
 } as const;
 
 describe('workflow contract validation', () => {
+  it('accepts the committed feedback-triage contract: notify, pull, approve gate, dispatch, done', () => {
+    const feedbackTriage = JSON.parse(
+      readFileSync(new URL('../../../docs/workflows/feedback-triage.json', import.meta.url), 'utf8'),
+    );
+    const read = readWorkflowContract(feedbackTriage);
+    expect(read).toEqual(feedbackTriage);
+    expect(read!.start).toBe('notify');
+    expect(read!.handoffs.approve).toMatchObject({ kind: 'gate', on: { dispatch: 'dispatch', skip: 'done' } });
+    // Dispatch is reachable only through the gate.
+    for (const [name, state] of Object.entries(read!.handoffs))
+      if (name !== 'approve' && 'on' in state && state.on)
+        expect(Object.values(state.on), name).not.toContain('dispatch');
+  });
+
   it('accepts the built-in Corner-shaped contract', () => {
     expect(readWorkflowContract(contract)).toEqual(contract);
   });

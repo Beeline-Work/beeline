@@ -42,7 +42,6 @@ import { backfillInstitutionalMemoryEmbeddingsOnce } from './institutional-memor
 import type { InstitutionalSkillAnchorSource } from './institutional-skill-anchors.js';
 import { retireWelcomeWorkspace, welcomeRetirementPreflight } from './welcome-retirement.js';
 import { feedbackConfigFromEnv } from './feedback.js';
-import { FeedbackGitHub } from './feedback-github.js';
 
 function required(name: string) {
   const value = process.env[name];
@@ -173,7 +172,6 @@ async function main() {
     },
   );
   const institutionalMemory = institutionalMemoryShadowConfigFromEnv();
-  const feedbackConfig = feedbackConfigFromEnv();
   github = githubClients
     ? new GitHubOperations(
         database,
@@ -183,7 +181,6 @@ async function main() {
         mountedAuth.sealedGitHubUserToken,
         (roomId) => live.publish({ type: 'invalidate', roomId, reason: 'github' }),
         institutionalMemory,
-        feedbackConfig,
       )
     : undefined;
   const githubJobs = githubClients
@@ -195,7 +192,6 @@ async function main() {
         mountedAuth.sealedGitHubUserToken,
         (roomId) => live.publish({ type: 'invalidate', roomId, reason: 'github' }),
         institutionalMemory,
-        feedbackConfig,
       )
     : undefined;
   // Generated procedures are anchored to real code, so the curator's staleness
@@ -285,10 +281,7 @@ async function main() {
     mcpRegistry,
     registryMcpOAuth,
     composio,
-    {
-      config: feedbackConfig,
-      ...(githubClients ? { host: new FeedbackGitHub(database, githubClients.app) } : {}),
-    },
+    feedbackConfigFromEnv(),
     objectService,
   );
   // The Google Play review link. Absent secret = the endpoint refuses like any

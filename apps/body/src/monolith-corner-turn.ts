@@ -713,7 +713,6 @@ export class MonolithCornerTurnLoop {
         this.sessionCodegraphReady,
       ),
       reviewerHandle: configuration.reviewerHandle,
-      feedbackTriage: configuration.feedbackTriage,
     });
   }
 
@@ -999,7 +998,6 @@ export class MonolithCornerTurnLoop {
         codegraphReady,
       ),
       reviewerHandle: configuration.reviewerHandle,
-      feedbackTriage: configuration.feedbackTriage,
     });
     const servers: McpServerWire[] = [
       ...(repository
@@ -1031,7 +1029,6 @@ export class MonolithCornerTurnLoop {
         cornerId: this.options.cornerId,
         agentMayCloseCorner: Boolean(repository) && this.options.lane !== 'research',
         agentMayUpgradeCorner: this.options.agentMayUpgradeCorner,
-        feedbackTriage: configuration.feedbackTriage === true,
         reviewer: Boolean(reviewerInstruction),
         lane: this.options.lane ?? (repository ? 'code' : 'no_code'),
         attachRoot: this.options.worktreePath,

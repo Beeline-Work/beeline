@@ -1154,14 +1154,18 @@ export class GitHubOperations {
         });
         const pr = await this.app.readPullRequest(token.token, row.repository, row.number);
         if (pr.mergeability === 'unknown') continue;
-        if (row.base_sha && row.base_sha !== pr.baseSha) {
-          if (
-            !pr.baseSha ||
-            (await this.app.readBranchHead(token.token, row.repository, row.target_branch)) !==
-              pr.baseSha
-          )
-            continue;
-        }
+        const staleBase = Boolean(
+          row.base_sha &&
+            row.base_sha !== pr.baseSha &&
+            (!pr.baseSha ||
+              (await this.app.readBranchHead(token.token, row.repository, row.target_branch)) !==
+                pr.baseSha),
+        );
+        // GitHub can leave a conflicting PR's base sha behind the branch head
+        // indefinitely. A conflict is still reported against the base already
+        // recorded; any other verdict waits for GitHub to reach that base.
+        if (staleBase && pr.mergeability !== 'dirty') continue;
+        const baseSha = staleBase ? row.base_sha! : pr.baseSha;
         await this.database.transaction(async (tx) => {
           const current = (
             await tx.query<{ lifecycle: CornerLifecycleView }>(
@@ -1183,13 +1187,13 @@ export class GitHubOperations {
               pr: {
                 ...current.pr,
                 mergeability: pr.mergeability,
-                ...(pr.baseSha ? { baseSha: pr.baseSha } : {}),
+                ...(baseSha ? { baseSha } : {}),
               },
             },
             tx,
           );
           if (pr.mergeability !== 'dirty') return;
-          const conflictKey = mergeConflictKey(row.number, pr.headSha, pr.baseSha);
+          const conflictKey = mergeConflictKey(row.number, pr.headSha, baseSha);
           const note = await systemLine(tx, {
             id: hash(`beeline:${row.corner_id}:github:${conflictKey}`),
             roomId: row.corner_id,

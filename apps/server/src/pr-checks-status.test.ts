@@ -10,6 +10,9 @@ import { PgliteDatabase } from './test-support.js';
 import { GitHubOperations } from './github-operations.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
+import { PhoneService } from './phone-service.js';
+import { createAgentCommand } from './agent-command.js';
+import { systemLine } from './system-line.js';
 
 const W = '11111111-1111-4111-8111-111111111111';
 const R = '22222222-2222-4222-8222-222222222222';
@@ -27,6 +30,9 @@ let daemon: DaemonService;
 let app: GitHubAppClient;
 let head: string;
 let rollupState: string | null;
+let mergeableState: string | undefined;
+let pullBaseSha: string | undefined;
+let mainHead: string;
 let requests: string[];
 let server: Server | undefined;
 
@@ -82,6 +88,9 @@ beforeEach(async () => {
   }
   head = SHA;
   rollupState = 'SUCCESS';
+  mergeableState = undefined;
+  pullBaseSha = undefined;
+  mainHead = 'd'.repeat(40);
   requests = [];
   app = new GitHubAppClient({
     appId: '1',
@@ -99,7 +108,13 @@ beforeEach(async () => {
     if (!url.startsWith('https://api.github.test/')) return realFetch(input, init);
     requests.push(url);
     expect(new Headers(init?.headers).get('authorization')).toBe('Bearer room-token');
-    if (url.endsWith('/pulls/614')) return Response.json({ head: { sha: head } });
+    if (url.endsWith('/pulls/614'))
+      return Response.json({
+        head: { sha: head },
+        ...(pullBaseSha ? { base: { ref: 'main', sha: pullBaseSha } } : {}),
+        mergeable_state: mergeableState,
+      });
+    if (url.endsWith('/branches/main')) return Response.json({ commit: { sha: mainHead } });
     if (url.endsWith('/graphql')) {
       const variables = JSON.parse(String(init?.body)).variables as { expression: string };
       return Response.json({
@@ -142,6 +157,15 @@ beforeEach(async () => {
     false,
     undefined,
     (input) => operations.prChecksStatus(input),
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    (cornerId) => operations.refreshUnknownMergeability(cornerId),
   );
 });
 
@@ -562,5 +586,130 @@ describe('PR-scoped check gate', () => {
       didHumanSayDontMerge: true,
     });
     child.kill();
+  });
+});
+
+describe('zero-check worker completion', () => {
+  /** The worker finishes its PR turn by posting the PR URL into the corner. */
+  async function finishPrTurn(baseSha: string) {
+    await new PhoneService(db, 'http://test').execute(
+      'updateRoom',
+      { roomId: R, reviewerAgentId: REVIEWER },
+      H,
+    );
+    await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+      C,
+      JSON.stringify({
+        lifecycle: 'in-review',
+        checks: 'unknown',
+        pr: {
+          number: 614,
+          url: URL,
+          headSha: SHA,
+          title: 'Work',
+          targetBranch: 'main',
+          baseSha,
+          mergeability: 'unknown',
+        },
+      }),
+    ]);
+    const source = await systemLine(db, {
+      roomId: C,
+      authorId: H,
+      subject: { kind: 'person', id: H, name: 'Owner' },
+      verb: 'requested work',
+    });
+    await createAgentCommand(db, {
+      roomId: C,
+      agentId: A,
+      sourceMessageId: source.id,
+      reason: 'corner_objective',
+    });
+    const [worker] = (await daemon.execute('getAgentCommands', { roomId: C }, A)).commands;
+    await daemon.execute(
+      'claimAgentCommand',
+      { roomId: C, commandId: worker!.id, generationId: 'g1' },
+      A,
+    );
+    await daemon.execute(
+      'postAgentTurnReceipt',
+      {
+        roomId: C,
+        agentId: A,
+        requestId: worker!.turnRequestId,
+        generationId: 'g1',
+        status: 'working',
+      },
+      A,
+    );
+    await daemon.execute(
+      'postRoomMessage',
+      { roomId: C, requestId: worker!.turnRequestId, generationId: 'g1', text: URL },
+      A,
+    );
+    const lifecycle = (
+      await db.query<{ lifecycle: Record<string, unknown> & { pr: Record<string, unknown> } }>(
+        `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+        [C],
+      )
+    ).rows[0]!.lifecycle;
+    const reasons = async (agentId: string) =>
+      (
+        await db.query<{ reason: string }>(
+          `SELECT reason FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND state='pending'`,
+          [C, agentId],
+        )
+      ).rows.map((row) => row.reason);
+    return { lifecycle, reviewer: await reasons(REVIEWER), worker: await reasons(A) };
+  }
+
+  it('does not pass or send to review a conflicting PR that GitHub ran no checks for', async () => {
+    rollupState = null;
+    mergeableState = 'dirty';
+    pullBaseSha = mainHead;
+    const after = await finishPrTurn(mainHead);
+    expect(after.lifecycle.pr.mergeability).toBe('dirty');
+    expect(after.lifecycle.checks).not.toBe('passing');
+    expect(after.lifecycle.checksSummary).toBeUndefined();
+    expect(after.reviewer).toEqual([]);
+    expect(after.worker).toEqual(['corner_merge_conflict']);
+  });
+
+  // Reproduction R1: PR #1957 conflicted with main, GitHub left pull.base.sha
+  // behind main's head and started no workflows; the corner read
+  // "no tests configured", checks passed, and the reviewer was woken.
+  it('records the conflict when GitHub lags the base sha behind the branch head (R1)', async () => {
+    rollupState = null;
+    mergeableState = 'dirty';
+    pullBaseSha = 'e'.repeat(40);
+    const after = await finishPrTurn(mainHead);
+    expect(after.lifecycle.pr).toMatchObject({ mergeability: 'dirty', baseSha: mainHead });
+    expect(after.lifecycle.checks).not.toBe('passing');
+    expect(after.reviewer).toEqual([]);
+    expect(after.worker).toEqual(['corner_merge_conflict']);
+  });
+
+  it('still resolves a clean PR with no checks as passing and wakes the reviewer', async () => {
+    rollupState = null;
+    mergeableState = 'clean';
+    pullBaseSha = mainHead;
+    const after = await finishPrTurn(mainHead);
+    expect(after.lifecycle).toMatchObject({
+      checks: 'passing',
+      checksSummary: { status: 'passing', total: 0 },
+      pr: { mergeability: 'clean' },
+    });
+    expect(after.reviewer).toEqual(['subscribed_event']);
+    expect(after.worker).toEqual([]);
+  });
+
+  it('keeps waiting on a clean verdict GitHub computed against a stale base', async () => {
+    rollupState = null;
+    mergeableState = 'clean';
+    pullBaseSha = 'e'.repeat(40);
+    const after = await finishPrTurn(mainHead);
+    expect(after.lifecycle.pr).toMatchObject({ mergeability: 'unknown', baseSha: mainHead });
+    expect(after.lifecycle.checks).toBe('passing');
+    expect(after.reviewer).toEqual(['subscribed_event']);
   });
 });

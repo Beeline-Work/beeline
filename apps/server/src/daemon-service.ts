@@ -310,6 +310,7 @@ export class DaemonService {
     private readonly feedback: FeedbackLoop = { config: feedbackConfigFromEnv() },
     private readonly objects?: ObjectService,
     private readonly linkWallet?: import('./link-agent-wallet.js').LinkAgentWallet,
+    private readonly refreshMergeability?: (cornerId: string) => Promise<void>,
   ) {}
 
   /** A turn's memory query, embedded before its command transaction opened. */
@@ -579,6 +580,7 @@ export class DaemonService {
           this.feedback,
           this.objects,
           this.linkWallet,
+          this.refreshMergeability,
         );
         scoped.memoryEmbed = memoryEmbed;
         scoped.afterCommit = (task) => {
@@ -1555,7 +1557,9 @@ export class DaemonService {
    * A repository with no checks emits no check webhook, so its configured
    * reviewer otherwise waits forever. Resolve that absence only after the
    * worker has finished its PR turn; at PR-open time the same empty rollup is
-   * merely a race with GitHub registering workflows.
+   * merely a race with GitHub registering workflows. GitHub also runs no
+   * workflows for a PR that conflicts with its base, so a conflict is read
+   * first and never resolved as a repository without checks.
    */
   private async reconcileZeroCheckWorkerCompletion(
     cornerId: string,
@@ -1590,6 +1594,12 @@ export class DaemonService {
       return;
     }
     if (verdict.checks !== 'pending' || verdict.checkCount !== 0) return;
+    try {
+      await this.refreshMergeability?.(cornerId);
+    } catch (error) {
+      console.error(`[server] zero-check mergeability read failed for corner ${cornerId}:`, error);
+      return;
+    }
 
     await this.database.transaction(async (db) => {
       const current = (
@@ -1611,6 +1621,7 @@ export class DaemonService {
         current.owner_agent_id !== workerAgentId ||
         current.reviewer_agent_id !== candidate.reviewer_agent_id ||
         current.lifecycle.pr?.headSha !== verdict.headSha ||
+        current.lifecycle.pr.mergeability === 'dirty' ||
         current.lifecycle.checks === 'passing'
       )
         return;

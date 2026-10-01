@@ -279,6 +279,7 @@ import {
   type RoomSurfaceSessionBindings,
   type UseRoomSurfaceSessionResult,
 } from './useRoomSurfaceSession';
+import { chatUploadTransport } from '@/buzz/chat-upload-transport';
 import {
   GitHubEventCard,
   DaemonFactCard,
@@ -692,16 +693,7 @@ export function BuzzChatSurface({
   useEffect(() => {
     attachmentUploader.retain(pendingAttachments);
     if (pendingAttachments.length === 0) return;
-    void (async () => {
-      let uploadTransport = transport;
-      if (!uploadTransport) {
-        const identity = await loadBuzzIdentity();
-        if (!identity) throw new Error('Beeline identity is unavailable');
-        uploadTransport = new BuzzRigTransport(identity);
-        setSessionTransport(uploadTransport);
-      }
-      return uploadTransport;
-    })()
+    void chatUploadTransport(transport, setSessionTransport)
       .then((uploadTransport) =>
         attachmentUploader.start(
           uploadTransport,
@@ -3706,13 +3698,7 @@ export function BuzzChatSurface({
       // published its transport state. Sending is still a valid operation:
       // construct the monolith transport on demand rather than
       // leaving the enabled send control as a silent no-op.
-      let sendTransport = transport;
-      if (!sendTransport) {
-        const identity = await loadBuzzIdentity();
-        if (!identity) throw new Error('Beeline identity is unavailable');
-        sendTransport = new BuzzRigTransport(identity);
-      }
-      if (!transport) setSessionTransport(sendTransport);
+      const sendTransport = await chatUploadTransport(transport, setSessionTransport);
       preparedTransport = sendTransport;
       const attachments = await attachmentUploader.uploadAll(
         sendTransport,

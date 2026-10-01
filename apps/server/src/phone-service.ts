@@ -7420,7 +7420,8 @@ export class PhoneService {
         ]);
         if (!metadata) return { appKey };
         return { appKey, ...(metadata.description ? { description: metadata.description } : {}),
-          ...(metadata.logo ? { logo: metadata.logo } : {}) };
+          ...(metadata.logo ? { logo: metadata.logo } : {}),
+          ...(metadata.appUrl ? { domain: new URL(metadata.appUrl).hostname } : {}) };
       } catch { return { appKey }; }
       finally { clearTimeout(timeout); }
     }))) : [];
@@ -7459,7 +7460,10 @@ export class PhoneService {
       })),
       apps: apps.map((app) => {
         const metadata = appMetadata.get(composioToolkitForApp(app.appKey));
-        return { ...app, ...(metadata?.description ? { description: metadata.description } : {}),
+        return { ...app,
+          ...(app.transport === 'composio' && !app.domain && metadata?.domain
+            ? { domain: metadata.domain } : {}),
+          ...(metadata?.description ? { description: metadata.description } : {}),
           ...(metadata?.logo ? { logo: metadata.logo } : {}) };
       }),
       appCatalog,

@@ -9,10 +9,12 @@ describe('managed app provider boundary', () => {
   it('reads the toolkit description and HTTPS logo from provider metadata', async () => {
     const transport = vi.fn(async () => json({ slug: 'gmail', enabled: true,
       composio_managed_auth_schemes: ['OAUTH2'],
-      meta: { description: 'Read and send Gmail messages.', logo: 'https://cdn.composio.dev/gmail.png' } }));
+      meta: { description: 'Read and send Gmail messages.', logo: 'https://cdn.composio.dev/gmail.png',
+        app_url: 'https://mail.google.com/mail/' } }));
     const provider = new ComposioApps('fixture-only', transport as typeof fetch);
     expect(await provider.toolkit('gmail')).toMatchObject({
       description: 'Read and send Gmail messages.', logo: 'https://cdn.composio.dev/gmail.png',
+      appUrl: 'https://mail.google.com',
     });
     expect(await provider.supportsOAuth('gmail')).toBe(true);
     expect(transport).toHaveBeenCalledTimes(1);

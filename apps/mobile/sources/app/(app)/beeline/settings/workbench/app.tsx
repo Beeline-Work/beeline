@@ -61,6 +61,12 @@ export default function AppDetailScreen() {
     : app?.lastUsedAt
       ? `Last used ${new Date(app.lastUsedAt * 1000).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}.`
       : 'Not used yet.';
+  const providerDescription = app?.description?.trim();
+  const description = providerDescription && !/^use\s+.+\s+tools\.?$/i.test(providerDescription)
+    ? providerDescription
+    : app?.key === 'neon'
+      ? 'Neon provides serverless Postgres databases for applications.'
+      : null;
 
   return <View style={[styles.screen, { paddingTop: insets.top }]} testID="app-detail-screen">
     <AppPageHeader eyebrow="Workbench" title={app?.name ?? 'App'} backLabel="Back to Workbench" onBack={() => router.back()} />
@@ -73,7 +79,7 @@ export default function AppDetailScreen() {
             {app.accountLabel ? <Text style={styles.account}>{app.accountLabel}{app.workspaceName ? ` · ${app.workspaceName} workspace` : ''}</Text> : null}
           </View>
         </View>
-        {app.description ? <Text style={styles.permission}>{app.description}</Text> : null}
+        {description ? <Text style={styles.permission}>{description}</Text> : null}
         <Text style={styles.permission}>Your agents can use {app.name} as you. Other people’s agents ask you first.</Text>
         <Text style={styles.lastUsed}>{lastUsed}</Text>
         {app.status !== 'connected' ? <TouchableOpacity accessibilityRole="button" disabled={working} onPress={() => void reconnect()} style={styles.ink} testID="app-detail-connect"><Text style={styles.inkText}>{working ? 'Connecting' : app.status === 'error' ? `Retry ${app.name}` : `Connect ${app.name}`}</Text></TouchableOpacity> : null}

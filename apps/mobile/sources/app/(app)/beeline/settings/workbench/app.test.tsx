@@ -58,6 +58,16 @@ describe('App detail', () => {
     expect((await source.readWorkbench({ workspaceId: 'ws', viewerId: 'human-dani' })).apps).toHaveLength(0);
   });
 
+  it('shows a product description on Neon detail when provider copy is missing or filler', async () => {
+    source.setApps([{ id: 'app-slack', key: 'neon', name: 'Neon',
+      description: 'Use neon tools.', transport: 'squire-api', status: 'connected', useCount: 0 }]);
+    const renderer = await render();
+    const tree = JSON.stringify(renderer.toJSON());
+    expect(tree).toContain('Neon provides serverless Postgres databases for applications.');
+    expect(tree).not.toContain('Use neon tools.');
+    expect(renderer.root.findByType('AppMark' as never).props.name).toBe('Neon');
+  });
+
   it('shows a truthful never-used state', async () => {
     source.setApps([{ id: 'app-slack', key: 'slack', name: 'Slack', transport: 'composio', status: 'connected', accountLabel: 'lunchbox', workspaceName: 'Tubing Crew', useCount: 0 }]);
     const renderer = await render();

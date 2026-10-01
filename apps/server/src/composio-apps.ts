@@ -38,7 +38,7 @@ function stripSecrets(value: unknown, depth = 0): unknown {
 
 export class ComposioApps {
   private readonly toolkitCache = new Map<string, { until: number; value: Promise<{
-    slug: string; description?: string; logo?: string; enabled?: boolean;
+    slug: string; description?: string; logo?: string; appUrl?: string; enabled?: boolean;
     composio_managed_auth_schemes?: unknown }> }>();
   constructor(private readonly apiKey: string, private readonly transport: typeof fetch = fetch) {
     if (!apiKey) throw new Error('App provider is unavailable');
@@ -77,7 +77,7 @@ export class ComposioApps {
     }
   }
 
-  async toolkit(toolkit: string): Promise<{ slug: string; description?: string; logo?: string;
+  async toolkit(toolkit: string): Promise<{ slug: string; description?: string; logo?: string; appUrl?: string;
     enabled?: boolean; composio_managed_auth_schemes?: unknown }> {
     const cached = this.toolkitCache.get(toolkit);
     if (cached && cached.until > Date.now()) return cached.value;
@@ -88,14 +88,22 @@ export class ComposioApps {
   }
 
   private async fetchToolkit(toolkit: string): Promise<{ slug: string; description?: string;
-    logo?: string; enabled?: boolean; composio_managed_auth_schemes?: unknown }> {
+    logo?: string; appUrl?: string; enabled?: boolean; composio_managed_auth_schemes?: unknown }> {
     const row = await this.request(`/toolkits/${encodeURIComponent(toolkit)}?version=latest`, 'GET');
     const meta = row.meta && typeof row.meta === 'object' && !Array.isArray(row.meta)
       ? row.meta as Json : {};
     const logo = typeof meta.logo === 'string' && /^https:\/\//i.test(meta.logo) ? meta.logo : undefined;
+    let appUrl: string | undefined;
+    if (typeof meta.app_url === 'string') {
+      try {
+        const parsed = new URL(meta.app_url);
+        if (parsed.protocol === 'https:' && parsed.hostname) appUrl = parsed.origin;
+      } catch { /* Invalid provider metadata is optional. */ }
+    }
     return { slug: requiredString(row.slug),
       ...(typeof meta.description === 'string' ? { description: meta.description } : {}),
       ...(logo ? { logo } : {}),
+      ...(appUrl ? { appUrl } : {}),
       ...(typeof row.enabled === 'boolean' ? { enabled: row.enabled } : {}),
       ...(Array.isArray(row.composio_managed_auth_schemes)
         ? { composio_managed_auth_schemes: row.composio_managed_auth_schemes } : {}) };

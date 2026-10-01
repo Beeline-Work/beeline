@@ -323,6 +323,9 @@ describe('connect_app', () => {
 
   it('projects provider descriptions and logos to app rows and the connect catalog', async () => {
     const provider = fakeComposio();
+    provider.toolkit.mockImplementation(async (toolkit: string) => ({ slug: toolkit,
+      description: `Use ${toolkit} tools.`, logo: `https://cdn.composio.dev/${toolkit}.png`,
+      ...(toolkit === 'gmail' ? { appUrl: 'https://mail.google.com' } : {}) }));
     const daemon = daemonWith(fakeRegistry([]).client, provider);
     const first = await daemon.execute('connectApp',
       { ...turn, app: 'Gmail', reason: 'connect Gmail' }, HELPER);
@@ -330,9 +333,11 @@ describe('connect_app', () => {
       undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
     const view = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
     expect(view.apps).toContainEqual(expect.objectContaining({ appId: first.appId,
-      description: 'Use gmail tools.', logo: 'https://cdn.composio.dev/gmail.png' }));
+      description: 'Use gmail tools.', logo: 'https://cdn.composio.dev/gmail.png',
+      domain: 'mail.google.com' }));
     expect(view.appCatalog).toContainEqual({ appKey: 'gmail',
-      description: 'Use gmail tools.', logo: 'https://cdn.composio.dev/gmail.png' });
+      description: 'Use gmail tools.', logo: 'https://cdn.composio.dev/gmail.png',
+      domain: 'mail.google.com' });
   });
 
   it('shows a failed callback on Workbench and clears it on retry', async () => {

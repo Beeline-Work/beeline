@@ -28,6 +28,18 @@ vi.mock('react-native', async () => {
         props.ListFooterComponent,
         (props.data ?? []).length === 0 ? props.ListEmptyComponent : null,
       ),
+    Animated: {
+      View: host('AnimatedView'),
+      Value: class {
+        interpolate() {
+          return 1;
+        }
+        setValue() {}
+      },
+      timing: () => ({}),
+      loop: () => ({ start() {}, stop() {} }),
+    },
+    Easing: { linear: (t: number) => t },
     Pressable: host('Pressable'),
     TouchableOpacity: host('TouchableOpacity'),
     Platform: { OS: 'web' },

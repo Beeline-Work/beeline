@@ -31,6 +31,10 @@ vi.mock('react-native-unistyles', async () => {
   };
 });
 
+vi.mock('@/constants/Typography', () => ({
+  Typography: { default: () => ({}) },
+}));
+
 vi.mock('@/components/buzz/IdentityMark', async () => {
   const ReactModule = await import('react');
   return { IdentityMark: (props: any) => ReactModule.createElement('IdentityMark', props) };
@@ -145,6 +149,27 @@ describe('MentionSuggestionMenu', () => {
     expect(
       JSON.stringify(channel.findAllByType('Text' as never).map((t: any) => t.props.children)),
     ).toContain('Everyone in this Room');
+  });
+
+  it('shows an agent as its handle, then model by @owner, without repeating its name', () => {
+    const agent: RoomRosterParticipant = {
+      pubkey: 'a-niglet',
+      name: 'Niglet',
+      handle: 'niglet',
+      kind: 'agent',
+      agent: { pubkey: 'a-niglet', displayName: 'Niglet' },
+      model: 'claude-opus-5-5',
+      ownerHandle: 'lunchboxfortwo',
+    };
+    const renderer = render(menu({ matches: [agent], overflow: 0 }));
+    const row = renderer.root.findByProps({ testID: 'mention-suggestion-niglet' });
+    const words = row
+      .findAllByType('Text' as never)
+      .map((text: any) => [text.props.children].flat().join(''));
+    expect(words).toEqual(['@niglet', 'claude-opus-5-5 · by @lunchboxfortwo']);
+    expect(row.props.accessibilityLabel).toBe(
+      '@niglet, claude-opus-5-5 · by @lunchboxfortwo, agent',
+    );
   });
 
   it('offers @system as a report row, not a person', () => {

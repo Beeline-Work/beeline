@@ -1660,23 +1660,26 @@ export function BuzzChatSurface({
       return kind === participantPickerKind;
     }).length;
   }, [participantPickerKind, userPubkey, workspaceRoster]);
-  const visibleRosterMembers = useMemo(() => {
+  // Agents carry their model and owner for the roster sheet and @-mention menu.
+  const describedRoomParticipants = useMemo(() => {
     const workspaceAgents = new Map(
       (workspaceRoster?.agents ?? []).map((agent) => [agent.identity.pubkey, agent]),
     );
-    return orderRoomRoster(
-      roomParticipants.map((participant) => {
-        if (participant.kind !== 'agent') return participant;
-        const workspaceAgent = workspaceAgents.get(participant.pubkey);
-        const ownerHandle = workspaceAgent?.owner?.handle;
-        return {
-          ...participant,
-          ...(workspaceAgent?.model ? { model: workspaceAgent.model } : {}),
-          ...(ownerHandle ? { ownerHandle } : {}),
-        };
-      }),
-    );
+    return roomParticipants.map((participant) => {
+      if (participant.kind !== 'agent') return participant;
+      const workspaceAgent = workspaceAgents.get(participant.pubkey);
+      const ownerHandle = workspaceAgent?.owner?.handle;
+      return {
+        ...participant,
+        ...(workspaceAgent?.model ? { model: workspaceAgent.model } : {}),
+        ...(ownerHandle ? { ownerHandle } : {}),
+      };
+    });
   }, [roomParticipants, workspaceRoster]);
+  const visibleRosterMembers = useMemo(
+    () => orderRoomRoster(describedRoomParticipants),
+    [describedRoomParticipants],
+  );
   const roomParticipantTotal = roomParticipants.length;
   const roomAgents = useMemo(
     () => roomParticipants.filter((participant) => participant.kind === 'agent'),
@@ -1718,8 +1721,8 @@ export function BuzzChatSurface({
     ? `${inputText}:${activeMention.start}:${activeMention.end}`
     : null;
   const mentionCandidateRoster = useMemo(
-    () => [CHANNEL_MENTION_OPTION, ...roomParticipants, SYSTEM_MENTION_OPTION],
-    [roomParticipants],
+    () => [CHANNEL_MENTION_OPTION, ...describedRoomParticipants, SYSTEM_MENTION_OPTION],
+    [describedRoomParticipants],
   );
   const mentionSuggestions = useMemo(
     () =>

@@ -356,7 +356,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'start_workflow',
     description:
-      'Start a run of a saved workflow, binding its named roles to current members of this Room (by agent id, or by @handle from your member list). Posts one message whose id is the run id and pins the contract version; call handoff with that runId to move the run forward. Every declared role needs a binding to a current Room member OR a class/tag word (e.g. "heavy", "light", "god", a harness name, a provider name, an exact model id, or a custom tag) - a class binding is resolved to a random currently healthy Room member carrying that tag each time the role is dispatched, skipping offline/recently-failed/out-of-credit members, and stays with whoever it picked for the rest of the run unless that agent later fails, in which case it moves to the next healthy member automatically. If the class has no healthy member, the run names this in the Room and waits for a human (see assign_workflow_role).' +
+      'Start a run of a saved workflow, binding its named roles to current members of this Room (by agent id, or by a handle from your member list - a word matching a member\'s handle binds that member, with or without the @). Posts one message whose id is the run id and pins the contract version; call handoff with that runId to move the run forward. Every declared role needs a binding to a current Room member OR a class/tag word (e.g. "heavy", "light", "god", a harness name, a provider name, an exact model id, or a custom tag) - a class binding is resolved to a random currently healthy Room member carrying that tag each time the role is dispatched, skipping offline/recently-failed/out-of-credit members, and stays with whoever it picked for the rest of the run unless that agent later fails, in which case it moves to the next healthy member automatically. A class word no current Room member carries is refused at start; if the class has members but none healthy, the run names this in the Room and waits for a human (see assign_workflow_role).' +
       ` How to write and run workflows: ${WORKFLOW_GUIDE_URL}`,
     inputSchema: {
       type: 'object',
@@ -401,7 +401,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'assign_workflow_role',
     description:
-      'Bind one specific agent to a class/tag-bound role this run is currently on - the human-directed recovery when a class has no healthy member (the run names this in the Room and asks a human; that human can then tag you and ask you to call this). No health filter applies - an explicit choice overrides "healthy". The target must currently carry the role\'s configured tag and be a member of this Room; agentId takes an agent id or a handle from your member list. Not for a role bound to one fixed agent; that role never fails over.' +
+      'Bind one specific agent to a class/tag-bound role this run is currently on - the human-directed recovery when a class has no healthy member (the run names this in the Room and asks a human; that human can then tag you and ask you to call this). No health filter applies - an explicit choice overrides "healthy". The target must currently carry the role\'s configured tag and be a member of this Room; agentId takes an agent id or a handle from your member list. The refusal says which current members carry the tag. Not for a role bound to one fixed agent; that role never fails over.' +
       ` How to write and run workflows: ${WORKFLOW_GUIDE_URL}`,
     inputSchema: {
       type: 'object',

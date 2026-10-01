@@ -972,3 +972,79 @@ describe('class roles', () => {
     ).rejects.toThrow('not class-bound');
   });
 });
+
+describe('member handles as workflow role bindings', () => {
+  it('binds a bare member handle to that member instead of reading it as a class/tag', async () => {
+    await database.query(`UPDATE identities SET handle='candy' WHERE id=$1`, [HEAVY_A]);
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: CLASS_CONTRACT });
+    const started = await startWorkflow(database, command, {
+      name: 'class-flow',
+      roleBindings: { worker: 'candy', closer: APPROVER },
+    });
+    expect(started.state).toBe('work');
+    const card = await classRunCard(started.runId);
+    expect(card.roleBindings.worker).toBe(HEAVY_A);
+    expect(card.roleBindings.closer).toBe(APPROVER);
+    // The bound member is the one dispatched, never a class placeholder.
+    expect(await pendingCommandsFor(HEAVY_A)).toBeGreaterThan(0);
+  });
+
+  it('refuses a class word no current Room member carries, at start, before any card is written', async () => {
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: CLASS_CONTRACT });
+    await expect(
+      startWorkflow(database, command, {
+        name: 'class-flow',
+        roleBindings: { worker: 'nosuchclass', closer: APPROVER },
+      }),
+    ).rejects.toThrow('no current Room member carries');
+    const cards = await database.query(
+      `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='workflow-handoff'`,
+      [ROOM],
+    );
+    expect(cards.rowCount).toBe(0);
+    expect(await pendingCommandsFor(HEAVY_A)).toBe(0);
+    expect(await pendingCommandsFor(HEAVY_B)).toBe(0);
+  });
+
+  it('a member handle wins over a custom tag of the same word (a tag never shares a member handle)', async () => {
+    await database.query(`UPDATE identities SET handle='candy' WHERE id=$1`, [HEAVY_A]);
+    await database.query(`UPDATE agents SET custom_tags=$2::jsonb WHERE agent_id=$1`, [
+      HEAVY_B,
+      JSON.stringify(['candy']),
+    ]);
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: CLASS_CONTRACT });
+    const started = await startWorkflow(database, command, {
+      name: 'class-flow',
+      roleBindings: { worker: 'candy', closer: APPROVER },
+    });
+    const card = await classRunCard(started.runId);
+    // The word names the member by handle, not the tag's carrier.
+    expect(card.roleBindings.worker).toBe(HEAVY_A);
+    expect(await pendingCommandsFor(HEAVY_A)).toBeGreaterThan(0);
+    expect(await pendingCommandsFor(HEAVY_B)).toBe(0);
+  });
+
+  it('assign_workflow_role names who may take the role when the target does not carry the tag', async () => {
+    await database.query(`UPDATE identities SET handle='heavya' WHERE id=$1`, [HEAVY_A]);
+    await database.query(`UPDATE identities SET handle='heavyb' WHERE id=$1`, [HEAVY_B]);
+    await reportPresence(HEAVY_A, 'offline');
+    await reportPresence(HEAVY_B, 'offline');
+    const { runId } = await startedClassRun();
+    const command = await commandFor(IMPLEMENTER);
+    const error = await assignWorkflowRole(database, command, {
+      runId,
+      role: 'worker',
+      targetAgentId: REVIEWER,
+    }).then(
+      () => null,
+      (e: Error) => e.message,
+    );
+    expect(error).toContain('does not carry the "heavy" tag');
+    // The eligibility error names the exact agents that carry the class.
+    expect(error).toContain('@heavya');
+    expect(error).toContain('@heavyb');
+  });
+});

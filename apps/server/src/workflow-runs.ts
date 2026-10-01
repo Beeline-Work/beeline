@@ -14,7 +14,12 @@ import type { SqlDatabase } from './database.js';
 import { applySkillRevision, assertSkillTextSafe } from './institutional-skills.js';
 import type { AfterCommit } from './institutional-memory-embeddings.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
-import { agentCarriesTag, pickHealthyClassMember } from './agent-classes.js';
+import {
+  agentCarriesTag,
+  pickHealthyClassMember,
+  roomHasTaggedMember,
+  roomMembersWithTag,
+} from './agent-classes.js';
 import { postRoomChoice } from './room-choice.js';
 import { ensureSystemIdentity, identitySubject, systemLine } from './system-line.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
@@ -331,10 +336,31 @@ export async function startWorkflow(
       } else if (isAgentIdentityReference(raw)) {
         roleBindings[role] = raw;
       } else if (isClassOrTagReference(raw)) {
-        roleBindings[role] = raw;
-        roleClasses[role] = raw;
+        // A word matching a current member's handle names THAT member — a
+        // tag never shares a member's handle, so the member always wins.
+        // Without this a bare handle like "candy" silently became a class
+        // tag, stranding the run at its first state and rejecting the very
+        // member the human meant to bind.
+        const memberId = await roomMemberIdForHandle(db, command.room_id, raw);
+        if (memberId) {
+          roleBindings[role] = memberId;
+        } else {
+          roleBindings[role] = raw;
+          roleClasses[role] = raw;
+        }
       } else {
-        throw new Error(`role binding for ${role} must be an agent id or a valid class/tag`);
+        throw new Error(`role binding for ${role} must be an agent id, a member handle, or a valid class/tag`);
+      }
+    }
+    // A class binding is refused at start when no current Room member
+    // carries it, instead of starting a run that strands at its first
+    // dispatch. A class with members who are merely unhealthy still parks
+    // for the existing human `assign_workflow_role` recovery.
+    for (const [role, className] of Object.entries(roleClasses)) {
+      if (!(await roomHasTaggedMember(db, command.room_id, room.workspace_id, className))) {
+        throw new Error(
+          `the ${role} role is bound to the "${className}" class, and no current Room member carries it; bind ${role} to a member by handle or agent id`,
+        );
       }
     }
     const boundIds = [...new Set(Object.values(roleBindings).filter(isAgentIdentityReference))];
@@ -680,9 +706,12 @@ export async function reassignFailedWorkflowRole(
   await reassignRole(db, { roomId: input.roomId, runId: run.runId, run, contract, role, picked });
 }
 
-/** The identity id of the current Room member with this handle (as agents see it in their member list). */
-async function memberIdForHandle(db: SqlDatabase, roomId: string, raw: string): Promise<string> {
-  const handle = raw.replace(/^@/, '');
+/** The identity id of a current Room member with this handle, or undefined when none has it. */
+async function roomMemberIdForHandle(
+  db: SqlDatabase,
+  roomId: string,
+  handle: string,
+): Promise<string | undefined> {
   const row = (
     await db.query<{ identity_id: string }>(
       `SELECT m.identity_id FROM memberships m JOIN identities i ON i.id=m.identity_id
@@ -690,8 +719,24 @@ async function memberIdForHandle(db: SqlDatabase, roomId: string, raw: string): 
       [roomId, handle],
     )
   ).rows[0];
-  if (!row) throw new Error(`@${handle} is not a current member of this Room`);
-  return row.identity_id;
+  return row?.identity_id;
+}
+
+/** The identity id of the current Room member with this handle (as agents see it in their member list). */
+async function memberIdForHandle(db: SqlDatabase, roomId: string, raw: string): Promise<string> {
+  const handle = raw.replace(/^@/, '');
+  const id = await roomMemberIdForHandle(db, roomId, handle);
+  if (!id) throw new Error(`@${handle} is not a current member of this Room`);
+  return id;
+}
+
+/** The member's own handle when it has one, else its bare identity id — errors name people as agents know them. */
+async function memberLabel(db: SqlDatabase, id: string): Promise<string> {
+  const row = await db.query<{ handle: string | null }>(
+    `SELECT handle FROM identities WHERE id=$1`,
+    [id],
+  );
+  return row.rows[0]?.handle ? `@${row.rows[0].handle}` : id;
 }
 
 /**
@@ -745,7 +790,17 @@ export async function assignWorkflowRole(
       throw new Error(`${targetAgentId} is not a current member of this Room`);
     }
     if (!(await agentCarriesTag(db, room.workspace_id, targetAgentId, className))) {
-      throw new Error(`${targetAgentId} does not carry the "${className}" tag`);
+      const carriers = await roomMembersWithTag(db, command.room_id, room.workspace_id, className);
+      const carrierLabels = (await Promise.all(carriers.map((c) => memberLabel(db, c.agentId)))).join(', ');
+      // Name who MAY take the role so a stranded run is recoverable: the
+      // human asked an agent to take over while the tool rejected it.
+      throw new Error(
+        `${await memberLabel(db, targetAgentId)} does not carry the "${className}" tag; ` +
+          `the ${input.role} role is class-bound to "${className}"` +
+          (carriers.length
+            ? `, and only ${carrierLabels} currently carry it`
+            : ', and no current Room member carries it'),
+      );
     }
     await reassignRole(db, {
       roomId: command.room_id,

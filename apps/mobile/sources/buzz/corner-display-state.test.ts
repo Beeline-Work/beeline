@@ -94,6 +94,22 @@ describe('server-owned corner display state', () => {
     ).toMatchObject({ state: 'archived' });
   });
 
+  it("reads the corner header idle when the server says nothing is owed", () => {
+    const view = { room: { archived: false }, latestAgentTurns: [], cornerLifecycle: lifecycle() };
+    const idle = cornerDisplayFromRoomView({ ...view, cornerOwed: false });
+    expect(idle).toMatchObject({ state: 'idle' });
+    expect(cornerDisplayState(idle)).toMatchObject({
+      word: 'idle',
+      needsYou: false,
+      tone: 'quiet',
+      visual: 'idle',
+    });
+    expect(cornerDisplayFromRoomView({ ...view, cornerOwed: true })).toMatchObject({
+      state: 'waiting',
+    });
+    expect(cornerDisplayFromRoomView(view)).toMatchObject({ state: 'waiting' });
+  });
+
   it('contains no client-side daemon-state resolver', () => {
     const source = readFileSync(new URL('./corner-display-state.ts', import.meta.url), 'utf8');
     expect(source).not.toMatch(/machineState|machineReason|currentCornerStatus|mergedAt|outcome/);

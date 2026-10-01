@@ -281,14 +281,14 @@ describe('phone contract', () => {
       readCornerListView({ ...base, corners: [corner] })?.corners;
     const lifecycle = { lifecycle: 'unknown', checks: 'unknown' };
 
-    for (const state of ['working', 'waiting', 'review', 'archived'] as const) {
+    for (const state of ['working', 'waiting', 'idle', 'review', 'archived'] as const) {
       expect(cornersFor({ corner: header, lifecycle, state, initiator: identity })).toEqual([
         { corner: header, lifecycle, state, initiator: identity },
       ]);
     }
-    // The four retired state words are not the contract: the corner is dropped,
+    // The retired state words are not the contract: the corner is dropped,
     // and the list it sits in survives.
-    for (const state of ['open', 'idle', 'concluded', 'closed']) {
+    for (const state of ['open', 'concluded', 'closed']) {
       expect(cornersFor({ corner: header, lifecycle, state })).toEqual([]);
     }
     // A malformed or non-human initiator is omitted; the corner itself stays.

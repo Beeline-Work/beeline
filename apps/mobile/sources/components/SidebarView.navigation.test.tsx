@@ -15,7 +15,7 @@ const route = vi.hoisted(() => ({
 const viewer = vi.hoisted(() => ({ kind: 'human' as 'human' | 'agent' }));
 const workspaceRole = vi.hoisted(() => ({ current: 'owner' as 'owner' | 'admin' | 'member' }));
 const openCornerState = vi.hoisted(() => ({
-  current: 'working' as 'working' | 'waiting' | 'review',
+  current: 'working' as 'working' | 'waiting' | 'idle' | 'review',
 }));
 const corners = vi.hoisted(() => vi.fn());
 const createHumanCorner = vi.hoisted(() =>
@@ -32,7 +32,13 @@ const chats = vi.hoisted(() =>
               room: { id: 'room-a', workspaceId, name: 'Alpha' },
               cornerCount: 2,
               openCorners: [
-                { id: 'corner-a', name: 'Fix fixture', state: openCornerState.current, mine: true },
+                {
+                  id: 'corner-a',
+                  name: 'Fix fixture',
+                  state: openCornerState.current,
+                  mine: true,
+                  ...(openCornerState.current === 'waiting' ? { attention: true } : {}),
+                },
                 { id: 'corner-theirs', name: 'Their fix', state: 'waiting' },
               ],
             },
@@ -759,7 +765,7 @@ describe('desktop Workspace navigation', () => {
     expect(corners).not.toHaveBeenCalled();
   });
 
-  it.each(['working', 'review'] as const)('keeps a %s state label quiet', async (state) => {
+  it.each(['working', 'idle', 'review'] as const)('keeps a %s state label quiet', async (state) => {
     openCornerState.current = state;
     route.pathname = '/beeline/chat/room-a';
     await act(async () => {

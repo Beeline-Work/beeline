@@ -3164,9 +3164,10 @@ describe('monolith integration', () => {
       }
     ).chats.find((item) => item.room.id === ROOM);
     expect(chat?.cornerCount).toBe(1);
-    expect(chat?.waitingCornerCount).toBe(1);
+    // It owes nobody anything, so it is idle, not waiting.
+    expect(chat?.waitingCornerCount).toBe(0);
     expect(chat?.openCorners).toEqual([
-      { id: '44444444-4444-4444-8444-444444444444', name: 'Open corner', state: 'waiting' },
+      { id: '44444444-4444-4444-8444-444444444444', name: 'Open corner', state: 'idle' },
     ]);
   });
 
@@ -8543,10 +8544,17 @@ describe('monolith integration', () => {
       [cornerId, AGENT],
     );
     expect(await listed()).toEqual(expect.objectContaining({ state: 'waiting', mine: true }));
+    // A later agent line does not answer the tag; the viewer's reply does.
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)
        VALUES('chat-mine-later',$1,$2,'Never mind.',now()+interval '3 seconds')`,
       [cornerId, AGENT],
+    );
+    expect(await listed()).toEqual(expect.objectContaining({ state: 'waiting', mine: true }));
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES('chat-mine-answer',$1,$2,'Round.',now()+interval '4 seconds')`,
+      [cornerId, HUMAN],
     );
     expect(await listed()).not.toHaveProperty('mine');
     await database.query(`UPDATE corner_facts SET commissioned_by=$2 WHERE corner_id=$1`, [
@@ -8592,7 +8600,7 @@ describe('monolith integration', () => {
     expect(await order()).toEqual([busy, ROOM]);
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)
-       VALUES('corner-hands-back',$1,$2,'Small or large?',now()+interval '10 seconds')`,
+       VALUES('corner-hands-back',$1,$2,'@owner small or large?',now()+interval '10 seconds')`,
       [cornerId, AGENT],
     );
     const corner = (await listed())
@@ -8600,11 +8608,215 @@ describe('monolith integration', () => {
       ?.openCorners?.find((item) => item.id === cornerId);
     expect(corner).toEqual(expect.objectContaining({ state: 'waiting', mine: true }));
     expect(await order()).toEqual([ROOM, busy]);
-    // Someone else's waiting corner is not the viewer's activity.
-    await database.query(`UPDATE corner_facts SET commissioned_by=NULL WHERE corner_id=$1`, [
-      cornerId,
-    ]);
+    // Answered, the corner owes nobody: idle is not the viewer's activity.
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES('corner-answered',$1,$2,'Large.',now()+interval '11 seconds')`,
+      [cornerId, HUMAN],
+    );
     expect(await order()).toEqual([busy, ROOM]);
+  });
+
+  it('reads a quiet corner idle until it owes someone, and pulls the dropdown open only until seen', async () => {
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'corner-owed-idle',
+      name: 'Pick a finish',
+      objective: 'Pick a finish for the widget',
+    });
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    const listed = async () =>
+      (
+        (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
+          chats: Array<{
+            room: { id: string };
+            openCorners?: Array<{ id: string; state: string; mine?: true; attention?: true }>;
+          }>;
+        }
+      ).chats
+        .find((item) => item.room.id === ROOM)
+        ?.openCorners?.find((item) => item.id === cornerId);
+    const page = async () =>
+      (await new PhoneService(database, origin).readCorners(ROOM, HUMAN))?.corners.find(
+        (item) => item.corner.id === cornerId,
+      );
+    const owed = async () =>
+      (await new PhoneService(database, origin).readRoom(cornerId, HUMAN))?.cornerOwed;
+    const say = (id: string, author: string, text: string, at: string) =>
+      database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,created_at)
+         VALUES($1,$2,$3,$4,now()+$5::interval)`,
+        [id, cornerId, author, text, at],
+      );
+
+    // The agent finished its turn and asks nothing of anyone.
+    await say('owed-done', AGENT, 'Done for now.', '1 second');
+    expect(await listed()).toEqual(expect.objectContaining({ state: 'idle', mine: true }));
+    expect(await listed()).not.toHaveProperty('attention');
+    expect(await page()).toEqual(expect.objectContaining({ state: 'idle' }));
+    expect(await owed()).toBe(false);
+
+    // It tags the viewer: waiting on them, and it pulls their dropdown open.
+    await say('owed-tag', AGENT, '@owner matte or gloss?', '2 seconds');
+    expect(await listed()).toEqual(
+      expect.objectContaining({ state: 'waiting', mine: true, attention: true }),
+    );
+    expect(await page()).toEqual(expect.objectContaining({ state: 'waiting', awaitsViewer: true }));
+    expect(await owed()).toBe(true);
+
+    // The viewer opens the corner: still waiting, but no longer pulling.
+    expect(
+      (await request(`/v1/phone/rooms/${cornerId}/read`, 'POST', { messageId: 'owed-tag' })).status,
+    ).toBe(204);
+    expect(await listed()).toEqual(expect.objectContaining({ state: 'waiting' }));
+    expect(await listed()).not.toHaveProperty('attention');
+
+    // The viewer answers: nothing is owed, the corner is idle.
+    await say('owed-answer', HUMAN, 'Matte.', '3 seconds');
+    expect(await listed()).toEqual(expect.objectContaining({ state: 'idle' }));
+    expect(await owed()).toBe(false);
+  });
+
+  it('expires an unanswered tag after a day but never a question, grant or blocked run', async () => {
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'corner-owed-expiry',
+      name: 'Pick a box',
+      objective: 'Pick a box for the widget',
+    });
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    const state = async () =>
+      (await new PhoneService(database, origin).readCorners(ROOM, HUMAN))?.corners.find(
+        (item) => item.corner.id === cornerId,
+      )?.state;
+    const old = "now()-interval '25 hours'";
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES('expiry-tag',$1,$2,'@owner big or small?',${old})`,
+      [cornerId, AGENT],
+    );
+    expect(await state()).toBe('idle');
+
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card,created_at)
+       VALUES('expiry-question',$1,$2,'Big or small?','card','choice',$3::jsonb,${old})`,
+      [
+        cornerId,
+        AGENT,
+        JSON.stringify({ mode: 'question', status: 'open', requester: { pubkey: HUMAN } }),
+      ],
+    );
+    expect(await state()).toBe('waiting');
+    await database.query(
+      `UPDATE messages SET card=jsonb_set(card,'{status}','"closed"') WHERE id='expiry-question'`,
+    );
+    expect(await state()).toBe('idle');
+
+    const grantId = '99999999-9999-4999-8999-999999999991';
+    await database.query(
+      `INSERT INTO agent_grants(id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status,created_at)
+       VALUES($1,$2,$3,'host','example.com','fetch docs',$2,$4,'pending',${old})`,
+      [grantId, AGENT, WORKSPACE, cornerId],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card,created_at)
+       VALUES('expiry-grant',$1,$2,'Allow Bee to reach example.com','card','grant-request',$3::jsonb,${old})`,
+      [cornerId, AGENT, JSON.stringify({ grants: [{ grantId, kind: 'host', target: 'example.com' }] })],
+    );
+    expect(await state()).toBe('waiting');
+    await database.query(`UPDATE agent_grants SET status='approved' WHERE id=$1`, [grantId]);
+    expect(await state()).toBe('idle');
+
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,created_at)
+       VALUES('expiry-blocked',$1,$2,'@owner may need to step in · checks still fail','system','corner-checks-blocked',${old})`,
+      [cornerId, AGENT],
+    );
+    expect(await state()).toBe('waiting');
+  });
+
+  it('keeps owed tags, questions, grants and blocks waiting past 21 updates', async () => {
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'corner-owed-crowded',
+      name: 'Pick a lid',
+      objective: 'Pick a lid for the widget',
+    });
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    const state = async () =>
+      (await new PhoneService(database, origin).readCorners(ROOM, HUMAN))?.corners.find(
+        (item) => item.corner.id === cornerId,
+      )?.state;
+    let updates = 0;
+    const crowd = async () => {
+      for (let index = 0; index < 21; index += 1) {
+        updates += 1;
+        await database.query(
+          `INSERT INTO messages(id,room_id,author_id,text,created_at)
+           VALUES($1,$2,$3,'Still working.',now()+$4::interval)`,
+          [`crowded-update-${updates}`, cornerId, AGENT, `${updates} seconds`],
+        );
+      }
+    };
+
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES('crowded-tag',$1,$2,'@owner hinged or loose?',now())`,
+      [cornerId, AGENT],
+    );
+    await crowd();
+    expect(await state()).toBe('waiting');
+    updates += 1;
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES('crowded-answer',$1,$2,'Hinged.',now()+$3::interval)`,
+      [cornerId, HUMAN, `${updates} seconds`],
+    );
+    expect(await state()).toBe('idle');
+
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card,created_at)
+       VALUES('crowded-question',$1,$2,'Hinged or loose?','card','choice',$3::jsonb,now())`,
+      [
+        cornerId,
+        AGENT,
+        JSON.stringify({ mode: 'question', status: 'open', requester: { pubkey: HUMAN } }),
+      ],
+    );
+    await crowd();
+    expect(await state()).toBe('waiting');
+    await database.query(
+      `UPDATE messages SET card=jsonb_set(card,'{status}','"closed"') WHERE id='crowded-question'`,
+    );
+    expect(await state()).toBe('idle');
+
+    const grantId = '99999999-9999-4999-8999-999999999992';
+    await database.query(
+      `INSERT INTO agent_grants(id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status)
+       VALUES($1,$2,$3,'host','example.com','fetch docs',$2,$4,'pending')`,
+      [grantId, AGENT, WORKSPACE, cornerId],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card,created_at)
+       VALUES('crowded-grant',$1,$2,'Allow Bee to reach example.com','card','grant-request',$3::jsonb,now())`,
+      [
+        cornerId,
+        AGENT,
+        JSON.stringify({ grants: [{ grantId, kind: 'host', target: 'example.com' }] }),
+      ],
+    );
+    await crowd();
+    expect(await state()).toBe('waiting');
+    await database.query(`UPDATE agent_grants SET status='approved' WHERE id=$1`, [grantId]);
+    expect(await state()).toBe('idle');
+
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,created_at)
+       VALUES('crowded-blocked',$1,$2,'@owner may need to step in · checks still fail','system','corner-checks-blocked',now()+$3::interval)`,
+      [cornerId, AGENT, `${updates} seconds`],
+    );
+    await crowd();
+    expect(await state()).toBe('waiting');
   });
 
   it('returns the active corner when the same originating task is opened repeatedly', async () => {

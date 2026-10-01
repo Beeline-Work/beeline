@@ -83,7 +83,7 @@ export type CornerLifecycleView = {
 
 /** The server-owned corner state vocabulary. Clients render this field; they
  * never derive a second state from lifecycle, PR, check, or turn facts. */
-export type CornerState = 'working' | 'waiting' | 'review' | 'archived';
+export type CornerState = 'working' | 'waiting' | 'idle' | 'review' | 'archived';
 export type CornerStateReason = 'failed' | 'checks-failed' | 'question';
 
 export const ROOM_VIEW_MESSAGE_LIMIT = 30;
@@ -614,6 +614,9 @@ export type RoomView = {
   readonly repositoryResolution: RoomRepositoryResolution;
   /** GitHub-derived lifecycle for this Room when it is a repository corner. */
   readonly cornerLifecycle?: CornerLifecycleView;
+  /** On a corner: whether something in it is still owed to a person, which
+   * keeps an otherwise quiet corner `waiting` instead of `idle`. */
+  readonly cornerOwed?: boolean;
   /** Native, code-free apps persisted on this corner and shared with its members. */
   readonly cornerApps?: readonly CornerAppView[];
   /** Optional installed app whose human surface owns this corner. */
@@ -683,6 +686,9 @@ export type ChatListCorner = {
   /** On the viewer's waiting corners: when the corner last spoke (unix
    * seconds), the moment it handed back. It counts as Room activity. */
   readonly waitingSince?: number;
+  /** The corner owes the viewer something they have not opened it to see
+   * since. Only these open the Room's corner dropdown on their own. */
+  readonly attention?: true;
 };
 
 export type ChatListItem = {

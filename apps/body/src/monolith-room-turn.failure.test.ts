@@ -222,7 +222,9 @@ describe('Room turn failure receipt', () => {
           const replacement = `${isolatedCredential}.next`;
           await writeFile(replacement, '{"token":"detached-refresh"}');
           await rename(replacement, isolatedCredential);
-          throw new Error('OAuth session expired and could not be refreshed');
+          throw new Error(
+            'ACP error -32603: Internal error; harness stderr: Failed to authenticate: OAuth session expired and could not be refreshed',
+          );
         }
         expect(lstatSync(isolatedCredential).isSymbolicLink()).toBe(true);
         expect(realpathSync(isolatedCredential)).toBe(realpathSync(operatorCredential));

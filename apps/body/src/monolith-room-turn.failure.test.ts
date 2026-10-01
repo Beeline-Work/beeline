@@ -22,6 +22,7 @@ const HUMAN = '22'.repeat(32);
 async function runTurn(options: {
   agentCommand: string;
   agentKind: string;
+  turnCount?: number;
   /** Applied over the default config: an OpenRouter pin needs a key and a cache. */
   configOverrides?: Partial<BodyConfig>;
   /** Model id the fake harness advertises, so a selection can be applied. */
@@ -99,11 +100,12 @@ async function runTurn(options: {
     if (name === 'postAgentTurnReceipt') receipts.push(input);
     if (name === 'getRoomInbox') {
       inboxReads += 1;
-      if (inboxReads === 2) {
+      if (inboxReads >= 2 && inboxReads <= (options.turnCount ?? 1) + 1) {
+        const requestId = `ask-${inboxReads - 1}`;
         return {
           items: [
             {
-              id: 'ask-1',
+              id: requestId,
               authorId: HUMAN,
               createdAt: 1,
               type: 'message',
@@ -111,7 +113,7 @@ async function runTurn(options: {
               attachments: [],
             },
           ],
-          cursor: 'ask-1',
+          cursor: requestId,
         };
       }
       return { items: [], cursor: 'latest' };
@@ -188,8 +190,8 @@ async function runTurn(options: {
   await vi.waitFor(
     () =>
       expect(
-        receipts.some((receipt) => receipt.status === 'failed' || receipt.status === 'complete'),
-      ).toBe(true),
+        receipts.filter((receipt) => receipt.status === 'failed' || receipt.status === 'complete'),
+      ).toHaveLength(options.turnCount ?? 1),
     { timeout: 5_000 },
   );
   abort.abort();
@@ -289,6 +291,84 @@ describe('Room turn failure receipt', () => {
 
     expect(attempts).toBe(1);
     expect(posted.map((message) => message.text)).toEqual(['Answered with the refreshed login.']);
+    expect(receipts).toContainEqual(expect.objectContaining({ status: 'complete' }));
+  });
+
+  it('uses a Claude refresh written during one turn on the next warm turn', async () => {
+    const spent = JSON.stringify({ claudeAiOauth: { refreshToken: 'spent', expiresAt: 1_000 } });
+    const rotated = JSON.stringify({ claudeAiOauth: { refreshToken: 'rotated', expiresAt: 2_000 } });
+    let operatorCredential = '';
+    const { receipts, posted, attempts } = await runTurn({
+      agentCommand: '/opt/harness/claude-agent-acp',
+      agentKind: 'claude',
+      turnCount: 2,
+      beforeRun: async ({ operatorHome }) => {
+        operatorCredential = join(operatorHome, '.claude/.credentials.json');
+        await mkdir(join(operatorHome, '.claude'), { recursive: true });
+        await writeFile(operatorCredential, spent);
+      },
+      prompt: async ({ agentHomeRoot, attempt }) => {
+        const isolated = join(agentHomeRoot, 'claude/.credentials.json');
+        if (attempt === 1) {
+          expect(lstatSync(isolated).isSymbolicLink()).toBe(true);
+          const refreshed = `${isolated}.next`;
+          await writeFile(refreshed, rotated);
+          await rename(refreshed, isolated);
+          return { stopReason: 'end_turn', updates: [], agentText: 'First turn answered.', toolCalls: [] };
+        }
+        expect(lstatSync(isolated).isFile()).toBe(true);
+        expect(await readFile(isolated, 'utf8')).toBe(rotated);
+        expect(await readFile(operatorCredential, 'utf8')).toBe(spent);
+        return {
+          stopReason: 'end_turn',
+          updates: [],
+          agentText: 'Second turn answered with the refreshed login.',
+          toolCalls: [],
+        };
+      },
+    });
+
+    expect(attempts).toBe(2);
+    expect(posted.map((message) => message.text)).toEqual([
+      'First turn answered.',
+      'Second turn answered with the refreshed login.',
+    ]);
+    expect(receipts.filter((receipt) => receipt.status === 'complete')).toHaveLength(2);
+  });
+
+  it('restores the shared Claude login after a newer detached login fails authentication', async () => {
+    const shared = JSON.stringify({ claudeAiOauth: { refreshToken: 'shared', expiresAt: 1_000 } });
+    const detached = JSON.stringify({
+      claudeAiOauth: { refreshToken: 'detached', expiresAt: 2_000 },
+    });
+    const { receipts, posted, attempts } = await runTurn({
+      agentCommand: '/opt/harness/claude-agent-acp',
+      agentKind: 'claude',
+      beforeRun: async ({ agentHomeRoot, operatorHome }) => {
+        await mkdir(join(operatorHome, '.claude'), { recursive: true });
+        await writeFile(join(operatorHome, '.claude/.credentials.json'), shared);
+        await mkdir(join(agentHomeRoot, 'claude'), { recursive: true });
+        await writeFile(join(agentHomeRoot, 'claude/.credentials.json'), detached);
+      },
+      prompt: async ({ agentHomeRoot, attempt }) => {
+        const isolated = join(agentHomeRoot, 'claude/.credentials.json');
+        if (attempt === 1) {
+          expect(await readFile(isolated, 'utf8')).toBe(detached);
+          throw new Error('OAuth session expired and could not be refreshed');
+        }
+        expect(lstatSync(isolated).isSymbolicLink()).toBe(true);
+        expect(await readFile(isolated, 'utf8')).toBe(shared);
+        return {
+          stopReason: 'end_turn',
+          updates: [],
+          agentText: 'Recovered with the shared login.',
+          toolCalls: [],
+        };
+      },
+    });
+
+    expect(attempts).toBe(2);
+    expect(posted.map((message) => message.text)).toEqual(['Recovered with the shared login.']);
     expect(receipts).toContainEqual(expect.objectContaining({ status: 'complete' }));
   });
 

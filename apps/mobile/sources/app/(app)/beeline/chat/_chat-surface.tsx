@@ -324,7 +324,11 @@ import {
 import { useNewMessageControl } from '@/buzz/use-new-message-control';
 import { RoomCatchUpControls } from '@/components/buzz/RoomCatchUpControls';
 import { TranscriptScrubber } from '@/components/buzz/TranscriptScrubber';
-import type { ScrubberDay } from '@/buzz/transcript-scrubber';
+import {
+  continueScrubLanding,
+  type ScrubberDay,
+  type ScrubLanding,
+} from '@/buzz/transcript-scrubber';
 import { useTranscriptScrubber } from '@/buzz/use-transcript-scrubber';
 import { RoomCatchUpSheet } from '@/components/buzz/RoomCatchUpSheet';
 import { buildCatchUpReport } from '@/buzz/room-catch-up-report';
@@ -2248,9 +2252,7 @@ export function BuzzChatSurface({
   const {
     history: scrubberHistory,
     position: scrubberPosition,
-    visible: scrubberVisible,
     observeVisibleRows: observeScrubberRows,
-    revealOnScroll: revealScrubber,
   } = useTranscriptScrubber({
     roomId: decodedId,
     roomClient,
@@ -2920,18 +2922,43 @@ export function BuzzChatSurface({
   // coming in under the finger, and stays it until it lands or the history
   // runs out.
   const [scrubTargetId, setScrubTargetId] = useState<string | null>(null);
-  useEffect(() => setScrubTargetId(null), [decodedId]);
-  const landAtScrubbedMessage = useCallback((messageId: string) => {
-    const index = boundaryRowIndex(transcriptMessagesRef.current, messageId);
-    if (index < 0) return false;
-    // Reuses the notification landing's retry for rows native has not measured.
-    pendingNotificationLandingRef.current = {
-      messageId: transcriptMessagesRef.current[index]!.id,
-      attempts: 0,
-    };
+  // A loaded row native has not measured yet is reached over several
+  // attempts; `onScrollToIndexFailed` schedules each next one.
+  const pendingScrubLandingRef = useRef<ScrubLanding | null>(null);
+  useEffect(() => {
+    setScrubTargetId(null);
+    pendingScrubLandingRef.current = null;
+  }, [decodedId]);
+  const attemptScrubLanding = useCallback(() => {
+    const landing = pendingScrubLandingRef.current;
+    if (!landing || userDraggingRef.current) return;
+    const index = boundaryRowIndex(transcriptMessagesRef.current, landing.messageId);
+    if (index < 0) {
+      pendingScrubLandingRef.current = null;
+      return;
+    }
+    const failures = landing.failures;
     flatListRef.current?.scrollToIndex({ index, viewPosition: 0.5, animated: false });
-    return true;
+    // A failure is reported inside the call above; none means it landed.
+    if (pendingScrubLandingRef.current === landing && landing.failures === failures) {
+      pendingScrubLandingRef.current = null;
+    }
   }, []);
+  const landAtScrubbedMessage = useCallback(
+    (messageId: string) => {
+      const index = boundaryRowIndex(transcriptMessagesRef.current, messageId);
+      if (index < 0) return false;
+      pendingScrubLandingRef.current = {
+        messageId: transcriptMessagesRef.current[index]!.id,
+        highestMeasured: -1,
+        stalls: 0,
+        failures: 0,
+      };
+      attemptScrubLanding();
+      return true;
+    },
+    [attemptScrubLanding],
+  );
   const landAtScrubbedDay = useCallback(
     (day: ScrubberDay) => {
       setScrubTargetId(landAtScrubbedMessage(day.firstMessageId) ? null : day.firstMessageId);
@@ -2943,6 +2970,12 @@ export function BuzzChatSurface({
     if (landAtScrubbedMessage(scrubTargetId)) {
       setScrubTargetId(null);
       return;
+    }
+    // Head for the day while its rows page in: the list climbs to the oldest
+    // loaded row as each older page arrives, rather than waiting at the tail.
+    const oldestLoaded = transcriptMessages.at(-1);
+    if (oldestLoaded && pendingScrubLandingRef.current?.messageId !== oldestLoaded.id) {
+      landAtScrubbedMessage(oldestLoaded.id);
     }
     const residentIndex = boundaryRowIndex(foldedMessages, scrubTargetId);
     if (residentIndex >= 0) {
@@ -5989,10 +6022,7 @@ export function BuzzChatSurface({
             keyboardDismissMode={transcriptKeyboardDismissMode(Platform.OS)}
             // The transcript scrubber below is this list's scroll bar.
             showsVerticalScrollIndicator={false}
-            onScroll={(event) => {
-              observePhoneTailOffset(event.nativeEvent.contentOffset.y);
-              revealScrubber();
-            }}
+            onScroll={(event) => observePhoneTailOffset(event.nativeEvent.contentOffset.y)}
             // One frame, the list's own default. A wider window leaves the
             // viewability report (which settles the badge and the unread
             // line) on an offset the list has already scrolled past.
@@ -6001,6 +6031,7 @@ export function BuzzChatSurface({
             onScrollBeginDrag={() => {
               // The reader's own drag abandons a scrubbed day still paging in.
               setScrubTargetId(null);
+              pendingScrubLandingRef.current = null;
               dragEndSequenceRef.current += 1;
               userDraggingRef.current = true;
               allowOlderHistoryRef.current = true;
@@ -6046,7 +6077,24 @@ export function BuzzChatSurface({
               resumePendingNewMessageLanding();
             }}
             renderItem={renderItem}
-            onScrollToIndexFailed={({ averageItemLength }) => {
+            onScrollToIndexFailed={({ averageItemLength, highestMeasuredFrameIndex, index }) => {
+              const scrubLanding = pendingScrubLandingRef.current;
+              if (scrubLanding) {
+                if (!continueScrubLanding(scrubLanding, highestMeasuredFrameIndex)) {
+                  pendingScrubLandingRef.current = null;
+                  return;
+                }
+                // Native lays out only as far as its furthest measured row.
+                // Moving toward the row measures the next batch; then try again.
+                flatListRef.current?.scrollToOffset({
+                  offset: averageItemLength * index,
+                  animated: false,
+                });
+                setTimeout(() => {
+                  if (pendingScrubLandingRef.current === scrubLanding) attemptScrubLanding();
+                }, 50);
+                return;
+              }
               const notification = pendingNotificationLandingRef.current;
               if (notification && !userDraggingRef.current) {
                 const index = transcriptMessagesRef.current.findIndex(
@@ -6138,7 +6186,6 @@ export function BuzzChatSurface({
             <TranscriptScrubber
               history={scrubberHistory}
               position={scrubberPosition}
-              visible={scrubberVisible}
               onScrub={landAtScrubbedDay}
               onScrubEnd={landAtScrubbedDay}
             />

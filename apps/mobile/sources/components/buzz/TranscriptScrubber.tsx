@@ -18,8 +18,9 @@ const HANDLE_HEIGHT = 44;
 const BAR_GRAB_SLOP = 12;
 
 /**
- * The transcript's own scroll bar. It shows while the list scrolls, placed by
- * the whole history (`buzz/transcript-scrubber.ts`) rather than the loaded
+ * The transcript's own scroll bar. It stays on screen whenever the reader's
+ * place is known, so it can be grabbed without scrolling first, and is placed
+ * by the whole history (`buzz/transcript-scrubber.ts`) rather than the loaded
  * rows, so a page of older messages cannot move it. Pressing the bar takes it
  * at once, as Android's fast-scroll thumb does, and turns it into a handle: a
  * rail of day markers appears, dragging snaps to them, and releasing hands the
@@ -31,15 +32,12 @@ const BAR_GRAB_SLOP = 12;
 export function TranscriptScrubber({
   history,
   position,
-  visible,
   onScrub,
   onScrubEnd,
 }: {
   history: ScrubberHistory;
   /** 0 at the newest message, 1 at the oldest; null hides the bar. */
   position: number | null;
-  /** The list is scrolling or just stopped. */
-  visible: boolean;
   onScrub: (day: ScrubberDay) => void;
   onScrubEnd: (day: ScrubberDay) => void;
 }) {
@@ -93,7 +91,6 @@ export function TranscriptScrubber({
   }, []);
 
   const scrubbing = scrubDay !== null;
-  const shown = grabbed || scrubbing || (visible && position !== null);
   const bubble = scrubDay ? scrubberBubble(scrubDay) : null;
 
   return (
@@ -116,14 +113,14 @@ export function TranscriptScrubber({
           ))}
         </View>
       )}
-      {shown && !scrubbing && position !== null && (
+      {!scrubbing && position !== null && (
         <View
           pointerEvents="none"
           style={[styles.bar, { top: handleTop(position, BAR_HEIGHT, railHeight) }]}
           testID="transcript-scrubber-bar"
         />
       )}
-      {shown && history.days.length > 0 && (position !== null || grabbed) && (
+      {history.days.length > 0 && (position !== null || grabbed) && (
         <View
           // Never flattened away: Android needs a real view to take the touch.
           collapsable={false}

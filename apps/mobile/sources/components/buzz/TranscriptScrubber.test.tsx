@@ -100,7 +100,6 @@ function render(props: Partial<React.ComponentProps<typeof TranscriptScrubber>> 
       <TranscriptScrubber
         history={history}
         position={0.1}
-        visible
         onScrub={() => undefined}
         onScrubEnd={() => undefined}
         {...props}
@@ -117,7 +116,7 @@ const words = (node: any) =>
   node.findAllByType('Text').map((text: any) => [text.props.children].flat().join(''));
 
 describe('TranscriptScrubber', () => {
-  it('shows a thin bar placed by the whole history while the list scrolls, and nothing to grab otherwise', () => {
+  it('shows a thin bar placed by the whole history, ready to grab without scrolling first', () => {
     const { renderer, strip, grab } = render();
     const bar = renderer.root.findByProps({ testID: 'transcript-scrubber-bar' });
     // Position 0.1 from the newest end of a 600pt rail, centred on a 36pt bar.
@@ -127,12 +126,12 @@ describe('TranscriptScrubber', () => {
     expect(grab().props.style[1].top).toBe(0.9 * 600 - 18 - 12);
     expect(grab().props.style[0].height).toBe(36 + 24);
     expect(grab().props.style[0].width).toBe(44);
+    // Until the reader's place is known there is no bar to show or grab.
     act(() =>
       renderer.update(
         <TranscriptScrubber
           history={history}
-          position={0.1}
-          visible={false}
+          position={null}
           onScrub={() => undefined}
           onScrubEnd={() => undefined}
         />,
@@ -172,7 +171,7 @@ describe('TranscriptScrubber', () => {
     expect(renderer.root.findAllByProps({ testID: 'transcript-scrubber-bubble' })).toHaveLength(0);
   });
 
-  it('keeps the bar held after the list stops until the finger lifts', () => {
+  it('keeps the bar held while the reader\'s place is unknown until the finger lifts', () => {
     const onScrubEnd = vi.fn();
     const { renderer, grab } = render({ onScrubEnd });
     act(() => grab().props.onPanResponderGrant({ nativeEvent: { locationY: 30 } }));
@@ -180,8 +179,7 @@ describe('TranscriptScrubber', () => {
       renderer.update(
         <TranscriptScrubber
           history={history}
-          position={0.1}
-          visible={false}
+          position={null}
           onScrub={() => undefined}
           onScrubEnd={onScrubEnd}
         />,

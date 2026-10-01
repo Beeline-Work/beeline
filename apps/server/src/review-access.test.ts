@@ -184,7 +184,8 @@ describe('the review identity', () => {
     expect(proofRoom?.cornerCount).toBe(1);
     const corners = await phone.readCorners(REVIEW_PROOF_ROOM_ID, REVIEW_IDENTITY_ID);
     expect(corners?.corners.map((corner) => corner.corner.id)).toEqual([REVIEW_PROOF_CORNER_ID]);
-    expect(corners?.corners[0]?.state).toBe('waiting');
+    // Nothing in it is owed to anyone, so it reads idle.
+    expect(corners?.corners[0]?.state).toBe('idle');
     // The corner screen's objective line reads the corner Room's `about`.
     const cornerRoom = await phone.readRoom(REVIEW_PROOF_CORNER_ID, REVIEW_IDENTITY_ID);
     expect(cornerRoom?.room.about).toBe(REVIEW_PROOF_OBJECTIVE);

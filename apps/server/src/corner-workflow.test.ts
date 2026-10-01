@@ -927,9 +927,9 @@ describe('GitHub refusing the merge (AC-6)', () => {
     await github.landReadyCorners();
     expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
     // The badge follows the run, not the still-green lifecycle: the corner
-    // waits on its implementer (AC-9).
+    // is back with its implementer (AC-9), and owes no person anything.
     const listed = (await phone.readCorners(R, H))!.corners.find((row) => row.corner.id === cornerId);
-    expect(listed).toMatchObject({ state: 'waiting' });
+    expect(listed).toMatchObject({ state: 'idle' });
   });
 });
 

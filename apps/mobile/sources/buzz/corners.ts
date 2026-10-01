@@ -6,7 +6,8 @@ const CORNER_STATE_PRECEDENCE: Readonly<Record<CornerState, number>> = {
   review: 0,
   working: 1,
   waiting: 2,
-  archived: 3,
+  idle: 3,
+  archived: 4,
 };
 
 export type CornerSummary = {
@@ -150,7 +151,7 @@ export { CORNER_GLYPH_FILLED, CORNER_GLYPH_HOLLOW };
 export function isCornerStalledOffline(
   corner: Pick<CornerSummary, 'state' | 'agentOffline'>,
 ): boolean {
-  return corner.agentOffline === true && corner.state === 'waiting';
+  return corner.agentOffline === true && (corner.state === 'waiting' || corner.state === 'idle');
 }
 
 /**

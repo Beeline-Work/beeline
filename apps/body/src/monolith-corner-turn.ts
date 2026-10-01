@@ -60,6 +60,7 @@ import {
 } from './codegraph.js';
 import {
   credentialMaskPaths,
+  grantedSandboxDevices,
   harnessHomeStateDirs,
   siblingAgentMaskPaths,
   wrapAgentCommand,
@@ -679,17 +680,19 @@ export class MonolithCornerTurnLoop {
   }
 
   private async currentSessionFingerprint(): Promise<string> {
-    const [configuration, roster, grantedHostRoutes] = await Promise.all([
+    const [configuration, roster, grants] = await Promise.all([
       this.options.api.execute('getAgentConfiguration', {
         agentId: this.agent.publicKey,
         roomId: this.options.cornerId,
       }),
       this.roster(),
-      this.grantedHostRoutes(),
+      this.grantedResources(),
     ]);
+    const { hostRoutes: grantedHostRoutes, devices: grantedDevices } = grants;
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
     const registryRoutes = configuration.registryMcpRoutes ?? [];
     return sessionConfigFingerprint({
+      devices: grantedDevices,
       model: configuration.model ?? this.options.config.modelSelection?.model,
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
       fastMode: configuration.fastMode,
@@ -715,29 +718,31 @@ export class MonolithCornerTurnLoop {
     });
   }
 
-  private async grantedHostRoutes(): Promise<string[]> {
+  private async grantedResources(): Promise<{ hostRoutes: string[]; devices: string[] }> {
     try {
-      const approved = await claimGrantedHostRoutes(
-        await this.options.api.execute('listAgentGrants', {
-          agentId: this.agent.publicKey,
-          roomId: this.options.cornerId,
-        }),
-      );
+      const grants = await this.options.api.execute('listAgentGrants', {
+        agentId: this.agent.publicKey,
+        roomId: this.options.cornerId,
+      });
+      const approved = await claimGrantedHostRoutes(grants);
       // Discovery is safe to mount; the transport gate authorizes every use.
       // This also lets an owner use a yolo resource without an activation prompt.
-      return [
-        ...new Set([
-          ...approved,
-          ...Object.keys(
-            hostImportedMcpDeclarations({
-              operatorHome: this.options.config.operatorHome,
-              agentKind: this.options.config.agentKind,
-            }),
-          ),
-        ]),
-      ];
+      return {
+        hostRoutes: [
+          ...new Set([
+            ...approved,
+            ...Object.keys(
+              hostImportedMcpDeclarations({
+                operatorHome: this.options.config.operatorHome,
+                agentKind: this.options.config.agentKind,
+              }),
+            ),
+          ]),
+        ],
+        devices: grantedSandboxDevices(grants),
+      };
     } catch {
-      return [];
+      return { hostRoutes: [], devices: [] };
     }
   }
 
@@ -753,14 +758,15 @@ export class MonolithCornerTurnLoop {
       return this.sessionId;
     }
     trace?.noteActivation('cold');
-    const [configuration, roster, grantedHostRoutes] = await Promise.all([
+    const [configuration, roster, grants] = await Promise.all([
       this.options.api.execute('getAgentConfiguration', {
         agentId: this.agent.publicKey,
         roomId: this.options.cornerId,
       }),
       this.roster(),
-      this.grantedHostRoutes(),
+      this.grantedResources(),
     ]);
+    const { hostRoutes: grantedHostRoutes, devices: grantedDevices } = grants;
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
     this.yoloMode = configuration.yoloMode;
     const opener = this.options.openedBy
@@ -936,6 +942,7 @@ export class MonolithCornerTurnLoop {
           cargoTargetDir,
           ...registryMcpHostBindPaths(configuration.registryMcpRoutes),
         ],
+        devices: grantedDevices,
         maskPaths: [
           ...credentialMaskPaths(this.options.config.sandboxMaskPaths, operatorHome),
           ...siblingAgentMaskPaths(
@@ -975,6 +982,7 @@ export class MonolithCornerTurnLoop {
       this.options.worktreePath,
     );
     const fingerprint = sessionConfigFingerprint({
+      devices: grantedDevices,
       model: configuration.model ?? this.options.config.modelSelection?.model,
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
       fastMode: configuration.fastMode,

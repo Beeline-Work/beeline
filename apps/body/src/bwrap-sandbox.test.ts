@@ -35,6 +35,7 @@ import {
   credentialMaskPaths,
   detectBwrapSandbox,
   ensureBwrapSandbox,
+  grantedSandboxDevices,
   isSandboxPolicy,
   harnessHomeStateDirs,
   sandboxMountPlan,
@@ -53,6 +54,9 @@ const ROOM_BASE = [
   '/',
   '--dev',
   '/dev',
+  '--dev-bind-try',
+  '/dev/kvm',
+  '/dev/kvm',
   '--proc',
   '/proc',
   '--tmpfs',
@@ -65,6 +69,9 @@ const CORNER_BASE = [
   '/',
   '--dev',
   '/dev',
+  '--dev-bind-try',
+  '/dev/kvm',
+  '/dev/kvm',
   '--proc',
   '/proc',
   '--tmpfs',
@@ -332,6 +339,43 @@ describe('bwrap argv construction', () => {
     // bwrap applies operations in order, so a bind placed before `--tmpfs /tmp`
     // would be silently shadowed for any path under /tmp.
     expect(args.indexOf('--tmpfs')).toBeLessThan(args.indexOf('--bind-try'));
+  });
+
+  it('binds approved device grants into the private /dev after /dev/kvm', () => {
+    const { args } = wrapAgentCommand({
+      bwrapPath: '/usr/bin/bwrap',
+      spec: { mode: 'edit', cwd: '/w', devices: ['/dev/bus/usb', '/dev/kvm'] },
+      command: 'codex-acp',
+    });
+    expect(args.slice(0, CORNER_BASE.length + 3)).toEqual([
+      ...CORNER_BASE.slice(0, CORNER_BASE.indexOf('--proc')),
+      '--dev-bind-try',
+      '/dev/bus/usb',
+      '/dev/bus/usb',
+      ...CORNER_BASE.slice(CORNER_BASE.indexOf('--proc')),
+    ]);
+    expect(args.filter((argument) => argument === '--dev-bind-try')).toHaveLength(2);
+  });
+
+  it('mounts only approved device grants under /dev/', () => {
+    expect(
+      grantedSandboxDevices({
+        grants: [
+          { kind: 'device', target: '/dev/bus/usb', status: 'approved' },
+          { kind: 'device', target: ' /dev/ttyUSB0 ', status: 'once' },
+          { kind: 'device', target: '/dev/video0', status: 'pending' },
+          { kind: 'device', target: '/dev/sdb', status: 'denied' },
+          { kind: 'device', target: '/dev/../etc/shadow', status: 'approved' },
+          { kind: 'device', target: '/home/op/.ssh', status: 'approved' },
+          { kind: 'device', target: 'dev/kvm', status: 'approved' },
+          { kind: 'device', target: '/dev/', status: 'approved' },
+          { kind: 'path', target: '/dev/kvm', status: 'approved' },
+          { kind: 'device', target: '/dev/bus/usb', status: 'approved' },
+        ],
+      }),
+    ).toEqual(['/dev/bus/usb', '/dev/ttyUSB0']);
+    expect(grantedSandboxDevices(undefined)).toEqual([]);
+    expect(grantedSandboxDevices({ grants: 'nope' })).toEqual([]);
   });
 
   it("names only the configured harness's own $HOME state root", () => {

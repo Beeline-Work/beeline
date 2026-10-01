@@ -17,7 +17,8 @@ function shims(mobile: string): Record<string, string> {
       roomId: '11111111-1111-4111-8111-111111111111' });
     export const useRouter = () => ({ back: () => undefined, push: () => undefined });
     export const router = { push: () => undefined, replace: () => undefined, back: () => undefined };`,
-    '@/sync/transport/monolith-operation': `export const monolithPhoneOperation = async (name) =>
+    '@/sync/transport/monolith-operation': `export class MonolithPhoneOperationError extends Error {}
+    export const monolithPhoneOperation = async (name) =>
       name === 'readNeedsYou' ? { items: [] } : { bookmarks: [] };
     export const phoneOperationFailureReason = (reason) => String(reason);`,
     '@/sync/transport/room-view-client': `export class RoomViewClient {

@@ -173,7 +173,12 @@ describe('corner message attribution', () => {
       JSON.stringify({
         checks: 'unknown',
         lifecycle: 'in-review',
-        pr: { number: 7, url: 'https://github.com/acme/repo/pull/7', headSha: '1'.repeat(40) },
+        pr: {
+          number: 7,
+          url: 'https://github.com/acme/repo/pull/7',
+          headSha: '1'.repeat(40),
+          mergeability: 'clean',
+        },
       }),
     ]);
     const source = await systemLine(db, {

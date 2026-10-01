@@ -1199,7 +1199,7 @@ describe('GitHub phone operations', () => {
       url: dirty.pull_request.html_url,
       headSha: newestHead,
       baseSha: '5'.repeat(40),
-      mergeability: 'dirty',
+      mergeability: 'clean',
     });
     await operations.refreshUnknownMergeability(corner);
     expect(

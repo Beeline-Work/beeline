@@ -3909,13 +3909,6 @@ export function BuzzChatSurface({
       );
       return;
     }
-    if (Platform.OS === 'ios') {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (permission.status !== 'granted') {
-        Modal.alert('Photo access needed', 'Allow photo access to attach an image.');
-        return;
-      }
-    }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsMultipleSelection: true,

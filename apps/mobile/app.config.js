@@ -71,7 +71,7 @@ export default {
         scheme,
         userInterfaceStyle: "automatic",
         ios: {
-            runtimeVersion: runtimeVersionOverride || "31",
+            runtimeVersion: runtimeVersionOverride || "32",
             // Keep the launcher identity stable across system appearance modes.
             // iOS masks this full-size source; only Android adaptive layers need
             // the separately inset safe-zone treatment.
@@ -105,7 +105,7 @@ export default {
             }
         },
         android: {
-            runtimeVersion: runtimeVersionOverride || "32",
+            runtimeVersion: runtimeVersionOverride || "33",
             versionCode: 27,
             adaptiveIcon: {
                 foregroundImage: "./sources/assets/images/icon-adaptive.png",
@@ -194,6 +194,15 @@ export default {
             ],
             "expo-secure-store",
             "expo-web-browser",
+            [
+                "expo-image-picker",
+                {
+                    // The system photo picker needs no library access; leave
+                    // microphonePermission unset so the speech-input string stays.
+                    photosPermission: false,
+                    cameraPermission: false
+                }
+            ],
             [
                 "expo-notifications",
                 {

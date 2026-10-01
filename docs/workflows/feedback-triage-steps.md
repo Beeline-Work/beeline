@@ -22,8 +22,9 @@ gh pr list --repo Beeline-Work/beeline --state merged --search '"Feedback items:
 
 For each one, call `notify_feedback_fixed` with the item ids from that line, a short
 plain title for the fix (one line, at most 120 characters), and the pull request URL.
-A repeat call sends nothing twice, so re-checking an older PR is safe. Hand off
-`notified` with `fixedPullRequests` listing the URLs you reported, or `none`.
+The server confirms the pull request merged before anyone hears about it. A repeat
+call sends nothing twice, so re-checking an older PR is safe. Hand off `notified`
+with `fixedPullRequests` listing the URLs you reported, or `none`.
 
 ## pull
 
@@ -56,6 +57,8 @@ dispatched until a person answers. **dispatch** approves every listed problem;
 
 For each approved problem, call `open_corner` in this Room. Give it a brief that
 describes the problem in your own words, lists its item ids, and requires the fix
-pull request body to carry the line `Feedback items: <ids>`. Don't name the people
-who reported it. Tag the agent best suited to the work in that corner. Hand off
-`dispatched` with `corners` listing each corner and its item ids.
+pull request body to carry the line `Feedback items: <ids>`. The repository is
+public: the brief and the pull request must never quote a report, and never name
+the people, Rooms or emails behind it. Tag the agent best suited to the work in
+that corner. Hand off `dispatched` with `corners` listing each corner and its
+item ids.

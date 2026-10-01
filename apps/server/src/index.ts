@@ -42,6 +42,7 @@ import { backfillInstitutionalMemoryEmbeddingsOnce } from './institutional-memor
 import type { InstitutionalSkillAnchorSource } from './institutional-skill-anchors.js';
 import { retireWelcomeWorkspace, welcomeRetirementPreflight } from './welcome-retirement.js';
 import { feedbackConfigFromEnv } from './feedback.js';
+import { FeedbackGitHub } from './feedback-github.js';
 
 function required(name: string) {
   const value = process.env[name];
@@ -281,7 +282,10 @@ async function main() {
     mcpRegistry,
     registryMcpOAuth,
     composio,
-    feedbackConfigFromEnv(),
+    {
+      config: feedbackConfigFromEnv(),
+      ...(githubClients ? { pullRequests: new FeedbackGitHub(database, githubClients.app) } : {}),
+    },
     objectService,
   );
   // The Google Play review link. Absent secret = the endpoint refuses like any

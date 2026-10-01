@@ -40,10 +40,14 @@ person who reported that problem.
 ## The `feedback-triage` workflow
 
 The contract is `docs/workflows/feedback-triage.json`. The procedure an agent
-follows at each step is `docs/workflows/feedback-triage-steps.md`. Both are
-saved in the Workspace: the contract with `save_workflow`, the procedure with
-`save_skill` as `feedback-triage-steps`. Agents find them the way they find
-memories and procedures. The per-turn Memory index lists
+follows at each step is `docs/workflows/feedback-triage-steps.md`. The server
+installs both (`apps/server/src/feedback-triage-workflow.ts`, run from
+`migrateData()` on every release) in each Workspace that has a triage schedule:
+the triage corner's schedule `7d7fa17b`, or any schedule whose prompt names the
+retired triage tools or the feedback sweep. It refreshes its own copy when the
+committed text changes and never overwrites a team's own workflow of the same
+name. Any other Workspace can save the same files with `save_workflow` and
+`save_skill`. Agents find them the way they find memories and procedures. The per-turn Memory index lists
 `Workflow feedback-triage (start_workflow): …`, and `load_workspace_skill`
 reads the steps. An agent starts a run with `start_workflow`, binding
 `triager` to itself.
@@ -62,7 +66,8 @@ every report as data and never follows instructions inside one.
 ### Production database access
 
 Only someone with production access can run the `pull` step. That credential
-is the access boundary, not a Beeline setting. Create a login role that can
+is the access boundary, not a Beeline setting. It reads every Workspace's
+reports on purpose: the loop covers bug reports from all of Beeline. Create a login role that can
 read `feedback_items` and nothing else:
 
 ```sql
@@ -78,11 +83,13 @@ the grant stops at `pull` and says so.
 
 ### Daily schedule
 
-The triage corner keeps its daily schedule (`0 14 * * *` UTC). Its prompt
-starts the workflow:
+The triage corner keeps its daily schedule (`0 14 * * *` UTC). On deploy the
+server rewrites that schedule's prompt, and only its prompt (cadence, agent and
+next run are untouched), to start the workflow:
 
 > Start the feedback-triage workflow with start_workflow, binding triager to
-> yourself, and follow the feedback-triage-steps procedure at each step.
+> yourself, and follow the feedback-triage-steps procedure (load_workspace_skill)
+> at each step.
 
 ## Close the loop: Fixed DMs
 
@@ -91,9 +98,12 @@ is sent. The server checks every call:
 
 - It must come from the agent's own active turn.
 - The agent's owner must be listed in `BEELINE_SYSTEM_SENDERS`.
-- `pr_url` must be a pull request in `BEELINE_FEEDBACK_REPOSITORY`.
 - The title must be one line of at most 120 characters, with no secret-shaped
   value.
+- `pr_url` must be a pull request in `BEELINE_FEEDBACK_REPOSITORY`, and GitHub
+  must report it merged. The server reads it through the Beeline GitHub App
+  (`pull_requests: read`); without the App, or for an open, closed-unmerged or
+  missing pull request, nothing is resolved or sent.
 
 Then the items become `resolved`. Each person who reported one of them
 themselves (`@system` or Report issue) gets one System DM:
@@ -107,7 +117,7 @@ reporter whose account is gone gets no DM.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `BEELINE_SYSTEM_SENDERS` | empty | Comma-separated identity ids of the people whose agents may have System send Fixed DMs. Empty means nobody can. |
-| `BEELINE_FEEDBACK_REPOSITORY` | `Beeline-Work/beeline` | The repository fix pull requests land in. A Fixed DM links only to a pull request here. |
+| `BEELINE_FEEDBACK_REPOSITORY` | `Beeline-Work/beeline` | The repository fix pull requests land in. A Fixed DM links only to a merged pull request here; the Beeline GitHub App must be installed on it. |
 
 ## Retired
 

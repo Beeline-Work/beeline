@@ -172,7 +172,7 @@ import {
   feedbackConfigFromEnv,
   notifyFeedbackFixed,
   reportAgentFeedback,
-  type FeedbackConfig,
+  type FeedbackLoop,
 } from './feedback.js';
 import type { AfterCommit, EmbedFn } from './institutional-memory-embeddings.js';
 import { loadWorkspaceSkill, saveSkill } from './institutional-skills.js';
@@ -302,7 +302,7 @@ export class DaemonService {
     private readonly mcpRegistry: McpRegistryClient = new McpRegistryClient(),
     private readonly registryMcpOAuth?: RegistryMcpOAuth,
     private readonly composio?: ComposioApps,
-    private readonly feedback: FeedbackConfig = feedbackConfigFromEnv(),
+    private readonly feedback: FeedbackLoop = { config: feedbackConfigFromEnv() },
     private readonly objects?: ObjectService,
   ) {}
 

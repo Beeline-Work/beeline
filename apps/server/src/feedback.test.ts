@@ -3,7 +3,7 @@ import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { claimAgentCommand, createAgentCommand } from './agent-command.js';
 import { DAEMON_OPERATION_NAMES, DaemonService } from './daemon-service.js';
 import { migrate } from './database.js';
-import { feedbackConfigFromEnv, type FeedbackConfig } from './feedback.js';
+import { feedbackConfigFromEnv, type FeedbackConfig, type FeedbackPullRequests } from './feedback.js';
 import { LiveHub } from './live.js';
 import { hasSystemReportMention, taggedIdentityIdsSql } from './message-mentions.js';
 import { PhoneService } from './phone-service.js';
@@ -23,6 +23,11 @@ const TRIAGE_CORNER = '44444444-4444-4444-8444-444444444444';
 const REPOSITORY = 'Beeline-Work/beeline';
 const CONFIG: FeedbackConfig = { repository: REPOSITORY, systemSenders: [CREATOR] };
 const FIX_URL = `https://github.com/${REPOSITORY}/pull/7`;
+/** GitHub as the feedback loop reads it: pull request 7 merged, nothing else did. */
+let merged: Set<number>;
+const pullRequests: FeedbackPullRequests = {
+  merged: async (repository, number) => repository === REPOSITORY && merged.has(number),
+};
 
 let database: PgliteDatabase;
 let sequence = 0;
@@ -33,6 +38,7 @@ function hex(): string {
 }
 
 beforeEach(async () => {
+  merged = new Set([7]);
   database = new PgliteDatabase();
   await migrate(database);
   await database.query(
@@ -107,7 +113,7 @@ async function openTurn(sourceMessageId: string, roomId = ROOM, agentId = AGENT)
   return { roomId, requestId, generationId };
 }
 
-function daemon(config = CONFIG): DaemonService {
+function daemon(config = CONFIG, reader: FeedbackPullRequests | null = pullRequests): DaemonService {
   return new DaemonService(
     database,
     new LiveHub(),
@@ -123,7 +129,7 @@ function daemon(config = CONFIG): DaemonService {
     undefined,
     undefined,
     undefined,
-    config,
+    { config, ...(reader ? { pullRequests: reader } : {}) },
   );
 }
 
@@ -428,6 +434,27 @@ describe('notify_feedback_fixed (close the loop)', () => {
     ).rejects.toThrow('secret-shaped');
     await expect(notify({ itemIds: [actionItem, 'fb_missing'] })).rejects.toThrow('unknown feedback item');
     await expect(notify({ itemIds: [] })).rejects.toThrow('item_ids must list');
+    expect((await items()).map((item) => item.status)).not.toContain('resolved');
+    expect(await fixedDms()).toEqual([]);
+  });
+
+  it('refuses a pull request GitHub does not report as merged, or when GitHub is not configured', async () => {
+    const { actionItem } = await reported();
+    merged.clear();
+    await expect(notify({ itemIds: [actionItem] })).rejects.toThrow(`${FIX_URL} has not merged`);
+    merged.add(7);
+    await expect(
+      daemon(CONFIG, null).execute(
+        'notifyFeedbackFixed',
+        {
+          ...(await openTurn(await message('@sweeper notify', PERSON, TRIAGE_CORNER), TRIAGE_CORNER, TRIAGE)),
+          itemIds: [actionItem],
+          title: 'Slow tools',
+          prUrl: FIX_URL,
+        } as never,
+        TRIAGE,
+      ),
+    ).rejects.toThrow('Beeline GitHub App is not configured');
     expect((await items()).map((item) => item.status)).not.toContain('resolved');
     expect(await fixedDms()).toEqual([]);
   });

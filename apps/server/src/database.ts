@@ -15,6 +15,7 @@ import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { uniqueAgentHandle } from '@beeline/api-contract/phone';
 import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
 import { backfillCornerWorkflowRuns, backfillCornerWorkflowSeed } from './corner-workflow.js';
+import { backfillFeedbackTriageWorkflow } from './feedback-triage-workflow.js';
 import { upgradeGrantPolicy, withdrawSupersededGrantAsks } from './grant-policy-upgrade.js';
 import { backfillRegistryApps } from './app-connections.js';
 import {
@@ -2573,6 +2574,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   await dataStep('inherited corner memberships', () => backfillInheritedCornerMemberships(database));
   await dataStep('corner workflow seed', () => backfillCornerWorkflowSeed(database));
   await dataStep('corner workflow runs', () => backfillCornerWorkflowRuns(database));
+  await dataStep('feedback triage workflow', () => backfillFeedbackTriageWorkflow(database));
   const blockers = await dataStep('corner merge blockers', () =>
     reconcileCornerMergeBlockers(database));
   if (blockers)

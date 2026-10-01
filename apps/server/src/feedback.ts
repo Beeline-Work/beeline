@@ -41,6 +41,18 @@ export type FeedbackConfig = {
   readonly systemSenders: readonly string[];
 };
 
+/** Reads a pull request in the feedback repository (the Beeline GitHub App). */
+export interface FeedbackPullRequests {
+  /** True only when the pull request exists and has merged. */
+  merged(repository: string, number: number): Promise<boolean>;
+}
+
+/** The feedback loop's server wiring: config plus the GitHub read it needs. */
+export type FeedbackLoop = {
+  readonly config: FeedbackConfig;
+  readonly pullRequests?: FeedbackPullRequests;
+};
+
 export function feedbackConfigFromEnv(env: NodeJS.ProcessEnv = process.env): FeedbackConfig {
   return {
     repository: env.BEELINE_FEEDBACK_REPOSITORY?.trim() || FEEDBACK_DEFAULT_REPOSITORY,
@@ -326,12 +338,13 @@ export async function reportMessageIssue(
  * fixed these items. System, whose identity only the server holds, DMs each
  * person who reported one of them themselves, once per pull request; agent
  * reports resolve silently. Checked on every call: the agent's own turn, an
- * owner listed in `BEELINE_SYSTEM_SENDERS`, a pull request in the configured
- * repository, and a one-line title with no secret. The text is fixed.
+ * owner listed in `BEELINE_SYSTEM_SENDERS`, a one-line title with no secret,
+ * and a pull request in the configured repository that GitHub reports as
+ * merged. The text is fixed.
  */
 export async function notifyFeedbackFixed(
   database: SqlDatabase,
-  config: FeedbackConfig,
+  { config, pullRequests }: FeedbackLoop,
   command: CommandRow | undefined,
   agentId: string,
   input: NotifyFeedbackFixedInput,
@@ -362,7 +375,13 @@ export async function notifyFeedbackFixed(
   const pull = /^https:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/pull\/([1-9][0-9]*)$/.exec(prUrl);
   if (!pull || pull[1]!.toLowerCase() !== config.repository.toLowerCase())
     throw new Error(`pr_url must be a pull request in ${config.repository}`);
-  const url = `https://github.com/${config.repository}/pull/${pull[2]}`;
+  const number = Number(pull[2]);
+  const url = `https://github.com/${config.repository}/pull/${number}`;
+  if (!pullRequests)
+    throw new Error('Fixed DMs are unavailable: the Beeline GitHub App is not configured');
+  // Only a merged fix closes the loop; the agent's word that it merged is not enough.
+  if (!(await pullRequests.merged(config.repository, number)))
+    throw new Error(`${url} has not merged; nothing was resolved or sent`);
   return database.transaction(async (db) => {
     const known = await db.query<{ id: string }>(
       `SELECT id FROM feedback_items WHERE id=ANY($1::text[])`,

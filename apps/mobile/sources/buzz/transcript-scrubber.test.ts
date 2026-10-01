@@ -18,14 +18,14 @@ afterAll(() => {
 const id = (n: number) => n.toString(16).padStart(64, '0');
 const at = (iso: string) => Date.parse(iso) / 1_000;
 
-// 100 messages: 40 on 30 Aug, 30 on 1 Sep (two hours), 30 on 2 Sep.
+// 100 messages: 40 on 30 Aug, 30 on 1 Sep (two buckets), 30 on 2 Sep.
 const outline: RoomHistoryOutline = {
   roomId: '00000000-0000-4000-8000-000000000001',
   total: 100,
   newest: { id: id(100), createdAt: at('2026-09-02T12:30:00Z') },
-  hours: [
+  buckets: [
     {
-      hour: at('2026-08-30T08:00:00Z'),
+      start: at('2026-08-30T08:00:00Z'),
       count: 40,
       first: {
         id: id(1),
@@ -35,7 +35,7 @@ const outline: RoomHistoryOutline = {
       },
     },
     {
-      hour: at('2026-09-01T09:00:00Z'),
+      start: at('2026-09-01T09:00:00Z'),
       count: 20,
       first: {
         id: id(41),
@@ -45,7 +45,7 @@ const outline: RoomHistoryOutline = {
       },
     },
     {
-      hour: at('2026-09-01T15:00:00Z'),
+      start: at('2026-09-01T15:00:00Z'),
       count: 10,
       first: {
         id: id(61),
@@ -55,7 +55,7 @@ const outline: RoomHistoryOutline = {
       },
     },
     {
-      hour: at('2026-09-02T12:00:00Z'),
+      start: at('2026-09-02T12:00:00Z'),
       count: 30,
       first: { id: id(71), createdAt: at('2026-09-02T12:00:00Z'), authorName: 'Bo' },
     },
@@ -98,6 +98,53 @@ describe('transcript scrubber', () => {
     expect(scrubberBubble(nearestScrubberDay(days, 0)!).detail).toBe(
       '12:00 · Bo · 29 messages back',
     );
+  });
+
+  it('keeps a marker for each side of a local midnight inside one UTC hour', () => {
+    // 23:50 on 1 Sep and 00:15 on 2 Sep in India (UTC+5:30) share the 18:00Z
+    // hour but fall in different quarter-hour buckets.
+    process.env.TZ = 'Asia/Kolkata';
+    try {
+      const { days } = scrubberHistory(
+        {
+          roomId: outline.roomId,
+          total: 3,
+          newest: { id: id(3), createdAt: at('2026-09-01T18:45:00Z') },
+          buckets: [
+            {
+              start: at('2026-09-01T18:15:00Z'),
+              count: 2,
+              first: { id: id(1), createdAt: at('2026-09-01T18:20:00Z'), authorName: 'Ann' },
+            },
+            {
+              start: at('2026-09-01T18:45:00Z'),
+              count: 1,
+              first: { id: id(3), createdAt: at('2026-09-01T18:45:00Z'), authorName: 'Bo' },
+            },
+          ],
+        },
+        [id(1), id(2), id(3)],
+      );
+      expect(days.map((day) => [day.key, day.firstMessageId, day.messagesBack])).toEqual([
+        ['2026-9-1', id(1), 2],
+        ['2026-9-2', id(3), 0],
+      ]);
+      expect(scrubberBubble(days[1]!)).toEqual({
+        date: 'WED 2 SEP',
+        detail: '00:15 · Bo · newest message',
+      });
+    } finally {
+      process.env.TZ = 'UTC';
+    }
+  });
+
+  it('places the days it is sent when the outline keeps only its newest buckets', () => {
+    const truncated = { ...outline, buckets: outline.buckets.slice(1) };
+    const { days } = scrubberHistory(truncated, loaded(71));
+    expect(days.map((day) => [day.key, day.messagesBack])).toEqual([
+      ['2026-9-1', 59],
+      ['2026-9-2', 29],
+    ]);
   });
 
   it('counts messages that arrived after the outline was read', () => {

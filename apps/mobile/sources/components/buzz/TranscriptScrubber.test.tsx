@@ -52,9 +52,9 @@ const outline: RoomHistoryOutline = {
   roomId: '00000000-0000-4000-8000-000000000001',
   total: 100,
   newest: { id: id(100), createdAt: at('2026-09-02T12:30:00Z') },
-  hours: [
+  buckets: [
     {
-      hour: at('2026-08-30T08:00:00Z'),
+      start: at('2026-08-30T08:00:00Z'),
       count: 40,
       first: {
         id: id(1),
@@ -64,7 +64,7 @@ const outline: RoomHistoryOutline = {
       },
     },
     {
-      hour: at('2026-09-01T09:00:00Z'),
+      start: at('2026-09-01T09:00:00Z'),
       count: 30,
       first: {
         id: id(41),
@@ -74,7 +74,7 @@ const outline: RoomHistoryOutline = {
       },
     },
     {
-      hour: at('2026-09-02T12:00:00Z'),
+      start: at('2026-09-02T12:00:00Z'),
       count: 30,
       first: {
         id: id(71),

@@ -3359,7 +3359,7 @@ describe('monolith integration', () => {
     expect(oldestPage.nextBefore).toBeUndefined();
   });
 
-  it("outlines the whole corner history by hour with each hour's first message", async () => {
+  it("outlines the whole corner history by quarter hour with each bucket's first message", async () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'history-outline',
@@ -3372,12 +3372,15 @@ describe('monolith integration', () => {
       await request(`/v1/phone/rooms/${cornerId}/outline`)
     ).json()) as RoomHistoryOutline;
     expect(readRoomHistoryOutline(before)).toEqual(before);
-    const ids = ['c', 'd', 'e'].map((digit) => digit.repeat(64));
+    const ids = ['c', 'd', 'e', 'f'].map((digit) => digit.repeat(64));
+    // 18:20Z and 18:45Z are 23:50 on 1 Jan and 00:15 on 2 Jan in India
+    // (UTC+5:30): one UTC hour, two local days.
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)
-       VALUES($1,$4,$5,'Day one, first','2040-01-01T09:15:00Z'),
-             ($2,$4,$5,'Day one, later','2040-01-01T09:40:00Z'),
-             ($3,$4,$5,'Day two','2040-01-02T18:05:00Z')`,
+       VALUES($1,$5,$6,'Before IST midnight','2040-01-01T18:20:00Z'),
+             ($2,$5,$6,'Same quarter hour','2040-01-01T18:25:00Z'),
+             ($3,$5,$6,'After IST midnight','2040-01-01T18:45:00Z'),
+             ($4,$5,$6,'Next day','2040-01-02T18:05:00Z')`,
       [...ids, cornerId, HUMAN],
     );
 
@@ -3385,33 +3388,35 @@ describe('monolith integration', () => {
       await request(`/v1/phone/rooms/${cornerId}/outline`)
     ).json()) as RoomHistoryOutline;
     expect(readRoomHistoryOutline(outline)).toEqual(outline);
-    expect(outline.total).toBe(before.total + 3);
+    expect(outline.total).toBe(before.total + 4);
     expect(outline.newest).toEqual({
-      id: ids[2],
+      id: ids[3],
       createdAt: Date.parse('2040-01-02T18:05:00Z') / 1_000,
     });
-    const nineAm = Date.parse('2040-01-01T09:00:00Z') / 1_000;
-    const sixPm = Date.parse('2040-01-02T18:00:00Z') / 1_000;
-    expect(outline.hours.filter((hour) => hour.hour >= nineAm)).toEqual([
+    const seconds = (iso: string) => Date.parse(iso) / 1_000;
+    const first = (id: string, iso: string) => ({
+      id,
+      createdAt: seconds(iso),
+      authorName: 'Owner',
+      authorHandle: 'owner',
+    });
+    expect(
+      outline.buckets.filter((bucket) => bucket.start >= seconds('2040-01-01T00:00:00Z')),
+    ).toEqual([
       {
-        hour: nineAm,
+        start: seconds('2040-01-01T18:15:00Z'),
         count: 2,
-        first: {
-          id: ids[0],
-          createdAt: Date.parse('2040-01-01T09:15:00Z') / 1_000,
-          authorName: 'Owner',
-          authorHandle: 'owner',
-        },
+        first: first(ids[0]!, '2040-01-01T18:20:00Z'),
       },
       {
-        hour: sixPm,
+        start: seconds('2040-01-01T18:45:00Z'),
         count: 1,
-        first: {
-          id: ids[2],
-          createdAt: Date.parse('2040-01-02T18:05:00Z') / 1_000,
-          authorName: 'Owner',
-          authorHandle: 'owner',
-        },
+        first: first(ids[2]!, '2040-01-01T18:45:00Z'),
+      },
+      {
+        start: seconds('2040-01-02T18:00:00Z'),
+        count: 1,
+        first: first(ids[3]!, '2040-01-02T18:05:00Z'),
       },
     ]);
   });

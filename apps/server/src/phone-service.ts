@@ -22,7 +22,8 @@ import {
   ROOM_VIEW_CHAT_LIMIT,
   ROOM_VIEW_MEMBER_LIMIT,
   ROOM_VIEW_MESSAGE_LIMIT,
-  ROOM_HISTORY_OUTLINE_HOUR_LIMIT,
+  ROOM_HISTORY_OUTLINE_BUCKET_LIMIT,
+  ROOM_HISTORY_OUTLINE_BUCKET_SECONDS,
   ROOM_VIEW_TOOL_ROW_LIMIT,
   WORKSPACE_MEMBER_PAGE_SIZE,
   readCornerAppDefinition,
@@ -1922,37 +1923,44 @@ export class PhoneService {
   }
 
   /**
-   * Every message `readHistory` can page through, counted per UTC hour with
-   * each hour's oldest message, so the phone can place the transcript
-   * scrubber and its day markers against the whole history.
+   * Every message `readHistory` can page through, counted per quarter hour
+   * with each bucket's oldest message, so the phone can place the transcript
+   * scrubber and its day markers against the whole history. Quarter hours
+   * keep every local midnight on a bucket edge in every time zone.
    */
   async readHistoryOutline(roomId: string, viewerId: string): Promise<RoomHistoryOutline | null> {
     if (!(await this.hasRoomAccess(roomId, viewerId))) return null;
-    const rows = (
-      await this.database.query<{
-        hour_start: string;
+    const visible = `m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
+           AND ${hiddenWakeCardSql('m')}`;
+    const [rows, counted] = await Promise.all([
+      this.database.query<{
+        bucket_start: string;
         message_count: string;
         id: string;
         created_at: Date;
         author_name: string;
         author_handle: string | null;
       }>(
-        `SELECT DISTINCT ON (bucket.hour_start) bucket.hour_start::text AS hour_start,
-           count(*) OVER (PARTITION BY bucket.hour_start)::text AS message_count,
+        `SELECT DISTINCT ON (bucket.bucket_start) bucket.bucket_start::text AS bucket_start,
+           count(*) OVER (PARTITION BY bucket.bucket_start)::text AS message_count,
            m.id,m.created_at,i.name author_name,i.handle author_handle
          FROM messages m JOIN identities i ON i.id=m.author_id
          CROSS JOIN LATERAL (
-           SELECT (floor(extract(epoch FROM m.created_at)/3600)*3600)::bigint AS hour_start
+           SELECT (floor(extract(epoch FROM m.created_at)/${ROOM_HISTORY_OUTLINE_BUCKET_SECONDS})
+             *${ROOM_HISTORY_OUTLINE_BUCKET_SECONDS})::bigint AS bucket_start
          ) bucket
-         WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
-           AND ${hiddenWakeCardSql('m')}
-         ORDER BY bucket.hour_start,m.created_at,m.id
-         LIMIT ${ROOM_HISTORY_OUTLINE_HOUR_LIMIT}`,
+         WHERE ${visible}
+         ORDER BY bucket.bucket_start DESC,m.created_at,m.id
+         LIMIT ${ROOM_HISTORY_OUTLINE_BUCKET_LIMIT}`,
         [roomId],
-      )
-    ).rows;
-    const hours = rows.map((row) => ({
-      hour: Number(row.hour_start),
+      ),
+      this.database.query<{ total: string }>(
+        `SELECT count(*)::text total FROM messages m WHERE ${visible}`,
+        [roomId],
+      ),
+    ]);
+    const buckets = rows.rows.reverse().map((row) => ({
+      start: Number(row.bucket_start),
       count: Number(row.message_count),
       first: {
         id: row.id,
@@ -1964,9 +1972,9 @@ export class PhoneService {
     const [newest] = await this.messageRows(roomId, undefined, 1);
     return {
       roomId,
-      total: hours.reduce((sum, hour) => sum + hour.count, 0),
+      total: Number(counted.rows[0]?.total ?? 0),
       ...(newest ? { newest: { id: newest.id, createdAt: unix(newest.created_at) } } : {}),
-      hours,
+      buckets,
     };
   }
 

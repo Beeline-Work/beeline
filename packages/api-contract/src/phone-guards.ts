@@ -39,7 +39,7 @@ import {
   type InviteView,
   type MessageReactionView,
   type RoomHistoryOutline,
-  type RoomHistoryOutlineHour,
+  type RoomHistoryOutlineBucket,
   type RoomHistoryView,
   type RoomRepositoryResolution,
   type RoomRepositoryView,
@@ -1564,16 +1564,16 @@ export function isRoomHistoryView(value: unknown): value is RoomHistoryView {
   return readRoomHistoryView(value) !== null;
 }
 
-/** An outline is only useful whole: one dropped hour would misplace every day after it. */
-export const ROOM_HISTORY_OUTLINE_HOUR_LIMIT = 20_000;
+export const ROOM_HISTORY_OUTLINE_BUCKET_SECONDS = 15 * 60;
+export const ROOM_HISTORY_OUTLINE_BUCKET_LIMIT = 20_000;
 
-function readRoomHistoryOutlineHour(value: unknown): RoomHistoryOutlineHour | null {
+function readRoomHistoryOutlineBucket(value: unknown): RoomHistoryOutlineBucket | null {
   const item = record(value);
   const first = record(item?.first);
   if (
     !item ||
     !first ||
-    !integer(item.hour) ||
+    !integer(item.start) ||
     !integer(item.count) ||
     item.count < 1 ||
     !hex64(first.id) ||
@@ -1583,7 +1583,7 @@ function readRoomHistoryOutlineHour(value: unknown): RoomHistoryOutlineHour | nu
     return null;
   const authorHandle = typeof first.authorHandle === 'string' ? first.authorHandle : undefined;
   return {
-    hour: item.hour,
+    start: item.start,
     count: item.count,
     first: {
       id: first.id,
@@ -1596,11 +1596,12 @@ function readRoomHistoryOutlineHour(value: unknown): RoomHistoryOutlineHour | nu
 
 export function readRoomHistoryOutline(value: unknown): RoomHistoryOutline | null {
   const item = record(value);
-  if (!item || !uuid(item.roomId) || !integer(item.total) || !Array.isArray(item.hours))
+  if (!item || !uuid(item.roomId) || !integer(item.total) || !Array.isArray(item.buckets))
     return null;
-  if (item.hours.length > ROOM_HISTORY_OUTLINE_HOUR_LIMIT) return null;
-  const hours = readList(item.hours, readRoomHistoryOutlineHour) ?? [];
-  if (hours.length !== item.hours.length) return null;
+  if (item.buckets.length > ROOM_HISTORY_OUTLINE_BUCKET_LIMIT) return null;
+  // One dropped bucket would misplace every day marker older than it.
+  const buckets = readList(item.buckets, readRoomHistoryOutlineBucket) ?? [];
+  if (buckets.length !== item.buckets.length) return null;
   const newest = record(item.newest);
   if (item.newest !== undefined && (!newest || !hex64(newest.id) || !integer(newest.createdAt)))
     return null;
@@ -1611,7 +1612,7 @@ export function readRoomHistoryOutline(value: unknown): RoomHistoryOutline | nul
       'newest',
       newest ? { id: newest.id as string, createdAt: newest.createdAt as number } : undefined,
     ),
-    hours,
+    buckets,
   };
 }
 

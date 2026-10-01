@@ -55,30 +55,37 @@ export function scrubberHistory(
   const rankById = new Map<string, number>();
   loadedIds.forEach((id, index) => rankById.set(id, loadedIds.length - 1 - index));
 
-  const days: ScrubberDay[] = [];
-  let older = 0;
-  let previousMonth = '';
-  for (const hour of outline?.hours ?? []) {
-    // An hour bucket belongs to the local day of its first message; only a
-    // half-hour time zone can split one across midnight.
-    const key = localDayKey(hour.first.createdAt);
-    if (days.at(-1)?.key !== key) {
-      const messagesBack = Math.max(0, total - 1 - older);
-      const month = ledgerMonth(hour.first.createdAt);
-      days.push({
-        key,
-        firstMessageId: hour.first.id,
-        startsAt: hour.first.createdAt,
-        authorName: hour.first.authorName,
-        ...(hour.first.authorHandle ? { authorHandle: hour.first.authorHandle } : {}),
-        messagesBack,
-        position: positionOf(messagesBack, total),
-        monthStart: month !== previousMonth,
-      });
-      previousMonth = month;
-    }
-    older += hour.count;
+  // Counted from the newest end, so an outline that sends only its newest
+  // buckets still places every day it does send.
+  const buckets = outline?.buckets ?? [];
+  const newerThan: number[] = new Array(buckets.length);
+  let newer = arrivedSince;
+  for (let index = buckets.length - 1; index >= 0; index -= 1) {
+    newer += buckets[index]!.count;
+    newerThan[index] = newer - 1;
   }
+
+  const days: ScrubberDay[] = [];
+  let previousMonth = '';
+  buckets.forEach((bucket, index) => {
+    // A quarter-hour bucket never crosses a local midnight, so the day of its
+    // first message is the day of all of it.
+    const key = localDayKey(bucket.first.createdAt);
+    if (days.at(-1)?.key === key) return;
+    const messagesBack = newerThan[index]!;
+    const month = ledgerMonth(bucket.first.createdAt);
+    days.push({
+      key,
+      firstMessageId: bucket.first.id,
+      startsAt: bucket.first.createdAt,
+      authorName: bucket.first.authorName,
+      ...(bucket.first.authorHandle ? { authorHandle: bucket.first.authorHandle } : {}),
+      messagesBack,
+      position: positionOf(messagesBack, total),
+      monthStart: month !== previousMonth,
+    });
+    previousMonth = month;
+  });
   return { total, days, rankById };
 }
 

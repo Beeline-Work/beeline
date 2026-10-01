@@ -183,6 +183,18 @@ function tokenFromProtocol(request: IncomingMessage): string | null {
     .find((item) => item.startsWith('bearer.'));
   return value ? value.slice('bearer.'.length) : null;
 }
+/** A named zone such as `Asia/Kolkata`, never a bare offset: Postgres reads
+ * `+05:30` with the POSIX sign, the opposite of ISO. */
+function isIanaTimeZone(value: string): boolean {
+  if (value !== 'UTC' && !/^[A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)+$/.test(value)) return false;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function isInboxCursor(value: unknown): value is string {
   return typeof value === 'string' && /^\d+,[0-9a-f]{64}$/.test(value);
 }
@@ -1573,7 +1585,12 @@ async function route(
   }
   match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)\/outline$/);
   if (method === 'GET' && match) {
-    const result = await options.phone.readHistoryOutline(match[1]!, identityId!);
+    const timeZone = url.searchParams.get('tz') ?? '';
+    if (!isIanaTimeZone(timeZone)) {
+      json(response, 400, { error: 'invalid_time_zone' });
+      return;
+    }
+    const result = await options.phone.readHistoryOutline(match[1]!, identityId!, timeZone);
     json(response, result ? 200 : 404, result ?? { error: 'not_found' });
     return;
   }

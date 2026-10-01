@@ -50,11 +50,12 @@ const id = (n: number) => n.toString(16).padStart(64, '0');
 const at = (iso: string) => Date.parse(iso) / 1_000;
 const outline: RoomHistoryOutline = {
   roomId: '00000000-0000-4000-8000-000000000001',
+  timeZone: 'UTC',
   total: 100,
   newest: { id: id(100), createdAt: at('2026-09-02T12:30:00Z') },
-  buckets: [
+  days: [
     {
-      start: at('2026-08-30T08:00:00Z'),
+      day: '2026-08-30',
       count: 40,
       first: {
         id: id(1),
@@ -64,7 +65,7 @@ const outline: RoomHistoryOutline = {
       },
     },
     {
-      start: at('2026-09-01T09:00:00Z'),
+      day: '2026-09-01',
       count: 30,
       first: {
         id: id(41),
@@ -74,7 +75,7 @@ const outline: RoomHistoryOutline = {
       },
     },
     {
-      start: at('2026-09-02T12:00:00Z'),
+      day: '2026-09-02',
       count: 30,
       first: {
         id: id(71),

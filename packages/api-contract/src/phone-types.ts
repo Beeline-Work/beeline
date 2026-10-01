@@ -628,27 +628,27 @@ export type RoomHistoryView = {
 };
 
 /**
- * The whole Room history in quarter-hour buckets, so the transcript scrubber
- * can place its handle and day markers against every message, not only the
- * pages loaded so far. Counts use the same rows `RoomHistoryView` pages
- * through. Every UTC offset is a whole number of quarter hours, so no bucket
- * crosses a local midnight in any time zone.
+ * The whole Room history, one entry per local calendar day in the reader's
+ * time zone, so the transcript scrubber can place its handle and a marker for
+ * every day against every message, not only the pages loaded so far. Counts
+ * use the same rows `RoomHistoryView` pages through.
  */
 export type RoomHistoryOutline = {
   readonly roomId: string;
+  /** The IANA time zone the days were cut in, as the reader asked. */
+  readonly timeZone: string;
   readonly total: number;
   /** The newest message counted, so later arrivals can extend `total`. */
   readonly newest?: { readonly id: string; readonly createdAt: number };
-  /** Oldest first; empty buckets are omitted. A history with more buckets
-   * than the server sends keeps its newest ones; `total` still counts all. */
-  readonly buckets: readonly RoomHistoryOutlineBucket[];
+  /** Every day with a message, oldest first. */
+  readonly days: readonly RoomHistoryOutlineDay[];
 };
 
-export type RoomHistoryOutlineBucket = {
-  /** Unix seconds at the start of the quarter hour. */
-  readonly start: number;
+export type RoomHistoryOutlineDay = {
+  /** `YYYY-MM-DD` in `timeZone`. */
+  readonly day: string;
   readonly count: number;
-  /** The bucket's oldest message. */
+  /** The day's oldest message. */
   readonly first: {
     readonly id: string;
     readonly createdAt: number;

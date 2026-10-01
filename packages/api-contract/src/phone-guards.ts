@@ -39,7 +39,7 @@ import {
   type InviteView,
   type MessageReactionView,
   type RoomHistoryOutline,
-  type RoomHistoryOutlineBucket,
+  type RoomHistoryOutlineDay,
   type RoomHistoryView,
   type RoomRepositoryResolution,
   type RoomRepositoryView,
@@ -1564,16 +1564,16 @@ export function isRoomHistoryView(value: unknown): value is RoomHistoryView {
   return readRoomHistoryView(value) !== null;
 }
 
-export const ROOM_HISTORY_OUTLINE_BUCKET_SECONDS = 15 * 60;
-export const ROOM_HISTORY_OUTLINE_BUCKET_LIMIT = 20_000;
+const OUTLINE_DAY = /^\d{4}-\d{2}-\d{2}$/;
 
-function readRoomHistoryOutlineBucket(value: unknown): RoomHistoryOutlineBucket | null {
+function readRoomHistoryOutlineDay(value: unknown): RoomHistoryOutlineDay | null {
   const item = record(value);
   const first = record(item?.first);
   if (
     !item ||
     !first ||
-    !integer(item.start) ||
+    typeof item.day !== 'string' ||
+    !OUTLINE_DAY.test(item.day) ||
     !integer(item.count) ||
     item.count < 1 ||
     !hex64(first.id) ||
@@ -1583,7 +1583,7 @@ function readRoomHistoryOutlineBucket(value: unknown): RoomHistoryOutlineBucket 
     return null;
   const authorHandle = typeof first.authorHandle === 'string' ? first.authorHandle : undefined;
   return {
-    start: item.start,
+    day: item.day,
     count: item.count,
     first: {
       id: first.id,
@@ -1596,23 +1596,29 @@ function readRoomHistoryOutlineBucket(value: unknown): RoomHistoryOutlineBucket 
 
 export function readRoomHistoryOutline(value: unknown): RoomHistoryOutline | null {
   const item = record(value);
-  if (!item || !uuid(item.roomId) || !integer(item.total) || !Array.isArray(item.buckets))
+  if (
+    !item ||
+    !uuid(item.roomId) ||
+    !nonempty(item.timeZone) ||
+    !integer(item.total) ||
+    !Array.isArray(item.days)
+  )
     return null;
-  if (item.buckets.length > ROOM_HISTORY_OUTLINE_BUCKET_LIMIT) return null;
-  // One dropped bucket would misplace every day marker older than it.
-  const buckets = readList(item.buckets, readRoomHistoryOutlineBucket) ?? [];
-  if (buckets.length !== item.buckets.length) return null;
+  // One dropped day would misplace every day marker older than it.
+  const days = readList(item.days, readRoomHistoryOutlineDay) ?? [];
+  if (days.length !== item.days.length) return null;
   const newest = record(item.newest);
   if (item.newest !== undefined && (!newest || !hex64(newest.id) || !integer(newest.createdAt)))
     return null;
   return {
     roomId: item.roomId,
+    timeZone: item.timeZone,
     total: item.total,
     ...field(
       'newest',
       newest ? { id: newest.id as string, createdAt: newest.createdAt as number } : undefined,
     ),
-    buckets,
+    days,
   };
 }
 

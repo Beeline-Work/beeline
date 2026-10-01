@@ -4,6 +4,15 @@ import { messageBoundaryIds } from './room-new-message-boundary';
 import type { ChatDisplayMessage } from './room-view-presentation';
 import { scrubberHistory, scrubberPosition } from './transcript-scrubber';
 
+/** The server cuts the outline's days in this zone, the one the transcript's dates use. */
+function deviceTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+}
+
 /** How long the bar stays after the list stops, long enough to press and hold it. */
 export const SCRUBBER_LINGER_MS = 2_000;
 
@@ -18,7 +27,7 @@ export function useTranscriptScrubber({
   durableMessages,
 }: {
   roomId: string;
-  roomClient: { outline(id: string): Promise<RoomHistoryOutline | null> } | null;
+  roomClient: { outline(id: string, timeZone: string): Promise<RoomHistoryOutline | null> } | null;
   durableMessages: readonly ChatDisplayMessage[];
 }) {
   const [outline, setOutline] = useState<RoomHistoryOutline | null>(null);
@@ -32,7 +41,7 @@ export function useTranscriptScrubber({
     if (!roomClient || !roomId) return;
     let current = true;
     roomClient
-      .outline(roomId)
+      .outline(roomId, deviceTimeZone())
       .then((next) => {
         if (current && next?.roomId === roomId) setOutline(next);
       })

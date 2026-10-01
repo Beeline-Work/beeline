@@ -105,8 +105,11 @@ class MonolithRoomViewClient {
       readRoomHistoryView,
     );
   }
-  outline(id: string): Promise<RoomHistoryOutline> {
-    return this.get(`/v1/phone/rooms/${encodeURIComponent(id)}/outline`, readRoomHistoryOutline);
+  outline(id: string, timeZone: string): Promise<RoomHistoryOutline> {
+    return this.get(
+      `/v1/phone/rooms/${encodeURIComponent(id)}/outline?tz=${encodeURIComponent(timeZone)}`,
+      readRoomHistoryOutline,
+    );
   }
   invite(token: string): Promise<InviteView> {
     return this.operation('resolveInvite', { token }, readInviteView);
@@ -215,9 +218,9 @@ export class RoomViewClient {
     return this.implementation.history(id, before);
   }
   /** The whole-history outline exists only on the monolith; null elsewhere. */
-  outline(id: string): Promise<RoomHistoryOutline | null> {
+  outline(id: string, timeZone: string): Promise<RoomHistoryOutline | null> {
     return this.implementation instanceof MonolithRoomViewClient
-      ? this.implementation.outline(id)
+      ? this.implementation.outline(id, timeZone)
       : Promise.resolve(null);
   }
   invite(token: string) {

@@ -1270,6 +1270,10 @@ export function BuzzChatSurface({
     () => (cacheViewerPubkey ? displayRoomMessages(olderPages.flat(), cacheViewerPubkey) : []),
     [cacheViewerPubkey, olderPages],
   );
+  const olderMessageIds = useMemo(
+    () => new Set(olderMessages.map((message) => message.id)),
+    [olderMessages],
+  );
   const durableMessages = useMemo(
     () => mergeDisplayPages(olderMessages, cachedMessages, liveMessages),
     [cachedMessages, liveMessages, olderMessages],
@@ -1335,8 +1339,9 @@ export function BuzzChatSurface({
       // A fold can gain a new durable fact without changing its host row id.
       // Observe every represented id so that arrival still joins the queue.
       ids: foldedMessages.flatMap(messageBoundaryIds),
+      historyIds: olderMessageIds,
     });
-  }, [decodedId, foldedMessages, roomSurface]);
+  }, [decodedId, foldedMessages, olderMessageIds, roomSurface]);
   useEffect(() => {
     // Keep the comparison anchored to the last committed transcript. Mutating
     // this ref during render makes React's development double-render consume a
@@ -2910,9 +2915,10 @@ export function BuzzChatSurface({
   // all — gets back to the live end in one tap, and a reader with unread mail
   // arrives where the next message will land. Any queue behind it is settled
   // here: the tap is the reader saying they are done being behind.
-  // The list follows the scrubber's day while the finger is down. A day
-  // released before its rows are loaded stays the target while older pages
-  // come in, until it lands or the history runs out.
+  // The list follows the scrubber's day while the finger is down. A day whose
+  // rows are not loaded yet becomes the target at once, so older pages start
+  // coming in under the finger, and stays it until it lands or the history
+  // runs out.
   const [scrubTargetId, setScrubTargetId] = useState<string | null>(null);
   useEffect(() => setScrubTargetId(null), [decodedId]);
   const landAtScrubbedMessage = useCallback((messageId: string) => {
@@ -2926,12 +2932,6 @@ export function BuzzChatSurface({
     flatListRef.current?.scrollToIndex({ index, viewPosition: 0.5, animated: false });
     return true;
   }, []);
-  const followScrubbedDay = useCallback(
-    (day: ScrubberDay) => {
-      landAtScrubbedMessage(day.firstMessageId);
-    },
-    [landAtScrubbedMessage],
-  );
   const landAtScrubbedDay = useCallback(
     (day: ScrubberDay) => {
       setScrubTargetId(landAtScrubbedMessage(day.firstMessageId) ? null : day.firstMessageId);
@@ -6139,7 +6139,7 @@ export function BuzzChatSurface({
               history={scrubberHistory}
               position={scrubberPosition}
               visible={scrubberVisible}
-              onScrub={followScrubbedDay}
+              onScrub={landAtScrubbedDay}
               onScrubEnd={landAtScrubbedDay}
             />
           )}

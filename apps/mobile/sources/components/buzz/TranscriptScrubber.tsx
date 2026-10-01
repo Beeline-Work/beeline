@@ -1,5 +1,5 @@
 import * as Haptics from 'expo-haptics';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { PanResponder, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { ledgerMonth } from '@/buzz/message-dates';
@@ -10,20 +10,23 @@ import {
   type ScrubberHistory,
 } from '@/buzz/transcript-scrubber';
 
-/** The right-edge strip that takes the press, wider than the bar it holds. */
+/** The right-edge strip the bar runs in, wider than the bar it holds. */
 export const SCRUBBER_STRIP_WIDTH = 44;
-export const SCRUBBER_HOLD_MS = 250;
 const BAR_HEIGHT = 36;
 const HANDLE_HEIGHT = 44;
-/** Movement that reads as a flick, not a hold, before the hold fires. */
-const HOLD_SLOP = 8;
+/** How far above and below the bar a press still takes it. */
+const BAR_GRAB_SLOP = 12;
 
 /**
  * The transcript's own scroll bar. It shows while the list scrolls, placed by
  * the whole history (`buzz/transcript-scrubber.ts`) rather than the loaded
- * rows, so a page of older messages cannot move it. Press and hold the right
- * edge to turn it into a handle: a rail of day markers appears, dragging snaps
- * to them, and releasing hands the day to the transcript to land on.
+ * rows, so a page of older messages cannot move it. Pressing the bar takes it
+ * at once, as Android's fast-scroll thumb does, and turns it into a handle: a
+ * rail of day markers appears, dragging snaps to them, and releasing hands the
+ * day to the transcript to land on.
+ *
+ * Only the bar takes touches. The rest of the strip passes them to the list,
+ * so a flick near the right edge scrolls the transcript while the bar shows.
  */
 export function TranscriptScrubber({
   history,
@@ -42,21 +45,11 @@ export function TranscriptScrubber({
 }) {
   const [railHeight, setRailHeight] = useState(0);
   const [scrubDay, setScrubDay] = useState<ScrubberDay | null>(null);
-  const live = useRef({ history, railHeight, onScrub, onScrubEnd });
-  live.current = { history, railHeight, onScrub, onScrubEnd };
-  const gesture = useRef<{
-    startY: number;
-    dy: number;
-    timer: ReturnType<typeof setTimeout> | null;
-    day: ScrubberDay | null;
-  }>({ startY: 0, dy: 0, timer: null, day: null });
-
-  useEffect(
-    () => () => {
-      if (gesture.current.timer) clearTimeout(gesture.current.timer);
-    },
-    [],
-  );
+  // The bar is held: it stays mounted and shown until the finger lifts.
+  const [grabbed, setGrabbed] = useState(false);
+  const live = useRef({ history, position, railHeight, onScrub, onScrubEnd });
+  live.current = { history, position, railHeight, onScrub, onScrubEnd };
+  const gesture = useRef<{ startY: number; day: ScrubberDay | null }>({ startY: 0, day: null });
 
   const pan = useMemo(() => {
     const dayAt = (y: number) => {
@@ -73,55 +66,42 @@ export function TranscriptScrubber({
       void Haptics.selectionAsync();
       live.current.onScrub(day);
     };
-    const cancelHold = () => {
-      if (gesture.current.timer) clearTimeout(gesture.current.timer);
-      gesture.current.timer = null;
-    };
     const finish = () => {
-      cancelHold();
       const day = gesture.current.day;
       gesture.current.day = null;
+      setGrabbed(false);
       setScrubDay(null);
       if (day) live.current.onScrubEnd(day);
     };
     return PanResponder.create({
       onStartShouldSetPanResponder: () => live.current.history.days.length > 0,
-      onPanResponderTerminationRequest: () => gesture.current.day === null,
+      onPanResponderTerminationRequest: () => false,
       onPanResponderGrant: (event) => {
+        const { position: at, railHeight: height } = live.current;
+        // The grab target sits on the bar; its touch is measured from its own top.
         gesture.current = {
-          startY: event.nativeEvent.locationY,
-          dy: 0,
-          timer: setTimeout(() => {
-            gesture.current.timer = null;
-            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            follow(gesture.current.startY + gesture.current.dy);
-          }, SCRUBBER_HOLD_MS),
+          startY: grabTop(at ?? 0, height) + event.nativeEvent.locationY,
           day: null,
         };
+        setGrabbed(true);
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       },
-      onPanResponderMove: (_event, state) => {
-        gesture.current.dy = state.dy;
-        if (gesture.current.day) follow(gesture.current.startY + state.dy);
-        else if (Math.abs(state.dy) > HOLD_SLOP) cancelHold();
-      },
+      onPanResponderMove: (_event, state) => follow(gesture.current.startY + state.dy),
       onPanResponderRelease: finish,
       onPanResponderTerminate: finish,
     });
   }, []);
 
   const scrubbing = scrubDay !== null;
-  const shown = scrubbing || (visible && position !== null);
-  const handleTop = (at: number, size: number) =>
-    Math.max(0, Math.min(railHeight - size, (1 - at) * railHeight - size / 2));
+  const shown = grabbed || scrubbing || (visible && position !== null);
   const bubble = scrubDay ? scrubberBubble(scrubDay) : null;
 
   return (
     <View
       onLayout={(event) => setRailHeight(event.nativeEvent.layout.height)}
-      pointerEvents={shown && history.days.length > 0 ? 'auto' : 'none'}
+      pointerEvents="box-none"
       style={styles.strip}
       testID="transcript-scrubber"
-      {...pan.panHandlers}
     >
       {scrubbing && (
         <View pointerEvents="none" style={styles.rail} testID="transcript-scrubber-rail">
@@ -139,20 +119,35 @@ export function TranscriptScrubber({
       {shown && !scrubbing && position !== null && (
         <View
           pointerEvents="none"
-          style={[styles.bar, { top: handleTop(position, BAR_HEIGHT) }]}
+          style={[styles.bar, { top: handleTop(position, BAR_HEIGHT, railHeight) }]}
           testID="transcript-scrubber-bar"
+        />
+      )}
+      {shown && history.days.length > 0 && (position !== null || grabbed) && (
+        <View
+          // Never flattened away: Android needs a real view to take the touch.
+          collapsable={false}
+          style={[styles.grab, { top: grabTop(position ?? 0, railHeight) }]}
+          testID="transcript-scrubber-grab"
+          {...pan.panHandlers}
         />
       )}
       {scrubDay && bubble && (
         <>
           <View
             pointerEvents="none"
-            style={[styles.handle, { top: handleTop(scrubDay.position, HANDLE_HEIGHT) }]}
+            style={[
+              styles.handle,
+              { top: handleTop(scrubDay.position, HANDLE_HEIGHT, railHeight) },
+            ]}
             testID="transcript-scrubber-handle"
           />
           <View
             pointerEvents="none"
-            style={[styles.bubble, { top: handleTop(scrubDay.position, HANDLE_HEIGHT) }]}
+            style={[
+              styles.bubble,
+              { top: handleTop(scrubDay.position, HANDLE_HEIGHT, railHeight) },
+            ]}
             testID="transcript-scrubber-bubble"
           >
             <Text style={styles.bubbleDate}>{bubble.date}</Text>
@@ -164,6 +159,15 @@ export function TranscriptScrubber({
       )}
     </View>
   );
+}
+
+function handleTop(at: number, size: number, railHeight: number): number {
+  return Math.max(0, Math.min(railHeight - size, (1 - at) * railHeight - size / 2));
+}
+
+/** The touch target over the bar, taller than the bar by the grab slop. */
+function grabTop(at: number, railHeight: number): number {
+  return handleTop(at, BAR_HEIGHT, railHeight) - BAR_GRAB_SLOP;
 }
 
 const styles = StyleSheet.create((theme) => {
@@ -200,6 +204,12 @@ const styles = StyleSheet.create((theme) => {
       ...groknight.type.sectionHead,
       fontFamily: groknight.monoSemibold,
       color: groknight.textMuted,
+    },
+    grab: {
+      position: 'absolute',
+      right: 0,
+      width: SCRUBBER_STRIP_WIDTH,
+      height: BAR_HEIGHT + BAR_GRAB_SLOP * 2,
     },
     bar: {
       position: 'absolute',

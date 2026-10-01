@@ -184,7 +184,11 @@ import {
   startWorkflow,
 } from './workflow-runs.js';
 import { agentCarriesTag, isConfiguredReviewer } from './agent-classes.js';
-import { recordStarPromptReply } from './github-star-prompt.js';
+import {
+  recordStarPromptReply,
+  STAR_PROMPT_MILESTONES,
+  starPromptReplySql,
+} from './github-star-prompt.js';
 
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
@@ -3597,6 +3601,12 @@ export class DaemonService {
                state='complete',completed_at=now(),result_message_id=inserted.id
              FROM inserted WHERE command.id=(SELECT id FROM writable)
              RETURNING command.id
+           ), star_count AS (
+             ${starPromptReplySql(
+               `(SELECT writable.root_source_message_id FROM writable,completed WHERE $5='message')`,
+               '(SELECT jsonb_array_length(attachments)>0 FROM attachment_payload)',
+               '$11::int[]',
+             )}
            ), cleared AS (
              DELETE FROM live_outputs output USING completed
              WHERE output.room_id=$2 AND output.agent_id=$3 AND output.turn_id=$6
@@ -3654,6 +3664,7 @@ export class DaemonService {
           input.replyToMessageId ?? null,
           rootMessageId,
           input.generationId,
+          STAR_PROMPT_MILESTONES,
         ],
       );
       if (this.livePaintDiagnostics) databaseAwaitResolvedAt = Date.now();
@@ -3713,7 +3724,8 @@ export class DaemonService {
           }
         : {}),
     });
-    if (input.requestId && input.presentation !== 'card') {
+    // The atomic reply statement counted it in its own star_count CTE.
+    if (!atomicCommandWrite && input.requestId && input.presentation !== 'card') {
       const reply = {
         roomId: input.roomId,
         agentId,
@@ -3722,10 +3734,9 @@ export class DaemonService {
         artifact: saved.attachments.length > 0,
       };
       const count = (database: SqlDatabase) => recordStarPromptReply(database, reply);
-      // Off the reply path: the committed reply returns without a serial tail.
       if (this.afterCommit) this.afterCommit(count);
       else
-        void count(this.database).catch((error) =>
+        await count(this.database).catch((error) =>
           console.error('[daemon] star prompt reply count failed', error),
         );
     }

@@ -22,7 +22,7 @@ import type { SqlDatabase } from './database.js';
  */
 const STAR_PROMPT_REPOSITORY = 'Beeline-Work/beeline';
 const STAR_PROMPT_URL = `https://github.com/${STAR_PROMPT_REPOSITORY}`;
-const STAR_PROMPT_MILESTONES: readonly number[] = [3, 30, 300];
+export const STAR_PROMPT_MILESTONES: readonly number[] = [3, 30, 300];
 const MID_CONVERSATION_SECONDS = 30;
 const CORRECTION_WINDOW_MINUTES = 10;
 
@@ -45,33 +45,44 @@ interface StarPromptGitHub {
 }
 
 /**
- * Count one committed agent reply toward the person whose message started
- * the command. A reply that carries an artifact is also a win.
+ * The upsert that counts one committed agent reply toward the person whose
+ * message started the command. A reply that carries an artifact is also a
+ * win. `command` yields the command's `root_source_message_id`, `artifact`
+ * is a boolean expression and `milestones` an int[] expression, so the agent
+ * reply statement can run it as one of its own CTEs.
  */
+export function starPromptReplySql(command: string, artifact: string, milestones: string): string {
+  return `INSERT INTO github_star_prompts AS prompt(identity_id,replies,reached_milestone,reached_at,last_win_at)
+     SELECT source.author_id,1,
+       CASE WHEN 1=ANY(${milestones}) THEN 1 ELSE 0 END,
+       CASE WHEN 1=ANY(${milestones}) THEN now() END,
+       CASE WHEN ${artifact} THEN now() END
+     FROM ${command} command
+     JOIN messages source ON source.id=command.root_source_message_id
+     JOIN identities person ON person.id=source.author_id
+       AND person.kind='human' AND NOT person.hidden_from_roster
+     LIMIT 1
+     ON CONFLICT(identity_id) DO UPDATE SET
+       replies=prompt.replies+1,
+       reached_milestone=CASE WHEN prompt.replies+1=ANY(${milestones})
+         THEN prompt.replies+1 ELSE prompt.reached_milestone END,
+       reached_at=CASE WHEN prompt.replies+1=ANY(${milestones}) THEN now() ELSE prompt.reached_at END,
+       last_win_at=CASE WHEN ${artifact} THEN now() ELSE prompt.last_win_at END,
+       updated_at=now()`;
+}
+
+/** {@link starPromptReplySql} for a reply that is already committed. */
 export async function recordStarPromptReply(
   database: SqlDatabase,
   reply: { roomId: string; agentId: string; requestId: string; messageId: string; artifact: boolean },
 ): Promise<void> {
   await database.query(
-    `INSERT INTO github_star_prompts AS prompt(identity_id,replies,reached_milestone,reached_at,last_win_at)
-     SELECT source.author_id,1,
-       CASE WHEN 1=ANY($5::int[]) THEN 1 ELSE 0 END,
-       CASE WHEN 1=ANY($5::int[]) THEN now() END,
-       CASE WHEN $6 THEN now() END
-     FROM agent_commands command
-     JOIN messages source ON source.id=command.root_source_message_id
-     JOIN identities person ON person.id=source.author_id
-       AND person.kind='human' AND NOT person.hidden_from_roster
-     WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3
-       AND command.result_message_id=$4
-     LIMIT 1
-     ON CONFLICT(identity_id) DO UPDATE SET
-       replies=prompt.replies+1,
-       reached_milestone=CASE WHEN prompt.replies+1=ANY($5::int[])
-         THEN prompt.replies+1 ELSE prompt.reached_milestone END,
-       reached_at=CASE WHEN prompt.replies+1=ANY($5::int[]) THEN now() ELSE prompt.reached_at END,
-       last_win_at=CASE WHEN $6 THEN now() ELSE prompt.last_win_at END,
-       updated_at=now()`,
+    starPromptReplySql(
+      `(SELECT root_source_message_id FROM agent_commands
+        WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 AND result_message_id=$4)`,
+      '$6::boolean',
+      '$5::int[]',
+    ),
     [
       reply.roomId,
       reply.agentId,

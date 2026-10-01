@@ -443,6 +443,27 @@ describe('start_workflow', () => {
     ).rejects.toThrow('is not a current member of this Room');
   });
 
+  it('binds an @handle role to the current Room member with that handle', async () => {
+    await database.query(`UPDATE identities SET handle='ravi' WHERE id=$1`, [REVIEWER]);
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: CONTRACT });
+    const started = await startWorkflow(database, command, {
+      name: 'corner',
+      roleBindings: { implementer: IMPLEMENTER, reviewer: '@ravi', approver: APPROVER },
+    });
+    const card = await database.query<{ card: { roleBindings: Record<string, string> } }>(
+      `SELECT card FROM messages WHERE id=$1`,
+      [started.runId],
+    );
+    expect(card.rows[0]?.card.roleBindings.reviewer).toBe(REVIEWER);
+    await expect(
+      startWorkflow(database, command, {
+        name: 'corner',
+        roleBindings: { implementer: IMPLEMENTER, reviewer: '@nobody', approver: APPROVER },
+      }),
+    ).rejects.toThrow('@nobody is not a current member of this Room');
+  });
+
   it('posts a run and wakes the start role agent', async () => {
     const command = await commandFor(IMPLEMENTER);
     await saveWorkflow(database, command, { contract: CONTRACT });
@@ -920,6 +941,19 @@ describe('class roles', () => {
     await expect(
       assignWorkflowRole(database, command, { runId, role: 'worker', targetAgentId: REVIEWER }),
     ).rejects.toThrow('does not carry the "heavy" tag');
+  });
+
+  it('assign_workflow_role binds the Room member a handle from the member list names', async () => {
+    await database.query(`UPDATE identities SET handle='heavya' WHERE id=$1`, [HEAVY_A]);
+    await reportPresence(HEAVY_A, 'offline');
+    await reportPresence(HEAVY_B, 'offline');
+    const { runId } = await startedClassRun();
+    const command = await commandFor(IMPLEMENTER);
+    await assignWorkflowRole(database, command, { runId, role: 'worker', targetAgentId: '@heavya' });
+    expect((await classRunCard(runId)).roleBindings.worker).toBe(HEAVY_A);
+    await expect(
+      assignWorkflowRole(database, command, { runId, role: 'worker', targetAgentId: 'nobody' }),
+    ).rejects.toThrow('@nobody is not a current member of this Room');
   });
 
   it('rejects assign_workflow_role for a role bound to one fixed agent', async () => {

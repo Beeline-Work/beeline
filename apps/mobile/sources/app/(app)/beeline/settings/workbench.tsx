@@ -21,6 +21,10 @@ import { appBoardColors } from '@/buzz/app-board-style';
 import { ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { authSessionOptions } from '@/auth/auth-session';
 import {
+  MonolithPhoneOperationError,
+  phoneOperationFailureReason,
+} from '@/sync/transport/monolith-operation';
+import {
   appInstrument,
   connectionCompany,
   connectionDomainsLine,
@@ -68,6 +72,7 @@ export default function WorkbenchScreen() {
   const [networkFailure, setNetworkFailure] = useState<'load' | 'wallet' | null>(null);
   const [walletConnecting, setWalletConnecting] = useState(false);
   const [linkConnecting, setLinkConnecting] = useState(false);
+  const [linkDisconnecting, setLinkDisconnecting] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
   const [walletWorkspaceMissing, setWalletWorkspaceMissing] = useState(false);
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
@@ -211,19 +216,30 @@ export default function WorkbenchScreen() {
         authSessionOptions(Platform.OS, returnUri));
       if (result.type !== 'success') await getWorkbenchSource().cancelLinkSignIn(state);
       await load();
-    } catch {
-      setLinkError('Link sign-in did not finish. Tap Connect to try again.');
+    } catch (error) {
+      // The server's refusal is the point (a control that refuses without
+      // saying why reads as a control that does nothing); a browser-session
+      // hiccup keeps the generic retry line.
+      setLinkError(error instanceof MonolithPhoneOperationError
+        ? phoneOperationFailureReason(error)
+        : 'Link sign-in did not finish. Tap Connect to try again.');
     } finally {
       setLinkConnecting(false);
     }
   }, [linkConnecting, load]);
 
   const disconnectLink = useCallback(async () => {
+    if (linkDisconnecting) return;
+    setLinkDisconnecting(true);
     try {
       await getWorkbenchSource().disconnectLinkSignIn();
       await load();
-    } catch { setLinkError('Could not disconnect Link. Try again.'); }
-  }, [load]);
+    } catch (error) {
+      setLinkError(phoneOperationFailureReason(error));
+    } finally {
+      setLinkDisconnecting(false);
+    }
+  }, [linkDisconnecting, load]);
 
   // The screen has three states, and they must not bleed into each other. A
   // failed load used to still render the section chrome and the "None yet"
@@ -278,9 +294,12 @@ export default function WorkbenchScreen() {
         contentContainerStyle={[styles.contentInner, { paddingBottom: theme.buzz.space.xxl + insets.bottom }]}
         testID="workbench-scroll"
       >
-        <View testID="workbench-payment-tools">
-          <Text style={styles.sectionLabel} testID="workbench-payment-tools-head">Payment tools</Text>
+        <View testID="workbench-connectors">
+          <Text style={styles.sectionLabel} testID="workbench-tools-head">
+            TOOLS
+          </Text>
           <ToolDetailsCell
+            appBoard
             testID="workbench-link"
             title="Link"
             leading={<ServiceMark company="Link" domain="link.com" testID="workbench-link-mark" />}
@@ -299,15 +318,11 @@ export default function WorkbenchScreen() {
             onAction={() => void connectLink()}
             extraActions={view?.linkAccount?.connected ? [{ label: 'Disconnect',
               testID: 'workbench-link-disconnect', tone: 'destructive',
+              disabled: linkDisconnecting,
               onPress: () => void disconnectLink() }] : []}
             value={view?.linkAccount?.connected ? 'connected'
               : view?.linkAccount?.pending ? 'installing' : undefined}
           />
-        </View>
-        <View testID="workbench-connectors">
-          <Text style={styles.sectionLabel} testID="workbench-tools-head">
-            TOOLS
-          </Text>
           {connectors.filter(connector => !connector.id.startsWith('google-') && connector.id !== 'tailscale').map(connector => {
             const instrument = connectorInstrument(connector.available ? connector.status : 'soon', connector.id);
             const canConnect = instrument.connect && connector.available;

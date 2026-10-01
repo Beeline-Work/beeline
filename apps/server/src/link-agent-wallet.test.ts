@@ -39,7 +39,7 @@ it('posts the Link approval URL only to the owner’s private Link card', async 
   await client.complete(state, 'code');
   const daemon = new DaemonService(database, new LiveHub(), undefined, undefined,
     true, undefined, false, undefined, undefined, undefined, undefined, undefined,
-    undefined, undefined, undefined, client);
+    undefined, undefined, undefined, undefined, client);
   const result = await daemon.execute('createLinkSpendRequest', { agentId: AGENT, roomId: ROOM,
     merchant: 'Stripe Press', merchantUrl: 'https://press.stripe.com', amount: 3500,
     description: 'A book', idempotencyKey: 'owner-book-1' }, AGENT);

@@ -169,8 +169,6 @@ export type PhoneOperationMap = {
   } };
   disconnectGoogleSignIn: { input: EmptyInput; output: void };
   beginLinkSignIn: { input: EmptyInput; output: { authorizationUrl: string } };
-  readLinkSignIn: { input: EmptyInput; output: {
-    connected: boolean; pending: boolean; ineligible: boolean } };
   cancelLinkSignIn: { input: { state?: string }; output: void };
   disconnectLinkSignIn: { input: EmptyInput; output: void };
   unpairConnector: { input: UnpairConnectorInput; output: void };

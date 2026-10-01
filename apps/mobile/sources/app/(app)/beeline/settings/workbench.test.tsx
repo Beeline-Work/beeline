@@ -160,16 +160,19 @@ describe('Workbench settings screen', () => {
     expect(scroll.findByProps({ testID: 'workbench-connect-app' })).toBeDefined();
   });
 
-  it('shows Link as one payment row and states non-US/Canada ineligibility on the collapsed row', async () => {
+  it('shows Link as one TOOLS row and states non-US/Canada ineligibility on the collapsed row', async () => {
     const source = new MockWorkbenchSource();
     const originalRead = source.readWorkbench.bind(source);
     source.readWorkbench = async (input) => ({ ...await originalRead(input),
       linkAccount: { connected: false, pending: false, ineligible: true } });
     setWorkbenchSource(source);
     const renderer = await render();
-    expect(renderer.root.findByProps({ testID: 'workbench-payment-tools-head' }).props.children)
-      .toBe('Payment tools');
-    const link = renderer.root.findByProps({ testID: 'workbench-link-head' });
+    // Link shares the TOOLS list with the other connectors; there is no
+    // separate Payment tools section.
+    expect(renderer.root.findAllByProps({ testID: 'workbench-payment-tools-head' })).toHaveLength(0);
+    const tools = renderer.root.findByProps({ testID: 'workbench-connectors' });
+    expect(tools.findByProps({ testID: 'workbench-tools-head' })).toBeDefined();
+    const link = tools.findByProps({ testID: 'workbench-link-head' });
     expect(link.props.title).toBe('Link');
     expect(link.props.description).toContain('US or Canada');
     expect(link.props.trailingPress.testID).toBe('workbench-link-connect');

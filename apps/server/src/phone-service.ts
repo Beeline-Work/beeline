@@ -3591,10 +3591,6 @@ export class PhoneService {
         await this.viewerWorkbenchWorkspace(viewerId);
         if (!this.linkWallet) throw new Error('Link is not configured');
         return { authorizationUrl: await this.linkWallet.begin(viewerId) } as Output<Name>;
-      case 'readLinkSignIn':
-        await this.viewerWorkbenchWorkspace(viewerId);
-        return (await this.linkWallet?.status(viewerId)
-          ?? { connected: false, pending: false, ineligible: false }) as Output<Name>;
       case 'cancelLinkSignIn':
         await this.viewerWorkbenchWorkspace(viewerId);
         await this.linkWallet?.cancel(viewerId, (input as Input<'cancelLinkSignIn'>).state);
@@ -8866,7 +8862,6 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'readGoogleSignIn',
   'disconnectGoogleSignIn',
   'beginLinkSignIn',
-  'readLinkSignIn',
   'cancelLinkSignIn',
   'disconnectLinkSignIn',
   'unpairConnector',

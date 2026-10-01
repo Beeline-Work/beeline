@@ -343,7 +343,7 @@ import {
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
 import { CornerObjectiveLine } from '@/components/buzz/CornerObjectiveLine';
-import { CornerBriefDisclosure } from '@/components/buzz/CornerBriefDisclosure';
+import { openCornerBriefViewer } from '@/components/buzz/corner-brief-viewer';
 import { CornerStatusLine } from '@/components/buzz/CornerStatusLine';
 import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import { AttachmentPickerSheet } from '@/components/buzz/AttachmentPickerSheet';
@@ -630,7 +630,6 @@ export function BuzzChatSurface({
     markRoomOpen('layout-chrome', roomSurface.messages.at(-1)?.id);
   }, [roomSurface]);
   const [inputText, setInputText] = useState('');
-  const [briefRevisionRequest, setBriefRevisionRequest] = useState<{ revision: number }>();
   const [composerInputRevision, setComposerInputRevision] = useState(0);
   const loadedDraftForRef = useRef<string | null>(null);
   const workPaneHandleRef = useRef<React.ElementRef<typeof Pressable>>(null);
@@ -1357,6 +1356,14 @@ export function BuzzChatSurface({
   // The same objective as one line, for the inscription under the header and
   // for the empty state's steering copy — derived once so the two never drift.
   const cornerObjectiveText = useMemo(() => cornerObjective.join(' '), [cornerObjective]);
+  // The brief's latest revision opens full-screen in the artifact viewer, from
+  // the objective line and from a "revised the corner brief" system line. No
+  // brief, no link.
+  const cornerBrief = roomSurface?.cornerBrief;
+  const openCurrentBrief = useMemo(
+    () => (cornerBrief ? () => openCornerBriefViewer(cornerBrief) : undefined),
+    [cornerBrief],
+  );
 
   const loadOlderTranscriptMessages = useCallback(() => {
     const visibleRowCount = visibleTranscriptWindow(foldedMessages, Number.MAX_SAFE_INTEGER).length;
@@ -5349,7 +5356,7 @@ export function BuzzChatSurface({
             stamp={ledgerStamp(item.timestamp)}
             onOpenIdentity={handleOpenSystemIdentity}
             onOpenUrl={handleOpenGitHubEvent}
-            onOpenBriefRevision={(revision) => setBriefRevisionRequest({ revision })}
+            onOpenBrief={openCurrentBrief}
           />
         );
       }
@@ -5457,6 +5464,7 @@ export function BuzzChatSurface({
       handleChoiceAnswer,
       handleChoiceSkip,
       handleOpenSystemIdentity,
+      openCurrentBrief,
       handleOpenCode,
       handleOpenMessageSource,
       handleReactToMessage,
@@ -5792,12 +5800,7 @@ export function BuzzChatSurface({
             the human's own request, inscribed rather than framed. The header
             carries a short corner name, so without this the objective survives
             only until the first message lands. */}
-          {isCorner && <CornerObjectiveLine objective={cornerObjectiveText} />}
-          {isCorner && <CornerBriefDisclosure brief={roomSurface?.cornerBrief} requestedRevision={briefRevisionRequest} validation={roomSurface?.cornerValidation} onOpenFile={(url) => {
-            void openExternalUrl(url).catch(() => {
-              Modal.alert('Could not open assignment file', 'Try opening the file again from this corner.');
-            });
-          }} />}
+          {isCorner && <CornerObjectiveLine objective={cornerObjectiveText} onOpenBrief={openCurrentBrief} />}
 
           {/* The corner's PR state, inscribed above the transcript: one line
             that links to GitHub, where review and merge happen. */}

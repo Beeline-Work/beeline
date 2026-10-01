@@ -477,6 +477,24 @@ describe('the full-screen artifact viewer (mock 1c)', () => {
     expect(renderer.root.findByType('MonoMarkdown').props.document).toBe(true);
   });
 
+  it('renders app-composed markdown (the corner brief) without fetching anything', () => {
+    mocks.fetchArtifactText.mockClear();
+    const renderer = render(
+      <ArtifactViewerScreen
+        markdown={{ title: 'Brief · revision 2', text: '# Spec\n\n> Approved.' }}
+        onClose={mocks.onClose}
+      />,
+    );
+    expect(renderer.root.findAllByType('Text' as any)[0].props.children).toBe('Brief · revision 2');
+    expect(renderer.root.findByProps({ testID: 'artifact-viewer-markdown' })).toBeDefined();
+    expect(renderer.root.findByType('MonoMarkdown').props).toMatchObject({
+      markdown: '# Spec\n\n> Approved.',
+      document: true,
+    });
+    expect(renderer.root.findAllByProps({ testID: 'artifact-viewer-copy' })).toHaveLength(0);
+    expect(mocks.fetchArtifactText).not.toHaveBeenCalled();
+  });
+
   it('lets the end of a code or markdown document scroll clear of the system navigation bar', async () => {
     const bottomPadding = (style: unknown) =>
       Object.assign({}, ...[style].flat(Infinity as 1)).paddingBottom;

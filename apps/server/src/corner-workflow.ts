@@ -74,7 +74,7 @@ export const CORNER_WORKFLOW_CONTRACT: WorkflowContract = {
     opened: {
       kind: 'server',
       requires: [],
-      on: { no_code: 'no_code_work', code: 'implement', research: 'investigate' },
+      on: { no_code: 'no_code_work', code: 'implement' },
     },
     // The opener's own turn. The only programmatic exit is a human asking for
     // the code upgrade.
@@ -86,8 +86,6 @@ export const CORNER_WORKFLOW_CONTRACT: WorkflowContract = {
       requires: ['branch', 'repositoryRoute', 'ciCallbackRegistered', 'mergeTarget'],
       on: { upgraded: 'implement' },
     },
-    // A research corner never merges; it only leaves through a human close.
-    investigate: { kind: 'waiting', role: 'implementer' },
     // The implementer's turn. A push reported by the GitHub webhook moves it
     // to checks. `rechecked` is a checks verdict on the same head arriving
     // after the one that sent the corner here (a re-run, or a reviewer
@@ -158,7 +156,7 @@ function loopCap(state: string): number {
   return loop.cap;
 }
 
-export type CornerLane = 'no_code' | 'code' | 'research';
+export type CornerLane = 'no_code' | 'code';
 
 /** Everything that can move a corner. Each adapter reports exactly one of these. */
 export type CornerEvent =
@@ -492,9 +490,6 @@ async function backfillRun(
   let outcome = derived.outcome;
   if (!terminalStatus(toState) && corner.lane === 'no_code') {
     toState = 'no_code_work';
-    outcome = undefined;
-  } else if (!terminalStatus(toState) && corner.lane === 'research') {
-    toState = 'investigate';
     outcome = undefined;
   } else if (toState === 'review') {
     if (await approvedCurrentHead(db, cornerId, corner)) {
@@ -1101,10 +1096,9 @@ async function approvingReviewer(
 /**
  * A person in the corner holding the merge: the newest human line saying hold
  * / do not merge, not followed by one saying resume / proceed / go ahead /
- * merge now. A research corner is always held.
+ * merge now.
  */
-async function cornerHeld(db: SqlDatabase, cornerId: string, lane: string): Promise<boolean> {
-  if (lane === 'research') return true;
+async function cornerHeld(db: SqlDatabase, cornerId: string): Promise<boolean> {
   const lines = await db.query<{ text: string }>(
     `SELECT message.text FROM messages message
      JOIN identities author ON author.id=message.author_id AND author.kind='human'
@@ -1183,7 +1177,7 @@ export async function cornerMergeGate(
     reviewerExists && !author
       ? (await approvingReviewer(db, { ...corner, cornerId, ...head })) === undefined
       : false;
-  const held = await cornerHeld(db, cornerId, corner.lane);
+  const held = await cornerHeld(db, cornerId);
   const isWorkerYolo = await workerYolo(db, cornerId);
   return {
     reviewerExists,

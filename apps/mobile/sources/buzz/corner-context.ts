@@ -34,8 +34,8 @@ export type RoomContextEntry = {
  * The corner's objective, as independently readable items — without treating
  * commas, code, or abbreviations as list boundaries.
  *
- * This is a compact navigation label only. The current structured brief's
- * verbatim intent and numbered criteria carry product authority. A plan
+ * This is a compact navigation label only. The corner brief's spec, with the
+ * human approval it carries, holds product authority. A plan
  * objective is only a compatibility fallback for corners opened before the
  * `task` tag shipped. A generated room name is never content.
  * An empty result means "say nothing" — never a placeholder, and never raw text.

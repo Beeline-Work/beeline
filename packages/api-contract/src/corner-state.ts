@@ -76,7 +76,7 @@ export function cornerRunFromLifecycle(input: {
  * | `implement` reached by `failing`            | review, checks-failed      |
  * | `ask_human`                                 | waiting, question          |
  * | `implement` reached by `failed`             | waiting, failed            |
- * | `opened`, `no_code_work`, `upgrade_to_code`, `investigate`, `implement` | waiting |
+ * | `opened`, `no_code_work`, `upgrade_to_code`, `implement` | waiting |
  */
 export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
   const run =

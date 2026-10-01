@@ -6,30 +6,27 @@ This document describes the shipped contract and its acceptance proof.
 
 ## Current contract
 
-Every new repository/code or research corner starts with a typed, human-authorized brief. A
-revision contains:
+Every new repository/code corner starts with a human-approved brief. A revision contains:
 
-- `intentVerbatim`: exact human message snapshots and their message IDs;
-- `buildSpec`: the synthesized Markdown implementation specification;
-- `criteria`: stable numbered IDs and their requirements;
-- `references`: object/message/URL references with explicit authority labels; and
-- `approvalBasis`: the exact initiating command or explicit answer that settled this material
-  scope.
+- `spec`: agent-written Markdown, at most 16000 characters. Intent quotes, the checklist,
+  non-goals and references are headings inside it;
+- `files`: the attachment manifest; and
+- `approval`: one human Room message id. The server resolves that message's exact text and author
+  (`resolveCornerBriefApproval`) and rejects an unknown or non-human message.
 
-The server checks every human snapshot against the source Room, requires the approval-basis
-message to remain in `intentVerbatim`, computes a deterministic revision hash, and commits the
-brief, corner, and initial worker command together. It automatically adds ready artifacts posted
-by the planner in that command turn to the manifest. The old `content` column is retained as a
-legacy `buildSpec` projection for pre-migration rows; it is not accepted as the contract for a new
-repository or research corner.
+The server commits the brief, corner, and initial worker command together and automatically adds
+ready artifacts posted by the planner in that command turn to the manifest. Revisions written before
+the trimmed brief keep their typed columns; on read they fold into one spec (`## Intent`,
+`## Checklist`, `## Non-goals`, `## References`, then the old build spec). Existing rows are never
+rewritten.
 
-A no-code corner that a person upgrades into the code lane is the one repository corner nobody
-typed a brief for, so the server composes its first revision inside that upgrade's own transaction
-(`composeCornerUpgradeBrief`, `apps/server/src/corner-brief.ts`). The one explicit human ask that
-triggered the upgrade is the whole `intentVerbatim` and the `approvalBasis`; everything said in the
-corner before it is carried into `buildSpec` as context rather than authority, because a chat corner
-holds superseded asks a worker could not rank. The row is authored by `@system`, never by the agent
-whose work it authorizes, and a corner that already holds revisions keeps them.
+A no-code corner upgraded into the code lane gets a placeholder revision 1 inside that upgrade's own
+transaction (`composeCornerUpgradeBrief`, `apps/server/src/corner-brief.ts`): the spec opens with
+`## Request` quoting the triggering human message, carries the earlier discussion as context, and is
+approved by that message. The row is authored by `@system`, never by the agent whose work it
+authorizes, and a corner that already holds revisions keeps them. The restarted code session reads
+the code, writes the real spec with `revise_corner_brief`, and asks the corner's opener to approve
+it. That approval is best effort and never enforced; no-code work never waits for it.
 
 Approval is proportional. An initiating command authorizes a revision only when it already settles
 the exact material scope. Otherwise the planner asks the human one specific unresolved choice and
@@ -42,10 +39,10 @@ failure modes, an acceptance/test map, automatic mock attachment, implementation
 and a bounded default-on adversarial second read. Findings return to the planner; only a material
 product choice goes to the human.
 
-Workers fetch and verify the current brief and files on every turn. Verbatim intent plus the current
-criteria are product authority; the short objective is navigation text only. Reviewers quote the
-verbatim intent with source IDs, report evidence for every current criterion ID, and separate
-product-completeness findings from engineering findings. Only a human-authorized revision may
+Workers fetch and verify the current brief and files on every turn. The spec's checklist is the
+scope and the approval quote wins any conflict; the short objective is navigation text only.
+Reviewers cite checklist lines for every finding and separate product-completeness findings from
+engineering findings. Only a human-authorized revision may
 remove a requirement.
 
 Merge approval is exact-head and exact-revision only. There is no patch-ID carry-over: whitespace,
@@ -53,8 +50,9 @@ line-ending, rename/mode-only, binary, and all other head changes require review
 The existing composite `pr_checks_status` gate remains the sole merge authority; validation-stage
 records are evidence, not authorization.
 
-The phone Assignment disclosure shows provenance, approval basis, current criteria and references,
-the current hash, and revision history. Brief enrichment still degrades independently of the core
+On the phone and in the desktop work pane, a Brief link on the objective line opens the latest
+revision full-screen in the in-app artifact viewer as Markdown: spec, approval quote, then files.
+There is no revision history in the viewer. Brief enrichment still degrades independently of the core
 Room read.
 
 ## Acceptance proof

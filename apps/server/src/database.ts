@@ -1611,9 +1611,6 @@ ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS open_idempotency_key text;
 -- so the default backfills them truthfully. The CHECK rides the same pattern
 -- as agent_turns_status_check: drop by generated name, re-add, idempotent.
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS lane text NOT NULL DEFAULT 'code';
-ALTER TABLE corner_facts DROP CONSTRAINT IF EXISTS corner_facts_lane_check;
-ALTER TABLE corner_facts ADD CONSTRAINT corner_facts_lane_check
-  CHECK (lane IN ('code', 'no_code', 'research'));
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'agent';
 ALTER TABLE corner_facts DROP CONSTRAINT IF EXISTS corner_facts_kind_check;
 ALTER TABLE corner_facts ADD CONSTRAINT corner_facts_kind_check
@@ -1629,6 +1626,20 @@ CREATE INDEX IF NOT EXISTS corner_facts_owner_agent_idx ON corner_facts(owner_ag
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS workflow_state text;
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS workflow_outcome text;
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS merge_attempt_head text;
+-- The research lane is gone: a research corner is a code corner, and its run
+-- leaves the removed investigate state for implement. Its newest handoff card
+-- is the run's state (corner-workflow.ts), so that card moves with it.
+UPDATE messages SET card=card || '{"toState":"implement"}'::jsonb
+  || CASE WHEN card->>'outcome'='research' THEN '{"outcome":"code"}'::jsonb ELSE '{}'::jsonb END
+  WHERE card_type='corner-workflow-handoff' AND card->>'toState'='investigate'
+    AND room_id IN (SELECT corner_id FROM corner_facts WHERE lane='research');
+UPDATE corner_facts SET workflow_state='implement',
+    workflow_outcome=CASE WHEN workflow_outcome='research' THEN 'code' ELSE workflow_outcome END
+  WHERE lane='research' AND workflow_state='investigate';
+UPDATE corner_facts SET lane='code' WHERE lane='research';
+ALTER TABLE corner_facts DROP CONSTRAINT IF EXISTS corner_facts_lane_check;
+ALTER TABLE corner_facts ADD CONSTRAINT corner_facts_lane_check
+  CHECK (lane IN ('code', 'no_code'));
 CREATE INDEX IF NOT EXISTS corner_facts_workflow_land_idx ON corner_facts(corner_id)
   WHERE workflow_state='land';
 CREATE INDEX IF NOT EXISTS corner_facts_commissioned_by_idx ON corner_facts(commissioned_by);
@@ -1650,8 +1661,8 @@ CREATE TABLE IF NOT EXISTS corner_brief_revisions (
 CREATE INDEX IF NOT EXISTS corner_brief_revisions_source_idx ON corner_brief_revisions(source_room_id);
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS source_message_id text;
 -- Structured authority was added after the original opaque content field.
--- Keep that column as the compatibility representation of build_spec; old rows
--- intentionally retain null authority fields and read back as legacy.
+-- Rows from before it keep null authority fields and read back as their
+-- build_spec alone.
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS intent_verbatim jsonb;
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS build_spec text;
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS criteria jsonb;
@@ -1659,7 +1670,13 @@ ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS non_goals jsonb;
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS brief_references jsonb;
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS approval_basis jsonb;
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS revision_hash text;
-UPDATE corner_brief_revisions SET build_spec=content WHERE build_spec IS NULL;
+UPDATE corner_brief_revisions SET build_spec=content
+  WHERE build_spec IS NULL AND content IS NOT NULL;
+-- The trimmed brief is one Markdown spec plus one approving message. New
+-- revisions write spec and approval_basis and leave content and the typed
+-- columns above NULL; older rows keep them and are folded into a spec on read.
+ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS spec text;
+ALTER TABLE corner_brief_revisions ALTER COLUMN content DROP NOT NULL;
 CREATE TABLE IF NOT EXISTS corner_validation_stages (
   corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   brief_revision integer NOT NULL,

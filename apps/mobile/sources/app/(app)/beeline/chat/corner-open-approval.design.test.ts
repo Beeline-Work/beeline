@@ -37,7 +37,9 @@ describe('corner-open approval card design contract', () => {
   it('holds the objective under the header for the life of the corner', () => {
     // Outside the transcript list, so it survives the first message rather than
     // scrolling away with the empty state.
-    expect(source).toContain('<CornerObjectiveLine objective={cornerObjectiveText} />');
+    expect(source).toContain(
+      '<CornerObjectiveLine objective={cornerObjectiveText} onOpenBrief={openCurrentBrief} />',
+    );
     expect(source).toContain('const cornerObjectiveText = useMemo(');
   });
 

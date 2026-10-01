@@ -3,7 +3,7 @@
  *
  * A real cursor-agent, in a real Room on a real monolith server, receives a
  * corrected discussion, posts a visual mock, and opens a corner with the
- * exact correction and initiating command in a typed brief. It must reach
+ * exact correction and initiating command quoted in its brief spec. It must reach
  * `beeline-agent post_artifact` and `open_corner` through the isolated
  * `mcp.json` the bridge writes — the field `session/new` used to drop. A
  * hermetic test that only asserts a file was written cannot catch cursor-agent
@@ -280,7 +280,7 @@ describe('a real cursor Room agent opens a corner through beeline-agent', () => 
         const commandMessageId = createHash('sha256')
           .update('cursor-open-corner-proof-command')
           .digest('hex');
-        const commandText = `@nerd The release-card scope is settled exactly by this command and the correction above. Create and post one self-contained HTML visual mock with an amber status label and Responsible owner. Then use beeline-agent open_corner to open Proof Corner. Pass a typed brief: intentVerbatim must preserve the exact correction (${correctionMessageId}) and this exact command (${commandMessageId}); buildSpec must describe the approved amber card; criteria must include stable IDs AC-1 for amber status and AC-2 for Responsible owner; references must label the posted mock as agent-recommendation; approvalBasis must be initiating-command with this message ID and this entire exact message snapshot. Do not manually copy the posted object's ID into attachments: same-turn artifact binding must add it automatically. Do not merely describe these tool calls; perform them.`;
+        const commandText = `@nerd The release-card scope is settled exactly by this command and the correction above. Create and post one self-contained HTML visual mock with an amber status label and Responsible owner. Then use beeline-agent open_corner to open Proof Corner. Pass a brief: its spec must quote the exact correction (${correctionMessageId}) and this exact command (${commandMessageId}) under ## Intent, have a ## Checklist with one line for the amber status and one for Responsible owner, and list the posted mock under ## References as an agent recommendation; its approval must be this message ID. Do not manually copy the posted object's ID into attachments: same-turn artifact binding must add it automatically. Do not merely describe these tool calls; perform them.`;
         await phone.execute(
           'sendRoomMessage',
           {
@@ -319,37 +319,20 @@ describe('a real cursor Room agent opens a corner through beeline-agent', () => 
             openedCornerId = corners.rows[0]!.id;
             expect(corners.rows[0]?.name.toLowerCase()).toMatch(/proof/);
             const brief = await database.query<{
-              build_spec: string;
-              intent_verbatim: { sourceMessageId: string; snapshot: string }[];
-              criteria: { id: string; text: string }[];
-              approval_basis: { kind: string; sourceMessageId: string; briefHash: string };
-              revision_hash: string;
+              spec: string;
+              approval_basis: { sourceMessageId: string; snapshot: string };
               attachments: { objectId: string; purpose: string; required: boolean }[];
             }>(
-              `SELECT build_spec,intent_verbatim,criteria,approval_basis,revision_hash,attachments
+              `SELECT spec,approval_basis,attachments
                FROM corner_brief_revisions WHERE corner_id=$1 AND revision=1`,
               [corners.rows[0]!.id],
             );
             const stored = brief.rows[0]!;
-            expect(stored.build_spec.toLowerCase()).toContain('amber');
-            expect(stored.intent_verbatim).toEqual(
-              expect.arrayContaining([
-                { sourceMessageId: correctionMessageId, snapshot: correctionText },
-                { sourceMessageId: commandMessageId, snapshot: commandText },
-              ]),
-            );
-            expect(stored.criteria).toEqual(
-              expect.arrayContaining([
-                expect.objectContaining({ id: 'AC-1' }),
-                expect.objectContaining({ id: 'AC-2' }),
-              ]),
-            );
+            expect(stored.spec).toContain('## Checklist');
+            expect(stored.spec.toLowerCase()).toContain('amber');
+            expect(stored.spec).toContain(correctionText);
             expect(stored.approval_basis).toEqual(
-              expect.objectContaining({
-                kind: 'initiating-command',
-                sourceMessageId: commandMessageId,
-                briefHash: stored.revision_hash,
-              }),
+              expect.objectContaining({ sourceMessageId: commandMessageId, snapshot: commandText }),
             );
             expect(stored.attachments).toEqual([expect.objectContaining({ required: true })]);
             const posted = await database.query<{ n: string }>(
@@ -391,7 +374,7 @@ describe('a real cursor Room agent opens a corner through beeline-agent', () => 
 
         // Stop the Room daemon immediately after assignment. A new daemon
         // instance must discover the already-durable corner command, create a
-        // fresh worker session, and restore the typed brief without help from
+        // fresh worker session, and restore the brief without help from
         // the planning session's context.
         abort.abort();
         await run.catch(() => undefined);
@@ -424,7 +407,7 @@ describe('a real cursor Room agent opens a corner through beeline-agent', () => 
         const revisionMessageId = createHash('sha256')
           .update('cursor-open-corner-proof-revision')
           .digest('hex');
-        const revisionText = `@nerd Midstream correction: replace the Responsible owner label with Account owner. Keep AC-1 unchanged, update AC-2 without renumbering it, retain the prior verbatim intent, add this exact message (${revisionMessageId}), and call revise_corner_brief with this entire exact message as explicit-human-answer plus a concise change description.`;
+        const revisionText = `@nerd Midstream correction: replace the Responsible owner label with Account owner. Keep the amber checklist line unchanged, update the owner line, keep the prior intent quotes, quote this exact message (${revisionMessageId}), and call revise_corner_brief with this message as the approval plus a concise change description.`;
         await phone.execute(
           'sendRoomMessage',
           {
@@ -439,10 +422,10 @@ describe('a real cursor Room agent opens a corner through beeline-agent', () => 
           async () => {
             const revision = await database.query<{
               revision: number;
-              build_spec: string;
+              spec: string;
               approval_basis: { kind: string; sourceMessageId: string; snapshot: string };
             }>(
-              `SELECT revision,build_spec,approval_basis
+              `SELECT revision,spec,approval_basis
                FROM corner_brief_revisions
                WHERE corner_id=$1
                ORDER BY revision DESC
@@ -450,7 +433,7 @@ describe('a real cursor Room agent opens a corner through beeline-agent', () => 
               [openedCornerId!],
             );
             expect(revision.rows[0]?.revision).toBeGreaterThanOrEqual(2);
-            expect(revision.rows[0]?.build_spec).toMatch(/Account owner/i);
+            expect(revision.rows[0]?.spec).toMatch(/Account owner/i);
             expect(revision.rows[0]?.approval_basis).toEqual(
               expect.objectContaining({
                 kind: 'explicit-human-answer',

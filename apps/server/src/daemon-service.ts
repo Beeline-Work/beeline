@@ -22,10 +22,11 @@ import type {
 import { CornerVerdictRejectedError, recordCornerMergeApproval } from './corner-merge-approval.js';
 import {
   CORNER_VALIDATION_STAGES,
+  CORNER_BRIEF_REVISION_SELECT,
+  type CornerBriefRow,
   composeCornerUpgradeBrief,
   cornerBriefRevisionHash,
   currentCornerBrief,
-  isStructuredCornerBrief,
   projectCornerBrief,
   resolveCornerBriefApproval,
   resolveCornerBriefAttachments,
@@ -2911,12 +2912,7 @@ export class DaemonService {
       closeRequested: row?.close_requested ?? false,
       // A row written before the lane existed reads back as its backfilled
       // default, never as an unknown third lane.
-      lane:
-        row?.lane === 'no_code'
-          ? ('no_code' as const)
-          : row?.lane === 'research'
-            ? ('research' as const)
-            : ('code' as const),
+      lane: row?.lane === 'no_code' ? ('no_code' as const) : ('code' as const),
       ...(row?.requester_handle ? { requesterHandle: row.requester_handle } : {}),
       ...(row?.lifecycle ? { lifecycle: row.lifecycle } : {}),
       ...(row?.pull_request_number && row.approval_head_sha
@@ -2940,12 +2936,10 @@ export class DaemonService {
     )
       throw new Error('invalid brief revision cursor');
     const rows = (
-      await this.database.query<Parameters<typeof projectCornerBrief>[1]>(
-        `SELECT revision,content,intent_verbatim,build_spec,criteria,non_goals,
-                brief_references,approval_basis,revision_hash,change,author_id,
-                source_room_id,source_message_id,attachments
-       FROM corner_brief_revisions WHERE corner_id=$1 AND ($2::integer IS NULL OR revision<$2)
-       ORDER BY revision DESC LIMIT 21`,
+      await this.database.query<CornerBriefRow>(
+        `${CORNER_BRIEF_REVISION_SELECT}
+       WHERE brief.corner_id=$1 AND ($2::integer IS NULL OR brief.revision<$2)
+       ORDER BY brief.revision DESC LIMIT 21`,
         [input.cornerId, input.beforeRevision ?? null],
       )
     ).rows;
@@ -6259,14 +6253,11 @@ export class DaemonService {
     // existing lane available without pretending it is repository work.
     const repositoryWork =
       input.lane !== 'no_code' &&
-      (input.lane === 'research' ||
-        Boolean(input.repository) ||
+      (Boolean(input.repository) ||
         parent.repository_resolution === 'repository' ||
         Boolean(parent.repository_key));
     if (repositoryWork && !input.brief)
-      throw new Error('a structured brief is required for repository and research corners');
-    if (input.brief && !isStructuredCornerBrief(input.brief))
-      throw new Error('the legacy opaque brief format is invalid for new corners');
+      throw new Error('a brief is required for repository corners');
     let cornerId: string = randomUUID();
     const opener = await this.identity(agentId);
     await this.database.transaction(async (db) => {
@@ -6285,24 +6276,14 @@ export class DaemonService {
           repository_key: string | null;
           repository_target_branch: string;
           lane: string;
-          brief_content: string | null;
-          brief_intent: import('@beeline/api-contract/daemon').CornerBrief['intentVerbatim'] | null;
-          brief_build_spec: string | null;
-          brief_criteria: import('@beeline/api-contract/daemon').CornerBrief['criteria'] | null;
-          brief_non_goals: string[] | null;
-          brief_references: import('@beeline/api-contract/daemon').CornerBrief['references'] | null;
-          brief_approval_basis:
-            import('@beeline/api-contract/daemon').CornerBrief['approvalBasis'] | null;
+          brief_revision: number | null;
           brief_revision_hash: string | null;
           brief_change: string | null;
           brief_attachments: import('@beeline/api-contract/daemon').CornerBriefAttachment[] | null;
         }>(
           `SELECT child.id::text corner_id,child.name,fact.objective,fact.owner_agent_id,
                   fact.request_id,child.repository_key,child.repository_target_branch,fact.lane,
-                  initial.content brief_content,initial.intent_verbatim brief_intent,
-                  initial.build_spec brief_build_spec,initial.criteria brief_criteria,
-                  initial.non_goals brief_non_goals,initial.brief_references,
-                  initial.approval_basis brief_approval_basis,
+                  initial.revision brief_revision,
                   initial.revision_hash brief_revision_hash,initial.change brief_change,
                   initial.attachments brief_attachments
            FROM rooms child
@@ -6328,13 +6309,12 @@ export class DaemonService {
               saved.required === item.required
             );
           });
-        const sameBrief =
-          input.brief && isStructuredCornerBrief(input.brief)
-            ? existing.brief_revision_hash ===
-                cornerBriefRevisionHash(input.brief, existing.brief_attachments ?? []) &&
-              existing.brief_change === (input.brief.change ?? null) &&
-              sameAttachments
-            : existing.brief_content === null;
+        const sameBrief = input.brief
+          ? existing.brief_revision_hash ===
+              cornerBriefRevisionHash(input.brief, existing.brief_attachments ?? []) &&
+            existing.brief_change === (input.brief.change ?? null) &&
+            sameAttachments
+          : existing.brief_revision === null;
         if (
           existing.owner_agent_id !== agentId ||
           existing.request_id !== input.requestId ||
@@ -6419,8 +6399,6 @@ export class DaemonService {
         ],
       );
       if (input.brief) {
-        if (!isStructuredCornerBrief(input.brief))
-          throw new Error('new corners cannot use the legacy opaque brief format');
         const sourceRoomIds = [...new Set([roomId, commandRoomId])];
         const explicitAttachments = await resolveCornerBriefAttachments(
           db,
@@ -6447,24 +6425,18 @@ export class DaemonService {
         );
         await db.query(
           `INSERT INTO corner_brief_revisions(
-             corner_id,revision,content,intent_verbatim,build_spec,criteria,non_goals,
-             brief_references,approval_basis,revision_hash,change,author_id,
+             corner_id,revision,spec,approval_basis,revision_hash,change,author_id,
              source_room_id,source_message_id,attachments
-           ) VALUES($1,1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+           ) VALUES($1,1,$2,$3,$4,$5,$6,$7,$8,$9)`,
           [
             cornerId,
-            input.brief.buildSpec.trim(),
-            JSON.stringify(input.brief.intentVerbatim),
-            input.brief.buildSpec.trim(),
-            JSON.stringify(input.brief.criteria),
-            JSON.stringify(input.brief.nonGoals ?? []),
-            JSON.stringify(input.brief.references),
+            input.brief.spec.trim(),
             JSON.stringify(authority.approvalBasis),
             authority.revisionHash,
             input.brief.change ?? null,
             agentId,
             authority.sourceRoomId,
-            input.brief.approvalBasis.sourceMessageId,
+            input.brief.approval.sourceMessageId,
             JSON.stringify(attachments),
           ],
         );
@@ -6509,8 +6481,6 @@ export class DaemonService {
   }
   private async reviseCornerBrief(input: Input<'reviseCornerBrief'>, agentId: string) {
     validateCornerBrief(input.brief);
-    if (!isStructuredCornerBrief(input.brief))
-      throw new Error('corner brief revisions require the structured authority contract');
     const draft = input.brief;
     if (!draft.change?.trim())
       throw new Error('corner brief revision requires a change description');
@@ -6561,25 +6531,19 @@ export class DaemonService {
       const revision = input.expectedRevision + 1;
       await db.query(
         `INSERT INTO corner_brief_revisions(
-           corner_id,revision,content,intent_verbatim,build_spec,criteria,non_goals,
-           brief_references,approval_basis,revision_hash,change,author_id,
+           corner_id,revision,spec,approval_basis,revision_hash,change,author_id,
            source_room_id,source_message_id,attachments
-         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
         [
           input.cornerId,
           revision,
-          draft.buildSpec.trim(),
-          JSON.stringify(draft.intentVerbatim),
-          draft.buildSpec.trim(),
-          JSON.stringify(draft.criteria),
-          JSON.stringify(draft.nonGoals ?? []),
-          JSON.stringify(draft.references),
+          draft.spec.trim(),
           JSON.stringify(authority.approvalBasis),
           authority.revisionHash,
           draft.change?.trim() ?? null,
           agentId,
           authority.sourceRoomId,
-          draft.approvalBasis.sourceMessageId,
+          draft.approval.sourceMessageId,
           JSON.stringify(attachments),
         ],
       );
@@ -6719,12 +6683,6 @@ export class DaemonService {
   }
   private async archiveCorner(cornerId: string, agentId: string) {
     const parentId = await this.database.transaction(async (database) => {
-      const fact = await database.query<{ lane: string }>(
-        `SELECT lane FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
-        [cornerId],
-      );
-      if (fact.rows[0]?.lane === 'research')
-        throw new Error('research corners require a human to close them');
       return (await closeCornerState(database, cornerId)).parentId;
     });
     this.live.publish({ type: 'invalidate', roomId: cornerId, reason: 'corner', agentId });
@@ -6838,7 +6796,7 @@ export class DaemonService {
         await ensureSystemIdentity(db);
         const draft = await composeCornerUpgradeBrief(db, cornerId, {
           sourceMessageId: command.source_message_id,
-          snapshot: requester.text,
+          text: requester.text,
         });
         const authority = await resolveCornerBriefApproval(
           db,
@@ -6849,16 +6807,12 @@ export class DaemonService {
         );
         await db.query(
           `INSERT INTO corner_brief_revisions(
-             corner_id,revision,content,intent_verbatim,build_spec,criteria,non_goals,
-             brief_references,approval_basis,revision_hash,author_id,
+             corner_id,revision,spec,approval_basis,revision_hash,author_id,
              source_room_id,source_message_id,attachments
-           ) VALUES($1,1,$2,$3,$4,$5,'[]'::jsonb,'[]'::jsonb,$6,$7,$8,$9,$10,'[]'::jsonb)`,
+           ) VALUES($1,1,$2,$3,$4,$5,$6,$7,'[]'::jsonb)`,
           [
             cornerId,
-            draft.buildSpec.trim(),
-            JSON.stringify(draft.intentVerbatim),
-            draft.buildSpec.trim(),
-            JSON.stringify(draft.criteria),
+            draft.spec.trim(),
             JSON.stringify(authority.approvalBasis),
             authority.revisionHash,
             SYSTEM_IDENTITY_ID,

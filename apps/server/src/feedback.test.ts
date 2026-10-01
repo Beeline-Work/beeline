@@ -735,7 +735,6 @@ describe('triage corner: sibling fix corners and its sweep schedule', () => {
         [turn.requestId],
       )
     ).rows[0]!.source_message_id;
-    const intent = { sourceMessageId: trigger, snapshot: '@sweeper sweep' };
     const { cornerId } = (await daemon().execute(
       'createCorner',
       {
@@ -745,11 +744,8 @@ describe('triage corner: sibling fix corners and its sweep schedule', () => {
         objective: 'Fix beeline-feedback issue #123',
         lane: 'no_code',
         brief: {
-          buildSpec: 'Fix GitHub issue Beeline-Work/beeline#123: the grant card stays pending.',
-          intentVerbatim: [intent],
-          criteria: [{ id: 'AC-1', text: 'Issue #123 no longer reproduces' }],
-          references: [],
-          approvalBasis: { kind: 'initiating-command', ...intent },
+          spec: 'Fix GitHub issue Beeline-Work/beeline#123: the grant card stays pending.\n\n## Checklist\n\n- AC-1: Issue #123 no longer reproduces',
+          approval: { sourceMessageId: trigger },
         },
       } as never,
       TRIAGE,
@@ -761,12 +757,12 @@ describe('triage corner: sibling fix corners and its sweep schedule', () => {
     ).rows[0]!;
     expect(created.parent_id).toBe(ROOM);
     const brief = (
-      await database.query<{ build_spec: string }>(
-        `SELECT build_spec FROM corner_brief_revisions WHERE corner_id=$1 AND revision=1`,
+      await database.query<{ spec: string }>(
+        `SELECT spec FROM corner_brief_revisions WHERE corner_id=$1 AND revision=1`,
         [cornerId],
       )
     ).rows[0]!;
-    expect(brief.build_spec).toContain('#123');
+    expect(brief.spec).toContain('#123');
     // The open card lands in the parent Room, where the sibling is listed.
     const card = await database.query(
       `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='daemon-fact' AND card->>'cornerId'=$2`,

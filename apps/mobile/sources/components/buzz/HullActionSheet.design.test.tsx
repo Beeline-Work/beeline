@@ -41,6 +41,7 @@ vi.mock('react-native', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
+    Keyboard: { addListener: () => ({ remove: () => undefined }) },
     Modal: host('Modal'),
     Platform: { OS: 'ios' },
     Pressable: host('Pressable'),
@@ -80,8 +81,10 @@ vi.mock('./HullDialog', async () => {
   return { HullFloatingSurface: host('HullFloatingSurface'), HullModal: host('HullModal') };
 });
 
+vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
+
 import { ChevronGlyph } from './ChevronGlyph';
-import { HULL_SHEET_INSET, HullActionSheetRow } from './HullActionSheet';
+import { HULL_SHEET_INSET, HullActionSheet, HullActionSheetRow } from './HullActionSheet';
 
 const originalConsoleError = console.error;
 
@@ -325,5 +328,43 @@ describe('sheet row trailing vocabulary (C102)', () => {
     expect(
       renderer.root.findAll((node: any) => node.props?.accessibilityRole === 'button'),
     ).toHaveLength(0);
+  });
+});
+
+describe('sheet title', () => {
+  it('is a plain header unless the sheet makes it a button', () => {
+    const plain = render(
+      <HullActionSheet title="#beeline" titleTestID="title">
+        {null}
+      </HullActionSheet>,
+    );
+    const header = plain.root.find(
+      (node: any) => node.props?.testID === 'title' && typeof node.type === 'string',
+    );
+    expect(header.type).toBe('Text');
+    expect(header.props.accessibilityRole).toBe('header');
+  });
+
+  it('runs the press it is given, e.g. opening the Room rename editor', () => {
+    const onTitlePress = vi.fn();
+    const renderer = render(
+      <HullActionSheet
+        onTitlePress={onTitlePress}
+        title="#beeline"
+        titleAccessibilityLabel="Rename #beeline"
+        titleTestID="title"
+      >
+        {null}
+      </HullActionSheet>,
+    );
+    const title = renderer.root.find(
+      (node: any) => node.props?.testID === 'title' && typeof node.type === 'string',
+    );
+    expect(title.type).toBe('Pressable');
+    expect(title.props.accessibilityRole).toBe('button');
+    expect(title.props.accessibilityLabel).toBe('Rename #beeline');
+    expect(title.findByType('Text' as any).props.children).toBe('#beeline');
+    act(() => title.props.onPress());
+    expect(onTitlePress).toHaveBeenCalledOnce();
   });
 });

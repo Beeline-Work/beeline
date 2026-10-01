@@ -32,6 +32,10 @@ type HullActionSheetProps = {
   subtitle?: string;
   testID?: string;
   title?: string;
+  /** Makes the title a button, e.g. a Room's name that opens its rename editor. */
+  onTitlePress?: () => void;
+  titleAccessibilityLabel?: string;
+  titleTestID?: string;
 };
 
 /**
@@ -68,11 +72,14 @@ export function HullActionSheet({
   scrollBody = true,
   grip = true,
   navigation,
+  onTitlePress,
   sticky,
   style,
   subtitle,
   testID,
   title,
+  titleAccessibilityLabel,
+  titleTestID,
 }: HullActionSheetProps) {
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
@@ -120,8 +127,17 @@ export function HullActionSheet({
         </View>
       ) : null}
       {navigation}
-      {title ? (
-        <Text accessibilityRole="header" style={styles.title}>
+      {title && onTitlePress ? (
+        <Pressable
+          accessibilityLabel={titleAccessibilityLabel}
+          accessibilityRole="button"
+          onPress={onTitlePress}
+          testID={titleTestID}
+        >
+          <Text style={styles.title}>{title}</Text>
+        </Pressable>
+      ) : title ? (
+        <Text accessibilityRole="header" style={styles.title} testID={titleTestID}>
           {title}
         </Text>
       ) : null}
@@ -306,6 +322,9 @@ type HullActionSheetModalProps = {
   scrimTestID?: string;
   testID?: string;
   title?: string;
+  onTitlePress?: () => void;
+  titleAccessibilityLabel?: string;
+  titleTestID?: string;
   subtitle?: string;
   visible: boolean;
 };
@@ -320,11 +339,14 @@ export function HullActionSheetModal({
   modalTestID,
   navigation,
   onClose,
+  onTitlePress,
   scrimTestID,
   sticky,
   subtitle,
   testID,
   title,
+  titleAccessibilityLabel,
+  titleTestID,
   visible,
 }: HullActionSheetModalProps) {
   const insets = useSafeAreaInsets();
@@ -349,7 +371,10 @@ export function HullActionSheetModal({
         style={{ paddingBottom: Math.max(insets.bottom, 10) }}
         subtitle={subtitle}
         testID={testID}
+        onTitlePress={onTitlePress}
         title={title}
+        titleAccessibilityLabel={titleAccessibilityLabel}
+        titleTestID={titleTestID}
       >
         {children}
       </HullActionSheet>

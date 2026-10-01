@@ -65,7 +65,7 @@ BEELINE_REAL_CURSOR_TOOL_PROOF=1 \
   npm run prove:corner-brief-acceptance
 ```
 
-The command fails closed for its live-harness boundary: without the opt-in that boundary is skipped with a printed notice and the deterministic server/body/mobile boundaries still run, so a normal review worktree can run the proof; the complete proof (real native Cursor session included) requires the env vars above. The mobile boundary is likewise skipped with a notice when the worktree has no isolated `apps/mobile` install (`npm run mobile:install`); the phone tests run where mobile is installed. It combines these boundaries in
+The command fails closed for its live-harness boundary: without the opt-in that boundary is skipped with a printed notice and the deterministic server/body/mobile boundaries still run, so a normal review worktree can run the proof; the complete proof (real native Cursor session included) requires the env vars above. The mobile boundary is likewise skipped with a notice when the worktree has no isolated `apps/mobile` install (`npm run mobile:install`); the phone tests run where mobile is installed. The command builds the full workspace export closure itself (the same dependency chain BODY SUITE uses) before any deterministic boundary, so a bare `npm ci` worktree needs no hand bootstrap, and the server/body boundaries run with generous explicit test timeouts so a cold or shared machine does not blow the vitest default. It combines these boundaries in
 one fixture:
 
 1. Server HTTP/database tests preserve a long corrected discussion, bind an actual posted object to

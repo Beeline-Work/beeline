@@ -1,9 +1,9 @@
 import React from 'react';
 import type { ChatListItem } from '@beeline/buzz-client';
 
-/** One of the viewer's own corners in this Room is waiting on a person. */
+/** One of the corners in this Room owes the viewer something they have not opened it to see. */
 export function roomHasMineWaiting(item: ChatListItem): boolean {
-  return (item.openCorners ?? []).some((corner) => corner.mine && corner.state === 'waiting');
+  return (item.openCorners ?? []).some((corner) => corner.attention);
 }
 
 export function mineWaitingRooms(chats: readonly ChatListItem[]): ReadonlySet<string> {
@@ -11,9 +11,9 @@ export function mineWaitingRooms(chats: readonly ChatListItem[]): ReadonlySet<st
 }
 
 /**
- * Open a Room's corner dropdown when one of the viewer's corners there starts
- * waiting, and close it once none is. Rooms whose waiting did not change keep
- * whatever the viewer toggled.
+ * Open a Room's corner dropdown when one of the corners there starts waiting
+ * on the viewer, and close it once none is unseen. Rooms whose waiting did
+ * not change keep whatever the viewer toggled.
  */
 export function nextExpandedRooms(
   expanded: ReadonlySet<string>,

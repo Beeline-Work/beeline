@@ -43,6 +43,7 @@ import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { MemberRosterRow } from '@/components/buzz/MemberRosterRow';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
 import { navigateToRoom } from '@/buzz/corner-navigation';
+import { displayModel } from '@/buzz/model-display';
 import { MonoButton } from '@/components/buzz/MonoHull';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { MEMBERS_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
@@ -1060,7 +1061,9 @@ export default function BuzzMembers({
                           <Text style={styles.axisValue} numberOfLines={1}>
                             {working === 'model-catalog' && kind === 'effort'
                               ? 'Refreshing…'
-                              : (current ?? UNSET_VALUE)}
+                              : kind === 'model' && current
+                                ? displayModel(current)
+                                : (current ?? UNSET_VALUE)}
                           </Text>
                           {(selectedAgent.modelUnavailable === kind ||
                             selectedAgent.modelUnavailable === 'selection') && (
@@ -1109,7 +1112,11 @@ export default function BuzzMembers({
                                 ]}
                                 testID={`model-option-${kind}-${choice.id}`}
                               >
-                                <Text style={styles.choiceText}>{choice.name ?? choice.id}</Text>
+                                <Text style={styles.choiceText}>
+                                  {kind === 'model'
+                                    ? displayModel(choice.name ?? choice.id)
+                                    : (choice.name ?? choice.id)}
+                                </Text>
                                 {choice.id === current && <Text style={styles.choiceText}>✓</Text>}
                               </TouchableOpacity>
                             ))}

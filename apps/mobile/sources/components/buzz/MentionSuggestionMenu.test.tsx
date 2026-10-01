@@ -126,13 +126,10 @@ describe('MentionSuggestionMenu', () => {
     expect(flat(row.props.style).height).toBe(MENTION_ROW_HEIGHT);
     expect(MENTION_ROW_HEIGHT).toBe(44);
     expect(row.findByType('IdentityMark' as never).props.size).toBe(24);
-    const [identity] = row.findAll(
-      (node: any) => node.type === 'View' && flat(node.props.style)?.flexDirection === 'row',
-    );
-    expect(flat(identity.props.style).flexDirection).toBe('row');
-    const [handle, role] = identity.findAllByType('Text' as never);
+    const [handle, role] = row.findAllByType('Text' as never);
     expect(handle.props.children).toEqual(['@', 'ada']);
-    expect(handle.props.numberOfLines).toBe(1);
+    expect(handle.props.numberOfLines).toBeUndefined();
+    expect(flat(handle.props.style).flexShrink).toBe(0);
     expect(flat(handle.props.style).fontSize).toBe(typeRoles.meta.fontSize);
     expect(role.props.children).toBe('admin');
     expect(role.props.numberOfLines).toBe(1);
@@ -151,25 +148,26 @@ describe('MentionSuggestionMenu', () => {
     ).toContain('Everyone in this Room');
   });
 
-  it('shows an agent as its handle, then model by @owner, without repeating its name', () => {
+  it('shows an agent as its full handle and model without provider or owner', () => {
     const agent: RoomRosterParticipant = {
       pubkey: 'a-niglet',
       name: 'Niglet',
-      handle: 'niglet',
+      handle: 'nigletverylonghandle',
       kind: 'agent',
       agent: { pubkey: 'a-niglet', displayName: 'Niglet' },
-      model: 'claude-opus-5-5',
+      model: 'openrouter/anthropic/claude-opus-5-5',
       ownerHandle: 'lunchboxfortwo',
     };
     const renderer = render(menu({ matches: [agent], overflow: 0 }));
-    const row = renderer.root.findByProps({ testID: 'mention-suggestion-niglet' });
+    const row = renderer.root.findByProps({ testID: 'mention-suggestion-nigletverylonghandle' });
     const words = row
       .findAllByType('Text' as never)
       .map((text: any) => [text.props.children].flat().join(''));
-    expect(words).toEqual(['@niglet', 'claude-opus-5-5 · by @lunchboxfortwo']);
-    expect(row.props.accessibilityLabel).toBe(
-      '@niglet, claude-opus-5-5 · by @lunchboxfortwo, agent',
-    );
+    expect(words).toEqual(['@nigletverylonghandle', 'claude-opus-5-5']);
+    expect(row.props.accessibilityLabel).toBe('@nigletverylonghandle, claude-opus-5-5, agent');
+    const handle = row.findAllByType('Text' as never)[0];
+    expect(handle.props.numberOfLines).toBeUndefined();
+    expect(flat(handle.props.style).flexShrink).toBe(0);
   });
 
   it('shows a person as their handle, then Room role, like an agent row', () => {

@@ -12,6 +12,7 @@ import { PageHeader } from './PageHeader';
 import { ProfileActions } from './ProfileActions';
 import { Typography } from '@/constants/Typography';
 import { SoulPortraitControls } from './SoulPortraitControls';
+import { displayModel } from '@/buzz/model-display';
 
 export function AgentProfileView({
   detail,
@@ -189,7 +190,7 @@ export function AgentProfileView({
             />
             <SettingsRow
               title="Model / difficulty"
-              value={`${label(model, modelAxis)} / ${label(effort, effortAxis)}`}
+              value={`${displayModel(label(model, modelAxis))} / ${label(effort, effortAxis)}`}
             />
             {editing && (
               <TextInput

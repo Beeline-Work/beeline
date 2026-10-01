@@ -340,10 +340,15 @@ export async function startWorkflow(
     const roleBindings: Record<string, string> = {};
     const roleAgents: Record<string, string[]> = {};
     for (const role of contract.roles) {
-      const agents = roleAgentList(input.roleBindings[role]!);
+      const raw = input.roleBindings[role]!;
+      const agents = roleAgentList(
+        Array.isArray(raw)
+          ? await Promise.all(raw.map((entry) => resolveHandleBinding(db, command.room_id, entry)))
+          : await resolveHandleBinding(db, command.room_id, raw),
+      );
       if (!agents) {
         throw new Error(
-          `role binding for ${role} must be an agent id or a list of 1-${WORKFLOW_ROLE_AGENTS_MAX} distinct agent ids`,
+          `role binding for ${role} must be an agent id or @handle, or a list of 1-${WORKFLOW_ROLE_AGENTS_MAX} distinct ones`,
         );
       }
       if (agents.length === 1) roleBindings[role] = agents[0]!;
@@ -685,6 +690,25 @@ export async function reassignFailedWorkflowRole(
   await reassignRole(db, { roomId: input.roomId, runId: run.runId, run, contract, role, picked });
 }
 
+/** An `@handle` binding entry resolved to that Room member's id; anything else is returned unchanged. */
+async function resolveHandleBinding(db: SqlDatabase, roomId: string, entry: string): Promise<string> {
+  return typeof entry === 'string' && entry.startsWith('@') ? memberIdForHandle(db, roomId, entry) : entry;
+}
+
+/** The identity id of the current Room member with this handle (as agents see it in their member list). */
+async function memberIdForHandle(db: SqlDatabase, roomId: string, raw: string): Promise<string> {
+  const handle = raw.replace(/^@/, '');
+  const row = (
+    await db.query<{ identity_id: string }>(
+      `SELECT m.identity_id FROM memberships m JOIN identities i ON i.id=m.identity_id
+       WHERE m.room_id=$1 AND m.removed_at IS NULL AND lower(i.handle)=lower($2)`,
+      [roomId, handle],
+    )
+  ).rows[0];
+  if (!row) throw new Error(`@${handle} is not a current member of this Room`);
+  return row.identity_id;
+}
+
 /**
  * A human's explicit override: bind a specific agent to a list-bound role
  * this run is currently on — the "ask a human" recovery path when nobody on
@@ -700,11 +724,14 @@ export async function assignWorkflowRole(
 ): Promise<{ runId: string; state: string }> {
   if (typeof input.runId !== 'string' || !input.runId) throw new Error('runId is required');
   if (typeof input.role !== 'string' || !input.role) throw new Error('role is required');
-  if (!isAgentIdentityReference(input.targetAgentId)) {
-    throw new Error('targetAgentId must be an agent identity');
+  if (typeof input.targetAgentId !== 'string' || !input.targetAgentId) {
+    throw new Error('targetAgentId is required');
   }
   return database.transaction(async (db) => {
     await lockWorkflowRun(db, input.runId);
+    const targetAgentId = isAgentIdentityReference(input.targetAgentId)
+      ? input.targetAgentId
+      : await memberIdForHandle(db, command.room_id, input.targetAgentId);
     const run = await loadRun(db, command.room_id, input.runId);
     if (!run) throw new Error('workflow run is unavailable in this Room');
     const contract = await loadPinnedContract(db, command.room_id, run.workflowSlug, run.workflowVersion);
@@ -723,10 +750,10 @@ export async function assignWorkflowRole(
       `SELECT 1 FROM memberships member
        JOIN identities identity ON identity.id=member.identity_id AND identity.kind='agent'
        WHERE member.room_id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL`,
-      [command.room_id, input.targetAgentId],
+      [command.room_id, targetAgentId],
     );
     if (!member.rowCount) {
-      throw new Error(`${input.targetAgentId} is not a current agent member of this Room`);
+      throw new Error(`${targetAgentId} is not a current agent member of this Room`);
     }
     await reassignRole(db, {
       roomId: command.room_id,
@@ -734,7 +761,7 @@ export async function assignWorkflowRole(
       run,
       contract,
       role: input.role,
-      picked: input.targetAgentId,
+      picked: targetAgentId,
     });
     return { runId: run.runId, state: run.toState };
   });

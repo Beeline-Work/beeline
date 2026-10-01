@@ -8,6 +8,8 @@ import {
 } from '@beeline/api-contract/daemon';
 import type { SqlDatabase } from './database.js';
 
+/** Most files one brief revision may carry. */
+const CORNER_BRIEF_ATTACHMENT_LIMIT = 16;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const CORNER_VALIDATION_STAGES: readonly CornerValidationStageName[] = [
   'intent',
@@ -41,7 +43,8 @@ export function validateCornerBrief(draft: CornerBriefDraft): void {
   const attachments = draft.attachments;
   if (!Array.isArray(attachments) && attachments !== undefined)
     throw new Error('corner brief attachments must be a list');
-  if ((attachments?.length ?? 0) > 16) throw new Error('corner brief has too many attachments');
+  if ((attachments?.length ?? 0) > CORNER_BRIEF_ATTACHMENT_LIMIT)
+    throw new Error('corner brief has too many attachments');
   const ids = new Set<string>();
   for (const item of attachments ?? []) {
     const normalizedId = item?.objectId?.toLowerCase();
@@ -240,9 +243,38 @@ export async function composeCornerUpgradeBrief(
     .slice(0, UPGRADE_DISCUSSION_CANDIDATES)
     .reverse()
     .filter((row) => row.id !== request.sourceMessageId);
+  // Files posted in the discussion (a spec doc, a mock) reach the code agent
+  // only through the brief: a turn downloads the brief's files, never an older
+  // message's. The newest that are still available, in posting order.
+  const files = (
+    await db.query<{ object_id: string }>(
+      `SELECT object_id FROM (
+         SELECT DISTINCT ON (o.id) o.id::text object_id,message.created_at,message.id
+         FROM messages message
+         CROSS JOIN LATERAL jsonb_array_elements(message.attachments) a
+         JOIN objects o ON o.owner_id=message.author_id
+           AND (a->>'url' LIKE '%/v1/media/' || o.id::text OR a->>'mediaId'=o.id::text)
+         WHERE message.room_id=$1 AND message.presentation='message'
+           AND message.deleted_at IS NULL
+           AND o.state='ready' AND o.expires_at>now()
+         ORDER BY o.id,message.created_at DESC,message.id DESC
+       ) posted
+       ORDER BY created_at DESC,id DESC LIMIT $2`,
+      [cornerId, CORNER_BRIEF_ATTACHMENT_LIMIT],
+    )
+  ).rows.reverse();
   return {
     spec: upgradeSpec(discussion, request.text, olderHistory),
     approval: { sourceMessageId: request.sourceMessageId },
+    ...(files.length
+      ? {
+          attachments: files.map((file) => ({
+            objectId: file.object_id,
+            purpose: 'Posted in the corner discussion before the upgrade',
+            required: false,
+          })),
+        }
+      : {}),
   };
 }
 

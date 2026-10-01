@@ -111,6 +111,7 @@ import { collapsePermissionCards } from '@beeline/push-gateway/projection';
 import { deriveCornerState } from './corner-state.js';
 import { advanceCorner } from './corner-workflow.js';
 import { chatCornerCounts } from './chat-corner-counts.js';
+import { cornerOwedLateralSql } from './corner-owed.js';
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
 import { retireAgentFromWorkspace, settleGrantCard } from './agent-retirement.js';
 import { ensureFirstRoom, firstAccessibleRoomId } from './first-room.js';
@@ -362,6 +363,9 @@ interface CornerRow extends RoomRow {
   latest_author_kind: 'human' | 'agent' | null;
   latest_author_name: string | null;
   latest_tags_viewer: boolean | null;
+  /** `cornerOwedLateralSql`'s facts; null on the archived page, which skips them. */
+  owed: boolean | null;
+  owed_viewer: boolean | null;
   /** `archived_at` in whole microseconds, exact, for the archived page cursor. */
   archived_us: string | null;
   agent_id: string | null;
@@ -1345,12 +1349,16 @@ export class PhoneService {
           commissioned_by_viewer: boolean | null;
           latest_tags_viewer: boolean | null;
           latest_created_at: Date | null;
+          owed: boolean;
+          owed_viewer: boolean;
+          attention: boolean;
         }>(
           `SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,f.workflow_state,f.workflow_outcome,
            turn.status latest_turn_status,
            initiator.id=$2 commissioned_by_viewer,
            $2=ANY(${taggedIdentityIdsSql('lm')}) latest_tags_viewer,
-           lm.created_at latest_created_at
+           lm.created_at latest_created_at,
+           owed.owed,owed.owed_viewer,owed.attention
          FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
          LEFT JOIN identities initiator
            ON initiator.id=f.commissioned_by AND initiator.kind='human'
@@ -1359,6 +1367,7 @@ export class PhoneService {
            SELECT status FROM agent_turns WHERE room_id=c.id
            ORDER BY created_at DESC LIMIT 1
          ) turn ON true
+         ${cornerOwedLateralSql('c', '$2')}
          WHERE c.parent_id=ANY($1::uuid[]) AND c.archived_at IS NULL AND EXISTS (
            SELECT 1 FROM memberships member WHERE member.room_id=c.id
              AND member.identity_id=$2 AND member.removed_at IS NULL
@@ -1685,7 +1694,7 @@ export class PhoneService {
     );
     const cornerLifecyclePromise = cornerRead(
       'lifecycle',
-      () => this.cornerLifecycle(room.id),
+      () => this.cornerLifecycle(room.id, viewerId),
       undefined,
     );
     // One await for every read, so none can reject unobserved behind another.
@@ -1841,7 +1850,8 @@ export class PhoneService {
           }
         : {}),
       repositoryResolution: (parent ?? room).repository_resolution,
-      ...(cornerLifecycle ? { cornerLifecycle } : {}),
+      ...(cornerLifecycle ? { cornerLifecycle: cornerLifecycle.lifecycle } : {}),
+      ...(cornerLifecycle?.owed !== undefined ? { cornerOwed: cornerLifecycle.owed } : {}),
       ...(cornerApps.length ? { cornerApps } : {}),
       ...(boundApp && boundManifest
         ? {
@@ -2304,6 +2314,7 @@ export class PhoneService {
         turn.status latest_turn_status,turn.created_at latest_turn_created_at,
         app_binding.installation_id app_installation_id,
         app_binding.instance_id app_instance_id,app_installation.manifest app_manifest,
+        ${archived ? 'NULL::boolean owed,NULL::boolean owed_viewer' : 'owed.owed,owed.owed_viewer'},
         ${archivedMicros}::text archived_us
       FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
       LEFT JOIN identities initiator
@@ -2325,6 +2336,7 @@ export class PhoneService {
       ) turn ON true
       LEFT JOIN corner_app_bindings app_binding ON app_binding.corner_id=c.id
       LEFT JOIN corner_app_installations app_installation ON app_installation.id=app_binding.installation_id
+      ${archived ? '' : cornerOwedLateralSql('c', '$2')}
       WHERE c.parent_id=$1 AND c.archived_at IS ${archived ? 'NOT NULL' : 'NULL'} AND EXISTS(
         SELECT 1 FROM memberships viewer
         WHERE viewer.room_id=c.id AND viewer.identity_id=$2 AND viewer.removed_at IS NULL
@@ -2350,6 +2362,7 @@ export class PhoneService {
           ? { run: { state: corner.workflow_state, outcome: corner.workflow_outcome ?? undefined } }
           : {}),
         lifecycle,
+        ...(corner.owed !== null ? { owed: corner.owed } : {}),
       });
       const header = roomHeader(corner, this.publicOrigin);
       const about = header.about ?? (corner.objective?.trim() || undefined);
@@ -2365,9 +2378,10 @@ export class PhoneService {
         // `updated_at` moves with any later write, so the closure stamp reads
         // the archive time itself rather than the row's last touch.
         ...(corner.archived_at ? { closedAt: unix(corner.archived_at) } : {}),
-        // A corner awaits the viewer when it is parked on a person and its
-        // latest message tags them.
-        ...(corner.latest_tags_viewer && (derived.state === 'waiting' || derived.state === 'review')
+        // A corner awaits the viewer when it owes them something, or it is
+        // parked on a person and its latest message tags them.
+        ...(corner.owed_viewer ||
+        (corner.latest_tags_viewer && (derived.state === 'waiting' || derived.state === 'review'))
           ? { awaitsViewer: true as const }
           : {}),
         ...(corner.initiator_id && corner.initiator_name
@@ -8655,15 +8669,23 @@ export class PhoneService {
       toolRows: cornerActivityMessages,
     };
   }
-  private async cornerLifecycle(roomId: string) {
-    return (
-      (
-        await this.database.query<{ lifecycle: NonNullable<RoomView['cornerLifecycle']> }>(
-          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
-          [roomId],
-        )
-      ).rows[0]?.lifecycle ?? { lifecycle: 'unknown' as const, checks: 'unknown' as const }
-    );
+  private async cornerLifecycle(roomId: string, viewerId: string) {
+    const row = (
+      await this.database.query<{
+        lifecycle: NonNullable<RoomView['cornerLifecycle']> | null;
+        owed: boolean;
+      }>(
+        `SELECT f.lifecycle,owed.owed FROM rooms c
+         LEFT JOIN corner_facts f ON f.corner_id=c.id
+         ${cornerOwedLateralSql('c', '$2')}
+         WHERE c.id=$1`,
+        [roomId, viewerId],
+      )
+    ).rows[0];
+    return {
+      lifecycle: row?.lifecycle ?? { lifecycle: 'unknown' as const, checks: 'unknown' as const },
+      ...(row ? { owed: row.owed } : {}),
+    };
   }
 }
 

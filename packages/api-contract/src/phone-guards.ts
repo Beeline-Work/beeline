@@ -758,6 +758,7 @@ function readMessageCorner(value: unknown): NonNullable<RoomViewMessage['corner'
     !uuid(item.id) ||
     (item.state !== 'working' &&
       item.state !== 'waiting' &&
+      item.state !== 'idle' &&
       item.state !== 'review' &&
       item.state !== 'archived')
   ) {
@@ -1158,7 +1159,7 @@ function readLatest(value: unknown): NonNullable<ChatListItem['latestMessage']> 
 
 function readChatCorner(value: unknown): ChatListCorner | null {
   const item = record(value);
-  const state = oneOf(item?.state, ['working', 'waiting', 'review']);
+  const state = oneOf(item?.state, ['working', 'waiting', 'idle', 'review']);
   if (!item || !uuid(item.id) || typeof item.name !== 'string' || !state) return null;
   return {
     id: item.id,
@@ -1166,6 +1167,7 @@ function readChatCorner(value: unknown): ChatListCorner | null {
     state,
     ...field('mine', item.mine === true ? (true as const) : undefined),
     ...field('waitingSince', integer(item.waitingSince) ? item.waitingSince : undefined),
+    ...field('attention', item.attention === true ? (true as const) : undefined),
   };
 }
 
@@ -1310,6 +1312,7 @@ function readCorner(value: unknown): CornerListItem | null {
     !corner ||
     (item.state !== 'working' &&
       item.state !== 'waiting' &&
+      item.state !== 'idle' &&
       item.state !== 'review' &&
       item.state !== 'archived')
   ) {
@@ -1507,6 +1510,7 @@ export function readRoomView(value: unknown): RoomView | null {
     ...field('cornerPlan', readPlan(item.cornerPlan)),
     ...field('repository', readRepository(item.repository)),
     ...field('cornerLifecycle', readCornerLifecycle(item.cornerLifecycle)),
+    ...field('cornerOwed', typeof item.cornerOwed === 'boolean' ? item.cornerOwed : undefined),
     ...field('cornerApps', readList(item.cornerApps, readCornerApp, 24)),
     ...field('boundApp', readCornerAppBinding(item.boundApp)),
   };

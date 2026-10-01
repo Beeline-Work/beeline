@@ -23,7 +23,6 @@ const messageSheet = sheet('testID="message-actions-sheet"', 'message actions sh
 
 const ROOM_ROWS = [
   'room-participant-roster-trigger',
-  'rename-room-action',
   'room-github-events-toggle',
   'room-schedules-action',
   'delete-room-action',
@@ -155,7 +154,6 @@ describe('Room and corner actions sheets', () => {
   it('keeps values and section-head capitals out of the row titles', () => {
     expect(chat).toContain('label="Repo notifications"');
     expect(chat).toContain('label="Scheduled work"');
-    expect(chat).toContain('label="Rename"');
     expect(chat).toContain('label="Members"');
     expect(chat).toContain('<RoomReviewerActions');
     // The old titles crammed the value and the verb into the label, and the
@@ -198,7 +196,6 @@ describe('Room and corner actions sheets', () => {
 
   it('leaves every action wired to exactly what it called before', () => {
     expect(row(roomSheet, 'room-participant-roster-trigger')).toContain('setRosterVisible(true)');
-    expect(row(roomSheet, 'rename-room-action')).toContain('startRenameFromTitle()');
     expect(row(roomSheet, 'room-github-events-toggle')).toContain(
       'onPress={() => void handleToggleGitHubEvents()}',
     );
@@ -211,6 +208,19 @@ describe('Room and corner actions sheets', () => {
     // A rename in flight still holds the sheet open against the scrim.
     expect(chat).toContain('dismissOnBackdrop={!renameBusy}');
     expect(chat).toContain('const closeRoomActions = useCallback(() => {');
+  });
+
+  it('renames the Room from its name at the top of the sheet, not from a Rename row', () => {
+    expect(chat).not.toContain('rename-room-action');
+    expect(roomSheet).not.toContain('label="Rename"');
+    expect(chat).toMatch(
+      /onTitlePress=\{canRenameTitle \? startRenameFromTitle : undefined\}\s*testID="room-actions-sheet"/,
+    );
+    expect(roomSheet).toContain('titleAccessibilityLabel={`Rename ${displayRoomName}`}');
+    // The editor opens at the top of the sheet, under the name that was tapped.
+    expect(roomSheet.indexOf('testID="rename-room-editor"')).toBeLessThan(
+      roomSheet.indexOf('slot="body"'),
+    );
   });
 
   it('opens the message actions sheet from the row long press with the same list', () => {

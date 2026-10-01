@@ -1,4 +1,5 @@
 import type { CornerBrief, DaemonOperationMap } from '@beeline/api-contract/daemon';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 import { boundRoomTaskBody, budgetTranscript } from './transcript-budget.js';
 
@@ -31,7 +32,6 @@ export const PROMPT_SURFACES = [
   'dm',
   'code-corner',
   'review-corner',
-  'research-corner',
   'no-code-corner',
 ] as const;
 export type PromptSurface = (typeof PROMPT_SURFACES)[number];
@@ -39,7 +39,6 @@ export type PromptSurface = (typeof PROMPT_SURFACES)[number];
 const CORNERS: readonly PromptSurface[] = [
   'code-corner',
   'review-corner',
-  'research-corner',
   'no-code-corner',
 ];
 const EVERYWHERE: readonly PromptSurface[] = PROMPT_SURFACES;
@@ -107,13 +106,13 @@ export interface SectionReport {
 // the same words and for tests.
 // ---------------------------------------------------------------------------
 
-export const CORNER_AUTHOR_CONTRACT = `The current assigned brief's verbatim human intent and numbered acceptance criteria are the product authority. The short objective is navigation-only text and cannot add, remove, or narrow a requirement.
-Implement every current acceptance criterion and use the brief's file manifest. Record relevant validation stages with record_validation_stage against the current revision and head, citing actual commands or observed behavior. Do not call a missing stage passed.
+export const CORNER_AUTHOR_CONTRACT = `The current brief's spec is the scope and its checklist says what done means. Its approval quote is the human's own words and wins any conflict with the spec. The short objective is navigation-only text and cannot add, remove, or narrow a requirement.
+Complete every checklist item in the current spec and use the brief's file manifest. Record relevant validation stages with record_validation_stage against the current revision and head, citing actual commands or observed behavior. Do not call a missing stage passed.
 When a human correction changes the assignment, read the latest revision and use revise_corner_brief with the complete updated brief and a change description before doing dependent work. A chat reply does not revise the assignment.
 Before any code, write its end-user story in one sentence: "a person who does X sees Y".
-Follow the beeline-triage skill's bugfix execution contract when the verbatim human intent reports a defect.
+Follow the beeline-triage skill's bugfix execution contract when the spec or its approval quote reports a defect.
 Attempt to reproduce it as triage isolated it, using every tool the host offers: emulator, Playwright, browser, test runner. Record what was tried and what was observed. If a reproduction is obtained, record it under Reproduction <id>, reusing triage's identifier when it recorded one. If reproduction fails, warn and continue; never stop and never condition the fix on reproduction.
-Narrow the fix to the authorized intent and current criteria. When a reproduction exists, change only what removes it while satisfying those criteria.
+Narrow the fix to the current spec and its approval quote. When a reproduction exists, change only what removes it while meeting the checklist.
 Before opening the pull request, produce Y against the built change: run the app or affected service from your branch and perform X.
 If no interactive surface is reachable, run the narrowest test or script that exercises the exact user path and prints the observable Y.
 A unit test of an inner function, a log line, or reading the code is not a demonstration.
@@ -121,7 +120,7 @@ The pull request body MUST contain two sections with exactly these headings: ## 
 Under ## Reproduced, name Reproduction <id> and give the steps or command and what was observed; write "not obtained" when reproduction failed, or "not a defect report" for feature work.
 Under ## Demonstrated, cite the same identifier and show that reproduction now passing when one exists; when none was obtained, state that plainly and show the regression instead.
 A pull request without both sections is not deliverable and the Room's reviewer will fail it.
-Change only what the verbatim intent and current criteria authorize. No unrequested features, flags, compatibility shims, or refactors.`;
+Change only what the current spec and its approval quote authorize. No unrequested features, flags, compatibility shims, or refactors.`;
 
 export const CORNER_REVIEWER_SESSION_INSTRUCTION =
   "You are this Room's configured reviewer. The active turn prompt names the latest stable green PR head. Review and approve only that exact head; if no stable green head is named, end the turn without a verdict. Never merge yourself.";
@@ -135,17 +134,25 @@ export const CORNER_DELIVERY_NUDGE =
 export const CORNER_YOLO_MERGE_NUDGE =
   'Yolo is on. Call pr_checks_status now. If checks="failed", fix the failure and push. If checks="unknown", reply in this corner with the tool reason and stop instead of retrying. Otherwise stop: the server merges this pull request itself once mergeAllowed=true. Never merge it yourself.';
 
-export const RESEARCH_CORNER_HOLD =
-  'This is a research corner with writable repository access. Investigate and edit files as needed. Do not commit, push, or open a pull request until a human explicitly directs that step. Never merge. Leave the corner open; only a human closes it.';
-
 /** Shared verbatim between the upgrade_corner_to_code tool description
  *  (`read-only-mcp.ts`) and this corner's own no-code prompt clause below, so
  *  the two surfaces can never say something different. The agent decides when
- *  the work needs repository changes; nobody has to ask for the upgrade. The
- *  server still requires the turn to answer a human message in this corner,
- *  because that message is the approval the upgraded corner's brief quotes. */
+ *  the work needs the repository; nobody has to ask. The
+ *  server still requires the turn to answer a human message in this corner:
+ *  it writes a placeholder brief revision quoting that message, and the code
+ *  session then writes the real spec (`CORNER_PLACEHOLDER_BRIEF_RULE`). */
 export const UPGRADE_INTENT_RULE =
-  "Call this on your own judgment when the work in this corner needs repository changes; nobody has to ask for the upgrade. Call it while answering a human message in this corner, because that message becomes the code corner's brief.";
+  'Call this on your own judgment when the work in this corner needs the repository; nobody has to ask. Call it while answering a human message in this corner, then write the brief in the restarted code session.';
+
+/** Appended to a code corner's turn.brief only while the current brief is the
+ *  upgrade's placeholder (revision 1 by the system identity). Approval is best effort:
+ *  nothing enforces it, and no-code work never waits on it. */
+export const CORNER_PLACEHOLDER_BRIEF_RULE =
+  "This brief is the placeholder the upgrade wrote from the request. Read the code, write the real spec with revise_corner_brief, then post it in this corner and ask the corner's opener to approve it before editing. This is best effort: if the opener is away or the request was already explicit, use your judgment and proceed. When the opener replies, record their reply as the approval in the next revision.";
+
+export function isPlaceholderCornerBrief(brief: CornerBrief): boolean {
+  return brief.revision === 1 && brief.authorId === SYSTEM_IDENTITY_ID;
+}
 
 /** Shared verbatim into the search_memory tool description (`read-only-mcp.ts`)
  *  so it is the one place this rule is stated. Meaning-based matching finds a
@@ -375,7 +382,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     render: () =>
       [
         'Repository changes happen only in a corner. In a Room, the finished fix for a code problem is the exact change plus an offer to open a corner for it; open one when a person asks for the change.',
-        'Before opening one, consult beeline-triage and beeline-spec, then call open_corner with a name of at most three words, an objective of at most 24 words, and the typed brief. The objective only titles the work; the brief is its authority. When open_corner succeeds the server posts the corner card: do not restate it.',
+        'Before opening one, consult beeline-triage and beeline-spec, then call open_corner with a name of at most three words, an objective of at most 24 words, and the brief (a spec plus the approving message). The objective only titles the work; the brief is its authority. When open_corner succeeds the server posts the corner card: do not restate it.',
         'For corners you belong to, use inspect_corner for status, steer_corner to pass Room input down, and ask_corner for one answer. Never post into a corner without a Room command.',
       ].join(' '),
   },
@@ -424,7 +431,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     why: 'The agent must know its branch and target; only a code-corner author is told to push and open the pull request.',
     budgetBytes: 520,
     layer: 'surface',
-    surfaces: ['code-corner', 'review-corner', 'research-corner'],
+    surfaces: ['code-corner', 'review-corner'],
     render: ({ worktree, surface }) =>
       [
         `You are in an isolated git worktree on ${worktree?.featureBranch ?? 'the feature branch'}, targeting ${worktree?.targetBranch ?? 'the target branch'}.`,
@@ -434,15 +441,6 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
       ]
         .filter(Boolean)
         .join('\n'),
-  },
-  {
-    id: 'corner.research',
-    topic: 'merge',
-    why: 'Research corners explore; nothing leaves the worktree until a human says so.',
-    budgetBytes: 320,
-    layer: 'surface',
-    surfaces: ['research-corner'],
-    render: () => RESEARCH_CORNER_HOLD,
   },
   {
     id: 'corner.contract',
@@ -565,45 +563,10 @@ export function assembleSessionPrompt(context: SessionPromptContext): AssembledS
 // ---------------------------------------------------------------------------
 
 export function renderAssignedCornerBrief(brief: CornerBrief): string {
-  if (brief.legacy || !Array.isArray(brief.intentVerbatim) || !Array.isArray(brief.criteria)) {
-    return `Legacy assigned corner brief ${brief.id} revision ${brief.revision}:\n${brief.content}`;
-  }
-  const intent = brief.intentVerbatim
-    .map((item) => `- [message ${item.sourceMessageId}] ${item.snapshot}`)
-    .join('\n');
-  const criteria = brief.criteria.map((item) => `- ${item.id}: ${item.text}`).join('\n');
-  const nonGoals = brief.nonGoals?.map((item) => `- ${item}`).join('\n') || '(none)';
-  const references =
-    brief.references
-      ?.map(
-        (item) =>
-          `- ${item.label} [${item.authority}]${item.objectId ? ` object ${item.objectId}` : ''}: ${item.description}`,
-      )
-      .join('\n') || '(none)';
-  const basis = brief.approvalBasis;
-  const approval =
-    basis.kind === 'legacy-pre-migration'
-      ? basis.reason
-      : `${basis.kind} by ${basis.approvedBy}, message ${basis.sourceMessageId}: ${basis.snapshot}`;
-  return `Assigned corner brief ${brief.id} revision ${brief.revision} (hash ${brief.revisionHash}; current server revision):
-
-Verbatim human intent — authoritative:
-${intent}
-
-Current acceptance criteria — authoritative:
-${criteria}
-
-Non-goals:
-${nonGoals}
-
-References and authority:
-${references}
-
-Approval basis bound to this revision:
-${approval}
-
-Build spec — implementation guidance:
-${brief.buildSpec}`;
+  const approval = brief.approval
+    ? `Approved by ${brief.approval.approverName}, message ${brief.approval.sourceMessageId}: ${brief.approval.text}`
+    : 'This revision predates recorded approvals.';
+  return `Brief revision ${brief.revision}:\n${brief.spec}\n\n${approval}`;
 }
 
 /**
@@ -612,14 +575,20 @@ ${brief.buildSpec}`;
  */
 export function roomMentionDirectory(roster: WorkspaceRoster, selfId: string): string {
   const rows: string[] = [];
+  let selfHandle: string | undefined;
   for (const member of roster.members) {
-    if (member.identityId === selfId) continue;
+    if (member.identityId === selfId) {
+      selfHandle = member.handle?.trim().replace(/^@/, '');
+      continue;
+    }
     const memberHandle = member.handle?.trim().replace(/^@/, '');
     if (!memberHandle) continue;
     const name = member.name?.trim() ?? '';
     const kind = member.kind === 'agent' ? 'agent' : 'person';
     rows.push(`- @${memberHandle}${name && name !== memberHandle ? ` — ${name}` : ''} (${kind})`);
   }
+  // Without this line an agent reading the list concludes it is not a member.
+  if (selfHandle) rows.push(`You are @${selfHandle}, a member of this Room; you are not listed above.`);
   if (!rows.length) return '';
   return ['Members (exact tag spellings):', ...rows].join('\n');
 }
@@ -631,6 +600,8 @@ export interface TurnPromptContext {
   /** `AssembledSessionPrompt.turnPrefix`. */
   readonly sessionPrefix?: string;
   readonly objective?: string;
+  /** The corner's current name, set only while it is still the generated one it opened under. */
+  readonly generatedTitle?: string;
   readonly brief?: {
     readonly brief: CornerBrief;
     readonly fileLines: readonly string[];
@@ -683,15 +654,27 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
       objective ? `Corner objective (navigation only, not product authority): ${objective}` : '',
   },
   {
+    id: 'turn.rename',
+    topic: 'corner-rename',
+    why: 'A generated corner name says nothing about the work; only the server knows the name is still generated, so the ask rides only on those turns.',
+    budgetBytes: 600,
+    layer: 'turn',
+    surfaces: CORNERS,
+    render: ({ generatedTitle }) =>
+      generatedTitle
+        ? `This corner still has its generated name, "${generatedTitle}". If the newest message states the work, call rename_corner once before you reply, with a name of at most three words taken from that message. A bare mention does not state the work; leave the name until a message does.`
+        : '',
+  },
+  {
     id: 'turn.brief',
     topic: 'brief',
     why: 'The brief is the product authority for corner work; a corner without one says so once.',
     budgetBytes: 24_000,
     layer: 'turn',
     surfaces: CORNERS,
-    render: ({ brief }) =>
+    render: ({ brief, surface }) =>
       brief
-        ? `${renderAssignedCornerBrief(brief.brief)}\n\nAssigned files:\n${brief.fileLines.join('\n') || '(none)'}${brief.missingRequiredFile ? '\nRequired assignment files are unavailable. Pause work that depends on them and report the missing file precisely.' : ''}`
+        ? `${renderAssignedCornerBrief(brief.brief)}\n\nAssigned files:\n${brief.fileLines.join('\n') || '(none)'}${brief.missingRequiredFile ? '\nRequired assignment files are unavailable. Pause work that depends on them and report the missing file precisely.' : ''}${surface === 'code-corner' && isPlaceholderCornerBrief(brief.brief) ? `\n\n${CORNER_PLACEHOLDER_BRIEF_RULE}` : ''}`
         : 'No assigned brief: the human messages in this corner are the authority; skip steps that need a brief revision.',
   },
   {

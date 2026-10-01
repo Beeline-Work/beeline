@@ -45,8 +45,6 @@ export interface SessionConfigInput {
   mcpServers?: readonly string[] | undefined;
   /** Reviewer identity baked into a corner session's Git workflow prompt. */
   reviewerHandle?: string | undefined;
-  /** A corner's Feedback triage setting, which changes its mounted tools. */
-  feedbackTriage?: boolean | undefined;
 }
 
 export function sessionConfigFingerprint(input: SessionConfigInput): string {
@@ -61,7 +59,6 @@ export function sessionConfigFingerprint(input: SessionConfigInput): string {
     mountedMcpSet(input.mcpServers),
   ];
   if (input.reviewerHandle !== undefined) fingerprint.push(input.reviewerHandle);
-  if (input.feedbackTriage) fingerprint.push('feedback-triage');
   return JSON.stringify(fingerprint);
 }
 

@@ -38,6 +38,8 @@ import {
   type GrantRequestCardView,
   type InviteView,
   type MessageReactionView,
+  type RoomHistoryOutline,
+  type RoomHistoryOutlineDay,
   type RoomHistoryView,
   type RoomRepositoryResolution,
   type RoomRepositoryView,
@@ -778,6 +780,7 @@ function readMessageCorner(value: unknown): NonNullable<RoomViewMessage['corner'
     !uuid(item.id) ||
     (item.state !== 'working' &&
       item.state !== 'waiting' &&
+      item.state !== 'idle' &&
       item.state !== 'review' &&
       item.state !== 'archived')
   ) {
@@ -1178,7 +1181,7 @@ function readLatest(value: unknown): NonNullable<ChatListItem['latestMessage']> 
 
 function readChatCorner(value: unknown): ChatListCorner | null {
   const item = record(value);
-  const state = oneOf(item?.state, ['working', 'waiting', 'review']);
+  const state = oneOf(item?.state, ['working', 'waiting', 'idle', 'review']);
   if (!item || !uuid(item.id) || typeof item.name !== 'string' || !state) return null;
   return {
     id: item.id,
@@ -1186,6 +1189,7 @@ function readChatCorner(value: unknown): ChatListCorner | null {
     state,
     ...field('mine', item.mine === true ? (true as const) : undefined),
     ...field('waitingSince', integer(item.waitingSince) ? item.waitingSince : undefined),
+    ...field('attention', item.attention === true ? (true as const) : undefined),
   };
 }
 
@@ -1330,6 +1334,7 @@ function readCorner(value: unknown): CornerListItem | null {
     !corner ||
     (item.state !== 'working' &&
       item.state !== 'waiting' &&
+      item.state !== 'idle' &&
       item.state !== 'review' &&
       item.state !== 'archived')
   ) {
@@ -1527,6 +1532,7 @@ export function readRoomView(value: unknown): RoomView | null {
     ...field('cornerPlan', readPlan(item.cornerPlan)),
     ...field('repository', readRepository(item.repository)),
     ...field('cornerLifecycle', readCornerLifecycle(item.cornerLifecycle)),
+    ...field('cornerOwed', typeof item.cornerOwed === 'boolean' ? item.cornerOwed : undefined),
     ...field('cornerApps', readList(item.cornerApps, readCornerApp, 24)),
     ...field('boundApp', readCornerAppBinding(item.boundApp)),
   };
@@ -1560,6 +1566,64 @@ export function readRoomHistoryView(value: unknown): RoomHistoryView | null {
 
 export function isRoomHistoryView(value: unknown): value is RoomHistoryView {
   return readRoomHistoryView(value) !== null;
+}
+
+const OUTLINE_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+function readRoomHistoryOutlineDay(value: unknown): RoomHistoryOutlineDay | null {
+  const item = record(value);
+  const first = record(item?.first);
+  if (
+    !item ||
+    !first ||
+    typeof item.day !== 'string' ||
+    !OUTLINE_DAY.test(item.day) ||
+    !integer(item.count) ||
+    item.count < 1 ||
+    !hex64(first.id) ||
+    !integer(first.createdAt) ||
+    typeof first.authorName !== 'string'
+  )
+    return null;
+  const authorHandle = typeof first.authorHandle === 'string' ? first.authorHandle : undefined;
+  return {
+    day: item.day,
+    count: item.count,
+    first: {
+      id: first.id,
+      createdAt: first.createdAt,
+      authorName: first.authorName,
+      ...field('authorHandle', authorHandle),
+    },
+  };
+}
+
+export function readRoomHistoryOutline(value: unknown): RoomHistoryOutline | null {
+  const item = record(value);
+  if (
+    !item ||
+    !uuid(item.roomId) ||
+    !nonempty(item.timeZone) ||
+    !integer(item.total) ||
+    !Array.isArray(item.days)
+  )
+    return null;
+  // One dropped day would misplace every day marker older than it.
+  const days = readList(item.days, readRoomHistoryOutlineDay) ?? [];
+  if (days.length !== item.days.length) return null;
+  const newest = record(item.newest);
+  if (item.newest !== undefined && (!newest || !hex64(newest.id) || !integer(newest.createdAt)))
+    return null;
+  return {
+    roomId: item.roomId,
+    timeZone: item.timeZone,
+    total: item.total,
+    ...field(
+      'newest',
+      newest ? { id: newest.id as string, createdAt: newest.createdAt as number } : undefined,
+    ),
+    days,
+  };
 }
 
 export function readWorkspaceListView(value: unknown): WorkspaceListView | null {

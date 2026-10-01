@@ -6,17 +6,19 @@ import type { AgentCommand } from '@beeline/api-contract/daemon';
 import { agentToolsFor, callAgentTool, reportFeedback } from './read-only-mcp.js';
 import { CommandExecutionContext } from './server-command-intake.js';
 
-const TRIAGE_TOOLS = [
+/** Retired with the Feedback triage setting: triage is the saved feedback-triage workflow. */
+const RETIRED_TRIAGE_TOOLS = [
   'list_feedback',
   'get_feedback',
   'list_feedback_issues',
   'file_feedback_issue',
   'attach_feedback_to_issue',
   'dismiss_feedback',
+  'set_feedback_triage',
 ];
 
 describe('feedback tools', () => {
-  it('offers report_feedback on every surface, memory rollout or not', () => {
+  it('offers report_feedback and notify_feedback_fixed on every surface and no triage tool anywhere', () => {
     const surfaces = {
       room: agentToolsFor(true, false),
       dm: agentToolsFor(true, true),
@@ -28,7 +30,9 @@ describe('feedback tools', () => {
     for (const [surface, tools] of Object.entries(surfaces)) {
       const names = tools.map((tool) => tool.name);
       expect(names, surface).toContain('report_feedback');
-      for (const name of TRIAGE_TOOLS) expect(names, surface).not.toContain(name);
+      // The server decides who may send a Fixed DM, on every call.
+      expect(names, surface).toContain('notify_feedback_fixed');
+      for (const name of RETIRED_TRIAGE_TOOLS) expect(names, surface).not.toContain(name);
     }
     const report = surfaces.room.find((tool) => tool.name === 'report_feedback')!;
     expect(report.inputSchema.properties).not.toHaveProperty('prompt_section_ids');
@@ -41,27 +45,8 @@ describe('feedback tools', () => {
     ]);
   });
 
-  it('mounts the triage tools only in a Feedback triage corner', () => {
-    const triageCorner = agentToolsFor(true, false, true, false, true, false, true, false, true);
-    const names = triageCorner.map((tool) => tool.name);
-    for (const name of TRIAGE_TOOLS) expect(names).toContain(name);
-    // Every corner opens sibling corners; the triage corner uses that for fixes.
-    expect(names).toContain('open_corner');
-    // The setting is a corner's; a Room or DM turn never gets triage tools from it.
-    for (const tools of [
-      agentToolsFor(true, false, false, false, true, false, true, false, true),
-      agentToolsFor(true, true, false, false, true, false, true, false, true),
-    ])
-      for (const name of TRIAGE_TOOLS) expect(tools.map((tool) => tool.name)).not.toContain(name);
-  });
-
-  it('offers set_feedback_triage in every corner turn and nowhere else', () => {
-    // A Room admin asks the corner's agent; there is no switch in the app.
-    expect(agentToolsFor(true, false, true).map((tool) => tool.name)).toContain(
-      'set_feedback_triage',
-    );
-    for (const tools of [agentToolsFor(true, false), agentToolsFor(true, true)])
-      expect(tools.map((tool) => tool.name)).not.toContain('set_feedback_triage');
+  it('still opens sibling fix corners from any corner, with no setting', () => {
+    expect(agentToolsFor(true, false, true).map((tool) => tool.name)).toContain('open_corner');
   });
 });
 
@@ -123,44 +108,31 @@ describe('report_feedback', () => {
     expect(JSON.parse(readFileSync(context.path, 'utf8')).promptSectionIds).toHaveLength(3);
   });
 
-  it('sends every triage call, reads included, with the turn it runs in', async () => {
-    answer = () => Response.json({ items: [], issues: [], repository: 'o/r' });
-    for (const [tool, args] of [
-      ['list_feedback', {}],
-      ['get_feedback', { item_ids: ['fb_1'] }],
-      ['list_feedback_issues', {}],
-      ['dismiss_feedback', { item_ids: ['fb_1'], reason: 'noise' }],
-    ] as const)
-      await callAgentTool(tool, args as never, 'call-1');
-    expect(calls.map((call) => call.name)).toEqual([
-      'listFeedback',
-      'getFeedback',
-      'listFeedbackIssues',
-      'dismissFeedback',
-    ]);
-    for (const call of calls)
-      expect(call.input, call.name).toMatchObject({
-        roomId: 'room-1',
-        requestId: 'request-1',
-        generationId: context.generationId,
-      });
-  });
-
-  it('sends set_feedback_triage with the turn it runs in', async () => {
-    answer = () => Response.json({ cornerId: 'corner-1', enabled: true });
-    expect(await callAgentTool('set_feedback_triage', { enabled: true }, 'call-1')).toBe(
-      'Feedback triage is on for this corner; the triage tools load on your next turn here.',
-    );
-    expect(calls).toHaveLength(1);
-    expect(calls[0]).toMatchObject({
-      name: 'setCornerFeedbackTriage',
-      input: {
-        roomId: 'room-1',
-        enabled: true,
-        requestId: 'request-1',
-        generationId: context.generationId,
+  it('sends notify_feedback_fixed with the turn it runs in', async () => {
+    answer = () => Response.json({ resolved: 2, notified: 1 });
+    const result = await callAgentTool(
+      'notify_feedback_fixed',
+      {
+        item_ids: ['fb_1', 'fb_2'],
+        title: 'Grant card resolves',
+        pr_url: 'https://github.com/Beeline-Work/beeline/pull/7',
       },
-    });
+      'call-1',
+    );
+    expect(JSON.parse(result)).toEqual({ resolved: 2, notified: 1 });
+    expect(calls).toEqual([
+      {
+        name: 'notifyFeedbackFixed',
+        input: expect.objectContaining({
+          roomId: 'room-1',
+          itemIds: ['fb_1', 'fb_2'],
+          title: 'Grant card resolves',
+          prUrl: 'https://github.com/Beeline-Work/beeline/pull/7',
+          requestId: 'request-1',
+          generationId: context.generationId,
+        }),
+      },
+    ]);
   });
 
   it('returns a refusal as a result instead of failing the turn', async () => {

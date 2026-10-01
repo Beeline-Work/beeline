@@ -38,7 +38,6 @@ describe('deriveCornerState from the workflow run', () => {
     ['opened', undefined, { state: 'waiting' }],
     ['no_code_work', undefined, { state: 'waiting' }],
     ['upgrade_to_code', 'upgrade_requested', { state: 'waiting' }],
-    ['investigate', undefined, { state: 'waiting' }],
     ['implement', 'code', { state: 'waiting' }],
     ['implement', 'no_reviewer', { state: 'waiting' }],
     ['implement', 'changes_requested', { state: 'waiting' }],
@@ -64,5 +63,25 @@ describe('deriveCornerState from the workflow run', () => {
     expect(deriveCornerState({ archived: true, turnRunning: false, run: { state: 'review' } })).toEqual({
       state: 'archived',
     });
+  });
+});
+
+describe('deriveCornerState with the owed fact', () => {
+  it.each([
+    ['opened', undefined],
+    ['no_code_work', undefined],
+    ['upgrade_to_code', 'upgrade_requested'],
+    ['implement', 'code'],
+  ] as const)('%s reads idle with nothing owed and waiting with something owed', (state, outcome) => {
+    const run = { state, ...(outcome ? { outcome } : {}) };
+    expect(deriveCornerState({ archived: false, turnRunning: false, run, owed: false })).toEqual({ state: 'idle' });
+    expect(deriveCornerState({ archived: false, turnRunning: false, run, owed: true })).toEqual({ state: 'waiting' });
+    // A projection that cannot tell keeps it waiting, so nothing owed is hidden.
+    expect(deriveCornerState({ archived: false, turnRunning: false, run })).toEqual({ state: 'waiting' });
+  });
+
+  it('keeps blocked runs waiting even with nothing owed', () => {
+    expect(deriveCornerState({ archived: false, turnRunning: false, run: { state: 'ask_human' }, owed: false })).toEqual({ state: 'waiting', reason: 'question' });
+    expect(deriveCornerState({ archived: false, turnRunning: false, run: { state: 'implement', outcome: 'failed' }, owed: false })).toEqual({ state: 'waiting', reason: 'failed' });
   });
 });

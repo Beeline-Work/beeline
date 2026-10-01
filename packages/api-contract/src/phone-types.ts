@@ -83,7 +83,7 @@ export type CornerLifecycleView = {
 
 /** The server-owned corner state vocabulary. Clients render this field; they
  * never derive a second state from lifecycle, PR, check, or turn facts. */
-export type CornerState = 'working' | 'waiting' | 'review' | 'archived';
+export type CornerState = 'working' | 'waiting' | 'idle' | 'review' | 'archived';
 export type CornerStateReason = 'failed' | 'checks-failed' | 'question';
 
 export const ROOM_VIEW_MESSAGE_LIMIT = 30;
@@ -591,40 +591,13 @@ export type RoomView = {
   /** The latest durable assignment; older revisions remain server-owned. */
   readonly cornerBrief?: {
     readonly revision: number;
-    readonly revisionHash: string;
-    readonly legacy: boolean;
-    readonly content: string;
-    readonly intentVerbatim: readonly { sourceMessageId: string; snapshot: string }[];
-    readonly buildSpec: string;
-    readonly criteria: readonly { id: string; text: string }[];
-    readonly nonGoals: readonly string[];
-    readonly references: readonly {
-      label: string;
-      authority: string;
-      description: string;
-      objectId?: string;
-    }[];
-    readonly approvalBasis: {
-      kind: string;
-      sourceMessageId?: string;
-      snapshot?: string;
-      approvedBy?: string;
-      briefHash: string;
-      reason?: string;
+    /** Markdown; older typed revisions are folded into it by the server. */
+    readonly spec: string;
+    readonly approval?: {
+      readonly sourceMessageId: string;
+      readonly text: string;
+      readonly approverName: string;
     };
-    readonly history: readonly {
-      revision: number;
-      revisionHash: string;
-      change?: string;
-      approvalKind: string;
-      content: string;
-      intentVerbatim: readonly { sourceMessageId: string; snapshot: string }[];
-      buildSpec: string;
-      criteria: readonly { id: string; text: string }[];
-      nonGoals: readonly string[];
-      references: readonly { label: string; authority: string; description: string; objectId?: string }[];
-      approvalBasis?: { kind: string; sourceMessageId?: string; snapshot?: string; approvedBy?: string; briefHash: string; reason?: string };
-    }[];
     readonly attachments: readonly {
       readonly title: string;
       readonly purpose: string;
@@ -641,6 +614,9 @@ export type RoomView = {
   readonly repositoryResolution: RoomRepositoryResolution;
   /** GitHub-derived lifecycle for this Room when it is a repository corner. */
   readonly cornerLifecycle?: CornerLifecycleView;
+  /** On a corner: whether something in it is still owed to a person, which
+   * keeps an otherwise quiet corner `waiting` instead of `idle`. */
+  readonly cornerOwed?: boolean;
   /** Native, code-free apps persisted on this corner and shared with its members. */
   readonly cornerApps?: readonly CornerAppView[];
   /** Optional installed app whose human surface owns this corner. */
@@ -652,6 +628,36 @@ export type RoomHistoryView = {
   readonly roomId: string;
   readonly messages: readonly RoomViewMessage[];
   readonly nextBefore?: { readonly createdAt: number; readonly id: string };
+};
+
+/**
+ * The whole Room history, one entry per local calendar day in the reader's
+ * time zone, so the transcript scrubber can place its handle and a marker for
+ * every day against every message, not only the pages loaded so far. Counts
+ * use the same rows `RoomHistoryView` pages through.
+ */
+export type RoomHistoryOutline = {
+  readonly roomId: string;
+  /** The IANA time zone the days were cut in, as the reader asked. */
+  readonly timeZone: string;
+  readonly total: number;
+  /** The newest message counted, so later arrivals can extend `total`. */
+  readonly newest?: { readonly id: string; readonly createdAt: number };
+  /** Every day with a message, oldest first. */
+  readonly days: readonly RoomHistoryOutlineDay[];
+};
+
+export type RoomHistoryOutlineDay = {
+  /** `YYYY-MM-DD` in `timeZone`. */
+  readonly day: string;
+  readonly count: number;
+  /** The day's oldest message. */
+  readonly first: {
+    readonly id: string;
+    readonly createdAt: number;
+    readonly authorName: string;
+    readonly authorHandle?: string;
+  };
 };
 
 /** Prompt-ready conversation rows supplied directly by the Room endpoint. */
@@ -680,6 +686,9 @@ export type ChatListCorner = {
   /** On the viewer's waiting corners: when the corner last spoke (unix
    * seconds), the moment it handed back. It counts as Room activity. */
   readonly waitingSince?: number;
+  /** The corner owes the viewer something they have not opened it to see
+   * since. Only these open the Room's corner dropdown on their own. */
+  readonly attention?: true;
 };
 
 export type ChatListItem = {

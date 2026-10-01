@@ -262,7 +262,7 @@ describe('Workbench identities', () => {
 describe('Room message variant components', () => {
   it('replaces the AGENT label with the model, falling back when no model is known', () => {
     expect(agentBylineLabel('  openrouter/deepseek-deepseek-v.4.1-flash  ')).toBe(
-      'openrouter/deepseek-deepseek-v.4.1-flash',
+      'deepseek-deepseek-v.4.1-flash',
     );
     expect(agentBylineLabel()).toBe('AGENT');
     expect(agentBylineLabel('   ')).toBe('AGENT');
@@ -2044,7 +2044,7 @@ describe('Room message variant components', () => {
 
     expect(ledgerEntryRender.mock.lastCall?.[0].byline).toMatchObject({
       name: 'Lumen',
-      role: 'openrouter/deepseek-deepseek-v.4.1-flash',
+      role: 'deepseek-deepseek-v.4.1-flash',
       mark: { seed: 'agent-lumen', kind: 'agent', face: 'owl' },
     });
   });

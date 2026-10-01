@@ -193,6 +193,7 @@ import {
   ownerGrantShareMessage,
   type OwnerGrantNeeded,
 } from '@/components/buzz/OwnerGrantNeededCard';
+import { StarPromptCard, useStarPrompt } from '@/components/buzz/StarPromptCard';
 import { selectWorkingAgents } from '@/buzz/room-indicators';
 import {
   roomBottomChromeStyles,
@@ -322,6 +323,9 @@ import {
 } from '@/buzz/room-new-message-boundary';
 import { useNewMessageControl } from '@/buzz/use-new-message-control';
 import { RoomCatchUpControls } from '@/components/buzz/RoomCatchUpControls';
+import { TranscriptScrubber } from '@/components/buzz/TranscriptScrubber';
+import type { ScrubberDay } from '@/buzz/transcript-scrubber';
+import { useTranscriptScrubber } from '@/buzz/use-transcript-scrubber';
 import { RoomCatchUpSheet } from '@/components/buzz/RoomCatchUpSheet';
 import { buildCatchUpReport } from '@/buzz/room-catch-up-report';
 import { createTranscriptCardMotionStore } from '@/components/buzz/transcript-card-motion-context';
@@ -343,7 +347,7 @@ import {
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
 import { CornerObjectiveLine } from '@/components/buzz/CornerObjectiveLine';
-import { CornerBriefDisclosure } from '@/components/buzz/CornerBriefDisclosure';
+import { openCornerBriefViewer } from '@/components/buzz/corner-brief-viewer';
 import { CornerStatusLine } from '@/components/buzz/CornerStatusLine';
 import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import { AttachmentPickerSheet } from '@/components/buzz/AttachmentPickerSheet';
@@ -630,7 +634,6 @@ export function BuzzChatSurface({
     markRoomOpen('layout-chrome', roomSurface.messages.at(-1)?.id);
   }, [roomSurface]);
   const [inputText, setInputText] = useState('');
-  const [briefRevisionRequest, setBriefRevisionRequest] = useState<{ revision: number }>();
   const [composerInputRevision, setComposerInputRevision] = useState(0);
   const loadedDraftForRef = useRef<string | null>(null);
   const workPaneHandleRef = useRef<React.ElementRef<typeof Pressable>>(null);
@@ -1357,6 +1360,14 @@ export function BuzzChatSurface({
   // The same objective as one line, for the inscription under the header and
   // for the empty state's steering copy — derived once so the two never drift.
   const cornerObjectiveText = useMemo(() => cornerObjective.join(' '), [cornerObjective]);
+  // The brief's latest revision opens full-screen in the artifact viewer, from
+  // the objective line and from a "revised the corner brief" system line. No
+  // brief, no link.
+  const cornerBrief = roomSurface?.cornerBrief;
+  const openCurrentBrief = useMemo(
+    () => (cornerBrief ? () => openCornerBriefViewer(cornerBrief) : undefined),
+    [cornerBrief],
+  );
 
   const loadOlderTranscriptMessages = useCallback(() => {
     const visibleRowCount = visibleTranscriptWindow(foldedMessages, Number.MAX_SAFE_INTEGER).length;
@@ -1653,23 +1664,26 @@ export function BuzzChatSurface({
       return kind === participantPickerKind;
     }).length;
   }, [participantPickerKind, userPubkey, workspaceRoster]);
-  const visibleRosterMembers = useMemo(() => {
+  // Agents carry their model and owner for the roster sheet and @-mention menu.
+  const describedRoomParticipants = useMemo(() => {
     const workspaceAgents = new Map(
       (workspaceRoster?.agents ?? []).map((agent) => [agent.identity.pubkey, agent]),
     );
-    return orderRoomRoster(
-      roomParticipants.map((participant) => {
-        if (participant.kind !== 'agent') return participant;
-        const workspaceAgent = workspaceAgents.get(participant.pubkey);
-        const ownerHandle = workspaceAgent?.owner?.handle;
-        return {
-          ...participant,
-          ...(workspaceAgent?.model ? { model: workspaceAgent.model } : {}),
-          ...(ownerHandle ? { ownerHandle } : {}),
-        };
-      }),
-    );
+    return roomParticipants.map((participant) => {
+      if (participant.kind !== 'agent') return participant;
+      const workspaceAgent = workspaceAgents.get(participant.pubkey);
+      const ownerHandle = workspaceAgent?.owner?.handle;
+      return {
+        ...participant,
+        ...(workspaceAgent?.model ? { model: workspaceAgent.model } : {}),
+        ...(ownerHandle ? { ownerHandle } : {}),
+      };
+    });
   }, [roomParticipants, workspaceRoster]);
+  const visibleRosterMembers = useMemo(
+    () => orderRoomRoster(describedRoomParticipants),
+    [describedRoomParticipants],
+  );
   const roomParticipantTotal = roomParticipants.length;
   const roomAgents = useMemo(
     () => roomParticipants.filter((participant) => participant.kind === 'agent'),
@@ -1711,8 +1725,8 @@ export function BuzzChatSurface({
     ? `${inputText}:${activeMention.start}:${activeMention.end}`
     : null;
   const mentionCandidateRoster = useMemo(
-    () => [CHANNEL_MENTION_OPTION, ...roomParticipants, SYSTEM_MENTION_OPTION],
-    [roomParticipants],
+    () => [CHANNEL_MENTION_OPTION, ...describedRoomParticipants, SYSTEM_MENTION_OPTION],
+    [describedRoomParticipants],
   );
   const mentionSuggestions = useMemo(
     () =>
@@ -1803,6 +1817,15 @@ export function BuzzChatSurface({
   // false there and only there for a direct message, since a DM can never be
   // archived).
   const isReadOnlyDirectMessage = isDirectMessage && roomSurface?.viewer.permissions.send === false;
+  // A win (a new reply, or the viewer's own 👍) can make the GitHub star card due.
+  const starPromptKey = useMemo(() => {
+    const messages = roomSurface?.messages ?? [];
+    const thumbs = messages.filter((message) =>
+      message.reactions?.some((reaction) => reaction.emoji === '👍' && reaction.reacted),
+    ).length;
+    return `${messages.at(-1)?.id ?? ''}:${thumbs}`;
+  }, [roomSurface?.messages]);
+  const starPrompt = useStarPrompt(starPromptKey, Boolean(roomSurface) && !isReadOnlyDirectMessage);
   useEffect(() => {
     const humanUi = roomSurface?.boundApp?.manifest.humanUi;
     if (!isFocused || !isCorner || !humanUi) return;
@@ -2212,6 +2235,22 @@ export function BuzzChatSurface({
   // durable boundary away from the numeric index we retry.
   const transcriptMessagesRef = useRef(transcriptMessages);
   transcriptMessagesRef.current = transcriptMessages;
+  // The server rows held here, which is what the history outline counts.
+  const serverTranscriptMessages = useMemo(
+    () => mergeDisplayPages(olderMessages, cachedMessages),
+    [cachedMessages, olderMessages],
+  );
+  const {
+    history: scrubberHistory,
+    position: scrubberPosition,
+    visible: scrubberVisible,
+    observeVisibleRows: observeScrubberRows,
+    revealOnScroll: revealScrubber,
+  } = useTranscriptScrubber({
+    roomId: decodedId,
+    roomClient,
+    durableMessages: serverTranscriptMessages,
+  });
   // The read cursor ranks rows by index to decide which is newest, so it reads
   // the chronological order for the same reason the jump control does: on the
   // phone `transcriptMessages` IS the reversed list, and ranking that array
@@ -2540,6 +2579,7 @@ export function BuzzChatSurface({
       visibleTranscriptMessagesRef.current = viewableItems
         .filter((token) => token.isViewable)
         .map((token) => token.item);
+      observeScrubberRows(visibleTranscriptMessagesRef.current);
       const notification = pendingNotificationLandingRef.current;
       if (
         notification &&
@@ -2593,7 +2633,13 @@ export function BuzzChatSurface({
       advanceReadCursor(chronologicalMessagesRef.current, visibleTranscriptMessagesRef.current);
       completePendingNewMessageLanding();
     },
-    [advanceReadCursor, completePendingNewMessageLanding, observeVisibleMessages, raiseSourceLandingFlash],
+    [
+      advanceReadCursor,
+      completePendingNewMessageLanding,
+      observeScrubberRows,
+      observeVisibleMessages,
+      raiseSourceLandingFlash,
+    ],
   );
   // Follow a new row only from the tail. A reader in history keeps the same
   // position while the arrival joins the compact queue above the composer.
@@ -2864,6 +2910,56 @@ export function BuzzChatSurface({
   // all — gets back to the live end in one tap, and a reader with unread mail
   // arrives where the next message will land. Any queue behind it is settled
   // here: the tap is the reader saying they are done being behind.
+  // The list follows the scrubber's day while the finger is down. A day
+  // released before its rows are loaded stays the target while older pages
+  // come in, until it lands or the history runs out.
+  const [scrubTargetId, setScrubTargetId] = useState<string | null>(null);
+  useEffect(() => setScrubTargetId(null), [decodedId]);
+  const landAtScrubbedMessage = useCallback((messageId: string) => {
+    const index = boundaryRowIndex(transcriptMessagesRef.current, messageId);
+    if (index < 0) return false;
+    // Reuses the notification landing's retry for rows native has not measured.
+    pendingNotificationLandingRef.current = {
+      messageId: transcriptMessagesRef.current[index]!.id,
+      attempts: 0,
+    };
+    flatListRef.current?.scrollToIndex({ index, viewPosition: 0.5, animated: false });
+    return true;
+  }, []);
+  const followScrubbedDay = useCallback(
+    (day: ScrubberDay) => {
+      landAtScrubbedMessage(day.firstMessageId);
+    },
+    [landAtScrubbedMessage],
+  );
+  const landAtScrubbedDay = useCallback(
+    (day: ScrubberDay) => {
+      setScrubTargetId(landAtScrubbedMessage(day.firstMessageId) ? null : day.firstMessageId);
+    },
+    [landAtScrubbedMessage],
+  );
+  useEffect(() => {
+    if (!scrubTargetId) return;
+    if (landAtScrubbedMessage(scrubTargetId)) {
+      setScrubTargetId(null);
+      return;
+    }
+    const residentIndex = boundaryRowIndex(foldedMessages, scrubTargetId);
+    if (residentIndex >= 0) {
+      revealTranscriptThrough(foldedMessages.length - residentIndex);
+      return;
+    }
+    if (transcriptHistoryStatus === 'idle') loadOlderTranscriptMessages();
+    else if (transcriptHistoryStatus !== 'loading') setScrubTargetId(null);
+  }, [
+    foldedMessages,
+    landAtScrubbedMessage,
+    loadOlderTranscriptMessages,
+    revealTranscriptThrough,
+    scrubTargetId,
+    transcriptHistoryStatus,
+    transcriptMessages,
+  ]);
   const landAtNewestMessage = useCallback(() => {
     pendingNewMessageLandingRef.current = null;
     scrollToNewestMessage();
@@ -4331,7 +4427,7 @@ export function BuzzChatSurface({
     setOpeningRandomCorner(true);
     try {
       await openRandomNamedCorner({
-        createCorner: (roomId, title) => transport.createHumanCorner(roomId, title),
+        createCorner: (roomId, title) => transport.createHumanCorner(roomId, title, undefined, undefined, true),
         roomId: decodedId,
         openCorner: (cornerId, title) => {
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -4398,7 +4494,7 @@ export function BuzzChatSurface({
         ),
         sourceMessageId: target.relayId ?? target.id,
         createCorner: (roomId, title, sourceMessageId) =>
-          transport.createHumanCorner(roomId, title, undefined, sourceMessageId),
+          transport.createHumanCorner(roomId, title, undefined, sourceMessageId, true),
         roomId: decodedId,
         openCorner: (cornerId, title) => {
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -5349,7 +5445,7 @@ export function BuzzChatSurface({
             stamp={ledgerStamp(item.timestamp)}
             onOpenIdentity={handleOpenSystemIdentity}
             onOpenUrl={handleOpenGitHubEvent}
-            onOpenBriefRevision={(revision) => setBriefRevisionRequest({ revision })}
+            onOpenBrief={openCurrentBrief}
           />
         );
       }
@@ -5457,6 +5553,7 @@ export function BuzzChatSurface({
       handleChoiceAnswer,
       handleChoiceSkip,
       handleOpenSystemIdentity,
+      openCurrentBrief,
       handleOpenCode,
       handleOpenMessageSource,
       handleReactToMessage,
@@ -5792,12 +5889,7 @@ export function BuzzChatSurface({
             the human's own request, inscribed rather than framed. The header
             carries a short corner name, so without this the objective survives
             only until the first message lands. */}
-          {isCorner && <CornerObjectiveLine objective={cornerObjectiveText} />}
-          {isCorner && <CornerBriefDisclosure brief={roomSurface?.cornerBrief} requestedRevision={briefRevisionRequest} validation={roomSurface?.cornerValidation} onOpenFile={(url) => {
-            void openExternalUrl(url).catch(() => {
-              Modal.alert('Could not open assignment file', 'Try opening the file again from this corner.');
-            });
-          }} />}
+          {isCorner && <CornerObjectiveLine objective={cornerObjectiveText} onOpenBrief={openCurrentBrief} />}
 
           {/* The corner's PR state, inscribed above the transcript: one line
             that links to GitHub, where review and merge happen. */}
@@ -5895,8 +5987,11 @@ export function BuzzChatSurface({
             }}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode={transcriptKeyboardDismissMode(Platform.OS)}
+            // The transcript scrubber below is this list's scroll bar.
+            showsVerticalScrollIndicator={false}
             onScroll={(event) => {
               observePhoneTailOffset(event.nativeEvent.contentOffset.y);
+              revealScrubber();
             }}
             // One frame, the list's own default. A wider window leaves the
             // viewability report (which settles the badge and the unread
@@ -5904,6 +5999,8 @@ export function BuzzChatSurface({
             scrollEventThrottle={16}
             onViewableItemsChanged={observeVisibleTranscriptMessages}
             onScrollBeginDrag={() => {
+              // The reader's own drag abandons a scrubbed day still paging in.
+              setScrubTargetId(null);
               dragEndSequenceRef.current += 1;
               userDraggingRef.current = true;
               allowOlderHistoryRef.current = true;
@@ -6021,10 +6118,30 @@ export function BuzzChatSurface({
                 />
               </View>
             }
-            ListHeaderComponent={null}
+            // Inverted native list: the header is the newest end of the transcript.
+            ListHeaderComponent={
+              starPrompt.prompt ? (
+                <View style={styles.starPrompt}>
+                  <StarPromptCard
+                    prompt={starPrompt.prompt}
+                    busy={starPrompt.busy}
+                    onAnswer={(action) => void starPrompt.answer(action)}
+                  />
+                </View>
+              ) : null
+            }
             // Inverted native list: the footer is the visual top.
             ListFooterComponent={transcriptHistoryLine}
           />
+          )}
+          {!desktopTranscript && (
+            <TranscriptScrubber
+              history={scrubberHistory}
+              position={scrubberPosition}
+              visible={scrubberVisible}
+              onScrub={followScrubbedDay}
+              onScrubEnd={landAtScrubbedDay}
+            />
           )}
           <RoomCatchUpControls
             corner={isCorner}
@@ -6581,10 +6698,55 @@ export function BuzzChatSurface({
             slot="row"
           />
         }
+        onTitlePress={canRenameTitle ? startRenameFromTitle : undefined}
         testID="room-actions-sheet"
         title={displayRoomName}
+        titleAccessibilityLabel={`Rename ${displayRoomName}`}
+        titleTestID="room-actions-title"
         visible={roomActionsVisible}
       >
+        {!isCorner && canRenameTitle && renameEditing && (
+          <View style={styles.roomRenameEditor} testID="rename-room-editor">
+            <Text style={styles.roomRenameLabel}>New {ROOM_LABEL.toLowerCase()} name</Text>
+            <TextInput
+              accessibilityLabel={`New ${ROOM_LABEL} name`}
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!renameBusy}
+              onChangeText={(value) => {
+                setRenameDraft(value);
+                if (value.trim()) setRenameError(null);
+              }}
+              onSubmitEditing={() => void handleRenameRoom()}
+              returnKeyType="done"
+              selectTextOnFocus
+              style={styles.roomRenameInput}
+              testID="rename-room-input"
+              value={renameDraft}
+            />
+            {!validRoomSlug(renameDraft.trim()) && (
+              <Text style={styles.roomRenameLabel}>{ROOM_SLUG_HINT}</Text>
+            )}
+            <View style={styles.roomRenameControls}>
+              <MonoButton
+                disabled={renameBusy}
+                label="Cancel"
+                onPress={() => {
+                  setRenameEditing(false);
+                  setRenameError(null);
+                }}
+                variant="secondary"
+              />
+              <MonoButton
+                disabled={renameBusy || !validRoomSlug(renameDraft.trim())}
+                label={renameBusy ? 'Renaming…' : 'Apply'}
+                loading={renameBusy}
+                onPress={() => void handleRenameRoom()}
+                testID="apply-room-rename"
+              />
+            </View>
+          </View>
+        )}
         <RoomRepositoryActions
           busy={roomRepoBusy}
           canManage={canManageWorkspace}
@@ -6671,60 +6833,6 @@ export function BuzzChatSurface({
           }}
           testID="room-participant-roster-trigger"
         />
-        {canManageWorkspace &&
-          (renameEditing ? (
-            <View style={styles.roomRenameEditor} testID="rename-room-editor">
-              <Text style={styles.roomRenameLabel}>New {ROOM_LABEL.toLowerCase()} name</Text>
-              <TextInput
-                accessibilityLabel={`New ${ROOM_LABEL} name`}
-                autoCapitalize="none"
-                autoCorrect={false}
-                editable={!renameBusy}
-                onChangeText={(value) => {
-                  setRenameDraft(value);
-                  if (value.trim()) setRenameError(null);
-                }}
-                onSubmitEditing={() => void handleRenameRoom()}
-                returnKeyType="done"
-                selectTextOnFocus
-                style={styles.roomRenameInput}
-                testID="rename-room-input"
-                value={renameDraft}
-              />
-              {!validRoomSlug(renameDraft.trim()) && (
-                <Text style={styles.roomRenameLabel}>{ROOM_SLUG_HINT}</Text>
-              )}
-              <View style={styles.roomRenameControls}>
-                <MonoButton
-                  disabled={renameBusy}
-                  label="Cancel"
-                  onPress={() => {
-                    setRenameEditing(false);
-                    setRenameError(null);
-                  }}
-                  variant="secondary"
-                />
-                <MonoButton
-                  disabled={renameBusy || !validRoomSlug(renameDraft.trim())}
-                  label={renameBusy ? 'Renaming…' : 'Apply'}
-                  loading={renameBusy}
-                  onPress={() => void handleRenameRoom()}
-                  testID="apply-room-rename"
-                />
-              </View>
-            </View>
-          ) : (
-            <HullActionSheetRow
-              accessibilityLabel={`Rename ${ROOM_LABEL}`}
-              chevron="right"
-              disabled={renameBusy}
-              label="Rename"
-              onPress={() => {
-                startRenameFromTitle();
-              }}
-              testID="rename-room-action"
-            />
-          ))}
         {canManageWorkspace && getBuzzRuntimeConfig().monolithEnabled && (
           <HullActionSheetRow
             accessibilityLabel={`View ${ROOM_LABEL} scheduled work`}
@@ -6893,6 +7001,7 @@ const styles = StyleSheet.create((theme) => {
     keyboardBody: {
       flex: 1,
     },
+    starPrompt: { paddingTop: 12 },
     agentProfilePane: { width: 380, maxWidth: '50%', borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: groknight.border },
     desktopConversationFrame: {
       flex: 1,

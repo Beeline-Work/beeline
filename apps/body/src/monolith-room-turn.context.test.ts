@@ -226,7 +226,7 @@ describe('monolith Room turn context', () => {
       'Before opening one, consult beeline-triage and beeline-spec',
     );
     expect(systemPrompts[0]).toContain(
-      'call open_corner with a name of at most three words, an objective of at most 24 words, and the typed brief',
+      'call open_corner with a name of at most three words, an objective of at most 24 words, and the brief (a spec plus the approving message)',
     );
 
     for (const prompt of prompts) {

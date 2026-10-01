@@ -15,11 +15,6 @@ import {
   reassignCollidingAgentHandles,
 } from './workspace-handles.js';
 import { recordCornerMergeApproval } from './corner-merge-approval.js';
-import {
-  feedbackConfigFromEnv,
-  processFeedbackIssueEvent,
-  type FeedbackConfig,
-} from './feedback.js';
 import { reportUnansweredCornerAsks } from './corner-close.js';
 import {
   advanceCorner,
@@ -233,7 +228,6 @@ export class GitHubOperations {
     private readonly resolveSealedUserToken?: (subject: string) => Promise<string | undefined>,
     private readonly onRoomChanged?: (roomId: string) => void,
     private readonly institutionalMemory: InstitutionalMemoryShadowConfig = { enabled: false },
-    private readonly feedback: FeedbackConfig = feedbackConfigFromEnv(),
   ) {
     this.#key = createHash('sha256').update(clientSecret).digest();
   }
@@ -478,6 +472,18 @@ export class GitHubOperations {
       }
     }
     return { ...(githubReconnectNeeded ? { githubReconnectNeeded } : {}) };
+  }
+
+  /** Whether the viewer starred `fullName`; 'unknown' without a usable token or answer. */
+  async repositoryStarred(viewerId: string, fullName: string): Promise<boolean | 'unknown'> {
+    const token = (await this.userCredential(viewerId, this.database))?.token;
+    return token ? this.app.repositoryStarred(token, fullName) : 'unknown';
+  }
+
+  /** Star `fullName` with the viewer's own token. False when GitHub refuses. */
+  async starRepository(viewerId: string, fullName: string): Promise<boolean> {
+    const token = (await this.userCredential(viewerId, this.database))?.token;
+    return token ? this.app.starRepository(token, fullName) : false;
   }
 
   async createRepository(viewerId: string, input: Input<'createGitHubRepository'>) {
@@ -936,9 +942,6 @@ export class GitHubOperations {
       event === 'check_suite' ||
       event === 'status'
     ) {
-      // The feedback loop's issues are not Room activity: their close
-      // resolves feedback items whatever any Room's GitHub events setting is.
-      if (event === 'issues') await processFeedbackIssueEvent(this.database, this.feedback, body);
       await this.processRepositoryEvent(event, body, install.id);
       await this.processCornerEvent(event, body, install.id);
       if (event === 'push') await this.processBaseBranchPush(body, install.id);

@@ -24,13 +24,11 @@ export function beelineAgentMcpServer(
     agentMayCloseCorner?: boolean;
     /** A repository-backed no-code corner may take its one-way code upgrade. */
     agentMayUpgradeCorner?: boolean;
-    /** A Room admin turned Feedback triage on for this corner. */
-    feedbackTriage?: boolean;
     /** This corner session belongs to the parent Room's configured reviewer. */
     reviewer?: boolean;
     /** The corner's lane. A code-lane corner mounts approve_merge on every
      *  turn; the server decides whether the caller is the configured reviewer. */
-    lane?: 'code' | 'no_code' | 'research';
+    lane?: 'code' | 'no_code';
     attachRoot?: string;
     /** The session's whole writable home overlay (or, absent one, its
      *  TMPDIR): a second legal post_artifact root covering anywhere the
@@ -70,7 +68,6 @@ export function beelineAgentMcpServer(
       ...(context.agentMayUpgradeCorner
         ? [{ name: 'BEELINE_CORNER_CAN_UPGRADE', value: '1' }]
         : []),
-      ...(context.feedbackTriage ? [{ name: 'BEELINE_CORNER_FEEDBACK_TRIAGE', value: '1' }] : []),
       ...(context.reviewer ? [{ name: 'BEELINE_CORNER_REVIEWER', value: '1' }] : []),
       ...(context.cornerId && context.lane
         ? [{ name: 'BEELINE_CORNER_LANE', value: context.lane }]

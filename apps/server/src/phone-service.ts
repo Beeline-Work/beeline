@@ -9,6 +9,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { ComposioApps } from './composio-apps.js';
 import { beginComposioAppSignIn, completeComposioSignIn } from './app-connections.js';
 import { CORNER_VALIDATION_STAGES, currentCornerBrief } from './corner-brief.js';
+import type { LinkAgentWallet } from './link-agent-wallet.js';
 import { storeWorkspaceAvatar } from './durable-avatar.js';
 import { queueLatestReleasePush } from './release-push-catchup.js';
 import { validateWebPushSubscription, webPushPublicKey } from './web-push.js';
@@ -50,6 +51,7 @@ import type {
   CornerLifecycleView,
   InviteView,
   RoomLiveDelta,
+  RoomHistoryOutline,
   RoomHistoryView,
   RoomView,
   RoomViewIdentity,
@@ -122,6 +124,7 @@ import { collapsePermissionCards } from '@beeline/push-gateway/projection';
 import { deriveCornerState } from './corner-state.js';
 import { advanceCorner } from './corner-workflow.js';
 import { chatCornerCounts } from './chat-corner-counts.js';
+import { cornerOwedLateralSql } from './corner-owed.js';
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
 import { retireAgentFromWorkspace, settleGrantCard } from './agent-retirement.js';
 import { ensureFirstRoom, firstAccessibleRoomId } from './first-room.js';
@@ -196,6 +199,7 @@ import { ARTIFACT_TTL_HOURS, mediaIdFromUrl, mediaTtlHours } from './media-ttl.j
 import type { ObjectService } from './object-service.js';
 import { closeCornerState } from './corner-close.js';
 import { writeCornerTitle } from './corner-title.js';
+import { answerStarPrompt, readStarPrompt, recordStarPromptWin } from './github-star-prompt.js';
 import {
   DELETED_ACCOUNT_IDENTITY_ID,
   DELETED_ACCOUNT_NAME,
@@ -372,6 +376,9 @@ interface CornerRow extends RoomRow {
   latest_author_kind: 'human' | 'agent' | null;
   latest_author_name: string | null;
   latest_tags_viewer: boolean | null;
+  /** `cornerOwedLateralSql`'s facts; null on the archived page, which skips them. */
+  owed: boolean | null;
+  owed_viewer: boolean | null;
   /** `archived_at` in whole microseconds, exact, for the archived page cursor. */
   archived_us: string | null;
   agent_id: string | null;
@@ -779,6 +786,7 @@ export class PhoneService {
     _legacyProviderSlot?: unknown,
     private readonly mcpRegistry: McpRegistryClient = new McpRegistryClient(),
     private readonly composio?: ComposioApps,
+    private readonly linkWallet?: LinkAgentWallet,
   ) {}
 
   private async optionalEnrichment<T>(name: string, work: Promise<T>): Promise<T | undefined> {
@@ -1356,12 +1364,16 @@ export class PhoneService {
           commissioned_by_viewer: boolean | null;
           latest_tags_viewer: boolean | null;
           latest_created_at: Date | null;
+          owed: boolean;
+          owed_viewer: boolean;
+          attention: boolean;
         }>(
           `SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,f.workflow_state,f.workflow_outcome,
            turn.status latest_turn_status,
            initiator.id=$2 commissioned_by_viewer,
            $2=ANY(${taggedIdentityIdsSql('lm')}) latest_tags_viewer,
-           lm.created_at latest_created_at
+           lm.created_at latest_created_at,
+           owed.owed,owed.owed_viewer,owed.attention
          FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
          LEFT JOIN identities initiator
            ON initiator.id=f.commissioned_by AND initiator.kind='human'
@@ -1370,6 +1382,7 @@ export class PhoneService {
            SELECT status FROM agent_turns WHERE room_id=c.id
            ORDER BY created_at DESC LIMIT 1
          ) turn ON true
+         ${cornerOwedLateralSql('c', '$2')}
          WHERE c.parent_id=ANY($1::uuid[]) AND c.archived_at IS NULL AND EXISTS (
            SELECT 1 FROM memberships member WHERE member.room_id=c.id
              AND member.identity_id=$2 AND member.removed_at IS NULL
@@ -1600,33 +1613,6 @@ export class PhoneService {
       () => currentCornerBrief(this.database, roomId).catch(() => undefined),
       undefined,
     );
-    const cornerBriefHistoryPromise = cornerRead(
-      'brief-history',
-      () =>
-        this.database
-          .query<{
-            revision: number;
-            revision_hash: string | null;
-            change: string | null;
-            approval_kind: string | null;
-            content: string;
-            intent_verbatim: NonNullable<RoomView['cornerBrief']>['intentVerbatim'];
-            build_spec: string | null;
-            criteria: NonNullable<RoomView['cornerBrief']>['criteria'];
-            non_goals: string[];
-            brief_references: NonNullable<RoomView['cornerBrief']>['references'];
-            approval_basis: NonNullable<RoomView['cornerBrief']>['approvalBasis'];
-          }>(
-            `SELECT revision,revision_hash,change,approval_basis->>'kind' approval_kind,
-                    content,intent_verbatim,build_spec,criteria,non_goals,brief_references,approval_basis
-             FROM corner_brief_revisions WHERE corner_id=$1
-             ORDER BY revision DESC LIMIT 20`,
-            [roomId],
-          )
-          .then((result) => result.rows)
-          .catch(() => []),
-      [],
-    );
     const cornerValidationPromise = cornerBriefPromise.then((brief) =>
       brief
         ? measured(
@@ -1723,7 +1709,7 @@ export class PhoneService {
     );
     const cornerLifecyclePromise = cornerRead(
       'lifecycle',
-      () => this.cornerLifecycle(room.id),
+      () => this.cornerLifecycle(room.id, viewerId),
       undefined,
     );
     // One await for every read, so none can reject unobserved behind another.
@@ -1732,7 +1718,6 @@ export class PhoneService {
       parent,
       facts,
       cornerBrief,
-      cornerBriefHistory,
       cornerValidation,
       boundApp,
       cornerAppRows,
@@ -1745,7 +1730,6 @@ export class PhoneService {
       parentPromise,
       factsPromise,
       cornerBriefPromise,
-      cornerBriefHistoryPromise,
       cornerValidationPromise,
       boundAppPromise,
       cornerAppRowsPromise,
@@ -1829,30 +1813,16 @@ export class PhoneService {
         ? {
             cornerBrief: {
               revision: cornerBrief.revision,
-              revisionHash: cornerBrief.revisionHash,
-              legacy: cornerBrief.legacy,
-              content: cornerBrief.content,
-              intentVerbatim: cornerBrief.intentVerbatim,
-              buildSpec: cornerBrief.buildSpec,
-              criteria: cornerBrief.criteria,
-              nonGoals: cornerBrief.nonGoals,
-              references: cornerBrief.references,
-              approvalBasis: cornerBrief.approvalBasis,
-              history: cornerBriefHistory.map((item) => ({
-                revision: item.revision,
-                revisionHash:
-                  item.revision_hash ??
-                  (item.revision === cornerBrief.revision ? cornerBrief.revisionHash : 'legacy'),
-                ...(item.change ? { change: item.change } : {}),
-                approvalKind: item.approval_kind ?? 'legacy-pre-migration',
-                content: item.content,
-                intentVerbatim: item.intent_verbatim ?? [],
-                buildSpec: item.build_spec ?? item.content,
-                criteria: item.criteria ?? [],
-                nonGoals: item.non_goals ?? [],
-                references: item.brief_references ?? [],
-                approvalBasis: item.approval_basis ?? undefined,
-              })),
+              spec: cornerBrief.spec,
+              ...(cornerBrief.approval
+                ? {
+                    approval: {
+                      sourceMessageId: cornerBrief.approval.sourceMessageId,
+                      text: cornerBrief.approval.text,
+                      approverName: cornerBrief.approval.approverName,
+                    },
+                  }
+                : {}),
               attachments: cornerBrief.attachments.map((file) => ({
                 title: file.title,
                 purpose: file.purpose,
@@ -1895,7 +1865,8 @@ export class PhoneService {
           }
         : {}),
       repositoryResolution: (parent ?? room).repository_resolution,
-      ...(cornerLifecycle ? { cornerLifecycle } : {}),
+      ...(cornerLifecycle ? { cornerLifecycle: cornerLifecycle.lifecycle } : {}),
+      ...(cornerLifecycle?.owed !== undefined ? { cornerOwed: cornerLifecycle.owed } : {}),
       ...(cornerApps.length ? { cornerApps } : {}),
       ...(boundApp && boundManifest
         ? {
@@ -1961,6 +1932,58 @@ export class PhoneService {
       ...(rows.length > 30 && tail
         ? { nextBefore: { createdAt: unix(tail.created_at), id: tail.id } }
         : {}),
+    };
+  }
+
+  /**
+   * Every message `readHistory` can page through, counted per local calendar
+   * day in the reader's time zone with each day's oldest message, so the phone
+   * can place the transcript scrubber and a marker for every day against the
+   * whole history. `timeZone` is an IANA name the route has already checked.
+   */
+  async readHistoryOutline(
+    roomId: string,
+    viewerId: string,
+    timeZone: string,
+  ): Promise<RoomHistoryOutline | null> {
+    if (!(await this.hasRoomAccess(roomId, viewerId))) return null;
+    const rows = (
+      await this.database.query<{
+        local_day: string;
+        message_count: string;
+        id: string;
+        created_at: Date;
+        author_name: string;
+        author_handle: string | null;
+      }>(
+        `SELECT DISTINCT ON (local.day) local.day::text AS local_day,
+           count(*) OVER (PARTITION BY local.day)::text AS message_count,
+           m.id,m.created_at,i.name author_name,i.handle author_handle
+         FROM messages m JOIN identities i ON i.id=m.author_id
+         CROSS JOIN LATERAL (SELECT (m.created_at AT TIME ZONE $2)::date AS day) local
+         WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
+           AND ${hiddenWakeCardSql('m')}
+         ORDER BY local.day,m.created_at,m.id`,
+        [roomId, timeZone],
+      )
+    ).rows;
+    const days = rows.map((row) => ({
+      day: row.local_day,
+      count: Number(row.message_count),
+      first: {
+        id: row.id,
+        createdAt: unix(row.created_at),
+        authorName: row.author_name,
+        ...(row.author_handle ? { authorHandle: row.author_handle } : {}),
+      },
+    }));
+    const [newest] = await this.messageRows(roomId, undefined, 1);
+    return {
+      roomId,
+      timeZone,
+      total: days.reduce((sum, day) => sum + day.count, 0),
+      ...(newest ? { newest: { id: newest.id, createdAt: unix(newest.created_at) } } : {}),
+      days,
     };
   }
 
@@ -2306,6 +2329,7 @@ export class PhoneService {
         turn.status latest_turn_status,turn.created_at latest_turn_created_at,
         app_binding.installation_id app_installation_id,
         app_binding.instance_id app_instance_id,app_installation.manifest app_manifest,
+        ${archived ? 'NULL::boolean owed,NULL::boolean owed_viewer' : 'owed.owed,owed.owed_viewer'},
         ${archivedMicros}::text archived_us
       FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
       LEFT JOIN identities initiator
@@ -2327,6 +2351,7 @@ export class PhoneService {
       ) turn ON true
       LEFT JOIN corner_app_bindings app_binding ON app_binding.corner_id=c.id
       LEFT JOIN corner_app_installations app_installation ON app_installation.id=app_binding.installation_id
+      ${archived ? '' : cornerOwedLateralSql('c', '$2')}
       WHERE c.parent_id=$1 AND c.archived_at IS ${archived ? 'NOT NULL' : 'NULL'} AND EXISTS(
         SELECT 1 FROM memberships viewer
         WHERE viewer.room_id=c.id AND viewer.identity_id=$2 AND viewer.removed_at IS NULL
@@ -2352,6 +2377,7 @@ export class PhoneService {
           ? { run: { state: corner.workflow_state, outcome: corner.workflow_outcome ?? undefined } }
           : {}),
         lifecycle,
+        ...(corner.owed !== null ? { owed: corner.owed } : {}),
       });
       const header = roomHeader(corner, this.publicOrigin);
       const about = header.about ?? (corner.objective?.trim() || undefined);
@@ -2367,9 +2393,10 @@ export class PhoneService {
         // `updated_at` moves with any later write, so the closure stamp reads
         // the archive time itself rather than the row's last touch.
         ...(corner.archived_at ? { closedAt: unix(corner.archived_at) } : {}),
-        // A corner awaits the viewer when it is parked on a person and its
-        // latest message tags them.
-        ...(corner.latest_tags_viewer && (derived.state === 'waiting' || derived.state === 'review')
+        // A corner awaits the viewer when it owes them something, or it is
+        // parked on a person and its latest message tags them.
+        ...(corner.owed_viewer ||
+        (corner.latest_tags_viewer && (derived.state === 'waiting' || derived.state === 'review'))
           ? { awaitsViewer: true as const }
           : {}),
         ...(corner.initiator_id && corner.initiator_name
@@ -3281,6 +3308,15 @@ export class PhoneService {
         return (await this.readWelcomeCards(viewerId)) as Output<Name>;
       case 'completeWelcomeCards':
         return (await this.completeWelcomeCards(viewerId)) as Output<Name>;
+      case 'readStarPrompt':
+        return (await readStarPrompt(this.database, viewerId, this.github)) as Output<Name>;
+      case 'answerStarPrompt':
+        return (await answerStarPrompt(
+          this.database,
+          viewerId,
+          input as Input<'answerStarPrompt'>,
+          this.github,
+        )) as Output<Name>;
       case 'sendRoomMessage':
         return (await this.sendMessage(
           input as Input<'sendRoomMessage'>,
@@ -3629,6 +3665,18 @@ export class PhoneService {
       case 'readGoogleSignIn':
         return { connected: false, connectedTypes: [] } as Output<Name>;
       case 'disconnectGoogleSignIn':
+        return undefined as Output<Name>;
+      case 'beginLinkSignIn':
+        await this.viewerWorkbenchWorkspace(viewerId);
+        if (!this.linkWallet) throw new Error('Link is not configured');
+        return { authorizationUrl: await this.linkWallet.begin(viewerId) } as Output<Name>;
+      case 'cancelLinkSignIn':
+        await this.viewerWorkbenchWorkspace(viewerId);
+        await this.linkWallet?.cancel(viewerId, (input as Input<'cancelLinkSignIn'>).state);
+        return undefined as Output<Name>;
+      case 'disconnectLinkSignIn':
+        await this.viewerWorkbenchWorkspace(viewerId);
+        await this.linkWallet?.disconnect(viewerId);
         return undefined as Output<Name>;
       case 'unpairConnector':
         await this.unpairConnector(input as Input<'unpairConnector'>, viewerId);
@@ -4062,8 +4110,11 @@ export class PhoneService {
     if (!MESSAGE_REACTION_EMOJIS.includes(input.emoji)) throw new Error('reaction is invalid');
     await this.database.transaction(async (database) => {
       const row = (
-        await database.query<{ reactions: Record<string, string[]> }>(
-          `SELECT message.reactions FROM messages message
+        await database.query<{ reactions: Record<string, string[]>; agent_author: boolean }>(
+          `SELECT message.reactions,
+             EXISTS(SELECT 1 FROM identities author
+               WHERE author.id=message.author_id AND author.kind='agent') agent_author
+           FROM messages message
            JOIN memberships membership ON membership.room_id=message.room_id
              AND membership.identity_id=$3 AND membership.removed_at IS NULL
            JOIN memberships workspace_member ON workspace_member.workspace_id=membership.workspace_id
@@ -4079,7 +4130,10 @@ export class PhoneService {
       const reactions = { ...(row.reactions ?? {}) };
       const reactors = new Set(reactions[input.emoji] ?? []);
       if (reactors.has(viewerId)) reactors.delete(viewerId);
-      else reactors.add(viewerId);
+      else {
+        reactors.add(viewerId);
+        if (input.emoji === '👍' && row.agent_author) await recordStarPromptWin(database, viewerId);
+      }
       if (reactors.size) reactions[input.emoji] = [...reactors];
       else delete reactions[input.emoji];
       await database.query(`UPDATE messages SET reactions=$3::jsonb WHERE id=$1 AND room_id=$2`, [
@@ -5299,9 +5353,9 @@ export class PhoneService {
         [parent.workspace_id, id, viewerId],
       );
       await database.query(
-        `INSERT INTO corner_facts(corner_id,commissioned_by,objective,lane,kind,lifecycle)
-         VALUES($1,$2,'','no_code','human','{"lifecycle":"working","checks":"unknown"}')`,
-        [id, viewerId],
+        `INSERT INTO corner_facts(corner_id,commissioned_by,objective,lane,kind,lifecycle,title_generated)
+         VALUES($1,$2,'','no_code','human','{"lifecycle":"working","checks":"unknown"}',$3)`,
+        [id, viewerId, input.titleGenerated === true],
       );
       await advanceCorner(database, id, {
         kind: 'open',
@@ -7339,6 +7393,7 @@ export class PhoneService {
     input: Input<'readWorkbench'>,
     viewerId: string,
   ): Promise<Output<'readWorkbench'>> {
+    const linkAccount = await this.linkWallet?.status(viewerId);
     if (input.refreshVault) {
       const refreshes = await this.database.transaction(async (database) => {
         const rows = (
@@ -7476,6 +7531,7 @@ export class PhoneService {
     ).rows[0];
     return {
       workspaceId: input.workspaceId,
+      ...(linkAccount ? { linkAccount } : {}),
       catalog: connectorCatalog(),
       ...(walletRow
         ? {
@@ -8736,15 +8792,23 @@ export class PhoneService {
       toolRows: cornerActivityMessages,
     };
   }
-  private async cornerLifecycle(roomId: string) {
-    return (
-      (
-        await this.database.query<{ lifecycle: NonNullable<RoomView['cornerLifecycle']> }>(
-          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
-          [roomId],
-        )
-      ).rows[0]?.lifecycle ?? { lifecycle: 'unknown' as const, checks: 'unknown' as const }
-    );
+  private async cornerLifecycle(roomId: string, viewerId: string) {
+    const row = (
+      await this.database.query<{
+        lifecycle: NonNullable<RoomView['cornerLifecycle']> | null;
+        owed: boolean;
+      }>(
+        `SELECT f.lifecycle,owed.owed FROM rooms c
+         LEFT JOIN corner_facts f ON f.corner_id=c.id
+         ${cornerOwedLateralSql('c', '$2')}
+         WHERE c.id=$1`,
+        [roomId, viewerId],
+      )
+    ).rows[0];
+    return {
+      lifecycle: row?.lifecycle ?? { lifecycle: 'unknown' as const, checks: 'unknown' as const },
+      ...(row ? { owed: row.owed } : {}),
+    };
   }
 }
 
@@ -8806,6 +8870,8 @@ export const REVIEW_LOCKED_OPERATIONS = new Set<keyof PhoneOperationMap>([
 export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'readWelcomeCards',
   'completeWelcomeCards',
+  'readStarPrompt',
+  'answerStarPrompt',
   'sendRoomMessage',
   'sendRoomReply',
   'reportMessageIssue',
@@ -8894,6 +8960,9 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'beginGoogleSignIn',
   'readGoogleSignIn',
   'disconnectGoogleSignIn',
+  'beginLinkSignIn',
+  'cancelLinkSignIn',
+  'disconnectLinkSignIn',
   'unpairConnector',
   'connectWorkbenchApp',
   'beginAppSignIn',

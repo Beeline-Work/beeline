@@ -28,6 +28,7 @@ import { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { GitHubOperations } from './github-operations.js';
 import { createMonolithAuth } from './monolith-auth.js';
 import { ComposioApps } from './composio-apps.js';
+import { LinkAgentWallet } from './link-agent-wallet.js';
 import { McpRegistryClient } from './mcp-registry.js';
 import { RegistryMcpOAuth } from './registry-mcp-oauth.js';
 import { ReviewAccess } from './review-access.js';
@@ -173,7 +174,6 @@ async function main() {
     },
   );
   const institutionalMemory = institutionalMemoryShadowConfigFromEnv();
-  const feedbackConfig = feedbackConfigFromEnv();
   github = githubClients
     ? new GitHubOperations(
         database,
@@ -183,7 +183,6 @@ async function main() {
         mountedAuth.sealedGitHubUserToken,
         (roomId) => live.publish({ type: 'invalidate', roomId, reason: 'github' }),
         institutionalMemory,
-        feedbackConfig,
       )
     : undefined;
   const githubJobs = githubClients
@@ -195,7 +194,6 @@ async function main() {
         mountedAuth.sealedGitHubUserToken,
         (roomId) => live.publish({ type: 'invalidate', roomId, reason: 'github' }),
         institutionalMemory,
-        feedbackConfig,
       )
     : undefined;
   // Generated procedures are anchored to real code, so the curator's staleness
@@ -245,6 +243,13 @@ async function main() {
   const composio = process.env.BEELINE_COMPOSIO_API_KEY
     ? new ComposioApps(process.env.BEELINE_COMPOSIO_API_KEY)
     : undefined;
+  const linkWallet = process.env.BEELINE_LINK_CLIENT_ID &&
+    process.env.BEELINE_LINK_CLIENT_SECRET && process.env.BEELINE_LINK_PUBLISHABLE_KEY &&
+    process.env.BEELINE_LINK_TOKEN_KEY
+    ? new LinkAgentWallet(database, process.env.BEELINE_LINK_CLIENT_ID,
+        process.env.BEELINE_LINK_CLIENT_SECRET, process.env.BEELINE_LINK_PUBLISHABLE_KEY,
+        publicOrigin, process.env.BEELINE_LINK_TOKEN_KEY)
+    : undefined;
   const mcpRegistry = new McpRegistryClient();
   const registryMcpOAuth = new RegistryMcpOAuth(database, publicOrigin);
   const mediaExpiry = objectStorage
@@ -269,6 +274,7 @@ async function main() {
     undefined,
     mcpRegistry,
     composio,
+    linkWallet,
   );
   const daemon = new DaemonService(
     database,
@@ -286,10 +292,11 @@ async function main() {
     registryMcpOAuth,
     composio,
     {
-      config: feedbackConfig,
-      ...(githubClients ? { host: new FeedbackGitHub(database, githubClients.app) } : {}),
+      config: feedbackConfigFromEnv(),
+      ...(githubClients ? { pullRequests: new FeedbackGitHub(database, githubClients.app) } : {}),
     },
     objectService,
+    linkWallet,
   );
   // The Google Play review link. Absent secret = the endpoint refuses like any
   // wrong secret; rotating the value revokes every future use of the link.
@@ -313,6 +320,7 @@ async function main() {
     enrichmentDatabase,
     jobsDatabase,
     databasePools: { app: database, enrichment: enrichmentDatabase, diagnostics: healthDatabase, jobs: jobsDatabase },
+    linkWallet,
     registryMcpOAuth,
     healthDatabase,
     backgroundHealth: () => backgroundJobs.snapshot(),

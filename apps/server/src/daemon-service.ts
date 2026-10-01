@@ -13,7 +13,6 @@ import {
   type CommandRow,
 } from './agent-command.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { FEEDBACK_ISSUE_LABEL } from '@beeline/api-contract/daemon';
 import type {
   DaemonAttachment,
   DaemonOperationMap,
@@ -22,10 +21,11 @@ import type {
 import { CornerVerdictRejectedError, recordCornerMergeApproval } from './corner-merge-approval.js';
 import {
   CORNER_VALIDATION_STAGES,
+  CORNER_BRIEF_REVISION_SELECT,
+  type CornerBriefRow,
   composeCornerUpgradeBrief,
   cornerBriefRevisionHash,
   currentCornerBrief,
-  isStructuredCornerBrief,
   projectCornerBrief,
   resolveCornerBriefApproval,
   resolveCornerBriefAttachments,
@@ -169,17 +169,10 @@ import {
 } from './institutional-memory-shadow.js';
 import { searchInstitutionalHistory } from './institutional-history.js';
 import {
-  assertFeedbackTriageTurn,
-  attachFeedbackToIssue,
-  dismissFeedback,
-  setCornerFeedbackTriage,
   feedbackConfigFromEnv,
-  fileFeedbackIssue,
-  getFeedback,
-  listFeedback,
+  notifyFeedbackFixed,
   reportAgentFeedback,
-  type FeedbackConfig,
-  type FeedbackIssueHost,
+  type FeedbackLoop,
 } from './feedback.js';
 import type { AfterCommit, EmbedFn } from './institutional-memory-embeddings.js';
 import { loadWorkspaceSkill, saveSkill } from './institutional-skills.js';
@@ -191,6 +184,11 @@ import {
   startWorkflow,
 } from './workflow-runs.js';
 import { agentCarriesTag, isConfiguredReviewer } from './agent-classes.js';
+import {
+  recordStarPromptReply,
+  STAR_PROMPT_MILESTONES,
+  starPromptReplySql,
+} from './github-star-prompt.js';
 
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
@@ -309,11 +307,9 @@ export class DaemonService {
     private readonly mcpRegistry: McpRegistryClient = new McpRegistryClient(),
     private readonly registryMcpOAuth?: RegistryMcpOAuth,
     private readonly composio?: ComposioApps,
-    private readonly feedback: {
-      readonly config: FeedbackConfig;
-      readonly host?: FeedbackIssueHost;
-    } = { config: feedbackConfigFromEnv() },
+    private readonly feedback: FeedbackLoop = { config: feedbackConfigFromEnv() },
     private readonly objects?: ObjectService,
+    private readonly linkWallet?: import('./link-agent-wallet.js').LinkAgentWallet,
   ) {}
 
   /** A turn's memory query, embedded before its command transaction opened. */
@@ -365,6 +361,8 @@ export class DaemonService {
       'postAgentActivity',
       'postSquireApproval',
       'postSquireLoginWall',
+      'createLinkSpendRequest',
+      'retrieveLinkSpendRequest',
       'createCorner',
       'reviseCornerBrief',
       'postCornerValidationStage',
@@ -406,15 +404,7 @@ export class DaemonService {
       'archiveWorkflow',
       'assignWorkflowRole',
       'reportFeedback',
-      // Triage is authorized per turn: the command's corner must have
-      // Feedback triage on (`assertFeedbackTriageTurn`).
-      'listFeedback',
-      'getFeedback',
-      'listFeedbackIssues',
-      'fileFeedbackIssue',
-      'attachFeedbackToIssue',
-      'dismissFeedback',
-      'setCornerFeedbackTriage',
+      'notifyFeedbackFixed',
     ]);
     if (
       !this.commandTransaction &&
@@ -588,6 +578,7 @@ export class DaemonService {
           this.composio,
           this.feedback,
           this.objects,
+          this.linkWallet,
         );
         scoped.memoryEmbed = memoryEmbed;
         scoped.afterCommit = (task) => {
@@ -1264,6 +1255,45 @@ export class DaemonService {
       case 'getGoogleOAuthGrant':
       case 'getRoomGoogleGrant':
         return { status: 'pending' } as Output<Name>;
+      case 'createLinkSpendRequest': {
+        if (!this.linkWallet) throw new Error('Link is not configured');
+        const request = input as Input<'createLinkSpendRequest'>;
+        const owner = (await this.database.query<{ owner_id: string }>(
+          `SELECT owner_id FROM agents WHERE agent_id=$1`, [authenticatedAgentId])).rows[0];
+        if (!owner) throw new Error('agent owner not found');
+        const created = await this.linkWallet.create(owner.owner_id, authenticatedAgentId,
+          request.roomId, request);
+        if (created.approval_url) await this.linkSpendApproval(request, authenticatedAgentId,
+          owner.owner_id, created.id, created.approval_url);
+        return { id: created.id, status: created.status,
+          ...(created.approval_url ? { approvalUrl: created.approval_url } : {}) } as Output<Name>;
+      }
+      case 'retrieveLinkSpendRequest': {
+        if (!this.linkWallet) throw new Error('Link is not configured');
+        const request = input as Input<'retrieveLinkSpendRequest'>;
+        const owner = (await this.database.query<{ owner_id: string }>(
+          `SELECT owner_id FROM agents WHERE agent_id=$1`, [authenticatedAgentId])).rows[0];
+        if (!owner) throw new Error('agent owner not found');
+        const result = await this.linkWallet.retrieve(owner.owner_id, authenticatedAgentId, request.id);
+        return { id: result.id, status: result.status,
+          ...(result.approval_url ? { approvalUrl: result.approval_url } : {}),
+          ...(result.status_details?.requires_action?.next_action ? { nextAction: {
+            resolution: result.status_details.requires_action.next_action.resolution,
+            displayMessage: result.status_details.requires_action.next_action.display_message,
+            actionUrl: result.status_details.requires_action.next_action.action_url } } : {}),
+          ...(result.card ? { card: { number: result.card.number, cvc: result.card.cvc,
+            expMonth: result.card.exp_month, expYear: result.card.exp_year,
+            billingAddress: result.card.billing_address ? {
+              name: result.card.billing_address.name,
+              postalCode: result.card.billing_address.postal_code,
+              line1: result.card.billing_address.line1, city: result.card.billing_address.city,
+              state: result.card.billing_address.state,
+              country: result.card.billing_address.country } : undefined,
+            validUntil: result.card.valid_until } } : {}),
+          ...(result.shared_payment_token ? { sharedPaymentToken: {
+            id: result.shared_payment_token.id,
+            validUntil: result.shared_payment_token.valid_until } } : {}) } as Output<Name>;
+      }
       case 'beginRegistryMcpOAuth': {
         if (!this.registryMcpOAuth) throw new Error('Registry MCP OAuth is unavailable');
         return (await this.registryMcpOAuth.begin(
@@ -1498,7 +1528,7 @@ export class DaemonService {
           input as Input<'walletSwap'>,
         )) as Output<Name>;
       // The feedback loop (`feedback.ts`). Any agent may report from its own
-      // turn; the rest is the triage sweep, run from a Feedback triage corner.
+      // turn; only a configured System sender's agent may close the loop.
       case 'reportFeedback':
         if (!this.commandTransaction || !this.authorizedCommand)
           throw new Error('feedback reports require an active command');
@@ -1508,60 +1538,14 @@ export class DaemonService {
           authenticatedAgentId,
           input as Input<'reportFeedback'>,
         )) as Output<Name>;
-      case 'listFeedback':
-        await assertFeedbackTriageTurn(this.database, this.authorizedCommand, authenticatedAgentId);
-        return (await listFeedback(
+      case 'notifyFeedbackFixed':
+        return (await notifyFeedbackFixed(
           this.database,
-          (input as Input<'listFeedback'>).limit,
-        )) as Output<Name>;
-      case 'getFeedback':
-        await assertFeedbackTriageTurn(this.database, this.authorizedCommand, authenticatedAgentId);
-        return (await getFeedback(
-          this.database,
-          (input as Input<'getFeedback'>).itemIds,
-        )) as Output<Name>;
-      case 'listFeedbackIssues': {
-        await assertFeedbackTriageTurn(this.database, this.authorizedCommand, authenticatedAgentId);
-        if (!this.feedback.host)
-          throw new Error('feedback filing is unavailable: the Beeline GitHub App is not configured');
-        const repository = this.feedback.config.repository;
-        return {
-          repository,
-          issues: await this.feedback.host.listOpenIssues(repository, FEEDBACK_ISSUE_LABEL),
-        } as Output<Name>;
-      }
-      case 'fileFeedbackIssue':
-        await assertFeedbackTriageTurn(this.database, this.authorizedCommand, authenticatedAgentId);
-        return (await fileFeedbackIssue(
-          this.database,
-          this.feedback.config,
-          this.feedback.host,
-          input as Input<'fileFeedbackIssue'>,
-        )) as Output<Name>;
-      case 'attachFeedbackToIssue':
-        await assertFeedbackTriageTurn(this.database, this.authorizedCommand, authenticatedAgentId);
-        return (await attachFeedbackToIssue(
-          this.database,
-          this.feedback.config,
-          this.feedback.host,
-          input as Input<'attachFeedbackToIssue'>,
-        )) as Output<Name>;
-      case 'dismissFeedback':
-        await assertFeedbackTriageTurn(this.database, this.authorizedCommand, authenticatedAgentId);
-        return (await dismissFeedback(
-          this.database,
-          input as Input<'dismissFeedback'>,
-        )) as Output<Name>;
-      case 'setCornerFeedbackTriage': {
-        const output = await setCornerFeedbackTriage(
-          this.database,
+          this.feedback,
           this.authorizedCommand,
           authenticatedAgentId,
-          (input as Input<'setCornerFeedbackTriage'>).enabled,
-        );
-        this.live.publish({ type: 'invalidate', roomId: output.cornerId, reason: 'corner' });
-        return output as Output<Name>;
-      }
+          input as Input<'notifyFeedbackFixed'>,
+        )) as Output<Name>;
       default:
         throw new Error(`unsupported daemon operation: ${String(name)}`);
     }
@@ -2861,6 +2845,7 @@ export class DaemonService {
         archived: boolean;
         objective: string;
         title: string;
+        title_generated: boolean;
         kind: 'agent' | 'human';
         feature_branch: string | null;
         request_id: string | null;
@@ -2872,7 +2857,7 @@ export class DaemonService {
         approval_head_sha: string | null;
       }>(
         `SELECT room.parent_id parent_room_id,room.archived_at IS NOT NULL archived,
-           fact.objective,room.name title,fact.kind,fact.feature_branch,fact.request_id,fact.close_requested,fact.lifecycle,
+           fact.objective,room.name title,fact.title_generated,fact.kind,fact.feature_branch,fact.request_id,fact.close_requested,fact.lifecycle,
            fact.lane,requester.handle requester_handle,
            approval.pull_request_number,approval.head_sha approval_head_sha
          FROM corner_facts fact
@@ -2906,17 +2891,13 @@ export class DaemonService {
           }
         : {}),
       ...(row ? { title: row.title, kind: row.kind } : {}),
+      ...(row?.title_generated ? { titleGenerated: true } : {}),
       ...(row?.feature_branch ? { featureBranch: row.feature_branch } : {}),
       ...(row?.request_id ? { requestId: row.request_id } : {}),
       closeRequested: row?.close_requested ?? false,
       // A row written before the lane existed reads back as its backfilled
       // default, never as an unknown third lane.
-      lane:
-        row?.lane === 'no_code'
-          ? ('no_code' as const)
-          : row?.lane === 'research'
-            ? ('research' as const)
-            : ('code' as const),
+      lane: row?.lane === 'no_code' ? ('no_code' as const) : ('code' as const),
       ...(row?.requester_handle ? { requesterHandle: row.requester_handle } : {}),
       ...(row?.lifecycle ? { lifecycle: row.lifecycle } : {}),
       ...(row?.pull_request_number && row.approval_head_sha
@@ -2940,12 +2921,10 @@ export class DaemonService {
     )
       throw new Error('invalid brief revision cursor');
     const rows = (
-      await this.database.query<Parameters<typeof projectCornerBrief>[1]>(
-        `SELECT revision,content,intent_verbatim,build_spec,criteria,non_goals,
-                brief_references,approval_basis,revision_hash,change,author_id,
-                source_room_id,source_message_id,attachments
-       FROM corner_brief_revisions WHERE corner_id=$1 AND ($2::integer IS NULL OR revision<$2)
-       ORDER BY revision DESC LIMIT 21`,
+      await this.database.query<CornerBriefRow>(
+        `${CORNER_BRIEF_REVISION_SELECT}
+       WHERE brief.corner_id=$1 AND ($2::integer IS NULL OR brief.revision<$2)
+       ORDER BY brief.revision DESC LIMIT 21`,
         [input.cornerId, input.beforeRevision ?? null],
       )
     ).rows;
@@ -3091,9 +3070,8 @@ export class DaemonService {
         commands: Array<{ name: string; description?: string; inputHint?: string }>;
         yolo_mode: boolean;
         reviewer_handle: string | null;
-        feedback_triage: boolean | null;
       }>(
-        `SELECT a.soul,a.selected_model,a.selected_effort,a.fast_mode,a.commands,fact.feedback_triage,
+        `SELECT a.soul,a.selected_model,a.selected_effort,a.fast_mode,a.commands,
                 CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode,
                 CASE WHEN room.parent_id IS NOT NULL
                            AND reviewer.id<>COALESCE(fact.owner_agent_id,room.created_by)
@@ -3146,7 +3124,6 @@ export class DaemonService {
       commands: row?.commands ?? [],
       yoloMode: row?.yolo_mode ?? false,
       ...(row?.reviewer_handle ? { reviewerHandle: row.reviewer_handle } : {}),
-      ...(row?.feedback_triage ? { feedbackTriage: true as const } : {}),
       ...(registryMcpRoutes.length ? { registryMcpRoutes } : {}),
     };
   }
@@ -3669,6 +3646,12 @@ export class DaemonService {
                state='complete',completed_at=now(),result_message_id=inserted.id
              FROM inserted WHERE command.id=(SELECT id FROM writable)
              RETURNING command.id
+           ), star_count AS (
+             ${starPromptReplySql(
+               `(SELECT writable.root_source_message_id FROM writable,completed WHERE $5='message')`,
+               '(SELECT jsonb_array_length(attachments)>0 FROM attachment_payload)',
+               '$11::int[]',
+             )}
            ), cleared AS (
              DELETE FROM live_outputs output USING completed
              WHERE output.room_id=$2 AND output.agent_id=$3 AND output.turn_id=$6
@@ -3726,6 +3709,7 @@ export class DaemonService {
           input.replyToMessageId ?? null,
           rootMessageId,
           input.generationId,
+          STAR_PROMPT_MILESTONES,
         ],
       );
       if (this.livePaintDiagnostics) databaseAwaitResolvedAt = Date.now();
@@ -3785,6 +3769,22 @@ export class DaemonService {
           }
         : {}),
     });
+    // The atomic reply statement counted it in its own star_count CTE.
+    if (!atomicCommandWrite && input.requestId && input.presentation !== 'card') {
+      const reply = {
+        roomId: input.roomId,
+        agentId,
+        requestId: input.requestId,
+        messageId: saved.id,
+        artifact: saved.attachments.length > 0,
+      };
+      const count = (database: SqlDatabase) => recordStarPromptReply(database, reply);
+      if (this.afterCommit) this.afterCommit(count);
+      else
+        await count(this.database).catch((error) =>
+          console.error('[daemon] star prompt reply count failed', error),
+        );
+    }
     return {
       id: saved.id,
       createdAt: seconds(saved.created_at),
@@ -4146,6 +4146,45 @@ export class DaemonService {
    * page in the resource owner's existing connector DM so Telegram is not a
    * prerequisite for seeing it.
    */
+  private async linkSpendApproval(input: Input<'createLinkSpendRequest'>,
+    agentId: string, ownerId: string, requestId: string, approvalUrl: string): Promise<void> {
+    const url = new URL(approvalUrl);
+    if (url.protocol !== 'https:' || !url.hostname.endsWith('.link.com'))
+      throw new Error('Link returned an invalid approval URL');
+    const context = (await this.database.query<{ workspace_id: string; agent_name: string;
+      agent_handle: string | null; agent_avatar: string | null }>(
+      `SELECT room.workspace_id,identity.name agent_name,identity.handle agent_handle,
+        identity.avatar agent_avatar FROM rooms room JOIN identities identity ON identity.id=$2
+       WHERE room.id=$1`, [input.roomId, agentId])).rows[0];
+    if (!context) throw new Error('Link request Room not found');
+    const member = await this.database.query(`SELECT 1 FROM memberships WHERE workspace_id=$1
+      AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL`,
+      [context.workspace_id, ownerId]);
+    if (!member.rowCount) throw new Error('resource owner access denied');
+    const roomId = await ensureConnectorDirectMessageRoom(this.database,
+      context.workspace_id, 'link', ownerId);
+    const connectorId = connectorIdentityId('link');
+    const title = `Link purchase at ${input.merchant}`;
+    const detail = `${(input.amount / 100).toFixed(2)} USD · ${input.description}`.slice(0, 500);
+    const sourceMessageId = this.authorizedCommand?.root_source_message_id;
+    const line = await systemLine(this.database, {
+      id: createHash('sha256').update(`link-approval:${requestId}`).digest('hex'),
+      roomId, authorId: connectorId,
+      subject: { kind: 'person', id: connectorId, name: 'Link' },
+      verb: 'needs your approval for', object: title, consequence: detail,
+      presentation: 'card', cardType: 'squire-approval',
+      card: {
+        agent: { pubkey: agentId, kind: 'agent', name: context.agent_name,
+          ...(context.agent_handle ? { handle: context.agent_handle } : {}),
+          ...(context.agent_avatar ? { avatar: context.agent_avatar } : {}) },
+        tool: 'Link', title, detail, approvalUrl, approvalId: requestId,
+        linkKind: 'approval', sourceRoomId: input.roomId,
+        ...(sourceMessageId ? { sourceMessageId } : {}),
+      },
+    });
+    if (line.inserted) this.live.publish({ type: 'invalidate', roomId, reason: 'message', agentId });
+  }
+
   private async squireApproval(input: Input<'postSquireApproval'>, agentId: string) {
     if (!input.tool.trim() || input.tool.length > 80) throw new Error('Squire tool is invalid');
     if (!input.title.trim() || input.title.length > 120)
@@ -6259,14 +6298,11 @@ export class DaemonService {
     // existing lane available without pretending it is repository work.
     const repositoryWork =
       input.lane !== 'no_code' &&
-      (input.lane === 'research' ||
-        Boolean(input.repository) ||
+      (Boolean(input.repository) ||
         parent.repository_resolution === 'repository' ||
         Boolean(parent.repository_key));
     if (repositoryWork && !input.brief)
-      throw new Error('a structured brief is required for repository and research corners');
-    if (input.brief && !isStructuredCornerBrief(input.brief))
-      throw new Error('the legacy opaque brief format is invalid for new corners');
+      throw new Error('a brief is required for repository corners');
     let cornerId: string = randomUUID();
     const opener = await this.identity(agentId);
     await this.database.transaction(async (db) => {
@@ -6285,24 +6321,14 @@ export class DaemonService {
           repository_key: string | null;
           repository_target_branch: string;
           lane: string;
-          brief_content: string | null;
-          brief_intent: import('@beeline/api-contract/daemon').CornerBrief['intentVerbatim'] | null;
-          brief_build_spec: string | null;
-          brief_criteria: import('@beeline/api-contract/daemon').CornerBrief['criteria'] | null;
-          brief_non_goals: string[] | null;
-          brief_references: import('@beeline/api-contract/daemon').CornerBrief['references'] | null;
-          brief_approval_basis:
-            import('@beeline/api-contract/daemon').CornerBrief['approvalBasis'] | null;
+          brief_revision: number | null;
           brief_revision_hash: string | null;
           brief_change: string | null;
           brief_attachments: import('@beeline/api-contract/daemon').CornerBriefAttachment[] | null;
         }>(
           `SELECT child.id::text corner_id,child.name,fact.objective,fact.owner_agent_id,
                   fact.request_id,child.repository_key,child.repository_target_branch,fact.lane,
-                  initial.content brief_content,initial.intent_verbatim brief_intent,
-                  initial.build_spec brief_build_spec,initial.criteria brief_criteria,
-                  initial.non_goals brief_non_goals,initial.brief_references,
-                  initial.approval_basis brief_approval_basis,
+                  initial.revision brief_revision,
                   initial.revision_hash brief_revision_hash,initial.change brief_change,
                   initial.attachments brief_attachments
            FROM rooms child
@@ -6328,13 +6354,12 @@ export class DaemonService {
               saved.required === item.required
             );
           });
-        const sameBrief =
-          input.brief && isStructuredCornerBrief(input.brief)
-            ? existing.brief_revision_hash ===
-                cornerBriefRevisionHash(input.brief, existing.brief_attachments ?? []) &&
-              existing.brief_change === (input.brief.change ?? null) &&
-              sameAttachments
-            : existing.brief_content === null;
+        const sameBrief = input.brief
+          ? existing.brief_revision_hash ===
+              cornerBriefRevisionHash(input.brief, existing.brief_attachments ?? []) &&
+            existing.brief_change === (input.brief.change ?? null) &&
+            sameAttachments
+          : existing.brief_revision === null;
         if (
           existing.owner_agent_id !== agentId ||
           existing.request_id !== input.requestId ||
@@ -6419,8 +6444,6 @@ export class DaemonService {
         ],
       );
       if (input.brief) {
-        if (!isStructuredCornerBrief(input.brief))
-          throw new Error('new corners cannot use the legacy opaque brief format');
         const sourceRoomIds = [...new Set([roomId, commandRoomId])];
         const explicitAttachments = await resolveCornerBriefAttachments(
           db,
@@ -6447,24 +6470,18 @@ export class DaemonService {
         );
         await db.query(
           `INSERT INTO corner_brief_revisions(
-             corner_id,revision,content,intent_verbatim,build_spec,criteria,non_goals,
-             brief_references,approval_basis,revision_hash,change,author_id,
+             corner_id,revision,spec,approval_basis,revision_hash,change,author_id,
              source_room_id,source_message_id,attachments
-           ) VALUES($1,1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+           ) VALUES($1,1,$2,$3,$4,$5,$6,$7,$8,$9)`,
           [
             cornerId,
-            input.brief.buildSpec.trim(),
-            JSON.stringify(input.brief.intentVerbatim),
-            input.brief.buildSpec.trim(),
-            JSON.stringify(input.brief.criteria),
-            JSON.stringify(input.brief.nonGoals ?? []),
-            JSON.stringify(input.brief.references),
+            input.brief.spec.trim(),
             JSON.stringify(authority.approvalBasis),
             authority.revisionHash,
             input.brief.change ?? null,
             agentId,
             authority.sourceRoomId,
-            input.brief.approvalBasis.sourceMessageId,
+            input.brief.approval.sourceMessageId,
             JSON.stringify(attachments),
           ],
         );
@@ -6509,8 +6526,6 @@ export class DaemonService {
   }
   private async reviseCornerBrief(input: Input<'reviseCornerBrief'>, agentId: string) {
     validateCornerBrief(input.brief);
-    if (!isStructuredCornerBrief(input.brief))
-      throw new Error('corner brief revisions require the structured authority contract');
     const draft = input.brief;
     if (!draft.change?.trim())
       throw new Error('corner brief revision requires a change description');
@@ -6561,25 +6576,19 @@ export class DaemonService {
       const revision = input.expectedRevision + 1;
       await db.query(
         `INSERT INTO corner_brief_revisions(
-           corner_id,revision,content,intent_verbatim,build_spec,criteria,non_goals,
-           brief_references,approval_basis,revision_hash,change,author_id,
+           corner_id,revision,spec,approval_basis,revision_hash,change,author_id,
            source_room_id,source_message_id,attachments
-         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
         [
           input.cornerId,
           revision,
-          draft.buildSpec.trim(),
-          JSON.stringify(draft.intentVerbatim),
-          draft.buildSpec.trim(),
-          JSON.stringify(draft.criteria),
-          JSON.stringify(draft.nonGoals ?? []),
-          JSON.stringify(draft.references),
+          draft.spec.trim(),
           JSON.stringify(authority.approvalBasis),
           authority.revisionHash,
           draft.change?.trim() ?? null,
           agentId,
           authority.sourceRoomId,
-          draft.approvalBasis.sourceMessageId,
+          draft.approval.sourceMessageId,
           JSON.stringify(attachments),
         ],
       );
@@ -6719,12 +6728,6 @@ export class DaemonService {
   }
   private async archiveCorner(cornerId: string, agentId: string) {
     const parentId = await this.database.transaction(async (database) => {
-      const fact = await database.query<{ lane: string }>(
-        `SELECT lane FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
-        [cornerId],
-      );
-      if (fact.rows[0]?.lane === 'research')
-        throw new Error('research corners require a human to close them');
       return (await closeCornerState(database, cornerId)).parentId;
     });
     this.live.publish({ type: 'invalidate', roomId: cornerId, reason: 'corner', agentId });
@@ -6838,32 +6841,30 @@ export class DaemonService {
         await ensureSystemIdentity(db);
         const draft = await composeCornerUpgradeBrief(db, cornerId, {
           sourceMessageId: command.source_message_id,
-          snapshot: requester.text,
+          text: requester.text,
         });
+        const attachments = await resolveCornerBriefAttachments(db, [cornerId], draft);
         const authority = await resolveCornerBriefApproval(
           db,
           [cornerId],
           draft,
-          [],
+          attachments,
           command.source_message_id,
         );
         await db.query(
           `INSERT INTO corner_brief_revisions(
-             corner_id,revision,content,intent_verbatim,build_spec,criteria,non_goals,
-             brief_references,approval_basis,revision_hash,author_id,
+             corner_id,revision,spec,approval_basis,revision_hash,author_id,
              source_room_id,source_message_id,attachments
-           ) VALUES($1,1,$2,$3,$4,$5,'[]'::jsonb,'[]'::jsonb,$6,$7,$8,$9,$10,'[]'::jsonb)`,
+           ) VALUES($1,1,$2,$3,$4,$5,$6,$7,$8::jsonb)`,
           [
             cornerId,
-            draft.buildSpec.trim(),
-            JSON.stringify(draft.intentVerbatim),
-            draft.buildSpec.trim(),
-            JSON.stringify(draft.criteria),
+            draft.spec.trim(),
             JSON.stringify(authority.approvalBasis),
             authority.revisionHash,
             SYSTEM_IDENTITY_ID,
             authority.sourceRoomId,
             command.source_message_id,
+            JSON.stringify(attachments),
           ],
         );
       }
@@ -7279,6 +7280,8 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postAgentMachineReport: true,
   getConnectorAssignments: true,
   getGoogleOAuthGrant: true,
+  createLinkSpendRequest: true,
+  retrieveLinkSpendRequest: true,
   getRoomGoogleGrant: true,
   beginRegistryMcpOAuth: true,
   claimRegistryMcpOAuthCode: true,
@@ -7326,13 +7329,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   walletPay: true,
   walletSwap: true,
   reportFeedback: true,
-  listFeedback: true,
-  getFeedback: true,
-  listFeedbackIssues: true,
-  fileFeedbackIssue: true,
-  attachFeedbackToIssue: true,
-  dismissFeedback: true,
-  setCornerFeedbackTriage: true,
+  notifyFeedbackFixed: true,
 };
 export const DAEMON_OPERATION_NAMES = new Set(
   Object.keys(DAEMON_OPERATION_ROUTES) as (keyof DaemonOperationMap)[],

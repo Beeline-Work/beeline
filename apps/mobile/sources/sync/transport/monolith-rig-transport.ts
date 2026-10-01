@@ -433,12 +433,14 @@ export class MonolithRigTransport {
     title: string,
     appInstallationId?: string,
     sourceMessageId?: string,
+    titleGenerated?: boolean,
   ) {
     return this.operation('createHumanCorner', {
       roomId,
       title,
       appInstallationId,
       sourceMessageId,
+      titleGenerated,
     }).then(
       (value) => (value as { id: string }).id,
     );

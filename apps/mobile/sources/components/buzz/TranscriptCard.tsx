@@ -89,6 +89,9 @@ export type TranscriptCardProps = {
   onHeaderPress?(): void;
   headerExpanded?: boolean;
   headerTestID?: string;
+  /** A ✕ at the end of the title line that closes the card for good. */
+  onDismiss?(): void;
+  dismissLabel?: string;
   testID?: string;
 };
 
@@ -224,6 +227,8 @@ export function TranscriptCard({
   onHeaderPress,
   headerExpanded,
   headerTestID,
+  onDismiss,
+  dismissLabel = 'Dismiss',
   testID,
 }: TranscriptCardProps) {
   const { theme } = useUnistyles();
@@ -367,6 +372,17 @@ export function TranscriptCard({
                   {title}
                 </SettlingText>
                 {stamp ? <Text style={styles.stamp}>{stamp}</Text> : null}
+                {onDismiss ? (
+                  <Pressable
+                    accessibilityLabel={dismissLabel}
+                    accessibilityRole="button"
+                    hitSlop={12}
+                    onPress={onDismiss}
+                    testID={testID ? `${testID}-dismiss` : undefined}
+                  >
+                    <Text style={styles.dismiss}>✕</Text>
+                  </Pressable>
+                ) : null}
               </View>
               {subline ? (
                 <SettlingText
@@ -755,6 +771,7 @@ const styles = StyleSheet.create((theme) => {
       color: card.ledgerQuiet,
       fontVariant: ['tabular-nums'],
     },
+    dismiss: { ...card.type.machine, color: card.ledgerQuiet },
     subline: { ...card.type.meta, color: card.ledgerQuiet, marginTop: 2 },
     body: {
       ...card.type.body,

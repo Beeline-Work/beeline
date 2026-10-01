@@ -18,29 +18,33 @@ describe('scheduled Agent work', () => {
     expect(screen).toContain("monolithPhoneOperation('listRoomSchedules'");
     expect(screen).toContain("monolithPhoneOperation('deleteRoomSchedule'");
     expect(screen).not.toContain("monolithPhoneOperation('createRoomSchedule'");
-    expect(screen).toContain('AGENT-MANAGED SCHEDULES');
-    expect(screen).toContain(
-      'Scheduled work appears with this Room&apos;s repository notifications.',
-    );
+    // No explainer paragraph stands above the list (DESIGN.md).
+    expect(screen).not.toContain('AGENT-MANAGED SCHEDULES');
+    expect(screen).not.toContain('repository notifications');
     expect(screen).toContain('CONFIRM STOP');
     expect(screen).not.toContain('Alert.alert');
   });
 
   it('labels corner schedules and opens their corner from the parent Room list', () => {
     expect(screen).toContain("import { cornerHref } from '@/buzz/corner-navigation'");
-    expect(screen).toContain('CORNER · {corner.name}');
+    expect(screen).toContain('<CornerGlyph size={CORNER_META_SIZE} />');
     expect(screen).toContain('router.push(cornerHref(corner.id, roomId!, corner.name))');
     expect(screen).toContain('testID={`open-scheduled-work-${schedule.id}`}');
   });
 
-  it('draws no in-page back control: the stack header is the only back button (C75)', () => {
-    expect(screen).not.toContain('router.back()');
-    expect(screen).not.toContain('accessibilityLabel="Back"');
-    expect(screen).not.toContain('styles.back');
-    expect(screen).not.toContain('paddingTop: insets.top');
+  it('draws the shared PageHeader, Room over Scheduled Work, and no stack header', () => {
+    expect(screen).toContain('<PageHeader');
+    expect(screen).toContain('title="Scheduled Work"');
+    expect(screen).toContain("eyebrow={displayRoomIndexTitle(roomName ?? undefined) ?? 'Room'}");
+    expect(screen).toContain('onBack={() => router.back()}');
     expect(layout).toMatch(
-      /name="beeline\/settings\/schedules"\s*options=\{\{\s*headerTitle: 'Scheduled work'/,
+      /name="beeline\/settings\/schedules"\s*options=\{\{\s*headerShown: false/,
     );
+  });
+
+  it('says a cadence in words, never as a raw cron expression', () => {
+    expect(screen).toContain('scheduleCadenceLabel(schedule.cadence)');
+    expect(screen).not.toContain('cadence.expression');
   });
 
   it('calls repository activity Repo notifications everywhere it is presented to people', () => {

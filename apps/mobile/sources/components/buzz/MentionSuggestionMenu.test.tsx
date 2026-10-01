@@ -31,6 +31,10 @@ vi.mock('react-native-unistyles', async () => {
   };
 });
 
+vi.mock('@/constants/Typography', () => ({
+  Typography: { default: () => ({}) },
+}));
+
 vi.mock('@/components/buzz/IdentityMark', async () => {
   const ReactModule = await import('react');
   return { IdentityMark: (props: any) => ReactModule.createElement('IdentityMark', props) };
@@ -145,6 +149,28 @@ describe('MentionSuggestionMenu', () => {
     expect(
       JSON.stringify(channel.findAllByType('Text' as never).map((t: any) => t.props.children)),
     ).toContain('Everyone in this Room');
+  });
+
+  it('shows an agent as its full handle and model without provider or owner', () => {
+    const agent: RoomRosterParticipant = {
+      pubkey: 'a-niglet',
+      name: 'Niglet',
+      handle: 'nigletverylonghandle',
+      kind: 'agent',
+      agent: { pubkey: 'a-niglet', displayName: 'Niglet' },
+      model: 'openrouter/anthropic/claude-opus-5-5',
+      ownerHandle: 'lunchboxfortwo',
+    };
+    const renderer = render(menu({ matches: [agent], overflow: 0 }));
+    const row = renderer.root.findByProps({ testID: 'mention-suggestion-nigletverylonghandle' });
+    const words = row
+      .findAllByType('Text' as never)
+      .map((text: any) => [text.props.children].flat().join(''));
+    expect(words).toEqual(['@nigletverylonghandle', 'claude-opus-5-5']);
+    expect(row.props.accessibilityLabel).toBe('@nigletverylonghandle, claude-opus-5-5, agent');
+    const handle = row.findAllByType('Text' as never)[0];
+    expect(handle.props.numberOfLines).toBeUndefined();
+    expect(flat(handle.props.style).flexShrink).toBe(0);
   });
 
   it('offers @system as a report row, not a person', () => {

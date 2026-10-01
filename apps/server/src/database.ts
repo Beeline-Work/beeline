@@ -3,6 +3,7 @@ import {
   reconcileConfiguredCornerReviewers,
   reconcileCornerMergeBlockers,
 } from './agent-command.js';
+import { GITHUB_STAR_PROMPT_SCHEMA } from './github-star-prompt.js';
 import {
   INSTITUTIONAL_HISTORY_MAX_AGE_DAYS,
   INSTITUTIONAL_MEMORY_KEYWORD_PATTERN,
@@ -15,6 +16,7 @@ import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { uniqueAgentHandle } from '@beeline/api-contract/phone';
 import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
 import { backfillCornerWorkflowRuns, backfillCornerWorkflowSeed } from './corner-workflow.js';
+import { backfillFeedbackTriageWorkflow } from './feedback-triage-workflow.js';
 import { upgradeGrantPolicy, withdrawSupersededGrantAsks } from './grant-policy-upgrade.js';
 import { backfillRegistryApps } from './app-connections.js';
 import {
@@ -174,7 +176,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 14;
+export const REQUIRED_SCHEMA_VERSION = 15;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -1611,16 +1613,14 @@ ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS open_idempotency_key text;
 -- so the default backfills them truthfully. The CHECK rides the same pattern
 -- as agent_turns_status_check: drop by generated name, re-add, idempotent.
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS lane text NOT NULL DEFAULT 'code';
-ALTER TABLE corner_facts DROP CONSTRAINT IF EXISTS corner_facts_lane_check;
-ALTER TABLE corner_facts ADD CONSTRAINT corner_facts_lane_check
-  CHECK (lane IN ('code', 'no_code', 'research'));
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'agent';
 ALTER TABLE corner_facts DROP CONSTRAINT IF EXISTS corner_facts_kind_check;
 ALTER TABLE corner_facts ADD CONSTRAINT corner_facts_kind_check
   CHECK (kind IN ('agent', 'human'));
--- Feedback triage (apps/server/src/feedback.ts): a Room admin's per-corner
--- switch. Only agents in a corner with it on, during a turn in that corner,
--- may use the feedback triage tools or open sibling corners from it.
+-- Retired: the per-corner Feedback triage switch. Feedback triage is now the
+-- saved feedback-triage workflow, and nothing reads this column. It stays so
+-- an older server image keeps working during a rolling update; a later
+-- release can drop it.
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS feedback_triage boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS corner_facts_owner_agent_idx ON corner_facts(owner_agent_id);
 -- The corner workflow run's current state, projected from its newest handoff
@@ -1629,9 +1629,26 @@ CREATE INDEX IF NOT EXISTS corner_facts_owner_agent_idx ON corner_facts(owner_ag
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS workflow_state text;
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS workflow_outcome text;
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS merge_attempt_head text;
+-- The research lane is gone: a research corner is a code corner, and its run
+-- leaves the removed investigate state for implement. Its newest handoff card
+-- is the run's state (corner-workflow.ts), so that card moves with it.
+UPDATE messages SET card=card || '{"toState":"implement"}'::jsonb
+  || CASE WHEN card->>'outcome'='research' THEN '{"outcome":"code"}'::jsonb ELSE '{}'::jsonb END
+  WHERE card_type='corner-workflow-handoff' AND card->>'toState'='investigate'
+    AND room_id IN (SELECT corner_id FROM corner_facts WHERE lane='research');
+UPDATE corner_facts SET workflow_state='implement',
+    workflow_outcome=CASE WHEN workflow_outcome='research' THEN 'code' ELSE workflow_outcome END
+  WHERE lane='research' AND workflow_state='investigate';
+UPDATE corner_facts SET lane='code' WHERE lane='research';
+ALTER TABLE corner_facts DROP CONSTRAINT IF EXISTS corner_facts_lane_check;
+ALTER TABLE corner_facts ADD CONSTRAINT corner_facts_lane_check
+  CHECK (lane IN ('code', 'no_code'));
 CREATE INDEX IF NOT EXISTS corner_facts_workflow_land_idx ON corner_facts(corner_id)
   WHERE workflow_state='land';
 CREATE INDEX IF NOT EXISTS corner_facts_commissioned_by_idx ON corner_facts(commissioned_by);
+-- True while a human corner still carries the name the phone generated for it;
+-- any rename clears it (corner-title.ts).
+ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS title_generated boolean NOT NULL DEFAULT false;
 
 -- Assignment revisions are immutable; the current revision is the greatest
 -- committed row. Opening and revising insert the row in the command transaction.
@@ -1650,8 +1667,8 @@ CREATE TABLE IF NOT EXISTS corner_brief_revisions (
 CREATE INDEX IF NOT EXISTS corner_brief_revisions_source_idx ON corner_brief_revisions(source_room_id);
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS source_message_id text;
 -- Structured authority was added after the original opaque content field.
--- Keep that column as the compatibility representation of build_spec; old rows
--- intentionally retain null authority fields and read back as legacy.
+-- Rows from before it keep null authority fields and read back as their
+-- build_spec alone.
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS intent_verbatim jsonb;
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS build_spec text;
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS criteria jsonb;
@@ -1659,7 +1676,13 @@ ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS non_goals jsonb;
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS brief_references jsonb;
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS approval_basis jsonb;
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS revision_hash text;
-UPDATE corner_brief_revisions SET build_spec=content WHERE build_spec IS NULL;
+UPDATE corner_brief_revisions SET build_spec=content
+  WHERE build_spec IS NULL AND content IS NOT NULL;
+-- The trimmed brief is one Markdown spec plus one approving message. New
+-- revisions write spec and approval_basis and leave content and the typed
+-- columns above NULL; older rows keep them and are folded into a spec on read.
+ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS spec text;
+ALTER TABLE corner_brief_revisions ALTER COLUMN content DROP NOT NULL;
 CREATE TABLE IF NOT EXISTS corner_validation_stages (
   corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   brief_revision integer NOT NULL,
@@ -2156,6 +2179,28 @@ ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS registry_squire_relaye
 -- (installConnector), so it never outlives one run.
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS force_relogin_provider text;
 
+-- Hosted Link wallet grants belong to a human. Neither agents nor helpers see OAuth tokens.
+CREATE TABLE IF NOT EXISTS link_oauth_accounts (
+  owner_identity_id text PRIMARY KEY REFERENCES identities(id) ON DELETE CASCADE,
+  state text UNIQUE,
+  code_verifier text,
+  attempt_expires_at timestamptz,
+  sealed_grant text,
+  granted_scopes text[] NOT NULL DEFAULT '{}',
+  ineligible boolean NOT NULL DEFAULT false,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS link_spend_requests (
+  id text PRIMARY KEY,
+  owner_identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  agent_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  merchant text NOT NULL,
+  amount bigint NOT NULL,
+  description text NOT NULL,
+  test boolean NOT NULL DEFAULT false,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS registry_mcp_oauth_attempts (
   state text PRIMARY KEY,
   connector_id uuid NOT NULL REFERENCES workspace_connectors(id) ON DELETE CASCADE,
@@ -2377,9 +2422,11 @@ CREATE INDEX IF NOT EXISTS wallet_transactions_wallet_idx
 
 -- The Beeline feedback loop (apps/server/src/feedback.ts). An agent's
 -- report_feedback call and a person's @system tag or Report issue action land
--- here; the triage corner's sweep files, attaches, or dismisses them, and
--- the configured repository's issue webhook resolves or closes them. Message
--- ids only: evidence text is read live, never copied.
+-- here. The saved feedback-triage workflow reads this table through a
+-- read-only grant, and notify_feedback_fixed resolves items once a fix merges.
+-- Message ids only, plus the text of a person's own @system report. The
+-- issue_* columns and feedback_issue_comments are retired GitHub-filing state,
+-- kept for rolling-update compatibility.
 CREATE TABLE IF NOT EXISTS feedback_items (
   id text PRIMARY KEY,
   source_kind text NOT NULL CHECK (source_kind IN ('agent','human')),
@@ -2465,6 +2512,7 @@ export async function migrate(
     `ALTER TABLE wallet_bindings ADD COLUMN IF NOT EXISTS delegation_standing boolean NOT NULL DEFAULT false`,
   );
   await ddlScript('agent command schema', AGENT_COMMAND_SCHEMA);
+  await ddlScript('github star prompt schema', GITHUB_STAR_PROMPT_SCHEMA);
   await retryMigrationStep('message cursor index', () => createIndexConcurrently(
     database, 'messages_room_cursor_idx',
     `CREATE INDEX CONCURRENTLY messages_room_cursor_idx ON messages (room_id,
@@ -2553,6 +2601,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   await dataStep('inherited corner memberships', () => backfillInheritedCornerMemberships(database));
   await dataStep('corner workflow seed', () => backfillCornerWorkflowSeed(database));
   await dataStep('corner workflow runs', () => backfillCornerWorkflowRuns(database));
+  await dataStep('feedback triage workflow', () => backfillFeedbackTriageWorkflow(database));
   const blockers = await dataStep('corner merge blockers', () =>
     reconcileCornerMergeBlockers(database));
   if (blockers)

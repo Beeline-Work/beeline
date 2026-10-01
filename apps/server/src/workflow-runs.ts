@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
-  readWorkflowContract,
+  workflowContractError,
   workflowContentsError,
   isAgentIdentityReference,
   isClassOrTagReference,
@@ -268,12 +268,9 @@ export async function saveWorkflow(
   input: { contract: unknown },
   afterCommit?: AfterCommit,
 ): Promise<{ slug: string; version: number }> {
-  const contract = readWorkflowContract(input.contract);
-  if (!contract) {
-    throw new Error(
-      'workflow contract is invalid: check roles, handoffs, required contents, loop caps, and terminals',
-    );
-  }
+  const reason = workflowContractError(input.contract);
+  if (reason !== null) throw new Error(`workflow contract is invalid: ${reason}`);
+  const contract = input.contract as WorkflowContract;
   const room = (
     await database.query<{ workspace_id: string }>(`SELECT workspace_id FROM rooms WHERE id=$1`, [
       command.room_id,
@@ -329,7 +326,9 @@ export async function startWorkflow(
     const roleClasses: Record<string, string> = {};
     for (const role of contract.roles) {
       const raw = input.roleBindings[role]!;
-      if (isAgentIdentityReference(raw)) {
+      if (typeof raw === 'string' && raw.startsWith('@')) {
+        roleBindings[role] = await memberIdForHandle(db, command.room_id, raw);
+      } else if (isAgentIdentityReference(raw)) {
         roleBindings[role] = raw;
       } else if (isClassOrTagReference(raw)) {
         roleBindings[role] = raw;
@@ -681,6 +680,20 @@ export async function reassignFailedWorkflowRole(
   await reassignRole(db, { roomId: input.roomId, runId: run.runId, run, contract, role, picked });
 }
 
+/** The identity id of the current Room member with this handle (as agents see it in their member list). */
+async function memberIdForHandle(db: SqlDatabase, roomId: string, raw: string): Promise<string> {
+  const handle = raw.replace(/^@/, '');
+  const row = (
+    await db.query<{ identity_id: string }>(
+      `SELECT m.identity_id FROM memberships m JOIN identities i ON i.id=m.identity_id
+       WHERE m.room_id=$1 AND m.removed_at IS NULL AND lower(i.handle)=lower($2)`,
+      [roomId, handle],
+    )
+  ).rows[0];
+  if (!row) throw new Error(`@${handle} is not a current member of this Room`);
+  return row.identity_id;
+}
+
 /**
  * A human's explicit override: bind a specific agent to a class-bound role
  * this run is currently stuck on — the "ask a human" recovery path when a
@@ -697,11 +710,14 @@ export async function assignWorkflowRole(
 ): Promise<{ runId: string; state: string }> {
   if (typeof input.runId !== 'string' || !input.runId) throw new Error('runId is required');
   if (typeof input.role !== 'string' || !input.role) throw new Error('role is required');
-  if (!isAgentIdentityReference(input.targetAgentId)) {
-    throw new Error('targetAgentId must be an agent identity');
+  if (typeof input.targetAgentId !== 'string' || !input.targetAgentId) {
+    throw new Error('targetAgentId is required');
   }
   return database.transaction(async (db) => {
     await lockWorkflowRun(db, input.runId);
+    const targetAgentId = isAgentIdentityReference(input.targetAgentId)
+      ? input.targetAgentId
+      : await memberIdForHandle(db, command.room_id, input.targetAgentId);
     const run = await loadRun(db, command.room_id, input.runId);
     if (!run) throw new Error('workflow run is unavailable in this Room');
     const contract = await loadPinnedContract(db, command.room_id, run.workflowSlug, run.workflowVersion);
@@ -723,13 +739,13 @@ export async function assignWorkflowRole(
     if (!room) throw new Error('workflow room not found');
     const member = await db.query(
       `SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
-      [command.room_id, input.targetAgentId],
+      [command.room_id, targetAgentId],
     );
     if (!member.rowCount) {
-      throw new Error(`${input.targetAgentId} is not a current member of this Room`);
+      throw new Error(`${targetAgentId} is not a current member of this Room`);
     }
-    if (!(await agentCarriesTag(db, room.workspace_id, input.targetAgentId, className))) {
-      throw new Error(`${input.targetAgentId} does not carry the "${className}" tag`);
+    if (!(await agentCarriesTag(db, room.workspace_id, targetAgentId, className))) {
+      throw new Error(`${targetAgentId} does not carry the "${className}" tag`);
     }
     await reassignRole(db, {
       roomId: command.room_id,
@@ -737,7 +753,7 @@ export async function assignWorkflowRole(
       run,
       contract,
       role: input.role,
-      picked: input.targetAgentId,
+      picked: targetAgentId,
     });
     return { runId: run.runId, state: run.toState };
   });

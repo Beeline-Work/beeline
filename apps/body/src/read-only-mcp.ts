@@ -14,7 +14,7 @@
  * edit-corner worktree after the signed human ALLOW flow.
  */
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   existsSync,
   lstatSync,
@@ -29,6 +29,7 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { createInterface } from 'node:readline';
 import {
+  CORNER_BRIEF_SPEC_MAX_LENGTH,
   CORNER_NAME_MAX_LENGTH,
   CORNER_NAME_MAX_WORDS,
   CORNER_OBJECTIVE_MAX_LENGTH,
@@ -41,9 +42,8 @@ import {
   type CornerRestoreResult,
   type RoomConversationResult,
   FEEDBACK_AGENT_CATEGORIES,
-  FEEDBACK_ISSUE_BODY_MAX_LENGTH,
-  FEEDBACK_ISSUE_TITLE_MAX_LENGTH,
-  FEEDBACK_TRIAGE_REASON_MAX_LENGTH,
+  FEEDBACK_FIXED_ITEMS_MAX,
+  FEEDBACK_FIXED_TITLE_MAX_LENGTH,
 } from '@beeline/api-contract/daemon';
 import {
   REQUESTABLE_AGENT_GRANT_KINDS,
@@ -258,6 +258,40 @@ const READ_ONLY_TOOLS: ToolDefinition[] = [
   },
 ];
 
+/** One brief shape for open_corner.brief and revise_corner_brief, so the two cannot drift. */
+const WORKFLOW_GUIDE_URL = 'https://github.com/Beeline-Work/beeline/blob/main/docs/workflows/README.md';
+
+export const CORNER_BRIEF_PROPERTIES = {
+  spec: {
+    type: 'string',
+    minLength: 1,
+    maxLength: CORNER_BRIEF_SPEC_MAX_LENGTH,
+    description:
+      'Markdown: what to build, a checklist of what done means, what is out of scope, and references, as headings in one doc.',
+  },
+  approval: {
+    type: 'object',
+    required: ['sourceMessageId'],
+    properties: { sourceMessageId: { type: 'string' } },
+    additionalProperties: false,
+    description: 'The human Room message that approved this spec. The server quotes it.',
+  },
+  attachments: {
+    type: 'array',
+    maxItems: 16,
+    items: {
+      type: 'object',
+      required: ['objectId', 'purpose', 'required'],
+      properties: {
+        objectId: { type: 'string', format: 'uuid' },
+        purpose: { type: 'string', maxLength: 500 },
+        required: { type: 'boolean' },
+      },
+      additionalProperties: false,
+    },
+  },
+} as const;
+
 const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'get_room_message',
@@ -304,7 +338,12 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'save_workflow',
     description:
-      'Save a declarative workflow contract for a multi-agent (or agent+human) team: named roles, handoffs between roles with required contents, loop caps with an ask-a-human escape, human decision points via gate states, and done/failed terminals. Validated synchronously (roles, handoffs, required contents, every loop capped, reachable from start, at least one terminal) and stored Workspace-wide, versioned by name; a run already in progress keeps the version it started with. Pass the whole contract as one JSON object under "contract" - see load_workspace_skill for the shape once one is saved, or ask for an example.',
+      'Save a declarative workflow contract for a multi-agent (or agent+human) team: named roles, handoffs between roles with required contents, loop caps with an ask-a-human escape, human decision points via gate states, and done/failed terminals. Stored Workspace-wide, versioned by name; a run already in progress keeps the version it started with. Pass the whole contract as one JSON object under "contract". Minimal valid example: ' +
+      '{"version":1,"name":"draft-and-approve","description":"Draft a note and get a human yes or no","roles":["writer"],"start":"draft","handoffs":{"draft":{"role":"writer","requires":["text"],"on":{"drafted":"approve"}},"approve":{"kind":"gate","role":"writer","requires":["decision"],"on":{"publish":"done","redo":"draft"}},"done":{"kind":"terminal","status":"done"}}}. ' +
+      'Rules: name is lowercase words joined by hyphens (a-z, 0-9, no underscores), at most 64 characters; description is 1-60 characters; roles are 1-16 lowercase names; start is a non-terminal state; handoffs has 2-64 states keyed by lowercase name. ' +
+      'A handoff state allows only role, requires (field names the handoff must carry), on (outcome -> next state, 1-16 outcomes), loop, timeoutSeconds and roleBinding. A gate is {"kind":"gate", role, requires, on} with 2-4 outcomes; a human picks one. A terminal is {"kind":"terminal","status":"done"|"failed"|"abandoned"}. No other keys. ' +
+      'Every state must be reachable from start, and at least one terminal is required. Every cycle must pass through a gate or have a loop cap on a state in it: "loop":{"onEdge":"<outcome>","cap":1-100,"onExceeded":"<another state>"}. A rejected contract returns the rule that failed and where.' +
+      ` How to write and run workflows: ${WORKFLOW_GUIDE_URL}`,
     inputSchema: {
       type: 'object',
       required: ['contract'],
@@ -317,7 +356,8 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'start_workflow',
     description:
-      'Start a run of a saved workflow, binding its named roles to current members of this Room. Posts one message whose id is the run id and pins the contract version; call handoff with that runId to move the run forward. Every declared role needs a binding to a current Room member OR a class/tag word (e.g. "heavy", "light", "god", a harness name, a provider name, an exact model id, or a custom tag) - a class binding is resolved to a random currently healthy Room member carrying that tag each time the role is dispatched, skipping offline/recently-failed/out-of-credit members, and stays with whoever it picked for the rest of the run unless that agent later fails, in which case it moves to the next healthy member automatically. If the class has no healthy member, the run names this in the Room and waits for a human (see assign_workflow_role).',
+      'Start a run of a saved workflow, binding its named roles to current members of this Room (by agent id, or by @handle from your member list). Posts one message whose id is the run id and pins the contract version; call handoff with that runId to move the run forward. Every declared role needs a binding to a current Room member OR a class/tag word (e.g. "heavy", "light", "god", a harness name, a provider name, an exact model id, or a custom tag) - a class binding is resolved to a random currently healthy Room member carrying that tag each time the role is dispatched, skipping offline/recently-failed/out-of-credit members, and stays with whoever it picked for the rest of the run unless that agent later fails, in which case it moves to the next healthy member automatically. If the class has no healthy member, the run names this in the Room and waits for a human (see assign_workflow_role).' +
+      ` How to write and run workflows: ${WORKFLOW_GUIDE_URL}`,
     inputSchema: {
       type: 'object',
       required: ['name', 'roleBindings'],
@@ -331,7 +371,8 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'handoff',
     description:
-      'Advance a workflow run you are currently holding: validated against the run\'s pinned contract (you must be bound to the current state\'s role, the outcome must be one the state declares, and contents must satisfy its required fields). Posted as a normal message and deterministically wakes whichever agent is bound to the next state\'s role - no @mention needed. A capped loop is enforced from the transcript itself: exceeding it is redirected to the loop\'s own escape state instead of your requested outcome. A state that reaches a human decision point posts a card instead of waking anyone directly; that role\'s agent is woken once a human answers it.',
+      'Advance a workflow run you are currently holding: validated against the run\'s pinned contract (you must be bound to the current state\'s role, the outcome must be one the state declares, and contents must satisfy its required fields). Posted as a normal message and deterministically wakes whichever agent is bound to the next state\'s role - no @mention needed. A capped loop is enforced from the transcript itself: exceeding it is redirected to the loop\'s own escape state instead of your requested outcome. A state that reaches a human decision point posts a card instead of waking anyone directly; that role\'s agent is woken once a human answers it.' +
+      ` How to write and run workflows: ${WORKFLOW_GUIDE_URL}`,
     inputSchema: {
       type: 'object',
       required: ['runId', 'outcome', 'contents'],
@@ -346,7 +387,8 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'archive_workflow',
     description:
-      'Retire a saved workflow by name so it drops out of discovery and can no longer be started. A run already in progress is unaffected - it keeps running on its pinned contract version.',
+      'Retire a saved workflow by name so it drops out of discovery and can no longer be started. A run already in progress is unaffected - it keeps running on its pinned contract version.' +
+      ` How to write and run workflows: ${WORKFLOW_GUIDE_URL}`,
     inputSchema: {
       type: 'object',
       required: ['name'],
@@ -359,14 +401,15 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'assign_workflow_role',
     description:
-      'Bind one specific agent to a class/tag-bound role this run is currently on - the human-directed recovery when a class has no healthy member (the run names this in the Room and asks a human; that human can then tag you and ask you to call this). No health filter applies - an explicit choice overrides "healthy". The target must currently carry the role\'s configured tag and be a member of this Room. Not for a role bound to one fixed agent; that role never fails over.',
+      'Bind one specific agent to a class/tag-bound role this run is currently on - the human-directed recovery when a class has no healthy member (the run names this in the Room and asks a human; that human can then tag you and ask you to call this). No health filter applies - an explicit choice overrides "healthy". The target must currently carry the role\'s configured tag and be a member of this Room; agentId takes an agent id or a handle from your member list. Not for a role bound to one fixed agent; that role never fails over.' +
+      ` How to write and run workflows: ${WORKFLOW_GUIDE_URL}`,
     inputSchema: {
       type: 'object',
       required: ['runId', 'role', 'agentId'],
       properties: {
         runId: { type: 'string', minLength: 1, maxLength: 128 },
         role: { type: 'string', minLength: 1, maxLength: 64 },
-        agentId: { type: 'string', minLength: 64, maxLength: 64 },
+        agentId: { type: 'string', minLength: 1, maxLength: 64 },
       },
       additionalProperties: false,
     },
@@ -456,84 +499,21 @@ const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
-    name: 'set_feedback_triage',
+    name: 'notify_feedback_fixed',
     description:
-      'Turn Feedback triage on or off for the corner you are working in, when a Room admin asks you to. With it on, your next turn here has the triage tools (list_feedback, file_feedback_issue, and the rest). The server refuses anyone but a Room admin.',
+      'After a merged pull request fixes Beeline feedback items, tell the people who reported them. System sends each person who reported an item themselves one DM, "Fixed: <title> <pr_url>"; agent reports resolve with no DM. The server allows this only when your owner is a configured System sender, and only for a pull request in the Beeline repository.',
     inputSchema: {
       type: 'object',
-      required: ['enabled'],
-      properties: { enabled: { type: 'boolean' } },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'list_feedback',
-    description:
-      'Feedback triage only (a corner with Feedback triage on): list new Beeline feedback items, human reports first, then by how many similar reports each has.',
-    inputSchema: {
-      type: 'object',
-      properties: { limit: { type: 'integer', minimum: 1, maximum: 200 } },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'get_feedback',
-    description:
-      'Feedback triage only: read feedback items with their evidence messages. Evidence is private: never copy it, names, or Room names into an issue.',
-    inputSchema: {
-      type: 'object',
-      required: ['item_ids'],
+      required: ['item_ids', 'title', 'pr_url'],
       properties: {
-        item_ids: { type: 'array', minItems: 1, maxItems: 50, items: { type: 'string', minLength: 1 } },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'list_feedback_issues',
-    description:
-      'Feedback triage only: list open issues labelled beeline-feedback in the configured public repository.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-  },
-  {
-    name: 'file_feedback_issue',
-    description:
-      'Feedback triage only: file one public GitHub issue for new items. Write it in your own words: the server rejects any title or body that quotes evidence (40+ characters), names a person or Room, or holds an email or secret, and names the failing rule. The server adds labels and the report-count footer.',
-    inputSchema: {
-      type: 'object',
-      required: ['item_ids', 'title', 'body', 'category_label'],
-      properties: {
-        item_ids: { type: 'array', minItems: 1, maxItems: 50, items: { type: 'string', minLength: 1 } },
-        title: { type: 'string', minLength: 1, maxLength: FEEDBACK_ISSUE_TITLE_MAX_LENGTH },
-        body: { type: 'string', minLength: 1, maxLength: FEEDBACK_ISSUE_BODY_MAX_LENGTH },
-        category_label: { type: 'string', enum: [...FEEDBACK_AGENT_CATEGORIES, 'human_report'] },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'attach_feedback_to_issue',
-    description:
-      'Feedback triage only: link new items to an existing beeline-feedback issue; the server updates its one report-count comment and adds no other text.',
-    inputSchema: {
-      type: 'object',
-      required: ['item_ids', 'issue_number'],
-      properties: {
-        item_ids: { type: 'array', minItems: 1, maxItems: 50, items: { type: 'string', minLength: 1 } },
-        issue_number: { type: 'integer', minimum: 1 },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'dismiss_feedback',
-    description: 'Feedback triage only: dismiss new items that are not worth an issue, with the reason.',
-    inputSchema: {
-      type: 'object',
-      required: ['item_ids', 'reason'],
-      properties: {
-        item_ids: { type: 'array', minItems: 1, maxItems: 50, items: { type: 'string', minLength: 1 } },
-        reason: { type: 'string', minLength: 1, maxLength: FEEDBACK_TRIAGE_REASON_MAX_LENGTH },
+        item_ids: {
+          type: 'array',
+          minItems: 1,
+          maxItems: FEEDBACK_FIXED_ITEMS_MAX,
+          items: { type: 'string', minLength: 1 },
+        },
+        title: { type: 'string', minLength: 1, maxLength: FEEDBACK_FIXED_TITLE_MAX_LENGTH },
+        pr_url: { type: 'string', minLength: 1 },
       },
       additionalProperties: false,
     },
@@ -877,111 +857,19 @@ const AGENT_TOOLS: ToolDefinition[] = [
           type: 'string',
           minLength: 1,
           maxLength: CORNER_OBJECTIVE_MAX_LENGTH,
-          description: `Navigation summary of at most ${CORNER_OBJECTIVE_MAX_WORDS} words; the typed brief carries product authority.`,
+          description: `Navigation summary of at most ${CORNER_OBJECTIVE_MAX_WORDS} words; the brief's spec carries the scope.`,
         },
         brief: {
           type: 'object',
-          required: ['intentVerbatim', 'buildSpec', 'criteria', 'references', 'approvalBasis'],
-          properties: {
-            intentVerbatim: {
-              type: 'array',
-              minItems: 1,
-              maxItems: 50,
-              items: {
-                type: 'object',
-                required: ['sourceMessageId', 'snapshot'],
-                properties: {
-                  sourceMessageId: { type: 'string' },
-                  snapshot: { type: 'string', minLength: 1, maxLength: 16000 },
-                },
-                additionalProperties: false,
-              },
-              description: 'Exact human message text and its durable Room message ID.',
-            },
-            buildSpec: {
-              type: 'string',
-              minLength: 1,
-              maxLength: 65536,
-              description: 'Agent-authored Markdown implementation specification.',
-            },
-            criteria: {
-              type: 'array',
-              minItems: 1,
-              maxItems: 100,
-              items: {
-                type: 'object',
-                required: ['id', 'text'],
-                properties: {
-                  id: { type: 'string', pattern: '^[A-Z][A-Z0-9_-]*-[1-9][0-9]*$' },
-                  text: { type: 'string', minLength: 1, maxLength: 2000 },
-                },
-                additionalProperties: false,
-              },
-            },
-            nonGoals: {
-              type: 'array',
-              maxItems: 50,
-              items: { type: 'string', minLength: 1, maxLength: 1000 },
-            },
-            references: {
-              type: 'array',
-              maxItems: 50,
-              items: {
-                type: 'object',
-                required: ['label', 'authority', 'description'],
-                properties: {
-                  label: { type: 'string', minLength: 1, maxLength: 200 },
-                  authority: {
-                    type: 'string',
-                    enum: [
-                      'human-authoritative',
-                      'repository-authoritative',
-                      'approved-reference',
-                      'informational',
-                      'agent-recommendation',
-                    ],
-                  },
-                  description: { type: 'string', minLength: 1, maxLength: 1000 },
-                  objectId: { type: 'string', format: 'uuid' },
-                },
-                additionalProperties: false,
-              },
-            },
-            approvalBasis: {
-              type: 'object',
-              required: ['kind', 'sourceMessageId', 'snapshot'],
-              properties: {
-                kind: {
-                  type: 'string',
-                  enum: ['initiating-command', 'explicit-human-answer'],
-                },
-                sourceMessageId: { type: 'string' },
-                snapshot: { type: 'string', minLength: 1, maxLength: 16000 },
-              },
-              additionalProperties: false,
-            },
-            attachments: {
-              type: 'array',
-              maxItems: 16,
-              items: {
-                type: 'object',
-                required: ['objectId', 'purpose', 'required'],
-                properties: {
-                  objectId: { type: 'string', format: 'uuid' },
-                  purpose: { type: 'string', maxLength: 500 },
-                  required: { type: 'boolean' },
-                },
-                additionalProperties: false,
-              },
-            },
-          },
+          required: ['spec', 'approval'],
+          properties: CORNER_BRIEF_PROPERTIES,
           additionalProperties: false,
         },
         lane: {
           type: 'string',
-          enum: ['code', 'no_code', 'research'],
+          enum: ['code', 'no_code'],
           description:
-            'Defaults to "code". Use "no_code" for artifact work without a repository checkout. Use "research" for a writable repository worktree held open for investigation: do not commit, push, or open a pull request until a human directs it.',
+            'Defaults to "code". Use "no_code" for artifact work without a repository checkout.',
         },
       },
       additionalProperties: false,
@@ -990,106 +878,14 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'revise_corner_brief',
     description:
-      'Record a correction as the next immutable assignment revision. Supply the complete replacement brief and the revision you read; the worker and reviewer will use the new revision.',
+      'Record a correction as the next immutable assignment revision. Supply the complete replacement spec, the human message that approved it, and the revision you read; the worker and reviewer will use the new revision.',
     inputSchema: {
       type: 'object',
-      required: [
-        'expectedRevision',
-        'intentVerbatim',
-        'buildSpec',
-        'criteria',
-        'references',
-        'approvalBasis',
-        'change',
-      ],
+      required: ['expectedRevision', 'spec', 'approval', 'change'],
       properties: {
         expectedRevision: { type: 'integer', minimum: 0 },
-        intentVerbatim: {
-          type: 'array',
-          minItems: 1,
-          maxItems: 50,
-          items: {
-            type: 'object',
-            required: ['sourceMessageId', 'snapshot'],
-            properties: {
-              sourceMessageId: { type: 'string' },
-              snapshot: { type: 'string', minLength: 1, maxLength: 16000 },
-            },
-            additionalProperties: false,
-          },
-        },
-        buildSpec: { type: 'string', minLength: 1, maxLength: 65536 },
-        criteria: {
-          type: 'array',
-          minItems: 1,
-          maxItems: 100,
-          items: {
-            type: 'object',
-            required: ['id', 'text'],
-            properties: {
-              id: { type: 'string', pattern: '^[A-Z][A-Z0-9_-]*-[1-9][0-9]*$' },
-              text: { type: 'string', minLength: 1, maxLength: 2000 },
-            },
-            additionalProperties: false,
-          },
-        },
-        nonGoals: {
-          type: 'array',
-          maxItems: 50,
-          items: { type: 'string', minLength: 1, maxLength: 1000 },
-        },
-        references: {
-          type: 'array',
-          maxItems: 50,
-          items: {
-            type: 'object',
-            required: ['label', 'authority', 'description'],
-            properties: {
-              label: { type: 'string', minLength: 1, maxLength: 200 },
-              authority: {
-                type: 'string',
-                enum: [
-                  'human-authoritative',
-                  'repository-authoritative',
-                  'approved-reference',
-                  'informational',
-                  'agent-recommendation',
-                ],
-              },
-              description: { type: 'string', minLength: 1, maxLength: 1000 },
-              objectId: { type: 'string', format: 'uuid' },
-            },
-            additionalProperties: false,
-          },
-        },
-        approvalBasis: {
-          type: 'object',
-          required: ['kind', 'sourceMessageId', 'snapshot'],
-          properties: {
-            kind: {
-              type: 'string',
-              enum: ['initiating-command', 'explicit-human-answer'],
-            },
-            sourceMessageId: { type: 'string' },
-            snapshot: { type: 'string', minLength: 1, maxLength: 16000 },
-          },
-          additionalProperties: false,
-        },
+        ...CORNER_BRIEF_PROPERTIES,
         change: { type: 'string', maxLength: 1000 },
-        attachments: {
-          type: 'array',
-          maxItems: 16,
-          items: {
-            type: 'object',
-            required: ['objectId', 'purpose', 'required'],
-            properties: {
-              objectId: { type: 'string', format: 'uuid' },
-              purpose: { type: 'string', maxLength: 500 },
-              required: { type: 'boolean' },
-            },
-            additionalProperties: false,
-          },
-        },
       },
       additionalProperties: false,
     },
@@ -1419,6 +1215,24 @@ const AGENT_TOOLS: ToolDefinition[] = [
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
+    name: 'create_link_spend_request',
+    description: 'Create a Link purchase request for the owner of this agent. Link asks the owner to approve the exact merchant and amount. Give merchant name, HTTPS merchant URL, amount in USD cents, and a clear description of what the owner asked to buy. For a seller that accepts a Shared Payment Token, set credentialType=shared_payment_token and provide its networkId; Link resolves the merchant and omits merchant URL in that API call. The owner gets a private Link approval card. No Beeline spending limit or approval is added. Use the returned ID with wait_link_spend_request.',
+    inputSchema: { type: 'object', required: ['merchant', 'amount', 'description'],
+      properties: { merchant: { type: 'string' }, merchantUrl: { type: 'string' },
+        amount: { type: 'integer', minimum: 1 }, description: { type: 'string' },
+        test: { type: 'boolean', description: 'Link test mode: no real charge.' },
+        credentialType: { type: 'string', enum: ['card', 'shared_payment_token'] },
+        networkId: { type: 'string', description: 'Required for shared_payment_token.' } },
+      additionalProperties: false },
+  },
+  {
+    name: 'wait_link_spend_request',
+    description: 'Wait for the owner to approve a Link spend request. Polls briefly; call again while pending. After approval the result contains a one-time merchant-and-amount scoped card number, expiry, CVC and billing fields, or a shared payment token. Fill ordinary checkout fields with Squire operate_type/operate_drive using those approved details. Never reuse the card for another purchase.',
+    inputSchema: { type: 'object', required: ['id'], properties: {
+      id: { type: 'string', description: 'The lsrq_... ID from create_link_spend_request.' } },
+      additionalProperties: false },
+  },
+  {
     name: 'connect_app',
     description:
       'Connect an app after workbench_status shows it is missing. Pass a request-specific continuation sentence for the sign-in card, stating what you will do after sign-in; omit links, secrets, and private data. The server chooses managed OAuth when supported and posts the card to the owner. Wait for the connection wake, then use the app ID with list_app_tools and execute_app_tool. Only when the provider reports managed OAuth unsupported does the server choose Trusty Squire. An outage or refusal never permits a silent route switch. Never put sign-in links or credentials in chat. This is setup, not use permission.',
@@ -1604,16 +1418,6 @@ const AGENT_TOOLS: ToolDefinition[] = [
 ];
 
 const agentSurface = process.env.BEELINE_MCP_SURFACE === 'agent';
-const FEEDBACK_TRIAGE_TOOL_NAMES = new Set([
-  'list_feedback',
-  'get_feedback',
-  'list_feedback_issues',
-  'file_feedback_issue',
-  'attach_feedback_to_issue',
-  'dismiss_feedback',
-]);
-/** Reads that the server authorizes per turn, so they carry the command context. */
-const TURN_SCOPED_READS = new Set(['listFeedback', 'getFeedback', 'listFeedbackIssues']);
 /** The bounded daemon-control tools for one surface. A direct message is
  *  strictly conversational: repository corners are never openable there. */
 export function agentToolsFor(
@@ -1625,7 +1429,6 @@ export function agentToolsFor(
   agentMayCloseCorner = cornerTurn,
   institutionalMemoryEnabled = process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false',
   agentMayUpgradeCorner = false,
-  feedbackTriage = false,
 ): ToolDefinition[] {
   if (!agentSurface) return READ_ONLY_TOOLS;
   return AGENT_TOOLS.filter((tool) => {
@@ -1658,9 +1461,7 @@ export function agentToolsFor(
       return !cornerTurn;
     // From a corner, open_corner opens a sibling corner in the parent Room.
     if (tool.name === 'open_corner') return !directMessage;
-    if (FEEDBACK_TRIAGE_TOOL_NAMES.has(tool.name)) return cornerTurn && feedbackTriage;
     if (tool.name === 'revise_corner_brief') return cornerTurn;
-    if (tool.name === 'set_feedback_triage') return cornerTurn;
     if (tool.name === 'record_validation_stage') return cornerTurn;
     if (tool.name === 'upgrade_corner_to_code') return cornerTurn && agentMayUpgradeCorner;
     if (tool.name === 'close_corner') return cornerTurn && agentMayCloseCorner;
@@ -1685,7 +1486,6 @@ const TOOLS = agentToolsFor(
   process.env.BEELINE_CORNER_AGENT_CLOSE === '1',
   process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false',
   process.env.BEELINE_CORNER_CAN_UPGRADE === '1',
-  process.env.BEELINE_CORNER_FEEDBACK_TRIAGE === '1',
 );
 
 const MAX_ATTACH_BYTES = 25 * 1024 * 1024;
@@ -2172,8 +1972,7 @@ async function daemonExecute(name: string, input: JsonObject): Promise<JsonObjec
     body: JSON.stringify({
       ...input,
       ...(process.env.BEELINE_TURN_CONTEXT_FILE &&
-      (TURN_SCOPED_READS.has(name) ||
-        ((!name.startsWith('get') || name.startsWith('getWallet')) && !name.startsWith('list')))
+      ((!name.startsWith('get') || name.startsWith('getWallet')) && !name.startsWith('list'))
         ? await activeCommandContext()
         : {}),
     }),
@@ -2230,20 +2029,10 @@ async function openCorner(args: JsonObject, toolCallId: string): Promise<string>
     throw new Error('open_corner is not available in a direct message');
   }
   const { name, objective } = cornerCallText(args);
-  if (
-    args.lane !== undefined &&
-    args.lane !== 'code' &&
-    args.lane !== 'no_code' &&
-    args.lane !== 'research'
-  ) {
-    throw new Error('lane must be "code", "no_code", or "research"');
+  if (args.lane !== undefined && args.lane !== 'code' && args.lane !== 'no_code') {
+    throw new Error('lane must be "code" or "no_code"');
   }
-  const lane =
-    args.lane === 'no_code'
-      ? ('no_code' as const)
-      : args.lane === 'research'
-        ? ('research' as const)
-        : ('code' as const);
+  const lane = args.lane === 'no_code' ? ('no_code' as const) : ('code' as const);
   // In a corner turn this is the parent Room, where the new corner opens.
   const roomId = requiredEnv('BEELINE_DAEMON_ROOM_ID');
   const repository = await daemonExecute('getRoomRepositoryState', { roomId });
@@ -2299,17 +2088,8 @@ async function reviseCornerBrief(args: JsonObject): Promise<string> {
       requestId,
       expectedRevision: args.expectedRevision as number,
       brief: {
-        intentVerbatim:
-          args.intentVerbatim as import('@beeline/api-contract/daemon').CornerBriefStructuredDraft['intentVerbatim'],
-        buildSpec: args.buildSpec as string,
-        criteria:
-          args.criteria as import('@beeline/api-contract/daemon').CornerBriefStructuredDraft['criteria'],
-        nonGoals:
-          args.nonGoals as import('@beeline/api-contract/daemon').CornerBriefStructuredDraft['nonGoals'],
-        references:
-          args.references as import('@beeline/api-contract/daemon').CornerBriefStructuredDraft['references'],
-        approvalBasis:
-          args.approvalBasis as import('@beeline/api-contract/daemon').CornerBriefStructuredDraft['approvalBasis'],
+        spec: args.spec as string,
+        approval: args.approval as import('@beeline/api-contract/daemon').CornerBriefDraft['approval'],
         change: args.change as string | undefined,
         attachments:
           args.attachments as import('@beeline/api-contract/daemon').CornerBriefDraft['attachments'],
@@ -2464,14 +2244,12 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
   // The merge gate is the server's: it owns the human hold, the worker's yolo
   // mode and the reviewer outcome, and it merges the head itself.
   const reviewFailed = verdict ? verdict.approvalPending !== false : true;
-  const held = verdict ? verdict.held === true : restore.lane === 'research';
+  const held = verdict?.held === true;
   const isWorkerYolo = verdict?.isWorkerYolo === true;
   const didHumanSayDontMerge = held;
   const mergeAllowed = verdict?.mergeAllowed === true;
   const mergeConditionsRule =
-    restore.lane === 'research'
-      ? 'This research corner has a durable hold: the agent must never merge it. A human may close the corner.'
-      : 'When mergeAllowed is true the server squash-merges this exact head itself; no agent runs gh pr merge. mergeAllowed is true only when checks passed, reviewFailed is false, isWorkerYolo is true, didHumanSayDontMerge is false, and reviewerExists is true; missing state is never consent. If GitHub refuses the merge (branch behind its target, conflict, moved head, permissions), the server wakes the implementer with its reason: bring the branch up to date (gh pr update-branch, or merge the target branch in) and push, and the new head needs green checks and a fresh reviewer PASS before the server merges it.';
+    'When mergeAllowed is true the server squash-merges this exact head itself; no agent runs gh pr merge. mergeAllowed is true only when checks passed, reviewFailed is false, isWorkerYolo is true, didHumanSayDontMerge is false, and reviewerExists is true; missing state is never consent. If GitHub refuses the merge (branch behind its target, conflict, moved head, permissions), the server wakes the implementer with its reason: bring the branch up to date (gh pr update-branch, or merge the target branch in) and push, and the new head needs green checks and a fresh reviewer PASS before the server merges it.';
   return JSON.stringify({
     checks,
     reason,
@@ -2490,10 +2268,7 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
     ...(pullRequest ? { pullRequest } : {}),
     ...(!pullRequest
       ? {
-          next:
-            restore.lane === 'research'
-              ? 'Keep investigating in the writable worktree. Do not commit, push, or open a pull request until a human explicitly directs it.'
-              : 'The PR URL is not yet durable in the corner. Print its full URL as your final response and end this turn now; do not call pr_checks_status again in this turn.',
+          next: 'The PR URL is not yet durable in the corner. Print its full URL as your final response and end this turn now; do not call pr_checks_status again in this turn.',
         }
       : {}),
     rule: [reviewerRule, mergeConditionsRule].filter(Boolean).join(' '),
@@ -3625,60 +3400,13 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       );
     case 'report_feedback':
       return reportFeedback(args);
-    case 'set_feedback_triage': {
-      if (typeof args.enabled !== 'boolean') throw new Error('enabled must be a boolean');
-      const result = await daemonExecute('setCornerFeedbackTriage', {
-        roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
-        enabled: args.enabled,
-      });
-      return result.enabled
-        ? 'Feedback triage is on for this corner; the triage tools load on your next turn here.'
-        : 'Feedback triage is off for this corner.';
-    }
-    case 'list_feedback':
+    case 'notify_feedback_fixed':
       return JSON.stringify(
-        await daemonExecute('listFeedback', {
-          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
-          ...(typeof args.limit === 'number' ? { limit: Math.floor(args.limit) } : {}),
-        }),
-      );
-    case 'get_feedback':
-      return JSON.stringify(
-        await daemonExecute('getFeedback', {
-          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
-          itemIds: Array.isArray(args.item_ids) ? args.item_ids : [],
-        }),
-      );
-    case 'list_feedback_issues':
-      return JSON.stringify(
-        await daemonExecute('listFeedbackIssues', {
-          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
-        }),
-      );
-    case 'file_feedback_issue':
-      return JSON.stringify(
-        await daemonExecute('fileFeedbackIssue', {
+        await daemonExecute('notifyFeedbackFixed', {
           roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
           itemIds: Array.isArray(args.item_ids) ? args.item_ids : [],
           title: String(args.title ?? ''),
-          body: String(args.body ?? ''),
-          categoryLabel: String(args.category_label ?? ''),
-        }),
-      );
-    case 'attach_feedback_to_issue':
-      return JSON.stringify(
-        await daemonExecute('attachFeedbackToIssue', {
-          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
-          itemIds: Array.isArray(args.item_ids) ? args.item_ids : [],
-          issueNumber: Number(args.issue_number),
-        }),
-      );
-    case 'dismiss_feedback':
-      return JSON.stringify(
-        await daemonExecute('dismissFeedback', {
-          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
-          itemIds: Array.isArray(args.item_ids) ? args.item_ids : [],
-          reason: String(args.reason ?? ''),
+          prUrl: String(args.pr_url ?? ''),
         }),
       );
     case 'propose_memory_item': {
@@ -3992,6 +3720,40 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       return requestGrant(args);
     case 'workbench_status':
       return workbenchStatus();
+    case 'create_link_spend_request': {
+      const context = await activeCommandContext();
+      const merchant = stringArg(args, 'merchant')?.trim();
+      const merchantUrl = stringArg(args, 'merchantUrl')?.trim();
+      const description = stringArg(args, 'description')?.trim();
+      const amount = args.amount;
+      if (!merchant || (args.credentialType !== 'shared_payment_token' && !merchantUrl)
+        || !description || typeof amount !== 'number'
+        || !Number.isSafeInteger(amount) || amount <= 0)
+        throw new Error('merchant, merchantUrl, positive amount in cents, and description are required');
+      const idempotencyKey = createHash('sha256').update(
+        `link:${context.requestId}:${context.generationId}:${toolCallId || randomUUID()}`).digest('hex');
+      return JSON.stringify(await daemonExecute('createLinkSpendRequest', {
+        ...context, agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
+        merchant, ...(merchantUrl ? { merchantUrl } : {}), amount, description, idempotencyKey,
+        ...(args.test === true ? { test: true } : {}),
+        ...(args.credentialType === 'shared_payment_token'
+          ? { credentialType: 'shared_payment_token', networkId: stringArg(args, 'networkId') }
+          : {}),
+      }));
+    }
+    case 'wait_link_spend_request': {
+      const id = stringArg(args, 'id')?.trim();
+      if (!id || !/^lsrq_[A-Za-z0-9]+$/.test(id)) throw new Error('valid Link request ID required');
+      const context = await activeCommandContext();
+      for (let attempt = 0; attempt < 20; attempt++) {
+        const result = await daemonExecute('retrieveLinkSpendRequest', {
+          ...context, agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'), id });
+        if (result.status !== 'pending_approval' && result.status !== 'created')
+          return JSON.stringify(result);
+        if (attempt < 19) await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+      return JSON.stringify({ id, status: 'pending_approval' });
+    }
     case 'connect_app': {
       const app = stringArg(args, 'app')?.trim();
       const reason = stringArg(args, 'reason')?.trim();

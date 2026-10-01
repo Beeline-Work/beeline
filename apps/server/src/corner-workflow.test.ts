@@ -189,17 +189,13 @@ async function commissioned(roomId: string, agentId = A): Promise<AgentCommand> 
 }
 
 function brief(sourceMessageId: string) {
-  const intent = { sourceMessageId, snapshot: '@hoots please do this' };
   return {
-    buildSpec: 'Ship the widget',
-    intentVerbatim: [intent],
-    criteria: [{ id: 'AC-1', text: 'Publish the result' }],
-    references: [],
-    approvalBasis: { kind: 'initiating-command' as const, ...intent },
+    spec: 'Ship the widget\n\n## Checklist\n\n- AC-1: Publish the result',
+    approval: { sourceMessageId },
   };
 }
 
-async function open(lane?: 'code' | 'no_code' | 'research', repository?: string): Promise<string> {
+async function open(lane?: 'code' | 'no_code', repository?: string): Promise<string> {
   const command = await commissioned(R);
   const { cornerId } = await daemon.execute(
     'createCorner',
@@ -357,9 +353,11 @@ describe('lane decided at open (row 1-3)', () => {
     expect(await currentState(cornerId)).toBe('implement');
   });
 
-  it('a research corner opens onto investigate, a dead end with no programmatic exit', async () => {
-    const cornerId = await open('research', 'owner/widgets');
-    expect(await currentState(cornerId)).toBe('investigate');
+  it('has only the code and no_code lanes, and no investigate state', () => {
+    expect(CORNER_WORKFLOW_CONTRACT.handoffs.opened).toMatchObject({
+      on: { no_code: 'no_code_work', code: 'implement' },
+    });
+    expect(Object.keys(CORNER_WORKFLOW_CONTRACT.handoffs)).not.toContain('investigate');
   });
 });
 
@@ -685,12 +683,6 @@ describe('advanceCorner rejects an event the current state does not allow (AC-1)
       expect(await projected(cornerId)).toBe('no_code_work');
       expect(info).toHaveBeenCalledWith(expect.stringContaining(`${cornerId}: ignored push in no_code_work`));
       expect(info).toHaveBeenCalledWith(expect.stringContaining(`${cornerId}: ignored approval in no_code_work`));
-
-      const research = await open('research', 'owner/widgets');
-      expect(await advanceCorner(db, research, { kind: 'push', headSha: SHA, contents: {} })).toEqual({
-        state: 'investigate',
-        accepted: false,
-      });
     } finally {
       info.mockRestore();
     }
@@ -935,9 +927,9 @@ describe('GitHub refusing the merge (AC-6)', () => {
     await github.landReadyCorners();
     expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
     // The badge follows the run, not the still-green lifecycle: the corner
-    // waits on its implementer (AC-9).
+    // is back with its implementer (AC-9), and owes no person anything.
     const listed = (await phone.readCorners(R, H))!.corners.find((row) => row.corner.id === cornerId);
-    expect(listed).toMatchObject({ state: 'waiting' });
+    expect(listed).toMatchObject({ state: 'idle' });
   });
 });
 
@@ -1043,6 +1035,81 @@ describe('a corner opened before the workflow run existed (AC-10)', () => {
     await db.query(`UPDATE corner_facts SET workflow_state=NULL WHERE corner_id=$1`, [cornerId]);
     await pushToCorner(cornerId, SHA);
     expect(await currentState(cornerId)).toBe('checks');
+  });
+});
+
+/**
+ * Puts a code corner back the way a research corner sat before the lane was
+ * removed: lane research under the old CHECK, its run in investigate.
+ */
+async function asLegacyResearchCorner(cornerId: string) {
+  await db.query(`ALTER TABLE corner_facts DROP CONSTRAINT corner_facts_lane_check`);
+  await db.query(
+    `ALTER TABLE corner_facts ADD CONSTRAINT corner_facts_lane_check CHECK (lane IN ('code','no_code','research'))`,
+  );
+  await db.query(
+    `UPDATE corner_facts SET lane='research',workflow_state='investigate',workflow_outcome='research' WHERE corner_id=$1`,
+    [cornerId],
+  );
+  await db.query(
+    `UPDATE messages SET card=card || '{"outcome":"research","toState":"investigate"}'::jsonb
+     WHERE room_id=$1 AND card_type=$2 AND card->>'fromState'='opened'`,
+    [cornerId, CORNER_WORKFLOW_HANDOFF_CARD_TYPE],
+  );
+}
+
+describe('migrating a research corner to the code lane', () => {
+  it('moves it to code in implement, unheld, and the server merges it after the reviewer passes it', async () => {
+    const cornerId = await open(undefined, 'owner/widgets');
+    await asLegacyResearchCorner(cornerId);
+    expect(await currentState(cornerId)).toBe('investigate');
+
+    await migrate(db);
+
+    expect(
+      (await db.query<{ lane: string }>(`SELECT lane FROM corner_facts WHERE corner_id=$1`, [cornerId]))
+        .rows[0]!.lane,
+    ).toBe('code');
+    expect(await currentState(cornerId)).toBe('implement');
+    expect(await projected(cornerId)).toBe('implement');
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await greenHead(cornerId, 7, SHA);
+    expect(await currentState(cornerId)).toBe('review');
+    const [review] = await commands(B, cornerId);
+    await claim(review!);
+    await approve(cornerId);
+    await result(review!, `approved ${SHA}`);
+    expect(await currentState(cornerId)).toBe('land');
+    githubHead = SHA;
+    githubRollupState = 'passed';
+    expect((await github.prChecksStatus({ cornerId, pullRequest: 7 })).held).toBe(false);
+    expect(await github.landReadyCorners()).toBe(1);
+    expect(githubApp.mergePullRequest).toHaveBeenCalledWith(77, 101, 'owner/widgets', 7, SHA);
+
+    await expect(
+      db.query(`UPDATE corner_facts SET lane='research' WHERE corner_id=$1`, [cornerId]),
+    ).rejects.toThrow(/corner_facts_lane_check/);
+  });
+
+  it("keeps a migrated corner held while a person's don't-merge message stands", async () => {
+    const cornerId = await open(undefined, 'owner/widgets');
+    await say(cornerId, "don't merge this yet");
+    await asLegacyResearchCorner(cornerId);
+
+    await migrate(db);
+
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await greenHead(cornerId, 7, SHA);
+    const [review] = await commands(B, cornerId);
+    await claim(review!);
+    await approve(cornerId);
+    await result(review!, `approved ${SHA}`);
+    githubHead = SHA;
+    githubRollupState = 'passed';
+    const status = await github.prChecksStatus({ cornerId, pullRequest: 7 });
+    expect(status).toMatchObject({ held: true, mergeAllowed: false });
+    expect(await github.landReadyCorners()).toBe(0);
+    expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
   });
 });
 

@@ -1101,6 +1101,43 @@ export class GitHubAppClient {
     return state === 'pending' ? 'pending' : 'unknown';
   }
 
+  /**
+   * Whether the authenticated user has starred `owner/repo`
+   * (GET /user/starred/{owner}/{repo}). 204 is yes and 404 is no. Anything
+   * else, including 403 for a token without the Starring permission, is
+   * 'unknown'. Never throws.
+   */
+  async repositoryStarred(accessToken: string, fullName: string): Promise<boolean | 'unknown'> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.#config.apiBaseUrl}/user/starred/${fullName}`, {
+        headers: githubHeaders(accessToken),
+      });
+    } catch {
+      return 'unknown';
+    }
+    if (response.status === 204) return true;
+    if (response.status === 404) return false;
+    return 'unknown';
+  }
+
+  /**
+   * Star `owner/repo` as the authenticated user (PUT /user/starred/{owner}/{repo}).
+   * Returns false when GitHub refuses, e.g. a 403 for a user token whose App
+   * install has not approved the Starring permission yet. Never throws.
+   */
+  async starRepository(accessToken: string, fullName: string): Promise<boolean> {
+    try {
+      const response = await fetch(`${this.#config.apiBaseUrl}/user/starred/${fullName}`, {
+        method: 'PUT',
+        headers: { ...githubHeaders(accessToken), 'content-length': '0' },
+      });
+      return response.status === 204;
+    } catch {
+      return false;
+    }
+  }
+
   private async userInstallationIds(
     accessToken: string,
     targetId?: number,

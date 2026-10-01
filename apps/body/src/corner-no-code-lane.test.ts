@@ -508,7 +508,7 @@ it('offers the one-way code upgrade to the session that actually mounts the tool
   // The agent upgrades on its own judgment; no human has to ask for it, and
   // the old fixed-phrase requirement is gone.
   expect(prompt).toContain(UPGRADE_INTENT_RULE);
-  expect(prompt).toContain('nobody has to ask for the upgrade');
+  expect(prompt).toContain('then write the brief in the restarted code session');
   expect(prompt).not.toContain('your own initiative');
   expect(prompt).not.toContain('explicitly asks for code edits');
   const agentEnvironment = new Map(

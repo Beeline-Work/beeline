@@ -64,15 +64,8 @@ async function commissioned(roomId: string, text: string): Promise<AgentCommand>
   return command!;
 }
 
-function brief(sourceMessageId: string, snapshot: string) {
-  const intent = { sourceMessageId, snapshot };
-  return {
-    buildSpec: snapshot,
-    intentVerbatim: [intent],
-    criteria: [{ id: 'AC-1', text: snapshot }],
-    references: [],
-    approvalBasis: { kind: 'initiating-command' as const, ...intent },
-  };
+function brief(sourceMessageId: string, spec: string) {
+  return { spec, approval: { sourceMessageId } };
 }
 
 async function openCorner(

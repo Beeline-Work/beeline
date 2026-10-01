@@ -89,6 +89,9 @@ export function webProofShims(mobile: string): Record<string, string> {
     'expo-haptics': `export const selectionAsync = async () => undefined;
     export const impactAsync = async () => undefined;
     export const ImpactFeedbackStyle = { Light: 'light' };`,
+    // expo-modules-core (pulled in by expo-web-browser) reads Node's `process`
+    // at module scope, which this plain browser bundle never defines.
+    'expo-web-browser': 'export const openAuthSessionAsync = async () => ({ type: "cancel" });',
     'react-native-keyboard-controller': `export { KeyboardAvoidingView } from 'react-native';`,
     'react-native-safe-area-context':
       'export const useSafeAreaInsets = () => ({ top: 0, bottom: 0, left: 0, right: 0 });',
@@ -141,7 +144,13 @@ export async function runBrowserProof(options: {
       mainFields: ['browser', 'module', 'main'],
       resolveExtensions: ['.web.tsx', '.web.ts', '.web.js', '.tsx', '.ts', '.js', '.json'],
       loader: { '.js': 'jsx' },
-      define: { 'process.env.NODE_ENV': '"development"', __DEV__: 'true' },
+      // Metro defines `global` for the web bundle; react-native-web's Animated
+      // stops a timing animation through `global.cancelAnimationFrame`.
+      define: {
+        'process.env.NODE_ENV': '"development"',
+        __DEV__: 'true',
+        global: 'globalThis',
+      },
       plugins: [
         {
           name: 'native-web-proof',

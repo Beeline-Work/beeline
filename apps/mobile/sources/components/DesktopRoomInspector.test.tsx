@@ -5,6 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 
 const phoneOperation = vi.hoisted(() => vi.fn());
 const modalConfirm = vi.hoisted(() => vi.fn());
+const openCornerBriefViewer = vi.hoisted(() => vi.fn());
 /** Scroll calls the transcript makes on its list, in order. */
 const listScrolls = vi.hoisted(() => [] as string[]);
 
@@ -137,6 +138,7 @@ vi.mock('@/sync/transport', () => ({
 }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
 vi.mock('@/modal', () => ({ Modal: { confirm: modalConfirm } }));
+vi.mock('@/components/buzz/corner-brief-viewer', () => ({ openCornerBriefViewer }));
 vi.mock('@/buzz/desktop-workbench-state', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/buzz/desktop-workbench-state')>()),
   loadDesktopPaneWidth: vi.fn(async () => 400),
@@ -678,6 +680,38 @@ describe('DesktopRoomInspector work pane', () => {
     expect(onOpenInMain).toHaveBeenCalledWith('working');
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(() => tree.root.findByProps({ accessibilityLabel: 'Back to work overview' })).toThrow();
+  });
+
+  it('links the pinned objective to the latest brief only when the corner has one', async () => {
+    const cornerBrief = { revision: 2, spec: 'Spec', attachments: [] };
+    const detail = { ...room(), room: corners[0].corner, parent: room().room, cornerBrief } as any;
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = create(
+        <DesktopRoomInspector
+          {...props({ client: { room: vi.fn(async () => detail) }, selectedCornerId: 'working' })}
+        />,
+      );
+    });
+    const link = tree.root
+      .findAllByType('Pressable' as any)
+      .find((node: any) => node.props.testID === 'desktop-work-brief');
+    expect(link.props.accessibilityRole).toBe('link');
+    expect(link.props.accessibilityLabel).toBe('Open brief');
+    act(() => link.props.onPress());
+    expect(openCornerBriefViewer).toHaveBeenCalledWith(cornerBrief);
+
+    const bare = { ...detail, cornerBrief: undefined };
+    await act(async () => {
+      tree = create(
+        <DesktopRoomInspector
+          {...props({ client: { room: vi.fn(async () => bare) }, selectedCornerId: 'working' })}
+        />,
+      );
+    });
+    expect(
+      tree.root.findAllByType('Pressable' as any).filter((node: any) => node.props.testID === 'desktop-work-brief'),
+    ).toHaveLength(0);
   });
 
   it('passes Room references to the desktop navigation handler', async () => {

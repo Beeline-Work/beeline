@@ -77,9 +77,13 @@ describe('MemberRosterRow', () => {
     });
     expect(
       renderer.root.findAllByType('Text' as any).map((node: any) => node.props.children),
-    ).toEqual(['@clara', 'Sonnet · by @viewer']);
-    expect(memberRosterSubtitle({ kind: 'agent', model: 'Codex', ownerHandle: 'captain' })).toBe(
-      'Codex · by @captain',
-    );
+    ).toEqual(['@clara', 'Sonnet']);
+    expect(
+      memberRosterSubtitle({
+        kind: 'agent',
+        model: 'openrouter/openai/Codex',
+        ownerHandle: 'captain',
+      }),
+    ).toBe('Codex');
   });
 });

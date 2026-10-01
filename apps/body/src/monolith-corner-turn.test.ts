@@ -239,7 +239,6 @@ describe('corner merge instructions', () => {
 
   it.each([
     { label: 'agent-opened code', lane: 'code', openedBy: undefined },
-    { label: 'agent-opened research', lane: 'research', openedBy: undefined },
     { label: 'agent-opened no-code', lane: 'no_code', openedBy: undefined },
     { label: 'BBC in a forwarded human corner', lane: 'no_code', openedBy: 'human-id' },
   ] as const)('starts $label without a repository or host permission request', async (case_) => {
@@ -2537,43 +2536,17 @@ describe('thin monolith corner turn', () => {
           brief: {
             id: 'corner-id',
             revision: 2,
-            legacy: false,
             authorId: runtime.agent.publicKey,
             sourceRoomId: 'room-id',
             sourceMessageId: 'correction-message',
             attachments: [],
-            content: 'Preserve the requested widget size and deliberate amber label.',
-            intentVerbatim: [
-              {
-                sourceMessageId: 'intent-message',
-                snapshot: 'Build the requested widget at the agreed size.',
-              },
-              {
-                sourceMessageId: 'correction-message',
-                snapshot: 'Correction: keep the label amber, not blue.',
-              },
-            ],
-            buildSpec: 'Preserve the requested widget size and deliberate amber label.',
-            criteria: [
-              { id: 'AC-1', text: 'The widget keeps the requested size.' },
-              { id: 'AC-2', text: 'The label remains amber.' },
-            ],
-            nonGoals: ['Changing the label to the conventional blue.'],
-            references: [
-              {
-                label: 'Approved widget mock',
-                authority: 'approved-reference',
-                description: 'The corrected amber visual.',
-              },
-            ],
-            approvalBasis: {
-              kind: 'explicit-human-answer',
+            spec: '## Intent\n> Build the requested widget at the agreed size. (intent-message)\n\n## Checklist\n- The widget keeps the requested size.\n- The label remains amber.\n\n## Non-goals\n- Changing the label to the conventional blue.',
+            approval: {
               sourceMessageId: 'correction-message',
-              snapshot: 'Correction: keep the label amber, not blue.',
+              text: 'Correction: keep the label amber, not blue.',
               approvedBy: 'human-pubkey',
-              briefHash: 'a'.repeat(64),
+              approverName: 'Rae',
             },
-            revisionHash: 'a'.repeat(64),
           },
         };
       if (name === 'getInstitutionalContext') {
@@ -2689,6 +2662,7 @@ describe('thin monolith corner turn', () => {
     expect(secondPrompt).toContain(
       'Corner objective (navigation only, not product authority): Implement the widget',
     );
+    expect(firstPrompt).not.toContain('rename_corner');
     expect(firstPrompt).toContain('Members (exact tag spellings):');
     expect(secondPrompt).toContain('Members (exact tag spellings):');
     expect(firstPrompt).toContain('- @goosy-2 — Goosy (agent)');
@@ -2811,14 +2785,11 @@ describe('thin monolith corner turn', () => {
       }),
     );
     for (const call of [sessionPrompt.mock.calls[0], sessionPrompt.mock.calls[1]]) {
-      expect(call[1]).toContain('Assigned corner brief corner-id revision 2');
-      expect(call[1]).toContain('(hash ' + 'a'.repeat(64));
+      expect(call[1]).toContain('Brief revision 2:\n## Intent');
+      expect(call[1]).toContain('- The label remains amber.');
       expect(call[1]).toContain(
-        '[message correction-message] Correction: keep the label amber, not blue.',
+        'Approved by Rae, message correction-message: Correction: keep the label amber, not blue.',
       );
-      expect(call[1]).toContain('AC-2: The label remains amber.');
-      expect(call[1]).toContain('Approval basis bound to this revision:');
-      expect(call[1]).toContain('explicit-human-answer by human-pubkey');
       // This harness drops the session prompt, so the session rules ride every turn.
       expect(call[1]).toContain(
         'You are Bee in Beeline. Stay Bee in every reply, including when a tool or permission blocks you.',
@@ -3017,6 +2988,102 @@ describe('corner turn institutional-memory prefetch', () => {
     // 300ms gave it somewhere to finish.
     expect(String(sessionPrompt.mock.calls[0]?.[1])).toContain('Prefetched institutional snapshot');
     expect(receipts.some((receipt) => receipt.status === 'complete')).toBe(true);
+  }, 10_000);
+});
+
+describe('corner turn rename prompt', () => {
+  it('asks the agent to rename a corner that still has its generated name', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-corner-rename-'));
+    roots.push(root);
+    await execFileAsync('git', ['init', root]);
+    const runtime = {
+      agentId: '11'.repeat(32),
+      agent: stored('11'.repeat(32), 'Bee'),
+      rooms: [],
+      supervisorRoot: root,
+      transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'daemon-token' },
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+    } as unknown as AgentRuntimeRecord;
+    const config: BodyConfig = {
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+      readonlyMcpCommand: '/fake-beeline-mcp',
+      agentEnv: {},
+      workspaceRoot: root,
+      autoApprovePermissions: true,
+    };
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [{ identityId: '11'.repeat(32), kind: 'agent', name: 'Bee', role: 'member' }],
+        };
+      }
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerCloseRequests') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerRestoreState')
+        return {
+          cornerId: 'corner-id',
+          kind: 'human',
+          title: 'still harbor corner',
+          titleGenerated: true,
+        };
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const api = {
+      execute,
+      connection: () => ({
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+        agentId: runtime.agent.publicKey,
+      }),
+    } as unknown as DaemonApiClient;
+    const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'start').mockResolvedValue(undefined);
+    vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'corner-session', raw: {} });
+    const sessionPrompt = vi.spyOn(acp, 'sessionPrompt').mockResolvedValue({
+      stopReason: 'end_turn',
+      updates: [],
+      agentText: 'Done.',
+      toolCalls: [],
+    });
+    const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
+    let loop!: MonolithCornerTurnLoop;
+    loop = new MonolithCornerTurnLoop({
+      cornerId: 'corner-id',
+      parentRoomId: 'room-id',
+      workspaceId: 'workspace',
+      objective: 'still harbor corner',
+      worktreePath: root,
+      runtime,
+      config,
+      api: closePushAfterReceipt(
+        commandFixtureApi(api, 'corner-id', runtime.agent.publicKey, 'Fix the login redirect'),
+        () => loop,
+        1,
+      ),
+      scheduler,
+      signal: new AbortController().signal,
+      pollMs: 10,
+      onPoll: vi.fn(),
+      onFailure: vi.fn(),
+      onCloseRequested: vi.fn(async () => undefined),
+      createAcpClient: () => acp,
+    });
+    await loop.run();
+    await scheduler.dispose();
+
+    expect(String(sessionPrompt.mock.calls[0]?.[1])).toContain(
+      'This corner still has its generated name, "still harbor corner". If the newest message states the work, call rename_corner once before you reply',
+    );
   }, 10_000);
 });
 

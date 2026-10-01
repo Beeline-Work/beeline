@@ -315,6 +315,70 @@ describe('per-room harness state isolation', () => {
     );
   });
 
+  it('keeps a newer Claude refresh when its atomic write detached the shared link', async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    const roomRoot = resolve(await scratch('beeline-room-refreshed-credential-'), 'agent-home');
+    const source = resolve(operatorHome, '.claude/.credentials.json');
+    const target = resolve(roomRoot, 'claude/.credentials.json');
+    const spent = JSON.stringify({ claudeAiOauth: { refreshToken: 'spent', expiresAt: 1_000 } });
+    const rotated = JSON.stringify({
+      claudeAiOauth: { refreshToken: 'rotated', expiresAt: 2_000 },
+    });
+    await mkdir(resolve(operatorHome, '.claude'), { recursive: true });
+    await writeFile(source, spent);
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome, agentKind: 'claude' });
+
+    // Claude refreshed through the isolated path: its atomic rename replaced
+    // the link, so the rotated login exists only in this Room.
+    const refreshed = `${target}.next`;
+    await writeFile(refreshed, rotated);
+    await rename(refreshed, target);
+
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome, agentKind: 'claude' });
+
+    expect(lstatSync(target).isFile()).toBe(true);
+    expect(readFileSync(target, 'utf8')).toBe(rotated);
+    expect(readFileSync(source, 'utf8')).toBe(spent);
+
+    // The operator can refresh concurrently. A later activation switches back
+    // to that credential without this Room ever replacing the operator file.
+    const operatorRefresh = JSON.stringify({
+      claudeAiOauth: { refreshToken: 'operator-refresh', expiresAt: 3_000 },
+    });
+    await writeFile(source, operatorRefresh);
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome, agentKind: 'claude' });
+    expect(lstatSync(target).isSymbolicLink()).toBe(true);
+    expect(realpathSync(target)).toBe(realpathSync(source));
+    expect(readFileSync(source, 'utf8')).toBe(operatorRefresh);
+  });
+
+  it('keeps the operator Claude login when the detached copy expires no later', async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    const roomRoot = resolve(await scratch('beeline-room-older-credential-'), 'agent-home');
+    const source = resolve(operatorHome, '.claude/.credentials.json');
+    const target = resolve(roomRoot, 'claude/.credentials.json');
+    const current = JSON.stringify({
+      claudeAiOauth: { refreshToken: 'current', expiresAt: 2_000 },
+    });
+    await mkdir(resolve(operatorHome, '.claude'), { recursive: true });
+    await writeFile(source, current);
+    await mkdir(resolve(roomRoot, 'claude'), { recursive: true });
+    await writeFile(
+      target,
+      JSON.stringify({ claudeAiOauth: { refreshToken: 'older', expiresAt: 1_000 } }),
+    );
+
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome, agentKind: 'claude' });
+
+    expect(realpathSync(target)).toBe(realpathSync(source));
+    expect(readFileSync(source, 'utf8')).toBe(current);
+    expect(
+      readdirSync(resolve(operatorHome, '.claude')).filter((name) =>
+        name.startsWith('.credentials.json.beeline-'),
+      ),
+    ).toHaveLength(0);
+  });
+
   it('repairs stale regular files for every shared credential path', async () => {
     const operatorHome = await scratch('beeline-operator-home-all-credentials-');
     const roomRoot = resolve(await scratch('beeline-room-all-credentials-'), 'agent-home');
@@ -603,7 +667,7 @@ describe('operator skills + MCP passthrough', () => {
     expect(reviewSkill).not.toContain('approved pending checks');
     expect(reviewSkill).not.toContain('unknown checks');
     expect(reviewSkill).not.toContain('--match-head-commit <reviewed sha>');
-    expect(reviewSkill).toContain('P0 - HUMAN INTENT AND CRITERIA FULFILLED, DEMONSTRATED');
+    expect(reviewSkill).toContain('P0 - SPEC AND CHECKLIST FULFILLED, DEMONSTRATED');
     expect(reviewSkill).toContain('If the user-visible Y cannot be produced, FAIL now');
     const triageSkill = readFileSync(resolve(skillsDir, 'beeline-triage', 'SKILL.md'), 'utf8');
     expect(triageSkill).toContain('name: beeline-triage');
@@ -1600,12 +1664,12 @@ describe('skill provision reuse', () => {
       const review = readFileSync(resolve(skills, 'beeline-review', 'SKILL.md'), 'utf8');
       expect(spec).toContain('name: beeline-spec');
       expect(spec).toContain('If one unresolved choice would materially change behavior');
-      expect(spec).toContain('intentVerbatim[]');
+      expect(spec).toContain('`## Checklist`');
       expect(spec).toContain('Bounded adversarial second read (default on)');
       expect(spec).toContain('Do not infer approval from silence');
       expect(review).toContain('Read the server-assigned brief and its current revision');
-      expect(review).toContain('Quote every verbatim human-intent entry');
-      expect(review).toContain('List every current criterion ID exactly once');
+      expect(review).toContain('Quote the approval with its message ID and approver');
+      expect(review).toContain('List every checklist line exactly once');
       expect(review).toContain(
         'Build one visible validation record for the brief revision and code head.',
       );

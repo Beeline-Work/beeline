@@ -1,24 +1,16 @@
 import { createHash } from 'node:crypto';
-import type {
-  CornerBrief,
-  CornerBriefApprovalBasis,
-  CornerBriefAttachment,
-  CornerBriefDraft,
-  CornerBriefReferenceAuthority,
-  CornerBriefStructuredDraft,
-  CornerValidationStageName,
+import {
+  CORNER_BRIEF_SPEC_MAX_LENGTH,
+  type CornerBrief,
+  type CornerBriefAttachment,
+  type CornerBriefDraft,
+  type CornerValidationStageName,
 } from '@beeline/api-contract/daemon';
 import type { SqlDatabase } from './database.js';
 
+/** Most files one brief revision may carry. */
+const CORNER_BRIEF_ATTACHMENT_LIMIT = 16;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const CRITERION_ID = /^[A-Z][A-Z0-9_-]*-[1-9][0-9]*$/;
-const REFERENCE_AUTHORITIES = new Set<CornerBriefReferenceAuthority>([
-  'human-authoritative',
-  'repository-authoritative',
-  'approved-reference',
-  'informational',
-  'agent-recommendation',
-]);
 export const CORNER_VALIDATION_STAGES: readonly CornerValidationStageName[] = [
   'intent',
   'base',
@@ -31,106 +23,28 @@ export const CORNER_VALIDATION_STAGES: readonly CornerValidationStageName[] = [
   'final_authorization',
 ];
 
-export function isStructuredCornerBrief(
-  draft: CornerBriefDraft,
-): draft is CornerBriefStructuredDraft {
-  return Boolean(draft && 'buildSpec' in draft);
-}
-
 function boundedText(value: unknown, maximum: number): value is string {
   return typeof value === 'string' && Boolean(value.trim()) && value.length <= maximum;
 }
 
-export function validateCornerBrief(
-  draft: CornerBriefDraft,
-  options: { allowLegacy?: boolean } = {},
-): void {
+export function validateCornerBrief(draft: CornerBriefDraft): void {
   if (!draft || typeof draft !== 'object') throw new Error('corner brief is required');
-  if (!isStructuredCornerBrief(draft)) {
-    if (
-      !options.allowLegacy ||
-      !boundedText(draft.content, 65_536) ||
-      (draft.change !== undefined &&
-        (typeof draft.change !== 'string' || draft.change.length > 1_000))
-    )
-      throw new Error('new corner briefs require the structured authority contract');
-  } else {
-    if (!boundedText(draft.buildSpec, 65_536))
-      throw new Error('corner brief buildSpec must contain 1–65536 characters');
-    if (!Array.isArray(draft.intentVerbatim) || draft.intentVerbatim.length === 0)
-      throw new Error('corner brief requires verbatim human intent');
-    if (draft.intentVerbatim.length > 50)
-      throw new Error('corner brief has too many verbatim intent entries');
-    const intentIds = new Set<string>();
-    for (const item of draft.intentVerbatim) {
-      if (
-        !item ||
-        !boundedText(item.sourceMessageId, 256) ||
-        !boundedText(item.snapshot, 16_000) ||
-        intentIds.has(item.sourceMessageId)
-      )
-        throw new Error('invalid corner brief verbatim intent');
-      intentIds.add(item.sourceMessageId);
-    }
-    if (!Array.isArray(draft.criteria) || draft.criteria.length === 0)
-      throw new Error('corner brief requires numbered acceptance criteria');
-    if (draft.criteria.length > 100) throw new Error('corner brief has too many criteria');
-    const criterionIds = new Set<string>();
-    for (const criterion of draft.criteria) {
-      if (
-        !criterion ||
-        typeof criterion.id !== 'string' ||
-        !CRITERION_ID.test(criterion.id) ||
-        !boundedText(criterion.text, 2_000) ||
-        criterionIds.has(criterion.id)
-      )
-        throw new Error('corner brief criteria require unique stable IDs such as AC-1');
-      criterionIds.add(criterion.id);
-    }
-    if (!Array.isArray(draft.references) || draft.references.length > 50)
-      throw new Error('corner brief references must be a bounded list');
-    for (const reference of draft.references) {
-      if (
-        !reference ||
-        !boundedText(reference.label, 200) ||
-        !REFERENCE_AUTHORITIES.has(reference.authority) ||
-        !boundedText(reference.description, 1_000) ||
-        (reference.objectId !== undefined && !UUID.test(reference.objectId))
-      )
-        throw new Error('invalid corner brief reference');
-    }
-    if (
-      draft.nonGoals !== undefined &&
-      (!Array.isArray(draft.nonGoals) ||
-        draft.nonGoals.length > 50 ||
-        draft.nonGoals.some((item) => !boundedText(item, 1_000)))
-    )
-      throw new Error('invalid corner brief non-goals');
-    const basis = draft.approvalBasis;
-    if (
-      !basis ||
-      (basis.kind !== 'initiating-command' && basis.kind !== 'explicit-human-answer') ||
-      !boundedText(basis.sourceMessageId, 256) ||
-      !boundedText(basis.snapshot, 16_000)
-    )
-      throw new Error('corner brief requires a sourced approval basis');
-    if (
-      !draft.intentVerbatim.some(
-        (item) =>
-          item.sourceMessageId === basis.sourceMessageId && item.snapshot === basis.snapshot,
-      )
-    )
-      throw new Error('corner brief approval basis must be retained in verbatim human intent');
-    if (
-      draft.change !== undefined &&
-      (typeof draft.change !== 'string' || draft.change.length > 1_000)
-    )
-      throw new Error('corner brief change must be at most 1000 characters');
-  }
+  if (!boundedText(draft.spec, CORNER_BRIEF_SPEC_MAX_LENGTH))
+    throw new Error(
+      `corner brief spec must contain 1–${CORNER_BRIEF_SPEC_MAX_LENGTH} characters of Markdown`,
+    );
+  if (!draft.approval || !boundedText(draft.approval.sourceMessageId, 256))
+    throw new Error('corner brief approval must name a human Room message');
+  if (
+    draft.change !== undefined &&
+    (typeof draft.change !== 'string' || draft.change.length > 1_000)
+  )
+    throw new Error('corner brief change must be at most 1000 characters');
   const attachments = draft.attachments;
   if (!Array.isArray(attachments) && attachments !== undefined)
     throw new Error('corner brief attachments must be a list');
-  if ((attachments?.length ?? 0) > 16) throw new Error('corner brief has too many attachments');
+  if ((attachments?.length ?? 0) > CORNER_BRIEF_ATTACHMENT_LIMIT)
+    throw new Error('corner brief has too many attachments');
   const ids = new Set<string>();
   for (const item of attachments ?? []) {
     const normalizedId = item?.objectId?.toLowerCase();
@@ -153,9 +67,8 @@ export async function resolveCornerBriefAttachments(
   db: SqlDatabase,
   sourceRoomIds: readonly string[],
   draft: CornerBriefDraft,
-  options: { allowLegacy?: boolean } = {},
 ): Promise<CornerBriefAttachment[]> {
-  validateCornerBrief(draft, options);
+  validateCornerBrief(draft);
   const resolved: CornerBriefAttachment[] = [];
   for (const item of draft.attachments ?? []) {
     const object = (
@@ -249,28 +162,28 @@ export async function resolvePendingCornerBriefAttachments(
     }));
 }
 
-const UPGRADE_REQUEST_LENGTH = 16_000;
-const UPGRADE_BUILD_SPEC_LENGTH = 65_536;
-const UPGRADE_CRITERION_LENGTH = 2_000;
-/** Newest messages considered for the build spec; older history is marked, never read. */
+/** Newest messages considered for the upgrade spec; older history is marked, never read. */
 const UPGRADE_DISCUSSION_CANDIDATES = 200;
+/** Room left after the discussion for the "omitted for length" note. */
+const UPGRADE_NOTE_RESERVE = 128;
 
-function upgradeCriterion(request: string): string {
-  const text = `Deliver the code change this corner was asked for: ${request.replace(/\s+/g, ' ').trim()}`;
-  return text.length <= UPGRADE_CRITERION_LENGTH
-    ? text
-    : `${text.slice(0, UPGRADE_CRITERION_LENGTH - 1)}…`;
+function upgradeSpecHead(request: string): string {
+  return `## Request\n\n${request.trim()}\n\n## Discussion before the upgrade (context, not authority)\n`;
 }
 
-function upgradeBuildSpec(
+/** The longest triggering message whose request section still fits the spec cap. */
+const UPGRADE_REQUEST_LENGTH =
+  CORNER_BRIEF_SPEC_MAX_LENGTH - upgradeSpecHead('').length - UPGRADE_NOTE_RESERVE - 1;
+
+function upgradeSpec(
   discussion: readonly { name: string; text: string }[],
   request: string,
   olderHistory: boolean,
 ): string {
-  const head = `# Code work requested in this corner\n\n## The request\n\n${request.trim()}\n\n## Discussion before the upgrade (context, not authority)\n`;
+  const head = upgradeSpecHead(request);
   const entries = discussion.map((row) => `\n- **${row.name}**: ${row.text.trim()}`);
   const kept: string[] = [];
-  let remaining = UPGRADE_BUILD_SPEC_LENGTH - head.length - 128;
+  let remaining = CORNER_BRIEF_SPEC_MAX_LENGTH - head.length - UPGRADE_NOTE_RESERVE - 1;
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index]!;
     if (entry.length > remaining) continue;
@@ -296,23 +209,24 @@ function upgradeBuildSpec(
  * transaction, rather than leaving the one repository corner that `createCorner`
  * would have refused — a code corner with no brief at all.
  *
- * The ONE explicit ask that triggered the upgrade is the whole authoritative
- * intent. Everything said in the corner before it is carried as build-spec
+ * The ONE explicit ask that triggered the upgrade is the request and the
+ * approval. Everything said in the corner before it is carried below it as
  * context, because a chat corner holds abandoned and superseded asks that a
- * worker reading `intentVerbatim` could not rank against the live one.
+ * worker could not rank against the live one. The agent revises this
+ * placeholder into a real spec with `revise_corner_brief`.
  */
 export async function composeCornerUpgradeBrief(
   db: SqlDatabase,
   cornerId: string,
-  approval: { sourceMessageId: string; snapshot: string },
-): Promise<CornerBriefStructuredDraft> {
-  if (!approval.snapshot.trim() || approval.snapshot.length > UPGRADE_REQUEST_LENGTH)
+  request: { sourceMessageId: string; text: string },
+): Promise<CornerBriefDraft> {
+  if (!request.text.trim() || request.text.trim().length > UPGRADE_REQUEST_LENGTH)
     throw new Error(
       `corner lane upgrade needs the code request written in one message of at most ${UPGRADE_REQUEST_LENGTH} characters — ask again in a shorter message`,
     );
   // Newest first, bounded in rows AND in bytes per row: a message longer than
-  // the whole build spec can never be rendered, so reading past that length
-  // would only be read to be thrown away.
+  // the whole spec can never be rendered, so reading past that length would
+  // only be read to be thrown away.
   const candidates = (
     await db.query<{ id: string; text: string; name: string }>(
       `SELECT message.id,left(message.text,$2) text,identity.name
@@ -321,40 +235,62 @@ export async function composeCornerUpgradeBrief(
          AND message.deleted_at IS NULL AND btrim(message.text)<>''
        ORDER BY message.created_at DESC,message.id DESC
        LIMIT $3`,
-      [cornerId, UPGRADE_BUILD_SPEC_LENGTH + 1, UPGRADE_DISCUSSION_CANDIDATES + 1],
+      [cornerId, CORNER_BRIEF_SPEC_MAX_LENGTH + 1, UPGRADE_DISCUSSION_CANDIDATES + 1],
     )
   ).rows;
   const olderHistory = candidates.length > UPGRADE_DISCUSSION_CANDIDATES;
   const discussion = candidates
     .slice(0, UPGRADE_DISCUSSION_CANDIDATES)
     .reverse()
-    .filter((row) => row.id !== approval.sourceMessageId);
+    .filter((row) => row.id !== request.sourceMessageId);
+  // Files posted in the discussion (a spec doc, a mock) reach the code agent
+  // only through the brief: a turn downloads the brief's files, never an older
+  // message's. The newest that are still available, in posting order.
+  const files = (
+    await db.query<{ object_id: string }>(
+      `SELECT object_id FROM (
+         SELECT DISTINCT ON (o.id) o.id::text object_id,message.created_at,message.id
+         FROM messages message
+         CROSS JOIN LATERAL jsonb_array_elements(message.attachments) a
+         JOIN objects o ON o.owner_id=message.author_id
+           AND (a->>'url' LIKE '%/v1/media/' || o.id::text OR a->>'mediaId'=o.id::text)
+         WHERE message.room_id=$1 AND message.presentation='message'
+           AND message.deleted_at IS NULL
+           AND o.state='ready' AND o.expires_at>now()
+         ORDER BY o.id,message.created_at DESC,message.id DESC
+       ) posted
+       ORDER BY created_at DESC,id DESC LIMIT $2`,
+      [cornerId, CORNER_BRIEF_ATTACHMENT_LIMIT],
+    )
+  ).rows.reverse();
   return {
-    intentVerbatim: [{ sourceMessageId: approval.sourceMessageId, snapshot: approval.snapshot }],
-    buildSpec: upgradeBuildSpec(discussion, approval.snapshot, olderHistory),
-    criteria: [{ id: 'AC-1', text: upgradeCriterion(approval.snapshot) }],
-    references: [],
-    approvalBasis: {
-      kind: 'initiating-command',
-      sourceMessageId: approval.sourceMessageId,
-      snapshot: approval.snapshot,
-    },
+    spec: upgradeSpec(discussion, request.text, olderHistory),
+    approval: { sourceMessageId: request.sourceMessageId },
+    ...(files.length
+      ? {
+          attachments: files.map((file) => ({
+            objectId: file.object_id,
+            purpose: 'Posted in the corner discussion before the upgrade',
+            required: false,
+          })),
+        }
+      : {}),
   };
 }
 
+/**
+ * Identity of one stored revision: what an `open_corner` retry is compared
+ * against. Internal only; the contract no longer exposes it.
+ */
 export function cornerBriefRevisionHash(
-  draft: CornerBriefStructuredDraft,
+  draft: CornerBriefDraft,
   attachments: readonly CornerBriefAttachment[],
 ): string {
   return createHash('sha256')
     .update(
       JSON.stringify({
-        intentVerbatim: draft.intentVerbatim,
-        buildSpec: draft.buildSpec.trim(),
-        criteria: draft.criteria,
-        nonGoals: draft.nonGoals ?? [],
-        references: draft.references,
-        approvalBasis: draft.approvalBasis,
+        spec: draft.spec.trim(),
+        approval: draft.approval.sourceMessageId,
         attachments: attachments.map((attachment) => ({
           objectId: attachment.objectId,
           title: attachment.title,
@@ -369,93 +305,156 @@ export function cornerBriefRevisionHash(
     .digest('hex');
 }
 
+/**
+ * Stored `approval_basis` shape. Rows written before the trimmed brief carry
+ * the same object, so old and new revisions read alike.
+ */
+type StoredCornerBriefApproval = {
+  kind: 'initiating-command' | 'explicit-human-answer';
+  sourceMessageId: string;
+  /** The approving message's exact text when the revision was written. */
+  snapshot: string;
+  approvedBy: string;
+  briefHash: string;
+};
+
+/**
+ * Quote the human message that approved this spec. The agent names only the
+ * message; its exact text and author come from the Room, and whether it was
+ * the command that opened this work or a later answer is decided here.
+ */
 export async function resolveCornerBriefApproval(
   db: SqlDatabase,
   sourceRoomIds: readonly string[],
-  draft: CornerBriefStructuredDraft,
+  draft: CornerBriefDraft,
   attachments: readonly CornerBriefAttachment[],
   initiatingMessageId?: string,
 ): Promise<{
-  approvalBasis: CornerBriefApprovalBasis;
+  approvalBasis: StoredCornerBriefApproval;
   revisionHash: string;
   sourceRoomId: string;
 }> {
   validateCornerBrief(draft);
-  const entries = [
-    ...draft.intentVerbatim.map((item) => ({ ...item, role: 'intent' as const })),
-    { ...draft.approvalBasis, role: 'approval' as const },
-  ];
-  const rows = (
-    await db.query<{ id: string; text: string; author_id: string; kind: string; room_id: string }>(
-      `SELECT message.id,message.text,message.author_id,identity.kind,message.room_id
+  const sourceMessageId = draft.approval.sourceMessageId;
+  const message = (
+    await db.query<{ text: string; author_id: string; kind: string; room_id: string }>(
+      `SELECT message.text,message.author_id,identity.kind,message.room_id
        FROM messages message JOIN identities identity ON identity.id=message.author_id
-       WHERE message.room_id=ANY($1::uuid[]) AND message.id=ANY($2::text[])`,
-      [sourceRoomIds, [...new Set(entries.map((entry) => entry.sourceMessageId))]],
+       WHERE message.room_id=ANY($1::uuid[]) AND message.id=$2`,
+      [sourceRoomIds, sourceMessageId],
     )
-  ).rows;
-  const messages = new Map(rows.map((row) => [row.id, row]));
-  for (const entry of entries) {
-    const message = messages.get(entry.sourceMessageId);
-    if (!message || message.kind !== 'human' || message.text !== entry.snapshot)
-      throw new Error(`corner brief ${entry.role} must quote an exact human Room message`);
-  }
-  if (
-    draft.approvalBasis.kind === 'initiating-command' &&
-    draft.approvalBasis.sourceMessageId !== initiatingMessageId
-  )
-    throw new Error('initiating-command approval must name the command that opened this work');
+  ).rows[0];
+  if (!message || message.kind !== 'human')
+    throw new Error('corner brief approval must name a human Room message');
   const revisionHash = cornerBriefRevisionHash(draft, attachments);
-  const approvalMessage = messages.get(draft.approvalBasis.sourceMessageId)!;
   return {
     approvalBasis: {
-      ...draft.approvalBasis,
-      approvedBy: approvalMessage.author_id,
+      kind:
+        sourceMessageId === initiatingMessageId ? 'initiating-command' : 'explicit-human-answer',
+      sourceMessageId,
+      snapshot: message.text,
+      approvedBy: message.author_id,
       briefHash: revisionHash,
     },
     revisionHash,
-    sourceRoomId: approvalMessage.room_id,
+    sourceRoomId: message.room_id,
   };
 }
 
-type BriefRow = {
-  revision: number;
-  content: string;
-  intent_verbatim: CornerBrief['intentVerbatim'] | null;
+/**
+ * The one read of stored revisions. Callers append their own WHERE/ORDER on
+ * the `brief` alias. The approver's name is joined here so every reader
+ * shows the same attribution.
+ */
+export const CORNER_BRIEF_REVISION_SELECT = `SELECT brief.revision,brief.spec,brief.content,brief.intent_verbatim,
+       brief.build_spec,brief.criteria,brief.non_goals,brief.brief_references,
+       brief.approval_basis,brief.change,brief.author_id,brief.source_room_id,
+       brief.source_message_id,brief.attachments,approver.name approver_name
+FROM corner_brief_revisions brief
+LEFT JOIN identities approver ON approver.id=brief.approval_basis->>'approvedBy'`;
+
+/** Columns only revisions written before the trimmed brief carry. */
+type FoldedBriefFields = {
+  content: string | null;
+  intent_verbatim: readonly { sourceMessageId: string; snapshot: string }[] | null;
   build_spec: string | null;
-  criteria: CornerBrief['criteria'] | null;
-  non_goals: string[] | null;
-  brief_references: CornerBrief['references'] | null;
-  approval_basis: CornerBriefApprovalBasis | null;
-  revision_hash: string | null;
+  criteria: readonly { id: string; text: string }[] | null;
+  non_goals: readonly string[] | null;
+  brief_references:
+    | readonly { label: string; authority: string; description: string; objectId?: string }[]
+    | null;
+};
+
+export type CornerBriefRow = FoldedBriefFields & {
+  revision: number;
+  spec: string | null;
+  approval_basis: Partial<StoredCornerBriefApproval> | null;
   change: string | null;
   author_id: string;
   source_room_id: string;
   source_message_id: string | null;
   attachments: CornerBriefAttachment[];
+  approver_name: string | null;
 };
 
-export function projectCornerBrief(cornerId: string, row: BriefRow): CornerBrief {
-  const buildSpec = row.build_spec ?? row.content;
-  const legacyHash = createHash('sha256')
-    .update(JSON.stringify({ content: row.content, attachments: row.attachments }))
-    .digest('hex');
-  const revisionHash = row.revision_hash ?? legacyHash;
+function quoteMarkdown(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => (line ? `> ${line}` : '>'))
+    .join('\n');
+}
+
+/**
+ * One Markdown spec from a revision written before the trimmed brief. The
+ * typed fields become headings in the order they used to render; empty ones
+ * are skipped, and the old build spec (or the original opaque content) ends it.
+ */
+function foldCornerBriefSpec(row: FoldedBriefFields): string {
+  const sections: string[] = [];
+  if (row.intent_verbatim?.length)
+    sections.push(
+      `## Intent\n\n${row.intent_verbatim
+        .map((item) => `${quoteMarkdown(item.snapshot)}\n>\n> — message \`${item.sourceMessageId}\``)
+        .join('\n\n')}`,
+    );
+  if (row.criteria?.length)
+    sections.push(
+      `## Checklist\n\n${row.criteria.map((item) => `- ${item.id}: ${item.text}`).join('\n')}`,
+    );
+  if (row.non_goals?.length)
+    sections.push(`## Non-goals\n\n${row.non_goals.map((item) => `- ${item}`).join('\n')}`);
+  if (row.brief_references?.length)
+    sections.push(
+      `## References\n\n${row.brief_references
+        .map(
+          (item) =>
+            `- ${item.label} [${item.authority}]: ${item.description}${
+              item.objectId ? ` (object \`${item.objectId}\`)` : ''
+            }`,
+        )
+        .join('\n')}`,
+    );
+  const buildSpec = (row.build_spec ?? row.content ?? '').trim();
+  if (buildSpec) sections.push(buildSpec);
+  return sections.join('\n\n');
+}
+
+export function projectCornerBrief(cornerId: string, row: CornerBriefRow): CornerBrief {
+  const basis = row.approval_basis;
   return {
     id: cornerId,
     revision: row.revision,
-    content: buildSpec,
-    legacy: row.revision_hash === null,
-    intentVerbatim: row.intent_verbatim ?? [],
-    buildSpec,
-    criteria: row.criteria ?? [],
-    nonGoals: row.non_goals ?? [],
-    references: row.brief_references ?? [],
-    approvalBasis: row.approval_basis ?? {
-      kind: 'legacy-pre-migration',
-      reason: 'This revision predates structured corner briefs.',
-      briefHash: revisionHash,
-    },
-    revisionHash,
+    spec: row.spec ?? foldCornerBriefSpec(row),
+    ...(basis?.sourceMessageId && basis.approvedBy
+      ? {
+          approval: {
+            sourceMessageId: basis.sourceMessageId,
+            text: basis.snapshot ?? '',
+            approvedBy: basis.approvedBy,
+            approverName: row.approver_name ?? basis.approvedBy,
+          },
+        }
+      : {}),
     ...(row.change ? { change: row.change } : {}),
     authorId: row.author_id,
     sourceRoomId: row.source_room_id,
@@ -469,11 +468,9 @@ export async function currentCornerBrief(
   cornerId: string,
 ): Promise<CornerBrief | undefined> {
   const row = (
-    await db.query<BriefRow>(
-      `SELECT revision,content,intent_verbatim,build_spec,criteria,non_goals,
-              brief_references,approval_basis,revision_hash,change,author_id,
-              source_room_id,source_message_id,attachments
-       FROM corner_brief_revisions WHERE corner_id=$1 ORDER BY revision DESC LIMIT 1`,
+    await db.query<CornerBriefRow>(
+      `${CORNER_BRIEF_REVISION_SELECT}
+       WHERE brief.corner_id=$1 ORDER BY brief.revision DESC LIMIT 1`,
       [cornerId],
     )
   ).rows[0];

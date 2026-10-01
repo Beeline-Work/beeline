@@ -47,6 +47,10 @@ export const HUMAN_CORNER_TITLE_MAX_LENGTH = 120;
 export type PhoneOperationMap = {
   readWelcomeCards: { input: Record<string, never>; output: WelcomeCardsView };
   completeWelcomeCards: { input: Record<string, never>; output: WelcomeCardsView };
+  /** The viewer's GitHub star card, when a reply milestone and a later win make it due. */
+  readStarPrompt: { input: Record<string, never>; output: StarPromptView };
+  /** Star (or fall back to the repository link), wait for the next milestone, or stop asking. */
+  answerStarPrompt: { input: AnswerStarPromptInput; output: AnswerStarPromptResult };
   sendRoomMessage: { input: SendRoomMessageInput; output: AgentMessageWriteResult };
   sendRoomReply: { input: SendRoomReplyInput; output: AgentMessageWriteResult };
   reactToMessage: { input: ReactToMessageInput; output: void };
@@ -168,6 +172,9 @@ export type PhoneOperationMap = {
     connected: boolean; connectedTypes?: string[]; authorizationUrl?: string;
   } };
   disconnectGoogleSignIn: { input: EmptyInput; output: void };
+  beginLinkSignIn: { input: EmptyInput; output: { authorizationUrl: string } };
+  cancelLinkSignIn: { input: { state?: string }; output: void };
+  disconnectLinkSignIn: { input: EmptyInput; output: void };
   unpairConnector: { input: UnpairConnectorInput; output: void };
   /** The one front door for connecting an app from the Workbench. */
   connectWorkbenchApp: { input: ConnectWorkbenchAppInput; output: ConnectWorkbenchAppResult };
@@ -190,6 +197,25 @@ export type PhoneOperationMap = {
 };
 
 export type WelcomeCardsView = { readonly due: boolean };
+
+export type StarPrompt = {
+  /** The completed-reply milestone (3, 30 or 300) this card answers. */
+  readonly milestone: number;
+  /** `owner/repo` on GitHub. */
+  readonly repository: string;
+  readonly url: string;
+};
+export type StarPromptView = { readonly prompt: StarPrompt | null };
+export type StarPromptAction = 'star' | 'later' | 'dismiss';
+export type AnswerStarPromptInput = { action: StarPromptAction; milestone: number };
+/**
+ * `starred`: GitHub starred the repository with the viewer's token.
+ * `open`: the token cannot star (no Starring permission yet), so the app opens `url`.
+ */
+export type AnswerStarPromptResult = {
+  readonly outcome: 'starred' | 'open' | 'later' | 'dismissed';
+  readonly url?: string;
+};
 
 export type {
   CreateWalletInput,
@@ -307,6 +333,8 @@ export type CancelAgentTurnInput = RoomInput & {
 };
 export type CreateHumanCornerInput = RoomInput & {
   readonly title: string;
+  /** The phone generated `title`; the corner's agent is asked to rename it from the first steer. */
+  readonly titleGenerated?: boolean;
   readonly appInstallationId?: string;
   /**
    * The parent-Room message this corner was opened from (the mobile

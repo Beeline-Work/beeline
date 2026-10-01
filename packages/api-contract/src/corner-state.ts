@@ -16,6 +16,13 @@ export type CornerStateFacts = {
   /** The corner's workflow run. Absent only where no run is known; see `cornerRunFromLifecycle`. */
   readonly run?: CornerRunFacts;
   readonly lifecycle?: CornerLifecycleView;
+  /**
+   * Whether something in the corner is still owed to a person: a message the
+   * push rule addresses to someone that they have not answered, an open
+   * question card, or a pending grant. Absent where a projection cannot tell;
+   * the corner then stays `waiting` so nothing owed is hidden.
+   */
+  readonly owed?: boolean;
 };
 
 export type DerivedCornerState = {
@@ -76,7 +83,8 @@ export function cornerRunFromLifecycle(input: {
  * | `implement` reached by `failing`            | review, checks-failed      |
  * | `ask_human`                                 | waiting, question          |
  * | `implement` reached by `failed`             | waiting, failed            |
- * | `opened`, `no_code_work`, `upgrade_to_code`, `investigate`, `implement` | waiting |
+ * | `opened`, `no_code_work`, `upgrade_to_code`, `implement`, owed | waiting |
+ * | the same, nothing owed to anyone            | idle                       |
  */
 export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
   const run =
@@ -91,5 +99,5 @@ export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
   if (run.state === 'ask_human') return { state: 'waiting', reason: 'question' };
   if (run.state === 'implement' && run.outcome === 'failed')
     return { state: 'waiting', reason: 'failed' };
-  return { state: 'waiting' };
+  return { state: facts.owed === false ? 'idle' : 'waiting' };
 }

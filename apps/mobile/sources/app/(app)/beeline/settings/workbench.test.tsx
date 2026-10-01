@@ -1,4 +1,5 @@
 import * as React from 'react';
+import * as WebBrowser from 'expo-web-browser';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -26,6 +27,9 @@ vi.mock('expo-router', () => ({
     focus.effect = effect;
     React.useEffect(effect, [effect]);
   },
+}));
+vi.mock('expo-web-browser', () => ({
+  openAuthSessionAsync: vi.fn(async () => ({ type: 'success' })),
 }));
 
 const safeArea = vi.hoisted(() => ({ bottom: 0 }));
@@ -156,6 +160,49 @@ describe('Workbench settings screen', () => {
     expect(scroll.findByProps({ testID: 'workbench-connect-app' })).toBeDefined();
   });
 
+  it('shows Link as one TOOLS row and states non-US/Canada ineligibility on the collapsed row', async () => {
+    const source = new MockWorkbenchSource();
+    const originalRead = source.readWorkbench.bind(source);
+    source.readWorkbench = async (input) => ({ ...await originalRead(input),
+      linkAccount: { connected: false, pending: false, ineligible: true } });
+    setWorkbenchSource(source);
+    const renderer = await render();
+    // Link shares the TOOLS list with the other connectors; there is no
+    // separate Payment tools section.
+    expect(renderer.root.findAllByProps({ testID: 'workbench-payment-tools-head' })).toHaveLength(0);
+    const tools = renderer.root.findByProps({ testID: 'workbench-connectors' });
+    expect(tools.findByProps({ testID: 'workbench-tools-head' })).toBeDefined();
+    const link = tools.findByProps({ testID: 'workbench-link-head' });
+    expect(link.props.title).toBe('Link');
+    expect(link.props.description).toContain('US or Canada');
+    expect(link.props.trailingPress.testID).toBe('workbench-link-connect');
+  });
+
+  it('returns from the Link auth session to a connected payment row', async () => {
+    const source = new MockWorkbenchSource();
+    let connected = false;
+    const originalRead = source.readWorkbench.bind(source);
+    source.beginLinkSignIn = vi.fn(async () => ({
+      authorizationUrl: 'https://login.link.com/auth?state=link-test-state',
+    }));
+    source.readWorkbench = async input => ({ ...await originalRead(input),
+      linkAccount: { connected, pending: false, ineligible: false } });
+    vi.mocked(WebBrowser.openAuthSessionAsync).mockImplementation(async () => {
+      connected = true;
+      return { type: 'success', url: 'beeline://beeline/settings/workbench' };
+    });
+    setWorkbenchSource(source);
+    const renderer = await render();
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'workbench-link-head' }).props.trailingPress.onPress();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(WebBrowser.openAuthSessionAsync).toHaveBeenCalledWith(
+      'https://login.link.com/auth?state=link-test-state',
+      'beeline://beeline/settings/workbench', expect.anything());
+    expect(renderer.root.findByProps({ testID: 'workbench-link-head' }).props.value).toBe('connected');
+  });
   it('refetches edited and deleted keys after focus and Squire-flow returns', async () => {
     vi.useFakeTimers();
     const data = new MockWorkbenchSource();

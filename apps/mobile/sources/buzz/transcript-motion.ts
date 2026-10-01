@@ -47,7 +47,12 @@ export function observeTranscriptArrivals(
     };
   }
 
-  const arrivingIds = new Set(input.ids.filter((id) => !previous.seenIds.has(id)));
+  // Ids ahead of the oldest id already seen are an older page paging in above
+  // the reader: history, not arrivals.
+  const firstSeen = input.ids.findIndex((id) => previous.seenIds.has(id));
+  const arrivingIds = new Set(
+    input.ids.filter((id, index) => index > firstSeen && !previous.seenIds.has(id)),
+  );
   return {
     state: {
       surfaceId: input.surfaceId,

@@ -145,8 +145,8 @@ export const WORKFLOW_DESCRIPTION_MAX_LENGTH = 60;
 
 const record = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
-const keys = (value: Record<string, unknown>, allowed: readonly string[]): boolean =>
-  Object.keys(value).every((key) => allowed.includes(key));
+const unknownKey = (value: Record<string, unknown>, allowed: readonly string[]): string | undefined =>
+  Object.keys(value).find((key) => !allowed.includes(key));
 const isIdentifierArray = (value: unknown, max: number, pattern: RegExp): value is string[] =>
   Array.isArray(value) &&
   value.length <= max &&
@@ -160,46 +160,47 @@ const isIdentifierArray = (value: unknown, max: number, pattern: RegExp): value 
  * with capped loop-edges excluded), rewritten against this smaller schema.
  */
 export function readWorkflowContract(value: unknown): WorkflowContract | null {
-  if (
-    !record(value) ||
-    !keys(value, [
-      'version',
-      'name',
-      'description',
-      'roles',
-      'start',
-      'handoffs',
-      'implicitEdges',
-      'externalOutcomes',
-    ]) ||
-    value.version !== WORKFLOW_CONTRACT_VERSION
-  )
-    return null;
+  return workflowContractError(value) === null ? (value as WorkflowContract) : null;
+}
+
+/**
+ * The reason `readWorkflowContract` rejects `value`, naming the rule and where
+ * it failed (a field, or `handoffs.<state>`), or null when the contract is valid.
+ */
+export function workflowContractError(value: unknown): string | null {
+  if (!record(value)) return 'contract must be a JSON object';
+  const topKey = unknownKey(value, [
+    'version',
+    'name',
+    'description',
+    'roles',
+    'start',
+    'handoffs',
+    'implicitEdges',
+    'externalOutcomes',
+  ]);
+  if (topKey !== undefined) return `unknown key "${topKey}" at the top level`;
+  if (value.version !== WORKFLOW_CONTRACT_VERSION) return `version must be ${WORKFLOW_CONTRACT_VERSION}`;
   if (typeof value.name !== 'string' || !CONTRACT_NAME_PATTERN.test(value.name) || value.name.length > 64)
-    return null;
-  if (
-    typeof value.description !== 'string' ||
-    value.description.length < 1 ||
-    value.description.length > WORKFLOW_DESCRIPTION_MAX_LENGTH
-  )
-    return null;
+    return `name must be lowercase words joined by hyphens, at most 64 characters (got ${JSON.stringify(value.name)})`;
+  if (typeof value.description !== 'string') return 'description must be a string';
+  if (value.description.length < 1 || value.description.length > WORKFLOW_DESCRIPTION_MAX_LENGTH)
+    return `description must be 1-${WORKFLOW_DESCRIPTION_MAX_LENGTH} characters (got ${value.description.length})`;
   if (!isIdentifierArray(value.roles, WORKFLOW_ROLES_MAX, IDENTIFIER_PATTERN) || value.roles.length < 1)
-    return null;
+    return `roles must be 1-${WORKFLOW_ROLES_MAX} unique lowercase names (letters, digits, _ or -)`;
   const roles = new Set(value.roles as string[]);
-  if (
-    !record(value.handoffs) ||
-    Object.keys(value.handoffs).length < WORKFLOW_STATES_MIN ||
-    Object.keys(value.handoffs).length > WORKFLOW_STATES_MAX ||
-    typeof value.start !== 'string' ||
-    !Object.hasOwn(value.handoffs, value.start)
-  )
-    return null;
+  if (!record(value.handoffs)) return 'handoffs must be an object of named states';
+  const stateCount = Object.keys(value.handoffs).length;
+  if (stateCount < WORKFLOW_STATES_MIN || stateCount > WORKFLOW_STATES_MAX)
+    return `handoffs must have ${WORKFLOW_STATES_MIN}-${WORKFLOW_STATES_MAX} states (got ${stateCount})`;
+  if (typeof value.start !== 'string' || !Object.hasOwn(value.handoffs, value.start))
+    return `start must name a state in handoffs (got ${JSON.stringify(value.start)})`;
   const states = value.handoffs as Record<string, unknown>;
   if (
     value.externalOutcomes !== undefined &&
     !isIdentifierArray(value.externalOutcomes, WORKFLOW_OUTCOMES_MAX, IDENTIFIER_PATTERN)
   )
-    return null;
+    return `externalOutcomes must be up to ${WORKFLOW_OUTCOMES_MAX} unique outcome names`;
   const external = new Set((value.externalOutcomes as string[] | undefined) ?? []);
   const edges = new Map<string, string[]>();
   /** The same edges minus those only an outside event can take (`externalOutcomes`). */
@@ -207,39 +208,46 @@ export function readWorkflowContract(value: unknown): WorkflowContract | null {
   const declaredOutcomes = new Set<string>();
   let terminalCount = 0;
   for (const [name, raw] of Object.entries(states)) {
-    if (!IDENTIFIER_PATTERN.test(name) || !record(raw)) return null;
+    if (!IDENTIFIER_PATTERN.test(name))
+      return `handoffs: state name "${name}" must be lowercase letters, digits, _ or -`;
+    const at = `handoffs.${name}`;
+    if (!record(raw)) return `${at} must be an object`;
     if (raw.kind === 'terminal') {
-      if (
-        !keys(raw, ['kind', 'status']) ||
-        (raw.status !== 'done' && raw.status !== 'failed' && raw.status !== 'abandoned')
-      )
-        return null;
+      const key = unknownKey(raw, ['kind', 'status']);
+      if (key !== undefined) return `${at}: unknown key "${key}" (a terminal allows kind, status)`;
+      if (raw.status !== 'done' && raw.status !== 'failed' && raw.status !== 'abandoned')
+        return `${at}: terminal status must be done, failed or abandoned`;
       terminalCount += 1;
       edges.set(name, []);
       cycleEdges.set(name, []);
       continue;
     }
     if (raw.kind === 'waiting') {
-      if (!keys(raw, ['kind', 'role'])) return null;
+      const key = unknownKey(raw, ['kind', 'role']);
+      if (key !== undefined) return `${at}: unknown key "${key}" (a waiting state allows kind, role)`;
       if (raw.role !== undefined && (typeof raw.role !== 'string' || !roles.has(raw.role)))
-        return null;
+        return `${at}: role ${JSON.stringify(raw.role)} is not in roles`;
       edges.set(name, []);
       cycleEdges.set(name, []);
       continue;
     }
     const isGate = raw.kind === 'gate';
     const isServer = raw.kind === 'server';
-    if (raw.kind !== undefined && !isGate && !isServer) return null;
+    if (raw.kind !== undefined && !isGate && !isServer)
+      return `${at}: kind must be gate, server, terminal or waiting, or omitted for a handoff`;
     const allowedKeys = isGate
       ? ['kind', 'role', 'requires', 'on']
       : isServer
         ? ['kind', 'role', 'requires', 'on', 'loop']
         : ['role', 'roleBinding', 'requires', 'on', 'loop', 'timeoutSeconds'];
-    if (!keys(raw, allowedKeys)) return null;
+    const key = unknownKey(raw, allowedKeys);
+    if (key !== undefined)
+      return `${at}: unknown key "${key}" (a ${isGate ? 'gate' : isServer ? 'server state' : 'handoff'} allows ${allowedKeys.join(', ')})`;
     if (isServer) {
       if (raw.role !== undefined && (typeof raw.role !== 'string' || !roles.has(raw.role)))
-        return null;
-    } else if (typeof raw.role !== 'string' || !roles.has(raw.role)) return null;
+        return `${at}: role ${JSON.stringify(raw.role)} is not in roles`;
+    } else if (typeof raw.role !== 'string' || !roles.has(raw.role))
+      return `${at}: role ${JSON.stringify(raw.role)} is not in roles`;
     if (
       !isGate &&
       !isServer &&
@@ -248,24 +256,24 @@ export function readWorkflowContract(value: unknown): WorkflowContract | null {
         raw.roleBinding.length > 128 ||
         !ROLE_BINDING_PATTERN.test(raw.roleBinding))
     )
-      return null;
-    if (!isIdentifierArray(raw.requires, WORKFLOW_REQUIRES_MAX, FIELD_NAME_PATTERN)) return null;
-    if (!record(raw.on)) return null;
+      return `${at}: roleBinding must look like live:parent.field`;
+    if (!isIdentifierArray(raw.requires, WORKFLOW_REQUIRES_MAX, FIELD_NAME_PATTERN))
+      return `${at}: requires must be a list of up to ${WORKFLOW_REQUIRES_MAX} unique field names`;
+    if (!record(raw.on)) return `${at}: on must be an object of outcome -> state`;
     const outcomes = Object.entries(raw.on);
     const outcomeMin = isGate ? WORKFLOW_GATE_OUTCOMES_MIN : WORKFLOW_OUTCOMES_MIN;
     const outcomeMax = isGate ? WORKFLOW_GATE_OUTCOMES_MAX : WORKFLOW_OUTCOMES_MAX;
-    if (outcomes.length < outcomeMin || outcomes.length > outcomeMax) return null;
+    if (outcomes.length < outcomeMin || outcomes.length > outcomeMax)
+      return `${at}: ${isGate ? 'a gate needs' : 'on needs'} ${outcomeMin}-${outcomeMax} outcomes (got ${outcomes.length})`;
     const outcomeLabelMax = isGate ? CHOICE_LABEL_MAX_LENGTH : 64;
-    if (
-      !outcomes.every(
-        ([outcome, target]) =>
-          IDENTIFIER_PATTERN.test(outcome) &&
-          outcome.length <= outcomeLabelMax &&
-          typeof target === 'string' &&
-          Object.hasOwn(states, target),
-      )
-    )
-      return null;
+    for (const [outcome, target] of outcomes) {
+      if (!IDENTIFIER_PATTERN.test(outcome))
+        return `${at}: outcome "${outcome}" must be lowercase letters, digits, _ or -`;
+      if (outcome.length > outcomeLabelMax)
+        return `${at}: outcome "${outcome}" is longer than ${outcomeLabelMax} characters`;
+      if (typeof target !== 'string' || !Object.hasOwn(states, target))
+        return `${at}: outcome "${outcome}" goes to ${JSON.stringify(target)}, which is not a state`;
+    }
     const on = raw.on as Record<string, string>;
     const targets = outcomes.map(([, target]) => target as string);
     const cycleTargets = outcomes
@@ -276,45 +284,42 @@ export function readWorkflowContract(value: unknown): WorkflowContract | null {
       if (
         !Number.isInteger(raw.timeoutSeconds) ||
         (raw.timeoutSeconds as number) < WORKFLOW_TIMEOUT_SECONDS_MIN ||
-        (raw.timeoutSeconds as number) > WORKFLOW_TIMEOUT_SECONDS_MAX ||
-        !Object.hasOwn(on, 'timeout')
+        (raw.timeoutSeconds as number) > WORKFLOW_TIMEOUT_SECONDS_MAX
       )
-        return null;
+        return `${at}: timeoutSeconds must be a whole number from ${WORKFLOW_TIMEOUT_SECONDS_MIN} to ${WORKFLOW_TIMEOUT_SECONDS_MAX}`;
+      if (!Object.hasOwn(on, 'timeout')) return `${at}: timeoutSeconds needs a "timeout" outcome in on`;
     }
     if (!isGate && raw.loop !== undefined) {
       const loop = raw.loop;
-      if (
-        !record(loop) ||
-        !keys(loop, ['onEdge', 'cap', 'onExceeded']) ||
-        typeof loop.onEdge !== 'string' ||
-        !Object.hasOwn(on, loop.onEdge) ||
-        !Number.isInteger(loop.cap) ||
-        (loop.cap as number) < 1 ||
-        (loop.cap as number) > WORKFLOW_LOOP_CAP_MAX ||
-        typeof loop.onExceeded !== 'string' ||
-        !Object.hasOwn(states, loop.onExceeded) ||
-        loop.onExceeded === on[loop.onEdge as string]
-      )
-        return null;
-      targets.push(loop.onExceeded as string);
-      cycleTargets.push(loop.onExceeded as string);
+      if (!record(loop) || unknownKey(loop, ['onEdge', 'cap', 'onExceeded']) !== undefined)
+        return `${at}: loop must be { onEdge, cap, onExceeded }`;
+      if (typeof loop.onEdge !== 'string' || !Object.hasOwn(on, loop.onEdge))
+        return `${at}: loop.onEdge ${JSON.stringify(loop.onEdge)} is not an outcome in on`;
+      if (!Number.isInteger(loop.cap) || (loop.cap as number) < 1 || (loop.cap as number) > WORKFLOW_LOOP_CAP_MAX)
+        return `${at}: loop.cap must be a whole number from 1 to ${WORKFLOW_LOOP_CAP_MAX}`;
+      if (typeof loop.onExceeded !== 'string' || !Object.hasOwn(states, loop.onExceeded))
+        return `${at}: loop.onExceeded ${JSON.stringify(loop.onExceeded)} is not a state`;
+      if (loop.onExceeded === on[loop.onEdge])
+        return `${at}: loop.onExceeded must differ from where loop.onEdge goes`;
+      targets.push(loop.onExceeded);
+      cycleTargets.push(loop.onExceeded);
     }
     edges.set(name, targets);
     cycleEdges.set(name, cycleTargets);
   }
-  if (![...external].every((outcome) => declaredOutcomes.has(outcome))) return null;
-  if (terminalCount < 1) return null;
-  if ((states[value.start as string] as Record<string, unknown>).kind === 'terminal') return null;
+  for (const outcome of external)
+    if (!declaredOutcomes.has(outcome)) return `externalOutcomes: "${outcome}" is not an outcome of any state`;
+  if (terminalCount < 1) return 'at least one terminal state is required';
+  if ((states[value.start] as Record<string, unknown>).kind === 'terminal')
+    return `start state "${value.start}" must not be a terminal`;
   if (value.implicitEdges !== undefined) {
-    if (
-      !isIdentifierArray(value.implicitEdges, WORKFLOW_STATES_MAX, IDENTIFIER_PATTERN) ||
-      !(value.implicitEdges as string[]).every(
-        (name) =>
-          Object.hasOwn(states, name) &&
-          (states[name] as Record<string, unknown>).kind === 'terminal',
-      )
-    )
-      return null;
+    if (!isIdentifierArray(value.implicitEdges, WORKFLOW_STATES_MAX, IDENTIFIER_PATTERN))
+      return 'implicitEdges must be a list of unique state names';
+    const notTerminal = value.implicitEdges.find(
+      (name) =>
+        !Object.hasOwn(states, name) || (states[name] as Record<string, unknown>).kind !== 'terminal',
+    );
+    if (notTerminal !== undefined) return `implicitEdges: "${notTerminal}" is not a terminal state`;
   }
   // Reachability: every declared state must be reached from `start`, plus
   // every `implicitEdges` terminal — reachable from anywhere by definition,
@@ -325,25 +330,28 @@ export function readWorkflowContract(value: unknown): WorkflowContract | null {
     reachable.add(name);
     for (const next of edges.get(name) ?? []) visitReachable(next);
   };
-  visitReachable(value.start as string);
+  visitReachable(value.start);
   for (const name of (value.implicitEdges as string[] | undefined) ?? []) reachable.add(name);
-  if (reachable.size !== Object.keys(states).length) return null;
+  const orphan = Object.keys(states).find((name) => !reachable.has(name));
+  if (orphan !== undefined) return `state "${orphan}" is not reachable from start`;
+  if (reachable.size !== Object.keys(states).length) return 'implicitEdges must be a list of unique state names';
   // Cycle detection: only a loop's own declared edge, an edge only an outside
   // event can take (`externalOutcomes`), or a path through a gate, may close
   // a cycle. A gate always waits on a fresh human decision
   // before anything past it can run again, so nothing beyond it can be part
   // of an unbounded AUTOMATIC loop the way two ordinary handoffs could be.
   const visited = new Set<string>();
-  const active = new Set<string>();
+  /** The current DFS path, so an uncapped cycle can be named. */
+  const active: string[] = [];
+  let cycle: string[] = [];
   const walk = (name: string): boolean => {
-    if (active.has(name)) return false;
     if (visited.has(name)) return true;
     const state = states[name] as Record<string, unknown>;
     if (state.kind === 'gate') {
       visited.add(name);
       return true;
     }
-    active.add(name);
+    active.push(name);
     const loop =
       state.kind === undefined || state.kind === 'server'
         ? (state.loop as WorkflowLoop | undefined)
@@ -351,14 +359,18 @@ export function readWorkflowContract(value: unknown): WorkflowContract | null {
     const loopTarget = loop ? (state.on as Record<string, string>)[loop.onEdge] : undefined;
     for (const next of cycleEdges.get(name) ?? []) {
       if (loopTarget !== undefined && next === loopTarget) continue;
-      if (active.has(next) || !walk(next)) return false;
+      if (active.includes(next)) {
+        cycle = [...active.slice(active.indexOf(next)), next];
+        return false;
+      }
+      if (!walk(next)) return false;
     }
-    active.delete(name);
+    active.pop();
     visited.add(name);
     return true;
   };
-  if (!walk(value.start as string)) return null;
-  return value as unknown as WorkflowContract;
+  if (!walk(value.start)) return `cycle ${cycle.join(' -> ')} has no loop cap`;
+  return null;
 }
 
 /** Validate a `handoff()` call's contents against a state's required field names. */

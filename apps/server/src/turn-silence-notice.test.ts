@@ -231,7 +231,7 @@ describe('first-silence notice', () => {
         requestId: '4'.repeat(64),
         reason: 'ACP error -32000: Authentication required',
         reasonKind: 'not-signed-in' as const,
-        text: "@candy could not answer · the helper isn't signed in to the provider. Run `beeline connect` on the helper's machine.",
+        text: "@candy could not answer · the helper could not authenticate with the provider. Check its log for the failed turn; if its login expired, run `beeline connect` on the helper's machine.",
         silence: 'not-signed-in',
       },
       {
@@ -357,13 +357,11 @@ describe('first-silence notice', () => {
     });
   });
 
-  it('escalates an exhausted auth-shaped hiccup to the not-signed-in verdict', async () => {
+  it('reports an exhausted auth-shaped hiccup without assuming the helper is signed out', async () => {
     // A transient token-refresh race (claude-agent-acp mid-OAuth-refresh) gets
     // the same bounded hiccup retries as any other hiccup; only once those
-    // are exhausted does the Room line read as the plain not-signed-in
-    // verdict instead of a generic "stopped restarting" hiccup give-up — a
-    // genuinely expired/missing credential is still named plainly, just
-    // after giving the race a chance to clear on its own.
+    // are exhausted, the Room names the failed authentication without
+    // deciding whether the helper's login expired or the refresh raced.
     const requestId = '9'.repeat(64);
     const command = await ask(database, requestId);
     const daemon = new DaemonService(database, new LiveHub());
@@ -391,7 +389,7 @@ describe('first-silence notice', () => {
       }
     }
     expect(await failureLine(database, requestId)).toEqual({
-      text: "@candy could not answer · the helper isn't signed in to the provider. Run `beeline connect` on the helper's machine.",
+      text: "@candy could not answer · the helper could not authenticate with the provider. Check its log for the failed turn; if its login expired, run `beeline connect` on the helper's machine.",
       silence: 'not-signed-in',
       state: 'failed',
     });

@@ -37,6 +37,8 @@ import {
 } from '@/buzz/desktop-artifact-pane';
 import { DesktopArtifactPane } from '@/components/buzz/DesktopArtifactPane';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
+import { CornerBriefLink } from '@/components/buzz/CornerObjectiveLine';
+import { openCornerBriefViewer } from '@/components/buzz/corner-brief-viewer';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { isAgentTurnActive } from '@/buzz/agent-presence';
 import { scheduleAnimationFrame } from '@/buzz/host-scheduler';
@@ -681,6 +683,7 @@ function CornerCockpit({
   );
   const title = summary?.corner.name ?? detail?.room.name ?? 'Corner';
   const objective = summary?.corner.about ?? detail?.room.about ?? title;
+  const cornerBrief = detail?.cornerBrief;
   return (
     <View style={styles.cockpit} testID="desktop-work-cockpit">
       <View style={styles.header} testID="desktop-work-cockpit-header">
@@ -717,9 +720,17 @@ function CornerCockpit({
           testID="desktop-work-cockpit-close"
         />
       </View>
-      <Text style={styles.pinnedObjective} testID="desktop-work-objective">
-        {objective}
-      </Text>
+      <View style={styles.pinnedObjective}>
+        <Text style={styles.pinnedObjectiveCopy} testID="desktop-work-objective">
+          {objective}
+        </Text>
+        {cornerBrief ? (
+          <CornerBriefLink
+            onPress={() => openCornerBriefViewer(cornerBrief)}
+            testID="desktop-work-brief"
+          />
+        ) : null}
+      </View>
       {loading || !detail ? (
         loading ? (
           <View style={styles.loadingBlock} testID="desktop-corner-loader">
@@ -892,8 +903,9 @@ const styles = StyleSheet.create((theme) => ({
   chevron: { color: theme.colors.textSecondary },
   cockpit: { flex: 1 },
   pinnedObjective: {
-    ...theme.buzz.type.meta,
-    color: theme.colors.text,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
     margin: 12,
     padding: 10,
     borderWidth: StyleSheet.hairlineWidth,
@@ -901,6 +913,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.buzz.radius,
     backgroundColor: theme.colors.surface,
   },
+  pinnedObjectiveCopy: { ...theme.buzz.type.meta, color: theme.colors.text, flex: 1, minWidth: 0 },
   transcript: { flex: 1 },
   transcriptContent: { paddingHorizontal: 14, paddingVertical: 10, gap: 12 },
   focusedMessage: { backgroundColor: theme.buzz.bgHighlight },

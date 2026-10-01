@@ -403,11 +403,10 @@ export interface MonolithCornerTurnOptions {
   objective: string;
   worktreePath: string;
   /**
-   * The server's lane for this session; research has a worktree but no automatic
-   * delivery or agent close. Only `no_code -> code` ever moves, once, and the
-   * session is retired and restarted for it rather than mutated in place.
+   * The server's lane for this session. Only `no_code -> code` ever moves, once,
+   * and the session is retired and restarted for it rather than mutated in place.
    */
-  lane?: 'code' | 'no_code' | 'research';
+  lane?: 'code' | 'no_code';
   /** The parent is repository-backed while this corner is still no-code. */
   agentMayUpgradeCorner?: boolean;
   /** The human who commissioned the corner, as a bare handle. Who a no-code corner reports back to. */
@@ -713,7 +712,6 @@ export class MonolithCornerTurnLoop {
         this.sessionCodegraphReady,
       ),
       reviewerHandle: configuration.reviewerHandle,
-      feedbackTriage: configuration.feedbackTriage,
     });
   }
 
@@ -749,6 +747,7 @@ export class MonolithCornerTurnLoop {
         await repairRoomAgentCredentialLinks({
           root: this.options.config.agentHomeRoot,
           operatorHome: this.options.config.operatorHome,
+          keepNewerDetachedClaudeLogin: this.options.config.agentKind === 'claude',
         });
       }
       return this.sessionId;
@@ -773,20 +772,16 @@ export class MonolithCornerTurnLoop {
       authorHandle: opener?.handle,
       openedByAgent: !this.options.openedBy || this.options.openedBy === this.agent.publicKey,
     };
-    const reviewerInstruction =
-      this.options.lane !== 'research' && cornerReviewerInstruction(reviewerInput)
-        ? CORNER_REVIEWER_SESSION_INSTRUCTION
-        : undefined;
+    const reviewerInstruction = cornerReviewerInstruction(reviewerInput)
+      ? CORNER_REVIEWER_SESSION_INSTRUCTION
+      : undefined;
     this.reviewerInstructionInput = reviewerInstruction ? reviewerInput : undefined;
-    const selfReviewerInstruction =
-      this.options.lane === 'research' ? undefined : cornerSelfReviewerInstruction(reviewerInput);
+    const selfReviewerInstruction = cornerSelfReviewerInstruction(reviewerInput);
     this.sessionSurface = !this.options.repository
       ? 'no-code-corner'
-      : this.options.lane === 'research'
-        ? 'research-corner'
-        : reviewerInstruction
-          ? 'review-corner'
-          : 'code-corner';
+      : reviewerInstruction
+        ? 'review-corner'
+        : 'code-corner';
     this.sessionPromptContext = {
       surface: this.sessionSurface,
       agentName: self?.name ?? this.agent.name,
@@ -999,7 +994,6 @@ export class MonolithCornerTurnLoop {
         codegraphReady,
       ),
       reviewerHandle: configuration.reviewerHandle,
-      feedbackTriage: configuration.feedbackTriage,
     });
     const servers: McpServerWire[] = [
       ...(repository
@@ -1029,9 +1023,8 @@ export class MonolithCornerTurnLoop {
         roomId: this.options.parentRoomId,
         workspaceId: this.options.workspaceId,
         cornerId: this.options.cornerId,
-        agentMayCloseCorner: Boolean(repository) && this.options.lane !== 'research',
+        agentMayCloseCorner: Boolean(repository),
         agentMayUpgradeCorner: this.options.agentMayUpgradeCorner,
-        feedbackTriage: configuration.feedbackTriage === true,
         reviewer: Boolean(reviewerInstruction),
         lane: this.options.lane ?? (repository ? 'code' : 'no_code'),
         attachRoot: this.options.worktreePath,
@@ -1488,6 +1481,9 @@ export class MonolithCornerTurnLoop {
                   surface: this.sessionSurface,
                   sessionPrefix: this.turnSessionPrefix,
                   objective: this.options.objective,
+                  ...(restored.titleGenerated && restored.title
+                    ? { generatedTitle: restored.title }
+                    : {}),
                   ...(restored.brief
                     ? {
                         brief: {
@@ -1745,6 +1741,12 @@ export class MonolithCornerTurnLoop {
                       'harness login expired; repairing the shared credential and retrying once',
                   );
                   trace.retry({ reason: 'expired harness login' });
+                  if (this.options.config.agentHomeRoot) {
+                    await repairRoomAgentCredentialLinks({
+                      root: this.options.config.agentHomeRoot,
+                      operatorHome: this.options.config.operatorHome,
+                    });
+                  }
                   await this.discardSession();
                   await trace.measure('activation', () => this.activate(trace));
                   try {
@@ -1822,7 +1824,7 @@ export class MonolithCornerTurnLoop {
               // of it; the daemon never rewrites the worktree after a turn.
               const checksTurn = isCornerChecksTurn(trigger, restates);
               const deliveryState =
-                !checksTurn && this.options.repository && this.options.lane !== 'research'
+                !checksTurn && this.options.repository
                   ? await cornerUndeliveredRepositoryState(
                       this.options.worktreePath,
                       this.options.repository.featureBranch,
@@ -1844,9 +1846,7 @@ export class MonolithCornerTurnLoop {
               if (
                 !explained &&
                 (needsDeliveryNudge ||
-                  (checksTurn &&
-                    this.options.lane !== 'research' &&
-                    (Boolean(this.reviewerInstructionInput) || this.yoloMode)))
+                  (checksTurn && (Boolean(this.reviewerInstructionInput) || this.yoloMode)))
               ) {
                 if (needsDeliveryNudge) this.lastDeliveryNudgeState = deliveryState;
                 // The flush comes first: it is what puts this run's narration

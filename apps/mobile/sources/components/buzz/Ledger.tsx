@@ -746,7 +746,7 @@ export function LedgerSystemLine({
   stamp,
   onOpenIdentity,
   onOpenUrl,
-  onOpenBriefRevision,
+  onOpenBrief,
 }: {
   id: string;
   text: string;
@@ -756,7 +756,8 @@ export function LedgerSystemLine({
   stamp: string;
   onOpenIdentity?: (identityId: string) => void;
   onOpenUrl?: (url: string) => void;
-  onOpenBriefRevision?: (revision: number) => void;
+  /** Opens the corner's latest brief; a revision notice links to it. */
+  onOpenBrief?: () => void;
 }) {
   const [summaryExpanded, setSummaryExpanded] = useState(false);
   const names = event ? (subjects?.length ? subjects : [event.subject]) : [];
@@ -780,14 +781,15 @@ export function LedgerSystemLine({
     const object = event.object;
     if (object?.text) {
       spans.push(' ');
+      // The brief keeps no history on the phone: any revision notice opens
+      // the latest brief.
       const briefRevision = event.verb === 'revised the corner brief'
-        ? /^Revision ([1-9]\d*)$/.exec(object.text)
-        : null;
-      if (briefRevision && onOpenBriefRevision) {
+        && /^Revision [1-9]\d*$/.test(object.text);
+      if (briefRevision && onOpenBrief) {
         spans.push(
           <Text key="object" style={styles.systemLineLink}
             accessibilityRole="link"
-            onPress={() => onOpenBriefRevision(Number(briefRevision[1]))}
+            onPress={onOpenBrief}
             testID={`system-line-object-${id}`}>
             {object.text}
           </Text>,

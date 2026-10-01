@@ -15,6 +15,7 @@ import type { ChannelReferenceIndex, ChannelReferenceTarget } from '@/buzz/chann
 import { agentActivityReplyExcerpt, type MessageReplyDisplayTarget } from '@/buzz/message-reply';
 import { resolveAgentDisplayIdentity, resolvePendingAgentDisplay } from '@/buzz/agent-display';
 import { fallbackMemberName } from '@/buzz/member-display';
+import { displayModel } from '@/buzz/model-display';
 import { CHANNEL_MENTION_HANDLE, SYSTEM_MENTION_HANDLE, hasChannelMentionToken } from '@/buzz/room-participants';
 import { SYSTEM_IDENTITY_PUBKEY } from '@/buzz/system-identity';
 import { describeWriteRequest } from '@/buzz/write-request-copy';
@@ -422,7 +423,7 @@ export const SquireApprovalCard = React.memo(function SquireApprovalCard({
       subline={`${approval.detail} · requested by @${agentName}`}
       sublineTestID="squire-approval-detail"
       stamp={ledgerStamp(message.timestamp)}
-      footerNote="approval stays with Trusty Squire"
+      footerNote={approval.tool === 'Link' ? 'approval stays with Link' : 'approval stays with Trusty Squire'}
       actions={actions}
     />
   );
@@ -1844,7 +1845,7 @@ export interface OrdinaryLedgerMessageProps {
  *  with no known model keeps the plain `AGENT` word. */
 export function agentBylineLabel(model?: string): string {
   const selectedModel = model?.trim();
-  return selectedModel || 'AGENT';
+  return selectedModel ? displayModel(selectedModel) : 'AGENT';
 }
 
 /**

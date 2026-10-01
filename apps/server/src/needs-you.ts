@@ -169,6 +169,23 @@ const VIEWER_ROOMS = `
   )`;
 
 /**
+ * Whether `identityExpr` may decide the grant row `grant`: the agent's owner
+ * for a personal resource, a Workspace owner/admin for a repository (the
+ * `requireGrantAuthority` rule).
+ */
+export function grantDecidedBySql(grant: string, identityExpr: string): string {
+  return `CASE WHEN ${grant}.kind='repository' THEN EXISTS (
+      SELECT 1 FROM memberships manager
+      WHERE manager.workspace_id=${grant}.workspace_id AND manager.room_id IS NULL
+        AND manager.identity_id=${identityExpr} AND manager.removed_at IS NULL
+        AND manager.role IN ('owner','admin'))
+    ELSE EXISTS (
+      SELECT 1 FROM agents grant_agent
+      WHERE grant_agent.agent_id=${grant}.agent_id AND grant_agent.owner_id=${identityExpr})
+    END`;
+}
+
+/**
  * Every current cell for one person in one Workspace, newest first, with the
  * ids nobody has started a clock for yet. Pure read: `readNeedsYou` starts
  * the clocks for what it shows, and the badge count starts none.
@@ -226,14 +243,8 @@ export async function needsYouItems(
       `WITH ${VIEWER_ROOMS},
        decidable AS (
          SELECT grant_row.id::text grant_id FROM agent_grants grant_row
-         JOIN agents agent ON agent.agent_id=grant_row.agent_id
          WHERE grant_row.workspace_id=$1 AND grant_row.status='pending'
-           AND CASE WHEN grant_row.kind='repository' THEN EXISTS (
-               SELECT 1 FROM memberships manager
-               WHERE manager.workspace_id=$1 AND manager.room_id IS NULL
-                 AND manager.identity_id=$2 AND manager.removed_at IS NULL
-                 AND manager.role IN ('owner','admin'))
-             ELSE agent.owner_id=$2 END
+           AND ${grantDecidedBySql('grant_row', '$2')}
        )
        SELECT ${ROW_COLUMNS},true approval,
          ARRAY(SELECT entry->>'grantId' FROM jsonb_array_elements(m.card->'grants') entry

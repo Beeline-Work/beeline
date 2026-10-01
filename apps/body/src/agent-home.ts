@@ -394,41 +394,26 @@ function claudeLoginExpiresAt(text: string): number | undefined {
   }
 }
 
-/**
- * Claude rotates its refresh token on every refresh. When that refresh was
- * written through a detached isolated path, the operator copy may already be
- * spent, so carry the later-expiring login back before re-linking. The prior
- * operator copy is kept beside it; credentials are never deleted.
- */
-async function promoteRefreshedClaudeLogin(detached: string, source: string): Promise<void> {
-  const refreshed = await readFile(detached, 'utf8');
-  const refreshedExpiresAt = claudeLoginExpiresAt(refreshed);
-  if (refreshedExpiresAt === undefined) return;
-  const current = await readFile(source, 'utf8');
-  const currentExpiresAt = claudeLoginExpiresAt(current);
-  if (currentExpiresAt === undefined || currentExpiresAt >= refreshedExpiresAt) return;
-  const backup = `${source}.beeline-quarantine-${Date.now()}-${randomUUID()}`;
-  await writeFile(backup, current, { mode: 0o600, flag: 'wx' });
-  const staged = `${source}.beeline-refresh-${randomUUID()}`;
-  try {
-    await writeFile(staged, refreshed, { mode: 0o600, flag: 'wx' });
-    await rename(staged, source);
-  } finally {
-    await rm(staged, { force: true });
-  }
+async function hasNewerDetachedClaudeLogin(detached: string, source: string): Promise<boolean> {
+  const detachedExpiresAt = claudeLoginExpiresAt(await readFile(detached, 'utf8'));
+  if (detachedExpiresAt === undefined) return false;
+  const sourceExpiresAt = claudeLoginExpiresAt(await readFile(source, 'utf8'));
+  return sourceExpiresAt !== undefined && detachedExpiresAt > sourceExpiresAt;
 }
 
 /**
- * Restore every shared login as a direct link to the operator credential.
+ * Restore shared login links, except a newer detached Claude login on activation.
  *
  * Harnesses commonly persist refreshed tokens with rename(2). When they do
  * that through an isolated path, the rename replaces the symlink itself and
- * leaves one Room holding a detached regular file. Preserve that file beside
- * the repaired path for diagnosis/recovery; credentials are never deleted.
+ * leaves one Room holding a detached regular file. A failed-login retry
+ * quarantines that file and restores the link; activation keeps a newer Claude
+ * login in the isolated home so a concurrent operator refresh cannot be lost.
  */
 export async function repairRoomAgentCredentialLinks(input: {
   root: string;
   operatorHome?: string;
+  keepNewerDetachedClaudeLogin?: boolean;
 }): Promise<void> {
   const root = resolve(input.root);
   const operatorHome = input.operatorHome ?? homedir();
@@ -446,10 +431,19 @@ export async function repairRoomAgentCredentialLinks(input: {
       if (resolve(dirname(target), linked) === source) continue;
     }
     if (stats) {
-      const quarantine = `${target}.beeline-quarantine-${Date.now()}-${randomUUID()}`;
-      if (credential.dir === 'claude' && stats.isFile()) {
-        await promoteRefreshedClaudeLogin(target, source);
+      // A successful Claude refresh can replace the isolated symlink. Keep
+      // that login for the next activation without writing over a concurrent
+      // refresh of the operator's credential. Failure retries use the shared
+      // source instead, so a failed detached refresh cannot trap the session.
+      if (
+        input.keepNewerDetachedClaudeLogin &&
+        credential.dir === 'claude' &&
+        stats.isFile() &&
+        (await hasNewerDetachedClaudeLogin(target, source))
+      ) {
+        continue;
       }
+      const quarantine = `${target}.beeline-quarantine-${Date.now()}-${randomUUID()}`;
       await rename(target, quarantine);
     }
     await symlink(source, target);
@@ -487,7 +481,11 @@ export async function prepareRoomAgentHome(
   }
 
   try {
-    await repairRoomAgentCredentialLinks({ root, operatorHome });
+    await repairRoomAgentCredentialLinks({
+      root,
+      operatorHome,
+      keepNewerDetachedClaudeLogin: input.agentKind === 'claude',
+    });
   } catch (error) {
     if (input.failClosed || input.resourceAuthFile) throw error;
     console.error(`[body] could not repair shared credentials under ${root}:`, error);

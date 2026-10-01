@@ -326,7 +326,7 @@ describe('per-room harness state isolation', () => {
     });
     await mkdir(resolve(operatorHome, '.claude'), { recursive: true });
     await writeFile(source, spent);
-    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome, agentKind: 'claude' });
 
     // Claude refreshed through the isolated path: its atomic rename replaced
     // the link, so the rotated login exists only in this Room.
@@ -334,16 +334,22 @@ describe('per-room harness state isolation', () => {
     await writeFile(refreshed, rotated);
     await rename(refreshed, target);
 
-    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome, agentKind: 'claude' });
 
+    expect(lstatSync(target).isFile()).toBe(true);
+    expect(readFileSync(target, 'utf8')).toBe(rotated);
+    expect(readFileSync(source, 'utf8')).toBe(spent);
+
+    // The operator can refresh concurrently. A later activation switches back
+    // to that credential without this Room ever replacing the operator file.
+    const operatorRefresh = JSON.stringify({
+      claudeAiOauth: { refreshToken: 'operator-refresh', expiresAt: 3_000 },
+    });
+    await writeFile(source, operatorRefresh);
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome, agentKind: 'claude' });
     expect(lstatSync(target).isSymbolicLink()).toBe(true);
     expect(realpathSync(target)).toBe(realpathSync(source));
-    expect(readFileSync(source, 'utf8')).toBe(rotated);
-    const backups = readdirSync(resolve(operatorHome, '.claude')).filter((name) =>
-      name.startsWith('.credentials.json.beeline-quarantine-'),
-    );
-    expect(backups).toHaveLength(1);
-    expect(readFileSync(resolve(operatorHome, '.claude', backups[0]!), 'utf8')).toBe(spent);
+    expect(readFileSync(source, 'utf8')).toBe(operatorRefresh);
   });
 
   it('keeps the operator Claude login when the detached copy expires no later', async () => {
@@ -362,7 +368,7 @@ describe('per-room harness state isolation', () => {
       JSON.stringify({ claudeAiOauth: { refreshToken: 'older', expiresAt: 1_000 } }),
     );
 
-    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome, agentKind: 'claude' });
 
     expect(realpathSync(target)).toBe(realpathSync(source));
     expect(readFileSync(source, 'utf8')).toBe(current);

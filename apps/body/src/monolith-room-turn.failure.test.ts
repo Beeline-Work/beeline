@@ -256,6 +256,7 @@ describe('Room turn failure receipt', () => {
     const rotated = JSON.stringify({
       claudeAiOauth: { refreshToken: 'rotated', expiresAt: 2_000 },
     });
+    let operatorCredential = '';
     const { receipts, posted, attempts } = await runTurn({
       agentCommand: '/opt/harness/claude-agent-acp',
       agentKind: 'claude',
@@ -264,12 +265,14 @@ describe('Room turn failure receipt', () => {
         // the shared link, so the rotated refresh token lives only in this
         // Room and the operator copy holds the spent one.
         await mkdir(join(operatorHome, '.claude'), { recursive: true });
-        await writeFile(join(operatorHome, '.claude/.credentials.json'), spent);
+        operatorCredential = join(operatorHome, '.claude/.credentials.json');
+        await writeFile(operatorCredential, spent);
         await mkdir(join(activeHome, 'claude'), { recursive: true });
         await writeFile(join(activeHome, 'claude/.credentials.json'), rotated);
       },
       prompt: async ({ agentHomeRoot: activeHome }) => {
         const credential = await readFile(join(activeHome, 'claude/.credentials.json'), 'utf8');
+        expect(await readFile(operatorCredential, 'utf8')).toBe(spent);
         if (credential !== rotated) {
           throw new Error(
             'ACP error -32603: Internal error; harness stderr: Failed to authenticate: OAuth session expired and could not be refreshed',

@@ -432,7 +432,7 @@ describe('start_workflow', () => {
     ).rejects.toThrow('role binding is missing for approver');
   });
 
-  it('rejects a role bound to someone who is not a current Room member', async () => {
+  it('rejects a role bound to someone who is not a current agent member of this Room (a person or an outsider)', async () => {
     const command = await commandFor(IMPLEMENTER);
     await saveWorkflow(database, command, { contract: CONTRACT });
     await expect(
@@ -440,7 +440,7 @@ describe('start_workflow', () => {
         name: 'corner',
         roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: 'f'.repeat(64) },
       }),
-    ).rejects.toThrow('is not a current member of this Room');
+    ).rejects.toThrow('is not a current agent member of this Room');
   });
 
   it('binds an @handle role to the current Room member with that handle', async () => {
@@ -869,7 +869,37 @@ describe('list roles', () => {
     await expect(start('heavy')).rejects.toThrow('must be an agent id or a member handle');
     await expect(start([WORKER_A, WORKER_A])).rejects.toThrow('must be an agent id or a member handle');
     await expect(start([])).rejects.toThrow('must be an agent id or a member handle');
-    await expect(start([WORKER_A, 'f'.repeat(64)])).rejects.toThrow('is not a current member of this Room');
+    await expect(start([WORKER_A, 'f'.repeat(64)])).rejects.toThrow('is not a current agent member of this Room');
+  });
+
+  it('rejects a human Room member as a binding, alone or on a list, before any card is written', async () => {
+    await database.query(`UPDATE identities SET handle='owner' WHERE id=$1`, [OWNER]);
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: LIST_CONTRACT });
+    const start = (worker: unknown) =>
+      startWorkflow(database, command, {
+        name: 'list-flow',
+        roleBindings: { worker: worker as string[], closer: APPROVER },
+      });
+    await expect(start(OWNER)).rejects.toThrow('is not a current agent member of this Room');
+    await expect(start('owner')).rejects.toThrow('is not a current agent member of this Room');
+    await expect(start('@owner')).rejects.toThrow('is not a current agent member of this Room');
+    await expect(start([WORKER_A, '@owner'])).rejects.toThrow('is not a current agent member of this Room');
+    const cards = await database.query(
+      `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='workflow-handoff'`,
+      [ROOM],
+    );
+    expect(cards.rowCount).toBe(0);
+  });
+
+  it('rejects a bare human handle in the member-handle path, before any card is written', async () => {
+    await database.query(`UPDATE identities SET handle='owner' WHERE id=$1`, [OWNER]);
+    await expect(startedListRun('owner')).rejects.toThrow('is not a current agent member of this Room');
+    const cards = await database.query(
+      `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='workflow-handoff'`,
+      [ROOM],
+    );
+    expect(cards.rowCount).toBe(0);
   });
 
   it('resolves @handles on a list to the Room members with those handles', async () => {

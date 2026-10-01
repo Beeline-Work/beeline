@@ -358,14 +358,17 @@ export async function startWorkflow(
     }
     const boundIds = [...new Set([...Object.values(roleBindings), ...Object.values(roleAgents).flat()])];
     if (boundIds.length) {
-      const members = await db.query<{ identity_id: string }>(
-        `SELECT identity_id FROM memberships
-         WHERE room_id=$1 AND identity_id=ANY($2::text[]) AND removed_at IS NULL`,
+      const agents = await db.query<{ identity_id: string }>(
+        `SELECT member.identity_id FROM memberships member
+         JOIN identities identity ON identity.id=member.identity_id AND identity.kind='agent'
+         WHERE member.room_id=$1 AND member.identity_id=ANY($2::text[]) AND member.removed_at IS NULL`,
         [command.room_id, boundIds],
       );
-      const memberSet = new Set(members.rows.map((row) => row.identity_id));
-      const notMember = boundIds.find((id) => !memberSet.has(id));
-      if (notMember) throw new Error(`${notMember} is not a current member of this Room`);
+      const agentSet = new Set(agents.rows.map((row) => row.identity_id));
+      const notAgent = boundIds.find((id) => !agentSet.has(id));
+      if (notAgent) {
+        throw new Error(`${notAgent} is not a current agent member of this Room`);
+      }
     }
     const starter = await loadIdentityRow(db, command.agent_id);
     const runId = randomBytes(32).toString('hex');

@@ -248,6 +248,7 @@ export class ComposioApps {
       } catch {
         if (body.trim()) detail = boundedDetail(body.trim());
       }
+      detail = detail?.replaceAll(this.apiKey, '[redacted]');
       const error = new Error(detail
         ? `App provider request failed (${response.status}): ${detail}`
         : `App provider request failed (${response.status})`);

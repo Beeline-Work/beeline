@@ -677,6 +677,18 @@ describe('connect_app', () => {
       expect(transport).not.toHaveBeenCalled();
     });
 
+    it('keeps the API key out of a connection check error the provider echoes', async () => {
+      const transport = vi.fn(async () =>
+        Response.json({ message: 'account rejected key composio-project-key' }, { status: 401 }));
+      await youtubeRoom();
+      const daemon = daemonWith(fakeRegistry([]).client,
+        new ComposioApps('composio-project-key', transport as typeof fetch));
+      const error = await daemon.execute('executeAppTool', { ...turn, appId: YOUTUBE_APP,
+        tool: 'YOUTUBE_LIST_CHANNEL_VIDEOS', arguments: {} }, HELPER).catch((e: unknown) => e as Error);
+      expect(error.message).toBe('App provider request failed (401): account rejected key [redacted]');
+      expect(transport).toHaveBeenCalledOnce();
+    });
+
     it('runs a tool without Room files exactly as before', async () => {
       const { daemon, calls, getObject } = await youtubeRoom();
       await expect(daemon.execute('executeAppTool', { ...turn, appId: YOUTUBE_APP,

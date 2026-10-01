@@ -122,6 +122,7 @@ Follow these steps in order. Do not skip or reorder them.
 - Review the objective, files, and complete PR diff before making another working copy.
 - Check out that exact head only when an empirical command must read or run the tree. Never use the author's worktree.
 - When a checkout is needed, create a temporary detached worktree, install an EXIT trap that removes it with \`git worktree remove --force\` and deletes its temporary directory, and run every command there. Cleanup is mandatory on PASS, FAIL, and command error.
+- For a deterministic one-shot bootstrap use \`npm run review:exact-head -- <sha> [--typecheck <pkg> …] [--] <pkg>:<glob> …\`: it checks that exact head out, runs \`npm ci\`, builds the workspace package exports, runs the given typechecks and targeted tests with non-interactive PASS/FAIL summaries, and removes the worktree itself (pass \`--keep\` to keep it and print the removal command).
 - Review and test only the recorded revision. If the head moves, clean up the scratch worktree and start over.
 
 ## 2. P0 - SPEC AND CHECKLIST FULFILLED, DEMONSTRATED

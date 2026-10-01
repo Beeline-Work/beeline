@@ -438,6 +438,10 @@ jobs:
       - name: Run the hermetic Body suite
         working-directory: apps/body
         run: npx vitest run
+      # The deterministic exact-head review bootstrap is review-skill tooling,
+      # body-owned; this is pure node:test, no additional setup.
+      - name: Run the review bootstrap unit test
+        run: node --test scripts/review-exact-head.test.mjs
 
   mac-helper-acceptance:
     name: MAC HELPER ACCEPTANCE

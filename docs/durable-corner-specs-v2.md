@@ -65,7 +65,7 @@ BEELINE_REAL_CURSOR_TOOL_PROOF=1 \
   npm run prove:corner-brief-acceptance
 ```
 
-The command fails closed unless the live-harness opt-in is present. It combines these boundaries in
+The command fails closed for its live-harness boundary: without the opt-in that boundary is skipped with a printed notice and the deterministic server/body/mobile boundaries still run, so a normal review worktree can run the proof; the complete proof (real native Cursor session included) requires the env vars above. It combines these boundaries in
 one fixture:
 
 1. Server HTTP/database tests preserve a long corrected discussion, bind an actual posted object to

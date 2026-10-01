@@ -29,6 +29,7 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { createInterface } from 'node:readline';
 import {
+  CORNER_BRIEF_SPEC_MAX_LENGTH,
   CORNER_NAME_MAX_LENGTH,
   CORNER_NAME_MAX_WORDS,
   CORNER_OBJECTIVE_MAX_LENGTH,
@@ -257,6 +258,38 @@ const READ_ONLY_TOOLS: ToolDefinition[] = [
     },
   },
 ];
+
+/** One brief shape for open_corner.brief and revise_corner_brief, so the two cannot drift. */
+export const CORNER_BRIEF_PROPERTIES = {
+  spec: {
+    type: 'string',
+    minLength: 1,
+    maxLength: CORNER_BRIEF_SPEC_MAX_LENGTH,
+    description:
+      'Markdown: what to build, a checklist of what done means, what is out of scope, and references, as headings in one doc.',
+  },
+  approval: {
+    type: 'object',
+    required: ['sourceMessageId'],
+    properties: { sourceMessageId: { type: 'string' } },
+    additionalProperties: false,
+    description: 'The human Room message that approved this spec. The server quotes it.',
+  },
+  attachments: {
+    type: 'array',
+    maxItems: 16,
+    items: {
+      type: 'object',
+      required: ['objectId', 'purpose', 'required'],
+      properties: {
+        objectId: { type: 'string', format: 'uuid' },
+        purpose: { type: 'string', maxLength: 500 },
+        required: { type: 'boolean' },
+      },
+      additionalProperties: false,
+    },
+  },
+} as const;
 
 const AGENT_TOOLS: ToolDefinition[] = [
   {
@@ -866,104 +899,12 @@ const AGENT_TOOLS: ToolDefinition[] = [
           type: 'string',
           minLength: 1,
           maxLength: CORNER_OBJECTIVE_MAX_LENGTH,
-          description: `Navigation summary of at most ${CORNER_OBJECTIVE_MAX_WORDS} words; the typed brief carries product authority.`,
+          description: `Navigation summary of at most ${CORNER_OBJECTIVE_MAX_WORDS} words; the brief's spec carries the scope.`,
         },
         brief: {
           type: 'object',
-          required: ['intentVerbatim', 'buildSpec', 'criteria', 'references', 'approvalBasis'],
-          properties: {
-            intentVerbatim: {
-              type: 'array',
-              minItems: 1,
-              maxItems: 50,
-              items: {
-                type: 'object',
-                required: ['sourceMessageId', 'snapshot'],
-                properties: {
-                  sourceMessageId: { type: 'string' },
-                  snapshot: { type: 'string', minLength: 1, maxLength: 16000 },
-                },
-                additionalProperties: false,
-              },
-              description: 'Exact human message text and its durable Room message ID.',
-            },
-            buildSpec: {
-              type: 'string',
-              minLength: 1,
-              maxLength: 65536,
-              description: 'Agent-authored Markdown implementation specification.',
-            },
-            criteria: {
-              type: 'array',
-              minItems: 1,
-              maxItems: 100,
-              items: {
-                type: 'object',
-                required: ['id', 'text'],
-                properties: {
-                  id: { type: 'string', pattern: '^[A-Z][A-Z0-9_-]*-[1-9][0-9]*$' },
-                  text: { type: 'string', minLength: 1, maxLength: 2000 },
-                },
-                additionalProperties: false,
-              },
-            },
-            nonGoals: {
-              type: 'array',
-              maxItems: 50,
-              items: { type: 'string', minLength: 1, maxLength: 1000 },
-            },
-            references: {
-              type: 'array',
-              maxItems: 50,
-              items: {
-                type: 'object',
-                required: ['label', 'authority', 'description'],
-                properties: {
-                  label: { type: 'string', minLength: 1, maxLength: 200 },
-                  authority: {
-                    type: 'string',
-                    enum: [
-                      'human-authoritative',
-                      'repository-authoritative',
-                      'approved-reference',
-                      'informational',
-                      'agent-recommendation',
-                    ],
-                  },
-                  description: { type: 'string', minLength: 1, maxLength: 1000 },
-                  objectId: { type: 'string', format: 'uuid' },
-                },
-                additionalProperties: false,
-              },
-            },
-            approvalBasis: {
-              type: 'object',
-              required: ['kind', 'sourceMessageId', 'snapshot'],
-              properties: {
-                kind: {
-                  type: 'string',
-                  enum: ['initiating-command', 'explicit-human-answer'],
-                },
-                sourceMessageId: { type: 'string' },
-                snapshot: { type: 'string', minLength: 1, maxLength: 16000 },
-              },
-              additionalProperties: false,
-            },
-            attachments: {
-              type: 'array',
-              maxItems: 16,
-              items: {
-                type: 'object',
-                required: ['objectId', 'purpose', 'required'],
-                properties: {
-                  objectId: { type: 'string', format: 'uuid' },
-                  purpose: { type: 'string', maxLength: 500 },
-                  required: { type: 'boolean' },
-                },
-                additionalProperties: false,
-              },
-            },
-          },
+          required: ['spec', 'approval'],
+          properties: CORNER_BRIEF_PROPERTIES,
           additionalProperties: false,
         },
         lane: {
@@ -979,106 +920,14 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'revise_corner_brief',
     description:
-      'Record a correction as the next immutable assignment revision. Supply the complete replacement brief and the revision you read; the worker and reviewer will use the new revision.',
+      'Record a correction as the next immutable assignment revision. Supply the complete replacement spec, the human message that approved it, and the revision you read; the worker and reviewer will use the new revision.',
     inputSchema: {
       type: 'object',
-      required: [
-        'expectedRevision',
-        'intentVerbatim',
-        'buildSpec',
-        'criteria',
-        'references',
-        'approvalBasis',
-        'change',
-      ],
+      required: ['expectedRevision', 'spec', 'approval', 'change'],
       properties: {
         expectedRevision: { type: 'integer', minimum: 0 },
-        intentVerbatim: {
-          type: 'array',
-          minItems: 1,
-          maxItems: 50,
-          items: {
-            type: 'object',
-            required: ['sourceMessageId', 'snapshot'],
-            properties: {
-              sourceMessageId: { type: 'string' },
-              snapshot: { type: 'string', minLength: 1, maxLength: 16000 },
-            },
-            additionalProperties: false,
-          },
-        },
-        buildSpec: { type: 'string', minLength: 1, maxLength: 65536 },
-        criteria: {
-          type: 'array',
-          minItems: 1,
-          maxItems: 100,
-          items: {
-            type: 'object',
-            required: ['id', 'text'],
-            properties: {
-              id: { type: 'string', pattern: '^[A-Z][A-Z0-9_-]*-[1-9][0-9]*$' },
-              text: { type: 'string', minLength: 1, maxLength: 2000 },
-            },
-            additionalProperties: false,
-          },
-        },
-        nonGoals: {
-          type: 'array',
-          maxItems: 50,
-          items: { type: 'string', minLength: 1, maxLength: 1000 },
-        },
-        references: {
-          type: 'array',
-          maxItems: 50,
-          items: {
-            type: 'object',
-            required: ['label', 'authority', 'description'],
-            properties: {
-              label: { type: 'string', minLength: 1, maxLength: 200 },
-              authority: {
-                type: 'string',
-                enum: [
-                  'human-authoritative',
-                  'repository-authoritative',
-                  'approved-reference',
-                  'informational',
-                  'agent-recommendation',
-                ],
-              },
-              description: { type: 'string', minLength: 1, maxLength: 1000 },
-              objectId: { type: 'string', format: 'uuid' },
-            },
-            additionalProperties: false,
-          },
-        },
-        approvalBasis: {
-          type: 'object',
-          required: ['kind', 'sourceMessageId', 'snapshot'],
-          properties: {
-            kind: {
-              type: 'string',
-              enum: ['initiating-command', 'explicit-human-answer'],
-            },
-            sourceMessageId: { type: 'string' },
-            snapshot: { type: 'string', minLength: 1, maxLength: 16000 },
-          },
-          additionalProperties: false,
-        },
+        ...CORNER_BRIEF_PROPERTIES,
         change: { type: 'string', maxLength: 1000 },
-        attachments: {
-          type: 'array',
-          maxItems: 16,
-          items: {
-            type: 'object',
-            required: ['objectId', 'purpose', 'required'],
-            properties: {
-              objectId: { type: 'string', format: 'uuid' },
-              purpose: { type: 'string', maxLength: 500 },
-              required: { type: 'boolean' },
-            },
-            additionalProperties: false,
-          },
-        },
       },
       additionalProperties: false,
     },
@@ -2276,17 +2125,8 @@ async function reviseCornerBrief(args: JsonObject): Promise<string> {
       requestId,
       expectedRevision: args.expectedRevision as number,
       brief: {
-        intentVerbatim:
-          args.intentVerbatim as import('@beeline/api-contract/daemon').CornerBriefStructuredDraft['intentVerbatim'],
-        buildSpec: args.buildSpec as string,
-        criteria:
-          args.criteria as import('@beeline/api-contract/daemon').CornerBriefStructuredDraft['criteria'],
-        nonGoals:
-          args.nonGoals as import('@beeline/api-contract/daemon').CornerBriefStructuredDraft['nonGoals'],
-        references:
-          args.references as import('@beeline/api-contract/daemon').CornerBriefStructuredDraft['references'],
-        approvalBasis:
-          args.approvalBasis as import('@beeline/api-contract/daemon').CornerBriefStructuredDraft['approvalBasis'],
+        spec: args.spec as string,
+        approval: args.approval as import('@beeline/api-contract/daemon').CornerBriefDraft['approval'],
         change: args.change as string | undefined,
         attachments:
           args.attachments as import('@beeline/api-contract/daemon').CornerBriefDraft['attachments'],

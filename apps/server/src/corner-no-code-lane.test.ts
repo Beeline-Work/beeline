@@ -8,7 +8,8 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { GitHubOperations } from './github-operations.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
-import type { AgentCommand } from '@beeline/api-contract/daemon';
+import { CORNER_BRIEF_SPEC_MAX_LENGTH, type AgentCommand } from '@beeline/api-contract/daemon';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
 /**
  * The no-code lane is a durable corner fact, chosen once at open.
@@ -92,15 +93,8 @@ async function commissioned(roomId: string, agentId = AGENT): Promise<AgentComma
   return command!;
 }
 
-function brief(sourceMessageId: string, buildSpec: string) {
-  const intent = { sourceMessageId, snapshot: '@hoots please do this' };
-  return {
-    buildSpec,
-    intentVerbatim: [intent],
-    criteria: [{ id: 'AC-1', text: 'Publish the result' }],
-    references: [],
-    approvalBasis: { kind: 'initiating-command' as const, ...intent },
-  };
+function brief(sourceMessageId: string, spec: string) {
+  return { spec, approval: { sourceMessageId } };
 }
 
 async function open(
@@ -628,28 +622,48 @@ it('carries the corner discussion into a first brief the human ask approves', as
 
   const { brief } = await daemon.execute('getCornerRestoreState', { cornerId }, AGENT);
   // The upgraded corner is a repository corner, so it must read like one: a
-  // current structured brief, not the legacy "no assigned brief" fallback.
+  // current brief written by the server and approved by the human's ask.
   expect(brief).toMatchObject({
     revision: 1,
-    legacy: false,
+    authorId: SYSTEM_IDENTITY_ID,
     sourceMessageId: command.sourceMessageId,
   });
-  expect(brief?.approvalBasis).toMatchObject({
-    kind: 'initiating-command',
-    sourceMessageId: command.sourceMessageId,
-    snapshot: '@hoots please do this',
-    approvedBy: HUMAN,
-  });
-  // The ask that triggered the upgrade is the whole authoritative intent: a
+  // The ask that triggered the upgrade is the request and the approval: a
   // chat corner's earlier asks may have been abandoned, and the worker cannot
   // rank them against the live one.
-  expect(brief?.intentVerbatim.map((item) => item.snapshot)).toEqual(['@hoots please do this']);
+  expect(brief?.approval).toMatchObject({
+    sourceMessageId: command.sourceMessageId,
+    text: '@hoots please do this',
+    approvedBy: HUMAN,
+  });
+  expect(brief?.spec.startsWith('## Request\n\n@hoots please do this\n\n')).toBe(true);
   // Everything else said in the corner is carried as context instead, once.
-  expect(brief?.buildSpec).toContain('The widget renderer drops the trailing label');
-  expect(brief?.buildSpec).toContain('I can see it in the renderer');
-  expect(brief?.buildSpec.split('@hoots please do this')).toHaveLength(2);
-  expect(brief?.criteria).toEqual([
-    { id: 'AC-1', text: expect.stringContaining('@hoots please do this') },
+  expect(brief?.spec).toContain('## Discussion before the upgrade (context, not authority)');
+  expect(brief?.spec).toContain('The widget renderer drops the trailing label');
+  expect(brief?.spec).toContain('I can see it in the renderer');
+  expect(brief?.spec.split('@hoots please do this')).toHaveLength(2);
+  // A placeholder for the agent to revise, not an invented checklist.
+  expect(brief?.spec).not.toMatch(/Deliver the code change|AC-1/);
+  expect(
+    (
+      await db.query(
+        `SELECT spec IS NOT NULL spec,content,intent_verbatim,build_spec,criteria,non_goals,
+                brief_references,approval_basis->>'kind' approval_kind
+         FROM corner_brief_revisions WHERE corner_id=$1`,
+        [cornerId],
+      )
+    ).rows,
+  ).toEqual([
+    {
+      spec: true,
+      content: null,
+      intent_verbatim: null,
+      build_spec: null,
+      criteria: null,
+      non_goals: null,
+      brief_references: null,
+      approval_kind: 'initiating-command',
+    },
   ]);
   // The one brief a later revision builds on.
   expect(
@@ -680,7 +694,7 @@ it('keeps the brief a no-code corner already had when it upgrades', async () => 
   const restored = await daemon.execute('getCornerRestoreState', { cornerId }, AGENT);
   expect(restored.brief).toMatchObject({
     revision: 1,
-    buildSpec: 'Scan the market and write it up',
+    spec: 'Scan the market and write it up',
   });
   expect(await lane(cornerId)).toBe('code');
 });
@@ -745,9 +759,10 @@ it('keeps the discussion that fits when one message is too long for the brief', 
   );
 
   const { brief } = await daemon.execute('getCornerRestoreState', { cornerId }, AGENT);
-  expect(brief?.buildSpec).toContain('The widget renderer drops the trailing label');
-  expect(brief?.buildSpec).not.toContain('yyyy');
-  expect(brief?.buildSpec).toContain('1 message(s) omitted for length');
+  expect(brief?.spec).toContain('The widget renderer drops the trailing label');
+  expect(brief?.spec).not.toContain('yyyy');
+  expect(brief?.spec).toContain('1 message(s) omitted for length');
+  expect(brief!.spec.length).toBeLessThanOrEqual(CORNER_BRIEF_SPEC_MAX_LENGTH);
 });
 
 it('reads only the newest slice of a long corner and says the rest was left out', async () => {
@@ -774,7 +789,7 @@ it('reads only the newest slice of a long corner and says the rest was left out'
   );
 
   const { brief } = await daemon.execute('getCornerRestoreState', { cornerId }, AGENT);
-  expect(brief?.buildSpec).toContain('note 219');
-  expect(brief?.buildSpec).not.toContain('note 0\n');
-  expect(brief?.buildSpec).toContain('earlier history omitted for length');
+  expect(brief?.spec).toContain('note 219');
+  expect(brief?.spec).not.toContain('note 0\n');
+  expect(brief?.spec).toContain('earlier history omitted for length');
 });

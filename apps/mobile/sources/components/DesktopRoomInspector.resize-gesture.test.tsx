@@ -91,6 +91,7 @@ vi.mock('@/auth/buzz-identity-storage', () => ({ loadBuzzIdentity: vi.fn(async (
 vi.mock('@/sync/transport', () => ({ BuzzRigTransport: class {} }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: vi.fn() }));
 vi.mock('@/modal', () => ({ Modal: { confirm: vi.fn() } }));
+vi.mock('@/components/buzz/corner-brief-viewer', () => ({ openCornerBriefViewer: vi.fn() }));
 
 const loadDesktopPaneWidthMock = vi.hoisted(() => vi.fn(async () => 400));
 const saveDesktopPaneWidthMock = vi.hoisted(() => vi.fn(async () => undefined));

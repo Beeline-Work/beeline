@@ -2536,43 +2536,17 @@ describe('thin monolith corner turn', () => {
           brief: {
             id: 'corner-id',
             revision: 2,
-            legacy: false,
             authorId: runtime.agent.publicKey,
             sourceRoomId: 'room-id',
             sourceMessageId: 'correction-message',
             attachments: [],
-            content: 'Preserve the requested widget size and deliberate amber label.',
-            intentVerbatim: [
-              {
-                sourceMessageId: 'intent-message',
-                snapshot: 'Build the requested widget at the agreed size.',
-              },
-              {
-                sourceMessageId: 'correction-message',
-                snapshot: 'Correction: keep the label amber, not blue.',
-              },
-            ],
-            buildSpec: 'Preserve the requested widget size and deliberate amber label.',
-            criteria: [
-              { id: 'AC-1', text: 'The widget keeps the requested size.' },
-              { id: 'AC-2', text: 'The label remains amber.' },
-            ],
-            nonGoals: ['Changing the label to the conventional blue.'],
-            references: [
-              {
-                label: 'Approved widget mock',
-                authority: 'approved-reference',
-                description: 'The corrected amber visual.',
-              },
-            ],
-            approvalBasis: {
-              kind: 'explicit-human-answer',
+            spec: '## Intent\n> Build the requested widget at the agreed size. (intent-message)\n\n## Checklist\n- The widget keeps the requested size.\n- The label remains amber.\n\n## Non-goals\n- Changing the label to the conventional blue.',
+            approval: {
               sourceMessageId: 'correction-message',
-              snapshot: 'Correction: keep the label amber, not blue.',
+              text: 'Correction: keep the label amber, not blue.',
               approvedBy: 'human-pubkey',
-              briefHash: 'a'.repeat(64),
+              approverName: 'Rae',
             },
-            revisionHash: 'a'.repeat(64),
           },
         };
       if (name === 'getInstitutionalContext') {
@@ -2810,14 +2784,11 @@ describe('thin monolith corner turn', () => {
       }),
     );
     for (const call of [sessionPrompt.mock.calls[0], sessionPrompt.mock.calls[1]]) {
-      expect(call[1]).toContain('Assigned corner brief corner-id revision 2');
-      expect(call[1]).toContain('(hash ' + 'a'.repeat(64));
+      expect(call[1]).toContain('Brief revision 2:\n## Intent');
+      expect(call[1]).toContain('- The label remains amber.');
       expect(call[1]).toContain(
-        '[message correction-message] Correction: keep the label amber, not blue.',
+        'Approved by Rae, message correction-message: Correction: keep the label amber, not blue.',
       );
-      expect(call[1]).toContain('AC-2: The label remains amber.');
-      expect(call[1]).toContain('Approval basis bound to this revision:');
-      expect(call[1]).toContain('explicit-human-answer by human-pubkey');
       // This harness drops the session prompt, so the session rules ride every turn.
       expect(call[1]).toContain(
         'You are Bee in Beeline. Stay Bee in every reply, including when a tool or permission blocks you.',

@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import type { CornerBrief } from '@beeline/api-contract/daemon';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import {
   CORE_BUDGET_BYTES,
   PROMPT_SURFACES,
@@ -17,6 +19,9 @@ import {
   cornerMergeInstruction,
   cornerReviewerInstruction,
   cornerSelfReviewerInstruction,
+  CORNER_PLACEHOLDER_BRIEF_RULE,
+  UPGRADE_INTENT_RULE,
+  renderAssignedCornerBrief,
 } from './prompt-assembly.js';
 import {
   beelineReviewSkillMarkdown,
@@ -342,6 +347,60 @@ describe('prompt assembly guards', () => {
   it('puts the trigger in the prompt once', () => {
     const turn = assembleTurnPrompt(TURN_VARIANTS['room-turn']!).text;
     expect(turn.split('Why did the release migration fail?')).toHaveLength(2);
+  });
+});
+
+describe('assigned corner brief', () => {
+  const brief: CornerBrief = {
+    id: 'brief-id',
+    revision: 3,
+    spec: '## Intent\n> Keep the marker write last. (m2)\n\n## Checklist\n- The marker is written last.',
+    approval: {
+      sourceMessageId: 'm2',
+      text: 'Also keep the marker write last.',
+      approvedBy: 'human-id',
+      approverName: 'lunchboxfortwo',
+    },
+    authorId: 'agent-id',
+    sourceRoomId: 'room-id',
+    attachments: [],
+  };
+  const turnWith = (value: CornerBrief, surface: PromptSurface = 'code-corner') =>
+    assembleTurnPrompt({
+      ...TURN_VARIANTS['code-corner-turn']!,
+      surface,
+      brief: { brief: value, fileLines: [], missingRequiredFile: false },
+    }).text;
+
+  it('renders the revision, the spec, then the approving message in the human words', () => {
+    expect(renderAssignedCornerBrief(brief)).toBe(
+      `Brief revision 3:\n${brief.spec}\n\nApproved by lunchboxfortwo, message m2: Also keep the marker write last.`,
+    );
+    const { approval: _approval, ...unapproved } = brief;
+    expect(renderAssignedCornerBrief(unapproved)).toBe(
+      `Brief revision 3:\n${brief.spec}\n\nThis revision predates recorded approvals.`,
+    );
+    expect(turnWith(brief)).toContain(
+      'Approved by lunchboxfortwo, message m2: Also keep the marker write last.\n\nAssigned files:\n(none)',
+    );
+  });
+
+  it('asks for the real spec only on the upgrade placeholder in a code corner', () => {
+    const placeholder = { ...brief, revision: 1, authorId: SYSTEM_IDENTITY_ID };
+    expect(turnWith(placeholder)).toContain(CORNER_PLACEHOLDER_BRIEF_RULE);
+    expect(CORNER_PLACEHOLDER_BRIEF_RULE).toContain('best effort');
+    expect(turnWith(placeholder, 'review-corner')).not.toContain(CORNER_PLACEHOLDER_BRIEF_RULE);
+    expect(turnWith({ ...placeholder, revision: 2 })).not.toContain(
+      CORNER_PLACEHOLDER_BRIEF_RULE,
+    );
+    expect(turnWith({ ...brief, revision: 1 })).not.toContain(CORNER_PLACEHOLDER_BRIEF_RULE);
+  });
+
+  it('lets the agent upgrade on its own judgment and write the brief afterwards', () => {
+    expect(UPGRADE_INTENT_RULE).not.toContain("becomes the code corner's brief");
+    expect(UPGRADE_INTENT_RULE).toContain('on your own judgment');
+    expect(UPGRADE_INTENT_RULE).toContain('nobody has to ask');
+    expect(UPGRADE_INTENT_RULE).toContain('then write the brief');
   });
 });
 

@@ -23,6 +23,7 @@ vi.mock('react-native-unistyles', async () => {
         factory({
           buzz: {
             humanRail: '#b08a4a',
+            accent: '#c49a52',
             textSecondary: '#c9c9d1',
             proseRegular: 'SpaceGrotesk-Regular',
             type: typeRoles,
@@ -87,5 +88,26 @@ describe('CornerObjectiveLine', () => {
   it('renders nothing rather than a placeholder when there is no objective', () => {
     expect(render(<CornerObjectiveLine />).toJSON()).toBeNull();
     expect(render(<CornerObjectiveLine objective="   " />).toJSON()).toBeNull();
+  });
+
+  it('hangs a Brief link in the gutter only when the corner has a brief', () => {
+    const onOpenBrief = vi.fn();
+    const renderer = render(<CornerObjectiveLine objective="Ship it" onOpenBrief={onOpenBrief} />);
+    const link = renderer.root
+      .findAllByType('Pressable' as any)
+      .find((node: any) => node.props.testID === 'corner-objective-line-brief');
+    expect(link.props.accessibilityRole).toBe('link');
+    expect(link.props.accessibilityLabel).toBe('Open brief');
+    const style = link.props.style({ pressed: false }).find(Boolean);
+    expect(style.minHeight).toBeGreaterThanOrEqual(44);
+    expect(style.minWidth).toBeGreaterThanOrEqual(44);
+    expect(link.findByType('Text' as any).props.children).toBe('Brief');
+    expect(link.findByType('Text' as any).props.style.color).toBe('#c49a52');
+    act(() => link.props.onPress());
+    expect(onOpenBrief).toHaveBeenCalledTimes(1);
+
+    expect(
+      render(<CornerObjectiveLine objective="Ship it" />).root.findAllByType('Pressable' as any),
+    ).toHaveLength(0);
   });
 });

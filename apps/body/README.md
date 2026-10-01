@@ -18,9 +18,9 @@ steering: `read-only-mcp.ts` exposes `steer_corner` in top-level Rooms, `open_co
 and corners (a corner's new corner opens beside it in the parent Room), and `pr_checks_status` in
 corners through the `beeline-agent` MCP surface. A no-code corner of a
 repository-backed Room also gets `upgrade_corner_to_code`, its one-way lane upgrade, which the
-agent calls on its own judgment when the work needs repository changes, while answering a human
-message in that same corner (that message becomes the brief); the corner then restarts with a
-branch, token and worktree. Corners do not post
+agent calls on its own judgment when the work needs the repository, while answering a human
+message in that same corner; the corner then restarts with a branch, token and worktree, and the
+code session writes the brief. Corners do not post
 reports back to their parent Room; their Room-facing output is server-owned cards.
 
 When an imported MCP server is added or removed from the selected harness's operator

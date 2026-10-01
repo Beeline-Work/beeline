@@ -189,13 +189,9 @@ async function commissioned(roomId: string, agentId = A): Promise<AgentCommand> 
 }
 
 function brief(sourceMessageId: string) {
-  const intent = { sourceMessageId, snapshot: '@hoots please do this' };
   return {
-    buildSpec: 'Ship the widget',
-    intentVerbatim: [intent],
-    criteria: [{ id: 'AC-1', text: 'Publish the result' }],
-    references: [],
-    approvalBasis: { kind: 'initiating-command' as const, ...intent },
+    spec: 'Ship the widget\n\n## Checklist\n\n- AC-1: Publish the result',
+    approval: { sourceMessageId },
   };
 }
 

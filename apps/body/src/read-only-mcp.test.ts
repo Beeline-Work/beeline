@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { agentToolsFor, cornerCallText } from './read-only-mcp.js';
+import { CORNER_BRIEF_PROPERTIES, agentToolsFor, cornerCallText } from './read-only-mcp.js';
 import { assembleSessionPrompt, SEARCH_MEMORY_FIRST_RULE } from './prompt-assembly.js';
 
 describe('direct message helper surface', () => {
@@ -187,14 +187,28 @@ describe('open_corner arguments', () => {
       required: string[];
       properties: Record<string, unknown>;
     };
-    expect(brief.required).toEqual([
-      'intentVerbatim',
-      'buildSpec',
-      'criteria',
-      'references',
-      'approvalBasis',
-    ]);
+    expect(brief.required).toEqual(['spec', 'approval']);
     expect(Object.keys(brief.properties)).not.toContain('content');
+  });
+
+  it('shares one brief schema with revise_corner_brief, which adds only its revision and change', () => {
+    const revise = agentToolsFor(true, false, true).find(
+      (tool) => tool.name === 'revise_corner_brief',
+    )!.inputSchema as { required: string[]; properties: Record<string, unknown> };
+    const brief = (openCorner().inputSchema as { properties: Record<string, unknown> }).properties
+      .brief as { properties: Record<string, unknown> };
+    expect(brief.properties).toBe(CORNER_BRIEF_PROPERTIES);
+    for (const [key, value] of Object.entries(CORNER_BRIEF_PROPERTIES))
+      expect(revise.properties[key]).toBe(value);
+    expect(
+      Object.keys(revise.properties).filter((key) => !(key in CORNER_BRIEF_PROPERTIES)),
+    ).toEqual(['expectedRevision', 'change']);
+    expect(revise.required).toEqual(['expectedRevision', 'spec', 'approval', 'change']);
+    expect(CORNER_BRIEF_PROPERTIES.spec).toMatchObject({ minLength: 1, maxLength: 16_000 });
+    expect(CORNER_BRIEF_PROPERTIES.approval).toMatchObject({
+      required: ['sourceMessageId'],
+      additionalProperties: false,
+    });
   });
 
   it('flattens an untidy call instead of refusing it', () => {

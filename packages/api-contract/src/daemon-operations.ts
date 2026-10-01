@@ -1067,61 +1067,16 @@ export type CornerBriefAttachment = {
   readonly sha256: string;
   readonly size: number;
 };
-export type CornerBriefIntentVerbatim = {
-  /** Durable provenance for the exact human words below. */
-  readonly sourceMessageId: string;
-  /** Exact message text at assignment time; never an agent paraphrase. */
-  readonly snapshot: string;
-};
-export type CornerBriefCriterion = {
-  /** Stable numbered identifier such as AC-1; retained across revisions. */
-  readonly id: string;
-  readonly text: string;
-};
-export type CornerBriefReferenceAuthority =
-  | 'human-authoritative'
-  | 'repository-authoritative'
-  | 'approved-reference'
-  | 'informational'
-  | 'agent-recommendation';
-export type CornerBriefReference = {
-  readonly label: string;
-  readonly authority: CornerBriefReferenceAuthority;
-  readonly description: string;
-  readonly objectId?: string;
-};
-export type CornerBriefApprovalBasisDraft =
-  | {
-      /** The initiating human command already settled this exact material scope. */
-      readonly kind: 'initiating-command';
-      readonly sourceMessageId: string;
-      readonly snapshot: string;
-    }
-  | {
-      /** A later human answer settled the named choice or requested brief slice. */
-      readonly kind: 'explicit-human-answer';
-      readonly sourceMessageId: string;
-      readonly snapshot: string;
-    };
-export type CornerBriefApprovalBasis =
-  | (CornerBriefApprovalBasisDraft & {
-      readonly approvedBy: string;
-      /** SHA-256 of the complete stored revision this evidence authorizes. */
-      readonly briefHash: string;
-    })
-  | {
-      /** Read-only marker for rows created before structured briefs existed. */
-      readonly kind: 'legacy-pre-migration';
-      readonly reason: string;
-      readonly briefHash: string;
-    };
-export type CornerBriefStructuredDraft = {
-  readonly intentVerbatim: readonly CornerBriefIntentVerbatim[];
-  readonly buildSpec: string;
-  readonly criteria: readonly CornerBriefCriterion[];
-  readonly nonGoals?: readonly string[];
-  readonly references: readonly CornerBriefReference[];
-  readonly approvalBasis: CornerBriefApprovalBasisDraft;
+/** Spec length cap shared by `open_corner`, `revise_corner_brief` and the server. */
+export const CORNER_BRIEF_SPEC_MAX_LENGTH = 16_000;
+export type CornerBriefDraft = {
+  /**
+   * Agent-written Markdown: what to build, a checklist of what done looks
+   * like, what is out of scope, and references, as headings inside one doc.
+   */
+  readonly spec: string;
+  /** The human Room message that approved this spec. The server quotes it. */
+  readonly approval: { readonly sourceMessageId: string };
   readonly attachments?: readonly {
     readonly objectId: string;
     readonly purpose: string;
@@ -1129,26 +1084,24 @@ export type CornerBriefStructuredDraft = {
   }[];
   readonly change?: string;
 };
-/** Accepted only when revising a pre-migration brief; new assignments must be structured. */
-export type CornerBriefLegacyDraft = {
-  readonly content: string;
-  readonly attachments?: CornerBriefStructuredDraft['attachments'];
-  readonly change?: string;
+export type CornerBriefApproval = {
+  readonly sourceMessageId: string;
+  /** The approving message's exact text, resolved by the server. */
+  readonly text: string;
+  readonly approvedBy: string;
+  readonly approverName: string;
 };
-export type CornerBriefDraft = CornerBriefStructuredDraft | CornerBriefLegacyDraft;
 export type CornerBrief = {
   readonly id: string;
   readonly revision: number;
-  /** Compatibility projection: the build spec, or the old opaque content for legacy rows. */
-  readonly content: string;
-  readonly legacy: boolean;
-  readonly intentVerbatim: readonly CornerBriefIntentVerbatim[];
-  readonly buildSpec: string;
-  readonly criteria: readonly CornerBriefCriterion[];
-  readonly nonGoals: readonly string[];
-  readonly references: readonly CornerBriefReference[];
-  readonly approvalBasis: CornerBriefApprovalBasis;
-  readonly revisionHash: string;
+  /**
+   * Markdown. Revisions written before the trimmed brief fold their typed
+   * fields into it on read (## Intent, ## Checklist, ## Non-goals,
+   * ## References, then the old build spec).
+   */
+  readonly spec: string;
+  /** Absent only on revisions that predate approvals. */
+  readonly approval?: CornerBriefApproval;
   readonly change?: string;
   readonly authorId: string;
   readonly sourceRoomId: string;

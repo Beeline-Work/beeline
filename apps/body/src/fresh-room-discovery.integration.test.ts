@@ -129,17 +129,8 @@ lines.on('line', async (line) => {
             name: 'Thing',
             objective: 'Build the thing',
             brief: {
-              intentVerbatim: [
-                { sourceMessageId: ctx.requestId, snapshot: '@bee OPEN CORNER now' },
-              ],
-              buildSpec: 'Build the requested thing in the corner.',
-              criteria: [{ id: 'AC-1', text: 'The corner opens and runs.' }],
-              references: [],
-              approvalBasis: {
-                kind: 'initiating-command',
-                sourceMessageId: ctx.requestId,
-                snapshot: '@bee OPEN CORNER now',
-              },
+              spec: '## Intent\n> @bee OPEN CORNER now\n\n## Checklist\n- The corner opens and runs.',
+              approval: { sourceMessageId: ctx.requestId },
             },
             ...(await (async () => {
               // This Room's own harness session is spawned once, well

@@ -50,7 +50,7 @@ describe('using-beeline Room guidance', () => {
     expect(room).toContain('If nothing is actionable for you, do not reply.');
     // The Room asks for the corner's NAME as well as its objective (C89).
     expect(room).toContain(
-      'call open_corner with a name of at most three words, an objective of at most 24 words, and the typed brief',
+      'call open_corner with a name of at most three words, an objective of at most 24 words, and the brief (a spec plus the approving message)',
     );
     expect(room).toContain('Before opening one, consult beeline-triage and beeline-spec');
     expect(room).toContain('If a shell command is refused, say so plainly');
@@ -346,13 +346,17 @@ describe('beeline-review reviewer skill', () => {
     expect(markdown).toContain('proof of that reproduction (or none obtained + regression):');
   });
 
-  it('treats verbatim intent and every criterion as product truth', () => {
-    expect(markdown).toContain(
-      'Quote every verbatim human-intent entry with its source message ID',
-    );
+  it('treats the spec checklist as scope and lets the approval quote win', () => {
+    expect(markdown).toContain('Quote the approval with its message ID and approver');
+    expect(markdown).toContain("The spec's checklist is the scope");
+    expect(markdown).toContain('it wins any conflict with the spec');
     expect(markdown).toContain('short objective is navigation-only text');
-    expect(markdown).toContain('List every current criterion ID exactly once');
-    expect(markdown).toContain('criterion ledger (every current ID + status + evidence):');
+    expect(markdown).toContain('List every checklist line exactly once');
+    expect(markdown).toContain(
+      'checklist ledger (every checklist line + status + evidence):',
+    );
+    expect(markdown).toContain('the affected checklist line or `engineering`');
+    expect(markdown).not.toMatch(/criteri|AC-\d|revision and hash/);
     expect(markdown).toContain('product-completeness findings (block):');
     expect(markdown).toContain('engineering findings (block):');
     expect(markdown).toContain('stable ID that survives rereview');
@@ -376,18 +380,21 @@ describe('beeline-spec planning skill', () => {
     expect(markdown).toContain('Do not recursively review the review');
   });
 
-  it('defines typed authority and proportional durable approval without blanket go', () => {
-    for (const field of [
-      'intentVerbatim[]',
-      'buildSpec',
-      'criteria[]',
-      'references[]',
-      'approvalBasis',
+  it('defines a spec, files, and one approving message without blanket go', () => {
+    for (const part of [
+      '`spec`',
+      '`## Intent`',
+      '`## Checklist`',
+      '`## Non-goals`',
+      '`## References`',
+      '`attachments`',
+      '`approval`: one human Room message ID',
     ])
-      expect(markdown).toContain(field);
+      expect(markdown).toContain(part);
+    expect(markdown).not.toMatch(/intentVerbatim|buildSpec|approvalBasis|criteria\[\]/);
     expect(markdown).toContain('Do not infer approval from silence');
     expect(markdown).toContain('Dispatch without a proposal/go ceremony');
-    expect(markdown).toContain('server records it against the exact revision hash');
+    expect(markdown).toContain("ask the corner's opener to approve it");
     expect(markdown).toContain('added automatically to the brief attachment manifest');
   });
 });

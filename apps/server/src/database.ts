@@ -1661,8 +1661,8 @@ CREATE TABLE IF NOT EXISTS corner_brief_revisions (
 CREATE INDEX IF NOT EXISTS corner_brief_revisions_source_idx ON corner_brief_revisions(source_room_id);
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS source_message_id text;
 -- Structured authority was added after the original opaque content field.
--- Keep that column as the compatibility representation of build_spec; old rows
--- intentionally retain null authority fields and read back as legacy.
+-- Rows from before it keep null authority fields and read back as their
+-- build_spec alone.
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS intent_verbatim jsonb;
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS build_spec text;
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS criteria jsonb;
@@ -1670,7 +1670,13 @@ ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS non_goals jsonb;
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS brief_references jsonb;
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS approval_basis jsonb;
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS revision_hash text;
-UPDATE corner_brief_revisions SET build_spec=content WHERE build_spec IS NULL;
+UPDATE corner_brief_revisions SET build_spec=content
+  WHERE build_spec IS NULL AND content IS NOT NULL;
+-- The trimmed brief is one Markdown spec plus one approving message. New
+-- revisions write spec and approval_basis and leave content and the typed
+-- columns above NULL; older rows keep them and are folded into a spec on read.
+ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS spec text;
+ALTER TABLE corner_brief_revisions ALTER COLUMN content DROP NOT NULL;
 CREATE TABLE IF NOT EXISTS corner_validation_stages (
   corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   brief_revision integer NOT NULL,

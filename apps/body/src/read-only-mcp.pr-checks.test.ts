@@ -72,29 +72,16 @@ afterEach(() => {
 const gateCalls = () => calls.filter((call) => call.name === 'getPrChecksStatus');
 
 describe('pr_checks_status PR selection and reviewer gate', () => {
-  it('keeps a research hold even after a human says to proceed and a reviewer passes', async () => {
-    restore.lane = 'research';
-    held = true;
-    mergeAllowed = false;
-    items = [{ authorId: 'human', body: 'proceed and merge now' }];
-    const status = JSON.parse(await prChecksStatus({ pullRequest: 614 }));
+  it('adds no hold of its own to a corner with no pull request yet', async () => {
+    restore = { lane: 'code', objective: 'Investigate' };
+    const status = JSON.parse(await prChecksStatus());
     expect(status).toMatchObject({
-      held: true,
+      held: false,
+      didHumanSayDontMerge: false,
       mergeAllowed: false,
       approvalPending: true,
     });
-    expect(status.rule).toContain('durable hold');
-    expect(status.rule).not.toContain('squash-merges');
-  });
-  it('holds a research corner with no pull request yet', async () => {
-    restore = { lane: 'research', objective: 'Investigate' };
-    expect(JSON.parse(await prChecksStatus())).toMatchObject({
-      held: true,
-      didHumanSayDontMerge: true,
-      isWorkerYolo: false,
-      mergeAllowed: false,
-      approvalPending: true,
-    });
+    expect(status.next).toContain('The PR URL is not yet durable');
     expect(gateCalls()).toHaveLength(0);
   });
   it.each([614, url])(

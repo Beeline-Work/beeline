@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { FACE_NAMES, FACE_SOULS, isFaceId, type FaceId } from '@beeline/api-contract/phone';
 import { AGENT_MENTION_NOTICE_GRACE_MS } from '@beeline/api-contract/agent-access';
+import { CORNER_BRIEF_SPEC_MAX_LENGTH } from '@beeline/api-contract/daemon';
 import { migrate } from './database.js';
 import { upgradeGrantPolicy } from './grant-policy-upgrade.js';
 import { MemoryObjectStorage, PgliteDatabase } from './test-support.js';
@@ -324,7 +325,6 @@ describe('monolith integration', () => {
 
     // A fix corner opened from the triage corner is its sibling in the Room.
     const fix = await turnIn(corner);
-    const intent = { sourceMessageId: fix.messageId, snapshot: '@bee sweep the feedback' };
     const opened = await daemonCall('createCorner', {
       ...fix,
       idempotencyKey: 'fix-grant-card',
@@ -332,11 +332,8 @@ describe('monolith integration', () => {
       objective: 'Fix the grant card that stays pending',
       lane: 'no_code',
       brief: {
-        buildSpec: 'Fix the grant card that stays pending after approval (feedback fb_000000000000000000000000).',
-        intentVerbatim: [intent],
-        criteria: [{ id: 'AC-1', text: 'The grant card resolves after approval' }],
-        references: [],
-        approvalBasis: { kind: 'initiating-command', ...intent },
+        spec: 'Fix the grant card that stays pending after approval (feedback fb_000000000000000000000000).\n\n## Checklist\n\n- AC-1: The grant card resolves after approval',
+        approval: { sourceMessageId: fix.messageId },
       },
     });
     expect(opened.status).toBe(200);
@@ -430,19 +427,12 @@ describe('monolith integration', () => {
           );
       });
       const suppliedBrief = input.brief as
-        | { content?: unknown; attachments?: unknown; change?: unknown; buildSpec?: unknown }
+        | { content?: unknown; attachments?: unknown; change?: unknown; spec?: unknown }
         | undefined;
-      if (suppliedBrief?.content && suppliedBrief.buildSpec === undefined) {
+      if (suppliedBrief?.content && suppliedBrief.spec === undefined) {
         input.brief = {
-          intentVerbatim: [{ sourceMessageId: sourceId, snapshot: 'Fixture command' }],
-          buildSpec: String(suppliedBrief.content),
-          criteria: [{ id: 'AC-1', text: String(suppliedBrief.content) }],
-          references: [],
-          approvalBasis: {
-            kind: 'initiating-command',
-            sourceMessageId: sourceId,
-            snapshot: 'Fixture command',
-          },
+          spec: String(suppliedBrief.content),
+          approval: { sourceMessageId: sourceId },
           ...(suppliedBrief.attachments ? { attachments: suppliedBrief.attachments } : {}),
           ...(suppliedBrief.change ? { change: suppliedBrief.change } : {}),
         };
@@ -454,23 +444,13 @@ describe('monolith integration', () => {
           )
         ).rows[0];
         if (
-          input.lane === 'research' ||
           input.repository ||
           sourceRoom?.repository_key ||
           sourceRoom?.repository_resolution === 'repository'
         ) {
           input.brief = {
-            intentVerbatim: [{ sourceMessageId: sourceId, snapshot: 'Fixture command' }],
-            buildSpec: String(input.objective ?? 'Complete the requested work.'),
-            criteria: [
-              { id: 'AC-1', text: String(input.objective ?? 'Complete the requested work.') },
-            ],
-            references: [],
-            approvalBasis: {
-              kind: 'initiating-command',
-              sourceMessageId: sourceId,
-              snapshot: 'Fixture command',
-            },
+            spec: String(input.objective ?? 'Complete the requested work.'),
+            approval: { sourceMessageId: sourceId },
           };
         }
       }
@@ -8630,18 +8610,8 @@ describe('monolith integration', () => {
     expect(await restore.json()).toMatchObject({
       brief: {
         revision: 1,
-        content: brief.content,
-        legacy: false,
-        intentVerbatim: [{ snapshot: 'Fixture command' }],
-        buildSpec: brief.content,
-        criteria: [{ id: 'AC-1', text: brief.content }],
-        references: [],
-        approvalBasis: {
-          kind: 'initiating-command',
-          snapshot: 'Fixture command',
-          approvedBy: HUMAN,
-        },
-        revisionHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+        spec: brief.content,
+        approval: { text: 'Fixture command', approvedBy: HUMAN, approverName: expect.any(String) },
         attachments: [
           { objectId: mediaId, sha256: sha, purpose: 'approved visual dimensions', required: true },
         ],
@@ -8650,14 +8620,42 @@ describe('monolith integration', () => {
     const viewed = await phone.readRoom(cornerId, HUMAN);
     expect(viewed?.cornerBrief).toMatchObject({
       revision: 1,
-      content: brief.content,
-      legacy: false,
-      buildSpec: brief.content,
-      criteria: [{ id: 'AC-1' }],
-      approvalBasis: { kind: 'initiating-command', approvedBy: HUMAN },
-      history: [{ revision: 1, approvalKind: 'initiating-command' }],
+      spec: brief.content,
+      approval: { text: 'Fixture command' },
       attachments: [{ title: 'approved-mock.txt', purpose: 'approved visual dimensions' }],
     });
+    expect(Object.keys(viewed!.cornerBrief!).sort()).toEqual([
+      'approval',
+      'attachments',
+      'revision',
+      'spec',
+    ]);
+    // A new revision is the spec and its approval; every column the typed
+    // brief used to fill stays empty, and the approval keeps the stored shape.
+    expect(
+      (
+        await database.query(
+          `SELECT spec,content,intent_verbatim,build_spec,criteria,non_goals,brief_references,
+                  approval_basis->>'kind' approval_kind,approval_basis->>'snapshot' snapshot,
+                  revision_hash IS NOT NULL hashed
+           FROM corner_brief_revisions WHERE corner_id=$1`,
+          [cornerId],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        spec: brief.content,
+        content: null,
+        intent_verbatim: null,
+        build_spec: null,
+        criteria: null,
+        non_goals: null,
+        brief_references: null,
+        approval_kind: 'initiating-command',
+        snapshot: 'Fixture command',
+        hashed: true,
+      },
+    ]);
     expect(
       (
         await daemonOperation('postCornerValidationStage', {
@@ -8722,7 +8720,7 @@ describe('monolith integration', () => {
     expect(await history.json()).toMatchObject({
       revisions: [
         { revision: 2, change: 'The requester corrected the label.' },
-        { revision: 1, content: brief.content },
+        { revision: 1, spec: brief.content },
       ],
     });
     const outsider = 'd'.repeat(64);
@@ -8949,88 +8947,184 @@ describe('monolith integration', () => {
     });
   });
 
-  it('refuses new repository and research corners without a structured brief at the server boundary', async () => {
-    for (const [requestId, lane] of [
-      ['missing-code-brief', 'code'],
-      ['missing-research-brief', 'research'],
+  it('refuses new repository corners without a structured brief at the server boundary', async () => {
+    const response = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'missing-code-brief',
+      name: 'Missing brief',
+      objective: 'Do repository work',
+      lane: 'code',
+      repository: 'example/repository',
+      fixtureOmitBrief: true,
+    });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain('a brief is required for repository corners');
+    expect(
+      (await database.query(`SELECT 1 FROM corner_facts WHERE request_id='missing-code-brief'`))
+        .rows,
+    ).toEqual([]);
+  });
+
+  it('rejects an approval that does not name a human Room message, and an over-long spec', async () => {
+    const agentMessage = 'agent-approval-message';
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Looks good to me')`,
+      [agentMessage, ROOM, AGENT],
+    );
+    for (const [requestId, sourceMessageId] of [
+      ['unknown-approval', 'not-a-real-message'],
+      ['agent-approval', agentMessage],
     ] as const) {
       const response = await daemonOperation('createCorner', {
         roomId: ROOM,
         requestId,
-        name: 'Missing brief',
+        name: 'Unapproved brief',
         objective: 'Do repository work',
-        lane,
         repository: 'example/repository',
-        fixtureOmitBrief: true,
+        brief: { spec: '## Checklist\n\n- Ship it.', approval: { sourceMessageId } },
       });
-      expect(response.status).toBe(400);
+      expect(response.status).not.toBe(200);
       expect(await response.text()).toContain(
-        'a structured brief is required for repository and research corners',
+        'corner brief approval must name a human Room message',
       );
+      expect(
+        (await database.query(`SELECT 1 FROM corner_facts WHERE request_id=$1`, [requestId])).rows,
+      ).toEqual([]);
     }
-    expect(
-      (
-        await database.query(
-          `SELECT 1 FROM corner_facts WHERE request_id IN ('missing-code-brief','missing-research-brief')`,
-        )
-      ).rows,
-    ).toEqual([]);
+
+    const tooLong = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'over-long-spec',
+      name: 'Long brief',
+      objective: 'Do repository work',
+      repository: 'example/repository',
+      brief: { content: 'x'.repeat(CORNER_BRIEF_SPEC_MAX_LENGTH + 1) },
+    });
+    expect(tooLong.status).not.toBe(200);
+    expect(await tooLong.text()).toContain(
+      `corner brief spec must contain 1–${CORNER_BRIEF_SPEC_MAX_LENGTH} characters`,
+    );
+    const atLimit = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'limit-length-spec',
+      name: 'Limit brief',
+      objective: 'Do repository work',
+      brief: { content: 'x'.repeat(CORNER_BRIEF_SPEC_MAX_LENGTH) },
+    });
+    expect(atLimit.status).toBe(200);
   });
 
-  it('rejects paraphrased human intent and approval snapshots', async () => {
-    const response = await daemonOperation('createCorner', {
+  it('folds a revision written before the trimmed brief into one Markdown spec', async () => {
+    const opened = await daemonOperation('createCorner', {
       roomId: ROOM,
-      requestId: 'forged-brief-provenance',
-      name: 'Forged brief',
-      objective: 'Do repository work',
-      repository: 'example/repository',
-      brief: {
-        intentVerbatim: [
-          { sourceMessageId: 'not-a-real-message', snapshot: 'A paraphrase written by the agent' },
-        ],
-        buildSpec: 'Implement the paraphrased request.',
-        criteria: [{ id: 'AC-1', text: 'Ship the paraphrase.' }],
-        references: [],
-        approvalBasis: {
-          kind: 'explicit-human-answer',
-          sourceMessageId: 'not-a-real-message',
-          snapshot: 'A paraphrase written by the agent',
-        },
-      },
+      requestId: 'folded-brief-open',
+      name: 'Folded brief',
+      objective: 'Keep the old assignment readable',
+      brief: { content: 'Revision one.' },
     });
-    expect(response.status).not.toBe(200);
-    expect(await response.text()).toContain('must quote an exact human Room message');
-
-    const omittedApproval = await daemonOperation('createCorner', {
-      roomId: ROOM,
-      requestId: 'omitted-approval-intent',
-      name: 'Omitted approval',
-      objective: 'Do repository work',
-      repository: 'example/repository',
-      brief: {
-        intentVerbatim: [
-          { sourceMessageId: 'intent-only', snapshot: 'An alleged intent snapshot' },
-        ],
-        buildSpec: 'Implement it.',
-        criteria: [{ id: 'AC-1', text: 'Implement it.' }],
-        references: [],
-        approvalBasis: {
-          kind: 'explicit-human-answer',
-          sourceMessageId: 'different-message',
-          snapshot: 'Looks good',
-        },
-      },
-    });
-    expect(omittedApproval.status).not.toBe(200);
-    expect(await omittedApproval.text()).toContain(
-      'approval basis must be retained in verbatim human intent',
+    expect(opened.status).toBe(200);
+    const { cornerId } = (await opened.json()) as { cornerId: string };
+    const approval = 'old-approval-message';
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Yes, build that.')`,
+      [approval, ROOM, HUMAN],
     );
+    // Exactly the row shape the structured brief wrote: no spec, every typed field.
+    await database.query(
+      `INSERT INTO corner_brief_revisions(
+         corner_id,revision,content,intent_verbatim,build_spec,criteria,non_goals,
+         brief_references,approval_basis,revision_hash,change,author_id,source_room_id,
+         source_message_id,attachments
+       ) VALUES($1,2,'Old build spec.',$2,'Old build spec.',$3,$4,$5,$6,$7,'Old change',$8,$9,$10,'[]')`,
+      [
+        cornerId,
+        JSON.stringify([{ sourceMessageId: approval, snapshot: 'Yes, build that.' }]),
+        JSON.stringify([
+          { id: 'AC-1', text: 'The widget renders.' },
+          { id: 'AC-2', text: 'Labels stay.' },
+        ]),
+        JSON.stringify(['No redesign.']),
+        JSON.stringify([
+          { label: 'Design doc', authority: 'approved-reference', description: 'The agreed mock.' },
+        ]),
+        JSON.stringify({
+          kind: 'explicit-human-answer',
+          sourceMessageId: approval,
+          snapshot: 'Yes, build that.',
+          approvedBy: HUMAN,
+          briefHash: 'f'.repeat(64),
+        }),
+        'f'.repeat(64),
+        AGENT,
+        ROOM,
+        approval,
+      ],
+    );
+    // And a row from before structured briefs: opaque content only.
+    await database.query(
+      `INSERT INTO corner_brief_revisions(corner_id,revision,content,author_id,source_room_id)
+       VALUES($1,3,'Opaque legacy content.',$2,$3)`,
+      [cornerId, AGENT, ROOM],
+    );
+    const human = (
+      await database.query<{ name: string }>(`SELECT name FROM identities WHERE id=$1`, [HUMAN])
+    ).rows[0]!.name;
+    const folded = [
+      '## Intent',
+      '',
+      '> Yes, build that.',
+      '>',
+      `> — message \`${approval}\``,
+      '',
+      '## Checklist',
+      '',
+      '- AC-1: The widget renders.',
+      '- AC-2: Labels stay.',
+      '',
+      '## Non-goals',
+      '',
+      '- No redesign.',
+      '',
+      '## References',
+      '',
+      '- Design doc [approved-reference]: The agreed mock.',
+      '',
+      'Old build spec.',
+    ].join('\n');
+    const history = (await (
+      await daemonOperation('listCornerBriefRevisions', { cornerId })
+    ).json()) as { revisions: Record<string, unknown>[] };
+    expect(history.revisions).toEqual([
+      expect.objectContaining({ revision: 3, spec: 'Opaque legacy content.' }),
+      expect.objectContaining({
+        revision: 2,
+        spec: folded,
+        change: 'Old change',
+        approval: {
+          sourceMessageId: approval,
+          text: 'Yes, build that.',
+          approvedBy: HUMAN,
+          approverName: human,
+        },
+      }),
+      expect.objectContaining({ revision: 1, spec: 'Revision one.' }),
+    ]);
+    expect(history.revisions[0]).not.toHaveProperty('approval');
+    await database.query(`DELETE FROM corner_brief_revisions WHERE corner_id=$1 AND revision=3`, [
+      cornerId,
+    ]);
+    expect((await phone.readRoom(cornerId, HUMAN))?.cornerBrief).toEqual({
+      revision: 2,
+      spec: folded,
+      approval: { sourceMessageId: approval, text: 'Yes, build that.', approverName: human },
+      attachments: [],
+    });
   });
 
   it('rolls back the corner and worker command when brief persistence fails', async () => {
     await database.query(
       `ALTER TABLE corner_brief_revisions ADD CONSTRAINT reject_test_brief
-       CHECK (content <> 'reject-this-brief')`,
+       CHECK (spec <> 'reject-this-brief')`,
     );
     const response = await daemonOperation('createCorner', {
       roomId: ROOM,
@@ -9153,7 +9247,7 @@ describe('monolith integration', () => {
     ).toMatchObject({
       brief: {
         revision: 2,
-        content: 'A1: keep the agreed behavior. A2: retain the corrected label.',
+        spec: 'A1: keep the agreed behavior. A2: retain the corrected label.',
       },
       validation: expect.arrayContaining([
         expect.objectContaining({ stage: 'review', status: 'passed', actorId: reviewerId }),
@@ -9715,8 +9809,6 @@ describe('monolith integration', () => {
   it.each([
     ['code', false],
     ['code', true],
-    ['research', false],
-    ['research', true],
     ['no_code', false],
     ['no_code', true],
   ] as const)(
@@ -9751,17 +9843,8 @@ describe('monolith integration', () => {
           ? {}
           : {
               brief: {
-                intentVerbatim: [
-                  { sourceMessageId: source.messageId, snapshot: '@bee open this corner' },
-                ],
-                buildSpec: 'Answer this request',
-                criteria: [{ id: 'AC-1', text: 'Answer this request' }],
-                references: [],
-                approvalBasis: {
-                  kind: 'initiating-command',
-                  sourceMessageId: source.messageId,
-                  snapshot: '@bee open this corner',
-                },
+                spec: 'Answer this request',
+                approval: { sourceMessageId: source.messageId },
               },
             }),
       });

@@ -1598,33 +1598,6 @@ export class PhoneService {
       () => currentCornerBrief(this.database, roomId).catch(() => undefined),
       undefined,
     );
-    const cornerBriefHistoryPromise = cornerRead(
-      'brief-history',
-      () =>
-        this.database
-          .query<{
-            revision: number;
-            revision_hash: string | null;
-            change: string | null;
-            approval_kind: string | null;
-            content: string;
-            intent_verbatim: NonNullable<RoomView['cornerBrief']>['intentVerbatim'];
-            build_spec: string | null;
-            criteria: NonNullable<RoomView['cornerBrief']>['criteria'];
-            non_goals: string[];
-            brief_references: NonNullable<RoomView['cornerBrief']>['references'];
-            approval_basis: NonNullable<RoomView['cornerBrief']>['approvalBasis'];
-          }>(
-            `SELECT revision,revision_hash,change,approval_basis->>'kind' approval_kind,
-                    content,intent_verbatim,build_spec,criteria,non_goals,brief_references,approval_basis
-             FROM corner_brief_revisions WHERE corner_id=$1
-             ORDER BY revision DESC LIMIT 20`,
-            [roomId],
-          )
-          .then((result) => result.rows)
-          .catch(() => []),
-      [],
-    );
     const cornerValidationPromise = cornerBriefPromise.then((brief) =>
       brief
         ? measured(
@@ -1730,7 +1703,6 @@ export class PhoneService {
       parent,
       facts,
       cornerBrief,
-      cornerBriefHistory,
       cornerValidation,
       boundApp,
       cornerAppRows,
@@ -1743,7 +1715,6 @@ export class PhoneService {
       parentPromise,
       factsPromise,
       cornerBriefPromise,
-      cornerBriefHistoryPromise,
       cornerValidationPromise,
       boundAppPromise,
       cornerAppRowsPromise,
@@ -1827,30 +1798,16 @@ export class PhoneService {
         ? {
             cornerBrief: {
               revision: cornerBrief.revision,
-              revisionHash: cornerBrief.revisionHash,
-              legacy: cornerBrief.legacy,
-              content: cornerBrief.content,
-              intentVerbatim: cornerBrief.intentVerbatim,
-              buildSpec: cornerBrief.buildSpec,
-              criteria: cornerBrief.criteria,
-              nonGoals: cornerBrief.nonGoals,
-              references: cornerBrief.references,
-              approvalBasis: cornerBrief.approvalBasis,
-              history: cornerBriefHistory.map((item) => ({
-                revision: item.revision,
-                revisionHash:
-                  item.revision_hash ??
-                  (item.revision === cornerBrief.revision ? cornerBrief.revisionHash : 'legacy'),
-                ...(item.change ? { change: item.change } : {}),
-                approvalKind: item.approval_kind ?? 'legacy-pre-migration',
-                content: item.content,
-                intentVerbatim: item.intent_verbatim ?? [],
-                buildSpec: item.build_spec ?? item.content,
-                criteria: item.criteria ?? [],
-                nonGoals: item.non_goals ?? [],
-                references: item.brief_references ?? [],
-                approvalBasis: item.approval_basis ?? undefined,
-              })),
+              spec: cornerBrief.spec,
+              ...(cornerBrief.approval
+                ? {
+                    approval: {
+                      sourceMessageId: cornerBrief.approval.sourceMessageId,
+                      text: cornerBrief.approval.text,
+                      approverName: cornerBrief.approval.approverName,
+                    },
+                  }
+                : {}),
               attachments: cornerBrief.attachments.map((file) => ({
                 title: file.title,
                 purpose: file.purpose,

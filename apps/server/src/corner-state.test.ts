@@ -38,7 +38,6 @@ describe('deriveCornerState from the workflow run', () => {
     ['opened', undefined, { state: 'waiting' }],
     ['no_code_work', undefined, { state: 'waiting' }],
     ['upgrade_to_code', 'upgrade_requested', { state: 'waiting' }],
-    ['investigate', undefined, { state: 'waiting' }],
     ['implement', 'code', { state: 'waiting' }],
     ['implement', 'no_reviewer', { state: 'waiting' }],
     ['implement', 'changes_requested', { state: 'waiting' }],

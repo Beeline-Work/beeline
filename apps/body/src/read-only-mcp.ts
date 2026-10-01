@@ -29,6 +29,7 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { createInterface } from 'node:readline';
 import {
+  CORNER_BRIEF_SPEC_MAX_LENGTH,
   CORNER_NAME_MAX_LENGTH,
   CORNER_NAME_MAX_WORDS,
   CORNER_OBJECTIVE_MAX_LENGTH,
@@ -256,6 +257,38 @@ const READ_ONLY_TOOLS: ToolDefinition[] = [
     },
   },
 ];
+
+/** One brief shape for open_corner.brief and revise_corner_brief, so the two cannot drift. */
+export const CORNER_BRIEF_PROPERTIES = {
+  spec: {
+    type: 'string',
+    minLength: 1,
+    maxLength: CORNER_BRIEF_SPEC_MAX_LENGTH,
+    description:
+      'Markdown: what to build, a checklist of what done means, what is out of scope, and references, as headings in one doc.',
+  },
+  approval: {
+    type: 'object',
+    required: ['sourceMessageId'],
+    properties: { sourceMessageId: { type: 'string' } },
+    additionalProperties: false,
+    description: 'The human Room message that approved this spec. The server quotes it.',
+  },
+  attachments: {
+    type: 'array',
+    maxItems: 16,
+    items: {
+      type: 'object',
+      required: ['objectId', 'purpose', 'required'],
+      properties: {
+        objectId: { type: 'string', format: 'uuid' },
+        purpose: { type: 'string', maxLength: 500 },
+        required: { type: 'boolean' },
+      },
+      additionalProperties: false,
+    },
+  },
+} as const;
 
 const AGENT_TOOLS: ToolDefinition[] = [
   {
@@ -813,111 +846,19 @@ const AGENT_TOOLS: ToolDefinition[] = [
           type: 'string',
           minLength: 1,
           maxLength: CORNER_OBJECTIVE_MAX_LENGTH,
-          description: `Navigation summary of at most ${CORNER_OBJECTIVE_MAX_WORDS} words; the typed brief carries product authority.`,
+          description: `Navigation summary of at most ${CORNER_OBJECTIVE_MAX_WORDS} words; the brief's spec carries the scope.`,
         },
         brief: {
           type: 'object',
-          required: ['intentVerbatim', 'buildSpec', 'criteria', 'references', 'approvalBasis'],
-          properties: {
-            intentVerbatim: {
-              type: 'array',
-              minItems: 1,
-              maxItems: 50,
-              items: {
-                type: 'object',
-                required: ['sourceMessageId', 'snapshot'],
-                properties: {
-                  sourceMessageId: { type: 'string' },
-                  snapshot: { type: 'string', minLength: 1, maxLength: 16000 },
-                },
-                additionalProperties: false,
-              },
-              description: 'Exact human message text and its durable Room message ID.',
-            },
-            buildSpec: {
-              type: 'string',
-              minLength: 1,
-              maxLength: 65536,
-              description: 'Agent-authored Markdown implementation specification.',
-            },
-            criteria: {
-              type: 'array',
-              minItems: 1,
-              maxItems: 100,
-              items: {
-                type: 'object',
-                required: ['id', 'text'],
-                properties: {
-                  id: { type: 'string', pattern: '^[A-Z][A-Z0-9_-]*-[1-9][0-9]*$' },
-                  text: { type: 'string', minLength: 1, maxLength: 2000 },
-                },
-                additionalProperties: false,
-              },
-            },
-            nonGoals: {
-              type: 'array',
-              maxItems: 50,
-              items: { type: 'string', minLength: 1, maxLength: 1000 },
-            },
-            references: {
-              type: 'array',
-              maxItems: 50,
-              items: {
-                type: 'object',
-                required: ['label', 'authority', 'description'],
-                properties: {
-                  label: { type: 'string', minLength: 1, maxLength: 200 },
-                  authority: {
-                    type: 'string',
-                    enum: [
-                      'human-authoritative',
-                      'repository-authoritative',
-                      'approved-reference',
-                      'informational',
-                      'agent-recommendation',
-                    ],
-                  },
-                  description: { type: 'string', minLength: 1, maxLength: 1000 },
-                  objectId: { type: 'string', format: 'uuid' },
-                },
-                additionalProperties: false,
-              },
-            },
-            approvalBasis: {
-              type: 'object',
-              required: ['kind', 'sourceMessageId', 'snapshot'],
-              properties: {
-                kind: {
-                  type: 'string',
-                  enum: ['initiating-command', 'explicit-human-answer'],
-                },
-                sourceMessageId: { type: 'string' },
-                snapshot: { type: 'string', minLength: 1, maxLength: 16000 },
-              },
-              additionalProperties: false,
-            },
-            attachments: {
-              type: 'array',
-              maxItems: 16,
-              items: {
-                type: 'object',
-                required: ['objectId', 'purpose', 'required'],
-                properties: {
-                  objectId: { type: 'string', format: 'uuid' },
-                  purpose: { type: 'string', maxLength: 500 },
-                  required: { type: 'boolean' },
-                },
-                additionalProperties: false,
-              },
-            },
-          },
+          required: ['spec', 'approval'],
+          properties: CORNER_BRIEF_PROPERTIES,
           additionalProperties: false,
         },
         lane: {
           type: 'string',
-          enum: ['code', 'no_code', 'research'],
+          enum: ['code', 'no_code'],
           description:
-            'Defaults to "code". Use "no_code" for artifact work without a repository checkout. Use "research" for a writable repository worktree held open for investigation: do not commit, push, or open a pull request until a human directs it.',
+            'Defaults to "code". Use "no_code" for artifact work without a repository checkout.',
         },
       },
       additionalProperties: false,
@@ -926,106 +867,14 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'revise_corner_brief',
     description:
-      'Record a correction as the next immutable assignment revision. Supply the complete replacement brief and the revision you read; the worker and reviewer will use the new revision.',
+      'Record a correction as the next immutable assignment revision. Supply the complete replacement spec, the human message that approved it, and the revision you read; the worker and reviewer will use the new revision.',
     inputSchema: {
       type: 'object',
-      required: [
-        'expectedRevision',
-        'intentVerbatim',
-        'buildSpec',
-        'criteria',
-        'references',
-        'approvalBasis',
-        'change',
-      ],
+      required: ['expectedRevision', 'spec', 'approval', 'change'],
       properties: {
         expectedRevision: { type: 'integer', minimum: 0 },
-        intentVerbatim: {
-          type: 'array',
-          minItems: 1,
-          maxItems: 50,
-          items: {
-            type: 'object',
-            required: ['sourceMessageId', 'snapshot'],
-            properties: {
-              sourceMessageId: { type: 'string' },
-              snapshot: { type: 'string', minLength: 1, maxLength: 16000 },
-            },
-            additionalProperties: false,
-          },
-        },
-        buildSpec: { type: 'string', minLength: 1, maxLength: 65536 },
-        criteria: {
-          type: 'array',
-          minItems: 1,
-          maxItems: 100,
-          items: {
-            type: 'object',
-            required: ['id', 'text'],
-            properties: {
-              id: { type: 'string', pattern: '^[A-Z][A-Z0-9_-]*-[1-9][0-9]*$' },
-              text: { type: 'string', minLength: 1, maxLength: 2000 },
-            },
-            additionalProperties: false,
-          },
-        },
-        nonGoals: {
-          type: 'array',
-          maxItems: 50,
-          items: { type: 'string', minLength: 1, maxLength: 1000 },
-        },
-        references: {
-          type: 'array',
-          maxItems: 50,
-          items: {
-            type: 'object',
-            required: ['label', 'authority', 'description'],
-            properties: {
-              label: { type: 'string', minLength: 1, maxLength: 200 },
-              authority: {
-                type: 'string',
-                enum: [
-                  'human-authoritative',
-                  'repository-authoritative',
-                  'approved-reference',
-                  'informational',
-                  'agent-recommendation',
-                ],
-              },
-              description: { type: 'string', minLength: 1, maxLength: 1000 },
-              objectId: { type: 'string', format: 'uuid' },
-            },
-            additionalProperties: false,
-          },
-        },
-        approvalBasis: {
-          type: 'object',
-          required: ['kind', 'sourceMessageId', 'snapshot'],
-          properties: {
-            kind: {
-              type: 'string',
-              enum: ['initiating-command', 'explicit-human-answer'],
-            },
-            sourceMessageId: { type: 'string' },
-            snapshot: { type: 'string', minLength: 1, maxLength: 16000 },
-          },
-          additionalProperties: false,
-        },
+        ...CORNER_BRIEF_PROPERTIES,
         change: { type: 'string', maxLength: 1000 },
-        attachments: {
-          type: 'array',
-          maxItems: 16,
-          items: {
-            type: 'object',
-            required: ['objectId', 'purpose', 'required'],
-            properties: {
-              objectId: { type: 'string', format: 'uuid' },
-              purpose: { type: 'string', maxLength: 500 },
-              required: { type: 'boolean' },
-            },
-            additionalProperties: false,
-          },
-        },
       },
       additionalProperties: false,
     },
@@ -2151,20 +2000,10 @@ async function openCorner(args: JsonObject, toolCallId: string): Promise<string>
     throw new Error('open_corner is not available in a direct message');
   }
   const { name, objective } = cornerCallText(args);
-  if (
-    args.lane !== undefined &&
-    args.lane !== 'code' &&
-    args.lane !== 'no_code' &&
-    args.lane !== 'research'
-  ) {
-    throw new Error('lane must be "code", "no_code", or "research"');
+  if (args.lane !== undefined && args.lane !== 'code' && args.lane !== 'no_code') {
+    throw new Error('lane must be "code" or "no_code"');
   }
-  const lane =
-    args.lane === 'no_code'
-      ? ('no_code' as const)
-      : args.lane === 'research'
-        ? ('research' as const)
-        : ('code' as const);
+  const lane = args.lane === 'no_code' ? ('no_code' as const) : ('code' as const);
   // In a corner turn this is the parent Room, where the new corner opens.
   const roomId = requiredEnv('BEELINE_DAEMON_ROOM_ID');
   const repository = await daemonExecute('getRoomRepositoryState', { roomId });
@@ -2220,17 +2059,8 @@ async function reviseCornerBrief(args: JsonObject): Promise<string> {
       requestId,
       expectedRevision: args.expectedRevision as number,
       brief: {
-        intentVerbatim:
-          args.intentVerbatim as import('@beeline/api-contract/daemon').CornerBriefStructuredDraft['intentVerbatim'],
-        buildSpec: args.buildSpec as string,
-        criteria:
-          args.criteria as import('@beeline/api-contract/daemon').CornerBriefStructuredDraft['criteria'],
-        nonGoals:
-          args.nonGoals as import('@beeline/api-contract/daemon').CornerBriefStructuredDraft['nonGoals'],
-        references:
-          args.references as import('@beeline/api-contract/daemon').CornerBriefStructuredDraft['references'],
-        approvalBasis:
-          args.approvalBasis as import('@beeline/api-contract/daemon').CornerBriefStructuredDraft['approvalBasis'],
+        spec: args.spec as string,
+        approval: args.approval as import('@beeline/api-contract/daemon').CornerBriefDraft['approval'],
         change: args.change as string | undefined,
         attachments:
           args.attachments as import('@beeline/api-contract/daemon').CornerBriefDraft['attachments'],
@@ -2385,14 +2215,12 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
   // The merge gate is the server's: it owns the human hold, the worker's yolo
   // mode and the reviewer outcome, and it merges the head itself.
   const reviewFailed = verdict ? verdict.approvalPending !== false : true;
-  const held = verdict ? verdict.held === true : restore.lane === 'research';
+  const held = verdict?.held === true;
   const isWorkerYolo = verdict?.isWorkerYolo === true;
   const didHumanSayDontMerge = held;
   const mergeAllowed = verdict?.mergeAllowed === true;
   const mergeConditionsRule =
-    restore.lane === 'research'
-      ? 'This research corner has a durable hold: the agent must never merge it. A human may close the corner.'
-      : 'When mergeAllowed is true the server squash-merges this exact head itself; no agent runs gh pr merge. mergeAllowed is true only when checks passed, reviewFailed is false, isWorkerYolo is true, didHumanSayDontMerge is false, and reviewerExists is true; missing state is never consent. If GitHub refuses the merge (branch behind its target, conflict, moved head, permissions), the server wakes the implementer with its reason: bring the branch up to date (gh pr update-branch, or merge the target branch in) and push, and the new head needs green checks and a fresh reviewer PASS before the server merges it.';
+    'When mergeAllowed is true the server squash-merges this exact head itself; no agent runs gh pr merge. mergeAllowed is true only when checks passed, reviewFailed is false, isWorkerYolo is true, didHumanSayDontMerge is false, and reviewerExists is true; missing state is never consent. If GitHub refuses the merge (branch behind its target, conflict, moved head, permissions), the server wakes the implementer with its reason: bring the branch up to date (gh pr update-branch, or merge the target branch in) and push, and the new head needs green checks and a fresh reviewer PASS before the server merges it.';
   return JSON.stringify({
     checks,
     reason,
@@ -2411,10 +2239,7 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
     ...(pullRequest ? { pullRequest } : {}),
     ...(!pullRequest
       ? {
-          next:
-            restore.lane === 'research'
-              ? 'Keep investigating in the writable worktree. Do not commit, push, or open a pull request until a human explicitly directs it.'
-              : 'The PR URL is not yet durable in the corner. Print its full URL as your final response and end this turn now; do not call pr_checks_status again in this turn.',
+          next: 'The PR URL is not yet durable in the corner. Print its full URL as your final response and end this turn now; do not call pr_checks_status again in this turn.',
         }
       : {}),
     rule: [reviewerRule, mergeConditionsRule].filter(Boolean).join(' '),

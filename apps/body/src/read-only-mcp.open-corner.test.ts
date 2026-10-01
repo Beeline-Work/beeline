@@ -339,21 +339,17 @@ describe('open_corner over the grok wire', () => {
     });
   }, 30_000);
 
-  it('carries the research lane with its repository binding', async () => {
+  it('refuses the research lane, naming the two lanes', async () => {
     const door = await daemonDoor();
-    const { result, error } = await callTool(door.origin, {
+    const { result } = await callTool(door.origin, {
       name: 'Market scan',
       objective: 'Investigate repository performance and report findings',
       lane: 'research',
     });
 
-    expect(error).toBeUndefined();
-    expect(result?.isError).toBeUndefined();
-    expect(JSON.parse(result!.content[0]!.text)).toMatchObject({ lane: 'research' });
-    expect(door.calls.find((call) => call.operation === 'createCorner')).toMatchObject({
-      lane: 'research',
-      repository: 'owner/widgets',
-    });
+    expect(result?.isError).toBe(true);
+    expect(result?.content[0]?.text).toBe('lane must be "code" or "no_code"');
+    expect(door.calls.some((call) => call.operation === 'createCorner')).toBe(false);
   }, 30_000);
 
   it('refuses a lane it does not know instead of silently opening a code corner', async () => {
@@ -365,7 +361,7 @@ describe('open_corner over the grok wire', () => {
     });
 
     expect(result?.isError).toBe(true);
-    expect(result?.content[0]?.text).toBe('lane must be "code", "no_code", or "research"');
+    expect(result?.content[0]?.text).toBe('lane must be "code" or "no_code"');
     expect(door.calls.some((call) => call.operation === 'createCorner')).toBe(false);
   }, 30_000);
 

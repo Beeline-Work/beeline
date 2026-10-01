@@ -342,7 +342,11 @@ export interface RoomAgentHomeInput {
   /** Per-room agent home root, e.g. `<roomRoot>/agent-home`. */
   root: string;
   /** Server-provided identity of the agent and this Room. */
-  squireScope?: { readonly agentId: string; readonly roomId: string; readonly relay?: { readonly url: string; readonly token: string; readonly contextFile: string } };
+  squireScope?: {
+    readonly agentId: string;
+    readonly roomId: string;
+    readonly relay?: { readonly url: string; readonly token: string; readonly contextFile: string };
+  };
   /** Operator's real home directory; defaults to the daemon's. */
   operatorHome?: string;
   failClosed?: boolean;
@@ -384,6 +388,40 @@ export interface RoomAgentHomeInput {
   resourceAuthFile?: string;
 }
 
+function claudeLoginExpiresAt(text: string): number | undefined {
+  try {
+    const expiresAt = (JSON.parse(text) as { claudeAiOauth?: { expiresAt?: unknown } } | null)
+      ?.claudeAiOauth?.expiresAt;
+    return typeof expiresAt === 'number' && Number.isFinite(expiresAt) ? expiresAt : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Claude rotates its refresh token on every refresh. When that refresh was
+ * written through a detached isolated path, the operator copy may already be
+ * spent, so carry the later-expiring login back before re-linking. The prior
+ * operator copy is kept beside it; credentials are never deleted.
+ */
+async function promoteRefreshedClaudeLogin(detached: string, source: string): Promise<void> {
+  const refreshed = await readFile(detached, 'utf8');
+  const refreshedExpiresAt = claudeLoginExpiresAt(refreshed);
+  if (refreshedExpiresAt === undefined) return;
+  const current = await readFile(source, 'utf8');
+  const currentExpiresAt = claudeLoginExpiresAt(current);
+  if (currentExpiresAt === undefined || currentExpiresAt >= refreshedExpiresAt) return;
+  const backup = `${source}.beeline-quarantine-${Date.now()}-${randomUUID()}`;
+  await writeFile(backup, current, { mode: 0o600, flag: 'wx' });
+  const staged = `${source}.beeline-refresh-${randomUUID()}`;
+  try {
+    await writeFile(staged, refreshed, { mode: 0o600, flag: 'wx' });
+    await rename(staged, source);
+  } finally {
+    await rm(staged, { force: true });
+  }
+}
+
 /**
  * Restore every shared login as a direct link to the operator credential.
  *
@@ -413,6 +451,9 @@ export async function repairRoomAgentCredentialLinks(input: {
     }
     if (stats) {
       const quarantine = `${target}.beeline-quarantine-${Date.now()}-${randomUUID()}`;
+      if (credential.dir === 'claude' && stats.isFile()) {
+        await promoteRefreshedClaudeLogin(target, source);
+      }
       await rename(target, quarantine);
     }
     await symlink(source, target);

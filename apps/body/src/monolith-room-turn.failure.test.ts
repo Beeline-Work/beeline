@@ -251,6 +251,44 @@ describe('Room turn failure receipt', () => {
     ).toHaveLength(1);
   });
 
+  it('answers with the login Claude refreshed through a detached isolated credential', async () => {
+    const spent = JSON.stringify({ claudeAiOauth: { refreshToken: 'spent', expiresAt: 1_000 } });
+    const rotated = JSON.stringify({
+      claudeAiOauth: { refreshToken: 'rotated', expiresAt: 2_000 },
+    });
+    const { receipts, posted, attempts } = await runTurn({
+      agentCommand: '/opt/harness/claude-agent-acp',
+      agentKind: 'claude',
+      beforeRun: async ({ agentHomeRoot: activeHome, operatorHome }) => {
+        // An earlier turn refreshed Claude's login. Its atomic write replaced
+        // the shared link, so the rotated refresh token lives only in this
+        // Room and the operator copy holds the spent one.
+        await mkdir(join(operatorHome, '.claude'), { recursive: true });
+        await writeFile(join(operatorHome, '.claude/.credentials.json'), spent);
+        await mkdir(join(activeHome, 'claude'), { recursive: true });
+        await writeFile(join(activeHome, 'claude/.credentials.json'), rotated);
+      },
+      prompt: async ({ agentHomeRoot: activeHome }) => {
+        const credential = await readFile(join(activeHome, 'claude/.credentials.json'), 'utf8');
+        if (credential !== rotated) {
+          throw new Error(
+            'ACP error -32603: Internal error; harness stderr: Failed to authenticate: OAuth session expired and could not be refreshed',
+          );
+        }
+        return {
+          stopReason: 'end_turn',
+          updates: [],
+          agentText: 'Answered with the refreshed login.',
+          toolCalls: [],
+        };
+      },
+    });
+
+    expect(attempts).toBe(1);
+    expect(posted.map((message) => message.text)).toEqual(['Answered with the refreshed login.']);
+    expect(receipts).toContainEqual(expect.objectContaining({ status: 'complete' }));
+  });
+
   it('names the harness and machine only after the repaired operator login also fails', async () => {
     const { receipts, posted, attempts } = await runTurn({
       agentCommand: '/opt/harness/claude-agent-acp',
@@ -487,7 +525,8 @@ describe('Room turn failure receipt', () => {
   it('retries a context-window overflow once in a fresh session', async () => {
     const overflow =
       "400 This endpoint's maximum context length is 1048576 tokens. However, you requested about 1053212 tokens (109494 of text input, 943718 in the output).";
-    const turn = (recovers: boolean) =>
+    const turn =
+      (recovers: boolean) =>
       async ({ agentHomeRoot, attempt }: { agentHomeRoot: string; attempt: number }) => {
         const dir = join(agentHomeRoot, 'pi', 'sessions', '--room--');
         await mkdir(dir, { recursive: true });
@@ -499,7 +538,11 @@ describe('Room turn failure receipt', () => {
             JSON.stringify({
               type: 'message',
               message: answered
-                ? { role: 'assistant', content: [{ type: 'text', text: 'Fresh answer.' }], stopReason: 'stop' }
+                ? {
+                    role: 'assistant',
+                    content: [{ type: 'text', text: 'Fresh answer.' }],
+                    stopReason: 'stop',
+                  }
                 : { role: 'assistant', content: [], stopReason: 'error', errorMessage: overflow },
             }),
           ].join('\n'),

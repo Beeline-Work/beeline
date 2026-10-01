@@ -125,8 +125,8 @@ describe('per-room harness state isolation', () => {
       openRouterRouting: { model, cacheDir, fetchImpl },
     });
 
-    const override = JSON.parse(readFileSync(resolve(roomRoot, 'pi/models.json'), 'utf8'))
-      .providers.openrouter.modelOverrides[model];
+    const override = JSON.parse(readFileSync(resolve(roomRoot, 'pi/models.json'), 'utf8')).providers
+      .openrouter.modelOverrides[model];
     expect(override.maxTokens).toBe(32_768);
     expect(override.contextWindow).toBeUndefined();
   });
@@ -313,6 +313,64 @@ describe('per-room harness state isolation', () => {
     expect(readFileSync(resolve(roomRoot, 'claude', quarantined[0]!), 'utf8')).toBe(
       '{"token":"stale-room-copy"}',
     );
+  });
+
+  it('keeps a newer Claude refresh when its atomic write detached the shared link', async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    const roomRoot = resolve(await scratch('beeline-room-refreshed-credential-'), 'agent-home');
+    const source = resolve(operatorHome, '.claude/.credentials.json');
+    const target = resolve(roomRoot, 'claude/.credentials.json');
+    const spent = JSON.stringify({ claudeAiOauth: { refreshToken: 'spent', expiresAt: 1_000 } });
+    const rotated = JSON.stringify({
+      claudeAiOauth: { refreshToken: 'rotated', expiresAt: 2_000 },
+    });
+    await mkdir(resolve(operatorHome, '.claude'), { recursive: true });
+    await writeFile(source, spent);
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+
+    // Claude refreshed through the isolated path: its atomic rename replaced
+    // the link, so the rotated login exists only in this Room.
+    const refreshed = `${target}.next`;
+    await writeFile(refreshed, rotated);
+    await rename(refreshed, target);
+
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+
+    expect(lstatSync(target).isSymbolicLink()).toBe(true);
+    expect(realpathSync(target)).toBe(realpathSync(source));
+    expect(readFileSync(source, 'utf8')).toBe(rotated);
+    const backups = readdirSync(resolve(operatorHome, '.claude')).filter((name) =>
+      name.startsWith('.credentials.json.beeline-quarantine-'),
+    );
+    expect(backups).toHaveLength(1);
+    expect(readFileSync(resolve(operatorHome, '.claude', backups[0]!), 'utf8')).toBe(spent);
+  });
+
+  it('keeps the operator Claude login when the detached copy expires no later', async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    const roomRoot = resolve(await scratch('beeline-room-older-credential-'), 'agent-home');
+    const source = resolve(operatorHome, '.claude/.credentials.json');
+    const target = resolve(roomRoot, 'claude/.credentials.json');
+    const current = JSON.stringify({
+      claudeAiOauth: { refreshToken: 'current', expiresAt: 2_000 },
+    });
+    await mkdir(resolve(operatorHome, '.claude'), { recursive: true });
+    await writeFile(source, current);
+    await mkdir(resolve(roomRoot, 'claude'), { recursive: true });
+    await writeFile(
+      target,
+      JSON.stringify({ claudeAiOauth: { refreshToken: 'older', expiresAt: 1_000 } }),
+    );
+
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+
+    expect(realpathSync(target)).toBe(realpathSync(source));
+    expect(readFileSync(source, 'utf8')).toBe(current);
+    expect(
+      readdirSync(resolve(operatorHome, '.claude')).filter((name) =>
+        name.startsWith('.credentials.json.beeline-'),
+      ),
+    ).toHaveLength(0);
   });
 
   it('repairs stale regular files for every shared credential path', async () => {
@@ -593,7 +651,9 @@ describe('operator skills + MCP passthrough', () => {
     expect(readFileSync(managedSkill, 'utf8')).toContain('name: using-beeline');
     const reviewSkill = readFileSync(resolve(skillsDir, 'beeline-review', 'SKILL.md'), 'utf8');
     expect(reviewSkill).toContain('PASS: call `approve_merge` with the reviewed head SHA');
-    expect(reviewSkill).toContain('`approved <reviewed sha>` without tagging the author. Do not tell the author to merge.');
+    expect(reviewSkill).toContain(
+      '`approved <reviewed sha>` without tagging the author. Do not tell the author to merge.',
+    );
     expect(reviewSkill).not.toContain('approved <reviewed sha>, merge');
     expect(reviewSkill).toContain(
       'Approving is your last step as reviewer. The server squash-merges that exact head',
@@ -1314,7 +1374,11 @@ describe('mounted imported MCP server names', () => {
         'args = ["-y", "@trusty-squire/mcp@latest", "server"]',
       ].join('\n'),
     );
-    const input = { operatorHome, agentKind: 'codex' as const, squireScope: { agentId: 'agent-a', roomId: 'room-a' } };
+    const input = {
+      operatorHome,
+      agentKind: 'codex' as const,
+      squireScope: { agentId: 'agent-a', roomId: 'room-a' },
+    };
     const preparedEnv = await prepareRoomAgentHome({
       root: agentHomeRoot,
       ...input,
@@ -1356,7 +1420,11 @@ describe('mounted imported MCP server names', () => {
         },
       }),
     );
-    const input = { operatorHome, agentKind: 'pi' as const, squireScope: { agentId: 'agent-a', roomId: 'room-a' } };
+    const input = {
+      operatorHome,
+      agentKind: 'pi' as const,
+      squireScope: { agentId: 'agent-a', roomId: 'room-a' },
+    };
     expect(mountedImportedMcpServerNames(input)).toEqual([]);
     expect(hostImportedMcpServerNames(input)).toEqual(['files', 'trusty-squire']);
     expect(

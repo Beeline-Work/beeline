@@ -296,7 +296,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'get_room_message',
     description:
-      'Read one message from this Room by its stable transcript id. Returns at most 4000 text characters, attachment references, and a nextOffset for the next text page. Current Room membership is checked on every call.',
+      'Read one message by its stable transcript id from this Room or an authorized source Room. Returns at most 4000 text characters, attachment references, and a nextOffset for the next text page.',
     inputSchema: {
       type: 'object',
       required: ['messageId'],
@@ -1972,7 +1972,8 @@ async function daemonExecute(name: string, input: JsonObject): Promise<JsonObjec
     body: JSON.stringify({
       ...input,
       ...(process.env.BEELINE_TURN_CONTEXT_FILE &&
-      ((!name.startsWith('get') || name.startsWith('getWallet')) && !name.startsWith('list'))
+      ((!name.startsWith('get') || name.startsWith('getWallet') || name === 'getRoomMessage') &&
+        !name.startsWith('list'))
         ? await activeCommandContext()
         : {}),
     }),

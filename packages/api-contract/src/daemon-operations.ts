@@ -218,9 +218,14 @@ export type DaemonOperationMap = {
   getWorkspaceRoster: Operation<WorkspaceRosterInput, WorkspaceRosterResult>;
   getRoomInbox: Operation<RoomCursorInput, RoomInboxResult>;
   getRoomConversation: Operation<RoomConversationInput, RoomConversationResult>;
-  /** One bounded page of an exact Room message, under current membership. */
+  /** One bounded page of an exact message in this Room or a source authorized for the active turn. */
   getRoomMessage: Operation<
-    RoomInput & { readonly messageId: string; readonly offset?: number },
+    RoomInput & {
+      readonly messageId: string;
+      readonly offset?: number;
+      readonly requestId?: string;
+      readonly generationId?: string;
+    },
     {
       readonly messageId: string;
       readonly body: string;

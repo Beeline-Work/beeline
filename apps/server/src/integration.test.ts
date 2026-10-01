@@ -2996,6 +2996,55 @@ describe('monolith integration', () => {
     expect(otherRoom.ok).toBe(false);
   });
 
+  it('fetches a search result from an authorized source Room in a corner turn', async () => {
+    const corner = '22222222-2222-4222-8222-222222222223';
+    const shared = '22222222-2222-4222-8222-222222222224';
+    const privateRoom = '22222222-2222-4222-8222-222222222225';
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES
+       ($1,$4,$5,'Issues triage'),($2,$4,NULL,'Shared'),($3,$4,NULL,'Private')`,
+      [corner, shared, privateRoom, WORKSPACE, ROOM],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+       ($1,$2,$5,'owner'),($1,$2,$6,'member'),
+       ($1,$3,$5,'owner'),($1,$3,$6,'member'),
+       ($1,$4,$6,'member')`,
+      [WORKSPACE, corner, shared, privateRoom, HUMAN, AGENT],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES
+       ('triage-root',$1,$4,'Inspect this result','message'),
+       ('triage-shared',$2,$4,'Authorized result text','message'),
+       ('triage-private',$3,$5,'Private result text','message')`,
+      [ROOM, shared, privateRoom, HUMAN, AGENT],
+    );
+    await database.transaction(async (tx) => {
+      const command = await createAgentCommand(tx, {
+        roomId: corner,
+        agentId: AGENT,
+        sourceMessageId: 'triage-root',
+        turnRequestId: 'triage-request',
+        reason: 'fixture',
+      });
+      expect(command).toBeTruthy();
+      await claimAgentCommand(tx, corner, AGENT, command!.id, 'triage-generation');
+    });
+    const call = (messageId: string) => daemonOperation('getRoomMessage', {
+      roomId: corner,
+      messageId,
+      requestId: 'triage-request',
+      generationId: 'triage-generation',
+    });
+    const sharedResult = await call('triage-shared');
+    expect(sharedResult.status).toBe(200);
+    expect(await sharedResult.json()).toMatchObject({ body: 'Authorized result text' });
+    const parentResult = await call('triage-root');
+    expect(parentResult.status).toBe(200);
+    expect(await parentResult.json()).toMatchObject({ body: 'Inspect this result' });
+    expect((await call('triage-private')).ok).toBe(false);
+  });
+
   it('never reports unread for the viewer’s own latest message', async () => {
     // A live helper is the quiet case: with a fresh presence heartbeat the send
     // writes no unread-mention notice, so the only rows here are the two the

@@ -691,6 +691,13 @@ export function BuzzChatSurface({
   // Staged photos and files start uploading as soon as they land in the
   // composer, so send only waits for whatever is still in flight.
   const [attachmentUploader] = useState(createChatAttachmentUploader);
+  // Each row shows its own upload state, so redraw whenever one changes.
+  const [, setAttachmentUploadRevision] = useState(0);
+  useEffect(
+    () =>
+      attachmentUploader.subscribe(() => setAttachmentUploadRevision((revision) => revision + 1)),
+    [attachmentUploader],
+  );
   useEffect(() => {
     attachmentUploader.retain(pendingAttachments);
     if (!transport || pendingAttachments.length === 0) return;
@@ -2464,9 +2471,7 @@ export function BuzzChatSurface({
     boundaryId: string;
     acknowledgeQueue: boolean;
   } | null>(null);
-  // Same progress rule as a scrubbed landing: keep moving toward a distant
-  // row while each failed attempt measures further (`continueScrubLanding`).
-  const pendingNotificationLandingRef = useRef<ScrubLanding | null>(null);
+  const pendingNotificationLandingRef = useRef<{ messageId: string; attempts: number } | null>(null);
   // The one-shot re-center + brass flash for a message-source jump (quote
   // reference, forward source, notification target). Settles on the same
   // viewability report that clears `pendingNotificationLandingRef` above —
@@ -2995,12 +3000,7 @@ export function BuzzChatSurface({
           if (row) raiseSourceLandingFlash(transcriptMessages[visibleIndex]!.id);
           return;
         }
-        pendingNotificationLandingRef.current = {
-          messageId,
-          highestMeasured: -1,
-          stalls: 0,
-          failures: 0,
-        };
+        pendingNotificationLandingRef.current = { messageId, attempts: 0 };
         // A first scroll can mount a distant variable-height row with its
         // provisional frame; once native measures that row, its real height
         // can move the same durable id. Re-center it exactly ONCE — but only
@@ -6020,7 +6020,8 @@ export function BuzzChatSurface({
                     message.id === notification.messageId ||
                     message.relayId === notification.messageId,
                 );
-                if (index >= 0 && continueScrubLanding(notification, highestMeasuredFrameIndex)) {
+                if (index >= 0 && notification.attempts < 8) {
+                  notification.attempts += 1;
                   // Native has not measured the distant row yet. Bring its
                   // window into range, then resolve the durable id again in
                   // case a newer message shifted the inverted list.
@@ -6317,6 +6318,7 @@ export function BuzzChatSurface({
                   name: attachment.name,
                   mimeType: attachment.mimeType,
                   sizeLabel: formatAttachmentSize(attachment.size),
+                  uploadState: attachmentUploader.state(attachment),
                 }))}
                 attachmentsUploading={sending}
                 onRemoveAttachment={(index) =>
@@ -6324,6 +6326,14 @@ export function BuzzChatSurface({
                     current.filter((_, attachmentIndex) => attachmentIndex !== index),
                   )
                 }
+                onRetryAttachment={(index) => {
+                  const attachment = pendingAttachments[index];
+                  if (!transport || !attachment) return;
+                  void transport
+                    .ensureClient()
+                    .then((client) => attachmentUploader.start(client, [attachment]))
+                    .catch(() => undefined);
+                }}
                 speechHints={speechHints}
                 value={inputText}
                 inputRevision={composerInputRevision}

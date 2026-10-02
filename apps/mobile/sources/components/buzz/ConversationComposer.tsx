@@ -76,9 +76,12 @@ type Props = {
     name: string;
     mimeType: string;
     sizeLabel: string;
+    /** Background upload state; undefined before the upload starts reads as uploading. */
+    uploadState?: 'uploading' | 'uploaded' | 'failed';
   }[];
   attachmentsUploading?: boolean;
   onRemoveAttachment?(index: number): void;
+  onRetryAttachment?(index: number): void;
 };
 
 export const COMPOSER_SINGLE_LINE_INPUT_HEIGHT = 26;
@@ -114,6 +117,7 @@ export function ConversationComposer({
   attachments = [],
   attachmentsUploading = false,
   onRemoveAttachment,
+  onRetryAttachment,
 }: Props) {
   const { theme } = useUnistyles();
   const multiline = height > COMPOSER_SINGLE_LINE_INPUT_HEIGHT;
@@ -212,11 +216,36 @@ export function ConversationComposer({
                 <Text numberOfLines={1} ellipsizeMode="tail" style={styles.attachmentName}>
                   {attachment.name}
                 </Text>
-                <Text numberOfLines={1} style={styles.attachmentMeta}>
-                  {attachmentsUploading ? 'UPLOADING' : attachment.sizeLabel} ·{' '}
-                  {attachment.mimeType.toUpperCase()}
+                <Text
+                  numberOfLines={1}
+                  style={styles.attachmentMeta}
+                  testID={`pending-chat-attachment-meta-${index}`}
+                >
+                  <Text
+                    style={attachment.uploadState === 'failed' && styles.attachmentFailed}
+                    testID={`pending-chat-attachment-state-${index}`}
+                  >
+                    {attachment.uploadState === 'uploaded'
+                      ? 'Ready'
+                      : attachment.uploadState === 'failed'
+                        ? 'Upload failed'
+                        : 'Uploading…'}
+                  </Text>{' '}
+                  · {attachment.sizeLabel} · {attachment.mimeType.toUpperCase()}
                 </Text>
               </View>
+              {attachment.uploadState === 'failed' && (
+                <TouchableOpacity
+                  accessibilityLabel={`Retry uploading ${attachment.name}`}
+                  accessibilityRole="button"
+                  disabled={attachmentsUploading}
+                  onPress={() => onRetryAttachment?.(index)}
+                  style={styles.retryButton}
+                  testID={`pending-chat-attachment-retry-${index}`}
+                >
+                  <Text style={styles.retryButtonText}>Retry</Text>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity
                 accessibilityLabel={`Remove ${attachment.name}`}
                 accessibilityRole="button"
@@ -597,6 +626,14 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.buzz.transcriptCard.rowKindSize,
     color: theme.buzz.ledgerGhost,
   },
+  attachmentFailed: { color: theme.buzz.danger },
+  retryButton: {
+    minHeight: 44,
+    alignSelf: 'stretch',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  retryButtonText: { ...theme.buzz.type.meta, color: theme.buzz.accent },
   removeButton: {
     width: 44,
     minHeight: 44,

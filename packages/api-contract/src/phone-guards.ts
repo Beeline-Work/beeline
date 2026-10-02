@@ -519,9 +519,11 @@ function readAppSignInCard(value: unknown): NonNullable<RoomViewMessage['appSign
   if (!item || !uuid(item.appId) || typeof item.appKey !== 'string' ||
     !item.appKey || typeof item.name !== 'string' || !item.name ||
     !hex64(item.ownerId) || !hex64(item.agentId) ||
-    (item.status !== 'pending' && item.status !== 'connected')) return null;
+    (item.status !== 'pending' && item.status !== 'connected' && item.status !== 'failed')) return null;
   return { appId: item.appId, appKey: item.appKey, name: item.name,
     ownerId: item.ownerId, agentId: item.agentId, status: item.status,
+    ...field('errorMessage', typeof item.errorMessage === 'string' && item.errorMessage.length <= 500
+      ? item.errorMessage : undefined),
     ...field('continuation', typeof item.continuation === 'string' && item.continuation.length <= 160
       ? item.continuation : undefined) };
 }

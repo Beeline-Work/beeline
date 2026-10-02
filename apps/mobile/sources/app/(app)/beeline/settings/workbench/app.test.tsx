@@ -71,6 +71,16 @@ describe('App detail', () => {
     expect((await source.readWorkbench({ workspaceId: 'ws', viewerId: 'human-dani' })).apps).toHaveLength(0);
   });
 
+  it('warns about Instagram account requirements before sign-in', async () => {
+    source.setApps([{ id: 'app-slack', key: 'instagram', name: 'Instagram',
+      transport: 'composio', status: 'error', errorMessage: 'Account rejected', useCount: 0 }]);
+    const renderer = await render();
+    const tree = JSON.stringify(renderer.toJSON());
+    expect(tree).toContain('Business or Creator account linked to a Facebook Page');
+    expect(tree).toContain('Account rejected');
+    expect(tree).toContain('Retry Instagram');
+  });
+
   it('shows a product description on Neon detail when provider copy is missing or filler', async () => {
     source.setApps([{ id: 'app-slack', key: 'neon', name: 'Neon',
       description: 'Use neon tools.', transport: 'squire-api', status: 'connected', useCount: 0 }]);

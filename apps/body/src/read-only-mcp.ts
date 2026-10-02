@@ -3300,7 +3300,8 @@ export async function workbenchStatus(
       label: string;
       state: string;
     }>;
-    apps?: Array<{ appId: string; appKey: string; name: string; transport: string; status: string }>;
+    apps?: Array<{ appId: string; appKey: string; name: string; transport: string;
+      status: string; errorMessage?: string }>;
     machine?: { machineId: string; name: string };
   };
   const who = view.owner?.handle
@@ -3336,7 +3337,7 @@ export async function workbenchStatus(
   const apps = view.apps ?? [];
   if (!apps.length) lines.push('- none');
   for (const app of apps)
-    lines.push(`- ${app.name} (app:${app.appKey}, id ${app.appId}) via ${app.transport}: ${app.status}`);
+    lines.push(`- ${app.name} (app:${app.appKey}, id ${app.appId}) via ${app.transport}: ${app.status}${app.status === 'error' && app.errorMessage ? ` — ${app.errorMessage}` : ''}`);
   if (deps.tailscaleReach) {
     const enabled = Boolean(
       view.catalog?.some(

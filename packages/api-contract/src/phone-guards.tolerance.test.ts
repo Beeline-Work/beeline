@@ -397,6 +397,12 @@ describe('phone surface readers', () => {
       ?.appSignIn).toBeUndefined();
     expect(readRoomViewMessage({ ...message, appSignIn: { ...appSignIn, continuation: 'x'.repeat(161) } })
       ?.appSignIn?.continuation).toBeUndefined();
+    expect(readRoomViewMessage({ ...message, appSignIn: { ...appSignIn,
+      status: 'failed', errorMessage: 'Provider rejected this account type' } })?.appSignIn)
+      .toMatchObject({ status: 'failed', errorMessage: 'Provider rejected this account type' });
+    expect(readRoomViewMessage({ ...message, appSignIn: { ...appSignIn,
+      status: 'failed', errorMessage: 'x'.repeat(501) } })?.appSignIn?.errorMessage)
+      .toBeUndefined();
   });
 
   it('preserves a Squire-owned approval link and drops malformed destinations', () => {

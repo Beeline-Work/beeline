@@ -68,6 +68,16 @@ describe('managed app provider boundary', () => {
     });
   });
 
+  it('reads a failed account status reason without exposing the provider key', async () => {
+    const transport = vi.fn(async () => json({ id: ACCOUNT, user_id: PERSON,
+      toolkit: { slug: 'instagram' }, status: 'FAILED',
+      status_reason: 'Instagram needs a Business account; fixture-only was rejected' }));
+    const provider = new ComposioApps('fixture-only', transport as typeof fetch);
+    await expect(provider.accountStatus(ACCOUNT, PERSON, 'instagram')).resolves.toEqual({
+      status: 'failed', reason: 'Instagram needs a Business account; [redacted] was rejected',
+    });
+  });
+
   it('pins execution to one account, person and toolkit and removes secret-shaped fields', async () => {
     const transport = vi.fn(async (url: URL | string, init?: RequestInit) => {
       const path = new URL(String(url)).pathname;

@@ -284,7 +284,8 @@ export type RoomViewMessage = {
     readonly name: string;
     readonly ownerId: string;
     readonly agentId: string;
-    readonly status: 'pending' | 'connected';
+    readonly status: 'pending' | 'connected' | 'failed';
+    readonly errorMessage?: string;
     readonly continuation?: string;
   };
   /** One preference card: a lettered question or a Room poll. Never authority. */

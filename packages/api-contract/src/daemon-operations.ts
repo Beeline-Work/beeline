@@ -1372,6 +1372,7 @@ export type AgentWorkbenchView = {
     readonly name: string;
     readonly transport: AppTransport;
     readonly status: ConnectAppStatus;
+    readonly errorMessage?: string;
   }[];
   /** This agent's own machine, where an accepted offer would install. */
   readonly machine: { readonly machineId: string; readonly name: string };

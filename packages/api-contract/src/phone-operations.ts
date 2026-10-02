@@ -365,7 +365,7 @@ export type WorkflowRunStepView = {
   readonly contents?: Readonly<Record<string, unknown>>;
   /** When `toState` is a gate: the choice card posted for this visit. */
   readonly gate?: WorkflowGateRecordView;
-  /** Corners `toState`'s holder opened during this visit that the viewer can read. */
+  /** Corners the handoff leaving `toState` lists by `cornerId` that the viewer can read. */
   readonly openedCorners?: readonly WorkflowOpenedCornerView[];
 };
 export type WorkflowRunDetailView = {

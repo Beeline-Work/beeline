@@ -60,5 +60,5 @@ describes the problem in your own words, lists its item ids, and requires the fi
 pull request body to carry the line `Feedback items: <ids>`. The repository is
 public: the brief and the pull request must never quote a report, and never name
 the people, Rooms or emails behind it. Tag the agent best suited to the work in
-that corner. Hand off `dispatched` with `corners` listing each corner and its
-item ids.
+that corner. Hand off `dispatched` with `corners` listing each corner's
+`cornerId` (from `open_corner`), its name and its item ids.

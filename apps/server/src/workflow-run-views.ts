@@ -446,44 +446,48 @@ async function loadGateRecords(
   return records;
 }
 
+/** The `cornerId`s a handoff lists under `corners`, in order. */
+function listedCornerIds(contents: Record<string, unknown> | null | undefined): string[] {
+  const corners = contents?.corners;
+  if (!Array.isArray(corners)) return [];
+  return corners.flatMap((corner: unknown) => {
+    const id = (corner as { cornerId?: unknown } | null)?.cornerId;
+    return typeof id === 'string' ? [id] : [];
+  });
+}
+
 /**
- * Corners each visit's holder opened while the run sat in that state. An
- * agent opens a corner in the top-level Room, so they are the top Room's
- * children created by the holder in the visit's window, and only those the
- * viewer can read.
+ * Corners each visit opened: the `cornerId`s the handoff that left it lists
+ * under `corners`. They are the top Room's corners, and only those the viewer
+ * can read.
  */
 async function loadOpenedCorners(
   db: SqlDatabase,
-  head: RunHead,
   topRoomId: string,
   viewerId: string,
-  contract: WorkflowContract,
   visits: readonly Visit[],
 ): Promise<Map<Visit, WorkflowOpenedCornerView[]>> {
   const opened = new Map<Visit, WorkflowOpenedCornerView[]>();
-  const holders = new Map<Visit, string>();
-  for (const visit of visits) {
-    const role = stateRole(contract, visit.card.to_state);
-    const holder = role
-      ? boundIdentityId(head, (visit.card.role_bindings ?? head.roleBindings)[role])
-      : undefined;
-    if (holder) holders.set(visit, holder);
-  }
-  if (holders.size === 0) return opened;
-  const corners = (
-    await db.query<{ id: string; name: string; parent_id: string; created_by: string; created_us: string }>(
-      `SELECT room.id,room.name,room.parent_id,room.created_by,${MICROS('room.created_at')} created_us
-       FROM rooms room
-       WHERE room.parent_id=$1 AND room.created_by=ANY($3::text[]) AND room.created_at>=$4
-         AND ${VIEWER_CAN_READ_ROOM_SQL}
-       ORDER BY room.created_at,room.id`,
-      [topRoomId, viewerId, [...new Set(holders.values())], visits[0]!.card.created_at],
-    )
-  ).rows;
-  for (const [visit, holder] of holders) {
-    const mine = corners
-      .filter((corner) => corner.created_by === holder && within(visit, Number(corner.created_us)))
-      .map((corner) => ({ id: corner.id, name: corner.name, parentRoomId: corner.parent_id }));
+  const listed = new Map<Visit, string[]>();
+  visits.forEach((visit, index) => {
+    const ids = listedCornerIds(visits[index + 1]?.card.contents);
+    if (ids.length > 0) listed.set(visit, ids);
+  });
+  if (listed.size === 0) return opened;
+  const readable = new Map(
+    (
+      await db.query<{ id: string; name: string; parent_id: string }>(
+        `SELECT room.id,room.name,room.parent_id FROM rooms room
+         WHERE room.parent_id=$1 AND room.id::text=ANY($3::text[]) AND ${VIEWER_CAN_READ_ROOM_SQL}`,
+        [topRoomId, viewerId, [...new Set([...listed.values()].flat())]],
+      )
+    ).rows.map((corner) => [corner.id, corner]),
+  );
+  for (const [visit, ids] of listed) {
+    const mine = [...new Set(ids)].flatMap((id) => {
+      const corner = readable.get(id);
+      return corner ? [{ id: corner.id, name: corner.name, parentRoomId: corner.parent_id }] : [];
+    });
     if (mine.length > 0) opened.set(visit, mine);
   }
   return opened;
@@ -538,7 +542,7 @@ export async function readWorkflowRun(
     loadActors(db, headBindingIds(head)),
     loadViewer(db, viewerId),
     loadGateRecords(db, input.roomId, contract, visits),
-    loadOpenedCorners(db, head, topRoomId, viewerId, contract, visits),
+    loadOpenedCorners(db, topRoomId, viewerId, visits),
   ]);
   const roleHolders: Record<string, WorkflowActorView> = {};
   for (const [role, binding] of Object.entries(head.roleBindings)) {

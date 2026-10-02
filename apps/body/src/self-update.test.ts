@@ -629,6 +629,15 @@ describe('self-update end to end against a local fixture manifest', () => {
       expect(rewritten).toContain(`Environment=PATH=${dirname(process.execPath)}:`);
       const control = await readFile(systemctlLog, 'utf8');
       expect(control).toContain('restart --no-block trusty-squire-broker.service');
+
+      // The same update carries the agent template's OOMPolicy=continue onto a
+      // host installed before it existed, so the next daemon restart survives
+      // an OOM-killed child.
+      const agentUnitPath = join(configRoot, 'systemd', 'user', 'beeline-agent@.service');
+      const agentUnit = await readFile(agentUnitPath, 'utf8');
+      expect(agentUnit).toContain('OOMPolicy=continue');
+      expect(agentUnit).toContain('OOMScoreAdjust=-1000');
+      expect(control).toContain('daemon-reload');
     } finally {
       if (previousPlatform) Object.defineProperty(process, 'platform', previousPlatform);
     }

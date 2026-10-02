@@ -1103,6 +1103,10 @@ export default function BuzzChannels() {
               const cornersExpanded = cornerDropdowns.expanded.has(item.room.id);
               const row = (
                 <View
+                  // Android keeps clipping a reused `overflow: 'hidden'` frame to its old
+                  // corners when a reorder changes its rounding, so the card's content
+                  // vanishes; a frame whose rounding changes is mounted fresh instead.
+                  key={`${first}-${last}`}
                   style={[
                     styles.rowSurface,
                     first && styles.rowSurfaceFirst,

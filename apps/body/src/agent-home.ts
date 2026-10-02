@@ -32,10 +32,10 @@
  * generated `settings.json` allowing its native `WebSearch` tool. Pi's
  * harness MCP inventory is `$PI_CODING_AGENT_DIR/mcp.json` (operator
  * `~/.pi/agent/mcp.json`); local servers are copied and granted host routes
- * are rewritten there like Claude's `.claude.json`. Pi 0.85.1 itself does
- * not read that file — optional `pi-mcp-adapter` does — and isolated homes
- * still exclude `settings.json`, so Beeline-owned servers and granted routes
- * also ride `pi-mcp-bridge.ts`. This does NOT touch the #376
+ * are rewritten there like Claude's `.claude.json`. The Pi installer chooses
+ * that native inventory only when the executable proves it can load it;
+ * otherwise `pi-mcp-bridge.ts` republishes the filtered stdio inventory.
+ * Isolated homes still exclude `settings.json`. This does NOT touch the #376
  * credential armor: masked stores (`~/.ssh`, `~/.netrc`, `~/.config/gh`,
  * `~/.config/trusty-squire`, `~/.git-credentials`) are never linked. Imported
  * MCP declarations are classified `local` (copied as-is) or `host` (rewritten

@@ -248,6 +248,8 @@ export interface GitHubInstallationRepository {
   fullName: string;
   remote: string;
   defaultBranch: string;
+  /** GitHub's `private` flag; an absent flag is treated as private. */
+  private: boolean;
 }
 
 export interface GitHubDispatchableWorkflow {
@@ -959,7 +961,15 @@ export class GitHubAppClient {
         if (!Number.isSafeInteger(id) || !name || !fullName || !remote || !defaultBranch) {
           throw new Error('GitHub repository entry is invalid');
         }
-        return { id, installationId, name, fullName, remote, defaultBranch };
+        return {
+          id,
+          installationId,
+          name,
+          fullName,
+          remote,
+          defaultBranch,
+          private: repo.private !== false,
+        };
       });
       repositories.push(...parsed);
       if (body.repositories.length < 100) return repositories;
@@ -1008,7 +1018,15 @@ export class GitHubAppClient {
     ) {
       throw new Error('GitHub repository creation response is invalid');
     }
-    return { id, installationId, name, fullName, remote, defaultBranch };
+    return {
+      id,
+      installationId,
+      name,
+      fullName,
+      remote,
+      defaultBranch,
+      private: body.private !== false,
+    };
   }
 
   async userCanAccessInstallation(accessToken: string, installationId: number): Promise<boolean> {

@@ -511,6 +511,7 @@ export class GitHubOperations {
       fullName: repository.fullName,
       installationId: repository.installationId,
       defaultBranch: repository.defaultBranch,
+      private: repository.private,
     };
   }
 
@@ -2245,14 +2246,26 @@ export class GitHubOperations {
     });
   }
   private async storeRepository(
-    repository: { id: number; installationId: number; fullName: string; defaultBranch: string },
+    repository: {
+      id: number;
+      installationId: number;
+      fullName: string;
+      defaultBranch: string;
+      private: boolean;
+    },
     database: SqlDatabase,
   ) {
     await database.query(
-      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch) VALUES($1,$2,$3,$4) ON CONFLICT(repository_id) DO UPDATE SET installation_id=EXCLUDED.installation_id,full_name=EXCLUDED.full_name,default_branch=EXCLUDED.default_branch,active=true,updated_at=now()
-       WHERE (github_repositories.installation_id,github_repositories.full_name,github_repositories.default_branch,github_repositories.active)
-         IS DISTINCT FROM (EXCLUDED.installation_id,EXCLUDED.full_name,EXCLUDED.default_branch,true)`,
-      [repository.id, repository.installationId, repository.fullName, repository.defaultBranch],
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch,private) VALUES($1,$2,$3,$4,$5) ON CONFLICT(repository_id) DO UPDATE SET installation_id=EXCLUDED.installation_id,full_name=EXCLUDED.full_name,default_branch=EXCLUDED.default_branch,private=EXCLUDED.private,active=true,updated_at=now()
+       WHERE (github_repositories.installation_id,github_repositories.full_name,github_repositories.default_branch,github_repositories.private,github_repositories.active)
+         IS DISTINCT FROM (EXCLUDED.installation_id,EXCLUDED.full_name,EXCLUDED.default_branch,EXCLUDED.private,true)`,
+      [
+        repository.id,
+        repository.installationId,
+        repository.fullName,
+        repository.defaultBranch,
+        repository.private,
+      ],
     );
   }
   private seal(token: string) {

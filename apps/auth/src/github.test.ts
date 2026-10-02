@@ -167,6 +167,22 @@ describe('GitHub-only account and repository access', () => {
                 full_name: 'acme/beeline',
                 clone_url: 'https://github.com/acme/beeline.git',
                 default_branch: 'main',
+                private: false,
+              },
+              {
+                id: 10,
+                name: 'secret',
+                full_name: 'acme/secret',
+                clone_url: 'https://github.com/acme/secret.git',
+                default_branch: 'main',
+                private: true,
+              },
+              {
+                id: 11,
+                name: 'unknown',
+                full_name: 'acme/unknown',
+                clone_url: 'https://github.com/acme/unknown.git',
+                default_branch: 'main',
               },
             ],
           }),
@@ -176,7 +192,9 @@ describe('GitHub-only account and repository access', () => {
     vi.stubGlobal('fetch', fetchMock);
     const app = new GitHubAppClient({ appId: '42', privateKey: privateKeyPem, slug: 'beeline' });
     await expect(app.listRepositories(77)).resolves.toEqual([
-      expect.objectContaining({ fullName: 'acme/beeline', installationId: 77 }),
+      expect.objectContaining({ fullName: 'acme/beeline', installationId: 77, private: false }),
+      expect.objectContaining({ fullName: 'acme/secret', private: true }),
+      expect.objectContaining({ fullName: 'acme/unknown', private: true }),
     ]);
     expect(fetchMock.mock.calls[0]![0]).toBe(
       'https://api.github.com/app/installations/77/access_tokens',
@@ -674,6 +692,7 @@ describe('GitHub-only account and repository access', () => {
             full_name: 'acme/new-repo',
             clone_url: 'https://github.com/acme/new-repo.git',
             default_branch: 'main',
+            private: true,
           }),
           { status: 201 },
         ),
@@ -690,7 +709,7 @@ describe('GitHub-only account and repository access', () => {
         { login: 'acme', type: 'Organization' },
         { name: 'new-repo', private: true },
       ),
-    ).resolves.toMatchObject({ installationId: 77, fullName: 'acme/new-repo' });
+    ).resolves.toMatchObject({ installationId: 77, fullName: 'acme/new-repo', private: true });
     expect(fetchMock.mock.calls[1]![0]).toBe('https://api.github.com/orgs/acme/repos');
     expect(JSON.parse(String(fetchMock.mock.calls[1]![1].body))).toEqual({
       name: 'new-repo',
@@ -708,6 +727,7 @@ describe('GitHub-only account and repository access', () => {
           full_name: 'owner/new-repo',
           clone_url: 'https://github.com/owner/new-repo.git',
           default_branch: 'main',
+          private: false,
         }),
         { status: 201 },
       ),
@@ -721,7 +741,11 @@ describe('GitHub-only account and repository access', () => {
         { name: 'new-repo' },
         'user-token',
       ),
-    ).resolves.toMatchObject({ fullName: 'owner/new-repo', defaultBranch: 'main' });
+    ).resolves.toMatchObject({
+      fullName: 'owner/new-repo',
+      defaultBranch: 'main',
+      private: false,
+    });
     expect(fetchMock.mock.calls[0]![0]).toBe('https://api.github.com/user/repos');
     expect(JSON.parse(String(fetchMock.mock.calls[0]![1].body))).toEqual({
       name: 'new-repo',

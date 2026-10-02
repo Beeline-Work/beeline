@@ -1847,6 +1847,8 @@ CREATE TABLE IF NOT EXISTS github_repositories (
   active boolean NOT NULL DEFAULT true,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+-- NULL until the next installation refresh records GitHub's flag; read as private.
+ALTER TABLE github_repositories ADD COLUMN IF NOT EXISTS private boolean;
 
 DROP TABLE IF EXISTS github_head_checks;
 

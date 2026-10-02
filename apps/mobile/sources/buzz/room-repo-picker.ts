@@ -12,7 +12,18 @@ export type RepoCandidate = {
   remote?: string;
   githubInstallationId?: number;
   defaultBranch?: string;
+  /** GitHub visibility; undefined when unknown. */
+  private?: boolean;
 };
+
+/**
+ * New Room's invite-only default for the chosen repository: a private (or
+ * unknown) repository starts invite-only, a public one starts public, and no
+ * repository keeps the public default.
+ */
+export function inviteOnlyForRepository(candidate: Pick<RepoCandidate, 'private'> | null): boolean {
+  return candidate ? candidate.private !== false : false;
+}
 
 export type GitHubRepositoryLinkagePlan =
   | { kind: 'available'; candidate: RepoCandidate }

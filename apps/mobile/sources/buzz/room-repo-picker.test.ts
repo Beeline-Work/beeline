@@ -7,6 +7,7 @@ import {
   groupRepoCandidatesByOwner,
   looksLikeCornerOpenIntent,
   githubFullNameFromInput,
+  inviteOnlyForRepository,
   matchesRepoQuery,
   repoOwnerFromCandidate,
   repoShortName,
@@ -23,6 +24,15 @@ const installation = {
   repositoryCount: 1,
   manageUrl: 'https://github.com/organizations/acme/settings/installations/7',
 };
+
+describe('inviteOnlyForRepository', () => {
+  it('starts private and unknown repositories invite-only, public ones and none public', () => {
+    expect(inviteOnlyForRepository({ private: true })).toBe(true);
+    expect(inviteOnlyForRepository({})).toBe(true);
+    expect(inviteOnlyForRepository({ private: false })).toBe(false);
+    expect(inviteOnlyForRepository(null)).toBe(false);
+  });
+});
 
 describe('githubRepositoryLinkagePlan', () => {
   it('uses an already-granted target without sending the user to a browser', () => {

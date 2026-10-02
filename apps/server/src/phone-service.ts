@@ -5365,8 +5365,9 @@ export class PhoneService {
                 installation_id: string;
                 full_name: string;
                 default_branch: string;
+                private: boolean | null;
               }>(
-                `SELECT r.repository_id,r.installation_id,r.full_name,r.default_branch
+                `SELECT r.repository_id,r.installation_id,r.full_name,r.default_branch,r.private
                  FROM github_repositories r
                  JOIN github_installations i USING(installation_id)
                  WHERE r.repository_id=$1 AND r.active AND i.owner_id=$2 AND i.status='active'`,
@@ -5386,7 +5387,8 @@ export class PhoneService {
           input.workspaceId,
           viewerId,
           name,
-          input.visibility ?? 'public',
+          input.visibility ??
+            (repository && repository.private !== false ? 'invite-only' : 'public'),
           repository ? `github:${repository.repository_id}` : null,
           repository?.full_name ?? null,
           repository ? `git://github.com/${repository.full_name}` : null,
@@ -7260,6 +7262,7 @@ export class PhoneService {
       full_name: string;
       installation_id: string;
       default_branch: string;
+      private: boolean | null;
     }>(
       `SELECT r.* FROM github_repositories r JOIN github_installations i USING(installation_id) WHERE i.owner_id=$1 AND i.status='active' AND r.active`,
       [viewerId],
@@ -7288,6 +7291,9 @@ export class PhoneService {
         fullName: row.full_name,
         installationId: Number(row.installation_id),
         defaultBranch: row.default_branch,
+        // Rows stored before GitHub's flag was recorded read as private until
+        // the next installation refresh backfills it.
+        private: row.private !== false,
       })),
     };
   }

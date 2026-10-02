@@ -487,6 +487,7 @@ export class MonolithRigTransport {
         fullName: string;
         installationId: number;
         defaultBranch: string;
+        private: boolean;
       }[];
       githubReconnectNeeded?: boolean;
     };
@@ -500,6 +501,7 @@ export class MonolithRigTransport {
         remote: `git://github.com/${repo.fullName}`,
         githubInstallationId: repo.installationId,
         defaultBranch: repo.defaultBranch,
+        private: repo.private,
       })),
     };
   }
@@ -523,6 +525,7 @@ export class MonolithRigTransport {
       fullName: string;
       installationId: number;
       defaultBranch: string;
+      private: boolean;
     };
     return {
       key: `github:${repo.id}`,
@@ -530,6 +533,7 @@ export class MonolithRigTransport {
       remote: `git://github.com/${repo.fullName}`,
       githubInstallationId: repo.installationId,
       defaultBranch: repo.defaultBranch,
+      private: repo.private,
     };
   }
   githubRepositoryAccess(fullName: string): Promise<any> {

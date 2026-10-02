@@ -322,7 +322,11 @@ export type WorkflowRunSummaryView = {
   /** The run's current state (its terminal state once it has ended). */
   readonly state: string;
   readonly status: WorkflowRunStatus;
-  /** Whoever holds the current state's role; absent for a server, waiting, or terminal state. */
+  /**
+   * Whoever holds the current state's role. An ended run names the role that
+   * handed it to the terminal, or that card's author when the state it left
+   * has no role. Absent for a live server or waiting state.
+   */
   readonly holder?: WorkflowActorView;
   /** True when the current state waits on the viewer: their role, or a gate a person answers. */
   readonly viewerHolds: boolean;

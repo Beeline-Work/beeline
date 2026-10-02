@@ -10,6 +10,7 @@ import {
   workflowStateLabel,
   type WorkflowGraphLayout,
 } from './workflow-graph';
+import { loopRoundLabel } from './workflow-run-copy';
 
 const repo = path.resolve(__dirname, '../../../..');
 const feedbackTriage = JSON.parse(
@@ -214,6 +215,10 @@ describe('layoutWorkflowGraph · corner (mock v11 frame D)', () => {
     expect(layout.chevrons.filter((chevron) => chevron.traversed)).toHaveLength(1);
     const review = layout.rows.find((row) => row.state === 'review')!;
     expect(review.loop).toEqual({ taken: 1, cap: 3 });
+    // One send-back on a cap of 3 is the second trip, still inside the cap.
+    expect(loopRoundLabel(review.loop)).toBe('round 2 of 3');
+    expect(loopRoundLabel({ taken: 3, cap: 3 })).toBe('round 3 of 3');
+    expect(loopRoundLabel({ taken: 0, cap: 3 })).toBeUndefined();
     expect(review.visits).toBe(2);
     expect(review.enteredAt).toBe(7);
     expect(layout.rows.find((row) => row.state === 'implement')!.lastOutcome).toBe('pushed');

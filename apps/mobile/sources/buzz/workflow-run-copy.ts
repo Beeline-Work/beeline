@@ -26,10 +26,10 @@ export function workflowRunRoomHref(
 
 const TERMINAL_LABEL = { done: 'Done', failed: 'Failed', abandoned: 'Abandoned' } as const;
 
-/** `round 2 of 4`: the loop's current trip out of the most it allows (cap trips back, plus the first). */
+/** `round 2 of 3`: the current trip out of the loop's cap. Hidden until the run has taken the loop edge once. */
 export function loopRoundLabel(loop: GraphRow['loop']): string | undefined {
   if (!loop || loop.taken < 1) return undefined;
-  return `round ${Math.min(loop.taken + 1, loop.cap + 1)} of ${loop.cap + 1}`;
+  return `round ${Math.min(loop.taken + 1, loop.cap)} of ${loop.cap}`;
 }
 
 function outcomeLabel(outcome: string): string {

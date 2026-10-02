@@ -529,7 +529,7 @@ them in one SVG gutter beside the rows. The rules:
   one `meta` line: the holder and the outcome taken for a passed state,
   `Waiting on you` or the holder for the current one, and the reason and
   status (`Skip · Done`) for a terminal. A capped loop adds its count to its
-  own state, `round 2 of 4`: cap trips back plus the first. Passed rows carry
+  own state, `round 2 of 3`: the current trip out of the cap. Passed rows carry
   their time (`machine`) on the right; the current row carries Open → to the
   corner the run works in.
 

@@ -158,6 +158,44 @@ describe('listRoomWorkflowRuns', () => {
     expect(asTriager.workflows.find((run) => run.workflowSlug === 'corner')!.viewerHolds).toBe(true);
   });
 
+  it('keeps the last role holder after the run ends', async () => {
+    await saveWorkflow(database, await command(CORNER, TRIAGER), { contract: TRIAGE });
+    const { runId } = await startWorkflow(database, await command(CORNER, TRIAGER), {
+      name: 'feedback-triage',
+      roleBindings: { triager: TRIAGER },
+    });
+    await handoff(database, await command(CORNER, TRIAGER), {
+      runId,
+      outcome: 'nothing_new',
+      contents: {},
+    });
+    await advanceCorner(database, CORNER, {
+      kind: 'open',
+      lane: 'code',
+      workspaceId: WORKSPACE,
+      implementerAgentId: TRIAGER,
+    });
+    expect(
+      (await advanceCorner(database, CORNER, { kind: 'closed' })).accepted,
+    ).toBe(true);
+    const listed = await phone.execute('listRoomWorkflowRuns', { roomId: ROOM }, OWNER);
+    const bySlug = Object.fromEntries(listed.workflows.map((run) => [run.workflowSlug, run]));
+    expect(bySlug['feedback-triage']).toMatchObject({
+      runId,
+      state: 'done',
+      status: 'done',
+      holder: { id: TRIAGER, name: 'Candy', kind: 'agent' },
+      viewerHolds: false,
+    });
+    // Closing leaves `implement`, whose role is the implementer, not the system author of the card.
+    expect(bySlug.corner).toMatchObject({
+      state: 'closed',
+      status: 'abandoned',
+      holder: { id: TRIAGER, name: 'Candy', kind: 'agent' },
+      viewerHolds: false,
+    });
+  });
+
   it('counts earlier runs and prefers the live one', async () => {
     await saveWorkflow(database, await command(CORNER, TRIAGER), { contract: TRIAGE });
     const start = async () =>

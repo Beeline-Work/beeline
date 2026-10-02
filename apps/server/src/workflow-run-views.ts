@@ -8,6 +8,7 @@ import type {
   WorkflowRunSummaryView,
 } from '@beeline/api-contract/phone';
 import { isAgentIdentityReference } from '@beeline/api-contract/daemon';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
 import { CORNER_WORKFLOW_CONTRACT, CORNER_WORKFLOW_SLUG } from './corner-workflow.js';
 import { CORNER_WORKFLOW_HANDOFF_CARD_TYPE } from './room-choice.js';
@@ -50,6 +51,8 @@ type RunHeadRow = {
   workflow_slug: string;
   workflow_version: number;
   to_state: string;
+  from_state: string | null;
+  author_id: string;
   role_bindings: Record<string, string> | null;
   started_at: Date;
   updated_at: Date;
@@ -65,6 +68,10 @@ type RunHead = {
   slug: string;
   version: number;
   state: string;
+  /** The state the newest card left, when it is a handoff rather than the start. */
+  fromState?: string;
+  /** Author of the newest card. Corner lifecycle cards are the system identity. */
+  authorId: string;
   roleBindings: Record<string, string>;
   startedAt: number;
   updatedAt: number;
@@ -99,7 +106,8 @@ async function loadRunHeads(
          SELECT message.id,message.room_id,message.created_at,
                 message.card->>'runId' run_id,message.card->>'workflowSlug' workflow_slug,
                 COALESCE((message.card->>'workflowVersion')::int,1) workflow_version,
-                message.card->>'toState' to_state,message.card->'roleBindings' role_bindings,
+                message.card->>'toState' to_state,message.card->>'fromState' from_state,
+                message.author_id,message.card->'roleBindings' role_bindings,
                 (message.card->>'seq')::int seq
          FROM messages message
          JOIN scope ON scope.id=message.room_id
@@ -112,8 +120,8 @@ async function loadRunHeads(
        SELECT DISTINCT ON (cards.room_id,cards.run_id)
               cards.run_id,cards.room_id,scope.name room_name,scope.parent_id,
               scope.reviewer_agent_id,scope.workspace_id,cards.workflow_slug,
-              cards.workflow_version,cards.to_state,cards.role_bindings,
-              started.started_at,cards.created_at updated_at
+              cards.workflow_version,cards.to_state,cards.from_state,cards.author_id,
+              cards.role_bindings,started.started_at,cards.created_at updated_at
        FROM cards
        JOIN scope ON scope.id=cards.room_id
        JOIN started ON started.room_id=cards.room_id AND started.run_id=cards.run_id
@@ -132,6 +140,8 @@ async function loadRunHeads(
     slug: row.workflow_slug,
     version: row.workflow_version,
     state: row.to_state,
+    ...(row.from_state ? { fromState: row.from_state } : {}),
+    authorId: row.author_id,
     roleBindings: row.role_bindings ?? {},
     startedAt: unix(row.started_at),
     updatedAt: unix(row.updated_at),
@@ -206,6 +216,22 @@ function runStatus(contract: WorkflowContract, state: string): WorkflowRunStatus
   return declared?.kind === 'terminal' ? declared.status : 'live';
 }
 
+/**
+ * Who the list should name. A live state uses its own role. A terminal has
+ * none, so the row keeps the role that handed the run off, and otherwise the
+ * person who wrote that card. The system identity writes corner lifecycle
+ * cards and is not a holder.
+ */
+function holderIdentityId(head: RunHead, contract: WorkflowContract): string | undefined {
+  const current = stateRole(contract, head.state);
+  if (current) return boundIdentityId(head, head.roleBindings[current]);
+  if (runStatus(contract, head.state) === 'live') return undefined;
+  const left = head.fromState ? stateRole(contract, head.fromState) : undefined;
+  const leftHolder = left ? boundIdentityId(head, head.roleBindings[left]) : undefined;
+  if (leftHolder) return leftHolder;
+  return head.authorId !== SYSTEM_IDENTITY_ID ? head.authorId : undefined;
+}
+
 function summarize(
   head: RunHead,
   contract: WorkflowContract,
@@ -214,8 +240,7 @@ function summarize(
   earlierRunCount: number,
 ): WorkflowRunSummaryView {
   const status = runStatus(contract, head.state);
-  const role = stateRole(contract, head.state);
-  const holderId = role ? boundIdentityId(head, head.roleBindings[role]) : undefined;
+  const holderId = holderIdentityId(head, contract);
   const holder = holderId ? actors.get(holderId) : undefined;
   const isGate = contract.handoffs[head.state]?.kind === 'gate';
   return {
@@ -238,7 +263,7 @@ function summarize(
 }
 
 function headBindingIds(head: RunHead): string[] {
-  return Object.values(head.roleBindings)
+  return [...Object.values(head.roleBindings), head.authorId]
     .map((binding) => boundIdentityId(head, binding))
     .filter((id): id is string => id !== undefined);
 }

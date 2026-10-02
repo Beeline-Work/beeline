@@ -146,13 +146,26 @@ function alive(pid: number, procRoot: string): boolean {
   }
 }
 
-async function waitGone(pids: readonly number[], procRoot: string, timeoutMs: number): Promise<boolean> {
+/**
+ * A thread-group leader shows `Z` while its other threads are still exiting
+ * and still hold the shared fd table, so a dead pid alone does not mean the
+ * listener is closed; wait for the sockets to stop answering too.
+ */
+async function waitReleased(
+  pids: readonly number[],
+  sockets: readonly string[],
+  procRoot: string,
+  timeoutMs: number,
+): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
-  while (pids.some((pid) => alive(pid, procRoot))) {
+  for (;;) {
+    if (!pids.some((pid) => alive(pid, procRoot))) {
+      const live = await Promise.all(sockets.map((socket) => squireBrokerSocketReady(socket)));
+      if (!live.includes(true)) return true;
+    }
     if (Date.now() >= deadline) return false;
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
-  return true;
 }
 
 function describe(holder: SquireSocketHolder): string {
@@ -200,22 +213,17 @@ export async function reclaimSquireBrokerSockets(options: ReclaimOptions): Promi
       // Already gone.
     }
   }
-  if (!(await waitGone(pids, procRoot, options.stopTimeoutMs ?? 15_000))) {
-    for (const pid of pids.filter((candidate) => alive(candidate, procRoot))) {
-      log(`[beeline] Trusty Squire broker pid ${pid} ignored SIGTERM; sending SIGKILL`);
+  if (!(await waitReleased(pids, held, procRoot, options.stopTimeoutMs ?? 15_000))) {
+    for (const pid of pids) {
+      log(`[beeline] Trusty Squire broker pid ${pid} did not release ${named} after SIGTERM; sending SIGKILL`);
       try {
         process.kill(pid, 'SIGKILL');
       } catch {
         // Already gone.
       }
     }
-    if (!(await waitGone(pids, procRoot, options.killTimeoutMs ?? 5_000))) {
-      return { ok: false, reason: `Trusty Squire broker ${pids.join(', ')} holding ${named} did not exit` };
-    }
-  }
-  for (const socket of held) {
-    if (await squireBrokerSocketReady(socket)) {
-      return { ok: false, reason: `${socket} is still held after stopping pid ${pids.join(', ')}` };
+    if (!(await waitReleased(pids, held, procRoot, options.killTimeoutMs ?? 5_000))) {
+      return { ok: false, reason: `${named} is still held after stopping Trusty Squire broker pid ${pids.join(', ')}` };
     }
   }
   return { ok: true, stopped: pids };

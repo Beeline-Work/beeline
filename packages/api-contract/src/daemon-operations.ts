@@ -374,9 +374,13 @@ export type DaemonOperationMap = {
   postCornerPlan: Operation<PostCornerPlanInput, WriteResult>;
   putCornerApp: Operation<PutCornerAppInput, CornerAppWriteResult>;
   requestCornerAppOpen: Operation<RequestCornerAppOpenInput, CornerAppWriteResult>;
-  /** Retitles the corner the calling agent is a member of; the name follows `CreateCornerInput.name`'s limits. */
+  /** Retitles a corner. A human-opened corner may receive its first objective and brief in the same write. */
   renameCorner: Operation<
-    TurnOutputAuthority & CornerInput & { readonly name: string },
+    TurnOutputAuthority & CornerInput & {
+      readonly name: string;
+      readonly objective?: string;
+      readonly brief?: CornerBriefDraft;
+    },
     { readonly cornerId: string; readonly name: string }
   >;
   postTargetBranchProposal: Operation<PostTargetBranchProposalInput, WriteResult>;

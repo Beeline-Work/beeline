@@ -642,9 +642,9 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
     budgetBytes: 600,
     layer: 'turn',
     surfaces: CORNERS,
-    render: ({ generatedTitle }) =>
+    render: ({ generatedTitle, brief }) =>
       generatedTitle
-        ? `This corner still has its generated name, "${generatedTitle}". If the newest message states the work, call rename_corner once before you reply, with a name of at most three words taken from that message. A bare mention does not state the work; leave the name until a message does.`
+        ? `This human-opened corner still has its generated name, "${generatedTitle}". If the newest human message states the work, call rename_corner once before you reply with a name of at most three words and a short objective${brief ? '' : ', plus a brief grounded in that message with brief.approval.sourceMessageId set to the human message id'}. A bare mention does not state the work; leave the name until a message does.`
         : '',
   },
   {

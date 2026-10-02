@@ -5849,6 +5849,7 @@ export function BuzzChatSurface({
           {isCorner && (
             <CornerObjectiveLine
               objective={cornerObjectiveText}
+              brief={cornerBrief?.spec}
               onOpenBrief={openCurrentBrief}
               onOpenWorkflow={openCornerWorkflowRun}
               workflow={cornerWorkflowRun}

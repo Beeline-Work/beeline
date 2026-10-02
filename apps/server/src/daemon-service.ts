@@ -5206,16 +5206,76 @@ export class DaemonService {
     const refusal = cornerTextRefusal('name', input.name);
     if (refusal) throw new Error(refusal);
     const name = normalizeCornerText(input.name);
+    const objective = input.objective === undefined ? undefined : normalizeCornerText(input.objective);
+    if (input.objective !== undefined) {
+      const objectiveRefusal = cornerTextRefusal('objective', input.objective);
+      if (objectiveRefusal) throw new Error(objectiveRefusal);
+    }
+    if (input.brief) validateCornerBrief(input.brief);
     await this.access(input.cornerId, agentId);
     const parentId = await this.database.transaction(async (db) => {
       const corner = (
-        await db.query<{ parent_id: string | null; archived_at: Date | null }>(
-          `SELECT parent_id,archived_at FROM rooms WHERE id=$1 FOR UPDATE`,
+        await db.query<{ parent_id: string | null; archived_at: Date | null; kind: string; objective: string }>(
+          `SELECT room.parent_id,room.archived_at,fact.kind,fact.objective
+           FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id
+           WHERE room.id=$1 FOR UPDATE OF room`,
           [input.cornerId],
         )
       ).rows[0];
       if (!corner?.parent_id) throw new Error('corner not found');
       if (corner.archived_at) throw new Error('corner is archived');
+      const current = corner.kind === 'human'
+        ? await currentCornerBrief(db, input.cornerId)
+        : null;
+      if (corner.kind === 'human' && !current && (!objective || !input.brief))
+        throw new Error('naming a human-opened corner requires its objective and first brief');
+      if (objective !== undefined || input.brief) {
+        if (corner.kind !== 'human')
+          throw new Error('corner details may be set while naming a human-opened corner');
+        const command = await authorizeCommandOutput(
+          db, input.cornerId, agentId, input.requestId, input.generationId,
+        );
+        if (current) {
+          if (input.brief && (current.spec !== input.brief.spec.trim() ||
+              current.approval?.sourceMessageId !== input.brief.approval.sourceMessageId))
+            throw new Error('corner brief already exists; revise the current brief instead');
+          if (objective !== undefined) await db.query(
+            `UPDATE corner_facts SET objective=$2,updated_at=now() WHERE corner_id=$1`,
+            [input.cornerId, objective],
+          );
+        } else {
+          const sourceRoomIds = [corner.parent_id, input.cornerId];
+          const brief = input.brief!;
+          const explicitAttachments = await resolveCornerBriefAttachments(db, sourceRoomIds, brief);
+          const attachments = [
+            ...explicitAttachments,
+            ...(await resolvePendingCornerBriefAttachments(db, {
+              roomId: input.cornerId,
+              agentId,
+              requestId: input.requestId ?? '',
+              generationId: input.generationId,
+              excluding: explicitAttachments.map((attachment) => attachment.objectId),
+            })),
+          ];
+          if (attachments.length > 16) throw new Error('corner brief has too many attachments');
+          const authority = await resolveCornerBriefApproval(
+            db, sourceRoomIds, brief, attachments, command.root_source_message_id,
+          );
+          await db.query(
+            `INSERT INTO corner_brief_revisions(
+               corner_id,revision,spec,approval_basis,revision_hash,change,author_id,
+               source_room_id,source_message_id,attachments
+             ) VALUES($1,1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+            [input.cornerId, brief.spec.trim(), JSON.stringify(authority.approvalBasis),
+              authority.revisionHash, brief.change ?? null, agentId, authority.sourceRoomId,
+              brief.approval.sourceMessageId, JSON.stringify(attachments)],
+          );
+          await db.query(
+            `UPDATE corner_facts SET objective=$2,updated_at=now() WHERE corner_id=$1`,
+            [input.cornerId, objective],
+          );
+        }
+      }
       await writeCornerTitle(db, input.cornerId, corner.parent_id, name);
       return corner.parent_id;
     });
@@ -6688,14 +6748,14 @@ export class DaemonService {
       throw new Error('corner brief revision requires a change description');
     const brief = await this.database.transaction(async (db) => {
       const corner = (
-        await db.query<{ parent_id: string; owner_agent_id: string }>(
-          `SELECT room.parent_id,fact.owner_agent_id FROM rooms room
+        await db.query<{ parent_id: string; owner_agent_id: string | null; kind: string }>(
+          `SELECT room.parent_id,fact.owner_agent_id,fact.kind FROM rooms room
          JOIN corner_facts fact ON fact.corner_id=room.id
          WHERE room.id=$1 AND room.archived_at IS NULL FOR UPDATE OF room`,
           [input.cornerId],
         )
       ).rows[0];
-      if (!corner?.parent_id || corner.owner_agent_id !== agentId)
+      if (!corner?.parent_id || (corner.owner_agent_id !== agentId && corner.kind !== 'human'))
         throw new Error('corner brief revision denied');
       const command = await authorizeCommandOutput(
         db,

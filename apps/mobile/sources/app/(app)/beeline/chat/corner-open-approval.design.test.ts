@@ -38,7 +38,7 @@ describe('corner-open approval card design contract', () => {
     // Outside the transcript list, so it survives the first message rather than
     // scrolling away with the empty state.
     expect(source).toMatch(
-      /<CornerObjectiveLine\s+objective=\{cornerObjectiveText\}\s+onOpenBrief=\{openCurrentBrief\}/,
+      /<CornerObjectiveLine\s+objective=\{cornerObjectiveText\}\s+brief=\{cornerBrief\?\.spec\}\s+onOpenBrief=\{openCurrentBrief\}/,
     );
     expect(source).toContain('const cornerObjectiveText = useMemo(');
   });

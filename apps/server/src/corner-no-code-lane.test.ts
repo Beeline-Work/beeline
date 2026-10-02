@@ -233,12 +233,80 @@ it('restores a generated human-corner title as generated until the corner is ren
       requestId: command.turnRequestId,
       generationId: 'g1',
       name: 'rename after steer',
+      objective: 'Answer the steering request',
+      brief: brief(command.sourceMessageId, 'Answer the steering request in this corner.'),
     },
     AGENT,
   );
   const renamed = await daemon.execute('getCornerRestoreState', { cornerId: generated }, AGENT);
   expect(renamed.title).toBe('rename after steer');
   expect(renamed).not.toHaveProperty('titleGenerated');
+});
+
+it('saves the first human-opened corner objective and brief when an agent names the work', async () => {
+  const cornerId = ((await phone.execute(
+    'createHumanCorner',
+    { roomId: CHAT_ROOM, title: 'still harbor corner', titleGenerated: true },
+    HUMAN,
+  )) as { id: string }).id;
+  const before = await phone.readRoom(cornerId, HUMAN);
+  expect(before?.room.about).toBeFalsy();
+  expect(before?.cornerBrief).toBeUndefined();
+
+  const command = await commissioned(cornerId);
+  await expect(daemon.execute('renameCorner', {
+    cornerId,
+    requestId: command.turnRequestId,
+    generationId: 'g1',
+    name: 'Readable briefs',
+  }, AGENT)).rejects.toThrow('requires its objective and first brief');
+  expect((await phone.readRoom(cornerId, HUMAN))?.room.name).toBe('still harbor corner');
+  const details = {
+    cornerId,
+    requestId: command.turnRequestId,
+    generationId: 'g1',
+    name: 'Readable briefs',
+    objective: 'Make the corner brief readable above its workflow',
+    brief: brief(command.sourceMessageId, 'Show the request in the corner panel.'),
+  };
+  await expect(daemon.execute('renameCorner', {
+    ...details,
+    brief: brief('f'.repeat(64), details.brief.spec),
+  }, AGENT)).rejects.toThrow('corner brief approval must name a human Room message');
+  expect((await phone.readRoom(cornerId, HUMAN))?.room.name).toBe('still harbor corner');
+  await daemon.execute('renameCorner', details, AGENT);
+  const viewed = await phone.readRoom(cornerId, HUMAN);
+  expect(viewed?.room.name).toBe('Readable briefs');
+  expect(viewed?.room.about).toBe(details.objective);
+  expect(viewed?.cornerBrief).toMatchObject({
+    revision: 1,
+    spec: 'Show the request in the corner panel.',
+    approval: { sourceMessageId: command.sourceMessageId, text: '@hoots please do this' },
+  });
+  await daemon.execute('renameCorner', details, AGENT);
+  expect((await db.query(`SELECT revision FROM corner_brief_revisions WHERE corner_id=$1`, [cornerId])).rows)
+    .toEqual([{ revision: 1 }]);
+  await daemon.execute('reviseCornerBrief', {
+    cornerId,
+    requestId: command.turnRequestId,
+    generationId: 'g1',
+    expectedRevision: 1,
+    brief: { ...brief(command.sourceMessageId, 'Show the updated request in the corner panel.'),
+      change: 'Clarify the panel copy.' },
+  }, AGENT);
+  expect((await phone.readRoom(cornerId, HUMAN))?.cornerBrief).toMatchObject({
+    revision: 2,
+    spec: 'Show the updated request in the corner panel.',
+  });
+  await daemon.execute('renameCorner', {
+    cornerId,
+    requestId: command.turnRequestId,
+    generationId: 'g1',
+    name: 'Readable briefs',
+    objective: 'Read the latest brief above the workflow',
+  }, AGENT);
+  expect((await phone.readRoom(cornerId, HUMAN))?.room.about)
+    .toBe('Read the latest brief above the workflow');
 });
 
 it('refuses a lane the constraint does not name', async () => {

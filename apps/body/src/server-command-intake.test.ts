@@ -139,6 +139,27 @@ describe('command intake mechanics', () => {
     expect(stop).toHaveBeenCalledWith('turn');
     expect(execute).toHaveBeenCalledWith('acknowledgeAgentCommand', expect.anything());
   });
+  it('claims a command the server requeued mid-run again once that run ends, in the same process', async () => {
+    const abort = new AbortController();
+    let release = () => {};
+    const run = vi.fn()
+      .mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }))
+      .mockImplementationOnce(async () => abort.abort());
+    const execute = vi.fn(async (name: string) => name === 'getAgentCommands'
+      ? { commandProtocol: 1, commands: [command()] } : { id: 'ok' });
+    const socket = socketApi(execute);
+    const running = runServerCommandIntake({ api: socket.api, roomId: 'room', agentId: 'agent',
+      context: await context(), signal: abort.signal, run, stop: vi.fn() });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+    // The server failed the stalled turn and requeued the same command.
+    socket.push([command()]);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(run).toHaveBeenCalledOnce();
+    release();
+    await running;
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(execute.mock.calls.filter(([name]) => name === 'claimAgentCommand')).toHaveLength(2);
+  });
   it('binds output to the claimed generation and request', async () => {
     const ctx = await context();
     await ctx.enter(command());

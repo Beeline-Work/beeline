@@ -60,6 +60,20 @@ describe('systemd supervision contract', () => {
     expect(unit).not.toContain('PrivateTmp=');
   });
 
+  it('favours the helper over host load and never stops restarting it', () => {
+    const unit = agentServiceUnit();
+    for (const line of [
+      'CPUWeight=1000',
+      'IOWeight=1000',
+      'Nice=-5',
+      'OOMScoreAdjust=-1000',
+      'StartLimitIntervalSec=0',
+    ])
+      expect(unit.split('\n')).toContain(line);
+    expect(unit).not.toContain('StartLimitBurst=');
+    expect(unit).not.toContain('MemoryMax=');
+  });
+
   it('installs, enables, starts, and returns the supervised main pid', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-systemd-'));
     roots.push(root);

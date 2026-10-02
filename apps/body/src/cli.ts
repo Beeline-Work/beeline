@@ -62,7 +62,6 @@ import { DEFAULT_DRAIN_DEADLINE_MS } from './room-runtime.js';
 import { activateDaemonTransport, DaemonApiError } from './daemon-api-client.js';
 import { reportInterruptedTurns } from './force-update-journal.js';
 import { ForceUpdateCoordinator } from './force-update.js';
-import { hiccupBackoffMs } from '@beeline/api-contract/daemon';
 import {
   clearDaemonPidRecordIfPid,
   convergeRuntimeRecordFileModes,
@@ -475,44 +474,21 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
     );
     await registryMcpBroker.start();
     process.env.BEELINE_REGISTRY_MCP_BROKER_SOCKET = registryMcpBroker.socketPath;
-    let lifecycleRestartDrain: Promise<void> | undefined;
+    let lifecycleRestart: Promise<void> | undefined;
     const core = new ThinDaemonCore(runtime, configPath, config, {
       daemonApi,
       onConfigChanged: refreshCatalog,
-      onHiccupRestart: (attempt) => {
-        const delay = hiccupBackoffMs(attempt);
-        console.warn(
-          `[thin-core] hiccup restart attempt ${attempt}; exiting so the service manager can start a fresh helper`,
-        );
-        if (delay <= 0) {
-          process.exit(0);
-          return;
-        }
-        const timer = setTimeout(() => process.exit(0), delay);
-        timer.unref?.();
-      },
       onRestartRequested: () => {
-        if (lifecycleRestartDrain) return;
-        const deadlineAt = Date.now() + DEFAULT_DRAIN_DEADLINE_MS;
-        stoppingStatus =
-          `restart requested; active work draining; ` +
-          `exit_deadline=${new Date(deadlineAt).toISOString()}`;
-        void notifier.progress(stoppingStatus);
-        core.setDrainDeadlineAt(deadlineAt);
-        lifecycleRestartDrain = (async () => {
-          while (core.activeTurnCount() > 0 && Date.now() < deadlineAt) {
-            await new Promise<void>((resolveWait) => setTimeout(resolveWait, 250));
-          }
-          const forced = core.activeTurnCount() > 0;
-          if (forced) await core.prepareForForcedUpdateRestart();
-          else core.quiesceForUpdateIfIdle();
-          stoppingStatus = forced
-            ? 'restart requested; drain deadline reached; active work cancelled'
-            : 'restart requested; active work drained';
+        if (lifecycleRestart) return;
+        lifecycleRestart = (async () => {
+          const cancelled = await core.cancelActiveWorkForRestart();
+          stoppingStatus = cancelled
+            ? 'restart requested; active work cancelled'
+            : 'restart requested; no active work';
           await notifier.stopping(stoppingStatus);
           controller.abort();
         })().catch((error) => {
-          console.error('[thin-core] requested restart drain failed:', error);
+          console.error('[thin-core] requested restart failed:', error);
           controller.abort();
         });
       },

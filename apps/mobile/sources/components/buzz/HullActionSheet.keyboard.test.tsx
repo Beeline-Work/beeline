@@ -95,7 +95,7 @@ vi.mock('./HullDialog', async () => {
   return { HullFloatingSurface: host('HullFloatingSurface'), HullModal: host('HullModal') };
 });
 
-import { HullActionSheet, HullActionSheetRow } from './HullActionSheet';
+import { HullActionSheet, HullActionSheetRow, sheetBottomPadding } from './HullActionSheet';
 
 const source = readFileSync(new URL('./HullActionSheet.tsx', import.meta.url), 'utf8');
 const originalConsoleError = console.error;
@@ -129,5 +129,12 @@ describe('HullActionSheet keyboard height subscription', () => {
     expect(source).toContain("Keyboard.addListener('keyboardDidShow'");
     expect(source).toContain("Keyboard.addListener('keyboardDidHide'");
     expect(source).not.toMatch(/const addListener = Keyboard\?\.addListener/);
+  });
+});
+
+describe('sheetBottomPadding', () => {
+  it('clears the navigation bar and then leaves a 12px gap, even with no bar', () => {
+    expect(sheetBottomPadding(48)).toBe(60);
+    expect(sheetBottomPadding(0)).toBe(12);
   });
 });

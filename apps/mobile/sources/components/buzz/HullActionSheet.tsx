@@ -49,6 +49,13 @@ const SHEET_SUBTITLE_BLOCK = 32;
 const SHEET_STICKY_BLOCK = 96;
 const SHEET_FOOTER_BLOCK = 54;
 const SHEET_BODY_MIN_HEIGHT = 140;
+/** Space between the sheet's last control and the navigation bar (or screen edge). */
+const SHEET_BOTTOM_GAP = 12;
+
+/** The sheet draws behind the navigation bar, so clear the bar and then leave a gap. */
+export function sheetBottomPadding(bottomInset: number): number {
+  return bottomInset + SHEET_BOTTOM_GAP;
+}
 
 function useVisualKeyboardHeight(): number {
   const [height, setHeight] = React.useState(0);
@@ -94,7 +101,7 @@ export function HullActionSheet({
           (subtitle ? SHEET_SUBTITLE_BLOCK : 0) -
           (sticky != null ? SHEET_STICKY_BLOCK : 0) -
           (footer != null ? SHEET_FOOTER_BLOCK : 0) -
-          Math.max(insets.bottom, 10) -
+          sheetBottomPadding(insets.bottom) -
           Math.max(keyboardHeight, 0),
       )
     : undefined;
@@ -368,7 +375,7 @@ export function HullActionSheetModal({
         grip={!isDesktop}
         navigation={navigation}
         sticky={sticky}
-        style={{ paddingBottom: Math.max(insets.bottom, 10) }}
+        style={{ paddingBottom: sheetBottomPadding(insets.bottom) }}
         subtitle={subtitle}
         testID={testID}
         onTitlePress={onTitlePress}

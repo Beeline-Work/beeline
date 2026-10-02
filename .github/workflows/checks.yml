@@ -17,6 +17,10 @@
 #   apps/mobile          → MOBILE SUITE + MOBILE-EXPORT REACHABILITY
 #   packages/**          → every path-filtered job (imported by every app)
 #   any path in no module → every path-filtered job (fail closed)
+# `unmapped` is its own paths-filter step with `predicate-quantifier: every`.
+# On the default `some`, `**` matches every file and a `!` line does not
+# subtract. `every` stays off the module step: one file would have to match
+# every pattern in a list, and the multi-pattern gates would never run.
 # MAC HELPER ACCEPTANCE is the exception: it holds the repository's one
 # self-hosted Intel Mac, so it follows its own `macHelper` filter alone — the
 # macOS-specific sources, never run-everything. The Apple-silicon bundle is
@@ -107,15 +111,6 @@ jobs:
             # them as dist. A stale compiled copy blanked every Room.
             packages:
               - 'packages/**'
-            # A path that belongs to no heavy-suite module fails closed.
-            unmapped:
-              - '**'
-              - '*'
-              - '!packages/**'
-              - '!apps/body/**'
-              - '!apps/push-gateway/**'
-              - '!apps/server/**'
-              - '!apps/mobile/**'
             bodyModule:
               - 'apps/body/**'
             # Deliberately the macOS-specific sources only: this gate holds the
@@ -248,10 +243,27 @@ jobs:
               - 'package-lock.json'
               - 'tsconfig.base.json'
 
+      # A file is unmapped only when every pattern matches that file.
+      # `**` matches any path; each `!` line rejects one mapped tree.
+      # A bare `*` is absent: under `every` it matches only a root path,
+      # so docs/ and .github/ would fail open.
+      - uses: dorny/paths-filter@v3
+        id: unmapped
+        with:
+          predicate-quantifier: every
+          filters: |
+            unmapped:
+              - '**'
+              - '!packages/**'
+              - '!apps/body/**'
+              - '!apps/push-gateway/**'
+              - '!apps/server/**'
+              - '!apps/mobile/**'
+
       - id: decide
         env:
           PACKAGES: ${{ steps.filter.outputs.packages }}
-          UNMAPPED: ${{ steps.filter.outputs.unmapped }}
+          UNMAPPED: ${{ steps.unmapped.outputs.unmapped }}
           BODY_MODULE: ${{ steps.filter.outputs.bodyModule }}
           MAC_HELPER: ${{ steps.filter.outputs.macHelper }}
           PUSH_GATEWAY_MODULE: ${{ steps.filter.outputs.pushGatewayModule }}
@@ -334,6 +346,10 @@ jobs:
       # workflow file, so a filtered lane would never see it.
       - name: Check no workflow names a deleted test
         run: npm run lint:workflow-paths
+      # Runs on every pull request, after npm ci, so a filter that opens
+      # every suite again fails here even when the diff is not a workflow.
+      - name: Check path filters skip untouched suites
+        run: node --test scripts/workflow-change-filter.test.mjs
 
   shared-package-tests:
     name: SHARED PACKAGE TESTS

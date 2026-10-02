@@ -18,6 +18,11 @@ describe('post_artifact validation matrix', () => {
     ['application/json', '{}'],
     ['text/csv', 'a,b'],
     ['application/zip', 'zip'],
+    ['video/mp4', 'mp4'],
+    ['video/quicktime', 'mov'],
+    ['video/webm', 'webm'],
+    ['audio/mpeg', 'mp3'],
+    ['audio/wav', 'wav'],
     ['application/octet-stream', 'bytes'],
   ])('accepts the inventoried %s lane', (mime, content) => {
     expect(() => validateArtifact(mime, Buffer.from(content), 'Artifact')).not.toThrow();
@@ -37,6 +42,11 @@ describe('post_artifact validation matrix', () => {
       'application/json',
       'text/csv',
       'application/zip',
+      'video/mp4',
+      'video/quicktime',
+      'video/webm',
+      'audio/mpeg',
+      'audio/wav',
       'application/octet-stream',
     ];
     expect(tested).toEqual([...ARTIFACT_MIME_TYPES]);
@@ -141,7 +151,7 @@ describe('post_artifact validation matrix', () => {
   });
 
   it('refuses unknown mimes, empty artifacts, and empty titles', () => {
-    expect(() => validateArtifact('audio/mpeg', Buffer.from('x'), 't')).toThrow(
+    expect(() => validateArtifact('audio/flac', Buffer.from('x'), 't')).toThrow(
       /mime must be one of/,
     );
     expect(() => validateArtifact('text/html', Buffer.alloc(0), 't')).toThrow(/empty/);

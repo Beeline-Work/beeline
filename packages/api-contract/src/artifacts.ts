@@ -26,6 +26,11 @@ export const ARTIFACT_MIME_TYPES = [
   'application/json',
   'text/csv',
   'application/zip',
+  'video/mp4',
+  'video/quicktime',
+  'video/webm',
+  'audio/mpeg',
+  'audio/wav',
   'application/octet-stream',
 ] as const;
 
@@ -49,6 +54,11 @@ export const ARTIFACT_EXTENSIONS_BY_MIME = {
   'application/json': ['.json'],
   'text/csv': ['.csv'],
   'application/zip': ['.zip'],
+  'video/mp4': ['.mp4', '.m4v'],
+  'video/quicktime': ['.mov'],
+  'video/webm': ['.webm'],
+  'audio/mpeg': ['.mp3'],
+  'audio/wav': ['.wav'],
   'application/octet-stream': [],
 } as const satisfies Record<ArtifactMimeType, readonly string[]>;
 

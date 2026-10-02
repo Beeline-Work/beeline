@@ -22,6 +22,11 @@ describe('artifact contract constants', () => {
       'application/json',
       'text/csv',
       'application/zip',
+      'video/mp4',
+      'video/quicktime',
+      'video/webm',
+      'audio/mpeg',
+      'audio/wav',
       'application/octet-stream',
     ]);
   });
@@ -44,6 +49,12 @@ describe('artifact contract constants', () => {
       '.json': 'application/json',
       '.csv': 'text/csv',
       '.zip': 'application/zip',
+      '.mp4': 'video/mp4',
+      '.m4v': 'video/mp4',
+      '.mov': 'video/quicktime',
+      '.webm': 'video/webm',
+      '.mp3': 'audio/mpeg',
+      '.wav': 'audio/wav',
     });
     expect(ARTIFACT_EXTENSIONS_BY_MIME['application/octet-stream']).toEqual([]);
   });

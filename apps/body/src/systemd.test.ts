@@ -84,6 +84,18 @@ describe('systemd supervision contract', () => {
     expect(unit.split('\n')).toContain('OOMScoreAdjust=-1000');
   });
 
+  it('keeps the checked-in reference unit on the same OOM policy as the rendered template', async () => {
+    // apps/body/systemd/beeline-agent@.service is the checked-in reference copy
+    // of the installed unit; letting it drift here is how the OOM policy would
+    // silently regress on a host that installs from it.
+    const reference = await readFile(
+      new URL('../systemd/beeline-agent@.service', import.meta.url),
+      'utf8',
+    );
+    expect(reference.split('\n')).toContain('OOMPolicy=continue');
+    expect(reference.split('\n')).toContain('OOMScoreAdjust=-1000');
+  });
+
   it('converges the installed template on update without restarting an agent', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-systemd-converge-'));
     roots.push(root);

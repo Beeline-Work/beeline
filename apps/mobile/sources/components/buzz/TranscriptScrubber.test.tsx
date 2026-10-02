@@ -130,6 +130,24 @@ describe('TranscriptScrubber', () => {
     act(() => store.observeContentSize(8_600));
     expect(onScrubTo).toHaveBeenLastCalledWith(8_000);
   });
+
+  it('leaves the list alone under a finger held partway up', () => {
+    const { store, onScrubTo, grab } = render(5_600, 0);
+    act(() => grab().props.onPanResponderGrant({ nativeEvent: {} }));
+    act(() => grab().props.onPanResponderMove({}, { dy: -(RAIL - 36) / 2 }));
+    expect(onScrubTo).toHaveBeenCalledTimes(1);
+    // Rows measure, a message arrives, the keyboard opens: the finger has
+    // not moved, so the list must not either.
+    act(() => store.observeContentSize(6_000));
+    act(() =>
+      store.observeScroll({
+        contentOffset: { y: 2_500 },
+        contentSize: { height: 6_000 },
+        layoutMeasurement: { height: 300 },
+      }),
+    );
+    expect(onScrubTo).toHaveBeenCalledTimes(1);
+  });
 });
 
 /**
@@ -218,6 +236,9 @@ describe('TranscriptScrubber on the Room transcript', () => {
     );
     expect(surface).toContain(
       'onContentSizeChange={(_width, height) => transcriptScrubber.observeContentSize(height)}',
+    );
+    expect(surface).toContain(
+      'useEffect(() => transcriptScrubber.reset(), [decodedId, transcriptScrubber]);',
     );
   });
 });

@@ -33,15 +33,16 @@ export function TranscriptScrubber({
   live.current = { position, dragPosition, railHeight, onScrubTo };
   const grabbedAt = useRef(0);
 
-  // Rows that load under a held finger change the list's size, not its
-  // offset. Re-aim the list so the finger keeps its place in the new range:
-  // held at the top, that is the new oldest row, which loads the next page.
+  // Older rows that load under a finger held at the top change the list's
+  // size, not its offset. Re-aim the list at the new oldest row, which loads
+  // the next page. Held anywhere else, the list stays put: rows measuring,
+  // a new message or the keyboard must not move it under a still finger.
   const contentHeight = metrics?.contentHeight;
   const viewportHeight = metrics?.viewportHeight;
   useEffect(() => {
     const held = live.current.dragPosition;
     const current = scrubber.getSnapshot().metrics;
-    if (held === null || !current) return;
+    if (held === null || held < 1 || !current) return;
     live.current.onScrubTo(scrubOffset(current, held));
   }, [contentHeight, viewportHeight, scrubber]);
 

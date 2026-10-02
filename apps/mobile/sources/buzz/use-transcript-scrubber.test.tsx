@@ -57,4 +57,18 @@ describe('transcript scrubber store', () => {
     expect(store.getSnapshot()).toBe(same);
     store.dispose();
   });
+
+  it('forgets the last Room on reset', () => {
+    const store = createTranscriptScrubberStore();
+    store.observeScroll(scroll(5_000));
+    store.observeVisibleRows([{ id: 'a', text: 'a', isUser: false, timestamp: 1_788_000_000 }]);
+    store.reset();
+    expect(store.getSnapshot()).toEqual({ metrics: null, date: null, visible: false });
+    // The old Room's fade timer no longer fires into the new Room.
+    const listener = vi.fn();
+    store.subscribe(listener);
+    vi.advanceTimersByTime(SCRUBBER_LINGER_MS);
+    expect(listener).not.toHaveBeenCalled();
+    store.dispose();
+  });
 });

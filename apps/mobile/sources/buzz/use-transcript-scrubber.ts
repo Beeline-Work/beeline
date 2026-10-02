@@ -73,6 +73,12 @@ export function createTranscriptScrubberStore() {
       const date = scrubDate(rows);
       if (date !== snapshot.date) update({ date });
     },
+    /** Forgets the last Room's list, so the next Room's bar starts fresh. */
+    reset() {
+      if (linger) clearTimeout(linger);
+      linger = null;
+      update({ metrics: null, date: null, visible: false });
+    },
     dispose() {
       if (linger) clearTimeout(linger);
       linger = null;

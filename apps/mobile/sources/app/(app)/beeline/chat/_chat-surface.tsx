@@ -2250,6 +2250,7 @@ export function BuzzChatSurface({
   const transcriptMessagesRef = useRef(transcriptMessages);
   transcriptMessagesRef.current = transcriptMessages;
   const transcriptScrubber = useTranscriptScrubber();
+  useEffect(() => transcriptScrubber.reset(), [decodedId, transcriptScrubber]);
   // The read cursor ranks rows by index to decide which is newest, so it reads
   // the chronological order for the same reason the jump control does: on the
   // phone `transcriptMessages` IS the reversed list, and ranking that array

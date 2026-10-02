@@ -1,5 +1,7 @@
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
+import { DaemonApiError } from './daemon-api-client.js';
+import { isNetworkFailure } from './live-link.js';
 
 export const DAEMON_FAILURE_LIMIT = 3;
 export const DAEMON_FAILURE_WINDOW_MS = 5 * 60_000;
@@ -40,6 +42,18 @@ async function writeFailureRecord(runtimeDir: string, record: DaemonFailureRecor
   await rename(staged, path);
 }
 
+/**
+ * Whether a start failure is one a restart cannot fix. A network failure, a
+ * server that said "try again", and a 401 from a token that may still be
+ * restored are all uncertainty: counting them stopped a helper for good on an
+ * unhealthy box or a server outage.
+ */
+export function countsTowardDistress(error: unknown): boolean {
+  if (isNetworkFailure(error)) return false;
+  if (error instanceof DaemonApiError && (error.retryable || error.status === 401)) return false;
+  return true;
+}
+
 export async function recordDaemonStartFailure(
   runtimeDir: string,
   error: unknown,
@@ -58,6 +72,19 @@ export async function recordDaemonStartFailure(
   };
   await writeFailureRecord(runtimeDir, record);
   return { distressed, count: failures.length, path: daemonFailurePath(runtimeDir) };
+}
+
+/**
+ * Settle one failed daemon run: only a failure a restart cannot fix is
+ * counted, and three of those in the window mean distress (exit 77).
+ */
+export async function settleDaemonStartFailure(
+  runtimeDir: string,
+  error: unknown,
+  now = Date.now(),
+): Promise<{ distressed: boolean; count?: number; path?: string }> {
+  if (!countsTowardDistress(error)) return { distressed: false };
+  return recordDaemonStartFailure(runtimeDir, error, now);
 }
 
 /** A completed core establishment resets only start failures, never update evidence. */

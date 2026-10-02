@@ -459,6 +459,8 @@ describe('a helper joining a corner it did not open', () => {
       { workspaceRoot: supervisorRoot } as never,
       { daemonApi: { execute } as unknown as DaemonApiClient, now: () => now },
     );
+    const discovery = vi.fn();
+    coordinator.setDiscoveryWakeListener(discovery);
     const recovery = coordinator as unknown as {
       sweepArchivedCornerWorktrees(
         corners: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>,
@@ -477,7 +479,7 @@ describe('a helper joining a corner it did not open', () => {
     await expect(access(worktree.path)).resolves.toBeUndefined();
     // A stale checkout is background cleanup. It must not turn every failed
     // attempt into another full Room discovery and database read burst.
-    expect(coordinator.needsFastReconcile()).toBe(false);
+    expect(discovery).not.toHaveBeenCalled();
     expect(execute).not.toHaveBeenCalledWith('getRoomGitHubToken', expect.anything());
     await coordinator.shutdown();
   });

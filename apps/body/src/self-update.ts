@@ -945,19 +945,15 @@ export async function settleUpdateAttemptOnStart(
 }
 
 // ---------------------------------------------------------------------------
-// The manager (daemon-side loop)
+// The manager (driven by explicit ticks)
 // ---------------------------------------------------------------------------
 
 export interface SelfUpdateManagerOptions {
   layout: BeelineInstallLayout;
   env?: NodeJS.ProcessEnv;
   now?: () => number;
-  /** How often the loop wakes at all. Default 60s. */
-  tickMs?: number;
   /** Minimum interval between manifest checks. Default 6h. */
   checkIntervalMs?: number;
-  /** Delay before the very first automatic check (startup grace). Default 2min. */
-  initialDelayMs?: number;
   /** How long to wait for agent work to finish before restarting. Default 30min. */
   idleTimeoutMs?: number;
   idlePollMs?: number;
@@ -984,7 +980,7 @@ export class SelfUpdateManager {
   private readonly options: Required<
     Pick<
       SelfUpdateManagerOptions,
-      'layout' | 'tickMs' | 'checkIntervalMs' | 'initialDelayMs' | 'idleTimeoutMs' | 'idlePollMs'
+      'layout' | 'checkIntervalMs' | 'idleTimeoutMs' | 'idlePollMs'
     >
   > & { env: NodeJS.ProcessEnv; now: () => number };
   private readonly isIdle: () => boolean;
@@ -993,7 +989,6 @@ export class SelfUpdateManager {
   private readonly log: (line: string) => void;
   private readonly stageOnly: boolean;
 
-  private timer: NodeJS.Timeout | undefined;
   private nextCheckAllowedAt = 0;
   private disposed = false;
   private applying = false;
@@ -1010,11 +1005,8 @@ export class SelfUpdateManager {
     };
     this.options = {
       layout: options.layout,
-      tickMs: options.tickMs ?? numberEnv('BEELINE_UPDATE_TICK_MS', 60_000),
       checkIntervalMs:
         options.checkIntervalMs ?? numberEnv('BEELINE_UPDATE_INTERVAL_MS', 6 * 60 * 60_000),
-      initialDelayMs:
-        options.initialDelayMs ?? numberEnv('BEELINE_UPDATE_INITIAL_DELAY_MS', 2 * 60_000),
       idleTimeoutMs:
         options.idleTimeoutMs ?? numberEnv('BEELINE_UPDATE_IDLE_TIMEOUT_MS', 30 * 60_000),
       idlePollMs: options.idlePollMs ?? 5_000,
@@ -1028,19 +1020,8 @@ export class SelfUpdateManager {
     this.stageOnly = options.stageOnly ?? false;
   }
 
-  start(): void {
-    if (this.timer || this.disposed) return;
-    this.nextCheckAllowedAt = this.options.now() + this.options.initialDelayMs;
-    this.timer = setInterval(() => {
-      void this.tick();
-    }, this.options.tickMs);
-    this.timer.unref?.();
-  }
-
   dispose(): void {
     this.disposed = true;
-    if (this.timer) clearInterval(this.timer);
-    this.timer = undefined;
   }
 
   private busy(): boolean {

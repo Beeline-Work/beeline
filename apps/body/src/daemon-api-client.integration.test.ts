@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createHash, createHmac } from 'node:crypto';
 import { access, chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
-import type { AddressInfo } from 'node:net';
+import { connect, createServer as createTcpServer, type AddressInfo, type Socket } from 'node:net';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -918,6 +918,139 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     } finally {
       disconnect();
       await replies;
+    }
+  });
+
+  it('answers a message sent while its network was down once the network returns, with no restart', async () => {
+    // A relay between helper and server. "Down" is a dead path: the live
+    // socket's bytes vanish without either side closing it, and every other
+    // connection is reset — what a dropped Wi-Fi hop or a NAT timeout leaves.
+    const serverPort = Number(new URL(origin).port);
+    const relayed = new Map<Socket, { upstream: Socket; live: boolean }>();
+    let down = false;
+    const relay = createTcpServer((client) => {
+      if (down) {
+        client.destroy();
+        return;
+      }
+      const upstream = connect(serverPort, '127.0.0.1');
+      const entry = { upstream, live: false };
+      relayed.set(client, entry);
+      for (const socket of [client, upstream]) socket.on('error', () => undefined);
+      client.on('data', (chunk) => {
+        if (/^upgrade: websocket/im.test(chunk.toString('latin1'))) entry.live = true;
+        if (!down) upstream.write(chunk);
+      });
+      upstream.on('data', (chunk) => {
+        if (!down) client.write(chunk);
+      });
+      client.on('close', () => {
+        upstream.destroy();
+        relayed.delete(client);
+      });
+      upstream.on('close', () => client.destroy());
+    });
+    await new Promise<void>((resolve) => relay.listen(0, '127.0.0.1', resolve));
+    const relayOrigin = `http://127.0.0.1:${(relay.address() as AddressInfo).port}`;
+    const exchange = await auth.createDaemonExchange(AGENT);
+    const exchanged = await fetch(`${origin}/v1/auth/daemon/exchange`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ exchangeToken: exchange.exchangeToken }),
+    });
+    const { daemonToken } = (await exchanged.json()) as { daemonToken: string };
+    const client = new DaemonApiClient(relayOrigin, daemonToken, AGENT, fetch, undefined, undefined, {
+      pongTimeoutMs: 500,
+      handshakeTimeoutMs: 1_000,
+      backoffBaseMs: 100,
+      backoffMaxMs: 400,
+    });
+    const activation = await client.execute('getRoomInbox', { roomId: ROOM, startAtLatest: true });
+    let connected = false;
+    let replies = Promise.resolve();
+    let answered = 0;
+    const answer = (command: AgentCommand) => {
+      replies = replies.then(async () => {
+        await client.execute('claimAgentCommand', {
+          roomId: ROOM,
+          commandId: command.id,
+          generationId: 'generation-1',
+        });
+        await client.execute('postRoomMessage', {
+          roomId: ROOM,
+          requestId: command.turnRequestId,
+          generationId: 'generation-1',
+          text: `Answer ${answered + 1}`,
+        });
+        answered += 1;
+      });
+    };
+    const disconnect = client.liveSubscribe(
+      ROOM,
+      activation.cursor,
+      (_items, cursor) => client.updateLiveCursor(ROOM, cursor),
+      (value) => {
+        connected = value;
+      },
+      undefined,
+      (commands) => commands.forEach(answer),
+    );
+    const ask = async (text: string) => {
+      await phone.execute('sendRoomMessage', { roomId: ROOM, text }, HUMAN);
+      // PGlite has no separate LISTEN connection; deliver the two committed notifications.
+      live.publish({ type: 'invalidate', roomId: ROOM, reason: 'postgres:messages' });
+      live.publish({
+        type: 'invalidate',
+        roomId: ROOM,
+        reason: 'postgres:agent_commands',
+        targetAgentId: AGENT,
+      });
+    };
+    const agentReplies = async () =>
+      (
+        await database.query<{ text: string }>(
+          `SELECT text FROM messages WHERE room_id=$1 AND author_id=$2 ORDER BY created_at`,
+          [ROOM, AGENT],
+        )
+      ).rows.map((row) => row.text);
+    try {
+      await vi.waitFor(() => expect(connected).toBe(true));
+      await ask('@bee before the outage');
+      await vi.waitFor(() => expect(answered).toBe(1));
+
+      down = true;
+      for (const [socket, entry] of relayed) {
+        if (entry.live) continue;
+        socket.destroy();
+        entry.upstream.destroy();
+      }
+      await ask('@bee during the outage');
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(answered).toBe(1);
+      // An ordinary helper call fails on the dead network; the helper asks
+      // its socket, gets no pong, and drops it for a new one.
+      await expect(client.execute('getDaemonBootstrap', { agentId: AGENT })).rejects.toThrow();
+      await vi.waitFor(() => expect(connected).toBe(false), { timeout: 3_000 });
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      expect(answered).toBe(1);
+
+      down = false;
+      await vi.waitFor(() => expect(answered).toBe(2), { timeout: 10_000 });
+      await replies;
+      // The server may say the helper went offline meanwhile; the answer
+      // to the message sent during the outage still arrives after it.
+      const posted = await agentReplies();
+      expect(posted.filter((text) => text.startsWith('Answer '))).toEqual(['Answer 1', 'Answer 2']);
+      expect(posted.at(-1)).toBe('Answer 2');
+    } finally {
+      disconnect();
+      await replies;
+      client.closeLive();
+      for (const [socket, entry] of relayed) {
+        socket.destroy();
+        entry.upstream.destroy();
+      }
+      await new Promise<void>((resolve) => relay.close(() => resolve()));
     }
   });
 

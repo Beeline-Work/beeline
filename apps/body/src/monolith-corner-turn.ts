@@ -108,6 +108,7 @@ import {
 } from './prompt-assembly.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 import { WarmTranscript } from './warm-transcript.js';
+import type { RoomSupervisor } from './room-supervisor.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
 import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
 import { installCornerGitHubWrappers } from './corner-github-auth.js';
@@ -434,7 +435,6 @@ export interface MonolithCornerTurnOptions {
   /** Close-request recovery interval (test seam); defaults to the jittered 10 min. */
   closePollMs?: number;
   onPoll(): void;
-  onFailure(retryInMs: number): void;
   onSubscriptionState?: (connected: boolean) => void;
   onIntakeError?: (error: unknown) => void;
   onCloseRequested(): Promise<void>;
@@ -442,6 +442,8 @@ export interface MonolithCornerTurnOptions {
   onLaneChanged?: () => void;
   onRestartRequested?: () => void;
   canStartTurn?: () => boolean;
+  /** Keeps this corner's intake alive across failed reads. */
+  supervisor?: RoomSupervisor;
   createAcpClient?: (options: ConstructorParameters<typeof AcpClient>[0]) => AcpClient;
   /** Attachment downloads (test seam). */
   fetchImpl?: typeof fetch;
@@ -2117,9 +2119,9 @@ export class MonolithCornerTurnLoop {
   }
 
   async run(): Promise<void> {
-    const { api, cornerId, signal } = this.options;
-    try {
-      await runServerCommandIntake({
+    const { api, cornerId, signal, supervisor } = this.options;
+    const intake = (progress: () => void) =>
+      runServerCommandIntake({
         api,
         roomId: cornerId,
         agentId: this.agent.publicKey,
@@ -2138,7 +2140,10 @@ export class MonolithCornerTurnLoop {
         onWake: (wake) => {
           this.wakeIntake = wake;
         },
-        onPoll: () => this.options.onPoll(),
+        onPoll: () => {
+          progress();
+          this.options.onPoll();
+        },
         onSubscriptionState: this.options.onSubscriptionState,
         onError: (error) => {
           this.options.onIntakeError?.(error);
@@ -2194,6 +2199,10 @@ export class MonolithCornerTurnLoop {
             command.source.type === 'message' ? command.sourceMessageId : undefined,
           ),
       });
+    try {
+      await (supervisor
+        ? supervisor.supervise(`corner ${cornerId}`, signal, intake)
+        : intake(() => undefined));
     } finally {
       this.squireRelay.close();
       this.options.grantRunner?.unregister(cornerId);

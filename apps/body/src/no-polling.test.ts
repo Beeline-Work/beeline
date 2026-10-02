@@ -83,6 +83,31 @@ describe('no timer-driven helper server reads', () => {
     await running;
   });
 
+  it('adds no interval timer beyond the existing local ones', async () => {
+    const dir = new URL('.', import.meta.url);
+    const names = (await readdir(dir)).filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'));
+    const intervals: string[] = [];
+    for (const name of names) {
+      const source = ts.createSourceFile(name, await readFile(new URL(name, dir), 'utf8'),
+        ts.ScriptTarget.Latest, true);
+      const visit = (node: ts.Node): void => {
+        if (ts.isCallExpression(node) && node.expression.getText(source) === 'setInterval')
+          intervals.push(name);
+        ts.forEachChild(node, visit);
+      };
+      visit(source);
+    }
+    // Recovery is the reconnect backoff and the bounded retries, both
+    // setTimeout; none of these intervals reads from the server.
+    expect(intervals.sort()).toEqual([
+      'cli.ts', // scratch sweep (local disk)
+      'institutional-memory-shadow-worker.ts', // lease heartbeat while a claimed job runs
+      'session-scheduler.ts', // idle session sweep (local)
+      'systemd.ts', // local watchdog feed
+      'turn-receipt-heartbeat.ts', // receipt heartbeat while a turn runs
+    ]);
+  });
+
   it('has no interval or timeout callback that can reach a daemon read', async () => {
     const dir = new URL('.', import.meta.url);
     const names = (await readdir(dir)).filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'));

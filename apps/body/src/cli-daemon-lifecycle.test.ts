@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+import { HELPER_EXIT_CODES } from './helper-lifecycle.js';
 import { UNKNOWN_AGENT_EXIT_STATUS } from './systemd.js';
 
 const roots: string[] = [];
@@ -178,7 +179,8 @@ describe('daemon lifecycle exits', () => {
         },
       );
 
-      expect(result.code).toBe(1);
+      // An ordinary failure: restarted by the service manager, never counted as distress.
+      expect(result.code).toBe(HELPER_EXIT_CODES.failed);
       expect(result.output).toContain(`beeline-agent@${failedOrphan}.service`);
       expect(result.output).toContain(`simulated ${failingAction} failure`);
       expect(result.output).toContain('live-runti');

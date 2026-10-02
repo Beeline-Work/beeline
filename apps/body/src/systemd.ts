@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -247,6 +247,36 @@ export async function installAgentService(
   throw new Error(`systemd did not replace ${service}'s MainPID before the restart deadline`);
 }
 
+/**
+ * Converge the agent unit template from an update. The unit is otherwise
+ * written only at install, so an old host keeps the start limit that stops a
+ * helper for good (StartLimitBurst=10). The new content goes to a temp file
+ * and is renamed into place under the install lock, then systemd reloads it.
+ * Nothing is restarted: running agents pick the unit up on their next start.
+ */
+export async function rewriteAgentServiceUnit(options: {
+  lock: <T>(work: () => Promise<T>) => Promise<T>;
+  env?: NodeJS.ProcessEnv;
+  run?: SystemdRunner;
+  /** Test seam; production checks the running bundled CLI path. */
+  invocationPath?: string;
+}): Promise<boolean> {
+  const env = options.env ?? process.env;
+  assertCanonicalInstalledLauncher(env, options.invocationPath);
+  const path = systemdUserUnitPath(env);
+  const content = agentServiceUnit();
+  const run = options.run ?? runSystemctl;
+  return options.lock(async () => {
+    if ((await readFile(path, 'utf8').catch(() => '')) === content) return false;
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    const staged = `${path}.${process.pid}.tmp`;
+    await writeFile(staged, content, { mode: 0o600 });
+    await rename(staged, path);
+    await run(['daemon-reload']);
+    return true;
+  });
+}
+
 async function serviceStatus(
   run: SystemdRunner,
   service: string,
@@ -417,13 +447,25 @@ export class SystemdNotifier implements DaemonNotifier {
   }
 }
 
-/** Keep an idle, socket-connected helper alive in systemd without a server read. */
+/**
+ * Keep an idle, socket-connected helper alive in systemd without a server
+ * read. It runs only when systemd armed a watchdog, and a failed notification
+ * is logged: it must never become an unhandled rejection that kills the helper.
+ */
 export function startLocalWatchdog(
   notifier: Pick<DaemonNotifier, 'progress'>,
   status: () => string,
   intervalMs = 60_000,
+  env: NodeJS.ProcessEnv = process.env,
 ): () => void {
-  const timer = setInterval(() => void notifier.progress(status()), intervalMs);
+  if (!env.WATCHDOG_USEC) return () => undefined;
+  const timer = setInterval(
+    () =>
+      void notifier
+        .progress(status())
+        .catch((error) => console.error('[thin-core] watchdog notification failed:', error)),
+    intervalMs,
+  );
   timer.unref?.();
   return () => clearInterval(timer);
 }

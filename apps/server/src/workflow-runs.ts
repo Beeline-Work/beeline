@@ -242,6 +242,11 @@ function isHandoffState(state: WorkflowState): state is WorkflowHandoffState {
   return state.kind === undefined;
 }
 
+/** The gate card's question; the run page finds a gate's card by it. */
+export function workflowGatePrompt(contract: Pick<WorkflowContract, 'name'>, stateName: string): string {
+  return `${contract.name}: ${stateName}`.slice(0, 120);
+}
+
 /** Posts the gate's ask_choice card; the bound role's agent is woken once a human answers. */
 async function postWorkflowGate(
   db: SqlDatabase,
@@ -260,7 +265,7 @@ async function postWorkflowGate(
     roomId: input.roomId,
     agentId: askerAgentId,
     mode: 'question',
-    prompt: `${input.contract.name}: ${input.stateName}`.slice(0, 120),
+    prompt: workflowGatePrompt(input.contract, input.stateName),
     options: Object.entries(input.state.on).map(([outcome, target]) => ({
       label: outcome,
       consequence: `go to ${target}`.slice(0, 80),

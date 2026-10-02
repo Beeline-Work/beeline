@@ -36,9 +36,7 @@ describe('the one page header', () => {
 
   it('is the one header Bookmarks and Workbench render', () => {
     expect(bookmarks).toContain('<PageHeader');
-    expect(bookmarks).toContain(
-      'trailing={`${needs.length} NEED YOU · ${bookmarks.length} SAVED`}',
-    );
+    expect(bookmarks).not.toContain('NEED YOU · ');
     expect(bookmarks).not.toContain('PRIVATE');
     expect(bookmarks).not.toContain('styles.header');
     expect(workbench).toContain('<PageHeader');

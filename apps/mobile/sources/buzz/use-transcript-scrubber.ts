@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RoomHistoryOutline } from '@beeline/api-contract/phone';
 import { messageBoundaryIds } from './room-new-message-boundary';
 import type { ChatDisplayMessage } from './room-view-presentation';
@@ -12,6 +12,9 @@ function deviceTimeZone(): string {
     return 'UTC';
   }
 }
+
+/** How long the bar stays after the list stops, long enough to press and hold it. */
+export const SCRUBBER_LINGER_MS = 2_000;
 
 /**
  * State for `TranscriptScrubber`: the Room's history outline, read once per
@@ -29,6 +32,8 @@ export function useTranscriptScrubber({
 }) {
   const [outline, setOutline] = useState<RoomHistoryOutline | null>(null);
   const [visibleIds, setVisibleIds] = useState<readonly string[]>([]);
+  const [visible, setVisible] = useState(false);
+  const lingerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setOutline(null);
@@ -47,6 +52,13 @@ export function useTranscriptScrubber({
     };
   }, [roomClient, roomId]);
 
+  useEffect(
+    () => () => {
+      if (lingerRef.current) clearTimeout(lingerRef.current);
+    },
+    [],
+  );
+
   const loadedIds = useMemo(
     () =>
       durableMessages
@@ -62,5 +74,11 @@ export function useTranscriptScrubber({
     setVisibleIds(rows.flatMap(messageBoundaryIds));
   }, []);
 
-  return { history, position, observeVisibleRows };
+  const revealOnScroll = useCallback(() => {
+    setVisible(true);
+    if (lingerRef.current) clearTimeout(lingerRef.current);
+    lingerRef.current = setTimeout(() => setVisible(false), SCRUBBER_LINGER_MS);
+  }, []);
+
+  return { history, position, visible, observeVisibleRows, revealOnScroll };
 }

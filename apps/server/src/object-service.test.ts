@@ -104,6 +104,9 @@ describe('ObjectService', () => {
     await expect(service.uploadArtifact(AGENT, Buffer.from('x'), 'text/html', '  ')).rejects.toThrow(
       /title/,
     );
+    await expect(
+      service.uploadArtifact(AGENT, Buffer.from('not a video'), 'video/mp4', 'clip.mp4'),
+    ).rejects.toThrow(/ftyp box/);
     expect(fake.put).not.toHaveBeenCalled();
   });
 
@@ -461,6 +464,7 @@ describe('ObjectService', () => {
       'video/webm',
       'audio/mpeg',
       'audio/wav',
+      'audio/mp4',
       'application/octet-stream',
     ])
       expect(isArtifactMimeType(mime)).toBe(true);

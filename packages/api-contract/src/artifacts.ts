@@ -31,6 +31,7 @@ export const ARTIFACT_MIME_TYPES = [
   'video/webm',
   'audio/mpeg',
   'audio/wav',
+  'audio/mp4',
   'application/octet-stream',
 ] as const;
 
@@ -59,6 +60,7 @@ export const ARTIFACT_EXTENSIONS_BY_MIME = {
   'video/webm': ['.webm'],
   'audio/mpeg': ['.mp3'],
   'audio/wav': ['.wav'],
+  'audio/mp4': ['.m4a'],
   'application/octet-stream': [],
 } as const satisfies Record<ArtifactMimeType, readonly string[]>;
 
@@ -68,6 +70,35 @@ export const ARTIFACT_MIME_BY_EXTENSION: Readonly<Record<string, ArtifactMimeTyp
       extensions.map((extension) => [extension, mime as ArtifactMimeType]),
     ),
   );
+
+function ascii(bytes: Uint8Array, start: number, end: number): string {
+  return String.fromCharCode(...bytes.subarray(start, end));
+}
+
+/** Older QuickTime files open with one of these atoms instead of `ftyp`. */
+const QUICKTIME_ATOMS = ['ftyp', 'moov', 'mdat', 'wide', 'free', 'skip', 'pnot'];
+
+/**
+ * Returns a refusal sentence when a video or audio artifact's bytes do not
+ * start with the signature of its declared mime; other mimes return undefined.
+ */
+export function artifactSignatureMismatch(mime: string, bytes: Uint8Array): string | undefined {
+  const expected: Record<string, [string, () => boolean]> = {
+    'video/mp4': ['an ISO-BMFF ftyp box', () => ascii(bytes, 4, 8) === 'ftyp'],
+    'audio/mp4': ['an ISO-BMFF ftyp box', () => ascii(bytes, 4, 8) === 'ftyp'],
+    'video/quicktime': ['a QuickTime ftyp or movie atom',
+      () => QUICKTIME_ATOMS.includes(ascii(bytes, 4, 8))],
+    'video/webm': ['the EBML header 1A 45 DF A3', () =>
+      bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3],
+    'audio/mpeg': ['an ID3 tag or MPEG frame sync', () => ascii(bytes, 0, 3) === 'ID3' ||
+      (bytes[0] === 0xff && ((bytes[1] ?? 0) & 0xe0) === 0xe0)],
+    'audio/wav': ['a RIFF/WAVE header',
+      () => ascii(bytes, 0, 4) === 'RIFF' && ascii(bytes, 8, 12) === 'WAVE'],
+  };
+  const check = expected[mime];
+  if (!check || check[1]()) return undefined;
+  return `a ${mime} artifact must start with ${check[0]}; these bytes do not`;
+}
 
 /** Artifacts upload through the server; this is also the `write_scratch_file`
  *  ceiling, so anything the helper can write it can post. */

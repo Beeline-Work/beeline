@@ -610,7 +610,7 @@ describe('corner close-request delivery', () => {
       const generated = await writeScratchFile(
         {
           path: 'clips/demo.mp4',
-          content: Buffer.from('video-bytes').toString('base64'),
+          content: Buffer.from('\0\0\0\x18ftypiso', 'latin1').toString('base64'),
           encoding: 'base64',
         },
         { root: env.get('BEELINE_ATTACH_SCRATCH_ROOT')! },

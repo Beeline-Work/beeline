@@ -322,7 +322,8 @@ function githubInstallErrorPage(reason: 'expired' | 'used' | 'invalid'): string 
   return githubInstallReturnPage(
     'This connection link is invalid',
     `<p>This GitHub connection link is not valid — it may have been mistyped, altered, or issued for a different account.</p>
-      <p>Start again from the app (or ask for a fresh link) and the connection will complete normally.</p>`,
+      <p>Start again from the app (or ask for a fresh link) and the connection will complete normally.</p>
+      <p>If the installation itself already succeeded on GitHub, Beeline will discover it automatically — open the app and it will appear.</p>`,
   );
 }
 
@@ -1032,7 +1033,29 @@ export function createAuthRouteContext(options: AuthServerOptions) {
     const rawInstallationId = query.installation_id;
     const installationId =
       typeof rawInstallationId === 'string' ? Number(rawInstallationId) : Number.NaN;
-    const flowUnavailable = (reason: 'expired' | 'used' | 'invalid') => {
+    const flowUnavailable = (
+      reason: 'expired' | 'used' | 'invalid',
+      cause: 'expired' | 'used' | 'missing' | 'other_community',
+    ) => {
+      // The auth app runs with Fastify's logger off in the monolith, so
+      // request.log is silent in production. Record why the return was
+      // refused, with presence flags and a short state fingerprint only —
+      // never the state or code themselves.
+      console.warn(
+        '[auth] GitHub installation return rejected',
+        JSON.stringify({
+          route:
+            request.routeOptions.url === '/auth/github/callback'
+              ? 'oauth_callback'
+              : 'install_callback',
+          path: request.routeOptions.url,
+          reason: cause,
+          installationId: query.installation_id !== undefined,
+          code: query.code !== undefined,
+          setupAction: typeof query.setup_action === 'string' ? query.setup_action : null,
+          stateFingerprint: sha256(state).slice(0, 8),
+        }),
+      );
       noStore(reply);
       reply.header(
         'content-security-policy',
@@ -1052,10 +1075,14 @@ export function createAuthRouteContext(options: AuthServerOptions) {
     // real callback arrives once approval lands.
     if (!Number.isSafeInteger(installationId) || installationId <= 0) {
       const pending = await options.store.peekGitHubInstallFlow(sha256(state), now());
-      if (pending.status !== 'ok' || pending.flow.community !== tenant.community) {
+      if (pending.status !== 'ok') {
         return flowUnavailable(
-          pending.status === 'expired' || pending.status === 'used' ? pending.status : 'invalid',
+          pending.status === 'missing' ? 'invalid' : pending.status,
+          pending.status,
         );
+      }
+      if (pending.flow.community !== tenant.community) {
+        return flowUnavailable('invalid', 'other_community');
       }
       noStore(reply);
       reply.header(
@@ -1072,6 +1099,7 @@ export function createAuthRouteContext(options: AuthServerOptions) {
       const miss = await options.store.peekGitHubInstallFlow(sha256(state), now());
       return flowUnavailable(
         miss.status === 'expired' || miss.status === 'used' ? miss.status : 'invalid',
+        flow ? 'other_community' : miss.status === 'ok' ? 'missing' : miss.status,
       );
     }
     const [linkedAccountId, installedAccount, repositories] = await Promise.all([

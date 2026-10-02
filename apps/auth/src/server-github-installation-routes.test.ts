@@ -687,6 +687,147 @@ describe('GitHub installation, repositories, and token routes', () => {
     expect(reused.body).not.toContain('has expired');
   });
 
+  it('tells an invalid-link visitor that a successful installation is still discovered', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/auth/github/callback?installation_id=77&setup_action=install&state=wrongstate',
+      headers: { host: alphaTenant.host },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.body).toContain('This connection link is invalid');
+    expect(response.body).toContain(
+      'If the installation itself already succeeded on GitHub, Beeline will discover it automatically',
+    );
+  });
+
+  it('logs one line per rejected install return with its reason and no raw state or code', async () => {
+    const identity = generateKeypair();
+    await bindGitHubIdentity(identity, '3'.repeat(43));
+    const installStartUrl = 'https://alpha.example/auth/github/install/start';
+    const startInstall = async () => {
+      const started = await app.inject({
+        method: 'POST',
+        url: '/auth/github/install/start',
+        headers: {
+          host: alphaTenant.host,
+          authorization: nip98AuthHeader(
+            identity.secretKey,
+            identity.publicKey,
+            installStartUrl,
+            'POST',
+          ),
+        },
+        payload: {
+          pubkey: identity.publicKey,
+          redirect_uri: 'beeline://beeline/github-installation',
+        },
+      });
+      expect(started.statusCode).toBe(200);
+      return new URL(started.json().authorization_url).searchParams.get('state') ?? '';
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const rejectedReturn = async (url: string, host: string, rawState: string) => {
+      warn.mockClear();
+      const response = await app.inject({ method: 'GET', url, headers: { host } });
+      expect(response.statusCode).toBe(400);
+      const lines = warn.mock.calls.filter(
+        (call) => call[0] === '[auth] GitHub installation return rejected',
+      );
+      expect(lines).toHaveLength(1);
+      const text = lines[0].join(' ');
+      expect(text).not.toContain(rawState);
+      expect(text).not.toContain('secretcode');
+      return JSON.parse(String(lines[0][1])) as Record<string, unknown>;
+    };
+    const fingerprint = (value: string) =>
+      createHash('sha256').update(value).digest('hex').slice(0, 8);
+
+    try {
+      // missing: a state no flow row was ever written for, via the OAuth callback.
+      const unknownState = 'neverissuedstate';
+      expect(
+        await rejectedReturn(
+          `/auth/github/callback?installation_id=77&setup_action=install&code=secretcode&state=${unknownState}`,
+          alphaTenant.host,
+          unknownState,
+        ),
+      ).toEqual({
+        route: 'oauth_callback',
+        path: '/auth/github/callback',
+        reason: 'missing',
+        installationId: true,
+        code: true,
+        setupAction: 'install',
+        stateFingerprint: fingerprint(unknownState),
+      });
+
+      // missing on the direct installation callback, without an installation id.
+      expect(
+        await rejectedReturn(
+          `/auth/github/install/callback?state=${unknownState}`,
+          alphaTenant.host,
+          unknownState,
+        ),
+      ).toMatchObject({
+        route: 'install_callback',
+        path: '/auth/github/install/callback',
+        reason: 'missing',
+        installationId: false,
+        code: false,
+        setupAction: null,
+      });
+
+      // other_community: a live flow issued by another Workspace server.
+      const foreignState = await startInstall();
+      expect(
+        await rejectedReturn(
+          `/auth/github/callback?setup_action=install&state=${foreignState}`,
+          betaTenant.host,
+          foreignState,
+        ),
+      ).toMatchObject({ reason: 'other_community', installationId: false });
+      expect(
+        await rejectedReturn(
+          `/auth/github/install/callback?installation_id=77&setup_action=install&state=${foreignState}`,
+          betaTenant.host,
+          foreignState,
+        ),
+      ).toMatchObject({ reason: 'other_community', installationId: true });
+
+      // used: a spent flow returned again.
+      const usedState = await startInstall();
+      const first = await app.inject({
+        method: 'GET',
+        url: `/auth/github/callback?installation_id=77&setup_action=install&state=${usedState}`,
+        headers: { host: alphaTenant.host },
+      });
+      expect(first.statusCode).toBe(302);
+      expect(
+        await rejectedReturn(
+          `/auth/github/callback?installation_id=77&setup_action=install&state=${usedState}`,
+          alphaTenant.host,
+          usedState,
+        ),
+      ).toMatchObject({ reason: 'used', stateFingerprint: fingerprint(usedState) });
+
+      // expired: the flow's window closed before GitHub returned.
+      const expiredState = await startInstall();
+      await database.query(`UPDATE beeline_github_install_flows SET expires_at = $1`, [
+        new Date(Date.now() - 60_000),
+      ]);
+      expect(
+        await rejectedReturn(
+          `/auth/github/install/callback?installation_id=77&setup_action=install&state=${expiredState}`,
+          alphaTenant.host,
+          expiredState,
+        ),
+      ).toMatchObject({ route: 'install_callback', reason: 'expired' });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('re-mints Room tokens for a repository that transferred after its Room binding was written', async () => {
     const owner = generateKeypair();
     const agent = generateKeypair();

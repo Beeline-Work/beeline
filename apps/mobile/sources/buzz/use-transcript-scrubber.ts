@@ -59,6 +59,16 @@ export function createTranscriptScrubberStore() {
       });
       reveal();
     },
+    /**
+     * The list's content grew or shrank without scrolling, as when an older
+     * page lands at the top. No scroll event reports that, so the list's
+     * content-size callback does.
+     */
+    observeContentSize(contentHeight: number) {
+      const { metrics } = snapshot;
+      if (!metrics || metrics.contentHeight === contentHeight) return;
+      update({ metrics: { ...metrics, contentHeight } });
+    },
     observeVisibleRows(rows: readonly ChatDisplayMessage[]) {
       const date = scrubDate(rows);
       if (date !== snapshot.date) update({ date });

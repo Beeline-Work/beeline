@@ -40,4 +40,21 @@ describe('transcript scrubber store', () => {
     store.observeVisibleRows(rows);
     expect(store.getSnapshot()).toBe(first);
   });
+
+  it('takes a new content height without scrolling or showing the bar', () => {
+    const store = createTranscriptScrubberStore();
+    store.observeContentSize(8_600);
+    expect(store.getSnapshot().metrics).toBeNull();
+    store.observeScroll(scroll(5_000));
+    vi.advanceTimersByTime(SCRUBBER_LINGER_MS);
+    store.observeContentSize(8_600);
+    expect(store.getSnapshot()).toMatchObject({
+      visible: false,
+      metrics: { offset: 5_000, contentHeight: 8_600, viewportHeight: 600 },
+    });
+    const same = store.getSnapshot();
+    store.observeContentSize(8_600);
+    expect(store.getSnapshot()).toBe(same);
+    store.dispose();
+  });
 });

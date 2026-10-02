@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -54,7 +56,9 @@ const scroll = (y: number, contentHeight: number) => ({
 
 function render(contentHeight = 5_600, offset = 0) {
   const store = createTranscriptScrubberStore();
-  const onScrubTo = vi.fn((y: number) => store.observeScroll(scroll(y, contentHeight)));
+  const onScrubTo = vi.fn((y: number) =>
+    store.observeScroll(scroll(y, store.getSnapshot().metrics?.contentHeight ?? contentHeight)),
+  );
   let renderer!: ReactTestRenderer;
   act(() => {
     renderer = create(<TranscriptScrubber scrubber={store} onScrubTo={onScrubTo} />);
@@ -119,9 +123,101 @@ describe('TranscriptScrubber', () => {
   it('keeps scrolling into older rows as they load under the finger', () => {
     const { store, onScrubTo, grab } = render(5_600, 5_000);
     act(() => grab().props.onPanResponderGrant({ nativeEvent: {} }));
-    // An older page lands: the content grows and the list's offset holds.
-    act(() => store.observeScroll(scroll(5_000, 8_600)));
     act(() => grab().props.onPanResponderMove({}, { dy: -2 }));
+    expect(onScrubTo).toHaveBeenLastCalledWith(5_000);
+    // An older page lands: the content grows, the offset holds, and no scroll
+    // event follows. The held finger goes on to the new oldest row.
+    act(() => store.observeContentSize(8_600));
     expect(onScrubTo).toHaveBeenLastCalledWith(8_000);
+  });
+});
+
+/**
+ * The Room screen's wiring around a stand-in inverted list: onScroll feeds
+ * observeScroll, onContentSizeChange feeds observeContentSize, a drag calls
+ * scrollToOffset, and onEndReached (threshold 0.5) loads an older page. Like
+ * iOS, scrollToOffset to the offset the list already has does nothing and
+ * sends no scroll event.
+ */
+describe('TranscriptScrubber on the Room transcript', () => {
+  const PAGE = 3_000;
+
+  function mountRoom() {
+    const store = createTranscriptScrubberStore();
+    const list = { offset: 0, contentHeight: 5_600, loads: 0, pending: 0, endSentFor: 0 };
+    const scrollEvent = () => ({
+      contentOffset: { y: list.offset },
+      contentSize: { height: list.contentHeight },
+      layoutMeasurement: { height: RAIL },
+    });
+    const maybeEndReached = () => {
+      const distance = list.contentHeight - RAIL - list.offset;
+      if (distance >= RAIL * 0.5 || list.endSentFor === list.contentHeight) return;
+      list.endSentFor = list.contentHeight;
+      list.loads += 1;
+      list.pending += 1;
+    };
+    // An older page renders on a later frame, at the top of the content.
+    const landOlderPage = () => {
+      expect(list.pending).toBeGreaterThan(0);
+      list.pending -= 1;
+      list.contentHeight += PAGE;
+      store.observeContentSize(list.contentHeight);
+      maybeEndReached();
+    };
+    const scrollToOffset = (offset: number) => {
+      const next = Math.min(Math.max(0, offset), list.contentHeight - RAIL);
+      if (next === list.offset) return;
+      list.offset = next;
+      store.observeScroll(scrollEvent());
+      maybeEndReached();
+    };
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(<TranscriptScrubber scrubber={store} onScrubTo={scrollToOffset} />);
+    });
+    act(() =>
+      renderer.root
+        .findByProps({ testID: 'transcript-scrubber' })
+        .props.onLayout({ nativeEvent: { layout: { height: RAIL } } }),
+    );
+    act(() => store.observeScroll(scrollEvent()));
+    const grab = () => renderer.root.findByProps({ testID: 'transcript-scrubber-grab' });
+    return { list, grab, landOlderPage };
+  }
+
+  it('loads page after page while the reader holds the bar at the top', () => {
+    const { list, grab, landOlderPage } = mountRoom();
+    act(() => grab().props.onPanResponderGrant({ nativeEvent: {} }));
+    act(() => grab().props.onPanResponderMove({}, { dy: -RAIL }));
+    expect(list).toMatchObject({ offset: 5_000, loads: 1 });
+    act(landOlderPage);
+    expect(list).toMatchObject({ contentHeight: 8_600, offset: 8_000, loads: 2 });
+    act(landOlderPage);
+    expect(list).toMatchObject({ contentHeight: 11_600, offset: 11_000, loads: 3 });
+  });
+
+  it('scrubs into the older rows after they load', () => {
+    const { list, grab, landOlderPage } = mountRoom();
+    act(() => grab().props.onPanResponderGrant({ nativeEvent: {} }));
+    act(() => grab().props.onPanResponderMove({}, { dy: -RAIL }));
+    act(() => grab().props.onPanResponderRelease());
+    act(landOlderPage);
+    // Released before the page landed: the list stays where the reader left it.
+    expect(list).toMatchObject({ contentHeight: 8_600, offset: 5_000, loads: 1 });
+    // Grab again and drag up: the list follows into the new rows.
+    act(() => grab().props.onPanResponderGrant({ nativeEvent: {} }));
+    act(() => grab().props.onPanResponderMove({}, { dy: -RAIL }));
+    expect(list).toMatchObject({ offset: 8_000, loads: 2 });
+  });
+
+  it('feeds the transcript list size into the bar', () => {
+    const surface = readFileSync(
+      resolve(__dirname, '../../app/(app)/beeline/chat/_chat-surface.tsx'),
+      'utf8',
+    );
+    expect(surface).toContain(
+      'onContentSizeChange={(_width, height) => transcriptScrubber.observeContentSize(height)}',
+    );
   });
 });

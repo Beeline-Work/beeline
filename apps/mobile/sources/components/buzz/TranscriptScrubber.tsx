@@ -1,5 +1,5 @@
 import * as Haptics from 'expo-haptics';
-import React, { useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { PanResponder, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { scrollBarPosition, scrubOffset } from '@/buzz/transcript-scrubber';
@@ -29,9 +29,21 @@ export function TranscriptScrubber({
   // The thumb follows the finger while dragging, not the list's echo.
   const [dragPosition, setDragPosition] = useState<number | null>(null);
   const position = dragPosition ?? (metrics ? scrollBarPosition(metrics) : null);
-  const live = useRef({ position, railHeight, onScrubTo });
-  live.current = { position, railHeight, onScrubTo };
+  const live = useRef({ position, dragPosition, railHeight, onScrubTo });
+  live.current = { position, dragPosition, railHeight, onScrubTo };
   const grabbedAt = useRef(0);
+
+  // Rows that load under a held finger change the list's size, not its
+  // offset. Re-aim the list so the finger keeps its place in the new range:
+  // held at the top, that is the new oldest row, which loads the next page.
+  const contentHeight = metrics?.contentHeight;
+  const viewportHeight = metrics?.viewportHeight;
+  useEffect(() => {
+    const held = live.current.dragPosition;
+    const current = scrubber.getSnapshot().metrics;
+    if (held === null || !current) return;
+    live.current.onScrubTo(scrubOffset(current, held));
+  }, [contentHeight, viewportHeight, scrubber]);
 
   const pan = useMemo(() => {
     const finish = () => {

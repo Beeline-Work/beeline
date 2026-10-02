@@ -5948,6 +5948,7 @@ export function BuzzChatSurface({
               observePhoneTailOffset(event.nativeEvent.contentOffset.y);
               transcriptScrubber.observeScroll(event.nativeEvent);
             }}
+            onContentSizeChange={(_width, height) => transcriptScrubber.observeContentSize(height)}
             // One frame, the list's own default. A wider window leaves the
             // viewability report (which settles the badge and the unread
             // line) on an offset the list has already scrolled past.

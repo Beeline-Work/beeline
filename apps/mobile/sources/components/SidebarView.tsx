@@ -341,7 +341,7 @@ export const SidebarView = React.memo(function SidebarView() {
     [query, filter, pinned, surface?.chats],
   );
   const messageSearch = useMessageSearch(
-    client ? (id, text, before) => client.searchMessages(id, text, before) : null,
+    client ? (id, text, before, signal) => client.searchMessages(id, text, before, signal) : null,
     workspaceId,
     query,
   );

@@ -48,10 +48,11 @@ const result = (id: string, extra: Partial<MessageSearchResult> = {}): MessageSe
 
 const state = (extra: Partial<MessageSearchState>): MessageSearchState => ({
   status: 'ready',
+  query: 'android build',
   results: [],
   hasMore: false,
   loadingMore: false,
-  moreFailed: false,
+  moreFailed: null,
   retry: () => undefined,
   loadMore: () => undefined,
   ...extra,
@@ -114,8 +115,32 @@ describe('MessageSearchResults', () => {
     expect(loadMore).toHaveBeenCalledTimes(1);
   });
 
-  it('renders nothing until the query is long enough to search', async () => {
+  it('renders nothing without a query or a server that searches', async () => {
     const { tree } = await render(state({ status: 'unavailable' }));
     expect(tree.toJSON()).toBeNull();
+  });
+
+  it('says why a short, common-word, or too-broad query is not searched', async () => {
+    expect(textOf((await render(state({ status: 'short', query: 'and' }))).find('message-search-short')[0])).toBe(
+      'Type 4 or more letters to search messages.',
+    );
+    expect(textOf((await render(state({ status: 'filler', query: 'with' }))).find('message-search-filler')[0])).toBe(
+      "Common words aren't searched. Type a more specific word.",
+    );
+    expect(textOf((await render(state({ status: 'too_broad', query: 'gradle' }))).find('message-search-too-broad')[0])).toBe(
+      'Too many messages match “gradle”. Add another word.',
+    );
+  });
+
+  it('says searching is too fast and offers Retry instead of the generic error', async () => {
+    const retry = vi.fn();
+    const { tree, find } = await render(state({ status: 'rate_limited', retry }));
+    expect(textOf(tree.root)).toContain('Searching too fast. Wait a moment.Retry');
+    expect(textOf(tree.root)).not.toContain("Couldn't search messages.");
+    await act(async () => find('message-search-too-fast')[0].props.onPress());
+    expect(retry).toHaveBeenCalledTimes(1);
+
+    const more = await render(state({ results: [result('1')], hasMore: true, moreFailed: 'rate_limited' }));
+    expect(textOf(more.tree.root)).toContain('Searching too fast. Wait a moment.Retry');
   });
 });

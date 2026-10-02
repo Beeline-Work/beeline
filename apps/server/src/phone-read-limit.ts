@@ -12,10 +12,11 @@ export const HISTORY_REQUESTS_PER_WINDOW = 2_400;
 /** The phone reads the outline once per Room visit; two visits a second is not a person. */
 export const OUTLINE_REQUESTS_PER_WINDOW = 120;
 /**
- * The Room list searches about 250 ms after typing stops, so even steady
- * typing for a whole minute asks fewer than this; more is a loop, not a person.
+ * The Room list searches about 250 ms after typing stops, only once a word has
+ * four letters, and not again while the searched words stay the same. A person
+ * typing asks a few times a query; more than one a second is a loop.
  */
-export const SEARCH_REQUESTS_PER_WINDOW = 240;
+export const SEARCH_REQUESTS_PER_WINDOW = 60;
 /** A flood must not be able to grow process memory without bound. */
 const MAX_TRACKED_IDENTITIES = 10_000;
 

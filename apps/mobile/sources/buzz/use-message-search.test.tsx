@@ -2,6 +2,7 @@ import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RoomViewHttpError } from '@beeline/buzz-client';
 import type { MessageSearchResult, MessageSearchView } from '@beeline/api-contract/phone';
 
 import {
@@ -74,22 +75,109 @@ function harness(read: MessageSearchRead) {
 }
 
 describe('useMessageSearch', () => {
-  it('waits for typing to pause, needs two characters, and asks once for the settled query', async () => {
+  it('waits for typing to pause, needs four characters, and asks once for the settled query', async () => {
     const read = vi.fn(async () => view(['1']));
     const search = harness(read);
-    await search.type('a');
-    await search.settle();
-    expect(search.state().status).toBe('unavailable');
+    for (const query of ['a', 'an', 'and']) {
+      await search.type(query);
+      await search.settle();
+      expect(search.state().status).toBe('short');
+    }
     expect(read).not.toHaveBeenCalled();
 
-    await search.type('an');
-    await search.type('and');
+    await search.type('andr');
+    await search.type('andro');
     expect(search.state().status).toBe('loading');
     await search.settle();
     expect(read).toHaveBeenCalledTimes(1);
-    expect(read).toHaveBeenCalledWith(WORKSPACE, 'and');
+    expect(read).toHaveBeenCalledWith(WORKSPACE, 'andro', undefined, expect.any(AbortSignal));
     expect(search.state().status).toBe('ready');
     expect(search.state().results.map((item) => item.messageId)).toEqual(['1'.repeat(64)]);
+  });
+
+  it('never asks for a query of only common words or a word still too short', async () => {
+    const read = vi.fn(async () => view(['1']));
+    const search = harness(read);
+    for (const query of ['with', 'yeah thanks', 'the bu']) {
+      await search.type(query);
+      await search.settle();
+      expect(search.state().status).toBe('filler');
+    }
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it('does not ask again while the searched words stay the same', async () => {
+    const read = vi.fn(async () => view(['1']));
+    const search = harness(read);
+    await search.type('android b');
+    await search.settle();
+    await search.type('android bu');
+    await search.settle();
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(search.state().status).toBe('ready');
+  });
+
+  it('cancels the read in flight when the query changes and shows no error for it', async () => {
+    const signals: AbortSignal[] = [];
+    const read = vi.fn<MessageSearchRead>((_workspace, _query, _before, signal) => {
+      signals.push(signal!);
+      return new Promise((_resolve, reject) =>
+        signal!.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError'))),
+      );
+    });
+    const search = harness(read);
+    await search.type('android');
+    await search.settle();
+    await search.type('gradle');
+    expect(signals[0]!.aborted).toBe(true);
+    expect(search.state().status).toBe('loading');
+    await search.settle();
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(signals[1]!.aborted).toBe(false);
+    expect(search.state().status).toBe('loading');
+  });
+
+  it('cancels a Show more read when the query changes', async () => {
+    const more = deferred<MessageSearchView>();
+    let moreSignal!: AbortSignal;
+    const read = vi
+      .fn<MessageSearchRead>()
+      .mockResolvedValueOnce(view(['3'], '3'.repeat(64)))
+      .mockImplementationOnce((_workspace, _query, _before, signal) => {
+        moreSignal = signal!;
+        return more.promise;
+      })
+      .mockResolvedValueOnce(view(['5']));
+    const search = harness(read);
+    await search.type('android');
+    await search.settle();
+    await act(async () => search.state().loadMore());
+    await search.type('gradle');
+    expect(moreSignal.aborted).toBe(true);
+    await search.settle();
+    await act(async () => more.reject(new DOMException('Aborted', 'AbortError')));
+    expect(search.state().status).toBe('ready');
+    expect(search.state().moreFailed).toBeNull();
+    expect(search.state().results.map((item) => item.messageId)).toEqual(['5'.repeat(64)]);
+  });
+
+  it('tells searching too fast and a too-broad query apart from other failures', async () => {
+    const read = vi
+      .fn<MessageSearchRead>()
+      .mockRejectedValueOnce(new RoomViewHttpError(429, 'too_many_requests'))
+      .mockRejectedValueOnce(new RoomViewHttpError(422, 'query_too_broad'))
+      .mockResolvedValueOnce(view(['1']));
+    const search = harness(read);
+    await search.type('gradle');
+    await search.settle();
+    expect(search.state().status).toBe('rate_limited');
+    await act(async () => search.state().retry());
+    await search.settle();
+    expect(search.state().status).toBe('too_broad');
+    expect(search.state().query).toBe('gradle');
+    await act(async () => search.state().retry());
+    await search.settle();
+    expect(search.state().status).toBe('ready');
   });
 
   it('drops a response for a query that has since changed', async () => {
@@ -124,7 +212,7 @@ describe('useMessageSearch', () => {
     expect(search.state().hasMore).toBe(true);
 
     await act(async () => search.state().loadMore());
-    expect(read).toHaveBeenLastCalledWith(WORKSPACE, 'android', '3'.repeat(64));
+    expect(read).toHaveBeenLastCalledWith(WORKSPACE, 'android', '3'.repeat(64), expect.any(AbortSignal));
     expect(search.state().results.map((item) => item.messageId)).toEqual([
       '3'.repeat(64),
       '2'.repeat(64),

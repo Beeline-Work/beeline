@@ -71,7 +71,6 @@ describe('transcript scroll bar', () => {
       attempt += 1;
       if (attempt % 3 !== 0) highest += 10;
     }
-    // Far more attempts than the notification landing's eight.
     expect(landing.failures).toBeGreaterThan(30);
   });
 

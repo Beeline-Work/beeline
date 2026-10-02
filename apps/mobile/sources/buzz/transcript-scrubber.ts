@@ -41,7 +41,7 @@ export function scrubDate(rows: readonly ChatDisplayMessage[]): string | null {
   return ledgerDayCaption(oldest);
 }
 
-/** A scrubbed day's landing while native measures its way to the row. */
+/** A landing on a distant row while native measures its way to it. */
 export type ScrubLanding = {
   messageId: string;
   /** The furthest row native had measured at the last failed attempt. */

@@ -324,8 +324,8 @@ import {
 import { useNewMessageControl } from '@/buzz/use-new-message-control';
 import { RoomCatchUpControls } from '@/components/buzz/RoomCatchUpControls';
 import { TranscriptScrubber } from '@/components/buzz/TranscriptScrubber';
-import { useTranscriptScrubber } from '@/buzz/use-transcript-scrubber';
 import { continueScrubLanding, type ScrubLanding } from '@/buzz/transcript-scrubber';
+import { useTranscriptScrubber } from '@/buzz/use-transcript-scrubber';
 import { RoomCatchUpSheet } from '@/components/buzz/RoomCatchUpSheet';
 import { buildCatchUpReport } from '@/buzz/room-catch-up-report';
 import { createTranscriptCardMotionStore } from '@/components/buzz/transcript-card-motion-context';

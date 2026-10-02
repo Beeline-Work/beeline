@@ -6799,6 +6799,15 @@ export class PhoneService {
           }),
         ],
       );
+      // A corner the account's agent currently implements — but that another
+      // agent opened — is not caught by the update above, and a surviving
+      // `worker_agent_id` would block `DELETE FROM identities` on its foreign
+      // key. Clearing it falls back to the opener, exactly as the column reads.
+      await database.query(
+        `UPDATE corner_facts SET worker_agent_id=NULL,updated_at=now()
+         WHERE worker_agent_id=ANY($1)`,
+        [gone],
+      );
       await database.query(
         `DELETE FROM agent_schedules WHERE agent_id=ANY($1) OR creator_id=ANY($1)`,
         [gone],

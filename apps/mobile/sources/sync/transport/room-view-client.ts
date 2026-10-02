@@ -113,12 +113,18 @@ class MonolithRoomViewClient {
       readRoomHistoryOutline,
     );
   }
-  searchMessages(workspaceId: string, query: string, before?: string): Promise<MessageSearchView> {
+  searchMessages(
+    workspaceId: string,
+    query: string,
+    before?: string,
+    signal?: AbortSignal,
+  ): Promise<MessageSearchView> {
     const params = new URLSearchParams({ q: query });
     if (before) params.set('before', before);
     return this.get(
       `/v1/phone/workspaces/${encodeURIComponent(workspaceId)}/search?${params.toString()}`,
       readMessageSearchView,
+      signal,
     );
   }
   invite(token: string): Promise<InviteView> {
@@ -141,8 +147,8 @@ class MonolithRoomViewClient {
     }).then(() => undefined);
   }
 
-  private get<T>(path: string, guard: Guard<T>): Promise<T> {
-    return this.checked(path, 'GET', guard);
+  private get<T>(path: string, guard: Guard<T>, signal?: AbortSignal): Promise<T> {
+    return this.checked(path, 'GET', guard, undefined, signal);
   }
   private operation<T>(name: string, input: unknown, guard: Guard<T>): Promise<T> {
     return this.checked(`/v1/phone/operations/${name}`, 'POST', guard, input);
@@ -152,14 +158,20 @@ class MonolithRoomViewClient {
     method: 'GET' | 'POST',
     guard: Guard<T>,
     body?: unknown,
+    signal?: AbortSignal,
   ): Promise<T> {
-    const response = await this.request(path, method, body);
+    const response = await this.request(path, method, body, signal);
     const value = (await response.json()) as unknown;
     const projected = guard(value);
     if (projected === null) throw new RoomViewHttpError(502, 'invalid_surface_response');
     return projected;
   }
-  private async request(path: string, method: 'GET' | 'POST', body?: unknown): Promise<Response> {
+  private async request(
+    path: string,
+    method: 'GET' | 'POST',
+    body?: unknown,
+    signal?: AbortSignal,
+  ): Promise<Response> {
     // The phone API carries room/workspace reads and small writes only; media
     // uploads go straight through the session and stay unbounded.
     const response = await monolithSession
@@ -167,6 +179,7 @@ class MonolithRoomViewClient {
         `${this.baseUrl}${path}`,
         {
           method,
+          ...(signal ? { signal } : {}),
           ...(body === undefined
             ? {}
             : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
@@ -238,9 +251,10 @@ export class RoomViewClient {
     workspaceId: string,
     query: string,
     before?: string,
+    signal?: AbortSignal,
   ): Promise<MessageSearchView | null> {
     return this.implementation instanceof MonolithRoomViewClient
-      ? this.implementation.searchMessages(workspaceId, query, before)
+      ? this.implementation.searchMessages(workspaceId, query, before, signal)
       : Promise.resolve(null);
   }
   invite(token: string) {

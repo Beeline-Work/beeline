@@ -66,6 +66,7 @@ import {
   isCommunityInviteToken,
   isFaceId,
   MESSAGE_REACTION_EMOJIS,
+  messageSearchTerms,
   resolveFace,
   type PhoneOperationMap,
   type WelcomeCardsView,
@@ -432,19 +433,17 @@ function unix(date: Date): number {
   return Math.floor(date.getTime() / 1_000);
 }
 const MESSAGE_SEARCH_PAGE = 20;
-/** A query of more words than this is cut to its first ones. */
-const MESSAGE_SEARCH_MAX_TERMS = 8;
+/** A search that reads longer than this matches too much to be worth finishing. */
+const MESSAGE_SEARCH_STATEMENT_TIMEOUT = '1500ms';
 // \x01/\x02 are stripped from the text before ts_headline marks matches with them.
 const MESSAGE_SEARCH_HEADLINE_OPTIONS =
   'StartSel="\x01", StopSel="\x02", MaxWords=30, MinWords=20, ShortWord=0';
-/**
- * Every word of a typed query as a quoted prefix term, ANDed, so "andro bui"
- * finds "Android build" while it is still being typed. Null when the query
- * holds no word at all.
- */
-export function messageSearchTerms(query: string): string | null {
-  const words = query.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu)?.slice(0, MESSAGE_SEARCH_MAX_TERMS);
-  return words?.length ? words.map((word) => `'${word}':*`).join(' & ') : null;
+/** A message search that hit its time limit: the query matches too much. */
+export class MessageSearchTooBroadError extends Error {
+  constructor() {
+    super('message search query too broad');
+    this.name = 'MessageSearchTooBroadError';
+  }
 }
 function messageSearchSnippet(headline: string): MessageSearchSnippetPart[] {
   const parts: MessageSearchSnippetPart[] = [];
@@ -1923,12 +1922,13 @@ export class PhoneService {
   }
 
   /**
-   * The Room list's message search: every word of `query` is matched as a
-   * prefix against `messages.search_document` (its GIN index does the lookup),
-   * across the Rooms and direct messages the viewer's Room list shows in this
-   * Workspace. Corners, archived Rooms, Rooms the viewer left, and deleted or
+   * The Room list's message search: the terms messageSearchTerms makes of
+   * `query` are matched against `messages.search_document` (its GIN index
+   * does the lookup), across the Rooms and direct messages the viewer's Room
+   * list shows in this Workspace. Corners, archived Rooms, Rooms the viewer left, and deleted or
    * non-message rows are never searched. Newest first, a page at a time;
-   * `before` is the previous page's last message id.
+   * `before` is the previous page's last message id. A read that runs past
+   * MESSAGE_SEARCH_STATEMENT_TIMEOUT throws MessageSearchTooBroadError.
    */
   async searchMessages(
     workspaceId: string,
@@ -1944,50 +1944,61 @@ export class PhoneService {
     if (!workspace.rowCount) return null;
     const terms = messageSearchTerms(query);
     if (!terms) return { workspaceId, results: [] };
-    const rows = (
-      await this.database.query<{
-        id: string;
-        room_id: string;
-        room_name: string;
-        direct_message: boolean;
-        author_name: string;
-        created_at: Date;
-        headline: string;
-      }>(
-        `WITH search_query AS (
-           SELECT to_tsquery('simple',$3) query
-         ), readable AS (
-           SELECT room.id FROM rooms room
-           JOIN memberships member ON member.room_id=room.id AND member.identity_id=$2
-             AND member.removed_at IS NULL
-           WHERE room.workspace_id=$1 AND room.parent_id IS NULL AND room.archived_at IS NULL
-         ), cursor AS (
-           SELECT created_at,id FROM messages WHERE id=$4
-         ), matches AS (
-           SELECT message.id,message.room_id,message.author_id,message.text,message.created_at
-           FROM search_query
-           JOIN messages message ON message.search_document @@ search_query.query
-           WHERE message.room_id IN (SELECT id FROM readable)
-             AND message.deleted_at IS NULL AND message.presentation='message'
-             AND ($4::text IS NULL OR (message.created_at,message.id) < (SELECT created_at,id FROM cursor))
-           ORDER BY message.created_at DESC,message.id DESC
-           LIMIT ${MESSAGE_SEARCH_PAGE + 1}
-         )
-         SELECT matches.id,matches.room_id,matches.created_at,
-           COALESCE(jsonb_typeof(room.direct_participants)='array',false) direct_message,
-           COALESCE(peer.handle,peer.name,room.name) room_name,author.name author_name,
-           ts_headline('simple',translate(matches.text,E'\\x01\\x02',''),search_query.query,$5) headline
-         FROM matches
-         CROSS JOIN search_query
-         JOIN rooms room ON room.id=matches.room_id
-         JOIN identities author ON author.id=matches.author_id
-         LEFT JOIN identities peer ON jsonb_typeof(room.direct_participants)='array'
-           AND peer.id=(SELECT participant FROM jsonb_array_elements_text(room.direct_participants) participant
-                        WHERE participant<>$2 LIMIT 1)
-         ORDER BY matches.created_at DESC,matches.id DESC`,
-        [workspaceId, viewerId, terms, before ?? null, MESSAGE_SEARCH_HEADLINE_OPTIONS],
-      )
-    ).rows;
+    type Row = {
+      id: string;
+      room_id: string;
+      room_name: string;
+      direct_message: boolean;
+      author_name: string;
+      created_at: Date;
+      headline: string;
+    };
+    const rows = await this.database.transaction(async (database) => {
+      await database.query(`SET LOCAL statement_timeout='${MESSAGE_SEARCH_STATEMENT_TIMEOUT}'`);
+      try {
+        return (await database.query<Row>(
+          `WITH search_query AS (
+             SELECT to_tsquery('simple',$3) query
+           ), readable AS (
+             SELECT room.id FROM rooms room
+             JOIN memberships member ON member.room_id=room.id AND member.identity_id=$2
+               AND member.removed_at IS NULL
+             WHERE room.workspace_id=$1 AND room.parent_id IS NULL AND room.archived_at IS NULL
+           ), cursor AS (
+             SELECT created_at,id FROM messages WHERE id=$4
+           ), matches AS (
+             SELECT message.id,message.room_id,message.author_id,message.text,message.created_at
+             FROM search_query
+             JOIN messages message ON message.search_document @@ search_query.query
+             WHERE message.room_id IN (SELECT id FROM readable)
+               AND message.deleted_at IS NULL AND message.presentation='message'
+               AND ($4::text IS NULL OR (message.created_at,message.id) < (SELECT created_at,id FROM cursor))
+             ORDER BY message.created_at DESC,message.id DESC
+             LIMIT ${MESSAGE_SEARCH_PAGE + 1}
+           )
+           SELECT matches.id,matches.room_id,matches.created_at,
+             COALESCE(jsonb_typeof(room.direct_participants)='array',false) direct_message,
+             COALESCE(peer.handle,peer.name,room.name) room_name,author.name author_name,
+             ts_headline('simple',translate(matches.text,E'\\x01\\x02',''),search_query.query,$5) headline
+           FROM matches
+           CROSS JOIN search_query
+           JOIN rooms room ON room.id=matches.room_id
+           JOIN identities author ON author.id=matches.author_id
+           LEFT JOIN identities peer ON jsonb_typeof(room.direct_participants)='array'
+             AND peer.id=(SELECT participant FROM jsonb_array_elements_text(room.direct_participants) participant
+                          WHERE participant<>$2 LIMIT 1)
+           ORDER BY matches.created_at DESC,matches.id DESC`,
+          [workspaceId, viewerId, terms, before ?? null, MESSAGE_SEARCH_HEADLINE_OPTIONS],
+        )).rows;
+      } catch (error) {
+        // Answered here rather than thrown through the transaction, so one broad
+        // query does not count as a database outage. COMMIT of the failed
+        // transaction rolls it back.
+        if ((error as { code?: unknown } | null)?.code === '57014') return null;
+        throw error;
+      }
+    });
+    if (!rows) throw new MessageSearchTooBroadError();
     const page = rows.slice(0, MESSAGE_SEARCH_PAGE);
     return {
       workspaceId,

@@ -6,7 +6,7 @@ import type { TokenAuth } from './auth.js';
 import { migrate } from './database.js';
 import type { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
-import { PhoneService } from './phone-service.js';
+import { MessageSearchTooBroadError, PhoneService } from './phone-service.js';
 import { HistoryOutlineCache } from './history-outline-cache.js';
 import { IdentityRateLimit, phoneReadLimits } from './phone-read-limit.js';
 import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
@@ -91,6 +91,15 @@ describe('identity rate limit', () => {
     ]);
     expect(limit.admit(BOB)).toBe(true);
   });
+
+  it('lets one person search 60 times a minute', () => {
+    let now = 0;
+    const { search } = phoneReadLimits({ search: { now: () => now, log: () => undefined } });
+    for (let request = 0; request < 60; request += 1) expect(search.admit(ALICE)).toBe(true);
+    expect(search.admit(ALICE)).toBe(false);
+    now += 60_000;
+    expect(search.admit(ALICE)).toBe(true);
+  });
 });
 
 describe('history outline cache', () => {
@@ -127,7 +136,7 @@ describe('phone history and outline reads', () => {
 
   const message = async (id: string, createdAt: string) =>
     database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES($1,$2,$3,'hi',$4)`,
+      `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES($1,$2,$3,'gradle cache',$4)`,
       [id.repeat(64), ROOM, ALICE, createdAt],
     );
   const get = (path: string, identity = ALICE) =>
@@ -232,7 +241,7 @@ describe('phone history and outline reads', () => {
   });
 
   it('answers the message search, refuses a bad query or cursor, and limits each identity', async () => {
-    const found = await get(`/v1/phone/workspaces/${WORKSPACE}/search?q=hi`);
+    const found = await get(`/v1/phone/workspaces/${WORKSPACE}/search?q=gradle`);
     expect(found.status).toBe(200);
     expect(
       ((await found.json()) as { results: { messageId: string }[] }).results.map(
@@ -242,18 +251,38 @@ describe('phone history and outline reads', () => {
     const blank = await get(`/v1/phone/workspaces/${WORKSPACE}/search?q=%20`);
     expect(blank.status).toBe(400);
     expect(await blank.json()).toEqual({ error: 'invalid_query' });
-    const cursor = await get(`/v1/phone/workspaces/${WORKSPACE}/search?q=hi&before=nope`);
+    const cursor = await get(`/v1/phone/workspaces/${WORKSPACE}/search?q=gradle&before=nope`);
     expect(cursor.status).toBe(400);
     expect(await cursor.json()).toEqual({ error: 'invalid_cursor' });
-    const limited = await get(`/v1/phone/workspaces/${WORKSPACE}/search?q=hi`);
+    const limited = await get(`/v1/phone/workspaces/${WORKSPACE}/search?q=gradle`);
     expect(limited.status).toBe(429);
+    expect(await limited.json()).toEqual({ error: 'too_many_requests' });
     expect(log.mock.calls).toEqual([['[phone-search] rate-limited', `identity=${ALICE}`]]);
     expect(
       (await get(`/v1/phone/workspaces/${WORKSPACE}/search?q=${'x'.repeat(201)}`, BOB)).status,
     ).toBe(400);
-    expect((await get(`/v1/phone/workspaces/${WORKSPACE}/search?q=hi`, BOB)).status).toBe(200);
+    expect((await get(`/v1/phone/workspaces/${WORKSPACE}/search?q=gradle`, BOB)).status).toBe(200);
     // Mallory is not in the Workspace.
-    expect((await get(`/v1/phone/workspaces/${WORKSPACE}/search?q=hi`, MALLORY)).status).toBe(404);
+    expect((await get(`/v1/phone/workspaces/${WORKSPACE}/search?q=gradle`, MALLORY)).status).toBe(404);
+  });
+
+  it('refuses a query with no searchable word before reading any message', async () => {
+    const search = vi.spyOn(PhoneService.prototype, 'searchMessages');
+    for (const query of ['gra', 'the%20with', 'yeah%20gr']) {
+      const refused = await get(`/v1/phone/workspaces/${WORKSPACE}/search?q=${query}`, BOB);
+      expect(refused.status).toBe(400);
+      expect(await refused.json()).toEqual({ error: 'query_too_short' });
+    }
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  it('answers a search that hit its time limit as too broad', async () => {
+    vi.spyOn(PhoneService.prototype, 'searchMessages').mockRejectedValueOnce(
+      new MessageSearchTooBroadError(),
+    );
+    const broad = await get(`/v1/phone/workspaces/${WORKSPACE}/search?q=gradle`);
+    expect(broad.status).toBe(422);
+    expect(await broad.json()).toEqual({ error: 'query_too_broad' });
   });
 
   it('counts a quiet Room once per time zone and recounts after any message change', async () => {

@@ -278,7 +278,8 @@ export default function BuzzChannels() {
   );
   const messageSearch = useMessageSearch(
     searchClient
-      ? (workspaceId, text, before) => searchClient.searchMessages(workspaceId, text, before)
+      ? (workspaceId, text, before, signal) =>
+          searchClient.searchMessages(workspaceId, text, before, signal)
       : null,
     activeCommunityId,
     query,

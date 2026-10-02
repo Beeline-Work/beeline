@@ -1,9 +1,9 @@
 import React from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import type { MessageSearchResult } from '@beeline/api-contract/phone';
+import { MESSAGE_SEARCH_MIN_CHARS, type MessageSearchResult } from '@beeline/api-contract/phone';
 import { compactRelativeTime } from '@/buzz/relative-time';
-import type { MessageSearchState } from '@/buzz/use-message-search';
+import type { MessageSearchFailure, MessageSearchState } from '@/buzz/use-message-search';
 import { RoomListSectionHeader } from './RoomListSectionHeader';
 
 /** The Messages section under the Room list while a search is typed. */
@@ -20,12 +20,28 @@ export function MessageSearchResults({
   return (
     <View testID="message-search-results">
       <RoomListSectionHeader title="Messages" />
-      {search.status === 'loading' ? (
+      {search.status === 'short' ? (
+        <Text style={styles.note} testID="message-search-short">
+          Type {MESSAGE_SEARCH_MIN_CHARS} or more letters to search messages.
+        </Text>
+      ) : search.status === 'filler' ? (
+        <Text style={styles.note} testID="message-search-filler">
+          Common words aren't searched. Type a more specific word.
+        </Text>
+      ) : search.status === 'loading' ? (
         <Text style={styles.note} testID="message-search-loading">
           Searching messages…
         </Text>
-      ) : search.status === 'error' ? (
-        <Retry label="Couldn't search messages." onPress={search.retry} testID="message-search-retry" />
+      ) : search.status === 'too_broad' ? (
+        <Text style={styles.note} testID="message-search-too-broad">
+          Too many messages match “{search.query}”. Add another word.
+        </Text>
+      ) : search.status === 'rate_limited' || search.status === 'error' ? (
+        <Retry
+          label={FAILURE_LABELS[search.status]}
+          onPress={search.retry}
+          testID={search.status === 'rate_limited' ? 'message-search-too-fast' : 'message-search-retry'}
+        />
       ) : search.results.length === 0 ? (
         <Text style={styles.note} testID="message-search-empty">
           No messages match
@@ -36,7 +52,11 @@ export function MessageSearchResults({
             <MessageSearchRow key={result.messageId} result={result} now={now} onOpen={onOpen} />
           ))}
           {search.moreFailed ? (
-            <Retry label="Couldn't load more." onPress={search.loadMore} testID="message-search-more-retry" />
+            <Retry
+              label={search.moreFailed === 'error' ? "Couldn't load more." : FAILURE_LABELS[search.moreFailed]}
+              onPress={search.loadMore}
+              testID="message-search-more-retry"
+            />
           ) : search.hasMore ? (
             <Pressable
               accessibilityRole="button"
@@ -53,6 +73,12 @@ export function MessageSearchResults({
     </View>
   );
 }
+
+const FAILURE_LABELS: Record<MessageSearchFailure, string> = {
+  too_broad: 'Too many messages match. Add another word.',
+  rate_limited: 'Searching too fast. Wait a moment.',
+  error: "Couldn't search messages.",
+};
 
 function MessageSearchRow({
   result,

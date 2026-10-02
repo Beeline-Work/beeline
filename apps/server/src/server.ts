@@ -9,12 +9,13 @@ import {
   TURN_REQUESTER_AUTHORITY_MESSAGE,
   PHONE_OPERATION_NAMES,
   YOLO_AUTHORITY_MESSAGE,
+  MessageSearchTooBroadError,
   parseArchivedCornerCursor,
   type PhoneService,
 } from './phone-service.js';
 import { DAEMON_OPERATION_NAMES, type DaemonService } from './daemon-service.js';
 import { ARTIFACT_MAXIMUM_BYTES } from '@beeline/api-contract/daemon';
-import { MESSAGE_SEARCH_QUERY_MAX_BYTES } from '@beeline/api-contract/phone';
+import { MESSAGE_SEARCH_QUERY_MAX_BYTES, messageSearchTerms } from '@beeline/api-contract/phone';
 import type { LiveEvent, LiveHub, LiveTrace } from './live.js';
 import type { ReviewAccess } from './review-access.js';
 import type { ReleaseNotifier } from './release-notify.js';
@@ -1580,16 +1581,22 @@ async function route(
       json(response, 400, { error: 'invalid_query' });
       return;
     }
+    if (!messageSearchTerms(query)) {
+      json(response, 400, { error: 'query_too_short' });
+      return;
+    }
     if (before !== null && !/^[0-9a-f]{64}$/.test(before)) {
       json(response, 400, { error: 'invalid_cursor' });
       return;
     }
-    const result = await options.phone.searchMessages(
-      match[1]!,
-      identityId!,
-      query,
-      before ?? undefined,
-    );
+    let result;
+    try {
+      result = await options.phone.searchMessages(match[1]!, identityId!, query, before ?? undefined);
+    } catch (error) {
+      if (!(error instanceof MessageSearchTooBroadError)) throw error;
+      json(response, 422, { error: 'query_too_broad' });
+      return;
+    }
     json(response, result ? 200 : 404, result ?? { error: 'not_found' });
     return;
   }

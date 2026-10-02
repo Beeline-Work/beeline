@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ChatListItem } from '@beeline/buzz-client';
 vi.mock('@react-native-async-storage/async-storage', () => ({ default: {} }));
-import { filterConversations, matchingCorners, roomListCounts } from './room-list-preferences';
+import { filterConversations, roomListCounts } from './room-list-preferences';
 
 const rooms = [
   { room: { id: 'unread', name: 'Product' }, unread: true },
@@ -44,27 +44,5 @@ describe('conversation filters', () => {
       pinned: 0,
     });
     expect(filterConversations(rooms, '', 'pinned', ['closed', 'missing'])).toEqual([]);
-  });
-  it('finds a Room by the name of one of its open corners', () => {
-    const withCorners = [
-      ...rooms,
-      {
-        room: { id: 'mobile', name: 'mobile' },
-        unread: false,
-        openCorners: [
-          { id: 'c1', name: 'Menu search mock', state: 'working', mine: true },
-          { id: 'c2', name: 'Member search paging', state: 'waiting' },
-          { id: 'c3', name: 'Release notes', state: 'working' },
-        ],
-      },
-    ] as ChatListItem[];
-    expect(ids(filterConversations(withCorners, 'SEARCH', 'all', []))).toEqual(['mobile']);
-    expect(ids(filterConversations(withCorners, 'search', 'unread', []))).toEqual([]);
-    expect(matchingCorners(withCorners.at(-1)!, ' Search ').map((corner) => corner.id)).toEqual([
-      'c1',
-      'c2',
-    ]);
-    expect(matchingCorners(withCorners.at(-1)!, '  ')).toEqual([]);
-    expect(matchingCorners(rooms[0]!, 'search')).toEqual([]);
   });
 });

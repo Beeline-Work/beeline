@@ -1,10 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { FlatList, Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router } from 'expo-router';
 import type { CornerListItem } from '@beeline/buzz-client';
 import { isMineCorner } from '@/buzz/mine-corners';
-import { cornerMatchesSearch } from '@/buzz/corner-search';
 import { cornerHref } from '@/buzz/corner-navigation';
 import { cornerDisplayState } from '@/buzz/corner-display-state';
 import { CornerWaitingPulse } from './CornerWaitingPulse';
@@ -42,11 +41,6 @@ import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
  * no corners at all: closed work is not in this surface's read, so the row is
  * the only sign the Room has a past. Its list arrives on tap and lands under
  * the live rows, newest closure first, each stamped with its age.
- *
- * A search narrows Mine, Others and the archived pages already read to the
- * corners whose name, opener or agent holds it, and opens every section with
- * a match. Folds tapped while searching last only as long as the search;
- * clearing it brings back the folds from before.
  */
 type Entry =
   | {
@@ -69,8 +63,6 @@ export function RoomCornersList({
   onMoreArchived,
   viewerPubkey,
   nowMs,
-  query = '',
-  onClearQuery,
 }: {
   corners: readonly CornerListItem[];
   parentRoomName: string;
@@ -88,34 +80,17 @@ export function RoomCornersList({
   viewerPubkey?: string;
   /** Clock for the closure stamps; defaults to now at paint. */
   nowMs?: number;
-  /** The search typed under the header; blank shows every corner. */
-  query?: string;
-  onClearQuery?: () => void;
 }) {
   const [mineOpen, setMineOpen] = useState(true);
   // Until the viewer folds Others, derive its default from the current list.
   // This also handles corners arriving after the initial empty render.
   const [othersOpen, setOthersOpen] = useState<boolean | undefined>();
   const [archivedOpen, setArchivedOpen] = useState(false);
-  const searching = query.trim() !== '';
-  // Sections folded during a search; the search's end forgets them.
-  const [searchFolded, setSearchFolded] = useState<ReadonlySet<string>>(() => new Set());
-  useEffect(() => {
-    if (!searching) setSearchFolded(new Set());
-  }, [searching]);
-  const toggleSearchFold = (key: string) =>
-    setSearchFolded((current) => {
-      const next = new Set(current);
-      if (!next.delete(key)) next.add(key);
-      return next;
-    });
   // FlatList compares `data` by identity, so it is rebuilt only when the
-  // corners, the search or a fold change, not on every parent render.
+  // corners or a fold change, not on every parent render.
   const data = useMemo(() => {
-    const matching = corners.filter((item) => cornerMatchesSearch(item, query));
-    const mine = matching.filter((item) => isMineCorner(item, viewerPubkey));
-    const others = matching.filter((item) => !isMineCorner(item, viewerPubkey));
-    const hasMine = corners.some((item) => isMineCorner(item, viewerPubkey));
+    const mine = corners.filter((item) => isMineCorner(item, viewerPubkey));
+    const others = corners.filter((item) => !isMineCorner(item, viewerPubkey));
     const section = (
       key: 'mine' | 'others',
       title: string,
@@ -128,22 +103,13 @@ export function RoomCornersList({
             ...(open ? rows.map((item) => ({ kind: 'row' as const, item })) : []),
           ]
         : [];
-    const opened = (key: 'mine' | 'others', open: boolean) =>
-      searching ? !searchFolded.has(key) : open;
     return [
-      ...section('mine', 'Mine', mine, opened('mine', mineOpen)),
-      ...section('others', 'Others', others, opened('others', othersOpen ?? !hasMine)),
+      ...section('mine', 'Mine', mine, mineOpen),
+      ...section('others', 'Others', others, othersOpen ?? mine.length === 0),
     ];
-  }, [corners, viewerPubkey, mineOpen, othersOpen, query, searching, searchFolded]);
+  }, [corners, viewerPubkey, mineOpen, othersOpen]);
   const stampedAt = nowMs ?? Date.now();
-  const archivedMatches =
-    archived.status === 'ready'
-      ? archived.corners.filter((item) => cornerMatchesSearch(item, query))
-      : [];
-  const archivedShown =
-    archived.status === 'ready' &&
-    (searching ? archivedMatches.length > 0 && !searchFolded.has('archived') : archivedOpen);
-  const archivedRows = archivedShown ? archivedMatches : [];
+  const archivedRows = archived.status === 'ready' && archivedOpen ? archived.corners : [];
   const more = archived.status === 'ready' ? archived.more : undefined;
 
   const row = (item: CornerListItem) => {
@@ -257,9 +223,7 @@ export function RoomCornersList({
         entry.kind === 'row'
           ? row(entry.item)
           : fold(entry.key, entry.label, entry.open, () =>
-              searching
-                ? toggleSearchFold(entry.key)
-                : (entry.key === 'mine' ? setMineOpen : setOthersOpen)(!entry.open),
+              (entry.key === 'mine' ? setMineOpen : setOthersOpen)(!entry.open),
             )
       }
       ListFooterComponent={
@@ -270,22 +234,18 @@ export function RoomCornersList({
             because the fold has to precede them. */}
           {fold(
             'archived',
-            searching && archived.status === 'ready'
-              ? `Archived ${CHANGES_LABEL} · ${archivedMatches.length}`
-              : archivedCornersLabel(archived),
-            archivedShown,
+            archivedCornersLabel(archived),
+            archivedOpen && archived.status === 'ready',
             () => {
-              if (searching && archived.status === 'ready') return toggleSearchFold('archived');
               if (archived.status !== 'ready') onShowArchived?.();
-              // A search opens what it finds; the viewer's own fold stays as it was.
-              if (!searching) setArchivedOpen(archived.status !== 'ready' || !archivedOpen);
+              setArchivedOpen(archived.status !== 'ready' || !archivedOpen);
             },
             archived.status === 'loading',
           )}
           {archivedRows.map((item) => (
             <React.Fragment key={item.corner.id}>{row(item)}</React.Fragment>
           ))}
-          {archivedShown && archived.status === 'ready' && archived.next ? (
+          {archivedOpen && archived.status === 'ready' && archived.next ? (
             <Pressable
               accessibilityLabel={
                 more?.status === 'error' ? `${more.reason}. Tap to retry` : 'More archived corners'
@@ -309,20 +269,7 @@ export function RoomCornersList({
       ListEmptyComponent={
         // A Room whose only work is closed is not an empty Room: once the
         // archived rows are on screen the invitation to start would be a lie.
-        archivedRows.length || (searching && archivedMatches.length) ? null : searching ? (
-          <View style={styles.empty} testID="room-corners-no-match">
-            <Text style={styles.emptyTitle}>No {CHANGES_LABEL} match</Text>
-            <Pressable
-              accessibilityLabel="Clear search"
-              accessibilityRole="button"
-              onPress={onClearQuery}
-              style={styles.clear}
-              testID="room-corners-search-clear"
-            >
-              <Text style={styles.clearLabel}>Clear search</Text>
-            </Pressable>
-          </View>
-        ) : (
+        archivedRows.length ? null : (
           <View style={styles.empty} testID="room-corners-empty">
             <Text style={styles.emptyTitle}>No {CHANGES_LABEL} yet</Text>
             <Text style={styles.emptyText}>
@@ -379,8 +326,6 @@ const styles = StyleSheet.create((theme) => {
       borderBottomColor: hull.border,
     },
     moreLabel: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted, flex: 1 },
-    clear: { minHeight: 44, justifyContent: 'center', paddingHorizontal: hull.space.md },
-    clearLabel: { ...Typography.default('semiBold'), ...hull.type.meta, color: hull.accent },
     emptyContainer: { flexGrow: 1 },
     empty: {
       flex: 1,

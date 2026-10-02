@@ -56,22 +56,7 @@ export function filterConversations(
       (!needle ||
         `${roomRowName(item).name} ${item.latestMessage?.text ?? ''}`
           .toLocaleLowerCase()
-          .includes(needle) ||
-        matchingCorners(item, query).length > 0),
-  );
-}
-
-type ChatListCorner = NonNullable<ChatListItem['openCorners']>[number];
-
-/** The Room's open corners whose name holds the search; none for a blank search. */
-export function matchingCorners(
-  item: Pick<ChatListItem, 'openCorners'>,
-  query: string,
-): ChatListCorner[] {
-  const needle = query.trim().toLocaleLowerCase();
-  if (!needle) return [];
-  return (item.openCorners ?? []).filter((corner) =>
-    corner.name.toLocaleLowerCase().includes(needle),
+          .includes(needle)),
   );
 }
 

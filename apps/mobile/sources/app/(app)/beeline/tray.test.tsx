@@ -290,11 +290,11 @@ describe.each([
 });
 
 describe('Bookmarks desktop second pane', () => {
-  it('shows the workspace above Tray and both section counts at the right', async () => {
+  it('shows the workspace above Tray with no counters beside it', async () => {
     const tree = await renderTray();
     const header = tree.root.findByProps({ testID: 'tray-header' });
     const words = header.findAllByType('Text' as any).map((node: any) => node.props.children);
-    expect(words).toEqual(['Clover Workspace', 'Tray', '0 NEED YOU · 1 SAVED']);
+    expect(words).toEqual(['Clover Workspace', 'Tray']);
   });
   it('opens a clicked corner bookmark in DesktopRoomInspector at that message', async () => {
     serve({
@@ -462,10 +462,6 @@ describe('Tray Needs you', () => {
       expect(cell.props.children).toBe('can you confirm the review note?');
       expect(textOf(tree)).not.toContain('@');
       expect(textOf(tree)).toContain('Launch room · 5m');
-      const header = tree.root.findByProps({ testID: 'tray-header' });
-      expect(header.findAllByType('Text' as any).map((node: any) => node.props.children)).toContain(
-        '2 NEED YOU · 1 SAVED',
-      );
     } finally {
       clock.mockRestore();
     }

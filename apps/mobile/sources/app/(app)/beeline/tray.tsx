@@ -505,7 +505,6 @@ export default function TrayScreen() {
         prominent
         testID="tray-header"
         title="Tray"
-        trailing={`${needs.length} NEED YOU · ${bookmarks.length} SAVED`}
       />
       {error ? (
         <Pressable accessibilityRole="button" onPress={() => void load()} style={styles.error}>

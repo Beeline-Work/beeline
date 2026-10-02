@@ -2463,9 +2463,7 @@ export function BuzzChatSurface({
     boundaryId: string;
     acknowledgeQueue: boolean;
   } | null>(null);
-  // Same progress rule as a scrubbed landing: keep moving toward a distant
-  // row while each failed attempt measures further (`continueScrubLanding`).
-  const pendingNotificationLandingRef = useRef<ScrubLanding | null>(null);
+  const pendingNotificationLandingRef = useRef<{ messageId: string; attempts: number } | null>(null);
   // The one-shot re-center + brass flash for a message-source jump (quote
   // reference, forward source, notification target). Settles on the same
   // viewability report that clears `pendingNotificationLandingRef` above —
@@ -2994,12 +2992,7 @@ export function BuzzChatSurface({
           if (row) raiseSourceLandingFlash(transcriptMessages[visibleIndex]!.id);
           return;
         }
-        pendingNotificationLandingRef.current = {
-          messageId,
-          highestMeasured: -1,
-          stalls: 0,
-          failures: 0,
-        };
+        pendingNotificationLandingRef.current = { messageId, attempts: 0 };
         // A first scroll can mount a distant variable-height row with its
         // provisional frame; once native measures that row, its real height
         // can move the same durable id. Re-center it exactly ONCE — but only
@@ -6019,7 +6012,8 @@ export function BuzzChatSurface({
                     message.id === notification.messageId ||
                     message.relayId === notification.messageId,
                 );
-                if (index >= 0 && continueScrubLanding(notification, highestMeasuredFrameIndex)) {
+                if (index >= 0 && notification.attempts < 8) {
+                  notification.attempts += 1;
                   // Native has not measured the distant row yet. Bring its
                   // window into range, then resolve the durable id again in
                   // case a newer message shifted the inverted list.

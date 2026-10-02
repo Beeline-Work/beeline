@@ -76,6 +76,7 @@
         "scripts/star-prompt-proof.tsx",
         "scripts/scheduled-work-proof.tsx",
         "scripts/workflow-run-proof.tsx",
+        "scripts/member-picker-nav-inset-proof.tsx",
       ],
       "project": [
         "sources/**/*.{js,ts,tsx}",

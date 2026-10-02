@@ -697,7 +697,7 @@ describe('DesktopRoomInspector work pane', () => {
       .findAllByType('Pressable' as any)
       .find((node: any) => node.props.testID === 'desktop-work-brief');
     expect(link.props.accessibilityRole).toBe('link');
-    expect(link.props.accessibilityLabel).toBe('Open brief');
+    expect(link.props.accessibilityLabel).toBe('Read brief');
     act(() => link.props.onPress());
     expect(openCornerBriefViewer).toHaveBeenCalledWith(cornerBrief);
 

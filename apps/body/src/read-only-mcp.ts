@@ -1141,12 +1141,20 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'rename_corner',
     description:
-      'Retitle the corner you are working in. Call it once the conversation has settled what this corner is about and its current title no longer says so. The name follows open_corner: at most three words.',
+      'Retitle the corner you are working in. A human-opened corner without a brief requires its objective and first brief together with the name, grounded in the human request; the brief approval names that human message. The name follows open_corner: at most three words.',
     inputSchema: {
       type: 'object',
       required: ['name'],
       properties: {
         name: { type: 'string', description: 'The corner title, at most three words.' },
+        objective: { type: 'string', description: 'For a human-opened corner: a navigation summary of the human request, at most 24 words.' },
+        brief: {
+          type: 'object',
+          required: ['spec', 'approval'],
+          properties: CORNER_BRIEF_PROPERTIES,
+          additionalProperties: false,
+          description: 'For a human-opened corner: the first brief, with the source human message as approval.',
+        },
       },
       additionalProperties: false,
     },
@@ -3935,6 +3943,8 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       const result = await daemonExecute('renameCorner', {
         cornerId,
         name: normalizeCornerText(String(args.name)),
+        ...(args.objective !== undefined ? { objective: args.objective } : {}),
+        ...(args.brief !== undefined ? { brief: args.brief } : {}),
       });
       return `renamed this corner to ${String(result.name)}`;
     }

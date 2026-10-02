@@ -120,19 +120,27 @@ describe('CornerObjectiveLine', () => {
     expect(render(<CornerObjectiveLine objective="   " />).toJSON()).toBeNull();
   });
 
-  it('hangs a Brief link in the gutter only when the corner has a brief', () => {
+  it('shows the current brief above the compact workflow and opens its full revision', () => {
     const onOpenBrief = vi.fn();
-    const renderer = render(<CornerObjectiveLine objective="Ship it" onOpenBrief={onOpenBrief} />);
+    const renderer = render(
+      <CornerObjectiveLine objective="Ship it" brief={'## Intent\n\n> Make the request readable'}
+        onOpenBrief={onOpenBrief} onOpenWorkflow={() => undefined} workflow={RUN} />,
+    );
+    expect(renderer.root.findByProps({ testID: 'corner-objective-line-brief-preview' }).props.children)
+      .toBe('Make the request readable');
     const link = renderer.root
       .findAllByType('Pressable' as any)
       .find((node: any) => node.props.testID === 'corner-objective-line-brief');
     expect(link.props.accessibilityRole).toBe('link');
-    expect(link.props.accessibilityLabel).toBe('Open brief');
+    expect(link.props.accessibilityLabel).toBe('Read brief');
     const style = link.props.style({ pressed: false }).find(Boolean);
     expect(style.minHeight).toBeGreaterThanOrEqual(44);
     expect(style.minWidth).toBeGreaterThanOrEqual(44);
-    expect(link.findByType('Text' as any).props.children).toBe('Brief');
+    expect(link.findByType('Text' as any).props.children).toBe('Read brief');
     expect(link.findByType('Text' as any).props.style.color).toBe('#c49a52');
+    const actions = renderer.root.findAllByType('View' as any)
+      .find((view: any) => view.props.style?.flexWrap === 'wrap');
+    expect(actions?.findAllByType('Pressable' as any)).toHaveLength(2);
     act(() => link.props.onPress());
     expect(onOpenBrief).toHaveBeenCalledTimes(1);
 
@@ -150,12 +158,9 @@ describe('CornerObjectiveLine', () => {
       .findAllByType('Pressable' as any)
       .find((node: any) => node.props.testID === 'corner-objective-line-workflow');
     expect(line.props.accessibilityRole).toBe('link');
-    expect(line.props.hitSlop).toEqual({ top: 12, bottom: 12 });
+    expect(line.props.style({ pressed: false })[0].minHeight).toBe(44);
     expect(line.findAllByType('Polygon' as any)).toHaveLength(1);
-    expect(flatText(line.findByProps({ testID: 'corner-objective-line-workflow-copy' }))).toBe(
-      'Feedback triage · Approve · waiting on you',
-    );
-    expect(line.findAllByType('Text' as any).at(-1).props.children).toBe('→');
+    expect(flatText(line.findByProps({ testID: 'corner-objective-line-workflow-copy' }))).toBe('Approve');
     act(() => line.props.onPress());
     expect(onOpenWorkflow).toHaveBeenCalledTimes(1);
     expect(workflowRunHref(RUN)).toEqual({
@@ -172,9 +177,8 @@ describe('CornerObjectiveLine', () => {
         workflow={{ ...RUN, viewerHolds: false, state: 'dispatch' }}
       />,
     );
-    expect(
-      flatText(renderer.root.findByProps({ testID: 'corner-objective-line-workflow-copy' })),
-    ).toBe('Feedback triage · Dispatch · Candy');
+    expect(flatText(renderer.root.findByProps({ testID: 'corner-objective-line-workflow-copy' })))
+      .toBe('Dispatch');
     const ended = render(
       <CornerObjectiveLine
         objective="Run the sweep"

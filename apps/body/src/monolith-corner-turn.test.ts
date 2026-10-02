@@ -3077,7 +3077,7 @@ describe('corner turn rename prompt', () => {
     await scheduler.dispose();
 
     expect(String(sessionPrompt.mock.calls[0]?.[1])).toContain(
-      'This corner still has its generated name, "still harbor corner". If the newest message states the work, call rename_corner once before you reply',
+      'This human-opened corner still has its generated name, "still harbor corner". If the newest human message states the work, call rename_corner once before you reply',
     );
   }, 10_000);
 });

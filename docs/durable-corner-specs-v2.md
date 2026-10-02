@@ -28,6 +28,11 @@ authorizes, and a corner that already holds revisions keeps them. The restarted 
 the code, writes the real spec with `revise_corner_brief`, and asks the corner's opener to approve
 it. That approval is best effort and never enforced; no-code work never waits for it.
 
+A human-opened corner begins without an objective or brief. When an addressed agent names its work,
+`rename_corner` can save its title, short objective, and first brief in one transaction. The brief
+quotes a human Room message as its approval source. A retry leaves revision 1 intact; later changes
+use `revise_corner_brief` under an active corner command.
+
 Approval is proportional. An initiating command authorizes a revision only when it already settles
 the exact material scope. Otherwise the planner asks the human one specific unresolved choice and
 records the answer against that revision. Silence is never approval, and settled requests do not
@@ -50,8 +55,9 @@ line-ending, rename/mode-only, binary, and all other head changes require review
 The existing composite `pr_checks_status` gate remains the sole merge authority; validation-stage
 records are evidence, not authorization.
 
-On the phone and in the desktop work pane, a Brief link on the objective line opens the latest
-revision full-screen in the in-app artifact viewer as Markdown: spec, approval quote, then files.
+On the phone, the objective rail shows the brief's lead above a compact workflow link and a
+`Read brief` link. The desktop work pane also offers `Read brief`. The link opens the latest revision
+full-screen in the in-app artifact viewer as Markdown: spec, approval quote, then files.
 There is no revision history in the viewer. Brief enrichment still degrades independently of the core
 Room read.
 

@@ -376,7 +376,7 @@ describe('prompt assembly guards', () => {
     }).text;
     expect(named).not.toContain('rename_corner');
     expect(generated).toContain(
-      'This corner still has its generated name, "still harbor corner". If the newest message states the work, call rename_corner once before you reply',
+      'This human-opened corner still has its generated name, "still harbor corner". If the newest human message states the work, call rename_corner once before you reply',
     );
     expect(generated.indexOf('Corner objective')).toBeLessThan(
       generated.indexOf('still has its generated name'),

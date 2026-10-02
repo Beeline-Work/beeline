@@ -175,6 +175,9 @@ describe('connect_app', () => {
         expiresAt: new Date(Date.now() + 600_000),
       })),
       account: vi.fn(async (_account: string, person: string) => active && person === OWNER),
+      accountStatus: vi.fn(async (_account: string, person: string) => ({
+        status: active && person === OWNER ? 'active' as const : 'pending' as const,
+      })),
       completeAuth: vi.fn(async (_session: string, person: string) => {
         if (person !== OWNER) throw new Error('App provider request failed (400)');
         active = true;
@@ -317,6 +320,10 @@ describe('connect_app', () => {
     provider.link.mockRejectedValueOnce(new Error('App provider request failed (403)'));
     await expect(phone.execute('beginAppSignIn', { appId: first.appId! }, OWNER))
       .rejects.toThrow('App provider request failed (403)');
+    expect((await phone.readRoom(ROOM, OWNER))?.messages.find((message) =>
+      message.appSignIn?.appId === first.appId)?.appSignIn).toMatchObject({
+        status: 'failed', errorMessage: 'App provider request failed (403)',
+      });
     expect((await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER)).apps)
       .toContainEqual(expect.objectContaining({ appId: first.appId, status: 'error',
         errorMessage: 'App provider request failed (403)' }));
@@ -356,12 +363,75 @@ describe('connect_app', () => {
     provider.completeAuth.mockRejectedValueOnce(new Error('App provider request failed (403)'));
     await expect(phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: first.appId! }, OWNER))
       .rejects.toThrow('App provider request failed (403)');
+    expect((await phone.readRoom(ROOM, OWNER))?.messages.find((message) =>
+      message.appSignIn?.appId === first.appId)?.appSignIn).toMatchObject({
+        status: 'failed', errorMessage: 'App provider request failed (403)',
+      });
     expect((await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER)).apps)
       .toContainEqual(expect.objectContaining({ appId: first.appId, status: 'error',
         errorMessage: 'App provider request failed (403)' }));
     await phone.execute('beginAppSignIn', { appId: first.appId! }, OWNER);
     expect((await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER)).apps)
       .toContainEqual(expect.objectContaining({ appId: first.appId, status: 'connecting' }));
+  });
+
+  it.each(['Instagram', 'Runway'])('Reproduction OAuth-1: %s provider failure reaches Workbench and its card', async (app) => {
+    const provider = fakeComposio();
+    provider.supportsOAuth.mockResolvedValue(true);
+    const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const first = await daemon.execute('connectApp',
+      { ...turn, app, reason: `connect ${app}` }, HELPER);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    await phone.execute('beginAppSignIn', { appId: first.appId! }, OWNER);
+    provider.accountStatus.mockResolvedValue({ status: 'failed', reason: 'Provider rejected this account type' });
+    const checked = await daemon.execute('connectApp',
+      { ...turn, app, reason: `finish ${app}` }, HELPER);
+    expect(checked).toMatchObject({ status: 'error',
+      next: expect.stringContaining('Provider rejected this account type') });
+    expect((await phone.readRoom(ROOM, OWNER))?.messages.find((message) =>
+      message.appSignIn?.appId === first.appId)?.appSignIn).toMatchObject({
+        status: 'failed', errorMessage: 'Provider rejected this account type',
+      });
+    const view = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
+    expect(view.apps).toContainEqual(expect.objectContaining({ appId: first.appId,
+      status: 'error', errorMessage: 'Provider rejected this account type' }));
+    expect((await daemon.execute('readAgentWorkbench', { roomId: ROOM }, HELPER)).apps)
+      .toContainEqual(expect.objectContaining({ appId: first.appId,
+        status: 'error', errorMessage: 'Provider rejected this account type' }));
+    const room = await phone.readRoom(ROOM, OWNER);
+    expect(room?.messages.find((message) => message.appSignIn?.appId === first.appId)
+      ?.appSignIn).toMatchObject({ status: 'failed',
+        errorMessage: 'Provider rejected this account type' });
+    if (process.env.BEELINE_SIGN_IN_PROOF === '1')
+      console.log(`OAuth-1 ${app}: Workbench=error, agent status=error, card=failed; reason=Provider rejected this account type`);
+  });
+
+  it.each(['Instagram', 'Runway'])('Reproduction OAuth-2: %s expires a pending sign-in', async (app) => {
+    const provider = fakeComposio();
+    provider.supportsOAuth.mockResolvedValue(true);
+    provider.link.mockResolvedValue({ url: 'https://app.composio.dev/connect/fixture',
+      accountId: 'ca_fixture', expiresAt: new Date(Date.now() + 60 * 60_000) });
+    const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const first = await daemon.execute('connectApp',
+      { ...turn, app, reason: `connect ${app}` }, HELPER);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    await phone.execute('beginAppSignIn', { appId: first.appId! }, OWNER);
+    const deadline = (await database.query<{ composio_link_expires_at: Date }>(
+      `SELECT composio_link_expires_at FROM workspace_apps WHERE id=$1`, [first.appId],
+    )).rows[0]!.composio_link_expires_at;
+    expect(deadline.getTime() - Date.now()).toBeLessThanOrEqual(10 * 60_000);
+    await database.query(`UPDATE workspace_apps SET composio_link_expires_at=now()-interval '1 second'
+      WHERE id=$1`, [first.appId]);
+    const view = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
+    expect(view.apps).toContainEqual(expect.objectContaining({ appId: first.appId,
+      status: 'error', errorMessage: expect.stringContaining('timed out') }));
+    expect((await phone.readRoom(ROOM, OWNER))?.messages.find((message) =>
+      message.appSignIn?.appId === first.appId)?.appSignIn).toMatchObject({ status: 'failed',
+        errorMessage: expect.stringContaining('timed out') });
+    if (process.env.BEELINE_SIGN_IN_PROOF === '1')
+      console.log(`OAuth-2 ${app}: Workbench=error, card=failed; reason=App sign-in timed out`);
   });
 
   it('WB-CALLBACK-2: fails only the initiating app when two sign-ins are pending', async () => {
@@ -891,7 +961,7 @@ describe('connect_app', () => {
     // could-not-be-checked error.
     const appBefore = (await readOwnerApps(database, OWNER, provider))[0]!;
     expect(appBefore).toMatchObject({ status: 'error',
-      errorMessage: 'App sign-in needs attention' });
+      errorMessage: 'App connection was not found. Sign in again.' });
     expect(appBefore.errorMessage).not.toBe('App connection could not be checked');
 
     // AC-3: the agent-side connect_app(reconnect:true) settles on

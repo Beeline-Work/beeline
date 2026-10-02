@@ -2825,6 +2825,14 @@ describe('Room message variant components', () => {
       expect(JSON.stringify(settled.toJSON())).toContain('CONNECTED ·');
       expect(JSON.stringify(settled.toJSON())).toContain('MONARCH');
       expect(JSON.stringify(settled.toJSON())).not.toContain('Connect Slack');
+      const instagram = render(<AppSignInCard message={message({ appSignIn: {
+        ...signIn.appSignIn!, appKey: 'instagram', name: 'Instagram', status: 'failed',
+        errorMessage: 'Instagram account was rejected by Meta',
+      } })} agentName="Monarch" canConnect onConnect={onConnect} busy={false} />);
+      const instagramCard = JSON.stringify(instagram.toJSON());
+      expect(instagramCard).toContain('Business or Creator account linked to a Facebook Page');
+      expect(instagramCard).toContain('Instagram account was rejected by Meta');
+      expect(instagramCard).toContain('Retry Instagram');
     });
 
     it('asks the question once, states consequence + boundary in one server-owned line, and offers ONE affirmative action to the addressee', () => {

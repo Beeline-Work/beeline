@@ -710,7 +710,8 @@ function projectedMessage(
       const card = row.card as NonNullable<RoomViewMessage['appSignIn']>;
       return { ...base, appSignIn: { appId: card.appId, appKey: card.appKey,
         name: card.name, ownerId: card.ownerId, agentId: card.agentId,
-        status: card.status, ...(card.continuation ? { continuation: card.continuation } : {}) } };
+        status: card.status, ...(card.errorMessage ? { errorMessage: card.errorMessage } : {}),
+        ...(card.continuation ? { continuation: card.continuation } : {}) } };
     }
     case 'choice':
       return { ...base, choice: row.card as NonNullable<RoomViewMessage['choice']> };
@@ -7842,7 +7843,8 @@ export class PhoneService {
       const cards = (await database.query<{ id: string; room_id: string;
         card: { appId: string; name: string; agentId: string; commandId?: string } }>(
         `SELECT id,room_id,card FROM messages WHERE card_type='app-sign-in'
-         AND card->>'appId'=$1 AND card->>'ownerId'=$2 AND card->>'status'='pending'
+         AND card->>'appId'=$1 AND card->>'ownerId'=$2
+         AND card->>'status' IN ('pending','failed')
          FOR UPDATE`, [appId, viewerId],
       )).rows;
       for (const card of cards) {

@@ -326,6 +326,17 @@ type Derived = {
 
 /** A composio row that is not actually connected — a fresh sign-in is the remedy. */
 const APP_SIGN_IN_NEEDS_ATTENTION = 'App sign-in needs attention';
+const APP_SIGN_IN_TIMEOUT_MS = 10 * 60_000;
+const APP_SIGN_IN_TIMED_OUT = 'App sign-in timed out. Open the connection card and sign in again.';
+
+async function failAppSignInCards(database: SqlDatabase, appId: string, reason: string): Promise<void> {
+  await database.query(
+    `UPDATE messages SET card=jsonb_set(jsonb_set(card,'{status}','"failed"'::jsonb),
+       '{errorMessage}',to_jsonb($2::text))
+     WHERE card_type='app-sign-in' AND card->>'appId'=$1 AND card->>'status'='pending'`,
+    [appId, reason.slice(0, 500)],
+  );
+}
 
 /** The app's live state, read from whatever serves it — never stored twice. */
 async function deriveStatus(database: SqlDatabase, row: AppRow, composio?: ComposioApps): Promise<Derived> {
@@ -333,20 +344,24 @@ async function deriveStatus(database: SqlDatabase, row: AppRow, composio?: Compo
     if (!composio) return { status: 'error', errorMessage: 'App sign-in is unavailable' };
     if (row.sign_in_error) return { status: 'error', errorMessage: row.sign_in_error };
     if (!row.composio_account_id) return { status: 'connecting' };
+    let account;
+    try {
+      account = await composio.accountStatus(row.composio_account_id, row.owner_identity_id,
+        composioToolkitForApp(row.app_key));
+    } catch {
+      return { status: 'error', errorMessage: 'App connection could not be checked. Try again.' };
+    }
+    if (account.status === 'failed')
+      return { status: 'error', errorMessage: account.reason ?? APP_SIGN_IN_NEEDS_ATTENTION };
     // Provider activation alone is not enough. The phone must redeem the
     // single-use verifier session under the authenticated Beeline identity.
     if (row.composio_link_expires_at)
       return row.composio_link_expires_at > new Date()
         ? { status: 'connecting' }
-        : { status: 'error', errorMessage: APP_SIGN_IN_NEEDS_ATTENTION };
-    try {
-      return await composio.account(row.composio_account_id, row.owner_identity_id,
-        composioToolkitForApp(row.app_key))
-        ? { status: 'connected' }
-        : { status: 'error', errorMessage: APP_SIGN_IN_NEEDS_ATTENTION };
-    } catch {
-      return { status: 'error', errorMessage: 'App connection could not be checked' };
-    }
+        : { status: 'error', errorMessage: APP_SIGN_IN_TIMED_OUT };
+    return account.status === 'active'
+      ? { status: 'connected' }
+      : { status: 'error', errorMessage: APP_SIGN_IN_NEEDS_ATTENTION };
   }
   if (row.transport === 'registry-mcp') {
     const connector = row.connector_id
@@ -442,6 +457,12 @@ export async function readOwnerApps(
   const views: WorkbenchAppView[] = [];
   for (const row of rows) {
     const derived = await deriveStatus(database, row, composio);
+    if (row.transport === 'composio' && derived.status === 'error' &&
+      derived.errorMessage && derived.errorMessage !== 'App connection could not be checked. Try again.') {
+      // A card update must not turn a readable Workbench status into a failed read.
+      try { await failAppSignInCards(database, row.id, derived.errorMessage); }
+      catch { /* The Workbench error remains visible even if a Room card cannot update. */ }
+    }
     views.push({
       appId: row.id,
       appKey: row.app_key,
@@ -537,7 +558,7 @@ function nextStep(
     return `Trusty Squire handles every sign-in, sign-up and payment for apps, and it is not connected for this owner. Offer it with offer_connector (connectorType trusty-squire), then call connect_app again.`;
   if (outcome.status === 'needs_sign_in')
     if (outcome.transport === 'composio')
-      return `The person must complete ${name} sign-in from the connection card. The app resumes on this same route after sign-in.`;
+      return `${derived.status === 'error' && derived.errorMessage ? `${derived.errorMessage}. ` : ''}The person must complete ${name} sign-in from the connection card. The app resumes on this same route after sign-in.`;
   if (outcome.status === 'needs_sign_in')
     return `Open authorizationUrl with Trusty Squire (operate_start, operate_login, operate_observe, then operate_finish). Any passkey or vouch step goes to the owner through Squire; never paste the link into chat. Call connect_app again when Squire finishes.`;
   if (outcome.status === 'error')
@@ -745,8 +766,14 @@ export async function connectApp(
   }
   const derived = await deriveStatus(database, { ...row,
     ...(authorizationUrl ? { composio_account_id: null,
-      composio_link_expires_at: new Date(Date.now() + 10 * 60_000) } : {}),
+      composio_link_expires_at: new Date(Date.now() + APP_SIGN_IN_TIMEOUT_MS),
+      sign_in_error: null } : {}),
   }, params.composio);
+  if (row.transport === 'composio' && derived.status === 'error' &&
+    derived.errorMessage && derived.errorMessage !== 'App connection could not be checked. Try again.') {
+    try { await failAppSignInCards(database, row.id, derived.errorMessage); }
+    catch { /* The agent still receives the connection error. */ }
+  }
   const versionNote = undefined;
   const decisionNote = applied.decision.kind === 'keep' ? applied.decision.note : undefined;
   const status: ConnectAppStatus = versionNote || linkFailed
@@ -757,7 +784,8 @@ export async function connectApp(
         ? 'connected'
         : derived.status === 'error'
           ? row.transport === 'composio' &&
-            derived.errorMessage === APP_SIGN_IN_NEEDS_ATTENTION
+            (derived.errorMessage === APP_SIGN_IN_NEEDS_ATTENTION ||
+              params.issueLink === false && params.reconnect)
             ? 'needs_sign_in'
             : 'error'
         : row.transport === 'composio'
@@ -856,12 +884,14 @@ export async function completeComposioSignIn(
   try {
     completed = await composio.completeAuth(sessionUri, viewerId);
   } catch (error) {
+    const reason = error instanceof Error ? error.message : 'App sign-in failed';
     await database.query(
       `UPDATE workspace_apps SET sign_in_error=$3,composio_link_expires_at=NULL,updated_at=now()
        WHERE id=$1::uuid AND owner_identity_id=$2 AND transport='composio'
          AND state='active' AND composio_account_id=$4 AND composio_link_expires_at>now()`,
-      [appId, viewerId, error instanceof Error ? error.message : 'App sign-in failed', pending.composio_account_id],
+      [appId, viewerId, reason, pending.composio_account_id],
     );
+    await failAppSignInCards(database, appId, reason);
     throw error;
   }
   const result = await database.transaction(async (db) => {
@@ -873,17 +903,20 @@ export async function completeComposioSignIn(
     )).rows[0];
     if (!current || composioToolkitForApp(current.app_key) !== completed.toolkit)
       throw new Error('App sign-in is no longer pending for this person');
-    let verified: boolean;
-    try { verified = await composio.account(completed.accountId, viewerId, completed.toolkit); }
+    let verified: Awaited<ReturnType<ComposioApps['accountStatus']>>;
+    try { verified = await composio.accountStatus(completed.accountId, viewerId, completed.toolkit); }
     catch (error) {
+      const reason = error instanceof Error ? error.message : 'App sign-in failed';
       await db.query(`UPDATE workspace_apps SET sign_in_error=$2,composio_link_expires_at=NULL,updated_at=now() WHERE id=$1::uuid`,
-        [pending.id, error instanceof Error ? error.message : 'App sign-in failed']);
+        [pending.id, reason]);
+      await failAppSignInCards(db, pending.id, reason);
       return { error };
     }
-    if (!verified) {
-      const error = new Error('App sign-in could not be verified');
+    if (verified.status !== 'active') {
+      const error = new Error(verified.reason ?? 'App sign-in could not be verified. Sign in again.');
       await db.query(`UPDATE workspace_apps SET sign_in_error=$2,composio_link_expires_at=NULL,updated_at=now() WHERE id=$1::uuid`,
         [pending.id, error.message]);
+      await failAppSignInCards(db, pending.id, error.message);
       return { error };
     }
     const updated = await db.query(
@@ -926,14 +959,22 @@ export async function beginComposioAppSignIn(
     let link;
     try { link = await composio.link(ownerId, toolkit); }
     catch (error) {
+      const reason = error instanceof Error ? error.message : 'App sign-in failed';
       await db.query(`UPDATE workspace_apps SET sign_in_error=$2,composio_account_id=NULL,composio_link_expires_at=NULL,updated_at=now() WHERE id=$1::uuid`,
-        [row.id, error instanceof Error ? error.message : 'App sign-in failed']);
+        [row.id, reason]);
+      await failAppSignInCards(db, row.id, reason);
       return { error };
     }
     await db.query(
       `UPDATE workspace_apps SET composio_account_id=$3,composio_link_expires_at=$4,sign_in_error=NULL,updated_at=now()
        WHERE id=$1::uuid AND owner_identity_id=$2`,
-      [appId, ownerId, link.accountId, link.expiresAt],
+      [appId, ownerId, link.accountId,
+        new Date(Math.min(link.expiresAt.getTime(), Date.now() + APP_SIGN_IN_TIMEOUT_MS))],
+    );
+    await db.query(
+      `UPDATE messages SET card=(card-'errorMessage')||'{"status":"pending"}'::jsonb
+       WHERE card_type='app-sign-in' AND card->>'appId'=$1 AND card->>'status'='failed'`,
+      [appId],
     );
     return { authorizationUrl: link.url };
   });

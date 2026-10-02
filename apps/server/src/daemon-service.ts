@@ -6038,6 +6038,7 @@ export class DaemonService {
           name: app.name,
           transport: app.transport,
           status: app.status,
+          ...(app.errorMessage ? { errorMessage: app.errorMessage } : {}),
         }),
       ),
       machine: context.machine,

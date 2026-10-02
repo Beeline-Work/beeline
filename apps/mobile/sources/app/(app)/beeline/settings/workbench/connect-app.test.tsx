@@ -145,6 +145,14 @@ describe('Connect an app', () => {
     expect(JSON.stringify(renderer.toJSON())).toContain('/assets/app-logos/gmail.png');
   });
 
+  it('warns about Instagram account requirements before connecting a searched app', async () => {
+    const renderer = await render();
+    await act(async () => renderer.root.findByProps({ testID: 'connect-app-input' })
+      .props.onChangeText('Instagram'));
+    expect(renderer.root.findByProps({ testID: 'connect-app-instagram' })).toBeTruthy();
+    expect(JSON.stringify(renderer.toJSON())).toContain('Business or Creator account linked to a Facebook Page');
+  });
+
   it('shows a searchable Popular picker with connected state and ink Connect buttons', async () => {
     source.setApps([{ id: 'app-gmail', key: 'gmail', name: 'Gmail', domain: 'gmail.com', transport: 'composio', status: 'connected', useCount: 0 }]);
     const renderer = await render();

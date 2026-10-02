@@ -31,6 +31,7 @@ import {
 } from '@/buzz/connector-offer-copy';
 import { AppMark } from '@/components/buzz/AppMark';
 import { appDomain } from '@/buzz/app-catalog';
+import { INSTAGRAM_SIGN_IN_REQUIREMENT } from '@/buzz/app-sign-in-copy';
 import { appBoardColors, appBoardType } from '@/buzz/app-board-style';
 import { shouldShowReplyReference } from '@/buzz/reply-reference';
 import {
@@ -476,7 +477,9 @@ export function AppSignInCard({ message, agentName, canConnect, onConnect, busy 
     <View style={appSignInStyles.card}>
       <View style={appSignInStyles.heading}><AppMark name={app.name} domain={appDomain(app.name)} size={30} white /><Text style={appSignInStyles.title}>Connect {app.name}</Text></View>
       <Text style={appSignInStyles.detail}>Sign in once. {app.continuation ?? `${agentName} continues the request right after.`}</Text>
-      {canConnect ? <Pressable accessibilityRole="button" disabled={busy} onPress={onConnect} style={appSignInStyles.button} testID={`app-sign-in-${app.appKey}-connect`}><Text style={appSignInStyles.buttonText}>{busy ? 'Connecting' : `Connect ${app.name}`}</Text></Pressable> : <Text style={appSignInStyles.detail}>Waiting for the account owner to connect {app.name}.</Text>}
+      {app.appKey === 'instagram' ? <Text style={appSignInStyles.detail}>{INSTAGRAM_SIGN_IN_REQUIREMENT}</Text> : null}
+      {app.status === 'failed' ? <Text accessibilityRole="alert" style={appSignInStyles.error}>{app.errorMessage ?? 'App sign-in failed. Try again.'}</Text> : null}
+      {canConnect ? <Pressable accessibilityRole="button" disabled={busy} onPress={onConnect} style={appSignInStyles.button} testID={`app-sign-in-${app.appKey}-connect`}><Text style={appSignInStyles.buttonText}>{busy ? 'Connecting' : app.status === 'failed' ? `Retry ${app.name}` : `Connect ${app.name}`}</Text></Pressable> : <Text style={appSignInStyles.detail}>Waiting for the account owner to connect {app.name}.</Text>}
     </View>
   </View>;
 }
@@ -489,6 +492,7 @@ const appSignInStyles = StyleSheet.create(theme => {
   heading: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   title: { ...Typography.ledger(), ...appBoardType.cardTitle, color: board.ink },
   detail: { ...Typography.ledger(), ...appBoardType.cardDetail, color: board.secondary },
+  error: { ...Typography.ledger(), ...appBoardType.cardDetail, color: theme.buzz.dialogDanger },
   button: { alignSelf: 'flex-start', minHeight: 44, paddingHorizontal: 18, borderRadius: 10, justifyContent: 'center', backgroundColor: board.buttonFill },
   buttonText: { ...Typography.ledger(), ...appBoardType.cardAction, color: board.buttonText },
   settled: { ...Typography.mono(), ...appBoardType.cardSettled, color: board.quiet, marginVertical: 8, marginHorizontal: 6 },

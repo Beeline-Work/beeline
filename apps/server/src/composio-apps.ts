@@ -358,18 +358,31 @@ export class ComposioApps {
     return { accountId: requiredString(done.connected_account_id), toolkit: requiredString(done.toolkit_slug) };
   }
 
-  async account(accountId: string, userId: string, toolkit: string): Promise<boolean> {
+  async accountStatus(accountId: string, userId: string, toolkit: string): Promise<{
+    status: 'active' | 'pending' | 'failed'; reason?: string;
+  }> {
     let row: Json;
     try {
       row = await this.request(`/connected_accounts/${encodeURIComponent(accountId)}`, 'GET');
     } catch (error) {
       // A stored account id that no longer exists upstream is "not connected",
       // never a checked error. Reconnect must issue a fresh sign-in link.
-      if ((error as { status?: number }).status === 404) return false;
+      if ((error as { status?: number }).status === 404)
+        return { status: 'failed', reason: 'App connection was not found. Sign in again.' };
       throw error;
     }
-    return row.id === accountId && row.user_id === userId && row.status === 'ACTIVE' &&
-      object(row.toolkit).slug === toolkit && row.is_disabled !== true;
+    if (row.id !== accountId || row.user_id !== userId || object(row.toolkit).slug !== toolkit)
+      return { status: 'failed', reason: 'App connection does not match this person. Sign in again.' };
+    if (row.status === 'ACTIVE' && row.is_disabled !== true) return { status: 'active' };
+    if (row.status === 'INITIALIZING' || row.status === 'INITIATED') return { status: 'pending' };
+    const reason = typeof row.status_reason === 'string' && row.status_reason.trim()
+      ? boundedDetail(row.status_reason.trim().replaceAll(this.apiKey, '[redacted]'))
+      : 'App sign-in failed. Sign in again.';
+    return { status: 'failed', reason };
+  }
+
+  async account(accountId: string, userId: string, toolkit: string): Promise<boolean> {
+    return (await this.accountStatus(accountId, userId, toolkit)).status === 'active';
   }
 
   async deleteAccount(accountId: string): Promise<void> {

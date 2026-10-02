@@ -11,6 +11,7 @@ import { openAppSignIn } from '@/buzz/app-sign-in';
 import type { WorkbenchApp } from '@/buzz/workbench';
 import { appBoardColors } from '@/buzz/app-board-style';
 import { appErrorCopy } from '@/buzz/app-error-copy';
+import { INSTAGRAM_SIGN_IN_REQUIREMENT } from '@/buzz/app-sign-in-copy';
 
 function first(value: string | string[] | undefined): string | undefined { return Array.isArray(value) ? value[0] : value; }
 
@@ -80,6 +81,7 @@ export default function AppDetailScreen() {
           </View>
         </View>
         {description ? <Text style={styles.permission}>{description}</Text> : null}
+        {app.key === 'instagram' && app.status !== 'connected' ? <Text style={styles.permission}>{INSTAGRAM_SIGN_IN_REQUIREMENT}</Text> : null}
         <Text style={styles.permission}>Your agents can use {app.name} as you. Other people’s agents ask you first.</Text>
         <Text style={styles.lastUsed}>{lastUsed}</Text>
         {app.status !== 'connected' ? <TouchableOpacity accessibilityRole="button" disabled={working} onPress={() => void reconnect()} style={styles.ink} testID="app-detail-connect"><Text style={styles.inkText}>{working ? 'Connecting' : app.status === 'error' ? `Retry ${app.name}` : `Connect ${app.name}`}</Text></TouchableOpacity> : null}

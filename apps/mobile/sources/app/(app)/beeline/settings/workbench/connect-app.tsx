@@ -13,6 +13,7 @@ import type { WorkbenchApp, WorkbenchHelper } from '@/buzz/workbench';
 import { openAppSignIn } from '@/buzz/app-sign-in';
 import { appBoardColors } from '@/buzz/app-board-style';
 import { appErrorCopy } from '@/buzz/app-error-copy';
+import { INSTAGRAM_SIGN_IN_REQUIREMENT } from '@/buzz/app-sign-in-copy';
 
 function first(value: string | string[] | undefined): string | undefined { return Array.isArray(value) ? value[0] : value; }
 
@@ -86,7 +87,7 @@ export default function ConnectAppScreen() {
           const metadata = appCatalog.find(item => item.appKey === key);
           return <View key={app.name} style={styles.row} testID={`connect-app-${app.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`}>
             <AppMark name={app.name} domain={app.domain} logo={metadata?.logo ?? existing?.logo} size={34} />
-            <View style={styles.name}><Text style={styles.nameText} numberOfLines={1}>{app.name}</Text>{metadata?.description ? <Text style={styles.description} numberOfLines={2}>{metadata.description}</Text> : null}</View>
+            <View style={styles.name}><Text style={styles.nameText} numberOfLines={1}>{app.name}</Text>{key === 'instagram' ? <Text style={styles.description}>{INSTAGRAM_SIGN_IN_REQUIREMENT}</Text> : metadata?.description ? <Text style={styles.description} numberOfLines={2}>{metadata.description}</Text> : null}</View>
             {existing?.status === 'connected' ? <Text style={styles.connected}>connected</Text> : <TouchableOpacity accessibilityRole="button" disabled={busy !== null} onPress={() => void connect(app.name)} style={styles.button}><Text style={styles.buttonText}>{busy === app.name ? 'Connecting' : existing?.status === 'error' ? 'Retry' : 'Connect'}</Text></TouchableOpacity>}
             {existing ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Disconnect ${app.name}`} disabled={busy !== null} onPress={() => void disconnect(existing)} testID={`disconnect-app-${app.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`}><Text style={styles.connected}>Disconnect</Text></TouchableOpacity> : null}
           </View>;

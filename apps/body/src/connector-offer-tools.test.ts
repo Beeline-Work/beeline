@@ -125,6 +125,16 @@ describe('beeline-agent workbench_status + offer_connector (R5)', () => {
     expect(text).not.toMatch(/secret|password|token=/i);
   });
 
+  it('shows the provider failure reason for an app', async () => {
+    const status = await workbenchStatus(deps({
+      owner: { name: 'Owner' }, catalog: [], connections: [],
+      apps: [{ appId: 'app-instagram', appKey: 'instagram', name: 'Instagram',
+        transport: 'composio', status: 'error',
+        errorMessage: 'Instagram needs a Business or Creator account' }],
+    }));
+    expect(status).toContain('Instagram (app:instagram, id app-instagram) via composio: error — Instagram needs a Business or Creator account');
+  });
+
   it('installs Tailscale when it is enabled on this machine and the CLI is missing', async () => {
     const ensured: boolean[] = [];
     const text = await workbenchStatus(

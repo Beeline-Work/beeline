@@ -2931,6 +2931,9 @@ export function BuzzChatSurface({
   }, [decodedId]);
   const attemptScrubLanding = useCallback(() => {
     const landing = pendingScrubLandingRef.current;
+    // The list is still coasting. scrollToIndex from here does not move it,
+    // so the landing stays pending until drag-end or momentum-end calls this
+    // again with the coast flag clear.
     if (!landing || userDraggingRef.current) return;
     const index = boundaryRowIndex(transcriptMessagesRef.current, landing.messageId);
     if (index < 0) {
@@ -6055,6 +6058,7 @@ export function BuzzChatSurface({
                   // momentum it is an in-flight offset; momentum-end rests it.
                   observePhoneTailOffset(event.nativeEvent.contentOffset.y);
                   resumePendingNewMessageLanding();
+                  attemptScrubLanding();
                 }
                 return;
               }
@@ -6063,6 +6067,7 @@ export function BuzzChatSurface({
                 if (dragEndSequenceRef.current !== sequence) return;
                 userDraggingRef.current = false;
                 resumePendingNewMessageLanding();
+                attemptScrubLanding();
               });
             }}
             onMomentumScrollBegin={() => {
@@ -6075,6 +6080,9 @@ export function BuzzChatSurface({
               dragEndSequenceRef.current += 1;
               userDraggingRef.current = false;
               resumePendingNewMessageLanding();
+              // A scrub grabbed while this coast was still running left its
+              // day pending. The list can take the landing only now.
+              attemptScrubLanding();
             }}
             renderItem={renderItem}
             onScrollToIndexFailed={({ averageItemLength, highestMeasuredFrameIndex, index }) => {

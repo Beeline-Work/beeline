@@ -218,6 +218,41 @@ describe('native variable-height history anchoring', () => {
     expect(gestureHandlers).toContain('onMomentumScrollEnd');
     expect(gestureHandlers).toContain('resumePendingNewMessageLanding();');
   });
+
+  it('resumes a scrubbed day when a coast ends', () => {
+    const dragEnd = chatSource.slice(
+      chatSource.indexOf('onScrollEndDrag='),
+      chatSource.indexOf('onMomentumScrollBegin='),
+    );
+    const momentumEnd = chatSource.slice(
+      chatSource.indexOf('onMomentumScrollEnd='),
+      chatSource.indexOf('renderItem={renderItem}'),
+    );
+    const attempt = chatSource.slice(
+      chatSource.indexOf('const attemptScrubLanding ='),
+      chatSource.indexOf('const landAtScrubbedMessage ='),
+    );
+    const guard = attempt.indexOf('if (!landing || userDraggingRef.current) return;');
+    const dropped = attempt.indexOf('pendingScrubLandingRef.current = null');
+
+    // A coast skips the landing and must not clear it. Rest is what runs it.
+    expect(guard).toBeGreaterThanOrEqual(0);
+    expect(dropped).toBeGreaterThan(guard);
+    const noMomentum = dragEnd.slice(
+      dragEnd.indexOf('if (!hasMomentum)'),
+      dragEnd.indexOf('return;', dragEnd.indexOf('if (!hasMomentum)')),
+    );
+    expect(noMomentum).toContain('attemptScrubLanding();');
+    const frame = dragEnd.slice(dragEnd.indexOf('scheduleAnimationFrame'));
+    expect(frame.indexOf('userDraggingRef.current = false')).toBeGreaterThanOrEqual(0);
+    expect(frame.indexOf('userDraggingRef.current = false')).toBeLessThan(
+      frame.indexOf('attemptScrubLanding();'),
+    );
+    expect(momentumEnd.indexOf('userDraggingRef.current = false')).toBeGreaterThanOrEqual(0);
+    expect(momentumEnd.indexOf('userDraggingRef.current = false')).toBeLessThan(
+      momentumEnd.indexOf('attemptScrubLanding();'),
+    );
+  });
 });
 
 /**

@@ -24,6 +24,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runSquireBrokerLink } from './squire-broker-link.js';
+import { reclaimSquireBrokerSockets } from './squire-broker-squatter.js';
 
 export const SQUIRE_BROKER_UNAVAILABLE = 'broker unavailable';
 export const TRUSTY_SQUIRE_BROKER_UNIT_NAME = 'trusty-squire-broker.service';
@@ -257,10 +258,22 @@ function spawnSquireServer(env: NodeJS.ProcessEnv, locateNpx: boolean, args: rea
   });
 }
 
-/** Host elector: spawn Squire's server even when no socket exists yet. */
-export function runSquireBroker(env: NodeJS.ProcessEnv = process.env): void {
+/**
+ * Host elector: spawn Squire's server even when no socket exists yet. A live
+ * same-profile broker the unit did not start is stopped first; any other
+ * holder of the unit's sockets fails the start with a reason naming it.
+ */
+export async function runSquireBroker(env: NodeJS.ProcessEnv = process.env): Promise<void> {
   const home = env.HOME?.trim() || homedir();
   const paths = ensureSquireHostDir(home);
+  const reclaimed = await reclaimSquireBrokerSockets({
+    sockets: [paths.mcpSocket, paths.brokerSocket],
+    profileDir: paths.profileDir,
+  });
+  if (!reclaimed.ok) {
+    process.stderr.write(`[beeline] Trusty Squire broker not started: ${reclaimed.reason}\n`);
+    process.exit(1);
+  }
   spawnSquireServer(
     {
       ...env,

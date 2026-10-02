@@ -57,7 +57,14 @@ import {
   institutionalMemoryShadowEnabled,
 } from './institutional-memory-shadow-worker.js';
 import { ThinDaemonCore } from './thin-core.js';
-import { installDaemonStopSignals } from './daemon-shutdown.js';
+import {
+  HELPER_EXIT_CODES,
+  HelperLifecycle,
+  installUnhandledRejectionGuard,
+  retryBeforeReady,
+  successorRollbackAllowed,
+  type HelperExitReason,
+} from './helper-lifecycle.js';
 import { DEFAULT_DRAIN_DEADLINE_MS } from './room-runtime.js';
 import { activateDaemonTransport, DaemonApiError } from './daemon-api-client.js';
 import { reportInterruptedTurns } from './force-update-journal.js';
@@ -92,17 +99,15 @@ import {
   repairInstallForwarders,
   settleUpdateAttemptOnStart,
 } from './self-update.js';
-import { clearDaemonStartFailures, recordDaemonStartFailure } from './daemon-failure.js';
+import { clearDaemonStartFailures, settleDaemonStartFailure } from './daemon-failure.js';
 import {
-  DAEMON_DISTRESS_EXIT_STATUS,
-  DELIBERATE_REMOVAL_EXIT_STATUS,
   SystemdNotifier,
   startLocalWatchdog,
-  UNKNOWN_AGENT_EXIT_STATUS,
   disableAgentService,
   extendSystemdStartTimeout,
   installTrustySquireBrokerService,
   reconcileAgentServices,
+  rewriteAgentServiceUnit,
 } from './systemd.js';
 import {
   ManagedUpdateDrain,
@@ -110,6 +115,7 @@ import {
   gateManagedSuccessor,
   managedRestartStaggerMs,
   ManagedUpdateHandoff,
+  withInstallLock,
   forceInstallMinimum,
   rollbackFailedSuccessor,
   runningRuntimeProbeIds,
@@ -170,6 +176,7 @@ All other config via env vars (see config.ts).
 }
 
 let daemonFailureRuntimeDir: string | undefined;
+let daemonLifecycle: HelperLifecycle | undefined;
 
 const SCRATCH_SWEEP_INTERVAL_MS = 6 * 60 * 60_000;
 
@@ -182,14 +189,14 @@ function runScratchSweepLogged(runtimeDir: string): void {
 class DaemonExitError extends Error {
   constructor(
     message: string,
-    readonly exitStatus: number,
+    readonly reason: HelperExitReason,
   ) {
     super(message);
     this.name = 'DaemonExitError';
   }
 }
 
-async function runStoredDaemon(pathOrPointer: string): Promise<void> {
+async function runStoredDaemon(pathOrPointer: string): Promise<HelperExitReason> {
   // `--config` may point at the repo-anchored compatibility pointer; every
   // per-daemon path below (workspace, daemon.pid, Room roots) must hang off the
   // real runtime directory, not the pointer's.
@@ -312,7 +319,9 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
     config.sandboxMaskPaths = [...(config.sandboxMaskPaths ?? []), ...runtime.sandboxMaskPaths];
   }
   const controller = new AbortController();
-  const disposeStopSignals = installDaemonStopSignals(controller);
+  const lifecycle = new HelperLifecycle({ controller });
+  daemonLifecycle = lifecycle;
+  const disposeStopSignals = lifecycle.installSignals();
 
   // The service manager, never this process, owns resurrection and handoff.
   const runtimeDir = dirname(configPath);
@@ -339,6 +348,8 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   let update: ManagedUpdateHandoff | undefined;
   let pendingSuccessor = false;
   let successorRolledBack = false;
+  /** A pending successor is never rolled back for an outage before this. */
+  let attemptDeadlineAt: number | undefined;
   if (layout) {
     const settle = await settleUpdateAttemptOnStart(layout);
     if (settle.kind === 'rolled-back') {
@@ -350,10 +361,11 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
       );
       throw new DaemonExitError(
         'stale unconfirmed release rolled back; supervisor must restart',
-        75,
+        'rolled-back',
       );
     } else if (settle.kind === 'pending') {
       pendingSuccessor = true;
+      attemptDeadlineAt = (await readUpdateAttempt(layout))?.confirmBy;
     }
     loadedRelease = await activeReleaseId(layout);
     // A prior process may have queued a rollback alert that has since been
@@ -383,6 +395,12 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
       // Squire elector here too: the swap does not rewrite or restart the unit
       // installed by `beeline start`/pairing, and a pre-#1653 host would keep
       // its PATH-less unit forever. Best-effort — the release is already live.
+      // The agent unit converges the same way, without restarting any agent.
+      await rewriteAgentServiceUnit({ lock: (work) => withInstallLock(layout, work) }).catch((error) => {
+        console.error(
+          `[beeline] agent unit not converged: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
       await installTrustySquireBrokerService().catch((error) => {
         console.error(
           `[beeline] host Squire broker unit not converged: ${
@@ -453,6 +471,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
     return catalogRefresh;
   };
   let stoppingStatus = 'daemon stopped';
+  let exitReason: HelperExitReason | undefined;
   try {
     registryMcpBroker = new RegistryMcpHostBroker(
       config.operatorHome,
@@ -479,17 +498,20 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
       daemonApi,
       onConfigChanged: refreshCatalog,
       onRestartRequested: () => {
-        if (lifecycleRestart) return;
+        // `/restart` cancels at once, and takes over an update still waiting.
+        if (lifecycleRestart || !lifecycle.quiesce('restart')) return;
         lifecycleRestart = (async () => {
           const cancelled = await core.cancelActiveWorkForRestart();
           stoppingStatus = cancelled
             ? 'restart requested; active work cancelled'
             : 'restart requested; no active work';
-          await notifier.stopping(stoppingStatus);
-          controller.abort();
+          await notifier.stopping(stoppingStatus).catch((error) =>
+            console.error('[thin-core] stopping notification failed:', error),
+          );
+          lifecycle.stop('restart-requested');
         })().catch((error) => {
           console.error('[thin-core] requested restart failed:', error);
-          controller.abort();
+          lifecycle.stop('restart-requested');
         });
       },
     });
@@ -498,6 +520,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
       loadedVersion: loadedReleaseIdentity?.version,
       runtimeDir,
       interrupt: () => {
+        lifecycle.quiesce('force-update');
         core.setDrainDeadlineAt(Date.now() + 60_000);
         return core.interruptForServerMinimum();
       },
@@ -517,18 +540,21 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
         );
         if (staggerMs > 0) await new Promise((resolve) => setTimeout(resolve, staggerMs));
         stoppingStatus = `server minimum installed; restarting onto ${desiredRelease}`;
-        await notifier.stopping(stoppingStatus);
-        controller.abort();
+        await notifier.stopping(stoppingStatus).catch((error) =>
+          console.error('[thin-core] stopping notification failed:', error),
+        );
+        lifecycle.stop('update');
       },
       failed: (error) => {
+        // The interrupted-turn journal stays for the next process to report.
         console.error('[thin-core] forced helper update failed:', error);
-        controller.abort();
+        lifecycle.stop('force-update-failed');
       },
     }) : undefined;
     daemonApi.setForceUpdateListener((minVersion) => {
       if (!forceUpdate) {
         console.error('[thin-core] server requires a published helper, but this process has no install layout');
-        controller.abort();
+        lifecycle.stop('stopped');
         return;
       }
       forceUpdate.request(minVersion);
@@ -538,7 +564,8 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
     const updateDrain = update
       ? new ManagedUpdateDrain({
           update,
-          quiesceIfIdle: () => !forceUpdate?.active && core.quiesceForUpdateIfIdle(),
+          quiesceIfIdle: () =>
+            !forceUpdate?.active && lifecycle.quiesceUpdateIfIdle(() => core.quiesceForUpdateIfIdle()),
           activeTurnCount: () => core.activeTurnCount(),
           restart: async ({ desiredRelease, drainDeadlineAt }) => {
             core.setDrainDeadlineAt(drainDeadlineAt);
@@ -552,8 +579,10 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
               `update pending, converging; loaded_release=${loadedRelease ?? 'unknown'}; ` +
               `desired_release=${desiredRelease}; ` +
               `active work drained; intake quiesced`;
-            await notifier.stopping(stoppingStatus);
-            controller.abort();
+            await notifier.stopping(stoppingStatus).catch((error) =>
+              console.error('[thin-core] stopping notification failed:', error),
+            );
+            lifecycle.stop('update');
           },
           waiting: async ({ desiredRelease }) => {
             await notifier.progress(
@@ -564,13 +593,25 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
           },
         })
       : undefined;
+    // A managed restart that fails after intake closed must not leave a
+    // helper that refuses every turn: it goes back to serving.
+    const tickUpdate = async (): Promise<void> => {
+      try {
+        await updateDrain?.tick();
+      } catch (error) {
+        console.error('[thin-core] managed restart failed; serving again:', error);
+        lifecycle.resumeAfterFailedUpdate(() => core.resumeServing());
+      }
+    };
     daemonApi.setHelperReleaseListener(({ version, sha }) => {
       update?.notifyReleaseAvailable(`${version}:${sha}`);
-      void updateDrain?.tick();
+      void tickUpdate();
     });
+    // The update check reads the static release manifest, never the server.
+    daemonApi.onLiveOpen(() => void tickUpdate());
     core.setInteractiveIdleListener(() => {
       institutionalMemoryWorker?.wake();
-      void updateDrain?.tick();
+      void tickUpdate();
     });
     const result = await core.run({
       signal: controller.signal,
@@ -662,7 +703,17 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
             );
         }
         try {
-          await reportInterruptedTurns(runtimeDir, daemonApi, runtime.agent.publicKey);
+          // Interrupted-turn replay waits out an outage on every open
+          // instead of failing the start (or rolling a successor back).
+          await retryBeforeReady(
+            () => reportInterruptedTurns(runtimeDir, daemonApi, runtime.agent.publicKey),
+            {
+              onLinkOpen: (listener) => daemonApi.onLiveOpen(listener),
+              extendStartTimeout: extendSystemdStartTimeout,
+              ...(attemptDeadlineAt !== undefined ? { deadlineAt: attemptDeadlineAt } : {}),
+              signal: controller.signal,
+            },
+          );
         } catch (error) {
           if (error instanceof DaemonApiError && error.status === 426 &&
               error.code === 'update_required' && forceUpdate?.pending) {
@@ -731,14 +782,16 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
         void drainRollbackAlert(core.activeRoomIds()[0] ?? runtime.rooms[0]?.channelId);
         // Reconciliation refreshes the status; the local timer keeps an idle
         // connected helper healthy between pushed events.
-        await notifier.progress(`loaded_release=${loadedRelease ?? 'development'}; ${status}`);
-        await updateDrain?.tick();
+        await notifier
+          .progress(`loaded_release=${loadedRelease ?? 'development'}; ${status}`)
+          .catch((error) => console.error('[thin-core] progress notification failed:', error));
+        await tickUpdate();
       },
     });
     if (result === 'agent-removed') {
       controller.abort();
       const archivedRuntime = await retireRemovedAgent(runtime);
-      process.exitCode = DELIBERATE_REMOVAL_EXIT_STATUS;
+      exitReason = 'agent-removed';
       console.log(
         `[beeline] agent ${runtime.agent.publicKey} removed; runtime archived at ${archivedRuntime}`,
       );
@@ -749,6 +802,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
       (layout &&
         pendingSuccessor &&
         !ready &&
+        successorRollbackAllowed(error, attemptDeadlineAt) &&
         // Named, so a sibling daemon's journal can say whose failure reverted
         // the attempt it shares with this one.
         (await rollbackFailedSuccessor(layout, runtimeDir, {
@@ -774,6 +828,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
     await clearDaemonPidRecordIfPid(configPath, process.pid);
     disposeStopSignals();
   }
+  return exitReason ?? lifecycle.stopReason ?? 'stopped';
 }
 
 async function main(): Promise<void> {
@@ -881,6 +936,7 @@ async function main(): Promise<void> {
   }
 
   if (command === 'daemon') {
+    installUnhandledRejectionGuard();
     const configFlag = args.indexOf('--config');
     const agentFlag = args.indexOf('--agent');
     let configPath = configFlag >= 0 ? args[configFlag + 1] : undefined;
@@ -901,11 +957,12 @@ async function main(): Promise<void> {
     if (!configPath && agentPubkey) {
       throw new DaemonExitError(
         `unknown agent ${agentPubkey}: no durable runtime exists; refusing service restart loop`,
-        UNKNOWN_AGENT_EXIT_STATUS,
+        'unknown-agent',
       );
     }
     if (!configPath) throw new Error('daemon requires --config <runtime.json> or --agent <pubkey>');
-    await runStoredDaemon(resolve(configPath));
+    const reason = await runStoredDaemon(resolve(configPath));
+    daemonLifecycle?.exit(reason);
     return;
   }
 
@@ -955,7 +1012,12 @@ main().catch(async (err) => {
   // restored anchor. Worker/interactive command failures never touch it.
   if (process.argv[2] === 'daemon') {
     const layout = beelineInstallLayout(process.env);
-    if (layout && (await rollbackFailedSuccessor(layout).catch(() => false))) {
+    const attempt = layout ? await readUpdateAttempt(layout).catch(() => undefined) : undefined;
+    if (
+      layout &&
+      successorRollbackAllowed(err, attempt?.confirmBy) &&
+      (await rollbackFailedSuccessor(layout).catch(() => false))
+    ) {
       console.error('[thin-core] successor failed during startup; previous release restored once');
     }
   }
@@ -976,12 +1038,13 @@ main().catch(async (err) => {
   } else {
     console.error(pc.red('[body] fatal:'), err);
   }
-  let exitStatus = err instanceof DaemonExitError ? err.exitStatus : 1;
-  if (process.argv[2] === 'daemon' && daemonFailureRuntimeDir && exitStatus === 1) {
+  if (process.argv[2] !== 'daemon') process.exit(1);
+  let reason: HelperExitReason = err instanceof DaemonExitError ? err.reason : 'failed';
+  if (daemonFailureRuntimeDir && reason === 'failed') {
     try {
-      const failure = await recordDaemonStartFailure(daemonFailureRuntimeDir, err);
+      const failure = await settleDaemonStartFailure(daemonFailureRuntimeDir, err);
       if (failure.distressed) {
-        exitStatus = DAEMON_DISTRESS_EXIT_STATUS;
+        reason = 'distress';
         console.error(
           `[thin-core] daemon start failed ${failure.count} times; service restart stopped. ` +
             `operator record: ${failure.path}`,
@@ -991,5 +1054,6 @@ main().catch(async (err) => {
       console.error('[thin-core] could not persist daemon distress record:', recordError);
     }
   }
-  process.exit(exitStatus);
+  if (daemonLifecycle) daemonLifecycle.exit(reason);
+  else process.exit(HELPER_EXIT_CODES[reason]);
 });

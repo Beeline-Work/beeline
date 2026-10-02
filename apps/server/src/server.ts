@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
+import type { Duplex } from 'node:stream';
 import { isTransientDatabaseConnectionError, type SqlDatabase } from './database.js';
 import { bearer, type TokenAuth } from './auth.js';
 import {
@@ -239,6 +240,8 @@ export function createBeelineServer(options: ServerOptions): Server {
   let liveDbTasks = 0;
   const liveDbWaiters: Array<() => void> = [];
   const socketCounts = new Map<string, number>();
+  /** Admitted daemon sockets per agent on this machine; a newer upgrade retires them. */
+  const daemonSockets = new Map<string, Set<{ socket: Duplex; release: () => void }>>();
   const socketSubscriptions = new Map<WebSocket, () => number>();
   const liveErrors = { database: 0, invalid: 0, internal: 0, overload: 0 };
   let helperVersionRefusals = 0;
@@ -383,6 +386,16 @@ export function createBeelineServer(options: ServerOptions): Server {
         socket.destroy();
         return;
       }
+      // Newest socket wins. A helper holds one live socket, so an older one
+      // for the same agent belongs to a dead process or a dead network path.
+      // Its count is released now, not on its eventual close, so zombies can
+      // never hold the cap against the helper that replaced them.
+      if (daemonId) {
+        for (const older of [...(daemonSockets.get(daemonId) ?? [])]) {
+          older.release();
+          older.socket.destroy();
+        }
+      }
       const openSockets = socketCounts.get(identityId) ?? 0;
       if (openSockets >= (daemonId ? 4 : 8)) {
         liveErrors.overload++;
@@ -391,11 +404,26 @@ export function createBeelineServer(options: ServerOptions): Server {
         return;
       }
       socketCounts.set(identityId, openSockets + 1);
-      socket.once('close', () => {
-        const remaining = socketCounts.get(identityId) ?? 1;
-        if (remaining <= 1) socketCounts.delete(identityId);
-        else socketCounts.set(identityId, remaining - 1);
-      });
+      let released = false;
+      const admitted = {
+        socket,
+        release: () => {
+          if (released) return;
+          released = true;
+          const remaining = socketCounts.get(identityId) ?? 1;
+          if (remaining <= 1) socketCounts.delete(identityId);
+          else socketCounts.set(identityId, remaining - 1);
+          const agentSockets = daemonSockets.get(identityId);
+          agentSockets?.delete(admitted);
+          if (agentSockets?.size === 0) daemonSockets.delete(identityId);
+        },
+      };
+      if (daemonId) {
+        const agentSockets = daemonSockets.get(daemonId) ?? new Set();
+        agentSockets.add(admitted);
+        daemonSockets.set(daemonId, agentSockets);
+      }
+      socket.once('close', admitted.release);
       webSockets.handleUpgrade(request, socket, head, (client) =>
         webSockets.emit('connection', client, request, {
           identityId,

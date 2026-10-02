@@ -116,6 +116,7 @@ import { distillTurnFailureReason } from './turn-failure-reason.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 import { WarmTranscript } from './warm-transcript.js';
+import type { RoomSupervisor } from './room-supervisor.js';
 
 export const ROOM_PROMPT_INACTIVITY_TIMEOUT_MS = 180_000;
 
@@ -380,8 +381,6 @@ interface ActiveTurn {
 
 export interface MonolithRoomTurnHealth {
   poll(): void;
-  failure(retryInMs: number): void;
-  presence(status: 'online' | 'offline'): void;
 }
 
 export interface MonolithRoomTurnOptions {
@@ -403,6 +402,8 @@ export interface MonolithRoomTurnOptions {
   onCornerOpened?: () => void;
   onRestartRequested?: () => void;
   canStartTurn?: () => boolean;
+  /** Keeps this Room's intake alive across failed reads. */
+  supervisor?: RoomSupervisor;
   /** Attachment downloads (test seam). */
   fetchImpl?: typeof fetch;
   /** The daemon's command-grant runner; this Room registers its checkout and current turn. */
@@ -1229,7 +1230,6 @@ export class MonolithRoomTurnLoop {
     this.activeTurn = active;
     active.promise = this.prompt(active)
       .catch((error) => {
-        this.options.health.failure(1_000);
         console.error(`[thin-core] monolith Room ${this.options.roomId} turn failed:`, error);
       })
       .finally(() => {
@@ -1831,9 +1831,9 @@ export class MonolithRoomTurnLoop {
   }
 
   async run(): Promise<void> {
-    const { api, roomId, signal } = this.options;
-    try {
-      await runServerCommandIntake({
+    const { api, roomId, signal, supervisor } = this.options;
+    const intake = (progress: () => void) =>
+      runServerCommandIntake({
         api,
         roomId,
         agentId: this.agent.publicKey,
@@ -1852,7 +1852,10 @@ export class MonolithRoomTurnLoop {
         onWake: (wake) => {
           this.wakeIntake = wake;
         },
-        onPoll: () => this.options.health.poll(),
+        onPoll: () => {
+          progress();
+          this.options.health.poll();
+        },
         onSubscriptionState: this.options.onSubscriptionState,
         onError: (error) => {
           this.options.onIntakeError?.(error);
@@ -1889,6 +1892,10 @@ export class MonolithRoomTurnLoop {
           await this.activeTurn?.promise;
         },
       });
+    try {
+      await (supervisor
+        ? supervisor.supervise(`Room ${roomId}`, signal, intake)
+        : intake(() => undefined));
     } finally {
       this.squireRelay.close();
       this.options.grantRunner?.unregister(roomId);

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -12,6 +12,7 @@ import {
   isCanonicalInstalledLauncher,
   disableAgentService,
   reconcileAgentServices,
+  rewriteAgentServiceUnit,
   startLocalWatchdog,
   systemdBrokerUnitPath,
 } from './systemd.js';
@@ -28,7 +29,9 @@ describe('systemd supervision contract', () => {
     try {
       const progress = vi.fn(async () => undefined);
       let status = 'connected';
-      const stop = startLocalWatchdog({ progress }, () => status, 1_000);
+      const stop = startLocalWatchdog({ progress }, () => status, 1_000, {
+        WATCHDOG_USEC: '180000000',
+      });
       await vi.advanceTimersByTimeAsync(3_000);
       expect(progress).toHaveBeenCalledTimes(3);
       status = 'reconnecting';
@@ -39,6 +42,36 @@ describe('systemd supervision contract', () => {
       expect(progress).toHaveBeenCalledTimes(4);
     } finally {
       vi.useRealTimers();
+    }
+  });
+  it('logs a failed watchdog notification and feeds only an armed watchdog', async () => {
+    vi.useFakeTimers();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      const progress = vi.fn(async () => {
+        throw new Error('systemd-notify exited 1');
+      });
+      const unarmed = startLocalWatchdog({ progress }, () => 'idle', 1_000, {});
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(progress).not.toHaveBeenCalled();
+      unarmed();
+      const stop = startLocalWatchdog({ progress }, () => 'idle', 1_000, { WATCHDOG_USEC: '1' });
+      await vi.advanceTimersByTimeAsync(2_000);
+      stop();
+      vi.useRealTimers();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(progress).toHaveBeenCalledTimes(2);
+      expect(error).toHaveBeenCalledWith(
+        '[thin-core] watchdog notification failed:',
+        expect.objectContaining({ message: 'systemd-notify exited 1' }),
+      );
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandled);
+      vi.useRealTimers();
+      error.mockRestore();
     }
   });
   it('renders notify readiness, progress watchdog, bounded stop and deliberate-removal policy', () => {
@@ -121,6 +154,59 @@ describe('systemd supervision contract', () => {
     expect(await readFile(join(root, 'systemd/user/beeline-agent@.service'), 'utf8')).toContain(
       'ExecStart=%h/.local/bin/beeline daemon --agent %i',
     );
+  });
+
+  it('rewrites an old agent unit atomically on update without restarting any agent', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-systemd-rewrite-'));
+    roots.push(root);
+    const unitDir = join(root, 'systemd/user');
+    const unitPath = join(unitDir, 'beeline-agent@.service');
+    await mkdir(unitDir, { recursive: true });
+    await writeFile(unitPath, '[Unit]\nStartLimitIntervalSec=5min\nStartLimitBurst=10\n');
+    const before = await stat(unitPath);
+    const calls: string[][] = [];
+    const run = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      return { stdout: '' };
+    });
+    const held: boolean[] = [];
+    let locked = false;
+    const lock = async <T>(work: () => Promise<T>): Promise<T> => {
+      locked = true;
+      try {
+        return await work();
+      } finally {
+        locked = false;
+      }
+    };
+    const options = {
+      env: {
+        HOME: '/operator',
+        BEELINE_LIB_DIR: '/operator/.local/lib/beeline',
+        XDG_CONFIG_HOME: root,
+      },
+      invocationPath: '/operator/.local/lib/beeline/lib/beeline/beeline-cli.mjs',
+      run: async (args: string[]) => {
+        held.push(locked);
+        return run(args);
+      },
+      lock,
+    };
+
+    await expect(rewriteAgentServiceUnit(options)).resolves.toBe(true);
+    const unit = await readFile(unitPath, 'utf8');
+    expect(unit).toBe(agentServiceUnit());
+    expect(unit).toContain('StartLimitIntervalSec=0');
+    expect(unit).not.toContain('StartLimitBurst=');
+    // Renamed into place, never written in place, and no temp file is left.
+    expect((await stat(unitPath)).ino).not.toBe(before.ino);
+    expect(await readdir(unitDir)).toEqual(['beeline-agent@.service']);
+    // Reloaded under the lock; nothing is started, stopped or restarted.
+    expect(calls).toEqual([['daemon-reload']]);
+    expect(held).toEqual([true]);
+
+    await expect(rewriteAgentServiceUnit(options)).resolves.toBe(false);
+    expect(calls).toEqual([['daemon-reload']]);
   });
 
   it('refuses a worktree invocation before touching the shared user unit', async () => {

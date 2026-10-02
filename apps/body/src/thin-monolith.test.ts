@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ThinDaemonCore } from './thin-core.js';
-import { installDaemonStopSignals } from './daemon-shutdown.js';
+import { HelperLifecycle } from './helper-lifecycle.js';
 import { EventEmitter } from 'node:events';
 import { AcpClient } from './acp.js';
 import {
@@ -51,7 +51,8 @@ describe('monolith-only thin daemon', () => {
     });
     const signal = new AbortController();
     const emitter = new EventEmitter();
-    const disposeStopSignals = installDaemonStopSignals(signal, { emitter });
+    const lifecycle = new HelperLifecycle({ controller: signal, exitProcess: vi.fn() });
+    const disposeStopSignals = lifecycle.installSignals(emitter);
     const core = new ThinDaemonCore(staged.runtime, staged.configPath,
       { workspaceRoot: root } as BodyConfig,
       { daemonApi: { execute } as unknown as DaemonApiClient });

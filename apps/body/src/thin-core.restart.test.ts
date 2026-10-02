@@ -49,9 +49,6 @@ describe('/restart', () => {
         promise: new Promise<void>((resolve) => {
           finish = resolve;
         }),
-        lastPollAt: Date.now(),
-        backoffUntil: 0,
-        recovering: false,
       },
     );
 

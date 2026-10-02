@@ -189,6 +189,7 @@ export async function runServerCommandIntake(options: {
     options.presence,
     notify,
   );
+  let failed = false;
   try {
     while (!signal?.aborted) {
       if (reconciliationError) throw reconciliationError;
@@ -284,11 +285,25 @@ export async function runServerCommandIntake(options: {
       if (signal?.aborted) break;
       if (reconcile) requestReconciliation();
     }
+  } catch (error) {
+    failed = true;
+    throw error;
   } finally {
     stopped = true;
     off?.();
     options.onWake?.(undefined);
-    if (context.current) options.stop(context.current.turnRequestId);
-    await busy;
+    const current = context.current;
+    const stopCurrent = () => {
+      if (current) options.stop(current.turnRequestId);
+    };
+    // A failed read leaves the running turn to finish. Intake is re-entered
+    // only after it settles, so its command can never be claimed twice.
+    if (!failed || signal?.aborted) stopCurrent();
+    else signal?.addEventListener('abort', stopCurrent, { once: true });
+    try {
+      await busy;
+    } finally {
+      signal?.removeEventListener('abort', stopCurrent);
+    }
   }
 }

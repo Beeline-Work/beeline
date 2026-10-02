@@ -6,8 +6,6 @@ import type { InterruptedTurn } from './force-update-journal.js';
 
 export {
   DEFAULT_DRAIN_DEADLINE_MS,
-  DEFAULT_RECONCILE_HEARTBEAT_MS,
-  DEFAULT_ROOM_WATCHDOG_STALE_MS,
   REMOVAL_CONFIRMATION_READS,
   ROOM_JOIN_CONCURRENCY,
   mapWithConcurrency,
@@ -27,8 +25,6 @@ export class ThinDaemonCore {
     baseConfig: BodyConfig,
     options: {
       now?: () => number;
-      watchdogStaleMs?: number;
-      reconcileHeartbeatMs?: number;
       drainDeadlineMs?: number;
       daemonApi: DaemonApiClient;
       onRestartRequested?: () => void;
@@ -80,6 +76,10 @@ export class ThinDaemonCore {
   quiesceForUpdateIfIdle(): boolean {
     return this.roomRuntime.quiesceForUpdateIfIdle();
   }
+  /** A managed restart failed after intake closed: take turns again. */
+  resumeServing(): void {
+    this.roomRuntime.resumeServing();
+  }
   async prepareForForcedUpdateRestart(): Promise<void> {
     await this.roomRuntime.prepareForForcedUpdateRestart();
   }
@@ -117,21 +117,38 @@ export class ThinDaemonCore {
     if (opts.signal?.aborted) stop();
     try {
       if (!opts.signal?.aborted) await opts.onEstablished?.();
+      const supervisor = this.roomRuntime.supervisor;
+      let failures = 0;
       while (!opts.signal?.aborted) {
         this.pendingDiscovery = false;
+        const wakesBefore = supervisor.wakes;
         try {
           const membership = await this.roomRuntime.reconcile();
           if (membership === 'not-member') return 'agent-removed';
           this.discoveryStatus = membership === 'unknown' ? 'monolith membership degraded' : '';
+          failures = 0;
         } catch (error) {
           if (isAgentRemovedError(error)) return 'agent-removed';
-          console.error('[thin-core] discovery failed; waiting for live recovery:', error);
+          failures += 1;
+          console.error(
+            failures > supervisor.retries
+              ? '[thin-core] discovery failed; waiting for the next live open or discovery wake:'
+              : `[thin-core] discovery failed; retry ${failures} of ${supervisor.retries}:`,
+            error,
+          );
           this.discoveryStatus = `monolith discovery degraded: ${error instanceof Error ? error.message : String(error)}`;
-          this.roomRuntime.reconnectAfterFailure();
+          this.roomRuntime.suspectLink(error);
         }
         if (opts.signal?.aborted) break;
         await opts.onProgress?.(this.healthStatus());
-        if (!this.pendingDiscovery) await this.waitForDiscovery(opts.signal);
+        if (failures > 0) {
+          // Bounded: three timed retries, then only an open or a wake (which
+          // a reconnect after the suspect ping delivers) tries again.
+          await supervisor.retryDelay(failures, opts.signal, wakesBefore);
+          if (failures > supervisor.retries) failures = 0;
+        } else if (!this.pendingDiscovery) {
+          await this.waitForDiscovery(opts.signal);
+        }
       }
       return 'aborted';
     } finally {

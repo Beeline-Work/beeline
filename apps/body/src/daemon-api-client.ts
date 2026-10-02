@@ -9,6 +9,13 @@ import WebSocket from 'ws';
 import { helperVersion, helperVersionHeader } from './helper-version.js';
 import { HostReadBudget, ReadBudgetFullError } from './host-read-budget.js';
 import {
+  isNetworkFailure,
+  LiveLink,
+  retryAfterMs,
+  type LiveLinkTiming,
+  type LiveSocketFactory,
+} from './live-link.js';
+import {
   readRuntimeRecord,
   runtimeDirectory,
   writeRuntimeRecord,
@@ -32,7 +39,7 @@ export type RoomMembershipChange = {
 };
 
 export type DaemonFetch = typeof fetch;
-export type DaemonWebSocketFactory = (url: string, protocols: string[]) => WebSocket;
+export type DaemonWebSocketFactory = LiveSocketFactory;
 
 export class DaemonApiError extends Error {
   constructor(
@@ -132,16 +139,6 @@ async function responseError(response: Response): Promise<DaemonApiError> {
   );
 }
 
-/** Retry-After may be seconds or an HTTP date. Clamp malformed/remote values. */
-function retryAfterMs(value: string | null): number | undefined {
-  if (!value) return undefined;
-  const seconds = Number(value);
-  const delay = Number.isFinite(seconds) && seconds >= 0
-    ? seconds * 1_000
-    : Date.parse(value) - Date.now();
-  return Number.isFinite(delay) && delay >= 0 ? Math.min(delay, 60_000) : undefined;
-}
-
 export type DaemonClientMetrics = {
   readonly inFlight: number;
   readonly requests: number;
@@ -153,21 +150,16 @@ export type DaemonClientMetrics = {
 };
 
 const REQUEST_DEADLINE_MS = 30_000;
-const STABLE_SOCKET_MS = 30_000;
 
 /** Typed client for the complete named daemon operation contract. */
 export class DaemonApiClient {
   private readonly presenceLifecycleId = randomUUID();
-  private liveSocket?: WebSocket;
-  private liveReconnect?: ReturnType<typeof setTimeout>;
-  private liveReconnectDelayMs = 1_000;
-  private liveOpenedAt = 0;
+  /** The one live socket; it reconnects by itself for as long as it is wanted. */
+  readonly link: LiveLink;
   private inFlight = 0;
   private requestCount = 0;
   private timeoutCount = 0;
-  private reconnectCount = 0;
   private subscriptionCount = 0;
-  private discoveryWakeSupported = false;
   private readonly readBudget?: HostReadBudget;
   private readonly liveRooms = new Map<
     string,
@@ -192,7 +184,6 @@ export class DaemonApiClient {
   private cornerRestartListener?: (roomId: string) => void;
   private helperReleaseListener?: (release: { version: string; sha: string }) => void;
   private forceUpdateListener?: (minVersion: string) => void;
-  private forceUpdatePending = false;
   private helperIdentity: { releaseVersion: string; sourceSha?: string } = {
     releaseVersion: 'v0.0.0',
   };
@@ -202,13 +193,26 @@ export class DaemonApiClient {
     private readonly daemonToken: string,
     readonly agentId: string,
     private readonly fetchImpl: DaemonFetch = fetch,
-    private readonly webSocketFactory: DaemonWebSocketFactory = (url, protocols) =>
-      new WebSocket(url, protocols),
+    webSocketFactory: DaemonWebSocketFactory = (url, protocols, options) =>
+      new WebSocket(url, protocols, options),
     readBudget?: HostReadBudget,
+    linkTiming?: Partial<LiveLinkTiming>,
   ) {
     // Test transports may supply their own admission model. The real network
     // transport always takes the machine-wide budget.
     this.readBudget = readBudget ?? (fetchImpl === fetch ? new HostReadBudget(baseUrl) : undefined);
+    this.link = new LiveLink({
+      url: () => this.liveUrl(),
+      protocols: () => [`bearer.${this.daemonToken}`],
+      factory: webSocketFactory,
+      onOpen: () => this.liveOpened(),
+      onMessage: (data) => this.liveMessage(data),
+      onClose: () => {
+        for (const room of this.liveRooms.values()) room.onState?.(false);
+      },
+      onUpdateRequired: (minVersion) => this.forceUpdateListener?.(minVersion),
+      ...(linkTiming ? { timing: linkTiming } : {}),
+    });
   }
 
   /** Connection material for the daemon-owned MCP proxy and corner credentials. */
@@ -234,25 +238,16 @@ export class DaemonApiClient {
       inFlight: this.inFlight,
       requests: this.requestCount,
       timeouts: this.timeoutCount,
-      reconnects: this.reconnectCount,
+      reconnects: this.link.reconnects,
       subscriptionsSent: this.subscriptionCount,
       readQueueDepth: budget?.waiting ?? 0,
       readQueueWaitMs: budget?.totalWaitMs ?? 0,
     };
   }
 
-  /** A new server can wake discovery after its DB listener recovers. */
-  supportsDiscoveryWake(): boolean {
-    return this.discoveryWakeSupported;
-  }
-
-  private requestForceUpdate(minVersion: string): void {
-    if (this.forceUpdatePending) return;
-    this.forceUpdatePending = true;
-    clearTimeout(this.liveReconnect);
-    this.liveReconnect = undefined;
-    this.forceUpdateListener?.(minVersion);
-    this.liveSocket?.close();
+  /** Called on every live socket open, after resubscription and the wakes. */
+  onLiveOpen(listener: () => void): () => void {
+    return this.link.onOpen(listener);
   }
 
   /** Add one Room to this agent's shared live socket. */
@@ -286,17 +281,11 @@ export class DaemonApiClient {
       });
     }
     this.ensureLiveSocket();
-    if (this.liveSocket?.readyState === WebSocket.OPEN) this.sendLiveSubscription(roomId);
+    this.sendLiveSubscription(roomId);
     return () => {
       this.liveRooms.delete(roomId);
-      if (this.liveSocket?.readyState === WebSocket.OPEN) {
-        this.liveSocket.send(JSON.stringify({ type: 'unsubscribe', roomId }));
-      }
-      if (!this.liveRooms.size && !this.roomsChangedListener) {
-        clearTimeout(this.liveReconnect);
-        this.liveSocket?.close();
-        this.liveSocket = undefined;
-      }
+      this.link.send(JSON.stringify({ type: 'unsubscribe', roomId }));
+      if (!this.liveRooms.size && !this.roomsChangedListener) this.link.stop();
     };
   }
 
@@ -345,18 +334,9 @@ export class DaemonApiClient {
     if (room && cursor) room.cursor = cursor;
   }
 
-  /** Retry an uncertain discovery read through socket reconnect backoff. */
-  reconnectLive(): void {
-    this.liveSocket?.close();
-  }
-
   /** Release the long-lived socket when the helper itself is shutting down. */
   closeLive(): void {
-    clearTimeout(this.liveReconnect);
-    this.liveReconnect = undefined;
-    const socket = this.liveSocket;
-    this.liveSocket = undefined;
-    socket?.close();
+    this.link.stop();
   }
 
   async execute<Name extends keyof DaemonOperationMap>(
@@ -400,7 +380,7 @@ export class DaemonApiClient {
       if (!response.ok) {
         const error = await responseError(response);
         if (error.status === 426 && error.code === 'update_required' && error.minVersion)
-          this.requestForceUpdate(error.minVersion);
+          this.link.requireUpdate(error.minVersion);
         throw error;
       }
       output = (await response.json()) as Output<Name>;
@@ -410,8 +390,12 @@ export class DaemonApiClient {
       }
       if (controller.signal.aborted) {
         this.timeoutCount += 1;
+        // An admitted request that hears nothing for its whole deadline may be
+        // riding a dead path; ask the socket. A queued one only waited here.
+        if (admitted) this.link.suspect();
         throw new DaemonApiError(`monolith daemon ${String(name)} timed out`, 408, true, 'deadline_exceeded');
       }
+      if (isNetworkFailure(error)) this.link.suspect();
       throw error;
     } finally {
       clearTimeout(deadline);
@@ -422,177 +406,131 @@ export class DaemonApiClient {
   }
 
   private ensureLiveSocket(): void {
-    if (this.forceUpdatePending || this.liveSocket || (!this.liveRooms.size && !this.roomsChangedListener)) return;
+    if (this.liveRooms.size || this.roomsChangedListener) this.link.start();
+  }
+
+  private liveUrl(): string {
     const liveUrl = new URL('/v1/phone/live', this.baseUrl);
     liveUrl.protocol = liveUrl.protocol === 'https:' ? 'wss:' : 'ws:';
     liveUrl.searchParams.set('helperVersion', this.helperIdentity.releaseVersion);
     if (this.helperIdentity.sourceSha) liveUrl.searchParams.set('sourceSha', this.helperIdentity.sourceSha);
-    const socket = this.webSocketFactory(liveUrl.toString(), [
-      `bearer.${this.daemonToken}`,
-    ]);
-    this.liveSocket = socket;
-    socket.on?.('unexpected-response', (_request, response) => {
-      if (response.statusCode !== 426) return;
-      // A daemon opening after the minimum was raised is refused before any
-      // WebSocket frame can arrive. Suppress reconnect while its short JSON
-      // body supplies the same force-update signal as a live push.
-      this.forceUpdatePending = true;
-      clearTimeout(this.liveReconnect);
-      this.liveReconnect = undefined;
-      let body = '';
-      response.on('data', (chunk: Buffer) => {
-        if (body.length < 1024) body += chunk.toString('utf8').slice(0, 1024 - body.length);
-      });
-      response.on('end', () => {
-        try {
-          const refusal = JSON.parse(body) as { error?: unknown; minVersion?: unknown };
-          if (refusal.error === 'update_required' && typeof refusal.minVersion === 'string')
-            this.forceUpdateListener?.(refusal.minVersion);
-        } catch {
-          // A malformed refusal cannot authorize an install.
-        }
-      });
-    });
-    socket.onopen = () => {
-      this.liveOpenedAt = Date.now();
-      this.discoveryWakeSupported = false;
-      for (const roomId of this.liveRooms.keys()) this.sendLiveSubscription(roomId);
-      // Every wake on this socket is fire-and-forget: a membership written, or
-      // a Connect tapped, while this socket was connecting (or between
-      // reconnects) never replays its frame. Treat every open as both wakes, so
-      // the reconciliation and the pending_ops drain still reach them.
+    return liveUrl.toString();
+  }
+
+  private liveOpened(): void {
+    for (const roomId of this.liveRooms.keys()) this.sendLiveSubscription(roomId);
+    // Every wake on this socket is fire-and-forget: a membership written, or
+    // a Connect tapped, while this socket was connecting (or between
+    // reconnects) never replays its frame. Treat every open as all three
+    // wakes, so the reconciliation and both drains still reach them.
+    this.roomsChangedListener?.();
+    this.connectorAssignmentListener?.();
+    this.memoryJobListener?.();
+  }
+
+  private liveMessage(data: string): void {
+    let value: unknown;
+    try {
+      value = JSON.parse(data);
+    } catch {
+      return;
+    }
+    if (!value || typeof value !== 'object') return;
+    const event = value as Record<string, unknown>;
+    if (event.type === 'force-update' && typeof event.minVersion === 'string') {
+      this.link.requireUpdate(event.minVersion);
+      return;
+    }
+    if (event.type === 'helper-release' && typeof event.version === 'string' &&
+        typeof event.sha === 'string') {
+      this.helperReleaseListener?.({ version: event.version, sha: event.sha });
+      return;
+    }
+    if (event.type === 'rooms-changed') {
+      this.roomsChangedListener?.(membershipChange(event));
+      return;
+    }
+    if (event.type === 'discovery-wake' &&
+        (event.reason === 'listener-resync' || event.reason === 'database-recovered')) {
       this.roomsChangedListener?.();
+      return;
+    }
+    if (event.type === 'corner-complete' && typeof event.roomId === 'string') {
+      this.cornerCompleteListener?.(event.roomId);
+      return;
+    }
+    if (event.type === 'corner-restart' && typeof event.roomId === 'string') {
+      this.cornerRestartListener?.(event.roomId);
+      return;
+    }
+    if (event.type === 'connector-assignment') {
       this.connectorAssignmentListener?.();
+      return;
+    }
+    if (event.type === 'memory-job') {
       this.memoryJobListener?.();
-    };
-    socket.onmessage = (message) => {
-      let value: unknown;
-      try {
-        value = JSON.parse(String(message.data));
-      } catch {
-        return;
-      }
-      if (!value || typeof value !== 'object') return;
-      const event = value as Record<string, unknown>;
-      if (event.type === 'force-update' && typeof event.minVersion === 'string') {
-        this.requestForceUpdate(event.minVersion);
-        return;
-      }
-      if (event.type === 'hello' && event.protocolMin === 1 && event.protocolMax === 1) {
-        const capabilities = event.capabilities as Record<string, unknown> | undefined;
-        if (capabilities?.discoveryWake === true) this.discoveryWakeSupported = true;
-        return;
-      }
-      if (event.type === 'helper-release' && typeof event.version === 'string' &&
-          typeof event.sha === 'string') {
-        this.helperReleaseListener?.({ version: event.version, sha: event.sha });
-        return;
-      }
-      if (event.type === 'rooms-changed') {
-        this.roomsChangedListener?.(membershipChange(event));
-        return;
-      }
-      if (event.type === 'discovery-wake' &&
-          (event.reason === 'listener-resync' || event.reason === 'database-recovered')) {
-        this.roomsChangedListener?.();
-        return;
-      }
-      if (event.type === 'corner-complete' && typeof event.roomId === 'string') {
-        this.cornerCompleteListener?.(event.roomId);
-        return;
-      }
-      if (event.type === 'corner-restart' && typeof event.roomId === 'string') {
-        this.cornerRestartListener?.(event.roomId);
-        return;
-      }
-      if (event.type === 'connector-assignment') {
-        this.connectorAssignmentListener?.();
-        return;
-      }
-      if (event.type === 'memory-job') {
-        this.memoryJobListener?.();
-        return;
-      }
-      if (event.type === 'config-changed') {
-        this.configChangedListener?.();
-        return;
-      }
-      if (event.type === 'subscribed' && typeof event.roomId === 'string') {
-        const capabilities = event.capabilities as Record<string, unknown> | undefined;
-        if (capabilities?.discoveryWake === true) this.discoveryWakeSupported = true;
-        this.liveRooms.get(event.roomId)?.onState?.(true, {
-          pushIntake: capabilities?.pushIntake === true,
-          connectionPresence: capabilities?.connectionPresence === true,
-        });
-        return;
-      }
-      if (
-        event.type === 'commands' &&
-        typeof event.roomId === 'string' &&
-        event.commandProtocol === 1 &&
-        Array.isArray(event.commands)
-      ) {
-        const room = this.liveRooms.get(event.roomId);
-        if (!room) return;
-        const commands = event.commands.filter((command): command is AgentCommand => {
-          if (
-            !isAgentCommand(command) ||
-            command.roomId !== event.roomId ||
-            command.agentId !== this.agentId ||
-            room.pushedCommandIds.has(command.id)
-          )
-            return false;
-          room.pushedCommandIds.add(command.id);
-          return true;
-        });
-        while (room.pushedCommandIds.size > 10_000)
-          room.pushedCommandIds.delete(room.pushedCommandIds.values().next().value!);
-        if (commands.length) room.onCommands?.(commands);
-        return;
-      }
-      if (event.type !== 'inbox' || typeof event.roomId !== 'string' || !Array.isArray(event.items))
-        return;
+      return;
+    }
+    if (event.type === 'config-changed') {
+      this.configChangedListener?.();
+      return;
+    }
+    if (event.type === 'subscribed' && typeof event.roomId === 'string') {
+      const capabilities = event.capabilities as Record<string, unknown> | undefined;
+      this.liveRooms.get(event.roomId)?.onState?.(true, {
+        pushIntake: capabilities?.pushIntake === true,
+        connectionPresence: capabilities?.connectionPresence === true,
+      });
+      return;
+    }
+    if (
+      event.type === 'commands' &&
+      typeof event.roomId === 'string' &&
+      event.commandProtocol === 1 &&
+      Array.isArray(event.commands)
+    ) {
       const room = this.liveRooms.get(event.roomId);
       if (!room) return;
-      const items: InboxItem[] = [];
-      for (const candidate of event.items) {
-        if (!candidate || typeof candidate !== 'object') continue;
-        const id = (candidate as { id?: unknown }).id;
-        if (typeof id === 'string') {
-          if (!room.pushedIds.has(id)) items.push(candidate as InboxItem);
-          room.pushedIds.add(id);
-        }
+      const commands = event.commands.filter((command): command is AgentCommand => {
+        if (
+          !isAgentCommand(command) ||
+          command.roomId !== event.roomId ||
+          command.agentId !== this.agentId ||
+          room.pushedCommandIds.has(command.id)
+        )
+          return false;
+        room.pushedCommandIds.add(command.id);
+        return true;
+      });
+      while (room.pushedCommandIds.size > 10_000)
+        room.pushedCommandIds.delete(room.pushedCommandIds.values().next().value!);
+      if (commands.length) room.onCommands?.(commands);
+      return;
+    }
+    if (event.type !== 'inbox' || typeof event.roomId !== 'string' || !Array.isArray(event.items))
+      return;
+    const room = this.liveRooms.get(event.roomId);
+    if (!room) return;
+    const items: InboxItem[] = [];
+    for (const candidate of event.items) {
+      if (!candidate || typeof candidate !== 'object') continue;
+      const id = (candidate as { id?: unknown }).id;
+      if (typeof id === 'string') {
+        if (!room.pushedIds.has(id)) items.push(candidate as InboxItem);
+        room.pushedIds.add(id);
       }
-      while (room.pushedIds.size > 10_000)
-        room.pushedIds.delete(room.pushedIds.values().next().value!);
-      if (items.length)
-        room.onItems?.(items, typeof event.cursor === 'string' ? event.cursor : undefined);
-    };
-    const reconnect = () => {
-      if (this.liveSocket !== socket) return;
-      this.liveSocket = undefined;
-      this.discoveryWakeSupported = false;
-      for (const room of this.liveRooms.values()) room.onState?.(false);
-      if (this.forceUpdatePending) return;
-      if (!this.liveRooms.size && !this.roomsChangedListener) return;
-      const delay = this.liveReconnectDelayMs;
-      this.liveReconnectDelayMs = Date.now() - this.liveOpenedAt >= STABLE_SOCKET_MS
-        ? 1_000
-        : Math.min(delay * 2, 30_000);
-      this.reconnectCount += 1;
-      // Full jitter prevents a host's agents from reconnecting in lockstep.
-      this.liveReconnect = setTimeout(() => this.ensureLiveSocket(), Math.floor(Math.random() * delay));
-      this.liveReconnect.unref?.();
-    };
-    socket.onerror = () => undefined;
-    socket.onclose = reconnect;
+    }
+    while (room.pushedIds.size > 10_000)
+      room.pushedIds.delete(room.pushedIds.values().next().value!);
+    if (items.length)
+      room.onItems?.(items, typeof event.cursor === 'string' ? event.cursor : undefined);
   }
 
   private sendLiveSubscription(roomId: string): void {
     const room = this.liveRooms.get(roomId);
-    if (!room || this.liveSocket?.readyState !== WebSocket.OPEN) return;
+    if (!room || !this.link.isOpen()) return;
     this.subscriptionCount += 1;
-    this.liveSocket.send(
+    this.link.send(
       JSON.stringify({
         type: 'subscribe',
         roomId,

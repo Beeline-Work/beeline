@@ -880,11 +880,6 @@ if (!(await proveLoadedReleaseReady(layout, runtimeDir, loadedRelease, { functio
     },
     controller: new AbortController(),
     promise: continuousWork,
-    lastPollAt: Date.now(),
-    lastPresenceAt: Date.now(),
-    presence: 'online',
-    backoffUntil: 0,
-    recovering: false,
   });
   await notifier.ready('ready; loaded_release=' + loadedRelease);
   await writeFile(statePath, JSON.stringify({ ...previous, generation, loadedRelease }));

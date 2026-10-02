@@ -1629,6 +1629,69 @@ describe('live reconnect admission', () => {
     }
   });
 
+  it('admits a restarted helper over its zombie sockets and pongs while the database gate is full', async () => {
+    const stalledReads: Array<() => void> = [];
+    const server = createBeelineServer({
+      database: { query: vi.fn(), transaction: vi.fn() },
+      auth: {
+        authenticateDaemon: vi.fn(async () => 'agent-restarted'),
+        authenticatePhone: vi.fn(async (token: string) => token),
+      } as unknown as TokenAuth,
+      phone: {
+        canReadRooms: vi.fn(() => new Promise<Set<string>>((resolve) => {
+          stalledReads.push(() => resolve(new Set()));
+        })),
+      } as unknown as PhoneService,
+      daemon: {} as DaemonService,
+      live: new LiveHub(),
+      mediaMaximumBytes: 1,
+    });
+    const sockets: WebSocket[] = [];
+    const open = (protocol: string) => {
+      const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, [protocol]);
+      sockets.push(socket);
+      return new Promise<WebSocket>((resolve, reject) => {
+        socket.once('open', () => resolve(socket));
+        socket.once('error', reject);
+      });
+    };
+    let port = 0;
+    try {
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      port = (server.address() as AddressInfo).port;
+      // Five helper processes died without their TCP connections closing.
+      const zombies: WebSocket[] = [];
+      const zombieClosed: Promise<void>[] = [];
+      for (let restart = 0; restart < 5; restart++) {
+        const zombie = await open('bearer.bdt_restarted');
+        zombies.push(zombie);
+        zombieClosed.push(new Promise((resolve) => zombie.once('close', () => resolve())));
+      }
+      const current = await open('bearer.bdt_restarted');
+      expect(current.readyState).toBe(WebSocket.OPEN);
+      await zombieClosed[0];
+      await Promise.all(zombieClosed);
+      expect(zombies.every((zombie) => zombie.readyState === WebSocket.CLOSED)).toBe(true);
+      expect((await (await fetch(`http://127.0.0.1:${port}/health`)).json()).live.sockets).toBe(1);
+
+      // Saturate the live database gate with reads that never finish.
+      for (const reader of ['phone-a', 'phone-b', 'phone-c']) {
+        const phone = await open(`bearer.${reader}`);
+        phone.send(JSON.stringify({ type: 'subscribe', roomId: `room-${reader}` }));
+      }
+      await vi.waitFor(() => expect(stalledReads).toHaveLength(2));
+      const health = await (await fetch(`http://127.0.0.1:${port}/health`)).json();
+      expect(health.live).toMatchObject({ activeDbTasks: 2, waitingDbTasks: 1 });
+      const pong = new Promise<string>((resolve) => current.once('pong', (data) => resolve(data.toString())));
+      current.ping('still-there');
+      await expect(pong).resolves.toBe('still-there');
+      for (const finish of stalledReads.splice(0)) finish();
+    } finally {
+      for (const socket of sockets) socket.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it('recovers 15 agents twice through a two-connection pool without waiters', async () => {
     let inUse = 0;
     let waiting = 0;

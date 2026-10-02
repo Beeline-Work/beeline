@@ -239,7 +239,7 @@ async function runRig(options: {
     config,
     api,
     scheduler,
-    health: { poll: () => undefined, failure: () => undefined, presence: () => undefined },
+    health: { poll: () => undefined },
     signal: abort.signal,
     pollMs: 200,
     ...(options.fakePrompt

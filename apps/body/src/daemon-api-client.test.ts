@@ -356,7 +356,7 @@ describe('DaemonApiClient', () => {
     vi.useRealTimers();
   });
 
-  it('uses server recovery wakes only after the subscribed capability is acknowledged', () => {
+  it('turns a server recovery wake into an unscoped discovery wake', () => {
     FakeWebSocket.instances.length = 0;
     const client = new DaemonApiClient('http://127.0.0.1:43123', 'token', 'b'.repeat(64),
       fetch, ((url, protocols) => new FakeWebSocket(url, protocols)) as DaemonWebSocketFactory);
@@ -365,16 +365,11 @@ describe('DaemonApiClient', () => {
     const release = client.liveSubscribe('room-1');
     const socket = FakeWebSocket.instances[0]!;
     socket.open();
-    expect(client.supportsDiscoveryWake()).toBe(false);
     socket.message({ type: 'hello', protocolMin: 1, protocolMax: 1,
       capabilities: { discoveryWake: true, pushIntake: true } });
-    expect(client.supportsDiscoveryWake()).toBe(true);
-    socket.message({ type: 'subscribed', roomId: 'room-1', capabilities: { discoveryWake: true } });
-    expect(client.supportsDiscoveryWake()).toBe(true);
     socket.message({ type: 'discovery-wake', reason: 'database-recovered' });
     expect(discovery).toHaveBeenCalledTimes(2); // open recovery and DB recovery
-    socket.close();
-    expect(client.supportsDiscoveryWake()).toBe(false);
+    expect(discovery).toHaveBeenLastCalledWith();
     release();
     client.closeLive();
   });

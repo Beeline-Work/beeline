@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DaemonApiClient, RoomMembershipChange } from './daemon-api-client.js';
+import { DaemonApiError, type DaemonApiClient, type RoomMembershipChange } from './daemon-api-client.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { RoomRuntimeCoordinator } from './room-runtime.js';
 
@@ -51,7 +51,6 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
     internal.running.set('room-1', {
       body: { isBusy: () => busy, requestReconciliation: vi.fn() },
       controller: new AbortController(), promise: Promise.resolve(),
-      lastPollAt: 0, backoffUntil: 0, recovering: false,
     });
     const stop = vi.spyOn(internal, 'stopRunning').mockImplementation(async () => {
       internal.running.delete('room-1');
@@ -70,21 +69,20 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
       await coordinator.shutdown();
     }
   });
-  it('keeps a capable live socket after a discovery read fault and retains old-server fallback', async () => {
+  it('suspects the live socket after a failed reconcile unless the server answered', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-discovery-recovery-'));
     roots.push(root);
-    const reconnectLive = vi.fn();
-    const supportsDiscoveryWake = vi.fn(() => true);
+    const suspect = vi.fn();
     const coordinator = new RoomRuntimeCoordinator(runtimeAt(root), join(root, 'agent.json'),
       { workspaceRoot: root } as never, { daemonApi: {
-        reconnectLive, supportsDiscoveryWake, setRoomsChangedListener: vi.fn(),
+        link: { suspect }, setRoomsChangedListener: vi.fn(),
       } as unknown as DaemonApiClient });
     try {
-      coordinator.reconnectAfterFailure();
-      expect(reconnectLive).not.toHaveBeenCalled();
-      supportsDiscoveryWake.mockReturnValue(false);
-      coordinator.reconnectAfterFailure();
-      expect(reconnectLive).toHaveBeenCalledOnce();
+      coordinator.suspectLink(new DaemonApiError('unavailable', 503, true, 'unavailable'));
+      coordinator.suspectLink(new DaemonApiError('budget', 429, true, 'read_budget_full'));
+      expect(suspect).not.toHaveBeenCalled();
+      coordinator.suspectLink(new TypeError('fetch failed', { cause: { code: 'ECONNRESET' } }));
+      expect(suspect).toHaveBeenCalledOnce();
     } finally {
       await coordinator.shutdown();
     }
@@ -310,11 +308,13 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
         } as unknown as DaemonApiClient,
       },
     );
+    const discovery = vi.fn();
+    coordinator.setDiscoveryWakeListener(discovery);
     try {
       await coordinator.applyMembershipEvent({ roomId: 'corner-1', parentRoomId: 'room-1' });
       expect(coordinator.activeRoomIds()).not.toContain('corner-1');
       expect(execute).not.toHaveBeenCalled();
-      expect(coordinator.needsFastReconcile()).toBe(true);
+      expect(discovery).toHaveBeenCalled();
     } finally {
       await coordinator.shutdown();
     }
@@ -342,15 +342,17 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
         } as unknown as DaemonApiClient,
       },
     );
+    const discovery = vi.fn();
+    coordinator.setDiscoveryWakeListener(discovery);
     try {
-      expect(coordinator.needsFastReconcile()).toBe(false);
+      expect(discovery).not.toHaveBeenCalled();
       await coordinator.applyMembershipEvent({
         roomId: 'corner-1',
         parentRoomId: 'room-1',
         openedBy: identityFromKey('11'.repeat(32), 'Bee').publicKey,
       });
       expect(coordinator.activeRoomIds()).not.toContain('corner-1');
-      expect(coordinator.needsFastReconcile()).toBe(true);
+      expect(discovery).toHaveBeenCalled();
     } finally {
       await coordinator.shutdown();
       vi.restoreAllMocks();
@@ -385,11 +387,13 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
         } as unknown as DaemonApiClient,
       },
     );
+    const discovery = vi.fn();
+    coordinator.setDiscoveryWakeListener(discovery);
     try {
-      expect(coordinator.needsFastReconcile()).toBe(false);
+      expect(discovery).not.toHaveBeenCalled();
       membership?.({ roomId: 'room-1' });
       await vi.waitFor(() => expect(coordinator.activeRoomIds()).toContain('room-1'));
-      expect(coordinator.needsFastReconcile()).toBe(false);
+      expect(discovery).not.toHaveBeenCalled();
       expect(execute).not.toHaveBeenCalledWith('getRoomRepositoryState', { roomId: 'room-1' });
     } finally {
       await coordinator.shutdown();
@@ -414,10 +418,12 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
         } as unknown as DaemonApiClient,
       },
     );
+    const discovery = vi.fn();
+    coordinator.setDiscoveryWakeListener(discovery);
     const startRoom = vi.spyOn(coordinator as never, 'startRoom').mockRejectedValueOnce(new Error('startup failed'));
     try {
       coordinator['queueMembershipEvent']({ roomId: 'room-1' });
-      await vi.waitFor(() => expect(coordinator.needsFastReconcile()).toBe(true));
+      await vi.waitFor(() => expect(discovery).toHaveBeenCalled());
       expect(startRoom).toHaveBeenCalledWith('room-1');
       expect(coordinator.activeRoomIds()).not.toContain('room-1');
     } finally {
@@ -554,10 +560,12 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
         } as unknown as DaemonApiClient,
       },
     );
+    const discovery = vi.fn();
+    coordinator.setDiscoveryWakeListener(discovery);
     try {
-      expect(coordinator.needsFastReconcile()).toBe(false);
+      expect(discovery).not.toHaveBeenCalled();
       membership?.();
-      expect(coordinator.needsFastReconcile()).toBe(true);
+      expect(discovery).toHaveBeenCalled();
     } finally {
       await coordinator.shutdown();
     }

@@ -157,6 +157,7 @@ describe('monolith integration', () => {
       fullName: `owner/${input.name}`,
       installationId: input.installationId,
       defaultBranch: 'main',
+      private: input.private !== false,
     }));
     sendPushTest = vi.fn(async () => undefined);
     objectStorage = new MemoryObjectStorage();
@@ -5108,6 +5109,46 @@ describe('monolith integration', () => {
     );
   });
 
+  it('defaults a new Room to its repository visibility unless the client chooses one', async () => {
+    await database.query(
+      `INSERT INTO github_installations(installation_id,owner_id,account_login,account_type) VALUES(42,$1,'owner','User')`,
+      [HUMAN],
+    );
+    await database.query(
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch,private)
+       VALUES(77,42,'owner/secret','main',true),(78,42,'owner/open','main',false),
+             (79,42,'owner/unknown','main',NULL)`,
+    );
+    const visibilityOf = async (body: Record<string, unknown>) => {
+      const created = await request('/v1/phone/operations/createRoom', 'POST', {
+        workspaceId: WORKSPACE,
+        ...body,
+      });
+      expect(created.status).toBe(200);
+      const { id } = (await created.json()) as { id: string };
+      return (
+        await database.query<{ visibility: string }>(`SELECT visibility FROM rooms WHERE id=$1`, [
+          id,
+        ])
+      ).rows[0]?.visibility;
+    };
+
+    expect(await visibilityOf({ name: 'no-repo' })).toBe('public');
+    expect(await visibilityOf({ name: 'private-repo', repositoryId: 77 })).toBe('invite-only');
+    expect(await visibilityOf({ name: 'public-repo', repositoryId: 78 })).toBe('public');
+    expect(await visibilityOf({ name: 'unknown-repo', repositoryId: 79 })).toBe('invite-only');
+    expect(
+      await visibilityOf({ name: 'private-made-public', repositoryId: 77, visibility: 'public' }),
+    ).toBe('public');
+    expect(
+      await visibilityOf({
+        name: 'public-made-private',
+        repositoryId: 78,
+        visibility: 'invite-only',
+      }),
+    ).toBe('invite-only');
+  });
+
   it('rotates refresh tokens and rejects stale phone and daemon credentials', async () => {
     const initial = await auth.exchangeGitHubOidc('proof');
     const refreshed = await request(
@@ -8149,7 +8190,14 @@ describe('monolith integration', () => {
     expect(payload).toMatchObject({
       installed: true,
       repositories: [
-        { id: 101, fullName: 'owner/widgets', installationId: 77, defaultBranch: 'trunk' },
+        // Stored before GitHub's flag was recorded: read as private.
+        {
+          id: 101,
+          fullName: 'owner/widgets',
+          installationId: 77,
+          defaultBranch: 'trunk',
+          private: true,
+        },
       ],
     });
   });
@@ -8160,7 +8208,7 @@ describe('monolith integration', () => {
       [HUMAN],
     );
     await database.query(
-      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch) VALUES(101,77,'owner/widgets','trunk')`,
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch,private) VALUES(101,77,'owner/widgets','trunk',false)`,
     );
 
     const listed = await request('/v1/phone/operations/listGitHubRepositories', 'POST', {});
@@ -8181,7 +8229,13 @@ describe('monolith integration', () => {
         },
       ],
       repositories: [
-        { id: 101, fullName: 'owner/widgets', installationId: 77, defaultBranch: 'trunk' },
+        {
+          id: 101,
+          fullName: 'owner/widgets',
+          installationId: 77,
+          defaultBranch: 'trunk',
+          private: false,
+        },
       ],
     });
 
@@ -8204,6 +8258,7 @@ describe('monolith integration', () => {
       fullName: 'owner/new-repo',
       installationId: 77,
       defaultBranch: 'main',
+      private: true,
     });
 
     const linked = await request('/v1/phone/operations/setRoomRepository', 'POST', {

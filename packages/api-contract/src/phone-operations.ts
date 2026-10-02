@@ -600,6 +600,7 @@ export type GitHubRepository = {
   readonly fullName: string;
   readonly installationId: number;
   readonly defaultBranch: string;
+  readonly private: boolean;
 };
 export type GitHubInstallation = {
   readonly installationId: number;

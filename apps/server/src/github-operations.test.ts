@@ -700,6 +700,68 @@ describe('GitHub phone operations', () => {
       expect(app.listRepositories).not.toHaveBeenCalled();
     },
   );
+  it('records GitHub repository visibility on installation refresh', async () => {
+    await database.query(
+      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
+       VALUES(77,$1,'42','owner','User','selected','active')`,
+      [HUMAN],
+    );
+    await database.query(
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch)
+       VALUES(101,77,'owner/widgets','main')`,
+    );
+    let widgetsPrivate = true;
+    const app = {
+      installationAccount: vi.fn(async () => ({
+        id: '42',
+        login: 'owner',
+        type: 'User' as const,
+        repositorySelection: 'selected' as const,
+      })),
+      listRepositories: vi.fn(async () => [
+        {
+          id: 101,
+          installationId: 77,
+          fullName: 'owner/widgets',
+          defaultBranch: 'main',
+          private: widgetsPrivate,
+        },
+        {
+          id: 102,
+          installationId: 77,
+          fullName: 'owner/open',
+          defaultBranch: 'main',
+          private: false,
+        },
+      ]),
+    } as unknown as GitHubAppClient;
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
+    const stored = async () =>
+      (
+        await database.query<{ repository_id: number; private: boolean | null }>(
+          `SELECT repository_id,private FROM github_repositories WHERE installation_id=77 ORDER BY repository_id`,
+        )
+      ).rows;
+
+    await operations.processWebhook('installation', {
+      action: 'created',
+      installation: { id: 77 },
+    });
+    expect(await stored()).toEqual([
+      { repository_id: 101, private: true },
+      { repository_id: 102, private: false },
+    ]);
+
+    widgetsPrivate = false;
+    await operations.processWebhook('repository', {
+      action: 'publicized',
+      installation: { id: 77 },
+    });
+    expect(await stored()).toEqual([
+      { repository_id: 101, private: false },
+      { repository_id: 102, private: false },
+    ]);
+  });
   it('still refreshes the catalog for a repository lifecycle webhook', async () => {
     await database.query(
       `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)

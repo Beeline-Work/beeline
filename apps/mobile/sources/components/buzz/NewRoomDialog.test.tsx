@@ -40,14 +40,17 @@ vi.mock('./HullActionSheet', async () => {
 
 import { NewRoomDialog } from './NewRoomDialog';
 import { beelineThemes } from '@/buzz/groknight';
+import { inviteOnlyForRepository } from '@/buzz/room-repo-picker';
 
 const repo = {
   key: 'repo',
   name: 'owner/widgets',
   remote: 'https://github.com/owner/widgets',
   defaultBranch: 'main',
+  private: false,
 } as any;
-const createdRepo = { ...repo, key: 'new-repo', name: 'owner/new-repo' };
+const privateRepo = { ...repo, key: 'private-repo', name: 'owner/secret', private: true };
+const createdRepo = { ...repo, key: 'new-repo', name: 'owner/new-repo', private: true };
 const installations = [
   { installationId: 78, accountLogin: 'owner', status: 'active' },
   { installationId: 79, accountLogin: 'other', status: 'active' },
@@ -78,13 +81,15 @@ function mount({ startPicker = false, createFails = false } = {}) {
         handleToggleRepoPicker={() => show((current) => !current)}
         handleSelectNoRepository={() => {
           select(null);
+          setInviteOnly(inviteOnlyForRepository(null));
           show(false);
         }}
         handleSelectRepoCandidate={(candidate) => {
           select(candidate);
+          setInviteOnly(inviteOnlyForRepository(candidate));
           show(false);
         }}
-        repoCandidates={[repo]}
+        repoCandidates={[repo, privateRepo]}
         repoInstallations={installations}
         repoPickerError={repoPickerError}
         handleAddGitHubAccount={addAccount}
@@ -95,6 +100,7 @@ function mount({ startPicker = false, createFails = false } = {}) {
             throw new Error('creation failed');
           }
           select(createdRepo);
+          setInviteOnly(inviteOnlyForRepository(createdRepo));
           show(false);
         }}
       />
@@ -132,15 +138,45 @@ describe('New Room sheet', () => {
 
   it('switches to invite-only without changing repository selection', () => {
     const { renderer, host, picker, submit, sheet } = mount();
-    act(() => host('create-room-public')?.props.onValueChange(false));
     act(() => host('create-room-repo-row')?.props.onPress());
     expect(sheet().title).toBe('Repository');
     expect(host('create-room-name')).toBeUndefined();
     expect(host('create-room-submit')).toBeUndefined();
     act(() => picker().onSelect(repo));
+    act(() => host('create-room-public')?.props.onValueChange(false));
+    expect(host('create-room-repo-row')).toBeDefined();
     act(() => host('create-room-name')?.props.onChangeText('private-room'));
     act(() => host('create-room-submit')?.props.onPress());
     expect(submit).toHaveBeenCalledWith('private-room', repo, true);
+    act(() => renderer.unmount());
+  });
+
+  it('starts the Public switch from the chosen repository visibility', () => {
+    const { renderer, host, picker } = mount();
+    expect(host('create-room-public')?.props.value).toBe(true);
+    act(() => host('create-room-repo-row')?.props.onPress());
+    act(() => picker().onSelect(privateRepo));
+    expect(host('create-room-public')?.props.value).toBe(false);
+    act(() => host('create-room-repo-row')?.props.onPress());
+    act(() => picker().onSelect(repo));
+    expect(host('create-room-public')?.props.value).toBe(true);
+    act(() => host('create-room-repo-row')?.props.onPress());
+    act(() => picker().onSelect(privateRepo));
+    act(() => host('create-room-repo-row')?.props.onPress());
+    act(() => picker().onSelectNoRepository());
+    expect(host('create-room-public')?.props.value).toBe(true);
+    act(() => renderer.unmount());
+  });
+
+  it('lets the user override the repository default before creating', () => {
+    const { renderer, host, picker, submit } = mount();
+    act(() => host('create-room-repo-row')?.props.onPress());
+    act(() => picker().onSelect(privateRepo));
+    act(() => host('create-room-public')?.props.onValueChange(true));
+    expect(host('create-room-public')?.props.value).toBe(true);
+    act(() => host('create-room-name')?.props.onChangeText('open-secret'));
+    act(() => host('create-room-submit')?.props.onPress());
+    expect(submit).toHaveBeenCalledWith('open-secret', privateRepo, false);
     act(() => renderer.unmount());
   });
 
@@ -168,9 +204,10 @@ describe('New Room sheet', () => {
     await act(async () => host('create-repository-submit')?.props.onPress());
     expect(createRepository).toHaveBeenCalledWith(78, 'new-repo');
     expect(sheet().title).toBe('New Room');
+    expect(host('create-room-public')?.props.value).toBe(false);
     act(() => host('create-room-name')?.props.onChangeText('planning'));
     act(() => host('create-room-submit')?.props.onPress());
-    expect(submit).toHaveBeenCalledWith('planning', createdRepo, false);
+    expect(submit).toHaveBeenCalledWith('planning', createdRepo, true);
     act(() => renderer.unmount());
   });
 

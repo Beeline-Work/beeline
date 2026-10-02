@@ -34,7 +34,7 @@ import { readWelcomeCards } from '@/buzz/welcome-cards';
 import { leaveRoomWithConfirmation } from '@/buzz/room-leave';
 import { validRoomSlug } from '@/buzz/room-name';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
-import type { RepoCandidate } from '@/buzz/room-repo-picker';
+import { inviteOnlyForRepository, type RepoCandidate } from '@/buzz/room-repo-picker';
 import { workspaceRailItem, type WorkspaceMemberDisplayItem } from '@/buzz/room-view-presentation';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
@@ -710,6 +710,7 @@ export default function BuzzChannels() {
 
   const handleSelectRepoCandidate = useCallback((candidate: RepoCandidate) => {
     setPendingRepo(candidate);
+    setInviteOnly(inviteOnlyForRepository(candidate));
     setShowRepoPicker(false);
     setRepoPickerError(null);
   }, []);
@@ -738,6 +739,7 @@ export default function BuzzChannels() {
 
   const handleSelectNoRepository = useCallback(() => {
     setPendingRepo(null);
+    setInviteOnly(inviteOnlyForRepository(null));
     setShowRepoPicker(false);
     setRepoPickerError(null);
   }, []);
@@ -755,6 +757,7 @@ export default function BuzzChannels() {
         });
         setRepoCandidates((current) => [...current, repository]);
         setPendingRepo(repository);
+        setInviteOnly(inviteOnlyForRepository(repository));
         setShowRepoPicker(false);
       } catch (reason) {
         setRepoPickerError(`Could not create repository: ${String(reason)}`);

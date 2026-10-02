@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { access, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -105,6 +105,29 @@ describe('a helper joining a corner it did not open', () => {
 
     expect(execute).not.toHaveBeenCalled();
     await coordinator.shutdown();
+  });
+
+  it('starts a corner whose supervisor directory is reached through a symlink', async () => {
+    const { remote, scratch } = await remoteWithCornerBranch();
+    const realRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-real-'));
+    roots.push(realRoot);
+    const linkRoot = resolve(scratch, 'supervisor-link');
+    await symlink(realRoot, linkRoot);
+    const worktree = await materializeCornerWorktree({
+      cornerId: 'corner-symlink',
+      remote,
+      targetBranch: 'main',
+      featureBranch: FEATURE,
+      token: 'unused',
+      supervisorRoot: linkRoot,
+      committer: { name: 'Helper', publicKey: 'a'.repeat(64) },
+    });
+    expect(await realpath(worktree.path)).toBe(
+      await realpath(resolve(realRoot, 'beeline', 'corners', 'corner-symlink')),
+    );
+    const top = await git(worktree.path, 'rev-parse', '--show-toplevel');
+    expect(resolve(top)).not.toBe(resolve(worktree.path));
+    expect(await realpath(top)).toBe(await realpath(worktree.path));
   });
 
   it('deletes its worktree and exact local and remote branches on close', async () => {

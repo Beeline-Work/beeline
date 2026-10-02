@@ -86,9 +86,9 @@ describe('phone cold launch after the deck replace', () => {
     );
     expect(route).not.toHaveBeenCalled();
 
-    const navigate = vi.fn();
+    const openStack = vi.fn();
     await routeBuzzNotificationResponse(leftover, {
-      router: { navigate },
+      navigator: { openStack },
       handled: new Set(),
       defaultActionIdentifier: 'expo.modules.notifications.actions.DEFAULT',
       waitForInitialLanding: async () => 'committed',
@@ -98,6 +98,6 @@ describe('phone cold launch after the deck replace', () => {
       consumedResponses: consumed,
       log: () => {},
     });
-    expect(navigate).not.toHaveBeenCalled();
+    expect(openStack).not.toHaveBeenCalled();
   });
 });

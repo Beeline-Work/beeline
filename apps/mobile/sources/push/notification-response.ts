@@ -1,8 +1,8 @@
-import type { Router } from 'expo-router';
 import {
   getBuzzNotificationTargetFromData,
   navigateToBuzzTargetFromNotification,
   type BuzzNotificationTarget,
+  type NotificationNavigator,
 } from '@/utils/notificationRouting';
 import type { InitialLandingResult } from '@/navigation/initial-landing';
 
@@ -140,7 +140,8 @@ export function startNotificationResponseEntries(entries: NotificationResponseEn
 }
 
 export type NotificationResponseRouting = {
-  router: Pick<Router, 'navigate'>;
+  /** Opens the target on top of its fixed ancestry (see `notificationStackRoutes`). */
+  navigator: NotificationNavigator;
   /** Response ids already routed in this process; each is acted on once. */
   handled: Set<string>;
   /** expo-notifications' identifier for a tap on the notification body. */
@@ -250,7 +251,7 @@ export async function routeBuzzNotificationResponse(
       // server truth. A cold AsyncStorage selection write need not keep the
       // Room behind the landing screen.
       routing.suppressPendingInitialLanding();
-      navigateToBuzzTargetFromNotification(routing.router, buzzTarget, responseId!);
+      navigateToBuzzTargetFromNotification(routing.navigator, buzzTarget, responseId!);
       void routing.resolveTarget(buzzTarget).catch((error) =>
         log(`Could not persist pushed Workspace selection: ${String(error)}`),
       );
@@ -269,7 +270,7 @@ export async function routeBuzzNotificationResponse(
       // its own time), or that replace would land the deck over the Room.
       routing.suppressPendingInitialLanding();
       const resolvedTarget = await routing.resolveTarget(buzzTarget);
-      navigateToBuzzTargetFromNotification(routing.router, resolvedTarget, responseId!);
+      navigateToBuzzTargetFromNotification(routing.navigator, resolvedTarget, responseId!);
       if (responseId) await routing.consumedResponses?.add(responseId);
       log(
         `[PUSH ROUTING] Navigating to Beeline ${resolvedTarget.target}: ${resolvedTarget.channelId ?? resolvedTarget.workspaceId}`,

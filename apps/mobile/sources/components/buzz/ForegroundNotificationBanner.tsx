@@ -1,7 +1,7 @@
 import * as React from 'react';
 import * as Notifications from 'expo-notifications';
 import { Animated, AppState, PanResponder, Platform, Pressable, Text, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useNavigationContainerRef } from 'expo-router';
 import { StyleSheet } from 'react-native-unistyles';
 import { getOpenBuzzChannelId } from '@/buzz/open-room-tracker';
 import { resolveBuzzNotificationDestination } from '@/push/notification-destination';
@@ -11,6 +11,7 @@ import {
   type ForegroundBannerEntry,
 } from '@/push/foreground-banner';
 import { navigateToBuzzTargetFromNotification } from '@/utils/notificationRouting';
+import { createNotificationNavigator } from '@/navigation/notification-stack';
 import { Typography } from '@/constants/Typography';
 
 const DISPLAY_MS = 4_000;
@@ -25,7 +26,7 @@ export function ForegroundNotificationBanner({
   left: number;
   right?: number;
 }) {
-  const router = useRouter();
+  const navigationRef = useNavigationContainerRef();
   const [entry, setEntry] = React.useState<ForegroundBannerEntry | null>(null);
   const progress = React.useRef(new Animated.Value(1)).current;
   const translateY = React.useRef(new Animated.Value(0)).current;
@@ -111,9 +112,13 @@ export function ForegroundNotificationBanner({
     const selected = entry;
     dismiss();
     void resolveBuzzNotificationDestination(selected.target).then((target) =>
-      navigateToBuzzTargetFromNotification(router, target, selected.id),
+      navigateToBuzzTargetFromNotification(
+        createNotificationNavigator(navigationRef),
+        target,
+        selected.id,
+      ),
     );
-  }, [dismiss, entry, router]);
+  }, [dismiss, entry, navigationRef]);
 
   if (!entry) return null;
   const kind = entry.count > 1 ? `${entry.count} new · needs you first` : entry.kind;

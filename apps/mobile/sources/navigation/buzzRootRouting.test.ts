@@ -205,8 +205,8 @@ describe('Buzz root launch routing', () => {
         },
       },
       {
-        router: {
-          navigate: () => {
+        navigator: {
+          openStack: () => {
             routing.pathname = `/beeline/chat/${room}`;
           },
         },

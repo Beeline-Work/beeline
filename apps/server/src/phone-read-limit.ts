@@ -11,6 +11,11 @@ const WINDOW_MS = 60_000;
 export const HISTORY_REQUESTS_PER_WINDOW = 2_400;
 /** The phone reads the outline once per Room visit; two visits a second is not a person. */
 export const OUTLINE_REQUESTS_PER_WINDOW = 120;
+/**
+ * The Room list searches about 250 ms after typing stops, so even steady
+ * typing for a whole minute asks fewer than this; more is a loop, not a person.
+ */
+export const SEARCH_REQUESTS_PER_WINDOW = 240;
 /** A flood must not be able to grow process memory without bound. */
 const MAX_TRACKED_IDENTITIES = 10_000;
 
@@ -68,13 +73,19 @@ export class IdentityRateLimit {
 export interface PhoneReadLimits {
   readonly history: IdentityRateLimit;
   readonly outline: IdentityRateLimit;
+  readonly search: IdentityRateLimit;
 }
 
 export function phoneReadLimits(
-  options: { history?: IdentityRateLimitOptions; outline?: IdentityRateLimitOptions } = {},
+  options: {
+    history?: IdentityRateLimitOptions;
+    outline?: IdentityRateLimitOptions;
+    search?: IdentityRateLimitOptions;
+  } = {},
 ): PhoneReadLimits {
   return {
     history: new IdentityRateLimit('phone-history', HISTORY_REQUESTS_PER_WINDOW, options.history),
     outline: new IdentityRateLimit('phone-outline', OUTLINE_REQUESTS_PER_WINDOW, options.outline),
+    search: new IdentityRateLimit('phone-search', SEARCH_REQUESTS_PER_WINDOW, options.search),
   };
 }

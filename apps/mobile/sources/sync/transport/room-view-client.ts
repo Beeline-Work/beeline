@@ -9,6 +9,7 @@ import {
   readChatListView,
   readCornerListView,
   readInviteView,
+  readMessageSearchView,
   readRoomHistoryOutline,
   readRoomHistoryView,
   readRoomView,
@@ -21,6 +22,7 @@ import {
   type ChatListView,
   type CornerListView,
   type InviteView,
+  type MessageSearchView,
   type RoomHistoryOutline,
   type RoomHistoryView,
   type RoomView,
@@ -109,6 +111,14 @@ class MonolithRoomViewClient {
     return this.get(
       `/v1/phone/rooms/${encodeURIComponent(id)}/outline?tz=${encodeURIComponent(timeZone)}`,
       readRoomHistoryOutline,
+    );
+  }
+  searchMessages(workspaceId: string, query: string, before?: string): Promise<MessageSearchView> {
+    const params = new URLSearchParams({ q: query });
+    if (before) params.set('before', before);
+    return this.get(
+      `/v1/phone/workspaces/${encodeURIComponent(workspaceId)}/search?${params.toString()}`,
+      readMessageSearchView,
     );
   }
   invite(token: string): Promise<InviteView> {
@@ -221,6 +231,16 @@ export class RoomViewClient {
   outline(id: string, timeZone: string): Promise<RoomHistoryOutline | null> {
     return this.implementation instanceof MonolithRoomViewClient
       ? this.implementation.outline(id, timeZone)
+      : Promise.resolve(null);
+  }
+  /** Room list message search exists only on the monolith; null elsewhere. */
+  searchMessages(
+    workspaceId: string,
+    query: string,
+    before?: string,
+  ): Promise<MessageSearchView | null> {
+    return this.implementation instanceof MonolithRoomViewClient
+      ? this.implementation.searchMessages(workspaceId, query, before)
       : Promise.resolve(null);
   }
   invite(token: string) {

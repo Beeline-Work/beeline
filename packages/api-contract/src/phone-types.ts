@@ -616,6 +616,37 @@ export type RoomHistoryView = {
   readonly nextBefore?: { readonly createdAt: number; readonly id: string };
 };
 
+/** Longest Room list message search query the server accepts, in UTF-8 bytes. */
+export const MESSAGE_SEARCH_QUERY_MAX_BYTES = 200;
+
+/**
+ * One page of the Room list's message search: messages in the viewer's Rooms
+ * and direct messages in one Workspace (never corners), newest first.
+ */
+export type MessageSearchView = {
+  readonly workspaceId: string;
+  readonly results: readonly MessageSearchResult[];
+  /** The last result's message id; pass it back as `before` for the next older page. */
+  readonly nextBefore?: string;
+};
+
+export type MessageSearchResult = {
+  readonly messageId: string;
+  readonly roomId: string;
+  /** The Room's name, or the other person's handle in a direct message. */
+  readonly roomName: string;
+  readonly directMessage: boolean;
+  readonly authorName: string;
+  readonly createdAt: number;
+  /** The message around the match, in order; `match` parts are the matched words. */
+  readonly snippet: readonly MessageSearchSnippetPart[];
+};
+
+export type MessageSearchSnippetPart = {
+  readonly text: string;
+  readonly match: boolean;
+};
+
 /**
  * The whole Room history, one entry per local calendar day in the reader's
  * time zone, so the transcript scrubber can place its handle and a marker for

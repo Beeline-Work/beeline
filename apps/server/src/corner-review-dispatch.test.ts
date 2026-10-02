@@ -90,7 +90,7 @@ beforeEach(async () => {
   await db.query(`UPDATE rooms SET reviewer_agent_id=NULL`);
   await db.query(
     `UPDATE corner_facts SET lifecycle='{"checks":"unknown"}'::jsonb,command_check_state=NULL,
-       review_handback_head=NULL,review_handback_count=0,commissioned_by=$1`,
+       review_handback_head=NULL,review_handback_count=0,commissioned_by=$1,worker_agent_id=NULL`,
     [H],
   );
 });
@@ -801,5 +801,102 @@ describe('corner message attribution', () => {
         DROP FUNCTION IF EXISTS keep_reviewer_off_corner();
       `);
     }
+  });
+});
+
+describe('the corner implementer the workflow wakes follows a person hand-over', () => {
+  it('a blocked-checks line keys on the current implementer, not the opener', async () => {
+    const head = 'a'.repeat(40);
+    await db.query(`UPDATE corner_facts SET worker_agent_id=$2,lifecycle=$3::jsonb WHERE corner_id=$1`, [
+      C,
+      B,
+      JSON.stringify({
+        checks: 'failing',
+        lifecycle: 'in-review',
+        pr: { number: 31, url: 'https://github.com/acme/repo/pull/31', headSha: head },
+      }),
+    ]);
+    const source = await systemLine(db, {
+      roomId: C,
+      authorId: A,
+      subject: { kind: 'github', name: 'GitHub' },
+      verb: 'found failing checks on',
+      object: { text: 'Fix widget', headSha: head },
+    });
+    await createAgentCommand(db, { roomId: C, agentId: B, sourceMessageId: source.id, reason: 'corner_check' });
+    // The opener still holds an unclaimed fix turn: reading the opener would
+    // stop the blocked line and hide the current implementer's ended turn.
+    await createAgentCommand(db, { roomId: C, agentId: A, sourceMessageId: source.id, reason: 'corner_check' });
+    await db.query(
+      `UPDATE agent_commands SET state='complete',completed_at=now()-interval '3 minutes'
+       WHERE room_id=$1 AND agent_id=$2`,
+      [C, B],
+    );
+    expect(await noteBlockedCornerChecks(db)).toBe(1);
+  });
+
+  it('a zero-check PR is completed for the current implementer, not the opener', async () => {
+    const checkGate = vi.fn(async () => ({
+      checks: 'pending' as const,
+      checkCount: 0,
+      pullRequest: 'https://github.com/acme/repo/pull/7',
+      headSha: '1'.repeat(40),
+      approvalPending: true,
+      reviewer: '@hoots',
+      reviewerExists: true,
+      reviewerIsAuthor: true,
+      reviewerWake: { status: 'waiting' as const, detail: 'No checks have reported.' },
+      rule: 'Only the configured reviewer records PASS.',
+    }));
+    daemon = new DaemonService(
+      db,
+      new LiveHub(),
+      undefined,
+      undefined,
+      false,
+      undefined,
+      false,
+      undefined,
+      checkGate,
+    );
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
+    await db.query(`UPDATE corner_facts SET worker_agent_id=$2,lifecycle=$3::jsonb WHERE corner_id=$1`, [
+      C,
+      B,
+      JSON.stringify({
+        checks: 'unknown',
+        lifecycle: 'in-review',
+        pr: {
+          number: 7,
+          url: 'https://github.com/acme/repo/pull/7',
+          headSha: '1'.repeat(40),
+          mergeability: 'clean',
+        },
+      }),
+    ]);
+    const source = await systemLine(db, {
+      roomId: C,
+      authorId: H,
+      subject: { kind: 'person', id: H, name: 'Human' },
+      verb: 'requested work',
+    });
+    await createAgentCommand(db, {
+      roomId: C,
+      agentId: B,
+      sourceMessageId: source.id,
+      reason: 'human_tag',
+    });
+    const [worker] = await commands(B, C);
+    await claim(worker!);
+    await result(worker!, 'https://github.com/acme/repo/pull/7');
+    expect(checkGate).toHaveBeenCalledOnce();
+    expect(
+      (
+        await db.query<{ lifecycle: { checks: string } }>(
+          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`,
+          [C],
+        )
+      ).rows[0]?.lifecycle.checks,
+    ).toBe('passing');
   });
 });

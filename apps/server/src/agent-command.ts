@@ -9,6 +9,7 @@ import { isResumeKind } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { isConfiguredReviewer } from './agent-health.js';
 import { advanceCorner } from './corner-workflow.js';
+import { cornerImplementerSql } from './corner-worker.js';
 import { hasSystemReportMention, taggedIdentityIdsSql } from './message-mentions.js';
 import { ensureSystemIdentity, GITHUB_SUBJECT, systemLine } from './system-line.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
@@ -494,9 +495,10 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
       author_id: string;
       text: string;
       direct_participants: string[] | null;
+      parent_id: string | null;
       tagged_ids: string[];
     }>(
-      `SELECT m.room_id,m.author_id,m.text,r.direct_participants,
+      `SELECT m.room_id,m.author_id,m.text,r.direct_participants,r.parent_id,
    ${taggedIdentityIdsSql('m')} tagged_ids
  FROM messages m JOIN identities i ON i.id=m.author_id AND i.kind='human'
  JOIN rooms r ON r.id=m.room_id
@@ -551,8 +553,34 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
       sourceMessageId: sourceId,
       reason: source.direct_participants ? 'direct_message' : 'human_tag',
     });
+    if (source.parent_id) await setCornerImplementer(db, source.room_id, target);
   }
   return false;
+}
+
+/**
+ * A person's agent tag in a corner names that corner's current implementer, so
+ * the corner workflow's lifecycle wakes follow the person's choice instead of
+ * the corner's never-changing opener (`corner_facts.owner_agent_id`). The
+ * parent Room's configured reviewer and its fallbacks hold the review post, so
+ * they never take the implementer role from a tag.
+ */
+async function setCornerImplementer(
+  db: SqlDatabase,
+  cornerId: string,
+  agentId: string,
+): Promise<void> {
+  await db.query(
+    `UPDATE corner_facts fact
+     SET worker_agent_id=$2,updated_at=now()
+     FROM rooms corner
+     JOIN rooms parent ON parent.id=corner.parent_id
+     WHERE fact.corner_id=corner.id AND corner.id=$1
+       AND $2<>COALESCE(parent.reviewer_agent_id,'')
+       AND NOT ($2=ANY(parent.reviewer_fallback_ids))
+       AND fact.worker_agent_id IS DISTINCT FROM $2`,
+    [cornerId, agentId],
+  );
 }
 
 export async function routeAgentResult(
@@ -638,13 +666,13 @@ export async function queueCornerWorkerAfterReview(
        JOIN rooms parent ON parent.id=corner.parent_id
        JOIN corner_facts fact ON fact.corner_id=corner.id
        JOIN messages dispatch ON dispatch.id=command.source_message_id
-       JOIN identities worker ON worker.id=COALESCE(fact.owner_agent_id,corner.created_by)
+       JOIN identities worker ON worker.id=${cornerImplementerSql('fact', 'corner')}
          AND worker.kind='agent'
        WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3
          AND command.action IN ('input','resume')
          AND (dispatch.system_event->>'kind'='check-passed'
-              OR dispatch.author_id=COALESCE(fact.owner_agent_id,corner.created_by))
-         AND COALESCE(fact.owner_agent_id,corner.created_by)<>command.agent_id
+              OR dispatch.author_id=${cornerImplementerSql('fact', 'corner')})
+         AND ${cornerImplementerSql('fact', 'corner')}<>command.agent_id
        ORDER BY command.created_at DESC,command.id DESC LIMIT 1`,
       [input.roomId, input.reviewerAgentId, input.turnRequestId],
     )
@@ -1010,7 +1038,7 @@ export async function queueCornerMergeConflict(
 ): Promise<boolean> {
   const owner = (
     await db.query<{ owner_agent_id: string }>(
-      `SELECT fact.owner_agent_id FROM corner_facts fact
+      `SELECT ${cornerImplementerSql('fact', 'corner')} owner_agent_id FROM corner_facts fact
        JOIN rooms corner ON corner.id=fact.corner_id
        WHERE fact.corner_id=$1 AND corner.archived_at IS NULL
          AND fact.lifecycle->'pr'->>'mergeability'='dirty'`,
@@ -1050,20 +1078,20 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
             fact.lifecycle->'pr'->>'number' number,
             fact.lifecycle->'pr'->>'url' url
      FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
-     WHERE corner.archived_at IS NULL AND fact.owner_agent_id IS NOT NULL
+     WHERE corner.archived_at IS NULL AND ${cornerImplementerSql('fact', 'corner')} IS NOT NULL
        AND fact.lifecycle->>'checks'='failing'
        AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
        AND EXISTS (
          SELECT 1 FROM agent_commands command
          JOIN messages source ON source.id=command.source_message_id
-         WHERE command.room_id=fact.corner_id AND command.agent_id=fact.owner_agent_id
+         WHERE command.room_id=fact.corner_id AND command.agent_id=${cornerImplementerSql('fact', 'corner')}
            AND command.reason='corner_check' AND command.state IN ('complete','cancelled')
            AND command.completed_at<=now()-interval '${CORNER_CHECKS_BLOCKED_AFTER}'
            AND source.system_event->'object'->>'headSha'=fact.lifecycle->'pr'->>'headSha'
        )
        AND NOT EXISTS (
          SELECT 1 FROM agent_commands working
-         WHERE working.room_id=fact.corner_id AND working.agent_id=fact.owner_agent_id
+         WHERE working.room_id=fact.corner_id AND working.agent_id=${cornerImplementerSql('fact', 'corner')}
            AND working.state IN ('pending','claimed')
        )`,
   );
@@ -1107,7 +1135,7 @@ export async function reconcileCornerMergeBlockers(
     title: string;
     url: string;
   }>(
-    `SELECT fact.corner_id,fact.owner_agent_id,
+    `SELECT fact.corner_id,${cornerImplementerSql('fact', 'corner')} owner_agent_id,
             fact.lifecycle->>'checks' checks,
             fact.lifecycle->'pr'->>'mergeability' mergeability,
             fact.lifecycle->'pr'->>'headSha' head_sha,
@@ -1116,7 +1144,7 @@ export async function reconcileCornerMergeBlockers(
             fact.lifecycle->'pr'->>'title' title,
             fact.lifecycle->'pr'->>'url' url
      FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
-     WHERE corner.archived_at IS NULL AND fact.owner_agent_id IS NOT NULL
+     WHERE corner.archived_at IS NULL AND ${cornerImplementerSql('fact', 'corner')} IS NOT NULL
        AND ($1::uuid IS NULL OR fact.corner_id=$1)
        AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
        AND fact.lifecycle->'pr'->>'number' ~ '^[0-9]+$'

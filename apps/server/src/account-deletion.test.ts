@@ -78,7 +78,7 @@ describe('deleteAccount', () => {
       [OWNER, WORKSPACE, PARTNER],
     );
     await database.query(
-      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle) VALUES($1,$2,'ship it','{"lifecycle":"working"}'::jsonb)`,
+      `INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id,objective,lifecycle) VALUES($1,$2,$2,'ship it','{"lifecycle":"working"}'::jsonb)`,
       [CORNER, AGENT],
     );
     // Authored content: the owner in the shared Room mentioning the partner,
@@ -247,6 +247,14 @@ describe('deleteAccount', () => {
        WHERE r.id=$1 AND r.archived_at IS NOT NULL
          AND f.owner_agent_id IS NULL AND f.close_requested
          AND f.lifecycle->>'lifecycle'='done' AND f.lifecycle->>'outcome'='abandoned'`,
+      [CORNER],
+      1,
+    );
+    // R-1983-1: the current-implementer pointer clears with the identity it
+    // named. A surviving `worker_agent_id` would trip its foreign key on the
+    // `DELETE FROM identities` below and fail the whole deletion with a 503.
+    await expectRowCount(
+      `SELECT 1 FROM corner_facts WHERE corner_id=$1 AND worker_agent_id IS NULL`,
       [CORNER],
       1,
     );

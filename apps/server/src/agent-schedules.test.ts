@@ -373,6 +373,7 @@ describe('agent tool schedule daemon operations', () => {
       expect(listed.schedules).toEqual([
         {
           scheduleId: created.scheduleId,
+          agentId: AGENT,
           prompt: 'Ping the Room.',
           cadence: { kind: 'interval', everyMinutes: 3 },
           maxRuns: 5,
@@ -380,31 +381,31 @@ describe('agent tool schedule daemon operations', () => {
           nextRunAt: created.nextRunAt,
         },
       ]);
-      // Another agent cannot see or delete it.
+      // Another agent in the Room sees it and may delete it.
       const rivalList = await daemon.execute(
         'listAgentSchedules',
         { agentId: OTHER_AGENT, roomId: ROOM },
         OTHER_AGENT,
       );
-      expect(rivalList.schedules).toEqual([]);
+      expect(rivalList.schedules).toEqual(listed.schedules);
       await expect(
         daemon.execute(
           'deleteAgentSchedule',
           { agentId: OTHER_AGENT, roomId: ROOM, scheduleId: created.scheduleId },
           OTHER_AGENT,
         ),
-      ).rejects.toThrow('schedule not found');
+      ).resolves.toBeTruthy();
+      expect(
+        (await daemon.execute('listAgentSchedules', { agentId: AGENT, roomId: ROOM }, AGENT))
+          .schedules,
+      ).toEqual([]);
       await expect(
         daemon.execute(
           'deleteAgentSchedule',
           { agentId: AGENT, roomId: ROOM, scheduleId: created.scheduleId },
           AGENT,
         ),
-      ).resolves.toBeTruthy();
-      expect(
-        (await daemon.execute('listAgentSchedules', { agentId: AGENT, roomId: ROOM }, AGENT))
-          .schedules,
-      ).toEqual([]);
+      ).rejects.toThrow('schedule not found');
       // A daemon token cannot create schedules on behalf of another agent.
       await expect(
         daemon.execute(
@@ -418,6 +419,100 @@ describe('agent tool schedule daemon operations', () => {
           AGENT,
         ),
       ).rejects.toThrow('daemon token does not own requested agent');
+    } finally {
+      await database.close();
+    }
+  });
+
+  it("lets another agent modify an agent's schedule, but not a person's", async () => {
+    const database = await fixture();
+    try {
+      const daemon = new DaemonService(database, new LiveHub());
+      const created = await daemon.execute(
+        'createAgentSchedule',
+        {
+          agentId: AGENT,
+          roomId: ROOM,
+          prompt: 'Ping the Room.',
+          cadence: { kind: 'interval', everyMinutes: 3 },
+        },
+        AGENT,
+      );
+      const updated = await daemon.execute(
+        'updateAgentSchedule',
+        {
+          agentId: OTHER_AGENT,
+          roomId: ROOM,
+          scheduleId: created.scheduleId,
+          prompt: 'Summarize the Room.',
+          cadence: { kind: 'interval', everyMinutes: 60 },
+          maxRuns: 2,
+        },
+        OTHER_AGENT,
+      );
+      expect(updated.scheduleId).toBe(created.scheduleId);
+      expect(updated.nextRunAt).toBeGreaterThan(created.nextRunAt);
+      expect(
+        (await daemon.execute('listAgentSchedules', { agentId: AGENT, roomId: ROOM }, AGENT))
+          .schedules,
+      ).toEqual([
+        {
+          scheduleId: created.scheduleId,
+          agentId: AGENT,
+          prompt: 'Summarize the Room.',
+          cadence: { kind: 'interval', everyMinutes: 60 },
+          maxRuns: 2,
+          runCount: 0,
+          nextRunAt: updated.nextRunAt,
+        },
+      ]);
+      await expect(
+        daemon.execute(
+          'updateAgentSchedule',
+          { agentId: OTHER_AGENT, roomId: ROOM, scheduleId: created.scheduleId },
+          OTHER_AGENT,
+        ),
+      ).rejects.toThrow('give a prompt, cadence, or maxRuns to change');
+
+      // A person's schedule for an agent runs in that person's name, so no
+      // agent may rewrite it, and only the agent it mentions may see or delete it.
+      const phone = new PhoneService(database, 'http://local.test');
+      const managerSchedule = await phone.execute(
+        'createRoomSchedule',
+        {
+          workspaceId: WORKSPACE,
+          roomId: ROOM,
+          agentId: AGENT,
+          message: 'Daily digest.',
+          cadence: { kind: 'interval', everyMinutes: 1440 },
+        },
+        OWNER,
+      );
+      for (const agentId of [AGENT, OTHER_AGENT]) {
+        await expect(
+          daemon.execute(
+            'updateAgentSchedule',
+            { agentId, roomId: ROOM, scheduleId: managerSchedule.id, prompt: 'Rewritten.' },
+            agentId,
+          ),
+        ).rejects.toThrow('schedule not found');
+      }
+      expect(
+        (
+          await daemon.execute(
+            'listAgentSchedules',
+            { agentId: OTHER_AGENT, roomId: ROOM },
+            OTHER_AGENT,
+          )
+        ).schedules.map((schedule) => schedule.scheduleId),
+      ).toEqual([created.scheduleId]);
+      await expect(
+        daemon.execute(
+          'deleteAgentSchedule',
+          { agentId: OTHER_AGENT, roomId: ROOM, scheduleId: managerSchedule.id },
+          OTHER_AGENT,
+        ),
+      ).rejects.toThrow('schedule not found');
     } finally {
       await database.close();
     }

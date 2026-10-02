@@ -10,6 +10,7 @@ import type { CornerLifecycleView, MessageReactionEmoji } from './phone-types.js
 import type { ChoiceOptionInput } from './room-choices.js';
 import type { RoomScheduleCadence } from './phone-operations.js';
 import type { CornerAppDefinition } from './corner-apps.js';
+import type { WorkflowRoleBinding } from './workflow-contracts.js';
 import type {
   ClaimInstitutionalMemoryJobResult,
   CompleteInstitutionalMemoryJobInput,
@@ -64,6 +65,9 @@ export type AgentScheduleResult = {
 };
 export type AgentScheduleEntry = {
   readonly scheduleId: string;
+  /** The agent the schedule mentions on every run. */
+  readonly agentId: string;
+  readonly agentHandle?: string;
   readonly prompt: string;
   readonly cadence: RoomScheduleCadence;
   readonly maxRuns?: number;
@@ -72,6 +76,13 @@ export type AgentScheduleEntry = {
 };
 export type AgentScheduleListResult = { readonly schedules: readonly AgentScheduleEntry[] };
 export type DeleteAgentScheduleInput = AgentRoomInput & { readonly scheduleId: string };
+/** Replaces only the fields given; a new cadence restarts the next run from now. */
+export type UpdateAgentScheduleInput = AgentRoomInput & {
+  readonly scheduleId: string;
+  readonly prompt?: string;
+  readonly cadence?: RoomScheduleCadence;
+  readonly maxRuns?: number;
+};
 
 /**
  * What this agent reacts to in ONE Room, written by the agent itself.
@@ -174,7 +185,7 @@ export type DaemonOperationMap = {
     RoomInput &
       TurnOutputAuthority & {
         readonly name: string;
-        readonly roleBindings: Readonly<Record<string, string>>;
+        readonly roleBindings: Readonly<Record<string, WorkflowRoleBinding>>;
       },
     { readonly runId: string; readonly state: string }
   >;
@@ -194,9 +205,9 @@ export type DaemonOperationMap = {
     { readonly slug: string; readonly archived: boolean }
   >;
   /**
-   * A human's explicit override for a class-bound role this run is currently
-   * on: binds one specific agent (no health filter), the "ask a human"
-   * recovery when the class is exhausted (`apps/server/src/agent-classes.ts`).
+   * A human's explicit override for a list-bound role this run is currently
+   * on: binds any agent in the Room (no health filter), the "ask a human"
+   * recovery when no agent on the role's list is healthy.
    */
   assignWorkflowRole: Operation<
     RoomInput &
@@ -253,6 +264,7 @@ export type DaemonOperationMap = {
   postRoomEvent: Operation<PostRoomEventInput, WriteResult>;
   listAgentSchedules: Operation<AgentRoomInput, AgentScheduleListResult>;
   deleteAgentSchedule: Operation<DeleteAgentScheduleInput, WriteResult>;
+  updateAgentSchedule: Operation<UpdateAgentScheduleInput, AgentScheduleResult>;
   getWorkScheduleAuthority: Operation<WorkScheduleAuthorityInput, AuthorityDecisionResult>;
   listAgentToolSchedules: Operation<AgentRoomInput, WorkScheduleListResult>;
   getAgentToolMandate: Operation<AgentRoomInput, AgentToolMandateResult>;

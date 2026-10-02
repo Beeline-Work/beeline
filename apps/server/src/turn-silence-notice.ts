@@ -17,6 +17,7 @@ import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
 import { restateSystemLine, systemLine, type SystemPhrase } from './system-line.js';
 import { reassignFailedWorkflowRole } from './workflow-runs.js';
+import { reassignFailedCornerReviewer } from './corner-workflow.js';
 
 export const TURN_FAILURE_REASON_MAX = 200;
 
@@ -57,9 +58,11 @@ export async function noteFirstSilence(
 ): Promise<TurnSilenceOutcome> {
   // Independent of the human-trigger notice below: a workflow dispatch's
   // triggering message is normally agent-authored (the previous role
-  // holder's handoff card, or the run's own start card), which the notice's
-  // own trigger requirement below would never satisfy. Failing a class-bound
-  // role over must not depend on there being a human further up the chain.
+  // holder's handoff card, or the run's own start card), and a review
+  // dispatch's is the server's check-passed fact, neither of which the
+  // notice's own trigger requirement below would satisfy. Failing a
+  // list-bound role or reviewer over must not depend on there being a human
+  // further up the chain.
   await database.transaction((db) =>
     reassignFailedWorkflowRole(db, {
       roomId: input.roomId,
@@ -67,6 +70,11 @@ export async function noteFirstSilence(
       agentId: input.agentId,
     }),
   );
+  await reassignFailedCornerReviewer(database, {
+    roomId: input.roomId,
+    requestId: input.requestId,
+    agentId: input.agentId,
+  });
 
   const trigger = (
     await database.query<{ agent_name: string }>(

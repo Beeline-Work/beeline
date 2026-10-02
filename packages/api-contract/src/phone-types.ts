@@ -2,7 +2,6 @@ import type { SystemEvent } from './system-events.js';
 import type { AgentGrantKind, AgentGrantStatus, CommandGrantScript } from './agent-grants.js';
 import type { ChoiceMode, ChoiceOptionView, ChoiceStatus } from './room-choices.js';
 import type { AgentAccessPolicy } from './agent-access.js';
-import type { WeightTierRule } from './agent-classes.js';
 import type { ConnectorOfferCardView } from './connector-offers.js';
 import type {
   CornerAppBindingView,
@@ -143,19 +142,6 @@ export type WorkspaceAgentView = RoomViewMember & {
   readonly model?: string;
   /** The person who connected and owns this agent's configuration. */
   readonly owner?: RoomViewIdentity;
-  /** Automatic, non-removable tags (model/harness/provider/weight-tier) plus admin-editable custom tags. */
-  readonly tags?: AgentTagsView;
-};
-
-export type AgentTagsView = {
-  /** The raw selected-model id, e.g. "claude-opus-4-5" — also a valid class reference. */
-  readonly model?: string;
-  readonly harness?: string;
-  readonly provider: string;
-  readonly weightTier: 'god' | 'heavy' | 'light';
-  /** True when the model matched no configured family-pattern rule (surfaced to admins only). */
-  readonly unclassified: boolean;
-  readonly custom: readonly string[];
 };
 
 export type RoomViewHeader = {
@@ -169,8 +155,8 @@ export type RoomViewHeader = {
   readonly visibility?: 'public' | 'invite-only';
   /** Agent configured to review repository corners opened from this Room. */
   readonly reviewerAgentId?: string;
-  /** A class/tag configured instead, resolved live at each dispatch; mutually exclusive with `reviewerAgentId`. */
-  readonly reviewerClass?: string;
+  /** Agents tried in order after `reviewerAgentId` when it is unhealthy or its review turn fails. */
+  readonly reviewerFallbackIds?: readonly string[];
   /** Absent when this bundle could not read it: a Room whose live/closed state
    *  is unknown is never painted as live. */
   readonly archived?: boolean;
@@ -820,8 +806,6 @@ export type WorkspaceView = {
     readonly rooms?: readonly WorkspaceManagedRoomView[];
     /** True when the server omitted Rooms beyond its 200-Room settings bound. */
     readonly roomsTruncated?: boolean;
-    /** The effective weight-tier family-pattern map (defaults when the workspace never customized it). */
-    readonly weightTierRules?: readonly WeightTierRule[];
   };
   readonly members: readonly RoomViewMember[];
   readonly agents: readonly WorkspaceAgentView[];
@@ -920,10 +904,6 @@ export type AgentDetailView = {
   readonly grants?: readonly AgentGrantView[];
   /** Server verdict: this viewer may decide and revoke this agent's grants. */
   readonly canManageGrants?: boolean;
-  /** Automatic tags plus the admin-editable custom set (`agent-classes.ts`). */
-  readonly tags?: AgentTagsView;
-  /** Server verdict: this viewer (a Workspace owner/admin) may edit `tags.custom`. */
-  readonly tagsCanChange?: boolean;
   readonly watchFilters: readonly SurfaceWatchFilter[];
 };
 

@@ -722,82 +722,11 @@ describe('Workspace Settings authority', () => {
 });
 
 describe('Weight tier settings', () => {
-  it('shows the shipped defaults when the workspace never customized them', async () => {
+  it('are gone from Workspace settings', async () => {
     const renderer = await render();
-    expect(renderer.root.findByProps({ testID: 'weight-tier-rule-astra*' }).props.value).toBe('god');
-    expect(renderer.root.findByProps({ testID: 'weight-tier-rule-opus*' }).props.value).toBe('heavy');
-    expect(renderer.root.findAllByProps({ testID: 'weight-tier-reset' })).toHaveLength(0);
-  });
-
-  it('shows a custom map and a reset action when the workspace overrode it', async () => {
-    roomViews.workspace.mockResolvedValue({
-      ...workspaceView('owner'),
-      managerSettings: {
-        visibility: 'invite-only',
-        weightTierRules: [{ pattern: 'night-shift*', tier: 'god' }],
-      },
-    });
-    const renderer = await render();
-    expect(renderer.root.findByProps({ testID: 'weight-tier-rule-night-shift*' }).props.value).toBe(
-      'god',
+    expect(renderer.root.findAllByProps({ testID: 'weight-tier-settings' })).toHaveLength(0);
+    expect(renderer.root.findAllByType('Text').map((node) => node.children.join(''))).not.toContain(
+      'Weight tiers',
     );
-    expect(renderer.root.findAllByProps({ testID: 'weight-tier-rule-astra*' })).toHaveLength(0);
-    expect(renderer.root.findByProps({ testID: 'weight-tier-reset' })).toBeDefined();
-  });
-
-  it('edits and saves a new rule list', async () => {
-    const renderer = await render();
-    act(() => renderer.root.findByProps({ testID: 'weight-tier-edit' }).props.onPress());
-    act(() =>
-      renderer.root
-        .findByProps({ testID: 'weight-tier-input' })
-        .props.onChangeText('night-shift* -> god'),
-    );
-    await act(async () => {
-      renderer.root.findByProps({ testID: 'weight-tier-save' }).props.onPress();
-      await Promise.resolve();
-    });
-    expect(phoneOperation).toHaveBeenCalledWith('setWorkspaceWeightTierRules', {
-      workspaceId: 'workspace-1',
-      rules: [{ pattern: 'night-shift*', tier: 'god' }],
-    });
-  });
-
-  it('rejects a malformed rule line instead of saving', async () => {
-    const renderer = await render();
-    act(() => renderer.root.findByProps({ testID: 'weight-tier-edit' }).props.onPress());
-    act(() =>
-      renderer.root.findByProps({ testID: 'weight-tier-input' }).props.onChangeText('not a rule'),
-    );
-    await act(async () => {
-      renderer.root.findByProps({ testID: 'weight-tier-save' }).props.onPress();
-      await Promise.resolve();
-    });
-    expect(phoneOperation).not.toHaveBeenCalledWith(
-      'setWorkspaceWeightTierRules',
-      expect.anything(),
-    );
-    expect(renderer.root.findAllByType('Text').map((node) => node.children.join(''))).toContain(
-      'Each line must read "pattern -> tier" (tier is god, heavy, or light).',
-    );
-  });
-
-  it('resets to the shipped defaults', async () => {
-    roomViews.workspace.mockResolvedValue({
-      ...workspaceView('owner'),
-      managerSettings: {
-        visibility: 'invite-only',
-        weightTierRules: [{ pattern: 'night-shift*', tier: 'god' }],
-      },
-    });
-    const renderer = await render();
-    await act(async () => {
-      renderer.root.findByProps({ testID: 'weight-tier-reset' }).props.onPress();
-      await Promise.resolve();
-    });
-    expect(phoneOperation).toHaveBeenCalledWith('setWorkspaceWeightTierRules', {
-      workspaceId: 'workspace-1',
-      rules: null,
-    });
   });
 });

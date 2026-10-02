@@ -12,7 +12,7 @@
  * its own per-turn index and loads it via `load_workspace_skill`.
  *
  * A third scenario proves the member-handle role binding fix: a bare handle
- * (no `@`) binds the member, and a class word no current Room member carries
+ * (no `@`) binds the member, and a word that is no current member's handle
  * is refused at start.
  *
  * These are agent CLIENTS — plain HTTP calls issuing the exact same daemon
@@ -498,10 +498,9 @@ async function main(): Promise<void> {
   const handleFailures: string[] = [];
   // ========== Scenario 3: a bare member handle binds the member at start ==========
   // The reported defect: "triager: \"candy\"" (a member's handle, no @) was read
-  // as a class/tag word, so the run started and stranded at its first state,
-  // and a class word nobody carries was silently accepted. The fix: a word
-  // matching a current member's handle binds that member, and a class word no
-  // current member carries is refused at start.
+  // as a class/tag word, so the run started and stranded at its first state.
+  // The fix: a word matching a current member's handle binds that member, and
+  // any other word is refused at start.
   const handleKickoff = 'handle-kickoff-message';
   await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`, [
     handleKickoff,
@@ -564,8 +563,8 @@ async function main(): Promise<void> {
   if (Number(triagerCommands.rows[0]?.count ?? 0) < 1) {
     handleFailures.push('expected the bound member @wren to be dispatched a pending command for the triage state');
   }
-  // An unknown class word must be refused at start, before any run is written.
-  const unknownClassError = await call(WRITER + " tries a class word nobody carries", 'startWorkflow', {
+  // A word that is no member's handle must be refused at start, before any run is written.
+  const unknownClassError = await call(WRITER + " tries a word that is no member's handle", 'startWorkflow', {
     roomId: ROOM,
     requestId: handleTurn.requestId,
     generationId: handleTurn.generationId,
@@ -573,9 +572,9 @@ async function main(): Promise<void> {
     name: 'handle-flow',
     roleBindings: { triager: 'nobodycarriesthis' },
   }, writerToken).catch((error: Error) => error.message);
-  if (typeof unknownClassError !== 'string' || !unknownClassError.includes('no current Room member carries')) {
+  if (typeof unknownClassError !== 'string' || !unknownClassError.includes('must be an agent id or a member handle')) {
     handleFailures.push(
-      `expected the at-start refusal for an unknown class, got ${JSON.stringify(unknownClassError)}`,
+      `expected the at-start refusal for an unknown word, got ${JSON.stringify(unknownClassError)}`,
     );
   }
   await complete(WRITER, writerToken, handleTurn);
@@ -690,13 +689,13 @@ async function main(): Promise<void> {
   }
   lines.push('');
   lines.push(
-    '## Scenario 3: a bare member handle binds the member; an unknown class is refused at start',
+    '## Scenario 3: a bare member handle binds the member; an unknown word is refused at start',
   );
   lines.push('');
   lines.push(
     `@wren starts the one-role \`handle-flow\` workflow with \`roleBindings: { triager: "wren" }\` — a ` +
       `bare member handle with no @. The member @wren is bound and dispatched; then the same turn tries ` +
-      `\`roleBindings: { triager: "nobodycarriesthis" }\`, a class word no current Room member carries, ` +
+      `\`roleBindings: { triager: "nobodycarriesthis" }\`, a word that is no current member's handle, ` +
       `which the server refuses at start instead of stranding a run.`,
   );
   lines.push('');
@@ -711,9 +710,9 @@ async function main(): Promise<void> {
   } else {
     lines.push(
       'PASSED: start_workflow read the bare handle "wren" as the member @wren and bound and dispatched ' +
-        'that exact agent (its id appears in the run card, not a class placeholder), and a class word ' +
-        'no current Room member carries was refused at start with the "no current Room member carries" ' +
-        'refusal before any run card was written.',
+        'that exact agent (its id appears in the run card), and a word that is no current member\'s ' +
+        'handle was refused at start with the "must be an agent id or a member handle" refusal ' +
+        'before any run card was written.',
     );
   }
   lines.push('');

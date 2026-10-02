@@ -10,7 +10,7 @@ import {
   repairReviewerCornerMembership,
   type CommandRow,
 } from './agent-command.js';
-import { agentCarriesTag, isConfiguredReviewer, pickHealthyClassMember } from './agent-classes.js';
+import { firstHealthyAgent, isConfiguredReviewer, nextHealthyAgent, reviewerList } from './agent-health.js';
 import { CORNER_WORKFLOW_HANDOFF_CARD_TYPE } from './room-choice.js';
 import { ensureSystemIdentity, GITHUB_SUBJECT, systemLine, type SystemLineInput } from './system-line.js';
 import { WORKFLOW_HANDOFF_CARD_TYPE, workflowRunLockKey } from './workflow-runs.js';
@@ -97,7 +97,7 @@ export const CORNER_WORKFLOW_CONTRACT: WorkflowContract = {
       on: { pushed: 'checks', rechecked: 'checks', rereview: 'review' },
     },
     // Green wakes the reviewer (live from the parent Room's
-    // `reviewer_agent_id`/`reviewer_class`), or skips review when the
+    // `reviewer_agent_id`/`reviewer_fallback_ids`), or skips review when the
     // reviewer is the author; no configured reviewer or red wakes the
     // implementer. At the loop cap the corner names the commissioning human.
     checks: {
@@ -210,7 +210,7 @@ type CornerRow = {
   configured_reviewer_kind: string | null;
   configured_reviewer_name: string | null;
   reviewer_parent_member: boolean;
-  reviewer_class: string | null;
+  reviewer_fallback_ids: string[];
 };
 
 /**
@@ -281,7 +281,7 @@ async function loadCorner(db: SqlDatabase, cornerId: string): Promise<CornerRow 
                   AND reviewer_membership.identity_id=parent.reviewer_agent_id
                   AND reviewer_membership.removed_at IS NULL
               ) reviewer_parent_member,
-              parent.reviewer_class
+              parent.reviewer_fallback_ids
        FROM corner_facts fact
        JOIN rooms corner ON corner.id=fact.corner_id
        JOIN rooms parent ON parent.id=corner.parent_id
@@ -666,15 +666,15 @@ async function checksReported(
   const headSha = corner.lifecycle.pr?.headSha ?? null;
   let plan: ChecksPlan;
   if (event.result === 'failing') plan = { outcome: 'failing' };
-  else if (!corner.configured_reviewer_id && !corner.reviewer_class) plan = { outcome: 'no_reviewer' };
+  else if (!corner.configured_reviewer_id) plan = { outcome: 'no_reviewer' };
   else if (
-    (await reviewerIsAuthor(db, corner)) ||
+    reviewerIsAuthor(corner) ||
     (await approvedCurrentHead(db, cornerId, corner))
   )
     plan = { outcome: 'passing', skipReview: true };
   else {
     // A repeat of the verdict that already holds changes nothing, and must
-    // not spend a class pick, a membership repair, or a note.
+    // not spend a reviewer pick, a membership repair, or a note.
     if ((from === 'review' || from === 'land') && transition.run.headSha === (headSha ?? undefined))
       return no('checks already passed on this head');
     const reviewerAgentId = await reachableReviewer(db, cornerId, corner, event.sourceMessageId, headSha);
@@ -738,7 +738,8 @@ async function checksReported(
  * Which reviewer a green head wakes, or undefined (after naming the gap in the
  * corner) when the configured reviewer cannot be reached. A configured
  * reviewer who is not a current member is never "no reviewer": it does not
- * fall through to the author path.
+ * fall through to the author path. A Room with fallback reviewers wakes the
+ * first healthy agent on its list instead.
  */
 async function reachableReviewer(
   db: SqlDatabase,
@@ -747,55 +748,125 @@ async function reachableReviewer(
   sourceMessageId: string,
   headSha: string | null,
 ): Promise<string | undefined> {
-  let reviewerAgentId: string | null = null;
-  if (corner.configured_reviewer_id) {
-    if (!corner.reviewer_parent_member) {
-      await noteUnreachableReviewer(db, {
-        cornerId,
-        sourceMessageId,
-        reviewerId: corner.configured_reviewer_id,
-        reviewerKind: corner.configured_reviewer_kind,
-        reviewerName: corner.configured_reviewer_name,
-        reason: REVIEWER_NOT_PARENT_MEMBER,
-      });
-      return undefined;
-    }
-    reviewerAgentId = corner.configured_reviewer_id;
-  } else if (corner.reviewer_class) {
-    // Resolved live at this dispatch, never sticky: the next green head may
-    // pick someone else. The pool is already current parent members.
-    reviewerAgentId = await pickHealthyClassMember(
-      db,
-      corner.parent_id,
-      corner.workspace_id,
-      corner.reviewer_class,
-    );
-    if (!reviewerAgentId) {
-      await noteReviewerClassExhausted(db, {
-        cornerId,
-        sourceMessageId,
-        reviewerClass: corner.reviewer_class,
-        headSha,
-      });
-      return undefined;
-    }
-  }
-  if (!reviewerAgentId) return undefined;
-  // Dispatch only when the reviewer can read the corner; a missing projection
-  // is repaired, an unreachable reviewer is named instead of rerouting the
-  // review to the owner (whose daemon would post it under the owner's name).
-  if (!(await repairReviewerCornerMembership(db, cornerId, reviewerAgentId))) {
+  if (!corner.configured_reviewer_id) return undefined;
+  if (corner.reviewer_fallback_ids.length)
+    return dispatchableListReviewer(db, cornerId, corner, sourceMessageId, headSha);
+  if (!corner.reviewer_parent_member) {
     await noteUnreachableReviewer(db, {
       cornerId,
       sourceMessageId,
-      reviewerId: reviewerAgentId,
+      reviewerId: corner.configured_reviewer_id,
       reviewerKind: corner.configured_reviewer_kind,
       reviewerName: corner.configured_reviewer_name,
-      reason: REVIEWER_NOT_CORNER_MEMBER,
+      reason: REVIEWER_NOT_PARENT_MEMBER,
     });
     return undefined;
   }
-  return reviewerAgentId;
+  return (await readableByReviewer(db, cornerId, corner.configured_reviewer_id, sourceMessageId))
+    ? corner.configured_reviewer_id
+    : undefined;
+}
+
+/**
+ * The first healthy agent on the parent Room's reviewer list, never the
+ * corner's own author; after `failed` on the list when one is given. Names
+ * the gap in the corner when nobody on the list can take the review.
+ */
+async function dispatchableListReviewer(
+  db: SqlDatabase,
+  cornerId: string,
+  corner: CornerRow,
+  sourceMessageId: string,
+  headSha: string | null,
+  failed?: string,
+): Promise<string | undefined> {
+  const list = reviewerList({
+    reviewer_agent_id: corner.configured_reviewer_id,
+    reviewer_fallback_ids: corner.reviewer_fallback_ids,
+  }).filter((id) => id !== corner.owner_agent_id);
+  const reviewerAgentId = failed
+    ? await nextHealthyAgent(db, corner.parent_id, list, failed)
+    : await firstHealthyAgent(db, corner.parent_id, list);
+  if (!reviewerAgentId) {
+    await noteReviewerListExhausted(db, { cornerId, sourceMessageId, headSha });
+    return undefined;
+  }
+  return (await readableByReviewer(db, cornerId, reviewerAgentId, sourceMessageId))
+    ? reviewerAgentId
+    : undefined;
+}
+
+/**
+ * Dispatch only when the reviewer can read the corner; a missing projection
+ * is repaired, an unreachable reviewer is named instead of rerouting the
+ * review to the owner (whose daemon would post it under the owner's name).
+ */
+async function readableByReviewer(
+  db: SqlDatabase,
+  cornerId: string,
+  reviewerAgentId: string,
+  sourceMessageId: string,
+): Promise<boolean> {
+  if (await repairReviewerCornerMembership(db, cornerId, reviewerAgentId)) return true;
+  const reviewer = (
+    await db.query<{ kind: string; name: string }>(`SELECT kind,name FROM identities WHERE id=$1`, [
+      reviewerAgentId,
+    ])
+  ).rows[0];
+  await noteUnreachableReviewer(db, {
+    cornerId,
+    sourceMessageId,
+    reviewerId: reviewerAgentId,
+    reviewerKind: reviewer?.kind ?? null,
+    reviewerName: reviewer?.name ?? null,
+    reason: REVIEWER_NOT_CORNER_MEMBER,
+  });
+  return false;
+}
+
+/**
+ * The failed/silent turn hook for a list reviewer: when the reviewer woken by
+ * a green head fails or goes silent, the review passes to the next healthy
+ * agent on the parent Room's reviewer list. Called from
+ * `turn-silence-notice.ts`'s `noteFirstSilence` beside the workflow-role
+ * failover, in its own transaction. A no-op for a Room without fallback
+ * reviewers, a turn that was not a review dispatch, or a corner that has
+ * already moved past review on this head.
+ */
+export async function reassignFailedCornerReviewer(
+  database: SqlDatabase,
+  input: { roomId: string; requestId: string; agentId: string },
+): Promise<void> {
+  await database.transaction(async (db) => {
+    const dispatch = await db.query(
+      `SELECT 1 FROM messages WHERE id=$1 AND room_id=$2 AND system_event->>'kind'='check-passed'`,
+      [input.requestId, input.roomId],
+    );
+    if (!dispatch.rowCount) return;
+    await lockCornerWorkflowRun(db, input.roomId);
+    const corner = await loadCorner(db, input.roomId);
+    if (!corner?.configured_reviewer_id || !corner.reviewer_fallback_ids.length) return;
+    if (corner.lifecycle.checks !== 'passing') return;
+    const run = await loadCornerWorkflowRunState(db, input.roomId);
+    if (run?.toState !== 'review') return;
+    if (await approvedCurrentHead(db, input.roomId, corner)) return;
+    if (!(await isConfiguredReviewer(db, corner.parent_id, input.agentId))) return;
+    const next = await dispatchableListReviewer(
+      db,
+      input.roomId,
+      corner,
+      input.requestId,
+      corner.lifecycle.pr?.headSha ?? null,
+      input.agentId,
+    );
+    if (!next) return;
+    await createAgentCommand(db, {
+      roomId: input.roomId,
+      agentId: next,
+      sourceMessageId: input.requestId,
+      reason: 'subscribed_event',
+    });
+  });
 }
 
 async function approvalRecorded(
@@ -1003,18 +1074,18 @@ async function noteUnreachableReviewer(
 }
 
 /**
- * A class-configured reviewer with no currently healthy member is named in
- * the corner rather than silently falling back to the owner. The id is keyed
- * per exhaustion episode — the head plus the triggering message — so a later
- * independent exhaustion is not swallowed by `systemLine`'s dedupe.
+ * A reviewer list with no healthy agent is named in the corner rather than
+ * silently falling back to the owner. The id is keyed per episode — the head
+ * plus the triggering message — so a later independent gap is not swallowed
+ * by `systemLine`'s dedupe.
  */
-async function noteReviewerClassExhausted(
+async function noteReviewerListExhausted(
   db: SqlDatabase,
-  input: { cornerId: string; sourceMessageId: string; reviewerClass: string; headSha: string | null },
+  input: { cornerId: string; sourceMessageId: string; headSha: string | null },
 ): Promise<void> {
   const id = createHash('sha256')
     .update(
-      `beeline:${input.cornerId}:reviewer-class-exhausted:${input.reviewerClass}:${input.headSha ?? 'no-head'}:${input.sourceMessageId}`,
+      `beeline:${input.cornerId}:reviewer-list-exhausted:${input.headSha ?? 'no-head'}:${input.sourceMessageId}`,
     )
     .digest('hex');
   await ensureSystemIdentity(db);
@@ -1022,9 +1093,9 @@ async function noteReviewerClassExhausted(
     id,
     roomId: input.cornerId,
     authorId: SYSTEM_IDENTITY_ID,
-    subject: { kind: 'system', name: `the "${input.reviewerClass}" reviewer class` },
-    verb: 'has no healthy member to review this',
-    consequence: 'a human can set a specific reviewer, or wait for a member to come back healthy',
+    subject: { kind: 'system', name: 'No reviewer on the list' },
+    verb: 'is healthy enough to review this',
+    consequence: 'a human can set a different reviewer, or wait for one on the list to come back healthy',
     afterMessageId: input.sourceMessageId,
   });
 }
@@ -1034,23 +1105,21 @@ async function noteReviewerClassExhausted(
  * approve_merge can ever exist for it, so requiring one is a permanent
  * deadlock, not a real gate.
  */
-async function reviewerIsAuthor(
-  db: SqlDatabase,
-  corner: Pick<CornerRow, 'owner_agent_id' | 'configured_reviewer_id' | 'reviewer_class' | 'workspace_id'>,
-): Promise<boolean> {
-  if (!corner.owner_agent_id) return false;
-  if (corner.configured_reviewer_id) return corner.configured_reviewer_id === corner.owner_agent_id;
-  return Boolean(
-    corner.reviewer_class &&
-      (await agentCarriesTag(db, corner.workspace_id, corner.owner_agent_id, corner.reviewer_class)),
-  );
+function reviewerIsAuthor(
+  corner: Pick<CornerRow, 'owner_agent_id' | 'configured_reviewer_id' | 'reviewer_fallback_ids'>,
+): boolean {
+  if (!corner.owner_agent_id || !corner.configured_reviewer_id) return false;
+  return reviewerList({
+    reviewer_agent_id: corner.configured_reviewer_id,
+    reviewer_fallback_ids: corner.reviewer_fallback_ids,
+  }).every((id) => id === corner.owner_agent_id);
 }
 
 /** The configured reviewer's PASS on the corner's current head and latest brief revision, by a current parent member. */
 async function approvedCurrentHead(
   db: SqlDatabase,
   cornerId: string,
-  corner: Pick<CornerRow, 'lifecycle' | 'parent_id' | 'workspace_id'>,
+  corner: Pick<CornerRow, 'lifecycle' | 'parent_id' | 'owner_agent_id'>,
 ): Promise<boolean> {
   const pr = corner.lifecycle.pr;
   if (!pr?.headSha || !pr.number) return false;
@@ -1062,7 +1131,7 @@ async function approvedCurrentHead(
 
 async function approvingReviewer(
   db: SqlDatabase,
-  input: { cornerId: string; parent_id: string; workspace_id: string; number: number; headSha: string },
+  input: { cornerId: string; parent_id: string; owner_agent_id: string | null; number: number; headSha: string },
 ): Promise<string | undefined> {
   const approvedBy = (
     await db.query<{ approved_by: string }>(
@@ -1073,9 +1142,9 @@ async function approvingReviewer(
       [input.cornerId, input.number, input.headSha],
     )
   ).rows[0]?.approved_by;
-  if (!approvedBy) return undefined;
-  if (!(await isConfiguredReviewer(db, input.parent_id, input.workspace_id, approvedBy)))
-    return undefined;
+  // The author on its own Room's reviewer list never approves its own work.
+  if (!approvedBy || approvedBy === input.owner_agent_id) return undefined;
+  if (!(await isConfiguredReviewer(db, input.parent_id, approvedBy))) return undefined;
   // A reviewer removed from the parent Room after its PASS no longer holds the post.
   const member = await db.query(
     `SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
@@ -1121,7 +1190,7 @@ async function workerYolo(db: SqlDatabase, cornerId: string): Promise<boolean> {
 }
 
 export type CornerMergeGate = {
-  /** A reviewer is configured (a fixed id or a class). */
+  /** A reviewer is configured. */
   reviewerExists: boolean;
   reviewerIsAuthor: boolean;
   /** No PASS by the configured reviewer on this head and the latest brief revision, and the reviewer is not the author. */
@@ -1149,11 +1218,10 @@ export async function cornerMergeGate(
       owner_agent_id: string | null;
       lane: string;
       configured_reviewer_id: string | null;
-      reviewer_class: string | null;
+      reviewer_fallback_ids: string[];
     }>(
       `SELECT corner.parent_id,parent.workspace_id,fact.owner_agent_id,fact.lane,
-              parent.reviewer_agent_id configured_reviewer_id,
-              CASE WHEN parent.reviewer_agent_id IS NULL THEN parent.reviewer_class END reviewer_class
+              parent.reviewer_agent_id configured_reviewer_id,parent.reviewer_fallback_ids
        FROM corner_facts fact
        JOIN rooms corner ON corner.id=fact.corner_id
        JOIN rooms parent ON parent.id=corner.parent_id
@@ -1162,8 +1230,8 @@ export async function cornerMergeGate(
     )
   ).rows[0];
   if (!corner) throw new Error('corner not found');
-  const reviewerExists = Boolean(corner.configured_reviewer_id || corner.reviewer_class);
-  const author = await reviewerIsAuthor(db, corner);
+  const reviewerExists = Boolean(corner.configured_reviewer_id);
+  const author = reviewerIsAuthor(corner);
   const approvalPending =
     reviewerExists && !author
       ? (await approvingReviewer(db, { ...corner, cornerId, ...head })) === undefined

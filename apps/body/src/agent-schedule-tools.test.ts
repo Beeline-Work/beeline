@@ -3,6 +3,7 @@ import {
   createSchedule,
   deleteSchedule,
   listSchedules,
+  updateSchedule,
   type AgentScheduleDeps,
 } from './read-only-mcp.js';
 
@@ -19,6 +20,8 @@ function deps(ops: Array<{ name: string; input: Record<string, unknown> }>): Age
           schedules: [
             {
               scheduleId: 'sched-1',
+              agentId: 'agent-2',
+              agentHandle: 'rival',
               prompt: 'message hello',
               cadence: { kind: 'interval', everyMinutes: 1 },
               maxRuns: 5,
@@ -27,6 +30,9 @@ function deps(ops: Array<{ name: string; input: Record<string, unknown> }>): Age
             },
           ],
         };
+      }
+      if (name === 'updateAgentSchedule') {
+        return { scheduleId: 'sched-1', nextRunAt: 1_800_000_000 };
       }
       return { id: 'w', createdAt: 1 };
     },
@@ -96,7 +102,7 @@ describe('beeline-agent schedule tools', () => {
     const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
     const result = await listSchedules(deps(ops));
     expect(ops).toEqual([{ name: 'listAgentSchedules', input: { roomId: 'room-1' } }]);
-    expect(result).toContain('sched-1');
+    expect(result).toContain('sched-1 (@rival)');
     expect(result).toContain('every 1 minute(s)');
     expect(result).toContain('(2/5 runs)');
     expect(result).toContain('message hello');
@@ -115,5 +121,36 @@ describe('beeline-agent schedule tools', () => {
       { name: 'deleteAgentSchedule', input: { roomId: 'room-1', scheduleId: 'sched-1' } },
     ]);
     expect(result).toBe('Schedule sched-1 deleted.');
+  });
+
+  it('update_schedule sends only the fields given, scoped to this Room', async () => {
+    const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const result = await updateSchedule(
+      {
+        scheduleId: 'sched-1',
+        prompt: ' Summarize. ',
+        cadence: { kind: 'interval', everyMinutes: 60 },
+      },
+      deps(ops),
+    );
+    expect(ops).toEqual([
+      {
+        name: 'updateAgentSchedule',
+        input: {
+          roomId: 'room-1',
+          scheduleId: 'sched-1',
+          prompt: 'Summarize.',
+          cadence: { kind: 'interval', everyMinutes: 60 },
+        },
+      },
+    ]);
+    expect(result).toBe('Schedule sched-1 updated. Next run 2027-01-15T08:00:00.000Z.');
+    await expect(updateSchedule({ scheduleId: 'sched-1' }, deps(ops))).rejects.toThrow(
+      'give a prompt, cadence, or maxRuns to change',
+    );
+    await expect(updateSchedule({ scheduleId: 'sched-1', maxRuns: 0 }, deps(ops))).rejects.toThrow(
+      'maxRuns',
+    );
+    expect(ops).toHaveLength(1);
   });
 });

@@ -19,4 +19,3 @@ export * from './push-level.js';
 export * from './push-actions.js';
 export * from './workbench.js';
 export * from './wallet.js';
-export * from './agent-classes.js';

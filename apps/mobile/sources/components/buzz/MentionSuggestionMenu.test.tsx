@@ -62,7 +62,7 @@ afterAll(() => vi.restoreAllMocks());
 
 const matches: RoomRosterParticipant[] = [
   { pubkey: CHANNEL_MENTION_PUBKEY, name: 'channel', handle: 'channel', kind: 'person' },
-  { pubkey: 'p-ada', name: 'Ada Lovelace', handle: 'ada', kind: 'person' },
+  { pubkey: 'p-ada', name: 'Ada Lovelace', handle: 'ada', kind: 'person', role: 'admin' },
   { pubkey: 'p-bo', name: 'Bo', handle: 'bo', kind: 'person' },
   { pubkey: 'p-cy', name: 'Cy', handle: 'cy', kind: 'person' },
   { pubkey: 'p-di', name: 'Di', handle: 'di', kind: 'person' },
@@ -119,24 +119,21 @@ describe('MentionSuggestionMenu', () => {
     expect(overflow.props.children).toEqual(['AND ', 3, ' OTHERS']);
   });
 
-  it('renders each row as one 44pt line with 24pt marks and 13pt name and handle', () => {
+  it('renders each row as one 44pt line with 24pt marks and 13pt handle and role', () => {
     const renderer = render(menu());
     const row = renderer.root.findByProps({ testID: 'mention-suggestion-ada' });
-    expect(row.props.accessibilityLabel).toBe('Ada Lovelace, @ada, person');
+    expect(row.props.accessibilityLabel).toBe('@ada, admin, person');
     expect(flat(row.props.style).height).toBe(MENTION_ROW_HEIGHT);
     expect(MENTION_ROW_HEIGHT).toBe(44);
     expect(row.findByType('IdentityMark' as never).props.size).toBe(24);
-    const [identity] = row.findAll(
-      (node: any) => node.type === 'View' && flat(node.props.style)?.flexDirection === 'row',
-    );
-    expect(flat(identity.props.style).flexDirection).toBe('row');
-    const [name, handle] = identity.findAllByType('Text' as never);
-    expect(name.props.children).toBe('Ada Lovelace');
-    expect(name.props.numberOfLines).toBe(1);
-    expect(flat(name.props.style).fontSize).toBe(typeRoles.meta.fontSize);
+    const [handle, role] = row.findAllByType('Text' as never);
     expect(handle.props.children).toEqual(['@', 'ada']);
-    expect(handle.props.numberOfLines).toBe(1);
-    expect(flat(handle.props.style).fontSize).toBe(typeRoles.machine.fontSize);
+    expect(handle.props.numberOfLines).toBeUndefined();
+    expect(flat(handle.props.style).flexShrink).toBe(0);
+    expect(flat(handle.props.style).fontSize).toBe(typeRoles.meta.fontSize);
+    expect(role.props.children).toBe('admin');
+    expect(role.props.numberOfLines).toBe(1);
+    expect(flat(role.props.style).fontSize).toBe(typeRoles.machine.fontSize);
     expect(typeRoles.meta.fontSize).toBe(13);
     expect(typeRoles.machine.fontSize).toBe(13);
 
@@ -171,6 +168,19 @@ describe('MentionSuggestionMenu', () => {
     const handle = row.findAllByType('Text' as never)[0];
     expect(handle.props.numberOfLines).toBeUndefined();
     expect(flat(handle.props.style).flexShrink).toBe(0);
+  });
+
+  it('shows a person as their handle, then Room role, like an agent row', () => {
+    const renderer = render(menu());
+    const words = (handle: string) =>
+      renderer.root
+        .findByProps({ testID: `mention-suggestion-${handle}` })
+        .findAllByType('Text' as never)
+        .map((text: any) => [text.props.children].flat().join(''));
+    expect(words('ada')).toEqual(['@ada', 'admin']);
+    // No role on record reads as an ordinary member; the display name and
+    // PERSON tag are gone.
+    expect(words('bo')).toEqual(['@bo', 'member']);
   });
 
   it('offers @system as a report row, not a person', () => {

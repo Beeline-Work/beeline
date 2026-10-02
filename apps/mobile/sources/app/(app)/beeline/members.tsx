@@ -81,8 +81,7 @@ type MembersAction =
   | 'model-config'
   | 'model-catalog'
   | 'agent-yolo'
-  | 'agent-access'
-  | 'agent-tags';
+  | 'agent-access';
 
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -265,9 +264,6 @@ export default function BuzzMembers({
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [yoloError, setYoloError] = useState<string | null>(null);
   const [accessError, setAccessError] = useState<string | null>(null);
-  const [tagsError, setTagsError] = useState<string | null>(null);
-  const [editingTags, setEditingTags] = useState(false);
-  const [tagsDraft, setTagsDraft] = useState('');
   const [retryGeneration, setRetryGeneration] = useState(0);
   const [profileRetryGeneration, setProfileRetryGeneration] = useState(0);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -918,31 +914,6 @@ export default function BuzzMembers({
     }
   };
 
-  const saveCustomTags = async () => {
-    if (!selectedAgent?.tagsCanChange) return;
-    const previous = selectedAgent;
-    const pubkey = previous.agent.identity.pubkey;
-    const tags = [...new Set(tagsDraft.split(',').map((tag) => tag.trim().toLowerCase()).filter(Boolean))];
-    setWorking('agent-tags');
-    setTagsError(null);
-    try {
-      const result = await monolithPhoneOperation('setAgentCustomTags', {
-        workspaceId: previous.workspaceId,
-        agentId: pubkey,
-        tags,
-      });
-      setSelectedAgent({
-        ...previous,
-        tags: previous.tags ? { ...previous.tags, custom: result.tags } : previous.tags,
-      });
-      setEditingTags(false);
-    } catch (reason) {
-      setTagsError(operationMessage(reason));
-    } finally {
-      setWorking(null);
-    }
-  };
-
   // An agent is removed, never banned: a ban only blocks this identity, and
   // its owner can pair the same helper back as a new agent at any time.
   const removeSelectedAgent = async () => {
@@ -1258,78 +1229,6 @@ export default function BuzzMembers({
                   {yoloError && (
                     <Text style={styles.switchError} testID="agent-yolo-error">
                       {yoloError}
-                    </Text>
-                  )}
-                </View>
-              )}
-              {selectedAgent.tags && (
-                <View style={styles.switchSection} testID="agent-tags">
-                  <Text style={styles.profileSettingLabel}>Tags</Text>
-                  <Text style={styles.profileSettingCopy} testID="agent-tags-automatic">
-                    {[
-                      selectedAgent.tags.model ? displayModel(selectedAgent.tags.model) : undefined,
-                      selectedAgent.tags.harness,
-                      selectedAgent.tags.weightTier,
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')}
-                    {selectedAgent.tags.unclassified ? ' · unclassified' : ''}
-                  </Text>
-                  {editingTags ? (
-                    <View style={styles.inlineEditor}>
-                      <TextInput
-                        accessibilityLabel="Custom tags, comma separated"
-                        autoCapitalize="none"
-                        editable={working !== 'agent-tags'}
-                        onChangeText={setTagsDraft}
-                        placeholder="night-shift, trusted"
-                        placeholderTextColor={theme.buzz.dim}
-                        style={styles.input}
-                        testID="agent-tags-input"
-                        value={tagsDraft}
-                      />
-                      <View style={styles.inlineEditorControls}>
-                        <MonoButton
-                          disabled={working === 'agent-tags'}
-                          label="Cancel"
-                          onPress={() => setEditingTags(false)}
-                          variant="secondary"
-                        />
-                        <MonoButton
-                          disabled={working === 'agent-tags'}
-                          label={working === 'agent-tags' ? 'Saving…' : 'Save'}
-                          loading={working === 'agent-tags'}
-                          onPress={() => void saveCustomTags()}
-                          testID="agent-tags-save"
-                        />
-                      </View>
-                    </View>
-                  ) : (
-                    <>
-                      <Text style={styles.profileSettingCopy} testID="agent-tags-custom">
-                        {selectedAgent.tags.custom.length
-                          ? selectedAgent.tags.custom.join(', ')
-                          : 'No custom tags'}
-                      </Text>
-                      {selectedAgent.tagsCanChange && (
-                        <TouchableOpacity
-                          accessibilityLabel="Edit custom tags"
-                          accessibilityRole="button"
-                          onPress={() => {
-                            setTagsDraft(selectedAgent.tags?.custom.join(', ') ?? '');
-                            setTagsError(null);
-                            setEditingTags(true);
-                          }}
-                          testID="agent-tags-edit"
-                        >
-                          <Text style={styles.choiceText}>Edit tags</Text>
-                        </TouchableOpacity>
-                      )}
-                    </>
-                  )}
-                  {tagsError && (
-                    <Text style={styles.switchError} testID="agent-tags-error">
-                      {tagsError}
                     </Text>
                   )}
                 </View>
@@ -1692,18 +1591,6 @@ const styles = StyleSheet.create((theme) => {
       paddingBottom: hull.space.sm,
     },
     switchSection: { gap: hull.space.xs },
-    inlineEditor: { gap: hull.space.sm, paddingVertical: hull.space.sm },
-    inlineEditorControls: { flexDirection: 'row', justifyContent: 'flex-end', gap: hull.space.sm },
-    input: {
-      ...Typography.default(),
-      ...hull.type.body,
-      minHeight: 44,
-      paddingHorizontal: hull.space.sm,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: hull.border,
-      borderRadius: hull.radius,
-      color: hull.textPrimary,
-    },
     switchRow: {
       minHeight: 40,
       flexDirection: 'row',

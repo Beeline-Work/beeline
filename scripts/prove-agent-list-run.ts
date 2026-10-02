@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /**
- * End-to-end acceptance proof for workflow class roles and their failover: a
+ * End-to-end acceptance proof for workflow list roles and their failover: a
  * real HTTP server, three real agent daemon identities (a coordinator plus
- * two "heavy" agents), a two-role workflow contract with the worker role
- * bound to the `heavy` class, driven through save_workflow, start_workflow,
- * and handoff — never mocked, never the production Workspace.
+ * two workers), a two-role workflow contract with the worker role bound to
+ * an ordered list of the two workers, driven through save_workflow,
+ * start_workflow, and handoff — never mocked, never the production Workspace.
  *
- * The scenario the captain asked for explicitly: a workflow step assigned to
- * class heavy whose first pick fails instantly hands to the next heavy
- * agent. The failure is a real `postAgentTurnReceipt` call with
+ * The scenario: a workflow step bound to the list [@ridge, @sable] goes to
+ * @ridge; @ridge fails instantly and the step hands to @sable, the next agent
+ * on the list. The failure is a real `postAgentTurnReceipt` call with
  * `status:'failed'`, exactly what a real harness reporting "model
  * unavailable" would send — it runs through the exact same
  * `turn-silence-notice.ts` pipeline production traffic does, which calls
@@ -23,7 +23,7 @@
  * so establishing "this agent is online" needs that one direct write.
  *
  * Local invocation:
- *   npm run prove:agent-classes-run -- /path/to/real-run.md
+ *   npm run prove:agent-list-run -- /path/to/real-run.md
  */
 import { writeFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
@@ -38,15 +38,15 @@ import { createAgentCommand } from '../apps/server/src/agent-command.js';
 
 const HUMAN = 'a'.repeat(64);
 const COORDINATOR = 'b'.repeat(64);
-const HEAVY_A = 'c'.repeat(64);
-const HEAVY_B = 'd'.repeat(64);
+const RIDGE = 'c'.repeat(64);
+const SABLE = 'd'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111114';
 const ROOM = '22222222-2222-4222-8222-222222222226';
 
 const CONTRACT = {
   version: 1,
-  name: 'class-review',
-  description: 'A heavy-class worker drafts a note, the coordinator closes',
+  name: 'list-review',
+  description: 'A worker from a list drafts, the coordinator closes',
   roles: ['worker', 'closer'],
   start: 'work',
   handoffs: {
@@ -85,14 +85,14 @@ async function main(): Promise<void> {
        ($2,'agent','Coordinator','coordinator'),
        ($3,'agent','Ridge','ridge'),
        ($4,'agent','Sable','sable')`,
-    [HUMAN, COORDINATOR, HEAVY_A, HEAVY_B],
+    [HUMAN, COORDINATOR, RIDGE, SABLE],
   );
   await database.query(
     `INSERT INTO agents(agent_id,owner_id,selected_model) VALUES
        ($1,$4,NULL),($2,$4,'opus-4-5'),($3,$4,'opus-4-5')`,
-    [COORDINATOR, HEAVY_A, HEAVY_B, HUMAN],
+    [COORDINATOR, RIDGE, SABLE, HUMAN],
   );
-  await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Agent Classes Proof Workspace')`, [
+  await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Agent Lists Proof Workspace')`, [
     WORKSPACE,
   ]);
   await database.query(`INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Team')`, [
@@ -100,16 +100,16 @@ async function main(): Promise<void> {
     WORKSPACE,
     HUMAN,
   ]);
-  for (const who of [HUMAN, COORDINATOR, HEAVY_A, HEAVY_B])
+  for (const who of [HUMAN, COORDINATOR, RIDGE, SABLE])
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
          ($1,NULL,$2,$3),($1,$4,$2,$3)`,
       [WORKSPACE, who, who === HUMAN ? 'owner' : 'member', ROOM],
     );
-  // Both class candidates report online, as a live daemon's own presence
+  // Both workers report online, as a live daemon's own presence
   // heartbeat would (see the module docblock: this harness does not wire
   // ConnectionPresence, so the fact is written directly here).
-  for (const agentId of [HEAVY_A, HEAVY_B]) {
+  for (const agentId of [RIDGE, SABLE]) {
     await database.query(
       `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body,updated_at)
        VALUES($1,$2,'presence','presence',$3::jsonb,now())`,
@@ -141,17 +141,17 @@ async function main(): Promise<void> {
     return (await auth.exchangeDaemonToken(exchange.exchangeToken))!.daemonToken;
   };
   const coordinatorToken = await daemonTokenFor(COORDINATOR);
-  const heavyATokenAuth = await daemonTokenFor(HEAVY_A);
-  const heavyBTokenAuth = await daemonTokenFor(HEAVY_B);
+  const ridgeToken = await daemonTokenFor(RIDGE);
+  const sableToken = await daemonTokenFor(SABLE);
   const tokenFor: Record<string, string> = {
     [COORDINATOR]: coordinatorToken,
-    [HEAVY_A]: heavyATokenAuth,
-    [HEAVY_B]: heavyBTokenAuth,
+    [RIDGE]: ridgeToken,
+    [SABLE]: sableToken,
   };
   const nameFor: Record<string, string> = {
     [COORDINATOR]: '@coordinator',
-    [HEAVY_A]: '@ridge',
-    [HEAVY_B]: '@sable',
+    [RIDGE]: '@ridge',
+    [SABLE]: '@sable',
   };
 
   const call = async (label: string, name: string, payload: unknown, token: string) => {
@@ -219,7 +219,7 @@ async function main(): Promise<void> {
     kickoff,
     ROOM,
     HUMAN,
-    'coordinator, please start our class-review workflow',
+    'coordinator, please start our list-review workflow',
   ]);
   const initialRow = await createAgentCommand(database, {
     roomId: ROOM,
@@ -245,21 +245,21 @@ async function main(): Promise<void> {
     agentId: COORDINATOR,
     contract: CONTRACT,
   }, coordinatorToken);
-  if (saved.slug !== 'class-review' || saved.version !== 1) {
+  if (saved.slug !== 'list-review' || saved.version !== 1) {
     failures.push(`unexpected save_workflow result: ${JSON.stringify(saved)}`);
   }
 
-  // --- start_workflow: the worker role names the "heavy" class, not one agent. ---
+  // --- start_workflow: the worker role names an ordered list of agents. ---
   const started = await call(
-    '@coordinator starts a run with worker bound to class "heavy"',
+    '@coordinator starts a run with worker bound to the list [@ridge, @sable]',
     'startWorkflow',
     {
       roomId: ROOM,
       requestId: turn1.requestId,
       generationId: turn1.generationId,
       agentId: COORDINATOR,
-      name: 'class-review',
-      roleBindings: { worker: 'heavy', closer: COORDINATOR },
+      name: 'list-review',
+      roleBindings: { worker: [RIDGE, SABLE], closer: COORDINATOR },
     },
     coordinatorToken,
   );
@@ -269,14 +269,14 @@ async function main(): Promise<void> {
   }
   await complete(COORDINATOR, turn1);
 
-  // --- Find out who the class resolved to: exactly one of Ridge/Sable has a pending command. ---
-  const ridgePending = await commandsFor(HEAVY_A);
-  const sablePending = await commandsFor(HEAVY_B);
-  const firstPickId = ridgePending.length ? HEAVY_A : sablePending.length ? HEAVY_B : undefined;
-  const secondPickId = firstPickId === HEAVY_A ? HEAVY_B : HEAVY_A;
-  if (!firstPickId) failures.push('neither Ridge nor Sable was dispatched for the "heavy" worker role');
+  // --- The list resolves to its first healthy agent: only Ridge has a pending command. ---
+  const ridgePending = await commandsFor(RIDGE);
+  const sablePending = await commandsFor(SABLE);
+  const firstPickId = ridgePending.length ? RIDGE : sablePending.length ? SABLE : undefined;
+  const secondPickId = firstPickId === RIDGE ? SABLE : RIDGE;
+  if (firstPickId !== RIDGE) failures.push('the worker role did not go to @ridge, first on its list');
   log.push({
-    label: 'Class resolution result (read from which agent has a pending command)',
+    label: 'List resolution result (read from which agent has a pending command)',
     response: {
       firstPick: firstPickId ? nameFor[firstPickId] : null,
       ridgePendingCount: ridgePending.length,
@@ -286,7 +286,7 @@ async function main(): Promise<void> {
 
   let secondPickHadNoCommandBeforeFailure = true;
   if (firstPickId) {
-    const firstCommand = (firstPickId === HEAVY_A ? ridgePending : sablePending)[0]!;
+    const firstCommand = (firstPickId === RIDGE ? ridgePending : sablePending)[0]!;
     const beforeFailure = await commandsFor(secondPickId);
     secondPickHadNoCommandBeforeFailure = beforeFailure.length === 0;
 
@@ -307,7 +307,7 @@ async function main(): Promise<void> {
       tokenFor[firstPickId]!,
     );
 
-    // --- Verify failover: the SECOND heavy agent now holds a pending command for the SAME run. ---
+    // --- Verify failover: the next agent on the list now holds a pending command for the SAME run. ---
     const secondPending = await commandsFor(secondPickId);
     if (!secondPending.length) {
       failures.push(`${nameFor[secondPickId]} was never dispatched after ${nameFor[firstPickId]}'s instant failure`);
@@ -343,7 +343,7 @@ async function main(): Promise<void> {
           agentId: COORDINATOR,
           runId,
           outcome: 'done',
-          contents: { summary: 'class failover completed the workflow' },
+          contents: { summary: 'list failover completed the workflow' },
         }, coordinatorToken);
         if (landed.state !== 'land' || landed.status !== 'done') {
           failures.push(`expected the run to land done, got ${JSON.stringify(landed)}`);
@@ -409,7 +409,7 @@ async function main(): Promise<void> {
   };
 
   const lines: string[] = [];
-  lines.push('# Real workflow-class failover run');
+  lines.push('# Real workflow list failover run');
   lines.push('');
   lines.push(
     'A real local HTTP server (`createBeelineServer`, real `DaemonService`/`PhoneService`/auth stack, ' +
@@ -419,15 +419,15 @@ async function main(): Promise<void> {
       'not live LLM-backed agent harnesses. Nothing here is mocked and nothing touched the production ' +
       'Workspace. The one fact this harness writes directly instead of over the wire is presence ' +
       '("online"): this proof server does not wire up `ConnectionPresence` (a live daemon reports that over ' +
-      'its own socket, not a `/v1/daemon/operations/*` call), so both heavy candidates\' `live_outputs` ' +
+      'its own socket, not a `/v1/daemon/operations/*` call), so both workers\' `live_outputs` ' +
       'presence rows are seeded directly, the same shape a live daemon\'s own heartbeat writes.',
   );
   lines.push('');
-  lines.push(`- Workspace: \`${WORKSPACE}\` ("Agent Classes Proof Workspace")`);
+  lines.push(`- Workspace: \`${WORKSPACE}\` ("Agent Lists Proof Workspace")`);
   lines.push(`- Room: \`${ROOM}\``);
-  lines.push(`- Coordinator agent (fixed "closer" role): \`${COORDINATOR}\` (@coordinator, tier light)`);
-  lines.push(`- Heavy-tier candidate: \`${HEAVY_A}\` (@ridge, selected_model opus-4-5)`);
-  lines.push(`- Heavy-tier candidate: \`${HEAVY_B}\` (@sable, selected_model opus-4-5)`);
+  lines.push(`- Coordinator agent (single-agent "closer" role): \`${COORDINATOR}\` (@coordinator)`);
+  lines.push(`- First worker on the list: \`${RIDGE}\` (@ridge)`);
+  lines.push(`- Second worker on the list: \`${SABLE}\` (@sable)`);
   lines.push('');
   lines.push(`Run id: \`${runId ?? '(never started)'}\``);
   lines.push('');
@@ -438,9 +438,8 @@ async function main(): Promise<void> {
   lines.push('```');
   lines.push('');
   lines.push(
-    `The \`worker\` role is bound to \`"heavy"\` — a class/tag, not an agent id — at \`start_workflow\`. ` +
-      `Both @ridge and @sable carry the "heavy" tag (their \`selected_model\` matches the workspace's default ` +
-      `\`opus*\` weight-tier rule) and are online, so either could be the random first pick.`,
+    `The \`worker\` role is bound to the ordered list [@ridge, @sable] at \`start_workflow\`. ` +
+      `Both are online, so the role goes to @ridge, first on the list.`,
   );
   lines.push('');
   lines.push('## Requests and responses, in order');
@@ -453,11 +452,11 @@ async function main(): Promise<void> {
     for (const failure of failures) lines.push(`- ${failure}`);
   } else {
     lines.push(
-      `PASSED: start_workflow resolved the "heavy" class to a random healthy member (${firstPickId ? nameFor[firstPickId] : '?'}) ` +
+      `PASSED: start_workflow gave the worker role to the first healthy agent on its list (${firstPickId ? nameFor[firstPickId] : '?'}) ` +
         `and dispatched it a real pending command; that agent's real \`postAgentTurnReceipt(status:'failed', ` +
         `reasonKind:'wrong-model')\` call — an instant failure, not a timeout — ran through the production ` +
         `\`turn-silence-notice.ts\` pipeline and \`reassignFailedWorkflowRole\` failed the worker role over to ` +
-        `${secondPickHadNoCommandBeforeFailure ? 'the other heavy candidate, who held no pending command before the failure and one immediately after it' : 'the other heavy candidate'} ` +
+        `${secondPickHadNoCommandBeforeFailure ? 'the next agent on the list, who held no pending command before the failure and one immediately after it' : 'the next agent on the list'} ` +
         `(${nameFor[secondPickId]}); that agent completed the step for real via handoff, the coordinator landed ` +
         `the run, and the originally-failed agent's later handoff attempt was refused because the role no ` +
         `longer belongs to it.`,

@@ -1,17 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Text, TextInput, View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { Text, View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import type { RoomViewIdentity } from '@beeline/buzz-client';
-import { isClassOrTagReference } from '@beeline/api-contract/phone';
 
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 import { HullActionSheetCancel, HullActionSheetModal, HullActionSheetRow } from './HullActionSheet';
-import { HullDialog } from './HullDialog';
 
 export type RoomReviewerUpdate = {
   roomId: string;
-  reviewerAgentId?: string | null;
-  reviewerClass?: string | null;
+  reviewerAgentId: string | null;
+  reviewerFallbackIds: string[];
 };
 
 type RoomReviewerActionsProps = {
@@ -20,58 +18,67 @@ type RoomReviewerActionsProps = {
   hasRepository: boolean;
   onSaved?: () => void;
   reviewerAgentId?: string;
-  /** A class/tag instead of one fixed agent; mutually exclusive with `reviewerAgentId`. */
-  reviewerClass?: string;
+  /** Agents tried in order after `reviewerAgentId`. */
+  reviewerFallbackIds?: readonly string[];
   roomId: string;
   roomName: string;
   updateRoom: (input: RoomReviewerUpdate) => Promise<unknown>;
 };
 
-/** The repository Room's one reviewer control, shared by phone and desktop sheets. */
+function reviewerOrder(reviewerAgentId?: string, reviewerFallbackIds?: readonly string[]): string[] {
+  if (!reviewerAgentId) return [];
+  return [reviewerAgentId, ...(reviewerFallbackIds ?? []).filter((id) => id !== reviewerAgentId)];
+}
+
+/**
+ * The repository Room's reviewer control, shared by phone and desktop sheets:
+ * an ordered list of agents. Tapping an agent adds it to the end of the list
+ * or takes it off.
+ */
 export function RoomReviewerActions({
   agents,
   canManage,
   hasRepository,
   onSaved,
   reviewerAgentId,
-  reviewerClass,
+  reviewerFallbackIds,
   roomId,
   roomName,
   updateRoom,
 }: RoomReviewerActionsProps) {
-  const { theme } = useUnistyles();
   const [pickerVisible, setPickerVisible] = useState(false);
-  const [classDialogVisible, setClassDialogVisible] = useState(false);
-  const [classDraft, setClassDraft] = useState('');
-  const [selectedReviewerAgentId, setSelectedReviewerAgentId] = useState(reviewerAgentId);
-  const [selectedReviewerClass, setSelectedReviewerClass] = useState(reviewerClass);
+  const [order, setOrder] = useState(() => reviewerOrder(reviewerAgentId, reviewerFallbackIds));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => setSelectedReviewerAgentId(reviewerAgentId), [reviewerAgentId]);
-  useEffect(() => setSelectedReviewerClass(reviewerClass), [reviewerClass]);
+  const savedOrderKey = reviewerOrder(reviewerAgentId, reviewerFallbackIds).join(',');
+  useEffect(() => setOrder(savedOrderKey ? savedOrderKey.split(',') : []), [savedOrderKey]);
 
-  const selectedReviewer = useMemo(
-    () => agents.find((agent) => agent.pubkey === selectedReviewerAgentId),
-    [agents, selectedReviewerAgentId],
+  const handleOf = useCallback(
+    (id: string) => {
+      const agent = agents.find((candidate) => candidate.pubkey === id);
+      return agent ? `@${agent.handle ?? agent.name}` : null;
+    },
+    [agents],
   );
-  const reviewerLabel = selectedReviewer
-    ? `@${selectedReviewer.handle ?? selectedReviewer.name}`
-    : selectedReviewerClass
-      ? `class: ${selectedReviewerClass}`
-      : 'None';
+  const reviewerLabel = useMemo(() => {
+    const handles = order.map(handleOf).filter((handle): handle is string => handle !== null);
+    return handles.length ? handles.join(', then ') : 'None';
+  }, [handleOf, order]);
 
-  const changeReviewer = useCallback(
-    async (next: Omit<RoomReviewerUpdate, 'roomId'>) => {
+  const changeReviewers = useCallback(
+    async (next: string[]) => {
       if (busy) return;
       setBusy(true);
       setError(null);
       try {
-        await updateRoom({ roomId, ...next });
-        setSelectedReviewerAgentId(next.reviewerAgentId ?? undefined);
-        setSelectedReviewerClass(next.reviewerClass ?? undefined);
-        setPickerVisible(false);
-        setClassDialogVisible(false);
+        await updateRoom({
+          roomId,
+          reviewerAgentId: next[0] ?? null,
+          reviewerFallbackIds: next.slice(1),
+        });
+        setOrder(next);
+        if (!next.length) setPickerVisible(false);
         onSaved?.();
       } catch (caught) {
         setError(`Could not change ${ROOM_LABEL} reviewer: ${String(caught)}`);
@@ -87,7 +94,7 @@ export function RoomReviewerActions({
   return (
     <>
       <HullActionSheetRow
-        accessibilityLabel={`Choose reviewer, currently ${reviewerLabel}`}
+        accessibilityLabel={`Choose reviewers, currently ${reviewerLabel}`}
         chevron="right"
         disabled={busy}
         label="Reviewer"
@@ -104,81 +111,53 @@ export function RoomReviewerActions({
         onClose={() => {
           if (!busy) setPickerVisible(false);
         }}
-        subtitle="This agent reviews every pull request opened from the Room. A class (a weight tier, harness, provider, model, or custom tag) resolves to a random healthy member carrying it at each dispatch."
+        subtitle="The first healthy agent on this list reviews every pull request opened from the Room. If its review fails or goes silent, the next one takes over. Tap an agent to add it to the end of the list or take it off."
         testID="room-reviewer-sheet"
-        title={`Reviewer for ${roomName}`}
+        title={`Reviewers for ${roomName}`}
         visible={pickerVisible}
       >
         <HullActionSheetRow
           disabled={busy}
           label="None"
-          onPress={() => void changeReviewer({ reviewerAgentId: null, reviewerClass: null })}
-          selected={!selectedReviewerAgentId && !selectedReviewerClass}
+          onPress={() => void changeReviewers([])}
+          selected={!order.length}
           testID="room-reviewer-none"
         />
-        {agents.map((agent) => (
-          <HullActionSheetRow
-            disabled={busy}
-            key={agent.pubkey}
-            label={`@${agent.handle ?? agent.name}`}
-            onPress={() => void changeReviewer({ reviewerAgentId: agent.pubkey, reviewerClass: null })}
-            selected={selectedReviewerAgentId === agent.pubkey}
-            testID={`room-reviewer-agent-${agent.pubkey}`}
-          />
-        ))}
-        <HullActionSheetRow
-          disabled={busy}
-          label={selectedReviewerClass ? `Class: ${selectedReviewerClass}` : 'Class…'}
-          onPress={() => {
-            setClassDraft(selectedReviewerClass ?? '');
-            setClassDialogVisible(true);
-          }}
-          selected={Boolean(selectedReviewerClass)}
-          testID="room-reviewer-class"
-        />
+        {agents.map((agent) => {
+          const position = order.indexOf(agent.pubkey);
+          return (
+            <HullActionSheetRow
+              accessibilityLabel={
+                position >= 0
+                  ? `@${agent.handle ?? agent.name}, reviewer ${position + 1} of ${order.length}. Take off the list`
+                  : `@${agent.handle ?? agent.name}. Add to the end of the list`
+              }
+              disabled={busy}
+              key={agent.pubkey}
+              label={`@${agent.handle ?? agent.name}`}
+              metadata={position >= 0 ? `#${position + 1}` : undefined}
+              onPress={() =>
+                void changeReviewers(
+                  position >= 0
+                    ? order.filter((id) => id !== agent.pubkey)
+                    : [...order, agent.pubkey],
+                )
+              }
+              testID={`room-reviewer-agent-${agent.pubkey}`}
+            />
+          );
+        })}
         {error ? (
           <View accessibilityRole="alert" style={styles.error} testID="room-reviewer-error">
             <Text style={styles.errorText}>! {error}</Text>
           </View>
         ) : null}
         <HullActionSheetCancel
+          label="Done"
           onPress={() => setPickerVisible(false)}
           testID="room-reviewer-close"
         />
       </HullActionSheetModal>
-      <HullDialog
-        accessibilityLabel="Close reviewer class dialog"
-        body="A word every candidate agent's tag set can match: a weight tier (god, heavy, light), a harness, a provider, an exact model id, or a custom tag."
-        dismissOnBackdrop={!busy}
-        onRequestClose={() => setClassDialogVisible(false)}
-        testID="room-reviewer-class-dialog"
-        title="Reviewer class"
-        visible={classDialogVisible}
-        actions={[
-          { label: 'Cancel', onPress: () => setClassDialogVisible(false), disabled: busy },
-          {
-            label: busy ? 'Saving…' : 'Save',
-            onPress: () =>
-              void changeReviewer({ reviewerClass: classDraft.trim(), reviewerAgentId: null }),
-            busy,
-            disabled: busy || !isClassOrTagReference(classDraft.trim()),
-            testID: 'room-reviewer-class-save',
-          },
-        ]}
-      >
-        <TextInput
-          accessibilityLabel="Reviewer class"
-          autoCapitalize="none"
-          autoCorrect={false}
-          editable={!busy}
-          onChangeText={setClassDraft}
-          placeholder="heavy"
-          placeholderTextColor={theme.buzz.dim}
-          style={styles.classInput}
-          testID="room-reviewer-class-input"
-          value={classDraft}
-        />
-      </HullDialog>
     </>
   );
 }
@@ -194,15 +173,5 @@ const styles = StyleSheet.create((theme) => ({
     ...theme.buzz.type.meta,
     color: theme.buzz.danger,
     fontFamily: theme.buzz.proseRegular,
-  },
-  classInput: {
-    ...theme.buzz.type.body,
-    minHeight: 44,
-    paddingHorizontal: theme.buzz.space.sm,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: theme.buzz.border,
-    borderRadius: theme.buzz.radius,
-    color: theme.buzz.textPrimary,
-    marginTop: theme.buzz.space.sm,
   },
 }));

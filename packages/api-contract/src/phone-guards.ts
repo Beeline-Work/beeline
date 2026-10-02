@@ -1,12 +1,6 @@
 import { isSystemEvent } from './system-events.js';
 import { isAgentAccessPolicy } from './agent-access.js';
 import {
-  isWeightTier,
-  isWeightTierRule,
-  WEIGHT_TIER_RULES_MAX,
-  type WeightTierRule,
-} from './agent-classes.js';
-import {
   MESSAGE_REACTION_EMOJIS,
   ROOM_VIEW_AGENT_LIMIT,
   ROOM_VIEW_BRIEFING_LIMIT,
@@ -52,7 +46,6 @@ import {
   type RoomViewMessage,
   type RoomViewer,
   type SurfaceWatchFilter,
-  type AgentTagsView,
   type WorkspaceAgentView,
   type WorkspaceListView,
   type WorkspaceManagedRoomView,
@@ -195,10 +188,9 @@ function readHeader(value: unknown): RoomViewHeader | null {
   const item = record(value);
   if (!item || !uuid(item.id)) return null;
   const reviewerAgentId = hex64(item.reviewerAgentId) ? item.reviewerAgentId : undefined;
-  const reviewerClass =
-    typeof item.reviewerClass === 'string' && item.reviewerClass.length > 0
-      ? item.reviewerClass
-      : undefined;
+  const reviewerFallbackIds = reviewerAgentId
+    ? readList(item.reviewerFallbackIds, (id) => (hex64(id) ? id : null))
+    : undefined;
   const parentId = uuid(item.parentId) ? item.parentId : undefined;
   return {
     id: item.id,
@@ -212,7 +204,7 @@ function readHeader(value: unknown): RoomViewHeader | null {
     ...field('avatar', typeof item.avatar === 'string' ? item.avatar : undefined),
     ...field('visibility', oneOf(item.visibility, ['public', 'invite-only'])),
     ...field('reviewerAgentId', reviewerAgentId),
-    ...field('reviewerClass', reviewerClass),
+    ...field('reviewerFallbackIds', reviewerFallbackIds?.length ? reviewerFallbackIds : undefined),
   };
 }
 
@@ -240,19 +232,6 @@ function readMember(value: unknown): RoomViewMember | null {
   };
 }
 
-function readAgentTags(value: unknown): AgentTagsView | undefined {
-  const item = record(value);
-  if (!item || typeof item.provider !== 'string' || !isWeightTier(item.weightTier)) return undefined;
-  return {
-    ...field('model', typeof item.model === 'string' ? item.model : undefined),
-    ...field('harness', typeof item.harness === 'string' ? item.harness : undefined),
-    provider: item.provider,
-    weightTier: item.weightTier,
-    unclassified: typeof item.unclassified === 'boolean' ? item.unclassified : false,
-    custom: requireList(item.custom, (tag) => (typeof tag === 'string' ? tag : null)) ?? [],
-  };
-}
-
 function readWorkspaceAgent(value: unknown): WorkspaceAgentView | null {
   const member = readMember(value);
   const item = record(value);
@@ -262,7 +241,6 @@ function readWorkspaceAgent(value: unknown): WorkspaceAgentView | null {
     ...member,
     ...field('model', typeof item.model === 'string' ? item.model : undefined),
     ...field('owner', owner && owner.kind === 'human' ? owner : undefined),
-    ...field('tags', readAgentTags(item.tags)),
   };
 }
 
@@ -1653,10 +1631,6 @@ export function isWorkspaceListView(value: unknown): value is WorkspaceListView 
   return readWorkspaceListView(value) !== null;
 }
 
-function readWeightTierRuleItem(value: unknown): WeightTierRule | null {
-  return isWeightTierRule(value) ? value : null;
-}
-
 export function readWorkspaceView(value: unknown): WorkspaceView | null {
   const item = record(value);
   const workspace = readWorkspace(item?.workspace);
@@ -1674,10 +1648,6 @@ export function readWorkspaceView(value: unknown): WorkspaceView | null {
             typeof managerSettings.roomsTruncated === 'boolean'
               ? managerSettings.roomsTruncated
               : undefined,
-          ),
-          ...field(
-            'weightTierRules',
-            readList(managerSettings.weightTierRules, readWeightTierRuleItem, WEIGHT_TIER_RULES_MAX),
           ),
         }
       : undefined;
@@ -1840,8 +1810,6 @@ export function readAgentDetailView(value: unknown): AgentDetailView | null {
       'canManageGrants',
       typeof item.canManageGrants === 'boolean' ? item.canManageGrants : undefined,
     ),
-    ...field('tags', readAgentTags(item.tags)),
-    ...field('tagsCanChange', typeof item.tagsCanChange === 'boolean' ? item.tagsCanChange : undefined),
   };
 }
 

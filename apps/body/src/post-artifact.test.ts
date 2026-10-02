@@ -71,7 +71,7 @@ describe('beeline-agent post_artifact', () => {
 
   it('refuses unknown mimes and oversized artifacts', async () => {
     const { deps: d } = deps();
-    await expect(postArtifact({ title: 't', mime: 'audio/mpeg', html: 'x' }, d)).rejects.toThrow(
+    await expect(postArtifact({ title: 't', mime: 'audio/flac', html: 'x' }, d)).rejects.toThrow(
       /mime must be one of/,
     );
     await expect(

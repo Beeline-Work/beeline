@@ -94,7 +94,7 @@ describe('ObjectService', () => {
 
   it('refuses bad mime, empty bytes, over-cap bytes, and a blank title', async () => {
     await expect(
-      service.uploadArtifact(AGENT, Buffer.from('x'), 'audio/mpeg', 't'),
+      service.uploadArtifact(AGENT, Buffer.from('x'), 'audio/flac', 't'),
     ).rejects.toThrow(/artifact mime/);
     await expect(
       service.uploadArtifact(AGENT, Buffer.alloc(0), 'text/html', 't'),
@@ -456,10 +456,15 @@ describe('ObjectService', () => {
       'application/json',
       'text/csv',
       'application/zip',
+      'video/mp4',
+      'video/quicktime',
+      'video/webm',
+      'audio/mpeg',
+      'audio/wav',
       'application/octet-stream',
     ])
       expect(isArtifactMimeType(mime)).toBe(true);
-    expect(isArtifactMimeType('audio/mpeg')).toBe(false);
+    expect(isArtifactMimeType('audio/flac')).toBe(false);
     expect(isArtifactMimeType('application/x-thing')).toBe(false);
   });
 

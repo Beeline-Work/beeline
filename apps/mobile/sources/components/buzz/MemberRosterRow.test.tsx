@@ -29,7 +29,7 @@ vi.mock('@/constants/Typography', () => ({
 }));
 vi.mock('./IdentityMark', () => ({ IdentityMark: 'IdentityMark' }));
 
-import { MemberRosterRow, memberRosterSubtitle } from './MemberRosterRow';
+import { MemberRosterRow, memberRosterModel, memberRosterSubtitle } from './MemberRosterRow';
 
 beforeAll(() => {
   (
@@ -59,7 +59,7 @@ describe('MemberRosterRow', () => {
     expect(memberRosterSubtitle({ kind: 'human', role: 'owner' })).toBe('owner');
   });
 
-  it('formats an agent with model and owner under the single handle title', () => {
+  it('formats an agent as handle and right-aligned model over its owner', () => {
     let renderer!: ReactTestRenderer;
     act(() => {
       renderer = create(
@@ -77,13 +77,11 @@ describe('MemberRosterRow', () => {
     });
     expect(
       renderer.root.findAllByType('Text' as any).map((node: any) => node.props.children),
-    ).toEqual(['@clara', 'Sonnet']);
-    expect(
-      memberRosterSubtitle({
-        kind: 'agent',
-        model: 'openrouter/openai/Codex',
-        ownerHandle: 'captain',
-      }),
-    ).toBe('Codex');
+    ).toEqual(['@clara', 'Sonnet', '@viewer']);
+    const model = renderer.root.findAllByType('Text' as any)[1];
+    expect(model.props.style.textAlign).toBe('right');
+    expect(memberRosterModel({ kind: 'agent', model: 'openrouter/openai/Codex' })).toBe('Codex');
+    expect(memberRosterSubtitle({ kind: 'agent', ownerHandle: 'captain' })).toBe('@captain');
+    expect(memberRosterSubtitle({ kind: 'agent' })).toBeUndefined();
   });
 });

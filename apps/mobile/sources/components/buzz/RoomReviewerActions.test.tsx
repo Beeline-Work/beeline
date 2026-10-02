@@ -19,7 +19,7 @@ vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
-  return { Text: host('Text'), View: host('View') };
+  return { ScrollView: host('ScrollView'), Text: host('Text'), View: host('View') };
 });
 
 vi.mock('./HullActionSheet', async () => {
@@ -27,7 +27,12 @@ vi.mock('./HullActionSheet', async () => {
   return {
     HullActionSheetCancel: (props: any) => ReactModule.createElement('Cancel', props),
     HullActionSheetModal: (props: any) =>
-      ReactModule.createElement('Sheet', props, props.visible ? props.children : null),
+      ReactModule.createElement(
+        'Sheet',
+        props,
+        props.visible ? props.children : null,
+        props.visible ? props.footer : null,
+      ),
     HullActionSheetRow: (props: any) => ReactModule.createElement('Row', props),
   };
 });
@@ -105,7 +110,9 @@ describe('RoomReviewerActions', () => {
       reviewerFallbackIds: [BEE],
     });
     expect(metadata()).toBe('@echo, then @bee');
-    expect(renderer.root.findByProps({ testID: `room-reviewer-agent-${BEE}` }).props.metadata).toBe('#2');
+    expect(renderer.root.findByProps({ testID: `room-reviewer-agent-${BEE}` }).props.metadata).toBe(
+      '#2',
+    );
 
     await press(`room-reviewer-agent-${ECHO}`);
     expect(updateRoom).toHaveBeenLastCalledWith({
@@ -137,5 +144,26 @@ describe('RoomReviewerActions', () => {
         .map((row: { props: { label: string } }) => row.props.label)
         .filter((label: string) => /class/i.test(label)),
     ).toEqual([]);
+  });
+
+  it('scrolls the agent list in a window of five rows with Done pinned below it', () => {
+    const many = Array.from({ length: 12 }, (_, index) => ({
+      pubkey: `agent-${index}`,
+      kind: 'agent' as const,
+      name: `Agent ${index}`,
+      handle: `agent${index}`,
+    }));
+    const { renderer } = render({ agents: many, reviewerAgentId: undefined });
+    act(() => renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.onPress());
+    const sheet = renderer.root.findByProps({ testID: 'room-reviewer-sheet' });
+    expect(sheet.props.scrollBody).toBe(false);
+    const list = renderer.root.findByProps({ testID: 'room-reviewer-list' });
+    expect(list.props.nestedScrollEnabled).toBe(true);
+    expect(list.props.style.maxHeight).toBe(5 * 52);
+    expect(list.findAllByType('Row')).toHaveLength(13);
+    expect(list.findAllByProps({ testID: 'room-reviewer-close' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'room-reviewer-close' }).length).toBeGreaterThan(
+      0,
+    );
   });
 });

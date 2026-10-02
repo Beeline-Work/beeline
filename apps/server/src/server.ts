@@ -47,6 +47,13 @@ const MAX_LIVE_SOCKET_QUEUED_BYTES = 2 * 1024 * 1024;
 const MAX_LIVE_ROOMS_PER_SOCKET = 8_192;
 const MAX_LIVE_SUBSCRIBE_FRAME_ROOMS = 32;
 const MAX_LIVE_OUTBOUND_BUFFERED_BYTES = 16 * 1024 * 1024;
+// An open daemon socket is the helper's liveness. The server pings it well
+// inside the 90-second reachable horizon and counts the protocol pong, which
+// the helper's ws client answers by itself, as presence evidence. A helper
+// that has answered no ping for as long as its own systemd watchdog allows is
+// gone, and its socket is dropped.
+export const LIVE_DAEMON_PING_MS = 30_000;
+export const LIVE_DAEMON_PONG_TIMEOUT_MS = 180_000;
 /**
  * Clearing a chat-list dismissal is per-viewer state that no Room read
  * projects, so it invalidates no Room for anybody. Its writer is the Room that
@@ -421,6 +428,23 @@ export function createBeelineServer(options: ServerOptions): Server {
         client.send(payload);
       };
       if (principal.kind === 'phone') options.live.humanConnected(principal.identityId);
+      let unansweredPings = 0;
+      const daemonPing = principal.kind === 'daemon'
+        ? setInterval(() => {
+            if (unansweredPings * LIVE_DAEMON_PING_MS >= LIVE_DAEMON_PONG_TIMEOUT_MS) {
+              client.terminate();
+              return;
+            }
+            unansweredPings++;
+            client.ping();
+          }, LIVE_DAEMON_PING_MS)
+        : undefined;
+      daemonPing?.unref();
+      if (principal.kind === 'daemon')
+        client.on('pong', () => {
+          unansweredPings = 0;
+          void options.connectionPresence?.evidence(undefined, principal.identityId);
+        });
       const releases = new Map<string, () => void>();
       let helperVersion = principal.helperVersion;
       let pushedMinimum: string | undefined;
@@ -1003,6 +1027,7 @@ export function createBeelineServer(options: ServerOptions): Server {
         });
       });
       client.on('close', () => {
+        clearInterval(daemonPing);
         socketSubscriptions.delete(client);
         if (principal.kind === 'phone') options.live.humanDisconnected(principal.identityId);
         membershipWakeRelease?.();

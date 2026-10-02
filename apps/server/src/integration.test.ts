@@ -18,7 +18,12 @@ import { TokenAuth, tokenHash } from './auth.js';
 import { PhoneService, REVIEW_LOCKED_OPERATIONS } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
-import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
+import {
+  createBeelineServer,
+  DEFAULT_MEDIA_MAXIMUM_BYTES,
+  LIVE_DAEMON_PING_MS,
+  LIVE_DAEMON_PONG_TIMEOUT_MS,
+} from './server.js';
 import { MediaExpiryLoop, PushDeliveryLoop } from './background.js';
 import { GitHubOperations } from './github-operations.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
@@ -37,7 +42,7 @@ import {
 } from '@beeline/api-contract/phone';
 import { createMonolithAuth, type MonolithAuthMount } from './monolith-auth.js';
 import { REVIEW_IDENTITY_ID, ReviewAccess } from './review-access.js';
-import { announceAgentLifecycle } from './connection-presence.js';
+import { announceAgentLifecycle, ConnectionPresence } from './connection-presence.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { taggedIdentityIdsSql } from './message-mentions.js';
 import { connectorIdentityId } from './workbench.js';
@@ -3242,6 +3247,111 @@ describe('monolith integration', () => {
       ],
     );
     expect((await readRoomItem())?.agentsOffline).toBeUndefined();
+  });
+
+  describe('daemon socket liveness', () => {
+    let presence: ConnectionPresence;
+    let pinged: ReturnType<typeof createBeelineServer>;
+    let liveOrigin: string;
+    const sockets: WebSocket[] = [];
+    beforeEach(async () => {
+      // Only the server's ping interval is simulated; the database clock and
+      // socket I/O stay real.
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      const live = new LiveHub();
+      presence = new ConnectionPresence(database, live, 300);
+      pinged = createBeelineServer({
+        database,
+        auth,
+        phone,
+        daemon: {} as DaemonService,
+        live,
+        connectionPresence: presence,
+        mediaMaximumBytes: 1024,
+      });
+      await new Promise<void>((resolve) => pinged.listen(0, '127.0.0.1', resolve));
+      liveOrigin = `ws://127.0.0.1:${(pinged.address() as AddressInfo).port}/v1/phone/live`;
+    });
+    afterEach(async () => {
+      for (const socket of sockets.splice(0)) socket.terminate();
+      vi.useRealTimers();
+      await presence.stop();
+      await new Promise<void>((resolve) => pinged.close(() => resolve()));
+    });
+    const connect = async (token: string, options: WebSocket.ClientOptions = {}) => {
+      const socket = new WebSocket(liveOrigin, [`bearer.${token}`], options);
+      sockets.push(socket);
+      await new Promise<void>((resolve, reject) => {
+        socket.once('open', () => resolve());
+        socket.once('error', reject);
+      });
+      return socket;
+    };
+    // No daemon operation runs in these tests; time past the 90-second horizon
+    // is the presence row's age.
+    const pastHorizon = () =>
+      database.query(
+        `UPDATE live_outputs SET updated_at=clock_timestamp()-interval '100 seconds'
+         WHERE agent_id=$1 AND kind='presence'`,
+        [AGENT],
+      );
+    const agentsOffline = async () =>
+      (await phone.readChats(WORKSPACE, HUMAN))?.chats.find((chat) => chat.room.id === ROOM)
+        ?.agentsOffline === true;
+    const settle = async (expected: boolean) => {
+      for (let attempt = 0; attempt < 100 && (await agentsOffline()) !== expected; attempt++)
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      return agentsOffline();
+    };
+
+    it('keeps an idle daemon online past the horizon on pongs alone, and ages it offline once closed', async () => {
+      const evidence = vi.spyOn(presence, 'evidence');
+      const daemonSocket = await connect(daemonToken);
+      await connect(accessToken);
+      await presence.announce(ROOM, AGENT, { lifecycleId: 'helper' });
+      await pastHorizon();
+      expect(await agentsOffline()).toBe(true);
+
+      // Four ping intervals of an idle helper: each pong restores reachability.
+      for (let interval = 0; interval < 4; interval++) {
+        await vi.advanceTimersByTimeAsync(LIVE_DAEMON_PING_MS);
+        expect(await settle(false)).toBe(false);
+        await pastHorizon();
+      }
+      expect(evidence.mock.calls.length).toBeGreaterThanOrEqual(4);
+      expect(evidence.mock.calls.every(([roomId, agentId]) => roomId === undefined && agentId === AGENT)).toBe(true);
+
+      const closed = new Promise((resolve) => daemonSocket.once('close', resolve));
+      daemonSocket.terminate();
+      await closed;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const callsAtClose = evidence.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(LIVE_DAEMON_PING_MS * 2);
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      expect(evidence).toHaveBeenCalledTimes(callsAtClose);
+      expect(await agentsOffline()).toBe(true);
+    });
+
+    it('never advances evidence from a phone socket', async () => {
+      const evidence = vi.spyOn(presence, 'evidence');
+      await connect(accessToken);
+      await vi.advanceTimersByTimeAsync(LIVE_DAEMON_PING_MS * 4);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(evidence).not.toHaveBeenCalled();
+    });
+
+    it('terminates a daemon socket that answers no ping within the timeout', async () => {
+      const silent = await connect(daemonToken, { autoPong: false });
+      let closed = false;
+      silent.once('close', () => (closed = true));
+      await vi.advanceTimersByTimeAsync(LIVE_DAEMON_PONG_TIMEOUT_MS);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(closed).toBe(false);
+      await vi.advanceTimersByTimeAsync(LIVE_DAEMON_PING_MS);
+      for (let attempt = 0; attempt < 50 && !closed; attempt++)
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(closed).toBe(true);
+    });
   });
 
   it('repairs millisecond-truncated read marks and treats their marked message as read', async () => {

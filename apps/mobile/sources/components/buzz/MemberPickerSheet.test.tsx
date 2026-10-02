@@ -70,6 +70,7 @@ vi.mock('./IdentityMark', async () => {
   return { IdentityMark: (props: any) => ReactModule.createElement('IdentityMark', props) };
 });
 
+import { HullActionSheetModal } from './HullActionSheet';
 import {
   MEMBER_PICKER_TITLE,
   MemberPickerSheet,
@@ -122,6 +123,10 @@ function has(renderer: ReactTestRenderer, testID: string): boolean {
   return renderer.root.findAllByProps({ testID }).length > 0;
 }
 
+function addButton(renderer: ReactTestRenderer) {
+  return renderer.root.findByType('BrassButton' as any);
+}
+
 describe('MemberPickerSheet', () => {
   it('lists the Room-addable Workspace members as checkbox rows and adds the checked ones', () => {
     const props = baseProps();
@@ -129,7 +134,8 @@ describe('MemberPickerSheet', () => {
 
     expect(has(renderer, `member-picker-candidate-${OX}`)).toBe(true);
     expect(has(renderer, `member-picker-candidate-${ANA}`)).toBe(true);
-    expect(has(renderer, 'member-picker-add')).toBe(false);
+    expect(addButton(renderer).props.label).toBe('Add');
+    expect(addButton(renderer).props.disabled).toBe(true);
     expect(has(renderer, 'room-member-picker-empty')).toBe(false);
     // The tile states the kind; the row carries only the name and @handle.
     const agentRow = renderer.root
@@ -143,9 +149,8 @@ describe('MemberPickerSheet', () => {
     ]);
 
     act(() => agentRow.props.onPress());
-    expect(renderer.root.findAllByProps({ testID: 'member-picker-add' }).at(-1)!.props.label).toBe(
-      'Add 1',
-    );
+    expect(addButton(renderer).props.label).toBe('Add 1');
+    expect(addButton(renderer).props.disabled).toBe(false);
     act(() =>
       renderer.root
         .findAllByProps({ testID: `member-picker-candidate-${ANA}` })
@@ -169,6 +174,20 @@ describe('MemberPickerSheet', () => {
     expect(has(renderer, 'room-member-picker-add-agent')).toBe(false);
   });
 
+  it('pins the Add button in the sheet footer and lets the sheet own the scrolling body', () => {
+    const renderer = render(<MemberPickerSheet {...baseProps()} busy />);
+    const sheet = renderer.root.findByType(HullActionSheetModal);
+    expect(sheet.props.scrollBody).toBeUndefined();
+    const footer = render(sheet.props.footer);
+    expect(footer.root.findByProps({ testID: 'member-picker-add' }).props.loading).toBe(true);
+    expect(has(renderer, 'member-picker-sheet-body')).toBe(true);
+    expect(
+      renderer.root
+        .findByProps({ testID: 'member-picker-sheet-body' })
+        .findAllByProps({ testID: 'member-picker-add' }),
+    ).toHaveLength(0);
+  });
+
   it('narrows to one kind for the slash verbs and forgets its checks when closed', () => {
     const props = baseProps();
     const renderer = render(<MemberPickerSheet {...props} kind="agent" />);
@@ -181,14 +200,15 @@ describe('MemberPickerSheet', () => {
         .at(-1)!
         .props.onPress(),
     );
-    expect(has(renderer, 'member-picker-add')).toBe(true);
+    expect(addButton(renderer).props.label).toBe('Add 1');
     act(() => {
       renderer.update(<MemberPickerSheet {...props} kind="agent" visible={false} />);
     });
     act(() => {
       renderer.update(<MemberPickerSheet {...props} kind="agent" visible />);
     });
-    expect(has(renderer, 'member-picker-add')).toBe(false);
+    expect(addButton(renderer).props.label).toBe('Add');
+    expect(addButton(renderer).props.disabled).toBe(true);
   });
 
   it('shows the loader, never the empty line, while the Workspace roster is in flight', () => {
@@ -256,6 +276,7 @@ describe('MemberPickerSheet', () => {
     expect(has(renderer, 'room-member-picker-invite-person')).toBe(false);
     expect(has(renderer, 'room-member-picker-add-agent')).toBe(false);
     expect(has(renderer, 'room-member-picker-actions')).toBe(false);
+    expect(has(renderer, 'member-picker-add')).toBe(false);
     expect(has(renderer, 'pair-agent-command')).toBe(true);
     const text = renderer.root
       .findAllByType('Text' as any)

@@ -25,9 +25,12 @@
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { unistylesTheme } = vi.hoisted(() => ({ unistylesTheme: {} as { buzz?: any } }));
+const { unistylesTheme, safeArea } = vi.hoisted(() => ({
+  unistylesTheme: {} as { buzz?: any },
+  safeArea: { top: 0, bottom: 0, left: 0, right: 0 },
+}));
 
 vi.mock('react-native-unistyles', async () => {
   const { beelineThemes } = await import('@/buzz/groknight');
@@ -143,7 +146,7 @@ vi.mock('react-native-keyboard-controller', async () => {
   };
 });
 vi.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+  useSafeAreaInsets: () => safeArea,
 }));
 vi.mock('expo-haptics', () => ({
   impactAsync: () => undefined,
@@ -335,4 +338,75 @@ describe('MemberPickerSheet, across the shapes a Room actually hands it', () => 
       ).not.toThrow();
     });
   }
+});
+
+describe('MemberPickerSheet on Android with the 3-button navigation bar (Reproduction R1)', () => {
+  // The 3-button bar is a 48dp bottom inset; twenty candidates overflow the sheet.
+  const MANY: MemberPickerCandidate[] = Array.from({ length: 20 }, (_, index) => ({
+    pubkey: String(index).padStart(64, 'c'),
+    name: `Member ${index}`,
+    handle: `member${index}`,
+    kind: index % 2 ? 'agent' : 'person',
+  }));
+
+  beforeEach(() => {
+    safeArea.bottom = 48;
+  });
+  afterEach(() => {
+    safeArea.bottom = 0;
+  });
+
+  function isInside(node: any, ancestor: any): boolean {
+    for (let current = node.parent; current; current = current.parent) {
+      if (current === ancestor) return true;
+    }
+    return false;
+  }
+
+  it('bounds the list above the nav bar and pins the Add button under it, outside the scroll', () => {
+    const props = { ...baseProps(null), candidates: MANY, error: 'Could not add @Member 0: boom' };
+    const renderer = render(<MemberPickerSheet {...props} />);
+
+    // The sheet owns one scrolling body, capped so it ends above the bottom inset.
+    const body = hostWithTestID(renderer, 'member-picker-sheet-body');
+    expect(body).toHaveLength(1);
+    const maxHeight = [body[0]!.props.style]
+      .flat(Infinity)
+      .reduce((value: unknown, style: any) => style?.maxHeight ?? value, undefined);
+    expect(maxHeight).toBeLessThanOrEqual(Math.round(844 * 0.82) - 48);
+    expect(renderer.root.findAll((node: any) => node.type === 'ScrollView')).toHaveLength(1);
+    // Every row and the Workspace-level ways in scroll inside that body.
+    for (const candidate of MANY) {
+      expect(
+        isInside(
+          hostWithTestID(renderer, `member-picker-candidate-${candidate.pubkey}`)[0],
+          body[0],
+        ),
+      ).toBe(true);
+    }
+    expect(isInside(hostWithTestID(renderer, 'room-member-picker-add-agent')[0], body[0])).toBe(
+      true,
+    );
+
+    // Nothing checked yet: the next step is already on screen, disabled.
+    let add = hostWithTestID(renderer, 'member-picker-add');
+    expect(add).toHaveLength(1);
+    expect(isInside(add[0], body[0])).toBe(false);
+    expect(add[0]!.props.disabled).toBe(true);
+    expect(renderer.root.findByProps({ testID: 'member-picker-add' }).props.label).toBe('Add');
+
+    act(() =>
+      hostWithTestID(renderer, `member-picker-candidate-${MANY[19]!.pubkey}`)[0]!.props.onPress(),
+    );
+    add = hostWithTestID(renderer, 'member-picker-add');
+    expect(add[0]!.props.disabled).toBe(false);
+    expect(renderer.root.findByProps({ testID: 'member-picker-add' }).props.label).toBe('Add 1');
+    act(() => add[0]!.props.onPress());
+    expect(props.onAdd).toHaveBeenCalledWith([MANY[19]!.pubkey]);
+
+    // The inline failure sits with the pinned button, never under it or scrolled away.
+    const error = hostWithTestID(renderer, 'member-picker-error');
+    expect(error).toHaveLength(1);
+    expect(isInside(error[0], body[0])).toBe(false);
+  });
 });

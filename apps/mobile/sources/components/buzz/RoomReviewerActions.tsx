@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Text, View } from 'react-native';
+import { ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { RoomViewIdentity } from '@beeline/buzz-client';
 
@@ -25,7 +25,15 @@ type RoomReviewerActionsProps = {
   updateRoom: (input: RoomReviewerUpdate) => Promise<unknown>;
 };
 
-function reviewerOrder(reviewerAgentId?: string, reviewerFallbackIds?: readonly string[]): string[] {
+/** HullActionSheetRow's minimum height; the list window is sized in rows. */
+const REVIEWER_ROW_HEIGHT = 52;
+/** Rows visible at once; the rest of the list scrolls. */
+const REVIEWER_VISIBLE_ROWS = 5;
+
+function reviewerOrder(
+  reviewerAgentId?: string,
+  reviewerFallbackIds?: readonly string[],
+): string[] {
   if (!reviewerAgentId) return [];
   return [reviewerAgentId, ...(reviewerFallbackIds ?? []).filter((id) => id !== reviewerAgentId)];
 }
@@ -108,55 +116,67 @@ export function RoomReviewerActions({
       <HullActionSheetModal
         accessibilityLabel="Close reviewer picker"
         dismissOnBackdrop={!busy}
+        footer={
+          <>
+            {error ? (
+              <View accessibilityRole="alert" style={styles.error} testID="room-reviewer-error">
+                <Text style={styles.errorText}>! {error}</Text>
+              </View>
+            ) : null}
+            <HullActionSheetCancel
+              label="Done"
+              onPress={() => setPickerVisible(false)}
+              testID="room-reviewer-close"
+            />
+          </>
+        }
         onClose={() => {
           if (!busy) setPickerVisible(false);
         }}
+        scrollBody={false}
         subtitle="The first healthy agent on this list reviews every pull request opened from the Room. If its review fails or goes silent, the next one takes over. Tap an agent to add it to the end of the list or take it off."
         testID="room-reviewer-sheet"
         title={`Reviewers for ${roomName}`}
         visible={pickerVisible}
       >
-        <HullActionSheetRow
-          disabled={busy}
-          label="None"
-          onPress={() => void changeReviewers([])}
-          selected={!order.length}
-          testID="room-reviewer-none"
-        />
-        {agents.map((agent) => {
-          const position = order.indexOf(agent.pubkey);
-          return (
-            <HullActionSheetRow
-              accessibilityLabel={
-                position >= 0
-                  ? `@${agent.handle ?? agent.name}, reviewer ${position + 1} of ${order.length}. Take off the list`
-                  : `@${agent.handle ?? agent.name}. Add to the end of the list`
-              }
-              disabled={busy}
-              key={agent.pubkey}
-              label={`@${agent.handle ?? agent.name}`}
-              metadata={position >= 0 ? `#${position + 1}` : undefined}
-              onPress={() =>
-                void changeReviewers(
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
+          nestedScrollEnabled
+          style={{ flexGrow: 0, maxHeight: REVIEWER_VISIBLE_ROWS * REVIEWER_ROW_HEIGHT }}
+          testID="room-reviewer-list"
+        >
+          <HullActionSheetRow
+            disabled={busy}
+            label="None"
+            onPress={() => void changeReviewers([])}
+            selected={!order.length}
+            testID="room-reviewer-none"
+          />
+          {agents.map((agent) => {
+            const position = order.indexOf(agent.pubkey);
+            return (
+              <HullActionSheetRow
+                accessibilityLabel={
                   position >= 0
-                    ? order.filter((id) => id !== agent.pubkey)
-                    : [...order, agent.pubkey],
-                )
-              }
-              testID={`room-reviewer-agent-${agent.pubkey}`}
-            />
-          );
-        })}
-        {error ? (
-          <View accessibilityRole="alert" style={styles.error} testID="room-reviewer-error">
-            <Text style={styles.errorText}>! {error}</Text>
-          </View>
-        ) : null}
-        <HullActionSheetCancel
-          label="Done"
-          onPress={() => setPickerVisible(false)}
-          testID="room-reviewer-close"
-        />
+                    ? `@${agent.handle ?? agent.name}, reviewer ${position + 1} of ${order.length}. Take off the list`
+                    : `@${agent.handle ?? agent.name}. Add to the end of the list`
+                }
+                disabled={busy}
+                key={agent.pubkey}
+                label={`@${agent.handle ?? agent.name}`}
+                metadata={position >= 0 ? `#${position + 1}` : undefined}
+                onPress={() =>
+                  void changeReviewers(
+                    position >= 0
+                      ? order.filter((id) => id !== agent.pubkey)
+                      : [...order, agent.pubkey],
+                  )
+                }
+                testID={`room-reviewer-agent-${agent.pubkey}`}
+              />
+            );
+          })}
+        </ScrollView>
       </HullActionSheetModal>
     </>
   );

@@ -148,7 +148,7 @@ describe('MentionSuggestionMenu', () => {
     ).toContain('Everyone in this Room');
   });
 
-  it('shows an agent as its full handle and model without provider or owner', () => {
+  it('shows an agent as its handle with the model right-aligned, and its owner beneath', () => {
     const agent: RoomRosterParticipant = {
       pubkey: 'a-niglet',
       name: 'Niglet',
@@ -163,11 +163,15 @@ describe('MentionSuggestionMenu', () => {
     const words = row
       .findAllByType('Text' as never)
       .map((text: any) => [text.props.children].flat().join(''));
-    expect(words).toEqual(['@nigletverylonghandle', 'claude-opus-5-5']);
-    expect(row.props.accessibilityLabel).toBe('@nigletverylonghandle, claude-opus-5-5, agent');
-    const handle = row.findAllByType('Text' as never)[0];
+    expect(words).toEqual(['@nigletverylonghandle', 'claude-opus-5-5', '@lunchboxfortwo']);
+    expect(row.props.accessibilityLabel).toBe(
+      '@nigletverylonghandle, claude-opus-5-5, @lunchboxfortwo, agent',
+    );
+    const [handle, model] = row.findAllByType('Text' as never);
     expect(handle.props.numberOfLines).toBeUndefined();
     expect(flat(handle.props.style).flexShrink).toBe(0);
+    expect(flat(model.props.style).textAlign).toBe('right');
+    expect(flat(model.props.style).marginLeft).toBe('auto');
   });
 
   it('shows a person as their handle, then Room role, like an agent row', () => {

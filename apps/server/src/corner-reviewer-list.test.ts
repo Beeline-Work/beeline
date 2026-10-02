@@ -31,6 +31,14 @@ async function reportPresence(agentId: string, status: 'online' | 'offline') {
   );
 }
 
+/** An idle helper on its socket: still online, last heard from minutes ago. */
+async function idleFor(agentId: string, minutes: number) {
+  await db.query(
+    `UPDATE live_outputs SET updated_at=now()-make_interval(mins => $2) WHERE agent_id=$1 AND kind='presence'`,
+    [agentId, minutes],
+  );
+}
+
 const commands = (agentId: string, roomId = C) =>
   daemon.execute('getAgentCommands', { roomId }, agentId).then((r) => r.commands);
 
@@ -208,6 +216,35 @@ describe('check-passed dispatch with a reviewer list', () => {
     );
     await route('episode-2-trigger');
     expect(await exhaustedNotices()).toHaveLength(before + 2);
+  });
+});
+
+describe('idle reviewers on the list', () => {
+  it('wakes the first agent when both reviewers have been idle for hours', async () => {
+    await idleFor(REVIEWER_A, 300);
+    await idleFor(REVIEWER_B, 300);
+    await setReviewers(REVIEWER_A, REVIEWER_B);
+    await greenCheck();
+    expect(await reviews(REVIEWER_A)).toHaveLength(1);
+    expect(await exhaustedNotices()).toHaveLength(0);
+  });
+
+  it('passes a failed review to an idle second reviewer', async () => {
+    await setReviewers(REVIEWER_A, REVIEWER_B);
+    await greenCheck();
+    await idleFor(REVIEWER_B, 300);
+    await failTurn((await reviews(REVIEWER_A))[0]!);
+    expect(await reviews(REVIEWER_B)).toHaveLength(1);
+    expect(await exhaustedNotices()).toHaveLength(0);
+  });
+
+  it('still skips an idle reviewer whose last presence event was offline', async () => {
+    await reportPresence(REVIEWER_A, 'offline');
+    await idleFor(REVIEWER_A, 300);
+    await setReviewers(REVIEWER_A, REVIEWER_B);
+    await greenCheck();
+    expect(await reviews(REVIEWER_A)).toHaveLength(0);
+    expect(await reviews(REVIEWER_B)).toHaveLength(1);
   });
 });
 

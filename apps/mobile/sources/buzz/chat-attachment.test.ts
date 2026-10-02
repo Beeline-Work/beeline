@@ -331,6 +331,36 @@ describe('chat attachment display metadata', () => {
     expect(mocks.readFileBytes.mock.calls.map(([uri]) => uri)).not.toContain('file:///removed.txt');
   });
 
+  it('reports uploading, failed, uploading again on retry, then uploaded, and forgets removed ones', async () => {
+    mocks.readFileBytes.mockResolvedValue(new Uint8Array([1]));
+    const uploadMedia = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue({ url: 'https://relay.example/media/a.txt', sha256: 'a', size: 1 });
+    const client = { uploadMedia } as never;
+    const staged = {
+      uri: 'file:///a',
+      name: 'a.txt',
+      mimeType: 'text/plain',
+      size: 1,
+      source: 'file' as const,
+    };
+    const uploader = createChatAttachmentUploader();
+    const seen: unknown[] = [];
+    uploader.subscribe(() => seen.push(uploader.state(staged)));
+
+    expect(uploader.state(staged)).toBeUndefined();
+    uploader.start(client, [staged]);
+    await vi.waitFor(() => expect(uploader.state(staged)).toBe('failed'));
+    uploader.start(client, [staged]);
+    await vi.waitFor(() => expect(uploader.state(staged)).toBe('uploaded'));
+    expect(seen).toEqual(['uploading', 'failed', 'uploading', 'uploaded']);
+
+    uploader.retain([]);
+    expect(uploader.state(staged)).toBeUndefined();
+    expect(seen.at(-1)).toBeUndefined();
+  });
+
   it('accepts a real phone JPEG whose EOI marker is followed by trailing bytes', () => {
     expect(trailingBytesAfterEoi(PHONE_JPEG_WITH_TRAILER)).toBeGreaterThan(0);
 

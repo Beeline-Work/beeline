@@ -690,6 +690,13 @@ export function BuzzChatSurface({
   // Staged photos and files start uploading as soon as they land in the
   // composer, so send only waits for whatever is still in flight.
   const [attachmentUploader] = useState(createChatAttachmentUploader);
+  // Each row shows its own upload state, so redraw whenever one changes.
+  const [, setAttachmentUploadRevision] = useState(0);
+  useEffect(
+    () =>
+      attachmentUploader.subscribe(() => setAttachmentUploadRevision((revision) => revision + 1)),
+    [attachmentUploader],
+  );
   useEffect(() => {
     attachmentUploader.retain(pendingAttachments);
     if (!transport || pendingAttachments.length === 0) return;
@@ -6310,6 +6317,7 @@ export function BuzzChatSurface({
                   name: attachment.name,
                   mimeType: attachment.mimeType,
                   sizeLabel: formatAttachmentSize(attachment.size),
+                  uploadState: attachmentUploader.state(attachment),
                 }))}
                 attachmentsUploading={sending}
                 onRemoveAttachment={(index) =>
@@ -6317,6 +6325,14 @@ export function BuzzChatSurface({
                     current.filter((_, attachmentIndex) => attachmentIndex !== index),
                   )
                 }
+                onRetryAttachment={(index) => {
+                  const attachment = pendingAttachments[index];
+                  if (!transport || !attachment) return;
+                  void transport
+                    .ensureClient()
+                    .then((client) => attachmentUploader.start(client, [attachment]))
+                    .catch(() => undefined);
+                }}
                 speechHints={speechHints}
                 value={inputText}
                 inputRevision={composerInputRevision}

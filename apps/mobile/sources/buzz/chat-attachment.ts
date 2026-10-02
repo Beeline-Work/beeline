@@ -252,16 +252,27 @@ export async function uploadChatAttachment(
   };
 }
 
+export type ChatAttachmentUploadState = 'uploading' | 'uploaded' | 'failed';
+
 /**
  * Starts each staged attachment's upload the moment it lands in the composer,
  * so send only waits for whatever is still in flight. Uploads run one at a time
  * in the order they were added, so a ten-photo pick never holds ten full
  * photos in memory. A failed upload is forgotten and retried by `uploadAll`,
  * including one that fails while send is waiting on it; a removed attachment
- * that has not started yet is skipped.
+ * that has not started yet is skipped. Each staged attachment's state is
+ * readable with `state` and announced through `subscribe`.
  */
 export function createChatAttachmentUploader() {
   const uploads = new Map<PickedChatAttachment, Promise<AttachmentReference>>();
+  const states = new Map<PickedChatAttachment, ChatAttachmentUploadState>();
+  const listeners = new Set<() => void>();
+  const setState = (attachment: PickedChatAttachment, state?: ChatAttachmentUploadState) => {
+    if (states.get(attachment) === state) return;
+    if (state) states.set(attachment, state);
+    else states.delete(attachment);
+    for (const listener of listeners) listener();
+  };
   let queue: Promise<unknown> = Promise.resolve();
   const start = (client: BuzzClient, attachment: PickedChatAttachment) => {
     const existing = uploads.get(attachment);
@@ -271,12 +282,32 @@ export function createChatAttachmentUploader() {
       return uploadChatAttachment(client, attachment);
     });
     uploads.set(attachment, upload);
+    setState(attachment, 'uploading');
+    upload.then(
+      () => {
+        if (uploads.get(attachment) === upload) setState(attachment, 'uploaded');
+      },
+      () => undefined,
+    );
     queue = upload.catch(() => {
-      if (uploads.get(attachment) === upload) uploads.delete(attachment);
+      if (uploads.get(attachment) !== upload) return;
+      uploads.delete(attachment);
+      setState(attachment, 'failed');
     });
     return upload;
   };
   return {
+    /** Uploading, uploaded or failed; undefined before the upload has started. */
+    state(attachment: PickedChatAttachment): ChatAttachmentUploadState | undefined {
+      return states.get(attachment);
+    },
+    /** Calls `listener` whenever any attachment's state changes. */
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
     /** Begins uploading every attachment not already uploading or uploaded. */
     start(client: BuzzClient, attachments: readonly PickedChatAttachment[]) {
       for (const attachment of attachments) void start(client, attachment).catch(() => undefined);
@@ -285,6 +316,8 @@ export function createChatAttachmentUploader() {
     retain(attachments: readonly PickedChatAttachment[]) {
       for (const attachment of uploads.keys())
         if (!attachments.includes(attachment)) uploads.delete(attachment);
+      for (const attachment of states.keys())
+        if (!attachments.includes(attachment)) setState(attachment);
     },
     /**
      * One message's uploaded references, in display order. An upload that was

@@ -297,6 +297,10 @@ describe('launchd supervision contract', () => {
     expect(broker.ProcessType).toBeUndefined();
     const environment = broker.EnvironmentVariables as Record<string, PlistValue>;
     expect(environment.TRUSTY_SQUIRE_BROKER_SOCKET).toBe(`${env.HOME}/.trusty-squire/broker.sock`);
+    const marker = JSON.parse(
+      await readFile(`${env.HOME}/.trusty-squire/.trusty-squire-broker-unit.json`, 'utf8'),
+    );
+    expect(marker.socket).toBe(`${env.HOME}/.trusty-squire/broker.sock`);
   });
 
   it('starts an already-loaded broker in place when its job is unchanged', async () => {

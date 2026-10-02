@@ -8,7 +8,16 @@
  * spawns the real `squire-facade` entry produced by the route rewrite.
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -18,6 +27,7 @@ import { rewriteHostMcpDeclaration } from './host-mcp-route.js';
 import {
   ensureSquireHostDir,
   SQUIRE_BROKER_FLAG,
+  SQUIRE_BROKER_UNIT_MARKER_FILE,
   SQUIRE_BROKER_ARGS,
   SQUIRE_BROKER_UNAVAILABLE,
   SQUIRE_SERVER_ARGS,
@@ -29,6 +39,7 @@ import {
   squireServerCommand,
   TRUSTY_SQUIRE_BROKER_UNIT_NAME,
   trustySquireBrokerUnit,
+  writeSquireBrokerUnitMarker,
 } from './squire-host.js';
 import { startFakeMcpBroker, stopFakeMcpBroker } from './squire-broker-link.test-support.js';
 
@@ -384,5 +395,31 @@ describe('façade launch and host binds', () => {
     expect(paths.brokerSocket).toBe(join(home, '.trusty-squire', 'broker.sock'));
     expect(squireHostBindPaths(home, true)).toEqual([paths.dir]);
     expect(squireHostBindPaths(home, false)).toEqual([]);
+  });
+});
+
+describe('managed broker marker', () => {
+  it('declares the host socket and the profile device anchor beside the profile', async () => {
+    const home = await scratch('beeline-squire-marker-');
+    const path = writeSquireBrokerUnitMarker(home);
+    const paths = squireHostPaths(home);
+    expect(path).toBe(join(paths.dir, SQUIRE_BROKER_UNIT_MARKER_FILE));
+    expect(lstatSync(path).mode & 0o777).toBe(0o600);
+    const parent = statSync(paths.dir);
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({
+      version: 1,
+      socket: paths.brokerSocket,
+      profile: { dev: parent.dev, ino: parent.ino, name: 'chrome-profile' },
+      accountBinding: null,
+    });
+  });
+
+  it('writes the marker in the canonical parent when the home is a symlink', async () => {
+    const real = await scratch('beeline-squire-marker-real-');
+    const link = join(await scratch('beeline-squire-marker-link-'), 'home');
+    symlinkSync(real, link);
+    const path = writeSquireBrokerUnitMarker(link);
+    expect(path).toBe(join(real, '.trusty-squire', SQUIRE_BROKER_UNIT_MARKER_FILE));
+    expect(JSON.parse(readFileSync(path, 'utf8')).socket).toBe(squireHostPaths(link).brokerSocket);
   });
 });

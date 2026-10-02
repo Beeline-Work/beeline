@@ -435,5 +435,9 @@ describe('trusty squire host broker unit', () => {
     const written = await readFile(systemdBrokerUnitPath({ XDG_CONFIG_HOME: root }), 'utf8');
     expect(written).toBe(trustySquireBrokerUnit());
     expect(written).not.toContain('PrivateTmp');
+    const marker = JSON.parse(
+      await readFile(join(home, '.trusty-squire', '.trusty-squire-broker-unit.json'), 'utf8'),
+    );
+    expect(marker.socket).toBe(join(home, '.trusty-squire', 'broker.sock'));
   });
 });

@@ -114,3 +114,34 @@ export function scrubberBubble(day: ScrubberDay): { date: string; detail: string
     detail: `${ledgerStamp(day.startsAt)} · ${who} · ${back}`,
   };
 }
+
+/** A scrubbed day's landing while native measures its way to the row. */
+export type ScrubLanding = {
+  messageId: string;
+  /** The furthest row native had measured at the last failed attempt. */
+  highestMeasured: number;
+  /** Failed attempts in a row that measured nothing further. */
+  stalls: number;
+  failures: number;
+};
+
+/** Failed attempts in a row, measuring nothing further, before a landing gives up. */
+export const SCRUB_LANDING_STALLS = 8;
+
+/**
+ * Whether a scrubbed landing should try again after `scrollToIndex` failed.
+ * A list without `getItemLayout` lays out content only as far as its furthest
+ * measured row, so a row hundreds back is reached about a batch of rows per
+ * attempt. The landing keeps going while attempts measure further, and stops
+ * only once they no longer do.
+ */
+export function continueScrubLanding(landing: ScrubLanding, highestMeasured: number): boolean {
+  landing.failures += 1;
+  if (highestMeasured > landing.highestMeasured) {
+    landing.highestMeasured = highestMeasured;
+    landing.stalls = 0;
+    return true;
+  }
+  landing.stalls += 1;
+  return landing.stalls <= SCRUB_LANDING_STALLS;
+}

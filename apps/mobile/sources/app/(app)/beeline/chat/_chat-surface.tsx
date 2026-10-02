@@ -324,6 +324,7 @@ import {
 import { useNewMessageControl } from '@/buzz/use-new-message-control';
 import { RoomCatchUpControls } from '@/components/buzz/RoomCatchUpControls';
 import { TranscriptScrubber } from '@/components/buzz/TranscriptScrubber';
+import { continueScrubLanding, type ScrubLanding } from '@/buzz/transcript-scrubber';
 import { useTranscriptScrubber } from '@/buzz/use-transcript-scrubber';
 import { RoomCatchUpSheet } from '@/components/buzz/RoomCatchUpSheet';
 import { buildCatchUpReport } from '@/buzz/room-catch-up-report';
@@ -6011,7 +6012,7 @@ export function BuzzChatSurface({
             }}
             onContentSizeChange={(_width, height) => transcriptScrubber.observeContentSize(height)}
             renderItem={renderItem}
-            onScrollToIndexFailed={({ averageItemLength }) => {
+            onScrollToIndexFailed={({ averageItemLength, highestMeasuredFrameIndex }) => {
               const notification = pendingNotificationLandingRef.current;
               if (notification && !userDraggingRef.current) {
                 const index = transcriptMessagesRef.current.findIndex(

@@ -264,9 +264,13 @@ export async function materializeCornerWorktree(input: {
     'user.email',
     `${input.committer.publicKey.slice(0, 16)}@users.noreply.github.com`,
   ]);
-  const top = await execFileAsync('git', ['-C', path, 'rev-parse', '--show-toplevel']);
-  if (resolve(top.stdout.trim()) !== resolve(path)) {
-    throw new Error(`corner worktree escaped its isolated root: ${top.stdout.trim()}`);
+  const top = (
+    await execFileAsync('git', ['-C', path, 'rev-parse', '--show-toplevel'])
+  ).stdout.trim();
+  // git reports the physical path. On macOS /var is /private/var, and a
+  // supervisor root reached through a symlink otherwise looks like an escape.
+  if ((await realpath(top)) !== (await realpath(path))) {
+    throw new Error(`corner worktree escaped its isolated root: ${top}`);
   }
   return { path, gitCommonDir };
 }

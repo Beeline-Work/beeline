@@ -9,6 +9,9 @@
 #                   still reports. The three-runner matrix runs only when
 #                   desktop code, packages/, or an unmapped path changes.
 #                   A sources/-only mobile PR does not build the shell.
+#                   `unmapped` uses `predicate-quantifier: every` in its own
+#                   step. The default `some` treats `**` as a match for every
+#                   file, so the matrix was starting on module-only diffs.
 #   workflow_dispatch — pick the variant; this is how a tester gets a build of
 #                   an arbitrary branch.
 #   workflow_call   — the unified release builds production installers before
@@ -119,14 +122,6 @@ jobs:
           filters: |
             packages:
               - 'packages/**'
-            unmapped:
-              - '**'
-              - '*'
-              - '!packages/**'
-              - '!apps/body/**'
-              - '!apps/push-gateway/**'
-              - '!apps/server/**'
-              - '!apps/mobile/**'
             desktopModule:
               - 'apps/mobile/src-tauri/**'
               - 'apps/mobile/package.json'
@@ -134,10 +129,24 @@ jobs:
               - 'apps/mobile/app.config.js'
               - 'apps/mobile/scripts/generate-tauri-icons.mjs'
               - 'apps/mobile/sources/assets/images/icon.png'
+      # Same latch as checks.yml: `every` is per file, and it must not apply
+      # to desktopModule, whose list is a union of paths.
+      - uses: dorny/paths-filter@v3
+        id: unmapped
+        with:
+          predicate-quantifier: every
+          filters: |
+            unmapped:
+              - '**'
+              - '!packages/**'
+              - '!apps/body/**'
+              - '!apps/push-gateway/**'
+              - '!apps/server/**'
+              - '!apps/mobile/**'
       - id: decide
         env:
           PACKAGES: ${{ steps.filter.outputs.packages }}
-          UNMAPPED: ${{ steps.filter.outputs.unmapped }}
+          UNMAPPED: ${{ steps.unmapped.outputs.unmapped }}
           DESKTOP_MODULE: ${{ steps.filter.outputs.desktopModule }}
         run: |
           set -euo pipefail

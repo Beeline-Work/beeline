@@ -783,6 +783,8 @@ export type AgentConfigurationResult = {
   readonly commands: readonly { readonly name: string; readonly description?: string }[];
   /** The agent "yolo" switch: grant requests are approved without asking. */
   readonly yoloMode: boolean;
+  /** Whether this agent holds the parent Room's reviewer post for this corner, by the exact predicate `approve_merge` enforces. */
+  readonly isReviewer: boolean;
   /** Live reviewer configured on a corner's parent Room; absent for self-review. */
   readonly reviewerHandle?: string;
   /** Connected Registry remotes mounted through the Body-owned credential broker. */

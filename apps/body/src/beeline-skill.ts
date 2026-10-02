@@ -8,23 +8,6 @@ export const BEELINE_REVIEW_SKILL_NAME = 'beeline-review';
 export const BEELINE_SPEC_SKILL_NAME = 'beeline-spec';
 
 /**
- * Whether THIS agent is the parent Room's configured reviewer, read from the
- * signals already plumbed to the daemon (`getAgentConfiguration`'s
- * `reviewerHandle` against the agent's own roster handle). Only a reviewer's
- * agent home carries the `beeline-review` skill (`agent-home.ts`).
- */
-export function isConfiguredReviewer(
-  agentHandle: string | undefined,
-  reviewerHandle: string | undefined,
-): boolean {
-  return Boolean(
-    agentHandle &&
-    reviewerHandle &&
-    agentHandle.replace(/^@/, '') === reviewerHandle.replace(/^@/, ''),
-  );
-}
-
-/**
  * Room mechanics a model looks up when it needs them. This list rides only in
  * the on-demand using-beeline skill, never in the always-on prompt: the rules
  * every turn needs live in `prompt-assembly.ts`, and each tool's own
@@ -202,7 +185,7 @@ Only the author may report final_authorization as passed, after pr_checks_status
 
 Then take exactly one action:
 
-- FAIL: reply \`@author\` with the confirmed findings to fix.
+- FAIL: call \`record_validation_stage\` with stage \`review\`, status \`failed\`, and the reviewed head SHA, then reply \`@author\` with the confirmed findings and that reviewed head SHA to fix. The recorded review stage is how an implementer who has already fixed the findings can tell whether the review is stale.
 - PASS: call \`approve_merge\` with the reviewed head SHA and assigned briefRevision (omit the revision only for a legacy corner without a brief), then reply \`approved <reviewed sha>\` without tagging the author. Do not tell the author to merge.
 - Approving is your last step as reviewer. The server squash-merges that exact head once checks are green, the worker's yolo is on, and no human hold stands. Neither you nor the author merges it.
 `;

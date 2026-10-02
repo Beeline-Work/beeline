@@ -35,11 +35,15 @@ async function activationFacts(agentId: string) {
   ]);
   const corner = corners.corners.find((entry) => entry.cornerId === C);
   return {
-    reviewerHandle: configuration.reviewerHandle,
+    isReviewer: configuration.isReviewer,
     openedBy: corner?.createdBy,
-    // `cornerReviewerInstruction` in apps/body refuses when either is missing,
-    // and `room-session` only sets BEELINE_CORNER_REVIEWER when it returns one.
-    reviewerSurface: Boolean(configuration.reviewerHandle) && corner?.createdBy !== agentId,
+    // `cornerReviewerInstruction` in apps/body refuses when the agent is not
+    // the gate's reviewer or opened the corner; only then is the reviewer
+    // instruction (and the beeline-review skill) delivered.
+    reviewerSurface: configuration.isReviewer && corner?.createdBy !== agentId,
+    // The reviewer who opened its own corner gets the self-review line, which
+    // the gate's `reviewerIsAuthor` path also treats as no separate PASS.
+    selfReviewer: configuration.isReviewer && corner?.createdBy === agentId,
   };
 }
 
@@ -92,6 +96,10 @@ afterAll(async () => db?.close());
 beforeEach(async () => {
   await db.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [C, IMPLEMENTER]);
   await db.query(`UPDATE rooms SET created_by=$2 WHERE id=$1`, [C, H]);
+  await db.query(
+    `UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`,
+    [R, REVIEWER],
+  );
   await phone.execute('updateRoom', { roomId: R, reviewerAgentId: REVIEWER }, H);
   await systemLine(db, {
     roomId: C,
@@ -118,9 +126,10 @@ describe('the turn a reconciled reviewer is woken into', () => {
     );
     expect(await reviewCommands()).toEqual([expect.objectContaining({ agentId: REVIEWER })]);
     await expect(activationFacts(REVIEWER)).resolves.toEqual({
-      reviewerHandle: 'hoots',
+      isReviewer: true,
       openedBy: IMPLEMENTER,
       reviewerSurface: true,
+      selfReviewer: false,
     });
   });
 
@@ -137,17 +146,43 @@ describe('the turn a reconciled reviewer is woken into', () => {
     const facts = await activationFacts(REVIEWER);
     expect(facts.openedBy).toBe(H);
     expect(facts.openedBy).not.toBe(REVIEWER);
-    expect(facts).toEqual({ reviewerHandle: 'hoots', openedBy: H, reviewerSurface: true });
+    expect(facts).toEqual({
+      isReviewer: true,
+      openedBy: H,
+      reviewerSurface: true,
+      selfReviewer: false,
+    });
   });
 
   it('agrees with the configuration query when the reviewer opened the corner itself', async () => {
     await db.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [C, REVIEWER]);
-    // Not a contradiction to fix: reviewing your own work is not reviewing, so
-    // both answers withhold the post and the agent gets a plain author's turn.
+    // Self-review is not review: the gate's `reviewerIsAuthor` path needs no
+    // separate PASS, so the body delivers the self-review line, never the
+    // reviewer instruction (and never mounts the beeline-review skill).
     await expect(activationFacts(REVIEWER)).resolves.toEqual({
-      reviewerHandle: undefined,
+      isReviewer: true,
       openedBy: REVIEWER,
       reviewerSurface: false,
+      selfReviewer: true,
     });
+  });
+
+  it('withholds the reviewer surface when the configured reviewer is not a parent member', async () => {
+    await db.query(
+      `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
+      [R, REVIEWER],
+    );
+    // `approve_merge` refuses this caller, so the instruction must never reach
+    // the reviewer's session: the two answers are one predicate.
+    await expect(
+      daemon.execute('getAgentConfiguration', { agentId: REVIEWER, roomId: C }, REVIEWER),
+    ).resolves.toMatchObject({ isReviewer: false });
+    await expect(
+      daemon.execute(
+        'approveCornerMerge',
+        { cornerId: C, headSha: HEAD, briefRevision: 1 },
+        REVIEWER,
+      ),
+    ).rejects.toThrow('configured reviewer');
   });
 });

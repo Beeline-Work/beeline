@@ -1,11 +1,18 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
-import { firstHealthyAgent, isConfiguredReviewer, nextHealthyAgent, roomAgentHealth } from './agent-health.js';
+import {
+  firstHealthyAgent,
+  isConfiguredReviewer,
+  isCornerReviewer,
+  nextHealthyAgent,
+  roomAgentHealth,
+} from './agent-health.js';
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000002';
 const ROOM = '20000000-0000-4000-8000-000000000002';
 const PARENT = '20000000-0000-4000-8000-000000000003';
+const CORNER = '20000000-0000-4000-8000-000000000004';
 const OWNER = 'a'.repeat(64);
 const AGENT_ONE = 'b'.repeat(64);
 const AGENT_TWO = 'c'.repeat(64);
@@ -215,5 +222,39 @@ describe('isConfiguredReviewer', () => {
 
   it('is false with no reviewer configured at all', async () => {
     expect(await isConfiguredReviewer(database, PARENT, AGENT_ONE)).toBe(false);
+  });
+});
+
+describe('isCornerReviewer', () => {
+  beforeEach(async () => {
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Corner')`,
+      [CORNER, WORKSPACE, PARENT, OWNER],
+    );
+  });
+
+  it('requires the reviewer to be a current parent member, not just configured', async () => {
+    await database.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [PARENT, AGENT_ONE]);
+    expect(await isCornerReviewer(database, CORNER, AGENT_ONE)).toBe(true);
+    expect(await isCornerReviewer(database, CORNER, AGENT_TWO)).toBe(false);
+    await database.query(
+      `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
+      [PARENT, AGENT_ONE],
+    );
+    expect(await isCornerReviewer(database, CORNER, AGENT_ONE)).toBe(false);
+  });
+
+  it('accepts a fallback reviewer only while it is a current parent member', async () => {
+    await database.query(`UPDATE rooms SET reviewer_agent_id=$2,reviewer_fallback_ids=$3 WHERE id=$1`, [
+      PARENT,
+      AGENT_ONE,
+      [AGENT_TWO],
+    ]);
+    expect(await isCornerReviewer(database, CORNER, AGENT_TWO)).toBe(true);
+    await database.query(
+      `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
+      [PARENT, AGENT_TWO],
+    );
+    expect(await isCornerReviewer(database, CORNER, AGENT_TWO)).toBe(false);
   });
 });

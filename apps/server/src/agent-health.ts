@@ -146,3 +146,34 @@ export async function isConfiguredReviewer(
   );
   return member.rowCount > 0;
 }
+
+/**
+ * The exact reviewer post `approve_merge` enforces for one corner: the parent
+ * Room's configured reviewer (or a current-member fallback) that is also a
+ * current member of the parent Room. It is the ONE predicate every reviewer
+ * surface uses — `approveCornerMerge`, the review validation stage, and the
+ * reviewer instruction `getAgentConfiguration.isReviewer` projects — so the
+ * instruction a reviewer receives can never name a PASS the gate refuses.
+ */
+export async function isCornerReviewer(
+  db: SqlDatabase,
+  cornerId: string,
+  agentId: string,
+): Promise<boolean> {
+  const row = (
+    await db.query<{ parent_room_id: string }>(
+      `SELECT parent.id parent_room_id FROM rooms corner
+       JOIN rooms parent ON parent.id=corner.parent_id WHERE corner.id=$1`,
+      [cornerId],
+    )
+  ).rows[0];
+  if (!row) return false;
+  if (!(await isConfiguredReviewer(db, row.parent_room_id, agentId))) return false;
+  const member = await db.query(
+    `SELECT 1 FROM memberships reviewer
+     JOIN identities identity ON identity.id=reviewer.identity_id AND identity.kind='agent'
+     WHERE reviewer.room_id=$1 AND reviewer.identity_id=$2 AND reviewer.removed_at IS NULL`,
+    [row.parent_room_id, agentId],
+  );
+  return member.rowCount > 0;
+}

@@ -11,7 +11,12 @@ import {
   type CommandRow,
 } from './agent-command.js';
 import { cornerImplementerSql } from './corner-worker.js';
-import { firstHealthyAgent, isConfiguredReviewer, nextHealthyAgent, reviewerList } from './agent-health.js';
+import {
+  firstHealthyAgent,
+  isCornerReviewer,
+  nextHealthyAgent,
+  reviewerList,
+} from './agent-health.js';
 import { CORNER_WORKFLOW_HANDOFF_CARD_TYPE } from './room-choice.js';
 import { ensureSystemIdentity, GITHUB_SUBJECT, systemLine, type SystemLineInput } from './system-line.js';
 import { WORKFLOW_HANDOFF_CARD_TYPE, workflowRunLockKey } from './workflow-runs.js';
@@ -851,7 +856,7 @@ export async function reassignFailedCornerReviewer(
     const run = await loadCornerWorkflowRunState(db, input.roomId);
     if (run?.toState !== 'review') return;
     if (await approvedCurrentHead(db, input.roomId, corner)) return;
-    if (!(await isConfiguredReviewer(db, corner.parent_id, input.agentId))) return;
+    if (!(await isCornerReviewer(db, input.roomId, input.agentId))) return;
     const next = await dispatchableListReviewer(
       db,
       input.roomId,
@@ -1145,13 +1150,9 @@ async function approvingReviewer(
   ).rows[0]?.approved_by;
   // The author on its own Room's reviewer list never approves its own work.
   if (!approvedBy || approvedBy === input.owner_agent_id) return undefined;
-  if (!(await isConfiguredReviewer(db, input.parent_id, approvedBy))) return undefined;
-  // A reviewer removed from the parent Room after its PASS no longer holds the post.
-  const member = await db.query(
-    `SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
-    [input.parent_id, approvedBy],
-  );
-  return member.rowCount ? approvedBy : undefined;
+  // The same predicate `approve_merge` enforces: a configured reviewer (or a
+  // current-member fallback) that is still a current member of the parent Room.
+  return (await isCornerReviewer(db, input.cornerId, approvedBy)) ? approvedBy : undefined;
 }
 
 /**

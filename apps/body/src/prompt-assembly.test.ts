@@ -277,8 +277,7 @@ describe('prompt assembly guards', () => {
       [
         'reviewer turn',
         cornerReviewerInstruction({
-          reviewerHandle: 'sol',
-          agentHandle: 'sol',
+          isReviewer: true,
           authorHandle: 'bee',
           openedByAgent: false,
           pullRequestNumber: 7,
@@ -289,8 +288,7 @@ describe('prompt assembly guards', () => {
       [
         'self reviewer',
         cornerSelfReviewerInstruction({
-          reviewerHandle: 'sol',
-          agentHandle: 'sol',
+          isReviewer: true,
           openedByAgent: true,
         })!,
       ],
@@ -305,6 +303,32 @@ describe('prompt assembly guards', () => {
     }
     expect(CORNER_YOLO_MERGE_NUDGE).toContain('the server merges this pull request itself');
     expect(CORNER_YOLO_MERGE_NUDGE).toContain('Never merge it yourself.');
+  });
+
+  it('asks the implementer only for the validation stages an implementer may record', () => {
+    const author = assembleSessionPrompt(SESSION_VARIANTS['code-corner-reviewed']!).systemPrompt;
+    expect(author).toContain(
+      'intent, base, tests, docs, lint_types, publication, ci, final_authorization',
+    );
+    expect(author).toContain('the configured reviewer records review');
+  });
+
+  it('records the reviewed head SHA in a FAIL verdict', () => {
+    const head = 'a'.repeat(40);
+    const instruction = cornerReviewerInstruction({
+      isReviewer: true,
+      authorHandle: 'bee',
+      openedByAgent: false,
+      pullRequestNumber: 7,
+      headSha: head,
+      briefRevision: 2,
+    })!;
+    expect(instruction).toContain('record_validation_stage');
+    expect(instruction).toContain('status "failed"');
+    expect(instruction).toContain('reviewed head');
+    const skill = beelineReviewSkillMarkdown('test');
+    expect(skill).toContain('record_validation_stage');
+    expect(skill).toContain('reviewed head SHA');
   });
 
   it('keeps Workbench tools out of corners, which do not have them', () => {

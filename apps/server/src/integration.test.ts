@@ -9324,6 +9324,45 @@ describe('monolith integration', () => {
         })
       ).status,
     ).toBe(200);
+    // An unambiguous short SHA resolves to the one head this corner can be
+    // recording against.
+    expect(
+      (
+        await daemonOperation('postCornerValidationStage', {
+          roomId: cornerId,
+          cornerId,
+          requestId: 'brief-stage-short-head',
+          briefRevision: 2,
+          headSha: reviewedHead.slice(0, 7),
+          stage: 'docs',
+          status: 'passed',
+          evidence: 'Documented the short-head path.',
+        })
+      ).status,
+    ).toBe(200);
+    const restored = (await (
+      await daemonOperation('getCornerRestoreState', { cornerId })
+    ).json()) as { validation: Array<{ stage: string; headSha: string; status: string }> };
+    expect(restored.validation.find((stage) => stage.stage === 'docs')).toMatchObject({
+      headSha: reviewedHead,
+      status: 'passed',
+    });
+    // A short SHA naming no head this corner has is refused, and the error
+    // says to pass the full SHA.
+    const badShort = await daemonOperation('postCornerValidationStage', {
+      roomId: cornerId,
+      cornerId,
+      requestId: 'brief-stage-bad-short-head',
+      briefRevision: 2,
+      headSha: 'deadbee',
+      stage: 'docs',
+      status: 'failed',
+      evidence: 'Wrong head.',
+    });
+    expect(badShort.status).not.toBe(200);
+    expect(await badShort.json()).toEqual({
+      error: expect.stringContaining('full 40-character SHA'),
+    });
     await database.query(
       `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`,
       [cornerId, '2'.repeat(40)],

@@ -476,6 +476,25 @@ describe('Room deck live path', () => {
     await act(async () => renderer.unmount());
   });
 
+  it('mounts a fresh card frame when a reorder changes its rounded edges', async () => {
+    deck.chatsResponse = listOf([room('room-a', 30), room('room-b', 20), room('room-c', 10)]);
+    const renderer = await mountDeck();
+    const list = renderer.root.find(
+      (node: { type: unknown; props: { testID?: string } }) =>
+        node.type === 'SectionList' && node.props.testID === 'room-list',
+    );
+    const data = paintedRows(renderer);
+    const frameKey = (index: number) => {
+      const cell = list.props.renderItem({ item: data[2], index, section: { data } });
+      return cell.props.children.props.children.key;
+    };
+
+    // room-c moving from last to first or middle must not reuse its clipped frame.
+    expect(new Set([frameKey(0), frameKey(1), frameKey(2)]).size).toBe(3);
+    expect(frameKey(1)).toBe(frameKey(1));
+    await act(async () => renderer.unmount());
+  });
+
   it('keeps its live watch when Rooms only change order', async () => {
     deck.chatsResponse = listOf([room('room-a', 20), room('room-b', 10)]);
     const renderer = await mountDeck();

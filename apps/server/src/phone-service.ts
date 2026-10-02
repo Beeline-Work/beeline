@@ -1273,7 +1273,12 @@ export class PhoneService {
       [workspaceId, viewerId, connectorIdentityIds()],
     );
     const roomIds = rooms.rows.map((room) => room.id);
-    const [presence, cursors, cornerStates] = await Promise.all([
+    // The Room's own corners, read once for both corner enrichments below.
+    const viewerCornersSql = `c.parent_id=ANY($1::uuid[]) AND c.archived_at IS NULL AND EXISTS (
+           SELECT 1 FROM memberships member WHERE member.room_id=c.id
+             AND member.identity_id=$2 AND member.removed_at IS NULL
+         )`;
+    const [presence, cursors, cornerStates, cornerOwed] = await Promise.all([
       this.optionalEnrichment(
         'chat-presence',
         this.enrichmentDatabase.query<{
@@ -1357,16 +1362,12 @@ export class PhoneService {
           commissioned_by_viewer: boolean | null;
           latest_tags_viewer: boolean | null;
           latest_created_at: Date | null;
-          owed: boolean;
-          owed_viewer: boolean;
-          attention: boolean;
         }>(
           `SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,f.workflow_state,f.workflow_outcome,
            turn.status latest_turn_status,
            initiator.id=$2 commissioned_by_viewer,
            $2=ANY(${taggedIdentityIdsSql('lm')}) latest_tags_viewer,
-           lm.created_at latest_created_at,
-           owed.owed,owed.owed_viewer,owed.attention
+           lm.created_at latest_created_at
          FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
          LEFT JOIN identities initiator
            ON initiator.id=f.commissioned_by AND initiator.kind='human'
@@ -1375,12 +1376,25 @@ export class PhoneService {
            SELECT status FROM agent_turns WHERE room_id=c.id
            ORDER BY created_at DESC LIMIT 1
          ) turn ON true
-         ${cornerOwedLateralSql('c', '$2')}
-         WHERE c.parent_id=ANY($1::uuid[]) AND c.archived_at IS NULL AND EXISTS (
-           SELECT 1 FROM memberships member WHERE member.room_id=c.id
-             AND member.identity_id=$2 AND member.removed_at IS NULL
-         )
+         WHERE ${viewerCornersSql}
          ORDER BY c.created_at DESC,c.id`,
+          [roomIds, viewerId],
+        ),
+      ),
+      // Owed facts read every recent message in every corner, so they get
+      // their own deadline: a slow one leaves corners waiting with no
+      // attention instead of dropping them from the deck.
+      this.optionalEnrichment(
+        'chat-corner-owed',
+        this.enrichmentDatabase.query<{
+          id: string;
+          owed: boolean;
+          owed_viewer: boolean;
+          attention: boolean;
+        }>(
+          `SELECT c.id,owed.owed,owed.owed_viewer,owed.attention FROM rooms c
+         ${cornerOwedLateralSql('c', '$2')}
+         WHERE ${viewerCornersSql}`,
           [roomIds, viewerId],
         ),
       ),
@@ -1388,7 +1402,10 @@ export class PhoneService {
     // A timed-out enrichment is unknown, not empty. Omitting its fields (and
     // naming unread, which old phones require) lets the phone keep what it
     // last knew instead of painting no corners and no unread dot.
-    const countsByRoom = cornerStates ? chatCornerCounts(cornerStates.rows) : undefined;
+    const owedByCorner = new Map(cornerOwed?.rows.map((row) => [row.id, row]) ?? []);
+    const countsByRoom = cornerStates
+      ? chatCornerCounts(cornerStates.rows.map((row) => ({ ...owedByCorner.get(row.id), ...row })))
+      : undefined;
     const unavailable = [
       ...(cursors ? [] : ['unread' as const]),
       ...(cornerStates ? [] : ['corners' as const]),

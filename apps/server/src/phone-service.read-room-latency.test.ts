@@ -383,8 +383,46 @@ describe('PhoneService.readRoom latency', () => {
     expect(view?.unavailable).toEqual(['unread', 'corners']);
     expect(room && 'cornerCount' in room).toBe(false);
     expect(room && 'openCorners' in room).toBe(false);
-    // Presence, read cursor, and corner counts each degrade independently.
-    expect(warning).toHaveBeenCalledTimes(3);
+    // Presence, read cursor, corner counts, and owed facts each degrade independently.
+    expect(warning).toHaveBeenCalledTimes(4);
+    warning.mockRestore();
+  });
+
+  it.each([
+    ['throws', () => Promise.reject(new Error('canceling statement due to statement timeout'))],
+    ['outlives its deadline', () => new Promise<never>(() => {})],
+  ])('keeps the Room list corners when the owed enrichment %s', async (_case, owedQuery) => {
+    const enrichmentDatabase: SqlDatabase = {
+      query: <Row extends QueryResultRow>(sql: string, values?: unknown[]) =>
+        sql.includes(' owed ON true')
+          ? (owedQuery() as Promise<QueryResult<Row>>)
+          : database.query<Row>(sql, values),
+      transaction: vi.fn(),
+    };
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const phone = new PhoneService(
+      database,
+      'https://server.usebeeline.app',
+      undefined,
+      undefined,
+      undefined,
+      false,
+      enrichmentDatabase,
+    );
+
+    const view = await phone.readChats(WORKSPACE, VIEWER);
+    const room = view?.chats.find((chat) => chat.room.id === ROOM);
+
+    expect(view?.unavailable).toBeUndefined();
+    expect(room?.cornerCount).toBe(30);
+    expect(room?.openCorners).toHaveLength(30);
+    // Unknown owed facts never read idle, and open no dropdown.
+    expect(room?.openCorners?.some((corner) => corner.state === 'idle')).toBe(false);
+    expect(room?.openCorners?.some((corner) => corner.attention)).toBe(false);
+    expect(warning).toHaveBeenCalledWith(
+      '[room-enrichment-degraded]',
+      expect.stringContaining('"enrichment":"chat-corner-owed"'),
+    );
     warning.mockRestore();
   });
 

@@ -113,6 +113,26 @@ describe('mobile transport cutover switch', () => {
     );
   });
 
+  it('passes the message search signal to the request so a changed query cancels it', async () => {
+    controls.enabled = true;
+    const workspaceId = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
+    const { monolithSession } = await import('@/auth/monolith-session');
+    vi.mocked(monolithSession.fetch).mockResolvedValueOnce(Response.json({ workspaceId, results: [] }));
+    const client = new RoomViewClient({
+      baseUrl: 'https://relay.example',
+      identity: { publicKey: 'a'.repeat(64), secretKey: new Uint8Array(32) },
+    });
+    const controller = new AbortController();
+    await expect(
+      client.searchMessages(workspaceId, 'gradle cache', undefined, controller.signal),
+    ).resolves.toEqual({ workspaceId, results: [] });
+    expect(vi.mocked(monolithSession.fetch)).toHaveBeenLastCalledWith(
+      `https://server.example/v1/phone/workspaces/${workspaceId}/search?q=gradle+cache`,
+      expect.objectContaining({ method: 'GET', signal: controller.signal }),
+      { timeoutMs: 15_000 },
+    );
+  });
+
   it('requests older agent work with the server cursor instead of repeating the first page', async () => {
     controls.enabled = true;
     const workspaceId = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';

@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
-import { messageSearchTerms, PhoneService } from './phone-service.js';
+import { MessageSearchTooBroadError, PhoneService } from './phone-service.js';
+import type { SqlDatabase } from './database.js';
 
 const VIEWER = 'a'.repeat(64);
 const SOL = 'b'.repeat(64);
@@ -85,7 +86,7 @@ describe('searchMessages', () => {
     });
     await message(ROOM, 'Nothing to see', '2026-09-03T10:00:00Z');
 
-    const view = await phone.searchMessages(WORKSPACE, VIEWER, 'andro bui');
+    const view = await phone.searchMessages(WORKSPACE, VIEWER, 'android buil');
 
     expect(view?.results.map((result) => result.messageId)).toEqual([newer, older]);
     expect(view?.nextBefore).toBeUndefined();
@@ -123,6 +124,38 @@ describe('searchMessages', () => {
     expect(view?.results.map((result) => result.messageId)).toEqual([visible]);
   });
 
+  it('never returns a match in a corner of a Room the viewer reads', async () => {
+    const room = await message(ROOM, 'gradle cache warmed', '2026-09-01T10:00:00Z');
+    await message(CORNER, 'gradle cache warmed', '2026-09-01T10:00:01Z');
+
+    const view = await phone.searchMessages(WORKSPACE, VIEWER, 'gradle');
+
+    expect(view?.results.map((result) => result.messageId)).toEqual([room]);
+  });
+
+  it('stops the read after 1.5 s and reports the query as too broad', async () => {
+    await message(ROOM, 'release proof', '2026-09-01T10:00:00Z');
+    const statements: string[] = [];
+    const transaction = database.transaction.bind(database);
+    vi.spyOn(database, 'transaction').mockImplementation((work) =>
+      transaction((inner) =>
+        work({
+          ...inner,
+          query: async (sql: string, values?: unknown[]) => {
+            statements.push(sql.trim().split('\n')[0]!);
+            if (sql.includes('search_query')) throw Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
+            return inner.query(sql, values);
+          },
+        } as SqlDatabase),
+      ),
+    );
+
+    await expect(phone.searchMessages(WORKSPACE, VIEWER, 'release')).rejects.toBeInstanceOf(
+      MessageSearchTooBroadError,
+    );
+    expect(statements).toEqual(["SET LOCAL statement_timeout='1500ms'", 'WITH search_query AS (']);
+  });
+
   it('skips deleted messages and rows that are not messages', async () => {
     const kept = await message(ROOM, 'deploy finished', '2026-09-01T10:00:00Z');
     await message(ROOM, 'deploy finished', '2026-09-01T10:00:01Z', { deleted: true });
@@ -158,11 +191,3 @@ describe('searchMessages', () => {
   });
 });
 
-describe('messageSearchTerms', () => {
-  it('turns every word into a quoted prefix term and drops punctuation', () => {
-    expect(messageSearchTerms("Android's  build!")).toBe("'android':* & 's':* & 'build':*");
-    expect(messageSearchTerms("x' | y:* & !z")).toBe("'x':* & 'y':* & 'z':*");
-    expect(messageSearchTerms('   ')).toBeNull();
-    expect(messageSearchTerms('a b c d e f g h i j')?.split(' & ')).toHaveLength(8);
-  });
-});

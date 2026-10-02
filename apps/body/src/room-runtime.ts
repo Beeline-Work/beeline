@@ -615,7 +615,6 @@ export class RoomRuntimeCoordinator {
       reconcileHeartbeatMs?: number;
       drainDeadlineMs?: number;
       daemonApi: DaemonApiClient;
-      onHiccupRestart?: (attempt: number) => void;
       onRestartRequested?: () => void;
       onConfigChanged?: () => void | Promise<void>;
     },
@@ -669,9 +668,6 @@ export class RoomRuntimeCoordinator {
       void Promise.resolve(this.options.onConfigChanged?.()).catch((error) =>
         console.error('[body] config-change catalog refresh failed', error),
       );
-    });
-    this.options.daemonApi.setHiccupRestartListener?.((attempt) => {
-      this.options.onHiccupRestart?.(attempt);
     });
     this.watchdogStaleMs = options.watchdogStaleMs ?? DEFAULT_ROOM_WATCHDOG_STALE_MS;
     this.reconcileHeartbeatMs = options.reconcileHeartbeatMs ?? defaultReconcileHeartbeatMs();

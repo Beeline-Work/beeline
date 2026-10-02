@@ -10,8 +10,6 @@ import { MAX_EVENT_CONSEQUENCE_LENGTH, SYSTEM_LINE_SEPARATOR } from './system-ev
 
 export const TURN_SILENCE_LINE_MAX = 200;
 export const HICCUP_ATTEMPT_LIMIT = 3;
-/** Backoff before restart N (1-indexed). Attempt 1 is immediate. */
-export const HICCUP_BACKOFF_MS = [0, 5_000, 20_000] as const;
 
 export const TURN_SILENCE_KINDS = [
   'hiccup',
@@ -209,7 +207,7 @@ export function shouldRestartHiccup(kind: TurnSilenceKind, nextAttempt: number):
 /**
  * A hiccup that has exhausted its restart budget AND still looks auth-shaped
  * is escalated to the authentication notice instead of the generic
- * "stopped restarting" line. The notice cannot infer whether a credential
+ * "stopped retrying" line. The notice cannot infer whether a credential
  * expired or a transient refresh race persisted. Only called once restarting is
  * over (`!shouldRestartHiccup(...)`); an auth-shaped fault mid-retry stays a
  * quiet hiccup so it never reports a standing failure prematurely.
@@ -239,11 +237,6 @@ export function shouldCompletePendingFailedCommand(kind: TurnSilenceKind, reason
   if (kind === 'hiccup' || kind === 'offline' || kind === 'update-interrupted') return false;
   if (kind === 'workspace-failure') return isStandingWorkspaceConfigurationFault(reason);
   return true;
-}
-
-export function hiccupBackoffMs(attempt: number): number {
-  const index = Math.max(1, attempt) - 1;
-  return HICCUP_BACKOFF_MS[Math.min(index, HICCUP_BACKOFF_MS.length - 1)] ?? 0;
 }
 
 function capLine(name: string, verb: string, consequence: string): TurnSilencePhrase {
@@ -316,10 +309,10 @@ export function phraseTurnSilence(
     case 'hiccup': {
       const fault = (classified.fault ?? 'the turn stalled').replace(/\s+/g, ' ').trim();
       const remedy = options.givingUp
-        ? 'Stopped restarting after three tries.'
+        ? 'Stopped retrying after three tries.'
         : options.restarting === false
           ? undefined
-          : 'Restarting the agent and resending your message.';
+          : 'Resending your message.';
       return capLine(agent, 'could not answer', remedy ? `${fault}. ${remedy}` : `${fault}.`);
     }
   }

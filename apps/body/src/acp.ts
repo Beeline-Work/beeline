@@ -102,6 +102,13 @@ export class AcpRequestTimeoutError extends Error {
   }
 }
 
+/** A prompt whose session produced nothing for its whole inactivity window. */
+export function isSilentPromptTimeout(error: unknown): boolean {
+  return (
+    error instanceof AcpRequestTimeoutError && error.inactivity && error.method === 'session/prompt'
+  );
+}
+
 function killChildProcessGroup(
   child: ChildProcessWithoutNullStreams,
   signal: NodeJS.Signals,

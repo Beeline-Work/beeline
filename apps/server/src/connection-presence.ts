@@ -48,7 +48,6 @@ export class ConnectionPresence {
   readonly #evidencePersistedAt = new Map<string, number>();
   readonly #authenticatedAt = new Map<string, number>();
   /** Last helper-process announce; a newer value than the stalled receipt means systemd already revived it. */
-  readonly #announcedAt = new Map<string, number>();
   readonly #observePending = new Set<string | undefined>();
   readonly #observeDebounces = new Map<string, ReturnType<typeof setTimeout>>();
   #observeWorker: Promise<void> | undefined;
@@ -106,7 +105,6 @@ export class ConnectionPresence {
     const lifecycleId = metadata.lifecycleId;
     if (!lifecycleId) return;
     if (this.#stopped) return;
-    this.#announcedAt.set(agentId, Date.now());
     await announceAgentLifecycle(this.database, this.live, roomId, agentId, {
       ...metadata,
       lifecycleId,
@@ -182,7 +180,6 @@ export class ConnectionPresence {
     this.#observeDebounces.clear();
     this.#observePending.clear();
     this.#authenticatedAt.clear();
-    this.#announcedAt.clear();
     for (const state of this.#evidence.values()) {
       if (state.timer) clearTimeout(state.timer);
       state.resume?.();
@@ -368,7 +365,6 @@ export class ConnectionPresence {
       agentId: delivery.agent_id,
       reason: "the helper isn't running",
       reasonKind: 'offline',
-      liveRestart: true,
     }).catch(this.report);
   }
 
@@ -455,7 +451,6 @@ export class ConnectionPresence {
       });
       return;
     }
-    const announcedAt = this.#announcedAt.get(turn.agent_id) ?? 0;
     await noteFirstSilence(this.database, this.live, {
       roomId: turn.room_id,
       requestId: turn.request_id,
@@ -463,8 +458,7 @@ export class ConnectionPresence {
       generationId: current.generation_id,
       reason: 'the turn stalled',
       reasonKind: 'hiccup',
-      liveRestart: true,
-      helperAlreadyRestarted: announcedAt > current.created_at.getTime(),
+      stalled: true,
     });
   }
 }

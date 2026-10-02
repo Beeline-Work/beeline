@@ -76,7 +76,6 @@ export type LiveEvent =
       messageId?: string;
       requestId?: string;
       operation?: string;
-      hiccupAttempt?: number;
       /** Parent Room when this invalidate names a corner membership. */
       parentRoomId?: string;
       /** The agent that opened that corner, as the corner's own facts record it. */

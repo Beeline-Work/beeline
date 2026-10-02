@@ -33,8 +33,7 @@ export function agentServiceUnit(): string {
 Description=Beeline agent %i
 After=network-online.target
 Wants=network-online.target
-StartLimitIntervalSec=5min
-StartLimitBurst=10
+StartLimitIntervalSec=0
 
 [Service]
 Type=notify
@@ -49,6 +48,10 @@ RestartMaxDelaySec=60s
 RestartPreventExitStatus=${DAEMON_DISTRESS_EXIT_STATUS} ${DELIBERATE_REMOVAL_EXIT_STATUS} ${UNKNOWN_AGENT_EXIT_STATUS}
 SuccessExitStatus=${UNKNOWN_AGENT_EXIT_STATUS}
 WatchdogSec=180s
+CPUWeight=1000
+IOWeight=1000
+Nice=-5
+OOMScoreAdjust=-1000
 TimeoutStartSec=90s
 TimeoutStopSec=90s
 KillMode=control-group

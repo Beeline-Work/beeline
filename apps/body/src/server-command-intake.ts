@@ -141,8 +141,15 @@ export async function runServerCommandIntake(options: {
   let stopped = false;
   const pending = new Map(first.commands.map((command) => [command.id, command]));
   const claimed = new Set<string>();
+  // The server may requeue a command this helper is still running (a stalled
+  // turn it failed). Hold that snapshot until the local run ends, then claim it
+  // again in this same process.
+  const requeued = new Map<string, AgentCommand>();
   const notify = (commands: readonly AgentCommand[] = []) => {
-    for (const command of commands) if (!claimed.has(command.id)) pending.set(command.id, command);
+    for (const command of commands) {
+      if (claimed.has(command.id)) requeued.set(command.id, command);
+      else pending.set(command.id, command);
+    }
     wake?.(false);
   };
   const requestReconciliation = () => {
@@ -237,14 +244,16 @@ export async function runServerCommandIntake(options: {
           busy = options
             .run(command)
             .catch((error) => {
-              claimed.delete(command.id);
               options.onError?.(error);
             })
             .finally(async () => {
               options.onLeave?.(command);
               await context.leave();
+              claimed.delete(command.id);
+              const again = requeued.get(command.id);
+              requeued.delete(command.id);
               busy = undefined;
-              notify();
+              notify(again ? [again] : []);
             });
         }
       }

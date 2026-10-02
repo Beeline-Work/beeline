@@ -46,6 +46,8 @@ async function runTurn(options: {
   agentHomeRoot: string;
   /** Every daemon write the turn made, in order. */
   writes: string[];
+  /** Harness sessions opened across every turn. */
+  sessionsOpened: number;
 }> {
   const root = await mkdtemp(join(tmpdir(), 'beeline-room-failure-'));
   roots.push(root);
@@ -141,7 +143,7 @@ async function runTurn(options: {
   });
   const acp = new AcpClient({ agentBinary: options.agentCommand, agentEnv: {} });
   vi.spyOn(acp, 'start').mockResolvedValue(undefined);
-  vi.spyOn(acp, 'sessionNew').mockResolvedValue({
+  const sessionNew = vi.spyOn(acp, 'sessionNew').mockResolvedValue({
     sessionId: 'room-session',
     raw: options.advertisedModel
       ? {
@@ -197,7 +199,16 @@ async function runTurn(options: {
   abort.abort();
   await running.catch(() => undefined);
   await scheduler.dispose();
-  return { receipts, posted, attempts, promptTimeouts, agentHomeRoot, writes, cornerOpens };
+  return {
+    receipts,
+    posted,
+    attempts,
+    promptTimeouts,
+    agentHomeRoot,
+    writes,
+    cornerOpens,
+    sessionsOpened: sessionNew.mock.calls.length,
+  };
 }
 
 /** The turn's writes to the live lane and the transcript, in order. */
@@ -528,6 +539,32 @@ describe('Room turn failure receipt', () => {
     expect(receipts).not.toContainEqual(expect.objectContaining({ status: 'complete' }));
     expect(posted).toEqual([]);
     expect(cornerOpens).toBe(0);
+  });
+
+  it('stops a session silent for the whole window and answers the next turn in a fresh one', async () => {
+    const { receipts, posted, promptTimeouts, sessionsOpened } = await runTurn({
+      agentCommand: '/fake-agent',
+      agentKind: 'codex',
+      turnCount: 2,
+      prompt: async ({ attempt }) => {
+        if (attempt === 1)
+          throw new AcpRequestTimeoutError(
+            'session/prompt',
+            ROOM_PROMPT_INACTIVITY_TIMEOUT_MS,
+            '',
+            true,
+          );
+        return { stopReason: 'end_turn', updates: [], agentText: 'Back again.', toolCalls: [] };
+      },
+    });
+
+    expect(promptTimeouts).toEqual([180_000, 180_000]);
+    expect(receipts.filter((receipt) => receipt.status !== 'working')).toEqual([
+      expect.objectContaining({ requestId: 'ask-1', status: 'failed' }),
+      expect.objectContaining({ requestId: 'ask-2', status: 'complete' }),
+    ]);
+    expect(posted).toEqual([expect.objectContaining({ text: 'Back again.' })]);
+    expect(sessionsOpened).toBe(2);
   });
 
   it('allows a Room model three minutes of inactivity before timing out', async () => {

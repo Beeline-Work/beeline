@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   type ClassifiedTurnSilence,
   classifyTurnSilence,
-  hiccupBackoffMs,
   HICCUP_ATTEMPT_LIMIT,
   phraseTurnSilence,
   shouldCompletePendingFailedCommand,
@@ -115,7 +114,7 @@ describe('turn silence phrasing', () => {
       phraseTurnSilence('Candy', { kind: 'update-interrupted' }),
     ];
     expect(lines.map((line) => `Candy ${line.verb} · ${line.consequence}`)).toEqual([
-      'Candy could not answer · the turn stalled. Restarting the agent and resending your message.',
+      'Candy could not answer · the turn stalled. Resending your message.',
       "Candy could not answer · the selected model isn't available. Pick another in the agent's settings.",
       'Candy could not answer · the provider allowance is spent until Sep 19th, 2026 4:09 AM. Top up, or move the agent to another provider.',
       "Candy could not answer · the helper could not authenticate with the provider. Check its log for the failed turn; if its login expired, run `beeline connect` on the helper's machine.",
@@ -164,7 +163,7 @@ describe('turn silence phrasing', () => {
         { kind: 'hiccup', fault: 'ACP agent exited (code 1)' },
         { givingUp: true },
       ).consequence,
-    ).toBe('ACP agent exited (code 1). Stopped restarting after three tries.');
+    ).toBe('ACP agent exited (code 1). Stopped retrying after three tries.');
   });
 
   it('does not promise a helper restart when none was authorized', () => {
@@ -212,7 +211,5 @@ describe('hiccup restart budget', () => {
     expect(shouldRestartHiccup('allowance-spent', 1)).toBe(false);
     expect(shouldRestartHiccup('not-signed-in', 1)).toBe(false);
     expect(shouldRestartHiccup('workspace-failure', 1)).toBe(false);
-    expect(hiccupBackoffMs(1)).toBe(0);
-    expect(hiccupBackoffMs(2)).toBe(5_000);
   });
 });

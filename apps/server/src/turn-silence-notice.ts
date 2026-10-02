@@ -1,7 +1,8 @@
 /**
  * First silence after a delivered message: one durable Room line, and for a
- * hiccup only, reopen the original command so the recovered helper answers
- * without another human request.
+ * hiccup only, reopen the original command so the helper answers it again
+ * without another human request. Only that one turn is failed or requeued; the
+ * helper process is never told to exit.
  *
  * Triggered from the failed receipt and from ConnectionPresence's existing
  * 90-second demotion / stalled-working-turn timers — never a poll.
@@ -50,10 +51,8 @@ export async function noteFirstSilence(
     readonly generationId?: string | null;
     readonly reason?: string | null;
     readonly reasonKind?: string;
-    /** Receipt path: the helper already has WriteResult.hiccupRestart. */
-    readonly liveRestart?: boolean;
-    /** Skip live restart when a new helper process already announced. */
-    readonly helperAlreadyRestarted?: boolean;
+    /** Presence stall timer: no receipt wrapper completes an exhausted command. */
+    readonly stalled?: boolean;
   },
 ): Promise<TurnSilenceOutcome> {
   // Independent of the human-trigger notice below: a workflow dispatch's
@@ -102,8 +101,7 @@ async function inscribeSilence(
     readonly generationId?: string | null;
     readonly reason?: string | null;
     readonly reasonKind?: string;
-    readonly liveRestart?: boolean;
-    readonly helperAlreadyRestarted?: boolean;
+    readonly stalled?: boolean;
   },
   agentName: string,
 ): Promise<TurnSilenceOutcome> {
@@ -206,16 +204,6 @@ async function inscribeSilence(
       attempt,
     );
     hiccupRestart = reopened;
-    if (reopened && input.liveRestart && !input.helperAlreadyRestarted) {
-      live.publish({
-        type: 'invalidate',
-        roomId: input.roomId,
-        reason: 'hiccup-restart',
-        targetAgentId: input.agentId,
-        agentId: input.agentId,
-        hiccupAttempt: attempt,
-      });
-    }
   } else if (classified.kind === 'update-interrupted' && command) {
     // Presence may have already reopened this exact command while the helper
     // was installing. Its generation-free receipt still replaces the generic
@@ -245,7 +233,7 @@ async function inscribeSilence(
     classified.kind === 'hiccup' &&
     !restart &&
     command?.state === 'claimed' &&
-    input.liveRestart
+    input.stalled
   ) {
     // Stall path has no execute wrapper to complete the exhausted command.
     await database.query(

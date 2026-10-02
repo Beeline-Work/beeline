@@ -31,7 +31,6 @@ export class ThinDaemonCore {
       reconcileHeartbeatMs?: number;
       drainDeadlineMs?: number;
       daemonApi: DaemonApiClient;
-      onHiccupRestart?: (attempt: number) => void;
       onRestartRequested?: () => void;
       onConfigChanged?: () => void | Promise<void>;
     },
@@ -89,6 +88,17 @@ export class ThinDaemonCore {
   }
   setDrainDeadlineAt(deadlineAt: number): void {
     this.roomRuntime.setDrainDeadlineAt(deadlineAt);
+  }
+  /**
+   * `/restart` cancels active work instead of draining it: shutdown reaches its
+   * deadline at once and force-cancels every busy session. Returns whether any
+   * turn was running.
+   */
+  async cancelActiveWorkForRestart(): Promise<boolean> {
+    this.roomRuntime.setDrainDeadlineAt(Date.now());
+    if (this.roomRuntime.quiesceForUpdateIfIdle()) return false;
+    await this.roomRuntime.prepareForForcedUpdateRestart();
+    return true;
   }
 
   async run(

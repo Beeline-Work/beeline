@@ -94,7 +94,7 @@ describe('first-silence notice', () => {
     );
     expect(result).toMatchObject({ hiccupRestart: true, hiccupAttempt: 1 });
     expect(await failureLine(database, requestId)).toEqual({
-      text: '@candy could not answer · provider error 429 concurrency_limit. Restarting the agent and resending your message.',
+      text: '@candy could not answer · provider error 429 concurrency_limit. Resending your message.',
       silence: 'hiccup',
       state: 'failed',
     });
@@ -351,7 +351,7 @@ describe('first-silence notice', () => {
       }
     }
     expect(await failureLine(database, requestId)).toEqual({
-      text: '@candy could not answer · ACP agent exited (code 1). Stopped restarting after three tries.',
+      text: '@candy could not answer · ACP agent exited (code 1). Stopped retrying after three tries.',
       silence: 'hiccup',
       state: 'failed',
     });
@@ -418,7 +418,7 @@ describe('first-silence notice', () => {
       AGENT,
     );
     expect(await failureLine(database, requestId)).toMatchObject({
-      text: '@candy could not answer · the model ended its turn with no text (stop reason end_turn). Restarting the agent and resending your message.',
+      text: '@candy could not answer · the model ended its turn with no text (stop reason end_turn). Resending your message.',
       state: 'failed',
     });
   });
@@ -522,11 +522,9 @@ describe('90-second first silence from presence', () => {
       sourceMessageId: requestId,
       reason: 'human_tag',
     });
-    const restarts: number[] = [];
+    const toHelper: string[] = [];
     live.subscribeAll((event) => {
-      if (event.type === 'invalidate' && event.reason === 'hiccup-restart') {
-        restarts.push(event.hiccupAttempt ?? 0);
-      }
+      if (event.type === 'invalidate' && event.targetAgentId === AGENT) toHelper.push(event.reason);
     });
     await presence.observe(ROOM);
     await vi.advanceTimersByTimeAsync(100);
@@ -536,11 +534,33 @@ describe('90-second first silence from presence', () => {
       hiccup_attempts: 0,
       generation_id: null,
     });
-    expect(restarts).toEqual([]);
+    expect(toHelper.every((reason) => reason === 'postgres:agent_commands')).toBe(true);
   });
 
-  it('restarts a stalled working turn once and reopens the original command', async () => {
+  it('fails only the stalled turn: another Room keeps its turn and the helper is never told to exit', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const otherRoom = '33333333-3333-4333-8333-333333333333';
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Other')`, [
+      otherRoom,
+      WORKSPACE,
+    ]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+      [WORKSPACE, otherRoom, HUMAN, AGENT],
+    );
+    const otherRequest = '9'.repeat(64);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@candy keep going')`,
+      [otherRequest, otherRoom, HUMAN],
+    );
+    const otherCommand = (await createAgentCommand(database, {
+      roomId: otherRoom,
+      agentId: AGENT,
+      sourceMessageId: otherRequest,
+      reason: 'human_tag',
+    }))!;
+    await claimAgentCommand(database, otherRoom, AGENT, otherCommand.id, 'g-other');
+
     const requestId = 'd'.repeat(64);
     const command = await ask(database, requestId);
     const turn: CommittedTurnLiveRow = (
@@ -550,11 +570,10 @@ describe('90-second first silence from presence', () => {
         [ROOM, requestId],
       )
     ).rows[0]!;
-    const restarts: number[] = [];
+    const toHelper: Array<{ roomId: string; reason: string }> = [];
     live.subscribeAll((event) => {
-      if (event.type === 'invalidate' && event.reason === 'hiccup-restart') {
-        restarts.push(event.hiccupAttempt ?? 0);
-      }
+      if (event.type === 'invalidate' && event.targetAgentId === AGENT)
+        toHelper.push({ roomId: event.roomId, reason: event.reason });
     });
     live.publish({
       type: 'invalidate',
@@ -569,7 +588,7 @@ describe('90-second first silence from presence', () => {
       expect(await failureLine(database, requestId)).toBeTruthy();
     });
     expect(await failureLine(database, requestId)).toEqual({
-      text: '@candy could not answer · the turn stalled. Restarting the agent and resending your message.',
+      text: '@candy could not answer · the turn stalled. Resending your message.',
       silence: 'hiccup',
       state: 'failed',
     });
@@ -578,7 +597,21 @@ describe('90-second first silence from presence', () => {
       hiccup_attempts: 1,
       generation_id: null,
     });
-    expect(restarts).toEqual([1]);
+    // The only thing the helper hears is the requeued command for this Room.
+    expect(toHelper).toEqual([{ roomId: ROOM, reason: 'postgres:agent_commands' }]);
+    expect(await commandState(database, otherCommand.id)).toEqual({
+      state: 'claimed',
+      hiccup_attempts: 0,
+      generation_id: 'g-other',
+    });
+    expect(
+      (
+        await database.query<{ status: string }>(
+          `SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+          [otherRoom, otherRequest, AGENT],
+        )
+      ).rows[0]?.status,
+    ).toBe('working');
   });
 
   it('lets a silent long-running turn heartbeat past the deadline and publish exactly one reply', async () => {
@@ -759,12 +792,6 @@ describe('silence detector ownership', () => {
     const requestId = 'f'.repeat(64);
     const command = await ask(database, requestId);
     const live = new LiveHub();
-    const liveRestarts: number[] = [];
-    live.subscribeAll((event) => {
-      if (event.type === 'invalidate' && event.reason === 'hiccup-restart') {
-        liveRestarts.push(event.hiccupAttempt ?? 0);
-      }
-    });
     const outcomes = await Promise.all([
       noteFirstSilence(database, live, {
         roomId: ROOM,
@@ -773,7 +800,6 @@ describe('silence detector ownership', () => {
         generationId: 'g1',
         reason: 'the turn stalled',
         reasonKind: 'hiccup',
-        liveRestart: false,
       }),
       noteFirstSilence(database, live, {
         roomId: ROOM,
@@ -782,7 +808,7 @@ describe('silence detector ownership', () => {
         generationId: 'g1',
         reason: 'the turn stalled',
         reasonKind: 'hiccup',
-        liveRestart: true,
+        stalled: true,
       }),
     ]);
     expect(outcomes.filter((outcome) => outcome.hiccupRestart)).toHaveLength(1);
@@ -792,7 +818,6 @@ describe('silence detector ownership', () => {
       hiccup_attempts: 1,
       generation_id: null,
     });
-    expect(liveRestarts.length).toBeLessThanOrEqual(1);
   });
 
   it('does not reopen a completed command when a stale stall detector finishes', async () => {
@@ -813,7 +838,7 @@ describe('silence detector ownership', () => {
       generationId: 'g1',
       reason: 'the turn stalled',
       reasonKind: 'hiccup',
-      liveRestart: true,
+      stalled: true,
     });
 
     expect(outcome.hiccupRestart).toBe(false);
@@ -849,7 +874,7 @@ describe('silence detector ownership', () => {
       generationId: 'g1',
       reason: 'the turn stalled',
       reasonKind: 'hiccup',
-      liveRestart: true,
+      stalled: true,
     });
 
     expect(outcome.hiccupRestart).toBe(false);

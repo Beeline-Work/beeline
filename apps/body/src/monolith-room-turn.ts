@@ -17,6 +17,7 @@ import {
   AcpClient,
   AcpRequestTimeoutError,
   isPureRetryNarration,
+  isSilentPromptTimeout,
   type AcpPermissionDecision,
   type AcpPermissionRequest,
   type McpServerWire,
@@ -1794,6 +1795,9 @@ export class MonolithRoomTurnLoop {
         void finishTrace('complete').catch(() => undefined);
         return;
       }
+      // A silent session is wedged. Stop it so it no longer holds this Room;
+      // the next turn here opens a fresh one in this same process.
+      if (isSilentPromptTimeout(error)) await this.discardSession().catch(() => undefined);
       // A failed turn ends owning no live output. Only `settle` dissolves the
       // draft on the way out and a throw never reaches one, so without this the
       // last snapshot the model streamed stays live under a turn the Room has

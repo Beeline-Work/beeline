@@ -54,6 +54,8 @@ import {
 import { RoomDeckLoadingView } from '@/components/buzz/RoomDeckLoadingView';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { RoomListToolbar } from '@/components/buzz/RoomListToolbar';
+import { MessageSearchResults } from '@/components/buzz/MessageSearchResults';
+import { messageSearchHref, useMessageSearch } from '@/buzz/use-message-search';
 import { WorkspaceActionsMenu } from '@/components/buzz/WorkspaceActionsMenu';
 import { WelcomeCards } from '@/components/buzz/WelcomeCards';
 import { Typography } from '@/constants/Typography';
@@ -270,6 +272,17 @@ export default function BuzzChannels() {
   useEffect(() => {
     setQuery('');
   }, [activeCommunityId]);
+  const searchClient = useMemo(
+    () => (identity && relayUrl ? new RoomViewClient({ baseUrl: relayUrl, identity }) : null),
+    [identity, relayUrl],
+  );
+  const messageSearch = useMessageSearch(
+    searchClient
+      ? (workspaceId, text, before) => searchClient.searchMessages(workspaceId, text, before)
+      : null,
+    activeCommunityId,
+    query,
+  );
 
   useEffect(() => {
     if (
@@ -1049,8 +1062,18 @@ export default function BuzzChannels() {
             renderSectionHeader={({ section }) =>
               section.title ? <RoomListSectionHeader title={section.title} /> : null
             }
+            ListFooterComponent={
+              <MessageSearchResults
+                search={messageSearch}
+                now={ageNow}
+                onOpen={(result) => {
+                  if (activeCommunityId)
+                    router.push(messageSearchHref(result, activeCommunityId) as Href);
+                }}
+              />
+            }
             ListEmptyComponent={
-              filter === 'pinned' && !query.trim() ? (
+              messageSearch.status !== 'unavailable' ? null : filter === 'pinned' && !query.trim() ? (
                 <PinnedConversationsEmpty onShowAll={() => setFilter('all')} />
               ) : query || filter !== 'all' ? (
                 <NoMatchingConversationsEmpty

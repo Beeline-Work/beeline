@@ -37,6 +37,8 @@ import type {
   CornerListView,
   CornerLifecycleView,
   InviteView,
+  MessageSearchSnippetPart,
+  MessageSearchView,
   RoomLiveDelta,
   RoomHistoryOutline,
   RoomHistoryView,
@@ -428,6 +430,30 @@ function messageId(): string {
 }
 function unix(date: Date): number {
   return Math.floor(date.getTime() / 1_000);
+}
+const MESSAGE_SEARCH_PAGE = 20;
+/** A query of more words than this is cut to its first ones. */
+const MESSAGE_SEARCH_MAX_TERMS = 8;
+// \x01/\x02 are stripped from the text before ts_headline marks matches with them.
+const MESSAGE_SEARCH_HEADLINE_OPTIONS =
+  'StartSel="\x01", StopSel="\x02", MaxWords=30, MinWords=20, ShortWord=0';
+/**
+ * Every word of a typed query as a quoted prefix term, ANDed, so "andro bui"
+ * finds "Android build" while it is still being typed. Null when the query
+ * holds no word at all.
+ */
+export function messageSearchTerms(query: string): string | null {
+  const words = query.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu)?.slice(0, MESSAGE_SEARCH_MAX_TERMS);
+  return words?.length ? words.map((word) => `'${word}':*`).join(' & ') : null;
+}
+function messageSearchSnippet(headline: string): MessageSearchSnippetPart[] {
+  const parts: MessageSearchSnippetPart[] = [];
+  for (const piece of headline.replace(/\s+/g, ' ').trim().split(/(\x01[^\x02]*\x02)/)) {
+    if (!piece) continue;
+    const match = piece.startsWith('\x01');
+    parts.push({ text: match ? piece.slice(1, -1) : piece, match });
+  }
+  return parts;
 }
 function messageOrder(left: RoomViewMessage, right: RoomViewMessage): number {
   return (
@@ -1894,6 +1920,88 @@ export class PhoneService {
       );
     }
     return view;
+  }
+
+  /**
+   * The Room list's message search: every word of `query` is matched as a
+   * prefix against `messages.search_document` (its GIN index does the lookup),
+   * across the Rooms and direct messages the viewer's Room list shows in this
+   * Workspace. Corners, archived Rooms, Rooms the viewer left, and deleted or
+   * non-message rows are never searched. Newest first, a page at a time;
+   * `before` is the previous page's last message id.
+   */
+  async searchMessages(
+    workspaceId: string,
+    viewerId: string,
+    query: string,
+    before?: string,
+  ): Promise<MessageSearchView | null> {
+    const workspace = await this.database.query(
+      `SELECT 1 FROM memberships
+       WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL`,
+      [workspaceId, viewerId],
+    );
+    if (!workspace.rowCount) return null;
+    const terms = messageSearchTerms(query);
+    if (!terms) return { workspaceId, results: [] };
+    const rows = (
+      await this.database.query<{
+        id: string;
+        room_id: string;
+        room_name: string;
+        direct_message: boolean;
+        author_name: string;
+        created_at: Date;
+        headline: string;
+      }>(
+        `WITH search_query AS (
+           SELECT to_tsquery('simple',$3) query
+         ), readable AS (
+           SELECT room.id FROM rooms room
+           JOIN memberships member ON member.room_id=room.id AND member.identity_id=$2
+             AND member.removed_at IS NULL
+           WHERE room.workspace_id=$1 AND room.parent_id IS NULL AND room.archived_at IS NULL
+         ), cursor AS (
+           SELECT created_at,id FROM messages WHERE id=$4
+         ), matches AS (
+           SELECT message.id,message.room_id,message.author_id,message.text,message.created_at
+           FROM search_query
+           JOIN messages message ON message.search_document @@ search_query.query
+           WHERE message.room_id IN (SELECT id FROM readable)
+             AND message.deleted_at IS NULL AND message.presentation='message'
+             AND ($4::text IS NULL OR (message.created_at,message.id) < (SELECT created_at,id FROM cursor))
+           ORDER BY message.created_at DESC,message.id DESC
+           LIMIT ${MESSAGE_SEARCH_PAGE + 1}
+         )
+         SELECT matches.id,matches.room_id,matches.created_at,
+           COALESCE(jsonb_typeof(room.direct_participants)='array',false) direct_message,
+           COALESCE(peer.handle,peer.name,room.name) room_name,author.name author_name,
+           ts_headline('simple',translate(matches.text,E'\\x01\\x02',''),search_query.query,$5) headline
+         FROM matches
+         CROSS JOIN search_query
+         JOIN rooms room ON room.id=matches.room_id
+         JOIN identities author ON author.id=matches.author_id
+         LEFT JOIN identities peer ON jsonb_typeof(room.direct_participants)='array'
+           AND peer.id=(SELECT participant FROM jsonb_array_elements_text(room.direct_participants) participant
+                        WHERE participant<>$2 LIMIT 1)
+         ORDER BY matches.created_at DESC,matches.id DESC`,
+        [workspaceId, viewerId, terms, before ?? null, MESSAGE_SEARCH_HEADLINE_OPTIONS],
+      )
+    ).rows;
+    const page = rows.slice(0, MESSAGE_SEARCH_PAGE);
+    return {
+      workspaceId,
+      results: page.map((row) => ({
+        messageId: row.id,
+        roomId: row.room_id,
+        roomName: row.room_name,
+        directMessage: row.direct_message,
+        authorName: row.author_name,
+        createdAt: unix(row.created_at),
+        snippet: messageSearchSnippet(row.headline),
+      })),
+      ...(rows.length > MESSAGE_SEARCH_PAGE ? { nextBefore: page.at(-1)!.id } : {}),
+    };
   }
 
   async readHistory(

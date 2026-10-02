@@ -32,6 +32,9 @@ import {
   type GrantRequestCardView,
   type InviteView,
   type MessageReactionView,
+  type MessageSearchResult,
+  type MessageSearchSnippetPart,
+  type MessageSearchView,
   type RoomHistoryOutline,
   type RoomHistoryOutlineDay,
   type RoomHistoryView,
@@ -1544,6 +1547,53 @@ export function readRoomHistoryView(value: unknown): RoomHistoryView | null {
 
 export function isRoomHistoryView(value: unknown): value is RoomHistoryView {
   return readRoomHistoryView(value) !== null;
+}
+
+/** A Room list search page holds at most this many results. */
+const MESSAGE_SEARCH_RESULT_LIMIT = 50;
+
+function readMessageSearchSnippetPart(value: unknown): MessageSearchSnippetPart | null {
+  const item = record(value);
+  if (!item || typeof item.text !== 'string' || typeof item.match !== 'boolean') return null;
+  return { text: item.text, match: item.match };
+}
+
+function readMessageSearchResult(value: unknown): MessageSearchResult | null {
+  const item = record(value);
+  if (
+    !item ||
+    !nonempty(item.messageId) ||
+    !uuid(item.roomId) ||
+    typeof item.roomName !== 'string' ||
+    typeof item.directMessage !== 'boolean' ||
+    typeof item.authorName !== 'string' ||
+    !integer(item.createdAt) ||
+    !Array.isArray(item.snippet)
+  )
+    return null;
+  const snippet = readList(item.snippet, readMessageSearchSnippetPart) ?? [];
+  if (snippet.length !== item.snippet.length) return null;
+  return {
+    messageId: item.messageId,
+    roomId: item.roomId,
+    roomName: item.roomName,
+    directMessage: item.directMessage,
+    authorName: item.authorName,
+    createdAt: item.createdAt,
+    snippet,
+  };
+}
+
+export function readMessageSearchView(value: unknown): MessageSearchView | null {
+  const item = record(value);
+  if (!item || !uuid(item.workspaceId) || !Array.isArray(item.results)) return null;
+  if (item.nextBefore !== undefined && !nonempty(item.nextBefore)) return null;
+  const results = readList(item.results, readMessageSearchResult, MESSAGE_SEARCH_RESULT_LIMIT) ?? [];
+  return {
+    workspaceId: item.workspaceId,
+    results,
+    ...field('nextBefore', item.nextBefore as string | undefined),
+  };
 }
 
 const OUTLINE_DAY = /^\d{4}-\d{2}-\d{2}$/;

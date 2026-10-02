@@ -14,6 +14,7 @@ import {
 } from './phone-service.js';
 import { DAEMON_OPERATION_NAMES, type DaemonService } from './daemon-service.js';
 import { ARTIFACT_MAXIMUM_BYTES } from '@beeline/api-contract/daemon';
+import { MESSAGE_SEARCH_QUERY_MAX_BYTES } from '@beeline/api-contract/phone';
 import type { LiveEvent, LiveHub, LiveTrace } from './live.js';
 import type { ReviewAccess } from './review-access.js';
 import type { ReleaseNotifier } from './release-notify.js';
@@ -1564,6 +1565,31 @@ async function route(
   match = url.pathname.match(/^\/v1\/phone\/workspaces\/([0-9a-f-]+)\/chats$/);
   if (method === 'GET' && match) {
     const result = await options.phone.readChats(match[1]!, identityId!);
+    json(response, result ? 200 : 404, result ?? { error: 'not_found' });
+    return;
+  }
+  match = url.pathname.match(/^\/v1\/phone\/workspaces\/([0-9a-f-]+)\/search$/);
+  if (method === 'GET' && match) {
+    if (!readLimits.search.admit(identityId!)) {
+      json(response, 429, { error: 'too_many_requests' });
+      return;
+    }
+    const query = (url.searchParams.get('q') ?? '').trim();
+    const before = url.searchParams.get('before');
+    if (!query || Buffer.byteLength(query, 'utf8') > MESSAGE_SEARCH_QUERY_MAX_BYTES) {
+      json(response, 400, { error: 'invalid_query' });
+      return;
+    }
+    if (before !== null && !/^[0-9a-f]{64}$/.test(before)) {
+      json(response, 400, { error: 'invalid_cursor' });
+      return;
+    }
+    const result = await options.phone.searchMessages(
+      match[1]!,
+      identityId!,
+      query,
+      before ?? undefined,
+    );
     json(response, result ? 200 : 404, result ?? { error: 'not_found' });
     return;
   }

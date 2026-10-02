@@ -32,6 +32,8 @@ import { DesktopWorkspaceStrip } from '@/components/buzz/DesktopWorkspaceStrip';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { RoomListToolbar } from '@/components/buzz/RoomListToolbar';
+import { MessageSearchResults } from '@/components/buzz/MessageSearchResults';
+import { messageSearchHref, useMessageSearch } from '@/buzz/use-message-search';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { WorkspaceActionsMenu } from '@/components/buzz/WorkspaceActionsMenu';
 import { BuzzRigTransport } from '@/sync/transport';
@@ -337,6 +339,11 @@ export const SidebarView = React.memo(function SidebarView() {
   const filteredChats = React.useMemo(
     () => filterConversations(surface?.chats ?? [], query, filter, pinned),
     [query, filter, pinned, surface?.chats],
+  );
+  const messageSearch = useMessageSearch(
+    client ? (id, text, before) => client.searchMessages(id, text, before) : null,
+    workspaceId,
+    query,
   );
   const filteredChatSections = React.useMemo(
     () => roomListSections(filteredChats),
@@ -728,6 +735,13 @@ export const SidebarView = React.memo(function SidebarView() {
                 </React.Fragment>
               ))
             )}
+            <MessageSearchResults
+              search={messageSearch}
+              now={Date.now()}
+              onOpen={(result) => {
+                if (workspaceId) router.push(messageSearchHref(result, workspaceId) as Href);
+              }}
+            />
           </ScrollView>
           {!showWorkspaceStrip && (
             <Pressable

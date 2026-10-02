@@ -1,0 +1,811 @@
+import React, { useMemo, useState } from 'react';
+import { Pressable, ScrollView, Text, View } from 'react-native';
+import Svg, { Circle, Line, Path } from 'react-native-svg';
+import { StyleSheet } from 'react-native-unistyles';
+import type {
+  WorkflowContract,
+  WorkflowOpenedCornerView,
+  WorkflowRunDetailView,
+} from '@beeline/api-contract/phone';
+import {
+  workflowRunLine,
+  workflowStateLabel,
+  type WorkflowLineStatus,
+  type WorkflowLineStep,
+  type WorkflowLineVisit,
+} from '@/buzz/workflow-graph';
+import {
+  deliveredFields,
+  formatRunDuration,
+  outcomeLabel,
+  stateRole,
+  stepSeconds,
+  visitSeconds,
+  workflowStepMeta,
+} from '@/buzz/workflow-run-copy';
+import { CORNER_META_SIZE, CornerGlyph } from './CornerGlyph';
+import { DECORATIVE_GLYPH_PROPS } from './decorative-glyph';
+import { HullLivePulse } from './MonoHull';
+
+const CIRCLE = 20;
+const STRIP_CIRCLE = 14;
+const ATTEMPT_CIRCLE = 16;
+const HALO = 32;
+/** The circle's top within a step row, and the line's x (the circle's centre). */
+const CIRCLE_TOP = 12;
+const LINE_X = 28;
+
+const CLOCK = new Intl.DateTimeFormat(undefined, {
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+});
+const clock = (at: number) => CLOCK.format(new Date(at * 1_000));
+
+/** The status in words, for a screen reader: the circle's shape and tone say it to the eye. */
+const STATUS_WORD: Record<WorkflowLineStatus, string> = {
+  done: 'done',
+  current: 'current step',
+  pending: 'not yet reached',
+  skipped: 'skipped',
+  failed: 'failed',
+};
+
+const reached = (step: WorkflowLineStep) =>
+  step.status === 'done' || step.status === 'current' || step.status === 'failed';
+
+type SegmentTone = 'brass' | 'quiet' | 'dashed';
+
+/** Brass where the run went, dashed past a skipped step, quiet ahead. */
+function segmentTone(above: WorkflowLineStep, below: WorkflowLineStep): SegmentTone {
+  if (above.status === 'skipped' || below.status === 'skipped') return 'dashed';
+  return reached(above) && reached(below) ? 'brass' : 'quiet';
+}
+
+/** One step's circle: brass check, breathing brass ring, hollow, ghost slash, or ink x. */
+export function WorkflowStepCircle({
+  status,
+  size = CIRCLE,
+  testID,
+}: {
+  status: WorkflowLineStatus;
+  size?: number;
+  testID?: string;
+}) {
+  const { brass, ground, hollow, ghost, ink } = palette();
+  return (
+    <Svg
+      {...DECORATIVE_GLYPH_PROPS}
+      height={size}
+      testID={testID}
+      viewBox="0 0 20 20"
+      width={size}
+    >
+      {status === 'done' ? (
+        <>
+          <Circle cx={10} cy={10} fill={brass} r={9} />
+          <Path
+            d="M6 10.2l2.6 2.6L14 7.4"
+            fill="none"
+            stroke={ground}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2.2}
+          />
+        </>
+      ) : status === 'current' ? (
+        <>
+          <Circle cx={10} cy={10} fill={ground} r={8.25} stroke={brass} strokeWidth={1.5} />
+          <Circle cx={10} cy={10} fill={brass} r={4} />
+        </>
+      ) : status === 'skipped' ? (
+        <>
+          <Circle
+            cx={10}
+            cy={10}
+            fill={ground}
+            r={8}
+            stroke={ghost}
+            strokeDasharray="2.5 2.2"
+            strokeWidth={1.5}
+          />
+          <Path d="M6.5 13.5l7-7" stroke={ghost} strokeLinecap="round" strokeWidth={1.5} />
+        </>
+      ) : status === 'failed' ? (
+        <>
+          <Circle cx={10} cy={10} fill={ground} r={8.25} stroke={ink} strokeWidth={1.5} />
+          <Path d="M7 7l6 6M13 7l-6 6" stroke={ink} strokeLinecap="round" strokeWidth={1.6} />
+        </>
+      ) : (
+        <Circle cx={10} cy={10} fill={ground} r={8} stroke={hollow} strokeWidth={1.5} />
+      )}
+    </Svg>
+  );
+}
+
+function palette() {
+  return {
+    brass: styles.brass.color,
+    quiet: styles.quietLine.color,
+    ground: styles.ground.color,
+    hollow: styles.hollow.color,
+    ghost: styles.ghost.color,
+    ink: styles.ink.color,
+  };
+}
+
+/** A 2pt piece of the line: solid brass or quiet, or a dashed ghost past a skip. */
+function Segment({
+  tone,
+  vertical,
+  style,
+  testID,
+}: {
+  tone: SegmentTone;
+  vertical: boolean;
+  style: object;
+  testID?: string;
+}) {
+  const { brass, quiet, ghost } = palette();
+  if (tone !== 'dashed')
+    return (
+      <View
+        style={[style, { backgroundColor: tone === 'brass' ? brass : quiet }]}
+        testID={testID ? `${testID}-${tone}` : undefined}
+      />
+    );
+  return (
+    <View style={style} testID={testID ? `${testID}-dashed` : undefined}>
+      <Svg {...DECORATIVE_GLYPH_PROPS} height="100%" width="100%">
+        <Line
+          stroke={ghost}
+          strokeDasharray="3 4"
+          strokeWidth={2}
+          x1={vertical ? 1 : 0}
+          x2={vertical ? 1 : '100%'}
+          y1={vertical ? 0 : 1}
+          y2={vertical ? '100%' : 1}
+        />
+      </Svg>
+    </View>
+  );
+}
+
+/** The run at a glance: the same circles in a row, each with its label. */
+export function WorkflowRunOverview({
+  line,
+  testID = 'workflow-run-overview',
+}: {
+  line: readonly WorkflowLineStep[];
+  testID?: string;
+}) {
+  return (
+    <ScrollView
+      contentContainerStyle={styles.strip}
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      testID={testID}
+    >
+      {line.map((step, index) => (
+        <View key={step.state} style={styles.stripNode} testID={`${testID}-${step.state}`}>
+          {index > 0 ? (
+            <Segment style={styles.stripLeft} tone={segmentTone(line[index - 1]!, step)} vertical={false} />
+          ) : null}
+          {index < line.length - 1 ? (
+            <Segment style={styles.stripRight} tone={segmentTone(step, line[index + 1]!)} vertical={false} />
+          ) : null}
+          <WorkflowStepCircle size={STRIP_CIRCLE} status={step.status} />
+          <Text numberOfLines={1} style={[styles.stripLabel, stripTone(step.status)]}>
+            {workflowStateLabel(step.state)}
+          </Text>
+        </View>
+      ))}
+    </ScrollView>
+  );
+}
+
+function stripTone(status: WorkflowLineStatus) {
+  if (status === 'current') return styles.brass;
+  if (status === 'skipped') return styles.ghost;
+  if (status === 'pending') return styles.quiet;
+  return styles.secondary;
+}
+
+/**
+ * The run page's steps (mock v12): one straight line of circles, a row per
+ * step with its name, one meta line and its duration. Tapping a step opens its
+ * readout in place. Nothing here acts on the run; a gate shows the answer it
+ * got, and a step that opened corners links to them.
+ */
+export function WorkflowRunLine({
+  detail,
+  now,
+  onOpenCorner,
+  testID = 'workflow-run-line',
+}: {
+  detail: WorkflowRunDetailView;
+  now: number;
+  onOpenCorner: (corner: WorkflowOpenedCornerView) => void;
+  testID?: string;
+}) {
+  const line = useMemo(
+    () => workflowRunLine(detail.contract, detail.history),
+    [detail.contract, detail.history],
+  );
+  const [open, setOpen] = useState<ReadonlySet<string>>(
+    () => new Set(line.filter((step) => step.status === 'current').map((step) => step.state)),
+  );
+  const toggle = (state: string) =>
+    setOpen((previous) => {
+      const next = new Set(previous);
+      if (next.has(state)) next.delete(state);
+      else next.add(state);
+      return next;
+    });
+  return (
+    <View testID={testID}>
+      {line.map((step, index) => (
+        <StepRow
+          above={index > 0 ? segmentTone(line[index - 1]!, step) : undefined}
+          below={index < line.length - 1 ? segmentTone(step, line[index + 1]!) : undefined}
+          detail={detail}
+          expanded={open.has(step.state)}
+          key={step.state}
+          now={now}
+          onOpenCorner={onOpenCorner}
+          onToggle={() => toggle(step.state)}
+          step={step}
+          testID={`${testID}-step-${step.state}`}
+        />
+      ))}
+    </View>
+  );
+}
+
+/** Skipped steps and terminals carry nothing more than their row says. */
+function expandable(step: WorkflowLineStep): boolean {
+  return step.status !== 'skipped' && step.kind !== 'terminal';
+}
+
+function StepRow({
+  step,
+  detail,
+  now,
+  above,
+  below,
+  expanded,
+  onToggle,
+  onOpenCorner,
+  testID,
+}: {
+  step: WorkflowLineStep;
+  detail: WorkflowRunDetailView;
+  now: number;
+  above?: SegmentTone;
+  below?: SegmentTone;
+  expanded: boolean;
+  onToggle: () => void;
+  onOpenCorner: (corner: WorkflowOpenedCornerView) => void;
+  testID: string;
+}) {
+  const meta = workflowStepMeta(step, {
+    contract: detail.contract,
+    roleHolders: detail.roleHolders,
+    run: detail.run,
+    history: detail.history,
+  });
+  const name = workflowStateLabel(step.state);
+  const seconds = step.kind === 'terminal' ? undefined : stepSeconds(step, now);
+  const reachedAt = step.kind === 'terminal' ? step.visits[0]?.enteredAt : undefined;
+  const canOpen = expandable(step);
+  const current = step.status === 'current';
+  const muted = step.status === 'skipped' ? styles.ghost : step.status === 'pending' ? styles.quiet : null;
+  const summary = (
+    <>
+      {current ? (
+        <HullLivePulse style={styles.halo}>
+          <View style={styles.haloRing} testID={`${testID}-halo`} />
+        </HullLivePulse>
+      ) : null}
+      <View style={styles.circle}>
+        <WorkflowStepCircle status={step.status} testID={`${testID}-circle-${step.status}`} />
+      </View>
+      <View style={styles.copy}>
+        <Text numberOfLines={1} style={[current ? styles.nameCurrent : styles.name, muted]}>
+          {name}
+          {step.visits.length > 1 ? <Text style={styles.times}>{`  ×${step.visits.length}`}</Text> : null}
+        </Text>
+        <Text
+          numberOfLines={1}
+          style={[styles.meta, current && styles.brass, step.status === 'skipped' && styles.ghost]}
+          testID={`${testID}-meta`}
+        >
+          {meta}
+        </Text>
+      </View>
+      <View style={styles.right}>
+        {seconds !== undefined ? (
+          <Text style={styles.duration}>{formatRunDuration(seconds)}</Text>
+        ) : reachedAt !== undefined ? (
+          <Text style={styles.duration}>{clock(reachedAt)}</Text>
+        ) : null}
+        {canOpen ? <Chevron open={expanded} /> : null}
+      </View>
+    </>
+  );
+  return (
+    <View style={styles.step} testID={testID}>
+      {above ? <Segment style={styles.lineAbove} testID={`${testID}-above`} tone={above} vertical /> : null}
+      {below ? <Segment style={styles.lineBelow} testID={`${testID}-below`} tone={below} vertical /> : null}
+      {canOpen ? (
+        <Pressable
+          accessibilityLabel={`${name}, ${STATUS_WORD[step.status]}${meta ? `, ${meta}` : ''}`}
+          accessibilityRole="button"
+          accessibilityState={{ expanded }}
+          onPress={onToggle}
+          style={({ pressed }) => [styles.summary, pressed && styles.pressed]}
+          testID={`${testID}-toggle`}
+        >
+          {summary}
+        </Pressable>
+      ) : (
+        <View
+          accessibilityLabel={`${name}, ${STATUS_WORD[step.status]}${meta ? `, ${meta}` : ''}`}
+          accessible
+          style={styles.summary}
+        >
+          {summary}
+        </View>
+      )}
+      {canOpen && expanded ? (
+        <View style={styles.readout} testID={`${testID}-readout`}>
+          <StepReadout
+            detail={detail}
+            now={now}
+            onOpenCorner={onOpenCorner}
+            step={step}
+            testID={testID}
+          />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <Svg
+      {...DECORATIVE_GLYPH_PROPS}
+      height={12}
+      style={open ? styles.chevronOpen : undefined}
+      viewBox="0 0 12 12"
+      width={12}
+    >
+      <Path
+        d="M4.5 2.5L8 6l-3.5 3.5"
+        fill="none"
+        stroke={styles.ghost.color}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.5}
+      />
+    </Svg>
+  );
+}
+
+type ReadoutLine = { key: string; value: React.ReactNode; items?: readonly string[] };
+
+/** Numbered machine lines on a quiet 2pt rule, the way a run log reads. */
+function Readout({ lines, testID }: { lines: readonly ReadoutLine[]; testID?: string }) {
+  return (
+    <View style={styles.rule} testID={testID}>
+      {lines.map((line, index) => (
+        <View key={`${line.key}:${index}`}>
+          <View style={styles.line}>
+            <Text style={styles.lineIndex}>{index + 1}</Text>
+            <Text style={styles.lineKey}>{line.key}</Text>
+            <Text style={styles.lineValue}>{line.value}</Text>
+          </View>
+          {line.items?.length ? (
+            <View style={styles.items}>
+              {line.items.map((item, itemIndex) => (
+                <View key={itemIndex} style={styles.item}>
+                  <Text style={styles.itemIndex}>{itemIndex + 1}</Text>
+                  <Text style={styles.itemText}>{item}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+const Brass = ({ children }: { children: React.ReactNode }) => (
+  <Text style={styles.brass}>{children}</Text>
+);
+const Ghost = ({ children }: { children: React.ReactNode }) => (
+  <Text style={styles.ghost}>{children}</Text>
+);
+
+function roleLine(contract: WorkflowContract, step: WorkflowLineStep, detail: WorkflowRunDetailView) {
+  const role = stateRole(contract, step.state);
+  if (!role) return [];
+  return [{ key: 'role', value: `${role} · ${detail.roleHolders[role]?.name ?? 'unassigned'}` }];
+}
+
+/** The outcomes a step can still leave by: `then approved → Land`, `or changes → Implement · 0 of 3`. */
+function outcomeLines(step: WorkflowLineStep, contract: WorkflowContract): ReadoutLine[] {
+  const declared = contract.handoffs[step.state];
+  if (!declared || declared.kind === 'terminal' || declared.kind === 'waiting') return [];
+  const loop = 'loop' in declared ? declared.loop : undefined;
+  return Object.entries(declared.on).map(([outcome, target], index) => ({
+    key: index === 0 ? 'then' : 'or',
+    value: (
+      <>
+        <Brass>{outcome}</Brass> → {workflowStateLabel(target)}
+        {loop && loop.onEdge === outcome ? (
+          <Ghost>{` · ${step.loop?.taken ?? 0} of ${loop.cap}`}</Ghost>
+        ) : null}
+      </>
+    ),
+  }));
+}
+
+/** The gate's card as it was settled: question, options, and who chose what when. */
+function gateLines(
+  visit: WorkflowLineVisit,
+  detail: WorkflowRunDetailView,
+  open: boolean,
+): ReadoutLine[] {
+  const gate = visit.gate;
+  const waitingOn = detail.run.viewerHolds ? 'you' : `a person in ${detail.run.roomName}`;
+  if (!gate)
+    return visit.outcome !== undefined
+      ? [{ key: 'answer', value: <Brass>{visit.outcome}</Brass> }]
+      : open
+        ? [{ key: 'answer', value: <Ghost>{`waiting on ${waitingOn}`}</Ghost> }]
+        : [];
+  const lines: ReadoutLine[] = [
+    { key: 'asked', value: gate.question },
+    ...gate.options.map((option) => ({
+      key: `option ${option.letter}`,
+      value: (
+        <>
+          {option.label}
+          <Ghost>{` · ${option.consequence}`}</Ghost>
+        </>
+      ),
+    })),
+  ];
+  if (gate.answer !== undefined)
+    lines.push({
+      key: 'answer',
+      value: (
+        <>
+          <Brass>{gate.answer}</Brass>
+          {gate.answeredBy ? ` · ${gate.answeredBy.name}` : ''}
+          {gate.answeredAt !== undefined ? ` · ${clock(gate.answeredAt)}` : ''}
+        </>
+      ),
+    });
+  else if (gate.status === 'open')
+    lines.push({ key: 'answer', value: <Ghost>{`waiting on ${waitingOn}`}</Ghost> });
+  else lines.push({ key: 'answer', value: <Ghost>{gate.status}</Ghost> });
+  return lines;
+}
+
+function deliveredLines(visit: WorkflowLineVisit): ReadoutLine[] {
+  if (!visit.delivered) return [];
+  return deliveredFields(visit.delivered).map((field) => ({
+    key: 'delivered',
+    value: (
+      <>
+        {field.field}
+        {field.count !== undefined ? <Ghost>{` · ${field.count || 'none'}`}</Ghost> : null}
+      </>
+    ),
+    items: field.items,
+  }));
+}
+
+/** One visit's lines: when it was entered and left, how, and what it handed off. */
+function visitLines(
+  step: WorkflowLineStep,
+  visit: WorkflowLineVisit,
+  detail: WorkflowRunDetailView,
+  options: { withRole: boolean },
+): ReadoutLine[] {
+  const open = visit.leftAt === undefined && step.status === 'current';
+  return [
+    ...(options.withRole ? roleLine(detail.contract, step, detail) : []),
+    { key: 'entered', value: clock(visit.enteredAt) },
+    ...(visit.leftAt !== undefined
+      ? [
+          {
+            key: 'left',
+            value: (
+              <>
+                {clock(visit.leftAt)}
+                {visit.outcome !== undefined ? (
+                  <>
+                    {' · '}
+                    <Brass>{visit.outcome}</Brass>
+                  </>
+                ) : null}
+                {visit.nextState ? ` → ${workflowStateLabel(visit.nextState)}` : ''}
+              </>
+            ),
+          },
+        ]
+      : []),
+    ...(step.kind === 'gate' ? gateLines(visit, detail, open) : []),
+    ...deliveredLines(visit),
+    ...(open && step.kind !== 'gate' ? outcomeLines(step, detail.contract) : []),
+  ];
+}
+
+function OpenedCorners({
+  corners,
+  onOpenCorner,
+  testID,
+}: {
+  corners: readonly WorkflowOpenedCornerView[];
+  onOpenCorner: (corner: WorkflowOpenedCornerView) => void;
+  testID: string;
+}) {
+  return (
+    <View style={styles.corners} testID={`${testID}-corners`}>
+      <Text style={styles.cornersHead}>Opened</Text>
+      {corners.map((corner) => (
+        <Pressable
+          accessibilityLabel={`Open corner ${corner.name}`}
+          accessibilityRole="link"
+          key={corner.id}
+          onPress={() => onOpenCorner(corner)}
+          style={({ pressed }) => [styles.cornerLink, pressed && styles.pressed]}
+          testID={`workflow-run-corner-${corner.id}`}
+        >
+          <CornerGlyph size={CORNER_META_SIZE} />
+          <Text numberOfLines={1} style={styles.cornerName}>
+            {corner.name}
+          </Text>
+          <Text style={styles.cornerArrow}>→</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+function VisitBody({
+  step,
+  visit,
+  detail,
+  withRole,
+  onOpenCorner,
+  testID,
+}: {
+  step: WorkflowLineStep;
+  visit: WorkflowLineVisit;
+  detail: WorkflowRunDetailView;
+  withRole: boolean;
+  onOpenCorner: (corner: WorkflowOpenedCornerView) => void;
+  testID: string;
+}) {
+  return (
+    <>
+      <Readout lines={visitLines(step, visit, detail, { withRole })} />
+      {visit.openedCorners?.length ? (
+        <OpenedCorners corners={visit.openedCorners} onOpenCorner={onOpenCorner} testID={testID} />
+      ) : null}
+    </>
+  );
+}
+
+function StepReadout({
+  step,
+  detail,
+  now,
+  onOpenCorner,
+  testID,
+}: {
+  step: WorkflowLineStep;
+  detail: WorkflowRunDetailView;
+  now: number;
+  onOpenCorner: (corner: WorkflowOpenedCornerView) => void;
+  testID: string;
+}) {
+  if (step.visits.length === 0) {
+    const declared = detail.contract.handoffs[step.state];
+    const requires = declared && 'requires' in declared ? declared.requires : [];
+    return (
+      <Readout
+        lines={[
+          ...roleLine(detail.contract, step, detail),
+          {
+            key: 'delivers',
+            value: requires.length > 0 ? requires.join(', ') : <Ghost>nothing</Ghost>,
+          },
+          ...outcomeLines(step, detail.contract),
+        ]}
+      />
+    );
+  }
+  if (step.visits.length === 1)
+    return (
+      <VisitBody
+        detail={detail}
+        onOpenCorner={onOpenCorner}
+        step={step}
+        testID={testID}
+        visit={step.visits[0]!}
+        withRole
+      />
+    );
+  return <Attempts detail={detail} now={now} onOpenCorner={onOpenCorner} step={step} testID={testID} />;
+}
+
+/** A step the run entered more than once: each attempt, newest first, opens like a step. */
+function Attempts({
+  step,
+  detail,
+  now,
+  onOpenCorner,
+  testID,
+}: {
+  step: WorkflowLineStep;
+  detail: WorkflowRunDetailView;
+  now: number;
+  onOpenCorner: (corner: WorkflowOpenedCornerView) => void;
+  testID: string;
+}) {
+  const count = step.visits.length;
+  const [open, setOpen] = useState<number | null>(count);
+  const attempts = step.visits.map((visit, index) => ({ visit, number: index + 1 })).reverse();
+  const role = roleLine(detail.contract, step, detail);
+  return (
+    <View>
+      {role.length > 0 ? <Readout lines={role} /> : null}
+      {attempts.map(({ visit, number }) => {
+        const live = visit.leftAt === undefined && step.status === 'current';
+        const expanded = open === number;
+        return (
+          <View key={number} testID={`${testID}-attempt-${number}`}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ expanded }}
+              onPress={() => setOpen(expanded ? null : number)}
+              style={({ pressed }) => [styles.attempt, pressed && styles.pressed]}
+              testID={`${testID}-attempt-${number}-toggle`}
+            >
+              <WorkflowStepCircle size={ATTEMPT_CIRCLE} status={live ? 'current' : 'done'} />
+              <Text numberOfLines={1} style={styles.attemptText}>
+                {`Attempt ${number}`}
+                <Text style={styles.quiet}>
+                  {visit.outcome !== undefined
+                    ? ` · ${outcomeLabel(visit.outcome)}${visit.nextState ? ` → ${workflowStateLabel(visit.nextState)}` : ''}`
+                    : live
+                      ? ' · now'
+                      : ''}
+                </Text>
+              </Text>
+              <Text style={styles.duration}>{formatRunDuration(visitSeconds(visit, now))}</Text>
+              <Chevron open={expanded} />
+            </Pressable>
+            {expanded ? (
+              <View style={styles.attemptBody}>
+                <VisitBody
+                  detail={detail}
+                  onOpenCorner={onOpenCorner}
+                  step={step}
+                  testID={`${testID}-attempt-${number}`}
+                  visit={visit}
+                  withRole={false}
+                />
+              </View>
+            ) : null}
+          </View>
+        );
+      })}
+      {step.loop ? (
+        <Readout
+          lines={[
+            {
+              key: 'loop',
+              value: `${step.loop.taken} of ${step.loop.cap} rounds used`,
+            },
+          ]}
+          testID={`${testID}-loop`}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create((theme) => {
+  const { type, space } = theme.buzz;
+  return {
+    brass: { color: theme.buzz.accent },
+    quietLine: { color: theme.buzz.borderStrong },
+    ground: { color: theme.buzz.bgBase },
+    hollow: { color: theme.buzz.textMuted },
+    ghost: { color: theme.buzz.ledgerGhost },
+    quiet: { color: theme.buzz.ledgerQuiet },
+    ink: { color: theme.buzz.textSecondary },
+    secondary: { color: theme.buzz.textSecondary },
+    strip: {
+      flexGrow: 1,
+      paddingHorizontal: space.md,
+      paddingTop: space.lg,
+      paddingBottom: space.sm,
+    },
+    stripNode: { flex: 1, minWidth: 64, alignItems: 'center', gap: space.sm },
+    stripLeft: { position: 'absolute', left: 0, right: '50%', top: STRIP_CIRCLE / 2 - 1, height: 2 },
+    stripRight: { position: 'absolute', left: '50%', right: 0, top: STRIP_CIRCLE / 2 - 1, height: 2 },
+    stripLabel: { ...type.meta, maxWidth: 64, paddingHorizontal: 2 },
+    step: { position: 'relative' },
+    lineAbove: { position: 'absolute', left: LINE_X - 1, width: 2, top: 0, height: CIRCLE_TOP },
+    lineBelow: {
+      position: 'absolute',
+      left: LINE_X - 1,
+      width: 2,
+      top: CIRCLE_TOP + CIRCLE,
+      bottom: 0,
+    },
+    summary: {
+      minHeight: theme.buzz.layout.row,
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      paddingLeft: 56,
+      paddingRight: space.md,
+    },
+    pressed: { backgroundColor: theme.buzz.bgPressed },
+    circle: { position: 'absolute', left: LINE_X - CIRCLE / 2, top: CIRCLE_TOP },
+    halo: {
+      position: 'absolute',
+      left: LINE_X - HALO / 2,
+      top: CIRCLE_TOP + CIRCLE / 2 - HALO / 2,
+      width: HALO,
+      height: HALO,
+    },
+    haloRing: {
+      width: HALO,
+      height: HALO,
+      borderRadius: HALO / 2,
+      borderWidth: 1,
+      borderColor: theme.buzz.accent,
+    },
+    copy: { flex: 1, minWidth: 0, paddingTop: 10, paddingBottom: 12 },
+    name: { ...type.body, color: theme.buzz.textPrimary },
+    nameCurrent: { ...type.bodyStrong, color: theme.buzz.textPrimary },
+    times: { ...type.machine, color: theme.buzz.accent },
+    meta: { ...type.meta, color: theme.buzz.ledgerQuiet },
+    right: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingTop: 12 },
+    duration: { ...type.machine, color: theme.buzz.ledgerGhost },
+    chevronOpen: { transform: [{ rotate: '90deg' }] },
+    readout: { marginLeft: 56, marginRight: space.md, paddingTop: 2, paddingBottom: space.md },
+    rule: {
+      borderLeftWidth: 2,
+      borderLeftColor: theme.buzz.borderStrong,
+      paddingLeft: 12,
+      paddingVertical: 2,
+    },
+    line: { flexDirection: 'row' },
+    lineIndex: { ...type.machine, width: 22, color: theme.buzz.ledgerGhost },
+    lineKey: { ...type.machine, width: 76, color: theme.buzz.ledgerQuiet },
+    lineValue: { ...type.machine, flex: 1, minWidth: 0, color: theme.buzz.textSecondary },
+    items: { marginLeft: 22, marginTop: space.xs, marginBottom: space.xs },
+    item: { flexDirection: 'row', gap: 10, paddingVertical: 2 },
+    itemIndex: { ...type.machine, width: 12, color: theme.buzz.ledgerGhost },
+    itemText: { ...type.meta, flex: 1, minWidth: 0, color: theme.buzz.textSecondary },
+    corners: { marginTop: space.sm },
+    cornersHead: { ...type.sectionHead, color: theme.buzz.ledgerQuiet, marginBottom: space.xs },
+    cornerLink: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: space.sm },
+    cornerName: { ...type.meta, flex: 1, minWidth: 0, color: theme.buzz.textPrimary },
+    cornerArrow: { ...type.meta, color: theme.buzz.accent },
+    attempt: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10 },
+    attemptText: { ...type.meta, flex: 1, minWidth: 0, color: theme.buzz.textSecondary },
+    attemptBody: { marginLeft: 26, marginBottom: space.sm },
+  };
+});

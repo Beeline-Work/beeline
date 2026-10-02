@@ -493,45 +493,64 @@ to the top edge (`9.93 3 14.07 3 14.07 13.81 21.76 21.5 15.9 21.5 12 17.6 8.1
 `ledgerGhost` when the workflow is idle. Inline it sits at `CORNER_META_SIZE`
 beside `meta` text, exactly where a corner glyph would.
 
-**A run is shown in three places, and only one draws the graph.** Scheduled
-Work lists each workflow's newest run in a Workflows section above Schedules:
-glyph and name, the current step in brass (`· you` when it waits on the
-viewer), the role holder, the description, the corner glyph with the corner
-name, and Open → to the run page. A corner with a live run adds one line under
-its objective, on the same rail: glyph · workflow · current step · whose move
-it is (`waiting on you` in brass), and → to the run page. The corner never
-draws the graph; the run page does. Scheduled Work, the corner, and the run
-page share one header title role: `bodyStrong` under a `meta` eyebrow.
+**A run is reached from its corner, and only the run page draws it.** A
+corner with a live run adds one line under its objective, on the same rail:
+glyph · workflow · current step · whose move it is (`waiting on you` in
+brass), and → to the run page. That line is the only way onto a run page.
+Scheduled Work lists schedules only: no Workflows section and no section
+heads. The run page has no way back to the run's own corner (no Open →), so
+the two pages never loop; Back returns to where the reader came from. The
+corner and the run page share one header title role: `bodyStrong` under a
+`meta` eyebrow, with the run number (`#14`) trailing on the run page.
 
-**The run page draws the whole state machine, one circle per row.**
-`layoutWorkflowGraph` (`buzz/workflow-graph.ts`) turns a contract and the
-run's handoff history into rows, lanes and edges; `WorkflowRunGraph` paints
-them in one SVG gutter beside the rows. The rules:
+**The run page is one straight line, read like a GitHub Actions run.**
+`workflowRunLine` (`buzz/workflow-graph.ts`) turns a contract and the run's
+handoff history into ordered steps; `WorkflowRunLine` paints them. The rules:
 
-- Every state is one circle on one 64pt row. Circles only — no boxes,
-  diamonds, or condition labels.
-- A state's first outcome continues down its own lane. Every other outcome
-  curves onto a lane to the right, and the state it reaches is drawn on that
-  lane, so every branch ends in a state. A branch from a branch nests one
-  lane further right.
-- A terminal is drawn once at the end of each branch that reaches it. An
-  `implicitEdges` terminal (reachable from anywhere) is one row at the end with
-  no line into it, until the run actually takes that jump.
-- An outcome that targets an earlier row, including `loop.onExceeded`, is a
-  back edge: it leaves the circle to the left and returns up a loop lane with
-  one up chevron at the state it repeats. Lines to the same state share a
-  lane; overlapping loops take separate lanes, short ones innermost.
-- Brass is the path this run took, edges and circles both. The current step
-  is a slightly larger brass dot under a ring that breathes on
-  `HullLivePulse`. A state the run can still reach is a hollow `textMuted`
-  ring; one it can no longer reach is ghosted, circle and copy.
-- Each row is the state name (`body`, `bodyStrong` for the current step) and
-  one `meta` line: the holder and the outcome taken for a passed state,
-  `Waiting on you` or the holder for the current one, and the reason and
-  status (`Skip · Done`) for a terminal. A capped loop adds its count to its
-  own state, `round 2 of 3`: the current trip out of the cap. Passed rows carry
-  their time (`machine`) on the right; the current row carries Open → to the
-  corner the run works in.
+- The line is the contract's main path: from `start`, each state's first
+  `on` outcome. When that outcome returns to a state already on the line,
+  the next outcome that goes somewhere new is taken; with none, the first
+  `implicitEdges` terminal ends the line. A state the run visited off that
+  path (Ask human, Closed) is spliced in after the state the run entered it
+  from, and is otherwise not drawn.
+- No forks, lanes, back edges or chevrons. A state the run entered more
+  than once is one row with `×N` (`machine`, brass) after its name.
+- Five step states, each a distinct 20pt circle and never colour alone:
+  done is a brass disc with a check; current is a brass ring and dot under a
+  32pt ring that breathes on `HullLivePulse`; not yet reached is a hollow
+  `textMuted` ring; skipped is a dashed `ledgerGhost` ring with a slash and
+  ghosted copy; failed (a `failed` or `abandoned` terminal) is a
+  `textSecondary` ring with an x. Each step's screen-reader label names its
+  state in words, and a skipped step's meta line says why
+  (`Skipped · Pull: nothing new`, or `Skipped · run ended at Closed`).
+- The 2pt line between two circles is brass where the run went, dashed
+  `ledgerGhost` beside a skipped step, and `borderStrong` ahead.
+- Each row is the state name (`body`, `bodyStrong` for the current step),
+  one `meta` line (holder and the outcome taken, whose move it is, the
+  holder to come, or why skipped) and, on the right, its duration in
+  `machine` (a reached terminal shows the time instead). A capped loop adds
+  `round 2 of 3` to the current step's meta line.
+- Tapping a step opens its readout in place: numbered `machine` lines on a
+  2pt `borderStrong` left rule — role and holder, entered and left times,
+  the outcome it left by and the next step, and what it delivered (the
+  handoff's contents, an array as a numbered list). A step not yet reached
+  shows its role, what it will deliver (`requires`) and its outcomes. A
+  step entered more than once lists each attempt, newest first, each
+  opening the same readout, then `N of cap rounds used` for a capped loop.
+  The current step starts open.
+- A gate is a record, never a control: the question, each option with its
+  consequence, and the answer, who chose it and when — or, while open,
+  `waiting on you` or on a person in the Room. Answering stays on the card
+  in the corner.
+- A step that opened corners lists each under `OPENED` as a 44pt link (corner
+  glyph and name, brass →) that navigates to that corner.
+
+Above the steps sits the run's plate and overview: a `hero` status line
+(`Waiting on you` in brass with the breathing live dot; `In review`; `Done ·
+nothing new` beside a done circle), a `meta` line with who started it, when,
+and how long it has run or took, then the same circles as a horizontal strip
+with a `meta` label under each, then a `STEPS` section head with `2 of 5`
+(live) or `3 ran · 2 skipped` (ended).
 
 ## Identity
 

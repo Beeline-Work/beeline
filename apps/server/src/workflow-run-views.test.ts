@@ -4,6 +4,7 @@ import { PgliteDatabase } from './test-support.js';
 import { createAgentCommand, type CommandRow } from './agent-command.js';
 import { advanceCorner, ensureCornerWorkflowSeeded } from './corner-workflow.js';
 import { PhoneService } from './phone-service.js';
+import { answerRoomChoice } from './room-choice.js';
 import { handoff, saveWorkflow, startWorkflow } from './workflow-runs.js';
 
 /**
@@ -20,6 +21,9 @@ const OWNER = 'a'.repeat(64);
 const TRIAGER = 'b'.repeat(64);
 const REVIEWER = 'c'.repeat(64);
 const OUTSIDER = 'e'.repeat(64);
+const FIX_CORNER = '50000000-0000-4000-8000-000000000001';
+const HIDDEN_CORNER = '50000000-0000-4000-8000-000000000002';
+const UNLISTED_CORNER = '50000000-0000-4000-8000-000000000003';
 
 const TRIAGE = {
   version: 1,
@@ -262,6 +266,120 @@ describe('readWorkflowRun', () => {
       implementer: { id: TRIAGER, name: 'Candy' },
       reviewer: { id: REVIEWER, name: 'Hoots' },
     });
+  });
+
+  it('lists no corner on a step whose handoff names none, even one its holder opened meanwhile', async () => {
+    await advanceCorner(database, CORNER, {
+      kind: 'open',
+      lane: 'code',
+      workspaceId: WORKSPACE,
+      implementerAgentId: TRIAGER,
+    });
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,created_by,name,parent_id) VALUES($1,$2,$3,'Unrelated corner',$4)`,
+      [UNLISTED_CORNER, WORKSPACE, TRIAGER, ROOM],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+      [WORKSPACE, UNLISTED_CORNER, OWNER],
+    );
+    const detail = await phone.execute('readWorkflowRun', { roomId: CORNER, runId: CORNER }, OWNER);
+    expect(detail.history.map((step) => [step.toState, step.openedCorners ?? null])).toEqual([
+      ['opened', null],
+      ['implement', null],
+    ]);
+  });
+
+  it("returns each step's contents, the gate's recorded answer, and the corners the dispatch opened", async () => {
+    await saveWorkflow(database, await command(CORNER, TRIAGER), { contract: TRIAGE });
+    const { runId } = await startWorkflow(database, await command(CORNER, TRIAGER), {
+      name: 'feedback-triage',
+      roleBindings: { triager: TRIAGER },
+    });
+    const problems = [{ description: 'Corner dropdown vanishes', reports: 3, items: ['f1'] }];
+    await handoff(database, await command(CORNER, TRIAGER), {
+      runId,
+      outcome: 'ranked',
+      contents: { problems },
+    });
+    const waiting = await phone.execute('readWorkflowRun', { roomId: CORNER, runId }, OWNER);
+    expect(waiting.history[1]).toMatchObject({ toState: 'approve', contents: { problems } });
+    expect(waiting.history[1]!.gate).toEqual({
+      question: 'feedback-triage: approve',
+      options: [
+        { letter: 'A', label: 'dispatch', consequence: 'go to dispatch' },
+        { letter: 'B', label: 'skip', consequence: 'go to done' },
+      ],
+      status: 'open',
+    });
+
+    const choice = (
+      await database.query<{ id: string; options: Array<{ optionId: string; label: string }> }>(
+        `SELECT id,options FROM room_choices WHERE room_id=$1 AND status='open'`,
+        [CORNER],
+      )
+    ).rows[0]!;
+    await answerRoomChoice(database, {
+      choiceId: choice.id,
+      optionId: choice.options.find((option) => option.label === 'dispatch')!.optionId,
+      viewerId: OWNER,
+    });
+    await handoff(database, await command(CORNER, TRIAGER), {
+      runId,
+      outcome: 'dispatch',
+      contents: {},
+    });
+    // The triager opens two fix corners in the top Room; the owner is only in
+    // one. It also opens an unrelated corner the handoff does not list.
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,created_by,name,parent_id) VALUES
+         ($1,$4,$5,'Corner dropdown fix',$6),($2,$4,$5,'Private fix',$6),($3,$4,$5,'Unrelated corner',$6)`,
+      [FIX_CORNER, HIDDEN_CORNER, UNLISTED_CORNER, WORKSPACE, TRIAGER, ROOM],
+    );
+    for (const roomId of [FIX_CORNER, UNLISTED_CORNER])
+      for (const who of [OWNER, TRIAGER])
+        await database.query(
+          `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+          [WORKSPACE, roomId, who],
+        );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`,
+      [WORKSPACE, HIDDEN_CORNER, TRIAGER],
+    );
+    const corners = [
+      { cornerId: FIX_CORNER, name: 'Corner dropdown fix', items: ['f1'] },
+      { cornerId: HIDDEN_CORNER, name: 'Private fix', items: ['f2'] },
+    ];
+    await handoff(database, await command(CORNER, TRIAGER), {
+      runId,
+      outcome: 'dispatched',
+      contents: { corners },
+    });
+
+    const detail = await phone.execute('readWorkflowRun', { roomId: CORNER, runId }, OWNER);
+    expect(detail.history.map((step) => step.toState)).toEqual(['pull', 'approve', 'dispatch', 'done']);
+    expect(detail.history[1]!.gate).toMatchObject({
+      status: 'answered',
+      answer: 'dispatch',
+      answeredBy: { id: OWNER, name: 'Owner', kind: 'human' },
+      answeredAt: expect.any(Number),
+    });
+    expect(detail.history[2]).toMatchObject({ fromState: 'approve', outcome: 'dispatch' });
+    // Only a listed corner the viewer can read, on the step that opened it.
+    expect(detail.history[2]!.openedCorners).toEqual([
+      { id: FIX_CORNER, name: 'Corner dropdown fix', parentRoomId: ROOM },
+    ]);
+    expect(detail.history[3]).toMatchObject({
+      fromState: 'dispatch',
+      contents: { corners },
+    });
+    expect(detail.history.filter((step) => step.openedCorners)).toHaveLength(1);
+    // The triager, a member of both, sees both listed corners and not the unrelated one.
+    const asTriager = await phone.execute('readWorkflowRun', { roomId: CORNER, runId }, TRIAGER);
+    expect(asTriager.history[2]!.openedCorners!.map((corner) => corner.id)).toEqual([
+      FIX_CORNER,
+      HIDDEN_CORNER,
+    ]);
   });
 
   it('refuses an unknown run', async () => {

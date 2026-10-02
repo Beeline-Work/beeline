@@ -3,7 +3,7 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const haptics = vi.hoisted(() => ({ selection: vi.fn(), impact: vi.fn() }));
+const haptics = vi.hoisted(() => ({ impact: vi.fn() }));
 
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
@@ -26,14 +26,12 @@ vi.mock('react-native-unistyles', async () => {
   };
 });
 vi.mock('expo-haptics', () => ({
-  selectionAsync: haptics.selection,
   impactAsync: haptics.impact,
   ImpactFeedbackStyle: { Light: 'light' },
 }));
 
-import type { RoomHistoryOutline } from '@beeline/api-contract/phone';
-import { scrubberHistory } from '@/buzz/transcript-scrubber';
-import { SCRUBBER_HOLD_MS, TranscriptScrubber } from './TranscriptScrubber';
+import { createTranscriptScrubberStore, SCRUBBER_LINGER_MS } from '@/buzz/use-transcript-scrubber';
+import { TranscriptScrubber } from './TranscriptScrubber';
 
 const originalTz = process.env.TZ;
 beforeAll(() => {
@@ -46,133 +44,84 @@ afterAll(() => {
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
-const id = (n: number) => n.toString(16).padStart(64, '0');
+const RAIL = 600;
 const at = (iso: string) => Date.parse(iso) / 1_000;
-const outline: RoomHistoryOutline = {
-  roomId: '00000000-0000-4000-8000-000000000001',
-  timeZone: 'UTC',
-  total: 100,
-  newest: { id: id(100), createdAt: at('2026-09-02T12:30:00Z') },
-  days: [
-    {
-      day: '2026-08-30',
-      count: 40,
-      first: {
-        id: id(1),
-        createdAt: at('2026-08-30T08:05:00Z'),
-        authorName: 'Ann',
-        authorHandle: 'ann',
-      },
-    },
-    {
-      day: '2026-09-01',
-      count: 30,
-      first: {
-        id: id(41),
-        createdAt: at('2026-09-01T09:10:00Z'),
-        authorName: 'Niglet',
-        authorHandle: 'niglet',
-      },
-    },
-    {
-      day: '2026-09-02',
-      count: 30,
-      first: {
-        id: id(71),
-        createdAt: at('2026-09-02T12:00:00Z'),
-        authorName: 'Bo',
-        authorHandle: 'bo',
-      },
-    },
-  ],
-};
-const history = scrubberHistory(
-  outline,
-  Array.from({ length: 30 }, (_, index) => id(71 + index)),
-);
+const scroll = (y: number, contentHeight: number) => ({
+  contentOffset: { y },
+  contentSize: { height: contentHeight },
+  layoutMeasurement: { height: RAIL },
+});
 
-function render(props: Partial<React.ComponentProps<typeof TranscriptScrubber>> = {}) {
+function render(contentHeight = 5_600, offset = 0) {
+  const store = createTranscriptScrubberStore();
+  const onScrubTo = vi.fn((y: number) => store.observeScroll(scroll(y, contentHeight)));
   let renderer!: ReactTestRenderer;
   act(() => {
-    renderer = create(
-      <TranscriptScrubber
-        history={history}
-        position={0.1}
-        visible
-        onScrub={() => undefined}
-        onScrubEnd={() => undefined}
-        {...props}
-      />,
-    );
+    renderer = create(<TranscriptScrubber scrubber={store} onScrubTo={onScrubTo} />);
   });
   const strip = () => renderer.root.findByProps({ testID: 'transcript-scrubber' });
-  act(() => strip().props.onLayout({ nativeEvent: { layout: { height: 600 } } }));
-  return { renderer, strip };
+  act(() => strip().props.onLayout({ nativeEvent: { layout: { height: RAIL } } }));
+  act(() => store.observeScroll(scroll(offset, contentHeight)));
+  const grab = () => renderer.root.findByProps({ testID: 'transcript-scrubber-grab' });
+  return { renderer, store, onScrubTo, strip, grab };
 }
 
-const words = (node: any) =>
-  node.findAllByType('Text').map((text: any) => [text.props.children].flat().join(''));
-
 describe('TranscriptScrubber', () => {
-  it('shows a thin bar placed by the whole history while the list scrolls, and nothing to grab otherwise', () => {
-    const { renderer, strip } = render();
-    const bar = renderer.root.findByProps({ testID: 'transcript-scrubber-bar' });
-    // Position 0.1 from the newest end of a 600pt rail, centred on a 36pt bar.
-    expect(bar.props.style[1].top).toBe(0.9 * 600 - 18);
-    expect(strip().props.pointerEvents).toBe('auto');
-    expect(strip().props.style.width).toBe(44);
+  it('places the bar by the list offset over the loaded rows while the list scrolls', () => {
+    const { renderer, store, grab } = render(5_600, 2_500);
+    // Halfway through 5000pt of scroll: halfway down the 564pt track.
+    expect(grab().props.style[1].top).toBe(0.5 * (RAIL - 36) - 14);
+    act(() => store.observeScroll(scroll(5_000, 5_600)));
+    expect(grab().props.style[1].top).toBe(-14);
+    act(() => vi.advanceTimersByTime(SCRUBBER_LINGER_MS));
+    expect(renderer.root.findAllByProps({ testID: 'transcript-scrubber-grab' })).toHaveLength(0);
+  });
+
+  it('passes touches off the bar to the list', () => {
+    const { strip, grab } = render();
+    expect(strip().props.pointerEvents).toBe('box-none');
+    expect(strip().props.onPanResponderGrant).toBeUndefined();
+    expect(grab().props.onPanResponderGrant).toBeTypeOf('function');
+  });
+
+  it('has no bar when the loaded rows fit on screen', () => {
+    const { renderer } = render(400);
+    expect(renderer.root.findAllByProps({ testID: 'transcript-scrubber-grab' })).toHaveLength(0);
+  });
+
+  it('scrolls the list with the finger as soon as the bar is pressed', () => {
+    const { renderer, store, onScrubTo, grab } = render(5_600, 0);
     act(() =>
-      renderer.update(
-        <TranscriptScrubber
-          history={history}
-          position={0.1}
-          visible={false}
-          onScrub={() => undefined}
-          onScrubEnd={() => undefined}
-        />,
-      ),
+      store.observeVisibleRows([
+        { id: 'a', text: 'a', isUser: false, timestamp: at('2026-09-01T09:10:00Z') },
+      ]),
     );
-    expect(renderer.root.findAllByProps({ testID: 'transcript-scrubber-bar' })).toHaveLength(0);
-    expect(strip().props.pointerEvents).toBe('none');
-  });
-
-  it('turns a press and hold into a handle that snaps to day markers and lands on release', () => {
-    const onScrub = vi.fn();
-    const onScrubEnd = vi.fn();
-    const { renderer, strip } = render({ onScrub, onScrubEnd });
-    // Press near the top of the rail (the oldest day) and hold.
-    act(() => strip().props.onPanResponderGrant({ nativeEvent: { locationY: 10 } }));
-    expect(renderer.root.findAllByProps({ testID: 'transcript-scrubber-rail' })).toHaveLength(0);
-    act(() => vi.advanceTimersByTime(SCRUBBER_HOLD_MS));
+    act(() => grab().props.onPanResponderGrant({ nativeEvent: {} }));
     expect(haptics.impact).toHaveBeenCalledTimes(1);
-    const rail = renderer.root.findByProps({ testID: 'transcript-scrubber-rail' });
-    expect(words(rail)).toEqual(['AUG', 'SEP']);
-    const bubble = () => renderer.root.findByProps({ testID: 'transcript-scrubber-bubble' });
-    expect(words(bubble())).toEqual(['SUN 30 AUG', '08:05 · @ann · 99 messages back']);
-    expect(onScrub).toHaveBeenLastCalledWith(expect.objectContaining({ firstMessageId: id(1) }));
-
-    // Drag down the rail: the handle snaps from day to day.
-    act(() => strip().props.onPanResponderMove({}, { dy: 280 }));
-    expect(words(bubble())).toEqual(['TUE 1 SEP', '09:10 · @niglet · 59 messages back']);
-    act(() => strip().props.onPanResponderMove({}, { dy: 300 }));
-    // Same day: no second tick.
-    expect(onScrub).toHaveBeenCalledTimes(2);
-    expect(haptics.selection).toHaveBeenCalledTimes(2);
-
-    act(() => strip().props.onPanResponderRelease());
-    expect(onScrubEnd).toHaveBeenCalledWith(expect.objectContaining({ firstMessageId: id(41) }));
+    // A quarter of the track up is a quarter of the way into the loaded rows.
+    act(() => grab().props.onPanResponderMove({}, { dy: -(RAIL - 36) / 4 }));
+    expect(onScrubTo).toHaveBeenLastCalledWith(1_250);
+    expect(grab().props.style[1].top).toBe(0.75 * (RAIL - 36) - 14);
+    expect(
+      renderer.root.findByProps({ testID: 'transcript-scrubber-bubble' }).findByType('Text').props
+        .children,
+    ).toBe('TUE 1 SEP');
+    // Past the top: the list goes to its oldest loaded row and no further.
+    act(() => grab().props.onPanResponderMove({}, { dy: -RAIL }));
+    expect(onScrubTo).toHaveBeenLastCalledWith(5_000);
+    act(() => grab().props.onPanResponderRelease());
     expect(renderer.root.findAllByProps({ testID: 'transcript-scrubber-bubble' })).toHaveLength(0);
+    // The bar stays long enough to grab again.
+    act(() => vi.advanceTimersByTime(SCRUBBER_LINGER_MS - 1));
+    expect(grab().props.style[1].top).toBe(-14);
   });
 
-  it('lets a flick through without scrubbing', () => {
-    const onScrub = vi.fn();
-    const onScrubEnd = vi.fn();
-    const { strip } = render({ onScrub, onScrubEnd });
-    act(() => strip().props.onPanResponderGrant({ nativeEvent: { locationY: 300 } }));
-    act(() => strip().props.onPanResponderMove({}, { dy: 40 }));
-    act(() => vi.advanceTimersByTime(SCRUBBER_HOLD_MS * 2));
-    act(() => strip().props.onPanResponderRelease());
-    expect(onScrub).not.toHaveBeenCalled();
-    expect(onScrubEnd).not.toHaveBeenCalled();
+  it('keeps scrolling into older rows as they load under the finger', () => {
+    const { store, onScrubTo, grab } = render(5_600, 5_000);
+    act(() => grab().props.onPanResponderGrant({ nativeEvent: {} }));
+    // An older page lands: the content grows and the list's offset holds.
+    act(() => store.observeScroll(scroll(5_000, 8_600)));
+    act(() => grab().props.onPanResponderMove({}, { dy: -2 }));
+    expect(onScrubTo).toHaveBeenLastCalledWith(8_000);
   });
 });

@@ -1,56 +1,43 @@
-import * as React from 'react';
-// @ts-expect-error react-test-renderer has no declarations in this workspace.
-import { act, create } from 'react-test-renderer';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { RoomViewHttpError } from '@beeline/buzz-client';
-import type { RoomHistoryOutline } from '@beeline/api-contract/phone';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ChatDisplayMessage } from './room-view-presentation';
-import { useTranscriptScrubber } from './use-transcript-scrubber';
+import { createTranscriptScrubberStore, SCRUBBER_LINGER_MS } from './use-transcript-scrubber';
 
-const originalConsoleError = console.error;
+beforeEach(() => vi.useFakeTimers());
+afterEach(() => vi.useRealTimers());
 
-beforeAll(() => {
-  (
-    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
-  ).IS_REACT_ACT_ENVIRONMENT = true;
-  vi.spyOn(console, 'error').mockImplementation((message?: unknown, ...args: unknown[]) => {
-    if (typeof message === 'string' && message.startsWith('react-test-renderer is deprecated'))
-      return;
-    originalConsoleError(message, ...args);
-  });
+const scroll = (y: number, contentHeight = 5_600) => ({
+  contentOffset: { y },
+  contentSize: { height: contentHeight },
+  layoutMeasurement: { height: 600 },
 });
 
-afterAll(() => vi.restoreAllMocks());
-
-const row = (id: string, timestamp: number): ChatDisplayMessage => ({
-  id: id.repeat(64),
-  text: `message-${id}`,
-  isUser: false,
-  timestamp,
-});
-
-describe('transcript scrubber outline', () => {
-  it('keeps the bar on the loaded rows when the outline read is rate-limited', async () => {
-    const outline = vi.fn(
-      async (): Promise<RoomHistoryOutline> => {
-        throw new RoomViewHttpError(429, 'too_many_requests');
-      },
-    );
-    // Stable props, as the Room screen passes them.
-    const roomClient = { outline };
-    const durableMessages = [row('1', 10), row('2', 20), row('3', 30)];
-    let scrubber!: ReturnType<typeof useTranscriptScrubber>;
-    function Probe() {
-      scrubber = useTranscriptScrubber({ roomId: 'room', roomClient, durableMessages });
-      return null;
-    }
-    await act(async () => {
-      create(<Probe />);
+describe('transcript scrubber store', () => {
+  it('shows the bar while the list scrolls and fades it after the list stops', () => {
+    const store = createTranscriptScrubberStore();
+    const listener = vi.fn();
+    store.subscribe(listener);
+    store.observeScroll(scroll(1_000));
+    expect(store.getSnapshot()).toMatchObject({
+      visible: true,
+      metrics: { offset: 1_000, contentHeight: 5_600, viewportHeight: 600 },
     });
-    expect(outline).toHaveBeenCalledTimes(1);
-    expect(scrubber.history.total).toBe(3);
-    expect(scrubber.history.days).toEqual([]);
-    expect([...scrubber.history.rankById.values()]).toEqual([2, 1, 0]);
+    vi.advanceTimersByTime(SCRUBBER_LINGER_MS - 1);
+    store.observeScroll(scroll(1_200));
+    vi.advanceTimersByTime(SCRUBBER_LINGER_MS - 1);
+    expect(store.getSnapshot().visible).toBe(true);
+    vi.advanceTimersByTime(1);
+    expect(store.getSnapshot().visible).toBe(false);
+    expect(listener).toHaveBeenCalled();
+    store.dispose();
+  });
+
+  it('keeps the same snapshot when the oldest day on screen does not change', () => {
+    const store = createTranscriptScrubberStore();
+    const rows = [{ id: 'a', text: 'a', isUser: false, timestamp: 1_788_000_000 }];
+    store.observeVisibleRows(rows);
+    const first = store.getSnapshot();
+    expect(first.date).not.toBeNull();
+    store.observeVisibleRows(rows);
+    expect(store.getSnapshot()).toBe(first);
   });
 });

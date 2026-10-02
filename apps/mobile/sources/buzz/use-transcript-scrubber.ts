@@ -1,84 +1,77 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { RoomHistoryOutline } from '@beeline/api-contract/phone';
-import { messageBoundaryIds } from './room-new-message-boundary';
+import { useEffect, useState } from 'react';
 import type { ChatDisplayMessage } from './room-view-presentation';
-import { scrubberHistory, scrubberPosition } from './transcript-scrubber';
+import { scrubDate, type TranscriptScrollMetrics } from './transcript-scrubber';
 
-/** The server cuts the outline's days in this zone, the one the transcript's dates use. */
-function deviceTimeZone(): string {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-  } catch {
-    return 'UTC';
-  }
-}
-
-/** How long the bar stays after the list stops, long enough to press and hold it. */
+/** How long the bar stays after the list stops, long enough to grab it. */
 export const SCRUBBER_LINGER_MS = 2_000;
 
+export type TranscriptScrubberSnapshot = {
+  metrics: TranscriptScrollMetrics | null;
+  /** The day of the oldest message on screen, for the drag bubble. */
+  date: string | null;
+  /** The list is scrolling or just stopped. */
+  visible: boolean;
+};
+
+/** The fields of a native scroll event the bar reads. */
+type ScrollEventShape = {
+  contentOffset: { y: number };
+  contentSize: { height: number };
+  layoutMeasurement: { height: number };
+};
+
+export type TranscriptScrubberStore = ReturnType<typeof createTranscriptScrubberStore>;
+
 /**
- * State for `TranscriptScrubber`: the Room's history outline, read once per
- * visit, and where the reader sits in it. `durableMessages` are the server
- * rows the phone holds, oldest first — the same rows the outline counts.
+ * State for `TranscriptScrubber`, kept outside React state so a scroll frame
+ * re-renders only the bar, not the Room screen that feeds it.
  */
-export function useTranscriptScrubber({
-  roomId,
-  roomClient,
-  durableMessages,
-}: {
-  roomId: string;
-  roomClient: { outline(id: string, timeZone: string): Promise<RoomHistoryOutline | null> } | null;
-  durableMessages: readonly ChatDisplayMessage[];
-}) {
-  const [outline, setOutline] = useState<RoomHistoryOutline | null>(null);
-  const [visibleIds, setVisibleIds] = useState<readonly string[]>([]);
-  const [visible, setVisible] = useState(false);
-  const lingerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    setOutline(null);
-    setVisibleIds([]);
-    if (!roomClient || !roomId) return;
-    let current = true;
-    roomClient
-      .outline(roomId, deviceTimeZone())
-      .then((next) => {
-        if (current && next?.roomId === roomId) setOutline(next);
-      })
-      // Without an outline the bar falls back to the loaded rows.
-      .catch(() => undefined);
-    return () => {
-      current = false;
-    };
-  }, [roomClient, roomId]);
-
-  useEffect(
-    () => () => {
-      if (lingerRef.current) clearTimeout(lingerRef.current);
+export function createTranscriptScrubberStore() {
+  let snapshot: TranscriptScrubberSnapshot = { metrics: null, date: null, visible: false };
+  let linger: ReturnType<typeof setTimeout> | null = null;
+  const listeners = new Set<() => void>();
+  const update = (next: Partial<TranscriptScrubberSnapshot>) => {
+    snapshot = { ...snapshot, ...next };
+    listeners.forEach((listener) => listener());
+  };
+  const reveal = () => {
+    if (!snapshot.visible) update({ visible: true });
+    if (linger) clearTimeout(linger);
+    linger = setTimeout(() => update({ visible: false }), SCRUBBER_LINGER_MS);
+  };
+  return {
+    getSnapshot: () => snapshot,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
     },
-    [],
-  );
+    /** Shows the bar and restarts its fade. */
+    reveal,
+    observeScroll(event: ScrollEventShape) {
+      update({
+        metrics: {
+          offset: event.contentOffset.y,
+          contentHeight: event.contentSize.height,
+          viewportHeight: event.layoutMeasurement.height,
+        },
+      });
+      reveal();
+    },
+    observeVisibleRows(rows: readonly ChatDisplayMessage[]) {
+      const date = scrubDate(rows);
+      if (date !== snapshot.date) update({ date });
+    },
+    dispose() {
+      if (linger) clearTimeout(linger);
+      linger = null;
+    },
+  };
+}
 
-  const loadedIds = useMemo(
-    () =>
-      durableMessages
-        // The outline, like history paging, skips unsettled activity rows.
-        .filter((message) => !message.isAgentActivity || message.durableFact)
-        .map((message) => message.id),
-    [durableMessages],
-  );
-  const history = useMemo(() => scrubberHistory(outline, loadedIds), [loadedIds, outline]);
-  const position = useMemo(() => scrubberPosition(history, visibleIds), [history, visibleIds]);
-
-  const observeVisibleRows = useCallback((rows: readonly ChatDisplayMessage[]) => {
-    setVisibleIds(rows.flatMap(messageBoundaryIds));
-  }, []);
-
-  const revealOnScroll = useCallback(() => {
-    setVisible(true);
-    if (lingerRef.current) clearTimeout(lingerRef.current);
-    lingerRef.current = setTimeout(() => setVisible(false), SCRUBBER_LINGER_MS);
-  }, []);
-
-  return { history, position, visible, observeVisibleRows, revealOnScroll };
+export function useTranscriptScrubber(): TranscriptScrubberStore {
+  const [store] = useState(createTranscriptScrubberStore);
+  useEffect(() => store.dispose, [store]);
+  return store;
 }

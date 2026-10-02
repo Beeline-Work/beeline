@@ -223,46 +223,74 @@ export function navigateToBuzzChannelFromNotification(
   );
 }
 
-/** Navigate to the exact push source, carrying enough context to reveal it or fall back safely. */
+/** One screen of the stack a notification opens, named as the app stack names it. */
+export type NotificationStackRoute = {
+  name: 'beeline/channels' | 'beeline/corners/[roomId]' | 'beeline/chat/[channelId]';
+  params: Record<string, string>;
+};
+
+/** Replaces the app stack with the given screens, bottom first. */
+export type NotificationNavigator = {
+  openStack: (routes: NotificationStackRoute[]) => void;
+};
+
+/**
+ * The fixed ancestry a notification opens, bottom first.
+ *
+ * A notification is an entry point, so back from it goes up the hierarchy,
+ * not into whatever history happened to be on the stack: a Room sits on its
+ * Workspace's Room list, and a corner on its Room's corners list above that
+ * Room list. Back never leaves the notified Workspace and the corner is at
+ * most three screens from the Room list.
+ */
+export function notificationStackRoutes(
+  target: BuzzNotificationTarget,
+  notificationResponseId: string,
+): NotificationStackRoute[] {
+  if (target.target === 'workspace') {
+    return [
+      {
+        name: 'beeline/channels',
+        params: { communityId: target.workspaceId, notificationResponseId },
+      },
+    ];
+  }
+  const roomList: NotificationStackRoute = {
+    name: 'beeline/channels',
+    params: target.workspaceId ? { communityId: target.workspaceId } : {},
+  };
+  const isCorner = target.roomId !== target.channelId;
+  const chat: NotificationStackRoute = {
+    name: 'beeline/chat/[channelId]',
+    params: {
+      channelId: target.channelId,
+      ...(target.workspaceId ? { communityId: target.workspaceId } : {}),
+      notificationResponseId,
+      ...(isCorner
+        ? { parent: target.roomId, returnTo: 'corners' }
+        : { returnTo: 'room-list' }),
+      ...(target.target === 'message' && target.messageId
+        ? { notificationMessageId: target.messageId }
+        : {}),
+      notificationTarget: target.target,
+    },
+  };
+  if (!isCorner) return [roomList, chat];
+  return [roomList, { name: 'beeline/corners/[roomId]', params: { roomId: target.roomId } }, chat];
+}
+
+/** Open the exact push source on top of its fixed ancestry. */
 export function navigateToBuzzTargetFromNotification(
-  router: Pick<Router, 'navigate'>,
+  navigator: NotificationNavigator,
   target: BuzzNotificationTarget,
   notificationResponseId: string,
 ): void {
-  if (target.target === 'workspace') {
-    router.navigate(
-      {
-        pathname: '/beeline/channels',
-        params: { communityId: target.workspaceId, notificationResponseId },
-      },
-      { dangerouslySingular: true },
-    );
-    return;
-  }
-  const channelId = target.channelId;
-  router.navigate(
-    {
-      pathname: '/beeline/chat/[channelId]',
-      params: {
-        channelId,
-        ...(target.workspaceId ? { communityId: target.workspaceId } : {}),
-        notificationResponseId,
-        ...(target.roomId !== target.channelId
-          ? { parent: target.roomId, returnTo: 'corners' }
-          : { returnTo: 'room-list' }),
-        ...(target.target === 'message' && target.messageId
-          ? { notificationMessageId: target.messageId }
-          : {}),
-        notificationTarget: target.target,
-      },
-    },
-    { dangerouslySingular: true },
-  );
+  navigator.openStack(notificationStackRoutes(target, notificationResponseId));
 }
 
 /** Parse an Expo response and navigate to its exact Buzz source when supported. */
 export function navigateToBuzzNotificationResponse(
-  router: Pick<Router, 'navigate'>,
+  navigator: NotificationNavigator,
   response: unknown,
 ): BuzzNotificationTarget | null {
   const request = getObjectValue(getObjectValue(response, 'notification'), 'request');
@@ -270,6 +298,6 @@ export function navigateToBuzzNotificationResponse(
   const content = getObjectValue(request, 'content');
   const target = getBuzzNotificationTargetFromData(getObjectValue(content, 'data'));
   if (!responseId || !target) return null;
-  navigateToBuzzTargetFromNotification(router, target, responseId);
+  navigateToBuzzTargetFromNotification(navigator, target, responseId);
   return target;
 }

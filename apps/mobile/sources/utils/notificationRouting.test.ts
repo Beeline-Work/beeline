@@ -142,10 +142,10 @@ describe('getBuzzNotificationTargetFromData', () => {
 
 describe('navigateToBuzzNotificationResponse', () => {
   it('opens a workspace join on the exact Workspace and Room from the server payload', () => {
-    const navigate = vi.fn();
+    const openStack = vi.fn();
 
     const target = navigateToBuzzNotificationResponse(
-      { navigate },
+      { openStack },
       {
         notification: {
           request: {
@@ -169,26 +169,23 @@ describe('navigateToBuzzNotificationResponse', () => {
       roomId: 'room-welcome',
       channelId: 'room-welcome',
     });
-    expect(navigate).toHaveBeenCalledWith(
-      {
-        pathname: '/beeline/chat/[channelId]',
-        params: {
-          channelId: 'room-welcome',
-          communityId: 'workspace-default',
-          notificationResponseId: 'response-workspace-join',
-          returnTo: 'room-list',
-          notificationTarget: 'message',
-        },
+    expect(openStack.mock.calls[0][0].at(-1)).toEqual({
+      name: 'beeline/chat/[channelId]',
+      params: {
+        channelId: 'room-welcome',
+        communityId: 'workspace-default',
+        notificationResponseId: 'response-workspace-join',
+        returnTo: 'room-list',
+        notificationTarget: 'message',
       },
-      { dangerouslySingular: true },
-    );
+    });
   });
 
   it('opens a Workspace-only join on the Workspace rather than the last-open deck', () => {
-    const navigate = vi.fn();
+    const openStack = vi.fn();
 
     const target = navigateToBuzzNotificationResponse(
-      { navigate },
+      { openStack },
       {
         notification: {
           request: {
@@ -210,23 +207,20 @@ describe('navigateToBuzzNotificationResponse', () => {
       target: 'workspace',
       workspaceId: 'workspace-default',
     });
-    expect(navigate).toHaveBeenCalledWith(
-      {
-        pathname: '/beeline/channels',
-        params: {
-          communityId: 'workspace-default',
-          notificationResponseId: 'response-workspace-only',
-        },
+    expect(openStack.mock.calls[0][0].at(-1)).toEqual({
+      name: 'beeline/channels',
+      params: {
+        communityId: 'workspace-default',
+        notificationResponseId: 'response-workspace-only',
       },
-      { dangerouslySingular: true },
-    );
+    });
   });
 
   it('opens a Room notification on exactly that Room, with no corner back-stack hints', () => {
-    const navigate = vi.fn();
+    const openStack = vi.fn();
 
     const target = navigateToBuzzNotificationResponse(
-      { navigate },
+      { openStack },
       {
         notification: {
           request: {
@@ -250,27 +244,24 @@ describe('navigateToBuzzNotificationResponse', () => {
     );
 
     expect(target).toMatchObject({ channelId: 'room-123', roomId: 'room-123' });
-    expect(navigate).toHaveBeenCalledTimes(1);
-    expect(navigate).toHaveBeenCalledWith(
-      {
-        pathname: '/beeline/chat/[channelId]',
-        params: {
-          channelId: 'room-123',
-          notificationMessageId: 'event-1',
-          notificationResponseId: 'response-room',
-          returnTo: 'room-list',
-          notificationTarget: 'message',
-        },
+    expect(openStack).toHaveBeenCalledTimes(1);
+    expect(openStack.mock.calls[0][0].at(-1)).toEqual({
+      name: 'beeline/chat/[channelId]',
+      params: {
+        channelId: 'room-123',
+        notificationMessageId: 'event-1',
+        notificationResponseId: 'response-room',
+        returnTo: 'room-list',
+        notificationTarget: 'message',
       },
-      { dangerouslySingular: true },
-    );
+    });
   });
 
   it.each(['cold', 'warm'])('%s tap opens the exact corner message', () => {
-    const navigate = vi.fn();
+    const openStack = vi.fn();
 
     const target = navigateToBuzzNotificationResponse(
-      { navigate },
+      { openStack },
       {
         notification: {
           request: {
@@ -292,20 +283,17 @@ describe('navigateToBuzzNotificationResponse', () => {
     );
 
     expect(target).toMatchObject({ channelId: 'corner-123', messageId: 'event-456' });
-    expect(navigate).toHaveBeenCalledWith(
-      {
-        pathname: '/beeline/chat/[channelId]',
-        params: {
-          channelId: 'corner-123',
-          parent: 'parent-room',
-          returnTo: 'corners',
-          notificationMessageId: 'event-456',
-          notificationResponseId: 'response-789',
-          notificationTarget: 'message',
-        },
+    expect(openStack.mock.calls[0][0].at(-1)).toEqual({
+      name: 'beeline/chat/[channelId]',
+      params: {
+        channelId: 'corner-123',
+        parent: 'parent-room',
+        returnTo: 'corners',
+        notificationMessageId: 'event-456',
+        notificationResponseId: 'response-789',
+        notificationTarget: 'message',
       },
-      { dangerouslySingular: true },
-    );
+    });
   });
 });
 

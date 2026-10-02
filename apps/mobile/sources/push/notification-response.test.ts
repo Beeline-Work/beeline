@@ -83,10 +83,10 @@ function memoryConsumed(
 }
 
 function routing(overrides: Partial<NotificationResponseRouting> = {}) {
-  const navigate = vi.fn();
+  const openStack = vi.fn();
   const suppressPendingInitialLanding = vi.fn();
   const base: NotificationResponseRouting = {
-    router: { navigate },
+    navigator: { openStack },
     handled: new Set<string>(),
     defaultActionIdentifier: DEFAULT_ACTION,
     waitForInitialLanding: () => Promise.resolve('committed'),
@@ -96,7 +96,7 @@ function routing(overrides: Partial<NotificationResponseRouting> = {}) {
     log: () => {},
     ...overrides,
   };
-  return { navigate, suppressPendingInitialLanding, routing: base };
+  return { openStack, suppressPendingInitialLanding, routing: base };
 }
 
 describe('routeBuzzNotificationResponse', () => {
@@ -104,17 +104,17 @@ describe('routeBuzzNotificationResponse', () => {
     let finishLanding!: (value: 'committed') => void;
     const landing = new Promise<'committed'>((resolve) => { finishLanding = resolve; });
     const prefetchRoom = vi.fn();
-    const { navigate, routing: deps } = routing({
+    const { openStack, routing: deps } = routing({
       waitForInitialLanding: () => landing,
       prefetchRoom,
     });
     const routed = routeBuzzNotificationResponse(tap('prefetch-1', 'room-early'), deps);
     await Promise.resolve();
     expect(prefetchRoom).not.toHaveBeenCalled();
-    expect(navigate).not.toHaveBeenCalled();
+    expect(openStack).not.toHaveBeenCalled();
     finishLanding('committed');
     await routed;
-    expect(navigate).toHaveBeenCalledOnce();
+    expect(openStack).toHaveBeenCalledOnce();
   });
 
   it('prefetches a complete Room while waiting for a committed cold landing', async () => {
@@ -123,7 +123,7 @@ describe('routeBuzzNotificationResponse', () => {
     const waitForInitialLanding = vi.fn(() => landing);
     const resolveTarget = vi.fn(() => new Promise<never>(() => undefined));
     const prefetchRoom = vi.fn();
-    const { navigate, suppressPendingInitialLanding, routing: deps } = routing({
+    const { openStack, suppressPendingInitialLanding, routing: deps } = routing({
       waitForInitialLanding,
       resolveTarget,
       prefetchRoom,
@@ -135,19 +135,19 @@ describe('routeBuzzNotificationResponse', () => {
     await vi.waitFor(() => expect(waitForInitialLanding).toHaveBeenCalledOnce());
     expect(prefetchRoom).toHaveBeenCalledOnce();
     expect(suppressPendingInitialLanding).not.toHaveBeenCalled();
-    expect(navigate).not.toHaveBeenCalled();
+    expect(openStack).not.toHaveBeenCalled();
     finishLanding('committed');
     await routed;
     expect(resolveTarget).toHaveBeenCalledOnce();
     expect(suppressPendingInitialLanding).toHaveBeenCalledOnce();
-    expect(navigate).toHaveBeenCalledOnce();
+    expect(openStack).toHaveBeenCalledOnce();
   });
 
   it('prefetches during root startup but navigates only after the navigator renders', async () => {
     let releaseRoot!: () => void;
     const ready = new Promise<void>((resolve) => { releaseRoot = resolve; });
     const prefetchRoom = vi.fn();
-    const { navigate, routing: deps } = routing({
+    const { openStack, routing: deps } = routing({
       waitForRootReady: () => ready,
       prefetchRoom,
     });
@@ -156,44 +156,43 @@ describe('routeBuzzNotificationResponse', () => {
       deps,
     );
     await vi.waitFor(() => expect(prefetchRoom).toHaveBeenCalledOnce());
-    expect(navigate).not.toHaveBeenCalled();
+    expect(openStack).not.toHaveBeenCalled();
     releaseRoot();
     await routed;
-    expect(navigate).toHaveBeenCalledOnce();
+    expect(openStack).toHaveBeenCalledOnce();
   });
 
 
   // The reported failure: the app is already running when the push is tapped.
   it('opens the Room a tap names while the app is already running', async () => {
-    const { navigate, routing: deps } = routing();
+    const { openStack, routing: deps } = routing();
 
     const target = await routeBuzzNotificationResponse(tap('msg-1', 'room-b'), deps);
 
     expect(target?.channelId).toBe('room-b');
-    expect(navigate).toHaveBeenCalledWith(
+    expect(openStack).toHaveBeenCalledWith([
+      { name: 'beeline/channels', params: {} },
       {
-        pathname: '/beeline/chat/[channelId]',
+        name: 'beeline/chat/[channelId]',
         params: {
           channelId: 'room-b',
           notificationResponseId: 'msg-1',
           returnTo: 'room-list',
-          notificationMessageId: undefined,
           notificationTarget: 'message',
         },
       },
-      { dangerouslySingular: true },
-    );
+    ]);
   });
 
   it('opens the named Room even when a different Room is already open', async () => {
-    const { navigate, routing: deps } = routing();
+    const { openStack, routing: deps } = routing();
     await routeBuzzNotificationResponse(tap('msg-a', 'room-a'), deps);
-    navigate.mockClear();
+    openStack.mockClear();
 
     await routeBuzzNotificationResponse(tap('msg-b', 'room-b'), deps);
 
-    expect(navigate).toHaveBeenCalledTimes(1);
-    expect(navigate.mock.calls[0][0].params.channelId).toBe('room-b');
+    expect(openStack).toHaveBeenCalledTimes(1);
+    expect(openStack.mock.calls[0][0].at(-1).params.channelId).toBe('room-b');
   });
 
   // The app root replaces whatever route is current the moment its identity
@@ -204,16 +203,16 @@ describe('routeBuzzNotificationResponse', () => {
     const landing = new Promise<'committed'>((resolve) => {
       releaseLanding = () => resolve('committed');
     });
-    const { navigate, routing: deps } = routing({ waitForInitialLanding: () => landing });
+    const { openStack, routing: deps } = routing({ waitForInitialLanding: () => landing });
 
     const routed = routeBuzzNotificationResponse(tap('msg-cold', 'room-c'), deps);
     await Promise.resolve();
-    expect(navigate).not.toHaveBeenCalled();
+    expect(openStack).not.toHaveBeenCalled();
 
     releaseLanding();
     await routed;
-    expect(navigate).toHaveBeenCalledTimes(1);
-    expect(navigate.mock.calls[0][0].params.channelId).toBe('room-c');
+    expect(openStack).toHaveBeenCalledTimes(1);
+    expect(openStack.mock.calls[0][0].at(-1).params.channelId).toBe('room-c');
   });
 
   it('retains a cold push until the landing actually commits after a timeout', async () => {
@@ -221,18 +220,18 @@ describe('routeBuzzNotificationResponse', () => {
     let commit = () => {};
     const committed = new Promise<'committed'>((resolve) => { commit = () => resolve('committed'); });
     const waitForInitialLanding = vi.fn().mockResolvedValueOnce('timeout').mockReturnValue(committed);
-    const { navigate, routing: deps } = routing({
+    const { openStack, routing: deps } = routing({
       waitForInitialLanding,
       log,
     });
     const routed = routeBuzzNotificationResponse(tap('msg-timeout', 'room-timeout'), deps);
     await vi.waitFor(() => expect(waitForInitialLanding).toHaveBeenCalledTimes(2));
-    expect(navigate).not.toHaveBeenCalled();
+    expect(openStack).not.toHaveBeenCalled();
     expect(deps.suppressPendingInitialLanding).not.toHaveBeenCalled();
     commit();
     await routed;
-    expect(navigate).toHaveBeenCalledTimes(1);
-    expect(navigate.mock.calls[0][0].params.channelId).toBe('room-timeout');
+    expect(openStack).toHaveBeenCalledTimes(1);
+    expect(openStack.mock.calls[0][0].at(-1).params.channelId).toBe('room-timeout');
     expect(log).toHaveBeenCalledWith(
       '[PUSH ROUTING] Initial landing still pending; retaining pushed destination',
     );
@@ -242,7 +241,7 @@ describe('routeBuzzNotificationResponse', () => {
     let commit = () => {};
     const committed = new Promise<'committed'>((resolve) => { commit = () => resolve('committed'); });
     const waitForInitialLanding = vi.fn().mockResolvedValueOnce('timeout').mockReturnValue(committed);
-    const { navigate, routing: deps } = routing({
+    const { openStack, routing: deps } = routing({
       waitForInitialLanding,
       suppressPendingInitialLanding: suppressInitialLandingNavigation,
       resolveTarget: async (target) => {
@@ -259,8 +258,8 @@ describe('routeBuzzNotificationResponse', () => {
     commit();
     await routed;
     expect(isInitialLandingNavigationSuppressed()).toBe(true);
-    expect(navigate).toHaveBeenCalledTimes(1);
-    expect(navigate.mock.calls[0][0].params.channelId).toBe('room-race');
+    expect(openStack).toHaveBeenCalledTimes(1);
+    expect(openStack.mock.calls[0][0].at(-1).params.channelId).toBe('room-race');
   });
 
   it('suppresses with the real gate state so the app root replace is refused', async () => {
@@ -291,7 +290,7 @@ describe('routeBuzzNotificationResponse', () => {
   // workspace's deck, not the previously-active one: the Workspace selection
   // commits in the resolver before the navigation names it via `communityId`.
   it('commits the pushed workspace before navigating to its deck', async () => {
-    const { navigate, routing: deps } = routing({
+    const { openStack, routing: deps } = routing({
       resolveTarget: async (target) => target,
     });
 
@@ -311,28 +310,27 @@ describe('routeBuzzNotificationResponse', () => {
     );
 
     expect(routed?.target).toBe('workspace');
-    expect(navigate).toHaveBeenCalledTimes(1);
-    expect(navigate).toHaveBeenCalledWith(
+    expect(openStack).toHaveBeenCalledTimes(1);
+    expect(openStack).toHaveBeenCalledWith([
       {
-        pathname: '/beeline/channels',
+        name: 'beeline/channels',
         params: { communityId: 'ws-burd', notificationResponseId: 'msg-ws' },
       },
-      { dangerouslySingular: true },
-    );
+    ]);
   });
 
   it('routes one response once, however many times it is delivered', async () => {
-    const { navigate, routing: deps } = routing();
+    const { openStack, routing: deps } = routing();
     const response = tap('msg-dup', 'room-d');
 
     await routeBuzzNotificationResponse(response, deps);
     await routeBuzzNotificationResponse(response, deps);
 
-    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(openStack).toHaveBeenCalledTimes(1);
   });
 
   it('ignores an action button and a response the OS never delivered', async () => {
-    const { navigate, routing: deps } = routing();
+    const { openStack, routing: deps } = routing();
 
     await routeBuzzNotificationResponse(null, deps);
     await routeBuzzNotificationResponse(
@@ -340,7 +338,7 @@ describe('routeBuzzNotificationResponse', () => {
       deps,
     );
 
-    expect(navigate).not.toHaveBeenCalled();
+    expect(openStack).not.toHaveBeenCalled();
   });
 
   it('clears the retained native response even when nothing was routed', async () => {
@@ -414,7 +412,7 @@ describe('notification response wiring', () => {
         },
       };
       const prefetchRoom = vi.fn();
-      const { navigate, routing: deps } = routing({
+      const { openStack, routing: deps } = routing({
         prefetchRoom,
         resolveTarget: async (target) => {
           expect(target.workspaceId).toBe('other-workspace');
@@ -435,12 +433,18 @@ describe('notification response wiring', () => {
       });
       if (entry === 'background') listener?.(response);
 
-      await vi.waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(openStack).toHaveBeenCalledTimes(1));
       if (surface === 'corner') expect(prefetchRoom).not.toHaveBeenCalled();
       else expect(prefetchRoom).toHaveBeenCalledWith(responseId, channelId);
-      expect(navigate).toHaveBeenCalledWith(
+      // Back from the notified screen stays in its Workspace: the stack
+      // underneath is that Workspace's Room list (and a corner's corners list).
+      expect(openStack).toHaveBeenCalledWith([
+        { name: 'beeline/channels', params: { communityId: 'other-workspace' } },
+        ...(surface === 'corner'
+          ? [{ name: 'beeline/corners/[roomId]', params: { roomId } }]
+          : []),
         {
-          pathname: '/beeline/chat/[channelId]',
+          name: 'beeline/chat/[channelId]',
           params: {
             channelId,
             communityId: 'other-workspace',
@@ -452,8 +456,7 @@ describe('notification response wiring', () => {
             notificationTarget: 'message',
           },
         },
-        { dangerouslySingular: true },
-      );
+      ]);
     },
   );
 
@@ -552,18 +555,18 @@ describe('notification response wiring', () => {
         storage.set(key, value);
       },
     });
-    const { navigate, routing: deps } = routing({ consumedResponses: consumed });
+    const { openStack, routing: deps } = routing({ consumedResponses: consumed });
     await routeBuzzNotificationResponse(response, deps);
-    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(openStack).toHaveBeenCalledTimes(1);
     expect(await consumed.has('msg-then-leftover')).toBe(true);
     expect(storage.get(CONSUMED_NOTIFICATION_RESPONSE_IDS_KEY)).toContain('msg-then-leftover');
 
-    navigate.mockClear();
+    openStack.mockClear();
     await routeBuzzNotificationResponse(response, {
       ...deps,
       handled: new Set(),
     });
-    expect(navigate).not.toHaveBeenCalled();
+    expect(openStack).not.toHaveBeenCalled();
   });
 
   it('routes all Expo taps through the one entry adapter', () => {

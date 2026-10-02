@@ -6,7 +6,7 @@ import * as Fonts from 'expo-font';
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { FontAwesome } from '@expo/vector-icons';
-import { useNavigationContainerRef, usePathname, useRouter } from 'expo-router';
+import { useNavigationContainerRef, usePathname } from 'expo-router';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import {
@@ -41,6 +41,7 @@ import {
   suppressInitialLandingNavigation,
   whenInitialLandingResolved,
 } from '@/navigation/initial-landing';
+import { createNotificationNavigator } from '@/navigation/notification-stack';
 import { useTauriZoom } from '@/hooks/useTauriZoom';
 import { useTauriDrag } from '@/hooks/useTauriDrag';
 import { BrowserNavigationShortcuts } from '@/hooks/useBrowserNavigationShortcuts';
@@ -289,7 +290,6 @@ export default function RootLayout() {
 
   useTauriZoom();
   useTauriDrag();
-  const router = useRouter();
   const pathname = usePathname();
   React.useEffect(() => {
     // `router.replace` only schedules the landing transition. Resolve the
@@ -322,6 +322,10 @@ export default function RootLayout() {
   //
   const [initialized, setInitialized] = React.useState(false);
   const navigationRef = useNavigationContainerRef();
+  const notificationNavigator = React.useMemo(
+    () => createNotificationNavigator(navigationRef),
+    [navigationRef],
+  );
   const rootReady = React.useRef<{ promise: Promise<void>; resolve: () => void } | null>(null);
   if (!rootReady.current) {
     let resolve!: () => void;
@@ -360,7 +364,7 @@ export default function RootLayout() {
   const handleNotificationResponse = React.useCallback(
     async (response: TappedNotificationResponse | null) => {
       await routeBuzzNotificationResponse(response, {
-        router,
+        navigator: notificationNavigator,
         handled: handledNotificationIds.current,
         defaultActionIdentifier: Notifications.DEFAULT_ACTION_IDENTIFIER,
         waitForRootReady: () => rootReady.current!.promise,
@@ -373,7 +377,7 @@ export default function RootLayout() {
         log: (message) => console.warn(message),
       });
     },
-    [router],
+    [notificationNavigator],
   );
 
   React.useEffect(() => {

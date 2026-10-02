@@ -12,7 +12,7 @@ vi.mock('expo-notifications', () => ({
 }));
 
 vi.mock('expo-router', () => ({
-  useRouter: () => ({}),
+  useNavigationContainerRef: () => ({}),
 }));
 
 vi.mock('react-native', async () => {

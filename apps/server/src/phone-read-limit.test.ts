@@ -190,6 +190,7 @@ describe('phone history and outline reads', () => {
       phoneReadLimits: phoneReadLimits({
         history: { maxRequestsPerWindow: 3, now: () => now, log },
         outline: { maxRequestsPerWindow: 3, now: () => now, log },
+        search: { maxRequestsPerWindow: 3, now: () => now, log },
       }),
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -228,6 +229,31 @@ describe('phone history and outline reads', () => {
     expect(limited.body).toEqual({ error: 'too_many_requests' });
     expect(log.mock.calls).toEqual([['[phone-outline] rate-limited', `identity=${ALICE}`]]);
     expect((await outline(BOB)).status).toBe(200);
+  });
+
+  it('answers the message search, refuses a bad query or cursor, and limits each identity', async () => {
+    const found = await get(`/v1/phone/workspaces/${WORKSPACE}/search?q=hi`);
+    expect(found.status).toBe(200);
+    expect(
+      ((await found.json()) as { results: { messageId: string }[] }).results.map(
+        (result) => result.messageId,
+      ),
+    ).toEqual(['2'.repeat(64), '1'.repeat(64)]);
+    const blank = await get(`/v1/phone/workspaces/${WORKSPACE}/search?q=%20`);
+    expect(blank.status).toBe(400);
+    expect(await blank.json()).toEqual({ error: 'invalid_query' });
+    const cursor = await get(`/v1/phone/workspaces/${WORKSPACE}/search?q=hi&before=nope`);
+    expect(cursor.status).toBe(400);
+    expect(await cursor.json()).toEqual({ error: 'invalid_cursor' });
+    const limited = await get(`/v1/phone/workspaces/${WORKSPACE}/search?q=hi`);
+    expect(limited.status).toBe(429);
+    expect(log.mock.calls).toEqual([['[phone-search] rate-limited', `identity=${ALICE}`]]);
+    expect(
+      (await get(`/v1/phone/workspaces/${WORKSPACE}/search?q=${'x'.repeat(201)}`, BOB)).status,
+    ).toBe(400);
+    expect((await get(`/v1/phone/workspaces/${WORKSPACE}/search?q=hi`, BOB)).status).toBe(200);
+    // Mallory is not in the Workspace.
+    expect((await get(`/v1/phone/workspaces/${WORKSPACE}/search?q=hi`, MALLORY)).status).toBe(404);
   });
 
   it('counts a quiet Room once per time zone and recounts after any message change', async () => {

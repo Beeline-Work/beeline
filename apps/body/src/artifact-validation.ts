@@ -1,4 +1,8 @@
-import { ARTIFACT_MAXIMUM_BYTES, ARTIFACT_MIME_TYPES } from '@beeline/api-contract/daemon';
+import {
+  ARTIFACT_MAXIMUM_BYTES,
+  ARTIFACT_MIME_TYPES,
+  artifactSignatureMismatch,
+} from '@beeline/api-contract/daemon';
 
 /**
  * The per-format validation matrix for `post_artifact`. The mime selects the
@@ -7,9 +11,9 @@ import { ARTIFACT_MAXIMUM_BYTES, ARTIFACT_MIME_TYPES } from '@beeline/api-contra
  * HTML and SVG must be SELF-CONTAINED: inline `<style>` and `data:` URLs
  * only. Every script carrier, external reference and interactive-submitting
  * element is refused by name, because the viewer runs with script off and a
- * mock that reaches for the network is not a mock. PDF is signature-checked.
- * The remaining formats (raster images, text, JSON, CSV, zip, and the
- * octet-stream fallback) are size-only: the viewer renders a document card.
+ * mock that reaches for the network is not a mock. PDF, video and audio are
+ * signature-checked. The remaining formats (raster images, text, JSON, CSV,
+ * zip, and the octet-stream fallback) are size-only: the viewer renders a document card.
  */
 
 
@@ -53,6 +57,8 @@ export function validateArtifact(mime: string, bytes: Buffer, title: string): vo
     }
     return;
   }
+  const mismatch = artifactSignatureMismatch(mime, bytes);
+  if (mismatch) throw new Error(mismatch);
   // text/markdown: size only.
 }
 

@@ -3,6 +3,10 @@ import { ARTIFACT_MAXIMUM_BYTES, ARTIFACT_MIME_TYPES } from '@beeline/api-contra
 import { validateArtifact } from './artifact-validation.js';
 
 const mb = (n: number) => Buffer.alloc(n);
+const ftyp = (brand: string) =>
+  Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from(`ftyp${brand}`), mb(8)]);
+const webm = Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x9f, 0x42, 0x86, 0x81]);
+const wav = Buffer.concat([Buffer.from('RIFF'), Buffer.from([36, 0, 0, 0]), Buffer.from('WAVEfmt ')]);
 
 describe('post_artifact validation matrix', () => {
   it.each([
@@ -18,13 +22,14 @@ describe('post_artifact validation matrix', () => {
     ['application/json', '{}'],
     ['text/csv', 'a,b'],
     ['application/zip', 'zip'],
-    ['video/mp4', 'mp4'],
-    ['video/quicktime', 'mov'],
-    ['video/webm', 'webm'],
-    ['audio/mpeg', 'mp3'],
-    ['audio/wav', 'wav'],
+    ['video/mp4', ftyp('isom')],
+    ['video/quicktime', ftyp('qt  ')],
+    ['video/webm', webm],
+    ['audio/mpeg', Buffer.from('ID3\x04\x00')],
+    ['audio/wav', wav],
+    ['audio/mp4', ftyp('M4A ')],
     ['application/octet-stream', 'bytes'],
-  ])('accepts the inventoried %s lane', (mime, content) => {
+  ] as const)('accepts the inventoried %s lane', (mime, content) => {
     expect(() => validateArtifact(mime, Buffer.from(content), 'Artifact')).not.toThrow();
   });
 
@@ -47,6 +52,7 @@ describe('post_artifact validation matrix', () => {
       'video/webm',
       'audio/mpeg',
       'audio/wav',
+      'audio/mp4',
       'application/octet-stream',
     ];
     expect(tested).toEqual([...ARTIFACT_MIME_TYPES]);
@@ -122,6 +128,24 @@ describe('post_artifact validation matrix', () => {
     expect(() => validateArtifact('application/pdf', Buffer.from('not a pdf'), 'Spec')).toThrow(
       /%PDF-/,
     );
+  });
+
+  it('requires video and audio bytes to match the declared format', () => {
+    expect(() => validateArtifact('audio/mpeg', Buffer.from([0xff, 0xfb, 0x90, 0x64]), 'Song'))
+      .not.toThrow();
+    expect(() => validateArtifact('video/quicktime', Buffer.from('\0\0\0\x08wide'), 'Clip'))
+      .not.toThrow();
+    const mismatches: readonly [string, Buffer, RegExp][] = [
+      ['video/mp4', Buffer.from('not a video'), /ftyp box/],
+      ['video/mp4', webm, /ftyp box/],
+      ['audio/mp4', wav, /ftyp box/],
+      ['video/quicktime', Buffer.from('plain text here'), /QuickTime/],
+      ['video/webm', ftyp('isom'), /EBML/],
+      ['audio/mpeg', wav, /ID3 tag or MPEG frame sync/],
+      ['audio/wav', Buffer.from('RIFF\0\0\0\0AVI LIST'), /RIFF\/WAVE/],
+    ];
+    for (const [mime, bytes, reason] of mismatches)
+      expect(() => validateArtifact(mime, bytes, 'Clip')).toThrow(reason);
   });
 
   it('checks size only for Markdown', () => {

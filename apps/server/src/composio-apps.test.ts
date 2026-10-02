@@ -260,6 +260,16 @@ describe('managed app provider boundary', () => {
       expect(error.message).toBe('provider rejected [staged file] from [staged file]');
     });
 
+    it('passes video and audio artifacts posted with their own mime type', async () => {
+      for (const mimeType of ['video/mp4', 'video/quicktime', 'video/webm', 'audio/mpeg',
+        'audio/wav', 'audio/mp4']) {
+        const file = video({ name: 'Launch teaser', mimeType });
+        const args = { videoFile: { beelineObjectId: OBJECT } };
+        const files = await resolveAppFiles(args, async () => file);
+        expect(files.get(args.videoFile)?.mimetype).toBe(mimeType);
+      }
+    });
+
     it('refuses an oversize or disallowed Room file without reading its bytes', async () => {
       const long = video({ name: 'long.mp4', size: APP_FILE_MAXIMUM_BYTES + 1 });
       await expect(resolveAppFiles({ videoFile: { beelineObjectId: OBJECT } }, async () => long))

@@ -4,6 +4,7 @@ import {
   ARTIFACT_MAXIMUM_BYTES,
   ARTIFACT_MIME_BY_EXTENSION,
   ARTIFACT_MIME_TYPES,
+  artifactSignatureMismatch,
 } from './artifacts.js';
 
 describe('artifact contract constants', () => {
@@ -27,6 +28,7 @@ describe('artifact contract constants', () => {
       'video/webm',
       'audio/mpeg',
       'audio/wav',
+      'audio/mp4',
       'application/octet-stream',
     ]);
   });
@@ -55,7 +57,19 @@ describe('artifact contract constants', () => {
       '.webm': 'video/webm',
       '.mp3': 'audio/mpeg',
       '.wav': 'audio/wav',
+      '.m4a': 'audio/mp4',
     });
     expect(ARTIFACT_EXTENSIONS_BY_MIME['application/octet-stream']).toEqual([]);
+  });
+
+  it('names the expected signature for a media mismatch and ignores other mimes', () => {
+    const mp4 = new Uint8Array([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70]);
+    expect(artifactSignatureMismatch('video/mp4', mp4)).toBeUndefined();
+    expect(artifactSignatureMismatch('audio/mp4', mp4)).toBeUndefined();
+    expect(artifactSignatureMismatch('video/webm', mp4)).toBe(
+      'a video/webm artifact must start with the EBML header 1A 45 DF A3; these bytes do not',
+    );
+    expect(artifactSignatureMismatch('audio/wav', new Uint8Array([1]))).toMatch(/RIFF\/WAVE/);
+    expect(artifactSignatureMismatch('text/plain', new Uint8Array([1]))).toBeUndefined();
   });
 });

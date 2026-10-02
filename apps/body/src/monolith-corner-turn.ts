@@ -111,7 +111,6 @@ import { WarmTranscript } from './warm-transcript.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
 import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
 import { installCornerGitHubWrappers } from './corner-github-auth.js';
-import { isConfiguredReviewer } from './beeline-skill.js';
 import {
   harvestWarmNodeModules,
   sharedCargoTargetDir,
@@ -779,8 +778,7 @@ export class MonolithCornerTurnLoop {
       ? roster.members.find((member) => member.identityId === this.options.openedBy)
       : undefined;
     const reviewerInput = {
-      reviewerHandle: configuration.reviewerHandle,
-      agentHandle: self?.handle,
+      isReviewer: configuration.isReviewer === true,
       authorHandle: opener?.handle,
       openedByAgent: !this.options.openedBy || this.options.openedBy === this.agent.publicKey,
     };
@@ -838,7 +836,7 @@ export class MonolithCornerTurnLoop {
           root: this.options.config.agentHomeRoot,
           squireScope,
           sharedSkills: this.options.config.sharedSkills ?? [],
-          isReviewer: isConfiguredReviewer(self?.handle, configuration.reviewerHandle),
+          isReviewer: Boolean(reviewerInstruction),
           grantedHostRoutes: mountedHostRoutes,
           extraHostRoutes: registryHostDeclarations,
           resourceAuthFile,

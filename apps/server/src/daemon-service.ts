@@ -184,7 +184,7 @@ import {
   saveWorkflow,
   startWorkflow,
 } from './workflow-runs.js';
-import { isConfiguredReviewer } from './agent-health.js';
+import { isCornerReviewer } from './agent-health.js';
 import {
   recordStarPromptReply,
   STAR_PROMPT_MILESTONES,
@@ -3016,18 +3016,7 @@ export class DaemonService {
           [input.cornerId],
         )
       ).rows[0];
-      if (
-        !target ||
-        !(await isConfiguredReviewer(db, target.parent_room_id, agentId)) ||
-        !(
-          await db.query(
-            `SELECT 1 FROM memberships reviewer
-             JOIN identities identity ON identity.id=reviewer.identity_id AND identity.kind='agent'
-             WHERE reviewer.room_id=$1 AND reviewer.identity_id=$2 AND reviewer.removed_at IS NULL`,
-            [target.parent_room_id, agentId],
-          )
-        ).rowCount
-      )
+      if (!target || !(await isCornerReviewer(db, input.cornerId, agentId)))
         throw new CornerVerdictRejectedError(
           'NOT_CONFIGURED_REVIEWER',
           "only this corner's configured reviewer can record PASS",
@@ -3178,6 +3167,8 @@ export class DaemonService {
           target: `registry-mcp:${route.registry_server_name}`,
         }))
       : [];
+    const isReviewer =
+      Boolean(roomId) && (await isCornerReviewer(this.database, roomId!, agentId));
     return {
       ...(row?.soul ? { soul: { name: row.soul.name, instructions: row.soul.instructions } } : {}),
       ...(row?.selected_model ? { model: row.selected_model } : {}),
@@ -3185,6 +3176,7 @@ export class DaemonService {
       fastMode: row?.fast_mode ?? false,
       commands: row?.commands ?? [],
       yoloMode: row?.yolo_mode ?? false,
+      isReviewer,
       ...(row?.reviewer_handle ? { reviewerHandle: row.reviewer_handle } : {}),
       ...(registryMcpRoutes.length ? { registryMcpRoutes } : {}),
     };
@@ -6823,8 +6815,7 @@ export class DaemonService {
         !input.evidence.trim())
     )
       throw new Error('invalid validation stage or missing evidence');
-    if (input.headSha !== 'draft' && !/^[0-9a-f]{40}$/.test(input.headSha))
-      throw new Error('validation head must be draft or a full SHA');
+    const rawHeadSha = typeof input.headSha === 'string' ? input.headSha.trim().toLowerCase() : '';
     return this.database.transaction(async (db) => {
       const corner = (
         await db.query<{
@@ -6852,13 +6843,24 @@ export class DaemonService {
       if ((current?.revision ?? 0) !== input.briefRevision)
         throw new Error('validation brief revision changed');
       const currentHead = corner.lifecycle?.pr?.headSha;
-      if (currentHead && input.headSha !== currentHead) throw new Error('validation head changed');
-      if (!currentHead && input.headSha !== 'draft')
+      // A short SHA is accepted only when it unambiguously names the one head
+      // this corner can be recording against; otherwise the error says to pass
+      // the full SHA (or `draft` while no pull request is published).
+      let headSha: string;
+      if (rawHeadSha === 'draft') headSha = 'draft';
+      else if (/^[0-9a-f]{40}$/.test(rawHeadSha)) headSha = rawHeadSha;
+      else if (currentHead && /^[0-9a-f]{7,39}$/.test(rawHeadSha) && currentHead.startsWith(rawHeadSha))
+        headSha = currentHead;
+      else
+        throw new Error(
+          currentHead
+            ? `validation head must be the full 40-character SHA (this corner's head is ${currentHead}) or "draft"`
+            : 'validation head must be "draft" until this corner has a published pull request',
+        );
+      if (currentHead && headSha !== currentHead) throw new Error('validation head changed');
+      if (!currentHead && headSha !== 'draft')
         throw new Error('validation head is not published');
-      if (
-        input.stage === 'review' &&
-        !(await isConfiguredReviewer(db, corner.parent_room_id, agentId))
-      )
+      if (input.stage === 'review' && !(await isCornerReviewer(db, input.cornerId, agentId)))
         throw new Error('only the configured reviewer records the review stage');
       if (
         input.stage === 'ci' &&
@@ -6874,7 +6876,7 @@ export class DaemonService {
         [
           input.cornerId,
           input.briefRevision,
-          input.headSha,
+          headSha,
           input.stage,
           input.status,
           input.evidence,
@@ -6883,7 +6885,7 @@ export class DaemonService {
       );
       return {
         briefRevision: input.briefRevision,
-        headSha: input.headSha,
+        headSha,
         stage: input.stage,
         status: input.status,
         evidence: input.evidence,

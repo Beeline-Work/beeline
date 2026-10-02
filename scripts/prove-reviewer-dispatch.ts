@@ -287,8 +287,7 @@ async function main(): Promise<void> {
     const lifecycle = (restore as { lifecycle?: { pr?: { number: number; headSha: string } } })
       .lifecycle;
     const instruction = cornerReviewerInstruction({
-      reviewerHandle: configuration.reviewerHandle as string | undefined,
-      agentHandle: members.find((member) => member.identityId === REVIEWER)?.handle,
+      isReviewer: configuration.isReviewer === true,
       authorHandle: members.find((member) => member.identityId === openedBy)?.handle,
       openedByAgent: !openedBy || openedBy === REVIEWER,
       ...(lifecycle?.pr

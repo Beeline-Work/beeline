@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { approveMerge, prChecksStatus } from './read-only-mcp.js';
+import { agentToolsFor, approveMerge, prChecksStatus } from './read-only-mcp.js';
 
 const url = 'https://github.com/owner/widgets/pull/614';
 let restore: Record<string, unknown>, items: Record<string, unknown>[];
@@ -277,5 +277,16 @@ describe('approve_merge', () => {
       'headSha must be a full 40-character SHA',
     );
     expect(calls).toEqual([]);
+  });
+});
+
+describe('tool descriptions agree with what the server will accept', () => {
+  const tool = (name: string) =>
+    agentToolsFor(true, false, true, true).find((candidate) => candidate.name === name)!;
+
+  it('record_validation_stage accepts a short SHA and reserves review for the reviewer', () => {
+    const description = tool('record_validation_stage').description;
+    expect(description).toContain('short prefix');
+    expect(description).toContain('configured reviewer records the review stage');
   });
 });

@@ -3,7 +3,6 @@ import { SERVER_EVENT_KINDS } from '@beeline/api-contract/phone';
 import {
   BEELINE_REVIEW_SKILL_NAME,
   beelineTriageSkillMarkdown,
-  isConfiguredReviewer,
   usingBeelineSkillMarkdown,
   beelineReviewSkillMarkdown,
   beelineSpecSkillMarkdown,
@@ -407,17 +406,6 @@ describe('beeline-spec planning skill', () => {
     expect(markdown).toContain('Dispatch without a proposal/go ceremony');
     expect(markdown).toContain("ask the corner's opener to approve it");
     expect(markdown).toContain('added automatically to the brief attachment manifest');
-  });
-});
-
-describe('isConfiguredReviewer', () => {
-  it('matches handles with or without their @ prefix and refuses blanks', () => {
-    expect(isConfiguredReviewer('fathom', '@fathom')).toBe(true);
-    expect(isConfiguredReviewer('@fathom', 'fathom')).toBe(true);
-    expect(isConfiguredReviewer('@hoots', '@fathom')).toBe(false);
-    expect(isConfiguredReviewer(undefined, '@fathom')).toBe(false);
-    expect(isConfiguredReviewer('@hoots', undefined)).toBe(false);
-    expect(isConfiguredReviewer('@hoots', '')).toBe(false);
   });
 });
 

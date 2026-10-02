@@ -7,7 +7,7 @@ import type {
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
 import { isResumeKind } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
-import { isConfiguredReviewer } from './agent-health.js';
+import { isCornerReviewer } from './agent-health.js';
 import { advanceCorner } from './corner-workflow.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import { hasSystemReportMention, taggedIdentityIdsSql } from './message-mentions.js';
@@ -636,7 +636,7 @@ export const CORNER_CHECKS_BLOCKED_AFTER = '2 minutes';
  *
  * "The review" is read structurally, never from the verdict's wording: this
  * agent is the configured reviewer on the corner's parent Room (the reviewer or
- * one of its fallbacks, per `isConfiguredReviewer`), and the turn it
+ * one of its fallbacks, per `isCornerReviewer`), and the turn it
  * just ended belongs to the review loop — dispatched either from a
  * `check-passed` fact (the green transition and reconciliation both cite one)
  * or from the worker's own message handing the branch back. A turn the reviewer
@@ -678,8 +678,7 @@ export async function queueCornerWorkerAfterReview(
     )
   ).rows[0];
   // The reviewer and a fallback reviewer hold the post the same way.
-  if (!review || !(await isConfiguredReviewer(db, review.parent_room_id, review.agent_id)))
-    return;
+  if (!review || !(await isCornerReviewer(db, input.roomId, review.agent_id))) return;
   await advanceCorner(db, input.roomId, {
     kind: 'review-ended',
     review,

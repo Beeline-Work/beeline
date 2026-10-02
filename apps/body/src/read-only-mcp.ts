@@ -973,7 +973,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'record_validation_stage',
     description:
-      'Record one observed Beeline validation stage for the current brief revision and code head. This is evidence, not merge authorization. Use headSha="draft" before publication; after publication use the exact current PR head. Give a concrete command, observation, finding, or reason.',
+      'Record one observed Beeline validation stage for the current brief revision and code head. This is evidence, not merge authorization. Use headSha="draft" before publication; after publication use the current PR head, either the full 40-character SHA or an unambiguous short prefix of it. Only the configured reviewer records the review stage; an implementer records intent, base, tests, docs, lint_types, publication, ci, and final_authorization. Give a concrete command, observation, finding, or reason.',
     inputSchema: {
       type: 'object',
       required: ['briefRevision', 'headSha', 'stage', 'status', 'evidence'],

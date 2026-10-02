@@ -107,7 +107,7 @@ export interface SectionReport {
 // ---------------------------------------------------------------------------
 
 export const CORNER_AUTHOR_CONTRACT = `The current brief's spec is the scope and its checklist says what done means. Its approval quote is the human's own words and wins any conflict with the spec. The short objective is navigation-only text and cannot add, remove, or narrow a requirement.
-Complete every checklist item in the current spec and use the brief's file manifest. Record relevant validation stages with record_validation_stage against the current revision and head, citing actual commands or observed behavior. Do not call a missing stage passed.
+Complete every checklist item in the current spec and use the brief's file manifest. Record your stages with record_validation_stage for this revision and head: intent, base, tests, docs, lint_types, publication, ci, final_authorization; the configured reviewer records review. Do not call a missing stage passed.
 When a human correction changes the assignment, read the latest revision and use revise_corner_brief with the complete updated brief and a change description before doing dependent work. A chat reply does not revise the assignment.
 Before any code, write its end-user story in one sentence: "a person who does X sees Y".
 Follow the beeline-triage skill's bugfix execution contract when the spec or its approval quote reports a defect.
@@ -179,25 +179,18 @@ export function cornerMergeInstruction(yoloMode: boolean, reviewerHandle?: strin
 }
 
 export function cornerReviewerInstruction(input: {
-  reviewerHandle?: string;
-  agentHandle?: string;
+  isReviewer: boolean;
   authorHandle?: string;
   openedByAgent: boolean;
   pullRequestNumber?: number;
   headSha?: string;
   briefRevision?: number;
 }): string | undefined {
-  if (
-    !input.reviewerHandle ||
-    !input.agentHandle ||
-    input.openedByAgent ||
-    handle(input.agentHandle) !== handle(input.reviewerHandle)
-  )
-    return undefined;
+  if (!input.isReviewer || input.openedByAgent) return undefined;
   const author = input.authorHandle ? handle(input.authorHandle) : 'author';
   const number = input.pullRequestNumber ?? 'N';
   const headSha = input.headSha ?? '<head sha>';
-  return `Checks are green on PR #${number} at ${headSha}${input.briefRevision ? ` with assigned brief revision ${input.briefRevision}` : ''}. Review it now with the beeline-review skill against that exact head and current assigned brief. FAIL: reply \`@${author}\` with the confirmed findings to fix. PASS: call the approve_merge tool for ${headSha}${input.briefRevision ? ` with briefRevision=${input.briefRevision}` : ''}, then reply \`approved ${headSha}\` without tagging ${author}: the server merges it, and a tag would wake the author for nothing. Never merge yourself or tell the author to merge. Never say you are holding or waiting for checks.`;
+  return `Checks are green on PR #${number} at ${headSha}${input.briefRevision ? ` with assigned brief revision ${input.briefRevision}` : ''}. Review it now with the beeline-review skill against that exact head and current assigned brief. FAIL: call record_validation_stage with stage "review", status "failed", and headSha ${headSha}, then reply \`@${author}\` with the confirmed findings and the reviewed head ${headSha} to fix. PASS: call the approve_merge tool for ${headSha}${input.briefRevision ? ` with briefRevision=${input.briefRevision}` : ''}, then reply \`approved ${headSha}\` without tagging ${author}: the server merges it, and a tag would wake the author for nothing. Never merge yourself or tell the author to merge. Never say you are holding or waiting for checks.`;
 }
 
 /**
@@ -207,17 +200,10 @@ export function cornerReviewerInstruction(input: {
  * agent to wait for `@<its own handle>` to tag it, a permanent deadlock.
  */
 export function cornerSelfReviewerInstruction(input: {
-  reviewerHandle?: string;
-  agentHandle?: string;
+  isReviewer: boolean;
   openedByAgent: boolean;
 }): string | undefined {
-  if (
-    !input.reviewerHandle ||
-    !input.agentHandle ||
-    !input.openedByAgent ||
-    handle(input.agentHandle) !== handle(input.reviewerHandle)
-  )
-    return undefined;
+  if (!input.isReviewer || !input.openedByAgent) return undefined;
   return 'Once the pull request exists, reply with its full URL and end the turn. You are this Room\'s reviewer, so your own pull request needs no review: do not request one or tag any agent for review. The server merges it once checks are green, yolo is on, and no human hold stands; never merge it yourself. You are woken only to fix failing checks or a merge GitHub refused.';
 }
 
@@ -460,11 +446,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     surfaces: ['code-corner'],
     render: ({ yoloMode, reviewerHandle, selfReviewer }) =>
       (selfReviewer
-        ? cornerSelfReviewerInstruction({
-            reviewerHandle,
-            agentHandle: reviewerHandle,
-            openedByAgent: true,
-          })!
+        ? cornerSelfReviewerInstruction({ isReviewer: true, openedByAgent: true })!
         : cornerMergeInstruction(Boolean(yoloMode), reviewerHandle)) +
       ' Never merge any other pull request.',
   },

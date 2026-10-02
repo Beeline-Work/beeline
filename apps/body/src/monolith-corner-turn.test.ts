@@ -139,8 +139,7 @@ describe('corner merge instructions', () => {
 
   it('selects the reviewer role by identity only for a non-opener', () => {
     const reviewer = {
-      reviewerHandle: 'echo',
-      agentHandle: 'echo',
+      isReviewer: true,
       authorHandle: 'bee',
       openedByAgent: false,
       pullRequestNumber: 42,
@@ -163,11 +162,11 @@ describe('corner merge instructions', () => {
     expect(instruction).not.toContain('pending checks');
     expect(instruction).not.toContain('unknown checks');
     expect(cornerReviewerInstruction({ ...reviewer, openedByAgent: true })).toBeUndefined();
-    expect(cornerReviewerInstruction({ ...reviewer, agentHandle: 'bee' })).toBeUndefined();
+    expect(cornerReviewerInstruction({ ...reviewer, isReviewer: false })).toBeUndefined();
   });
 
   it('gives the self-reviewer line only when the reviewer opens its own corner', () => {
-    const selfReviewer = { reviewerHandle: 'echo', agentHandle: 'echo', openedByAgent: true };
+    const selfReviewer = { isReviewer: true, openedByAgent: true };
     const instruction = cornerSelfReviewerInstruction(selfReviewer)!;
     expect(instruction).toContain("You are this Room's reviewer");
     expect(instruction).toContain('do not request one');
@@ -178,15 +177,11 @@ describe('corner merge instructions', () => {
     expect(instruction).toContain('never merge it yourself');
     expect(instruction).not.toContain('gh pr merge');
     // A non-reviewer opener (someone else is the configured reviewer): nothing.
-    expect(cornerSelfReviewerInstruction({ ...selfReviewer, agentHandle: 'bee' })).toBeUndefined();
+    expect(cornerSelfReviewerInstruction({ ...selfReviewer, isReviewer: false })).toBeUndefined();
     // The reviewer on someone else's corner: `cornerReviewerInstruction` covers
     // that case instead, so this stays undefined.
     expect(
       cornerSelfReviewerInstruction({ ...selfReviewer, openedByAgent: false }),
-    ).toBeUndefined();
-    // No reviewer configured at all: nothing either.
-    expect(
-      cornerSelfReviewerInstruction({ ...selfReviewer, reviewerHandle: undefined }),
     ).toBeUndefined();
   });
 
@@ -310,7 +305,7 @@ describe('corner merge instructions', () => {
     const api = {
       execute: vi.fn(async (name: string) => {
         if (name === 'getAgentConfiguration')
-          return { commands: [], yoloMode: true, reviewerHandle: 'echo' };
+          return { commands: [], yoloMode: true, isReviewer: true, reviewerHandle: 'echo' };
         if (name === 'getWorkspaceRoster')
           return {
             members: [

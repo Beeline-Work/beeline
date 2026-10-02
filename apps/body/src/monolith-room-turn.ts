@@ -51,7 +51,6 @@ import {
   withoutImageData,
   type DeliveredAttachment,
 } from './attachment-delivery.js';
-import { isConfiguredReviewer } from './beeline-skill.js';
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import {
   beelineAgentMcpServer,
@@ -855,7 +854,7 @@ export class MonolithRoomTurnLoop {
           root: this.options.config.agentHomeRoot,
           squireScope,
           sharedSkills: this.options.config.sharedSkills ?? [],
-          isReviewer: isConfiguredReviewer(self?.handle, configuration.reviewerHandle),
+          isReviewer: configuration.isReviewer === true,
           grantedHostRoutes: mountedHostRoutes,
           extraHostRoutes: registryHostDeclarations,
           resourceAuthFile,

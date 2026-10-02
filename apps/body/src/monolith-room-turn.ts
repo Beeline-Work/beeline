@@ -996,15 +996,12 @@ export class MonolithRoomTurnLoop {
       resourceAuthFile,
       squireScope,
     );
-    // pi-acp 0.0.33 never mounts what `session/new` hands it, so its whole
-    // daemon tool panel is written into its own extensions directory instead
-    // (`pi-mcp-bridge.ts`). Granted host routes also ride that bridge:
-    // isolated homes write them into `mcp.json` like the other harnesses,
-    // but pi 0.85.1 itself does not read that file and isolated homes
-    // exclude the settings.json that would load optional pi-mcp-adapter.
+    // Pi ACP ignores session/new MCP servers. The installer selects native
+    // mcp.json or the generated bridge for this executable and isolated home.
     await installPiMcpBridge({
       agentCommand: harnessLabel,
       piHome: agentEnv.PI_CODING_AGENT_DIR,
+      piCommand: agentEnv.PI_ACP_PI_COMMAND ?? process.env.PI_ACP_PI_COMMAND,
       servers: [...servers, ...grantedRouteServers],
     });
     // What this session actually mounted, not only the Beeline-owned servers:

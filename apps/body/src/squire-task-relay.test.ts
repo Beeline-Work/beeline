@@ -29,7 +29,8 @@ function fixture(
 ) {
   let spawns = 0;
   let exits = 0;
-  let callbacks: { onSpawn: (pid: number) => void; onExit: (pid: number, code: number) => void } | undefined;
+  let callbacks: { onSpawn: (pid: number) => void; onExit: (pid: number, code: number) => void;
+    onDiagnostic: (message: string) => void } | undefined;
   const relay = new SquireTaskRelay('agent', 'room', contextFile, authorize, homedir(), (hooks) => {
     spawns++;
     callbacks = hooks as typeof callbacks;
@@ -46,7 +47,9 @@ function fixture(
     } as unknown as StdioSquireMcpClient;
   });
   relays.push(relay);
-  return { relay, stats: () => ({ spawns, exits }), die: () => callbacks?.onExit(2000 + spawns, 1) };
+  return { relay, stats: () => ({ spawns, exits }),
+    die: () => callbacks?.onExit(2000 + spawns, 1),
+    diagnose: (message: string) => callbacks?.onDiagnostic(message) };
 }
 
 async function request(
@@ -66,6 +69,31 @@ async function request(
 }
 
 describe('helper-owned Squire task relay', () => {
+  it('lists tools during Pi session startup before a turn, without authorizing a call', async () => {
+    const { relay, stats } = fixture();
+    const listed = await request(relay, 'startup', 'startup', 'tools/list');
+    expect(listed.status).toBe(200);
+    expect(listed.body.result).toMatchObject({ tools: expect.arrayContaining([{ name: 'operate_start' }]) });
+    expect(stats().spawns).toBe(1);
+    expect((await request(relay, 'startup', 'startup', 'tools/call', { name: 'operate_start' })).status)
+      .toBe(400);
+    relay.activate(command('root', 'turn-one'), 'generation');
+    expect((await request(relay, 'root', 'turn-one', 'tools/call', { name: 'operate_start' })).status)
+      .toBe(200);
+  });
+
+  it('records a bounded Squire process reason without copying stderr into the Room', async () => {
+    const logs: string[] = [];
+    vi.spyOn(console, 'info').mockImplementation((...parts) => { logs.push(parts.join(' ')); });
+    const { relay, diagnose, die } = fixture();
+    await request(relay, 'startup', 'startup', 'tools/list');
+    diagnose('squire mcp stderr: broker unavailable; private detail');
+    die();
+    expect(logs.join('\n')).toContain('"reason":"broker-unavailable"');
+    expect(logs.join('\n')).toContain('"exitCode":1');
+    expect(logs.join('\n')).not.toContain('private detail');
+  });
+
   it('keeps one MCP connection through calls, a turn boundary, and a new task in the same conversation', async () => {
     const logs: string[] = [];
     vi.spyOn(console, 'info').mockImplementation((...parts) => { logs.push(parts.join(' ')); });
@@ -384,13 +412,13 @@ describe('helper-owned Squire task relay', () => {
   it('routes separate real stdio facade processes through one conversation connection', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'squire-task-proxy-'));
     const contextFile = join(dir, 'turn.json');
-    const { relay, stats } = fixture(contextFile);
+    const { relay, stats, die } = fixture(contextFile);
     try {
       const endpoint = await relay.listen();
       const invoke = async (
-        turn: string, taskId: string, name: string, args: Record<string, unknown> = {},
+        turn: string | undefined, taskId: string, name: string, args: Record<string, unknown> = {},
       ) => {
-        await writeFile(contextFile, JSON.stringify({
+        if (turn) await writeFile(contextFile, JSON.stringify({
           roomId: 'room', requestId: turn, taskId, generationId: 'generation',
         }));
         const child = spawn(process.execPath, [
@@ -412,14 +440,22 @@ describe('helper-owned Squire task relay', () => {
             child.once('error', reject);
             child.once('exit', () => reject(new Error('stdio facade exited before responding')));
           });
-          child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call',
-            params: { name, arguments: args } })}\n`);
+          child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1,
+            method: name === 'tools/list' ? name : 'tools/call',
+            params: name === 'tools/list' ? {} : { name, arguments: args } })}\n`);
           return await reply;
         } finally {
           child.kill();
         }
       };
+      expect(await invoke(undefined, 'inventory', 'tools/list')).toHaveProperty('result');
       relay.activate(command('root', 'turn-one'), 'generation');
+      expect(await invoke('turn-one', 'root', 'operate_start')).toHaveProperty('result');
+      die();
+      const refused = await invoke('turn-one', 'root', 'operate_observe', {
+        sessionId: 'browser-1',
+      });
+      expect(JSON.stringify(refused)).toMatch(/connection died.*operate_start/);
       expect(await invoke('turn-one', 'root', 'operate_start')).toHaveProperty('result');
       relay.deactivate('turn-one');
       relay.activate(command('next-root', 'turn-two'), 'generation');
@@ -429,7 +465,7 @@ describe('helper-owned Squire task relay', () => {
       expect(await invoke('turn-two', 'next-root', 'inject_card', {
         sessionId: 'browser-1',
       })).toHaveProperty('result');
-      expect(stats().spawns).toBe(1);
+      expect(stats().spawns).toBe(2);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

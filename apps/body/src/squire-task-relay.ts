@@ -99,8 +99,10 @@ export class SquireTaskRelay {
     private readonly makeClient: (callbacks: {
       onSpawn: (pid: number | undefined) => void;
       onExit: (pid: number | undefined, code: number | null) => void;
+      onDiagnostic: (message: string) => void;
     }) => StdioSquireMcpClient = (callbacks) =>
-      new StdioSquireMcpClient({ scope: { agentId, roomId }, home, processGroup: true, ...callbacks }),
+      new StdioSquireMcpClient({ scope: { agentId, roomId }, home, processGroup: true,
+        onSpawn: callbacks.onSpawn, onExit: callbacks.onExit, log: callbacks.onDiagnostic }),
   ) {}
 
   async listen(): Promise<{ url: string; token: string; contextFile: string }> {
@@ -217,6 +219,15 @@ export class SquireTaskRelay {
     } as TaskConnection;
     task.client = this.makeClient({
       onSpawn: (pid) => this.log('relay-spawn', task, { pid }),
+      onDiagnostic: (message) => {
+        if (message.startsWith('squire mcp exited')) return;
+        const reason = /broker unavailable/i.test(message) ? 'broker-unavailable'
+          : /EADDRINUSE/.test(message) ? 'socket-in-use'
+          : /ECONNREFUSED/.test(message) ? 'connection-refused'
+          : /ENOENT/.test(message) ? 'path-missing'
+          : 'mcp-stderr';
+        this.log('relay-diagnostic', task, { reason });
+      },
       onExit: (pid, code) => {
         task.dead = true;
         this.log('relay-exit', task, { pid, exitCode: code,
@@ -249,13 +260,19 @@ export class SquireTaskRelay {
 
   private async handleSerial(input: RelayRequest): Promise<unknown> {
     const active = this.active;
-    if (!active || this.closed || Object.keys(active).some((key) =>
-      input[key as keyof TurnKey] !== active[key as keyof TurnKey]))
+    const inventory = input.method === 'initialize' || input.method === 'tools/list';
+    const suppliedTurn = Object.keys(input).some((key) =>
+      key === 'roomId' || key === 'requestId' || key === 'taskId' || key === 'generationId');
+    if (this.closed || (!inventory && (!active || Object.keys(active).some((key) =>
+      input[key as keyof TurnKey] !== active[key as keyof TurnKey]))) ||
+      (inventory && active && suppliedTurn && Object.keys(active).some((key) =>
+        input[key as keyof TurnKey] !== active[key as keyof TurnKey])))
       throw new Error('Squire requires the current active task');
     if (input.method === 'initialize') {
-      const task = this.connection(active.taskId);
+      const task = this.connection(active?.taskId ?? 'inventory');
       this.log('call-start', task, { method: input.method });
       this.log('call-end', task, { method: input.method });
+      if (!active) this.scheduleIdle();
       return {
         protocolVersion: '2024-11-05', capabilities: { tools: {} },
         serverInfo: { name: 'beeline-squire-task-relay', version: '1.0.0' },
@@ -263,7 +280,7 @@ export class SquireTaskRelay {
     }
     if (input.method !== 'tools/list' && input.method !== 'tools/call')
       throw new Error('Unsupported Squire MCP method');
-    let task = this.connection(active.taskId);
+    let task = this.connection(active?.taskId ?? 'inventory');
     const toolName = input.method === 'tools/call' ? input.params?.name : undefined;
     const safeToolName = typeof toolName === 'string' && /^[a-z][a-z0-9_]{0,80}$/i.test(toolName)
       ? toolName : undefined;
@@ -284,7 +301,7 @@ export class SquireTaskRelay {
       throw new Error('Squire browser session is no longer owned by this conversation; call operate_start');
     }
     if (input.method === 'tools/call' && !(await this.authorize({
-      ...active, tool: safeToolName!,
+      ...active!, tool: safeToolName!,
       args: input.params?.arguments && typeof input.params.arguments === 'object' &&
         !Array.isArray(input.params.arguments)
         ? input.params.arguments as Record<string, unknown> : {},
@@ -298,14 +315,15 @@ export class SquireTaskRelay {
         throw new Error('Squire MCP connection died; call operate_start for a fresh browser session');
       }
       this.retire('restart-required');
-      task = this.connection(active.taskId);
+      task = this.connection(active!.taskId);
     }
     try {
       const result = await task.client.requestMcp(input.method, input.params ?? {});
-      if (this.closed || this.task !== task || this.active?.taskId !== active.taskId ||
-          this.active?.requestId !== active.requestId)
+      if (this.closed || this.task !== task || (active && (this.active?.taskId !== active.taskId ||
+          this.active?.requestId !== active.requestId)))
         throw new Error('Squire task ended while the call was running');
       if (input.method === 'tools/list') task.tools = result;
+      if (!active) this.scheduleIdle();
       if (staleLeaseResult(result)) {
         for (const id of requestedIds) task.sessions.delete(id);
         this.releasePendingApprovals(task, requestedIds);
@@ -334,7 +352,7 @@ export class SquireTaskRelay {
         const pending = status === 'approval_pending' || status === 'pending_approval';
         if (pending && ids.length) {
           task.pendingApprovals.set(approvalKey, {
-            requestId: active.requestId, sessionIds: new Set(ids),
+            requestId: active!.requestId, sessionIds: new Set(ids),
           });
           this.log('approval-pending', task, { tool: safeToolName ?? null,
             sessionId: redactedSessionId(ids[0]) });
@@ -381,7 +399,10 @@ export function runSquireTaskProxy(env: NodeJS.ProcessEnv = process.env): void {
       try { input = JSON.parse(line); } catch { return; }
       if (input.id === undefined) return;
       try {
-        const context = JSON.parse(await readFile(contextFile, 'utf8')) as TurnKey;
+        // Pi and other ACP clients enumerate tools before a server command is
+        // claimed. Inventory is safe; calls still require the current turn file.
+        const inventory = input.method === 'initialize' || input.method === 'tools/list';
+        const context = inventory ? undefined : JSON.parse(await readFile(contextFile, 'utf8')) as TurnKey;
         const response = await fetch(new URL('/mcp', url), {
           method: 'POST',
           headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },

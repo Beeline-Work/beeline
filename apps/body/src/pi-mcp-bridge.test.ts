@@ -78,12 +78,81 @@ describe('pi MCP bridge', () => {
     const path = await installPiMcpBridge({
       agentCommand: '/usr/bin/pi-acp',
       piHome,
+      nativeMcp: false,
       servers: [SERVER],
     });
     expect(path).toBe(resolve(piHome, 'extensions', PI_MCP_BRIDGE_FILENAME));
     const stats = await stat(path as string);
     expect(stats.mode & 0o777).toBe(0o600);
     expect(await readFile(path as string, 'utf8')).toContain('beeline-agent');
+  });
+
+  it('puts copied local stdio servers on the legacy bridge once', async () => {
+    const piHome = await home();
+    await writeFile(
+      resolve(piHome, 'mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          local: {
+            command: '/usr/bin/local-mcp',
+            args: ['serve'],
+            cwd: '/repo',
+            env: { MODE: 'room' },
+          },
+          'beeline-agent': { command: '/wrong/duplicate' },
+        },
+      }),
+    );
+    const path = await installPiMcpBridge({
+      agentCommand: 'pi-acp',
+      piHome,
+      nativeMcp: false,
+      servers: [SERVER],
+    });
+    const source = await readFile(path!, 'utf8');
+    expect(source).toContain('"command": "/usr/bin/local-mcp"');
+    expect(source).toContain('"MODE": "room"');
+    expect(source).toContain('"cwd": "/repo"');
+    expect(source).not.toContain('/wrong/duplicate');
+    expect(source.match(/"name": "beeline-agent"/g)).toHaveLength(1);
+    const config = JSON.parse(await readFile(resolve(piHome, 'mcp.json'), 'utf8'));
+    expect(config.mcpServers.local.enabled).toBe(false);
+    expect(config.mcpServers['beeline-agent'].enabled).toBe(false);
+  });
+
+  it('lets native Pi own its isolated config and removes a stale generated bridge', async () => {
+    const piHome = await home();
+    const bridge = resolve(piHome, 'extensions', PI_MCP_BRIDGE_FILENAME);
+    await mkdir(resolve(piHome, 'extensions'), { recursive: true });
+    await writeFile(bridge, 'stale');
+    await writeFile(
+      resolve(piHome, 'mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          local: { command: '/usr/bin/local-mcp', exposure: 'codemode' },
+        },
+      }),
+    );
+    const path = await installPiMcpBridge({
+      agentCommand: 'pi-acp',
+      piHome,
+      nativeMcp: true,
+      servers: [SERVER],
+    });
+    expect(path).toBe(resolve(piHome, 'mcp.json'));
+    const config = JSON.parse(await readFile(path!, 'utf8'));
+    expect(config.mcpServers.local).toEqual({
+      command: '/usr/bin/local-mcp',
+      exposure: 'codemode',
+    });
+    expect(config.mcpServers['beeline-agent']).toMatchObject({
+      command: SERVER.command,
+      exposure: 'direct',
+      env: {
+        BEELINE_DAEMON_TOKEN: 'token-abc',
+      },
+    });
+    await expect(readFile(bridge, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('writes nothing for a harness that mounts its own servers, or with no home', async () => {
@@ -101,7 +170,12 @@ describe('pi MCP bridge', () => {
       await installPiMcpBridge({ agentCommand: '/usr/bin/pi-acp', servers: [SERVER] }),
     ).toBeUndefined();
     expect(
-      await installPiMcpBridge({ agentCommand: '/usr/bin/pi-acp', piHome, servers: [] }),
+      await installPiMcpBridge({
+        agentCommand: '/usr/bin/pi-acp',
+        piHome,
+        nativeMcp: false,
+        servers: [],
+      }),
     ).toBeUndefined();
   });
 
@@ -113,7 +187,12 @@ describe('pi MCP bridge', () => {
     await writeFile(outside, 'untouched', 'utf8');
     const { symlink } = await import('node:fs/promises');
     await symlink(outside, resolve(directory, PI_MCP_BRIDGE_FILENAME));
-    await installPiMcpBridge({ agentCommand: 'pi-acp', piHome, servers: [SERVER] });
+    await installPiMcpBridge({
+      agentCommand: 'pi-acp',
+      piHome,
+      nativeMcp: false,
+      servers: [SERVER],
+    });
     expect(await readFile(outside, 'utf8')).toBe('untouched');
     expect(await readFile(resolve(directory, PI_MCP_BRIDGE_FILENAME), 'utf8')).toContain(
       'pi.registerTool',
@@ -139,6 +218,7 @@ describe('pi MCP bridge, against a live stdio MCP server', () => {
   async function bridgeFor(
     name = 'beeline-agent',
     authorizationEnv: Record<string, string> = {},
+    failOnce = false,
   ): Promise<{
     tools: Map<string, BridgedTool>;
     readCalls: () => Promise<{ params: { name: string; arguments: unknown }; surface: string }[]>;
@@ -149,7 +229,7 @@ describe('pi MCP bridge, against a live stdio MCP server', () => {
     await writeFile(
       serverPath,
       `import { createInterface } from 'node:readline';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
 const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');
 createInterface({ input: process.stdin }).on('line', (line) => {
   const request = JSON.parse(line);
@@ -161,6 +241,11 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     ] } });
   if (request.method === 'tools/call') {
     appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ params: request.params, surface: process.env.BEELINE_MCP_SURFACE }) + '\\n');
+    if (process.env.MCP_FAIL_ONCE_FILE && !existsSync(process.env.MCP_FAIL_ONCE_FILE)) {
+      writeFileSync(process.env.MCP_FAIL_ONCE_FILE, 'failed');
+      process.stderr.write('index worker closed the connection\\n');
+      process.exit(17);
+    }
     if (request.params.name === 'always_refuses')
       return send({ jsonrpc: '2.0', id: request.id, result: { content: [{ type: 'text', text: 'not an event kind you can subscribe to' }], isError: true } });
     return send({ jsonrpc: '2.0', id: request.id, result: { content: [{ type: 'text', text: 'You now react to joined in this Room.' }] } });
@@ -180,6 +265,9 @@ createInterface({ input: process.stdin }).on('line', (line) => {
           args: [serverPath],
           env: [
             { name: 'BEELINE_MCP_SURFACE', value: 'agent' },
+            ...(failOnce
+              ? [{ name: 'MCP_FAIL_ONCE_FILE', value: resolve(root, 'failed-once') }]
+              : []),
             ...(name === 'vault'
               ? [{ name: 'TRUSTY_SQUIRE_BROKER_SOCKET', value: '/host/broker.sock' }]
               : []),
@@ -316,5 +404,19 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     await expect(refusing?.execute('call-2', {})).rejects.toThrow(
       /not an event kind you can subscribe to/,
     );
+  });
+
+  it('reports CodeGraph process stderr, then calls again through a fresh process while read tools remain', async () => {
+    const { tools } = await bridgeFor('codegraph', {}, true);
+    const explore = tools.get('codegraph__subscribe_events')!;
+    await expect(explore.execute('first', {})).rejects.toThrow(
+      /codegraph exited before answering \(code 17, signal null\): index worker closed the connection/,
+    );
+    expect(await explore.execute('retry', {})).toMatchObject({
+      content: [{ text: 'You now react to joined in this Room.' }],
+    });
+    expect(
+      await tools.get('beeline-agent__subscribe_events')!.execute('fallback', {}),
+    ).toMatchObject({ content: [{ text: 'You now react to joined in this Room.' }] });
   });
 });

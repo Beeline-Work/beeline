@@ -18,7 +18,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { executableOnPath } from './agent-command.js';
-import { PI_MCP_BRIDGE_FILENAME, piMcpBridgeSource } from './pi-mcp-bridge.js';
+import { PI_MCP_BRIDGE_FILENAME, installPiMcpBridge } from './pi-mcp-bridge.js';
 
 const pi = executableOnPath('pi');
 const root = mkdtempSync(resolve(tmpdir(), 'beeline-pi-bridge-live-'));
@@ -48,22 +48,27 @@ export default function (pi) {
 `;
 }
 
-async function toolsPiActuallyHolds(): Promise<string[]> {
-  const agentDir = resolve(root, 'agent');
+async function toolsPiActuallyHolds(surface: 'room' | 'corner'): Promise<string[]> {
+  const agentDir = resolve(root, surface, 'agent');
   const extensions = resolve(agentDir, 'extensions');
-  const cwd = resolve(root, 'cwd');
+  const cwd = resolve(root, surface, 'cwd');
   mkdirSync(extensions, { recursive: true });
   mkdirSync(cwd, { recursive: true });
-  const serverPath = resolve(root, 'server.mjs');
-  const reportPath = resolve(root, 'tools.json');
+  const serverPath = resolve(root, surface, 'server.mjs');
+  const reportPath = resolve(root, surface, 'tools.json');
   writeFileSync(serverPath, MCP_SERVER, 'utf8');
-  writeFileSync(
-    resolve(extensions, PI_MCP_BRIDGE_FILENAME),
-    piMcpBridgeSource([
-      { name: 'beeline-agent', command: process.execPath, args: [serverPath], env: [] },
-    ]),
-    'utf8',
-  );
+  const installed = await installPiMcpBridge({
+    agentCommand: 'pi-acp',
+    piHome: agentDir,
+    nativeMcp: false,
+    servers: ['beeline-agent', 'codegraph', 'squire'].map((name) => ({
+      name,
+      command: process.execPath,
+      args: [serverPath],
+      env: [],
+    })),
+  });
+  expect(installed).toBe(resolve(extensions, PI_MCP_BRIDGE_FILENAME));
   // `zz-` so it loads after the bridge; extensions are read in directory order.
   writeFileSync(resolve(extensions, 'zz-beeline-probe.js'), probeExtension(reportPath), 'utf8');
   const child = spawn(pi as string, ['--mode', 'rpc', '--no-themes', '--no-session'], {
@@ -100,11 +105,40 @@ async function toolsPiActuallyHolds(): Promise<string[]> {
 }
 
 describe.skipIf(!pi)('pi loads the generated MCP bridge', () => {
-  it('holds the bridged daemon tools in its own registry', { timeout: 90_000 }, async () => {
-    const tools = await toolsPiActuallyHolds();
-    // The four pi ships with, proving the probe read a real registry...
-    expect(tools).toEqual(expect.arrayContaining(['read', 'bash', 'edit', 'write']));
-    // ...and the one the bridge put there, which is the whole point.
-    expect(tools).toContain('beeline-agent__subscribe_events');
+  it.each(['room', 'corner'] as const)(
+    'holds each bridged tool once in a %s session',
+    { timeout: 90_000 },
+    async (surface) => {
+      const tools = await toolsPiActuallyHolds(surface);
+      // The four pi ships with, proving the probe read a real registry...
+      expect(tools).toEqual(expect.arrayContaining(['read', 'bash', 'edit', 'write']));
+      // ...and the one the bridge put there, which is the whole point.
+      expect(tools).toContain('beeline-agent__subscribe_events');
+      expect(tools.filter((name) => name === 'beeline-agent__subscribe_events')).toHaveLength(1);
+      expect(tools.filter((name) => name === 'codegraph__subscribe_events')).toHaveLength(1);
+      expect(tools.filter((name) => name === 'squire__subscribe_events')).toHaveLength(1);
+      console.info(`${surface} Pi registry: beeline-agent, codegraph, squire each mounted once`);
+    },
+  );
+
+  it('chooses one mount file for the installed Pi executable', { timeout: 15_000 }, async () => {
+    const agentDir = resolve(root, 'owner-probe');
+    mkdirSync(agentDir, { recursive: true });
+    const path = await installPiMcpBridge({
+      agentCommand: 'pi-acp',
+      piHome: agentDir,
+      piCommand: pi as string,
+      servers: [{ name: 'beeline-agent', command: process.execPath, args: ['--version'], env: [] }],
+    });
+    expect(path).toBeDefined();
+    if (path?.endsWith('mcp.json')) {
+      const config = JSON.parse(readFileSync(path, 'utf8'));
+      expect(config.mcpServers['beeline-agent'].exposure).toBe('direct');
+      expect(existsSync(resolve(agentDir, 'extensions', PI_MCP_BRIDGE_FILENAME))).toBe(false);
+    } else {
+      expect(path).toBe(resolve(agentDir, 'extensions', PI_MCP_BRIDGE_FILENAME));
+      expect(readFileSync(path, 'utf8')).toContain('beeline-agent');
+    }
+    console.info(`installed Pi MCP owner: ${path?.endsWith('mcp.json') ? 'native' : 'bridge'}`);
   });
 });

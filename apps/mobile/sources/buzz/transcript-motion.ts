@@ -25,13 +25,7 @@ export const EMPTY_TRANSCRIPT_ARRIVAL_STATE: TranscriptArrivalState = {
  */
 export function observeTranscriptArrivals(
   previous: TranscriptArrivalState,
-  input: {
-    surfaceId: string;
-    hydrated: boolean;
-    ids: readonly string[];
-    /** Ids paged in from older history. They are never arrivals, wherever they land. */
-    historyIds?: ReadonlySet<string>;
-  },
+  input: { surfaceId: string; hydrated: boolean; ids: readonly string[] },
 ): TranscriptArrivalObservation {
   if (previous.surfaceId !== input.surfaceId) {
     if (!input.hydrated) {
@@ -54,14 +48,10 @@ export function observeTranscriptArrivals(
   }
 
   // Ids ahead of the oldest id already seen are an older page paging in above
-  // the reader: history, not arrivals. Position alone cannot tell: an older
-  // card pulls a seen relay report or check up into its own row, so the rest
-  // of its page lands after a seen id. Older-page ids are history by source.
+  // the reader: history, not arrivals.
   const firstSeen = input.ids.findIndex((id) => previous.seenIds.has(id));
   const arrivingIds = new Set(
-    input.ids.filter(
-      (id, index) => index > firstSeen && !previous.seenIds.has(id) && !input.historyIds?.has(id),
-    ),
+    input.ids.filter((id, index) => index > firstSeen && !previous.seenIds.has(id)),
   );
   return {
     state: {

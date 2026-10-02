@@ -45,7 +45,7 @@
     "prove:workflow-run": "npm run build -w @beeline/api-contract && node --import tsx scripts/prove-workflow-run.ts",
     "prove:agent-list-run": "npm run build -w @beeline/api-contract && node --import tsx scripts/prove-agent-list-run.ts",
     "prove:reviewer-list": "npm run build -w @beeline/api-contract && node --import tsx scripts/prove-reviewer-list.ts",
-    "prove:corner-workflow-migration": "npm run build -w @beeline/api-contract && node --import tsx scripts/prove-corner-workflow-migration.ts",    "smoke": "node --import tsx scripts/smoke.ts",
+    "prove:corner-workflow-migration": "npm run build -w @beeline/api-contract && node --import tsx scripts/prove-corner-workflow-migration.ts",    "dry-run:agent-class-retirement": "node --import tsx scripts/dry-run-agent-class-retirement.ts",    "smoke": "node --import tsx scripts/smoke.ts",
     "test:deploy": "node --test scripts/unified-release.test.mjs scripts/gh-release-retry.test.mjs scripts/server-release-smoke.test.mjs scripts/landing-page.test.mjs scripts/pages-site.test.mjs scripts/legacy-production-routing.test.mjs",
     "test:pages": "node --test scripts/desktop-download.test.mjs scripts/pages-site.test.mjs scripts/pages-channel.test.mjs scripts/verify-pages-update.test.mjs",
     "test:web-deploy": "node --test scripts/verify-web-deployment.test.mjs",

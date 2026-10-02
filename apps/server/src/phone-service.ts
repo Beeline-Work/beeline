@@ -112,7 +112,7 @@ import { collapsePermissionCards } from '@beeline/push-gateway/projection';
 import { deriveCornerState } from './corner-state.js';
 import { advanceCorner } from './corner-workflow.js';
 import { chatCornerCounts } from './chat-corner-counts.js';
-import { cornerOwedLateralSql } from './corner-owed.js';
+import { cornerOwedLookupSql } from './corner-owed.js';
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
 import { retireAgentFromWorkspace, settleGrantCard } from './agent-retirement.js';
 import { ensureFirstRoom, firstAccessibleRoomId } from './first-room.js';
@@ -367,7 +367,7 @@ interface CornerRow extends RoomRow {
   latest_author_kind: 'human' | 'agent' | null;
   latest_author_name: string | null;
   latest_tags_viewer: boolean | null;
-  /** `cornerOwedLateralSql`'s facts; null on the archived page, which skips them. */
+  /** `cornerOwedLookupSql`'s facts; null on the archived page, which skips them. */
   owed: boolean | null;
   owed_viewer: boolean | null;
   /** `archived_at` in whole microseconds, exact, for the archived page cursor. */
@@ -1375,7 +1375,7 @@ export class PhoneService {
            SELECT status FROM agent_turns WHERE room_id=c.id
            ORDER BY created_at DESC LIMIT 1
          ) turn ON true
-         ${cornerOwedLateralSql('c', '$2')}
+         ${cornerOwedLookupSql('c', '$2')}
          WHERE c.parent_id=ANY($1::uuid[]) AND c.archived_at IS NULL AND EXISTS (
            SELECT 1 FROM memberships member WHERE member.room_id=c.id
              AND member.identity_id=$2 AND member.removed_at IS NULL
@@ -2358,7 +2358,7 @@ export class PhoneService {
       ) turn ON true
       LEFT JOIN corner_app_bindings app_binding ON app_binding.corner_id=c.id
       LEFT JOIN corner_app_installations app_installation ON app_installation.id=app_binding.installation_id
-      ${archived ? '' : cornerOwedLateralSql('c', '$2')}
+      ${archived ? '' : cornerOwedLookupSql('c', '$2')}
       WHERE c.parent_id=$1 AND c.archived_at IS ${archived ? 'NOT NULL' : 'NULL'} AND EXISTS(
         SELECT 1 FROM memberships viewer
         WHERE viewer.room_id=c.id AND viewer.identity_id=$2 AND viewer.removed_at IS NULL
@@ -8751,7 +8751,7 @@ export class PhoneService {
       }>(
         `SELECT f.lifecycle,owed.owed FROM rooms c
          LEFT JOIN corner_facts f ON f.corner_id=c.id
-         ${cornerOwedLateralSql('c', '$2')}
+         ${cornerOwedLookupSql('c', '$2')}
          WHERE c.id=$1`,
         [roomId, viewerId],
       )

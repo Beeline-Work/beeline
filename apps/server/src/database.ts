@@ -25,6 +25,7 @@ import {
   syncTopLevelSharedRoomRoles,
 } from './membership-join.js';
 import { POSTGRES_LIVE_SCHEMA } from './postgres-live.js';
+import { cornerOwedBackfillSql, cornerOwedSchemaSql } from './corner-owed.js';
 import { retryMigrationStep, splitMigrationStatements } from './migration-retry.js';
 import { Pool, type PoolClient, type PoolConfig, type QueryResultRow } from 'pg';
 import { QueryProfiler } from './query-profile.js';
@@ -177,7 +178,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 16;
+export const REQUIRED_SCHEMA_VERSION = 17;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -2582,6 +2583,7 @@ export async function migrate(
     `CREATE INDEX CONCURRENTLY messages_grant_request_idx
      ON messages(room_id,created_at DESC) WHERE card_type='grant-request'`,
   ));
+  await ddlScript('corner owed schema', cornerOwedSchemaSql());
   await ddlScript('live notification schema', POSTGRES_LIVE_SCHEMA);
   if (!options.deferData) await migrateData(database);
 }
@@ -2600,6 +2602,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   if (searchDocuments)
     console.log(`backfillMessageSearchDocuments: filled ${searchDocuments} message row(s)`);
   await dataStep('corner owner backfill', () => backfillCornerOwners(database));
+  await dataStep('corner owed backfill', () => backfillCornerOwed(database));
   await dataStep('inherited corner memberships', () => backfillInheritedCornerMemberships(database));
   await dataStep('corner workflow seed', () => backfillCornerWorkflowSeed(database));
   await dataStep('corner workflow runs', () => backfillCornerWorkflowRuns(database));
@@ -2983,6 +2986,25 @@ export async function backfillSystemEventKinds(database: SqlDatabase): Promise<v
  * Older corners predate an explicit owner fact. The creating agent is authoritative
  * when present; imported/legacy corners fall back to their first agent-authored post.
  */
+/**
+ * Fill `corner_owed` from messages until the release that adds it is marked
+ * current (schema 17), so corners already owing someone keep reading so.
+ * Its triggers keep it current after that; a rerun before the marker only
+ * re-adds rows that are still owed.
+ */
+export async function backfillCornerOwed(database: SqlDatabase): Promise<void> {
+  const marked = await database.query<{ marked: boolean }>(
+    `SELECT to_regclass('beeline_schema_state') IS NOT NULL marked`,
+  );
+  if (marked.rows[0]?.marked) {
+    const current = await database.query<{ version: number }>(
+      `SELECT version FROM beeline_schema_state`,
+    );
+    if ((current.rows[0]?.version ?? 0) >= 17) return;
+  }
+  await database.query(cornerOwedBackfillSql());
+}
+
 export async function backfillCornerOwners(database: SqlDatabase): Promise<void> {
   await database.query(`
     UPDATE corner_facts fact

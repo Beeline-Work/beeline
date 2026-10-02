@@ -16,7 +16,7 @@ export function chatCornerCounts(
     commissioned_by_viewer?: boolean | null;
     latest_tags_viewer?: boolean | null;
     latest_created_at?: Date | null;
-    /** `cornerOwedLateralSql`'s facts for this corner and viewer. */
+    /** `cornerOwedLookupSql`'s facts for this corner and viewer. */
     owed?: boolean | null;
     owed_viewer?: boolean | null;
     attention?: boolean | null;

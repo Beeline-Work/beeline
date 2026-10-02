@@ -40,21 +40,23 @@ export function presentedNotificationIdentifierTag(identifier: string): string |
   return null;
 }
 
-/** Match data-rich Expo rows first, then Android's data-less foreign-row tag. */
+/**
+ * Match data-rich Expo rows first, then Android's data-less foreign-row tag.
+ * Only the conversation that opened matches: a Room never claims its corners'
+ * pushes, and a corner never claims its Room's.
+ */
 export function presentedNotificationMatchesChannel(
   notification: PresentedNotification,
   openedChannelId: string,
-  parentRoomId?: string,
 ): boolean {
   const target = getBuzzNotificationTargetFromData(notification.request.content?.data);
   if (target) {
     return (
       target.target !== 'workspace' &&
-      (target.channelId === openedChannelId || target.roomId === openedChannelId)
+      (target.channelId === openedChannelId || target.cornerId === openedChannelId)
     );
   }
-  const tag = presentedNotificationIdentifierTag(notification.request.identifier);
-  return tag === openedChannelId || Boolean(parentRoomId && tag === parentRoomId);
+  return presentedNotificationIdentifierTag(notification.request.identifier) === openedChannelId;
 }
 
 /** Remove pre-Room-tag Android rows once; their original destination is unrecoverable. */
@@ -91,19 +93,18 @@ export async function reconcilePresentedNotificationBadge(
   await api.setBadgeCountAsync(presented.length);
 }
 
-/** Dismiss every presented push whose Room or corner is now open. */
+/** Dismiss every presented push for the Room or corner that is now open. */
 export async function dismissPresentedNotificationsForChannel(
   channelId: string,
   api: PresentedNotificationApi,
   platform: string,
-  parentRoomId?: string,
 ): Promise<void> {
   const openedChannelId = channelId.trim();
   if (!openedChannelId) return;
 
   const presented = await api.getPresentedNotificationsAsync();
   const matchingIds = presented.flatMap((notification) =>
-    presentedNotificationMatchesChannel(notification, openedChannelId, parentRoomId)
+    presentedNotificationMatchesChannel(notification, openedChannelId)
       ? [notification.request.identifier]
       : [],
   );

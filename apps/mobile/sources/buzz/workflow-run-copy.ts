@@ -141,15 +141,6 @@ export function workflowRunHeadline(
   return lastOutcome !== undefined ? `${status} · ${outcomeLabel(lastOutcome)}` : status;
 }
 
-/** The corner line's state word: the viewer's turn, who holds it, or how the run ended. */
-export function workflowRunStateWord(
-  run: Pick<WorkflowRunSummaryView, 'status' | 'viewerHolds' | 'holder'>,
-): string {
-  if (run.status !== 'live') return TERMINAL_LABEL[run.status].toLowerCase();
-  if (run.viewerHolds) return 'waiting on you';
-  return run.holder ? run.holder.name : 'working';
-}
-
 const DAY = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
 
 /** `Today`, `Yesterday`, or the date a run started. */

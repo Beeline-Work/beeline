@@ -26,8 +26,9 @@ function AppSignInReturnScreen({ sessionUri }: { sessionUri: string }) {
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
-    void getWorkbenchSource().completeAppSignIn({ sessionUri }).then(async () => {
-      const destination = await takeAppSignInReturn();
+    void takeAppSignInReturn().then(async destination => {
+      if (!destination?.appId) throw new Error('App sign-in could not be matched to a connection');
+      await getWorkbenchSource().completeAppSignIn({ sessionUri, appId: destination.appId });
       if (!live) return;
       router.replace(destination?.roomId ? connectorOfferCompletionRoute(destination.roomId) as Href : ({ pathname: '/beeline/settings/workbench', params: { workspaceId: destination?.workspaceId ?? '', viewerId: destination?.viewerId ?? '' } } as Href));
     }).catch(cause => { if (live) setError(cause instanceof Error ? cause.message : 'Sign-in could not be verified'); });

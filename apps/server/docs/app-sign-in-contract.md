@@ -26,9 +26,12 @@ in the system browser and is never written into Room history. The hosted
 provider returns through `GET /v1/apps/oauth/verify?session_uri=…`, which
 redirects to `beeline://beeline/settings/workbench/connect-signin` with
 `appSignInSession`. The signed-in phone then calls
-`completeAppSignIn({sessionUri: appSignInSession})`. The server verifies that
-phone identity with the provider, confirms the exact pending account and
-product, settles the Room card to `connected`, and queues an `app_connected`
+`completeAppSignIn({sessionUri: appSignInSession, appId})` using the app ID stored
+when the phone opened the link. The server checks that the app belongs to the
+returning person and is pending before redeeming the session, then verifies
+the account and product returned by the provider. A failed redemption records
+the error on that pending app alone. Success settles the Room card to
+`connected` and queues an `app_connected`
 command carrying the original request's provenance. A second completion of
 the single-use session is refused.
 

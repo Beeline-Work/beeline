@@ -356,7 +356,7 @@ export default function WorkbenchScreen() {
           <Text style={styles.sectionLabel} testID="workbench-apps-head">
             APPS
           </Text>
-          {apps.map(app => <WorkbenchIndexRow key={app.id} leading={<AppMark name={app.name} domain={app.domain} />} onPress={() => router.push({ pathname: '/beeline/settings/workbench/app', params: { workspaceId, viewerId, appId: app.id } } as unknown as Href)} testID={`workbench-app-${app.key}`} title={app.name} value={appInstrument(app.status).value} />)}
+          {apps.map(app => <WorkbenchIndexRow key={app.id} leading={<AppMark name={app.name} domain={app.domain} logo={app.logo} />} onPress={() => router.push({ pathname: '/beeline/settings/workbench/app', params: { workspaceId, viewerId, appId: app.id } } as unknown as Href)} testID={`workbench-app-${app.key}`} title={app.name} value={appInstrument(app.status).value} />)}
           <WorkbenchIndexRow onPress={openConnectApp} testID="workbench-connect-app" title="Connect an app" action />
           <Text style={styles.appsNote}>Agents can also connect an app for you from a conversation when they need one.</Text>
         </View>

@@ -72,13 +72,33 @@ describe('ServiceMark', () => {
 });
 
 describe('AppMark', () => {
-  it('shows a transparent product logo without a letter underneath, then falls back if loading fails', () => {
-    const renderer = render(<AppMark name="Gmail" domain="gmail.com" size={34} />);
-    expect(renderer.root.findAllByType('Image')).toHaveLength(1);
-    expect(renderer.root.findAllByType('Text')).toHaveLength(0);
+  it('falls back from a failed provider logo to the app favicon', () => {
+    const renderer = render(<AppMark name="Example App" domain="example.com" logo="https://cdn.composio.dev/example.png" size={34} />);
+    expect(renderer.root.findByType('Image').props.source).toEqual({ uri: 'https://cdn.composio.dev/example.png' });
+    act(() => renderer.root.findByType('Image').props.onError());
+    expect(renderer.root.findByType('Image').props.source).toEqual({ uri: serviceFaviconUrl('example.com') });
     act(() => renderer.root.findByType('Image').props.onError());
     expect(renderer.root.findAllByType('Image')).toHaveLength(0);
-    expect(renderer.root.findByType('Text').props.children).toBe('G');
+    expect(renderer.root.findByType('Text').props.children).toBe('E');
+  });
+
+  it('shows a bundled product logo without a network request', () => {
+    const renderer = render(<AppMark name="Gmail" domain="gmail.com" size={34} />);
+    expect(renderer.root.findAllByType('Image')).toHaveLength(1);
+    expect(renderer.root.findByType('Image').props.source).toBeTruthy();
+    expect(renderer.root.findByType('Image').props.source.uri).toBeUndefined();
+    expect(renderer.root.findAllByType('Text')).toHaveLength(0);
+  });
+
+  it('shows the reported Android apps as bundled marks on Workbench and detail even with broken provider URLs', () => {
+    for (const name of ['Neon', 'Notion', 'Linear', 'YouTube', 'Runway']) {
+      for (const size of [36, 48]) {
+        const renderer = render(<AppMark name={name} logo="https://invalid.example/logo.png" size={size} />);
+        expect(renderer.root.findByType('Image').props.source).toBeTruthy();
+        expect(renderer.root.findByType('Image').props.source.uri).toBeUndefined();
+        expect(renderer.root.findAllByType('Text')).toHaveLength(0);
+      }
+    }
   });
 
   it('uses a letter tile when an app has no known image', () => {

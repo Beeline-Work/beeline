@@ -358,6 +358,40 @@ describe('Workbench settings screen', () => {
     expect(navigation.push.mock.calls.at(-1)![0].pathname).toBe('/beeline/settings/workbench/connect-app');
   });
 
+  it('shows the five reported Android rows with app marks and the failed state', async () => {
+    const source = new MockWorkbenchSource();
+    source.setApps(['Neon', 'Notion', 'Linear', 'YouTube', 'Runway'].map((name, index) => ({
+      id: `app-${name.toLowerCase()}`, key: name.toLowerCase(), name,
+      logo: 'https://invalid.example/logo.png', transport: 'composio' as const,
+      status: index === 4 ? 'error' as const : 'connected' as const,
+      ...(index === 4 ? { errorMessage: 'App provider request failed (403)' } : {}),
+      useCount: 0,
+    })));
+    setWorkbenchSource(source);
+    const renderer = await render();
+    for (const name of ['Neon', 'Notion', 'Linear', 'YouTube', 'Runway']) {
+      const row = renderer.root.findByProps({ testID: `workbench-app-${name.toLowerCase()}` });
+      expect(row.findByType('Image').props.source.uri).toBeUndefined();
+      expect(row.findAllByType('Text').some((text: { props: { children: unknown } }) => text.props.children === name[0])).toBe(false);
+    }
+    expect(renderer.root.findByProps({ testID: 'workbench-app-runway' }).props.value).toBe('error');
+  });
+
+  it('falls back to a favicon for an unlisted Composio app and shows its failed connection', async () => {
+    const source = new MockWorkbenchSource();
+    source.setApps([{ id: 'app-example', key: 'example', name: 'Example App', domain: 'example.com',
+      logo: 'https://invalid.example/logo.png', transport: 'composio', status: 'error',
+      errorMessage: 'App provider request failed (403)', useCount: 0 }]);
+    setWorkbenchSource(source);
+    const renderer = await render();
+    const row = renderer.root.findByProps({ testID: 'workbench-app-example' });
+    expect(row.props.value).toBe('error');
+    const firstImage = row.findByType('Image');
+    expect(firstImage.props.source.uri).toBe('https://invalid.example/logo.png');
+    act(() => firstImage.props.onError());
+    expect(row.findByType('Image').props.source.uri).toContain('domain=example.com');
+  });
+
   it('collapses an expanded cell on a second tap', async () => {
     const renderer = await render();
     const row = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' });

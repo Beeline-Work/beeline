@@ -3,7 +3,7 @@ import { openExternalUrl } from '@/utils/open-external-url';
 
 const RETURN_KEY = 'beeline.app-sign-in-return.v1';
 
-export type AppSignInReturn = { workspaceId: string; viewerId?: string; roomId?: string };
+export type AppSignInReturn = { workspaceId: string; appId: string; viewerId?: string; roomId?: string };
 
 /** The URL is server-issued and kept out of Room history. The server verifies the callback. */
 export async function openAppSignIn(url: string, destination: AppSignInReturn): Promise<void> {

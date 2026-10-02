@@ -97,6 +97,8 @@ export type WorkbenchApp = {
   name: string;
   /** Brand domain for the row's mark; absent draws the lettermark. */
   domain?: string;
+  description?: string;
+  logo?: string;
   transport: 'registry-mcp' | 'composio' | 'squire-api' | 'squire-browser';
   status: 'connecting' | 'connected' | 'error';
   errorMessage?: string;
@@ -120,6 +122,7 @@ export type WorkbenchView = {
   connections: readonly WorkbenchConnection[];
   /** The viewer's apps, one row each. */
   apps: readonly WorkbenchApp[];
+  appCatalog?: readonly { appKey: string; description?: string; logo?: string }[];
   /** The viewer's own connected machines — the Workbench's helper candidates. */
   helpers: readonly WorkbenchHelper[];
 };

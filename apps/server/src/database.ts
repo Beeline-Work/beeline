@@ -2336,6 +2336,7 @@ CREATE TABLE IF NOT EXISTS workspace_apps (
   connector_id uuid REFERENCES workspace_connectors(id) ON DELETE SET NULL,
   composio_account_id text,
   composio_link_expires_at timestamptz,
+  sign_in_error text,
   machine_id text,
   state text NOT NULL DEFAULT 'active' CHECK (state IN ('active','disconnected')),
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -2346,6 +2347,7 @@ CREATE TABLE IF NOT EXISTS workspace_apps (
 );
 ALTER TABLE workspace_apps ADD COLUMN IF NOT EXISTS composio_account_id text;
 ALTER TABLE workspace_apps ADD COLUMN IF NOT EXISTS composio_link_expires_at timestamptz;
+ALTER TABLE workspace_apps ADD COLUMN IF NOT EXISTS sign_in_error text;
 ALTER TABLE workspace_apps DROP CONSTRAINT IF EXISTS workspace_apps_transport_check;
 ALTER TABLE workspace_apps ADD CONSTRAINT workspace_apps_transport_check
   CHECK (transport IN ('registry-mcp','composio','squire-api','squire-browser'));

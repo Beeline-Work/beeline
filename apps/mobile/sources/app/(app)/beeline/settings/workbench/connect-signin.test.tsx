@@ -235,22 +235,23 @@ describe('ConnectorSignInScreen', () => {
 
   it('redeems a provider callback once and returns to the original Room', async () => {
     searchParams.appSignInSession = 'https://provider.test/session/one';
-    storedReturn.set('beeline.app-sign-in-return.v1', JSON.stringify({ workspaceId: 'workspace-1', viewerId: 'human-1', roomId: 'room-1' }));
+    storedReturn.set('beeline.app-sign-in-return.v1', JSON.stringify({ workspaceId: 'workspace-1', viewerId: 'human-1', roomId: 'room-1', appId: 'app-slack' }));
     await act(async () => { create(React.createElement(ConnectorSignInScreen)); await Promise.resolve(); });
-    expect(completeAppSignIn).toHaveBeenCalledWith({ sessionUri: searchParams.appSignInSession });
+    expect(completeAppSignIn).toHaveBeenCalledWith({ sessionUri: searchParams.appSignInSession, appId: 'app-slack' });
     expect(router.replace).toHaveBeenCalledWith({ pathname: '/beeline/chat/[channelId]', params: { channelId: 'room-1' } });
     expect(storedReturn.size).toBe(0);
   });
 
   it('returns a Workbench connection to Workbench only after verified completion', async () => {
     searchParams.appSignInSession = 'https://provider.test/session/two';
-    storedReturn.set('beeline.app-sign-in-return.v1', JSON.stringify({ workspaceId: 'workspace-1', viewerId: 'human-1' }));
+    storedReturn.set('beeline.app-sign-in-return.v1', JSON.stringify({ workspaceId: 'workspace-1', viewerId: 'human-1', appId: 'app-slack' }));
     await act(async () => { create(React.createElement(ConnectorSignInScreen)); await Promise.resolve(); });
     expect(router.replace).toHaveBeenCalledWith({ pathname: '/beeline/settings/workbench', params: { workspaceId: 'workspace-1', viewerId: 'human-1' } });
   });
 
   it('keeps a failed verifier on the callback screen and does not claim success', async () => {
     searchParams.appSignInSession = 'https://provider.test/session/denied';
+    storedReturn.set('beeline.app-sign-in-return.v1', JSON.stringify({ workspaceId: 'workspace-1', appId: 'app-slack' }));
     completeAppSignIn.mockRejectedValueOnce(new Error('Sign-in was denied'));
     let renderer!: ReactTestRenderer;
     await act(async () => { renderer = create(React.createElement(ConnectorSignInScreen)); await Promise.resolve(); });

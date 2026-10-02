@@ -6,7 +6,7 @@ import {
   type CommandRow,
 } from './agent-command.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import type { ComposioApps } from './composio-apps.js';
+import { composioToolkitForApp, type ComposioApps } from './composio-apps.js';
 import { beginComposioAppSignIn, completeComposioSignIn } from './app-connections.js';
 import { CORNER_VALIDATION_STAGES, currentCornerBrief } from './corner-brief.js';
 import type { LinkAgentWallet } from './link-agent-wallet.js';
@@ -3725,7 +3725,8 @@ export class PhoneService {
         await this.viewerWorkbenchWorkspace(viewerId);
         if (!this.composio) throw new Error('App sign-in is unavailable');
         return (await this.completeAppSignIn(
-          (input as Input<'completeAppSignIn'>).sessionUri, viewerId)) as Output<Name>;
+          (input as Input<'completeAppSignIn'>).sessionUri,
+          (input as Input<'completeAppSignIn'>).appId, viewerId)) as Output<Name>;
       case 'disconnectWorkbenchApp':
         await this.disconnectWorkbenchApp(input as Input<'disconnectWorkbenchApp'>, viewerId);
         return undefined as Output<Name>;
@@ -7559,6 +7560,25 @@ export class PhoneService {
     ).rows;
 
     const apps = await readOwnerApps(this.database, viewerId, this.composio);
+    const catalogKeys = new Set(['gmail', 'googlecalendar', 'slack', 'googledrive',
+      'googlesheets', 'notion', 'linear', 'hubspot', 'airtable', 'asana', 'jira', 'supabase',
+      ...apps.filter((app) => app.transport === 'composio')
+        .map((app) => composioToolkitForApp(app.appKey))]);
+    const appCatalog = this.composio ? (await Promise.all([...catalogKeys].map(async (appKey) => {
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const metadata = await Promise.race([
+          this.composio!.toolkit(appKey),
+          new Promise<undefined>((resolve) => { timeout = setTimeout(() => resolve(undefined), 1500); }),
+        ]);
+        if (!metadata) return { appKey };
+        return { appKey, ...(metadata.description ? { description: metadata.description } : {}),
+          ...(metadata.logo ? { logo: metadata.logo } : {}),
+          ...(metadata.appUrl ? { domain: new URL(metadata.appUrl).hostname } : {}) };
+      } catch { return { appKey }; }
+      finally { clearTimeout(timeout); }
+    }))) : [];
+    const appMetadata = new Map(appCatalog.map((item) => [item.appKey, item]));
     const walletRow = (
       await this.database.query<{
         created_at: Date;
@@ -7592,7 +7612,15 @@ export class PhoneService {
         name: row.name,
         online: row.online,
       })),
-      apps,
+      apps: apps.map((app) => {
+        const metadata = appMetadata.get(composioToolkitForApp(app.appKey));
+        return { ...app,
+          ...(app.transport === 'composio' && !app.domain && metadata?.domain
+            ? { domain: metadata.domain } : {}),
+          ...(metadata?.description ? { description: metadata.description } : {}),
+          ...(metadata?.logo ? { logo: metadata.logo } : {}) };
+      }),
+      appCatalog,
       connectors: connectors.map((row) => ({
         connectorId: row.id,
         connectorType: row.connector_type,
@@ -7767,11 +7795,11 @@ export class PhoneService {
     };
   }
 
-  private async completeAppSignIn(sessionUri: string, viewerId: string) {
+  private async completeAppSignIn(sessionUri: string, appId: string, viewerId: string) {
     if (!this.composio) throw new Error('App sign-in is unavailable');
     let rooms: string[] = [];
     const completed = await completeComposioSignIn(this.database, this.composio,
-      viewerId, sessionUri, async (database, appId) => {
+      viewerId, sessionUri, appId, async (database, appId) => {
       const cards = (await database.query<{ id: string; room_id: string;
         card: { appId: string; name: string; agentId: string; commandId?: string } }>(
         `SELECT id,room_id,card FROM messages WHERE card_type='app-sign-in'

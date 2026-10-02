@@ -251,6 +251,7 @@ type AppRow = {
   connector_id: string | null;
   composio_account_id: string | null;
   composio_link_expires_at: Date | null;
+  sign_in_error: string | null;
   machine_id: string | null;
   state: 'active' | 'disconnected';
   created_at: Date;
@@ -330,6 +331,7 @@ const APP_SIGN_IN_NEEDS_ATTENTION = 'App sign-in needs attention';
 async function deriveStatus(database: SqlDatabase, row: AppRow, composio?: ComposioApps): Promise<Derived> {
   if (row.transport === 'composio') {
     if (!composio) return { status: 'error', errorMessage: 'App sign-in is unavailable' };
+    if (row.sign_in_error) return { status: 'error', errorMessage: row.sign_in_error };
     if (!row.composio_account_id) return { status: 'connecting' };
     // Provider activation alone is not enough. The phone must redeem the
     // single-use verifier session under the authenticated Beeline identity.
@@ -392,7 +394,7 @@ async function deriveStatus(database: SqlDatabase, row: AppRow, composio?: Compo
 }
 
 const APP_COLUMNS = `a.id,a.workspace_id,a.owner_identity_id,a.app_key,a.display_name,a.domain,
-  a.transport,a.route,a.connector_id,a.composio_account_id,a.composio_link_expires_at,
+  a.transport,a.route,a.connector_id,a.composio_account_id,a.composio_link_expires_at,a.sign_in_error,
   a.machine_id,a.state,a.created_at`;
 
 /**
@@ -674,6 +676,7 @@ export async function connectApp(
                THEN workspace_apps.composio_account_id ELSE NULL END,
              composio_link_expires_at=CASE WHEN EXCLUDED.transport='composio' AND workspace_apps.transport='composio'
                THEN workspace_apps.composio_link_expires_at ELSE NULL END,
+             sign_in_error=NULL,
              state='active',updated_at=now()`,
         [
           id,
@@ -732,9 +735,11 @@ export async function connectApp(
       try {
         authorizationUrl = (await beginComposioAppSignIn(database, params.composio,
           params.ownerId, row.id)).authorizationUrl;
-      } catch {
+      } catch (error) {
         // Keep this route. A retry can issue another link; never fall through.
         linkFailed = true;
+        await database.query(`UPDATE workspace_apps SET sign_in_error=$2,composio_account_id=NULL,composio_link_expires_at=NULL,updated_at=now() WHERE id=$1::uuid`,
+          [row.id, error instanceof Error ? error.message : 'App sign-in failed']);
       }
     }
   }
@@ -838,23 +843,51 @@ export async function completeComposioSignIn(
   composio: ComposioApps,
   viewerId: string,
   sessionUri: string,
+  appId: string,
   settle?: (database: SqlDatabase, appId: string) => Promise<void>,
 ): Promise<{ appId: string }> {
-  const completed = await composio.completeAuth(sessionUri, viewerId);
-  return database.transaction(async (db) => {
-    const pending = (
-      await db.query<{ id: string; app_key: string }>(
-        `SELECT id,app_key FROM workspace_apps
-         WHERE owner_identity_id=$1 AND composio_account_id=$2
-           AND transport='composio' AND state='active' AND composio_link_expires_at>now()
-         FOR UPDATE`,
-        [viewerId, completed.accountId],
-      )
-    ).rows.find((row) => composioToolkitForApp(row.app_key) === completed.toolkit);
-    if (!pending || !(await composio.account(completed.accountId, viewerId, completed.toolkit)))
+  const pending = (await database.query<{ id: string; app_key: string; composio_account_id: string }>(
+    `SELECT id,app_key,composio_account_id FROM workspace_apps
+     WHERE id=$1::uuid AND owner_identity_id=$2 AND transport='composio'
+       AND state='active' AND composio_link_expires_at>now()`, [appId, viewerId],
+  )).rows[0];
+  if (!pending) throw new Error('App sign-in is no longer pending for this person');
+  let completed: { accountId: string; toolkit: string };
+  try {
+    completed = await composio.completeAuth(sessionUri, viewerId);
+  } catch (error) {
+    await database.query(
+      `UPDATE workspace_apps SET sign_in_error=$3,composio_link_expires_at=NULL,updated_at=now()
+       WHERE id=$1::uuid AND owner_identity_id=$2 AND transport='composio'
+         AND state='active' AND composio_account_id=$4 AND composio_link_expires_at>now()`,
+      [appId, viewerId, error instanceof Error ? error.message : 'App sign-in failed', pending.composio_account_id],
+    );
+    throw error;
+  }
+  const result = await database.transaction(async (db) => {
+    const current = (await db.query<{ id: string; app_key: string }>(
+      `SELECT id,app_key FROM workspace_apps WHERE id=$1::uuid AND owner_identity_id=$2
+         AND composio_account_id=$3 AND transport='composio' AND state='active'
+         AND composio_link_expires_at>now() FOR UPDATE`,
+      [appId, viewerId, completed.accountId],
+    )).rows[0];
+    if (!current || composioToolkitForApp(current.app_key) !== completed.toolkit)
       throw new Error('App sign-in is no longer pending for this person');
+    let verified: boolean;
+    try { verified = await composio.account(completed.accountId, viewerId, completed.toolkit); }
+    catch (error) {
+      await db.query(`UPDATE workspace_apps SET sign_in_error=$2,composio_link_expires_at=NULL,updated_at=now() WHERE id=$1::uuid`,
+        [pending.id, error instanceof Error ? error.message : 'App sign-in failed']);
+      return { error };
+    }
+    if (!verified) {
+      const error = new Error('App sign-in could not be verified');
+      await db.query(`UPDATE workspace_apps SET sign_in_error=$2,composio_link_expires_at=NULL,updated_at=now() WHERE id=$1::uuid`,
+        [pending.id, error.message]);
+      return { error };
+    }
     const updated = await db.query(
-      `UPDATE workspace_apps SET composio_link_expires_at=NULL,updated_at=now()
+      `UPDATE workspace_apps SET composio_link_expires_at=NULL,sign_in_error=NULL,updated_at=now()
        WHERE id=$1::uuid AND owner_identity_id=$2 AND composio_account_id=$3
          AND composio_link_expires_at>now()`,
       [pending.id, viewerId, completed.accountId],
@@ -863,6 +896,8 @@ export async function completeComposioSignIn(
     await settle?.(db, pending.id);
     return { appId: pending.id };
   });
+  if ('error' in result) throw result.error;
+  return result;
 }
 
 /** A card tap issues a fresh link; the link itself is never persisted in Room history. */
@@ -872,7 +907,7 @@ export async function beginComposioAppSignIn(
   ownerId: string,
   appId: string,
 ): Promise<{ authorizationUrl: string }> {
-  return database.transaction(async (db) => {
+  const result = await database.transaction(async (db) => {
     const row = (
       await db.query<AppRow>(
         `SELECT ${APP_COLUMNS} FROM workspace_apps a
@@ -888,14 +923,22 @@ export async function beginComposioAppSignIn(
         throw new Error('App is already connected');
       await composio.deleteAccount(row.composio_account_id);
     }
-    const link = await composio.link(ownerId, toolkit);
+    let link;
+    try { link = await composio.link(ownerId, toolkit); }
+    catch (error) {
+      await db.query(`UPDATE workspace_apps SET sign_in_error=$2,composio_account_id=NULL,composio_link_expires_at=NULL,updated_at=now() WHERE id=$1::uuid`,
+        [row.id, error instanceof Error ? error.message : 'App sign-in failed']);
+      return { error };
+    }
     await db.query(
-      `UPDATE workspace_apps SET composio_account_id=$3,composio_link_expires_at=$4,updated_at=now()
+      `UPDATE workspace_apps SET composio_account_id=$3,composio_link_expires_at=$4,sign_in_error=NULL,updated_at=now()
        WHERE id=$1::uuid AND owner_identity_id=$2`,
       [appId, ownerId, link.accountId, link.expiresAt],
     );
     return { authorizationUrl: link.url };
   });
+  if ('error' in result) throw result.error;
+  return result;
 }
 
 type AppGate =

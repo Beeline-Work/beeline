@@ -135,6 +135,16 @@ describe('Connect an app', () => {
     }
   });
 
+  it('shows provider metadata on the Gmail connect row', async () => {
+    source.setAppCatalog([{ appKey: 'gmail', description: 'Read and send Gmail messages.',
+      logo: 'https://cdn.composio.dev/gmail.png' }]);
+    const renderer = await render();
+    expect(JSON.stringify(renderer.toJSON())).toContain('Read and send Gmail messages.');
+    // The bundled Gmail mark wins over the provider's logo URL, so the row
+    // renders the local asset and never a remote favicon.
+    expect(JSON.stringify(renderer.toJSON())).toContain('/assets/app-logos/gmail.png');
+  });
+
   it('shows a searchable Popular picker with connected state and ink Connect buttons', async () => {
     source.setApps([{ id: 'app-gmail', key: 'gmail', name: 'Gmail', domain: 'gmail.com', transport: 'composio', status: 'connected', useCount: 0 }]);
     const renderer = await render();
@@ -142,7 +152,7 @@ describe('Connect an app', () => {
     expect(header.props.eyebrow).toBe('Workbench');
     expect(header.props.title).toBe('Connect an app');
     expect(renderer.root.findAllByType('TextInput' as never)).toHaveLength(1);
-    expect(renderer.root.findByProps({ testID: 'connect-app-gmail' }).findAllByType('TouchableOpacity' as never)).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'connect-app-gmail' }).findAllByType('TouchableOpacity' as never)).toHaveLength(1);
     expect(renderer.root.findByProps({ testID: 'connect-app-slack' }).findAllByType('TouchableOpacity' as never)).toHaveLength(1);
     await act(async () => renderer.root.findByProps({ testID: 'connect-app-input' }).props.onChangeText('slack'));
     expect(renderer.root.findAllByProps({ testID: 'connect-app-gmail' })).toHaveLength(0);
@@ -160,15 +170,23 @@ describe('Connect an app', () => {
     source.connectApp = async () => ({ appId: 'app-slack', authorizationUrl: 'https://signin.example.test/one' });
     const renderer = await render();
     await act(async () => { renderer.root.findByProps({ testID: 'connect-app-slack' }).findByType('TouchableOpacity' as never).props.onPress(); await Promise.resolve(); });
-    expect(signIn.open).toHaveBeenCalledWith('https://signin.example.test/one', { workspaceId: 'workspace-1', viewerId: 'human-dani' });
+    expect(signIn.open).toHaveBeenCalledWith('https://signin.example.test/one', { workspaceId: 'workspace-1', viewerId: 'human-dani', appId: 'app-slack' });
     expect(navigation.back).not.toHaveBeenCalled();
   });
 
   it('keeps the server error visible and never claims connection', async () => {
-    source.connectApp = async () => { throw new Error('Sign-in is unavailable'); };
+    source.connectApp = async () => { throw new Error('Monolith beginAppSignIn failed (503): App provider request failed (403)'); };
     const renderer = await render();
     await act(async () => { renderer.root.findByProps({ testID: 'connect-app-slack' }).findByType('TouchableOpacity' as never).props.onPress(); await Promise.resolve(); });
     expect(navigation.back).not.toHaveBeenCalled();
-    expect(JSON.stringify(renderer.toJSON())).toContain('Sign-in is unavailable');
+    expect(JSON.stringify(renderer.toJSON())).toContain('The app provider refused this connection (403).');
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('Monolith');
+  });
+
+  it('disconnects a connected app from the list', async () => {
+    source.setApps([{ id: 'app-gmail', key: 'gmail', name: 'Gmail', transport: 'composio', status: 'connected', useCount: 0 }]);
+    const renderer = await render();
+    await act(async () => { renderer.root.findByProps({ testID: 'disconnect-app-gmail' }).props.onPress(); await Promise.resolve(); });
+    expect((await source.readWorkbench({ workspaceId: 'workspace-1', viewerId: 'human-dani' })).apps).toHaveLength(0);
   });
 });

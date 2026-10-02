@@ -5332,7 +5332,7 @@ export function BuzzChatSurface({
             if (appSignInActionId || viewerIsAgent || cacheViewerPubkey !== card.ownerId) return;
             setAppSignInActionId(card.appId);
             void monolithPhoneOperation('beginAppSignIn', { appId: card.appId })
-              .then(result => openAppSignIn(result.authorizationUrl, { workspaceId: activeCommunityId ?? '', viewerId: cacheViewerPubkey, roomId: decodedId }))
+              .then(result => openAppSignIn(result.authorizationUrl, { workspaceId: activeCommunityId ?? '', viewerId: cacheViewerPubkey, roomId: decodedId, appId: card.appId }))
               .catch(error => Modal.alert('Could not connect app', phoneOperationFailureReason(error)))
               .finally(() => setAppSignInActionId(null));
           }}

@@ -12,6 +12,7 @@ import { getWorkbenchSource } from '@/buzz/workbench-source';
 import type { WorkbenchApp, WorkbenchHelper } from '@/buzz/workbench';
 import { openAppSignIn } from '@/buzz/app-sign-in';
 import { appBoardColors } from '@/buzz/app-board-style';
+import { appErrorCopy } from '@/buzz/app-error-copy';
 
 function first(value: string | string[] | undefined): string | undefined { return Array.isArray(value) ? value[0] : value; }
 
@@ -22,6 +23,7 @@ export default function ConnectAppScreen() {
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
   const [apps, setApps] = useState<readonly WorkbenchApp[]>([]);
+  const [appCatalog, setAppCatalog] = useState<readonly { appKey: string; description?: string; logo?: string }[]>([]);
   const [helpers, setHelpers] = useState<readonly WorkbenchHelper[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -29,7 +31,7 @@ export default function ConnectAppScreen() {
   useEffect(() => {
     let live = true;
     void getWorkbenchSource().readWorkbench({ workspaceId, viewerId }).then(view => {
-      if (live) { setApps(view.apps); setHelpers(view.helpers); }
+      if (live) { setApps(view.apps); setAppCatalog(view.appCatalog ?? []); setHelpers(view.helpers); }
     }).catch(() => { if (live) setError('Apps are unavailable right now'); });
     return () => { live = false; };
   }, [viewerId, workspaceId]);
@@ -50,9 +52,20 @@ export default function ConnectAppScreen() {
     setError(null);
     try {
       const started = await getWorkbenchSource().connectApp({ workspaceId, app: name, helperId: helper.id, ...(existing?.status === 'error' ? { reconnect: true } : {}) });
-      if (started.authorizationUrl) await openAppSignIn(started.authorizationUrl, { workspaceId, viewerId });
+      if (started.authorizationUrl) await openAppSignIn(started.authorizationUrl, { workspaceId, viewerId, appId: started.appId });
       else router.back();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Connecting failed'); }
+    } catch (cause) { setError(appErrorCopy(cause instanceof Error ? cause.message : 'Connecting failed')); }
+    finally { setBusy(null); }
+  };
+
+  const disconnect = async (app: WorkbenchApp) => {
+    if (busy) return;
+    setBusy(app.name);
+    setError(null);
+    try {
+      await getWorkbenchSource().disconnectApp({ workspaceId, appId: app.id });
+      setApps(current => current.filter(item => item.id !== app.id));
+    } catch (cause) { setError(appErrorCopy(cause instanceof Error ? cause.message : 'Could not disconnect app')); }
     finally { setBusy(null); }
   };
 
@@ -68,11 +81,14 @@ export default function ConnectAppScreen() {
       <Text style={styles.section}>POPULAR</Text>
       <View style={styles.list}>
         {filtered.map(app => {
-          const connected = apps.some(item => item.name.toLowerCase() === app.name.toLowerCase() && item.status === 'connected');
+          const existing = apps.find(item => item.name.toLowerCase() === app.name.toLowerCase());
+          const key = app.name.toLowerCase().replaceAll(' ', '');
+          const metadata = appCatalog.find(item => item.appKey === key);
           return <View key={app.name} style={styles.row} testID={`connect-app-${app.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`}>
-            <AppMark name={app.name} domain={app.domain} size={34} />
-            <Text style={styles.name} numberOfLines={1}>{app.name}</Text>
-            {connected ? <Text style={styles.connected}>connected</Text> : <TouchableOpacity accessibilityRole="button" disabled={busy !== null} onPress={() => void connect(app.name)} style={styles.button}><Text style={styles.buttonText}>{busy === app.name ? 'Connecting' : 'Connect'}</Text></TouchableOpacity>}
+            <AppMark name={app.name} domain={app.domain} logo={metadata?.logo ?? existing?.logo} size={34} />
+            <View style={styles.name}><Text style={styles.nameText} numberOfLines={1}>{app.name}</Text>{metadata?.description ? <Text style={styles.description} numberOfLines={2}>{metadata.description}</Text> : null}</View>
+            {existing?.status === 'connected' ? <Text style={styles.connected}>connected</Text> : <TouchableOpacity accessibilityRole="button" disabled={busy !== null} onPress={() => void connect(app.name)} style={styles.button}><Text style={styles.buttonText}>{busy === app.name ? 'Connecting' : existing?.status === 'error' ? 'Retry' : 'Connect'}</Text></TouchableOpacity>}
+            {existing ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Disconnect ${app.name}`} disabled={busy !== null} onPress={() => void disconnect(existing)} testID={`disconnect-app-${app.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`}><Text style={styles.connected}>Disconnect</Text></TouchableOpacity> : null}
           </View>;
         })}
       </View>
@@ -93,7 +109,9 @@ const styles = StyleSheet.create(theme => {
   section: { ...Typography.default(), ...hull.type.sectionHead, paddingHorizontal: 20, paddingTop: 12, paddingBottom: 4, color: board.quiet },
   list: { paddingHorizontal: 20 },
   row: { minHeight: 54, flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: board.border },
-  name: { ...Typography.ledger(), ...hull.type.body, flex: 1, color: board.ink },
+  name: { flex: 1 },
+  nameText: { ...Typography.ledger(), ...hull.type.body, color: board.ink },
+  description: { ...Typography.ledger(), ...hull.type.meta, color: board.quiet },
   connected: { ...Typography.ledger(), ...hull.type.meta, color: board.quiet },
   button: { minHeight: 36, paddingHorizontal: 14, justifyContent: 'center', borderRadius: 9, backgroundColor: board.buttonFill },
   buttonText: { ...Typography.ledger(), ...hull.type.body, color: board.buttonText },

@@ -225,6 +225,9 @@ function customOAuthConfig(items: readonly Json[], toolkit: string): Json | unde
 }
 
 export class ComposioApps {
+  private readonly toolkitCache = new Map<string, { until: number; value: Promise<{
+    slug: string; description?: string; logo?: string; appUrl?: string; enabled?: boolean;
+    composio_managed_auth_schemes?: unknown }> }>();
   constructor(private readonly apiKey: string, private readonly transport: typeof fetch = fetch) {
     if (!apiKey) throw new Error('App provider is unavailable');
   }
@@ -260,18 +263,49 @@ export class ComposioApps {
   }
 
   async supportsOAuth(toolkit: string): Promise<boolean> {
-    let row: Json;
     try {
-      row = await this.request(`/toolkits/${encodeURIComponent(toolkit)}?version=latest`, 'GET');
+      const row = await this.toolkit(toolkit);
+      if (row.slug !== toolkit || row.enabled === false) return false;
+      if (Array.isArray(row.composio_managed_auth_schemes) &&
+        row.composio_managed_auth_schemes.some((scheme) =>
+          typeof scheme === 'string' && scheme.toLowerCase() === 'oauth2')) return true;
+      return customOAuthConfig(await this.authConfigs(toolkit), toolkit) !== undefined;
     } catch (error) {
       if ((error as { status?: number }).status === 404) return false;
       throw error;
     }
-    if (row.slug !== toolkit || row.enabled === false) return false;
-    if (Array.isArray(row.composio_managed_auth_schemes) &&
-      row.composio_managed_auth_schemes.some((scheme) =>
-        typeof scheme === 'string' && scheme.toLowerCase() === 'oauth2')) return true;
-    return customOAuthConfig(await this.authConfigs(toolkit), toolkit) !== undefined;
+  }
+
+  async toolkit(toolkit: string): Promise<{ slug: string; description?: string; logo?: string; appUrl?: string;
+    enabled?: boolean; composio_managed_auth_schemes?: unknown }> {
+    const cached = this.toolkitCache.get(toolkit);
+    if (cached && cached.until > Date.now()) return cached.value;
+    const value = this.fetchToolkit(toolkit);
+    this.toolkitCache.set(toolkit, { until: Date.now() + 300_000, value });
+    try { return await value; }
+    catch (error) { this.toolkitCache.delete(toolkit); throw error; }
+  }
+
+  private async fetchToolkit(toolkit: string): Promise<{ slug: string; description?: string;
+    logo?: string; appUrl?: string; enabled?: boolean; composio_managed_auth_schemes?: unknown }> {
+    const row = await this.request(`/toolkits/${encodeURIComponent(toolkit)}?version=latest`, 'GET');
+    const meta = row.meta && typeof row.meta === 'object' && !Array.isArray(row.meta)
+      ? row.meta as Json : {};
+    const logo = typeof meta.logo === 'string' && /^https:\/\//i.test(meta.logo) ? meta.logo : undefined;
+    let appUrl: string | undefined;
+    if (typeof meta.app_url === 'string') {
+      try {
+        const parsed = new URL(meta.app_url);
+        if (parsed.protocol === 'https:' && parsed.hostname) appUrl = parsed.origin;
+      } catch { /* Invalid provider metadata is optional. */ }
+    }
+    return { slug: requiredString(row.slug),
+      ...(typeof meta.description === 'string' ? { description: meta.description } : {}),
+      ...(logo ? { logo } : {}),
+      ...(appUrl ? { appUrl } : {}),
+      ...(typeof row.enabled === 'boolean' ? { enabled: row.enabled } : {}),
+      ...(Array.isArray(row.composio_managed_auth_schemes)
+        ? { composio_managed_auth_schemes: row.composio_managed_auth_schemes } : {}) };
   }
 
   private async authConfigs(toolkit: string): Promise<Json[]> {

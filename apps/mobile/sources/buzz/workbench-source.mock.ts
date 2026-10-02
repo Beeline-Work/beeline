@@ -152,6 +152,7 @@ export class MockWorkbenchSource implements WorkbenchSource {
   private failedConnectors = new Set<string>();
   private signInMethod: 'streamed' | 'oauth' | undefined;
   private apps: WorkbenchApp[] = [];
+  private appCatalog: NonNullable<WorkbenchView['appCatalog']> = [];
   /** Every connectApp call, so a test can read what the screen asked for. */
   readonly appRequests: { app: string; helperId: string; reconnect?: boolean }[] = [];
 
@@ -235,6 +236,7 @@ export class MockWorkbenchSource implements WorkbenchSource {
       ],
       connections: viewer ? viewer.connections.map((detail) => detail.connection) : [],
       apps: viewer ? this.apps : [],
+      appCatalog: this.appCatalog,
     };
   }
 
@@ -402,7 +404,7 @@ export class MockWorkbenchSource implements WorkbenchSource {
     return { authorizationUrl: `https://example.test/connect/${input.appId}` };
   }
 
-  async completeAppSignIn(input: { sessionUri: string }): Promise<{ appId: string }> {
+  async completeAppSignIn(input: { sessionUri: string; appId: string }): Promise<{ appId: string }> {
     const appId = new URL(input.sessionUri).searchParams.get('appId') ?? '';
     const app = this.apps.find((item) => item.id === appId);
     if (app) app.status = 'connected';
@@ -412,6 +414,10 @@ export class MockWorkbenchSource implements WorkbenchSource {
   /** Test hook: seed the viewer's apps. */
   setApps(apps: readonly WorkbenchApp[]): void {
     this.apps = apps.map((app) => ({ ...app }));
+  }
+
+  setAppCatalog(catalog: NonNullable<WorkbenchView['appCatalog']>): void {
+    this.appCatalog = catalog;
   }
 
   /** Test hook: make the next pairing of this connector fail at a step. */

@@ -73,7 +73,7 @@ export interface WorkbenchSource {
     reconnect?: boolean;
   }): Promise<{ appId: string; authorizationUrl?: string }>;
   beginAppSignIn(input: { appId: string }): Promise<{ authorizationUrl: string }>;
-  completeAppSignIn(input: { sessionUri: string }): Promise<{ appId: string }>;
+  completeAppSignIn(input: { sessionUri: string; appId: string }): Promise<{ appId: string }>;
   disconnectApp(input: { workspaceId: string; appId: string }): Promise<void>;
 }
 
@@ -234,6 +234,8 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
         key: app.appKey,
         name: app.name,
         ...(app.domain ? { domain: app.domain } : {}),
+        ...(app.description ? { description: app.description } : {}),
+        ...(app.logo ? { logo: app.logo } : {}),
         transport: app.transport,
         status: app.status,
         ...(app.errorMessage ? { errorMessage: app.errorMessage } : {}),
@@ -247,6 +249,7 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
         ...(app.workspaceName ? { workspaceName: app.workspaceName } : {}),
         ...(app.lastUse ? { lastUse: { ...app.lastUse } } : {}),
       })),
+      appCatalog: dto.appCatalog ?? [],
       connections: dto.connections.map((connection) => toConnection(connection, input.viewerId)),
     };
   }
@@ -418,7 +421,7 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
     return monolithPhoneOperation('beginAppSignIn', input);
   }
 
-  async completeAppSignIn(input: { sessionUri: string }): Promise<{ appId: string }> {
+  async completeAppSignIn(input: { sessionUri: string; appId: string }): Promise<{ appId: string }> {
     return monolithPhoneOperation('completeAppSignIn', input);
   }
 

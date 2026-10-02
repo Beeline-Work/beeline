@@ -17,9 +17,14 @@ import {
   CHECKS_FAILING_LIMIT,
   CORNER_WORKFLOW_CONTRACT,
   CORNER_WORKFLOW_SLUG,
+  cornerMergeGate,
   ensureCornerWorkflowSeeded,
   REVIEW_HANDBACK_LIMIT,
 } from './corner-workflow.js';
+import {
+  queueCornerMergeConflict,
+  reconcileCornerMergeBlockers,
+} from './agent-command.js';
 import { CORNER_WORKFLOW_HANDOFF_CARD_TYPE } from './room-choice.js';
 import { workflowRunLockKey } from './workflow-runs.js';
 
@@ -781,6 +786,157 @@ describe('each transition wakes the next role exactly once (AC-2)', () => {
     await result(review!, 'Please fix the race.');
     expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_review')).toHaveLength(1);
     expect(await reasons(cornerId, B)).toEqual(['subscribed_event']);
+  });
+});
+
+describe('a person hands the corner to another agent (the implementer follows the tag)', () => {
+  // A third agent, a member of the corner only: the reviewer stays B, so the
+  // tagged implementer is never the reviewer. `beforeEach` drops the corner
+  // rows, so it is re-added per test and its identities row is idempotent.
+  const D = 'd'.repeat(64);
+  async function taggableMember(cornerId: string): Promise<void> {
+    await db.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Sol','sol') ON CONFLICT(id) DO NOTHING`,
+      [D],
+    );
+    await db.query(
+      `INSERT INTO agents(agent_id,owner_id) VALUES($1,$2) ON CONFLICT(agent_id) DO UPDATE SET owner_id=EXCLUDED.owner_id`,
+      [D, H],
+    );
+    await db.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING`,
+      [W, cornerId, D],
+    );
+  }
+  const workerOf = async (cornerId: string): Promise<string | null> =>
+    (
+      await db.query<{ worker_agent_id: string | null }>(
+        `SELECT worker_agent_id FROM corner_facts WHERE corner_id=$1`,
+        [cornerId],
+      )
+    ).rows[0]!.worker_agent_id;
+
+  it('a tag in the corner moves the failing-check wake off the opener, leaving owner_agent_id alone', async () => {
+    const cornerId = await open(undefined, 'owner/widgets');
+    await say(cornerId, '@goosy take this one');
+    expect(await workerOf(cornerId)).toBe(B);
+    expect(
+      (
+        await db.query<{ owner_agent_id: string }>(
+          `SELECT owner_agent_id FROM corner_facts WHERE corner_id=$1`,
+          [cornerId],
+        )
+      ).rows[0]!.owner_agent_id,
+    ).toBe(A);
+    await redHead(cornerId, 3, SHA);
+    expect((await reasons(cornerId, B)).filter((reason) => reason === 'corner_check')).toHaveLength(1);
+    expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_check')).toHaveLength(0);
+  });
+
+  it('a review handback wakes the tagged implementer, not the opener', async () => {
+    const cornerId = await open(undefined, 'owner/widgets');
+    await taggableMember(cornerId);
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await say(cornerId, '@sol take this one');
+    await greenHead(cornerId, 7, SHA);
+    const [review] = await commands(B, cornerId);
+    await claim(review!);
+    await result(review!, 'Please fix the race.');
+    expect((await reasons(cornerId, D)).filter((reason) => reason === 'corner_review')).toHaveLength(1);
+    expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_review')).toHaveLength(0);
+  });
+
+  it('a refused merge wakes the tagged implementer, not the opener', async () => {
+    const cornerId = await open(undefined, 'owner/widgets');
+    await taggableMember(cornerId);
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await say(cornerId, '@sol take this one');
+    await greenHead(cornerId, 7, SHA);
+    const [review] = await commands(B, cornerId);
+    await claim(review!);
+    await approve(cornerId);
+    await result(review!, `approved ${SHA}`);
+    githubHead = SHA;
+    githubRollupState = 'passed';
+    githubApp.mergePullRequest.mockRejectedValueOnce(
+      new Error('GitHub pull request merge failed: HTTP 405: Base branch was modified'),
+    );
+    await github.landReadyCorners();
+    expect((await reasons(cornerId, D)).filter((reason) => reason === 'corner_merge_refused')).toHaveLength(1);
+    expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_merge_refused')).toHaveLength(0);
+  });
+
+  it('a merge conflict wakes the tagged implementer', async () => {
+    const cornerId = await open(undefined, 'owner/widgets');
+    await say(cornerId, '@goosy take this one');
+    await db.query(
+      `UPDATE corner_facts SET lifecycle=lifecycle||$2::jsonb WHERE corner_id=$1`,
+      [
+        cornerId,
+        JSON.stringify({
+          pr: {
+            number: 7,
+            url: 'https://github.com/owner/widgets/pull/7',
+            headSha: SHA,
+            mergeability: 'dirty',
+          },
+        }),
+      ],
+    );
+    const source = await systemLine(db, {
+      roomId: cornerId,
+      authorId: H,
+      subject: { kind: 'github', name: 'GitHub' },
+      verb: 'found merge conflicts in',
+    });
+    await queueCornerMergeConflict(db, cornerId, source.id);
+    expect((await reasons(cornerId, B)).filter((reason) => reason === 'corner_merge_conflict')).toHaveLength(1);
+    expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_merge_conflict')).toHaveLength(0);
+  });
+
+  it('blocker reconciliation wakes the tagged implementer', async () => {
+    const cornerId = await open(undefined, 'owner/widgets');
+    await say(cornerId, '@goosy take this one');
+    await pushToCorner(cornerId, SHA);
+    await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+      cornerId,
+      JSON.stringify({
+        checks: 'failing',
+        lifecycle: 'in-review',
+        pr: { number: 7, url: 'https://github.com/owner/widgets/pull/7', headSha: SHA },
+      }),
+    ]);
+    await reconcileCornerMergeBlockers(db, cornerId);
+    expect((await reasons(cornerId, B)).filter((reason) => reason === 'corner_check')).toHaveLength(1);
+    expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_check')).toHaveLength(0);
+  });
+
+  it('the merge gate reads the tagged implementer yolo mode', async () => {
+    const cornerId = await open(undefined, 'owner/widgets');
+    await db.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [A]);
+    await db.query(`UPDATE agents SET yolo_mode=true WHERE agent_id=$1`, [B]);
+    await say(cornerId, '@goosy take this one');
+    expect((await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).isWorkerYolo).toBe(true);
+  });
+
+  it('tagging the configured reviewer does not take the implementer role', async () => {
+    const cornerId = await open(undefined, 'owner/widgets');
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await say(cornerId, '@goosy what do you think?');
+    expect(await workerOf(cornerId)).toBeNull();
+  });
+
+  it('a tag in the parent Room does not move a corner implementer', async () => {
+    const cornerId = await open(undefined, 'owner/widgets');
+    await say(R, '@goosy take this one');
+    expect(await workerOf(cornerId)).toBeNull();
+  });
+
+  it('a corner nobody redirected still wakes its opener', async () => {
+    const cornerId = await open(undefined, 'owner/widgets');
+    await redHead(cornerId, 3, SHA);
+    expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_check')).toHaveLength(1);
+    expect((await reasons(cornerId, B)).filter((reason) => reason === 'corner_check')).toHaveLength(0);
   });
 });
 

@@ -10,6 +10,7 @@ import {
   repairReviewerCornerMembership,
   type CommandRow,
 } from './agent-command.js';
+import { cornerImplementerSql } from './corner-worker.js';
 import { firstHealthyAgent, isConfiguredReviewer, nextHealthyAgent, reviewerList } from './agent-health.js';
 import { CORNER_WORKFLOW_HANDOFF_CARD_TYPE } from './room-choice.js';
 import { ensureSystemIdentity, GITHUB_SUBJECT, systemLine, type SystemLineInput } from './system-line.js';
@@ -267,7 +268,7 @@ async function loadCorner(db: SqlDatabase, cornerId: string): Promise<CornerRow 
   return (
     await db.query<CornerRow>(
       `SELECT corner.parent_id,parent.workspace_id,
-              COALESCE(fact.owner_agent_id,corner.created_by) worker_agent_id,
+              ${cornerImplementerSql('fact', 'corner')} worker_agent_id,
               fact.owner_agent_id,fact.commissioned_by,fact.lifecycle,
               corner.archived_at IS NOT NULL archived,fact.lane,
               parent.reviewer_agent_id configured_reviewer_id,
@@ -1181,7 +1182,7 @@ async function workerYolo(db: SqlDatabase, cornerId: string): Promise<boolean> {
        FROM corner_facts fact
        JOIN rooms corner ON corner.id=fact.corner_id
        JOIN workspaces workspace ON workspace.id=corner.workspace_id
-       JOIN agents agent ON agent.agent_id=COALESCE(fact.owner_agent_id,corner.created_by)
+       JOIN agents agent ON agent.agent_id=${cornerImplementerSql('fact', 'corner')}
        WHERE fact.corner_id=$1`,
       [cornerId],
     )

@@ -1607,6 +1607,11 @@ CREATE TABLE IF NOT EXISTS corner_facts (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS owner_agent_id text REFERENCES identities(id);
+-- The corner's CURRENT implementer: the agent a person last addressed in the
+-- corner (routeHumanMessage). NULL means "the opener", which is every
+-- corner until a person redirects one; owner_agent_id stays the historical
+-- opener, brief author and close authority.
+ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS worker_agent_id text REFERENCES identities(id);
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS commissioned_by text REFERENCES identities(id);
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS open_idempotency_key text;
 -- Every corner that existed before the lane did was a commit-and-merge corner,

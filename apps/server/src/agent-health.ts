@@ -5,13 +5,11 @@
  *
  * Health is derived from facts this codebase already keeps, never a new
  * stored status:
- *  - "online" is the agent's latest `live_outputs kind='presence'` row: it
- *    says `online` and was written within `AGENT_HEALTH_STALE_MS`. Presence
- *    only refreshes on the helper's HTTP calls, so an idle helper waiting on
- *    its socket ages past the 90-second `AGENT_REACHABLE_HORIZON_MS` between
- *    reconcile heartbeats (10-15 minutes); the longer window keeps it
- *    healthy, while an unanswered delivery still writes an explicit
- *    `offline` that counts at once.
+ *  - "online" is the status on the agent's latest `live_outputs
+ *    kind='presence'` row, however old. Presence is event-driven: a helper
+ *    never calls in to keep it fresh, so its age says nothing. Only an event
+ *    writes `offline` — an unanswered delivery (`ConnectionPresence`) or an
+ *    `available:false` announce.
  *  - "recently failed" and "out of credit" both read the agent's most recent
  *    `agent_turns` row (index `agent_turns_agent_activity`) and, when it
  *    failed, the `turn-failed` message card's `silenceKind`
@@ -24,8 +22,6 @@
 import type { SqlDatabase } from './database.js';
 
 export const AGENT_RECENT_FAILURE_MS = 5 * 60 * 1000;
-/** Longer than the helper's longest reconcile heartbeat (15 minutes). */
-export const AGENT_HEALTH_STALE_MS = 20 * 60 * 1000;
 
 export type AgentHealthReason = 'offline' | 'recent-failure' | 'out-of-credit';
 export type AgentHealth = { healthy: boolean; reason?: AgentHealthReason };
@@ -59,7 +55,6 @@ export async function roomAgentHealth(
     `SELECT agent.agent_id,
             COALESCE((
               SELECT lo.body->>'status'='online'
-                AND lo.updated_at >= now()-make_interval(secs => $2::double precision/1000)
               FROM live_outputs lo
               WHERE lo.agent_id=agent.agent_id AND lo.kind='presence'
               ORDER BY lo.updated_at DESC LIMIT 1
@@ -80,8 +75,8 @@ export async function roomAgentHealth(
        ORDER BY created_at DESC LIMIT 1
      ) failure ON latest.status='failed'
      WHERE member.room_id=$1 AND member.removed_at IS NULL
-       AND member.identity_id=ANY($3::text[])`,
-    [roomId, AGENT_HEALTH_STALE_MS, [...new Set(agentIds)]],
+       AND member.identity_id=ANY($2::text[])`,
+    [roomId, [...new Set(agentIds)]],
   );
   const now = Date.now();
   return new Map(rows.rows.map((row) => [row.agent_id, candidateHealth(row, now)]));

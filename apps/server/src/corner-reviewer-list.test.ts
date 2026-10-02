@@ -220,9 +220,9 @@ describe('check-passed dispatch with a reviewer list', () => {
 });
 
 describe('idle reviewers on the list', () => {
-  it('wakes the first agent when both reviewers have been idle for minutes', async () => {
-    await idleFor(REVIEWER_A, 5);
-    await idleFor(REVIEWER_B, 5);
+  it('wakes the first agent when both reviewers have been idle for hours', async () => {
+    await idleFor(REVIEWER_A, 300);
+    await idleFor(REVIEWER_B, 300);
     await setReviewers(REVIEWER_A, REVIEWER_B);
     await greenCheck();
     expect(await reviews(REVIEWER_A)).toHaveLength(1);
@@ -232,14 +232,15 @@ describe('idle reviewers on the list', () => {
   it('passes a failed review to an idle second reviewer', async () => {
     await setReviewers(REVIEWER_A, REVIEWER_B);
     await greenCheck();
-    await idleFor(REVIEWER_B, 5);
+    await idleFor(REVIEWER_B, 300);
     await failTurn((await reviews(REVIEWER_A))[0]!);
     expect(await reviews(REVIEWER_B)).toHaveLength(1);
     expect(await exhaustedNotices()).toHaveLength(0);
   });
 
-  it('still skips a reviewer not heard from for longer than a helper reconcile cycle', async () => {
-    await idleFor(REVIEWER_A, 30);
+  it('still skips an idle reviewer whose last presence event was offline', async () => {
+    await reportPresence(REVIEWER_A, 'offline');
+    await idleFor(REVIEWER_A, 300);
     await setReviewers(REVIEWER_A, REVIEWER_B);
     await greenCheck();
     expect(await reviews(REVIEWER_A)).toHaveLength(0);

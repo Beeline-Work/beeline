@@ -1,6 +1,8 @@
 import type {
   WorkflowActorView,
   WorkflowContract,
+  WorkflowGateRecordView,
+  WorkflowOpenedCornerView,
   WorkflowRunDetailView,
   WorkflowRunListResult,
   WorkflowRunStatus,
@@ -12,11 +14,11 @@ import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
 import { CORNER_WORKFLOW_CONTRACT, CORNER_WORKFLOW_SLUG } from './corner-workflow.js';
 import { CORNER_WORKFLOW_HANDOFF_CARD_TYPE } from './room-choice.js';
-import { WORKFLOW_HANDOFF_CARD_TYPE } from './workflow-runs.js';
+import { WORKFLOW_HANDOFF_CARD_TYPE, workflowGatePrompt } from './workflow-runs.js';
 
 /**
- * Read-only projections of agent workflow runs for the phone: the Scheduled
- * Work list, a corner's workflow line, and the run page's graph. Runs have no
+ * Read-only projections of agent workflow runs for the phone: a corner's
+ * workflow line and the run page. Runs have no
  * table (`workflow-runs.ts`), so everything here is derived from the
  * `workflow-handoff` cards — and a corner's own `corner-workflow-handoff`
  * lifecycle cards — citing each run id. Callers check Room read access first;
@@ -346,7 +348,152 @@ export async function listRoomWorkflowRuns(
   return { workflows };
 }
 
-/** One run in `roomId`, with its pinned contract and every card in order. Null when unreadable. */
+/** Microseconds since the epoch, as text so the value survives the driver exactly. */
+const MICROS = (column: string) => `(extract(epoch FROM ${column})*1000000)::bigint::text`;
+
+type RunCardRow = {
+  from_state: string | null;
+  outcome: string | null;
+  to_state: string;
+  status: WorkflowRunStepView['status'] | null;
+  reassigned: boolean;
+  contents: Record<string, unknown> | null;
+  role_bindings: Record<string, string> | null;
+  created_at: Date;
+  created_us: string;
+  author_id: string;
+  author_name: string;
+  author_kind: 'human' | 'agent';
+  workflow_slug: string;
+};
+
+/** One stay in a state: the card that entered it, until the next card that moved the run. */
+type Visit = { card: RunCardRow; from: number; until?: number };
+
+function visitsOf(cards: readonly RunCardRow[]): Visit[] {
+  const moves = cards.filter((card) => !card.reassigned);
+  return moves.map((card, index) => ({
+    card,
+    from: Number(card.created_us),
+    ...(moves[index + 1] ? { until: Number(moves[index + 1]!.created_us) } : {}),
+  }));
+}
+
+const within = (visit: Visit, at: number) =>
+  at >= visit.from && (visit.until === undefined || at < visit.until);
+
+/**
+ * Each gate visit's choice card. The card does not name its run, so it is the
+ * card with the gate's prompt posted in the run's Room during that visit;
+ * a reassigned gate posts a second card, and the answered one wins.
+ */
+async function loadGateRecords(
+  db: SqlDatabase,
+  roomId: string,
+  contract: WorkflowContract,
+  visits: readonly Visit[],
+): Promise<Map<Visit, WorkflowGateRecordView>> {
+  const records = new Map<Visit, WorkflowGateRecordView>();
+  const gates = visits.filter((visit) => contract.handoffs[visit.card.to_state]?.kind === 'gate');
+  if (gates.length === 0) return records;
+  const prompts = [...new Set(gates.map((visit) => workflowGatePrompt(contract, visit.card.to_state)))];
+  const choices = (
+    await db.query<{
+      prompt: string;
+      options: Array<{ optionId: string; letter: string; label: string; consequence: string }>;
+      status: WorkflowGateRecordView['status'];
+      created_us: string;
+      option_id: string | null;
+      answered_at: Date | null;
+      voter_id: string | null;
+      voter_name: string | null;
+      voter_kind: 'human' | 'agent' | null;
+    }>(
+      `SELECT choice.prompt,choice.options,choice.status,${MICROS('choice.created_at')} created_us,
+              vote.option_id,vote.created_at answered_at,
+              voter.id voter_id,voter.name voter_name,voter.kind voter_kind
+       FROM room_choices choice
+       LEFT JOIN LATERAL (
+         SELECT option_id,voter_id,created_at FROM room_choice_votes
+         WHERE choice_id=choice.id ORDER BY created_at,voter_id LIMIT 1
+       ) vote ON choice.mode='question'
+       LEFT JOIN identities voter ON voter.id=vote.voter_id
+       WHERE choice.room_id=$1 AND choice.prompt=ANY($2::text[])
+         AND choice.created_at>=$3
+       ORDER BY choice.created_at,choice.id`,
+      [roomId, prompts, gates[0]!.card.created_at],
+    )
+  ).rows;
+  for (const visit of gates) {
+    const prompt = workflowGatePrompt(contract, visit.card.to_state);
+    const mine = choices.filter(
+      (choice) => choice.prompt === prompt && within(visit, Number(choice.created_us)),
+    );
+    const choice = mine.find((entry) => entry.status === 'answered') ?? mine[mine.length - 1];
+    if (!choice) continue;
+    const picked = choice.options.find((option) => option.optionId === choice.option_id);
+    records.set(visit, {
+      question: choice.prompt,
+      options: choice.options.map(({ letter, label, consequence }) => ({ letter, label, consequence })),
+      status: choice.status,
+      ...(picked ? { answer: picked.label } : {}),
+      ...(picked && choice.voter_id && choice.voter_name && choice.voter_kind
+        ? { answeredBy: { id: choice.voter_id, name: choice.voter_name, kind: choice.voter_kind } }
+        : {}),
+      ...(picked && choice.answered_at ? { answeredAt: unix(choice.answered_at) } : {}),
+    });
+  }
+  return records;
+}
+
+/**
+ * Corners each visit's holder opened while the run sat in that state. An
+ * agent opens a corner in the top-level Room, so they are the top Room's
+ * children created by the holder in the visit's window, and only those the
+ * viewer can read.
+ */
+async function loadOpenedCorners(
+  db: SqlDatabase,
+  head: RunHead,
+  topRoomId: string,
+  viewerId: string,
+  contract: WorkflowContract,
+  visits: readonly Visit[],
+): Promise<Map<Visit, WorkflowOpenedCornerView[]>> {
+  const opened = new Map<Visit, WorkflowOpenedCornerView[]>();
+  const holders = new Map<Visit, string>();
+  for (const visit of visits) {
+    const role = stateRole(contract, visit.card.to_state);
+    const holder = role
+      ? boundIdentityId(head, (visit.card.role_bindings ?? head.roleBindings)[role])
+      : undefined;
+    if (holder) holders.set(visit, holder);
+  }
+  if (holders.size === 0) return opened;
+  const corners = (
+    await db.query<{ id: string; name: string; parent_id: string; created_by: string; created_us: string }>(
+      `SELECT room.id,room.name,room.parent_id,room.created_by,${MICROS('room.created_at')} created_us
+       FROM rooms room
+       WHERE room.parent_id=$1 AND room.created_by=ANY($3::text[]) AND room.created_at>=$4
+         AND ${VIEWER_CAN_READ_ROOM_SQL}
+       ORDER BY room.created_at,room.id`,
+      [topRoomId, viewerId, [...new Set(holders.values())], visits[0]!.card.created_at],
+    )
+  ).rows;
+  for (const [visit, holder] of holders) {
+    const mine = corners
+      .filter((corner) => corner.created_by === holder && within(visit, Number(corner.created_us)))
+      .map((corner) => ({ id: corner.id, name: corner.name, parentRoomId: corner.parent_id }));
+    if (mine.length > 0) opened.set(visit, mine);
+  }
+  return opened;
+}
+
+/**
+ * One run in `roomId`, with its pinned contract and every card in order: what
+ * each step handed off, each gate's recorded answer, and the corners each step
+ * opened. Null when unreadable.
+ */
 export async function readWorkflowRun(
   db: SqlDatabase,
   input: { roomId: string; runId: string },
@@ -360,22 +507,15 @@ export async function readWorkflowRun(
   if (!room) return null;
   const topRoomId = room.parent_id ?? input.roomId;
   const cards = (
-    await db.query<{
-      from_state: string | null;
-      outcome: string | null;
-      to_state: string;
-      status: WorkflowRunStepView['status'] | null;
-      reassigned: boolean;
-      created_at: Date;
-      author_id: string;
-      author_name: string;
-      author_kind: 'human' | 'agent';
-      workflow_slug: string;
-    }>(
+    await db.query<RunCardRow>(
       `SELECT message.card->>'fromState' from_state,message.card->>'outcome' outcome,
               message.card->>'toState' to_state,message.card->>'status' status,
               COALESCE((message.card->>'reassigned')::boolean,false) reassigned,
-              message.created_at,author.id author_id,author.name author_name,
+              CASE WHEN jsonb_typeof(message.card->'contents')='object'
+                THEN message.card->'contents' END contents,
+              message.card->'roleBindings' role_bindings,
+              message.created_at,${MICROS('message.created_at')} created_us,
+              author.id author_id,author.name author_name,
               author.kind author_kind,message.card->>'workflowSlug' workflow_slug
        FROM messages message
        JOIN identities author ON author.id=message.author_id
@@ -393,25 +533,34 @@ export async function readWorkflowRun(
     `${head.slug}@${head.version}`,
   );
   if (!contract) return null;
-  const [actors, viewer] = await Promise.all([
+  const visits = visitsOf(cards);
+  const [actors, viewer, gates, corners] = await Promise.all([
     loadActors(db, headBindingIds(head)),
     loadViewer(db, viewerId),
+    loadGateRecords(db, input.roomId, contract, visits),
+    loadOpenedCorners(db, head, topRoomId, viewerId, contract, visits),
   ]);
   const roleHolders: Record<string, WorkflowActorView> = {};
   for (const [role, binding] of Object.entries(head.roleBindings)) {
     const holder = actors.get(boundIdentityId(head, binding) ?? '');
     if (holder) roleHolders[role] = holder;
   }
-  const history: WorkflowRunStepView[] = cards
-    .filter((card) => !card.reassigned)
-    .map((card) => ({
+  const history: WorkflowRunStepView[] = visits.map((visit) => {
+    const { card } = visit;
+    const gate = gates.get(visit);
+    const opened = corners.get(visit);
+    return {
       ...(card.from_state ? { fromState: card.from_state } : {}),
       ...(card.from_state && card.outcome ? { outcome: card.outcome } : {}),
       toState: card.to_state,
       ...(card.status ? { status: card.status } : {}),
       actor: { id: card.author_id, name: card.author_name, kind: card.author_kind },
       at: unix(card.created_at),
-    }));
+      ...(card.contents ? { contents: card.contents } : {}),
+      ...(gate ? { gate } : {}),
+      ...(opened ? { openedCorners: opened } : {}),
+    };
+  });
   return {
     run: summarize(head, contract, actors, viewer, earlierThan(heads, head)),
     contract,

@@ -31,7 +31,7 @@ describe('corner workflow line', () => {
     expect(chat).toMatch(
       /<CornerObjectiveLine[\s\S]*?onOpenWorkflow=\{openCornerWorkflowRun\}[\s\S]*?workflow=\{cornerWorkflowRun\}/,
     );
-    expect(chat).not.toContain('WorkflowRunGraph');
+    expect(chat).not.toContain('WorkflowRunLine');
   });
 
   it('names a saved workflow working in the corner before the corner’s own lifecycle run', () => {

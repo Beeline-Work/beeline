@@ -330,6 +330,29 @@ export type WorkflowRunSummaryView = {
 };
 export type WorkflowRunListResult = { readonly workflows: readonly WorkflowRunSummaryView[] };
 export type ReadWorkflowRunInput = RoomInput & { readonly runId: string };
+/**
+ * The record of a gate's choice card: what it asked, what it offered, and how
+ * it was settled. `status` is the card's own (`open` while it waits).
+ */
+export type WorkflowGateRecordView = {
+  readonly question: string;
+  readonly options: readonly {
+    readonly letter: string;
+    readonly label: string;
+    readonly consequence: string;
+  }[];
+  readonly status: 'open' | 'answered' | 'skipped' | 'closed' | 'retracted';
+  /** The chosen option's label. */
+  readonly answer?: string;
+  readonly answeredBy?: WorkflowActorView;
+  readonly answeredAt?: number;
+};
+/** A corner opened by the step's holder while the run was in that step. */
+export type WorkflowOpenedCornerView = {
+  readonly id: string;
+  readonly name: string;
+  readonly parentRoomId: string;
+};
 /** One `workflow-handoff` card. The first has only `toState` (the run's start). */
 export type WorkflowRunStepView = {
   readonly fromState?: string;
@@ -338,6 +361,12 @@ export type WorkflowRunStepView = {
   readonly status?: WorkflowTerminalState['status'];
   readonly actor?: WorkflowActorView;
   readonly at: number;
+  /** What `fromState` handed off with: the card's `contents`. */
+  readonly contents?: Readonly<Record<string, unknown>>;
+  /** When `toState` is a gate: the choice card posted for this visit. */
+  readonly gate?: WorkflowGateRecordView;
+  /** Corners `toState`'s holder opened during this visit that the viewer can read. */
+  readonly openedCorners?: readonly WorkflowOpenedCornerView[];
 };
 export type WorkflowRunDetailView = {
   readonly run: WorkflowRunSummaryView;

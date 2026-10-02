@@ -1,16 +1,15 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { WorkflowContract } from '@beeline/api-contract/phone';
+import type { WorkflowContract, WorkflowRunStepView } from '@beeline/api-contract/phone';
 import {
-  GRAPH_NODE_Y,
-  GRAPH_ROW,
-  layoutWorkflowGraph,
   workflowDisplayName,
+  workflowMainPath,
+  workflowRunLine,
   workflowStateLabel,
-  type WorkflowGraphLayout,
+  type WorkflowLineStep,
 } from './workflow-graph';
-import { loopRoundLabel } from './workflow-run-copy';
+import { formatRunDuration, loopRoundLabel, workflowRunHeadline, workflowStepMeta } from './workflow-run-copy';
 
 const repo = path.resolve(__dirname, '../../../..');
 const feedbackTriage = JSON.parse(
@@ -68,276 +67,241 @@ const serverCornerSource = readFileSync(
   'utf8',
 );
 
-function rowsOf(layout: WorkflowGraphLayout) {
-  return layout.rows.map((row) => [row.state, row.column, row.reach]);
+const candy = { id: 'b'.repeat(64), name: 'Candy', kind: 'agent' as const };
+
+function rowsOf(line: readonly WorkflowLineStep[]) {
+  return line.map((step) => [step.state, step.status]);
 }
 
-/** No two circles share a row, and no line passes through a circle it does not end at. */
-function expectNoCollisions(layout: WorkflowGraphLayout) {
-  const ys = layout.rows.map((row) => row.y);
-  expect(new Set(ys).size).toBe(ys.length);
-  const spans = layout.laneSpans;
-  for (let a = 0; a < spans.length; a += 1)
-    for (let b = a + 1; b < spans.length; b += 1)
-      if (spans[a]!.column === spans[b]!.column)
-        expect(
-          spans[a]!.from > spans[b]!.to || spans[b]!.from > spans[a]!.to,
-          `lane ${spans[a]!.column} used twice over rows ${JSON.stringify([spans[a], spans[b]])}`,
-        ).toBe(true);
-  // Every row's circle sits on its own lane, inside that lane's span.
-  layout.rows.forEach((row, index) => {
-    expect(
-      spans.some((span) => span.column === row.column && span.from <= index && index <= span.to),
-    ).toBe(true);
-  });
+function metaOf(
+  line: readonly WorkflowLineStep[],
+  contract: WorkflowContract,
+  history: readonly WorkflowRunStepView[],
+  viewerHolds = false,
+) {
+  return line.map((step) =>
+    workflowStepMeta(step, {
+      contract,
+      roleHolders: { triager: candy, implementer: candy },
+      run: { viewerHolds, holder: candy },
+      history,
+    }),
+  );
 }
 
-/** Every edge that leaves a non-terminal row ends on a row: no fork is a no-op. */
-function expectEveryBranchEndsInAState(layout: WorkflowGraphLayout, contract: WorkflowContract) {
-  layout.rows.forEach((row, index) => {
-    const state = contract.handoffs[row.state]!;
-    if (state.kind === 'terminal' || state.kind === 'waiting') return;
-    const targets = new Set(Object.values(state.on));
-    if ('loop' in state && state.loop) targets.add(state.loop.onExceeded);
-    const drawn = layout.edges.filter((edge) => edge.from === index).map((edge) => layout.rows[edge.to]!.state);
-    expect(new Set(drawn)).toEqual(targets);
-  });
-}
-
-describe('layoutWorkflowGraph · feedback-triage (mock v11 frame C)', () => {
-  const history = [
-    { toState: 'notify', at: 100 },
-    { fromState: 'notify', outcome: 'notified', toState: 'pull', at: 200 },
-    { fromState: 'pull', outcome: 'ranked', toState: 'approve', at: 300 },
-  ];
-  const layout = layoutWorkflowGraph(feedbackTriage, history);
-
-  it('puts each state on one row, forks onto the branch lane, and repeats Done per branch', () => {
-    expect(rowsOf(layout)).toEqual([
-      ['notify', 0, 'traversed'],
-      ['pull', 0, 'traversed'],
-      ['done', 1, 'unreachable'],
-      ['approve', 0, 'current'],
-      ['done', 1, 'reachable'],
-      ['dispatch', 0, 'reachable'],
-      ['done', 0, 'reachable'],
-    ]);
-    // The mock's lanes: main x=28, branch x=46, rows 64 apart, circle 22.5 down.
-    expect(layout.rows.map((row) => row.x)).toEqual([28, 28, 46, 28, 46, 28, 28]);
-    expect(layout.rows.map((row) => row.y)).toEqual(
-      [0, 1, 2, 3, 4, 5, 6].map((index) => index * GRAPH_ROW + GRAPH_NODE_Y),
-    );
-    expect(layout.width).toBe(60);
-    expect(layout.rows.filter((row) => row.state === 'done').map((row) => row.inOutcomes)).toEqual([
-      ['nothing_new'],
-      ['skip'],
-      ['dispatched'],
-    ]);
+describe('workflowMainPath', () => {
+  it("follows each state's first outcome from start to a terminal", () => {
+    expect(workflowMainPath(feedbackTriage)).toEqual(['notify', 'pull', 'approve', 'dispatch', 'done']);
   });
 
-  it('marks the path taken in brass and nothing else', () => {
-    const traversed = layout.edges
-      .filter((edge) => edge.traversed)
-      .map((edge) => [layout.rows[edge.from]!.state, layout.rows[edge.to]!.state]);
-    expect(traversed).toEqual([
-      ['notify', 'pull'],
-      ['pull', 'approve'],
+  it('steps past an outcome that loops back, and ends on the first implicit terminal', () => {
+    // land's outcomes all return up the line, so the line ends on `landed`.
+    expect(workflowMainPath(corner)).toEqual([
+      'opened',
+      'no_code_work',
+      'upgrade_to_code',
+      'implement',
+      'checks',
+      'review',
+      'land',
+      'landed',
     ]);
-    // The fork from Pull to its Done is the mock's curve: down out of the circle, onto lane 46.
-    const fork = layout.edges.find((edge) => edge.from === 1 && edge.to === 2)!;
-    expect(fork.kind).toBe('fork');
-    expect(fork.path).toBe('M28 91 C28 108 46 102 46 120 L46 146');
-    expect(layout.chevrons).toEqual([]);
-    expectNoCollisions(layout);
-    expectEveryBranchEndsInAState(layout, feedbackTriage);
   });
 });
 
-describe('layoutWorkflowGraph · corner (mock v11 frame D)', () => {
+describe('workflowRunLine · feedback-triage', () => {
+  it('reads a live run waiting at its gate as done, current, then not yet reached', () => {
+    const history = [
+      { toState: 'notify', at: 100, actor: candy },
+      { fromState: 'notify', outcome: 'notified', toState: 'pull', at: 112, actor: candy, contents: { fixedPullRequests: [] } },
+      { fromState: 'pull', outcome: 'ranked', toState: 'approve', at: 212, actor: candy, contents: { problems: ['a'] } },
+    ];
+    const line = workflowRunLine(feedbackTriage, history);
+    expect(rowsOf(line)).toEqual([
+      ['notify', 'done'],
+      ['pull', 'done'],
+      ['approve', 'current'],
+      ['dispatch', 'pending'],
+      ['done', 'pending'],
+    ]);
+    expect(line.every((step) => step.onMainPath)).toBe(true);
+    expect(metaOf(line, feedbackTriage, history, true)).toEqual([
+      'Candy · notified',
+      'Candy · ranked',
+      'Your call · gate',
+      'Candy',
+      'Ends the run',
+    ]);
+    // A visit carries what the state handed off when it left, and how.
+    expect(line[1]!.visits).toEqual([
+      {
+        enteredAt: 112,
+        leftAt: 212,
+        outcome: 'ranked',
+        nextState: 'approve',
+        leftBy: candy,
+        delivered: { problems: ['a'] },
+      },
+    ]);
+    expect(line[2]!.visits[0]!.leftAt).toBeUndefined();
+  });
+
+  it('skips the states a fork went around, and says why', () => {
+    const history = [
+      { toState: 'notify', at: 100 },
+      { fromState: 'notify', outcome: 'notified', toState: 'pull', at: 109 },
+      { fromState: 'pull', outcome: 'nothing_new', toState: 'done', status: 'done' as const, at: 158 },
+    ];
+    const line = workflowRunLine(feedbackTriage, history);
+    expect(rowsOf(line)).toEqual([
+      ['notify', 'done'],
+      ['pull', 'done'],
+      ['approve', 'skipped'],
+      ['dispatch', 'skipped'],
+      ['done', 'done'],
+    ]);
+    expect(line[2]!.skippedBy).toEqual({ state: 'pull', outcome: 'nothing_new' });
+    expect(metaOf(line, feedbackTriage, history).slice(2)).toEqual([
+      'Skipped · Pull: nothing new',
+      'Skipped · Pull: nothing new',
+      'Ended by Pull',
+    ]);
+    expect(workflowRunHeadline({ status: 'done', viewerHolds: false, state: 'done' }, 'nothing_new')).toBe(
+      'Done · nothing new',
+    );
+  });
+
+  it("keeps the gate's record and the corners a step opened on the visit they belong to", () => {
+    const gate = {
+      question: 'feedback-triage: approve',
+      options: [{ letter: 'A', label: 'dispatch', consequence: 'go to dispatch' }],
+      status: 'answered' as const,
+      answer: 'dispatch',
+      answeredBy: { id: 'a'.repeat(64), name: 'Owner', kind: 'human' as const },
+    };
+    const opened = [{ id: 'corner-9', name: 'Fix it', parentRoomId: 'room-1' }];
+    const history = [
+      { toState: 'pull', at: 1 },
+      { fromState: 'pull', outcome: 'ranked', toState: 'approve', at: 2, gate },
+      { fromState: 'approve', outcome: 'dispatch', toState: 'dispatch', at: 3, openedCorners: opened },
+      { fromState: 'dispatch', outcome: 'dispatched', toState: 'done', at: 4, contents: { corners: ['Fix it'] } },
+    ];
+    const line = workflowRunLine(feedbackTriage, history);
+    // The settled gate names who answered it.
+    expect(metaOf(line, feedbackTriage, history)[2]).toBe('Owner · dispatch');
+    const byState = Object.fromEntries(line.map((step) => [step.state, step]));
+    expect(byState.approve!.visits[0]).toMatchObject({ gate, outcome: 'dispatch' });
+    expect(byState.dispatch!.visits[0]).toMatchObject({
+      openedCorners: opened,
+      delivered: { corners: ['Fix it'] },
+    });
+    expect(byState.notify!.status).toBe('skipped');
+  });
+});
+
+describe('workflowRunLine · corner', () => {
   it('matches the server contract it copies', () => {
     for (const state of Object.keys(corner.handoffs))
       expect(serverCornerSource).toContain(`    ${state}: {`);
     expect(serverCornerSource).toContain("implicitEdges: ['landed', 'closed']");
   });
 
-  const history = [
-    { toState: 'opened', at: 1 },
-    { fromState: 'opened', outcome: 'code', toState: 'implement', at: 2 },
-    { fromState: 'implement', outcome: 'pushed', toState: 'checks', at: 3 },
-    { fromState: 'checks', outcome: 'passing', toState: 'review', at: 4 },
-    { fromState: 'review', outcome: 'changes_requested', toState: 'implement', at: 5 },
-    { fromState: 'implement', outcome: 'pushed', toState: 'checks', at: 6 },
-    { fromState: 'checks', outcome: 'passing', toState: 'review', at: 7 },
+  const looped = [
+    { toState: 'opened', at: 0 },
+    { fromState: 'opened', outcome: 'code', toState: 'implement', at: 10 },
+    { fromState: 'implement', outcome: 'pushed', toState: 'checks', at: 1_870 },
+    { fromState: 'checks', outcome: 'failing', toState: 'implement', at: 2_410 },
+    { fromState: 'implement', outcome: 'pushed', toState: 'checks', at: 3_430 },
+    { fromState: 'checks', outcome: 'passing', toState: 'review', at: 4_150 },
+    { fromState: 'review', outcome: 'changes_requested', toState: 'implement', at: 4_330 },
   ];
-  const layout = layoutWorkflowGraph(corner, history);
 
-  it('draws forks, the ask_human branch, every back edge, and both terminals', () => {
-    expect(rowsOf(layout)).toEqual([
-      ['opened', 0, 'traversed'],
-      ['no_code_work', 0, 'unreachable'],
-      ['upgrade_to_code', 0, 'unreachable'],
-      ['implement', 0, 'traversed'],
-      ['checks', 0, 'traversed'],
-      ['review', 0, 'current'],
-      ['land', 0, 'reachable'],
-      ['ask_human', 1, 'reachable'],
-      ['landed', 0, 'reachable'],
-      ['closed', 0, 'reachable'],
+  it('folds loops into one row per state, ×N visits, never drawing back up the line', () => {
+    const line = workflowRunLine(corner, looped);
+    expect(rowsOf(line)).toEqual([
+      ['opened', 'done'],
+      ['no_code_work', 'skipped'],
+      ['upgrade_to_code', 'skipped'],
+      ['implement', 'current'],
+      ['checks', 'done'],
+      ['review', 'done'],
+      ['land', 'pending'],
+      ['landed', 'pending'],
     ]);
-    expect(layout.rows.filter((row) => row.implicit).map((row) => row.state)).toEqual([
-      'landed',
-      'closed',
+    const byState = Object.fromEntries(line.map((step) => [step.state, step]));
+    expect(byState.implement!.visits.map((visit) => visit.outcome)).toEqual(['pushed', 'pushed', undefined]);
+    expect(byState.checks!.visits.map((visit) => [visit.outcome, visit.leftAt! - visit.enteredAt])).toEqual([
+      ['failing', 540],
+      ['passing', 720],
     ]);
-    const backs = layout.edges.filter((edge) => edge.kind === 'back');
-    expect(
-      backs.map((edge) => `${layout.rows[edge.from]!.state}>${layout.rows[edge.to]!.state}`).sort(),
-    ).toEqual(
-      [
-        'checks>implement',
-        'review>implement',
-        'land>implement',
-        'review>checks',
-        'land>checks',
-        'ask_human>checks',
-      ].sort(),
-    );
-    // One up chevron per state a loop returns to.
-    expect(layout.chevrons).toHaveLength(2);
-    expectNoCollisions(layout);
-    expectEveryBranchEndsInAState(layout, corner);
-  });
-
-  it('brasses the loop the run took and counts its rounds', () => {
-    const traversedBack = layout.edges
-      .filter((edge) => edge.kind === 'back' && edge.traversed)
-      .map((edge) => `${layout.rows[edge.from]!.state}>${layout.rows[edge.to]!.state}`);
-    expect(traversedBack).toEqual(['review>implement']);
-    expect(layout.chevrons.filter((chevron) => chevron.traversed)).toHaveLength(1);
-    const review = layout.rows.find((row) => row.state === 'review')!;
-    expect(review.loop).toEqual({ taken: 1, cap: 3 });
-    // One send-back on a cap of 3 is the second trip, still inside the cap.
-    expect(loopRoundLabel(review.loop)).toBe('round 2 of 3');
+    expect(byState.checks!.loop).toEqual({ taken: 1, cap: 100 });
+    expect(byState.review!.loop).toEqual({ taken: 1, cap: 3 });
+    expect(loopRoundLabel(byState.review!.loop)).toBe('round 2 of 3');
     expect(loopRoundLabel({ taken: 3, cap: 3 })).toBe('round 3 of 3');
     expect(loopRoundLabel({ taken: 0, cap: 3 })).toBeUndefined();
-    expect(review.visits).toBe(2);
-    expect(review.enteredAt).toBe(7);
-    expect(layout.rows.find((row) => row.state === 'implement')!.lastOutcome).toBe('pushed');
+    expect(byState.no_code_work!.skippedBy).toEqual({ state: 'opened', outcome: 'code' });
   });
 
-  it('draws an implicit jump only when the run took it', () => {
-    const closedRun = layoutWorkflowGraph(corner, [
-      ...history,
-      { fromState: 'review', outcome: 'closed', toState: 'closed', at: 8 },
+  it('splices an off-path state in where the run entered it', () => {
+    const line = workflowRunLine(corner, [
+      ...looped.slice(0, 3),
+      { fromState: 'checks', outcome: 'failing', toState: 'ask_human', at: 2_000 },
     ]);
-    const closed = closedRun.rows.findIndex((row) => row.state === 'closed');
-    const into = closedRun.edges.filter((edge) => edge.to === closed);
-    expect(into).toHaveLength(1);
-    expect(into[0]!.traversed).toBe(true);
-    expect(closedRun.rows[closed]!.reach).toBe('traversed');
-    expect(closedRun.rows.some((row) => row.reach === 'current')).toBe(false);
-    expect(closedRun.rows.filter((row) => row.reach === 'reachable')).toEqual([]);
-    expectNoCollisions(closedRun);
-    expect(
-      layout.edges.some((edge) => layout.rows[edge.to]!.implicit),
-    ).toBe(false);
+    expect(rowsOf(line)).toEqual([
+      ['opened', 'done'],
+      ['no_code_work', 'skipped'],
+      ['upgrade_to_code', 'skipped'],
+      ['implement', 'done'],
+      ['checks', 'done'],
+      ['ask_human', 'current'],
+      ['review', 'pending'],
+      ['land', 'pending'],
+      ['landed', 'pending'],
+    ]);
+    expect(line.find((step) => step.state === 'ask_human')!.onMainPath).toBe(false);
+    // `closed` is never on the line unless the run went there.
+    expect(line.some((step) => step.state === 'closed')).toBe(false);
+  });
+
+  it('ends a closed corner at Closed, failed, and skips what it never reached', () => {
+    const history = [
+      ...looped.slice(0, 6),
+      { fromState: 'review', outcome: 'closed', toState: 'closed', status: 'abandoned' as const, at: 4_200 },
+    ];
+    const line = workflowRunLine(corner, history);
+    expect(rowsOf(line)).toEqual([
+      ['opened', 'done'],
+      ['no_code_work', 'skipped'],
+      ['upgrade_to_code', 'skipped'],
+      ['implement', 'done'],
+      ['checks', 'done'],
+      ['review', 'done'],
+      ['closed', 'failed'],
+      ['land', 'skipped'],
+      ['landed', 'skipped'],
+    ]);
+    const meta = metaOf(line, corner, history);
+    expect(meta[6]).toBe('Abandoned · ended by Review');
+    expect(meta[7]).toBe('Skipped · run ended at Closed');
   });
 });
 
-describe('layoutWorkflowGraph · any valid contract', () => {
-  it('nests a fork on a branch onto its own lane', () => {
-    const nested: WorkflowContract = {
-      version: 1,
-      name: 'nested',
-      description: 'nested forks',
-      roles: ['a'],
-      start: 'one',
-      handoffs: {
-        one: { role: 'a', requires: [], on: { ok: 'two', side: 'branch' } },
-        two: { role: 'a', requires: [], on: { ok: 'finish' } },
-        branch: { role: 'a', requires: [], on: { left: 'deeper', right: 'other' } },
-        deeper: { role: 'a', requires: [], on: { ok: 'finish' } },
-        other: { role: 'a', requires: [], on: { ok: 'failed' } },
-        finish: { kind: 'terminal', status: 'done' },
-        failed: { kind: 'terminal', status: 'failed' },
-      },
-    };
-    const layout = layoutWorkflowGraph(nested);
-    expect(rowsOf(layout)).toEqual([
-      ['one', 0, 'unreachable'],
-      ['two', 0, 'unreachable'],
-      ['finish', 0, 'unreachable'],
-      ['branch', 1, 'unreachable'],
-      ['deeper', 1, 'unreachable'],
-      ['finish', 1, 'unreachable'],
-      ['other', 2, 'unreachable'],
-      ['failed', 2, 'unreachable'],
-    ]);
-    expectNoCollisions(layout);
-    expectEveryBranchEndsInAState(layout, nested);
-  });
-
-  it('draws a terminal reached three ways three times', () => {
-    const threeWays: WorkflowContract = {
-      version: 1,
-      name: 'three-ways',
-      description: 'one terminal, three branches',
-      roles: ['a'],
-      start: 'first',
-      handoffs: {
-        first: { role: 'a', requires: [], on: { next: 'second', stop: 'end' } },
-        second: { kind: 'gate', role: 'a', requires: [], on: { next: 'third', stop: 'end' } },
-        third: { role: 'a', requires: [], on: { stop: 'end' } },
-        end: { kind: 'terminal', status: 'done' },
-      },
-    };
-    const layout = layoutWorkflowGraph(threeWays, [
-      { toState: 'first' },
-      { fromState: 'first', outcome: 'stop', toState: 'end' },
-    ]);
-    const ends = layout.rows.filter((row) => row.state === 'end');
-    expect(ends).toHaveLength(3);
-    expect(new Set(ends.map((row) => row.key)).size).toBe(3);
-    // Only the copy this run reached is brass.
-    expect(ends.map((row) => row.reach)).toEqual(['traversed', 'unreachable', 'unreachable']);
-    expectNoCollisions(layout);
-    expectEveryBranchEndsInAState(layout, threeWays);
-  });
-
-  it('gives overlapping loops separate lanes and a self-loop its own chevron', () => {
-    const loops: WorkflowContract = {
-      version: 1,
-      name: 'loops',
-      description: 'overlapping loops',
-      roles: ['a'],
-      start: 'a',
-      handoffs: {
-        a: { role: 'a', requires: [], on: { go: 'b' } },
-        b: { kind: 'gate', role: 'a', requires: [], on: { go: 'c', again: 'b' } },
-        c: {
-          role: 'a',
-          requires: [],
-          on: { go: 'd', retry: 'a' },
-          loop: { onEdge: 'retry', cap: 2, onExceeded: 'stuck' },
-        },
-        d: { role: 'a', requires: [], on: { go: 'done', redo: 'b' }, loop: { onEdge: 'redo', cap: 1, onExceeded: 'stuck' } },
-        stuck: { kind: 'waiting' },
-        done: { kind: 'terminal', status: 'done' },
-      },
-    };
-    const layout = layoutWorkflowGraph(loops);
-    const loopSpans = layout.laneSpans.filter((span) => span.column < 0);
-    expect(new Set(loopSpans.map((span) => span.column)).size).toBe(3);
-    expect(layout.chevrons).toHaveLength(3);
-    expect(layout.rows.map((row) => row.x)[0]).toBe(10 + 18 * 3);
-    expectNoCollisions(layout);
-    expectEveryBranchEndsInAState(layout, loops);
-  });
-});
-
-describe('workflow labels', () => {
+describe('workflow copy', () => {
   it('turns slugs and state names into sentence case', () => {
     expect(workflowDisplayName('feedback-triage')).toBe('Feedback triage');
     expect(workflowStateLabel('ask_human')).toBe('Ask human');
     expect(workflowStateLabel('no_code_work')).toBe('No code work');
+  });
+
+  it('reads durations the way a run log does', () => {
+    expect(formatRunDuration(9)).toBe('9s');
+    expect(formatRunDuration(125)).toBe('2m 05s');
+    expect(formatRunDuration(48 * 60 + 10)).toBe('48m');
+    expect(formatRunDuration(72 * 60)).toBe('1h 12m');
+  });
+
+  it('heads a live run by whose move it is', () => {
+    expect(workflowRunHeadline({ status: 'live', viewerHolds: true, state: 'approve' })).toBe('Waiting on you');
+    expect(workflowRunHeadline({ status: 'live', viewerHolds: false, state: 'review' })).toBe('In review');
   });
 });

@@ -4,22 +4,16 @@ import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
-import type { RoomScheduleView, WorkflowRunSummaryView } from '@beeline/api-contract/phone';
+import type { RoomScheduleView } from '@beeline/api-contract/phone';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { cornerHref } from '@/buzz/corner-navigation';
 import { displayRoomIndexTitle } from '@/buzz/room-list-row';
 import { scheduleCadenceLabel } from '@/buzz/schedule-cadence';
-import { workflowDisplayName, workflowStateLabel } from '@/buzz/workflow-graph';
-import { workflowRunHref } from '@/buzz/workflow-run-copy';
 import { CORNER_META_SIZE, CornerGlyph } from '@/components/buzz/CornerGlyph';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
-import { WorkflowGlyph } from '@/components/buzz/WorkflowGlyph';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
-import {
-  MonolithPhoneOperationError,
-  monolithPhoneOperation,
-} from '@/sync/transport/monolith-operation';
+import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -31,24 +25,12 @@ const NEXT_RUN = new Intl.DateTimeFormat(undefined, {
   hour: 'numeric',
   minute: '2-digit',
 });
-const LAST_RUN = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
-
-/** The Room's workflow runs; a server without the operation has none to show. */
-async function listWorkflowRuns(roomId: string): Promise<readonly WorkflowRunSummaryView[]> {
-  try {
-    return (await monolithPhoneOperation('listRoomWorkflowRuns', { roomId })).workflows;
-  } catch (caught) {
-    if (caught instanceof MonolithPhoneOperationError && caught.status === 404) return [];
-    throw caught;
-  }
-}
 
 /**
  * Agents control recurring work. Room managers can only inspect or stop it.
  * The page wears the shared section header (Room name over Scheduled Work, the
- * corner and workflow-run pages' title role). Workflows come first: each
- * agent workflow's newest run in this Room and its corners, opening the run's
- * state graph rather than the corner it happens to run in.
+ * corner and workflow-run pages' title role) and lists schedules only;
+ * workflow runs are reached from a corner's objective panel.
  */
 export default function ScheduledWork() {
   const insets = useSafeAreaInsets();
@@ -61,7 +43,6 @@ export default function ScheduledWork() {
   const [roomName, setRoomName] = useState<string | null>(null);
   const [agents, setAgents] = useState<Array<{ id: string; name: string }>>([]);
   const [schedules, setSchedules] = useState<readonly RoomScheduleView[]>([]);
-  const [workflows, setWorkflows] = useState<readonly WorkflowRunSummaryView[]>([]);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [confirmStop, setConfirmStop] = useState<string | null>(null);
@@ -82,10 +63,7 @@ export default function ScheduledWork() {
       const relayUrl = await getEffectiveRelayUrl();
       const room = await new RoomViewClient({ baseUrl: relayUrl, identity }).room(roomId);
       if (!room.viewer.permissions.manage) throw new Error('Room manager required');
-      const [listed, runs] = await Promise.all([
-        monolithPhoneOperation('listRoomSchedules', { roomId }),
-        listWorkflowRuns(roomId),
-      ]);
+      const listed = await monolithPhoneOperation('listRoomSchedules', { roomId });
       setRoomName(room.room.name);
       setAgents(
         room.members
@@ -93,7 +71,6 @@ export default function ScheduledWork() {
           .map((member) => ({ id: member.identity.pubkey, name: member.identity.name })),
       );
       setSchedules(listed.schedules);
-      setWorkflows(runs);
       setError(null);
     } catch (caught) {
       setError(`Could not load scheduled work: ${String(caught)}`);
@@ -196,69 +173,6 @@ export default function ScheduledWork() {
     );
   };
 
-  const renderWorkflow = (run: WorkflowRunSummaryView) => {
-    const live = run.status === 'live';
-    const open = () => router.push(workflowRunHref(run));
-    return (
-      <Pressable
-        accessibilityLabel={`Open ${workflowDisplayName(run.workflowSlug)} workflow`}
-        accessibilityRole="button"
-        key={`${run.roomId}:${run.runId}`}
-        onPress={open}
-        style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-        testID={`scheduled-workflow-${run.workflowSlug}`}
-      >
-        <View style={styles.cadenceLine}>
-          <View style={styles.workflowName}>
-            <WorkflowGlyph
-              color={live ? undefined : styles.idleGlyph.color}
-              live={live}
-              size={CORNER_META_SIZE}
-            />
-            <Text numberOfLines={1} style={styles.cadence}>
-              {workflowDisplayName(run.workflowSlug)}
-            </Text>
-          </View>
-          <Text numberOfLines={1} style={live ? styles.workflowStep : styles.next}>
-            {live
-              ? `${workflowStateLabel(run.state)}${run.viewerHolds ? ' · you' : ''}`
-              : `Last run ${LAST_RUN.format(new Date(run.updatedAt * 1_000))}`}
-          </Text>
-        </View>
-        {run.holder ? (
-          <Text numberOfLines={1} style={styles.agent}>
-            @{run.holder.name}
-          </Text>
-        ) : null}
-        <Text style={styles.message}>{run.description}</Text>
-        <View style={styles.rowFooter}>
-          <View style={styles.corner}>
-            {run.parentRoomId ? (
-              <CornerGlyph
-                color={live ? undefined : styles.idleGlyph.color}
-                size={CORNER_META_SIZE}
-              />
-            ) : null}
-            <Text numberOfLines={1} style={[styles.cornerName, !live && styles.idleCorner]}>
-              {run.roomName}
-            </Text>
-          </View>
-          <Pressable
-            accessibilityRole="link"
-            onPress={(event) => {
-              event.stopPropagation();
-              open();
-            }}
-            style={styles.stopAction}
-            testID={`open-scheduled-workflow-${run.workflowSlug}`}
-          >
-            <Text style={styles.openText}>Open →</Text>
-          </Pressable>
-        </View>
-      </Pressable>
-    );
-  };
-
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <PageHeader
@@ -290,32 +204,15 @@ export default function ScheduledWork() {
           keyboardShouldPersistTaps="handled"
           testID="scheduled-work-list"
         >
-          {workflows.length > 0 && (
-            <>
-              <View style={styles.section} testID="scheduled-work-workflows">
-                <Text style={styles.sectionHead}>Workflows</Text>
-                <Text style={styles.sectionCount}>{workflows.length}</Text>
-              </View>
-              {workflows.map(renderWorkflow)}
-            </>
-          )}
-          {schedules.length === 0 && workflows.length === 0 ? (
+          {schedules.length === 0 ? (
             <View style={styles.emptyBlock} testID="scheduled-work-empty">
               <Ionicons color={styles.emptyIcon.color} name="time-outline" size={22} />
               <Text style={styles.emptyTitle}>No scheduled work</Text>
               <Text style={styles.empty}>Agents in this Room have nothing on a schedule.</Text>
             </View>
-          ) : schedules.length > 0 ? (
-            <>
-              {workflows.length > 0 && (
-                <View style={styles.section} testID="scheduled-work-schedules">
-                  <Text style={styles.sectionHead}>Schedules</Text>
-                  <Text style={styles.sectionCount}>{schedules.length}</Text>
-                </View>
-              )}
-              {schedules.map(renderSchedule)}
-            </>
-          ) : null}
+          ) : (
+            schedules.map(renderSchedule)
+          )}
         </ScrollView>
       )}
     </View>
@@ -334,23 +231,6 @@ const styles = StyleSheet.create((theme) => ({
   rowPressed: { backgroundColor: theme.buzz.bgHighlight },
   cadenceLine: { flexDirection: 'row', alignItems: 'baseline', gap: 12 },
   cadence: { ...theme.buzz.type.meta, flex: 1, color: theme.buzz.textPrimary },
-  workflowName: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  workflowStep: { ...theme.buzz.type.meta, flexShrink: 0, color: theme.buzz.accent },
-  idleGlyph: { color: theme.buzz.ledgerGhost },
-  idleCorner: { color: theme.buzz.ledgerGhost },
-  openText: { ...theme.buzz.type.sectionHead, color: theme.buzz.accent },
-  section: {
-    minHeight: 32,
-    marginTop: theme.buzz.layout.sectionGap,
-    paddingHorizontal: theme.buzz.space.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: theme.buzz.border,
-  },
-  sectionHead: { ...theme.buzz.type.sectionHead, color: theme.buzz.ledgerQuiet },
-  sectionCount: { ...theme.buzz.type.meta, color: theme.buzz.accent },
   next: { ...theme.buzz.type.meta, flexShrink: 0, color: theme.buzz.ledgerQuiet },
   agent: { ...theme.buzz.type.meta, color: theme.buzz.accent, marginTop: 12 },
   message: { ...theme.buzz.type.body, color: theme.buzz.textSecondary, marginTop: 5 },

@@ -10,6 +10,7 @@ const sources = resolve(__dirname, '..');
 // the button palette instead; this makes a local Pressable fill fail CI.
 const decorativeAccentFills = new Set([
   'app/(app)/join/[token].tsx:badgeDot',
+  'app/(app)/beeline/workflow-run.tsx:liveDot',
   'components/DesktopWorkPaneHandle.tsx:arrived',
   'components/buzz/ConversationRow.tsx:dot',
   'components/buzz/DesktopWorkspaceRail.tsx:pill',

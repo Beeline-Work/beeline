@@ -854,7 +854,7 @@ async function main(): Promise<void> {
     return;
   }
   if (command === SQUIRE_BROKER_FLAG) {
-    runSquireBroker();
+    await runSquireBroker();
     return;
   }
   if (command === '--help' || command === '-h') usage(0);

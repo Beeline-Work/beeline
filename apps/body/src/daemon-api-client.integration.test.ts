@@ -833,6 +833,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     const operations = vi.spyOn(client, 'execute');
     const activation = await client.execute('getRoomInbox', { roomId: ROOM, startAtLatest: true });
     let connected = false;
+    let drops = 0;
     let replies = Promise.resolve();
     let answered = 0;
     const answer = (command: AgentCommand) => {
@@ -859,6 +860,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       },
       (value) => {
         connected = value;
+        if (!value) drops += 1;
       },
       undefined,
       (commands) => commands.forEach(answer),
@@ -892,7 +894,9 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         )
       ).rows;
       sockets[0]!.close();
-      await vi.waitFor(() => expect(connected).toBe(false));
+      // The reconnect backoff is a random 0-1 s, so the link can be back up
+      // before a poll of `connected` ever sees the drop; count the drop itself.
+      await vi.waitFor(() => expect(drops).toBe(1));
       expect(await state()).toBe('online');
       await vi.waitFor(
         () => {

@@ -238,6 +238,11 @@ describe('monolith integration', () => {
         onWebhook: processWebhook,
       },
     });
+    // PGlite runs in this thread, so a large seed blocks the event loop past
+    // Node's 5 s keep-alive. The next fetch then reuses the pooled socket just
+    // as the server's overdue idle timer destroys it (read ECONNRESET). Only
+    // the client may retire idle sockets here; afterEach's close() still ends them.
+    server.keepAliveTimeout = 0;
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     (phone as unknown as { publicOrigin: string }).publicOrigin = origin;

@@ -14,9 +14,12 @@ import type { CommandRow } from './agent-command.js';
 import {
   assertHotRead,
   explainHotRead,
+  formatPlan,
   HOT_READ_BUDGETS_MS,
+  planViolations,
   PRODUCTION_CORPUS_MESSAGE_COUNT,
   PRODUCTION_CORPUS_SIGNATURE,
+  rowsComputing,
   timingTable,
   type HotReadName,
   type HotReadResult,
@@ -111,6 +114,28 @@ class HotReadDatabase implements SqlDatabase {
 
   transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {
     return this.database.transaction((database) => work(new HotReadDatabase(database, this)));
+  }
+}
+
+/** Records every statement, including those inside a transaction. */
+class CapturingDatabase implements SqlDatabase {
+  constructor(
+    private readonly database: SqlDatabase,
+    readonly statements: Array<{ sql: string; values: unknown[] }> = [],
+  ) {}
+
+  query<Row extends QueryResultRow = QueryResultRow>(
+    sql: string,
+    values: unknown[] = [],
+  ): Promise<QueryResult<Row>> {
+    this.statements.push({ sql, values });
+    return this.database.query<Row>(sql, values);
+  }
+
+  transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {
+    return this.database.transaction((database) =>
+      work(new CapturingDatabase(database, this.statements)),
+    );
   }
 }
 
@@ -268,19 +293,40 @@ describe('PRODUCTION-CORPUS REPLAY hot-read gate', () => {
   }, 120_000);
 
   it('bounds a Workspace-wide history search instead of ranking every match', async () => {
-    const startedAt = performance.now();
-    const broad = await searchInstitutionalHistory(database, searchCommand, {
+    const captured = new CapturingDatabase(database);
+    const broad = await searchInstitutionalHistory(captured, searchCommand, {
       agentId: AGENT,
       roomId: ROOM,
       query: 'production corpus message',
       limit: 10,
     });
-    const wallMs = performance.now() - startedAt;
 
     expect(broad.results).toHaveLength(10);
     expect(broad.capped).toBe(true);
     expect(broad.omitted).toBe(INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX - broad.results.length);
-    expect(wallMs).toBeLessThan(HOT_READ_BUDGETS_MS['history-search']);
+    // The bound is structural: of every match, only the newest scan-max rows
+    // reach ts_rank_cd. Counting the rows the plan ranked proves that on any
+    // runner, where a wall-clock budget measured the runner's load as well.
+    const matching = (
+      await database.query<{ count: string }>(
+        `SELECT count(*)::text count FROM messages
+         WHERE search_document @@ websearch_to_tsquery('simple','production corpus message')`,
+      )
+    ).rows[0]?.count;
+    expect(Number(matching)).toBeGreaterThan(INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX * 100);
+    const search = captured.statements.find(({ sql }) => sql.includes('matched_count'));
+    expect(search).toBeDefined();
+    const explained = await database.query<QueryResultRow>(
+      `EXPLAIN (ANALYZE, VERBOSE, FORMAT JSON) ${search!.sql}`,
+      search!.values,
+    );
+    const plan = explained.rows[0]?.['QUERY PLAN'];
+    const ranked = rowsComputing(plan, 'ts_rank_cd(');
+    expect(ranked.length, formatPlan(plan)).toBeGreaterThan(0);
+    expect(Math.max(...ranked), formatPlan(plan)).toBeLessThanOrEqual(
+      INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX,
+    );
+    expect(planViolations(plan)).toEqual([]);
     // Across 35,100 rows the bound must keep the NEWEST matches, not whatever
     // the bitmap scan emitted first.
     const oldestKeptAt = (

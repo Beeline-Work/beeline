@@ -104,14 +104,21 @@ export function launchdAgentSupervisorPath(env: NodeJS.ProcessEnv = process.env)
  * FOREGROUND child, which would skip the daemon's own drain and make the
  * plist's ExitTimeOut ceiling unreachable. `wait` interrupted by the trapped
  * signal returns >128 while the child is still draining, so it is resumed
- * until the child's real status is in hand.
+ * until the child's real status is in hand. The trap is installed before the
+ * daemon is spawned: a stop landing between the spawn and a later trap would
+ * kill the wrapper outright and leave the daemon running undrained. A stop
+ * that arrives before the child's pid is known is recorded and forwarded once
+ * the pid is.
  */
 export function launchdAgentSupervisorScript(): string {
   return `#!/bin/sh
 set -u
+child=
+stopping=
+trap 'if [ -n "$child" ]; then kill -TERM "$child" 2>/dev/null; else stopping=1; fi' TERM INT
 "$2" daemon --agent "$1" &
 child=$!
-trap 'kill -TERM "$child" 2>/dev/null' TERM INT
+[ -z "$stopping" ] || kill -TERM "$child" 2>/dev/null
 wait "$child"
 status=$?
 while [ "$status" -gt 128 ] && kill -0 "$child" 2>/dev/null; do

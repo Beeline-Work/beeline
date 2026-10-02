@@ -84,6 +84,23 @@ export function planViolations(plan: unknown): string[] {
   return [...violations];
 }
 
+/**
+ * Rows each EXPLAIN (ANALYZE, VERBOSE) node produced while computing
+ * `expression` in its output. A count of evaluated rows does not depend on how
+ * busy the runner is, unlike the wall time of the same statement.
+ */
+export function rowsComputing(plan: unknown, expression: string): number[] {
+  const root = planRoot(plan);
+  const rows: number[] = [];
+  if (!root) return rows;
+  walkPlan(root, (node) => {
+    const output = Array.isArray(node.Output) ? node.Output : [];
+    if (output.some((column) => typeof column === 'string' && column.includes(expression)))
+      rows.push(Number(node['Actual Rows'] ?? 0) * Number(node['Actual Loops'] ?? 0));
+  });
+  return rows;
+}
+
 export function formatPlan(plan: unknown): string {
   return JSON.stringify(plan, null, 2);
 }

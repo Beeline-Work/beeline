@@ -533,12 +533,32 @@ describe('PR-scoped check gate', () => {
     const lines = createInterface({ input: child.stdout });
     const replies: string[] = [];
     lines.on('line', (line) => replies.push(line));
+    let stderr = '';
+    child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+    // Wait on the reply itself, not a 1 s poll: the first call also pays the
+    // helper's cold start (tsx transpiling the MCP server), which on a loaded
+    // runner can outlast any fixed poll while the reply is still on its way.
+    const reply = (id: number) =>
+      new Promise<string>((resolve, reject) => {
+        const settle = () => {
+          if (replies.length < id) return;
+          lines.off('line', settle);
+          child.off('exit', exited);
+          resolve(replies[id - 1]!);
+        };
+        const exited = (code: number | null) => {
+          lines.off('line', settle);
+          reject(new Error(`read-only MCP exited (${code}) before reply ${id}: ${stderr}`));
+        };
+        lines.on('line', settle);
+        child.once('exit', exited);
+        settle();
+      });
     const callGate = async (id: number) => {
       child.stdin.write(
         `${JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'pr_checks_status', arguments: { pullRequest: 614 } } })}\n`,
       );
-      await vi.waitFor(() => expect(replies).toHaveLength(id));
-      const response = JSON.parse(replies[id - 1]!) as {
+      const response = JSON.parse(await reply(id)) as {
         result: { content: Array<{ text: string }> };
       };
       return JSON.parse(response.result.content[0]!.text) as Record<string, unknown>;

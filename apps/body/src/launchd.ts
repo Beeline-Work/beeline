@@ -6,7 +6,7 @@ import { dirname, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { defaultSupervisorRoot, runtimeConfigPath } from './runtime.js';
-import { ensureSquireHostDir, SQUIRE_BROKER_FLAG, squireHostRewriteEnv } from './squire-host.js';
+import { SQUIRE_BROKER_FLAG, squireHostRewriteEnv, writeSquireBrokerUnitMarker } from './squire-host.js';
 import {
   DAEMON_DISTRESS_EXIT_STATUS,
   DELIBERATE_REMOVAL_EXIT_STATUS,
@@ -522,7 +522,7 @@ export async function installLaunchdTrustySquireBrokerService(
   const env = options.env ?? process.env;
   assertCanonicalInstalledLauncher(env, options.invocationPath);
   const home = launchdHome(env);
-  ensureSquireHostDir(home);
+  writeSquireBrokerUnitMarker(home);
   await mkdir(resolve(home, 'Library', 'Logs', 'Beeline'), { recursive: true, mode: 0o700 });
   const plistPath = launchdBrokerPlistPath(env);
   const changed = await writeManagedFile(plistPath, launchdBrokerPlist(env), 0o600);

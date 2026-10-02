@@ -9,11 +9,19 @@
  * namespace. A sandboxed façade never elects.
  */
 import { spawn } from 'node:child_process';
-import { accessSync, constants as fsConstants, existsSync, mkdirSync } from 'node:fs';
+import {
+  accessSync,
+  constants as fsConstants,
+  existsSync,
+  mkdirSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { createRequire } from 'node:module';
 import { createConnection } from 'node:net';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runSquireBrokerLink } from './squire-broker-link.js';
 
@@ -67,6 +75,34 @@ export function ensureSquireHostDir(home: string): SquireHostPaths {
   mkdirSync(paths.dir, { recursive: true, mode: 0o700 });
   mkdirSync(paths.profileDir, { recursive: true, mode: 0o700 });
   return paths;
+}
+
+/** Squire's managed-broker marker file (`dist/bot/broker/managed-marker.js`). */
+export const SQUIRE_BROKER_UNIT_MARKER_FILE = '.trusty-squire-broker-unit.json';
+
+/**
+ * Declare the host unit as the owner of the shared Chrome profile. Squire
+ * clients (1.1.24+) that find this marker beside the profile wait for its
+ * socket and never spawn a broker, even inside a bwrap sandbox where the
+ * `systemctl --user` probe cannot reach the bus and would otherwise fall
+ * through to "spawn". `profile` is Squire's device anchor: the canonical
+ * parent's dev/ino plus the profile directory's resolved name. A null
+ * `accountBinding` is "unclaimed", which every client may join.
+ */
+export function writeSquireBrokerUnitMarker(home: string): string {
+  const paths = ensureSquireHostDir(home);
+  const profile = realpathSync.native(paths.profileDir);
+  const parent = dirname(profile);
+  const { dev, ino } = statSync(parent);
+  const path = join(parent, SQUIRE_BROKER_UNIT_MARKER_FILE);
+  const marker = {
+    version: 1,
+    socket: paths.brokerSocket,
+    profile: { dev, ino, name: basename(profile) },
+    accountBinding: null,
+  };
+  writeFileSync(path, `${JSON.stringify(marker, null, 2)}\n`, { mode: 0o600 });
+  return path;
 }
 
 /**
@@ -226,7 +262,14 @@ export function runSquireBroker(env: NodeJS.ProcessEnv = process.env): void {
   const home = env.HOME?.trim() || homedir();
   const paths = ensureSquireHostDir(home);
   spawnSquireServer(
-    { ...env, ...squireHostRewriteEnv(home), TRUSTY_SQUIRE_BROKER_SOCKET: paths.brokerSocket },
+    {
+      ...env,
+      ...squireHostRewriteEnv(home),
+      TRUSTY_SQUIRE_BROKER_SOCKET: paths.brokerSocket,
+      // Squire's daemon refuses to start under the managed marker unless the
+      // unit started it; launchd sets no INVOCATION_ID, so say so explicitly.
+      TRUSTY_SQUIRE_BROKER_UNIT: '1',
+    },
     true,
     SQUIRE_BROKER_ARGS,
   );

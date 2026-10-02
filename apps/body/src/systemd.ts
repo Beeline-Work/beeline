@@ -6,9 +6,9 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { defaultSupervisorRoot, runtimeConfigPath } from './runtime.js';
 import {
-  ensureSquireHostDir,
   TRUSTY_SQUIRE_BROKER_UNIT_NAME,
   trustySquireBrokerUnit,
+  writeSquireBrokerUnitMarker,
 } from './squire-host.js';
 
 const execFileAsync = promisify(execFile);
@@ -136,7 +136,7 @@ export async function installTrustySquireBrokerService(
   const env = options.env ?? process.env;
   assertCanonicalInstalledLauncher(env, options.invocationPath);
   const home = env.HOME?.trim() || homedir();
-  ensureSquireHostDir(home);
+  writeSquireBrokerUnitMarker(home);
   const path = systemdBrokerUnitPath(env);
   const content = trustySquireBrokerUnit();
   const existing = await readFile(path, 'utf8').catch(() => '');

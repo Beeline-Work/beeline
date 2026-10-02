@@ -33,13 +33,13 @@ describe('presented notification dismissal', () => {
     ).toBeNull();
   });
 
-  it('matches Android foreign rows by the open Room or a corner parent', () => {
+  it('matches Android foreign rows by their exact tag only', () => {
     const tagged = notification(`expo-notifications://foreign_notifications?tag=${roomA}&id=0`, {
       'android.title': 'Beeline',
     });
     expect(presentedNotificationMatchesChannel(tagged, roomA)).toBe(true);
     expect(presentedNotificationMatchesChannel(tagged, roomB)).toBe(false);
-    expect(presentedNotificationMatchesChannel(tagged, 'corner-a', roomA)).toBe(true);
+    expect(presentedNotificationMatchesChannel(tagged, 'corner-a')).toBe(false);
   });
 
   it('keeps data-based matching for Expo-presented rows', () => {
@@ -50,7 +50,7 @@ describe('presented notification dismissal', () => {
       roomId: roomA,
       cornerId: 'corner-a',
     });
-    expect(presentedNotificationMatchesChannel(presented, roomA)).toBe(true);
+    expect(presentedNotificationMatchesChannel(presented, roomA)).toBe(false);
     expect(presentedNotificationMatchesChannel(presented, 'corner-a')).toBe(true);
     expect(presentedNotificationMatchesChannel(presented, roomB)).toBe(false);
   });
@@ -159,7 +159,7 @@ describe('presented notification dismissal', () => {
     expect(setBadgeCountAsync).toHaveBeenCalledWith(0);
   });
 
-  it('dismisses corner pushes on the parent Room or exact corner, never a sibling', async () => {
+  it('dismisses corner pushes on the exact corner, never its parent Room or a sibling', async () => {
     const dismissNotificationAsync = vi.fn(() => Promise.resolve());
     const presented = [
       notification('corner', {
@@ -179,7 +179,7 @@ describe('presented notification dismissal', () => {
     await dismissPresentedNotificationsForChannel('corner-b', api, 'android');
     expect(dismissNotificationAsync).not.toHaveBeenCalled();
     await dismissPresentedNotificationsForChannel('room-a', api, 'android');
-    expect(dismissNotificationAsync).toHaveBeenCalledWith('corner');
+    expect(dismissNotificationAsync).not.toHaveBeenCalled();
 
     await dismissPresentedNotificationsForChannel('corner-a', api, 'android');
     expect(dismissNotificationAsync).toHaveBeenCalledWith('corner');
@@ -244,7 +244,7 @@ describe('presented notification dismissal', () => {
   });
 });
 
-it('clears a Room stack including its summary, while retaining other Rooms', async () => {
+it('clears a Room stack including its summary, while retaining its corners and other Rooms', async () => {
   const dismissNotificationAsync = vi.fn(async () => undefined);
   await dismissPresentedNotificationsForChannel(
     'room-a',
@@ -276,5 +276,42 @@ it('clears a Room stack including its summary, while retaining other Rooms', asy
     },
     'android',
   );
-  expect(dismissNotificationAsync.mock.calls).toEqual([['summary-a'], ['corner-a']]);
+  expect(dismissNotificationAsync.mock.calls).toEqual([['summary-a']]);
+});
+
+it('opening a Room from its push keeps every corner push in that Room', async () => {
+  const dismissNotificationAsync = vi.fn(async () => undefined);
+  const setBadgeCountAsync = vi.fn(async () => true);
+  const presented = [
+    notification('room-a-message', {
+      type: 'channel-activity',
+      roomId: 'room-a',
+      channelId: 'room-a',
+    }),
+    notification('corner-a-message', {
+      type: 'channel-activity',
+      roomId: 'room-a',
+      channelId: 'corner-a',
+      cornerId: 'corner-a',
+    }),
+    notification('corner-b-message', {
+      type: 'channel-activity',
+      roomId: 'room-a',
+      channelId: 'corner-b',
+      cornerId: 'corner-b',
+    }),
+  ];
+  const api = {
+    getPresentedNotificationsAsync: async () => presented,
+    dismissNotificationAsync,
+    setBadgeCountAsync,
+  };
+
+  await dismissPresentedNotificationsForChannel('room-a', api, 'ios');
+  expect(dismissNotificationAsync.mock.calls).toEqual([['room-a-message']]);
+  expect(setBadgeCountAsync).toHaveBeenCalledWith(2);
+
+  dismissNotificationAsync.mockClear();
+  await dismissPresentedNotificationsForChannel('corner-a', api, 'android');
+  expect(dismissNotificationAsync.mock.calls).toEqual([['corner-a-message']]);
 });

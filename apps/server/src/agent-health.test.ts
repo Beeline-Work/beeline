@@ -92,6 +92,14 @@ beforeEach(async () => {
 const ALL = () => [AGENT_ONE, AGENT_TWO];
 
 describe('roomAgentHealth', () => {
+  it('judges presence by its latest status, never its age', async () => {
+    await reportPresence(AGENT_ONE, 'online', 6 * 60 * 60);
+    await reportPresence(AGENT_TWO, 'offline', 6 * 60 * 60);
+    const health = await roomAgentHealth(database, ROOM, ALL());
+    expect(health.get(AGENT_ONE)).toEqual({ healthy: true });
+    expect(health.get(AGENT_TWO)).toEqual({ healthy: false, reason: 'offline' });
+  });
+
   it('marks an offline agent unhealthy', async () => {
     await reportPresence(AGENT_ONE, 'online');
     await reportPresence(AGENT_TWO, 'offline');

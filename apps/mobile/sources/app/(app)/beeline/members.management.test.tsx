@@ -656,13 +656,13 @@ describe('Members workspace management', () => {
     expect(texts.flat().join(' ')).not.toMatch(/⌬|ONLINE|OFFLINE|MEMBER\b/);
   });
 
-  it('shows every handle once with role-only human and model-only agent subtitles', async () => {
+  it('shows every handle once with a role under a human and model and owner on an agent', async () => {
     const renderer = await render();
     const agentRow = renderer.root.findByProps({ testID: `agent-${AGENT}-identity` });
     const agentTexts = agentRow
       .findAllByType('Text' as any)
       .map((node: any) => node.props.children);
-    expect(agentTexts).toEqual(['@clara', 'Sonnet']);
+    expect(agentTexts).toEqual(['@clara', 'Sonnet', '@viewer']);
     expect(chevronDirections(agentRow)).toEqual(['right']);
     expect(agentRow.findByType('IdentityMark' as any).props.alive).toBeFalsy();
     const personRow = renderer.root.findByProps({ testID: `member-${MEMBER}-identity` });

@@ -8,7 +8,7 @@ import {
   SYSTEM_MENTION_PUBKEY,
 } from '@/buzz/room-participants';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
-import { memberRosterSubtitle } from '@/components/buzz/MemberRosterRow';
+import { memberRosterModel, memberRosterSubtitle } from '@/components/buzz/MemberRosterRow';
 import type { RoomRosterParticipant } from '@/components/buzz/RoomRosterSheet';
 
 /** One-line mention row height; also the unit of the scroll cap. */
@@ -79,23 +79,26 @@ export function MentionSuggestionMenu({
           const display = participant.agent
             ? resolveAgentDisplayIdentity(participant.pubkey, participant.agent)
             : undefined;
-          // A member row reads like the roster: the handle, then the model for
-          // an agent, or the Room role for a person.
+          // A member row reads like the roster: the handle, with an agent's
+          // model on the right; under it the agent's owner or the person's role.
           const subtitle = reserved
             ? undefined
             : participant.kind === 'agent'
-              ? memberRosterSubtitle({
-                  kind: 'agent',
-                  model: participant.model,
-                })
+              ? memberRosterSubtitle({ kind: 'agent', ownerHandle: participant.ownerHandle })
               : memberRosterSubtitle({ kind: 'human', role: participant.role });
+          const model =
+            participant.kind === 'agent' && !reserved
+              ? memberRosterModel({ kind: 'agent', model: participant.model })
+              : undefined;
           return (
             <TouchableOpacity
               accessibilityLabel={
                 participant.pubkey === SYSTEM_MENTION_PUBKEY
                   ? `${SYSTEM_MENTION_LABEL}, @${participant.handle}`
-                  : subtitle !== undefined
-                    ? `@${participant.handle}, ${subtitle}, ${participant.kind}`
+                  : !reserved
+                    ? [`@${participant.handle}`, model, subtitle, participant.kind]
+                        .filter(Boolean)
+                        .join(', ')
                     : `${participant.name}, @${participant.handle}, ${participant.kind}`
               }
               accessibilityRole="button"
@@ -130,12 +133,21 @@ export function MentionSuggestionMenu({
                   size={24}
                 />
               )}
-              {subtitle !== undefined ? (
+              {!reserved ? (
                 <View style={styles.mentionAgentIdentity}>
-                  <Text style={styles.mentionName}>@{participant.handle}</Text>
-                  <Text numberOfLines={1} style={styles.mentionHandle}>
-                    {subtitle}
-                  </Text>
+                  <View style={styles.mentionTitleLine}>
+                    <Text style={styles.mentionName}>@{participant.handle}</Text>
+                    {model ? (
+                      <Text numberOfLines={1} style={styles.mentionModel}>
+                        {model}
+                      </Text>
+                    ) : null}
+                  </View>
+                  {subtitle !== undefined ? (
+                    <Text numberOfLines={1} style={styles.mentionHandle}>
+                      {subtitle}
+                    </Text>
+                  ) : null}
                 </View>
               ) : (
                 <>
@@ -208,6 +220,18 @@ const styles = StyleSheet.create((theme) => {
       flex: 1,
       minWidth: 0,
       justifyContent: 'center',
+    },
+    mentionTitleLine: {
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      gap: 6,
+    },
+    mentionModel: {
+      ...groknight.type.machine,
+      flexShrink: 1,
+      marginLeft: 'auto',
+      textAlign: 'right',
+      color: groknight.textMuted,
     },
     mentionChannelGlyph: {
       width: 24,

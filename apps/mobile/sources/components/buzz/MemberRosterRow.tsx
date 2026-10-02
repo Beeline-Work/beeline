@@ -38,12 +38,17 @@ export function memberRosterTitle(identity: { handle?: string; pubkey: string })
   return `@${identity.handle ?? fallbackMemberHandle(identity.pubkey)}`;
 }
 
+/** The second line: a person's Room role, or an agent's owner when it has a handle. */
 export function memberRosterSubtitle(
-  member:
-    { kind: 'human'; role?: string } | { kind: 'agent'; model?: string; ownerHandle?: string },
-): string {
+  member: { kind: 'human'; role?: string } | { kind: 'agent'; ownerHandle?: string },
+): string | undefined {
   if (member.kind === 'human') return member.role ?? 'member';
-  return member.model ? displayModel(member.model) : '—';
+  return member.ownerHandle ? `@${member.ownerHandle}` : undefined;
+}
+
+/** An agent's model, right-aligned on the handle line. */
+export function memberRosterModel(member: { kind: 'human' } | { kind: 'agent'; model?: string }) {
+  return member.kind === 'agent' && member.model ? displayModel(member.model) : undefined;
 }
 
 /**
@@ -54,6 +59,7 @@ export function memberRosterSubtitle(
 export function MemberRosterRow(props: MemberRosterRowProps) {
   const title = memberRosterTitle(props);
   const subtitle = memberRosterSubtitle(props);
+  const model = memberRosterModel(props);
   const address = title.slice(1);
   // Presence is not spoken: it ages out while an idle agent waits on its
   // socket, so only a live turn is named, matching the ring.
@@ -77,12 +83,21 @@ export function MemberRosterRow(props: MemberRosterRowProps) {
         alive={props.kind === 'agent' ? props.alive : undefined}
       />
       <View style={styles.copy}>
-        <Text numberOfLines={1} style={styles.title}>
-          {title}
-        </Text>
-        <Text numberOfLines={1} style={styles.subtitle}>
-          {subtitle}
-        </Text>
+        <View style={styles.titleLine}>
+          <Text numberOfLines={1} style={styles.title}>
+            {title}
+          </Text>
+          {model ? (
+            <Text numberOfLines={1} style={styles.model}>
+              {model}
+            </Text>
+          ) : null}
+        </View>
+        {subtitle !== undefined ? (
+          <Text numberOfLines={1} style={styles.subtitle}>
+            {subtitle}
+          </Text>
+        ) : null}
       </View>
       {props.trailing}
     </TouchableOpacity>
@@ -108,7 +123,17 @@ const styles = StyleSheet.create((theme) => {
       borderBottomColor: hull.border,
     },
     copy: { flex: 1, minWidth: 0 },
-    title: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary },
+    titleLine: { flexDirection: 'row', alignItems: 'baseline', gap: hull.space.sm },
+    title: { ...Typography.default(), ...hull.type.body, flexShrink: 1, color: hull.textPrimary },
+    model: {
+      ...Typography.default(),
+      ...hull.type.meta,
+      flexShrink: 0,
+      marginLeft: 'auto',
+      maxWidth: '50%',
+      textAlign: 'right',
+      color: hull.textMuted,
+    },
     subtitle: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
   };
 });

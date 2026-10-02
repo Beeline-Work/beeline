@@ -200,6 +200,21 @@ describe('TranscriptScrubber', () => {
     expect(grab().props.pointerEvents).toBeUndefined();
   });
 
+  it('claims the finger before the day lands, and releases the claim after', () => {
+    const onGrabChange = vi.fn();
+    const onScrubEnd = vi.fn();
+    const { grab } = render({ onGrabChange, onScrubEnd });
+    act(() => grab().props.onPanResponderGrant({ nativeEvent: { locationY: 30 } }));
+    expect(onGrabChange).toHaveBeenLastCalledWith(true);
+    act(() => grab().props.onPanResponderMove({}, { dy: -520 }));
+    act(() => grab().props.onPanResponderRelease());
+    expect(onScrubEnd).toHaveBeenCalledWith(expect.objectContaining({ firstMessageId: id(1) }));
+    const landedAt = onScrubEnd.mock.invocationCallOrder[0];
+    const releasedAt = onGrabChange.mock.invocationCallOrder.at(-1) ?? 0;
+    expect(onGrabChange).toHaveBeenLastCalledWith(false);
+    expect(landedAt).toBeLessThan(releasedAt);
+  });
+
   it('lifting the bar without a drag lands nowhere', () => {
     const onScrub = vi.fn();
     const onScrubEnd = vi.fn();

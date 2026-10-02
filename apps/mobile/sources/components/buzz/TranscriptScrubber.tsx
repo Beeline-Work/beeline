@@ -34,19 +34,22 @@ export function TranscriptScrubber({
   position,
   onScrub,
   onScrubEnd,
+  onGrabChange,
 }: {
   history: ScrubberHistory;
   /** 0 at the newest message, 1 at the oldest; null hides the bar. */
   position: number | null;
   onScrub: (day: ScrubberDay) => void;
   onScrubEnd: (day: ScrubberDay) => void;
+  /** True from the press until the day has been handed off and the finger is up. */
+  onGrabChange?: (grabbed: boolean) => void;
 }) {
   const [railHeight, setRailHeight] = useState(0);
   const [scrubDay, setScrubDay] = useState<ScrubberDay | null>(null);
   // The bar is held: it stays mounted and shown until the finger lifts.
   const [grabbed, setGrabbed] = useState(false);
-  const live = useRef({ history, position, railHeight, onScrub, onScrubEnd });
-  live.current = { history, position, railHeight, onScrub, onScrubEnd };
+  const live = useRef({ history, position, railHeight, onScrub, onScrubEnd, onGrabChange });
+  live.current = { history, position, railHeight, onScrub, onScrubEnd, onGrabChange };
   const gesture = useRef<{ startY: number; day: ScrubberDay | null }>({ startY: 0, day: null });
 
   const pan = useMemo(() => {
@@ -69,7 +72,9 @@ export function TranscriptScrubber({
       gesture.current.day = null;
       setGrabbed(false);
       setScrubDay(null);
+      // Hand the day off while the grab is still claimed, then release the claim.
       if (day) live.current.onScrubEnd(day);
+      live.current.onGrabChange?.(false);
     };
     return PanResponder.create({
       onStartShouldSetPanResponder: () => live.current.history.days.length > 0,
@@ -81,6 +86,8 @@ export function TranscriptScrubber({
           startY: grabTop(at ?? 0, height) + event.nativeEvent.locationY,
           day: null,
         };
+        // Claim the finger before the list can treat this press as its own drag.
+        live.current.onGrabChange?.(true);
         setGrabbed(true);
         void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       },

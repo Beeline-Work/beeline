@@ -253,6 +253,30 @@ describe('native variable-height history anchoring', () => {
       momentumEnd.indexOf('attemptScrubLanding();'),
     );
   });
+
+  it('keeps a scrubbed day when the bar has the finger', () => {
+    const begin = chatSource.slice(
+      chatSource.indexOf('onScrollBeginDrag={() => {'),
+      chatSource.indexOf('onScrollEndDrag='),
+    );
+    const guard = begin.indexOf('if (scrubGrabbedRef.current) return;');
+    const clear = begin.indexOf('pendingScrubLandingRef.current = null');
+    expect(guard).toBeGreaterThanOrEqual(0);
+    expect(clear).toBeGreaterThan(guard);
+    const release = chatSource.slice(
+      chatSource.indexOf('const releaseScrubbedDay ='),
+      chatSource.indexOf('const landAtNewestMessage ='),
+    );
+    expect(release.indexOf('userDraggingRef.current = false')).toBeGreaterThanOrEqual(0);
+    expect(release.indexOf('userDraggingRef.current = false')).toBeLessThan(
+      release.indexOf('landAtScrubbedDay(day)'),
+    );
+    const grab = chatSource.slice(
+      chatSource.indexOf('const onScrubGrabChange ='),
+      chatSource.indexOf('const releaseScrubbedDay ='),
+    );
+    expect(grab).toContain('if (grabbed) userDraggingRef.current = false;');
+  });
 });
 
 /**

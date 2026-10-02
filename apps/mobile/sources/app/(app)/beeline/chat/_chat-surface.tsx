@@ -2925,6 +2925,9 @@ export function BuzzChatSurface({
   // A loaded row native has not measured yet is reached over several
   // attempts; `onScrollToIndexFailed` schedules each next one.
   const pendingScrubLandingRef = useRef<ScrubLanding | null>(null);
+  // True while the finger is on the bar. That press can also reach the list
+  // as a drag start, and the list then never gets a drag end.
+  const scrubGrabbedRef = useRef(false);
   useEffect(() => {
     setScrubTargetId(null);
     pendingScrubLandingRef.current = null;
@@ -2967,6 +2970,19 @@ export function BuzzChatSurface({
       setScrubTargetId(landAtScrubbedMessage(day.firstMessageId) ? null : day.firstMessageId);
     },
     [landAtScrubbedMessage],
+  );
+  const onScrubGrabChange = useCallback((grabbed: boolean) => {
+    scrubGrabbedRef.current = grabbed;
+    // The bar took the finger. scrollToIndex does nothing while the coast
+    // flag is set, and this press may never deliver a list drag-end.
+    if (grabbed) userDraggingRef.current = false;
+  }, []);
+  const releaseScrubbedDay = useCallback(
+    (day: ScrubberDay) => {
+      userDraggingRef.current = false;
+      landAtScrubbedDay(day);
+    },
+    [landAtScrubbedDay],
   );
   useEffect(() => {
     if (!scrubTargetId) return;
@@ -6032,6 +6048,9 @@ export function BuzzChatSurface({
             scrollEventThrottle={16}
             onViewableItemsChanged={observeVisibleTranscriptMessages}
             onScrollBeginDrag={() => {
+              // The bar owns this finger. Treating it as a list drag clears
+              // the day and can arm the coast flag with no drag-end to follow.
+              if (scrubGrabbedRef.current) return;
               // The reader's own drag abandons a scrubbed day still paging in.
               setScrubTargetId(null);
               pendingScrubLandingRef.current = null;
@@ -6194,8 +6213,9 @@ export function BuzzChatSurface({
             <TranscriptScrubber
               history={scrubberHistory}
               position={scrubberPosition}
+              onGrabChange={onScrubGrabChange}
               onScrub={landAtScrubbedDay}
-              onScrubEnd={landAtScrubbedDay}
+              onScrubEnd={releaseScrubbedDay}
             />
           )}
           <RoomCatchUpControls

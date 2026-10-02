@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { Pressable, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { HullActionSheetModal } from './HullActionSheet';
@@ -109,109 +109,113 @@ export function MemberPickerSheet({
       visible={visible}
       testID={testID}
       title={agentConnectOnly ? undefined : MEMBER_PICKER_TITLE}
-      scrollBody={false}
-    >
-      <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-        {!agentConnectOnly && roomInScope && candidates === null && (
-          <View style={styles.loading} testID="member-picker-loading">
-            <SurfaceGlyphLoader testID="member-picker-glyph-loader" />
-          </View>
-        )}
-        {!agentConnectOnly &&
-          visibleCandidates.map((candidate) => {
-            const isChecked = checked.has(candidate.pubkey);
-            return (
-              <Pressable
-                accessibilityLabel={`${candidate.name}, ${candidate.kind}`}
-                accessibilityRole="checkbox"
-                accessibilityState={{ checked: isChecked, disabled: busy }}
-                disabled={busy}
-                key={candidate.pubkey}
-                onPress={() => toggle(candidate.pubkey)}
-                style={styles.row}
-                testID={`member-picker-candidate-${candidate.pubkey}`}
-              >
-                {candidate.kind === 'agent' ? (
-                  <IdentityMark
-                    kind="agent"
-                    seed={candidate.pubkey}
-                    avatarUrl={candidate.avatarUrl}
-                    face={candidate.face}
-                    name={candidate.name}
-                    size={38}
-                  />
-                ) : (
-                  <IdentityMark
-                    kind="human"
-                    seed={candidate.pubkey}
-                    avatarUrl={candidate.avatarUrl}
-                    face={candidate.face}
-                    name={candidate.name}
-                    size={38}
-                  />
-                )}
-                <View style={styles.copy}>
-                  <Text numberOfLines={1} style={styles.name}>
-                    {candidate.name}
-                  </Text>
-                  <Text numberOfLines={1} style={styles.meta}>
-                    @{candidate.handle}
-                  </Text>
-                </View>
-                <View
-                  style={[styles.check, isChecked && styles.checkOn]}
-                  testID={`member-picker-check-${candidate.pubkey}`}
+      footer={
+        !agentConnectOnly || error ? (
+          <View style={styles.footer}>
+            {error && (
+              <Text accessibilityRole="alert" style={styles.error} testID="member-picker-error">
+                ! {error}
+              </Text>
+            )}
+            {!agentConnectOnly && (
+              <View style={styles.addInset}>
+                <BrassButton
+                  disabled={chosen.length === 0}
+                  label={chosen.length > 0 ? `Add ${chosen.length}` : 'Add'}
+                  loading={busy}
+                  onPress={() => onAdd(chosen.map((candidate) => candidate.pubkey))}
+                  testID="member-picker-add"
                 />
-              </Pressable>
-            );
-          })}
-        {!agentConnectOnly && (
-          <RoomMemberPickerActions
-            addableCount={visibleCandidates.length}
-            busy={busy}
-            canManage={canManage}
-            canConnectAgent={canConnectAgent}
-            kind={kind}
-            workspacePeerCount={workspacePeerCount}
-            onAddAgent={onConnectAgent}
-            onInvitePerson={onInvitePerson}
-            showEmpty={roomInScope && candidates !== null}
-          />
-        )}
-        {(agentConnectOnly || pairCommand) && (
-          <View style={styles.pairing} testID="invite-agent-flow">
-            <Text style={styles.meta}>
-              Run this where the agent will live. It joins every Room you're in.
-            </Text>
-            {pairCommand && (
-              <TouchableOpacity
-                accessibilityLabel="Copy connect command"
-                onPress={() => onCopyPairCommand?.(pairCommand)}
-                style={styles.commandRow}
-              >
-                <Text selectable style={styles.command} testID="pair-agent-command">
-                  {pairCommand}
-                </Text>
-                <Text style={styles.copyLabel}>Copy</Text>
-              </TouchableOpacity>
+              </View>
             )}
           </View>
-        )}
-      </ScrollView>
-      {!agentConnectOnly && chosen.length > 0 && (
-        <View style={styles.footer}>
-          <BrassButton
-            label={`Add ${chosen.length}`}
-            loading={busy}
-            onPress={() => onAdd(chosen.map((candidate) => candidate.pubkey))}
-            testID="member-picker-add"
-          />
+        ) : undefined
+      }
+    >
+      {!agentConnectOnly && roomInScope && candidates === null && (
+        <View style={styles.loading} testID="member-picker-loading">
+          <SurfaceGlyphLoader testID="member-picker-glyph-loader" />
         </View>
       )}
-      {error && (
-        <Text accessibilityRole="alert" style={styles.error} testID="member-picker-error">
-          ! {error}
-        </Text>
+      {!agentConnectOnly &&
+        visibleCandidates.map((candidate) => {
+          const isChecked = checked.has(candidate.pubkey);
+          return (
+            <Pressable
+              accessibilityLabel={`${candidate.name}, ${candidate.kind}`}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: isChecked, disabled: busy }}
+              disabled={busy}
+              key={candidate.pubkey}
+              onPress={() => toggle(candidate.pubkey)}
+              style={styles.row}
+              testID={`member-picker-candidate-${candidate.pubkey}`}
+            >
+              {candidate.kind === 'agent' ? (
+                <IdentityMark
+                  kind="agent"
+                  seed={candidate.pubkey}
+                  avatarUrl={candidate.avatarUrl}
+                  face={candidate.face}
+                  name={candidate.name}
+                  size={38}
+                />
+              ) : (
+                <IdentityMark
+                  kind="human"
+                  seed={candidate.pubkey}
+                  avatarUrl={candidate.avatarUrl}
+                  face={candidate.face}
+                  name={candidate.name}
+                  size={38}
+                />
+              )}
+              <View style={styles.copy}>
+                <Text numberOfLines={1} style={styles.name}>
+                  {candidate.name}
+                </Text>
+                <Text numberOfLines={1} style={styles.meta}>
+                  @{candidate.handle}
+                </Text>
+              </View>
+              <View
+                style={[styles.check, isChecked && styles.checkOn]}
+                testID={`member-picker-check-${candidate.pubkey}`}
+              />
+            </Pressable>
+          );
+        })}
+      {!agentConnectOnly && (
+        <RoomMemberPickerActions
+          addableCount={visibleCandidates.length}
+          busy={busy}
+          canManage={canManage}
+          canConnectAgent={canConnectAgent}
+          kind={kind}
+          workspacePeerCount={workspacePeerCount}
+          onAddAgent={onConnectAgent}
+          onInvitePerson={onInvitePerson}
+          showEmpty={roomInScope && candidates !== null}
+        />
+      )}
+      {(agentConnectOnly || pairCommand) && (
+        <View style={styles.pairing} testID="invite-agent-flow">
+          <Text style={styles.meta}>
+            Run this where the agent will live. It joins every Room you're in.
+          </Text>
+          {pairCommand && (
+            <TouchableOpacity
+              accessibilityLabel="Copy connect command"
+              onPress={() => onCopyPairCommand?.(pairCommand)}
+              style={styles.commandRow}
+            >
+              <Text selectable style={styles.command} testID="pair-agent-command">
+                {pairCommand}
+              </Text>
+              <Text style={styles.copyLabel}>Copy</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       )}
     </HullActionSheetModal>
   );
@@ -220,7 +224,7 @@ export function MemberPickerSheet({
 const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
-    modalContent: { paddingHorizontal: 0, maxHeight: '82%' },
+    modalContent: { paddingHorizontal: 0 },
     loading: { paddingVertical: hull.space.lg, alignItems: 'center' },
     row: {
       minHeight: hull.layout.row,
@@ -263,11 +267,10 @@ const styles = StyleSheet.create((theme) => {
     command: { ...Typography.mono(), ...hull.type.machine, color: hull.textPrimary, flex: 1 },
     copyLabel: { ...Typography.default(), ...hull.type.meta, color: hull.accent },
     footer: {
-      paddingHorizontal: hull.space.md,
-      paddingTop: hull.space.md,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: hull.border,
     },
+    addInset: { paddingHorizontal: hull.space.md, paddingTop: hull.space.sm },
     error: {
       ...Typography.default(),
       ...hull.type.meta,

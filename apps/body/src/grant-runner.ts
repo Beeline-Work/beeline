@@ -41,14 +41,15 @@
  * so it stops matching immediately.
  *
  * Secrets are resolved from the operator key store (`provider-key-store.ts`,
- * `~/.config/beeline/providers.json`, addressed by the provider's env var name)
- * or from the saved-secrets file beside it (`secrets.json`, `{ NAME: value }`).
- * Values are injected into the child's env and scrubbed from its output; they
- * never reach the transcript, the ledger, or the model.
+ * `~/.config/beeline/providers.json`, addressed by the provider's env var name),
+ * from the saved-secrets file beside it (`secrets.json`, `{ NAME: value }`, the
+ * one `store_secret` writes), then from the daemon's own environment as a
+ * last-resort fallback. Values are injected into the child's env and scrubbed
+ * from its output; they never reach the transcript, the ledger, or the model.
  */
 import { execFile } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { chmod, mkdir, readFile, readdir, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { dirname, resolve } from 'node:path';
@@ -135,7 +136,194 @@ export const ROOM_WRITE_REFUSED_NOTE =
 
 export type SecretResolver = (name: string) => Promise<string | undefined>;
 
-/** Resolve one named secret from the operator key store, never echoing it. */
+/** The saved-secrets file beside the operator key store: `{ NAME: value }`. */
+function operatorSecretsPath(env: NodeJS.ProcessEnv = process.env): string {
+  return resolve(dirname(providerKeyStorePath(env)), 'secrets.json');
+}
+
+/** The store's current `{ NAME: value }` map, never the file's history. */
+async function readOperatorSecrets(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<Record<string, string>> {
+  const raw = await readFile(operatorSecretsPath(env), 'utf8').catch(() => undefined);
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>).filter(
+        (entry): entry is [string, string] =>
+          typeof entry[1] === 'string' && entry[1].length > 0,
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
+
+/** How long a stale lock may sit before a waiter takes it over. */
+const SECRETS_LOCK_STALE_MS = 15_000;
+/** Ceiling on waiting for the lock; the caller gets an error, not a hang. */
+const SECRETS_LOCK_TIMEOUT_MS = 30_000;
+/** Base poll interval while the lock is held by someone else. */
+const SECRETS_LOCK_POLL_MS = 25;
+
+/** The holder's unguessable owner token, which also names its lock marker file. */
+function operatorSecretsLockToken(): string {
+  return `${process.pid}:${randomUUID()}`;
+}
+
+/** The lock directory's current owner marker, or undefined if there is no lock. */
+async function operatorSecretsLockOwner(lockDir: string): Promise<string | undefined> {
+  let entries: string[];
+  try {
+    entries = await readdir(lockDir);
+  } catch {
+    return undefined;
+  }
+  const marker = entries.find((entry) => !entry.endsWith('/'));
+  return marker ?? undefined;
+}
+
+/**
+ * Take over a stale lock directory. The lock's ownership is verified and
+ * removed with ATOMIC primitives, never by a bare pathname unlink:
+ * a stale lock is a directory aged past `SECRETS_LOCK_STALE_MS` containing
+ * either the dead holder's marker, or NOTHING — a holder crashed between
+ * `mkdir` and writing its marker, or a prior takeover crashed between
+ * unlink and `rmdir`. In both cases we then `rmdir`, which succeeds only on
+ * an EMPTY directory. If a rival removed the marker and re-created the
+ * directory with its own marker first, our `rmdir` sees ENOTEMPTY and
+ * removes nothing. There is no read-then-replace window in which a newly
+ * acquired lock can be deleted.
+ *
+ * Freshness is judged BEFORE the contents are read: a FRESH directory —
+ * even an empty one — is a live `mkdir`→marker handshake in progress, so it
+ * is always left alone for the acquirer to finish writing its marker.
+ *
+ * Returns true when the stale lock was removed (the caller should retry
+ * `mkdir` at once); false when the lock is fresh, gone, or already claimed.
+ */
+async function takeOverStaleOperatorSecretsLock(lockDir: string): Promise<boolean> {
+  const info = await stat(lockDir).catch(() => undefined);
+  if (!info || Date.now() - info.mtimeMs <= SECRETS_LOCK_STALE_MS) return false;
+  const owner = await operatorSecretsLockOwner(lockDir);
+  if (owner) {
+    // `force` so a rival waiter that already unlinked the marker makes this
+    // a no-op, not an ENOENT that aborts our wait.
+    await rm(joinDirSafe(lockDir, owner), { force: true });
+  }
+  try {
+    await rmdir(lockDir);
+  } catch {
+    return false; // a rival re-created the directory with its own marker
+  }
+  return true;
+}
+
+/**
+ * Release the lock this holder owns. We unlink our own uniquely named marker
+ * (a no-op if the directory was taken over), then `rmdir` the directory —
+ * which succeeds only while it is still EMPTY, i.e. still ours. If a rival
+ * re-created it with its own marker, `rmdir` returns ENOTEMPTY and removes
+ * nothing. No interleaving of another process can make this release delete
+ * somebody else's lock.
+ */
+async function releaseOperatorSecretsLock(lockDir: string, owner: string): Promise<void> {
+  await rm(joinDirSafe(lockDir, owner), { force: true }).catch(() => {});
+  await rmdir(lockDir).catch(() => {});
+}
+
+/** `join(dir, name)` for a lock marker, with no path traversal. */
+function joinDirSafe(dir: string, name: string): string {
+  return /^[A-Za-z0-9:._-]+$/.test(name) ? `${dir}/${name}` : dir;
+}
+
+/**
+ * Hold the operator-store lock for one read-modify-write. The lock is a
+ * sibling `secrets.json.lock` DIRECTORY: `mkdir` is the atomic acquire
+ * fence (only one process wins), the holder drops an unguessably named
+ * owner marker inside, and every removal goes through `rmdir`, which
+ * succeeds only on an empty directory — so release and stale takeover are
+ * ownership-safe by construction, with no unlink-by-pathname that a
+ * concurrent replacement can race. Cross-process by construction, since
+ * separate daemon processes sharing one operator config directory contend
+ * on the same path. Returns a release function; call it in `finally`. A
+ * crashed holder leaves a stale lock that any waiter takes over after
+ * `SECRETS_LOCK_STALE_MS`.
+ */
+export async function acquireOperatorSecretStoreLock(
+  path: string,
+): Promise<() => Promise<void>> {
+  const lockDir = `${path}.lock`;
+  const owner = operatorSecretsLockToken();
+  const deadline = Date.now() + SECRETS_LOCK_TIMEOUT_MS;
+  for (;;) {
+    try {
+      await mkdir(lockDir, { mode: 0o700 });
+      // A rival could have stolen an old lock and be re-creating this path;
+      // if our marker write fails the lock is no longer ours — retry fresh.
+      await writeFile(`${lockDir}/${owner}`, `${process.pid}\n`, { mode: 0o600 });
+      let released = false;
+      return async () => {
+        if (released) return;
+        released = true;
+        await releaseOperatorSecretsLock(lockDir, owner);
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+        if (await takeOverStaleOperatorSecretsLock(lockDir)) continue;
+      } else {
+        // The empty-dir window of a concurrent stale takeover: our marker
+        // could not be written, so this acquire must be retried, not held.
+        await rmdir(lockDir).catch(() => {});
+      }
+      if (Date.now() > deadline) {
+        throw new Error(`timed out waiting for the operator secret store lock at ${lockDir}`);
+      }
+      await new Promise((resolve) =>
+        setTimeout(resolve, SECRETS_LOCK_POLL_MS + Math.floor(Math.random() * 25)),
+      );
+    }
+  }
+}
+
+/**
+ * Store one operator secret by name so a command grant's `--with NAME` resolves
+ * at run time. Written to secrets.json beside the operator key store, mode
+ * 0600, value never echoed. Storing the same name replaces its value.
+ *
+ * The write is a read-modify-write of one shared file, so it is serialized
+ * under an exclusive lockfile that coordinates across processes; without it
+ * two stores in flight both write from the same snapshot and the last one
+ * drops the other's secret. The file is written to a sibling temp and renamed
+ * into place so a concurrent reader never sees a torn file.
+ */
+export async function storeOperatorSecret(
+  name: string,
+  value: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
+  const path = operatorSecretsPath(env);
+  // The lock file lives beside the store, so the directory must exist first;
+  // recursive mkdir is idempotent and safe when several processes race to it.
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const release = await acquireOperatorSecretStoreLock(path);
+  try {
+    const store = { ...(await readOperatorSecrets(env)), [name]: value };
+    const tmp = `${path}.tmp`;
+    await writeFile(tmp, `${JSON.stringify(store, null, 2)}\n`, { mode: 0o600 });
+    await rename(tmp, path);
+    await chmod(path, 0o600);
+  } finally {
+    await release();
+  }
+}
+
+/**
+ * Resolve one named secret from the operator key store, then the daemon
+ * environment, never echoing it.
+ */
 export function operatorSecretResolver(env: NodeJS.ProcessEnv = process.env): SecretResolver {
   const providerByEnvVar = new Map(
     (Object.entries(PROVIDER_KEY_ENV_VARS) as [ProviderKeyProvider, string][]).map(
@@ -148,19 +336,16 @@ export function operatorSecretResolver(env: NodeJS.ProcessEnv = process.env): Se
       const saved = (await readProviderKeyStore(env))[provider];
       if (saved) return saved;
     }
-    const raw = await readFile(
-      resolve(dirname(providerKeyStorePath(env)), 'secrets.json'),
-      'utf8',
-    ).catch(() => undefined);
-    if (!raw) return undefined;
-    try {
-      const parsed = JSON.parse(raw) as unknown;
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
-      const value = (parsed as Record<string, unknown>)[name];
-      return typeof value === 'string' && value.length > 0 ? value : undefined;
-    } catch {
-      return undefined;
-    }
+    const store = await readOperatorSecrets(env);
+    const saved = store[name];
+    if (saved) return saved;
+    // Last-resort fallback: a secret the daemon itself runs with (an env file
+    // systemd sourced, a CI-style injected var) is a real secret the operator
+    // already chose to expose to this process, so a `--with NAME` grant may use
+    // it without a separate copy in the store.
+    const fromEnv = env[name]?.trim();
+    if (fromEnv) return fromEnv;
+    return undefined;
   };
 }
 

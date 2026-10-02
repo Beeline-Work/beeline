@@ -50,6 +50,7 @@ import {
   AGENT_GRANT_REASON_MAX_LENGTH,
   AGENT_GRANT_TARGET_MAX_LENGTH,
   AGENT_GRANT_VERBS,
+  COMMAND_SECRET_NAME,
   GRANT_SCRIPT_MAX_BYTES,
   GRANT_SCRIPT_MAX_LINES,
   formatGrantEscalationReason,
@@ -61,6 +62,7 @@ import {
   type CommandGrantRule,
   type CommandGrantScript,
 } from '@beeline/api-contract/agent-grants';
+import { operatorSecretResolver, storeOperatorSecret, type SecretResolver } from './grant-runner.js';
 import {
   CONNECTOR_OFFER_REASON_MAX_LENGTH,
   OFFERABLE_CONNECTOR_KINDS,
@@ -1208,6 +1210,34 @@ const AGENT_TOOLS: ToolDefinition[] = [
           type: 'integer',
           minimum: 60,
           description: 'Optional lifetime in seconds after which the grant expires.',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'list_grants',
+    description:
+      "List this agent's grants: pending (card posted, awaiting a human decision), approved, and once, each with status, target, reason and grant id. For a command grant, every `--with SECRET` name is checked against the operator key store and the daemon environment, so a grant whose named secret cannot resolve is marked NOT resolvable — store that secret with store_secret, then ask for the grant again. Pure inspection: changes nothing and never shows a secret value. Call this before a run fails or before asking for a command grant you are not sure is usable.",
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'store_secret',
+    description:
+      "Store one operator secret by one UPPER_CASE name so a command grant's `--with NAME` resolves when it runs. The value is written into the daemon's secrets.json beside the operator key store (mode 0600), is never echoed, never sent to the server, and never appears on a ledger row; storing the same name replaces its value. Use it when request_grant or a run reports a named secret missing: store the value, then ask again. Secrets already in the operator key store or the daemon environment need no store call.",
+    inputSchema: {
+      type: 'object',
+      required: ['name', 'value'],
+      properties: {
+        name: {
+          type: 'string',
+          pattern: '^[A-Z][A-Z0-9_]{0,63}$',
+          description: 'The UPPER_CASE secret name the command grant names with --with.',
+        },
+        value: {
+          type: 'string',
+          minLength: 1,
+          description: 'The secret value; never echoed back.',
         },
       },
       additionalProperties: false,
@@ -2883,6 +2913,14 @@ export interface AgentGrantDeps {
   scriptRoots?: string[];
   /** Test seam for reading those bytes. */
   readScript?: (path: string) => Buffer;
+  /**
+   * Where a command grant's named secrets resolve from, at ask time and for
+   * `list_grants`. Defaults to the operator key store, secrets.json, then the
+   * daemon environment.
+   */
+  resolveSecret?: SecretResolver;
+  /** Where `store_secret` writes; defaults to the daemon's secrets.json. */
+  storeSecret?: (name: string, value: string) => Promise<void>;
 }
 
 export function agentGrantDepsFromEnv(): AgentGrantDeps {
@@ -2892,6 +2930,8 @@ export function agentGrantDepsFromEnv(): AgentGrantDeps {
     roomId: agentScheduleRoomId(),
     execute: daemonExecute,
     scriptRoots: [...(attachRoot ? [attachRoot] : []), ...(scratchRoot ? [scratchRoot] : [])],
+    resolveSecret: operatorSecretResolver(process.env),
+    storeSecret: (name, value) => storeOperatorSecret(name, value, process.env),
   };
 }
 
@@ -2972,6 +3012,23 @@ export async function requestGrant(
   if (ttl !== undefined && (typeof ttl !== 'number' || !Number.isInteger(ttl) || ttl < 60)) {
     throw new Error('ttl must be an integer number of seconds, at least 60');
   }
+  // Reject at ask time a command grant whose named secrets cannot resolve: an
+  // approved grant that fails at run time is the failure this whole fix removes.
+  // Resolvable means the operator key store, secrets.json, or the daemon's own
+  // environment has a value for the name, now.
+  if (kind === 'command' && rule && rule.secrets.length) {
+    const resolveSecret = deps.resolveSecret ?? operatorSecretResolver(process.env);
+    const missing: string[] = [];
+    for (const name of rule.secrets) {
+      if (!(await resolveSecret(name))) missing.push(name);
+    }
+    if (missing.length) {
+      throw new Error(
+        `secret ${missing.join(', ')} is not in the operator key store or the daemon environment, so this command grant could never run. ` +
+          'Store it first with store_secret (the value is written into the daemon key store and never echoed), or drop the --with suffix.',
+      );
+    }
+  }
   const result = await deps.execute('requestAgentGrant', {
     roomId: deps.roomId,
     kind,
@@ -3029,6 +3086,78 @@ export async function requestGrant(
       ? 'the approval wake starts the fresh session with that route mounted, so use it immediately without restarting or scheduling another turn.'
       : 'you will be woken with the answer.')
   );
+}
+
+/**
+ * list_grants: every grant this agent raised — pending, approved, and once —
+ * with status, target, reason, and, for a command grant, whether each named
+ * secret currently resolves. This is inspection, never authority: it changes
+ * no state and the server answers it from the agent's own rows.
+ */
+export async function listGrants(
+  deps: AgentGrantDeps = agentGrantDepsFromEnv(),
+): Promise<string> {
+  const result = (await deps.execute('listAgentGrantRequests', {
+    roomId: deps.roomId,
+  })) as { grants?: Array<Record<string, unknown>> };
+  const grants = Array.isArray(result.grants) ? result.grants : [];
+  if (!grants.length) {
+    return 'no grants right now: nothing pending an answer, approved, or spent-once';
+  }
+  const resolveSecret = deps.resolveSecret ?? operatorSecretResolver(process.env);
+  const lines: string[] = [];
+  for (const entry of grants) {
+    const grantId = typeof entry.grantId === 'string' ? entry.grantId : 'unknown';
+    const kind = typeof entry.kind === 'string' ? entry.kind : 'unknown';
+    const status = typeof entry.status === 'string' ? entry.status : 'unknown';
+    const target = typeof entry.target === 'string' ? entry.target : '';
+    const reason = typeof entry.reason === 'string' ? entry.reason : '';
+    let secretsNote = '';
+    if (kind === 'command') {
+      try {
+        const rule = parseCommandGrantTarget(target);
+        if (rule.secrets.length) {
+          const missing = (
+            await Promise.all(
+              rule.secrets.map(async (name) => ((await resolveSecret(name)) ? null : name)),
+            )
+          ).filter((name): name is string => name !== null);
+          secretsNote = missing.length
+            ? ` · secrets ${missing.join(', ')} NOT resolvable (store them with store_secret, then ask again)`
+            : ` · secrets present`;
+        }
+      } catch {
+        // A target that no longer parses is shown plainly; nothing else to say.
+      }
+    }
+    lines.push(`- ${status} ${kind} ${target} [${grantId}]${reason ? ` · ${reason}` : ''}${secretsNote}`);
+  }
+  return ['grants:', ...lines].join('\n');
+}
+
+/**
+ * store_secret: write one operator secret by name so a command grant's
+ * `--with NAME` resolves at run time. The value goes into the daemon's
+ * secrets.json (mode 0600) and is never echoed, never sent to the server, and
+ * never shown on a ledger row.
+ */
+export async function storeSecret(
+  args: JsonObject,
+  deps: AgentGrantDeps = agentGrantDepsFromEnv(),
+): Promise<string> {
+  const name = stringArg(args, 'name')?.trim();
+  const value = args.value;
+  if (!name || !COMMAND_SECRET_NAME.test(name)) {
+    throw new Error('name must be one UPPER_CASE secret name (A-Z, 0-9, underscore, max 64 chars)');
+  }
+  if (typeof value !== 'string' || !value) {
+    throw new Error('value must be a non-empty string');
+  }
+  if (value.length > 8192) {
+    throw new Error('value is too long: secrets are capped at 8192 characters');
+  }
+  await (deps.storeSecret ?? ((n, v) => storeOperatorSecret(n, v)))(name, value);
+  return `stored secret ${name} in the operator key store; it now resolves for --with ${name}. The value was never echoed.`;
 }
 
 export interface ConnectorOfferDeps {
@@ -3731,6 +3860,10 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       return deleteSchedule(args);
     case 'request_grant':
       return requestGrant(args);
+    case 'list_grants':
+      return listGrants();
+    case 'store_secret':
+      return storeSecret(args);
     case 'workbench_status':
       return workbenchStatus();
     case 'create_link_spend_request': {

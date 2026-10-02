@@ -6,8 +6,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { REQUESTABLE_AGENT_GRANT_KINDS } from '@beeline/api-contract/agent-grants';
 import {
   agentToolsFor,
+  listGrants,
   requestGrant,
   runGrantedCommand,
+  storeSecret,
   type AgentGrantDeps,
   type GrantRunDeps,
 } from './read-only-mcp.js';
@@ -16,6 +18,7 @@ import { approvedDeviceGrant } from './monolith-room-turn.js';
 function deps(
   answer: Record<string, unknown>,
   ops: Array<{ name: string; input: Record<string, unknown> }> = [],
+  secrets: Record<string, string> = { FLY_TOKEN: 'fly-secret-value-123' },
 ): AgentGrantDeps {
   return {
     roomId: 'room-1',
@@ -23,6 +26,7 @@ function deps(
       ops.push({ name, input: input as Record<string, unknown> });
       return answer;
     },
+    resolveSecret: async (name) => secrets[name],
   };
 }
 
@@ -200,6 +204,152 @@ describe('beeline-agent request_grant', () => {
       requestGrant({ kind: 'host', target: 'api.fly.io', reason: 'x', ttl: 5 }, answer),
     ).rejects.toThrow('ttl must be');
     expect(ops).toEqual([]);
+  });
+
+  it('rejects at ask time a command grant whose named secret cannot resolve, before the server is called', async () => {
+    const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const ask = deps({ grantId: 'never' }, ops, {});
+    await expect(
+      requestGrant(
+        {
+          kind: 'command',
+          target: 'fly deploy -a preview --with DOOMED_SECRET --with ANOTHER_MISSING',
+          reason: 'publish',
+        },
+        ask,
+      ),
+    ).rejects.toThrow('DOOMED_SECRET, ANOTHER_MISSING');
+    // Nothing was sent to the server: an unresolvable ask never becomes a card.
+    expect(ops).toEqual([]);
+  });
+
+  it('lets a command ask through when every named secret resolves now', async () => {
+    const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const reply = await requestGrant(
+      {
+        kind: 'command',
+        target: 'fly deploy -a preview --with FLY_TOKEN',
+        reason: 'publish',
+      },
+      deps({ grantId: 'g-7', status: 'approved', auto: true }, ops),
+    );
+    expect(ops[0]!.name).toBe('requestAgentGrant');
+    expect(ops[0]!.input).toEqual({
+      roomId: 'room-1',
+      kind: 'command',
+      target: 'fly deploy -a preview --with FLY_TOKEN',
+      reason: 'publish',
+    });
+    expect(reply).toContain('approved: run fly deploy -a preview');
+  });
+
+  it('mounts list_grants and store_secret next to request_grant on every agent surface', () => {
+    for (const directMessage of [false, true]) {
+      const names = agentToolsFor(true, directMessage).map((tool) => tool.name);
+      expect(names).toContain('list_grants');
+      expect(names).toContain('store_secret');
+      expect(names).toContain('request_grant');
+    }
+    expect(agentToolsFor(false, false).map((tool) => tool.name)).not.toContain('store_secret');
+    expect(agentToolsFor(false, false).map((tool) => tool.name)).not.toContain('list_grants');
+  });
+});
+
+describe('beeline-agent list_grants and store_secret', () => {
+  it('list_grants shows each pending and live grant and flags a command grant whose secret is missing', async () => {
+    const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const reply = await listGrants(
+      deps(
+        {
+          grants: [
+            {
+              grantId: 'g-1',
+              workspaceId: 'w',
+              roomId: 'room-1',
+              kind: 'command',
+              target: 'fly deploy -a preview --with FLY_TOKEN',
+              reason: 'publish the preview',
+              status: 'pending',
+              auto: false,
+              requestedBy: 'c'.repeat(64),
+              createdAt: 1,
+            },
+            {
+              grantId: 'g-2',
+              workspaceId: 'w',
+              roomId: 'room-1',
+              kind: 'command',
+              target: 'fly deploy -a preview --with GHOST_SECRET',
+              reason: 'publish the preview',
+              status: 'pending',
+              auto: false,
+              requestedBy: 'c'.repeat(64),
+              createdAt: 2,
+            },
+            {
+              grantId: 'g-3',
+              workspaceId: 'w',
+              roomId: 'room-1',
+              kind: 'host',
+              target: 'api.fly.io',
+              reason: 'reach the API',
+              status: 'approved',
+              auto: true,
+              requestedBy: 'c'.repeat(64),
+              createdAt: 3,
+            },
+          ],
+        },
+        ops,
+        // Only FLY_TOKEN resolves; GHOST_SECRET does not.
+        { FLY_TOKEN: 'fly-secret-value-123' },
+      ),
+    );
+    expect(ops[0]!.name).toBe('listAgentGrantRequests');
+    expect(reply).toContain('pending command fly deploy -a preview --with FLY_TOKEN');
+    expect(reply).toContain('secrets present');
+    expect(reply).toContain('GHOST_SECRET NOT resolvable');
+    expect(reply).toContain('approved host api.fly.io');
+    expect(reply).not.toContain('fly-secret-value-123');
+  });
+
+  it('list_grants says none when the server has nothing', async () => {
+    const reply = await listGrants(deps({ grants: [] }));
+    expect(reply).toContain('no grants right now');
+  });
+
+  it('store_secret writes through its dependency and never echoes the value', async () => {
+    const writes: Array<[string, string]> = [];
+    const reply = await storeSecret(
+      { name: 'DEPLOY_TOKEN', value: 'super-secret-9' },
+      {
+        roomId: 'room-1',
+        execute: async () => ({}),
+        storeSecret: async (name, value) => {
+          writes.push([name, value]);
+        },
+      },
+    );
+    expect(writes).toEqual([['DEPLOY_TOKEN', 'super-secret-9']]);
+    expect(reply).toContain('stored secret DEPLOY_TOKEN');
+    expect(reply).not.toContain('super-secret-9');
+  });
+
+  it('store_secret refuses a name the --with rule would never accept', async () => {
+    const writes: Array<[string, string]> = [];
+    await expect(
+      storeSecret(
+        { name: 'lower_case', value: 'x' },
+        {
+          roomId: 'room-1',
+          execute: async () => ({}),
+          storeSecret: async (name, value) => {
+            writes.push([name, value]);
+          },
+        },
+      ),
+    ).rejects.toThrow('UPPER_CASE');
+    expect(writes).toEqual([]);
   });
 });
 

@@ -66,7 +66,9 @@ export const AGENT_GRANT_VERBS: Readonly<Record<AgentGrantKind, string>> = {
  * `--with NAME` suffix, one name per `--with`, and are stripped from the argv.
  */
 const SHELL_METACHARACTERS = /[;&|<>$`\\'"(){}\n\r\t*?[\]~#!]/;
-const SECRET_NAME = /^[A-Z][A-Z0-9_]{0,63}$/;
+
+/** One secret name a `--with` suffix or `store_secret` may carry. */
+export const COMMAND_SECRET_NAME = /^[A-Z][A-Z0-9_]{0,63}$/;
 
 export type CommandGrantRule = {
   /** The approved argv prefix, shell-word split on single spaces. */
@@ -97,7 +99,7 @@ export function parseCommandGrantTarget(target: string): CommandGrantRule {
     const word = words[index]!;
     if (word === '--with') {
       const name = words[index + 1];
-      if (!name || !SECRET_NAME.test(name)) {
+      if (!name || !COMMAND_SECRET_NAME.test(name)) {
         throw new Error('--with must name one UPPER_CASE secret');
       }
       if (!secrets.includes(name)) secrets.push(name);

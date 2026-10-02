@@ -1,8 +1,10 @@
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { chmod, mkdir, mkdtemp, rm, rmdir, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import {
@@ -14,7 +16,10 @@ import {
   GrantCommandRunner,
   GrantRunnerServer,
   ROOM_SANDBOX_UNAVAILABLE,
+  acquireOperatorSecretStoreLock,
   matchCommandGrant,
+  operatorSecretResolver,
+  storeOperatorSecret,
   type GrantWritePolicy,
 } from './grant-runner.js';
 
@@ -247,6 +252,239 @@ describe('GrantCommandRunner', () => {
       'secret MISSING_SECRET is not in the operator key store',
     );
     expect(calls.map((call) => call.name)).toEqual(['listTurnAgentGrants']);
+  });
+
+  it('resolves a secret from the daemon environment as a fallback when the store has none', async () => {
+    const config = await mkdtemp(join(tmpdir(), 'beeline-keys-'));
+    roots.push(config);
+    const env: NodeJS.ProcessEnv = {
+      XDG_CONFIG_HOME: join(config, '.config'),
+      ENV_ONLY_SECRET: 'env-only-value-42',
+    };
+    const resolve = operatorSecretResolver(env);
+    await expect(resolve('ENV_ONLY_SECRET')).resolves.toBe('env-only-value-42');
+    await expect(resolve('NEVER_ANYWHERE')).resolves.toBeUndefined();
+  });
+
+  it('resolves provider keys and secrets.json before the environment, and never invents values', async () => {
+    const config = await mkdtemp(join(tmpdir(), 'beeline-keys-'));
+    roots.push(config);
+    const dict = join(config, '.config', 'beeline');
+    await mkdir(dict, { recursive: true });
+    await writeFile(
+      join(dict, 'providers.json'),
+      JSON.stringify({ openrouter: 'sk-or-stored' }),
+      { mode: 0o600 },
+    );
+    await writeFile(join(dict, 'secrets.json'), JSON.stringify({ STORED: 'from-json' }), {
+      mode: 0o600,
+    });
+    const env: NodeJS.ProcessEnv = {
+      XDG_CONFIG_HOME: join(config, '.config'),
+      OPENROUTER_API_KEY: 'sk-or-env',
+      STORED: 'from-env',
+    };
+    const resolve = operatorSecretResolver(env);
+    // The store wins over the environment: a stored value is the operator's
+    // explicit standing choice, an env var may be incidental.
+    await expect(resolve('OPENROUTER_API_KEY')).resolves.toBe('sk-or-stored');
+    await expect(resolve('STORED')).resolves.toBe('from-json');
+    await expect(resolve('EMPTY_STORED')).resolves.toBeUndefined();
+  });
+
+  it('storeOperatorSecret writes mode-0600 and the resolver reads it back', async () => {
+    const config = await mkdtemp(join(tmpdir(), 'beeline-keys-'));
+    roots.push(config);
+    const env: NodeJS.ProcessEnv = { XDG_CONFIG_HOME: join(config, '.config') };
+    await storeOperatorSecret('DEPLOY_TOKEN', 'token-value-9', env);
+    const path = join(config, '.config', 'beeline', 'secrets.json');
+    expect(existsSync(path)).toBe(true);
+    const mode = (await import('node:fs')).statSync(path).mode & 0o777;
+    expect(mode).toBe(0o600);
+    await expect(operatorSecretResolver(env)('DEPLOY_TOKEN')).resolves.toBe('token-value-9');
+    // Storing the same name replaces its value.
+    await storeOperatorSecret('DEPLOY_TOKEN', 'token-value-10', env);
+    await expect(operatorSecretResolver(env)('DEPLOY_TOKEN')).resolves.toBe('token-value-10');
+    // The raw file never contains anything but the JSON pair.
+    expect(readFileSync(path, 'utf8')).toBe(JSON.stringify({ DEPLOY_TOKEN: 'token-value-10' }, null, 2) + '\n');
+  });
+
+  it('concurrent storeOperatorSecret writes never drop a secret (regression: 1 of 24 survived)', async () => {
+    const config = await mkdtemp(join(tmpdir(), 'beeline-keys-'));
+    roots.push(config);
+    const env: NodeJS.ProcessEnv = { XDG_CONFIG_HOME: join(config, '.config') };
+    // All stores share one secrets.json and each is a read-modify-write, so
+    // without serialization every call writes from the same snapshot and only
+    // the last one survives.
+    const names = Array.from({ length: 24 }, (_, i) => `SECRET_${i}`);
+    await Promise.all(
+      names.map((name, i) => storeOperatorSecret(name, `value-${i}`, env)),
+    );
+    const resolve = operatorSecretResolver(env);
+    for (const [i, name] of names.entries()) {
+      await expect(resolve(name)).resolves.toBe(`value-${i}`);
+    }
+    const keep = Object.keys(JSON.parse(readFileSync(join(config, '.config', 'beeline', 'secrets.json'), 'utf8')));
+    expect(keep.sort()).toEqual(names.slice().sort());
+  });
+
+  it('concurrent storeOperatorSecret writes across separate processes never drop a secret (regression: 6 of 48 survived)', async () => {
+    const config = await mkdtemp(join(tmpdir(), 'beeline-keys-'));
+    roots.push(config);
+    const xdg = join(config, '.config');
+    // Two daemon processes share one operator config directory, so an
+    // in-process write tail cannot serialize them. Run the real
+    // storeOperatorSecret from grant-runner.ts in separate node processes
+    // (loaded through tsx) against one store, each writing a distinct name.
+    const modulePath = fileURLToPath(new URL('./grant-runner.ts', import.meta.url));
+    const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
+    const worker = join(config, 'store-worker.mjs');
+    await writeFile(
+      worker,
+      [
+        `const { storeOperatorSecret } = await import(${JSON.stringify(modulePath)});`,
+        `const [name, value, xdg] = process.argv.slice(2);`,
+        `await storeOperatorSecret(name, value, { XDG_CONFIG_HOME: xdg });`,
+        '',
+      ].join('\n'),
+      { mode: 0o600 },
+    );
+    const names = Array.from({ length: 24 }, (_, i) => `PROCESS_SECRET_${i}`);
+    await Promise.all(
+      names.map((name, i) => {
+        return new Promise<void>((resolve, reject) => {
+          const child = spawn(
+            process.execPath,
+            ['--import', 'tsx', worker, name, `value-${i}`, xdg],
+            { cwd: repoRoot, stdio: ['ignore', 'ignore', 'pipe'] },
+          );
+          let stderr = '';
+          child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+          child.on('error', reject);
+          child.on('exit', (code) => {
+            if (code === 0) resolve();
+            else reject(new Error(`worker ${name} exited ${code}: ${stderr}`));
+          });
+        });
+      }),
+    );
+    const resolveSecret = operatorSecretResolver({ XDG_CONFIG_HOME: xdg });
+    for (const [i, name] of names.entries()) {
+      await expect(resolveSecret(name)).resolves.toBe(`value-${i}`);
+    }
+    const store = JSON.parse(
+      readFileSync(join(xdg, 'beeline', 'secrets.json'), 'utf8'),
+    ) as Record<string, string>;
+    expect(Object.keys(store).sort()).toEqual(names.slice().sort());
+  });
+
+  it('an interleaved takeover can never make a release delete the new holder lock', async () => {
+    const config = await mkdtemp(join(tmpdir(), 'beeline-keys-'));
+    roots.push(config);
+    const xdg = join(config, '.config');
+    const storePath = join(xdg, 'beeline', 'secrets.json');
+    const lockDir = `${storePath}.lock`;
+    await mkdir(dirname(storePath), { recursive: true });
+    const releaseH = await acquireOperatorSecretStoreLock(storePath);
+    const markerH = readdirSync(lockDir)[0];
+    // Deterministic interleaving: while H still believes it owns the lock, a
+    // second holder takes it over — the lock is aged past the stale threshold
+    // and re-acquired, so the path is replaced under the original holder.
+    const past = Date.now() - 20_000;
+    await utimes(lockDir, new Date(past), new Date(past));
+    const releaseN = await acquireOperatorSecretStoreLock(storePath); // steals + re-acquires
+    const markerN = readdirSync(lockDir)[0];
+    expect(markerN).not.toBe(markerH);
+    // H finishing must not delete N's lock: the lock directory is a non-empty
+    // directory, and rmdir only ever succeeds on an empty one.
+    await releaseH();
+    expect(existsSync(lockDir)).toBe(true);
+    expect(readdirSync(lockDir)).toEqual([markerN]);
+    // A second release from H is also a no-op.
+    await releaseH();
+    expect(readdirSync(lockDir)).toEqual([markerN]);
+    // N can still release its own lock normally.
+    await releaseN();
+    expect(existsSync(lockDir)).toBe(false);
+  });
+
+  it('takes over a genuinely stale lock and a fresh lock is never removed by a waiter', async () => {
+    const config = await mkdtemp(join(tmpdir(), 'beeline-keys-'));
+    roots.push(config);
+    const xdg = join(config, '.config');
+    const env: NodeJS.ProcessEnv = { XDG_CONFIG_HOME: xdg };
+    const storePath = join(xdg, 'beeline', 'secrets.json');
+    const lockDir = `${storePath}.lock`;
+    await mkdir(dirname(storePath), { recursive: true });
+    // A dead holder left a lock directory aged past the stale threshold; the
+    // next store must take it over and complete instead of wedging forever.
+    await mkdir(lockDir, { mode: 0o700 });
+    await writeFile(join(lockDir, 'dead:9'), '9\n', { mode: 0o600 });
+    const dead = Date.now() - 20_000;
+    await utimes(lockDir, new Date(dead), new Date(dead));
+    await storeOperatorSecret('RECOVERED', 'survived', env);
+    await expect(operatorSecretResolver(env)('RECOVERED')).resolves.toBe('survived');
+    // The takeover completed and the holder released; no lock is left behind.
+    expect(existsSync(lockDir)).toBe(false);
+    // Now hold the lock and ask another caller to acquire while it is fresh:
+    // the waiter must wait, never remove the held lock.
+    const release = await acquireOperatorSecretStoreLock(storePath);
+    const owner = readdirSync(lockDir)[0];
+    const waiting = acquireOperatorSecretStoreLock(storePath);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(readdirSync(lockDir)).toEqual([owner]);
+    await release();
+    const release2 = await waiting;
+    expect(readdirSync(lockDir)[0]).not.toBe(owner);
+    await release2();
+  });
+
+  it('reclaims a stale EMPTY lock directory left by a crash between mkdir and the marker', async () => {
+    const config = await mkdtemp(join(tmpdir(), 'beeline-keys-'));
+    roots.push(config);
+    const xdg = join(config, '.config');
+    const env: NodeJS.ProcessEnv = { XDG_CONFIG_HOME: xdg };
+    const storePath = join(xdg, 'beeline', 'secrets.json');
+    const lockDir = `${storePath}.lock`;
+    await mkdir(dirname(storePath), { recursive: true });
+    // A holder crashed after `mkdir` but before writing its owner marker (or
+    // a prior takeover crashed between unlink and rmdir): an EMPTY lock
+    // directory aged past the stale threshold. The next store must reclaim it
+    // and complete, not wedge until the lock timeout.
+    await mkdir(lockDir, { mode: 0o700 });
+    const dead = Date.now() - 20_000;
+    await utimes(lockDir, new Date(dead), new Date(dead));
+    await storeOperatorSecret('RECOVERED2', 'survived', env);
+    await expect(operatorSecretResolver(env)('RECOVERED2')).resolves.toBe('survived');
+    // The takeover completed and the holder released; no lock is left behind.
+    expect(existsSync(lockDir)).toBe(false);
+  });
+
+  it('a fresh EMPTY lock directory is left alone while its acquirer finishes the handshake', async () => {
+    const config = await mkdtemp(join(tmpdir(), 'beeline-keys-'));
+    roots.push(config);
+    const xdg = join(config, '.config');
+    const env: NodeJS.ProcessEnv = { XDG_CONFIG_HOME: xdg };
+    const storePath = join(xdg, 'beeline', 'secrets.json');
+    const lockDir = `${storePath}.lock`;
+    await mkdir(dirname(storePath), { recursive: true });
+    // `mkdir` and the marker write are two steps; a live acquirer sits in the
+    // gap with a FRESH empty directory. A waiter must never reclaim it, or it
+    // would delete a live lock that still has its marker to write.
+    await mkdir(lockDir, { mode: 0o700 });
+    const waiting = acquireOperatorSecretStoreLock(storePath);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(existsSync(lockDir)).toBe(true);
+    expect(readdirSync(lockDir)).toEqual([]);
+    // The gap closes: the acquirer writes its marker, then releases the way
+    // releaseOperatorSecretsLock does — remove its own marker, then rmdir,
+    // which succeeds only while the directory is truly empty.
+    await writeFile(join(lockDir, 'live:1'), '1\n', { mode: 0o600 });
+    await rm(join(lockDir, 'live:1'), { force: true });
+    await rmdir(lockDir);
+    const release = await waiting;
+    await release();
+    expect(existsSync(lockDir)).toBe(false);
   });
 
   it('reports a non-zero exit and a command that does not start, still with a ledger row', async () => {

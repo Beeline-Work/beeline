@@ -19,6 +19,7 @@ import type {
   SystemEvent,
 } from '@beeline/api-contract/daemon';
 import { CornerVerdictRejectedError, recordCornerMergeApproval } from './corner-merge-approval.js';
+import { cornerImplementerSql } from './corner-worker.js';
 import {
   CORNER_VALIDATION_STAGES,
   CORNER_BRIEF_REVISION_SELECT,
@@ -1586,12 +1587,12 @@ export class DaemonService {
         reviewer_agent_id: string;
         owner_agent_id: string;
       }>(
-        `SELECT parent.reviewer_agent_id,fact.owner_agent_id
+        `SELECT parent.reviewer_agent_id,${cornerImplementerSql('fact', 'corner')} owner_agent_id
          FROM rooms corner
          JOIN rooms parent ON parent.id=corner.parent_id
          JOIN corner_facts fact ON fact.corner_id=corner.id
          WHERE corner.id=$1 AND parent.reviewer_agent_id IS NOT NULL
-           AND parent.reviewer_agent_id<>$2 AND fact.owner_agent_id=$2
+           AND parent.reviewer_agent_id<>$2 AND ${cornerImplementerSql('fact', 'corner')}=$2
            AND fact.lifecycle ? 'pr'`,
         [cornerId, workerAgentId],
       )
@@ -1622,7 +1623,7 @@ export class DaemonService {
           owner_agent_id: string;
           lifecycle: import('@beeline/api-contract/phone').CornerLifecycleView;
         }>(
-          `SELECT parent.reviewer_agent_id,fact.owner_agent_id,fact.lifecycle
+          `SELECT parent.reviewer_agent_id,${cornerImplementerSql('fact', 'corner')} owner_agent_id,fact.lifecycle
            FROM rooms corner
            JOIN rooms parent ON parent.id=corner.parent_id
            JOIN corner_facts fact ON fact.corner_id=corner.id

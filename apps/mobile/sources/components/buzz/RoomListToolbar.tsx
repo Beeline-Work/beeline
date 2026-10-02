@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
+import { SearchField } from './SearchField';
 import { TrayGlyph } from './TrayGlyph';
 import { compactNeedsYouCount } from '@/buzz/needs-you';
 import type { RoomListFilter } from '@/buzz/room-list-preferences';
@@ -37,14 +38,16 @@ export function RoomListToolbar({
   const localSearchRef = useRef<TextInput>(null);
   const [focused, setFocused] = useState(false);
   const [localSearchOpen, setLocalSearchOpen] = useState(false);
-  const searchOpen = controlledSearchOpen ?? localSearchOpen;
+  const toggledOpen = controlledSearchOpen ?? localSearchOpen;
+  // The phone keeps its field standing under the chips; desktop opens it from the magnifier.
+  const searchOpen = !desktop || toggledOpen;
   const setSearchOpen = (open: boolean) => {
     onSearchOpenChange?.(open);
     if (controlledSearchOpen === undefined) setLocalSearchOpen(open);
   };
   useEffect(() => {
-    if (searchOpen) (searchRef ?? localSearchRef).current?.focus();
-  }, [searchOpen, searchRef]);
+    if (desktop && toggledOpen) (searchRef ?? localSearchRef).current?.focus();
+  }, [desktop, toggledOpen, searchRef]);
   const toggleSearch = () => {
     if (searchOpen) {
       (searchRef ?? localSearchRef).current?.blur();
@@ -56,16 +59,18 @@ export function RoomListToolbar({
   };
   const actions = (
     <>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={searchOpen ? 'Close search' : 'Search conversations'}
-        accessibilityState={{ expanded: searchOpen }}
-        onPress={toggleSearch}
-        style={styles.action}
-        testID="room-search-toggle"
-      >
-        <Ionicons name="search-outline" size={21} color={styles.label.color} />
-      </Pressable>
+      {desktop && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={searchOpen ? 'Close search' : 'Search conversations'}
+          accessibilityState={{ expanded: searchOpen }}
+          onPress={toggleSearch}
+          style={styles.action}
+          testID="room-search-toggle"
+        >
+          <Ionicons name="search-outline" size={21} color={styles.label.color} />
+        </Pressable>
+      )}
       {onTray && (
         <Pressable
           accessibilityRole="button"
@@ -115,7 +120,7 @@ export function RoomListToolbar({
       ))}
     </ScrollView>
   );
-  const search = (
+  const search = desktop ? (
     <View>
       <TextInput
         ref={searchRef ?? localSearchRef}
@@ -127,9 +132,16 @@ export function RoomListToolbar({
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
         style={[styles.search, focused && styles.searchFocused]}
-        testID={desktop ? 'desktop-room-search' : 'room-search'}
+        testID="desktop-room-search"
       />
     </View>
+  ) : (
+    <SearchField
+      value={query}
+      onChangeText={onQuery}
+      label="Search Rooms, DMs and corners"
+      testID="room-search"
+    />
   );
   return (
     <View>

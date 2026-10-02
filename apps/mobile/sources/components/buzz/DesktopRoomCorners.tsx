@@ -14,16 +14,19 @@ export function DesktopRoomCorners({
   onOpen,
   renderDrag,
   mobile = false,
+  corners: listed,
 }: {
   item: ChatListItem;
   onOpen: (cornerId: string) => void;
   renderDrag: (cornerId: string, children: React.ReactNode) => React.ReactNode;
   mobile?: boolean;
+  /** Corners to list instead of the viewer's own, such as a search's matches. */
+  corners?: NonNullable<ChatListItem['openCorners']>;
 }) {
   // The chat list carries each Room's open corners; no per-Room corners read.
-  const corners = (item.openCorners ?? [])
-    .filter((corner) => corner.mine)
-    .sort((a, b) => Number(b.state === 'waiting') - Number(a.state === 'waiting'));
+  const corners = [...(listed ?? (item.openCorners ?? []).filter((corner) => corner.mine))].sort(
+    (a, b) => Number(b.state === 'waiting') - Number(a.state === 'waiting'),
+  );
   if (corners.length === 0) return null;
   return (
     <View

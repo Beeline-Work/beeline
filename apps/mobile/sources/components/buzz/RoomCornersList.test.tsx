@@ -288,13 +288,16 @@ describe('RoomCornersList', () => {
 
   it('uses the human creator as the opener when a corner has no agent', () => {
     const item = corner('notes', 'waiting', 'Release notes');
-    const tree = render([
-      {
-        ...item,
-        agent: undefined,
-        initiator: { pubkey: 'person-1', kind: 'human', name: 'Avery' },
-      },
-    ], { viewerPubkey: 'person-1' });
+    const tree = render(
+      [
+        {
+          ...item,
+          agent: undefined,
+          initiator: { pubkey: 'person-1', kind: 'human', name: 'Avery' },
+        },
+      ],
+      { viewerPubkey: 'person-1' },
+    );
     const row = tree.root.findByProps({ testID: 'room-corner-notes' });
     expect(row.props.accessibilityLabel).toContain('Opened by Avery');
     expect(row.findByType('IdentityMark' as any).props).toMatchObject({
@@ -637,5 +640,107 @@ describe('RoomCornersHeader', () => {
     expect(onBack).toHaveBeenCalledOnce();
     act(() => add.props.onPress());
     expect(onAdd).toHaveBeenCalledOnce();
+  });
+});
+
+describe('RoomCornersList search', () => {
+  const ids = (tree: ReactTestRenderer) =>
+    tree.root
+      .findAllByType('Pressable' as any)
+      .map((node: any) => String(node.props.testID ?? ''))
+      .filter((testID: string) => /^room-corner-/.test(testID));
+  const live = [
+    corner('mine-search', 'working', 'Menu search mock'),
+    corner('mine-other', 'working', 'Release notes'),
+    theirs('theirs-search'),
+    theirs('theirs-other'),
+  ].map((item) =>
+    item.corner.id === 'theirs-search'
+      ? { ...item, corner: { ...item.corner, name: 'Member search paging' } }
+      : item,
+  );
+  const archived = {
+    status: 'ready' as const,
+    corners: [
+      corner('closed-search', 'archived', 'Room list search toggle'),
+      corner('closed-other', 'archived', 'Fix focus'),
+    ],
+  };
+  const update = (tree: ReactTestRenderer, query: string, onClearQuery?: () => void) =>
+    act(() =>
+      tree.update(
+        <RoomCornersList
+          corners={live}
+          parentRoomName="#alpha"
+          parentRoomId="room-1"
+          viewerPubkey={VIEWER}
+          archived={archived}
+          query={query}
+          onClearQuery={onClearQuery}
+        />,
+      ),
+    );
+
+  it('filters Mine, Others and the loaded archive, opening every section with a match', () => {
+    const tree = render(live, { archived });
+    // Before the search: Mine open, Others and Archived folded.
+    expect(ids(tree)).toEqual(['room-corner-mine-search', 'room-corner-mine-other']);
+
+    update(tree, 'SEARCH');
+    expect(ids(tree)).toEqual([
+      'room-corner-mine-search',
+      'room-corner-theirs-search',
+      'room-corner-closed-search',
+    ]);
+    expect(pressable(tree, 'room-corners-mine').props.accessibilityLabel).toBe('Mine · 1');
+    expect(pressable(tree, 'room-corners-others').props.accessibilityLabel).toBe('Others · 1');
+    expect(pressable(tree, 'room-corners-archived').props.accessibilityLabel).toBe(
+      'Archived corners · 1',
+    );
+    for (const key of ['mine', 'others', 'archived']) {
+      expect(pressable(tree, `room-corners-${key}`).props.accessibilityState).toMatchObject({
+        expanded: true,
+      });
+    }
+  });
+
+  it('matches the person who opened a corner and its agent', () => {
+    const tree = render(live, { archived });
+    update(tree, 'sam');
+    expect(ids(tree)).toEqual(['room-corner-theirs-search', 'room-corner-theirs-other']);
+    update(tree, 'opener closed-other');
+    expect(ids(tree)).toEqual(['room-corner-closed-other']);
+  });
+
+  it('restores the folds from before the search once it is cleared', () => {
+    const tree = render(live, { archived });
+    act(() => pressable(tree, 'room-corners-mine').props.onPress());
+    expect(ids(tree)).toEqual([]);
+
+    update(tree, 'search');
+    expect(ids(tree)).toHaveLength(3);
+    // A fold tapped mid-search lasts only as long as the search.
+    act(() => pressable(tree, 'room-corners-others').props.onPress());
+    expect(ids(tree)).toEqual(['room-corner-mine-search', 'room-corner-closed-search']);
+
+    update(tree, '');
+    expect(ids(tree)).toEqual([]);
+    for (const key of ['mine', 'others', 'archived']) {
+      expect(pressable(tree, `room-corners-${key}`).props.accessibilityState).toMatchObject({
+        expanded: false,
+      });
+    }
+  });
+
+  it('says nothing matches and offers to clear the search', () => {
+    const onClearQuery = vi.fn();
+    const tree = render(live, { archived });
+    update(tree, 'nothing like this', onClearQuery);
+    expect(ids(tree)).toEqual([]);
+    expect(tree.root.findByProps({ testID: 'room-corners-no-match' })).toBeTruthy();
+    expect(text(tree)).toContain('No corners match');
+    expect(tree.root.findAllByProps({ testID: 'room-corners-empty' })).toHaveLength(0);
+    act(() => pressable(tree, 'room-corners-search-clear').props.onPress());
+    expect(onClearQuery).toHaveBeenCalledOnce();
   });
 });

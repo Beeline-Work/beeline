@@ -42,6 +42,7 @@ export default function BuzzCorners() {
   const [retryGeneration, setRetryGeneration] = useState(0);
   const creatingRef = useRef(false);
   const [archived, setArchived] = useState<ArchivedCornersState>({ status: 'idle' });
+  const [query, setQuery] = useState('');
   const schedulerRef = useRef<SurfaceRefreshScheduler<CornerListView> | null>(null);
 
   useEffect(() => {
@@ -227,6 +228,8 @@ export default function BuzzCorners() {
           title={title}
           onBack={() => router.back()}
           onAdd={() => void createCorner()}
+          query={query}
+          onQuery={setQuery}
         />
         {!!error && (
           // F5: it is tappable, so it announces as a button. `alert` promised
@@ -252,6 +255,8 @@ export default function BuzzCorners() {
           onShowArchived={() => void loadArchived()}
           onMoreArchived={() => void loadMoreArchived()}
           viewerPubkey={surface.viewer.identity.pubkey}
+          query={query}
+          onClearQuery={() => setQuery('')}
           onRefresh={() => {
             setRefreshing(true);
             schedulerRef.current?.force();

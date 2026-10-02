@@ -24,6 +24,7 @@ import { deckLanding } from '@/buzz/deck-landing';
 import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
 import {
   filterConversations,
+  matchingCorners,
   roomListCounts,
   useRoomPins,
   useRoomListFilter,
@@ -1074,6 +1075,12 @@ export default function BuzzChannels() {
               const first = index === 0;
               const last = index === section.data.length - 1;
               const cornersExpanded = cornerDropdowns.expanded.has(item.room.id);
+              // A search that names a corner lists it under its Room, folded or not.
+              const searchCorners = item.directMessage ? [] : matchingCorners(item, query);
+              const openCorner = (cornerId: string) => {
+                const corner = item.openCorners?.find((open) => open.id === cornerId);
+                router.push(cornerHref(cornerId, item.room.id, corner?.name, 'room-list'));
+              };
               const row = (
                 <View
                   style={[
@@ -1099,18 +1106,25 @@ export default function BuzzChannels() {
                     }
                     testID={`room-${item.room.id}`}
                   />
-                  {!item.directMessage && (item.cornerCount ?? 0) > 0 && cornersExpanded && (
+                  {searchCorners.length > 0 ? (
                     <DesktopRoomCorners
                       item={item}
+                      corners={searchCorners}
                       mobile
-                      onOpen={(cornerId) => {
-                        const corner = item.openCorners?.find((open) => open.id === cornerId);
-                        router.push(
-                          cornerHref(cornerId, item.room.id, corner?.name, 'room-list'),
-                        );
-                      }}
+                      onOpen={openCorner}
                       renderDrag={(_, children) => children}
                     />
+                  ) : (
+                    !item.directMessage &&
+                    (item.cornerCount ?? 0) > 0 &&
+                    cornersExpanded && (
+                      <DesktopRoomCorners
+                        item={item}
+                        mobile
+                        onOpen={openCorner}
+                        renderDrag={(_, children) => children}
+                      />
+                    )
                   )}
                 </View>
               );

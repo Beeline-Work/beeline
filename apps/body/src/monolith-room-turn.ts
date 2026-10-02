@@ -2,6 +2,7 @@ import { readHarnessTurnUsage } from './turn-usage.js';
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
 import type { InterruptedTurn } from './force-update-journal.js';
 import { SquireTaskRelay } from './squire-task-relay.js';
+import { SquireSessionRegistry, squireRegistryDir } from './squire-session-registry.js';
 import { resourceCallFacts } from './resource-mcp-facade.js';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
@@ -499,6 +500,13 @@ export class MonolithRoomTurnLoop {
           })
         ).allowed,
       options.config.operatorHome ?? homedir(),
+      undefined,
+      {
+        registry: new SquireSessionRegistry(
+          squireRegistryDir(options.config.operatorHome ?? homedir()),
+        ),
+        ownerId: options.config.accessOwnerPubkey ?? null,
+      },
     );
     this.options = { ...options, api: this.commandContext.bind(options.api) };
     options.grantRunner?.register(options.roomId, {

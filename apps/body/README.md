@@ -16,7 +16,14 @@ pairing-code redemption, approval or mandate engine, work calendar, repository l
 GitHub event consumer. Its action surface is repository corner start/status plus Room-to-corner
 steering: `read-only-mcp.ts` exposes `steer_corner` in top-level Rooms, `open_corner` in Rooms
 and corners (a corner's new corner opens beside it in the parent Room), and `pr_checks_status` in
-corners through the `beeline-agent` MCP surface. A no-code corner of a
+corners through the `beeline-agent` MCP surface. The same surface exposes `list_squire_sessions`
+and `close_squire_session` for the host-shared Squire browser sessions: every helper keeps one
+small record per open session in `~/.trusty-squire/beeline-sessions`, so an agent can see a
+session another agent left behind and close it when its turn has ended (a live turn or a pending
+human approval is never closable from outside, and an abandoned session is reaped after a
+timeout). A card-release `inject_card`/`operate_drive` also takes a host-wide order lock keyed by
+merchant, amount and currency, so a second agent of the same owner staging the same order is
+refused instead of opening a second live card-release link. A no-code corner of a
 repository-backed Room also gets `upgrade_corner_to_code`, its one-way lane upgrade, which the
 agent calls on its own judgment when the work needs the repository, while answering a human
 message in that same corner; the corner then restarts with a branch, token and worktree, and the

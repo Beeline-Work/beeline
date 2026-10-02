@@ -87,6 +87,7 @@ import {
 } from '@beeline/api-contract/phone';
 import { normalizeAppContinuation } from '@beeline/api-contract/app-connections';
 import { READ_ONLY_TOOL_NAMES } from './read-only-policy.js';
+import { processAlive, SquireSessionRegistry } from './squire-session-registry.js';
 import { validateArtifact } from './artifact-validation.js';
 import {
   BoundedSizeError,
@@ -1509,6 +1510,29 @@ const AGENT_TOOLS: ToolDefinition[] = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'list_squire_sessions',
+    description:
+      'List every open Trusty Squire browser session on this machine: the owning agent, the conversation it was opened from, when it started, whether a turn is still using it, and whether a human approval is holding it. A session with turnLive false and stale true is blocking nobody and can be closed; call this before operate_start fails on a busy shared browser, and before telling anyone a session cannot be killed. Free to call; it changes nothing.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'close_squire_session',
+    description:
+      'Close one open Squire browser session on the shared broker so operate_start can run again. Only an agent of the SAME OWNER as the session may close it, and never while its turn is live or a human card approval is waiting on it — list_squire_sessions reports canClose for each session. Use this on a session left by a cancelled or finished turn; a stale session is also reaped automatically after a timeout.',
+    inputSchema: {
+      type: 'object',
+      required: ['sessionId'],
+      properties: {
+        sessionId: {
+          type: 'string',
+          minLength: 1,
+          description: 'The sessionId from list_squire_sessions.',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
 ];
 
 const agentSurface = process.env.BEELINE_MCP_SURFACE === 'agent';
@@ -1523,6 +1547,7 @@ export function agentToolsFor(
   agentMayCloseCorner = cornerTurn,
   institutionalMemoryEnabled = process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false',
   agentMayUpgradeCorner = false,
+  squireSessionsAvailable = Boolean(process.env.BEELINE_SQUIRE_SESSION_DIR),
 ): ToolDefinition[] {
   if (!agentSurface) return READ_ONLY_TOOLS;
   return AGENT_TOOLS.filter((tool) => {
@@ -1567,6 +1592,8 @@ export function agentToolsFor(
       return cornerTurn;
     if (tool.name === 'open_poll') return !directMessage;
     if (tool.name === 'run_granted_command') return commandRunnerAvailable;
+    if (tool.name === 'list_squire_sessions' || tool.name === 'close_squire_session')
+      return squireSessionsAvailable;
     return true;
   });
 }
@@ -3444,6 +3471,88 @@ export async function openPoll(
   );
 }
 
+export interface SquireSessionDeps {
+  /** The host-shared registry directory (`squireRegistryDir`). */
+  dir: string;
+  /** The human that paired this agent; only their agents may close a session. */
+  ownerId: string | null;
+  agentId: string;
+  fetchImpl?: typeof fetch;
+}
+
+/** Absent when the daemon did not expose a registry to this session. */
+export function squireSessionDepsFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): SquireSessionDeps | undefined {
+  const dir = env.BEELINE_SQUIRE_SESSION_DIR?.trim();
+  if (!dir) return undefined;
+  return {
+    dir,
+    ownerId: env.BEELINE_AGENT_OWNER_ID?.trim() || null,
+    agentId: env.BEELINE_DAEMON_AGENT_ID?.trim() || '',
+  };
+}
+
+/** list_squire_sessions: what is holding the shared browser right now. */
+export async function listSquireSessions(deps: SquireSessionDeps): Promise<string> {
+  const registry = new SquireSessionRegistry(deps.dir);
+  const sessions = registry.listSessions().map((session) => ({
+    sessionId: session.sessionId,
+    ownerAgentId: session.ownerAgentId,
+    ownerId: session.ownerId,
+    conversationId: session.conversationId,
+    startedAt: new Date(session.startedAt).toISOString(),
+    turnLive: session.turnLive,
+    approvalPending: session.approvalPending,
+    stale: session.stale,
+    ownerAlive: session.ownerAlive,
+    // Closeable only by the same owner, and only when no live turn or human
+    // approval still holds it — the same rule the owning helper enforces.
+    canClose: session.ownerAlive && session.stale && session.ownerId === deps.ownerId,
+  }));
+  const orderLocks = registry.listOrderLocks()
+    .filter((lock) => lock.holderOwnerId === deps.ownerId)
+    .map((lock) => ({
+      label: lock.label,
+      holderAgentId: lock.holderAgentId,
+      approvalPending: lock.approvalPending,
+    }));
+  return JSON.stringify({ sessions, orderLocks });
+}
+
+/** close_squire_session: ask the owning helper to finish a stale session. */
+export async function closeSquireSession(
+  args: JsonObject,
+  deps: SquireSessionDeps,
+): Promise<string> {
+  const sessionId = typeof args.sessionId === 'string' ? args.sessionId : '';
+  if (!sessionId) throw new Error('sessionId is required');
+  const registry = new SquireSessionRegistry(deps.dir);
+  const session = registry.findSession(sessionId);
+  if (!session) throw new Error('No open Squire session has that id; call list_squire_sessions first.');
+  if (session.ownerId !== deps.ownerId)
+    throw new Error('That Squire session belongs to another owner; only an agent of the same owner may close it.');
+  if (session.turnLive && processAlive(session.pid))
+    throw new Error('That Squire session is in use by a live turn and cannot be closed from outside.');
+  if (session.approvalPending)
+    throw new Error('That Squire session has an approval awaiting a human decision; it is not stale yet.');
+  if (!session.closeUrl)
+    throw new Error('That Squire session has no reachable owning helper to close it.');
+  const response = await (deps.fetchImpl ?? fetch)(new URL('/sessions/close', `${session.closeUrl}/`), {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${session.closeToken}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ sessionId, ownerId: deps.ownerId, agentId: deps.agentId }),
+    signal: AbortSignal.timeout(20_000),
+  });
+  const body = (await response.json().catch(() => ({}))) as { error?: unknown };
+  if (!response.ok)
+    throw new Error(typeof body.error === 'string' ? body.error : `Squire session close failed (${response.status})`);
+  return JSON.stringify({ closed: true, sessionId });
+}
+
 export interface GrantRunDeps {
   roomId: string;
   run: (input: { roomId: string; argv: string[] }) => Promise<JsonObject>;
@@ -4040,6 +4149,16 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       return openPoll(args);
     case 'run_granted_command':
       return runGrantedCommand(args);
+    case 'list_squire_sessions': {
+      const deps = squireSessionDepsFromEnv();
+      if (!deps) throw new Error('Squire session tools are unavailable on this host');
+      return await listSquireSessions(deps);
+    }
+    case 'close_squire_session': {
+      const deps = squireSessionDepsFromEnv();
+      if (!deps) throw new Error('Squire session tools are unavailable on this host');
+      return await closeSquireSession(args, deps);
+    }
     default:
       throw new Error(`tool is not available on the agent surface: ${name}`);
   }

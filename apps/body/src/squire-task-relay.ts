@@ -11,6 +11,11 @@ import { createInterface } from 'node:readline';
 import { homedir } from 'node:os';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import { StdioSquireMcpClient } from './squire-mcp-client.js';
+import {
+  SQUIRE_SESSION_STALE_MS,
+  SquireSessionRegistry,
+  squireOrderIdentity,
+} from './squire-session-registry.js';
 import { squireApprovalFromMcp } from './resource-mcp-facade.js';
 
 type TurnKey = { roomId: string; requestId: string; taskId: string; generationId: string };
@@ -79,16 +84,37 @@ type TaskConnection = {
   dead: boolean;
 };
 
+export type SquireTaskRelayOptions = {
+  /** Host-shared registry of open sessions and staged-order locks. */
+  registry?: SquireSessionRegistry;
+  /** The human that paired this agent (`runtime.pairedBy`), when known. */
+  ownerId?: string | null;
+  /** How long a session whose turn ended survives before it is reaped. */
+  sessionStaleMs?: number;
+};
+
 export class SquireTaskRelay {
   private server?: Server;
   private url?: string;
   private readonly token = randomUUID();
+  private readonly closeToken = randomUUID();
+  private readonly relayId = randomUUID();
+  private readonly registry?: SquireSessionRegistry;
+  private readonly ownerId: string | null;
+  private readonly sessionStaleMs: number;
   private active?: TurnKey;
   private task?: TaskConnection;
   private leaseTimer?: ReturnType<typeof setTimeout>;
+  private reapTimer?: ReturnType<typeof setTimeout>;
   private approvalRequestId?: string;
   private closed = false;
   private callTail: Promise<void> = Promise.resolve();
+  /** orderKey → display label for an order this relay is staging. */
+  private readonly orderLocks = new Map<string, string>();
+  /** approvalKey → orderKey, so an approval's end releases its order lock. */
+  private readonly approvalOrderKeys = new Map<string, string>();
+  /** raw approval id → orderKey, so the call that resolves the approval releases it. */
+  private readonly approvalIdOrderKeys = new Map<string, string>();
 
   constructor(
     private readonly agentId: string,
@@ -101,12 +127,39 @@ export class SquireTaskRelay {
       onExit: (pid: number | undefined, code: number | null) => void;
     }) => StdioSquireMcpClient = (callbacks) =>
       new StdioSquireMcpClient({ scope: { agentId, roomId }, home, processGroup: true, ...callbacks }),
-  ) {}
+    options: SquireTaskRelayOptions = {},
+  ) {
+    this.registry = options.registry;
+    this.ownerId = options.ownerId ?? null;
+    this.sessionStaleMs = options.sessionStaleMs ?? SQUIRE_SESSION_STALE_MS;
+  }
 
   async listen(): Promise<{ url: string; token: string; contextFile: string }> {
     if (this.closed) throw new Error('Squire task relay is closed');
     if (!this.server) {
       const server = createServer(async (request, response) => {
+        if (request.method === 'POST' && request.url === '/sessions/close') {
+          if (request.headers.authorization !== `Bearer ${this.closeToken}`) {
+            response.writeHead(403).end();
+            return;
+          }
+          try {
+            let body = '';
+            for await (const chunk of request) body += chunk;
+            const input = JSON.parse(body) as { sessionId?: unknown; ownerId?: unknown };
+            await this.closeStaleSession(
+              String(input.sessionId ?? ''),
+              typeof input.ownerId === 'string' && input.ownerId ? input.ownerId : null,
+            );
+            response.writeHead(200, { 'content-type': 'application/json' })
+              .end(JSON.stringify({ closed: true }));
+          } catch (error) {
+            response.writeHead(409, { 'content-type': 'application/json' }).end(
+              JSON.stringify({ error: error instanceof Error ? error.message : 'close refused' }),
+            );
+          }
+          return;
+        }
         if (request.method !== 'POST' || request.url !== '/mcp' ||
             request.headers.authorization !== `Bearer ${this.token}`) {
           response.writeHead(403).end();
@@ -149,16 +202,20 @@ export class SquireTaskRelay {
       taskId: command.rootCommandId,
       generationId,
     };
+    this.clearReap();
     if (this.task) {
       this.task.taskId = command.rootCommandId;
       this.task.lastRequestId = command.turnRequestId;
     }
+    this.publishSessions();
   }
 
   deactivate(requestId: string, approvalRequestId?: string): void {
     if (this.active?.requestId !== requestId) return;
     this.active = undefined;
     this.approvalRequestId = approvalRequestId;
+    this.publishSessions();
+    this.scheduleReap();
     // A human approval is an open continuation, however long the card waits.
     if (approvalRequestId) return;
     this.scheduleIdle();
@@ -183,9 +240,16 @@ export class SquireTaskRelay {
           approval.requestId === requestId)) return;
     if (this.active?.requestId === requestId) this.active = undefined;
     if (this.approvalRequestId === requestId) this.approvalRequestId = undefined;
-    for (const [id, approval] of this.task?.pendingApprovals ?? [])
-      if (approval.requestId === requestId) this.task?.pendingApprovals.delete(id);
-    if (!this.active && !this.approvalRequestId) this.scheduleIdle();
+    for (const [id, approval] of [...(this.task?.pendingApprovals ?? [])]) {
+      if (approval.requestId !== requestId) continue;
+      this.task?.pendingApprovals.delete(id);
+      this.releaseApprovalOrderLock(id);
+    }
+    this.publishSessions();
+    if (!this.active && !this.approvalRequestId) {
+      this.scheduleIdle();
+      this.scheduleReap();
+    }
   }
 
   close(): void {
@@ -223,6 +287,8 @@ export class SquireTaskRelay {
           sessionId: redactedSessionId(task.sessions.values().next().value) });
         task.sessions.clear();
         task.pendingApprovals.clear();
+        this.registry?.removeRelaySessions(this.relayId);
+        this.releaseAllOrderLocks();
       },
     });
     this.task = task;
@@ -232,13 +298,175 @@ export class SquireTaskRelay {
   private retire(reason: string): void {
     if (this.leaseTimer) clearTimeout(this.leaseTimer);
     this.leaseTimer = undefined;
+    this.clearReap();
     if (!this.task) return;
     this.log('relay-close', this.task, { reason,
       sessionId: redactedSessionId(this.task.sessions.values().next().value) });
     this.task.client.close();
+    this.registry?.removeRelaySessions(this.relayId);
+    this.releaseAllOrderLocks();
     this.task.sessions.clear();
     this.task.pendingApprovals.clear();
     this.task = undefined;
+  }
+
+  /** Publish every session this relay holds with the liveness its turn just set. */
+  private publishSessions(): void {
+    if (!this.registry || !this.task) return;
+    const live = Boolean(this.active);
+    for (const sessionId of this.task.sessions)
+      this.registry.setSessionLive(sessionId, live, this.sessionHasPendingApproval(sessionId));
+  }
+
+  private sessionHasPendingApproval(sessionId: string): boolean {
+    for (const approval of this.task?.pendingApprovals.values() ?? [])
+      if (approval.sessionIds.has(sessionId)) return true;
+    return false;
+  }
+
+  private addSessions(task: TaskConnection, ids: string[]): void {
+    for (const id of ids) {
+      if (task.sessions.has(id)) continue;
+      task.sessions.add(id);
+      const startedAt = Date.now();
+      this.registry?.registerSession({
+        sessionId: id,
+        ownerAgentId: this.agentId,
+        ownerId: this.ownerId,
+        conversationId: this.roomId,
+        relayId: this.relayId,
+        pid: process.pid,
+        startedAt,
+        turnLive: Boolean(this.active),
+        approvalPending: false,
+        updatedAt: startedAt,
+        closeUrl: this.url ?? '',
+        closeToken: this.closeToken,
+      });
+    }
+  }
+
+  private dropSessions(task: TaskConnection, ids: string[]): void {
+    for (const id of ids) {
+      task.sessions.delete(id);
+      this.registry?.removeSession(id);
+    }
+  }
+
+  /**
+   * A session whose turn ended is reaped after `sessionStaleMs` unless a human
+   * approval still holds it. That is the bound which stops an abandoned browser
+   * from blocking every other agent's `operate_start` on the shared broker.
+   */
+  private scheduleReap(): void {
+    if (this.reapTimer) clearTimeout(this.reapTimer);
+    this.reapTimer = undefined;
+    if (!this.registry || !this.task || this.closed) return;
+    const task = this.task;
+    this.reapTimer = setTimeout(() => {
+      this.reapTimer = undefined;
+      if (this.active || this.closed || this.task !== task) return;
+      for (const sessionId of [...task.sessions]) {
+        if (this.sessionHasPendingApproval(sessionId)) continue;
+        void this.reapSession(task, sessionId, 'stale-timeout').catch(() => {});
+      }
+    }, this.sessionStaleMs);
+    this.reapTimer.unref?.();
+  }
+
+  private clearReap(): void {
+    if (this.reapTimer) clearTimeout(this.reapTimer);
+    this.reapTimer = undefined;
+  }
+
+  /**
+   * Close a Squire browser session this relay owns, refusing while a turn holds
+   * it: a live session is never closable from outside, which is the guarantee
+   * the shared broker needs. Only an agent of the same owner may ask.
+   */
+  private async closeStaleSession(sessionId: string, requesterOwnerId: string | null): Promise<void> {
+    if (!sessionId) throw new Error('a Squire session id is required');
+    if (this.ownerId && requesterOwnerId !== this.ownerId)
+      throw new Error('Squire sessions may only be closed by an agent of the same owner');
+    const task = this.task;
+    if (!task || !task.sessions.has(sessionId))
+      throw new Error('Squire session is not owned by this helper');
+    if (this.active) throw new Error('Squire session is in use by a live turn');
+    if (this.sessionHasPendingApproval(sessionId))
+      throw new Error('Squire session has an approval awaiting a human decision');
+    await this.reapSession(task, sessionId, 'closed-by-owner-agent');
+  }
+
+  private async reapSession(task: TaskConnection, sessionId: string, reason: string): Promise<void> {
+    if (task !== this.task || !task.sessions.has(sessionId)) return;
+    // Squire's own tool takes `session_id` (snake_case); a camelCase argument
+    // would be rejected and the browser would stay open behind a "closed"
+    // record. A refused close keeps the record so it can be retried instead of
+    // pretending the shared browser was freed.
+    let closed: unknown;
+    try {
+      closed = await task.client.requestMcp('tools/call', {
+        name: 'operate_finish', arguments: { session_id: sessionId },
+      });
+    } catch (error) {
+      this.log('session-reap-failed', task, { reason, sessionId: redactedSessionId(sessionId) });
+      throw error;
+    }
+    if (closed && typeof closed === 'object' && (closed as { isError?: unknown }).isError === true) {
+      this.log('session-reap-failed', task, { reason, sessionId: redactedSessionId(sessionId) });
+      throw new Error('Squire refused to close the session; it is still open');
+    }
+    task.sessions.delete(sessionId);
+    this.releasePendingApprovals(task, [sessionId]);
+    this.registry?.removeSession(sessionId);
+    this.log('session-reaped', task, { reason, sessionId: redactedSessionId(sessionId) });
+  }
+
+  /**
+   * A staged order takes a host-wide lock before its card release reaches
+   * Squire, so a second agent of the same owner staging the same order is
+   * refused instead of opening a second live card-release link.
+   */
+  private acquireOrderLock(task: TaskConnection, tool: string, args: Record<string, unknown>): void {
+    const identity = squireOrderIdentity(tool, args);
+    if (!identity || !this.registry || this.orderLocks.has(identity.orderKey)) return;
+    const held = this.registry.acquireOrderLock({
+      orderKey: identity.orderKey,
+      label: identity.label,
+      holderAgentId: this.agentId,
+      holderOwnerId: this.ownerId,
+      conversationId: this.roomId,
+      relayId: this.relayId,
+      pid: process.pid,
+      acquiredAt: Date.now(),
+      approvalPending: false,
+    });
+    if (!held.acquired) {
+      this.log('order-refused', task, { reason: 'order-locked' });
+      throw new Error(
+        `Another agent of your owner is already staging this order (${held.heldBy.label}); ` +
+        'wait for that agent to finish or ask it to release the order.',
+      );
+    }
+    this.orderLocks.set(identity.orderKey, identity.label);
+  }
+
+  private releaseApprovalOrderLock(approvalKey: string): void {
+    const orderKey = this.approvalOrderKeys.get(approvalKey);
+    if (!orderKey) return;
+    this.approvalOrderKeys.delete(approvalKey);
+    this.releaseOrderLock(orderKey);
+  }
+
+  private releaseOrderLock(orderKey: string): void {
+    for (const [approvalId, key] of [...this.approvalIdOrderKeys])
+      if (key === orderKey) this.approvalIdOrderKeys.delete(approvalId);
+    if (!this.orderLocks.delete(orderKey)) return;
+    this.registry?.releaseOrderLock(orderKey, this.relayId);
+  }
+
+  private releaseAllOrderLocks(): void {
+    for (const orderKey of [...this.orderLocks.keys()]) this.releaseOrderLock(orderKey);
   }
 
   private handle(input: RelayRequest): Promise<unknown> {
@@ -283,11 +511,11 @@ export class SquireTaskRelay {
       this.log('call-refused', task, { reason: 'session-not-owned' });
       throw new Error('Squire browser session is no longer owned by this conversation; call operate_start');
     }
+    const callArgs = input.params?.arguments && typeof input.params.arguments === 'object' &&
+      !Array.isArray(input.params.arguments)
+      ? input.params.arguments as Record<string, unknown> : {};
     if (input.method === 'tools/call' && !(await this.authorize({
-      ...active, tool: safeToolName!,
-      args: input.params?.arguments && typeof input.params.arguments === 'object' &&
-        !Array.isArray(input.params.arguments)
-        ? input.params.arguments as Record<string, unknown> : {},
+      ...active, tool: safeToolName!, args: callArgs,
     }))) {
       this.log('call-refused', task, { reason: 'resource-denied' });
       throw new Error('Squire call is not authorized for this task');
@@ -300,6 +528,11 @@ export class SquireTaskRelay {
       this.retire('restart-required');
       task = this.connection(active.taskId);
     }
+    const orderIdentity = input.method === 'tools/call' && safeToolName
+      ? squireOrderIdentity(safeToolName, callArgs)
+      : undefined;
+    if (orderIdentity) this.acquireOrderLock(task, safeToolName!, callArgs);
+    let orderLockHeld = false;
     try {
       const result = await task.client.requestMcp(input.method, input.params ?? {});
       if (this.closed || this.task !== task || this.active?.taskId !== active.taskId ||
@@ -307,7 +540,7 @@ export class SquireTaskRelay {
         throw new Error('Squire task ended while the call was running');
       if (input.method === 'tools/list') task.tools = result;
       if (staleLeaseResult(result)) {
-        for (const id of requestedIds) task.sessions.delete(id);
+        this.dropSessions(task, requestedIds);
         this.releasePendingApprovals(task, requestedIds);
         this.log('call-error', task, { method: input.method, tool: safeToolName ?? null,
           reason: 'stale-lease', sessionId: redactedSessionId(requestedIds[0]) });
@@ -317,10 +550,10 @@ export class SquireTaskRelay {
       }
       if (safeToolName === 'operate_finish' &&
           !(result && typeof result === 'object' && (result as { isError?: unknown }).isError === true)) {
-        for (const id of requestedIds) task.sessions.delete(id);
+        this.dropSessions(task, requestedIds);
         this.releasePendingApprovals(task, requestedIds);
       } else {
-        for (const id of sessionIds(result)) task.sessions.add(id);
+        this.addSessions(task, sessionIds(result));
       }
       const approval = input.method === 'tools/call' && squireApprovalFromMcp(
         { id: 1, method: input.method, params: input.params }, { id: 1, result },
@@ -336,16 +569,40 @@ export class SquireTaskRelay {
           task.pendingApprovals.set(approvalKey, {
             requestId: active.requestId, sessionIds: new Set(ids),
           });
+          if (orderIdentity) {
+            this.approvalOrderKeys.set(approvalKey, orderIdentity.orderKey);
+            if (approval.approvalId)
+              this.approvalIdOrderKeys.set(approval.approvalId, orderIdentity.orderKey);
+            this.registry?.setOrderLockApprovalPending(orderIdentity.orderKey, true);
+            orderLockHeld = true;
+          }
           this.log('approval-pending', task, { tool: safeToolName ?? null,
             sessionId: redactedSessionId(ids[0]) });
         } else if (!pending) {
           task.pendingApprovals.delete(approvalKey);
+          this.releaseApprovalOrderLock(approvalKey);
+        }
+        this.publishSessions();
+      }
+      // The call that consumes an approval often carries no order facts at all
+      // (only `approval_id`), so resolve the lock from the approval id itself.
+      const callApprovalId = typeof callArgs.approval_id === 'string' ? callArgs.approval_id : undefined;
+      if (callApprovalId) {
+        const status = resultStatus(result);
+        const stillPending = status === 'approval_pending' || status === 'pending_approval';
+        const orderKey = this.approvalIdOrderKeys.get(callApprovalId);
+        if (!stillPending && orderKey) {
+          this.approvalIdOrderKeys.delete(callApprovalId);
+          this.releaseOrderLock(orderKey);
+          orderLockHeld = false;
         }
       }
+      if (orderIdentity && !orderLockHeld) this.releaseOrderLock(orderIdentity.orderKey);
       this.log('call-end', task, { method: input.method, tool: safeToolName ?? null,
         sessionId: redactedSessionId(requestedIds[0] ?? sessionIds(result)[0] ?? task.sessions.values().next().value) });
       return result;
     } catch (error) {
+      if (orderIdentity && !orderLockHeld) this.releaseOrderLock(orderIdentity.orderKey);
       if (error instanceof Error && /timed out/.test(error.message)) {
         task.dead = true;
         task.sessions.clear();
@@ -363,7 +620,10 @@ export class SquireTaskRelay {
   private releasePendingApprovals(task: TaskConnection, sessionIdsToRelease: string[]): void {
     for (const [id, approval] of task.pendingApprovals) {
       for (const sessionId of sessionIdsToRelease) approval.sessionIds.delete(sessionId);
-      if (!approval.sessionIds.size) task.pendingApprovals.delete(id);
+      if (!approval.sessionIds.size) {
+        task.pendingApprovals.delete(id);
+        this.releaseApprovalOrderLock(id);
+      }
     }
   }
 }

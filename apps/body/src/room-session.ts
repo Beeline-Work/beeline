@@ -1,5 +1,7 @@
 import { resolve } from 'node:path';
+import { homedir } from 'node:os';
 import { agentSkillDir } from './agent-home.js';
+import { squireRegistryDir } from './squire-session-registry.js';
 import type { McpServerWire } from './acp.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
@@ -81,6 +83,15 @@ export function beelineAgentMcpServer(
             { name: 'BEELINE_GRANT_RUNNER_URL', value: context.grantRunner.url },
             { name: 'BEELINE_GRANT_RUNNER_TOKEN', value: context.grantRunner.token },
           ]
+        : []),
+      // The host-shared Squire session registry the helper maintains, so
+      // list_squire_sessions / close_squire_session work from the sandbox.
+      {
+        name: 'BEELINE_SQUIRE_SESSION_DIR',
+        value: squireRegistryDir(config.operatorHome ?? homedir()),
+      },
+      ...(config.accessOwnerPubkey
+        ? [{ name: 'BEELINE_AGENT_OWNER_ID', value: config.accessOwnerPubkey }]
         : []),
     ],
   };

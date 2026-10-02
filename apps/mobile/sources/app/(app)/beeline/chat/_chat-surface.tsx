@@ -347,6 +347,8 @@ import {
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
 import { CornerObjectiveLine } from '@/components/buzz/CornerObjectiveLine';
+import { useCornerWorkflowRun } from '@/buzz/use-corner-workflow-run';
+import { workflowRunHref } from '@/buzz/workflow-run-copy';
 import { openCornerBriefViewer } from '@/components/buzz/corner-brief-viewer';
 import { CornerStatusLine } from '@/components/buzz/CornerStatusLine';
 import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
@@ -1368,6 +1370,14 @@ export function BuzzChatSurface({
     () => (cornerBrief ? () => openCornerBriefViewer(cornerBrief) : undefined),
     [cornerBrief],
   );
+  // A live workflow run in this corner: one line under the objective, → its run page.
+  const cornerWorkflowRun = useCornerWorkflowRun(
+    isCorner ? decodedId : undefined,
+    roomSurface?.messages.at(-1)?.id,
+  );
+  const openCornerWorkflowRun = useCallback(() => {
+    if (cornerWorkflowRun) router.push(workflowRunHref(cornerWorkflowRun));
+  }, [cornerWorkflowRun]);
 
   const loadOlderTranscriptMessages = useCallback(() => {
     const visibleRowCount = visibleTranscriptWindow(foldedMessages, Number.MAX_SAFE_INTEGER).length;
@@ -5882,7 +5892,14 @@ export function BuzzChatSurface({
             the human's own request, inscribed rather than framed. The header
             carries a short corner name, so without this the objective survives
             only until the first message lands. */}
-          {isCorner && <CornerObjectiveLine objective={cornerObjectiveText} onOpenBrief={openCurrentBrief} />}
+          {isCorner && (
+            <CornerObjectiveLine
+              objective={cornerObjectiveText}
+              onOpenBrief={openCurrentBrief}
+              onOpenWorkflow={openCornerWorkflowRun}
+              workflow={cornerWorkflowRun}
+            />
+          )}
 
           {/* The corner's PR state, inscribed above the transcript: one line
             that links to GitHub, where review and merge happen. */}

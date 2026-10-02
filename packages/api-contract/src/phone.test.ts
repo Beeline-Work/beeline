@@ -256,6 +256,8 @@ describe('phone contract', () => {
     expectTypeOf<PhoneOperationMap['closeChat']['input']>().toHaveProperty('roomId');
     expectTypeOf<PhoneOperationMap['reopenChat']['input']>().toHaveProperty('roomId');
     expectTypeOf<PhoneOperationMap['listRoomSchedules']['output']>().toHaveProperty('schedules');
+    expectTypeOf<PhoneOperationMap['listRoomWorkflowRuns']['output']>().toHaveProperty('workflows');
+    expectTypeOf<PhoneOperationMap['readWorkflowRun']['output']>().toHaveProperty('contract');
     expectTypeOf<PhoneOperationMap['updateIdentityPushLevel']['input']>().toHaveProperty(
       'pushLevel',
     );

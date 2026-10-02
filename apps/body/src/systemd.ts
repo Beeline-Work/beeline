@@ -27,6 +27,12 @@ export const SYSTEMD_RESTART_WAIT_MS = 90_000 + 30_000;
  * The portable supervision contract, rendered as a systemd user template.
  * PATH includes `%h/.local/bin` so every Cursor helper can resolve
  * `cursor-agent`; a host drop-in that replaces PATH must keep that entry.
+ *
+ * `OOMPolicy=continue` is load-bearing: systemd's default `stop` tears the whole
+ * unit down when the kernel OOM-kills any process in its cgroup, which on this
+ * host means one memory-hungry harness would take every other agent's daemon
+ * with it. `OOMScoreAdjust=-1000` keeps the daemon itself off the kernel's
+ * victim list so the child is the one reclaimed.
  */
 export function agentServiceUnit(): string {
   return `[Unit]
@@ -52,6 +58,7 @@ CPUWeight=1000
 IOWeight=1000
 Nice=-5
 OOMScoreAdjust=-1000
+OOMPolicy=continue
 TimeoutStartSec=90s
 TimeoutStopSec=90s
 KillMode=control-group
@@ -181,6 +188,49 @@ export async function convergeTrustySquireBrokerService(options: {
   } catch (error) {
     options.log?.(
       `[beeline] host Squire broker unit not converged: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return false;
+  }
+}
+
+/**
+ * Rewrite the installed agent template from the running bundle without
+ * restarting any agent. `beeline start`/pairing rewrites the template on
+ * install, but an already-running daemon skips that path, so a managed update
+ * would otherwise keep the OLD unit (and its OOMPolicy) forever. The property
+ * takes effect on the unit's next start, which the update handoff performs.
+ * Best-effort: the release is already live, so a host without systemd user
+ * services logs and keeps its current unit.
+ */
+export async function convergeAgentServiceUnit(options: {
+  libDir: string;
+  env?: NodeJS.ProcessEnv;
+  run?: SystemdRunner;
+  log?: (line: string) => void;
+}): Promise<boolean> {
+  const env = options.env ?? process.env;
+  try {
+    assertCanonicalInstalledLauncher(
+      env,
+      resolve(options.libDir, 'lib', 'beeline', 'beeline-cli.mjs'),
+    );
+    const path = systemdUserUnitPath(env);
+    const content = agentServiceUnit();
+    const existing = await readFile(path, 'utf8').catch(() => '');
+    if (existing === content) return false;
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    await writeFile(path, content, { mode: 0o600 });
+    const run = options.run ?? runSystemctl;
+    await run(['daemon-reload']);
+    options.log?.(
+      '[beeline] agent systemd unit updated; it applies on the next daemon restart',
+    );
+    return true;
+  } catch (error) {
+    options.log?.(
+      `[beeline] agent systemd unit not converged: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );

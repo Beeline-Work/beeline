@@ -23,6 +23,11 @@ import {
   harnessSupportsNativeSessionResume,
 } from './harness-capabilities.js';
 import { harnessReadsMetaSystemPrompt, sessionToolScopeMeta } from './harness-tool-scope.js';
+import {
+  cgroupOomKillProbe,
+  OomKillTracker,
+  type OomKillDetector,
+} from './oom-kill.js';
 
 /** Bound on the stderr tail kept for an exit-failure error message. */
 const STDERR_TAIL_MAX_CHARS = 2_000;
@@ -675,6 +680,9 @@ export class AcpClient extends EventEmitter {
   private permissionHandler?: AcpPermissionHandler;
   private permissionAllowlist?: AcpPermissionAllowlist;
   private commandsHandler?: (commands: readonly AcpAvailableCommand[]) => void;
+  private oomKills: OomKillDetector;
+  /** A deliberate stop owns its SIGKILL; that exit is never labelled OOM. */
+  private stopping = false;
 
   constructor(opts: {
     /** Legacy bare-binary option. Prefer agentCommand + agentArgs. */
@@ -716,6 +724,11 @@ export class AcpClient extends EventEmitter {
     permissionAllowlist?: AcpPermissionAllowlist;
     /** Full advertised-command snapshots, ready for the daemon's indexed read. */
     onCommands?: (commands: readonly AcpAvailableCommand[]) => void;
+    /**
+     * Kernel OOM-kill detector for this child. Defaults to the daemon cgroup's
+     * own `memory.events` counter; tests inject a stub.
+     */
+    oomKills?: OomKillDetector;
   }) {
     super();
     const command = opts.agentCommand ?? opts.agentBinary;
@@ -732,10 +745,16 @@ export class AcpClient extends EventEmitter {
     this.permissionHandler = opts.permissionHandler;
     this.permissionAllowlist = opts.permissionAllowlist;
     this.commandsHandler = opts.onCommands;
+    this.oomKills = opts.oomKills ?? new OomKillTracker(cgroupOomKillProbe());
   }
 
   async start(timeoutMs = 60_000): Promise<void> {
     if (this.alive) return;
+    // Record the cgroup's OOM counter before this child can be its victim, so
+    // an OOM kill later is measured against this run rather than the first
+    // probe at exit time (which would miss it).
+    await this.oomKills.prime().catch(() => undefined);
+    this.stopping = false;
     this.child = await withAdapterInstallLock(() =>
       spawn(this.agentCommand, this.agentArgs, {
         // agentEnv is the child's whole environment: buildAgentEnv's allowlist is
@@ -762,23 +781,7 @@ export class AcpClient extends EventEmitter {
     this.child.stdout.on('data', (chunk: string) => this.onData(chunk));
 
     this.child.on('exit', (code, signal) => {
-      this.alive = false;
-      const meaningful = flattenHarnessCause(this.stderrTail);
-      const stderrSuffix = meaningful ? `: ${meaningful}` : '';
-      for (const [, p] of this.pending) {
-        this.clearTimer(p);
-        p.reject(
-          new Error(
-            `ACP agent ${this.agentLabel} exited code=${code} signal=${signal}${stderrSuffix}`,
-          ),
-        );
-      }
-      this.pending.clear();
-      this.activeRunIds.clear();
-      this.activePromptSessions.clear();
-      this.toolCallMetadata.clear();
-      this.sessionCommands.clear();
-      this.emit('exit', { code, signal });
+      void this.handleChildExit(code, signal);
     });
 
     this.child.on('error', (err) => {
@@ -823,10 +826,41 @@ export class AcpClient extends EventEmitter {
     if (!isPiAcpHarness(this.agentLabel)) this.notify('notifications/initialized', {});
   }
 
+  /**
+   * One child exit: reject every in-flight request so the turn fails and is
+   * reported instead of hanging, then publish the exit. A SIGKILL is checked
+   * against the daemon cgroup's OOM counter so the rejection can name the real
+   * cause instead of a bare signal.
+   */
+  private async handleChildExit(
+    code: number | null,
+    signal: NodeJS.Signals | null,
+  ): Promise<void> {
+    this.alive = false;
+    const oomKilled =
+      signal === 'SIGKILL' && !this.stopping && (await this.oomKills.consume().catch(() => false));
+    const exitText = oomKilled
+      ? `ACP agent ${this.agentLabel} was killed by the kernel OOM killer (signal=SIGKILL)`
+      : `ACP agent ${this.agentLabel} exited code=${code} signal=${signal}`;
+    const meaningful = flattenHarnessCause(this.stderrTail);
+    const stderrSuffix = meaningful ? `: ${meaningful}` : '';
+    for (const [, p] of this.pending) {
+      this.clearTimer(p);
+      p.reject(new Error(`${exitText}${stderrSuffix}`));
+    }
+    this.pending.clear();
+    this.activeRunIds.clear();
+    this.activePromptSessions.clear();
+    this.toolCallMetadata.clear();
+    this.sessionCommands.clear();
+    this.emit('exit', { code, signal });
+  }
+
   async stop(): Promise<void> {
     if (!this.alive) return;
     const child = this.child;
     if (!child) return;
+    this.stopping = true;
     try {
       // Send shutdown if child is still alive.
       if (this.child?.stdin.writable) {

@@ -7,6 +7,7 @@ import {
   DELIBERATE_REMOVAL_EXIT_STATUS,
   UNKNOWN_AGENT_EXIT_STATUS,
   agentServiceUnit,
+  convergeAgentServiceUnit,
   installAgentService,
   installTrustySquireBrokerService,
   isCanonicalInstalledLauncher,
@@ -72,6 +73,57 @@ describe('systemd supervision contract', () => {
       expect(unit.split('\n')).toContain(line);
     expect(unit).not.toContain('StartLimitBurst=');
     expect(unit).not.toContain('MemoryMax=');
+  });
+
+  it('keeps the unit alive when the kernel OOM-kills one harness child', () => {
+    const unit = agentServiceUnit();
+    // systemd's default OOMPolicy=stop would tear down the whole unit when one
+    // child is reclaimed, taking every other agent's daemon with it.
+    expect(unit.split('\n')).toContain('OOMPolicy=continue');
+    // The daemon stays off the kernel's victim list so the child is reclaimed.
+    expect(unit.split('\n')).toContain('OOMScoreAdjust=-1000');
+  });
+
+  it('converges the installed template on update without restarting an agent', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-systemd-converge-'));
+    roots.push(root);
+    const calls: string[][] = [];
+    const run = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      return { stdout: '' };
+    });
+    const home = '/operator';
+    const libDir = `${home}/.local/lib/beeline`;
+    const changed = await convergeAgentServiceUnit({
+      libDir,
+      env: { HOME: home, BEELINE_LIB_DIR: libDir, XDG_CONFIG_HOME: root },
+      run,
+    });
+    expect(changed).toBe(true);
+    expect(calls).toEqual([['daemon-reload']]);
+    const written = await readFile(join(root, 'systemd/user/beeline-agent@.service'), 'utf8');
+    expect(written).toContain('OOMPolicy=continue');
+
+    // A second convergence with the same content touches nothing.
+    calls.length = 0;
+    await expect(
+      convergeAgentServiceUnit({
+        libDir,
+        env: { HOME: home, BEELINE_LIB_DIR: libDir, XDG_CONFIG_HOME: root },
+        run,
+      }),
+    ).resolves.toBe(false);
+    expect(calls).toEqual([]);
+
+    // A non-canonical checkout may not rewrite the shared user unit.
+    await expect(
+      convergeAgentServiceUnit({
+        libDir: '/worktree',
+        env: { HOME: home, BEELINE_LIB_DIR: '/worktree', XDG_CONFIG_HOME: root },
+        run,
+      }),
+    ).resolves.toBe(false);
+    expect(calls).toEqual([]);
   });
 
   it('installs, enables, starts, and returns the supervised main pid', async () => {

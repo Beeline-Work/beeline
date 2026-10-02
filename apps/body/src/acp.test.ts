@@ -1039,6 +1039,33 @@ process.exit(1);
   return binary;
 }
 
+async function fakeOomKilledAgent(): Promise<string> {
+  const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-oomkill-'));
+  temporaryDirectories.push(directory);
+  const binary = resolve(directory, 'fake-oomkill-agent.mjs');
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
+import { createInterface } from 'node:readline';
+
+const lines = createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+lines.on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+  } else if (message.method === 'session/new') {
+    // Die to SIGKILL while this request is pending, exactly as an OOM victim
+    // does: no response, no stderr, just an exit event.
+    process.kill(process.pid, 'SIGKILL');
+  }
+});
+`,
+  );
+  await chmod(binary, 0o755);
+  return binary;
+}
+
 async function fakeRpcInternalErrorAgent(): Promise<string> {
   const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-rpc-internal-'));
   temporaryDirectories.push(directory);
@@ -1575,6 +1602,32 @@ describe('AcpClient live steering', () => {
       await client.stop();
     },
   );
+
+  it('names the kernel OOM killer when a SIGKILLed child is the cgroup victim', async () => {
+    const client = new AcpClient({
+      agentCommand: await fakeOomKilledAgent(),
+      agentLabel: 'pi-acp',
+      agentEnv: {},
+      oomKills: { prime: async () => undefined, consume: async () => true },
+    });
+    await client.start();
+    await expect(client.sessionNew({ cwd: tmpdir() })).rejects.toThrow(
+      /ACP agent pi-acp was killed by the kernel OOM killer \(signal=SIGKILL\)/,
+    );
+  });
+
+  it('keeps the plain signal wording when the cgroup counter did not advance', async () => {
+    const client = new AcpClient({
+      agentCommand: await fakeOomKilledAgent(),
+      agentLabel: 'pi-acp',
+      agentEnv: {},
+      oomKills: { prime: async () => undefined, consume: async () => false },
+    });
+    await client.start();
+    await expect(client.sessionNew({ cwd: tmpdir() })).rejects.toThrow(
+      /ACP agent pi-acp exited code=null signal=SIGKILL/,
+    );
+  });
 
   it('carries the child process stderr tail into a spawn/exit failure', async () => {
     const client = new AcpClient({

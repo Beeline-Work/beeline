@@ -19,7 +19,7 @@ import {
 } from './self-update.js';
 import { findAgentRuntimeConfigPaths, readRuntimeRecord, runtimeDaemonPid } from './runtime.js';
 import { convergeLaunchdTrustySquireBrokerService } from './launchd.js';
-import { convergeTrustySquireBrokerService } from './systemd.js';
+import { convergeAgentServiceUnit, convergeTrustySquireBrokerService } from './systemd.js';
 import type { UpdateFunctionalProbeResult } from './update-functional-probe.js';
 import { UpdateFunctionalProbeError } from './update-functional-probe.js';
 import { queueUpdateRollbackAlert } from './update-rollback-alert.js';
@@ -420,6 +420,13 @@ export class ManagedUpdateHandoff {
       // would otherwise keep its PATH-less unit. Best-effort.
       if (process.platform === 'linux' && this.#env.BEELINE_SYSTEMD_USER !== '0') {
         await convergeTrustySquireBrokerService({
+          libDir: this.#layout.libDir,
+          env: this.#env,
+          log: (line) => console.log(line),
+        });
+        // Carry the agent template's OOMPolicy=continue onto a host that
+        // installed before it existed; the restart below applies it.
+        await convergeAgentServiceUnit({
           libDir: this.#layout.libDir,
           env: this.#env,
           log: (line) => console.log(line),

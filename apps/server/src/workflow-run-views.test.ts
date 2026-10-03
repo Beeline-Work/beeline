@@ -214,10 +214,14 @@ describe('listRoomWorkflowRuns', () => {
     await end(await start());
     const live = await start();
     // A later run that already ended does not displace the live one.
-    await end(await start());
+    await database.query(`UPDATE memberships SET role='admin' WHERE room_id=$1 AND identity_id=$2`, [CORNER, OWNER]);
+    const later = await phone.execute('startOwnedWorkflow', {
+      roomId: CORNER, name: 'feedback-triage', roleBindings: { triager: TRIAGER },
+    }, OWNER);
+    await end(later.runId);
     const listed = await phone.execute('listRoomWorkflowRuns', { roomId: ROOM }, OWNER);
     const triage = listed.workflows.find((run) => run.workflowSlug === 'feedback-triage')!;
-    expect(triage).toMatchObject({ runId: live, status: 'live', state: 'pull', earlierRunCount: 1 });
+    expect(triage).toMatchObject({ runId: live, status: 'live', state: 'pull', earlierRunCount: 1, activeRunIds: [live] });
   });
 
   it('refuses a viewer who cannot read the Room', async () => {

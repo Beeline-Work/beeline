@@ -438,13 +438,14 @@ async function loadGateRecords(
       voter_id: string | null;
       voter_name: string | null;
       voter_kind: 'human' | 'agent' | null;
+      note: string | null;
     }>(
       `SELECT choice.prompt,choice.options,choice.status,${MICROS('choice.created_at')} created_us,
-              vote.option_id,vote.created_at answered_at,
+              vote.option_id,vote.created_at answered_at,vote.note,
               voter.id voter_id,voter.name voter_name,voter.kind voter_kind
        FROM room_choices choice
        LEFT JOIN LATERAL (
-         SELECT option_id,voter_id,created_at FROM room_choice_votes
+         SELECT option_id,voter_id,created_at,note FROM room_choice_votes
          WHERE choice_id=choice.id ORDER BY created_at,voter_id LIMIT 1
        ) vote ON choice.mode='question'
        LEFT JOIN identities voter ON voter.id=vote.voter_id
@@ -471,6 +472,7 @@ async function loadGateRecords(
         ? { answeredBy: { id: choice.voter_id, name: choice.voter_name, kind: choice.voter_kind } }
         : {}),
       ...(picked && choice.answered_at ? { answeredAt: unix(choice.answered_at) } : {}),
+      ...(picked && choice.note ? { note: choice.note } : {}),
     });
   }
   return records;

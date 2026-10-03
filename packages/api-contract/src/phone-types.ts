@@ -500,6 +500,10 @@ export type ChoiceCardView = {
   readonly selectedOptionId?: string;
   readonly outcome?: 'winner' | 'tie' | 'no-votes';
   readonly footer?: string;
+  /** Present when the card is a workflow gate. */
+  readonly runId?: string;
+  /** The note the answerer typed with their pick on a workflow gate. */
+  readonly note?: string;
 };
 
 export type RoomViewer = {

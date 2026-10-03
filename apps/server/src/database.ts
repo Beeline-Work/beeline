@@ -2168,6 +2168,8 @@ CREATE TABLE IF NOT EXISTS room_choice_votes (
   updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (choice_id, voter_id)
 );
+-- A workflow gate answer's optional note, delivered to the woken agent.
+ALTER TABLE room_choice_votes ADD COLUMN IF NOT EXISTS note text;
 
 CREATE TABLE IF NOT EXISTS import_runs (
   import_id text PRIMARY KEY,

@@ -383,6 +383,8 @@ export type WorkflowGateRecordView = {
   readonly answer?: string;
   readonly answeredBy?: WorkflowActorView;
   readonly answeredAt?: number;
+  /** The note the answerer typed with their pick. */
+  readonly note?: string;
 };
 /** A corner opened by the step's holder while the run was in that step. */
 export type WorkflowOpenedCornerView = {
@@ -509,6 +511,8 @@ export type AcceptConnectorOfferResult =
 export type AnswerChoiceInput = {
   readonly choiceId: string;
   readonly optionId: string;
+  /** Optional free text with a workflow gate answer, at most `CHOICE_NOTE_MAX_LENGTH`. */
+  readonly note?: string;
 };
 export type CreateRoomPollInput = RoomInput & {
   readonly prompt: string;

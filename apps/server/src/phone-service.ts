@@ -6674,6 +6674,7 @@ export class PhoneService {
         choiceId: input.choiceId,
         optionId: input.optionId,
         viewerId,
+        note: input.note,
       }),
     );
   }

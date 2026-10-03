@@ -18,6 +18,8 @@ export const CHOICE_PROMPT_MAX_LENGTH = 120;
 export const CHOICE_CONSTRAINT_MAX_LENGTH = 160;
 export const CHOICE_LABEL_MAX_LENGTH = 32;
 export const CHOICE_CONSEQUENCE_MAX_LENGTH = 80;
+/** A workflow gate answer's optional note; the same cap as a workflow receipt line. */
+export const CHOICE_NOTE_MAX_LENGTH = 140;
 export const CHOICE_OPTIONS_MIN = 2;
 export const CHOICE_OPTIONS_MAX = 4;
 export const CHOICE_POLL_ELECTORATE_MIN = 2;
@@ -120,6 +122,16 @@ export function normalizeChoiceConstraint(value: unknown): string | undefined {
   if (!constraint) return undefined;
   if (constraint.length > CHOICE_CONSTRAINT_MAX_LENGTH) refuse('choice constraint is too long');
   return constraint;
+}
+
+/** A gate answer's optional note: one trimmed line; empty means no note. */
+export function normalizeChoiceNote(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string') refuse('choice note is invalid');
+  const note = flattenLine(value);
+  if (!note) return undefined;
+  if (Array.from(note).length > CHOICE_NOTE_MAX_LENGTH) refuse('choice note is too long');
+  return note;
 }
 
 export function normalizeChoiceTtl(value: unknown, required: boolean): ChoiceTtlSeconds | undefined {

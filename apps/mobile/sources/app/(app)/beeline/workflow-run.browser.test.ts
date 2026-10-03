@@ -253,7 +253,7 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     expect(page.halo).toBe(0);
   }, 120_000);
 
-  it("records who answered the gate and links each corner the dispatch opened", async () => {
+  it("records who answered the gate, their note, and links each corner the dispatch opened", async () => {
     const detail = feedbackTriageDetail(
       repo(),
       { state: 'done', status: 'done', viewerHolds: false, updatedAt: STARTED + 400 },
@@ -272,6 +272,7 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
             answer: 'dispatch',
             answeredBy: owner,
             answeredAt: STARTED + 200,
+            note: 'only the dropdown one, skip the rest',
           },
         },
         {
@@ -313,6 +314,9 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
       '5',
       'answer',
       expect.stringMatching(/^dispatch · Owner · \d\d:\d\d:\d\d/),
+      '6',
+      'note',
+      'only the dropdown one, skip the rest',
     ]);
     // The record is all there is: no answer plates, no control of any kind.
     expect(gate.gate!.controls).toBe(0);

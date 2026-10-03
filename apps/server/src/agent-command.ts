@@ -852,7 +852,7 @@ function mergeCardDetail(card: MergeCard | null): string {
   return detail ? `\n${detail}` : '';
 }
 
-type WorkflowWakeCard = { runId?: string; workflowSlug?: string };
+type WorkflowWakeCard = { runId?: string; workflowSlug?: string; note?: string };
 
 /**
  * A wake from a saved workflow run (a `workflow-handoff` card, or a gate's
@@ -861,11 +861,13 @@ type WorkflowWakeCard = { runId?: string; workflowSlug?: string };
  * run already exists rather than reaching for `start_workflow` again. The
  * corner's own built-in lifecycle run (`corner-workflow-handoff`) is excluded:
  * every corner turn would otherwise carry this line for no reason, since a
- * corner is never started through `start_workflow`.
+ * corner is never started through `start_workflow`. A gate answer's optional
+ * note is quoted ahead of it.
  */
 function workflowWakeDetail(cardType: string | null, card: WorkflowWakeCard | null): string {
   if (!card?.runId || !card.workflowSlug || cardType === CORNER_WORKFLOW_HANDOFF_CARD_TYPE) return '';
-  return `\nYou are in run ${card.runId} of ${card.workflowSlug}. Continue this run; do not start a new one.`;
+  const note = card.note ? `\nTheir note with the answer: ${JSON.stringify(card.note)}` : '';
+  return `${note}\nYou are in run ${card.runId} of ${card.workflowSlug}. Continue this run; do not start a new one.`;
 }
 
 export async function readAgentCommands(

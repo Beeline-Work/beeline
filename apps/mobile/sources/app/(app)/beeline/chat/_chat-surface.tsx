@@ -327,6 +327,7 @@ import { RoomCatchUpControls } from '@/components/buzz/RoomCatchUpControls';
 import { TranscriptScrubber } from '@/components/buzz/TranscriptScrubber';
 import { continueScrubLanding, type ScrubLanding } from '@/buzz/transcript-scrubber';
 import { useTranscriptScrubber } from '@/buzz/use-transcript-scrubber';
+import { usePhoneUnderfillHistory } from '@/buzz/phone-underfill-history';
 import { RoomCatchUpSheet } from '@/components/buzz/RoomCatchUpSheet';
 import { buildCatchUpReport } from '@/buzz/room-catch-up-report';
 import { createTranscriptCardMotionStore } from '@/components/buzz/transcript-card-motion-context';
@@ -2237,6 +2238,15 @@ export function BuzzChatSurface({
   transcriptMessagesRef.current = transcriptMessages;
   const transcriptScrubber = useTranscriptScrubber();
   useEffect(() => transcriptScrubber.reset(), [decodedId, transcriptScrubber]);
+  // A folded tail shorter than the phone list never scrolls, so no drag
+  // opens the older-history gate; page in without one until it fills.
+  const phoneUnderfill = usePhoneUnderfillHistory({
+    enabled: !desktopTranscript && transcriptMessages.length > 0,
+    status: transcriptHistoryStatus,
+    historyRevision: visibleMessageCount,
+    threshold: TAIL_PIN_THRESHOLD,
+    loadOlder: loadOlderTranscriptMessages,
+  });
   // The read cursor ranks rows by index to decide which is newest, so it reads
   // the chronological order for the same reason the jump control does: on the
   // phone `transcriptMessages` IS the reversed list, and ranking that array
@@ -5978,7 +5988,11 @@ export function BuzzChatSurface({
               userDraggingRef.current = false;
               resumePendingNewMessageLanding();
             }}
-            onContentSizeChange={(_width, height) => transcriptScrubber.observeContentSize(height)}
+            onLayout={(event) => phoneUnderfill.observeListHeight(event.nativeEvent.layout.height)}
+            onContentSizeChange={(_width, height) => {
+              transcriptScrubber.observeContentSize(height);
+              phoneUnderfill.observeContentHeight(height);
+            }}
             renderItem={renderItem}
             onScrollToIndexFailed={({ averageItemLength, highestMeasuredFrameIndex }) => {
               const notification = pendingNotificationLandingRef.current;

@@ -286,6 +286,42 @@ describe('resource MCP transport authorization', () => {
     ).toBeUndefined();
   });
 
+  it('names an oauth_sign_in wall from Drive\'s own needs_user field, never prose', () => {
+    const request = {
+      id: 9,
+      method: 'tools/call',
+      params: { name: 'operate_drive', arguments: { session_id: 's1', goal: 'sign in to github' } },
+    };
+    expect(
+      squireLoginWallFromMcp(request, {
+        id: 9,
+        result: {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                status: 'needs_value',
+                field: 'oauth_sign_in',
+                needs_user: {
+                  wall: 'oauth_sign_in',
+                  message:
+                    'Awaiting a 2FA confirmation. Run `npx @trusty-squire/mcp connect --json` ' +
+                    'to get the shared-browser sign_in_url for the person, then resume observing this session.',
+                  resume: 'connect',
+                },
+              }),
+            },
+          ],
+        },
+      }),
+    ).toEqual({
+      wall: 'oauth_sign_in',
+      message:
+        'Awaiting a 2FA confirmation. Run `npx @trusty-squire/mcp connect --json` to get the ' +
+        'shared-browser sign_in_url for the person, then resume observing this session.',
+    });
+  });
+
   it('names an OAuth awaiting_human challenge, but only from oauth.state', () => {
     const request = { id: 10, method: 'tools/call', params: { name: 'operate_login', arguments: {} } };
     expect(

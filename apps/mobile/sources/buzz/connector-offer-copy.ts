@@ -14,8 +14,10 @@ export function connectorOfferTitle(connectorName: string): string {
 }
 
 /** `Sign in to Google again` — a `'reconnect'` offer asks nothing; it names
- *  what stalled. `provider` is Squire's own value (e.g. `'google'`). */
-export function connectorOfferReconnectTitle(provider: string): string {
+ *  what stalled. `provider` is Squire's own value (e.g. `'google'`), omitted
+ *  for an `oauth_sign_in` wall, where Squire names no provider. */
+export function connectorOfferReconnectTitle(provider?: string): string {
+  if (!provider) return 'Sign in again';
   return `Sign in to ${provider[0]!.toUpperCase()}${provider.slice(1)} again`;
 }
 

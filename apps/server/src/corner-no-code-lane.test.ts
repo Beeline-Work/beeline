@@ -669,7 +669,15 @@ it("delivers GitHub's pull request to a corner another agent upgraded", async ()
   );
   await db.query(`UPDATE rooms SET github_installation_id=77 WHERE id=$1`, [CODE_ROOM]);
   const branch = `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`;
-  const github = new GitHubOperations(db, {} as GitHubOAuthClient, {} as GitHubAppClient, 's');
+  const app = {
+    installationToken: async () => ({ token: 'room-token' }),
+    readCommitCheckRollup: async (_token: string, repository: string, headSha: string) => {
+      expect(repository).toBe('owner/widgets');
+      expect(headSha).toBe('1'.repeat(40));
+      return { state: 'pending', total: 0, passed: 0, failed: 0, pending: 0 };
+    },
+  } as unknown as GitHubAppClient;
+  const github = new GitHubOperations(db, {} as GitHubOAuthClient, app, 's');
 
   await github.processWebhook('pull_request', {
     action: 'opened',

@@ -162,6 +162,12 @@ export function isPlaceholderCornerBrief(brief: CornerBrief): boolean {
 export const SEARCH_MEMORY_FIRST_RULE =
   'Call this before telling anyone a fact was never saved, or asking them for information they may already have given you. Meaning-based matching often finds it even when this turn shares no words with how it was originally phrased.';
 
+/** The agent's own memory upkeep, stated in the save_memory tool description
+ *  (`read-only-mcp.ts`). No background review exists: what the answering agent
+ *  does not keep current, nothing does. */
+export const MEMORY_UPKEEP_RULE =
+  'Before saving, call search_memory. If the fact is already saved, do not save it again. If a saved item is out of date, update_memory it instead of deleting and saving again. delete_memory any item this turn proves wrong, duplicate, or obsolete. Before ending the turn, report_memory_used the items your answer relied on.';
+
 const handle = (value: string): string => value.replace(/^@/, '');
 
 /**
@@ -311,7 +317,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
   {
     id: 'core.feedback',
     topic: 'feedback',
-    why: 'Turn-end memory extraction never sees tool errors or refusals, so friction in Beeline itself is lost unless the agent that hit it reports it in the turn.',
+    why: 'Nothing reviews a turn after it ends, so friction in Beeline itself is lost unless the agent that hit it reports it in the turn.',
     budgetBytes: 260,
     layer: 'core',
     surfaces: EVERYWHERE,

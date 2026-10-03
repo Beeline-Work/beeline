@@ -276,7 +276,7 @@ describe('embed-on-save (event-driven, no scan)', () => {
   });
 
   it('schedules no work at all (not even a read) when disabled and no embedder override is given', async () => {
-    // Regression: `saveSkill`/`proposeInstitutionalMemory` schedule with no
+    // Regression: `saveSkill`/`saveInstitutionalMemory` schedule with no
     // override, so with no key configured this must never touch the
     // database — a stray query racing an unrelated caller's own transaction
     // on the same row crashed pglite (memory access out of bounds) before

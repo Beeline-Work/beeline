@@ -177,7 +177,6 @@ export class DaemonApiClient {
     }
   >();
   private roomsChangedListener?: (event?: RoomMembershipChange) => void;
-  private memoryJobListener?: () => void;
   private configChangedListener?: () => void;
   private connectorAssignmentListener?: () => void;
   private cornerCompleteListener?: (roomId: string) => void;
@@ -297,12 +296,6 @@ export class DaemonApiClient {
     this.ensureLiveSocket();
   }
 
-  /** A pending memory job is announced on the live socket. */
-  setMemoryJobListener(listener: () => void): void {
-    this.memoryJobListener = listener;
-    this.ensureLiveSocket();
-  }
-
   /** Register the one listener invoked when the server reports the agent's
    * model/effort selection changed — the wake that hot-restarts every
    * retained session (agent-wide; the event names no single Room). */
@@ -356,7 +349,7 @@ export class DaemonApiClient {
     let output: Output<Name>;
     try {
       const operation = String(name);
-      if (this.readBudget && (/^(get|list|read|search)/.test(operation) || operation === 'claimInstitutionalMemoryJob')) {
+      if (this.readBudget && /^(get|list|read|search)/.test(operation)) {
         release = await this.readBudget.acquire(
           operation === 'getAgentCommands' || operation === 'getRoomInbox' ? 'urgent' : 'background',
           Date.now() + REQUEST_DEADLINE_MS,
@@ -421,11 +414,10 @@ export class DaemonApiClient {
     for (const roomId of this.liveRooms.keys()) this.sendLiveSubscription(roomId);
     // Every wake on this socket is fire-and-forget: a membership written, or
     // a Connect tapped, while this socket was connecting (or between
-    // reconnects) never replays its frame. Treat every open as all three
-    // wakes, so the reconciliation and both drains still reach them.
+    // reconnects) never replays its frame. Treat every open as both wakes,
+    // so the reconciliation and the drain still reach them.
     this.roomsChangedListener?.();
     this.connectorAssignmentListener?.();
-    this.memoryJobListener?.();
   }
 
   private liveMessage(data: string): void {
@@ -465,10 +457,6 @@ export class DaemonApiClient {
     }
     if (event.type === 'connector-assignment') {
       this.connectorAssignmentListener?.();
-      return;
-    }
-    if (event.type === 'memory-job') {
-      this.memoryJobListener?.();
       return;
     }
     if (event.type === 'config-changed') {

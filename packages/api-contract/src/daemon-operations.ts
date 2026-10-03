@@ -12,19 +12,20 @@ import type { RoomScheduleCadence } from './phone-operations.js';
 import type { CornerAppDefinition } from './corner-apps.js';
 import type { WorkflowRoleBinding } from './workflow-contracts.js';
 import type {
-  ClaimInstitutionalMemoryJobResult,
-  CompleteInstitutionalMemoryJobInput,
-  FailInstitutionalMemoryJobInput,
+  DeleteInstitutionalMemoryInput,
   InstitutionalContextSnapshot,
   InstitutionalMemoryTurnStats,
+  InstitutionalMemoryWriteResult,
   LoadWorkspaceSkillInput,
   LoadWorkspaceSkillResult,
-  ProposeInstitutionalMemoryInput,
-  ProposeInstitutionalMemoryResult,
+  ReportInstitutionalMemoryUsedInput,
+  ReportInstitutionalMemoryUsedResult,
+  SaveInstitutionalMemoryInput,
   SearchInstitutionalHistoryInput,
   SearchInstitutionalHistoryResult,
   SearchInstitutionalMemoryInput,
   SearchInstitutionalMemoryResult,
+  UpdateInstitutionalMemoryInput,
 } from './institutional-memory.js';
 import type {
   NotifyFeedbackFixedInput,
@@ -134,18 +135,19 @@ export type CommandClaimInput = RoomInput & {
 };
 export type TurnOutputAuthority = { readonly generationId?: string; readonly requestId?: string };
 export type DaemonOperationMap = {
-  /** Claims host-side extraction work. The server never calls a model. */
-  claimInstitutionalMemoryJob: Operation<AgentInput & { readonly extractorVersion?: string }, ClaimInstitutionalMemoryJobResult>;
-  heartbeatInstitutionalMemoryJob: Operation<
-    AgentInput & { readonly jobId: string; readonly leaseToken: string },
-    WriteResult
-  >;
-  completeInstitutionalMemoryJob: Operation<CompleteInstitutionalMemoryJobInput, WriteResult>;
-  failInstitutionalMemoryJob: Operation<FailInstitutionalMemoryJobInput, WriteResult>;
   getInstitutionalContext: Operation<RoomInput & TurnOutputAuthority, InstitutionalContextSnapshot>;
-  proposeInstitutionalMemory: Operation<
-    ProposeInstitutionalMemoryInput,
-    ProposeInstitutionalMemoryResult
+  saveInstitutionalMemory: Operation<SaveInstitutionalMemoryInput, InstitutionalMemoryWriteResult>;
+  updateInstitutionalMemory: Operation<
+    UpdateInstitutionalMemoryInput,
+    InstitutionalMemoryWriteResult
+  >;
+  deleteInstitutionalMemory: Operation<
+    DeleteInstitutionalMemoryInput,
+    InstitutionalMemoryWriteResult
+  >;
+  reportInstitutionalMemoryUsed: Operation<
+    ReportInstitutionalMemoryUsedInput,
+    ReportInstitutionalMemoryUsedResult
   >;
   searchInstitutionalMemory: Operation<
     SearchInstitutionalMemoryInput,

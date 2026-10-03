@@ -501,10 +501,6 @@ export function createBeelineServer(options: ServerOptions): Server {
                 sendLive(JSON.stringify({ type: 'connector-assignment' }));
                 return;
               }
-              if (event.reason === 'memory-job') {
-                sendLive(JSON.stringify({ type: 'memory-job', roomId: event.roomId }));
-                return;
-              }
               if (event.reason !== 'postgres:memberships') return;
               sendLive(
                 JSON.stringify({
@@ -783,11 +779,6 @@ export function createBeelineServer(options: ServerOptions): Server {
                   }
                   if (event.reason === 'postgres:agent_commands') {
                     if (event.targetAgentId === principal.identityId) void pushCommands(trigger);
-                    return;
-                  }
-                  if (event.reason === 'memory-job') {
-                    if (!event.targetAgentId && client.readyState === client.OPEN)
-                      sendLive(JSON.stringify({ type: 'memory-job', roomId }));
                     return;
                   }
                   if (event.reason === 'postgres:rooms' && event.repositoryChanged &&

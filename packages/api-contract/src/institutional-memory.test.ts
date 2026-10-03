@@ -2,9 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   INSTITUTIONAL_MEMORY_BODY_MAX_BYTES,
   parseInstitutionalCuratorProposal,
-  parseInstitutionalMergeReviewProposal,
   parseInstitutionalMemoryProposal,
-  parseInstitutionalMemoryReviewProposal,
   institutionalMemoryRequestWords,
 } from './institutional-memory.js';
 
@@ -26,26 +24,6 @@ const workspaceFact = {
 } as const;
 
 describe('institutional memory proposal contract', () => {
-  it('parses v2 cross-key supersede and retire-only actions, while retaining v1', () => {
-    expect(parseInstitutionalMemoryReviewProposal(workspaceFact)).toEqual(workspaceFact);
-    const { cas: _cas, ...fact } = workspaceFact;
-    const replacement = parseInstitutionalMemoryReviewProposal({
-      ...fact, proposalVersion: 2, action: 'supersede',
-      target: { itemId: 'offered-id', baseVersion: 3 },
-    });
-    expect(replacement).toMatchObject({ action: 'supersede',
-      target: { itemId: 'offered-id', baseVersion: 3 } });
-    const retired = parseInstitutionalMemoryReviewProposal({
-      proposalVersion: 2, action: 'retire', source: workspaceFact.source,
-      confidence: 0.9, classification: { rationale: 'Now obsolete.' },
-      retire: [{ itemId: 'offered-id', baseVersion: 3, reason: 'obsolete' }],
-    });
-    expect(retired).toMatchObject({ action: 'retire',
-      retire: [{ itemId: 'offered-id', reason: 'obsolete' }] });
-    expect(() => parseInstitutionalMemoryReviewProposal({
-      ...fact, proposalVersion: 2, action: 'supersede',
-    })).toThrow('target');
-  });
   it('accepts a bounded workspace fact with source and CAS fields', () => {
     expect(parseInstitutionalMemoryProposal(workspaceFact)).toEqual(workspaceFact);
   });
@@ -155,100 +133,6 @@ describe('institutional memory proposal contract', () => {
     expect([
       ...institutionalMemoryRequestWords('How do you deploy the release migration?'),
     ]).toEqual(['deploy', 'release', 'migration']);
-  });
-});
-
-describe('institutional merge review contract', () => {
-  const proposal = {
-    proposalVersion: 1,
-    skill: {
-      slug: 'release-migrations',
-      description: 'Safely ship release-owned database changes',
-      markdown: '# Release migrations\n\nWrite the schema marker last.',
-      baseVersion: null,
-      anchor: { repository: 'Beeline-Work/beeline', targetCommit: 'a'.repeat(40) },
-    },
-    findings: [
-      {
-        taxonomy: 'database.release-order',
-        summary: 'Schema readiness must be marked only after every migration succeeds.',
-        severity: 'warning',
-        confidence: 0.98,
-        path: 'apps/server/src/database.ts',
-      },
-    ],
-  } as const;
-
-  it('accepts one bounded restricted procedure and structured findings', () => {
-    expect(parseInstitutionalMergeReviewProposal(proposal)).toEqual(proposal);
-  });
-
-  it('never stores a code digest the model could not have computed', () => {
-    const withAnchor = (anchor: Record<string, unknown>) => ({
-      ...proposal,
-      skill: { ...proposal.skill, anchor: { ...proposal.skill.anchor, ...anchor } },
-    });
-    // The model is given no file bytes, so any digest it emits is asserted, not
-    // computed. There is no such field, and the anchor fails closed on it like
-    // every other unknown key rather than accepting a spelling nothing reads.
-    for (const contentHash of ['b'.repeat(64), 'looks-about-right', 'A'.repeat(64), null]) {
-      expect(() => parseInstitutionalMergeReviewProposal(withAnchor({ contentHash }))).toThrow(
-        /unknown field contentHash/,
-      );
-    }
-    // An unverifiable path is dropped too, without discarding valid work.
-    for (const path of ['/etc/passwd', '../secrets.txt', 'apps/../../outside.ts', 'a//b.ts', 42]) {
-      const parsed = parseInstitutionalMergeReviewProposal(withAnchor({ path }));
-      expect(parsed.skill?.anchor).toEqual({
-        repository: proposal.skill.anchor.repository,
-        targetCommit: proposal.skill.anchor.targetCommit,
-      });
-      expect(parsed.findings).toHaveLength(1);
-    }
-    // A path the model can name from its own evidence is kept exactly.
-    expect(
-      parseInstitutionalMergeReviewProposal(withAnchor({ path: 'apps/server/src/database.ts' }))
-        .skill?.anchor,
-    ).toMatchObject({ path: 'apps/server/src/database.ts' });
-  });
-
-  it('treats an explicit null optional field as absent instead of losing the review', () => {
-    const parsed = parseInstitutionalMergeReviewProposal({
-      ...proposal,
-      findings: [{ ...proposal.findings[0], path: null }],
-    });
-    expect(parsed.findings).toEqual([
-      {
-        taxonomy: proposal.findings[0].taxonomy,
-        summary: proposal.findings[0].summary,
-        severity: proposal.findings[0].severity,
-        confidence: proposal.findings[0].confidence,
-      },
-    ]);
-    expect(parsed.skill?.slug).toBe(proposal.skill.slug);
-    // Findings with no procedure is the ordinary shape of a review that found
-    // nothing worth publishing, and an omitted key means the same as null.
-    expect(parseInstitutionalMergeReviewProposal({ ...proposal, skill: undefined }).skill).toBe(
-      null,
-    );
-  });
-
-  it('rejects unknown fields, invalid slugs, and descriptions over 60 characters', () => {
-    expect(() => parseInstitutionalMergeReviewProposal({ ...proposal, native: true })).toThrow(
-      /unknown field native/,
-    );
-    expect(() =>
-      parseInstitutionalMergeReviewProposal({
-        ...proposal,
-        skill: { ...proposal.skill, slug: 'Native Skill' },
-      }),
-    ).toThrow(/slug/);
-    expect(() =>
-      parseInstitutionalMergeReviewProposal({
-        ...proposal,
-        skill: { ...proposal.skill, description: 'x'.repeat(61) },
-      }),
-    ).toThrow(/description/);
   });
 });
 

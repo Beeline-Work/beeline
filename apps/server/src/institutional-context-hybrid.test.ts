@@ -23,7 +23,7 @@ const MESSAGE = 'd'.repeat(64);
 
 let database: PgliteDatabase;
 
-const liveConfig = { enabled: true, dailyJobLimit: 20, leaseMs: 60_000, live: true } as const;
+const liveConfig = { enabled: true, live: true } as const;
 
 function liveDaemon(): DaemonService {
   return new DaemonService(
@@ -178,7 +178,7 @@ describe('getInstitutionalContext hybrid vector snapshot', () => {
     expect(context.embeddingOutcome).toBe('served');
     await daemon.execute('searchInstitutionalMemory',
       { ...turn, agentId: RONNIE, query: 'where does my wife live' }, RONNIE);
-    const saved = await daemon.execute('proposeInstitutionalMemory', {
+    const saved = await daemon.execute('saveInstitutionalMemory', {
       ...turn,
       agentId: RONNIE,
       memoryKind: 'human_profile_fact',
@@ -186,9 +186,8 @@ describe('getInstitutionalContext hybrid vector snapshot', () => {
       body: 'Daeun lives in Seoul.',
       keywords: ['daeun', 'seoul'],
       sourceMessageIds: [MESSAGE],
-      correction: false,
+      personAsked: false,
       confidence: 0.9,
-      cas: { baseVersion: null },
     }, RONNIE);
     await vi.waitFor(async () => {
       expect((await database.query(`SELECT 1 FROM institutional_memory_items
@@ -214,7 +213,7 @@ describe('getInstitutionalContext hybrid vector snapshot', () => {
     const daemon = liveDaemon();
     await openCommand('turn-1', 'gen-1');
     const saved = await daemon.execute(
-      'proposeInstitutionalMemory',
+      'saveInstitutionalMemory',
       {
         agentId: RONNIE,
         roomId: ROOM,
@@ -225,9 +224,8 @@ describe('getInstitutionalContext hybrid vector snapshot', () => {
         body: "Daeun's Tokyo residence is Motoazabu Hills 3-2-1 #402.",
         keywords: ['daeun', 'tokyo', 'residence'],
         sourceMessageIds: [MESSAGE],
-        correction: false,
+        personAsked: false,
         confidence: 0.9,
-        cas: { baseVersion: null },
       },
       RONNIE,
     );
@@ -253,7 +251,7 @@ describe('getInstitutionalContext hybrid vector snapshot', () => {
     // A keyword-matched item, so the snapshot still serves something even
     // though the vector pass never resolves in time.
     const saved = await daemon.execute(
-      'proposeInstitutionalMemory',
+      'saveInstitutionalMemory',
       {
         agentId: RONNIE,
         roomId: ROOM,
@@ -264,9 +262,8 @@ describe('getInstitutionalContext hybrid vector snapshot', () => {
         body: 'Her name is Daeun.',
         keywords: ['wife', 'daeun'],
         sourceMessageIds: [MESSAGE],
-        correction: false,
+        personAsked: false,
         confidence: 0.9,
-        cas: { baseVersion: null },
       },
       RONNIE,
     );

@@ -151,8 +151,6 @@ async function main(): Promise<void> {
   const daemon = new DaemonService(database, live, undefined, undefined, false, undefined, false, undefined, undefined, undefined, {
     enabled: true,
     live: true,
-    dailyJobLimit: 20,
-    leaseMs: 60_000,
   });
   const server = createBeelineServer({
     database,

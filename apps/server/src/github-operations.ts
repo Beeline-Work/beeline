@@ -27,11 +27,7 @@ import {
   reconcileCornerMergeBlockers,
   routeSystemCommand,
 } from './agent-command.js';
-import {
-  enqueueInstitutionalMemoryMergeReview,
-  recordInstitutionalCornerOutcome,
-  type InstitutionalMemoryShadowConfig,
-} from './institutional-memory-shadow.js';
+import { recordInstitutionalCornerOutcome } from './institutional-memory-shadow.js';
 import { reviewerList, roomAgentHealth } from './agent-health.js';
 
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
@@ -227,7 +223,6 @@ export class GitHubOperations {
     clientSecret: string,
     private readonly resolveSealedUserToken?: (subject: string) => Promise<string | undefined>,
     private readonly onRoomChanged?: (roomId: string) => void,
-    private readonly institutionalMemory: InstitutionalMemoryShadowConfig = { enabled: false },
   ) {
     this.#key = createHash('sha256').update(clientSecret).digest();
   }
@@ -1904,7 +1899,6 @@ export class GitHubOperations {
         )
       ).rows[0]?.lifecycle;
       if (expectedPrNumber && currentLifecycle?.pr?.number !== expectedPrNumber) return;
-      const observedChecks = currentLifecycle?.checks;
       const currentPr = currentLifecycle?.pr;
       const mergedPr =
         currentPr ??
@@ -1957,7 +1951,7 @@ export class GitHubOperations {
         kind: 'merged',
         object: { text: pullRequest.title, url: pullRequest.url },
       };
-      const mergeNote = await systemLine(database, {
+      await systemLine(database, {
         id: hash(`beeline:${target.corner_id}:${mergeKey}`),
         roomId: target.corner_id,
         authorId: target.author_id,
@@ -1965,7 +1959,6 @@ export class GitHubOperations {
         cardType: 'github-corner-note',
         card: { source: 'github', dedupe: mergeKey },
       });
-      const targetCommit = pullRequest.mergeCommitSha ?? pullRequest.headSha;
       await recordInstitutionalCornerOutcome(database, {
         cornerId: target.corner_id,
         kind: 'merged',
@@ -1975,22 +1968,6 @@ export class GitHubOperations {
           ...(pullRequest.mergeCommitSha ? { mergeCommitSha: pullRequest.mergeCommitSha } : {}),
         },
       });
-      if (targetCommit) {
-        await enqueueInstitutionalMemoryMergeReview(database, {
-          cornerId: target.corner_id,
-          sourceMessageId: mergeNote.id,
-          repository: pullRequest.repository,
-          targetCommit,
-          pullRequestUrl: pullRequest.url,
-          pullRequestTitle: pullRequest.title,
-          objective: target.summary,
-          commits: pullRequest.commits,
-          files: pullRequest.files,
-          checks: observedChecks,
-          headSha: pullRequest.headSha ?? mergedPr?.headSha,
-          config: this.institutionalMemory,
-        });
-      }
       const summary = target.summary.trim() || pullRequest.title;
       // The merge summary card in the parent Room: a tap opens the pull request.
       await systemLine(database, {

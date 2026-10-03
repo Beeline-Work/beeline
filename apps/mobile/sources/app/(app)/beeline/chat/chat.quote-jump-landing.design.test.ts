@@ -146,14 +146,13 @@ it('ignores an anchored response after the reader abandons the jump', async () =
 });
 
 describe('message-source cover', () => {
-  it('covers resident offscreen targets and releases after visibility or touch', () => {
+  it('covers resident offscreen targets until touch', () => {
     expect(shouldCoverMessageSource({ desktop: false, abandoned: false })).toBe(true);
     expect(shouldCoverMessageSource({ desktop: false, abandoned: true })).toBe(false);
-    expect(shouldReleaseMessageSourceCover({ abandoned: false, targetVisible: true, retryAttempts: 0 })).toBe(true);
   });
 
   it('releases the cover when the retry budget ends', () => {
-    expect(shouldReleaseMessageSourceCover({ abandoned: false, targetVisible: false, retryAttempts: 7 })).toBe(false);
-    expect(shouldReleaseMessageSourceCover({ abandoned: false, targetVisible: false, retryAttempts: 8 })).toBe(true);
+    expect(shouldReleaseMessageSourceCover({ abandoned: false, retryAttempts: 7 })).toBe(false);
+    expect(shouldReleaseMessageSourceCover({ abandoned: false, retryAttempts: 8 })).toBe(true);
   });
 });

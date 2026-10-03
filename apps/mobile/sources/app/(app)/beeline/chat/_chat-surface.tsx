@@ -6131,7 +6131,6 @@ export function BuzzChatSurface({
               }
               if (notification && shouldReleaseMessageSourceCover({
                 abandoned: messageSourceLandingAbandonedRef.current,
-                targetVisible: false,
                 retryAttempts: notification.attempts,
               })) {
                 pendingNotificationLandingRef.current = null;

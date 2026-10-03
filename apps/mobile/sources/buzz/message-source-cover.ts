@@ -7,8 +7,7 @@ export function shouldCoverMessageSource(input: {
 
 export function shouldReleaseMessageSourceCover(input: {
   abandoned: boolean;
-  targetVisible: boolean;
   retryAttempts: number;
 }): boolean {
-  return input.abandoned || input.targetVisible || input.retryAttempts >= 8;
+  return input.abandoned || input.retryAttempts >= 8;
 }

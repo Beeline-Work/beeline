@@ -418,9 +418,11 @@ describe.each([
     expect(await projected(cornerId)).toBe('landed');
     badges.push(await badge(cornerId, true));
     expect(badges).toEqual(BADGES);
-    expect((await cards(cornerId)).map((card) => (card as { workflowVersion?: number }).workflowVersion)).toEqual(
-      (await cards(cornerId)).map(() => 1),
-    );
+    // The cards name no workflow and no version.
+    for (const card of await cards(cornerId)) {
+      expect(card).not.toHaveProperty('workflowSlug');
+      expect(card).not.toHaveProperty('workflowVersion');
+    }
 
     const detail = await phone.execute('readWorkflowRun', { roomId: cornerId, runId: cornerId }, H);
     expect(detail.contract).toEqual(CORNER_LIFECYCLE_CONTRACT);

@@ -30,8 +30,9 @@ import { WORKFLOW_HANDOFF_CARD_TYPE, workflowGatePrompt } from './workflow-runs.
 const RUN_CARD_TYPES = [WORKFLOW_HANDOFF_CARD_TYPE, CORNER_WORKFLOW_HANDOFF_CARD_TYPE];
 
 /**
- * A corner's own run is keyed by its card type, never by its `workflowSlug`
- * or a stored workflow: it always renders from the in-code
+ * A corner's own run is keyed by its card type, never by a workflow name or
+ * version (older corner cards still carry `workflowSlug`/`workflowVersion`;
+ * both are ignored): it always renders from the in-code
  * `CORNER_LIFECYCLE_CONTRACT`, and a Workspace workflow saved as `corner`
  * stays a separate, ordinary workflow. Neither a `slug` nor a `slug@version`
  * contains a colon.
@@ -113,7 +114,7 @@ async function loadRunHeads(
   db: SqlDatabase,
   topRoomId: string,
   viewerId: string,
-  slug?: string,
+  only?: { cardType: string; slug?: string },
 ): Promise<RunHead[]> {
   const rows = (
     await db.query<RunHeadRow>(
@@ -133,7 +134,8 @@ async function loadRunHeads(
          JOIN scope ON scope.id=message.room_id
          WHERE message.card_type=ANY($3::text[]) AND message.card->>'runId' IS NOT NULL
            AND message.card->>'toState' IS NOT NULL
-           AND ($4::text IS NULL OR message.card->>'workflowSlug'=$4)
+           AND ($4::text IS NULL OR message.card_type=$4)
+           AND ($5::text IS NULL OR message.card->>'workflowSlug'=$5)
        ), started AS (
          SELECT room_id,run_id,min(created_at) started_at FROM cards GROUP BY room_id,run_id
        )
@@ -147,7 +149,7 @@ async function loadRunHeads(
        JOIN started ON started.room_id=cards.room_id AND started.run_id=cards.run_id
        ORDER BY cards.room_id,cards.run_id,cards.created_at DESC,cards.seq DESC NULLS LAST,
                 cards.id DESC`,
-      [topRoomId, viewerId, RUN_CARD_TYPES, slug ?? null],
+      [topRoomId, viewerId, RUN_CARD_TYPES, only?.cardType ?? null, only?.slug ?? null],
     )
   ).rows;
   return rows.map((row) => {
@@ -159,7 +161,7 @@ async function loadRunHeads(
       ...(row.parent_id ? { parentRoomId: row.parent_id } : {}),
       ...(row.reviewer_agent_id ? { reviewerAgentId: row.reviewer_agent_id } : {}),
       workspaceId: row.workspace_id,
-      slug: row.workflow_slug,
+      slug: corner ? CORNER_LIFECYCLE_CONTRACT.name : row.workflow_slug,
       version: row.workflow_version,
       corner,
       key: corner ? CORNER_RUN_KEY : `${row.workflow_slug}@${row.workflow_version}`,
@@ -379,8 +381,11 @@ export async function listRoomWorkflowRuns(
 ): Promise<WorkflowRunListResult> {
   // A definition's runs never include a corner's lifecycle run, which no
   // stored workflow defines.
-  const heads = (await loadRunHeads(db, roomId, viewerId, workflowSlug)).filter(
-    (head) => !workflowSlug || !head.corner,
+  const heads = await loadRunHeads(
+    db,
+    roomId,
+    viewerId,
+    workflowSlug ? { cardType: WORKFLOW_HANDOFF_CARD_TYPE, slug: workflowSlug } : undefined,
   );
   if (heads.length === 0) return { workflows: [] };
   const workspaceId = heads[0]!.workspaceId;
@@ -449,6 +454,7 @@ type RunCardRow = {
   author_avatar: string | null;
   author_face_id: string | null;
   workflow_slug: string;
+  card_type: string;
 };
 
 /** One stay in a state: the card that entered it, until the next card that moved the run. */
@@ -625,7 +631,8 @@ export async function readWorkflowRun(
               message.created_at,${MICROS('message.created_at')} created_us,
               author.id author_id,author.name author_name,
               author.kind author_kind,author.handle author_handle,author.avatar author_avatar,
-              author.face_id author_face_id,message.card->>'workflowSlug' workflow_slug
+              author.face_id author_face_id,message.card->>'workflowSlug' workflow_slug,
+              message.card_type
        FROM messages message
        JOIN identities author ON author.id=message.author_id
        WHERE message.room_id=$1 AND message.card_type=ANY($3::text[])
@@ -635,7 +642,15 @@ export async function readWorkflowRun(
     )
   ).rows;
   if (cards.length === 0) return null;
-  const heads = await loadRunHeads(db, topRoomId, viewerId, cards[0]!.workflow_slug);
+  const first = cards[0]!;
+  const heads = await loadRunHeads(
+    db,
+    topRoomId,
+    viewerId,
+    first.card_type === CORNER_WORKFLOW_HANDOFF_CARD_TYPE
+      ? { cardType: CORNER_WORKFLOW_HANDOFF_CARD_TYPE }
+      : { cardType: WORKFLOW_HANDOFF_CARD_TYPE, slug: first.workflow_slug },
+  );
   const head = heads.find((entry) => entry.runId === input.runId && entry.roomId === input.roomId);
   if (!head) return null;
   const contracts = await loadContracts(db, head.workspaceId, heads);

@@ -63,7 +63,10 @@ import { WORKFLOW_HANDOFF_CARD_TYPE, workflowRunLockKey } from './workflow-runs.
  * The contract is plain TypeScript. It is not a Workspace workflow: it is
  * never stored in `workspace_skills`, never listed or started as one, and a
  * Workspace workflow saved with the slug `corner` has no effect on corners.
- * It keeps the `WorkflowContract` shape only so the run page can draw it. A
+ * It keeps the `WorkflowContract` shape only so the run page can draw it
+ * (`version: 1` is that shape's fixed format marker, not a stored version).
+ * Its cards name neither a workflow nor a version; the run page finds them by
+ * their card type. A
  * corner's run id is its own room id — one run for its whole life — and its
  * current state is the newest card citing that run, projected onto
  * `corner_facts.workflow_state`/`workflow_outcome` in the same transaction
@@ -213,7 +216,6 @@ type RunState = {
   /** The PR head the newest card was written for. */
   headSha: string | undefined;
   roleBindings: Record<string, string>;
-  workflowVersion: number;
   seq: number;
 };
 
@@ -259,13 +261,12 @@ async function loadCornerWorkflowRunState(
       outcome: string | null;
       head_sha: string | null;
       role_bindings: Record<string, string> | null;
-      workflow_version: number | null;
       seq: number | null;
     }>(
       `SELECT card->>'toState' to_state, card->>'outcome' outcome,
               COALESCE(card->'contents'->>'headSha',card->>'headSha') head_sha,
               card->'roleBindings' role_bindings,
-              (card->>'workflowVersion')::int workflow_version, (card->>'seq')::int seq
+              (card->>'seq')::int seq
        FROM messages
        WHERE room_id=$1::uuid AND card_type=$2 AND card->>'runId'=$1::text
        ORDER BY (card->>'seq')::int DESC LIMIT 1`,
@@ -278,7 +279,6 @@ async function loadCornerWorkflowRunState(
     outcome: row.outcome ?? undefined,
     headSha: row.head_sha ?? undefined,
     roleBindings: row.role_bindings ?? {},
-    workflowVersion: row.workflow_version ?? 1,
     seq: row.seq ?? 0,
   };
 }
@@ -344,7 +344,6 @@ async function writeStartCard(
   db: SqlDatabase,
   input: {
     cornerId: string;
-    workflowVersion: number;
     roleBindings: Record<string, string>;
     toState: string;
     /** Set only on a run derived from an older corner's lifecycle. */
@@ -366,8 +365,6 @@ async function writeStartCard(
     cardType: CORNER_WORKFLOW_HANDOFF_CARD_TYPE,
     card: {
       runId: input.cornerId,
-      workflowSlug: CORNER_LIFECYCLE_CONTRACT.name,
-      workflowVersion: input.workflowVersion,
       roleBindings: input.roleBindings,
       toState: input.toState,
       seq: 0,
@@ -452,8 +449,6 @@ class Transition {
       cardType: CORNER_WORKFLOW_HANDOFF_CARD_TYPE,
       card: {
         runId: this.cornerId,
-        workflowSlug: CORNER_LIFECYCLE_CONTRACT.name,
-        workflowVersion: this.run.workflowVersion,
         roleBindings: this.run.roleBindings,
         fromState,
         outcome,
@@ -515,7 +510,6 @@ async function backfillRun(
     toState = 'checks';
     outcome = undefined;
   }
-  const workflowVersion = CORNER_LIFECYCLE_CONTRACT.version;
   const roleBindings = {
     implementer: corner.worker_agent_id ?? '',
     reviewer: REVIEWER_ROLE_BINDING,
@@ -523,12 +517,11 @@ async function backfillRun(
   const headSha = corner.lifecycle.pr?.headSha;
   await writeStartCard(db, {
     cornerId,
-    workflowVersion,
     roleBindings,
     toState,
     backfilled: { outcome, headSha },
   });
-  return { toState, outcome, headSha, roleBindings, workflowVersion, seq: 0 };
+  return { toState, outcome, headSha, roleBindings, seq: 0 };
 }
 
 async function checksVerdictDispatched(
@@ -573,18 +566,17 @@ export async function advanceCorner(
         rejected(cornerId, event, run.toState, 'run already started');
         return { state: run.toState, accepted: false };
       }
-      const workflowVersion = CORNER_LIFECYCLE_CONTRACT.version;
       const roleBindings = {
         implementer: event.implementerAgentId,
         // Never a real agent id, so the generic handoff() engine's own
         // `boundAgentId !== command.agent_id` check can never match it.
         reviewer: REVIEWER_ROLE_BINDING,
       };
-      await writeStartCard(db, { cornerId, workflowVersion, roleBindings, toState: 'opened' });
+      await writeStartCard(db, { cornerId, roleBindings, toState: 'opened' });
       const transition = new Transition(
         db,
         cornerId,
-        { toState: 'opened', outcome: undefined, headSha: undefined, roleBindings, workflowVersion, seq: 0 },
+        { toState: 'opened', outcome: undefined, headSha: undefined, roleBindings, seq: 0 },
         corner.lifecycle.pr?.headSha,
       );
       return { state: await transition.take(event.lane), accepted: true };

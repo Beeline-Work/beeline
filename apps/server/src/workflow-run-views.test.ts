@@ -310,7 +310,7 @@ describe('readWorkflowRun', () => {
     });
   });
 
-  it('renders a corner run from the in-code contract whatever version its cards name, with no stored corner row', async () => {
+  it('renders a corner run from the in-code contract whatever name and version older cards carry, with no stored corner row', async () => {
     expect(
       (await database.query(`SELECT 1 FROM workspace_skills WHERE slug='corner'`)).rowCount,
     ).toBe(0);
@@ -320,9 +320,10 @@ describe('readWorkflowRun', () => {
       workspaceId: WORKSPACE,
       implementerAgentId: TRIAGER,
     });
-    // Cards written while a stored copy existed name its version.
+    // Cards written while a stored copy existed name it and its version.
     await database.query(
-      `UPDATE messages SET card=jsonb_set(card,'{workflowVersion}','7') WHERE room_id=$1`,
+      `UPDATE messages SET card=card || '{"workflowSlug":"corner","workflowVersion":7}'::jsonb
+       WHERE room_id=$1`,
       [CORNER],
     );
     const detail = await phone.execute('readWorkflowRun', { roomId: CORNER, runId: CORNER }, OWNER);
@@ -360,12 +361,15 @@ describe('readWorkflowRun', () => {
       workspaceId: WORKSPACE,
       implementerAgentId: TRIAGER,
     });
-    const lifecycleCards = await database.query<{ version: string }>(
-      `SELECT card->>'workflowVersion' version FROM messages
+    const lifecycleCards = await database.query<{ slug: string | null; version: string | null }>(
+      `SELECT card->>'workflowSlug' slug,card->>'workflowVersion' version FROM messages
        WHERE room_id=$1 AND card_type='corner-workflow-handoff'`,
       [CORNER],
     );
-    expect(lifecycleCards.rows.map((row) => row.version)).toEqual(['1', '1']);
+    expect(lifecycleCards.rows).toEqual([
+      { slug: null, version: null },
+      { slug: null, version: null },
+    ]);
 
     const listed = await phone.execute('listRoomWorkflowRuns', { roomId: ROOM }, OWNER);
     const byRun = Object.fromEntries(listed.workflows.map((run) => [run.runId, run]));

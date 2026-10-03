@@ -4,6 +4,7 @@
  * command line the way npm runs Squire's broker.
  */
 import { type ChildProcess, spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -101,6 +102,8 @@ describe.skipIf(!linux)('host broker socket preflight', () => {
     });
 
     expect(result).toEqual({ ok: true, stopped: [squatter.pid] });
+    // Socket release can precede Node's notification that the child exited.
+    if (!exited(squatter)) await once(squatter, 'exit');
     expect(exited(squatter)).toBe(true);
     expect(await squireBrokerSocketReady(paths.mcpSocket)).toBe(false);
     expect(lines.join('\n')).toContain(`pid ${squatter.pid}`);
@@ -133,6 +136,7 @@ describe.skipIf(!linux)('host broker socket preflight', () => {
     });
 
     expect(result).toEqual({ ok: true, stopped: [squatter.pid] });
+    if (!exited(squatter)) await once(squatter, 'exit');
     expect(squatter.signalCode).toBe('SIGKILL');
   });
 

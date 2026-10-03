@@ -37,3 +37,11 @@ git diff --check
 App connections: 39 tests passed. Mobile: 118 tests passed. Contract: 140 tests passed. Composio: 25 tests passed. Room latency: 10 tests passed when run separately; the first combined run exceeded its 1200ms timing assertion at 1273ms, and the separate run measured 1193ms. Server build and server/mobile typechecks passed. The corrected SIGNIN-1 fixtures set the provider account active before completion; both pass.
 
 Fallback remains a letter when neither a bundled image, provider logo, nor a working domain favicon is available. No new per-service logo table, authentication route, authorization change, or connection flag was added.
+
+## CI follow-up
+
+Reproduction CI-1: BODY SUITE job 111089163023 failed in the inherited `squire-broker-squatter.test.ts:104` assertion. Socket reclamation returned the expected successful result, but the immediate child `exitCode`/`signalCode` assertion was still false. The implementation waits for process/socket release through `/proc`; Node's child exit notification can arrive after that observation. The test now awaits that notification before asserting exit and SIGKILL status. The assertions remain in place and the existing test timeout still bounds the wait. No broker implementation changed.
+
+The unmodified seven-test file passed locally using `TMPDIR=/tmp`. The helper's default temporary path is too long for Unix sockets. GitHub rejected rerunning the completed job because its encompassing workflow was still running. The CI correction is limited to test synchronization.
+
+After the correction, `TMPDIR=/tmp npm test -w @beeline/body -- src/squire-broker-squatter.test.ts` passed all seven real-process/socket tests, including the exact failed test and SIGKILL case. `npm run typecheck -w @beeline/body` and `git diff --check` passed.

@@ -35,3 +35,9 @@ The full server suite passed 1,506 tests and the API contract suite passed 336 t
 The broader helper and mobile suites were attempted. They are not fully green on this host. Unchanged-base runs reproduce helper fixtures refused by the corner’s branch push restriction, a helper-presence assertion, and the machine-ID fixture’s assumption that `/dev` is unwritable. The mobile base also reproduces the native fingerprint mismatch and three release-canary assertions that encounter the unavailable sanctioned emulator before their expected EAS paths. Long session temporary paths additionally caused Unix socket/browser failures; rerunning with `TMPDIR=/tmp` removed those failures. Required installed mobile notification patches were applied before the final mobile run.
 
 These unrelated checks are reported as failing, not counted as passes; no release, fingerprint, emulator or host policy change is included in this workflow fix. CI and the configured reviewer’s exact-head verdict remain pending at publication.
+
+## Verification after resolving merge conflicts
+
+Merged main at `b93b99d3`, retaining both the workflow ownership imports and the new corner hold imports in the daemon and phone services. The affected server suites pass 165 tests, helper suites pass 56 tests, API contracts pass 336 tests, and workflow browser suites pass 9 tests. Server and dependency builds, mobile and script type checks, whitespace checks, and the dead-code gate pass (zero introduced findings).
+
+Reproduction OWNER-1 still passes against the running isolated service and workflow page: the peer receives HTTP 403 naming Scanner and the complete active run ID. Chrome shows the owner at 1280px and 390px, and a human transfer to Peer updates the header while preserving Scanner as the existing run's starter. CI and fresh reviewer approval are pending for the updated head.

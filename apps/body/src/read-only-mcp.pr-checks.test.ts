@@ -55,6 +55,7 @@ beforeEach(() => {
                   reviewerIsAuthor,
                   ...(reviewerWake ? { reviewerWake } : {}),
                   held,
+                  holds: held ? [{ id: 'hold-1', actorId: 'human', standing: 'owner', setAt: '2026-10-02' }] : [],
                   isWorkerYolo,
                   mergeAllowed,
                   rule: gateRule,
@@ -136,6 +137,7 @@ describe('pr_checks_status PR selection and reviewer gate', () => {
     items = [{ authorId: 'human', body: 'proceed' }];
     expect(JSON.parse(await prChecksStatus({ pullRequest: 614 }))).toMatchObject({
       held: true,
+      holds: [{ id: 'hold-1', actorId: 'human', standing: 'owner', setAt: '2026-10-02' }],
       didHumanSayDontMerge: true,
       mergeAllowed: false,
       approvalPending: true,

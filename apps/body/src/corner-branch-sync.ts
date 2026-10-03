@@ -1,7 +1,9 @@
 import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 
-const execFileAsync = promisify(execFile);
+export const CORNER_GIT_SYNC_TIMEOUT_MS = 120_000;
+export const CORNER_GIT_SYNC_KILL_GRACE_MS = 1_000;
+
+class CornerGitSyncInterruptedError extends Error {}
 
 /**
  * Two agents, one branch.
@@ -27,20 +29,69 @@ export interface CornerBranchSyncInput {
   readonly worktreePath: string;
   readonly featureBranch: string;
   readonly env?: NodeJS.ProcessEnv;
+  readonly signal?: AbortSignal;
   /** Seam for tests; defaults to running real git in the worktree. */
   readonly git?: (args: readonly string[]) => Promise<string>;
 }
 
 export async function syncCornerBranch(input: CornerBranchSyncInput): Promise<CornerBranchSync> {
-  const git =
-    input.git ??
-    (async (args: readonly string[]) =>
-      (
-        await execFileAsync('git', ['-C', input.worktreePath, ...args], {
-          ...(input.env ? { env: input.env } : {}),
-          maxBuffer: 4 * 1024 * 1024,
-        })
-      ).stdout);
+  const git = async (args: readonly string[]): Promise<string> => {
+    const controller = new AbortController();
+    const signal = input.signal
+      ? AbortSignal.any([input.signal, controller.signal])
+      : controller.signal;
+    const timer = setTimeout(() => controller.abort(), CORNER_GIT_SYNC_TIMEOUT_MS);
+    const interrupted = () =>
+      new CornerGitSyncInterruptedError(
+        `corner git sync ${args[0]} ${controller.signal.aborted ? `timed out after ${CORNER_GIT_SYNC_TIMEOUT_MS}ms` : 'stopped'}`,
+      );
+    try {
+      if (signal.aborted) throw interrupted();
+      return await new Promise<string>((resolve, reject) => {
+        let killTimer: NodeJS.Timeout | undefined;
+        let stdout = '';
+        let failure: Error | null = null;
+        const child = input.git
+          ? undefined
+          : execFile(
+              'git',
+              ['-C', input.worktreePath, ...args],
+              {
+                ...(input.env ? { env: input.env } : {}),
+                signal,
+                maxBuffer: 4 * 1024 * 1024,
+              },
+              (error, output) => {
+                failure = error;
+                stdout = output;
+              },
+            );
+        const abort = () => {
+          if (!child) {
+            cleanup();
+            reject(interrupted());
+          } else {
+            killTimer = setTimeout(() => child.kill('SIGKILL'), CORNER_GIT_SYNC_KILL_GRACE_MS);
+          }
+        };
+        signal.addEventListener('abort', abort, { once: true });
+        const cleanup = () => {
+          signal.removeEventListener('abort', abort);
+          if (killTimer) clearTimeout(killTimer);
+        };
+        if (child)
+          child.once('close', () => {
+            cleanup();
+            if (signal.aborted) reject(interrupted());
+            else if (failure) reject(failure);
+            else resolve(stdout);
+          });
+        else input.git!(args).then(resolve, reject).finally(cleanup);
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   const remoteRef = `refs/remotes/origin/${input.featureBranch}`;
   const fetched = await git([
     'fetch',
@@ -73,8 +124,11 @@ export async function syncCornerBranch(input: CornerBranchSyncInput): Promise<Co
   try {
     await git(behind ? ['merge', '--ff-only', remote] : ['rebase', remote]);
     return behind ? 'fast-forwarded' : 'rebased';
-  } catch {
-    await git(['rebase', '--abort']).catch(() => undefined);
+  } catch (error) {
+    if (error instanceof CornerGitSyncInterruptedError) throw error;
+    await git(['rebase', '--abort']).catch((error) => {
+      if (error instanceof CornerGitSyncInterruptedError) throw error;
+    });
     await git(['reset', '--hard', remote]);
     return 'realigned';
   }
@@ -88,6 +142,9 @@ async function contains(
 ): Promise<boolean> {
   return git(['merge-base', '--is-ancestor', ancestor, head]).then(
     () => true,
-    () => false,
+    (error) => {
+      if (error instanceof CornerGitSyncInterruptedError) throw error;
+      return false;
+    },
   );
 }

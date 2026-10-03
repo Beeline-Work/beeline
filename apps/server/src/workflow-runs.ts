@@ -34,6 +34,8 @@ export const WORKFLOW_HANDOFF_CARD_TYPE = 'workflow-handoff';
 
 type WorkflowRunCard = {
   runId: string;
+  /** Absent on cards written before per-run sequencing. */
+  seq?: number;
   workflowSlug: string;
   workflowVersion: number;
   /** The agent holding each role; a list-bound role is absent until its first dispatch. */
@@ -73,7 +75,7 @@ async function loadRun(
     await db.query<{ card: WorkflowRunCard }>(
       `SELECT card FROM messages
        WHERE room_id=$1 AND card_type=$2 AND card->>'runId'=$3
-       ORDER BY created_at DESC,id DESC LIMIT 1`,
+       ORDER BY (card->>'seq')::int DESC NULLS LAST,created_at DESC,id DESC LIMIT 1`,
       [roomId, WORKFLOW_HANDOFF_CARD_TYPE, runId],
     )
   ).rows[0];
@@ -531,6 +533,7 @@ export async function startWorkflow(
       cardType: WORKFLOW_HANDOFF_CARD_TYPE,
       card: {
         runId,
+        seq: 0,
         active: true,
         currentAgentId: exhausted ? null : (resolution as { agentId: string }).agentId,
         workflowSlug: contract.name,
@@ -672,6 +675,7 @@ export async function handoff(
       cardType: WORKFLOW_HANDOFF_CARD_TYPE,
       card: {
         runId: input.runId,
+        seq: (run.seq ?? 0) + 1,
         workflowSlug: run.workflowSlug,
         workflowVersion: run.workflowVersion,
         roleBindings,
@@ -760,6 +764,7 @@ async function reassignRole(
     cardType: WORKFLOW_HANDOFF_CARD_TYPE,
     card: {
       runId: input.runId,
+      seq: (input.run.seq ?? 0) + 1,
       workflowSlug: input.run.workflowSlug,
       workflowVersion: input.run.workflowVersion,
       roleBindings,
@@ -834,7 +839,7 @@ export async function reassignFailedWorkflowRole(
   const latest = (
     await db.query<{ id: string; card: WorkflowRunCard }>(
       `SELECT id,card FROM messages WHERE room_id=$1 AND card_type=$2 AND card->>'runId'=$3
-       ORDER BY created_at DESC,id DESC LIMIT 1`,
+       ORDER BY (card->>'seq')::int DESC NULLS LAST,created_at DESC,id DESC LIMIT 1`,
       [input.roomId, WORKFLOW_HANDOFF_CARD_TYPE, trigger.run_id],
     )
   ).rows[0];

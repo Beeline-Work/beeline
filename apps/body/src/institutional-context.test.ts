@@ -3,6 +3,7 @@ import {
   awaitInstitutionalContext,
   EMPTY_INSTITUTIONAL_CONTEXT,
   INSTITUTIONAL_CONTEXT_MISSED_TEXT,
+  INSTITUTIONAL_CONTEXT_TIMEOUT_MS,
   startInstitutionalContextFetch,
 } from './institutional-context.js';
 
@@ -147,6 +148,49 @@ describe('institutional context fetch', () => {
     // truthiness must see a reason, not silence indistinguishable from
     // "nothing was ever saved" (the recall-miss incident this guards against).
     expect(INSTITUTIONAL_CONTEXT_MISSED_TEXT.length).toBeGreaterThan(0);
+  });
+
+  it('serves a snapshot that resolves just inside the real INSTITUTIONAL_CONTEXT_TIMEOUT_MS default budget', async () => {
+    const snapshot = { ...EMPTY_INSTITUTIONAL_CONTEXT, text: 'served near the edge' };
+    const execute = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(() => resolve(snapshot), INSTITUTIONAL_CONTEXT_TIMEOUT_MS - 50);
+        }),
+    );
+    const fetch = startInstitutionalContextFetch({ execute } as never, 'room-1', true, () => 0);
+    vi.useFakeTimers();
+    try {
+      // No explicit budgetMs: this exercises the real production default.
+      const result = awaitInstitutionalContext(fetch, vi.fn(), undefined, () => 0);
+      await vi.advanceTimersByTimeAsync(INSTITUTIONAL_CONTEXT_TIMEOUT_MS - 50);
+      await expect(result).resolves.toEqual({ ...snapshot, outcome: 'served' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('times out a snapshot that resolves just past the real INSTITUTIONAL_CONTEXT_TIMEOUT_MS default budget', async () => {
+    const snapshot = { ...EMPTY_INSTITUTIONAL_CONTEXT, text: 'too late' };
+    const execute = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(() => resolve(snapshot), INSTITUTIONAL_CONTEXT_TIMEOUT_MS + 50);
+        }),
+    );
+    const fetch = startInstitutionalContextFetch({ execute } as never, 'room-1', true, () => 0);
+    vi.useFakeTimers();
+    try {
+      const result = awaitInstitutionalContext(fetch, vi.fn(), undefined, () => 0);
+      await vi.advanceTimersByTimeAsync(INSTITUTIONAL_CONTEXT_TIMEOUT_MS);
+      await expect(result).resolves.toEqual({
+        ...EMPTY_INSTITUTIONAL_CONTEXT,
+        text: INSTITUTIONAL_CONTEXT_MISSED_TEXT,
+        outcome: 'timed-out',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('fetches by default without any host flag', async () => {

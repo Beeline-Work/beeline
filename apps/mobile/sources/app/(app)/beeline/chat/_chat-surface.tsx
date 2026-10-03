@@ -555,6 +555,8 @@ export function BuzzChatSurface({
   // arrivals can decide whether to follow or queue against the pre-append view.
   const isPinnedToTailRef = useRef(true);
   const handledNotificationAnchorRef = useRef<string | null>(null);
+  const locatingMessageSourceIdRef = useRef<string | null>(null);
+  const [isLocatingMessageSource, setIsLocatingMessageSource] = useState(false);
   const composerRef = useRef<TextInput>(null);
   // React state can lag the final Android native text event when the user
   // immediately taps send. Keep the authoritative in-flight draft beside the
@@ -1232,6 +1234,7 @@ export function BuzzChatSurface({
   // transcript or folded into the current Room response.
   const {
     aroundStatus,
+    aroundForwardStatus,
     anchoredSegmentActive,
     segmentRows,
     loadNewerAround,
@@ -2266,14 +2269,13 @@ export function BuzzChatSurface({
   transcriptMessagesRef.current = transcriptMessages;
   const transcriptScrubber = useTranscriptScrubber();
   useEffect(() => transcriptScrubber.reset(), [decodedId, transcriptScrubber]);
-  // A folded tail shorter than the phone list never scrolls, so no drag
-  // opens the older-history gate; page in without one until it fills.
   const phoneUnderfill = usePhoneUnderfillHistory({
-    enabled: !desktopTranscript && transcriptMessages.length > 0,
-    status: transcriptHistoryStatus,
+    enabled: !desktopTranscript && transcriptMessages.length > 0 &&
+      (!anchoredSegmentActive || !isLocatingMessageSource),
+    status: anchoredSegmentActive ? aroundForwardStatus : transcriptHistoryStatus,
     historyRevision: visibleMessageCount,
     threshold: TAIL_PIN_THRESHOLD,
-    loadOlder: loadOlderTranscriptMessages,
+    loadOlder: anchoredSegmentActive ? loadNewerAround : loadOlderTranscriptMessages,
   });
   // The read cursor ranks rows by index to decide which is newest, so it reads
   // the chronological order for the same reason the jump control does: on the
@@ -2502,17 +2504,8 @@ export function BuzzChatSurface({
   // which provoke momentum events on the shared `dragEndSequenceRef` just
   // like a real gesture would. Reset when a new landing starts.
   const messageSourceLandingAbandonedRef = useRef(false);
-  // The id a message-source jump is walking server history pages (and then
-  // chasing onScrollToIndexFailed's retries) to reach, or null when no jump
-  // is mid-flight. Native only: desktop's `scrollIntoView` is synchronous
-  // real DOM with no paging wait or retry chase to cover. While set, the
-  // transcript stays covered by a "Locating message…" overlay instead of
-  // sitting blank through the history walk and then visibly hopping through
-  // onScrollToIndexFailed's corrective scrolls before it settles.
-  const locatingMessageSourceIdRef = useRef<string | null>(null);
   const requestedAroundMessageIdRef = useRef<string | null>(null);
   const activeMessageSourceAnchorRef = useRef<string | null>(null);
-  const [isLocatingMessageSource, setIsLocatingMessageSource] = useState(false);
   const visibleTranscriptMessagesRef = useRef<ChatDisplayMessage[]>([]);
   const dragEndSequenceRef = useRef(0);
   const completedUnreadLandingRef = useRef<string | null>(null);
@@ -3040,12 +3033,11 @@ export function BuzzChatSurface({
       (message) => message.id === messageId || message.relayId === messageId,
     );
     if (visibleIndex >= 0) {
-      if (shouldCoverMessageSource({
+      if (!visibleTranscriptMessagesRef.current.some(
+        (row) => row.id === messageId || row.relayId === messageId,
+      ) && shouldCoverMessageSource({
         desktop: desktopTranscript,
         abandoned: messageSourceLandingAbandonedRef.current,
-        targetVisible: visibleTranscriptMessagesRef.current.some(
-          (row) => row.id === messageId || row.relayId === messageId,
-        ),
       })) {
         locatingMessageSourceIdRef.current = messageId;
         setIsLocatingMessageSource(true);
@@ -3088,7 +3080,6 @@ export function BuzzChatSurface({
       if (shouldCoverMessageSource({
         desktop: desktopTranscript,
         abandoned: messageSourceLandingAbandonedRef.current,
-        targetVisible: false,
       })) {
         locatingMessageSourceIdRef.current = messageId;
         setIsLocatingMessageSource(true);

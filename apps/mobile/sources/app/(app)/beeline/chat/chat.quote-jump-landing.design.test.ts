@@ -37,7 +37,7 @@ it.each(['quote', 'notification', 'bookmark'])('%s fetches a distant target for 
   expect(state!.aroundPage.map((row) => row.id)).toContain(target.id);
 
   const landing = startMessageSourceLanding(target.id);
-  let coverVisible = shouldCoverMessageSource({ desktop: false, abandoned: false, targetVisible: false });
+  let coverVisible = shouldCoverMessageSource({ desktop: false, abandoned: false });
   const scrollToIndex = vi.fn();
   const flash = vi.fn();
   const input = {
@@ -147,9 +147,8 @@ it('ignores an anchored response after the reader abandons the jump', async () =
 
 describe('message-source cover', () => {
   it('covers resident offscreen targets and releases after visibility or touch', () => {
-    expect(shouldCoverMessageSource({ desktop: false, abandoned: false, targetVisible: false })).toBe(true);
-    expect(shouldCoverMessageSource({ desktop: false, abandoned: true, targetVisible: false })).toBe(false);
-    expect(shouldCoverMessageSource({ desktop: false, abandoned: false, targetVisible: true })).toBe(false);
+    expect(shouldCoverMessageSource({ desktop: false, abandoned: false })).toBe(true);
+    expect(shouldCoverMessageSource({ desktop: false, abandoned: true })).toBe(false);
     expect(shouldReleaseMessageSourceCover({ abandoned: false, targetVisible: true, retryAttempts: 0 })).toBe(true);
   });
 

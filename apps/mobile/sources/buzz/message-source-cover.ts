@@ -1,9 +1,8 @@
 export function shouldCoverMessageSource(input: {
   desktop: boolean;
   abandoned: boolean;
-  targetVisible: boolean;
 }): boolean {
-  return !input.desktop && !input.abandoned && !input.targetVisible;
+  return !input.desktop && !input.abandoned;
 }
 
 export function shouldReleaseMessageSourceCover(input: {

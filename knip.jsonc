@@ -63,6 +63,7 @@
         "scripts/render-room-list-proof.mjs",
         "scripts/room-list-proof.tsx",
         "scripts/room-list-corner-longpress-proof.tsx",
+        "scripts/room-list-gestures-proof.tsx",
         "scripts/room-list-blank-proof.tsx",
         "scripts/render-consolidated-board-proof.mjs",
         "scripts/consolidated-board-proof.tsx",

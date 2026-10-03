@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { createAgentCommand, readAgentCommands, type CommandRow } from './agent-command.js';
-import { advanceCorner, ensureCornerWorkflowSeeded } from './corner-workflow.js';
+import { advanceCorner, CORNER_LIFECYCLE_CONTRACT } from './corner-lifecycle.js';
 import { PhoneService } from './phone-service.js';
 import { answerRoomChoice, postRoomChoice } from './room-choice.js';
 import { handoff, saveWorkflow, startWorkflow } from './workflow-runs.js';
@@ -116,7 +116,6 @@ beforeEach(async () => {
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
     [WORKSPACE, OTHER_ROOM, OUTSIDER],
   );
-  await ensureCornerWorkflowSeeded(database, WORKSPACE, ROOM);
   phone = new PhoneService(database, 'http://test');
 });
 afterEach(async () => database.close());
@@ -309,6 +308,96 @@ describe('readWorkflowRun', () => {
       implementer: { id: TRIAGER, name: 'Candy' },
       reviewer: { id: REVIEWER, name: 'Hoots' },
     });
+  });
+
+  it('renders a corner run from the in-code contract whatever name and version older cards carry, with no stored corner row', async () => {
+    expect(
+      (await database.query(`SELECT 1 FROM workspace_skills WHERE slug='corner'`)).rowCount,
+    ).toBe(0);
+    await advanceCorner(database, CORNER, {
+      kind: 'open',
+      lane: 'code',
+      workspaceId: WORKSPACE,
+      implementerAgentId: TRIAGER,
+    });
+    // Cards written while a stored copy existed name it and its version.
+    await database.query(
+      `UPDATE messages SET card=card || '{"workflowSlug":"corner","workflowVersion":7}'::jsonb
+       WHERE room_id=$1`,
+      [CORNER],
+    );
+    const detail = await phone.execute('readWorkflowRun', { roomId: CORNER, runId: CORNER }, OWNER);
+    expect(detail.contract).toEqual(CORNER_LIFECYCLE_CONTRACT);
+    expect(detail.history.map((step) => step.toState)).toEqual(['opened', 'implement']);
+    const listed = await phone.execute('listRoomWorkflowRuns', { roomId: ROOM }, OWNER);
+    expect(listed.workflows).toEqual([
+      expect.objectContaining({
+        runId: CORNER,
+        workflowSlug: 'corner',
+        description: CORNER_LIFECYCLE_CONTRACT.description,
+        state: 'implement',
+        status: 'live',
+      }),
+    ]);
+  });
+
+  it('keeps a Workspace workflow saved as corner apart from the corner lifecycle', async () => {
+    const saved = {
+      ...TRIAGE,
+      name: 'corner',
+      description: 'A workflow someone named corner',
+    };
+    await saveWorkflow(database, await command(ROOM, TRIAGER), { contract: saved });
+    await saveWorkflow(database, await command(ROOM, TRIAGER), {
+      contract: { ...saved, description: 'A workflow someone named corner, again' },
+    });
+    const { runId } = await startWorkflow(database, await command(ROOM, TRIAGER), {
+      name: 'corner',
+      roleBindings: { triager: TRIAGER },
+    });
+    await advanceCorner(database, CORNER, {
+      kind: 'open',
+      lane: 'code',
+      workspaceId: WORKSPACE,
+      implementerAgentId: TRIAGER,
+    });
+    const lifecycleCards = await database.query<{ slug: string | null; version: string | null }>(
+      `SELECT card->>'workflowSlug' slug,card->>'workflowVersion' version FROM messages
+       WHERE room_id=$1 AND card_type='corner-workflow-handoff'`,
+      [CORNER],
+    );
+    expect(lifecycleCards.rows).toEqual([
+      { slug: null, version: null },
+      { slug: null, version: null },
+    ]);
+
+    const listed = await phone.execute('listRoomWorkflowRuns', { roomId: ROOM }, OWNER);
+    const byRun = Object.fromEntries(listed.workflows.map((run) => [run.runId, run]));
+    expect(Object.keys(byRun).sort()).toEqual([CORNER, runId].sort());
+    expect(byRun[CORNER]).toMatchObject({
+      workflowSlug: 'corner',
+      description: CORNER_LIFECYCLE_CONTRACT.description,
+      state: 'implement',
+      earlierRunCount: 0,
+      activeRunIds: [CORNER],
+    });
+    expect(byRun[CORNER]).not.toHaveProperty('ownership');
+    expect(byRun[runId]).toMatchObject({
+      workflowSlug: 'corner',
+      description: 'A workflow someone named corner, again',
+      state: 'pull',
+      earlierRunCount: 0,
+      activeRunIds: [runId],
+    });
+
+    const corner = await phone.execute('readWorkflowRun', { roomId: CORNER, runId: CORNER }, OWNER);
+    expect(corner.contract).toEqual(CORNER_LIFECYCLE_CONTRACT);
+    expect(corner.run.activeRunIds).toEqual([CORNER]);
+    const definition = await phone.execute('readWorkflowDefinition', { roomId: ROOM, name: 'corner' }, OWNER);
+    expect(definition.runs.map((run) => run.runId)).toEqual([runId]);
+    const ordinary = await phone.execute('readWorkflowRun', { roomId: ROOM, runId }, OWNER);
+    expect(ordinary.contract.description).toBe('A workflow someone named corner, again');
+    expect(ordinary.history.map((step) => step.toState)).toEqual(['pull']);
   });
 
   it('lists no corner on a step whose handoff names none, even one its holder opened meanwhile', async () => {

@@ -6,7 +6,7 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { systemLine } from './system-line.js';
 import { routeSystemCommand } from './agent-command.js';
-import { claimCornerMergeAttempt, cornerMergeGate } from './corner-workflow.js';
+import { claimCornerMergeAttempt, cornerMergeGate } from './corner-lifecycle.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 
 const H = 'a'.repeat(64);

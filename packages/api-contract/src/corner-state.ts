@@ -3,7 +3,7 @@ import type { CornerLifecycleView, CornerState, CornerStateReason } from './phon
 /**
  * Where a corner's workflow run currently sits: the `toState` of its newest
  * handoff card, and the outcome of the edge that brought it there. State names
- * are the server's corner workflow contract (`apps/server/src/corner-workflow.ts`).
+ * are the server's corner workflow contract (`apps/server/src/corner-lifecycle.ts`).
  */
 export type CornerRunFacts = {
   readonly state: string;

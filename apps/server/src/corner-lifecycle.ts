@@ -1,5 +1,5 @@
 import type { activeCornerHolds } from './corner-holds.js';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import type { WorkflowContract, WorkflowTerminalState } from '@beeline/api-contract/daemon';
 import { cornerRunFromLifecycle, type CornerLifecycleView } from '@beeline/api-contract/phone';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
@@ -36,7 +36,7 @@ import { WORKFLOW_HANDOFF_CARD_TYPE, workflowRunLockKey } from './workflow-runs.
  */
 
 /**
- * The corner lifecycle as a declarative workflow contract, and the one
+ * The corner lifecycle as a declarative contract, and the one
  * authority that moves a corner through it.
  *
  * Every corner state change goes through `advanceCorner`: lane open, lane
@@ -46,7 +46,7 @@ import { WORKFLOW_HANDOFF_CARD_TYPE, workflowRunLockKey } from './workflow-runs.
  * `queueCornerWorkerAfterReview`, `closeCornerState`, and the server merge in
  * `GitHubOperations.landCorner`) only REPORT their event. Under the run lock,
  * `advanceCorner` reads the run's current state, validates the edge against
- * `CORNER_WORKFLOW_CONTRACT`, applies the contract's loop caps, writes the
+ * `CORNER_LIFECYCLE_CONTRACT`, applies the contract's loop caps, writes the
  * handoff card, and performs the edge's side effect — the one wake of the
  * next role, or the line naming the commissioning human. An event the current
  * state does not allow changes nothing and is logged. No other code path
@@ -60,18 +60,23 @@ import { WORKFLOW_HANDOFF_CARD_TYPE, workflowRunLockKey } from './workflow-runs.
  * to merge. A refused merge returns the corner to `implement` with GitHub's
  * reason; the merge webhook moves it to `landed`.
  *
- * The contract is seeded once per Workspace (and refreshed when it changes)
- * so it is discoverable and loadable exactly like any other workflow. A
+ * The contract is plain TypeScript. It is not a Workspace workflow: it is
+ * never stored in `workspace_skills`, never listed or started as one, and a
+ * Workspace workflow saved with the slug `corner` has no effect on corners.
+ * It keeps the `WorkflowContract` shape only so the run page can draw it
+ * (`version: 1` is that shape's fixed format marker, not a stored version).
+ * Its cards name neither a workflow nor a version; the run page finds them by
+ * their card type. A
  * corner's run id is its own room id — one run for its whole life — and its
  * current state is the newest card citing that run, projected onto
  * `corner_facts.workflow_state`/`workflow_outcome` in the same transaction
  * for the phone badge and the merge sweep.
  */
-export const CORNER_WORKFLOW_SLUG = 'corner';
+export const CORNER_LIFECYCLE_SLUG = 'corner';
 
-export const CORNER_WORKFLOW_CONTRACT: WorkflowContract = {
+export const CORNER_LIFECYCLE_CONTRACT: WorkflowContract = {
   version: 1,
-  name: CORNER_WORKFLOW_SLUG,
+  name: CORNER_LIFECYCLE_SLUG,
   description: 'Corner lifecycle: implement, check, review, merge, or close',
   roles: ['implementer', 'reviewer'],
   start: 'opened',
@@ -158,7 +163,7 @@ export const REVIEW_HANDBACK_LIMIT = loopCap('review');
 export const CHECKS_FAILING_LIMIT = loopCap('checks');
 
 function loopCap(state: string): number {
-  const handoff = CORNER_WORKFLOW_CONTRACT.handoffs[state];
+  const handoff = CORNER_LIFECYCLE_CONTRACT.handoffs[state];
   const loop = handoff && 'loop' in handoff ? handoff.loop : undefined;
   if (!loop) throw new Error(`corner contract state ${state} declares no loop`);
   return loop.cap;
@@ -211,7 +216,6 @@ type RunState = {
   /** The PR head the newest card was written for. */
   headSha: string | undefined;
   roleBindings: Record<string, string>;
-  workflowVersion: number;
   seq: number;
 };
 
@@ -257,13 +261,12 @@ async function loadCornerWorkflowRunState(
       outcome: string | null;
       head_sha: string | null;
       role_bindings: Record<string, string> | null;
-      workflow_version: number | null;
       seq: number | null;
     }>(
       `SELECT card->>'toState' to_state, card->>'outcome' outcome,
               COALESCE(card->'contents'->>'headSha',card->>'headSha') head_sha,
               card->'roleBindings' role_bindings,
-              (card->>'workflowVersion')::int workflow_version, (card->>'seq')::int seq
+              (card->>'seq')::int seq
        FROM messages
        WHERE room_id=$1::uuid AND card_type=$2 AND card->>'runId'=$1::text
        ORDER BY (card->>'seq')::int DESC LIMIT 1`,
@@ -276,7 +279,6 @@ async function loadCornerWorkflowRunState(
     outcome: row.outcome ?? undefined,
     headSha: row.head_sha ?? undefined,
     roleBindings: row.role_bindings ?? {},
-    workflowVersion: row.workflow_version ?? 1,
     seq: row.seq ?? 0,
   };
 }
@@ -321,25 +323,14 @@ async function cornerBookkeepingSubject(db: SqlDatabase): Promise<SystemLineInpu
   return { kind: 'system', id: SYSTEM_IDENTITY_ID, name: '@system' };
 }
 
-async function currentCornerWorkflowVersion(db: SqlDatabase, workspaceId: string): Promise<number> {
-  const row = (
-    await db.query<{ current_version: number }>(
-      `SELECT current_version FROM workspace_skills
-       WHERE workspace_id=$1 AND slug=$2 AND kind='workflow'`,
-      [workspaceId, CORNER_WORKFLOW_SLUG],
-    )
-  ).rows[0];
-  return row?.current_version ?? 1;
-}
-
 function terminalStatus(toState: string): WorkflowTerminalState['status'] | undefined {
-  const state = CORNER_WORKFLOW_CONTRACT.handoffs[toState];
+  const state = CORNER_LIFECYCLE_CONTRACT.handoffs[toState];
   return state?.kind === 'terminal' ? state.status : undefined;
 }
 
 /** The declared `on` edges of a state; empty for waiting and terminal states. */
 function edgesOf(stateName: string): Readonly<Record<string, string>> {
-  const state = CORNER_WORKFLOW_CONTRACT.handoffs[stateName];
+  const state = CORNER_LIFECYCLE_CONTRACT.handoffs[stateName];
   return state && 'on' in state ? state.on : {};
 }
 
@@ -353,7 +344,6 @@ async function writeStartCard(
   db: SqlDatabase,
   input: {
     cornerId: string;
-    workflowVersion: number;
     roleBindings: Record<string, string>;
     toState: string;
     /** Set only on a run derived from an older corner's lifecycle. */
@@ -367,7 +357,7 @@ async function writeStartCard(
     authorId: SYSTEM_IDENTITY_ID,
     subject,
     verb: 'started workflow',
-    object: CORNER_WORKFLOW_CONTRACT.name,
+    object: CORNER_LIFECYCLE_CONTRACT.name,
     kind: WORKFLOW_HANDOFF_CARD_TYPE,
     // Never a chat line: `hiddenWakeCardSql` excludes this card type from the
     // transcript a human reads.
@@ -375,8 +365,6 @@ async function writeStartCard(
     cardType: CORNER_WORKFLOW_HANDOFF_CARD_TYPE,
     card: {
       runId: input.cornerId,
-      workflowSlug: CORNER_WORKFLOW_CONTRACT.name,
-      workflowVersion: input.workflowVersion,
       roleBindings: input.roleBindings,
       toState: input.toState,
       seq: 0,
@@ -433,11 +421,11 @@ class Transition {
     loopCount?: number,
   ): Promise<string> {
     const fromState = this.run.toState;
-    const implicit = CORNER_WORKFLOW_CONTRACT.implicitEdges?.includes(outcome) ?? false;
+    const implicit = CORNER_LIFECYCLE_CONTRACT.implicitEdges?.includes(outcome) ?? false;
     if (!implicit && !this.allows(outcome))
       throw new Error(`corner contract has no ${fromState} --${outcome}--> edge`);
     let toState = implicit ? outcome : edgesOf(fromState)[outcome]!;
-    const state = CORNER_WORKFLOW_CONTRACT.handoffs[fromState];
+    const state = CORNER_LIFECYCLE_CONTRACT.handoffs[fromState];
     const loop = state && 'loop' in state ? state.loop : undefined;
     if (loop && loop.onEdge === outcome && loopCount !== undefined && loopCount > loop.cap)
       toState = loop.onExceeded;
@@ -461,8 +449,6 @@ class Transition {
       cardType: CORNER_WORKFLOW_HANDOFF_CARD_TYPE,
       card: {
         runId: this.cornerId,
-        workflowSlug: CORNER_WORKFLOW_CONTRACT.name,
-        workflowVersion: this.run.workflowVersion,
         roleBindings: this.run.roleBindings,
         fromState,
         outcome,
@@ -524,7 +510,6 @@ async function backfillRun(
     toState = 'checks';
     outcome = undefined;
   }
-  const workflowVersion = await currentCornerWorkflowVersion(db, corner.workspace_id);
   const roleBindings = {
     implementer: corner.worker_agent_id ?? '',
     reviewer: REVIEWER_ROLE_BINDING,
@@ -532,12 +517,11 @@ async function backfillRun(
   const headSha = corner.lifecycle.pr?.headSha;
   await writeStartCard(db, {
     cornerId,
-    workflowVersion,
     roleBindings,
     toState,
     backfilled: { outcome, headSha },
   });
-  return { toState, outcome, headSha, roleBindings, workflowVersion, seq: 0 };
+  return { toState, outcome, headSha, roleBindings, seq: 0 };
 }
 
 async function checksVerdictDispatched(
@@ -582,18 +566,17 @@ export async function advanceCorner(
         rejected(cornerId, event, run.toState, 'run already started');
         return { state: run.toState, accepted: false };
       }
-      const workflowVersion = await currentCornerWorkflowVersion(db, event.workspaceId);
       const roleBindings = {
         implementer: event.implementerAgentId,
         // Never a real agent id, so the generic handoff() engine's own
         // `boundAgentId !== command.agent_id` check can never match it.
         reviewer: REVIEWER_ROLE_BINDING,
       };
-      await writeStartCard(db, { cornerId, workflowVersion, roleBindings, toState: 'opened' });
+      await writeStartCard(db, { cornerId, roleBindings, toState: 'opened' });
       const transition = new Transition(
         db,
         cornerId,
-        { toState: 'opened', outcome: undefined, headSha: undefined, roleBindings, workflowVersion, seq: 0 },
+        { toState: 'opened', outcome: undefined, headSha: undefined, roleBindings, seq: 0 },
         corner.lifecycle.pr?.headSha,
       );
       return { state: await transition.take(event.lane), accepted: true };
@@ -1426,105 +1409,23 @@ export async function backfillCornerWorkflowRuns(database: SqlDatabase): Promise
 }
 
 /**
- * Seeds the built-in Corner workflow for one Workspace, idempotently. Bypasses
- * `applySkillRevision`'s active-count/byte caps deliberately: this is a
- * system-owned bootstrap row, not user-authored content competing for a
- * user-facing budget.
+ * Deletes the copy of the corner contract that older servers seeded into every
+ * Workspace as a `corner` workflow, with its versions. The corner lifecycle
+ * never read it. Every such row carries a version written by the seed's
+ * `corner-workflow-v1` extractor; a workflow a person saves later under the
+ * slug `corner` has none, so it survives every run of `migrateData()`.
  */
-export async function ensureCornerWorkflowSeeded(
-  db: SqlDatabase,
-  workspaceId: string,
-  sourceRoomId: string,
-): Promise<void> {
-  await insertCornerWorkflowSkill(db, workspaceId, sourceRoomId);
-}
-
-function cornerWorkflowMarkdown() {
-  const markdown = JSON.stringify(CORNER_WORKFLOW_CONTRACT);
-  return { markdown, contentHash: createHash('sha256').update(markdown).digest('hex') };
-}
-
-async function insertCornerWorkflowSkill(
-  db: SqlDatabase,
-  workspaceId: string,
-  sourceRoomId: string,
-): Promise<void> {
-  const { markdown, contentHash } = cornerWorkflowMarkdown();
-  const skillId = randomBytes(16).toString('hex');
-  const inserted = await db.query<{ id: string }>(
-    `INSERT INTO workspace_skills
-       (id,workspace_id,slug,description,state,current_version,revision,source_room_id,
-        repository,target_commit,path,kind)
-     SELECT $1::uuid,$2,$3,$4,'active',1,1,$5,'','',NULL,'workflow'
-     WHERE NOT EXISTS (SELECT 1 FROM workspace_skills WHERE workspace_id=$2 AND slug=$3)
-     RETURNING id`,
-    [skillId, workspaceId, CORNER_WORKFLOW_SLUG, CORNER_WORKFLOW_CONTRACT.description, sourceRoomId],
+export async function deleteStoredCornerWorkflows(database: SqlDatabase): Promise<number> {
+  const deleted = await database.query(
+    `DELETE FROM workspace_skills skill
+     WHERE skill.slug=$1 AND skill.kind='workflow'
+       AND EXISTS (
+         SELECT 1 FROM workspace_skill_versions version
+         WHERE version.skill_id=skill.id AND version.extractor_version='corner-workflow-v1'
+       )`,
+    [CORNER_LIFECYCLE_SLUG],
   );
-  const newSkillId = inserted.rows[0]?.id;
-  if (!newSkillId) return; // already seeded
-  await db.query(
-    `INSERT INTO workspace_skill_versions
-       (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,
-        repository,target_commit,path,extractor_version,model)
-     VALUES($1,1,$2,$3,NULL,$4,'','',NULL,'corner-workflow-v1','n/a')`,
-    [newSkillId, markdown, contentHash, ['system:corner-workflow-seed']],
-  );
-}
-
-/**
- * Backfills the built-in Corner workflow into every Workspace created before
- * it shipped, and appends a new version wherever the seeded contract differs
- * from `CORNER_WORKFLOW_CONTRACT`, so the discoverable copy is the one the
- * server enforces. Run once from `migrateData()`. The oldest top-level Room
- * stands in as the seed's required `source_room_id`.
- */
-export async function backfillCornerWorkflowSeed(database: SqlDatabase): Promise<number> {
-  const missing = await database.query<{ workspace_id: string; source_room_id: string }>(
-    `SELECT w.id workspace_id,room.id source_room_id
-     FROM workspaces w
-     JOIN LATERAL (
-       SELECT id FROM rooms
-       WHERE workspace_id=w.id AND parent_id IS NULL AND direct_participants IS NULL
-       ORDER BY created_at,id LIMIT 1
-     ) room ON true
-     WHERE NOT EXISTS (
-       SELECT 1 FROM workspace_skills skill WHERE skill.workspace_id=w.id AND skill.slug=$1
-     )`,
-    [CORNER_WORKFLOW_SLUG],
-  );
-  for (const row of missing.rows) {
-    await database.transaction((db) => insertCornerWorkflowSkill(db, row.workspace_id, row.source_room_id));
-  }
-  if (missing.rowCount)
-    console.log(`backfillCornerWorkflowSeed: seeded ${missing.rowCount} Workspace(s)`);
-  const { markdown, contentHash } = cornerWorkflowMarkdown();
-  const stale = await database.query<{ id: string }>(
-    `SELECT skill.id FROM workspace_skills skill
-     JOIN workspace_skill_versions version
-       ON version.skill_id=skill.id AND version.version=skill.current_version
-     WHERE skill.slug=$1 AND skill.kind='workflow' AND version.content_hash<>$2`,
-    [CORNER_WORKFLOW_SLUG, contentHash],
-  );
-  for (const row of stale.rows) {
-    await database.transaction(async (db) => {
-      const next = (
-        await db.query<{ version: number }>(
-          `UPDATE workspace_skills SET current_version=current_version+1,revision=revision+1,
-             description=$2
-           WHERE id=$1 RETURNING current_version version`,
-          [row.id, CORNER_WORKFLOW_CONTRACT.description],
-        )
-      ).rows[0]!.version;
-      await db.query(
-        `INSERT INTO workspace_skill_versions
-           (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,
-            repository,target_commit,path,extractor_version,model)
-         VALUES($1,$2,$3,$4,NULL,$5,'','',NULL,'corner-workflow-v1','n/a')`,
-        [row.id, next, markdown, contentHash, ['system:corner-workflow-seed']],
-      );
-    });
-  }
-  if (stale.rowCount)
-    console.log(`backfillCornerWorkflowSeed: refreshed ${stale.rowCount} Workspace contract(s)`);
-  return missing.rowCount + stale.rowCount;
+  if (deleted.rowCount)
+    console.log(`deleteStoredCornerWorkflows: deleted ${deleted.rowCount} stored corner workflow(s)`);
+  return deleted.rowCount;
 }

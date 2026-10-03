@@ -1634,6 +1634,7 @@ CREATE INDEX IF NOT EXISTS agent_schedules_due_idx ON agent_schedules(next_run_a
 CREATE INDEX IF NOT EXISTS agent_schedules_room_idx ON agent_schedules(room_id, created_at, id);
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS max_runs integer;
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS run_count integer NOT NULL DEFAULT 0;
+ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS workflow_run jsonb;
 
 CREATE TABLE IF NOT EXISTS agent_schedule_occurrences (
   schedule_id uuid NOT NULL REFERENCES agent_schedules(id) ON DELETE CASCADE,

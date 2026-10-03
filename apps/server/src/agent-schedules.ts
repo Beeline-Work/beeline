@@ -77,6 +77,7 @@ type DueSchedule = {
   agent_id: string;
   creator_id: string;
   workflow_slug: string | null;
+  workflow_run: { runId: string; workflowSlug: string } | null;
   cadence: RoomScheduleCadence;
   message: string;
   max_runs: number | null;
@@ -104,7 +105,7 @@ export class AgentScheduleLoop {
 
   async runOnce(now = new Date()): Promise<number> {
     const due = await this.database.query<DueSchedule>(
-      `SELECT schedule.id,schedule.room_id,schedule.agent_id,schedule.creator_id,schedule.workflow_slug,
+      `SELECT schedule.id,schedule.room_id,schedule.agent_id,schedule.creator_id,schedule.workflow_slug,schedule.workflow_run,
         schedule.cadence,schedule.message,schedule.max_runs,schedule.run_count,schedule.next_run_at
        FROM agent_schedules schedule
        JOIN rooms room ON room.id=schedule.room_id AND room.archived_at IS NULL
@@ -124,7 +125,7 @@ export class AgentScheduleLoop {
       const roomId = await this.database.transaction(async (database) => {
         const current = (
           await database.query<DueSchedule>(
-            `SELECT schedule.id,schedule.room_id,schedule.agent_id,schedule.creator_id,schedule.workflow_slug,
+            `SELECT schedule.id,schedule.room_id,schedule.agent_id,schedule.creator_id,schedule.workflow_slug,schedule.workflow_run,
               schedule.cadence,schedule.message,schedule.max_runs,schedule.run_count,schedule.next_run_at,
               agent.name agent_name
              FROM agent_schedules schedule
@@ -192,8 +193,8 @@ export class AgentScheduleLoop {
           );
         }
         await database.query(
-          `UPDATE messages SET card=COALESCE(card,'{}'::jsonb) || jsonb_build_object('trigger',jsonb_build_object('scheduleId',$2::text,'period',$3::text)) WHERE id=$1`,
-          [messageId, current.id, current.next_run_at.toISOString()],
+          `UPDATE messages SET card=COALESCE(card,'{}'::jsonb) || jsonb_build_object('trigger',jsonb_build_object('scheduleId',$2::text,'period',$3::text)) || $4::jsonb WHERE id=$1`,
+          [messageId, current.id, current.next_run_at.toISOString(), JSON.stringify(current.workflow_run ?? {})],
         );
         await createAgentCommand(database, {
           roomId: current.room_id,

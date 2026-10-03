@@ -214,6 +214,7 @@ async function scheduleWorkflowTimeout(
     workspaceId: string;
     roomId: string;
     runId: string;
+    workflowName: string;
     stateName: string;
     agentId: string;
     seconds: number;
@@ -227,11 +228,11 @@ async function scheduleWorkflowTimeout(
   const nextRunAt = nextScheduleOccurrence(cadence, new Date());
   await db.query(
     `INSERT INTO agent_schedules
-       (id,workspace_id,room_id,agent_id,creator_id,cadence,message,max_runs,next_run_at)
-     VALUES($1,$2,$3,$4,$4,$5::jsonb,$6,1,$7)
+       (id,workspace_id,room_id,agent_id,creator_id,cadence,message,max_runs,next_run_at,workflow_run)
+     VALUES($1,$2,$3,$4,$4,$5::jsonb,$6,1,$7,$8::jsonb)
      ON CONFLICT(id) DO UPDATE
        SET cadence=EXCLUDED.cadence,message=EXCLUDED.message,next_run_at=EXCLUDED.next_run_at,
-           run_count=0,updated_at=now()`,
+           workflow_run=EXCLUDED.workflow_run,run_count=0,updated_at=now()`,
     [
       workflowTimeoutScheduleId(input.runId, input.stateName),
       input.workspaceId,
@@ -240,6 +241,7 @@ async function scheduleWorkflowTimeout(
       JSON.stringify(cadence),
       `workflow run ${input.runId} timed out at ${input.stateName}; call handoff with outcome "timeout"${input.hint ? `; receipt hint: ${input.hint}` : ''}`,
       nextRunAt,
+      JSON.stringify({ runId: input.runId, workflowSlug: input.workflowName }),
     ],
   );
 }
@@ -356,13 +358,13 @@ async function runThisWakeContinues(
   input: { roomId: string; agentId: string; sourceMessageId: string; workflowName: string },
 ): Promise<{ runId: string } | undefined> {
   const wake = (
-    await db.query<{ card_type: string | null; card: WorkflowRunCard | null }>(
-      `SELECT card_type,card FROM messages WHERE id=$1 AND room_id=$2`,
+    await db.query<{ card_type: string | null; wake_kind: string | null; card: WorkflowRunCard | null }>(
+      `SELECT card_type,system_event->>'kind' wake_kind,card FROM messages WHERE id=$1 AND room_id=$2`,
       [input.sourceMessageId, input.roomId],
     )
   ).rows[0];
   if (!wake?.card) return undefined;
-  if (wake.card_type !== WORKFLOW_HANDOFF_CARD_TYPE &&
+  if (wake.card_type !== WORKFLOW_HANDOFF_CARD_TYPE && wake.wake_kind !== 'schedule-ran' &&
       !CHOICE_WAKE_CARD_TYPES.some((type) => type === wake.card_type)) return undefined;
   if (wake.card.workflowSlug !== input.workflowName) return undefined;
   const run = await loadRun(db, input.roomId, wake.card.runId);
@@ -614,6 +616,7 @@ export async function startWorkflow(
         workspaceId: room.workspace_id,
         roomId: command.room_id,
         runId,
+        workflowName: contract.name,
         stateName: contract.start,
         agentId: (resolution as { agentId: string }).agentId,
         seconds: (startState as WorkflowHandoffState).timeoutSeconds!,
@@ -748,6 +751,7 @@ export async function handoff(
         workspaceId: room.workspace_id,
         roomId: command.room_id,
         runId: input.runId,
+        workflowName: contract.name,
         stateName: toState,
         agentId: (nextResolution as { agentId: string }).agentId,
         seconds: (nextState as WorkflowHandoffState).timeoutSeconds!,
@@ -825,6 +829,7 @@ async function reassignRole(
         workspaceId: room.workspace_id,
         roomId: input.roomId,
         runId: input.runId,
+        workflowName: input.run.workflowSlug,
         stateName: input.run.toState,
         agentId: input.picked,
         seconds: state.timeoutSeconds,

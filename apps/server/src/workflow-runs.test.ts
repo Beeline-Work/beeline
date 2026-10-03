@@ -903,6 +903,42 @@ describe('handoff', () => {
     const after = await database.query(`SELECT id FROM agent_schedules WHERE room_id=$1`, [ROOM]);
     expect(after.rows).toHaveLength(0);
   });
+
+  it('carries run context through a state-timeout wake and refuses a duplicate start', async () => {
+    const timed = {
+      ...CONTRACT,
+      handoffs: {
+        ...CONTRACT.handoffs,
+        implement: {
+          ...CONTRACT.handoffs.implement,
+          on: { ...CONTRACT.handoffs.implement.on, timeout: 'ask_human' },
+          timeoutSeconds: 3600,
+        },
+      },
+    };
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: timed });
+    const { runId } = await startWorkflow(database, command, {
+      name: 'corner',
+      roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+    });
+    await database.query(`UPDATE agent_schedules SET next_run_at=now()-interval '1 minute' WHERE room_id=$1`, [ROOM]);
+    expect(await new AgentScheduleLoop(database).runOnce()).toBe(1);
+    const inbox = await readAgentCommands(database, ROOM, IMPLEMENTER);
+    const wake = inbox.commands.find((item) => item.source.systemEvent?.kind === 'schedule-ran');
+    expect(wake?.source.body).toContain(
+      `You are in run ${runId} of corner. Continue this run; do not start a new one.`,
+    );
+    const card = await database.query<{ card: { runId: string; workflowSlug: string } }>(
+      `SELECT card FROM messages WHERE id=$1`, [wake!.sourceMessageId],
+    );
+    expect(card.rows[0]?.card).toMatchObject({ runId, workflowSlug: 'corner' });
+    const wokenCommand = await commandFor(IMPLEMENTER, wake!.sourceMessageId);
+    await expect(startWorkflow(database, wokenCommand, {
+      name: 'corner',
+      roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+    })).rejects.toThrow(`You are already in run ${runId} of corner.`);
+  });
 });
 
 describe('archive_workflow', () => {

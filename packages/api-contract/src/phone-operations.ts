@@ -4,7 +4,6 @@ import type { AgentAccessPolicy } from './agent-access.js';
 import type { PushLevel } from './push-level.js';
 import type {
   WorkflowContract,
-  WorkflowRoleBinding,
   WorkflowTerminalState,
   WorkflowReceipt,
 } from './workflow-contracts.js';
@@ -53,7 +52,6 @@ export type {
   WorkflowReceipt,
   WorkflowReceiptInput,
   WorkflowReceiptRef,
-  WorkflowRoleBinding,
   WorkflowState,
   WorkflowTerminalState,
 } from './workflow-contracts.js';

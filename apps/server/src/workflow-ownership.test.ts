@@ -10,6 +10,7 @@ import { LiveHub } from './live.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 
 const ROOM = '20000000-0000-4000-8000-000000000001';
+const CORNER = '20000000-0000-4000-8000-000000000002';
 const WORKSPACE = '10000000-0000-4000-8000-000000000001';
 const HUMAN = 'a'.repeat(64),
   OWNER = 'b'.repeat(64),
@@ -64,15 +65,15 @@ beforeEach(async () => {
 afterEach(async () => {
   await db.close();
 });
-async function command(agentId = OWNER) {
+async function command(agentId = OWNER, roomId = ROOM) {
   const message = Math.random().toString(16);
   await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'scan')`, [
     message,
-    ROOM,
+    roomId,
     HUMAN,
   ]);
   return (await createAgentCommand(db, {
-    roomId: ROOM,
+    roomId,
     agentId,
     sourceMessageId: message,
     reason: 'human_tag',
@@ -80,6 +81,17 @@ async function command(agentId = OWNER) {
 }
 async function save() {
   await saveWorkflow(db, await command(), { contract });
+}
+async function surface(roomId: string, parentId: string | null, members = [OWNER, OTHER]) {
+  await db.query(
+    `INSERT INTO rooms(id,workspace_id,created_by,name,parent_id) VALUES($1,$2,$3,'Run surface',$4)`,
+    [roomId, WORKSPACE, HUMAN, parentId],
+  );
+  for (const member of members)
+    await db.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+      [WORKSPACE, roomId, member],
+    );
 }
 const start = (actor = OWNER) =>
   startWorkflow(
@@ -101,6 +113,84 @@ const schedule = (actor = OWNER) =>
   );
 
 describe('workflow ownership', () => {
+  it('shows parent Room active run IDs in corner start errors, reads and schedules', async () => {
+    await save();
+    await surface(CORNER, ROOM);
+    const { runId } = await start();
+    await expect(
+      startWorkflow(
+        db,
+        { room_id: CORNER, agent_id: OTHER },
+        { name: 'daily', roleBindings: { scanner: OTHER } },
+      ),
+    ).rejects.toThrow(
+      `Only Scanner can start runs of daily. Ask them, or hand off to the active run by its run ID. Owner: ${OWNER}. Active run IDs: ${runId}.`,
+    );
+    expect(await readWorkflowOwnership(db, CORNER, 'daily', OTHER)).toMatchObject({
+      owner: { id: OWNER, name: 'Scanner' },
+      activeRunIds: [runId],
+    });
+    const created = await daemon.execute(
+      'createAgentSchedule',
+      {
+        roomId: CORNER,
+        agentId: OWNER,
+        prompt: 'Start workflow daily',
+        workflowName: 'daily',
+        cadence: { kind: 'interval', everyMinutes: 1 },
+      },
+      OWNER,
+    );
+    const listed = await daemon.execute('listAgentSchedules', { roomId: CORNER }, OTHER);
+    expect(listed.schedules.find((entry) => entry.scheduleId === created.scheduleId)).toMatchObject(
+      {
+        owner: { id: OWNER },
+        activeRunIds: [runId],
+      },
+    );
+  });
+  it('limits corner active runs to readable parent and sibling surfaces and excludes ended runs', async () => {
+    await save();
+    const sibling = '20000000-0000-4000-8000-000000000003';
+    const privateCorner = '20000000-0000-4000-8000-000000000004';
+    const unrelatedRoom = '20000000-0000-4000-8000-000000000005';
+    await surface(CORNER, ROOM);
+    await surface(sibling, ROOM);
+    await surface(privateCorner, ROOM, [OWNER]);
+    await surface(unrelatedRoom, null);
+    const parentRun = await start();
+    const startHere = (roomId: string) =>
+      startWorkflow(
+        db,
+        { room_id: roomId, agent_id: OWNER },
+        { name: 'daily', roleBindings: { scanner: OWNER } },
+      );
+    const cornerRun = await startHere(CORNER);
+    const siblingRun = await startHere(sibling);
+    const privateRun = await startHere(privateCorner);
+    await startHere(unrelatedRoom);
+    const visible = [parentRun.runId, cornerRun.runId, siblingRun.runId].sort();
+    expect((await readWorkflowOwnership(db, CORNER, 'daily', OTHER)).activeRunIds).toEqual(visible);
+    expect((await readWorkflowOwnership(db, ROOM, 'daily', OTHER)).activeRunIds).toEqual(visible);
+    expect((await readWorkflowOwnership(db, CORNER, 'daily', OWNER)).activeRunIds).toEqual(
+      [...visible, privateRun.runId].sort(),
+    );
+    await handoff(db, await command(OWNER, sibling), {
+      runId: siblingRun.runId,
+      outcome: 'done',
+      contents: {},
+    });
+    expect((await readWorkflowOwnership(db, CORNER, 'daily', OTHER)).activeRunIds).toEqual(
+      [parentRun.runId, cornerRun.runId].sort(),
+    );
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [
+      ROOM,
+      OTHER,
+    ]);
+    expect((await readWorkflowOwnership(db, CORNER, 'daily', OTHER)).activeRunIds).toEqual([
+      cornerRun.runId,
+    ]);
+  });
   it('defaults to the saving agent, preserves creator/owner on revisions and exposes active runs to peers', async () => {
     await save();
     const { runId } = await start();

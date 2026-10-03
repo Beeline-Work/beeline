@@ -61,7 +61,8 @@ export async function readWorkflowOwnership(
     FROM messages message JOIN rooms surface ON surface.id=message.room_id
     JOIN rooms requested ON requested.id=$1 AND requested.workspace_id=surface.workspace_id
     JOIN memberships readable ON readable.room_id=surface.id AND readable.identity_id=$4 AND readable.removed_at IS NULL
-    WHERE (surface.id=requested.id OR surface.parent_id=requested.id)
+    WHERE (surface.id=COALESCE(requested.parent_id,requested.id)
+      OR surface.parent_id=COALESCE(requested.parent_id,requested.id))
       AND message.card_type='workflow-handoff' AND message.card->>'workflowSlug'=$2
       AND message.deleted_at IS NULL
     ORDER BY message.card->>'runId',message.created_at DESC,message.id DESC

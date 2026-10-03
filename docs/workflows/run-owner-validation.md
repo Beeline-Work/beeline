@@ -8,6 +8,8 @@ Reproduction OWNER-1: an owner agent saves and starts a workflow through the aut
 
 The regression proof was also copied to a detached checkout of base commit `0588cc8e` and run there. Its expected rejection assertion failed with the second agent’s start returning HTTP 200. On the changed branch it returns HTTP 403 naming Scanner, its owner identity, and the first run’s complete ID.
 
+Reproduction OWNER-1, review finding R1: the extended `scripts/prove-workflow-owner.ts` starts a run in the parent Room, then calls `startWorkflow`, `loadWorkspaceSkill` and `listAgentSchedules` as a non-owner agent in a member corner. Against head `c1f5683b`, the start returned HTTP 403 with “Active run IDs: none”, and both reads returned empty active-run lists despite the live parent run. The two new ownership regressions also failed before the query fix.
+
 The host’s `adb devices` listed an offline emulator. The server test runner and Chrome were reachable, and supplied the reproduction and UI verification.
 
 ## Demonstrated
@@ -21,6 +23,10 @@ npm run prove:workflow-owner -- /tmp/workflow-owner-demonstrated.json
 Reproduction OWNER-1 now passes. The proof starts an isolated HTTP server with two authenticated daemon identities and a human admin, saves and starts `daily`, and rejects the peer’s start with the owner and active run ID. It builds and opens the real workflow page in Chrome at 1280px and 390px. The page reads the live authenticated phone API, shows Owner / Scanner and the full run ID, and has no horizontal overflow. At phone width the human clicks Change owner, selects Peer, and the page reloads the server’s new owner. The existing run still identifies Scanner as its starter.
 
 The browser harness supplies Expo navigation and native-device shims, using the existing web proof harness. The workflow components and ownership/transfer HTTP operations are real. It uses no production Workspace or live model-backed agent.
+
+The extended proof now passes R1 through the same authenticated HTTP paths: the corner start error names Scanner and the full parent run ID, and the workflow read and corner schedule list expose that same ID. The active-run query resolves a corner to its parent Room and includes readable corners of that parent, retaining membership filtering and terminal-state exclusion. Regression tests exclude unreadable corners, unrelated Rooms and ended runs, and verify removed parent membership hides that parent's run. Chrome still verifies the actual workflow page at both widths and a human owner transfer. During R1 verification `adb devices` showed a connected emulator; the reported agent-tool path was exercised through the service and Chrome rather than the mobile device.
+
+R1 validation: 90 tests pass across ownership, workflow runs, workflow run views, agent schedules and institutional skills. The initial combined run encountered imports missing while the dependency build was cleaning its output; after that build completed, all three affected suites passed on retry. All seven server/dependency builds and the script TypeScript check pass. The running-service and Chrome evidence was written to `/tmp/workflow-owner-r1-demonstrated.json`; CI and a fresh exact-head review remain pending.
 
 ## Coverage
 

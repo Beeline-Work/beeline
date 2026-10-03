@@ -18,6 +18,7 @@ import { createAgentCommand } from '../apps/server/src/agent-command.js';
 import { runBrowserProof, webProofShims } from '../apps/mobile/sources/test/browserProof.js';
 
 const ROOM = '22222222-2222-4222-8222-222222222222';
+const CORNER = '33333333-3333-4333-8333-333333333333';
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const HUMAN = createHash('sha256').update('github:workflow-owner-proof').digest('hex');
 const OWNER = 'b'.repeat(64),
@@ -38,6 +39,11 @@ type Ready = {
   phoneToken: string;
   runId: string;
   rejected: { status: number; error: string };
+  corner: {
+    rejected: { status: number; error: string };
+    workflowRead: { status: number; data: Record<string, unknown> };
+    schedules: { status: number; data: Record<string, unknown> };
+  };
 };
 
 async function serve() {
@@ -57,10 +63,14 @@ async function serve() {
     `INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Ownership proof')`,
     [ROOM, WORKSPACE, HUMAN],
   );
+  await db.query(
+    `INSERT INTO rooms(id,workspace_id,created_by,name,parent_id) VALUES($1,$2,$3,'Corner ownership proof',$4)`,
+    [CORNER, WORKSPACE, HUMAN, ROOM],
+  );
   for (const identity of [HUMAN, OWNER, PEER])
     await db.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,$4),($1,NULL,$3,$4)`,
-      [WORKSPACE, ROOM, identity, identity === HUMAN ? 'owner' : 'member'],
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,$4),($1,NULL,$3,$4),($1,$5,$3,$4)`,
+      [WORKSPACE, ROOM, identity, identity === HUMAN ? 'owner' : 'member', CORNER],
     );
   const auth = new TokenAuth(db, async () => ({
     subject: 'workflow-owner-proof',
@@ -101,22 +111,22 @@ async function serve() {
     const data = (await response.json()) as Record<string, unknown>;
     return { status: response.status, data };
   };
-  const turn = async (agentId: string) => {
+  const turn = async (agentId: string, roomId = ROOM) => {
     const { exchangeToken } = await auth.createDaemonExchange(agentId);
     const token = (await auth.exchangeDaemonToken(exchangeToken))!.daemonToken;
-    const source = createHash('sha256').update(`proof:${agentId}`).digest('hex');
+    const source = createHash('sha256').update(`proof:${roomId}:${agentId}`).digest('hex');
     await db.query(
       `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Start daily')`,
-      [source, ROOM, HUMAN],
+      [source, roomId, HUMAN],
     );
     const command = (await createAgentCommand(db, {
-      roomId: ROOM,
+      roomId,
       agentId,
       sourceMessageId: source,
       reason: 'human_tag',
     }))!;
     const scope = {
-      roomId: ROOM,
+      roomId,
       agentId,
       requestId: command.turn_request_id,
       generationId: `proof-${agentId[0]}`,
@@ -145,12 +155,46 @@ async function serve() {
     { ...peer.scope, name: 'daily', roleBindings: { scanner: PEER } },
     peer.token,
   );
+  const cornerPeer = await turn(PEER, CORNER);
+  const cornerOwner = await turn(OWNER, CORNER);
+  const cornerRejected = await call(
+    'startWorkflow',
+    { ...cornerPeer.scope, name: 'daily', roleBindings: { scanner: PEER } },
+    cornerPeer.token,
+  );
+  const cornerSchedule = await call(
+    'createAgentSchedule',
+    {
+      ...cornerOwner.scope,
+      workflowName: 'daily',
+      prompt: 'Start workflow daily',
+      cadence: { kind: 'interval', everyMinutes: 60 },
+    },
+    cornerOwner.token,
+  );
+  if (cornerSchedule.status !== 200)
+    throw new Error(`corner schedule: ${JSON.stringify(cornerSchedule)}`);
+  const workflowRead = await call(
+    'loadWorkspaceSkill',
+    { ...cornerPeer.scope, slug: 'daily' },
+    cornerPeer.token,
+  );
+  const schedules = await call(
+    'listAgentSchedules',
+    { roomId: CORNER, agentId: PEER },
+    cornerPeer.token,
+  );
   const phoneToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
   process.send!({
     origin,
     phoneToken,
     runId: started.data.runId,
     rejected: { status: rejected.status, error: rejected.data.error },
+    corner: {
+      rejected: { status: cornerRejected.status, error: cornerRejected.data.error },
+      workflowRead,
+      schedules,
+    },
   });
   process.on('message', () => {
     server.close(() => {
@@ -185,6 +229,24 @@ async function prove() {
       !ready.rejected.error.includes(ready.runId)
     )
       throw new Error(`Non-owner start did not match OWNER-1: ${JSON.stringify(ready.rejected)}`);
+    const cornerSchedules = ready.corner.schedules.data.schedules as
+      { owner?: { id: string }; activeRunIds?: string[] }[] | undefined;
+    if (
+      ready.corner.rejected.status !== 403 ||
+      !ready.corner.rejected.error.includes('Only Scanner') ||
+      !ready.corner.rejected.error.includes(ready.runId) ||
+      ready.corner.workflowRead.status !== 200 ||
+      !(ready.corner.workflowRead.data.activeRunIds as string[] | undefined)?.includes(
+        ready.runId,
+      ) ||
+      ready.corner.schedules.status !== 200 ||
+      !cornerSchedules?.some(
+        (schedule) => schedule.owner?.id === OWNER && schedule.activeRunIds?.includes(ready.runId),
+      )
+    )
+      throw new Error(
+        `OWNER-1 R1 corner visibility failed: ${JSON.stringify({ runId: ready.runId, ...ready.corner })}`,
+      );
     const mobile = path.resolve('apps/mobile');
     const browser: unknown[] = [];
     for (const width of [1280, 390]) {
@@ -220,6 +282,7 @@ async function prove() {
       reproduction: 'OWNER-1',
       nonOwnerStart: ready.rejected,
       existingRunId: ready.runId,
+      corner: ready.corner,
       browser,
     };
     console.log(JSON.stringify(evidence, null, 2));

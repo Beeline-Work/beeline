@@ -3119,6 +3119,21 @@ export function BuzzChatSurface({
     cacheViewerPubkey,
     raiseSourceLandingFlash,
   ]);
+  useEffect(() => {
+    if (!desktopTranscript || !anchoredSegmentActive || isLocatingMessageSource ||
+        aroundForwardStatus !== 'idle') return;
+    const node = desktopScrollNodeRef.current;
+    if (node && node.scrollHeight <= node.clientHeight + TAIL_PIN_THRESHOLD) {
+      loadNewerAround();
+    }
+  }, [
+    desktopTranscript,
+    anchoredSegmentActive,
+    isLocatingMessageSource,
+    aroundForwardStatus,
+    transcriptMessages,
+    loadNewerAround,
+  ]);
   // A reconciled draft/final bubble keeps a stable display `id` across the
   // turn, so it also needs to resolve by its real relay event id — the id
   // any NIP-10 reply on another client actually references.

@@ -1,4 +1,4 @@
-# Buzzy visual language — Obsidian Refined
+# Beeline visual language — Obsidian Refined
 
 The phone is a single slab of obsidian. Beeline's output is logged across it.
 
@@ -14,7 +14,7 @@ then a regular body with tight line-height and visible space between turns.
 
 ## The slab
 
-The default Buzz surface is the Speakeasy brand canvas, a very dark aubergine
+The default Beeline surface is the Speakeasy brand canvas, a very dark aubergine
 (`#14091A`, mapped at the token level in `groknight.ts` so every screen
 inherits it), edge to edge, with no second surface laid over it. Chrome — the
 Room-list header, the transcript header, the Workspace rail — carries no

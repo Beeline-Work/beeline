@@ -208,6 +208,7 @@ export default function BuzzChannels() {
   const [pendingRepo, setPendingRepo] = useState<RepoCandidate | null>(null);
   const [repoCandidates, setRepoCandidates] = useState<RepoCandidate[]>([]);
   const [repoInstallations, setRepoInstallations] = useState<GitHubInstallationAccess[]>([]);
+  const [repoAccessLoading, setRepoAccessLoading] = useState(false);
   const [repoPickerError, setRepoPickerError] = useState<string | null>(null);
   const [repoPickerNotice, setRepoPickerNotice] = useState<string | null>(null);
   const [retryGeneration, setRetryGeneration] = useState(0);
@@ -697,17 +698,23 @@ export default function BuzzChannels() {
     [activeCommunityId, transport],
   );
 
-  const handleToggleRepoPicker = useCallback(async () => {
-    Keyboard.dismiss();
-    setShowRepoPicker((value) => !value);
-    if (showRepoPicker || !transport || !activeCommunityId) return;
+  const handleLoadRepositories = useCallback(async () => {
+    if (!transport || !activeCommunityId) return;
     setRepoPickerError(null);
+    setRepoAccessLoading(true);
     try {
       await loadRepoPicker(true);
     } catch (reason) {
       setRepoPickerError('Could not load repos. Check your connection and try again.');
+    } finally {
+      setRepoAccessLoading(false);
     }
-  }, [activeCommunityId, loadRepoPicker, showRepoPicker, transport]);
+  }, [activeCommunityId, loadRepoPicker, transport]);
+
+  const handleToggleRepoPicker = useCallback(() => {
+    Keyboard.dismiss();
+    setShowRepoPicker((value) => !value);
+  }, []);
 
   const handleSelectRepoCandidate = useCallback((candidate: RepoCandidate) => {
     setPendingRepo(candidate);
@@ -758,8 +765,7 @@ export default function BuzzChannels() {
         });
         setRepoCandidates((current) => [...current, repository]);
         setPendingRepo(repository);
-        setInviteOnly(inviteOnlyForRepository(repository));
-        setShowRepoPicker(false);
+        return repository;
       } catch (reason) {
         setRepoPickerError(`Could not create repository: ${String(reason)}`);
         throw reason;
@@ -770,7 +776,7 @@ export default function BuzzChannels() {
     [transport],
   );
 
-  const createRoom = useCallback(async () => {
+  const createRoom = useCallback(async (repository: RepoCandidate | null) => {
     const name = roomName.trim();
     if (
       !validRoomSlug(name) ||
@@ -789,7 +795,7 @@ export default function BuzzChannels() {
       await transport.createRoom(name, {
         communityId: activeCommunityId,
         visibility: inviteOnly ? 'invite-only' : 'public',
-        repository: pendingRepo ?? undefined,
+        repository: repository ?? undefined,
         onPublished: () => {
           publishAcknowledged = true;
           clearSubmittedRoom();
@@ -823,7 +829,6 @@ export default function BuzzChannels() {
     creatingRoom,
     creatingRepository,
     inviteOnly,
-    pendingRepo,
     roomName,
     roomNameDraft,
     transport,
@@ -990,6 +995,8 @@ export default function BuzzChannels() {
           pendingRepo={pendingRepo}
           showRepoPicker={showRepoPicker}
           handleToggleRepoPicker={handleToggleRepoPicker}
+          handleLoadRepositories={handleLoadRepositories}
+          repoAccessLoading={repoAccessLoading}
           handleSelectNoRepository={handleSelectNoRepository}
           handleSelectRepoCandidate={handleSelectRepoCandidate}
           repoCandidates={repoCandidates}

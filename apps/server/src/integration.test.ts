@@ -9945,6 +9945,7 @@ describe('monolith integration', () => {
       requestId: 'reviewer-brief-open',
       name: 'Review brief',
       objective: 'Keep the agreed behavior',
+      repository: 'example/repo',
       brief: { content: 'A1: keep the agreed behavior.' },
     });
     expect(opened.status).toBe(200);

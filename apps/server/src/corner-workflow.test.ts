@@ -18,11 +18,14 @@ import {
   CORNER_WORKFLOW_CONTRACT,
   CORNER_WORKFLOW_SLUG,
   cornerMergeGate,
+  cornersReadyToLand,
   claimCornerMergeAttempt,
   ensureCornerWorkflowSeeded,
   REVIEW_HANDBACK_LIMIT,
 } from './corner-workflow.js';
 import {
+  createAgentCommand,
+  repairReviewerCornerMembership,
   queueCornerMergeConflict,
   reconcileCornerMergeBlockers,
 } from './agent-command.js';
@@ -160,7 +163,8 @@ beforeEach(async () => {
   await db.query(`DELETE FROM rooms WHERE parent_id IS NOT NULL`);
   await db.query(`UPDATE memberships SET removed_at=NULL`);
   await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb`);
-  await db.query(`UPDATE rooms SET reviewer_agent_id=NULL WHERE id=$1`, [R]);
+  await db.query(`UPDATE rooms SET reviewer_agent_id=NULL,reviewer_fallback_ids='{}' WHERE id=$1`, [R]);
+  await db.query(`DELETE FROM live_outputs`);
   await db.query(`UPDATE agents SET yolo_mode=true`);
   githubRollupState = 'pending';
   githubHead = '';
@@ -686,6 +690,146 @@ async function revise(cornerId: string, service = daemon) {
     brief: { ...brief(command.sourceMessageId), spec: 'Revised widget\n\n## Checklist\n- Ship it', change: 'Changed scope' },
   }, A);
 }
+
+const F = 'e'.repeat(64);
+async function fallback(cornerId: string, online = true) {
+  await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Fallback','fallback') ON CONFLICT DO NOTHING`, [F]);
+  await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [F, H]);
+  for (const roomId of [null, R])
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING`, [W, roomId, F]);
+  await db.query(`UPDATE rooms SET reviewer_fallback_ids=$2 WHERE id=$1`, [R, [F]]);
+  await repairReviewerCornerMembership(db, cornerId, F);
+  if (online) await db.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence','{"status":"online"}')`, [R, F]);
+}
+
+describe('Reproduction S-10: lifecycle updates preserve a green landing candidate', () => {
+  it('keeps the green head in the server merge sweep', async () => {
+    const cornerId = await approved();
+    expect(await cornersReadyToLand(db)).toContain(cornerId);
+    await daemon.execute('postCornerLifecycle', { cornerId, objective: 'Ship widget', status: 'working', outcome: 'Still working' }, A);
+    const { lifecycle } = (await db.query<{ lifecycle: Record<string, unknown> }>(`SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!;
+    const ready = (await cornersReadyToLand(db)).includes(cornerId);
+    console.info(`Reproduction S-10: postCornerLifecycle → checks=${lifecycle.checks}, landing candidate=${ready}`);
+    expect(lifecycle).toMatchObject({ lifecycle: 'working', outcome: 'Still working', checks: 'passing', pr: { headSha: SHA } });
+    expect(await projected(cornerId)).toBe('land');
+    expect(ready).toBe(true);
+  });
+});
+
+describe('Reproduction S-03: revised briefs use the lifecycle reviewer resolver', () => {
+  it.each(['removed', 'offline'] as const)('wakes a healthy fallback when the primary is %s', async (condition) => {
+    const cornerId = await approved();
+    await fallback(cornerId);
+    if (condition === 'removed') await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [R, B]);
+    await revise(cornerId);
+    const wakes = await reasons(cornerId, F);
+    console.info(`Reproduction S-03: revise green brief with ${condition} primary → fallback review commands=${wakes.filter(r => r === 'corner_check').length}`);
+    expect(wakes).toContain('corner_check');
+    const wake = (await db.query<{ text: string }>(`SELECT m.text FROM agent_commands c JOIN messages m ON m.id=c.source_message_id WHERE c.room_id=$1 AND c.agent_id=$2 AND c.reason='corner_check'`, [cornerId, F])).rows[0]!;
+    expect(wake.text).toContain('Revision 2');
+    expect(await currentState(cornerId)).toBe('review');
+    expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ open: false, approvalPending: true });
+    await expect(approve(cornerId, SHA, 1, F)).rejects.toThrow();
+    expect(await commands(F, cornerId)).toEqual([]);
+    const author = (await db.query<{ turn_request_id: string }>(`SELECT turn_request_id FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND state='claimed'`, [cornerId, A])).rows[0]!;
+    await daemon.execute('postRoomMessage', { roomId: cornerId, requestId: author.turn_request_id, generationId: 'g1', text: 'Revision implemented' }, A);
+    expect((await commands(F, cornerId))[0]?.source.body).toContain('Revision 2');
+    console.info('Reproduction S-03: worker finished → fallback received Revision 2; old revision PASS rejected');
+  });
+
+  it('wakes the reachable primary without a fallback list', async () => {
+    const cornerId = await approved();
+    const recording = new RecordingDatabase(db);
+    await revise(cornerId, new DaemonService(recording, new LiveHub()));
+    expect(await reasons(cornerId, B)).toContain('corner_check');
+    expect(await currentState(cornerId)).toBe('review');
+    const lock = recording.calls.findIndex(c => c.sql.includes('pg_advisory_xact_lock'));
+    const write = recording.calls.findIndex(c => c.sql.startsWith('INSERT INTO corner_brief_revisions'));
+    expect(lock).toBeGreaterThanOrEqual(0);
+    expect(lock).toBeLessThan(write);
+  });
+
+  it.each(['implement', 'checks', 'review'])('reviews a green revision from %s', async (state) => {
+    const cornerId = state === 'review' ? await inReview() : await open(undefined, 'owner/widgets');
+    if (state !== 'review') {
+      await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+      if (state === 'checks') await pushToCorner(cornerId, SHA);
+      await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [cornerId, JSON.stringify({ lifecycle: 'in-review', checks: 'passing', pr: { number: 7, headSha: SHA } })]);
+    }
+    expect(await currentState(cornerId)).toBe(state);
+    await revise(cornerId);
+    expect(await reasons(cornerId, B)).toContain('corner_check');
+    expect(await currentState(cornerId)).toBe('review');
+  });
+
+  it('names a primary who has left when no fallback list exists', async () => {
+    const cornerId = await approved();
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [R, B]);
+    await revise(cornerId);
+    expect(await reasons(cornerId, B)).not.toContain('corner_check');
+    expect((await db.query<{ text: string }>(`SELECT text FROM messages WHERE room_id=$1`, [cornerId])).rows.some(r => r.text.includes('not a current member of the parent Room'))).toBe(true);
+  });
+
+  it('does not wake the revision author as reviewer', async () => {
+    const cornerId = await approved();
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
+    await revise(cornerId);
+    expect(await reasons(cornerId, A)).not.toContain('corner_check');
+  });
+
+  it.each(['pending', 'failing'])('does not review a revision while checks are %s', async (checks) => {
+    const cornerId = await approved();
+    await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}',to_jsonb($2::text)) WHERE corner_id=$1`, [cornerId, checks]);
+    await revise(cornerId);
+    expect(await reasons(cornerId, B)).not.toContain('corner_check');
+  });
+
+  it('names an exhausted reviewer list', async () => {
+    const cornerId = await approved();
+    await fallback(cornerId, false);
+    await revise(cornerId);
+    expect(await reasons(cornerId, F)).not.toContain('corner_check');
+    expect((await db.query<{ text: string }>(`SELECT text FROM messages WHERE room_id=$1`, [cornerId])).rows.some(r => /reviewer.*(available|healthy|take|exhaust)/i.test(r.text))).toBe(true);
+  });
+});
+
+describe('Reproduction S-07: every reviewer waits for a quiet corner', () => {
+  it.each([B, F])('holds a review for %s until the worker releases its lease', async (reviewerId) => {
+    const cornerId = await inReview();
+    if (reviewerId === F) await fallback(cornerId);
+    const worker = (await commands(A, cornerId))[0]!;
+    await claim(worker);
+    const source = await systemLine(db, { roomId: cornerId, subject: { kind: 'agent', id: A, name: 'Hoots' }, verb: 'revised the corner brief', object: 'Revision 2' });
+    const review = await createAgentCommand(db, { roomId: cornerId, agentId: reviewerId, sourceMessageId: source.id, reason: 'corner_check' });
+    const delivered = (await commands(reviewerId, cornerId)).some(c => c.id === review!.id);
+    console.info(`Reproduction S-07: ${reviewerId === F ? 'fallback' : 'primary'} review with live worker lease → delivered=${delivered}`);
+    expect(delivered).toBe(false);
+    await result(worker, 'Worker finished');
+    expect((await commands(reviewerId, cornerId)).some(c => c.id === review!.id)).toBe(true);
+  });
+
+  it.each([B, F])('delivers unrelated commands to %s while the worker is busy', async (reviewerId) => {
+    const cornerId = await inReview();
+    if (reviewerId === F) await fallback(cornerId);
+    await claim((await commands(A, cornerId))[0]!);
+    const source = await systemLine(db, { roomId: cornerId, subject: { kind: 'human', id: H, name: 'Human' }, verb: 'recorded a note' });
+    const ordinary = await createAgentCommand(db, { roomId: cornerId, agentId: reviewerId, sourceMessageId: source.id, reason: 'human_tag' });
+    expect((await commands(reviewerId, cornerId)).some(c => c.id === ordinary!.id)).toBe(true);
+  });
+
+  it('holds a fallback checks-passed review and releases it on lease expiry', async () => {
+    const cornerId = await open(undefined, 'owner/widgets');
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await fallback(cornerId);
+    const worker = (await commands(A, cornerId))[0]!;
+    await claim(worker);
+    await greenHead(cornerId, 7, SHA);
+    expect(await reasons(cornerId, F)).toContain('subscribed_event');
+    expect(await commands(F, cornerId)).toEqual([]);
+    await db.query(`UPDATE agent_commands SET lease_expires_at=now()-interval '1 second' WHERE id=$1`, [worker.id]);
+    expect(await commands(F, cornerId)).toHaveLength(1);
+  });
+});
 
 describe('Reproduction R5a: entry paths lock the run before corner rows', () => {
   it.each(['check webhook', 'merged webhook', 'approval', 'upgrade', 'hold', 'brief', 'create', 'zero-check', 'blocker reconciliation'])('%s', async path => {

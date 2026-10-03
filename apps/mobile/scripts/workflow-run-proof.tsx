@@ -7,7 +7,9 @@ import WorkflowRun from '../sources/app/(app)/beeline/workflow-run';
  * Paints the real workflow run page over the run the shimmed
  * `readWorkflowRun` returns, then reports the words it shows in order, the
  * header's type, each step's circle and the line beside it, what each step
- * says to a screen reader, and any control inside the gate's readout. It then
+ * says to a screen reader, each step's assignee (handle, whether it is the
+ * viewer's own mark, and whether it sits at the row's right edge), any live
+ * output, and any control inside the gate's readout. It then
  * opens the step named by `?expand=`, reports its readout, taps the corner
  * named by `?corner=`, and reports where the page navigated.
  */
@@ -51,7 +53,38 @@ async function run() {
   const lines = ids(/-(above|below)-(brass|quiet|dashed)$/).map((id) => id.slice(prefix.length));
   const labels = Array.from(
     document.querySelectorAll<HTMLElement>(`[data-testid^="${prefix}"] [aria-label]`),
-  ).map((node) => node.getAttribute('aria-label'));
+  )
+    // What a screen reader reads: nothing inside a subtree hidden from it.
+    .filter((node) => !node.closest('[aria-hidden="true"]'))
+    .map((node) => node.getAttribute('aria-label'));
+  const assignees = Object.fromEntries(
+    Array.from(document.querySelectorAll<HTMLElement>(`[data-testid^="${prefix}"][data-testid*="-assignee"]`))
+      .filter((node) => /-assignee(-viewer)?$/.test(node.dataset.testid!))
+      .map((node) => {
+        const id = node.dataset.testid!;
+        const state = id.slice(prefix.length).replace(/-assignee(-viewer)?$/, '');
+        const row = document.querySelector<HTMLElement>(`[data-testid="${prefix}${state}-toggle"]`) ??
+          node.closest<HTMLElement>(`[data-testid="${prefix}${state}"]`)!;
+        const handle = node.querySelector<HTMLElement>(`[data-testid="${prefix}${state}-assignee-handle"]`)!;
+        const name = document.querySelector<HTMLElement>(`[data-testid="${prefix}${state}"]`)!
+          .querySelector<HTMLElement>('[dir="auto"]')!;
+        const mark = node.querySelector<HTMLElement>(`[data-testid="${prefix}${state}-assignee-mark"]`);
+        const box = node.getBoundingClientRect();
+        const rowBox = row.getBoundingClientRect();
+        return [state, {
+          handle: handle.textContent,
+          viewer: id.endsWith('-viewer'),
+          mark: Boolean(mark),
+          color: getComputedStyle(handle).color,
+          rightAligned: box.left > rowBox.left + rowBox.width / 2 &&
+            box.left > name.getBoundingClientRect().left,
+        }];
+      }),
+  );
+  const live = Object.fromEntries(
+    ids(/-live$/).map((id) => [id.slice(prefix.length, -'-live'.length),
+      document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.textContent]),
+  );
   const pushedBefore = [...((globalThis as { __pushed?: unknown[] }).__pushed ?? [])];
   const expand = query.get('expand');
   let expanded: string[] | null = null;
@@ -94,6 +127,8 @@ async function run() {
       lines,
       labels,
       halo: ids(/-halo$/).length,
+      assignees,
+      live,
       gate,
       expanded,
       pushedBefore,

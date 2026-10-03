@@ -9,7 +9,14 @@ import {
   workflowStateLabel,
   type WorkflowLineStep,
 } from './workflow-graph';
-import { formatRunDuration, loopRoundLabel, workflowRunHeadline, workflowStepMeta } from './workflow-run-copy';
+import { SYSTEM_IDENTITY_PUBKEY } from './system-identity';
+import {
+  formatRunDuration,
+  loopRoundLabel,
+  workflowRunHeadline,
+  workflowStepAssignee,
+  workflowStepMeta,
+} from './workflow-run-copy';
 
 const repo = path.resolve(__dirname, '../../../..');
 const feedbackTriage = JSON.parse(
@@ -68,6 +75,7 @@ const serverCornerSource = readFileSync(
 );
 
 const candy = { id: 'b'.repeat(64), name: 'Candy', kind: 'agent' as const };
+const owner = { id: 'a'.repeat(64), name: 'Owner', kind: 'human' as const };
 
 function rowsOf(line: readonly WorkflowLineStep[]) {
   return line.map((step) => [step.state, step.status]);
@@ -79,13 +87,22 @@ function metaOf(
   history: readonly WorkflowRunStepView[],
   viewerHolds = false,
 ) {
-  return line.map((step) =>
-    workflowStepMeta(step, {
-      contract,
-      roleHolders: { triager: candy, implementer: candy },
-      run: { viewerHolds, holder: candy },
-      history,
-    }),
+  return line.map((step) => workflowStepMeta(step, { contract, run: { viewerHolds }, history }));
+}
+
+function assigneesOf(
+  line: readonly WorkflowLineStep[],
+  contract: WorkflowContract,
+  viewerHolds = false,
+) {
+  return line.map(
+    (step) =>
+      workflowStepAssignee(step, {
+        contract,
+        roleHolders: { triager: candy, implementer: candy },
+        run: { viewerHolds, holder: candy },
+        viewer: owner,
+      })?.name,
   );
 }
 
@@ -126,11 +143,19 @@ describe('workflowRunLine · feedback-triage', () => {
     ]);
     expect(line.every((step) => step.onMainPath)).toBe(true);
     expect(metaOf(line, feedbackTriage, history, true)).toEqual([
-      'Candy · notified',
-      'Candy · ranked',
+      '',
+      '',
       'Your call · gate',
-      'Candy',
+      '',
       'Ends the run',
+    ]);
+    // Who held each step is its mark: the gate waiting on the viewer is theirs.
+    expect(assigneesOf(line, feedbackTriage, true)).toEqual([
+      'Candy',
+      'Candy',
+      'Owner',
+      'Candy',
+      undefined,
     ]);
     // A visit carries what the state handed off when it left, and how.
     expect(line[1]!.visits).toEqual([
@@ -188,7 +213,9 @@ describe('workflowRunLine · feedback-triage', () => {
     ];
     const line = workflowRunLine(feedbackTriage, history);
     // The settled gate names who answered it.
-    expect(metaOf(line, feedbackTriage, history)[2]).toBe('Owner · dispatch');
+    expect(metaOf(line, feedbackTriage, history)[2]).toBe('');
+    // A settled gate is the person who answered it, not the agent that asked.
+    expect(assigneesOf(line, feedbackTriage)[2]).toBe('Owner');
     const byState = Object.fromEntries(line.map((step) => [step.state, step]));
     expect(byState.approve!.visits[0]).toMatchObject({ gate, outcome: 'dispatch' });
     expect(byState.dispatch!.visits[0]).toMatchObject({
@@ -196,6 +223,21 @@ describe('workflowRunLine · feedback-triage', () => {
       delivered: { corners: ['Fix it'] },
     });
     expect(byState.notify!.status).toBe('skipped');
+  });
+});
+
+describe('workflowStepAssignee', () => {
+  it('names the bound holder, not the system identity, on a corner step the server closed', () => {
+    const system = { id: SYSTEM_IDENTITY_PUBKEY, name: 'Beeline', kind: 'agent' as const };
+    const history = [
+      { toState: 'opened', actor: system, at: 0 },
+      { fromState: 'opened', outcome: 'code', toState: 'implement', actor: system, at: 10 },
+      { fromState: 'implement', outcome: 'pushed', toState: 'checks', actor: system, at: 20 },
+    ];
+    const line = workflowRunLine(corner, history);
+    const byState = Object.fromEntries(line.map((step) => [step.state, step]));
+    expect(byState.implement!.status).toBe('done');
+    expect(assigneesOf([byState.implement!, byState.checks!], corner)).toEqual(['Candy', undefined]);
   });
 });
 

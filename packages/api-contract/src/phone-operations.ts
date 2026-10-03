@@ -325,6 +325,11 @@ export type WorkflowActorView = {
   readonly id: string;
   readonly name: string;
   readonly kind: 'human' | 'agent';
+  readonly handle?: string;
+  /** Absolute picture URL, when the identity has one. */
+  readonly avatar?: string;
+  /** The chosen face (one of `FACE_IDS`). */
+  readonly face?: string;
 };
 /** `live` until the run reaches a terminal state, then that terminal's status. */
 export type WorkflowOwnershipView = {
@@ -416,6 +421,8 @@ export type WorkflowRunDetailView = {
   readonly history: readonly WorkflowRunStepView[];
   /** The run's role holders as of its newest card, by role name. */
   readonly roleHolders: Readonly<Record<string, WorkflowActorView>>;
+  /** The reader, so a step waiting on or answered by them can show their own mark. */
+  readonly viewer?: WorkflowActorView;
 };
 export type SendRoomMessageInput = RoomInput & {
   /** Client-generated retry/optimistic identity. Random 32-byte hex. */

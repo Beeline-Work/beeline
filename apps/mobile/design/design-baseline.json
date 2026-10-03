@@ -5,6 +5,7 @@
   "spacing": {
     "app/(app)/beeline/channels.tsx": 1,
     "app/(app)/beeline/onboarding.tsx": 1,
+    "components/Item.tsx": 1,
     "components/buzz/CornerOpenedMarker.tsx": 1,
     "components/buzz/Ledger.tsx": 2,
     "components/buzz/NeedsYouCell.tsx": 1,

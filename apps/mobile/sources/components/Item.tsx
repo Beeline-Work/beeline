@@ -269,7 +269,8 @@ export const Item = React.memo<ItemProps>((props) => {
                     style={[
                         styles.divider,
                         { 
-                            marginLeft: (isAndroid || isWeb) ? 0 : (dividerInset + (icon || leftElement ? 55 : 16))
+                            // Under the title: the row's side padding, plus the icon and its gap.
+                            marginLeft: (isAndroid || isWeb) ? 0 : (dividerInset + theme.buzz.space.lg + (icon || leftElement ? theme.buzz.space.lg + theme.buzz.space.md : 0))
                         }
                     ]}
                 />

@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { join, posix, relative, sep } from 'node:path';
 import { resolveThemeRootedNames } from './calm-lint';
 import { space } from './groknight';
 
@@ -64,6 +64,8 @@ export const DESIGN_BASELINE_REASONS: Readonly<Partial<Record<DesignRule, Readon
       'The empty Room list clears the 80-point compose button that floats over it.',
     'app/(app)/beeline/onboarding.tsx':
       'The focused input thickens its border by 1, and the padding gives that 1 back so the text does not move.',
+    'components/Item.tsx':
+      'The iOS row divider starts under the title: side padding plus the 24-point icon slot and its gap (64), or the side padding alone.',
     'components/buzz/CornerOpenedMarker.tsx':
       'Reserves the 36-point Ledger marginalia column the timestamp hangs in (LEDGER_MARGINALIA_WIDTH).',
     'components/buzz/Ledger.tsx':
@@ -99,11 +101,13 @@ const RETIRED_COMPONENT =
 export type DesignOffence = { rule: DesignRule; file: string; line: number; text: string };
 
 /**
- * What a style value is known to be. A `number` was traced to literals (through
- * local constants, local tables, exported constants, parentheses, arithmetic
- * and `Math.*`). A `token` is read from the theme. `unknown` is a runtime value
+ * What a style value can be. A `number` was traced to literals (through local
+ * constants, local tables, imported constants, parentheses, arithmetic and
+ * `Math.*`). A `token` is read from the theme. `unknown` is a runtime value
  * (safe-area insets, measured sizes, props) that no scale governs. `terms` are
- * the numbers added to a token or runtime value (`space.sm + 2` → [2]).
+ * the numbers added to a token or runtime value (`space.sm + 2` → [2]). A
+ * value with branches (a ternary, `??`, `Math.max(insets.top, 12)`) traces to
+ * one entry per branch, and every entry must fit.
  */
 type Traced =
   | { kind: 'number'; value: number; half?: boolean }
@@ -111,17 +115,24 @@ type Traced =
   | { kind: 'unknown'; terms: number[] }
   | { kind: 'circle' };
 
-/** The names a file declares, so a value can be traced to its literal. */
+/** The names a module declares and imports, so a value can be traced to its literal. */
 export type DesignScope = {
+  file: string;
   consts: Map<string, string>;
+  exported: Set<string>;
   tables: Map<string, string>;
   rooted: Set<string>;
+  /** Local name → the module (sources-relative path) and the name it exports. */
+  imports: Map<string, { file: string; name: string }>;
 };
 
-/** Constants other modules export (`export const HULL_SHEET_INSET = 16`), by name. */
-export type DesignExports = Map<string, { expr: string; scope: DesignScope }>;
+/** Every scanned module's scope, by sources-relative path, so an import resolves to its module. */
+export type DesignModules = Map<string, DesignScope>;
 
 const NUMBER = /^\d+(?:\.\d+)?$/;
+const UNKNOWN: Traced = { kind: 'unknown', terms: [] };
+/** A value with more branches than this is not expanded further. */
+const MAX_BRANCHES = 64;
 
 /** Split `text` at `separators` that sit outside brackets and strings. */
 function splitTopLevel(text: string, separators: RegExp): { parts: string[]; ops: string[] } {
@@ -153,7 +164,57 @@ function splitTopLevel(text: string, separators: RegExp): { parts: string[]; ops
   return { parts, ops };
 }
 
-/** The value expression after `prop:` on one line, up to the property's end. */
+/** `cond ? a : b` at the top level, split into its three parts (nested ternaries stay in `b`). */
+function ternaryParts(text: string): [string, string, string] | null {
+  let depth = 0;
+  let quote: string | null = null;
+  let question = -1;
+  let open = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (quote) {
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') quote = ch;
+    else if ('([{'.includes(ch)) depth++;
+    else if (')]}'.includes(ch)) depth--;
+    else if (depth === 0 && ch === '?') {
+      // `?.` and `??` are not a ternary.
+      if (text[i + 1] === '.' || text[i + 1] === '?') {
+        i += 1;
+        continue;
+      }
+      if (question === -1) question = i;
+      open++;
+    } else if (depth === 0 && ch === ':' && question !== -1) {
+      open--;
+      if (open === 0) return [text.slice(0, question), text.slice(question + 1, i), text.slice(i + 1)];
+    }
+  }
+  return null;
+}
+
+/** Whether `text` is one parenthesised group, `( … )`, end to end. */
+function wrappedInParens(text: string): boolean {
+  if (!text.startsWith('(') || !text.endsWith(')')) return false;
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '(') depth++;
+    else if (text[i] === ')') depth--;
+    if (depth === 0 && i < text.length - 1) return false;
+  }
+  return true;
+}
+
+const CONTINUES_AFTER = /[-+*/?:=(,|&]\s*$/;
+const CONTINUES_BEFORE = /^\s*(?:[-+*/?:|&.]|\?\?)/;
+
+/**
+ * The value expression starting at `from`, up to the property's or
+ * declaration's end: a top-level `,` or `;`, an unmatched closing bracket, or
+ * a line break the expression does not continue across.
+ */
 function valueAt(text: string, from: number): string {
   let depth = 0;
   let quote: string | null = null;
@@ -169,6 +230,12 @@ function valueAt(text: string, from: number): string {
       if (depth === 0) return text.slice(from, i);
       depth--;
     } else if ((ch === ',' || ch === ';') && depth === 0) return text.slice(from, i);
+    else if (ch === '\n' && depth === 0) {
+      const sofar = text.slice(from, i);
+      if (sofar.trim() && !CONTINUES_AFTER.test(sofar) && !CONTINUES_BEFORE.test(text.slice(i + 1))) {
+        return sofar;
+      }
+    }
   }
   return text.slice(from);
 }
@@ -178,25 +245,128 @@ function tableProperty(table: string, prop: string): string | null {
   return match ? valueAt(table, match.index + match[0].length).trim() : null;
 }
 
-export function designScope(source: string): DesignScope {
-  const { rooted, objectLiterals } = resolveThemeRootedNames(source);
-  const consts = new Map<string, string>();
-  for (const match of source.matchAll(/\bconst\s+([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=\s*/g)) {
-    const start = match.index! + match[0].length;
-    const end = source.indexOf('\n', start);
-    const expr = valueAt(source.slice(start, end === -1 ? undefined : end), 0).trim();
-    if (expr && !consts.has(match[1]!)) consts.set(match[1]!, expr);
+/** `source` with its comments blanked to spaces, so offsets and line numbers still match. */
+function withoutComments(source: string): string {
+  const out = source.split('');
+  let quote: string | null = null;
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i]!;
+    if (quote) {
+      if (ch === '\\') i++;
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') {
+      quote = ch;
+    } else if (ch === '/' && source[i + 1] === '/') {
+      while (i < source.length && source[i] !== '\n') out[i++] = ' ';
+    } else if (ch === '/' && source[i + 1] === '*') {
+      const close = source.indexOf('*/', i + 2);
+      const stop = close === -1 ? source.length : close + 2;
+      for (; i < stop; i++) if (source[i] !== '\n') out[i] = ' ';
+      i--;
+    }
   }
-  rooted.add('space');
-  return { consts, tables: objectLiterals, rooted };
+  return out.join('');
 }
 
-function trace(expr: string, scope: DesignScope, exports: DesignExports, depth = 0): Traced {
-  const text = expr
+function resolveModule(from: string, specifier: string, known: (file: string) => boolean): string | null {
+  let base: string;
+  if (specifier.startsWith('@/')) base = specifier.slice(2);
+  else if (specifier.startsWith('.')) base = posix.join(posix.dirname(from), specifier);
+  else return null;
+  for (const extension of ['', '.ts', '.tsx', '/index.ts', '/index.tsx']) {
+    if (known(base + extension)) return base + extension;
+  }
+  return null;
+}
+
+const IMPORT = /\bimport\s+(?:type\s+)?(?:[A-Za-z_$][\w$]*\s*,\s*)?\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/g;
+
+export function designScope(
+  source: string,
+  file = '',
+  known: (file: string) => boolean = () => false,
+): DesignScope {
+  const code = withoutComments(source);
+  const { rooted, objectLiterals } = resolveThemeRootedNames(code);
+  const consts = new Map<string, string>();
+  for (const match of code.matchAll(/\bconst\s+([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=(?!=)\s*/g)) {
+    const expr = valueAt(code, match.index! + match[0].length).trim();
+    if (expr && !consts.has(match[1]!)) consts.set(match[1]!, expr);
+  }
+  const exported = new Set([...code.matchAll(/\bexport\s+const\s+([A-Za-z_$][\w$]*)/g)].map((m) => m[1]!));
+  const imports = new Map<string, { file: string; name: string }>();
+  for (const match of code.matchAll(IMPORT)) {
+    const target = resolveModule(file, match[2]!, known);
+    if (!target) continue;
+    for (const entry of match[1]!.split(',')) {
+      const named = /^\s*(?:type\s+)?([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?\s*$/.exec(entry);
+      if (named) imports.set(named[2] ?? named[1]!, { file: target, name: named[1]! });
+    }
+  }
+  rooted.add('space');
+  return { file, consts, exported, tables: objectLiterals, rooted, imports };
+}
+
+/** Every combination of one entry from each list, capped at MAX_BRANCHES. */
+function combinations(lists: Traced[][]): Traced[][] {
+  let out: Traced[][] = [[]];
+  for (const list of lists) {
+    out = out.flatMap((prefix) => list.map((item) => [...prefix, item])).slice(0, MAX_BRANCHES);
+  }
+  return out;
+}
+
+function addTerms(traced: Traced[], signs: number[]): Traced {
+  if (traced.every((t) => t.kind === 'number')) {
+    return {
+      kind: 'number',
+      value: traced.reduce((total, t, i) => total + signs[i]! * (t as { value: number }).value, 0),
+    };
+  }
+  const terms: number[] = [];
+  let runtime = false;
+  for (const [i, t] of traced.entries()) {
+    if (t.kind === 'number') terms.push(signs[i]! * t.value);
+    else {
+      if (t.kind !== 'token') runtime = true;
+      if (t.kind !== 'circle') terms.push(...t.terms);
+    }
+  }
+  return runtime ? { kind: 'unknown', terms } : { kind: 'token', terms };
+}
+
+function multiply(traced: Traced[], ops: string[]): Traced {
+  const last = traced[traced.length - 1]!;
+  // Half of a size: as a radius it draws a round shape (`DOT / 2`, `14 / 2`).
+  const half = ops[ops.length - 1] === '/' && last.kind === 'number' && last.value === 2;
+  if (traced.every((t) => t.kind === 'number')) {
+    let value = (traced[0] as { value: number }).value;
+    ops.forEach((op, i) => {
+      const next = (traced[i + 1] as { value: number }).value;
+      value = op === '*' ? value * next : value / next;
+    });
+    return { kind: 'number', value, half };
+  }
+  return half ? { kind: 'circle' } : UNKNOWN;
+}
+
+function trace(expr: string, scope: DesignScope, modules: DesignModules, depth = 0): Traced[] {
+  let text = expr
     .trim()
     .replace(/\s+as\s+const$/, '')
-    .replace(/\s+as\s+\w+$/, '');
-  if (!text || depth > 8) return { kind: 'unknown', terms: [] };
+    .replace(/\s+as\s+\w+$/, '')
+    .trim();
+  while (wrappedInParens(text)) text = text.slice(1, -1).trim();
+  if (!text || depth > 12) return [UNKNOWN];
+  const again = (part: string, inScope = scope) => trace(part, inScope, modules, depth + 1);
+
+  const ternary = ternaryParts(text);
+  if (ternary) return [...again(ternary[1]), ...again(ternary[2])].slice(0, MAX_BRANCHES);
+
+  const fallback = splitTopLevel(text, /^(?:\?\?|\|\|)/);
+  if (fallback.parts.length > 1) return fallback.parts.flatMap((part) => again(part)).slice(0, MAX_BRANCHES);
 
   const sum = splitTopLevel(text, /^[+-](?![+-=])/);
   // A leading unary minus leaves an empty first part.
@@ -204,75 +374,61 @@ function trace(expr: string, scope: DesignScope, exports: DesignExports, depth =
   if (leading !== undefined) sum.parts.shift();
   if (sum.parts.length > 1 || leading !== undefined) {
     const signs = [leading === '-' ? -1 : 1, ...sum.ops.map((op) => (op === '-' ? -1 : 1))];
-    const traced = sum.parts.map((part) => trace(part, scope, exports, depth + 1));
-    if (traced.every((t) => t.kind === 'number')) {
-      return {
-        kind: 'number',
-        value: traced.reduce((total, t, i) => total + signs[i]! * (t as { value: number }).value, 0),
-      };
-    }
-    const terms: number[] = [];
-    let runtime = false;
-    for (const [i, t] of traced.entries()) {
-      if (t.kind === 'number') terms.push(signs[i]! * t.value);
-      else {
-        if (t.kind !== 'token') runtime = true;
-        if (t.kind !== 'circle') terms.push(...t.terms);
-      }
-    }
-    return runtime ? { kind: 'unknown', terms } : { kind: 'token', terms };
+    return combinations(sum.parts.map((part) => again(part))).map((combo) => addTerms(combo, signs));
   }
 
   const product = splitTopLevel(text, /^[*/]/);
   if (product.parts.length > 1) {
-    const traced = product.parts.map((part) => trace(part, scope, exports, depth + 1));
-    const last = traced[traced.length - 1]!;
-    // Half of a size: as a radius it draws a round shape (`DOT / 2`, `14 / 2`).
-    const half = product.ops[product.ops.length - 1] === '/' && last.kind === 'number' && last.value === 2;
-    if (traced.every((t) => t.kind === 'number')) {
-      let value = (traced[0] as { value: number }).value;
-      product.ops.forEach((op, i) => {
-        const next = (traced[i + 1] as { value: number }).value;
-        value = op === '*' ? value * next : value / next;
-      });
-      return { kind: 'number', value, half };
-    }
-    if (half) return { kind: 'circle' };
-    return { kind: 'unknown', terms: [] };
+    return combinations(product.parts.map((part) => again(part))).map((combo) => multiply(combo, product.ops));
   }
 
-  if (NUMBER.test(text)) return { kind: 'number', value: Number(text) };
-  if (text.startsWith('(') && text.endsWith(')')) return trace(text.slice(1, -1), scope, exports, depth + 1);
+  if (NUMBER.test(text)) return [{ kind: 'number', value: Number(text) }];
 
-  const math = /^Math\.(round|floor|ceil|max|min|abs)\((.*)\)$/.exec(text);
+  const math = /^Math\.(round|floor|ceil|max|min|abs)\(([\s\S]*)\)$/.exec(text);
   if (math) {
-    const args = splitTopLevel(math[2]!, /^,/).parts.map((arg) => trace(arg, scope, exports, depth + 1));
-    if (args.every((t) => t.kind === 'number')) {
-      const values = args.map((t) => (t as { value: number }).value);
-      return { kind: 'number', value: (Math[math[1] as 'max'] as (...v: number[]) => number)(...values) };
-    }
-    return { kind: 'unknown', terms: [] };
+    const args = splitTopLevel(math[2]!, /^,/).parts.map((arg) => again(arg));
+    const fn = Math[math[1] as 'max'] as (...values: number[]) => number;
+    return combinations(args).map((combo): Traced => {
+      if (combo.every((t) => t.kind === 'number')) {
+        return { kind: 'number', value: fn(...combo.map((t) => (t as { value: number }).value)) };
+      }
+      return UNKNOWN;
+    }).concat(
+      // A runtime argument hides the result, but a number beside it can be the
+      // result (`Math.max(insets.top, 12)` is 12 whenever the inset is smaller).
+      args.flat().filter((t) => t.kind === 'number'),
+    ).slice(0, MAX_BRANCHES);
   }
 
   const chain = /^([A-Za-z_$][\w$]*)((?:\??\.[A-Za-z_$][\w$]*)*)$/.exec(text);
-  if (!chain) return { kind: 'unknown', terms: [] };
+  if (!chain) return [UNKNOWN];
   const root = chain[1]!;
   const path = chain[2]!.split(/\??\./).filter(Boolean);
   const step = path[path.length - 1];
   if (step && step in space && (root === 'space' || path.includes('space'))) {
-    return { kind: 'number', value: space[step as keyof typeof space] };
+    return [{ kind: 'number', value: space[step as keyof typeof space] }];
   }
-  if (scope.rooted.has(root)) return { kind: 'token', terms: [] };
   if (path.length === 1 && scope.tables.has(root)) {
     const value = tableProperty(scope.tables.get(root)!, path[0]!);
-    return value ? trace(value, scope, exports, depth + 1) : { kind: 'unknown', terms: [] };
+    return value ? again(value) : [UNKNOWN];
   }
-  if (path.length === 0 && scope.consts.has(root)) {
-    return trace(scope.consts.get(root)!, scope, exports, depth + 1);
+  const init = scope.consts.get(root);
+  if (init !== undefined && !init.startsWith('{')) {
+    // A local constant: trace what it holds, then any property path read from it.
+    if (path.length === 0) return again(init);
+    if (/^[A-Za-z_$][\w$.?]*$/.test(init)) return again(`${init}.${path.join('.')}`);
   }
-  const exported = path.length === 0 ? exports.get(root) : undefined;
-  if (exported) return trace(exported.expr, exported.scope, exports, depth + 1);
-  return { kind: 'unknown', terms: [] };
+  if (scope.rooted.has(root)) return [{ kind: 'token', terms: [] }];
+  const imported = scope.imports.get(root);
+  const source = imported ? modules.get(imported.file) : undefined;
+  if (imported && source && source.exported.has(imported.name)) {
+    const value = source.consts.get(imported.name);
+    if (value !== undefined && path.length === 0) return again(value, source);
+    if (value !== undefined && /^[A-Za-z_$][\w$.?]*$/.test(value)) {
+      return again(`${value}.${path.join('.')}`, source);
+    }
+  }
+  return [UNKNOWN];
 }
 
 /** Whether a traced spacing value is on the scale (sign aside), and so is every number added to a token. */
@@ -291,45 +447,47 @@ function onRadiusSet(traced: Traced): boolean {
   return traced.terms.every((term) => term === 0);
 }
 
-/** Every branch of a ternary or fallback is checked on its own. */
-function branches(expr: string): string[] {
-  const ternary = splitTopLevel(expr, /^\?(?![?.])/);
-  if (ternary.parts.length > 1) {
-    const rest = ternary.parts.slice(1).join('?');
-    return splitTopLevel(rest, /^:/).parts.flatMap(branches);
-  }
-  const fallback = splitTopLevel(expr, /^(?:\?\?|\|\|)/);
-  return fallback.parts.length > 1 ? fallback.parts.flatMap(branches) : [expr];
-}
-
 export function scanDesignSource(
   source: string,
   file: string,
-  exports: DesignExports = new Map(),
+  modules: DesignModules = new Map(),
 ): DesignOffence[] {
   const offences: DesignOffence[] = [];
-  const scope = designScope(source);
-  const offScale = (text: string, pattern: RegExp, fits: (traced: Traced) => boolean) => {
-    let count = 0;
-    for (const match of text.matchAll(pattern)) {
-      const value = valueAt(text, match.index! + match[0].length);
-      if (branches(value).some((branch) => !fits(trace(branch, scope, exports)))) count++;
+  const scope = modules.get(file) ?? designScope(source, file, (name) => modules.has(name));
+  // Comments describe rules; they set nothing.
+  const code = withoutComments(source);
+  const originalLines = source.split('\n');
+  const lineStarts = [0];
+  for (let i = 0; i < code.length; i++) if (code[i] === '\n') lineStarts.push(i + 1);
+  const lineAt = (index: number) => {
+    let lo = 0;
+    let hi = lineStarts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (lineStarts[mid]! <= index) lo = mid;
+      else hi = mid - 1;
     }
-    return count;
+    return lo;
   };
-  source.split('\n').forEach((text, index) => {
-    const trimmed = text.trim();
-    // Comments describe rules; they set nothing.
-    if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*')) return;
-    const push = (rule: DesignRule) => offences.push({ rule, file, line: index + 1, text: trimmed });
-    for (const _ of text.matchAll(COLOUR_LITERAL)) push('colour');
-    for (let i = offScale(text, SPACING_PROPERTY, onSpacingScale); i > 0; i--) push('spacing');
-    for (let i = offScale(text, RADIUS_PROPERTY, onRadiusSet); i > 0; i--) push('radius');
-    for (const _ of text.matchAll(SHADOW)) push('shadow');
-    for (const _ of text.matchAll(RETIRED_FONT)) push('font');
-    for (const _ of text.matchAll(RETIRED_COMPONENT)) push('component');
-  });
-  return offences.filter((offence) => !(offence.file in DESIGN_ALLOWLIST[offence.rule]));
+  const push = (rule: DesignRule, index: number) => {
+    const line = lineAt(index);
+    offences.push({ rule, file, line: line + 1, text: originalLines[line]!.trim() });
+  };
+  const offScale = (pattern: RegExp, rule: DesignRule, fits: (traced: Traced) => boolean) => {
+    for (const match of code.matchAll(pattern)) {
+      const value = valueAt(code, match.index! + match[0].length);
+      if (!trace(value, scope, modules).every(fits)) push(rule, match.index!);
+    }
+  };
+  for (const match of code.matchAll(COLOUR_LITERAL)) push('colour', match.index!);
+  offScale(SPACING_PROPERTY, 'spacing', onSpacingScale);
+  offScale(RADIUS_PROPERTY, 'radius', onRadiusSet);
+  for (const match of code.matchAll(SHADOW)) push('shadow', match.index!);
+  for (const match of code.matchAll(RETIRED_FONT)) push('font', match.index!);
+  for (const match of code.matchAll(RETIRED_COMPONENT)) push('component', match.index!);
+  return offences
+    .filter((offence) => !(offence.file in DESIGN_ALLOWLIST[offence.rule]))
+    .sort((a, b) => a.line - b.line);
 }
 
 const SCANNED = /\.(tsx?|json)$/;
@@ -351,18 +509,12 @@ function walk(root: string, dir: string, out: string[]) {
   return out;
 }
 
-/** Every exported numeric-looking constant in the tree, so an import is traced too. */
-export function designExports(files: { source: string }[]): DesignExports {
-  const exports: DesignExports = new Map();
-  for (const { source } of files) {
-    if (!/\bexport\s+const\b/.test(source)) continue;
-    const scope = designScope(source);
-    for (const match of source.matchAll(/\bexport\s+const\s+([A-Za-z_$][\w$]*)\b/g)) {
-      const expr = scope.consts.get(match[1]!);
-      if (expr && !exports.has(match[1]!)) exports.set(match[1]!, { expr, scope });
-    }
-  }
-  return exports;
+/** Every module's scope, so an imported constant is traced in the module that exports it. */
+export function designModules(files: { source: string; file: string }[]): DesignModules {
+  const names = new Set(files.map(({ file }) => file));
+  return new Map(
+    files.map(({ source, file }) => [file, designScope(source, file, (name) => names.has(name))]),
+  );
 }
 
 export function scanDesignTree(sourcesDir: string): DesignOffence[] {
@@ -372,8 +524,8 @@ export function scanDesignTree(sourcesDir: string): DesignOffence[] {
       source: readFileSync(path, 'utf8'),
       file: relative(sourcesDir, path).split(sep).join('/'),
     }));
-  const exports = designExports(files);
-  return files.flatMap(({ source, file }) => scanDesignSource(source, file, exports));
+  const modules = designModules(files);
+  return files.flatMap(({ source, file }) => scanDesignSource(source, file, modules));
 }
 
 /** `{ rule: { file: count } }`, sorted for a stable JSON file. */

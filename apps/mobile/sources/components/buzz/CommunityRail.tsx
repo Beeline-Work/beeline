@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useState } from 'react';
 import { Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { space } from '@/buzz/groknight';
 import * as Haptics from 'expo-haptics';
 import Animated, {
   Easing,
@@ -186,7 +187,7 @@ export function CommunityRail({
       style={[
         styles.rail,
         column && styles.columnPicker,
-        { paddingTop: column ? 0 : Math.max(insets.top, 10) },
+        { paddingTop: column ? 0 : Math.max(insets.top, space.sm) },
       ]}
     >
       <ScrollView

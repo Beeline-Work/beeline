@@ -7,7 +7,7 @@ import {
   DESIGN_RADII,
   DESIGN_SPACING,
   designCounts,
-  designScope,
+  designModules,
   judgeDesign,
   scanDesignSource,
   scanDesignTree,
@@ -107,12 +107,16 @@ describe('design lint', () => {
       'const TABLE = { inset: 20 };',
       'const w = { paddingTop: TABLE.inset, borderRadius: hull.radius + 2 };',
       'const x = { padding: isDesktop ? 12 : 16, marginTop: insets.top + 40 };',
+      "import { SHARED_INSET } from './shared';",
       'const y = { paddingTop: SHARED_INSET };',
       'const ok = { elevation: 0, padding: (16), gap: Math.max(8, 4), marginTop: insets.top + 8 };',
       'const round = { borderRadius: DOT / 2, borderTopLeftRadius: 14 / 2, padding: -space.md };',
     ].join('\n');
-    const exports = new Map([['SHARED_INSET', { expr: '20', scope: designScope('') }]]);
-    expect(scanDesignSource(source, 'x.tsx', exports).map(({ rule, line }) => `${rule}@${line}`)).toEqual([
+    const modules = designModules([
+      { file: 'shared.ts', source: 'export const SHARED_INSET = 20;' },
+      { file: 'x.tsx', source },
+    ]);
+    expect(scanDesignSource(source, 'x.tsx', modules).map(({ rule, line }) => `${rule}@${line}`)).toEqual([
       'shadow@1',
       'spacing@2',
       'spacing@3',
@@ -124,8 +128,41 @@ describe('design lint', () => {
       'radius@6',
       'spacing@7',
       'spacing@7',
-      'spacing@8',
+      'spacing@9',
     ]);
+  });
+
+  it('traces branches, aliases, multiline values and imports by module', () => {
+    const probe = (source: string, modules?: { file: string; source: string }[]) =>
+      scanDesignSource(
+        source,
+        'x.tsx',
+        designModules([...(modules ?? []), { file: 'x.tsx', source }]),
+      ).map(({ rule, line }) => `${rule}@${line}`);
+    expect(probe('const s = { padding: (desktop ? 12 : 16) };')).toEqual(['spacing@1']);
+    expect(probe('const PAD = theme.buzz.space.sm + 2;\nconst s = { padding: PAD };')).toEqual(['spacing@2']);
+    expect(probe('const PAD = theme.dark ? 12 : 16;\nconst s = { padding: PAD };')).toEqual(['spacing@2']);
+    expect(probe('const s = { padding:\n  12 };')).toEqual(['spacing@1']);
+    expect(probe('const s = { padding: Math.max(insets.top, 12) };')).toEqual(['spacing@1']);
+    const twoModules = [
+      { file: 'a.ts', source: 'export const PAD = 16;' },
+      { file: 'b.ts', source: 'export const PAD = 12;' },
+    ];
+    expect(probe("import { PAD } from './b';\nconst s = { padding: PAD };", twoModules)).toEqual(['spacing@2']);
+    expect(probe("import { PAD } from './a';\nconst s = { padding: PAD };", twoModules)).toEqual([]);
+    expect(probe("import { PAD as INSET } from '@/b';\nconst s = { padding: INSET };", twoModules)).toEqual(['spacing@2']);
+    // On-scale shapes of the same syntax pass.
+    expect(
+      probe(
+        [
+          'const hull = theme.buzz;',
+          'const GAP = theme.dark ? hull.space.sm : 16;',
+          'const s = { padding: (desktop ? 8 : 16), gap: GAP, margin: Math.max(insets.top, 16),',
+          '  paddingTop:',
+          '    hull.space.md, borderRadius: hull.radius };',
+        ].join('\n'),
+      ),
+    ).toEqual([]);
   });
 
   it('names the reason for every baseline row, and only for baseline rows', () => {

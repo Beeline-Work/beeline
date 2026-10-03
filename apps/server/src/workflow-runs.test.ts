@@ -459,7 +459,7 @@ describe('start_workflow', () => {
     );
     expect(card.rows[0]?.card.roleBindings.reviewer).toBe(REVIEWER);
     await expect(
-      startWorkflow(database, command, {
+      startWorkflow(database, { room_id: ROOM, agent_id: OWNER }, {
         name: 'corner',
         roleBindings: { implementer: IMPLEMENTER, reviewer: '@nobody', approver: APPROVER },
       }),
@@ -527,6 +527,16 @@ describe('start_workflow', () => {
     ).rejects.toThrow(`You are already in run ${runId} of corner. Continue it or hand off within it.`);
   });
 
+  it('rejects a current role agent after an ordinary human tag', async () => {
+    const { runId } = await startedRun();
+    const tagged = await rootMessage(OWNER, '@impy please handle this');
+    const command = await commandFor(IMPLEMENTER, tagged);
+    await expect(startWorkflow(database, command, {
+      name: 'corner',
+      roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+    })).rejects.toThrow(`You are already in run ${runId} of corner. Continue it or hand off within it.`);
+  });
+
   it('lets an agent not currently in a run start the workflow when no run is active', async () => {
     const command = await commandFor(IMPLEMENTER);
     await saveWorkflow(database, command, { contract: CONTRACT });
@@ -588,7 +598,7 @@ describe('start_workflow schedule/trigger duplicate-run refusal', () => {
     await createSchedule(IMPLEMENTER, SCHEDULE);
     const runs: string[] = [];
     for (let index = 0; index < 5; index += 1) {
-      const { runId } = await startWorkflow(database, command, {
+      const { runId } = await startWorkflow(database, { room_id: ROOM, agent_id: OWNER }, {
         name: 'corner',
         roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
       });
@@ -617,7 +627,7 @@ describe('start_workflow schedule/trigger duplicate-run refusal', () => {
     await saveWorkflow(database, firstCommand, { contract: CONTRACT });
     const started = await startWorkflow(database, firstCommand, {
       name: 'corner',
-      roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+      roleBindings: { implementer: REVIEWER, reviewer: REVIEWER, approver: APPROVER },
     });
     // A second wake for the exact same schedule occurrence (a retried turn,
     // or the agent resuming after a restart) must not start a duplicate run.
@@ -625,7 +635,7 @@ describe('start_workflow schedule/trigger duplicate-run refusal', () => {
     await expect(
       startWorkflow(database, secondCommand, {
         name: 'corner',
-        roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+        roleBindings: { implementer: REVIEWER, reviewer: REVIEWER, approver: APPROVER },
       }),
     ).rejects.toThrow(
       `corner already has an active run ${started.runId} started by this schedule for this period`,
@@ -674,7 +684,7 @@ describe('start_workflow schedule/trigger duplicate-run refusal', () => {
     )).rows[0]!;
     const started = await startWorkflow(database, scheduled, {
       name: 'corner',
-      roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+      roleBindings: { implementer: REVIEWER, reviewer: REVIEWER, approver: APPROVER },
     });
     const startCard = (await database.query<{ card: { trigger: { scheduleId: string; period: string } } }>(
       `SELECT card FROM messages WHERE id=$1`, [started.runId],
@@ -682,7 +692,7 @@ describe('start_workflow schedule/trigger duplicate-run refusal', () => {
     expect(startCard.card.trigger.scheduleId).toBe(SCHEDULE);
     await expect(startWorkflow(database, scheduled, {
       name: 'corner',
-      roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+      roleBindings: { implementer: REVIEWER, reviewer: REVIEWER, approver: APPROVER },
     })).rejects.toThrow(`active run ${started.runId}`);
   });
 });

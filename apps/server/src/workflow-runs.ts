@@ -20,7 +20,6 @@ import type { AfterCommit } from './institutional-memory-embeddings.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import { firstHealthyAgent, nextHealthyAgent } from './agent-health.js';
 import { postRoomChoice } from './room-choice.js';
-import { CHOICE_WAKE_CARD_TYPES } from '@beeline/api-contract/phone';
 import { ensureSystemIdentity, identitySubject, systemLine } from './system-line.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
@@ -345,37 +344,18 @@ function roleAgentList(binding: WorkflowRoleBinding): string[] | null {
   return new Set(binding).size === binding.length ? [...binding] : null;
 }
 
-/**
- * The active run THIS wake is evidence of: the command's own triggering
- * message is a `workflow-handoff` card for the named workflow, the run it
- * names has not ended, and this agent is still the one bound to its current
- * state's role. A stale wake (the run already moved past this card, or past
- * this agent) is not "currently acting" and is left alone — only a genuinely
- * live hold on the named workflow blocks a fresh `start_workflow`.
- */
-async function runThisWakeContinues(
+async function activeRunHeldByAgent(
   db: SqlDatabase,
-  input: { roomId: string; agentId: string; sourceMessageId: string; workflowName: string },
+  input: { roomId: string; agentId: string; workflowName: string },
 ): Promise<{ runId: string } | undefined> {
-  const wake = (
-    await db.query<{ card_type: string | null; wake_kind: string | null; card: WorkflowRunCard | null }>(
-      `SELECT card_type,system_event->>'kind' wake_kind,card FROM messages WHERE id=$1 AND room_id=$2`,
-      [input.sourceMessageId, input.roomId],
-    )
-  ).rows[0];
-  if (!wake?.card) return undefined;
-  if (wake.card_type !== WORKFLOW_HANDOFF_CARD_TYPE && wake.wake_kind !== 'schedule-ran' &&
-      !CHOICE_WAKE_CARD_TYPES.some((type) => type === wake.card_type)) return undefined;
-  if (wake.card.workflowSlug !== input.workflowName) return undefined;
-  const run = await loadRun(db, input.roomId, wake.card.runId);
-  if (!run) return undefined;
-  const contract = await loadPinnedContract(db, input.roomId, run.workflowSlug, run.workflowVersion);
-  if (!contract) return undefined;
-  const state = contract.handoffs[run.toState];
-  if (!state || state.kind === 'terminal') return undefined;
-  const role = (state as WorkflowHandoffState | WorkflowGateState).role;
-  if (run.roleBindings[role] !== input.agentId) return undefined;
-  return { runId: run.runId };
+  const active = await db.query<{ id: string }>(
+    `SELECT id FROM messages
+     WHERE room_id=$1 AND card_type='workflow-handoff' AND card->>'active'='true'
+       AND card->>'workflowSlug'=$2 AND card->>'currentAgentId'=$3
+     ORDER BY id LIMIT 1`,
+    [input.roomId, input.workflowName, input.agentId],
+  );
+  return active.rows[0] ? { runId: active.rows[0].id } : undefined;
 }
 
 /** The schedule occurrence (if any) whose wake message triggered this call. */
@@ -441,18 +421,15 @@ export async function startWorkflow(
   }
 
   return database.transaction(async (db) => {
-    if (command.source_message_id) {
-      const held = await runThisWakeContinues(db, {
-        roomId: command.room_id,
-        agentId: command.agent_id,
-        sourceMessageId: command.source_message_id,
-        workflowName: input.name,
-      });
-      if (held) {
-        throw new Error(
-          `You are already in run ${held.runId} of ${input.name}. Continue it or hand off within it.`,
-        );
-      }
+    const held = await activeRunHeldByAgent(db, {
+      roomId: command.room_id,
+      agentId: command.agent_id,
+      workflowName: input.name,
+    });
+    if (held) {
+      throw new Error(
+        `You are already in run ${held.runId} of ${input.name}. Continue it or hand off within it.`,
+      );
     }
     const room = (
       await db.query<{ workspace_id: string }>(`SELECT workspace_id FROM rooms WHERE id=$1`, [
@@ -555,6 +532,7 @@ export async function startWorkflow(
       card: {
         runId,
         active: true,
+        currentAgentId: exhausted ? null : (resolution as { agentId: string }).agentId,
         workflowSlug: contract.name,
         workflowVersion: skill.current_version,
         ownerAtStart: ownership.owner!.id,
@@ -706,13 +684,12 @@ export async function handoff(
         ...(isTerminal ? { status: (nextState as { status: 'done' | 'failed' }).status } : {}),
       },
     });
-    if (isTerminal) {
-      await db.query(
-        `UPDATE messages SET card=card || '{"active":false}'::jsonb
-         WHERE id=$1 AND room_id=$2 AND card_type=$3`,
-        [input.runId, command.room_id, WORKFLOW_HANDOFF_CARD_TYPE],
-      );
-    }
+    await db.query(
+      `UPDATE messages SET card=card || jsonb_build_object('active',$3::boolean,'currentAgentId',$4::text)
+       WHERE id=$1 AND room_id=$2 AND card_type='workflow-handoff'`,
+      [input.runId, command.room_id, !isTerminal,
+        isTerminal || exhausted ? null : (nextResolution as { agentId: string }).agentId],
+    );
     if (exhausted) {
       await noteWorkflowRoleExhausted(db, {
         roomId: command.room_id,
@@ -791,6 +768,11 @@ async function reassignRole(
       ...(state.hint ? { receiptHint: state.hint } : {}),
     },
   });
+  await db.query(
+    `UPDATE messages SET card=card || jsonb_build_object('currentAgentId',$3::text)
+     WHERE id=$1 AND room_id=$2 AND card_type='workflow-handoff'`,
+    [input.runId, input.roomId, input.picked],
+  );
   if (state.kind === 'gate') {
     await postWorkflowGate(db, {
       roomId: input.roomId,

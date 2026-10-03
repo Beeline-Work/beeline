@@ -1634,6 +1634,7 @@ CREATE INDEX IF NOT EXISTS agent_schedules_due_idx ON agent_schedules(next_run_a
 CREATE INDEX IF NOT EXISTS agent_schedules_room_idx ON agent_schedules(room_id, created_at, id);
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS max_runs integer;
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS run_count integer NOT NULL DEFAULT 0;
+ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS workflow_run jsonb;
 
 CREATE TABLE IF NOT EXISTS agent_schedule_occurrences (
   schedule_id uuid NOT NULL REFERENCES agent_schedules(id) ON DELETE CASCADE,
@@ -2593,6 +2594,12 @@ export async function migrate(
     `CREATE INDEX CONCURRENTLY messages_live_activity_idx
      ON messages(room_id,author_id,created_at DESC,id DESC)
      WHERE presentation='activity' AND durable_fact IS NULL`,
+  ));
+  await retryMigrationStep('active workflow trigger index', () => createIndexConcurrently(
+    database, 'messages_workflow_active_trigger_idx',
+    `CREATE INDEX CONCURRENTLY messages_workflow_active_trigger_idx
+     ON messages(room_id, (card->'trigger'->>'scheduleId'), (card->>'workflowSlug'), (card->'trigger'->>'period'))
+     WHERE card_type='workflow-handoff' AND card->>'active'='true'`,
   ));
   await retryMigrationStep('unread cursor index', () => createIndexConcurrently(
     database, 'messages_unread_cursor_idx',

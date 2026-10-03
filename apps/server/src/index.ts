@@ -370,6 +370,7 @@ async function main() {
       await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
       // The corner workflow's server merge: a `land` handoff card (or a human
       // lifting a hold) is a new message, which wakes this loop.
+      if (githubJobs) await backgroundJobs.run('corner-merge-recovery', () => githubJobs.recoverUnfinishedMergeClaims());
       if (githubJobs) await backgroundJobs.run('corner-land', () => githubJobs.landReadyCorners());
       const now = Date.now();
       if (now - lastReconciliationAt >= reconciliationMs) {

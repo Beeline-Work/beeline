@@ -22,6 +22,8 @@ import {
   lockCornerWorkflowRun,
   cornerMergeGate,
   cornersReadyToLand,
+  unfinishedCornerMergeClaims,
+  clearUnfinishedCornerMergeClaim,
 } from './corner-workflow.js';
 import {
   queueCornerMergeConflict,
@@ -905,15 +907,15 @@ export class GitHubOperations {
     }
     if (!status.mergeAllowed) return false;
     const target = (
-      await this.database.query<{
+      await this.database.query<CornerWebhookTarget & {
         number: number;
         feature_branch: string | null;
-        repository_id: string;
-        installation_id: string;
         full_name: string;
       }>(
         `SELECT (fact.lifecycle->'pr'->>'number')::int number,fact.feature_branch,
-           repository.repository_id,repository.installation_id,repository.full_name
+           repository.repository_id,repository.installation_id,repository.full_name,
+           corner.id corner_id,parent.id parent_id,corner.name corner_name,
+           COALESCE(fact.owner_agent_id,corner.created_by,parent.created_by) author_id,fact.objective summary
          FROM rooms corner
          JOIN rooms parent ON parent.id=corner.parent_id
          JOIN corner_facts fact ON fact.corner_id=corner.id
@@ -937,6 +939,19 @@ export class GitHubOperations {
         status.headSha,
       );
     } catch (error) {
+      let pr: Awaited<ReturnType<GitHubAppClient['readPullRequest']>> | undefined;
+      try {
+        const token = await this.app.installationToken(Number(target.installation_id), {
+          repositoryIds: [Number(target.repository_id)],
+        });
+        pr = await this.app.readPullRequest(token.token, target.full_name, target.number);
+      } catch (readError) {
+        console.error(`[server] merge outcome read failed for ${cornerId}:`, readError);
+      }
+      if (pr?.merged && pr.headSha === status.headSha && pr.headRef === target.feature_branch) {
+        await this.recordConfirmedCornerMerge(target, target.full_name, target.number, pr);
+        return true;
+      }
       await advanceCorner(this.database, cornerId, {
         kind: 'merge-refused',
         headSha: status.headSha,
@@ -1252,6 +1267,54 @@ export class GitHubOperations {
         console.error(`[server] mergeability refresh failed for corner ${row.corner_id}:`, error);
       }
     }
+  }
+
+  /** The leader recovers unfinished claims; it never sends a merge itself. */
+  async recoverUnfinishedMergeClaims(): Promise<void> {
+    for (const claim of await unfinishedCornerMergeClaims(this.database)) {
+      try {
+        const target = (await this.database.query<CornerWebhookTarget & { repository: string; branch: string }>(
+          `SELECT corner.id corner_id,parent.id parent_id,corner.name corner_name,
+             COALESCE(fact.owner_agent_id,corner.created_by,parent.created_by) author_id,fact.objective summary,
+             github.repository_id,github.installation_id,github.full_name repository,fact.feature_branch branch
+           FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
+           JOIN corner_facts fact ON fact.corner_id=corner.id
+           JOIN github_repositories github ON github.installation_id=parent.github_installation_id
+             AND github.active AND lower(github.full_name)=lower(regexp_replace(regexp_replace(
+               COALESCE(parent.repository_remote,parent.repository_key,''),
+               '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
+           WHERE corner.id=$1 AND fact.feature_branch IS NOT NULL`, [claim.corner_id],
+        )).rows[0];
+        if (!target) continue;
+        const token = await this.app.installationToken(Number(target.installation_id), {
+          repositoryIds: [Number(target.repository_id)],
+        });
+        const pr = await this.app.readPullRequest(token.token, target.repository, claim.number);
+        if (pr.merged) {
+          if (pr.headRef === target.branch)
+            await this.recordConfirmedCornerMerge(target, target.repository, claim.number, pr, claim.head_sha);
+        } else {
+          await clearUnfinishedCornerMergeClaim(this.database, claim.corner_id, claim.head_sha, claim.number);
+        }
+      } catch (error) {
+        console.error(`[server] unfinished merge recovery failed for ${claim.corner_id}:`, error);
+      }
+    }
+  }
+
+  private async recordConfirmedCornerMerge(
+    target: CornerWebhookTarget, repository: string, number: number,
+    pr: Awaited<ReturnType<GitHubAppClient['readPullRequest']>>, unfinishedClaimHead?: string,
+  ) {
+    if (!pr.headRef) return;
+    await this.mergeCorner(target, {
+      repository, branch: pr.headRef, number, url: pr.url,
+      title: pr.title ?? `Pull request #${number}`, targetBranch: pr.baseRef, headSha: pr.headSha,
+      ...(pr.mergedAt ? { mergedAt: pr.mergedAt } : {}),
+      ...(pr.mergeCommitSha ? { mergeCommitSha: pr.mergeCommitSha } : {}),
+      ...(pr.mergedBy ? { mergedBy: pr.mergedBy } : {}),
+      commits: 0, files: 0,
+    }, this.database, number, unfinishedClaimHead);
   }
 
   /** Recover merged corners when GitHub's closed PR webhook never arrived. */
@@ -1891,17 +1954,24 @@ export class GitHubOperations {
     },
     database: SqlDatabase = this.database,
     expectedPrNumber?: number,
+    unfinishedClaimHead?: string,
   ) {
     const mergeKey = `github:pull-request:merged:${pullRequest.url}`;
     let archived = false;
     await database.transaction(async (database) => {
       await lockCornerWorkflowRun(database, target.corner_id);
-      const currentLifecycle = (
-        await database.query<{ lifecycle: CornerLifecycleView }>(
-          `SELECT lifecycle FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
+      if (unfinishedClaimHead) {
+        const claim = (await unfinishedCornerMergeClaims(database, target.corner_id))[0];
+        if (claim?.head_sha !== unfinishedClaimHead || claim.number !== expectedPrNumber) return;
+      }
+      const current = (
+        await database.query<{ lifecycle: CornerLifecycleView; feature_branch: string | null }>(
+          `SELECT lifecycle,feature_branch FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
           [target.corner_id],
         )
-      ).rows[0]?.lifecycle;
+      ).rows[0];
+      if (unfinishedClaimHead && current?.feature_branch !== pullRequest.branch) return;
+      const currentLifecycle = current?.lifecycle;
       if (expectedPrNumber && currentLifecycle?.pr?.number !== expectedPrNumber) return;
       const currentPr = currentLifecycle?.pr;
       const mergedPr =

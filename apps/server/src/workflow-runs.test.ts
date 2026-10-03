@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { QueryResultRow } from 'pg';
 import { migrate, type QueryResult, type SqlDatabase } from './database.js';
 import { PgliteDatabase } from './test-support.js';
-import { createAgentCommand, type CommandRow } from './agent-command.js';
+import { createAgentCommand, readAgentCommands, type CommandRow } from './agent-command.js';
 import { answerRoomChoice } from './room-choice.js';
+import { AgentScheduleLoop } from './agent-schedules.js';
 import {
+  activeRunIdsForSchedule,
   archiveWorkflow,
   assignWorkflowRole,
   handoff,
@@ -457,7 +459,7 @@ describe('start_workflow', () => {
     );
     expect(card.rows[0]?.card.roleBindings.reviewer).toBe(REVIEWER);
     await expect(
-      startWorkflow(database, command, {
+      startWorkflow(database, { room_id: ROOM, agent_id: OWNER }, {
         name: 'corner',
         roleBindings: { implementer: IMPLEMENTER, reviewer: '@nobody', approver: APPROVER },
       }),
@@ -478,6 +480,220 @@ describe('start_workflow', () => {
       [started.runId],
     );
     expect(card.rows[0]?.card_type).toBe('workflow-handoff');
+  });
+
+  it('wakes the start role agent with its run id and workflow name stated plainly', async () => {
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: CONTRACT });
+    const started = await startWorkflow(database, command, {
+      name: 'corner',
+      roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+    });
+    const inbox = await readAgentCommands(database, ROOM, IMPLEMENTER);
+    const woken = inbox.commands.find((c) => c.sourceMessageId === started.runId);
+    expect(woken?.source.body).toContain(
+      `You are in run ${started.runId} of corner. Continue this run; do not start a new one.`,
+    );
+  });
+
+  it('shows the full run id on the handoff card: the stored text a human reads carries it verbatim', async () => {
+    // `messages.text` (not just the structured `card`) is what the mobile app
+    // renders for this card: `workflow-handoff` is not a card type
+    // `phone-service.ts`'s `toRoomViewMessage` gives a dedicated field, and it
+    // is not `presentation: 'system'` either, so it falls back to an ordinary
+    // ledger message bubble whose body is this exact `text` column.
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: CONTRACT });
+    const started = await startWorkflow(database, command, {
+      name: 'corner',
+      roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+    });
+    const row = await database.query<{ text: string }>(`SELECT text FROM messages WHERE id=$1`, [
+      started.runId,
+    ]);
+    expect(row.rows[0]?.text).toContain(started.runId);
+  });
+
+  it('rejects start_workflow from an agent currently acting inside an active run of the same workflow, naming the run id', async () => {
+    const { runId } = await startedRun();
+    // IMPLEMENTER's own wake (the start card) is its triggering message here,
+    // exactly as a real wake would be.
+    const command = await commandFor(IMPLEMENTER, runId);
+    await expect(
+      startWorkflow(database, command, {
+        name: 'corner',
+        roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+      }),
+    ).rejects.toThrow(`You are already in run ${runId} of corner. Continue it or hand off within it.`);
+  });
+
+  it('rejects a current role agent after an ordinary human tag', async () => {
+    const { runId } = await startedRun();
+    const tagged = await rootMessage(OWNER, '@impy please handle this');
+    const command = await commandFor(IMPLEMENTER, tagged);
+    await expect(startWorkflow(database, command, {
+      name: 'corner',
+      roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+    })).rejects.toThrow(`You are already in run ${runId} of corner. Continue it or hand off within it.`);
+  });
+
+  it('lets an agent not currently in a run start the workflow when no run is active', async () => {
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: CONTRACT });
+    await expect(
+      startWorkflow(database, command, {
+        name: 'corner',
+        roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+      }),
+    ).resolves.toMatchObject({ state: 'implement' });
+  });
+
+  it('does not reject start_workflow once the run has moved on to another role', async () => {
+    const { runId } = await startedRun();
+    let command = await commandFor(IMPLEMENTER, runId);
+    await handoff(database, command, {
+      runId,
+      outcome: 'pushed',
+      contents: { summary: 'x', prUrl: 'y' },
+    });
+    command = await commandFor(IMPLEMENTER, runId);
+    await handoff(database, command, { runId, outcome: 'passing', contents: { headSha: 'abc' } });
+    // The run is now at `review`, held by REVIEWER: IMPLEMENTER's old wake
+    // (the start card) no longer names who is currently acting in it.
+    command = await commandFor(IMPLEMENTER, runId);
+    await expect(
+      startWorkflow(database, command, {
+        name: 'corner',
+        roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+      }),
+    ).resolves.toMatchObject({ state: 'implement' });
+  });
+});
+
+async function createSchedule(agentId: string, scheduleId: string): Promise<void> {
+  await database.query(
+    `INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at)
+     VALUES($1,$2,$3,$4,$4,$5::jsonb,'run the workflow',now())`,
+    [scheduleId, WORKSPACE, ROOM, agentId, JSON.stringify({ kind: 'interval', everyMinutes: 60 })],
+  );
+}
+
+async function scheduleOccurrence(
+  scheduleId: string,
+  messageId: string,
+  scheduledFor = new Date('2026-01-01T00:00:00Z'),
+): Promise<void> {
+  await database.query(
+    `INSERT INTO agent_schedule_occurrences(schedule_id,scheduled_for,message_id) VALUES($1,$2,$3)`,
+    [scheduleId, scheduledFor, messageId],
+  );
+}
+
+describe('start_workflow schedule/trigger duplicate-run refusal', () => {
+  const SCHEDULE = '30000000-0000-4000-8000-000000000001';
+
+  it('lists only active runs from a schedule with one database read', async () => {
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: CONTRACT });
+    await createSchedule(IMPLEMENTER, SCHEDULE);
+    const runs: string[] = [];
+    for (let index = 0; index < 5; index += 1) {
+      const { runId } = await startWorkflow(database, { room_id: ROOM, agent_id: OWNER }, {
+        name: 'corner',
+        roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+      });
+      runs.push(runId);
+      await database.query(
+        `UPDATE messages SET card=card || jsonb_build_object('trigger',jsonb_build_object('scheduleId',$2::text,'period',$3::text)) WHERE id=$1`,
+        [runId, SCHEDULE, `2026-01-0${index + 1}T00:00:00.000Z`],
+      );
+      if (index < 4) {
+        await database.query(
+          `UPDATE messages SET card=card || '{"active":false}'::jsonb WHERE id=$1`,
+          [runId],
+        );
+      }
+    }
+    const recorded = new RecordingDatabase(database);
+    expect(await activeRunIdsForSchedule(recorded, ROOM, SCHEDULE)).toEqual([runs[4]]);
+    expect(recorded.calls).toHaveLength(1);
+  });
+
+  it('refuses a second start_workflow triggered by the same schedule occurrence, naming the active run', async () => {
+    await createSchedule(IMPLEMENTER, SCHEDULE);
+    const firstWake = await rootMessage(IMPLEMENTER, 'daily workflow kickoff');
+    await scheduleOccurrence(SCHEDULE, firstWake);
+    const firstCommand = await commandFor(IMPLEMENTER, firstWake);
+    await saveWorkflow(database, firstCommand, { contract: CONTRACT });
+    const started = await startWorkflow(database, firstCommand, {
+      name: 'corner',
+      roleBindings: { implementer: REVIEWER, reviewer: REVIEWER, approver: APPROVER },
+    });
+    // A second wake for the exact same schedule occurrence (a retried turn,
+    // or the agent resuming after a restart) must not start a duplicate run.
+    const secondCommand = firstCommand;
+    await expect(
+      startWorkflow(database, secondCommand, {
+        name: 'corner',
+        roleBindings: { implementer: REVIEWER, reviewer: REVIEWER, approver: APPROVER },
+      }),
+    ).rejects.toThrow(
+      `corner already has an active run ${started.runId} started by this schedule for this period`,
+    );
+  });
+
+  it('lets a human admin override the schedule/trigger refusal, attributed to that human', async () => {
+    await createSchedule(IMPLEMENTER, SCHEDULE);
+    const firstWake = await rootMessage(IMPLEMENTER, 'daily workflow kickoff');
+    await scheduleOccurrence(SCHEDULE, firstWake);
+    const firstCommand = await commandFor(IMPLEMENTER, firstWake);
+    await saveWorkflow(database, firstCommand, { contract: CONTRACT });
+    await startWorkflow(database, firstCommand, {
+      name: 'corner',
+      roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+    });
+    const overridden = await startWorkflow(database, { room_id: ROOM, agent_id: OWNER }, {
+      name: 'corner',
+      roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+    });
+    expect(overridden.state).toBe('implement');
+    const card = await database.query<{ system_event: { subject: { id: string; name: string } } }>(
+      `SELECT system_event FROM messages WHERE id=$1`,
+      [overridden.runId],
+    );
+    expect(card.rows[0]?.system_event.subject.id).toBe(OWNER);
+  });
+
+  it('refuses a retry from a one-shot schedule after its occurrence is deleted', async () => {
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: CONTRACT });
+    await createSchedule(IMPLEMENTER, SCHEDULE);
+    await database.query(
+      `UPDATE agent_schedules SET max_runs=1,next_run_at=now()-interval '1 minute' WHERE id=$1`,
+      [SCHEDULE],
+    );
+    expect(await new AgentScheduleLoop(database).runOnce()).toBe(1);
+    expect((await database.query(`SELECT 1 FROM agent_schedules WHERE id=$1`, [SCHEDULE])).rowCount).toBe(0);
+    const wake = (await database.query<{ source_message_id: string }>(
+      `SELECT source_message_id FROM agent_commands WHERE reason='schedule' AND agent_id=$1`,
+      [IMPLEMENTER],
+    )).rows[0]!;
+    const scheduled = (await database.query<CommandRow>(
+      `SELECT * FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2`,
+      [wake.source_message_id, IMPLEMENTER],
+    )).rows[0]!;
+    const started = await startWorkflow(database, scheduled, {
+      name: 'corner',
+      roleBindings: { implementer: REVIEWER, reviewer: REVIEWER, approver: APPROVER },
+    });
+    const startCard = (await database.query<{ card: { trigger: { scheduleId: string; period: string } } }>(
+      `SELECT card FROM messages WHERE id=$1`, [started.runId],
+    )).rows[0]!;
+    expect(startCard.card.trigger.scheduleId).toBe(SCHEDULE);
+    await expect(startWorkflow(database, scheduled, {
+      name: 'corner',
+      roleBindings: { implementer: REVIEWER, reviewer: REVIEWER, approver: APPROVER },
+    })).rejects.toThrow(`active run ${started.runId}`);
   });
 });
 
@@ -525,6 +741,13 @@ describe('handoff', () => {
     });
     expect(result.state).toBe('checks');
     expect(await pendingCommandsFor(IMPLEMENTER)).toBeGreaterThan(0);
+    // The handoff card's stored text (what the mobile app renders for it,
+    // same fallback as the start card) carries the full run id too.
+    const rows = await database.query<{ text: string }>(
+      `SELECT text FROM messages WHERE card_type='workflow-handoff' AND card->>'runId'=$1 ORDER BY created_at DESC LIMIT 1`,
+      [runId],
+    );
+    expect(rows.rows[0]?.text).toContain(runId);
   });
 
   it('rejects a handoff on a run that has already ended', async () => {
@@ -549,6 +772,11 @@ describe('handoff', () => {
       [ROOM, APPROVER],
     );
     const approvedOption = choice.rows[0]!.options.find((option) => option.label === 'approved')!;
+    const gateCard = await database.query<{ card: { runId: string; workflowSlug: string } }>(
+      `SELECT message.card FROM messages message JOIN room_choices choice ON choice.message_id=message.id WHERE choice.id=$1`,
+      [choice.rows[0]!.id],
+    );
+    expect(gateCard.rows[0]?.card).toMatchObject({ runId, workflowSlug: 'corner' });
     await answerRoomChoice(database, {
       choiceId: choice.rows[0]!.id,
       optionId: approvedOption.optionId,
@@ -561,6 +789,10 @@ describe('handoff', () => {
       contents: { decision: 'approved' },
     });
     expect(landed).toEqual({ runId, state: 'land', status: 'done' });
+    const start = await database.query<{ active: string }>(
+      `SELECT card->>'active' active FROM messages WHERE id=$1`, [runId],
+    );
+    expect(start.rows[0]?.active).toBe('false');
     command = await commandFor(APPROVER);
     await expect(
       handoff(database, command, { runId, outcome: 'approved', contents: { decision: 'approved' } }),
@@ -614,6 +846,45 @@ describe('handoff', () => {
     expect(choice.rows[0]!.options).toHaveLength(2);
   });
 
+  it('wakes the approver with its run id and workflow name once a human answers the gate', async () => {
+    const { runId } = await startedRun();
+    let command = await commandFor(IMPLEMENTER);
+    await handoff(database, command, {
+      runId,
+      outcome: 'pushed',
+      contents: { summary: 'x', prUrl: 'y' },
+    });
+    command = await commandFor(IMPLEMENTER);
+    await handoff(database, command, { runId, outcome: 'passing', contents: { headSha: 'abc' } });
+    command = await commandFor(REVIEWER);
+    await handoff(database, command, {
+      runId,
+      outcome: 'approved',
+      contents: { verdict: 'approve', notes: 'lgtm' },
+    });
+    const choice = await database.query<{ id: string; options: { optionId: string; label: string }[] }>(
+      `SELECT id,options FROM room_choices WHERE room_id=$1 AND agent_id=$2 AND status='open'`,
+      [ROOM, APPROVER],
+    );
+    const approvedOption = choice.rows[0]!.options.find((option) => option.label === 'approved')!;
+    await answerRoomChoice(database, {
+      choiceId: choice.rows[0]!.id,
+      optionId: approvedOption.optionId,
+      viewerId: OWNER,
+    });
+    const inbox = await readAgentCommands(database, ROOM, APPROVER);
+    const woken = inbox.commands.find((c) => c.source.systemEvent?.verb === 'picked');
+    expect(woken?.source.body).toContain(
+      `You are in run ${runId} of corner. Continue this run; do not start a new one.`,
+    );
+    expect(woken?.sourceMessageId).toBeDefined();
+    const approverCommand = await commandFor(APPROVER, woken!.sourceMessageId);
+    await expect(startWorkflow(database, approverCommand, {
+      name: 'corner',
+      roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+    })).rejects.toThrow(`You are already in run ${runId} of corner.`);
+  });
+
   it('schedules and cancels a state timeout across a handoff', async () => {
     const timed = {
       ...CONTRACT,
@@ -643,6 +914,42 @@ describe('handoff', () => {
     // The implement state's own timeout is cancelled once it resolves normally.
     const after = await database.query(`SELECT id FROM agent_schedules WHERE room_id=$1`, [ROOM]);
     expect(after.rows).toHaveLength(0);
+  });
+
+  it('carries run context through a state-timeout wake and refuses a duplicate start', async () => {
+    const timed = {
+      ...CONTRACT,
+      handoffs: {
+        ...CONTRACT.handoffs,
+        implement: {
+          ...CONTRACT.handoffs.implement,
+          on: { ...CONTRACT.handoffs.implement.on, timeout: 'ask_human' },
+          timeoutSeconds: 3600,
+        },
+      },
+    };
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: timed });
+    const { runId } = await startWorkflow(database, command, {
+      name: 'corner',
+      roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+    });
+    await database.query(`UPDATE agent_schedules SET next_run_at=now()-interval '1 minute' WHERE room_id=$1`, [ROOM]);
+    expect(await new AgentScheduleLoop(database).runOnce()).toBe(1);
+    const inbox = await readAgentCommands(database, ROOM, IMPLEMENTER);
+    const wake = inbox.commands.find((item) => item.source.systemEvent?.kind === 'schedule-ran');
+    expect(wake?.source.body).toContain(
+      `You are in run ${runId} of corner. Continue this run; do not start a new one.`,
+    );
+    const card = await database.query<{ card: { runId: string; workflowSlug: string } }>(
+      `SELECT card FROM messages WHERE id=$1`, [wake!.sourceMessageId],
+    );
+    expect(card.rows[0]?.card).toMatchObject({ runId, workflowSlug: 'corner' });
+    const wokenCommand = await commandFor(IMPLEMENTER, wake!.sourceMessageId);
+    await expect(startWorkflow(database, wokenCommand, {
+      name: 'corner',
+      roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+    })).rejects.toThrow(`You are already in run ${runId} of corner.`);
   });
 });
 

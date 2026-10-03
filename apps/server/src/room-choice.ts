@@ -197,8 +197,11 @@ async function writeChoiceCard(
   messageId: string,
   card: ChoiceCardView,
 ): Promise<void> {
-  // A workflow gate's hint must survive settlement for the answering agent.
-  await database.query(`UPDATE messages SET card=jsonb_strip_nulls(jsonb_build_object('receiptHint',card->'receiptHint')) || $2::jsonb WHERE id=$1`, [
+  // A workflow gate's hint, run id and workflow name must survive settlement
+  // for the answering agent's eventual wake.
+  await database.query(`UPDATE messages SET card=jsonb_strip_nulls(jsonb_build_object(
+    'receiptHint',card->'receiptHint','runId',card->'runId','workflowSlug',card->'workflowSlug'
+  )) || $2::jsonb WHERE id=$1`, [
     messageId,
     JSON.stringify(card),
   ]);
@@ -364,8 +367,18 @@ async function wakeChoice(
     consequence?: string;
     kind: ChoiceWakeCardType;
     card: Record<string, unknown>;
+    /** The settled choice card's message id: a workflow gate's run id and workflow name ride along on this wake. */
+    settledMessageId?: string;
   },
 ): Promise<void> {
+  const workflow = input.settledMessageId
+    ? (
+        await database.query<{ run_id: string | null; workflow_slug: string | null }>(
+          `SELECT card->>'runId' run_id,card->>'workflowSlug' workflow_slug FROM messages WHERE id=$1`,
+          [input.settledMessageId],
+        )
+      ).rows[0]
+    : undefined;
   await systemLine(database, {
     roomId: input.roomId,
     authorId: input.authorId,
@@ -380,7 +393,12 @@ async function wakeChoice(
     kind: input.kind,
     wakes: [input.agentId],
     cardType: input.kind,
-    card: input.card,
+    card: {
+      ...input.card,
+      ...(workflow?.run_id && workflow.workflow_slug
+        ? { runId: workflow.run_id, workflowSlug: workflow.workflow_slug }
+        : {}),
+    },
   });
 }
 
@@ -453,6 +471,7 @@ async function closeOpenPoll(database: SqlDatabase, choice: ChoiceRow): Promise<
       consequence,
       kind: 'poll-closed',
       card: { choiceId: choice.id, outcome: tally.outcome, votedCount: responses.length },
+      settledMessageId: choice.message_id,
     });
   }
 }
@@ -494,6 +513,7 @@ async function skipOpenChoice(
     ...(reason === 'expired' ? { consequence: 'expired · no answer' } : {}),
     kind: 'choice-skipped',
     card: { choiceId: choice.id, status, reason },
+    settledMessageId: choice.message_id,
   });
 }
 
@@ -594,6 +614,7 @@ export async function answerRoomChoice(
     consequence: option.label,
     kind: 'choice-answered',
     card: { choiceId: choice.id, optionId: input.optionId, letter: option.letter },
+    settledMessageId: choice.message_id,
   });
   return { choiceId: choice.id, status: 'answered', roomId: choice.room_id };
 }

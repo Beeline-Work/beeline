@@ -18,6 +18,7 @@ import {
   CORNER_WORKFLOW_CONTRACT,
   CORNER_WORKFLOW_SLUG,
   cornerMergeGate,
+  claimCornerMergeAttempt,
   ensureCornerWorkflowSeeded,
   REVIEW_HANDBACK_LIMIT,
 } from './corner-workflow.js';
@@ -69,6 +70,9 @@ let githubHead: string;
 let githubApp: {
   deleteBranch: ReturnType<typeof vi.fn>;
   mergePullRequest: ReturnType<typeof vi.fn>;
+  readPullRequest: ReturnType<typeof vi.fn>;
+  installationToken: ReturnType<typeof vi.fn>;
+  readCommitCheckRollup: ReturnType<typeof vi.fn>;
 };
 /** Every `fromState:outcome:toState` a test in this file recorded, for the edge-coverage proof. */
 const recordedEdges = new Set<string>();
@@ -163,6 +167,10 @@ beforeEach(async () => {
   githubApp.mergePullRequest.mockReset();
   githubApp.mergePullRequest.mockResolvedValue(undefined);
   githubApp.deleteBranch.mockClear();
+  githubApp.readPullRequest.mockReset();
+  githubApp.readPullRequest.mockImplementation(async (_token: string, _repository: string, number: number) => ({
+    number, url: `https://github.com/owner/widgets/pull/${number}`, headSha: githubHead, mergeability: 'clean',
+  }));
 });
 
 /** Every `workflow-handoff` card for one corner's run, oldest first. */
@@ -1208,6 +1216,248 @@ describe('GitHub refusing the merge (AC-6)', () => {
     // is back with its implementer (AC-9), and owes no person anything.
     const listed = (await phone.readCorners(R, H))!.corners.find((row) => row.corner.id === cornerId);
     expect(listed).toMatchObject({ state: 'idle' });
+  });
+});
+
+describe('unfinished merge claim recovery (R6a–R6f)', () => {
+  async function recover() {
+    await github.recoverUnfinishedMergeClaims();
+  }
+
+  function providerPr(cornerId: string, merged = false, headSha = SHA) {
+    return {
+      number: 7, url: 'https://github.com/owner/widgets/pull/7', title: 'Ship the widget',
+      headSha, headRef: branchOf(cornerId), baseRef: 'main', merged, mergeability: 'clean',
+      ...(merged ? { mergedAt: '2026-01-01T00:00:00Z', mergeCommitSha: '8'.repeat(40) } : {}),
+    };
+  }
+
+  async function backdate(cornerId: string) {
+    await db.query(`UPDATE corner_facts SET updated_at=now()-interval '1 hour' WHERE corner_id=$1`, [cornerId]);
+  }
+
+  async function claimed(stale = true) {
+    const cornerId = await approved();
+    expect(await claimCornerMergeAttempt(db, cornerId, SHA)).toBe(true);
+    if (stale) await backdate(cornerId);
+    githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId));
+    return cornerId;
+  }
+
+  async function claimHead(cornerId: string) {
+    return (await db.query(`SELECT merge_attempt_head FROM corner_facts WHERE corner_id=$1`, [cornerId]))
+      .rows[0]!.merge_attempt_head;
+  }
+
+  async function landing(cornerId: string) {
+    expect(await currentState(cornerId)).toBe('landed');
+    expect((await cards(cornerId)).filter(card => card.toState === 'landed')).toEqual([
+      expect.objectContaining({ fromState: 'land', toState: 'landed' }),
+    ]);
+    expect((await db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0]!.archived_at)
+      .not.toBeNull();
+    expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%merged%'`, [cornerId])).rowCount)
+      .toBe(1);
+    expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card->>'type'='corner-complete'`, [R])).rowCount)
+      .toBe(1);
+    const visible = (await phone.readCorners(R, H, false, true))?.corners.find(row => row.corner.id === cornerId);
+    expect(visible).toMatchObject({ state: 'archived', lifecycle: { outcome: 'landed' } });
+  }
+
+  it('Reproduction R6a: a crash before merge gets one fresh attempt through the normal sweep', async () => {
+    const cornerId = await claimed();
+    expect(await github.landReadyCorners()).toBe(0);
+    await recover();
+    expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
+    expect(await github.landReadyCorners()).toBe(1);
+    expect(githubApp.mergePullRequest).toHaveBeenCalledWith(77, 101, 'owner/widgets', 7, SHA);
+    await recover();
+    expect(await github.landReadyCorners()).toBe(0);
+    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
+    await mergedWebhook(cornerId, 7, SHA);
+    await landing(cornerId);
+    console.info('R6a demonstrated: interrupted approved corner retried once, then archived with one landing and parent completion card.');
+  });
+
+  it('Reproduction R6b: a crash after merge records one landing without another merge', async () => {
+    const cornerId = await claimed();
+    // Recovery must work even when ordinary webhook reconciliation is disabled.
+    await db.query(`UPDATE rooms SET github_events_enabled=false WHERE id=$1`, [R]);
+    try {
+      githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, true));
+      await recover();
+      await landing(cornerId);
+      await recover();
+      await db.query(`UPDATE rooms SET github_events_enabled=true WHERE id=$1`, [R]);
+      await mergedWebhook(cornerId, 7, SHA);
+      await landing(cornerId);
+      expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
+      console.info('R6b demonstrated: GitHub-confirmed merge archived once; duplicate recovery and webhook added no card or merge.');
+    } finally {
+      await db.query(`UPDATE rooms SET github_events_enabled=true WHERE id=$1`, [R]);
+    }
+  });
+
+  it.each([new Error('GitHub pull request merge failed: HTTP 502'), new TypeError('fetch failed')])(
+    'Reproduction R6c: %s after GitHub merged produces a landing, no refusal', async error => {
+      const cornerId = await approved();
+      githubApp.mergePullRequest.mockRejectedValueOnce(error);
+      githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, true));
+      await github.landReadyCorners();
+      expect((await cards(cornerId)).filter(card => card.outcome === 'merge_refused')).toEqual([]);
+      expect(await reasons(cornerId, A)).not.toContain('corner_merge_refused');
+      expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%refused to merge%'`, [cornerId])).rowCount)
+        .toBe(0);
+      await landing(cornerId);
+      console.info('R6c demonstrated: uncertain merge response confirmed landed; no refusal message or implementer wake.');
+    },
+  );
+
+  it('Reproduction R6d: a moved provider head clears the claim without merging', async () => {
+    const cornerId = await claimed();
+    githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, false, '9'.repeat(40)));
+    await recover();
+    expect(await claimHead(cornerId)).toBeNull();
+    expect(await github.landReadyCorners()).toBe(0);
+    expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it.each(['before read', 'during read'])('Reproduction R6e: a hold %s clears the claim and blocks merge until released', async timing => {
+    const cornerId = await claimed();
+    let holdId: string;
+    if (timing === 'before read') {
+      ({ holdId } = await phone.execute('setCornerHold', { cornerId }, H));
+      await backdate(cornerId);
+    } else {
+      githubApp.readPullRequest.mockImplementationOnce(async () => {
+        ({ holdId } = await phone.execute('setCornerHold', { cornerId }, H));
+        await backdate(cornerId);
+        return providerPr(cornerId);
+      });
+    }
+    await recover();
+    expect(await claimHead(cornerId)).toBeNull();
+    expect(await github.landReadyCorners()).toBe(0);
+    await phone.execute('setCornerHold', { cornerId, releaseHoldId: holdId! }, H);
+    expect(await github.landReadyCorners()).toBe(1);
+    expect(await github.landReadyCorners()).toBe(0);
+    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('Reproduction R6f(i): a recent claim is not read or cleared', async () => {
+    const cornerId = await claimed(false);
+    await recover();
+    expect(githubApp.readPullRequest).not.toHaveBeenCalled();
+    expect(await claimHead(cornerId)).toBe(SHA);
+    expect(await github.landReadyCorners()).toBe(0);
+  });
+
+  it('Reproduction R6f(ii): an already-refused head is never recovered after reapproval', async () => {
+    const cornerId = await approved();
+    githubApp.mergePullRequest.mockRejectedValueOnce(new Error('GitHub pull request merge failed: HTTP 405'));
+    await github.landReadyCorners();
+    // Replay green delivery before reviewing the unchanged, refused head.
+    await greenHead(cornerId, 7, SHA);
+    await approve(cornerId);
+    expect(await currentState(cornerId)).toBe('land');
+    await backdate(cornerId);
+    githubApp.readPullRequest.mockClear();
+    await recover();
+    expect(githubApp.readPullRequest).not.toHaveBeenCalled();
+    expect(await claimHead(cornerId)).toBe(SHA);
+    expect(await github.landReadyCorners()).toBe(0);
+    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('Reproduction R6f(iii): a failed GitHub read leaves the claim intact', async () => {
+    const cornerId = await claimed();
+    githubApp.readPullRequest.mockRejectedValueOnce(new TypeError('fetch failed'));
+    await recover();
+    expect(githubApp.readPullRequest).toHaveBeenCalledTimes(1);
+    expect(await claimHead(cornerId)).toBe(SHA);
+    expect(await github.landReadyCorners()).toBe(0);
+    expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it.each(['different merged head', 'read fails'])('R6c: %s retains the existing refusal behavior', async outcome => {
+    const cornerId = await approved();
+    const reason = 'GitHub pull request merge failed: HTTP 502';
+    githubApp.mergePullRequest.mockRejectedValueOnce(new Error(reason));
+    githubApp.readPullRequest.mockResolvedValueOnce(providerPr(cornerId));
+    if (outcome === 'read fails') githubApp.readPullRequest.mockRejectedValueOnce(new TypeError('fetch failed'));
+    else githubApp.readPullRequest.mockResolvedValueOnce(providerPr(cornerId, true, '9'.repeat(40)));
+    await github.landReadyCorners();
+    expect(githubApp.readPullRequest).toHaveBeenCalledTimes(2); // Gate read, then one outcome read.
+    expect(await currentState(cornerId)).toBe('implement');
+    expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_merge_refused')).toHaveLength(1);
+    expect((await db.query<{ text: string }>(`SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%refused to merge%'`, [cornerId])).rows)
+      .toEqual([{ text: expect.stringContaining(reason) }]);
+  });
+
+  it.each([false, true])('R6f: revalidates an unmerged/merged=%s claim after the provider read', async merged => {
+    for (const change of ['fresh', 'head', 'number', 'refusal', 'archived', 'state']) {
+      const cornerId = await claimed();
+      githubApp.readPullRequest.mockImplementationOnce(async () => {
+        if (change === 'fresh') await db.query(`UPDATE corner_facts SET updated_at=now() WHERE corner_id=$1`, [cornerId]);
+        if (change === 'head') await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`, [cornerId, '9'.repeat(40)]);
+        if (change === 'number') await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,number}','8') WHERE corner_id=$1`, [cornerId]);
+        if (change === 'refusal') await advanceCorner(db, cornerId, { kind: 'merge-refused', headSha: SHA, reason: 'HTTP 405' });
+        if (change === 'archived') await daemon.execute('archiveCorner', { cornerId }, A);
+        if (change === 'state') {
+          await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`, [cornerId]);
+          await advanceCorner(db, cornerId, { kind: 'checks-pending' });
+        }
+        return providerPr(cornerId, merged);
+      });
+      await recover();
+      expect(await claimHead(cornerId), change).toBe(SHA);
+      expect((await cards(cornerId)).filter(card => card.toState === 'landed'), change).toEqual([]);
+      expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
+      // Keep each interposed read isolated from the next scenario's scan.
+      await db.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [cornerId]);
+    }
+  });
+
+  it.each(['recovery open', 'recovery merged', 'uncertain merge'])('R6: %s has no provider call inside a transaction', async path => {
+    const cornerId = path === 'uncertain merge' ? await approved() : await claimed();
+    let depth = 0;
+    const providerDepths: { call: string; depth: number }[] = [];
+    const guarded = (database: SqlDatabase): SqlDatabase => ({
+      query: (sql, values) => database.query(sql, values),
+      transaction: work => database.transaction(async tx => {
+        depth++;
+        try { return await work(guarded(tx)); } finally { depth--; }
+      }),
+    });
+    githubApp.installationToken.mockImplementation(async () => {
+      providerDepths.push({ call: 'token', depth });
+      expect(depth, 'token').toBe(0);
+      return { token: 'tok', expiresAt: '2030-01-01T00:00:00Z' };
+    });
+    githubApp.readPullRequest.mockImplementation(async () => {
+      providerDepths.push({ call: 'read PR', depth });
+      expect(depth, 'read PR').toBe(0);
+      return providerPr(cornerId, path !== 'recovery open');
+    });
+    githubApp.mergePullRequest.mockImplementation(async () => {
+      providerDepths.push({ call: 'merge', depth });
+      expect(depth, 'merge').toBe(0);
+      if (path === 'uncertain merge') throw new TypeError('fetch failed');
+    });
+    githubApp.deleteBranch.mockImplementation(async () => {
+      providerDepths.push({ call: 'delete branch', depth });
+      expect(depth, 'delete branch').toBe(0);
+    });
+    const operation = new GitHubOperations(guarded(db), {} as GitHubOAuthClient, githubApp as unknown as GitHubAppClient, 'secret');
+    if (path === 'uncertain merge') await operation.landReadyCorners();
+    else {
+      await operation.recoverUnfinishedMergeClaims();
+      await operation.landReadyCorners();
+    }
+    if (path === 'recovery open') expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
+    else await landing(cornerId);
+    expect(providerDepths.length).toBeGreaterThan(0);
+    expect(providerDepths.filter(call => call.depth !== 0)).toEqual([]);
   });
 });
 

@@ -36,6 +36,7 @@ import { DaemonService } from '../apps/server/src/daemon-service.js';
 import { LiveHub } from '../apps/server/src/live.js';
 import { createBeelineServer } from '../apps/server/src/server.js';
 import { createAgentCommand } from '../apps/server/src/agent-command.js';
+import { AgentScheduleLoop } from '../apps/server/src/agent-schedules.js';
 
 const HUMAN = createHash('sha256').update('github:proof-owner').digest('hex');
 const WRITER = 'b'.repeat(64);
@@ -101,6 +102,19 @@ const CANDY_CONTRACT = {
   handoffs: {
     triage: { role: 'triager', requires: ['note'], on: { done: 'finished' } },
     finished: { kind: 'terminal', status: 'done' },
+  },
+};
+
+const WAKE_CONTRACT = {
+  version: 1,
+  name: 'wake-proof',
+  description: 'Verify timeout and gate wake context',
+  roles: ['writer', 'reviewer'],
+  start: 'wait',
+  handoffs: {
+    wait: { role: 'writer', requires: [], on: { advance: 'gate', timeout: 'gate' }, timeoutSeconds: 3600 },
+    gate: { kind: 'gate', role: 'reviewer', requires: [], on: { approved: 'done', rejected: 'done' } },
+    done: { kind: 'terminal', status: 'done' },
   },
 };
 
@@ -305,14 +319,29 @@ async function main(): Promise<void> {
     body: JSON.stringify({ roomId: ROOM, runId }),
   });
   if (!previewResponse.ok) throw new Error(`live readWorkflowRun returned HTTP ${previewResponse.status}`);
-  const preview = await previewResponse.json();
+  const preview = await previewResponse.json() as { run?: { activeRunIds?: readonly string[] } };
   log.push({ label: 'A person opens the live workflow run', response: preview });
+  if (!preview.run?.activeRunIds?.includes(runId))
+    throw new Error(`live workflow read did not expose active run ${runId}`);
+  const listResponse = await fetch(`${origin}/v1/phone/operations/listRoomWorkflowRuns`, {
+    method: 'POST', headers: { authorization: `Bearer ${previewToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ roomId: ROOM }),
+  });
+  const listedRuns = await listResponse.json() as {
+    workflows?: { workflowSlug: string; activeRunIds?: readonly string[] }[];
+  };
+  log.push({ label: 'A person lists live workflow runs', response: { httpStatus: listResponse.status, ...listedRuns } });
+  if (!listResponse.ok || !listedRuns.workflows?.some((entry) =>
+    entry.workflowSlug === 'draft-review' && entry.activeRunIds?.includes(runId)))
+    throw new Error('workflow list did not expose its active run id');
   if (process.argv[3]) await writeFile(process.argv[3], JSON.stringify(preview), 'utf8');
   await complete(WRITER, writerToken, turn1);
 
   // --- Turn 2 (reviewer): request changes (first pass through the capped loop). ---
   const reviewerPending1 = (await commandsFor(REVIEWER, reviewerToken))[0];
   if (!reviewerPending1) throw new Error('reviewer was never woken for the first review');
+  if (!reviewerPending1.source?.body.includes(`You are in run ${runId} of draft-review. Continue this run; do not start a new one.`))
+    throw new Error('reviewer wake omitted its run id and continuation instruction');
   if (!reviewerPending1.source?.body.includes('the review decision and evidence'))
     throw new Error('the dispatched reviewer did not receive the state receipt hint');
   const turn2 = await claim(REVIEWER, reviewerToken, reviewerPending1);
@@ -595,11 +624,44 @@ async function main(): Promise<void> {
   if (Number(triagerCommands.rows[0]?.count ?? 0) < 1) {
     handleFailures.push('expected the bound member @wren to be dispatched a pending command for the triage state');
   }
+  await complete(WRITER, writerToken, handleTurn);
+  const taggedMessage = 'handle-flow-human-tag';
+  await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@wren please continue this run')`,
+    [taggedMessage, ROOM, HUMAN]);
+  const taggedCommand = await createAgentCommand(database, {
+    roomId: ROOM, agentId: WRITER, sourceMessageId: taggedMessage, reason: 'human_tag',
+  });
+  if (!taggedCommand) throw new Error('human tag did not create a command');
+  const taggedTurn = await claim(WRITER, writerToken, {
+    id: taggedCommand.id, roomId: ROOM, agentId: WRITER,
+    sourceMessageId: taggedCommand.source_message_id,
+    turnRequestId: taggedCommand.turn_request_id, reason: taggedCommand.reason,
+  });
+  const duplicateError = await call(WRITER + ' tries to start the active handle-flow after a human tag', 'startWorkflow', {
+    roomId: ROOM,
+    requestId: taggedTurn.requestId,
+    generationId: taggedTurn.generationId,
+    agentId: WRITER,
+    name: 'handle-flow',
+    roleBindings: { triager: 'wren' },
+  }, writerToken).catch((error: Error) => error.message);
+  if (typeof duplicateError !== 'string' || !duplicateError.includes(
+    `You are already in run ${handleRunId} of handle-flow. Continue it or hand off within it.`,
+  )) handleFailures.push(`expected the current role to be refused a second run, got ${JSON.stringify(duplicateError)}`);
+  await call(WRITER + ' finishes the handle-flow run', 'handoff', {
+    roomId: ROOM,
+    requestId: taggedTurn.requestId,
+    generationId: taggedTurn.generationId,
+    agentId: WRITER,
+    runId: handleRunId,
+    outcome: 'done',
+    contents: { note: 'finished' },
+  }, writerToken);
   // A word that is no member's handle must be refused at start, before any run is written.
   const unknownClassError = await call(WRITER + " tries a word that is no member's handle", 'startWorkflow', {
     roomId: ROOM,
-    requestId: handleTurn.requestId,
-    generationId: handleTurn.generationId,
+    requestId: taggedTurn.requestId,
+    generationId: taggedTurn.generationId,
     agentId: WRITER,
     name: 'handle-flow',
     roleBindings: { triager: 'nobodycarriesthis' },
@@ -609,7 +671,104 @@ async function main(): Promise<void> {
       `expected the at-start refusal for an unknown word, got ${JSON.stringify(unknownClassError)}`,
     );
   }
-  await complete(WRITER, writerToken, handleTurn);
+  await complete(WRITER, writerToken, taggedTurn);
+  const part3LogCount = log.length;
+
+  // Drive a due schedule through the real scheduler and HTTP operation boundary.
+  const scheduleId = '44444444-4444-4444-8444-444444444444';
+  await database.query(
+    `INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at)
+     VALUES($1,$2,$3,$4,$4,$5::jsonb,'Start handle-flow',now()-interval '1 minute')`,
+    [scheduleId, WORKSPACE, ROOM, WRITER, JSON.stringify({ kind: 'interval', everyMinutes: 60 })],
+  );
+  if (await new AgentScheduleLoop(database).runOnce() !== 1) throw new Error('schedule did not fire');
+  const scheduled = (await commandsFor(WRITER, writerToken)).find((entry) => entry.reason === 'schedule');
+  if (!scheduled) throw new Error('scheduled agent command was not delivered');
+  const scheduledTurn = await claim(WRITER, writerToken, scheduled);
+  const schedulePayload = {
+    roomId: ROOM,
+    requestId: scheduledTurn.requestId,
+    generationId: scheduledTurn.generationId,
+    agentId: WRITER,
+    name: 'handle-flow',
+    roleBindings: { triager: REVIEWER },
+  };
+  const scheduledRun = await call('schedule starts handle-flow', 'startWorkflow', schedulePayload, writerToken);
+  const scheduledRunId = scheduledRun.runId as string;
+  const scheduleRetry = await call('same schedule period retries handle-flow', 'startWorkflow', schedulePayload, writerToken)
+    .catch((error: Error) => error.message);
+  if (typeof scheduleRetry !== 'string' || !scheduleRetry.includes(`active run ${scheduledRunId} started by this schedule for this period`))
+    throw new Error(`schedule retry did not name its active run: ${JSON.stringify(scheduleRetry)}`);
+  const adminToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
+  const adminResponse = await fetch(`${origin}/v1/phone/operations/startOwnedWorkflow`, {
+    method: 'POST', headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ roomId: ROOM, name: 'handle-flow', roleBindings: { triager: REVIEWER } }),
+  });
+  const adminResult = await adminResponse.json() as { runId?: string };
+  log.push({ label: 'human admin overrides the active schedule run', response: { httpStatus: adminResponse.status, ...adminResult } });
+  if (!adminResponse.ok || !adminResult.runId || adminResult.runId === scheduledRunId)
+    throw new Error(`human admin override failed: ${JSON.stringify(adminResult)}`);
+  const adminCard = await database.query<{ author_id: string }>(`SELECT author_id FROM messages WHERE id=$1`, [adminResult.runId]);
+  if (adminCard.rows[0]?.author_id !== HUMAN) throw new Error('override was not attributed to the human');
+  const scheduleList = await call('agent reads its active schedule runs', 'listAgentSchedules', { roomId: ROOM, agentId: WRITER }, writerToken) as {
+    schedules?: { scheduleId: string; activeRunIds?: readonly string[] }[];
+  };
+  if (!scheduleList.schedules?.find((entry) =>
+    entry.scheduleId === scheduleId && entry.activeRunIds?.includes(scheduledRunId)))
+    throw new Error('list_schedules did not expose the active scheduled run');
+  await complete(WRITER, writerToken, scheduledTurn);
+
+  const wakeMessage = 'wake-proof-message';
+  await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'test workflow wakes')`,
+    [wakeMessage, ROOM, HUMAN]);
+  const wakeCommand = await createAgentCommand(database, {
+    roomId: ROOM, agentId: WRITER, sourceMessageId: wakeMessage, reason: 'human_tag',
+  });
+  if (!wakeCommand) throw new Error('wake proof command was not created');
+  const wakeTurn = await claim(WRITER, writerToken, {
+    id: wakeCommand.id, roomId: ROOM, agentId: WRITER,
+    sourceMessageId: wakeCommand.source_message_id,
+    turnRequestId: wakeCommand.turn_request_id, reason: wakeCommand.reason,
+  });
+  await call('writer saves the wake proof workflow', 'saveWorkflow', {
+    roomId: ROOM, requestId: wakeTurn.requestId, generationId: wakeTurn.generationId,
+    agentId: WRITER, contract: WAKE_CONTRACT,
+  }, writerToken);
+  const wakeRun = await call('writer starts the wake proof workflow', 'startWorkflow', {
+    roomId: ROOM, requestId: wakeTurn.requestId, generationId: wakeTurn.generationId,
+    agentId: WRITER, name: 'wake-proof', roleBindings: { writer: WRITER, reviewer: REVIEWER },
+  }, writerToken);
+  const wakeRunId = wakeRun.runId as string;
+  await database.query(`UPDATE agent_schedules SET next_run_at=now()-interval '1 minute' WHERE workflow_run->>'runId'=$1`,
+    [wakeRunId]);
+  if (await new AgentScheduleLoop(database).runOnce() !== 1) throw new Error('workflow timeout did not fire');
+  const timeoutWake = (await commandsFor(WRITER, writerToken)).find((entry) =>
+    entry.source?.body.includes(`You are in run ${wakeRunId} of wake-proof. Continue this run; do not start a new one.`)
+    && entry.reason === 'schedule');
+  if (!timeoutWake) throw new Error('timeout wake omitted its run context');
+  log.push({ label: 'writer receives the state timeout wake', response: timeoutWake });
+  await call('writer advances to the gate', 'handoff', {
+    roomId: ROOM, requestId: wakeTurn.requestId, generationId: wakeTurn.generationId,
+    agentId: WRITER, runId: wakeRunId, outcome: 'advance', contents: {},
+  }, writerToken);
+  const openGate = (await database.query<{ id: string; options: { optionId: string; label: string }[] }>(
+    `SELECT id,options FROM room_choices WHERE room_id=$1 AND agent_id=$2 AND status='open'`, [ROOM, REVIEWER],
+  )).rows[0];
+  if (!openGate) throw new Error('workflow gate was not posted');
+  const approved = openGate.options.find((entry) => entry.label === 'approved');
+  if (!approved) throw new Error('workflow gate has no approved option');
+  const answerResponse = await fetch(`${origin}/v1/phone/operations/answerChoice`, {
+    method: 'POST', headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ choiceId: openGate.id, optionId: approved.optionId }),
+  });
+  const answerResult = await answerResponse.json() as Record<string, unknown>;
+  log.push({ label: 'human answers the workflow gate', response: { httpStatus: answerResponse.status, ...answerResult } });
+  if (!answerResponse.ok) throw new Error(`workflow gate answer failed: ${JSON.stringify(answerResult)}`);
+  const gateWake = (await commandsFor(REVIEWER, reviewerToken)).find((entry) =>
+    entry.source?.body.includes(`You are in run ${wakeRunId} of wake-proof. Continue this run; do not start a new one.`));
+  if (!gateWake) throw new Error('settled gate wake omitted its run context');
+  log.push({ label: 'reviewer receives the settled gate wake', response: gateWake });
+  await complete(WRITER, writerToken, wakeTurn);
 
   const transcript = await database.query<{
     id: string;
@@ -705,7 +864,7 @@ async function main(): Promise<void> {
   lines.push('');
   lines.push('### Requests and responses, in order');
   lines.push('');
-  lines.push(...requestResponseSection(log.slice(part1LogCount)));
+  lines.push(...requestResponseSection(log.slice(part1LogCount, part2LogCount)));
   lines.push('### Verdict');
   lines.push('');
   if (skillFailures.length) {
@@ -726,14 +885,14 @@ async function main(): Promise<void> {
   lines.push('');
   lines.push(
     `@wren starts the one-role \`handle-flow\` workflow with \`roleBindings: { triager: "wren" }\` — a ` +
-      `bare member handle with no @. The member @wren is bound and dispatched; then the same turn tries ` +
+      `bare member handle with no @. The member @wren is bound and dispatched; after that run ends, the same turn tries ` +
       `\`roleBindings: { triager: "nobodycarriesthis" }\`, a word that is no current member's handle, ` +
       `which the server refuses at start instead of stranding a run.`,
   );
   lines.push('');
   lines.push('### Requests and responses, in order');
   lines.push('');
-  lines.push(...requestResponseSection(log.slice(part2LogCount)));
+  lines.push(...requestResponseSection(log.slice(part2LogCount, part3LogCount)));
   lines.push('### Verdict');
   lines.push('');
   if (handleFailures.length) {
@@ -747,6 +906,19 @@ async function main(): Promise<void> {
         'before any run card was written.',
     );
   }
+  lines.push('');
+  lines.push('## Scenario 4: workflow run wakes and duplicate-run guard');
+  lines.push('');
+  lines.push(`An ordinary human tag woke the current role, which refused a duplicate of run \`${handleRunId}\`. The scheduler started run \`${scheduledRunId}\`; ` +
+    `a retry for that schedule period was refused, while the human admin started a distinct run \`${adminResult.runId}\`. ` +
+    `A state timeout and an answered gate both woke their agents with run \`${wakeRunId}\` and its workflow name.`);
+  lines.push('');
+  lines.push('### Requests and responses, in order');
+  lines.push('');
+  lines.push(...requestResponseSection(log.slice(part3LogCount)));
+  lines.push('### Verdict');
+  lines.push('');
+  lines.push('PASSED: the live daemon and phone operations exposed exact run IDs in wakes, duplicate refusals, schedule reads, active workflow reads, and the human-attributed admin override.');
   lines.push('');
   lines.push('## Resulting transcript, both Rooms');
   lines.push('');
@@ -773,7 +945,7 @@ async function main(): Promise<void> {
     console.error(`\nFAILED: ${allFailures.join('; ')}`);
     process.exitCode = 1;
   } else {
-    console.log('\nPASSED: Reproduction 517 storage — a person opening readWorkflowRun receives the saved summary, optional receipt and engine exit; missing receipt text and refs remain empty.');
+    console.log('\nPASSED: Live workflow HTTP proof, including run wakes, duplicate refusals, schedule visibility, and human admin override.');
   }
 }
 

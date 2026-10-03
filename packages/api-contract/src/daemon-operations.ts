@@ -69,7 +69,6 @@ export type AgentScheduleResult = {
 export type AgentScheduleEntry = {
   readonly workflowName?: string;
   readonly owner?: import('./phone-operations.js').WorkflowOwnershipView['owner'];
-  readonly activeRunIds?: readonly string[];
   readonly scheduleId: string;
   /** The agent the schedule mentions on every run. */
   readonly agentId: string;
@@ -79,6 +78,8 @@ export type AgentScheduleEntry = {
   readonly maxRuns?: number;
   readonly runCount: number;
   readonly nextRunAt: number;
+  /** Still-active runs this schedule has started, of any saved workflow (requirement: duplicate-run visibility). */
+  readonly activeRunIds?: readonly string[];
 };
 export type AgentScheduleListResult = { readonly schedules: readonly AgentScheduleEntry[] };
 export type DeleteAgentScheduleInput = AgentRoomInput & { readonly scheduleId: string };

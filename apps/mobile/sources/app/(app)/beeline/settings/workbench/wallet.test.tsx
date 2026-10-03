@@ -121,6 +121,7 @@ import WalletSendScreen from './wallet-send';
 import { MockWalletSource } from '@/buzz/wallet-source.mock';
 import { setWalletSource } from '@/buzz/wallet-source';
 import { MonolithPhoneOperationError } from '@/sync/transport/monolith-operation';
+import { WALLET_GRANT_ENDED_MESSAGE } from '@/buzz/workbench';
 
 const originalConsoleError = console.error;
 
@@ -191,7 +192,7 @@ describe('Wallet screens (mock §Screens, pass 4)', () => {
     expect(renderer.root.findByProps({ testID: 'wallet-address-qr-toggle' })).toBeTruthy();
   });
 
-  it('does not show Permission expired for a standing grant', async () => {
+  it('shows no connect row for a standing grant', async () => {
     const source = new MockWalletSource();
     const baseline = await source.readWallet();
     source.readWallet = async () => ({
@@ -200,8 +201,31 @@ describe('Wallet screens (mock §Screens, pass 4)', () => {
     });
     setWalletSource(source);
     const renderer = await render(WalletScreen);
-    expect(renderer.root.findAllByProps({ testID: 'wallet-delegation-banner' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'wallet-connect-row' })).toHaveLength(0);
     expect(JSON.stringify(renderer.toJSON())).not.toContain('Permission expired');
+  });
+
+  it('shows nothing of the wallet until the grant to sign lands', async () => {
+    const source = new MockWalletSource();
+    const baseline = await source.readWallet();
+    source.readWallet = async () => ({
+      ...baseline,
+      delegation: { active: false, expiresAt: null },
+    });
+    setWalletSource(source);
+    const renderer = await render(WalletScreen);
+    const row = renderer.root.findByProps({ testID: 'wallet-connect-row' });
+    expect(row.props.title).toBe('Wallet not connected');
+    expect(row.props.action).toBe('connect');
+    for (const testID of [
+      'wallet-address',
+      'wallet-balance',
+      'wallet-actions',
+      'wallet-assets-head',
+      'wallet-activity-head',
+    ]) {
+      expect(renderer.root.findAllByProps({ testID })).toHaveLength(0);
+    }
   });
 
   it('copies the address through expo-clipboard', async () => {
@@ -235,7 +259,7 @@ describe('Wallet screens (mock §Screens, pass 4)', () => {
     expect(renderer.root.findAllByProps({ testID: 'wallet-activity-1' }).length).toBeGreaterThan(0);
   });
 
-  it('keeps a grant press on the banner and shows it in flight', async () => {
+  it('keeps a reconnect press on the connect row and shows it in flight', async () => {
     const source = new MockWalletSource();
     const baseline = await source.readWallet();
     let finishGrant: ((value: { expiresAt: number }) => void) | undefined;
@@ -249,14 +273,15 @@ describe('Wallet screens (mock §Screens, pass 4)', () => {
       });
     setWalletSource(source);
     const renderer = await render(WalletScreen);
-    const banner = renderer.root.findByProps({ testID: 'wallet-delegation-banner' });
-    expect(banner.props.action).toBe('grant');
+    const banner = renderer.root.findByProps({ testID: 'wallet-connect-row' });
+    expect(banner.props.action).toBe('reconnect');
+    expect(banner.props.description).toBe(WALLET_GRANT_ENDED_MESSAGE);
     expect(banner.props.onPress).toBeTypeOf('function');
     await act(async () => {
       void banner.props.onPress();
     });
-    const inFlight = renderer.root.findByProps({ testID: 'wallet-delegation-banner' });
-    expect(inFlight.props.value).toBe('Granting…');
+    const inFlight = renderer.root.findByProps({ testID: 'wallet-connect-row' });
+    expect(inFlight.props.value).toBe('Connecting…');
     expect(inFlight.props.valueTone).toBe('accent');
     expect(inFlight.props.statusGlyph).toBe('pulse');
     expect(inFlight.props.action).toBeUndefined();
@@ -284,11 +309,12 @@ describe('Wallet screens (mock §Screens, pass 4)', () => {
     setWalletSource(source);
     const renderer = await render(WalletScreen);
     await act(async () => {
-      await renderer.root.findByProps({ testID: 'wallet-delegation-banner' }).props.onPress();
+      await renderer.root.findByProps({ testID: 'wallet-connect-row' }).props.onPress();
     });
     expect(workspace.resolve).toHaveBeenCalledWith(undefined);
     expect(grant).toHaveBeenCalledWith({ workspaceId: 'workspace-1' });
-    expect(renderer.root.findAllByProps({ testID: 'wallet-delegation-banner' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'wallet-connect-row' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'wallet-balance-value' })).toBeTruthy();
   });
 
   it('shows a Workspace action and sends no Wallet request when none exists', async () => {
@@ -304,7 +330,7 @@ describe('Wallet screens (mock §Screens, pass 4)', () => {
     expect(grant).not.toHaveBeenCalled();
   });
 
-  it('shows a real grant refusal on the loaded-wallet banner, not the empty-wallet path', async () => {
+  it('shows a real grant refusal on the connect row, not the empty-wallet path', async () => {
     const source = new MockWalletSource();
     const baseline = await source.readWallet();
     source.readWallet = async () => ({
@@ -318,16 +344,16 @@ describe('Wallet screens (mock §Screens, pass 4)', () => {
     const renderer = await render(WalletScreen);
     expect(renderer.root.findAllByProps({ testID: 'wallet-network-unavailable' })).toHaveLength(0);
     await act(async () => {
-      renderer.root.findByProps({ testID: 'wallet-delegation-banner' }).props.onPress();
+      renderer.root.findByProps({ testID: 'wallet-connect-row' }).props.onPress();
       await Promise.resolve();
       await Promise.resolve();
     });
-    const banner = renderer.root.findByProps({ testID: 'wallet-delegation-banner' });
+    const banner = renderer.root.findByProps({ testID: 'wallet-connect-row' });
     expect(banner.props.description).toBe('wallet not created');
     expect(banner.props.descriptionTone).toBe('danger');
-    expect(banner.props.action).toBe('grant');
+    expect(banner.props.action).toBe('reconnect');
     expect(renderer.root.findAllByProps({ testID: 'wallet-network-unavailable' })).toHaveLength(0);
-    expect(renderer.root.findByProps({ testID: 'wallet-balance-value' })).toBeTruthy();
+    expect(renderer.root.findAllByProps({ testID: 'wallet-balance-value' })).toHaveLength(0);
   });
 
   it('the send screen refuses with the only named refusal: not enough of the asset', async () => {

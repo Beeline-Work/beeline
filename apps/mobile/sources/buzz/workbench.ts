@@ -133,6 +133,9 @@ export type WorkbenchHelper = {
   online: boolean;
 };
 
+/** The Wallet row's error line once an earlier grant to sign has ended. */
+export const WALLET_GRANT_ENDED_MESSAGE = 'Permission to sign ended. Reconnect to let agents spend.';
+
 /** The one-sentence user story under each catalog row before anything is
  *  paired (board revision 2, PR #1351). The Google tools share the entry's
  *  one covering sentence. */

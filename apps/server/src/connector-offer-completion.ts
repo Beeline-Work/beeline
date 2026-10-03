@@ -32,6 +32,26 @@ export async function completeConnectorOffersForConnector(
   database: SqlDatabase,
   connectorId: string,
 ): Promise<CompletedConnectorOffer[]> {
+  return settleConnectingOffers(database, 'offer.connector_id', connectorId, connectorId);
+}
+
+/**
+ * Settle one wallet offer. Accepting it was the owner's own grant to sign, so
+ * there is no connector row or helper report to wait on.
+ */
+export async function completeWalletConnectorOffer(
+  database: SqlDatabase,
+  offerId: string,
+): Promise<CompletedConnectorOffer[]> {
+  return settleConnectingOffers(database, 'offer.id', offerId);
+}
+
+async function settleConnectingOffers(
+  database: SqlDatabase,
+  key: 'offer.connector_id' | 'offer.id',
+  value: string,
+  connectorId?: string,
+): Promise<CompletedConnectorOffer[]> {
   const offers = (
     await database.query<ConnectingOffer>(
       `SELECT offer.id,offer.room_id,offer.agent_id,offer.command_id,offer.connector_type,
@@ -39,10 +59,10 @@ export async function completeConnectorOffersForConnector(
               acceptor.name accepted_name,acceptor.kind accepted_kind
          FROM connector_offers offer
          JOIN identities acceptor ON acceptor.id=offer.accepted_by
-        WHERE offer.connector_id=$1::uuid AND offer.status='connecting'
+        WHERE ${key}=$1::uuid AND offer.status='connecting'
         ORDER BY offer.created_at,offer.id
         FOR UPDATE OF offer`,
-      [connectorId],
+      [value],
     )
   ).rows;
 
@@ -85,7 +105,7 @@ export async function completeConnectorOffersForConnector(
       ...(offer.command_id ? { commandId: offer.command_id } : {}),
       wakes: [offer.agent_id],
       cardType: 'connector-offer-decision',
-      card: { offerId: offer.id, status: 'accepted', connectorId },
+      card: { offerId: offer.id, status: 'accepted', ...(connectorId ? { connectorId } : {}) },
     });
     completed.push({ offerId: offer.id, roomId: offer.room_id, agentId: offer.agent_id });
   }

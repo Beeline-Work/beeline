@@ -1717,6 +1717,17 @@ CREATE INDEX IF NOT EXISTS corner_facts_commissioned_by_idx ON corner_facts(comm
 -- any rename clears it (corner-title.ts).
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS title_generated boolean NOT NULL DEFAULT false;
 
+CREATE TABLE IF NOT EXISTS corner_watches (
+  watcher_room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  agent_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  kinds jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (watcher_room_id,agent_id,corner_id)
+);
+CREATE INDEX IF NOT EXISTS corner_watches_corner_idx ON corner_watches(corner_id);
+
 -- Assignment revisions are immutable; the current revision is the greatest
 -- committed row. Opening and revising insert the row in the command transaction.
 CREATE TABLE IF NOT EXISTS corner_brief_revisions (

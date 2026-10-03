@@ -270,6 +270,10 @@ export type DaemonOperationMap = {
   listWorkSchedules: Operation<AgentInput, WorkScheduleListResult>;
   createAgentSchedule: Operation<CreateAgentScheduleInput, AgentScheduleResult>;
   setEventSubscriptions: Operation<SetEventSubscriptionsInput, EventSubscriptionsResult>;
+  watchCorner: Operation<
+    RoomInput & { readonly cornerId: string; readonly kinds: readonly CornerWatchKind[] },
+    CornerWatchResult
+  >;
   listEventSubscriptions: Operation<RoomInput, EventSubscriptionsResult>;
   postRoomEvent: Operation<PostRoomEventInput, WriteResult>;
   listAgentSchedules: Operation<AgentRoomInput, AgentScheduleListResult>;
@@ -380,7 +384,6 @@ export type DaemonOperationMap = {
     { readonly machineId: string; readonly machineName: string },
     WriteResult
   >;
-  postCornerLifecycle: Operation<PostCornerLifecycleInput, WriteResult>;
   postCornerRemoteState: Operation<PostCornerRemoteStateInput, WriteResult>;
   postCornerPlan: Operation<PostCornerPlanInput, WriteResult>;
   putCornerApp: Operation<PutCornerAppInput, CornerAppWriteResult>;
@@ -1041,10 +1044,19 @@ export type PostAgentModelCatalogInput = AgentInput & {
   /** The harness kind (`AGENT_KINDS` in `apps/body/src/agent-command.ts`); the automatic "harness" tag. */
   readonly harness?: string;
 };
-export type PostCornerLifecycleInput = CornerInput & {
-  readonly status: string;
-  readonly objective: string;
-  readonly outcome?: 'landed' | 'abandoned';
+export type CornerWatchKind = 'merged' | 'check-passed' | 'check-failed';
+export type CornerWatchResult = {
+  readonly kinds: readonly CornerWatchKind[];
+  readonly snapshot: {
+    readonly id: string;
+    readonly name: string;
+    readonly workflowState: string | null;
+    readonly pullRequestNumber: number | null;
+    readonly pullRequestUrl: string | null;
+    readonly headSha: string | null;
+    readonly checks: string | null;
+    readonly mergeCommitSha: string | null;
+  };
 };
 export type PostCornerRemoteStateInput = CornerInput & {
   readonly branch: string;

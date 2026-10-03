@@ -31,6 +31,7 @@ import {
 } from '@/buzz/room-list-preferences';
 import { openRoomListCorner } from '@/buzz/room-list-new-corner';
 import { roomListSections, roomRowName } from '@/buzz/room-list-row';
+import { useRoomListGestures } from '@/buzz/use-room-list-gestures';
 import { readWelcomeCards } from '@/buzz/welcome-cards';
 import { leaveRoomWithConfirmation } from '@/buzz/room-leave';
 import { validRoomSlug } from '@/buzz/room-name';
@@ -340,6 +341,7 @@ export default function BuzzChannels() {
   }, []);
 
   const swipeableRefs = useRef<Map<string, Swipeable | null>>(new Map());
+  const roomListGestures = useRoomListGestures();
 
   const handleCloseChat = useCallback(
     async (item: ChatListItem) => {
@@ -1058,158 +1060,183 @@ export default function BuzzChannels() {
             </View>
           )
         ) : (
-          <SectionList
-            testID="room-list"
-            sections={chatSections}
-            keyExtractor={(item) => item.room.id}
-            extraData={cornerDropdowns.expanded}
-            stickySectionHeadersEnabled={false}
-            refreshing={refreshing}
-            onRefresh={() => {
-              setRefreshing(true);
-              refreshNow();
-            }}
-            contentContainerStyle={
-              chatList.chats.length
-                ? [styles.list, { paddingBottom: LOBBY_LIST_BOTTOM_SPACING + insets.bottom }]
-                : styles.emptyList
-            }
-            renderSectionHeader={({ section }) =>
-              section.title ? <RoomListSectionHeader title={section.title} /> : null
-            }
-            ListFooterComponent={
-              <MessageSearchResults
-                search={messageSearch}
-                now={ageNow}
-                onOpen={(result) => {
-                  if (activeCommunityId)
-                    router.push(messageSearchHref(result, activeCommunityId) as Href);
-                }}
-              />
-            }
-            ListEmptyComponent={
-              messageSearch.status !== 'unavailable' ? null : filter === 'pinned' && !query.trim() ? (
-                <PinnedConversationsEmpty onShowAll={() => setFilter('all')} />
-              ) : query || filter !== 'all' ? (
-                <NoMatchingConversationsEmpty
-                  onShowAll={() => {
-                    setQuery('');
-                    setFilter('all');
+          <View
+            testID="room-list-gestures"
+            style={styles.listViewport}
+            {...roomListGestures.touchHandlers}
+          >
+            <SectionList
+              testID="room-list"
+              {...roomListGestures.listHandlers}
+              sections={chatSections}
+              keyExtractor={(item) => item.room.id}
+              extraData={[cornerDropdowns.expanded, roomListGestures.swipesEnabled]}
+              stickySectionHeadersEnabled={false}
+              refreshing={refreshing}
+              onRefresh={() => {
+                setRefreshing(true);
+                refreshNow();
+              }}
+              contentContainerStyle={
+                chatList.chats.length
+                  ? [styles.list, { paddingBottom: LOBBY_LIST_BOTTOM_SPACING + insets.bottom }]
+                  : styles.emptyList
+              }
+              renderSectionHeader={({ section }) =>
+                section.title ? <RoomListSectionHeader title={section.title} /> : null
+              }
+              ListFooterComponent={
+                <MessageSearchResults
+                  search={messageSearch}
+                  now={ageNow}
+                  onOpen={(result) => {
+                    if (activeCommunityId)
+                      router.push(messageSearchHref(result, activeCommunityId) as Href);
                   }}
                 />
-              ) : (
-                <EmptyRoomActions
-                  canAddRoom={!viewerIsAgent && canManageWorkspace}
-                  canConnectAgent={!viewerIsAgent}
-                  onAddRoom={() => setShowCreateRoom(true)}
-                  onConnectAgent={() => void connectAgent()}
-                />
-              )
-            }
-            renderItem={({ item, index, section }) => {
-              const heading = roomRowName(item);
-              const title = `${heading.sigil}${heading.name}`;
-              const first = index === 0;
-              const last = index === section.data.length - 1;
-              const cornersExpanded = cornerDropdowns.expanded.has(item.room.id);
-              const row = (
-                <View
-                  // Android keeps clipping a reused `overflow: 'hidden'` frame to its old
-                  // corners when a reorder changes its rounding, so the card's content
-                  // vanishes; a frame whose rounding changes is mounted fresh instead.
-                  key={`${first}-${last}`}
-                  style={[
-                    styles.rowSurface,
-                    first && styles.rowSurfaceFirst,
-                    last && styles.rowSurfaceLast,
-                  ]}
-                >
-                  <ConversationRow
-                    item={item}
-                    viewer={chatList.viewer.pubkey}
-                    now={ageNow}
-                    onPress={() => {
-                      swipeableRefs.current.get(item.room.id)?.close();
-                      openRoom(item.room.id);
+              }
+              ListEmptyComponent={
+                messageSearch.status !== 'unavailable' ? null : filter === 'pinned' &&
+                  !query.trim() ? (
+                  <PinnedConversationsEmpty onShowAll={() => setFilter('all')} />
+                ) : query || filter !== 'all' ? (
+                  <NoMatchingConversationsEmpty
+                    onShowAll={() => {
+                      setQuery('');
+                      setFilter('all');
                     }}
-                    pinned={pinned.includes(item.room.id)}
-                    onPin={() => void togglePin(item.room.id)}
-                    cornersExpanded={cornersExpanded}
-                    onToggleCorners={() => cornerDropdowns.toggle(item.room.id)}
-                    onLongPressCorners={
-                      viewerIsAgent ? undefined : () => void openNewCorner(item.room.id)
-                    }
-                    testID={`room-${item.room.id}`}
                   />
-                  {!item.directMessage && (item.cornerCount ?? 0) > 0 && cornersExpanded && (
-                    <DesktopRoomCorners
+                ) : (
+                  <EmptyRoomActions
+                    canAddRoom={!viewerIsAgent && canManageWorkspace}
+                    canConnectAgent={!viewerIsAgent}
+                    onAddRoom={() => setShowCreateRoom(true)}
+                    onConnectAgent={() => void connectAgent()}
+                  />
+                )
+              }
+              renderItem={({ item, index, section }) => {
+                const heading = roomRowName(item);
+                const title = `${heading.sigil}${heading.name}`;
+                const first = index === 0;
+                const last = index === section.data.length - 1;
+                const cornersExpanded = cornerDropdowns.expanded.has(item.room.id);
+                const row = (
+                  <View
+                    // Android keeps clipping a reused `overflow: 'hidden'` frame to its old
+                    // corners when a reorder changes its rounding, so the card's content
+                    // vanishes; a frame whose rounding changes is mounted fresh instead.
+                    key={`${first}-${last}`}
+                    style={[
+                      styles.rowSurface,
+                      first && styles.rowSurfaceFirst,
+                      last && styles.rowSurfaceLast,
+                    ]}
+                  >
+                    <ConversationRow
                       item={item}
-                      mobile
-                      onOpen={(cornerId) => {
-                        const corner = item.openCorners?.find((open) => open.id === cornerId);
-                        router.push(
-                          cornerHref(cornerId, item.room.id, corner?.name, 'room-list'),
-                        );
+                      viewer={chatList.viewer.pubkey}
+                      now={ageNow}
+                      onPress={() => {
+                        if (!roomListGestures.canInteract()) return;
+                        swipeableRefs.current.get(item.room.id)?.close();
+                        openRoom(item.room.id);
                       }}
-                      renderDrag={(_, children) => children}
+                      pinned={pinned.includes(item.room.id)}
+                      onPin={() => {
+                        if (roomListGestures.canInteract()) void togglePin(item.room.id);
+                      }}
+                      cornersExpanded={cornersExpanded}
+                      onToggleCorners={() => {
+                        if (roomListGestures.canInteract()) cornerDropdowns.toggle(item.room.id);
+                      }}
+                      onLongPressCorners={
+                        viewerIsAgent
+                          ? undefined
+                          : () => {
+                              if (roomListGestures.canInteract()) void openNewCorner(item.room.id);
+                            }
+                      }
+                      testID={`room-${item.room.id}`}
                     />
-                  )}
-                </View>
-              );
-              return (
-                <View style={[styles.roomCell, last && styles.roomCellLast]}>
-                  {!viewerIsAgent ? (
-                    <Swipeable
-                      ref={(ref) => {
-                        if (ref) swipeableRefs.current.set(item.room.id, ref);
-                        else swipeableRefs.current.delete(item.room.id);
-                      }}
-                      friction={1}
-                      overshootRight={false}
-                      rightThreshold={ROW_HEIGHT}
-                      renderRightActions={() => (
-                        <View style={styles.chatActions}>
-                          {!item.directMessage && (
-                            <View style={styles.swipeAction}>
-                              <TouchableOpacity
-                                accessibilityLabel={`Leave ${title}`}
-                                accessibilityRole="button"
-                                hitSlop={LEAVE_TILE_HIT_SLOP}
-                                onPress={() => handleLeaveRoom(item)}
-                                style={styles.swipeActionButton}
-                                testID={`room-leave-action-${item.room.id}`}
-                              >
-                                <ExitGlyph testID={`room-exit-glyph-${item.room.id}`} />
-                              </TouchableOpacity>
-                            </View>
-                          )}
-                          {item.directMessage && (
-                            <View style={styles.swipeAction}>
-                              <TouchableOpacity
-                                accessibilityLabel={`Close ${title}`}
-                                accessibilityRole="button"
-                                hitSlop={LEAVE_TILE_HIT_SLOP}
-                                onPress={() => handleCloseChat(item)}
-                                style={styles.swipeActionButton}
-                                testID={`chat-close-action-${item.room.id}`}
-                              >
-                                <ExitGlyph testID={`dm-exit-glyph-${item.room.id}`} />
-                              </TouchableOpacity>
-                            </View>
-                          )}
-                        </View>
-                      )}
-                      testID={`chat-close-swipe-${item.room.id}`}
-                    >
-                      {row}
-                    </Swipeable>
-                  ) : (
-                    row
-                  )}
-                </View>
-              );
-            }}
-          />
+                    {!item.directMessage && (item.cornerCount ?? 0) > 0 && cornersExpanded && (
+                      <DesktopRoomCorners
+                        item={item}
+                        mobile
+                        onOpen={(cornerId) => {
+                          if (!roomListGestures.canInteract()) return;
+                          const corner = item.openCorners?.find((open) => open.id === cornerId);
+                          router.push(
+                            cornerHref(cornerId, item.room.id, corner?.name, 'room-list'),
+                          );
+                        }}
+                        renderDrag={(_, children) => children}
+                      />
+                    )}
+                  </View>
+                );
+                return (
+                  <View style={[styles.roomCell, last && styles.roomCellLast]}>
+                    {!viewerIsAgent ? (
+                      <Swipeable
+                        enabled={roomListGestures.swipesEnabled}
+                        activeOffsetX={[-15, 15]}
+                        failOffsetY={[-10, 10]}
+                        ref={(ref) => {
+                          if (ref) swipeableRefs.current.set(item.room.id, ref);
+                          else swipeableRefs.current.delete(item.room.id);
+                        }}
+                        friction={1}
+                        overshootRight={false}
+                        rightThreshold={ROW_HEIGHT}
+                        renderRightActions={() => (
+                          <View style={styles.chatActions}>
+                            {!item.directMessage && (
+                              <View style={styles.swipeAction}>
+                                <TouchableOpacity
+                                  accessibilityLabel={`Leave ${title}`}
+                                  accessibilityRole="button"
+                                  hitSlop={LEAVE_TILE_HIT_SLOP}
+                                  onPress={() => {
+                                    if (roomListGestures.canInteract()) void handleLeaveRoom(item);
+                                  }}
+                                  style={styles.swipeActionButton}
+                                  testID={`room-leave-action-${item.room.id}`}
+                                >
+                                  <ExitGlyph testID={`room-exit-glyph-${item.room.id}`} />
+                                </TouchableOpacity>
+                              </View>
+                            )}
+                            {item.directMessage && (
+                              <View style={styles.swipeAction}>
+                                <TouchableOpacity
+                                  accessibilityLabel={`Close ${title}`}
+                                  accessibilityRole="button"
+                                  hitSlop={LEAVE_TILE_HIT_SLOP}
+                                  onPress={() => {
+                                    if (roomListGestures.canInteract()) void handleCloseChat(item);
+                                  }}
+                                  style={styles.swipeActionButton}
+                                  testID={`chat-close-action-${item.room.id}`}
+                                >
+                                  <ExitGlyph testID={`dm-exit-glyph-${item.room.id}`} />
+                                </TouchableOpacity>
+                              </View>
+                            )}
+                          </View>
+                        )}
+                        testID={`chat-close-swipe-${item.room.id}`}
+                      >
+                        {row}
+                      </Swipeable>
+                    ) : (
+                      row
+                    )}
+                  </View>
+                );
+              }}
+            />
+          </View>
         )}
         <DirectMessagePickerSheet
           draftContext={activeCommunityId ?? ''}
@@ -1263,6 +1290,7 @@ const styles = StyleSheet.create((theme) => {
     },
     error: { ...theme.buzz.type.meta, color: hull.danger, textAlign: 'center' },
     list: { paddingTop: hull.roomCard.gap },
+    listViewport: { flex: 1 },
     emptyList: {
       flexGrow: 1,
       justifyContent: 'flex-start',

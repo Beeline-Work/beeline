@@ -90,7 +90,7 @@ describe('Chat-list swipe-left actions', () => {
       source.indexOf('testID={`chat-close-swipe-'),
     );
     expect(actions.indexOf('item.directMessage && (')).toBeLessThan(
-      actions.indexOf('onPress={() => handleCloseChat(item)}'),
+      actions.indexOf('void handleCloseChat(item)'),
     );
   });
 

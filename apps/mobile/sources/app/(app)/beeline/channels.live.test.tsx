@@ -9,6 +9,7 @@ const deck = vi.hoisted(() => ({
   appState: 'active' as string,
   appStateListeners: [] as Array<(state: string) => void>,
   bottomInset: 0,
+  renderRows: false,
   chatsReads: 0,
   chatsResponse: null as unknown,
   reconnects: 0,
@@ -55,7 +56,22 @@ vi.mock('react-native', async () => {
       select: (choices: Record<string, unknown>) => choices.ios ?? choices.default,
     },
     Pressable: host('Pressable'),
-    SectionList: host('SectionList'),
+    SectionList: (props: any) =>
+      ReactModule.createElement(
+        'SectionList',
+        props,
+        deck.renderRows
+          ? props.sections.flatMap((section: any) =>
+              section.data.map((item: any, index: number) =>
+                ReactModule.createElement(
+                  ReactModule.Fragment,
+                  { key: item.room.id },
+                  props.renderItem({ item, index, section }),
+                ),
+              ),
+            )
+          : props.children,
+      ),
     Text: host('Text'),
     TextInput: host('TextInput'),
     TouchableOpacity: host('TouchableOpacity'),
@@ -177,6 +193,11 @@ vi.mock('@/sync/transport/room-view-client', () => ({
 import BuzzChannels from './channels';
 import { router } from 'expo-router';
 import { ConversationRow } from '@/components/buzz/ConversationRow';
+import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
+
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
 const viewer = { pubkey: 'viewer', kind: 'human' as const, name: 'Captain' };
 const agent = { pubkey: 'agent', kind: 'agent' as const, name: 'Greeter' };
@@ -264,10 +285,13 @@ beforeEach(() => {
   deck.appState = 'active';
   deck.appStateListeners = [];
   deck.bottomInset = 0;
+  deck.renderRows = false;
   deck.chatsReads = 0;
   deck.reconnects = 0;
   deck.storedInvite = null;
   vi.mocked(router.replace).mockClear();
+  vi.mocked(router.push).mockClear();
+  vi.mocked(dispatchRoomOpenTap).mockClear();
   deck.createRepository.mockClear();
   deck.createCorner.mockClear();
   deck.subscriptions.length = 0;
@@ -277,6 +301,191 @@ beforeEach(() => {
 afterEach(() => {
   deck.focusEffect = null;
   deck.blur = null;
+});
+
+describe('Room list gestures', () => {
+  const listIn = (renderer: ReactTestRenderer) => renderer.root.findByType('SectionList');
+  const touchIn = (renderer: ReactTestRenderer) =>
+    renderer.root.find(
+      (node: any) => node.type === 'View' && node.props.testID === 'room-list-gestures',
+    );
+  const pressIn = (renderer: ReactTestRenderer) =>
+    renderer.root.find(
+      (node: any) => node.type === 'Pressable' && node.props.testID === 'room-room-a',
+    );
+  const swipeIn = (renderer: ReactTestRenderer) => renderer.root.findByType('Swipeable');
+
+  it('blocks vertical drags and their late release, then accepts a resting tap without delay', async () => {
+    deck.renderRows = true;
+    const renderer = await mountDeck();
+    const list = listIn(renderer);
+    expect(swipeIn(renderer).props).toMatchObject({
+      enabled: true,
+      activeOffsetX: [-15, 15],
+      failOffsetY: [-10, 10],
+    });
+    act(() => {
+      expect(touchIn(renderer).props.onStartShouldSetResponderCapture()).toBe(false);
+      list.props.onScrollBeginDrag();
+      pressIn(renderer).props.onPress();
+    });
+    expect(swipeIn(renderer).props.enabled).toBe(false);
+    expect(dispatchRoomOpenTap).not.toHaveBeenCalled();
+    act(() => {
+      list.props.onScrollEndDrag({
+        nativeEvent: { velocity: { y: 0 }, contentOffset: { y: 100 } },
+      });
+      touchIn(renderer).props.onTouchEnd();
+      pressIn(renderer).props.onPress();
+    });
+    expect(dispatchRoomOpenTap).not.toHaveBeenCalled();
+    expect(swipeIn(renderer).props.enabled).toBe(true);
+    act(() => {
+      touchIn(renderer).props.onStartShouldSetResponderCapture();
+      pressIn(renderer).props.onPress();
+    });
+    expect(dispatchRoomOpenTap).toHaveBeenCalledOnce();
+    console.log(
+      'Vertical drag and late release: no Room opened; next resting tap opens immediately',
+    );
+    act(() => renderer.unmount());
+  });
+
+  it('keeps swipes disabled between fling release and momentum-begin, and until a stop touch ends', async () => {
+    deck.renderRows = true;
+    const renderer = await mountDeck();
+    const list = listIn(renderer);
+    act(() => {
+      touchIn(renderer).props.onStartShouldSetResponderCapture();
+      list.props.onScrollBeginDrag();
+      list.props.onScrollEndDrag({
+        nativeEvent: { velocity: { y: -2 }, contentOffset: { y: 100 } },
+      });
+      touchIn(renderer).props.onTouchEnd();
+    });
+    expect(swipeIn(renderer).props.enabled).toBe(false);
+    act(() => {
+      list.props.onMomentumScrollBegin();
+      touchIn(renderer).props.onStartShouldSetResponderCapture();
+      list.props.onMomentumScrollEnd();
+    });
+    expect(swipeIn(renderer).props.enabled).toBe(false);
+    act(() => touchIn(renderer).props.onTouchEnd());
+    expect(swipeIn(renderer).props.enabled).toBe(true);
+    console.log('Fling and coast-stop touch: swipes disabled; release at rest: swipes enabled');
+    act(() => renderer.unmount());
+  });
+
+  it('handles drag receipts without velocity and cancels settlement when momentum begins', async () => {
+    deck.renderRows = true;
+    const renderer = await mountDeck();
+    const list = listIn(renderer);
+    vi.useFakeTimers();
+    try {
+      act(() => {
+        touchIn(renderer).props.onStartShouldSetResponderCapture();
+        list.props.onScrollBeginDrag();
+        list.props.onScrollEndDrag({ nativeEvent: { contentOffset: { y: 100 } } });
+        touchIn(renderer).props.onTouchEnd();
+      });
+      expect(swipeIn(renderer).props.enabled).toBe(false);
+      act(() => vi.advanceTimersByTime(16));
+      expect(swipeIn(renderer).props.enabled).toBe(true);
+      act(() => {
+        list.props.onScrollBeginDrag();
+        list.props.onScrollEndDrag({ nativeEvent: { contentOffset: { y: 100 } } });
+        list.props.onMomentumScrollBegin();
+        vi.advanceTimersByTime(16);
+      });
+      expect(swipeIn(renderer).props.enabled).toBe(false);
+      act(() => list.props.onMomentumScrollEnd());
+      expect(swipeIn(renderer).props.enabled).toBe(true);
+    } finally {
+      act(() => renderer.unmount());
+      vi.useRealTimers();
+    }
+  });
+
+  it('blocks a corner long press and toggle during scrolling', async () => {
+    deck.renderRows = true;
+    deck.chatsResponse = listOf([
+      room('room-a', 10, {
+        cornerCount: 1,
+        openCorners: [{ id: 'corner-1', name: 'fix', state: 'working', mine: true }],
+      }),
+    ]);
+    const renderer = await mountDeck();
+    const list = listIn(renderer);
+    const glyph = () =>
+      renderer.root.find(
+        (node: any) => node.type === 'Pressable' && node.props.testID === 'room-room-a-corners',
+      );
+    await act(async () => {
+      list.props.onScrollBeginDrag();
+      glyph().props.onPress();
+      await glyph().props.onLongPress();
+    });
+    expect(deck.createCorner).not.toHaveBeenCalled();
+    expect(glyph().props.accessibilityState.expanded).toBe(false);
+    act(() => renderer.unmount());
+  });
+
+  it('blocks the iOS bounce-stop touch when momentum-end arrives before touch-start', async () => {
+    deck.renderRows = true;
+    const renderer = await mountDeck();
+    const list = listIn(renderer);
+    vi.useFakeTimers();
+    try {
+      act(() => {
+        list.props.onMomentumScrollBegin();
+        list.props.onMomentumScrollEnd();
+        touchIn(renderer).props.onStartShouldSetResponderCapture();
+        touchIn(renderer).props.onTouchEnd();
+        pressIn(renderer).props.onPress();
+      });
+      expect(dispatchRoomOpenTap).not.toHaveBeenCalled();
+      act(() => {
+        vi.advanceTimersByTime(16);
+        touchIn(renderer).props.onStartShouldSetResponderCapture();
+        pressIn(renderer).props.onPress();
+      });
+      expect(dispatchRoomOpenTap).toHaveBeenCalledOnce();
+    } finally {
+      act(() => renderer.unmount());
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a coast-stopping touch from opening the Room after momentum ends', async () => {
+    deck.renderRows = true;
+    const renderer = await mountDeck();
+    const list = listIn(renderer);
+    const rowPress = () => pressIn(renderer);
+    act(() => {
+      list.props.onScrollBeginDrag?.();
+      list.props.onScrollEndDrag?.({
+        nativeEvent: { velocity: { y: 2 }, contentOffset: { y: 100 } },
+      });
+      list.props.onMomentumScrollBegin?.();
+      touchIn(renderer).props.onStartShouldSetResponderCapture?.();
+      list.props.onMomentumScrollEnd?.();
+      touchIn(renderer).props.onTouchEnd?.();
+      rowPress().props.onPress();
+    });
+    expect(dispatchRoomOpenTap).not.toHaveBeenCalled();
+    expect(router.push).not.toHaveBeenCalled();
+    console.log(
+      'Reproduction room-list-coast: fling → touch row → momentum ends → release: no Room opened',
+    );
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 16));
+      touchIn(renderer).props.onStartShouldSetResponderCapture();
+      rowPress().props.onPress();
+    });
+    expect(dispatchRoomOpenTap).toHaveBeenCalledOnce();
+    console.log('Resting tap: Room open dispatched immediately');
+    act(() => renderer.unmount());
+  });
 });
 
 describe('Room deck live path', () => {
@@ -325,12 +534,14 @@ describe('Room deck live path', () => {
     expect(contentStyles.at(-1)).toMatchObject({ paddingBottom: 58 });
   });
 
-  it('toggles the Room\'s corner dropdown on mobile without a selected conversation state', async () => {
+  it("toggles the Room's corner dropdown on mobile without a selected conversation state", async () => {
     const renderer = await mountDeck();
     const item = {
       ...paintedRows(renderer)[0],
       cornerCount: 1,
-      openCorners: [{ id: 'corner-1', name: 'fix', state: 'working' as const, mine: true as const }],
+      openCorners: [
+        { id: 'corner-1', name: 'fix', state: 'working' as const, mine: true as const },
+      ],
     };
     const renderRow = () => {
       const list = renderer.root.find((node: any) => node.type === 'SectionList');
@@ -350,7 +561,9 @@ describe('Room deck live path', () => {
       opened = renderRow();
     });
     expect(opened!.root.findByType(ConversationRow).props.cornersExpanded).toBe(true);
-    expect(opened!.root.findAllByProps({ testID: 'desktop-corner-corner-1' }).length).toBeGreaterThan(0);
+    expect(
+      opened!.root.findAllByProps({ testID: 'desktop-corner-corner-1' }).length,
+    ).toBeGreaterThan(0);
     act(() => {
       row!.unmount();
       opened!.unmount();
@@ -593,7 +806,6 @@ describe('Room deck live path', () => {
   });
 });
 
-vi.mock('@/components/buzz/ConversationRow', () => hostModule('ConversationRow'));
 vi.mock('@/components/buzz/WorkspaceActionsMenu', () => hostModule('WorkspaceActionsMenu'));
 vi.mock('@/components/buzz/RoomListToolbar', () => hostModule('RoomListToolbar'));
 vi.mock('@react-native-async-storage/async-storage', () => ({

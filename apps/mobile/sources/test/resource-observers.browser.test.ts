@@ -15,10 +15,15 @@ describe('resource observers in the desktop web renderer', () => {
         import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
         import { CornerObjectiveLine } from '@/components/buzz/CornerObjectiveLine';
         import { useCornerWorkflowRun } from '@/buzz/use-corner-workflow-run';
-        const room = { room: { id: 'parent', name: 'Room' }, messages: [], members: [], corners: [], latestAgentTurns: [], viewer: { identity: { pubkey: 'a', name: 'Person' }, permissions: {} } };
+        const room = { room: { id: 'parent', name: 'Room' }, messages: [], members: [], corners: [], latestAgentTurns: [], viewer: { identity: { pubkey: 'a', name: 'Person' }, role: 'owner', permissions: {} } };
         const client = { corners: async () => ({ corners: [] }), room: async id => {
           if (id === 'broken' && !globalThis.__recover) throw new Error('Selected corner unavailable');
-          return { ...room, room: { id, name: 'Original corner', about: 'Original detail', archived: true } };
+          const detail = { ...room, room: { id, name: 'Original corner', about: 'Original detail', archived: false }, latestAgentTurns: [{ agentPubkey: 'b'.repeat(64), requestId: 'turn', status: 'working', requestedBy: 'a', createdAt: Date.now()/1000 }] };
+          if (globalThis.__cornerReads) detail.messages = [{ id: 'sent', text: 'a new message', author: room.viewer.identity, presentation: 'message', createdAt: Date.now()/1000 }];
+          if (id === 'original') { globalThis.__cornerReads = (globalThis.__cornerReads ?? 0) + 1;
+            if (globalThis.__cornerReads === 2) return new Promise(resolve => { globalThis.__releaseCorner = () => resolve(detail); });
+            if (globalThis.__cornerReads === 3) return new Promise(resolve => { globalThis.__releaseStop = () => resolve(detail); }); }
+          return detail;
         } };
         function App() {
           const [id, select] = React.useState('original'); globalThis.__select = select;
@@ -28,6 +33,16 @@ describe('resource observers in the desktop web renderer', () => {
         }
         createRoot(document.getElementById('root')).render(<App />);
         const output = {};
+        setTimeout(() => { globalThis.__transcript = document.querySelector('[data-testid="desktop-work-corner-transcript"]');
+          globalThis.__composer.onChangeText('a new message'); }, 300);
+        setTimeout(() => { globalThis.__composer.onSend(); }, 400);
+        setTimeout(() => { output.sameTranscript = globalThis.__transcript === document.querySelector('[data-testid="desktop-work-corner-transcript"]');
+          output.loaderDuringRefresh = !!document.querySelector('[data-testid="desktop-corner-loader"]');
+          output.sentBeforeRead = !globalThis.__composer.disabled; globalThis.__releaseCorner(); }, 800);
+        setTimeout(() => { output.sentAfterRead = !globalThis.__composer.disabled; output.messageVisible = document.getElementById('root').textContent.includes('a new message'); }, 1100);
+        setTimeout(() => { globalThis.__stopSettled = false; globalThis.__composer.onStop().then(() => { globalThis.__stopSettled = true; }); }, 1200);
+        setTimeout(() => { output.stoppedBeforeRead = globalThis.__stopSettled; globalThis.__releaseStop(); }, 1400);
+        setTimeout(() => { output.stoppedAfterRead = globalThis.__stopSettled; }, 1600);
         setTimeout(() => { output.pendingReads = globalThis.__installReads;
           output.initialTranscript = !!document.querySelector('[data-testid="desktop-work-corner-transcript"]');
           globalThis.__release(null); globalThis.__select('broken'); }, 1800);
@@ -39,8 +54,9 @@ describe('resource observers in the desktop web renderer', () => {
         setTimeout(() => { output.stoppedReads = globalThis.__installReads;
           document.querySelector('[data-testid="signin-retry"]')?.click();
           globalThis.__recover = true;
-          document.querySelector('[data-testid="desktop-corner-retry"]')?.click(); }, 8500);
-        setTimeout(() => { output.retryReads = globalThis.__installReads;
+          globalThis.__roomListeners.broken?.({ monolithLive: { type: 'invalidate', roomId: 'broken', reason: 'message' } });
+          document.querySelector('[data-testid="connect-pair-retry"]')?.click(); }, 8500);
+        setTimeout(() => { output.retryReads = globalThis.__installReads; output.repaired = globalThis.__repaired;
           output.recoveredTranscript = !!document.querySelector('[data-testid="desktop-work-corner-transcript"]');
           output.workflowReads = globalThis.__workflowReads;
           output.workflowText = document.querySelector('[data-testid="corner-objective-line-workflow-copy"]')?.textContent;
@@ -52,33 +68,36 @@ describe('resource observers in the desktop web renderer', () => {
         '@expo/vector-icons': `export const Ionicons = () => null; export const FontAwesome = () => null;`,
         'expo-web-browser': `export const openBrowserAsync = async () => undefined;`,
         'expo-router': `export const useLocalSearchParams = () => ({ workspaceId: 'workspace', connectorId: 'install', connectorName: 'Squire', pairedConnectorId: 'install', offerId: 'offer', roomId: 'parent', url: 'https://example.test', method: 'oauth' }); export const router = { back() {}, replace() {}, push() {} };`,
-        '@/sync/transport/live-connection': `export const sharedLiveConnection = () => ({ register: async () => () => undefined });`,
-        '@/buzz/workbench-source': `export const getWorkbenchSource = () => ({ readInstallState: () => {
+        '@/sync/transport/live-connection': `globalThis.__roomListeners = {}; export const sharedLiveConnection = () => ({ register: async (filters, listener) => { const id = filters[0]['#h'][0]; globalThis.__roomListeners[id] = listener; return () => { delete globalThis.__roomListeners[id]; }; } });`,
+        '@/buzz/workbench-source': `export const getWorkbenchSource = () => ({ readInstallState: ({ connectorId }) => {
           globalThis.__installReads = (globalThis.__installReads ?? 0) + 1;
+          if (connectorId === 'fresh-row') return Promise.resolve({ connectorId, connected: true, steps: [] });
           if (globalThis.__installReads === 1) return new Promise(resolve => { globalThis.__release = resolve; });
           return Promise.resolve(null);
         } });`,
-        '@/sync/transport/monolith-operation': `export const monolithPhoneOperation = async () => {
+        '@/sync/transport/monolith-operation': `export const monolithPhoneOperation = async operation => {
+          if (operation === 'cancelAgentTurn') return {};
+          if (operation === 'acceptConnectorOffer') { globalThis.__repaired = true; return { connectorId: 'fresh-row' }; }
           globalThis.__workflowReads = (globalThis.__workflowReads ?? 0) + 1;
           return { workflows: [{ runId: 'run', roomId: 'corner', workflowSlug: 'corner', state: 'implement', status: 'live' }] };
         };`,
         '@/buzz/app-sign-in': `export const takeAppSignInReturn = async () => null;`,
         '@/components/AnimatedOverlay': `export const AnimatedBlurBackdrop = () => null;`,
         '@/components/buzz/sandbox-webview': `export const useSandboxWebView = () => null;`,
-        '@/auth/buzz-identity-storage': `export const loadBuzzIdentity = async () => null;`,
-        '@/sync/transport': `export class BuzzRigTransport {}`,
+        '@/auth/buzz-identity-storage': `export const loadBuzzIdentity = async () => ({ pubkey: 'a' });`,
+        '@/sync/transport': `export class BuzzRigTransport { async composeMessage() { return {}; } async publishPreparedMessage() {} }`,
         '@/components/buzz/DesktopArtifactPane': `export const DesktopArtifactPane = () => null;`,
         '@/components/buzz/corner-brief-viewer': `export const openCornerBriefViewer = () => undefined;`,
         '@/components/buzz/IdentityMark': `export const IdentityMark = () => null;`,
-        '@/components/buzz/ConversationComposer': `export const COMPOSER_MAX_INPUT_HEIGHT = 115; export const COMPOSER_SINGLE_LINE_INPUT_HEIGHT = 26; export const ConversationComposer = () => null;`,
-        '@/app/(app)/beeline/chat/RoomMessageVariants': `export const DaemonFactCard = () => null; export const GitHubEventCard = () => null; export const NotificationLifecycleCard = () => null; export const OrdinaryLedgerMessage = () => null;`,
+        '@/components/buzz/ConversationComposer': `export const COMPOSER_MAX_INPUT_HEIGHT = 115; export const COMPOSER_SINGLE_LINE_INPUT_HEIGHT = 26; export const ConversationComposer = props => { globalThis.__composer = props; return null; };`,
+        '@/app/(app)/beeline/chat/RoomMessageVariants': `export const DaemonFactCard = () => null; export const GitHubEventCard = () => null; export const NotificationLifecycleCard = () => null; export const OrdinaryLedgerMessage = ({ message }) => <span>{message.text}</span>;`,
         '@/buzz/desktop-workbench-state': `export const DESKTOP_INSPECTOR_DEFAULT_WIDTH = 400; export const DESKTOP_INSPECTOR_MIN_WIDTH = 320; export const DESKTOP_TRANSCRIPT_MIN_WIDTH = 300;
           export const clampDesktopPaneWidth = (_, width) => width; export const desktopComposerKeyAction = () => null; export const loadDesktopPaneWidth = async () => 400; export const saveDesktopPaneWidth = async () => undefined;`,
       } });
       expect(result.status, result.stderr).toBe(0);
       console.log('Reproductions R9a–R9c desktop web:', result.result);
       const proof = JSON.parse(result.result);
-      expect(proof).toMatchObject({ pendingReads: 1, initialTranscript: true, staleTranscript: false, workflowReads: 1, recoveredTranscript: true, terminalReads: 8, stoppedReads: 8, retryReads: 9 });
+      expect(proof).toMatchObject({ pendingReads: 1, initialTranscript: true, staleTranscript: false, workflowReads: 1, recoveredTranscript: true, terminalReads: 8, stoppedReads: 8, retryReads: 10, sameTranscript: true, loaderDuringRefresh: false, sentBeforeRead: false, sentAfterRead: true, repaired: true, messageVisible: true, stoppedBeforeRead: false, stoppedAfterRead: true });
       expect(proof.signInError).toContain('Retry');
       expect(proof.installerError).toContain('Lost track');
       expect(proof.inspectorError).toContain('Selected corner unavailable');

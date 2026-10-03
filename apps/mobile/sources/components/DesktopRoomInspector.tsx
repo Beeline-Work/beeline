@@ -1,5 +1,5 @@
-import { observeRoomResource, useObservedResource } from '@/buzz/use-observed-resource';
 import * as React from 'react';
+import { observeRoomResource, useObservedResource } from '@/buzz/use-observed-resource';
 import { FlatList, PanResponder, Platform, Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { CornerListItem, RoomView } from '@beeline/buzz-client';
@@ -159,13 +159,16 @@ export function DesktopRoomInspector({
     };
   }, [client, room.room.id]);
 
-  const observed = useObservedResource<RoomView>(client && selectedCornerId ? `inspector:${selectedCornerId}` : undefined, {
-    load: () => client!.room(selectedCornerId!),
-    subscribe: selectedCornerId ? observeRoomResource(selectedCornerId) : undefined,
-  });
+  const observed = useObservedResource<RoomView>(
+    client && selectedCornerId ? `inspector:${selectedCornerId}` : undefined,
+    {
+      load: () => client!.room(selectedCornerId!),
+      subscribe: selectedCornerId ? observeRoomResource(selectedCornerId) : undefined,
+    },
+  );
   const detail = observed.data?.room.id === selectedCornerId ? observed.data : null;
   const loading = observed.loading;
-  const refreshCorner = React.useCallback(async () => observed.retry(), [observed.retry]);
+  const refreshCorner = observed.retry;
 
   // Mirrors the navigation divider in SidebarNavigator. The pane is the last
   // child of its row, so its layout x plus its width is the row's width.
@@ -500,7 +503,7 @@ function CornerCockpit({
         requestId: ack.stop.requestId,
         agentId: ack.stop.agentPubkey,
       });
-      void onRefresh().catch(() => undefined);
+      await onRefresh();
       return true;
     } catch (error) {
       setStopping(false);

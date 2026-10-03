@@ -10,7 +10,8 @@ function create(element: React.ReactElement) {
   return tree;
 }
 afterEach(async () => { await act(async () => mounted.splice(0).forEach(tree => tree.unmount())); });
-vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ register: async () => () => undefined }) }));
+const roomWire = vi.hoisted(() => ({ listener: undefined as any }));
+vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ register: async (_: unknown, listener: unknown) => { roomWire.listener = listener; return () => undefined; } }) }));
 
 const phoneOperation = vi.hoisted(() => vi.fn());
 const modalConfirm = vi.hoisted(() => vi.fn());
@@ -331,6 +332,19 @@ describe('DesktopRoomInspector work pane', () => {
     } finally { await act(async () => tree.unmount()); }
   });
 
+  it('R9-OBS-04: live refresh keeps the transcript mounted', async () => {
+    const detail = { ...room(), room: corners[0].corner, parent: room().room };
+    let release!: (value: any) => void;
+    const client = { room: vi.fn().mockResolvedValueOnce(detail).mockImplementation(() => new Promise(resolve => { release = resolve; })) } as any;
+    const tree = await render(props({ client, selectedCornerId: 'working' }));
+    const transcript = tree.root.findByType('FlatList' as any);
+    await act(async () => roomWire.listener({ monolithLive: { type: 'invalidate', roomId: 'working', reason: 'message' } }));
+    expect(tree.root.findAllByType('FlatList' as any)).toHaveLength(1);
+    expect(tree.root.findByType('FlatList' as any)).toBe(transcript);
+    expect(tree.root.findAllByProps({ testID: 'desktop-corner-loader' })).toHaveLength(0);
+    await act(async () => release(detail));
+  });
+
   it('renders the corner list with full objectives and one concluded row', async () => {
     const tree = await render();
     const copy = text(tree);
@@ -570,9 +584,14 @@ describe('DesktopRoomInspector work pane', () => {
       expect(Boolean(composer.props.onStop)).toBe(role !== 'member');
       expect(Boolean(progress.props.onStop)).toBe(role !== 'member');
       if (role !== 'member') {
-        await act(async () => {
-          await composer.props.onStop();
-        });
+        let release!: (value: any) => void;
+        client.room.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+        let stopped!: Promise<boolean>;
+        let settled = false;
+        await act(async () => { stopped = composer.props.onStop().then((value: boolean) => { settled = true; return value; }); });
+        expect(settled).toBe(false);
+        await act(async () => { release(detail); await stopped; });
+        expect(settled).toBe(true);
         expect(phoneOperation).toHaveBeenCalledWith('cancelAgentTurn', {
           roomId: 'working',
           requestId: 'turn-1',
@@ -829,10 +848,14 @@ describe('DesktopRoomInspector work pane', () => {
 
     const composer = tree.root.findByType('ConversationComposer' as any);
     await act(async () => composer.props.onChangeText('speaking up'));
-    await act(async () => {
-      await tree.root.findByType('ConversationComposer' as any).props.onSend();
-    });
-
+    let release!: (value: any) => void;
+    client.room.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    await act(async () => { tree.root.findByType('ConversationComposer' as any).props.onSend(); });
+    expect(tree.root.findByType('ConversationComposer' as any).props.disabled).toBe(true);
+    expect(listScrolls).toEqual(['index:0']);
+    await act(async () => release({ ...detail, messages: [...detail.messages, { id: 'sent', text: 'speaking up', createdAt: 6, author: person, presentation: 'message' }] }));
+    expect(tree.root.findAllByType('OrdinaryLedgerMessage' as any).some((node: any) => node.props.message.text === 'speaking up')).toBe(true);
+    expect(tree.root.findByType('ConversationComposer' as any).props.disabled).toBe(false);
     expect(listScrolls.at(-1)).toBe('end');
     act(() => tree.unmount());
   });

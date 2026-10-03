@@ -3,6 +3,9 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const phoneOperation = vi.hoisted(() => vi.fn());
+vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
+
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
 const searchParams = vi.hoisted(() => ({
   params: {
@@ -390,6 +393,25 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     expect(renderer.root.findByProps({ testID: 'connect-install-progress' })).toBeDefined();
     await advancePolls(2);
     expect(renderer.root.findByProps({ testID: 'connect-install-progress' })).toBeDefined();
+  });
+
+  it.each(['helper', 'offer'])('R9-OBS-05: Retry re-pairs a vanished install through %s', async (kind) => {
+    const source = new MockWorkbenchSource();
+    const pairConnector = vi.fn(async () => ({ connectorId: 'fresh-row' }));
+    const readInstallState = vi.fn(async () => null);
+    setWorkbenchSource(Object.assign(source, { pairConnector, readInstallState }));
+    if (kind === 'offer') {
+      searchParams.params = { workspaceId: 'workspace-1', connectorId: 'trusty-squire', pairedConnectorId: 'missing-row', offerId: 'offer-1', roomId: 'room-1' };
+      phoneOperation.mockResolvedValue({ connectorId: 'fresh-row' });
+    }
+    const renderer = await render();
+    if (kind === 'helper') await pair(renderer);
+    await advancePolls(8);
+    expect(renderer.root.findByProps({ testID: 'connect-error' }).props.children).toContain('Lost track');
+    pairConnector.mockClear();
+    await act(async () => { renderer.root.findByProps({ testID: 'connect-pair-retry' }).props.onPress(); });
+    if (kind === 'helper') expect(pairConnector).toHaveBeenCalledTimes(1);
+    else expect(phoneOperation).toHaveBeenCalledWith('acceptConnectorOffer', { offerId: 'offer-1' });
   });
 
   it('returns to the Workbench once the install reports connected', async () => {

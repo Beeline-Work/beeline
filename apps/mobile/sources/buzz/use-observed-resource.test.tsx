@@ -71,6 +71,37 @@ it('R9-OBS-01: reconnect recovers a failed room read', async () => {
   expect(current.data).toBe('current');
 });
 
+it('R9-OBS-02: a room invalidation recovers after an error', async () => {
+  const load = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue('current');
+  let current: any;
+  function Reader() { current = useObservedResource<string>('live-error', { load, subscribe: observeRoomResource('room') }); return <span>{current.error ?? current.data}</span>; }
+  await act(async () => { mount(<Reader />); });
+  expect(current.error).toBe('offline');
+  await act(async () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'room', reason: 'message' } }));
+  expect(load).toHaveBeenCalledTimes(2);
+  expect(current.error).toBeNull();
+  expect(current.data).toBe('current');
+});
+
+it('R9-OBS-03: retry waits for the read queued after an existing flight', async () => {
+  const releases: Array<(value: string) => void> = [];
+  const load = vi.fn(() => new Promise<string>(resolve => releases.push(resolve)));
+  let current: any;
+  function Reader() { current = useObservedResource<string>('await-refresh', { load }); return <span>{current.data}</span>; }
+  await act(async () => { mount(<Reader />); });
+  let settled = false;
+  let refresh: Promise<void>;
+  await act(async () => { refresh = Promise.resolve(current.retry()).then(() => { settled = true; }); });
+  expect(settled).toBe(false);
+  expect(load).toHaveBeenCalledTimes(1);
+  await act(async () => releases.shift()!('initial'));
+  expect(settled).toBe(false);
+  expect(load).toHaveBeenCalledTimes(2);
+  await act(async () => { releases.shift()!('current'); await refresh!; });
+  expect(settled).toBe(true);
+  expect(current.data).toBe('current');
+});
+
 it('selection switches hide old values and late reads cannot overwrite the new selection', async () => {
   let release!: (value: string) => void;
   let current: any;

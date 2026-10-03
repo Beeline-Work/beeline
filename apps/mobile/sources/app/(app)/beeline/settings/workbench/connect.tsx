@@ -161,7 +161,11 @@ function ConnectToolFlow() {
 
   const retry = useCallback(() => {
     setError(null);
-    if (observed.error) { observed.retry(); return; }
+    if (observed.error && !observed.error.startsWith('Lost track of the install')) {
+      void observed.retry();
+      return;
+    }
+    stopPolling();
     setInstall(null);
     if (offerId) {
       void monolithPhoneOperation('acceptConnectorOffer', { offerId })
@@ -173,7 +177,7 @@ function ConnectToolFlow() {
     }
     const helperId = pairedHelperRef.current;
     if (helperId) void pair(helperId);
-  }, [observed.error, observed.retry, offerId, pair, startPolling]);
+  }, [observed.error, observed.retry, offerId, pair, startPolling, stopPolling]);
 
   const connectorName = connectorNameFor(connectorId);
   const machineName = install?.helperName ?? selectedHelperName;

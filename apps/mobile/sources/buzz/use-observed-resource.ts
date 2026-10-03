@@ -20,6 +20,7 @@ class Resource<T> {
   listeners = new Set<() => void>();
   flight = false;
   dirty = false;
+  waiters: Array<() => void> = [];
   misses = 0;
   timer?: ReturnType<typeof setTimeout>;
   stop?: () => void;
@@ -32,21 +33,23 @@ class Resource<T> {
     this.listeners.forEach((listener) => listener());
   }
   invalidate = () => {
-    if (this.snapshot.error || !this.listeners.size) return;
+    if (this.snapshot.error || !this.listeners.size) return Promise.resolve();
     this.dirty = true;
+    const completed = new Promise<void>((resolve) => this.waiters.push(resolve));
     void this.read();
+    return completed;
   };
   retry = () => {
     this.misses = 0;
     this.publish({ ...this.snapshot, error: null });
-    this.invalidate();
+    return this.invalidate();
   };
   async read() {
     if (this.flight || !this.listeners.size) return;
     clearTimeout(this.timer);
     this.flight = true;
     this.dirty = false;
-    this.publish({ ...this.snapshot, loading: true });
+    this.publish({ ...this.snapshot, loading: this.snapshot.data === undefined });
     try {
       const data = await this.options.load();
       if (this.listeners.size) {
@@ -69,13 +72,15 @@ class Resource<T> {
       this.flight = false;
       if (!this.listeners.size) {
         if (resources.get(this.key) === this) resources.delete(this.key);
+      } else if (this.dirty && (!this.snapshot.error || this.options.subscribe)) {
+        this.publish({ ...this.snapshot, error: null });
+        void this.read();
+        return;
       } else if (!this.snapshot.error) {
-        if (this.dirty) void this.read();
-        else {
-          const delay = this.options.refreshAfter?.(this.snapshot.data);
-          if (delay) this.timer = setTimeout(this.invalidate, delay);
-        }
+        const delay = this.options.refreshAfter?.(this.snapshot.data);
+        if (delay) this.timer = setTimeout(this.invalidate, delay);
       }
+      this.waiters.splice(0).forEach((resolve) => resolve());
     }
   }
   subscribe = (listener: () => void) => {
@@ -89,7 +94,7 @@ class Resource<T> {
         subscriptionStop?.();
       };
       void Promise.resolve()
-        .then(() => (active ? this.options.subscribe?.(this.invalidate, this.retry) : undefined))
+        .then(() => (active ? this.options.subscribe?.(this.retry, this.retry) : undefined))
         .then((stop) => {
           if (active) subscriptionStop = stop;
           else stop?.();
@@ -129,7 +134,7 @@ export function useObservedResource<T>(key: string | undefined, options: Options
     resource?.subscribe ?? idleSubscribe,
     resource?.getSnapshot ?? idleSnapshot,
   );
-  return { ...snapshot, retry: resource?.retry ?? (() => undefined) };
+  return { ...snapshot, retry: resource?.retry ?? (() => Promise.resolve()) };
 }
 
 /** Room pushes include hidden workflow/lifecycle cards; poll fallbacks do not invalidate reads. */

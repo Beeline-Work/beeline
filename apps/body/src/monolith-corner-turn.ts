@@ -811,6 +811,7 @@ export class MonolithCornerTurnLoop {
     const registryHostDeclarations = registryMcpHostDeclarations(
       configuration.registryMcpRoutes,
       this.commandContext.path,
+      this.options.config.registryMcpBrokerSocket,
     );
     const mountedHostRoutes = [...grantedHostRoutes, ...Object.keys(registryHostDeclarations)];
     const squireScope = {
@@ -946,7 +947,10 @@ export class MonolithCornerTurnLoop {
           npmCacheDir,
           pnpmStoreDir,
           cargoTargetDir,
-          ...registryMcpHostBindPaths(configuration.registryMcpRoutes),
+          ...registryMcpHostBindPaths(
+            configuration.registryMcpRoutes,
+            this.options.config.registryMcpBrokerSocket,
+          ),
         ],
         devices: grantedDevices,
         maskPaths: [
@@ -1395,6 +1399,7 @@ export class MonolithCornerTurnLoop {
                 restored,
                 activeReviewerInstruction,
                 institutionalContext,
+                memberCorners,
               ] = await trace.measure('context-fetch', () =>
                 Promise.all([
                   api.execute('getRoomConversation', {
@@ -1408,6 +1413,7 @@ export class MonolithCornerTurnLoop {
                   awaitInstitutionalContext(institutionalContextFetch, (message) =>
                     console.warn(`[thin-core] corner ${cornerId}: ${message}`),
                   ),
+                  api.execute('listRoomCorners', { roomId: this.options.parentRoomId }),
                 ]),
               );
               trace.noteInstitutionalMemory(institutionalContext.outcome);
@@ -1510,6 +1516,9 @@ export class MonolithCornerTurnLoop {
                   },
                   members: roomMentionDirectory(roster, this.agent.publicKey),
                   memory: institutionalContext.text,
+                  corners: memberCorners.corners?.filter(
+                    (corner) => corner.cornerId !== cornerId && !corner.archived,
+                  ),
                   ...(activeReviewerInstruction
                     ? { reviewerTarget: activeReviewerInstruction }
                     : {}),

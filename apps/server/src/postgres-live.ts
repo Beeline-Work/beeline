@@ -194,19 +194,6 @@ BEGIN
         'agentId', COALESCE(NEW.agent_id, OLD.agent_id),
         'scheduleId', COALESCE(NEW.id, OLD.id)
       );
-    WHEN 'institutional_memory_jobs' THEN
-      payload = jsonb_build_object(
-        'table', TG_TABLE_NAME, 'operation', TG_OP,
-        'roomId', COALESCE(NEW.source_room_id, OLD.source_room_id),
-        'jobId', COALESCE(NEW.id,OLD.id),
-        'pending', NEW.status = 'pending' AND NEW.next_attempt_at <= now(),
-        'dueAt', CASE WHEN TG_OP = 'DELETE' THEN NULL
-          WHEN NEW.status IN ('pending','retry') THEN
-            floor(extract(epoch FROM NEW.next_attempt_at) * 1000)::bigint
-          WHEN NEW.status = 'claimed' THEN
-            floor(extract(epoch FROM NEW.lease_expires_at) * 1000)::bigint
-          ELSE NULL END
-      );
   END CASE;
   payload = payload || jsonb_build_object(
     'traceId', md5(random()::text || clock_timestamp()::text || txid_current()::text),
@@ -220,6 +207,9 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Memory jobs no longer exist as work, so their rows no longer wake anyone.
+DROP TRIGGER IF EXISTS beeline_notify_live_institutional_memory_jobs ON institutional_memory_jobs;
+
 DO $$
 DECLARE table_name text;
 BEGIN
@@ -227,7 +217,7 @@ BEGIN
     'messages', 'live_outputs', 'agent_turns', 'rooms', 'memberships',
     'corner_facts', 'permission_authority', 'room_read_marks',
     'agent_grants', 'agent_schedules', 'agent_commands',
-    'institutional_memory_jobs', 'github_installations', 'github_repositories',
+    'github_installations', 'github_repositories',
     'registry_mcp_oauth_attempts'
   ] LOOP
     IF NOT EXISTS (
@@ -295,6 +285,8 @@ interface LiveNotificationPayload {
   registryState?: string;
   registryConnectorId?: string;
   registryDueAt?: number;
+  /** Connection epoch an instance accepted for `agentId` (table `agent_connection`). */
+  epoch?: number;
 }
 
 function decodePayload(value: string | undefined): LiveNotificationPayload | undefined {
@@ -318,6 +310,7 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
       ...(typeof parsed.turnId === 'string' ? { turnId: parsed.turnId } : {}),
       ...(typeof parsed.kind === 'string' ? { kind: parsed.kind } : {}),
       ...(typeof parsed.observedAt === 'number' ? { observedAt: parsed.observedAt } : {}),
+      ...(typeof parsed.epoch === 'number' ? { epoch: parsed.epoch } : {}),
       ...(typeof parsed.ownerEpoch === 'string' ? { ownerEpoch: parsed.ownerEpoch } : {}),
       ...(typeof parsed.expiresAt === 'number' ? { expiresAt: parsed.expiresAt } : {}),
       ...(typeof parsed.traceId === 'string' ? { traceId: parsed.traceId } : {}),
@@ -374,8 +367,6 @@ export class PostgresLiveListener {
   private maxDeliveryAgeMs = 0;
   private readonly deliveryAgeBuckets = [0, 0, 0, 0, 0, 0];
   private needsProjectionResync = false;
-  private readonly memoryDue = new Map<string, { roomId: string; dueAt: number }>();
-  private memoryDueTimer?: NodeJS.Timeout;
   private readonly registryDue = new Map<string, { connectorId: string; dueAt: number }>();
   private registryDueTimer?: NodeJS.Timeout;
 
@@ -410,55 +401,6 @@ export class PostgresLiveListener {
       else this.registryDue.set(row.state, { connectorId: row.connector_id, dueAt });
     }
     this.scheduleRegistryDue();
-  }
-
-  private async pushMemoryJob(roomId: string): Promise<void> {
-    const members = await this.database.query<{ identity_id: string }>(
-      `SELECT identity_id FROM memberships WHERE room_id=$1 AND removed_at IS NULL`,
-      [roomId],
-    );
-    for (const member of members.rows)
-      this.live.publish({ type: 'invalidate', roomId, reason: 'memory-job',
-        targetAgentId: member.identity_id });
-  }
-
-  private scheduleMemoryDue(): void {
-    if (this.memoryDueTimer) clearTimeout(this.memoryDueTimer);
-    this.memoryDueTimer = undefined;
-    if (this.stopped || !this.memoryDue.size) return;
-    let dueAt = Number.POSITIVE_INFINITY;
-    for (const job of this.memoryDue.values()) dueAt = Math.min(dueAt, job.dueAt);
-    this.memoryDueTimer = setTimeout(() => {
-      this.memoryDueTimer = undefined;
-      const now = Date.now();
-      for (const [id, job] of this.memoryDue) {
-        if (job.dueAt > now) continue;
-        this.memoryDue.delete(id);
-        void this.pushMemoryJob(job.roomId).catch((error) =>
-          console.error('[live-listener] memory due notification failed', error));
-      }
-      this.scheduleMemoryDue();
-    }, Math.max(0, dueAt - Date.now()));
-    this.memoryDueTimer.unref?.();
-  }
-
-  private async restoreMemoryDue(): Promise<void> {
-    const rows = await this.database.query<{
-      id: string; source_room_id: string; due_at: Date;
-    }>(
-      `SELECT id,source_room_id,
-         CASE WHEN status='claimed' THEN lease_expires_at ELSE next_attempt_at END due_at
-       FROM institutional_memory_jobs WHERE status IN ('pending','retry','claimed')`,
-    );
-    this.memoryDue.clear();
-    for (const row of rows.rows) {
-      if (!row.due_at) continue;
-      const dueAt = row.due_at.getTime();
-      if (dueAt <= Date.now()) {
-        await this.pushMemoryJob(row.source_room_id);
-      } else this.memoryDue.set(row.id, { roomId: row.source_room_id, dueAt });
-    }
-    this.scheduleMemoryDue();
   }
 
   constructor(
@@ -583,7 +525,6 @@ export class PostgresLiveListener {
         await client.query(`LISTEN ${POSTGRES_LIVE_CHANNEL}`);
         this.connected = true;
         console.log('[live-listener] connected');
-        await this.restoreMemoryDue();
         await this.restoreRegistryDue();
         this.live.resync();
         await disconnected;
@@ -604,7 +545,6 @@ export class PostgresLiveListener {
   async stop(): Promise<void> {
     this.stopped = true;
     this.projectionQueue.length = 0;
-    if (this.memoryDueTimer) clearTimeout(this.memoryDueTimer);
     if (this.registryDueTimer) clearTimeout(this.registryDueTimer);
     await this.active?.end().catch(() => undefined);
   }
@@ -653,6 +593,7 @@ export class PostgresLiveListener {
             agentId: payload.agentId,
             status: row.body.status,
             observedAt: row.body.observedAt,
+            ...(row.body.held === true ? { held: true } : {}),
           });
         }
         return;
@@ -678,6 +619,13 @@ export class PostgresLiveListener {
       }
       return;
     }
+    if (payload.table === 'agent_connection' && payload.agentId && payload.epoch !== undefined) {
+      // Another instance accepted a newer helper connection for this agent.
+      this.live.publish({
+        type: 'agent-connection', roomId: '', agentId: payload.agentId, epoch: payload.epoch,
+      });
+      return;
+    }
     if (payload.table === 'agent_config' && payload.agentId) {
       // A phone-side model/effort selection change. The synthetic payload is
       // written by PhoneService with a direct pg_notify inside the selection
@@ -699,20 +647,6 @@ export class PostgresLiveListener {
         reason: 'connector-assignment',
         targetAgentId: payload.agentId,
       });
-      return;
-    }
-    if (payload.table === 'institutional_memory_jobs') {
-      if (payload.pending === true) await this.pushMemoryJob(payload.roomId);
-      if (payload.jobId) {
-        if (payload.dueAt && payload.dueAt > Date.now())
-          this.memoryDue.set(payload.jobId, { roomId: payload.roomId, dueAt: payload.dueAt });
-        else {
-          this.memoryDue.delete(payload.jobId);
-          if (payload.dueAt && payload.pending !== true)
-            await this.pushMemoryJob(payload.roomId);
-        }
-        this.scheduleMemoryDue();
-      }
       return;
     }
     if (payload.table === 'registry_mcp_oauth_attempts') {

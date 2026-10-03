@@ -4,6 +4,7 @@ import type {
   WorkflowGateRecordView,
   WorkflowOpenedCornerView,
   WorkflowRunDetailView,
+  WorkflowReceipt,
   WorkflowRunListResult,
   WorkflowRunStatus,
   WorkflowRunStepView,
@@ -358,6 +359,7 @@ type RunCardRow = {
   status: WorkflowRunStepView['status'] | null;
   reassigned: boolean;
   contents: Record<string, unknown> | null;
+  receipt: WorkflowReceipt | null;
   role_bindings: Record<string, string> | null;
   created_at: Date;
   created_us: string;
@@ -517,7 +519,7 @@ export async function readWorkflowRun(
               COALESCE((message.card->>'reassigned')::boolean,false) reassigned,
               CASE WHEN jsonb_typeof(message.card->'contents')='object'
                 THEN message.card->'contents' END contents,
-              message.card->'roleBindings' role_bindings,
+              message.card->'receipt' receipt,message.card->'roleBindings' role_bindings,
               message.created_at,${MICROS('message.created_at')} created_us,
               author.id author_id,author.name author_name,
               author.kind author_kind,message.card->>'workflowSlug' workflow_slug
@@ -561,6 +563,7 @@ export async function readWorkflowRun(
       actor: { id: card.author_id, name: card.author_name, kind: card.author_kind },
       at: unix(card.created_at),
       ...(card.contents ? { contents: card.contents } : {}),
+      ...(card.receipt ? { receipt: card.receipt } : {}),
       ...(gate ? { gate } : {}),
       ...(opened ? { openedCorners: opened } : {}),
     };

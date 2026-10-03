@@ -58,6 +58,13 @@ function workflowRunShims(mobile: string, detail: unknown): Record<string, strin
 
 type Proof = {
   text: string[];
+  overview: boolean;
+  earlier: boolean;
+  summary: string | null;
+  exits: Record<string, string>;
+  receipts: string[];
+  refs: string[];
+  overflow: boolean;
   eyebrowFont: string | null;
   titleFont: string | null;
   circles: Record<string, string>;
@@ -70,13 +77,13 @@ type Proof = {
   pushed: unknown[];
 };
 
-async function proof(detail: unknown, query: string): Promise<Proof> {
+async function proof(detail: unknown, query: string, width = 390): Promise<Proof> {
   const mobile = process.cwd();
   const { result, status, stderr } = await runBrowserProof({
     entry: path.join(mobile, 'scripts/workflow-run-proof.tsx'),
     mobile,
     shims: workflowRunShims(mobile, detail),
-    width: 390,
+    width,
     query,
   });
   expect(status, stderr).toBe(0);
@@ -119,8 +126,12 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
       ],
     );
     const page = await proof(detail, '?eyebrow=Issues%20triage&title=Feedback%20triage&expand=pull');
-    // The same title role as the corner, with the run number beside it.
-    expect(page.text.slice(0, 3)).toEqual(['Issues triage', 'Feedback triage', '#14']);
+    // The same title role as the corner, with no previous-run count.
+    expect(page.text.slice(0, 2)).toEqual(['Issues triage', 'Feedback triage']);
+    expect(page).toMatchObject({ overview: false, earlier: false, summary: null, receipts: [] });
+    expect(page.text).not.toContain('#14');
+    expect(page.exits['approve-exits']).toBe('Exits: dispatch → Dispatch · skip → Done');
+    expect(page.exits['pull-exit']).toBe('→ Approve via ranked · Candy');
     expect(page).toMatchObject({
       eyebrowFont: '13px SpaceGrotesk-Regular',
       titleFont: '16px SpaceGrotesk-SemiBold',
@@ -232,8 +243,8 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
       'done-above-dashed',
     ]);
     expect(page.labels).toEqual([
-      'Notify, done, Candy · notified',
-      'Pull, done, Candy · nothing new',
+      'Notify, done, Candy',
+      'Pull, done, Candy',
       'Approve, skipped, Skipped · Pull: nothing new',
       'Dispatch, skipped, Skipped · Pull: nothing new',
       'Done, done, Ended by Pull',
@@ -299,12 +310,6 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
       'asked',
       'feedback-triage: approve',
       '5',
-      'option A',
-      'dispatch · go to dispatch',
-      '6',
-      'option B',
-      'skip · go to done',
-      '7',
       'answer',
       expect.stringMatching(/^dispatch · Owner · \d\d:\d\d:\d\d/),
     ]);
@@ -323,4 +328,45 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
       },
     ]);
   }, 120_000);
+
+  it('Reproduction 517: one rail, optional summary and generic receipt chips at phone and desktop widths', async () => {
+    const detail = {
+      run: { runId: 'run-1', workflowSlug: 'research', description: 'Research and review',
+        roomId: 'corner-2', roomName: 'Research', state: 'review', status: 'live', viewerHolds: false,
+        holder: candy, startedAt: STARTED, updatedAt: STARTED + 10, earlierRunCount: 17 },
+      contract: { version: 1, name: 'research', description: 'Research and review',
+        summary: 'Collect evidence, then review the result.', roles: ['analyst'], start: 'collect',
+        handoffs: {
+          collect: { role: 'analyst', requires: [], on: { collected: 'review' } },
+          review: { role: 'analyst', requires: [], on: { approved: 'done', rejected: 'failed' } },
+          done: { kind: 'terminal', status: 'done' }, failed: { kind: 'terminal', status: 'failed' },
+        } },
+      history: [
+        { toState: 'collect', actor: candy, at: STARTED },
+        { fromState: 'collect', outcome: 'collected', toState: 'review', actor: candy, at: STARTED + 10,
+          receipt: { line: 'Collected the indicators.', refs: [
+            { kind: 'brief', label: 'Research brief', url: 'https://beeline.test/brief' },
+            { kind: 'file', label: 'Indicators', url: 'https://beeline.test/indicators' },
+            { kind: 'memory', label: 'Prior study', url: 'https://beeline.test/memory' },
+          ], exit: { gate: 'collected', actorId: candy.id } } },
+      ], roleHolders: { analyst: candy },
+    };
+    for (const width of [390, 1440]) {
+      const page = await proof(detail, '?expand=collect', width);
+      expect(page).toMatchObject({ overview: false, earlier: false, overflow: false,
+        summary: detail.contract.summary });
+      expect(Object.keys(page.circles)).toEqual(['collect', 'review', 'done']);
+      expect(page.exits).toEqual({ 'collect-exit': '→ Review via collected · Candy',
+        'review-exits': 'Exits: approved → Done · rejected → Failed' });
+      expect(page.text).toContain('Collected the indicators.');
+      expect(page.refs).toHaveLength(3);
+      expect(page.refs).toEqual(expect.arrayContaining([
+        'workflow-run-line-step-collect-ref-brief-0',
+        'workflow-run-line-step-collect-ref-file-1',
+        'workflow-run-line-step-collect-ref-memory-2',
+      ]));
+      expect(page.expanded).toEqual(expect.arrayContaining(['entered', 'left']));
+    }
+  }, 120_000);
+
 });

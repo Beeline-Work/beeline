@@ -31,7 +31,7 @@ const CARD = 'e'.repeat(64);
 
 let database: PgliteDatabase;
 
-const liveConfig = { enabled: true, dailyJobLimit: 20, leaseMs: 60_000, live: true } as const;
+const liveConfig = { enabled: true, live: true } as const;
 
 function liveDaemon() {
   return new DaemonService(

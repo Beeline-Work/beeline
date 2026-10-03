@@ -30,7 +30,7 @@ const MESSAGE = 'd'.repeat(64);
 
 let database: PgliteDatabase;
 
-const liveConfig = { enabled: true, dailyJobLimit: 20, leaseMs: 60_000, live: true } as const;
+const liveConfig = { enabled: true, live: true } as const;
 
 function liveDaemon() {
   return new DaemonService(
@@ -145,7 +145,7 @@ describe('search_memory recall (institutional memory)', () => {
     await openCommand('cake-order-turn', 'cake-order-generation');
 
     const saved = await daemon.execute(
-      'proposeInstitutionalMemory',
+      'saveInstitutionalMemory',
       {
         agentId: RONNIE,
         roomId: ROOM,
@@ -156,9 +156,8 @@ describe('search_memory recall (institutional memory)', () => {
         body: "Daeun's Tokyo delivery address is Motoazabu Hills 3-2-1 #402, phone 03-4700-2210, email daeun.lee@example.com.",
         keywords: ['wife', 'tokyo', 'delivery', 'address'],
         sourceMessageIds: [MESSAGE],
-        correction: false,
+        personAsked: false,
         confidence: 0.9,
-        cas: { baseVersion: null },
       },
       RONNIE,
     );
@@ -218,7 +217,7 @@ describe('search_memory recall (institutional memory)', () => {
     const daemon = liveDaemon();
     await openCommand('cake-order-turn', 'cake-order-generation');
     const saved = await daemon.execute(
-      'proposeInstitutionalMemory',
+      'saveInstitutionalMemory',
       {
         agentId: RONNIE,
         roomId: ROOM,
@@ -229,9 +228,8 @@ describe('search_memory recall (institutional memory)', () => {
         body: 'Daeun receives deliveries at Motoazabu Hills 3-2-1 #402 in Tokyo.',
         keywords: ['daeun', 'motoazabu', 'delivery'],
         sourceMessageIds: [MESSAGE],
-        correction: false,
+        personAsked: false,
         confidence: 0.9,
-        cas: { baseVersion: null },
       },
       RONNIE,
     );
@@ -262,7 +260,7 @@ describe('search_memory recall (institutional memory)', () => {
     const daemon = liveDaemon();
     await openCommand('cake-order-turn', 'cake-order-generation');
     const saved = await daemon.execute(
-      'proposeInstitutionalMemory',
+      'saveInstitutionalMemory',
       {
         agentId: RONNIE,
         roomId: ROOM,
@@ -273,9 +271,8 @@ describe('search_memory recall (institutional memory)', () => {
         body: '다은 주소는 서울시 강남구에 있습니다.',
         keywords: ['korean', 'address'],
         sourceMessageIds: [MESSAGE],
-        correction: false,
+        personAsked: false,
         confidence: 0.9,
-        cas: { baseVersion: null },
       },
       RONNIE,
     );
@@ -297,7 +294,7 @@ describe('search_memory recall (institutional memory)', () => {
     const daemon = liveDaemon();
     await openCommand('cake-order-turn', 'cake-order-generation');
     const saved = await daemon.execute(
-      'proposeInstitutionalMemory',
+      'saveInstitutionalMemory',
       {
         agentId: RONNIE,
         roomId: ROOM,
@@ -308,9 +305,8 @@ describe('search_memory recall (institutional memory)', () => {
         body: '受取人: ダウン 電話: 03-4700-2210 元麻布のマンション',
         keywords: ['japan', 'address'],
         sourceMessageIds: [MESSAGE],
-        correction: false,
+        personAsked: false,
         confidence: 0.9,
-        cas: { baseVersion: null },
       },
       RONNIE,
     );
@@ -334,7 +330,7 @@ describe('search_memory recall (institutional memory)', () => {
     const daemon = liveDaemon();
     await openCommand('cake-order-turn', 'cake-order-generation');
     const saved = await daemon.execute(
-      'proposeInstitutionalMemory',
+      'saveInstitutionalMemory',
       {
         agentId: RONNIE,
         roomId: ROOM,
@@ -345,9 +341,8 @@ describe('search_memory recall (institutional memory)', () => {
         body: 'Daeun 住所: 東京都港区元麻布',
         keywords: ['daeun', 'address'],
         sourceMessageIds: [MESSAGE],
-        correction: false,
+        personAsked: false,
         confidence: 0.9,
-        cas: { baseVersion: null },
       },
       RONNIE,
     );
@@ -425,7 +420,7 @@ describe('search_memory hybrid vector recall (no shared words)', () => {
 
   async function saveDaeunFactWithoutWifeWord(daemon: DaemonService) {
     return daemon.execute(
-      'proposeInstitutionalMemory',
+      'saveInstitutionalMemory',
       {
         agentId: RONNIE,
         roomId: ROOM,
@@ -436,9 +431,8 @@ describe('search_memory hybrid vector recall (no shared words)', () => {
         body: "Daeun's Tokyo residence is Motoazabu Hills 3-2-1 #402, phone 03-4700-2210.",
         keywords: ['daeun', 'tokyo', 'residence', 'address'],
         sourceMessageIds: [MESSAGE],
-        correction: false,
+        personAsked: false,
         confidence: 0.9,
-        cas: { baseVersion: null },
       },
       RONNIE,
     );
@@ -551,7 +545,7 @@ describe('search_memory hybrid vector recall (no shared words)', () => {
 
     // A stale copy in THIS workspace that would otherwise win by concept.
     const staleFact = await daemon.execute(
-      'proposeInstitutionalMemory',
+      'saveInstitutionalMemory',
       {
         agentId: RONNIE,
         roomId: ROOM,
@@ -562,9 +556,8 @@ describe('search_memory hybrid vector recall (no shared words)', () => {
         body: 'Daeun used to reside at a different address.',
         keywords: ['daeun', 'residence'],
         sourceMessageIds: [MESSAGE],
-        correction: false,
+        personAsked: false,
         confidence: 0.9,
-        cas: { baseVersion: null },
       },
       RONNIE,
     );

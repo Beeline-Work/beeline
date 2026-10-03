@@ -6,25 +6,39 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
-  bootstrapLaunchdAgentService,
-  installLaunchdAgentService,
-  launchdAgentJobStatus,
-  launchdAgentLabel,
+  LAUNCHD_HELPER_LABEL,
+  installLaunchdHelperService,
+  launchdHelperPlistPath,
   launchdUserDomain,
 } from './launchd.js';
+import { NO_AGENTS_EXIT_STATUS } from './systemd.js';
 
 const run = promisify(execFile);
 const enabled = process.platform === 'darwin' && process.env.BEELINE_LAUNCHD_ACCEPTANCE === '1';
 
 /**
- * A fixed label, not one derived from this run's tmpdir: a cancelled run (the
- * job has its own timeout) leaves a real bootstrapped job behind whose files are
- * gone, and only a stable label lets the next run's `bootoutIfLoaded` reclaim it.
- * The temp HOME keeps the plist away from any paired agent.
+ * The helper job has one fixed label, so a cancelled run's leftover job is the
+ * one the next run reclaims. The temp HOME keeps the plist and wrapper away from
+ * a real install; only run this where no real Beeline helper is loaded.
  */
-const publicKey = 'ac'.repeat(32);
+const label = LAUNCHD_HELPER_LABEL;
 
-describe.runIf(enabled)('isolated launchd supervision acceptance', () => {
+/** launchd's own view of the job, read the way `launchd.ts` reads it. */
+async function jobStatus(target: string): Promise<{ state: string; pid: number; lastExitStatus?: number }> {
+  try {
+    const { stdout } = await run('launchctl', ['print', target]);
+    const exited = Number(stdout.match(/^\s*last exit (?:status|code)\s*=\s*(-?\d+)\s*$/m)?.[1] ?? 'x');
+    return {
+      state: stdout.match(/^\s*state\s*=\s*([^\n]+)$/m)?.[1]?.trim() ?? '',
+      pid: Number(stdout.match(/^\s*pid\s*=\s*(\d+)\s*$/m)?.[1] ?? '0'),
+      ...(Number.isSafeInteger(exited) ? { lastExitStatus: exited } : {}),
+    };
+  } catch {
+    return { state: 'unloaded', pid: 0 };
+  }
+}
+
+describe.runIf(enabled)('isolated launchd supervision acceptance for the machine helper', () => {
   let root = '';
   let home = '';
   let target = '';
@@ -35,7 +49,7 @@ describe.runIf(enabled)('isolated launchd supervision acceptance', () => {
     root = await mkdtemp(resolve(tmpdir(), 'beeline-launchd-acceptance-'));
     home = resolve(root, 'home');
     stateRoot = resolve(root, 'state');
-    target = `${launchdUserDomain()}/${launchdAgentLabel(publicKey)}`;
+    target = `${launchdUserDomain()}/${label}`;
     const bin = resolve(home, '.local', 'bin');
     const lib = resolve(home, '.local', 'lib', 'beeline');
     await mkdir(bin, { recursive: true });
@@ -53,7 +67,7 @@ test ! -f "$count_file" || count=$(cat "$count_file")
 count=$((count + 1))
 printf '%s\n' "$$" > "$child_file"
 printf '%s\n' "$count" > "$count_file"
-test "$(cat "$mode_file")" != terminal || exit 78
+test "$(cat "$mode_file")" != terminal || exit ${NO_AGENTS_EXIT_STATUS}
 trap 'exit 0' TERM INT
 while :; do sleep 1; done
 `,
@@ -63,7 +77,8 @@ while :; do sleep 1; done
     const invocationPath = resolve(lib, 'lib', 'beeline', 'beeline-cli.mjs');
     await writeFile(invocationPath, 'acceptance fixture\n');
     env = { HOME: home, BEELINE_LIB_DIR: lib };
-    await installLaunchdAgentService(publicKey, { env, invocationPath, waitTimeoutMs: 15_000 });
+    await run('launchctl', ['bootout', target]).catch(() => undefined);
+    await installLaunchdHelperService({ env, invocationPath, waitTimeoutMs: 15_000 });
     await waitForCountGreaterThan(0);
   }, 40_000);
 
@@ -91,7 +106,7 @@ while :; do sleep 1; done
       // A bare count assertion cannot say whether launchd refused the job, left
       // it stopped, or started it and had it die, and that is the whole
       // difference between a supervision bug and a fixture bug.
-      const status = await launchdAgentJobStatus(publicKey, { env });
+      const status = await jobStatus(target);
       throw new Error(
         `launchd did not reach start #${previous + 1} within 20s: ` +
           `state=${status.state || 'unknown'} pid=${status.pid} ` +
@@ -119,12 +134,10 @@ while :; do sleep 1; done
     for (;;) {
       await run('launchctl', ['bootout', target]).catch(() => undefined);
       await sleep(250);
-      if ((await launchdAgentJobStatus(publicKey, { env })).state === 'unloaded') break;
-      if (Date.now() >= deadline) {
-        throw new Error(`launchd never removed ${launchdAgentLabel(publicKey)} after bootout`);
-      }
+      if ((await jobStatus(target)).state === 'unloaded') break;
+      if (Date.now() >= deadline) throw new Error(`launchd never removed ${label} after bootout`);
     }
-    await bootstrapLaunchdAgentService(publicKey, { env });
+    await run('launchctl', ['bootstrap', launchdUserDomain(), launchdHelperPlistPath(env)]);
   }
 
   it('restarts after a crash and is loaded again at the next login bootstrap', async () => {
@@ -137,7 +150,7 @@ while :; do sleep 1; done
     await waitForCountGreaterThan(afterCrash);
   }, 60_000);
 
-  it('does not restart a deliberate terminal status', async () => {
+  it('does not restart a helper that found no agent to host', async () => {
     // Both tests run in one process against one job, so this one re-establishes
     // a loaded, running daemon rather than inheriting it: a bootstrap failure
     // above must read as that failure, not as an unexplained timeout here.

@@ -331,12 +331,13 @@ describe('prompt assembly guards', () => {
     expect(skill).toContain('reviewed head SHA');
   });
 
-  it('keeps Workbench tools out of corners, which do not have them', () => {
+  it('documents Workbench discovery and connection in every agent turn', () => {
     for (const [name, context] of Object.entries(SESSION_VARIANTS)) {
       const text = assembleSessionPrompt(context).systemPrompt;
-      if (context.surface === 'room' || context.surface === 'dm')
-        expect(text, name).toContain('workbench_status');
-      else expect(text, name).not.toMatch(/workbench_status|connect_app|offer_connector/);
+      expect(text, name).toContain('workbench_status');
+      expect(text, name).toContain('connect_app');
+      if (context.surface.includes('corner'))
+        expect(text, name).toContain('connect_app starts sign-in here');
     }
   });
 
@@ -386,6 +387,23 @@ describe('prompt assembly guards', () => {
   it('puts the trigger in the prompt once', () => {
     const turn = assembleTurnPrompt(TURN_VARIANTS['room-turn']!).text;
     expect(turn.split('Why did the release migration fail?')).toHaveLength(2);
+  });
+
+  it('gives both corner lanes sibling steer context without Room question instructions', () => {
+    for (const surface of ['code-corner', 'no-code-corner', 'review-corner'] as const) {
+      const session = assembleSessionPrompt({ surface, agentName: 'Bee' }).systemPrompt;
+      expect(session).toContain('Use steer_corner during a turn');
+      expect(session).toContain('Membership alone grants no turn');
+      const turn = assembleTurnPrompt({
+        surface,
+        corners: [{ cornerId: 'sibling-id', parentRoomId: 'room-id', objective: 'Other work' }],
+        task: { body: 'Steer the sibling' },
+      }).text;
+      expect(turn).toContain('sibling-id');
+      expect(turn).toContain('steer_corner for a sibling under this parent Room');
+      expect(turn).not.toContain('ask_corner');
+      expect(turn).not.toContain('inspect_corner');
+    }
   });
 });
 

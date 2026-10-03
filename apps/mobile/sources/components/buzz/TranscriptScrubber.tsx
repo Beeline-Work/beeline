@@ -118,7 +118,8 @@ const styles = StyleSheet.create((theme) => {
       top: 0,
       right: 0,
       bottom: 0,
-      width: SCRUBBER_STRIP_WIDTH,
+      // The date bubble needs the transcript's width to size to its text.
+      left: 0,
     },
     grab: {
       position: 'absolute',

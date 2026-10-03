@@ -178,7 +178,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 17;
+export const REQUIRED_SCHEMA_VERSION = 18;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -1088,7 +1088,7 @@ CREATE TABLE IF NOT EXISTS institutional_memory_items (
   content_hash text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
-  last_served_at timestamptz,
+  last_used_at timestamptz,
   deleted_at timestamptz,
   CONSTRAINT institutional_memory_items_body_check CHECK (
     (deleted_at IS NULL AND octet_length(convert_to(body,'UTF8')) BETWEEN 1 AND 4000) OR
@@ -1116,6 +1116,9 @@ ALTER TABLE institutional_memory_items
   FOREIGN KEY (created_by_job_id) REFERENCES institutional_memory_jobs(id) ON DELETE SET NULL;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS created_by_command_id text;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS explicit_save boolean NOT NULL DEFAULT false;
+-- An item's age resets only on save, update, or an end-of-turn used report
+-- (last_used_at); being loaded into a snapshot no longer counts as use.
+ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS last_used_at timestamptz;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS curated_at timestamptz;
 -- Only a keyword match loads an item into a turn. Rows saved before keywords
@@ -1493,6 +1496,26 @@ CREATE TABLE IF NOT EXISTS live_outputs (
 );
 
 CREATE INDEX IF NOT EXISTS live_outputs_agent_presence ON live_outputs(agent_id,updated_at DESC) WHERE kind='presence';
+
+-- One row per agent: the newest live connection a helper holds for it. The
+-- epoch only grows, so a late close of an older socket (on any server
+-- instance) can never release a newer connection.
+CREATE TABLE IF NOT EXISTS agent_connections (
+  agent_id text PRIMARY KEY,
+  epoch bigint NOT NULL,
+  connection_id text NOT NULL,
+  instance_id text NOT NULL,
+  connected_at timestamptz NOT NULL DEFAULT now(),
+  released_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS agent_connections_held ON agent_connections(instance_id) WHERE released_at IS NULL;
+
+-- Each server instance renews its own row; an instance that stops renewing
+-- releases the connections it held, so a crashed server's agents go offline.
+CREATE TABLE IF NOT EXISTS live_server_instances (
+  instance_id text PRIMARY KEY,
+  renewed_at timestamptz NOT NULL DEFAULT now()
+);
 
 CREATE TABLE IF NOT EXISTS room_read_marks (
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,

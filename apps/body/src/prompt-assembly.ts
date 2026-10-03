@@ -50,8 +50,8 @@ const EVERYWHERE: readonly PromptSurface[] = PROMPT_SURFACES;
  * replace or shorten one.
  */
 export const CORE_BUDGET_BYTES = 2_300;
-/** Ceiling for one surface's own rules, on top of the core. A code corner uses ~3.9 KB. */
-export const SURFACE_BUDGET_BYTES = 4_000;
+/** Ceiling for one surface's own rules, on top of the core. A code corner uses ~4.1 KB. */
+export const SURFACE_BUDGET_BYTES = 4_120;
 
 /**
  * Whether this session can run shell commands, and why not when it cannot.
@@ -161,6 +161,12 @@ export function isPlaceholderCornerBrief(brief: CornerBrief): boolean {
  *  miss is never sufficient grounds to tell someone a fact was never stored. */
 export const SEARCH_MEMORY_FIRST_RULE =
   'Call this before telling anyone a fact was never saved, or asking them for information they may already have given you. Meaning-based matching often finds it even when this turn shares no words with how it was originally phrased.';
+
+/** The agent's own memory upkeep, stated in the save_memory tool description
+ *  (`read-only-mcp.ts`). No background review exists: what the answering agent
+ *  does not keep current, nothing does. */
+export const MEMORY_UPKEEP_RULE =
+  'Before saving, call search_memory. If the fact is already saved, do not save it again. If a saved item is out of date, update_memory it instead of deleting and saving again. delete_memory any item this turn proves wrong, duplicate, or obsolete. Before ending the turn, report_memory_used the items your answer relied on.';
 
 const handle = (value: string): string => value.replace(/^@/, '');
 
@@ -311,7 +317,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
   {
     id: 'core.feedback',
     topic: 'feedback',
-    why: 'Turn-end memory extraction never sees tool errors or refusals, so friction in Beeline itself is lost unless the agent that hit it reports it in the turn.',
+    why: 'Nothing reviews a turn after it ends, so friction in Beeline itself is lost unless the agent that hit it reports it in the turn.',
     budgetBytes: 260,
     layer: 'core',
     surfaces: EVERYWHERE,
@@ -331,12 +337,13 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
   {
     id: 'surface.tools',
     topic: 'tools',
-    why: 'Agents said a tool was missing without checking, while a forced check on every request cost a tool call every turn. Corners have none of these tools.',
+    why: 'Agents need app discovery before use in every turn; connector offers remain in Rooms and DMs.',
     budgetBytes: 240,
     layer: 'surface',
-    surfaces: ['room', 'dm'],
-    render: () =>
-      'When you need a tool you do not have, call workbench_status; offer_connector the tool it lists, otherwise call connect_app for the app.',
+    surfaces: EVERYWHERE,
+    render: ({ surface }) => surface === 'room' || surface === 'dm'
+      ? 'When you need a tool you do not have, call workbench_status; offer_connector the tool it lists, otherwise call connect_app for the app.'
+      : 'In corners, workbench_status discovers apps; connect_app starts sign-in here. Connector offers stay in Rooms and DMs.',
   },
 
   // --- Room ----------------------------------------------------------------
@@ -411,6 +418,16 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
   },
 
   // --- Corners -------------------------------------------------------------
+  {
+    id: 'corner.steering',
+    topic: 'corner-steering',
+    why: 'Active corner turns can steer member siblings without borrowing parent Room authority.',
+    budgetBytes: 160,
+    layer: 'surface',
+    surfaces: ['code-corner', 'no-code-corner', 'review-corner'],
+    render: () =>
+      'Use steer_corner during a turn to send input to a member sibling under this parent. Membership alone grants no turn.',
+  },
   {
     id: 'corner.worktree',
     topic: 'place',
@@ -714,16 +731,16 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
   {
     id: 'turn.corners',
     topic: 'corners',
-    why: 'Room agents need exact corner ids to inspect, steer, or ask their corners.',
+    why: 'Room and corner agents need exact member corner ids for supported relay actions.',
     budgetBytes: 8_000,
     layer: 'turn',
-    surfaces: ['room'],
-    render: ({ corners, closedCorners }) =>
+    surfaces: ['room', 'code-corner', 'no-code-corner', 'review-corner'],
+    render: ({ surface, corners, closedCorners }) =>
       [
         corners?.length
-          ? `Current corners you belong to (use the exact cornerId with inspect_corner, steer_corner, or ask_corner):\n${JSON.stringify(corners)}`
+          ? `Current corners you belong to (use the exact cornerId with ${surface === 'room' ? 'inspect_corner, steer_corner, or ask_corner' : 'steer_corner for a sibling under this parent Room'}):\n${JSON.stringify(corners)}`
           : '',
-        closedCorners?.length
+        surface === 'room' && closedCorners?.length
           ? `Corners you belong to closed in the last 24 hours (merge commit is unavailable when absent):\n${closedCorners
               .map(
                 (corner) =>

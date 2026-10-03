@@ -31,7 +31,8 @@ const WORKSPACE_HOST_AVAILABLE_SQL = `EXISTS (
       ON presence.agent_id=member.identity_id AND presence.kind='presence'
     WHERE member.workspace_id=$1 AND member.room_id IS NULL AND member.removed_at IS NULL
       AND presence.body->>'status'='online'
-      AND presence.updated_at>=$2::timestamptz-interval '${DELIVERY_PICKUP_WINDOW_MS} milliseconds'
+      AND (presence.body->>'held'='true'
+        OR presence.updated_at>=$2::timestamptz-interval '${DELIVERY_PICKUP_WINDOW_MS} milliseconds')
   )`;
 
 /** Seconds since `anchor` in which no authorized helper host was available. */
@@ -49,7 +50,8 @@ function agedBeyondSql(anchor: string, days: string): string {
             -${unavailableSecondsSql(anchor)}>=(${days})::integer*86400`;
 }
 
-const ITEM_AGE_ANCHOR = `GREATEST(item.updated_at,COALESCE(item.last_served_at,item.updated_at))`;
+/** Only a save, an update (a new row), or an end-of-turn used report resets an item's age. */
+const ITEM_AGE_ANCHOR = `GREATEST(item.updated_at,COALESCE(item.last_used_at,item.updated_at))`;
 
 /**
  * Sample whether an authorized helper host can serve this Workspace and record
@@ -563,13 +565,14 @@ async function deterministicLifecycle(
   staleSkills: number;
   archivedSkills: number;
 }> {
-  // Only what an agent saved on its own ages out. A fact someone asked to
-  // keep (explicit_save) never expires; it changes only when corrected.
+  // Only a Workspace fact an agent saved on its own ages out. Profile facts
+  // and standing orders (explicit_save) never expire; they change only when
+  // corrected or deleted.
   const staleItems = await database.query(
     `UPDATE institutional_memory_items item
      SET state='stale',body='',deleted_at=$2,updated_at=$2
      WHERE item.workspace_id=$1 AND item.state='active' AND item.deleted_at IS NULL
-       AND NOT item.explicit_save
+       AND item.kind='workspace_fact' AND NOT item.explicit_save
        AND ${agedBeyondSql(ITEM_AGE_ANCHOR, '$3')}`,
     [workspaceId, now, expireAfterDays],
   );

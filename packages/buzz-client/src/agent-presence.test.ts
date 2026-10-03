@@ -23,6 +23,14 @@ describe('durable agent presence', () => {
     expect(isAgentPresenceOnline({ ...online, status: 'offline' }, 1_000_000)).toBe(false);
   });
 
+  it('keeps presence held by a live helper connection online past the horizon', () => {
+    const held = { ...online, held: true };
+    expect(isAgentPresenceOnline(held, 1_000_000 + AGENT_PRESENCE_STALE_MS * 100)).toBe(true);
+    expect(resolveAgentPresenceTier(held, 1_000_000 + AGENT_PRESENCE_DORMANT_MS * 2)).toBe('online');
+    // The connection ended: the server says offline, and offline wins.
+    expect(isAgentPresenceOnline({ ...held, status: 'offline' }, 1_000_000)).toBe(false);
+  });
+
   it('lets explicit offline win a same-second tie and rejects stale replay', () => {
     expect(newerAgentPresence(online, { ...online, status: 'offline' }).status).toBe('offline');
     expect(newerAgentPresence(online, { ...online, observedAt: 999 })).toBe(online);

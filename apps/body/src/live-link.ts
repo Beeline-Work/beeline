@@ -2,12 +2,14 @@ import type { IncomingMessage } from 'node:http';
 import WebSocket from 'ws';
 
 /**
- * The helper's one live socket to the server.
+ * The helper machine's one live socket to the server.
  *
  * The socket is disposable: any failed or silent connection is dropped and a
  * new one is opened after backoff, with no limit on attempts. Nothing here
  * reads from the server on a timer; the only timers are the reconnect backoff,
- * the handshake deadline, and the pong deadline of a socket already suspected.
+ * the handshake deadline, the pong deadline of a socket already suspected,
+ * and the heartbeat deadline: the server pings every open socket, and one
+ * that hears no ping for `heartbeatTimeoutMs` is dead even if it looks open.
  *
  *   disconnected → connecting → open ⇄ suspect
  *   any state → update-required (terminal: never reconnects)
@@ -33,6 +35,8 @@ export interface LiveLinkTiming {
   stableCloseJitterMs: number;
   /** TCP keepalive finds an idle, silently dead socket without server traffic. */
   keepAliveDelayMs: number;
+  /** An open socket that receives no server ping for this long is dropped. */
+  heartbeatTimeoutMs: number;
 }
 
 export const LIVE_LINK_TIMING: Readonly<LiveLinkTiming> = Object.freeze({
@@ -43,6 +47,7 @@ export const LIVE_LINK_TIMING: Readonly<LiveLinkTiming> = Object.freeze({
   stableSocketMs: 30_000,
   stableCloseJitterMs: 10_000,
   keepAliveDelayMs: 5 * 60_000,
+  heartbeatTimeoutMs: 75_000,
 });
 
 const NETWORK_ERROR_CODES = new Set([
@@ -95,6 +100,7 @@ export class LiveLink {
   #retryAfterMs = 0;
   #reconnect: ReturnType<typeof setTimeout> | undefined;
   #pongDeadline: ReturnType<typeof setTimeout> | undefined;
+  #heartbeatDeadline: ReturnType<typeof setTimeout> | undefined;
   #wanted = false;
   #updateAnnounced = false;
   #reconnects = 0;
@@ -205,6 +211,24 @@ export class LiveLink {
     this.#reconnect = undefined;
     clearTimeout(this.#pongDeadline);
     this.#pongDeadline = undefined;
+    clearTimeout(this.#heartbeatDeadline);
+    this.#heartbeatDeadline = undefined;
+  }
+
+  /**
+   * (Re)start the wait for the server's next ping. An idle helper performs no
+   * operation that could notice a dead path, so the server's own heartbeat is
+   * the only signal: no ping in time means the socket is gone.
+   */
+  #armHeartbeat(socket: WebSocket): void {
+    clearTimeout(this.#heartbeatDeadline);
+    this.#heartbeatDeadline = setTimeout(() => {
+      this.#heartbeatDeadline = undefined;
+      if (this.#socket !== socket) return;
+      console.warn('[live-link] no server heartbeat; dropping the socket and reconnecting');
+      socket.terminate();
+    }, this.#timing.heartbeatTimeoutMs);
+    this.#heartbeatDeadline.unref?.();
   }
 
   #connect(): void {
@@ -245,6 +269,9 @@ export class LiveLink {
       });
       response.on('close', () => socket.terminate());
     });
+    socket.on?.('ping', () => {
+      if (this.#socket === socket && this.isOpen()) this.#armHeartbeat(socket);
+    });
     socket.on?.('pong', () => {
       if (this.#socket !== socket || this.#state !== 'suspect') return;
       clearTimeout(this.#pongDeadline);
@@ -255,6 +282,7 @@ export class LiveLink {
       if (this.#socket !== socket) return;
       this.#state = 'open';
       this.#openedAt = this.#now();
+      this.#armHeartbeat(socket);
       this.options.onOpen();
       for (const listener of [...this.#openListeners]) {
         try {
@@ -273,6 +301,8 @@ export class LiveLink {
       this.#socket = undefined;
       clearTimeout(this.#pongDeadline);
       this.#pongDeadline = undefined;
+      clearTimeout(this.#heartbeatDeadline);
+      this.#heartbeatDeadline = undefined;
       const openedAt = this.#openedAt;
       this.#openedAt = undefined;
       if (this.#state !== 'update-required') this.#state = 'disconnected';

@@ -106,6 +106,7 @@ const cases: Case[] = [
       'parent',
       'briefing',
       'cornerPlan',
+      'cornerBrief',
       'repository',
       'cornerLifecycle',
       'members',
@@ -341,6 +342,53 @@ describe('phone surface readers', () => {
       .toBe('b'.repeat(64));
     expect(readRoomView({ ...currentRoom, cornerOpenerAgentId: 'invalid' })?.cornerOpenerAgentId)
       .toBeUndefined();
+  });
+
+  it('preserves a saved brief, its exact approval quote, and its files for the objective panel', () => {
+    const cornerBrief = {
+      revision: 2,
+      spec: '## Intent\n\n> Read the saved request\n\n## Checklist\n\n- Keep every detail',
+      approval: {
+        sourceMessageId: 'b'.repeat(64),
+        text: 'Keep this\n\nexact quote.',
+        approverName: 'Owner',
+      },
+      attachments: [
+        { title: 'Plan', purpose: 'Reference', required: true, url: 'https://example.com/plan' },
+      ],
+    };
+    expect(readRoomView({ ...currentRoom, cornerBrief })?.cornerBrief).toEqual(cornerBrief);
+    const { approval: _approval, ...legacy } = cornerBrief;
+    expect(readRoomView({ ...currentRoom, cornerBrief: legacy })?.cornerBrief).toEqual(legacy);
+    expect(readRoomView(currentRoom)?.cornerBrief).toBeUndefined();
+  });
+
+  it('contains malformed brief data without losing the Room or its valid spec', () => {
+    const cornerBrief = { revision: 1, spec: 'Saved spec', attachments: [] };
+    for (const invalid of [
+      null,
+      {},
+      { ...cornerBrief, revision: 0 },
+      { ...cornerBrief, revision: 1.5 },
+      { ...cornerBrief, spec: false },
+      { ...cornerBrief, attachments: {} },
+    ]) {
+      const view = readRoomView({ ...currentRoom, cornerBrief: invalid });
+      expect(view?.room.id).toBe(roomId);
+      expect(view?.cornerBrief).toBeUndefined();
+    }
+    expect(
+      readRoomView({
+        ...currentRoom,
+        cornerBrief: {
+          ...cornerBrief,
+          approval: { sourceMessageId: 'invalid', text: 'Quote', approverName: 'Owner' },
+          attachments: [
+            { title: 'Bad file', purpose: 'Reference', required: true, url: 'javascript:alert(1)' },
+          ],
+        },
+      })?.cornerBrief,
+    ).toEqual(cornerBrief);
   });
 
   it('keeps valid read-cursor counts and drops malformed turn counts', () => {

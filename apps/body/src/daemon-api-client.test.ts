@@ -108,12 +108,28 @@ describe('DaemonApiClient', () => {
       this.onopen?.();
     }
 
+    agentId?: string;
+
+    /** The fake server takes every agent that registers. */
     send(value: string): void {
       this.sent.push(value);
+      const frame = JSON.parse(value) as { type?: string; agentId?: string };
+      if (frame.type === 'register' && frame.agentId) {
+        this.agentId = frame.agentId;
+        this.onmessage?.({ data: JSON.stringify({ type: 'registered', agentId: frame.agentId }) });
+      }
     }
 
-    message(value: unknown): void {
-      this.onmessage?.({ data: JSON.stringify(value) });
+    /** A frame for the registered agent; machine-wide frames carry no agent. */
+    message(value: Record<string, unknown>): void {
+      const machineWide = ['force-update', 'helper-release', 'hello'].includes(String(value.type));
+      this.onmessage?.({
+        data: JSON.stringify(machineWide ? value : { ...value, agentId: this.agentId }),
+      });
+    }
+
+    terminate(): void {
+      this.close();
     }
 
     close(): void {
@@ -289,7 +305,15 @@ describe('DaemonApiClient', () => {
     first.open();
     expect(first.sent.map((value) => JSON.parse(value))).toEqual([
       {
+        type: 'register',
+        agentId: 'b'.repeat(64),
+        token: `bdt_${'y'.repeat(43)}`,
+        lifecycleId: expect.any(String),
+        releaseVersion: 'v0.0.0',
+      },
+      {
         type: 'subscribe',
+        agentId: 'b'.repeat(64),
         roomId: 'room-1',
         lifecycleId: expect.any(String),
         cursor: `1000,${'a'.repeat(64)}`,

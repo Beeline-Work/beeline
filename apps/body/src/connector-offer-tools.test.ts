@@ -23,14 +23,14 @@ function deps(
 }
 
 describe('beeline-agent workbench_status + offer_connector (R5)', () => {
-  it('are mounted in Rooms and direct messages, never in a corner', () => {
+  it('mounts discovery in every turn while connector offers stay in Rooms and DMs', () => {
     for (const directMessage of [false, true]) {
       const names = agentToolsFor(true, directMessage).map((tool) => tool.name);
       expect(names).toContain('workbench_status');
       expect(names).toContain('offer_connector');
     }
     const corner = agentToolsFor(true, false, true).map((tool) => tool.name);
-    expect(corner).not.toContain('workbench_status');
+    expect(corner).toContain('workbench_status');
     expect(corner).not.toContain('offer_connector');
     expect(agentToolsFor(false, false).map((tool) => tool.name)).not.toContain('offer_connector');
   });

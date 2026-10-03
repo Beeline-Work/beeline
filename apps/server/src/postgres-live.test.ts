@@ -2,7 +2,11 @@ import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { LiveHub, type LiveEvent } from './live.js';
-import { announceAgentLifecycle, ConnectionPresence } from './connection-presence.js';
+import {
+  announceAgentLifecycle,
+  claimAgentConnection,
+  ConnectionPresence,
+} from './connection-presence.js';
 import {
   notifyAgentConfigChange,
   notifyConnectorAssignment,
@@ -331,6 +335,29 @@ describe('Postgres live fanout', () => {
     ]);
   });
 
+  it('relays a newer helper connection epoch to every other server instance', async () => {
+    const agent = 'f'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [agent]);
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const received: LiveEvent[] = [];
+    live.subscribeAll((event) => received.push(event));
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    received.length = 0;
+
+    // Server A accepts the connection against its own hub; B learns through PostgreSQL.
+    const epoch = await claimAgentConnection(database, new LiveHub(), agent, { lifecycleId: 'life' }, {
+      connectionId: 'connection-a', instanceId: 'server-a',
+    });
+    await eventually(() => received.some((event) => event.type === 'agent-connection'));
+    expect(received.filter((event) => event.type === 'agent-connection')).toEqual([
+      { type: 'agent-connection', roomId: '', agentId: agent, epoch },
+    ]);
+  });
+
   it('delivers a membership change as an agent-directed invalidation', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
@@ -361,64 +388,6 @@ describe('Postgres live fanout', () => {
           event.roomId === freshRoom,
       ),
     );
-  });
-
-  it('pushes newly queued institutional memory work to the source Room', async () => {
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES($1,$2,$3,'member')`, [WORKSPACE, ROOM, AUTHOR],
-    );
-    const live = new LiveHub();
-    const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
-    listeners.push(listener);
-    const received: LiveEvent[] = [];
-    live.subscribe(ROOM, (event) => received.push(event));
-    void listener.run();
-    await eventually(() => client.listenerCount('notification') === 1);
-    await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'source')`,
-      ['f'.repeat(64), ROOM, AUTHOR],
-    );
-    received.length = 0;
-    await database.query(
-      `INSERT INTO institutional_memory_jobs
-       (id,workspace_id,trigger_kind,source_room_id,source_message_id,
-        requester_identity_id,source_audience_kind,idempotency_key)
-       VALUES($1,$2,'turn_review',$3,$4,$5,'workspace_candidate','memory-push-test')`,
-      ['33333333-3333-4333-8333-333333333333', WORKSPACE, ROOM, 'f'.repeat(64), AUTHOR],
-    );
-    await eventually(() => received.some((event) => event.type === 'invalidate' && event.reason === 'memory-job'));
-  });
-
-  it('pushes a retry when it becomes due without a helper claim timer', async () => {
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES($1,$2,$3,'member')`, [WORKSPACE, ROOM, AUTHOR],
-    );
-    const live = new LiveHub();
-    const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
-    listeners.push(listener);
-    const received: LiveEvent[] = [];
-    live.subscribe(ROOM, (event) => received.push(event));
-    void listener.run();
-    await eventually(() => client.listenerCount('notification') === 1);
-    await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'source')`,
-      ['e'.repeat(64), ROOM, AUTHOR],
-    );
-    received.length = 0;
-    await database.query(
-      `INSERT INTO institutional_memory_jobs
-       (id,workspace_id,trigger_kind,source_room_id,source_message_id,
-        requester_identity_id,source_audience_kind,idempotency_key,status,next_attempt_at)
-       VALUES($1,$2,'turn_review',$3,$4,$5,'workspace_candidate','memory-retry-push',
-         'retry',now()+interval '100 milliseconds')`,
-      ['44444444-4444-4444-8444-444444444444', WORKSPACE, ROOM, 'e'.repeat(64), AUTHOR],
-    );
-    expect(received.filter((event) => event.type === 'invalidate' && event.reason === 'memory-job')).toHaveLength(0);
-    await eventually(() => received.some((event) => event.type === 'invalidate' && event.reason === 'memory-job'));
   });
 
   it('pushes an expired Registry OAuth attempt when its server clock ends', async () => {

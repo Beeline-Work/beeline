@@ -2,7 +2,7 @@ import type { AgentGrantDecision, AgentGrantStatus } from './agent-grants.js';
 import type { ChoiceStatus, ChoiceOptionInput } from './room-choices.js';
 import type { AgentAccessPolicy } from './agent-access.js';
 import type { PushLevel } from './push-level.js';
-import type { WorkflowContract, WorkflowTerminalState } from './workflow-contracts.js';
+import type { WorkflowContract, WorkflowTerminalState, WorkflowReceipt } from './workflow-contracts.js';
 import type { GrantWalletDelegationInput, GrantWalletDelegationResult } from './wallet.js';
 import type {
   AgentModelSelection,
@@ -45,6 +45,9 @@ import type {
 export type {
   WorkflowContract,
   WorkflowLoop,
+  WorkflowReceipt,
+  WorkflowReceiptInput,
+  WorkflowReceiptRef,
   WorkflowState,
   WorkflowTerminalState,
 } from './workflow-contracts.js';
@@ -363,6 +366,7 @@ export type WorkflowRunStepView = {
   readonly at: number;
   /** What `fromState` handed off with: the card's `contents`. */
   readonly contents?: Readonly<Record<string, unknown>>;
+  readonly receipt?: WorkflowReceipt;
   /** When `toState` is a gate: the choice card posted for this visit. */
   readonly gate?: WorkflowGateRecordView;
   /** Corners the handoff leaving `toState` lists by `cornerId` that the viewer can read. */

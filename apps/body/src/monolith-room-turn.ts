@@ -828,6 +828,7 @@ export class MonolithRoomTurnLoop {
     const registryHostDeclarations = registryMcpHostDeclarations(
       configuration.registryMcpRoutes,
       this.commandContext.path,
+      this.options.config.registryMcpBrokerSocket,
     );
     const mountedHostRoutes = [...grantedHostRoutes, ...Object.keys(registryHostDeclarations)];
     const squireScope = {
@@ -945,7 +946,10 @@ export class MonolithRoomTurnLoop {
         additionalWritablePaths: [
           ...(attachScratchRoot ? [attachScratchRoot] : []),
           ...(codegraphReady ? [codegraphIndexDirectory(this.options.cwd)] : []),
-          ...registryMcpHostBindPaths(configuration.registryMcpRoutes),
+          ...registryMcpHostBindPaths(
+            configuration.registryMcpRoutes,
+            this.options.config.registryMcpBrokerSocket,
+          ),
         ],
         devices: grantedDevices,
         maskPaths: [

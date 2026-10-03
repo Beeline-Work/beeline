@@ -18,7 +18,7 @@ const OUTSIDER = 'c'.repeat(64);
 const MESSAGE = 'd'.repeat(64);
 
 let database: PgliteDatabase;
-const liveConfig = { enabled: true, dailyJobLimit: 20, leaseMs: 60_000, live: true } as const;
+const liveConfig = { enabled: true, live: true } as const;
 
 function liveDaemon(): DaemonService {
   return new DaemonService(
@@ -84,7 +84,7 @@ describe('getInstitutionalMemoryTurnStats', () => {
     const daemon = liveDaemon();
     await openCommand('turn-1', 'gen-1');
     await daemon.execute(
-      'proposeInstitutionalMemory',
+      'saveInstitutionalMemory',
       {
         agentId: RONNIE,
         roomId: ROOM,
@@ -95,9 +95,8 @@ describe('getInstitutionalMemoryTurnStats', () => {
         body: 'Her name is Daeun.',
         keywords: ['wife', 'name'],
         sourceMessageIds: [MESSAGE],
-        correction: false,
+        personAsked: false,
         confidence: 0.9,
-        cas: { baseVersion: null },
       },
       RONNIE,
     );

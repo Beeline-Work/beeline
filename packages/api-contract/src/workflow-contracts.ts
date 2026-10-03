@@ -29,6 +29,23 @@ export const WORKFLOW_TIMEOUT_SECONDS_MIN = 60;
 export const WORKFLOW_TIMEOUT_SECONDS_MAX = 30 * 24 * 60 * 60;
 /** Agents one `start_workflow` role binding may list, tried in order. */
 export const WORKFLOW_ROLE_AGENTS_MAX = 16;
+export const WORKFLOW_TEXT_MAX_LENGTH = 140;
+export const WORKFLOW_RECEIPT_REFS_MAX = 3;
+export const WORKFLOW_RECEIPT_REF_KINDS = ['brief', 'file', 'message', 'pr', 'checks', 'memory', 'url'] as const;
+
+export type WorkflowReceiptRef = {
+  readonly kind: (typeof WORKFLOW_RECEIPT_REF_KINDS)[number];
+  readonly label: string;
+  readonly url: string;
+};
+export type WorkflowReceiptInput = {
+  readonly line?: string;
+  readonly refs?: readonly WorkflowReceiptRef[];
+};
+export type WorkflowReceipt = WorkflowReceiptInput & {
+  /** Written by the engine, never accepted from the agent. */
+  readonly exit: { readonly gate: string; readonly actorId: string };
+};
 
 const IDENTITY_ID_PATTERN = /^[0-9a-f]{64}$/;
 
@@ -52,6 +69,7 @@ export type WorkflowLoop = {
 
 /** An ordinary agent-to-agent handoff: whoever holds `role` acts and reports an outcome. */
 export type WorkflowHandoffState = {
+  readonly hint?: string;
   readonly kind?: undefined;
   readonly role: string;
   /**
@@ -75,6 +93,7 @@ export type WorkflowHandoffState = {
 
 /** Posts an `ask_choice` card; `role`'s agent is woken once a human answers. */
 export type WorkflowGateState = {
+  readonly hint?: string;
   readonly kind: 'gate';
   readonly role: string;
   readonly requires: readonly string[];
@@ -91,6 +110,7 @@ export type WorkflowGateState = {
  * only the server's own write path can move one.
  */
 export type WorkflowServerState = {
+  readonly hint?: string;
   readonly kind: 'server';
   readonly role?: string;
   readonly requires: readonly string[];
@@ -99,6 +119,7 @@ export type WorkflowServerState = {
 };
 
 export type WorkflowTerminalState = {
+  readonly hint?: string;
   readonly kind: 'terminal';
   /** `abandoned` is a human-closed run, distinct from a `failed` escalation. */
   readonly status: 'done' | 'failed' | 'abandoned';
@@ -113,6 +134,7 @@ export type WorkflowTerminalState = {
  * an ordinary `on` edge or by `handoff()`/`start_workflow`.
  */
 export type WorkflowWaitingState = {
+  readonly hint?: string;
   readonly kind: 'waiting';
   /** Advisory only, exactly like `WorkflowServerState.role` — who is conceptually active here. */
   readonly role?: string;
@@ -129,6 +151,7 @@ export type WorkflowContract = {
   readonly version: 1;
   readonly name: string;
   readonly description: string;
+  readonly summary?: string;
   readonly roles: readonly string[];
   readonly start: string;
   readonly handoffs: Readonly<Record<string, WorkflowState>>;
@@ -169,6 +192,32 @@ const isIdentifierArray = (value: unknown, max: number, pattern: RegExp): value 
   value.every((entry) => typeof entry === 'string' && pattern.test(entry)) &&
   new Set(value).size === value.length;
 
+const oneLine = (value: unknown): value is string =>
+  typeof value === 'string' && Array.from(value).length <= WORKFLOW_TEXT_MAX_LENGTH &&
+  !/[\r\n\u2028\u2029]/.test(value);
+
+/** Validate the optional agent-supplied receipt before a transition is written. */
+export function workflowReceiptError(value: unknown): string | null {
+  if (value === undefined) return null;
+  if (!record(value) || unknownKey(value, ['line', 'refs']) !== undefined)
+    return 'receipt must be an object with optional line and refs; exit is engine-owned';
+  if (value.line !== undefined && !oneLine(value.line))
+    return `receipt.line must be plaintext on one line, at most ${WORKFLOW_TEXT_MAX_LENGTH} characters`;
+  if (value.refs !== undefined) {
+    if (!Array.isArray(value.refs) || value.refs.length > WORKFLOW_RECEIPT_REFS_MAX)
+      return `receipt.refs must contain 0-${WORKFLOW_RECEIPT_REFS_MAX} references`;
+    for (const ref of value.refs) {
+      if (!record(ref) || unknownKey(ref, ['kind', 'label', 'url']) !== undefined ||
+          !(WORKFLOW_RECEIPT_REF_KINDS as readonly unknown[]).includes(ref.kind) ||
+          typeof ref.label !== 'string' || !ref.label.trim() ||
+          typeof ref.url !== 'string' || !/^https?:\/\//i.test(ref.url))
+        return 'receipt refs need a supported kind, a label and an http(s) URL';
+      try { new URL(ref.url); } catch { return 'receipt ref URL is invalid'; }
+    }
+  }
+  return null;
+}
+
 /**
  * Reject a malformed, unreachable, or uncapped-loop contract before storage.
  * Mirrors the reachability/cycle-detection approach of the reverted engine's
@@ -189,6 +238,7 @@ export function workflowContractError(value: unknown): string | null {
     'version',
     'name',
     'description',
+    'summary',
     'roles',
     'start',
     'handoffs',
@@ -202,6 +252,8 @@ export function workflowContractError(value: unknown): string | null {
   if (typeof value.description !== 'string') return 'description must be a string';
   if (value.description.length < 1 || value.description.length > WORKFLOW_DESCRIPTION_MAX_LENGTH)
     return `description must be 1-${WORKFLOW_DESCRIPTION_MAX_LENGTH} characters (got ${value.description.length})`;
+  if (value.summary !== undefined && !oneLine(value.summary))
+    return `summary must be plaintext on one line, at most ${WORKFLOW_TEXT_MAX_LENGTH} characters`;
   if (!isIdentifierArray(value.roles, WORKFLOW_ROLES_MAX, IDENTIFIER_PATTERN) || value.roles.length < 1)
     return `roles must be 1-${WORKFLOW_ROLES_MAX} unique lowercase names (letters, digits, _ or -)`;
   const roles = new Set(value.roles as string[]);
@@ -228,9 +280,10 @@ export function workflowContractError(value: unknown): string | null {
       return `handoffs: state name "${name}" must be lowercase letters, digits, _ or -`;
     const at = `handoffs.${name}`;
     if (!record(raw)) return `${at} must be an object`;
+    if (raw.hint !== undefined && typeof raw.hint !== 'string') return `${at}: hint must be a string`;
     if (raw.kind === 'terminal') {
-      const key = unknownKey(raw, ['kind', 'status']);
-      if (key !== undefined) return `${at}: unknown key "${key}" (a terminal allows kind, status)`;
+      const key = unknownKey(raw, ['kind', 'status', 'hint']);
+      if (key !== undefined) return `${at}: unknown key "${key}" (a terminal allows kind, status, hint)`;
       if (raw.status !== 'done' && raw.status !== 'failed' && raw.status !== 'abandoned')
         return `${at}: terminal status must be done, failed or abandoned`;
       terminalCount += 1;
@@ -239,8 +292,8 @@ export function workflowContractError(value: unknown): string | null {
       continue;
     }
     if (raw.kind === 'waiting') {
-      const key = unknownKey(raw, ['kind', 'role']);
-      if (key !== undefined) return `${at}: unknown key "${key}" (a waiting state allows kind, role)`;
+      const key = unknownKey(raw, ['kind', 'role', 'hint']);
+      if (key !== undefined) return `${at}: unknown key "${key}" (a waiting state allows kind, role, hint)`;
       if (raw.role !== undefined && (typeof raw.role !== 'string' || !roles.has(raw.role)))
         return `${at}: role ${JSON.stringify(raw.role)} is not in roles`;
       edges.set(name, []);
@@ -256,6 +309,7 @@ export function workflowContractError(value: unknown): string | null {
       : isServer
         ? ['kind', 'role', 'requires', 'on', 'loop']
         : ['role', 'roleBinding', 'requires', 'on', 'loop', 'timeoutSeconds'];
+    allowedKeys.push('hint');
     const key = unknownKey(raw, allowedKeys);
     if (key !== undefined)
       return `${at}: unknown key "${key}" (a ${isGate ? 'gate' : isServer ? 'server state' : 'handoff'} allows ${allowedKeys.join(', ')})`;

@@ -26,6 +26,7 @@
  *   npm run prove:workflow-run -- /path/to/real-run.md
  */
 import { writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { migrate } from '../apps/server/src/database.js';
 import { PgliteDatabase } from '../apps/server/src/test-support.js';
@@ -36,7 +37,7 @@ import { LiveHub } from '../apps/server/src/live.js';
 import { createBeelineServer } from '../apps/server/src/server.js';
 import { createAgentCommand } from '../apps/server/src/agent-command.js';
 
-const HUMAN = 'a'.repeat(64);
+const HUMAN = createHash('sha256').update('github:proof-owner').digest('hex');
 const WRITER = 'b'.repeat(64);
 const REVIEWER = 'c'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
@@ -59,6 +60,7 @@ const CONTRACT = {
   version: 1,
   name: 'draft-review',
   description: 'Draft a note and get it reviewed',
+  summary: 'Draft a note, request review, and revise within a bounded loop.',
   roles: ['writer', 'reviewer'],
   start: 'draft',
   handoffs: {
@@ -69,6 +71,7 @@ const CONTRACT = {
     },
     review: {
       role: 'reviewer',
+      hint: 'the review decision and evidence',
       requires: ['verdict'],
       on: { approved: 'done', changes_requested: 'draft' },
       loop: { onEdge: 'changes_requested', cap: 1, onExceeded: 'failed' },
@@ -85,6 +88,7 @@ type Command = {
   sourceMessageId: string;
   turnRequestId: string;
   reason: string;
+  source?: { body: string };
 };
 
 /** A one-role flow used to prove a bare member handle binds that member. */
@@ -151,8 +155,6 @@ async function main(): Promise<void> {
   const daemon = new DaemonService(database, live, undefined, undefined, false, undefined, false, undefined, undefined, undefined, {
     enabled: true,
     live: true,
-    dailyJobLimit: 20,
-    leaseMs: 60_000,
   });
   const server = createBeelineServer({
     database,
@@ -292,13 +294,27 @@ async function main(): Promise<void> {
     runId,
     outcome: 'submitted',
     contents: { text: 'Draft v1: the workflow ships next Tuesday.' },
+    receipt: { line: 'Drafted the launch note.', refs: [
+      { kind: 'file', label: 'Draft note', url: 'https://example.com/draft.txt' },
+    ] },
   }, writerToken);
   if (draft1.state !== 'review') throw new Error(`expected review, got ${JSON.stringify(draft1)}`);
+  const previewToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
+  const previewResponse = await fetch(`${origin}/v1/phone/operations/readWorkflowRun`, {
+    method: 'POST', headers: { authorization: `Bearer ${previewToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ roomId: ROOM, runId }),
+  });
+  if (!previewResponse.ok) throw new Error(`live readWorkflowRun returned HTTP ${previewResponse.status}`);
+  const preview = await previewResponse.json();
+  log.push({ label: 'A person opens the live workflow run', response: preview });
+  if (process.argv[3]) await writeFile(process.argv[3], JSON.stringify(preview), 'utf8');
   await complete(WRITER, writerToken, turn1);
 
   // --- Turn 2 (reviewer): request changes (first pass through the capped loop). ---
   const reviewerPending1 = (await commandsFor(REVIEWER, reviewerToken))[0];
   if (!reviewerPending1) throw new Error('reviewer was never woken for the first review');
+  if (!reviewerPending1.source?.body.includes('the review decision and evidence'))
+    throw new Error('the dispatched reviewer did not receive the state receipt hint');
   const turn2 = await claim(REVIEWER, reviewerToken, reviewerPending1);
   const review1 = await call(REVIEWER + ' requests changes', 'handoff', {
     roomId: ROOM,
@@ -393,6 +409,22 @@ async function main(): Promise<void> {
     failures.push(`expected a handoff on the ended run to be refused, got ${JSON.stringify(laterHandoff)}`);
   }
 
+  // A person opens the run through the same authenticated operation the app uses.
+  const { accessToken } = await auth.exchangeGitHubOidc('proof');
+  const response = await fetch(`${origin}/v1/phone/operations/readWorkflowRun`, {
+    method: 'POST', headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ roomId: ROOM, runId }),
+  });
+  if (!response.ok) throw new Error(`readWorkflowRun returned HTTP ${response.status}`);
+  const detail = await response.json() as import('../packages/api-contract/src/phone.js').WorkflowRunDetailView;
+  log.push({ label: 'A person opens the workflow run', request: { operation: 'readWorkflowRun', roomId: ROOM, runId }, response: detail });
+  if (detail.contract.summary !== CONTRACT.summary ||
+      detail.history[1]?.receipt?.line !== 'Drafted the launch note.' ||
+      detail.history[1]?.receipt?.refs?.[0]?.kind !== 'file' ||
+      detail.history[1]?.receipt?.exit.actorId !== WRITER ||
+      detail.history[2]?.receipt?.line !== undefined ||
+      detail.history[2]?.receipt?.refs !== undefined)
+    failures.push('phone read did not preserve the summary, supplied receipt, engine actor, or empty receipt');
   const part1LogCount = log.length;
   const skillFailures: string[] = [];
   // ================= Scenario 2: save_skill cross-Room visibility =================
@@ -741,7 +773,7 @@ async function main(): Promise<void> {
     console.error(`\nFAILED: ${allFailures.join('; ')}`);
     process.exitCode = 1;
   } else {
-    console.log('\nPASSED');
+    console.log('\nPASSED: Reproduction 517 storage — a person opening readWorkflowRun receives the saved summary, optional receipt and engine exit; missing receipt text and refs remain empty.');
   }
 }
 

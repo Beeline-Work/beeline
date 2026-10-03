@@ -124,6 +124,7 @@ describe('server readiness', () => {
         activeDbTasks: 0,
         waitingDbTasks: 0,
         errors: { database: 0, invalid: 0, internal: 0, overload: 0 },
+        heartbeatTerminations: 0,
       },
     });
   });
@@ -839,15 +840,6 @@ describe('daemon live command push', () => {
       targetAgentId: agentId,
     });
     await expect(connector).resolves.toEqual({ type: 'connector-assignment' });
-
-    const globalMemoryJob = nextSocketMessage(socket, 'memory-job');
-    live.publish({ type: 'invalidate', roomId: 'another-room', reason: 'memory-job',
-      targetAgentId: agentId });
-    await expect(globalMemoryJob).resolves.toEqual({ type: 'memory-job', roomId: 'another-room' });
-
-    const memoryJob = nextSocketMessage(socket, 'memory-job');
-    live.publish({ type: 'invalidate', roomId, reason: 'memory-job' });
-    await expect(memoryJob).resolves.toEqual({ type: 'memory-job', roomId });
 
     const closed = nextSocketMessage(socket, 'corner-complete');
     live.publish({

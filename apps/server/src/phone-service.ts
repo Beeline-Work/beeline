@@ -349,7 +349,7 @@ interface AgentTurnRow {
 }
 interface MemberRow extends IdentityRow {
   role: 'owner' | 'admin' | 'member' | 'spectator';
-  presence_body: { status: 'online' | 'offline'; observedAt: number } | null;
+  presence_body: { status: 'online' | 'offline'; observedAt: number; held?: unknown } | null;
   presence_updated_at: Date | null;
 }
 interface CornerRow extends RoomRow {
@@ -431,6 +431,23 @@ function messageId(): string {
 }
 function unix(date: Date): number {
   return Math.floor(date.getTime() / 1_000);
+}
+/** A held presence belongs to a live helper connection and does not age out. */
+function projectAgentPresence(
+  body: NonNullable<MemberRow['presence_body']>,
+  updatedAt: Date,
+  roomId: string | null,
+): NonNullable<RoomViewMember['presence']> {
+  const held = body.held === true;
+  const status = isAgentReachable(body.status, updatedAt.getTime(), Date.now(), held)
+    ? 'online'
+    : 'offline';
+  return {
+    status,
+    observedAt: Math.max(body.observedAt, unix(updatedAt)),
+    ...(held && status === 'online' ? { held: true as const } : {}),
+    ...(roomId ? { roomId } : {}),
+  };
 }
 const MESSAGE_SEARCH_PAGE = 20;
 /** A search that reads longer than this matches too much to be worth finishing. */
@@ -1334,7 +1351,7 @@ export class PhoneService {
                count(agent_status.body)::int known_presence_count,
                count(*) FILTER(
                  WHERE agent_status.body->>'status'='online'
-                   AND agent_status.updated_at>$3
+                   AND (agent_status.updated_at>$3 OR agent_status.body->>'held'='true')
                )::int online_agent_count
              FROM memberships member
              JOIN identities agent ON agent.id=member.identity_id
@@ -1551,18 +1568,23 @@ export class PhoneService {
     peer_presence_body: Record<string, unknown> | null;
     peer_presence_updated_at: Date | null;
     peer_activity_at: Date | null;
-  }): { status: 'online' | 'offline'; observedAt: number } | undefined {
+  }): { status: 'online' | 'offline'; observedAt: number; held?: true } | undefined {
     if (!row.peer_id || !row.peer_kind) return undefined;
     if (row.peer_kind === 'agent' && row.peer_presence_body && row.peer_presence_updated_at) {
+      const held = row.peer_presence_body.held === true;
+      const status = isAgentReachable(
+        row.peer_presence_body.status === 'online' ? 'online' : 'offline',
+        row.peer_presence_updated_at.getTime(),
+        Date.now(),
+        held,
+      ) ? 'online' : 'offline';
       return {
-        status: isAgentReachable(
-          row.peer_presence_body.status === 'online' ? 'online' : 'offline',
-          row.peer_presence_updated_at.getTime(),
-        ) ? 'online' : 'offline',
+        status,
         observedAt: Math.max(
           Number(row.peer_presence_body.observedAt ?? 0),
           unix(row.peer_presence_updated_at),
         ),
+        ...(held && status === 'online' ? { held: true as const } : {}),
       };
     }
     const connection = this.live?.humanPresence(row.peer_id);
@@ -4574,7 +4596,8 @@ export class PhoneService {
                     AND membership.removed_at IS NULL
                 ) member,
                 COALESCE((SELECT lo.body->>'status'='online'
-                    AND lo.updated_at >= now()-make_interval(secs => $3::double precision / 1000)
+                    AND (lo.body->>'held'='true'
+                      OR lo.updated_at >= now()-make_interval(secs => $3::double precision / 1000))
                   FROM live_outputs lo
                   WHERE lo.agent_id=identity.id AND lo.kind='presence'
                   ORDER BY lo.updated_at DESC LIMIT 1),false) reachable
@@ -4717,7 +4740,8 @@ export class PhoneService {
                   WHERE membership.room_id=d.room_id AND membership.identity_id=d.agent_id
                     AND membership.removed_at IS NULL) member,
                 COALESCE((SELECT lo.body->>'status'='online'
-                    AND lo.updated_at >= now()-make_interval(secs => $2::double precision / 1000)
+                    AND (lo.body->>'held'='true'
+                      OR lo.updated_at >= now()-make_interval(secs => $2::double precision / 1000))
                   FROM live_outputs lo
                   WHERE lo.agent_id=d.agent_id AND lo.kind='presence'
                   ORDER BY lo.updated_at DESC LIMIT 1),false) reachable,
@@ -7629,7 +7653,7 @@ export class PhoneService {
              SELECT 1 FROM live_outputs p
              WHERE p.agent_id=a.agent_id AND p.kind='presence'
                AND p.body->>'status'='online'
-               AND p.updated_at>now()-interval '90 seconds'
+               AND (p.updated_at>now()-interval '90 seconds' OR p.body->>'held'='true')
            ) online
          ) p ON true
          WHERE a.owner_id=$1
@@ -7770,7 +7794,7 @@ export class PhoneService {
            FROM live_outputs p
            WHERE p.agent_id=a.agent_id AND p.kind='presence'
              AND p.body->>'status'='online'
-             AND p.updated_at>now()-interval '90 seconds'
+             AND (p.updated_at>now()-interval '90 seconds' OR p.body->>'held'='true')
            ORDER BY p.updated_at DESC LIMIT 1
          ) presence ON true
         WHERE a.owner_id=$1 AND (a.machine_id=$2 OR a.agent_id=$2)
@@ -8580,16 +8604,7 @@ export class PhoneService {
       identity: identity(row, this.publicOrigin),
       role: row.role,
       ...(row.presence_body && row.presence_updated_at
-        ? {
-            presence: {
-              status: isAgentReachable(
-                row.presence_body.status,
-                row.presence_updated_at.getTime(),
-              ) ? 'online' : 'offline',
-              observedAt: Math.max(row.presence_body.observedAt, unix(row.presence_updated_at)),
-              ...(roomId ? { roomId } : {}),
-            },
-          }
+        ? { presence: projectAgentPresence(row.presence_body, row.presence_updated_at, roomId) }
         : {}),
     }));
   }

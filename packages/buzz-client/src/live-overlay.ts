@@ -10,7 +10,7 @@ import type { RoomViewAgentTurn, RoomViewMessage } from './room-view.js';
 export type LiveOverlay =
   | { readonly kind: 'draft'; readonly key: string; readonly stableId: string; readonly agentPubkey: string; readonly requestId: string; readonly text?: string; readonly closed: boolean; readonly createdAt: number }
   | { readonly kind: 'thought'; readonly key: string; readonly agentPubkey: string; readonly sessionId: string; readonly text?: string; readonly closed: boolean; readonly createdAt: number }
-  | { readonly kind: 'presence'; readonly key: string; readonly agentPubkey: string; readonly status: 'online' | 'offline'; readonly createdAt: number };
+  | { readonly kind: 'presence'; readonly key: string; readonly agentPubkey: string; readonly status: 'online' | 'offline'; readonly createdAt: number; readonly held?: boolean };
 
 function exactTag(event: NostrEvent, name: string): string | undefined {
   const matches = event.tags.filter((tag) => tag[0] === name);

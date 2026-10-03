@@ -154,16 +154,14 @@ import {
   notifyConnectorHelper,
 } from './postgres-live.js';
 import {
-  claimInstitutionalMemoryJob,
-  completeInstitutionalMemoryJob,
-  enqueueInstitutionalMemoryTurnReview,
-  failInstitutionalMemoryJob,
+  deleteInstitutionalMemory,
   getInstitutionalContext,
   getInstitutionalMemoryTurnStats,
-  heartbeatInstitutionalMemoryJob,
   precomputeInstitutionalQueryEmbedding,
-  proposeInstitutionalMemory,
+  reportInstitutionalMemoryUsed,
+  saveInstitutionalMemory,
   searchInstitutionalMemory,
+  updateInstitutionalMemory,
   recordInstitutionalMemoryTurnOutcome,
   recordInstitutionalServeUsage,
   type InstitutionalMemoryShadowConfig,
@@ -395,7 +393,10 @@ export class DaemonService {
       'requestCornerAppOpen',
       'renameCorner',
       'getInstitutionalContext',
-      'proposeInstitutionalMemory',
+      'saveInstitutionalMemory',
+      'updateInstitutionalMemory',
+      'deleteInstitutionalMemory',
+      'reportInstitutionalMemoryUsed',
       'searchInstitutionalMemory',
       'searchInstitutionalHistory',
       'getRoomMessage',
@@ -683,14 +684,6 @@ export class DaemonService {
               command.id,
               candidate.status === 'cancelled' ? 'cancelled' : 'complete',
             ]);
-            if (candidate.status === 'complete') {
-              await enqueueInstitutionalMemoryTurnReview(db, {
-                roomId: scopedRoom!,
-                sourceMessageId: command.root_source_message_id,
-                requestId: command.turn_request_id,
-                config: this.institutionalMemoryShadow,
-              });
-            }
             await recordInstitutionalMemoryTurnOutcome(
               db,
               scopedRoom!,
@@ -750,40 +743,6 @@ export class DaemonService {
         return { status: 'permission-required', grantId: permission.grantId } as Output<Name>;
     }
     switch (name) {
-      case 'claimInstitutionalMemoryJob': {
-        if (!this.institutionalMemoryShadow.enabled) return { enabled: false } as Output<Name>;
-        const job = await claimInstitutionalMemoryJob(
-          this.database,
-          authenticatedAgentId,
-          this.institutionalMemoryShadow,
-          (input as { extractorVersion?: string }).extractorVersion,
-        );
-        return { enabled: true, ...(job ? { job } : {}) } as Output<Name>;
-      }
-      case 'heartbeatInstitutionalMemoryJob':
-        await heartbeatInstitutionalMemoryJob(
-          this.database,
-          authenticatedAgentId,
-          input as Input<'heartbeatInstitutionalMemoryJob'>,
-          this.institutionalMemoryShadow,
-        );
-        return this.writeResult() as Output<Name>;
-      case 'completeInstitutionalMemoryJob':
-        await completeInstitutionalMemoryJob(
-          this.database,
-          authenticatedAgentId,
-          input as Input<'completeInstitutionalMemoryJob'>,
-          this.institutionalMemoryShadow,
-        );
-        return this.writeResult() as Output<Name>;
-      case 'failInstitutionalMemoryJob':
-        await failInstitutionalMemoryJob(
-          this.database,
-          authenticatedAgentId,
-          input as Input<'failInstitutionalMemoryJob'>,
-          this.institutionalMemoryShadow,
-        );
-        return this.writeResult() as Output<Name>;
       case 'getInstitutionalContext':
         if (!this.commandTransaction || !this.authorizedCommand) {
           throw new Error('institutional context requires an active command');
@@ -802,19 +761,46 @@ export class DaemonService {
           this.authorizedCommand,
           this.memoryEmbed,
         )) as Output<Name>;
-      case 'proposeInstitutionalMemory':
+      case 'saveInstitutionalMemory':
+      case 'updateInstitutionalMemory':
+      case 'deleteInstitutionalMemory':
+      case 'reportInstitutionalMemoryUsed': {
         if (!this.commandTransaction || !this.authorizedCommand) {
-          throw new Error('institutional memory proposal requires an active command');
+          throw new Error('institutional memory changes require an active command');
         }
         if (!this.institutionalMemoryShadow.live) {
           throw new Error('institutional memory is disabled');
         }
-        return (await proposeInstitutionalMemory(
+        const command = this.authorizedCommand;
+        if (name === 'saveInstitutionalMemory') {
+          return (await saveInstitutionalMemory(
+            this.database,
+            command,
+            input as Input<'saveInstitutionalMemory'>,
+            this.afterCommit,
+          )) as Output<Name>;
+        }
+        if (name === 'updateInstitutionalMemory') {
+          return (await updateInstitutionalMemory(
+            this.database,
+            command,
+            input as Input<'updateInstitutionalMemory'>,
+            this.afterCommit,
+          )) as Output<Name>;
+        }
+        if (name === 'deleteInstitutionalMemory') {
+          return (await deleteInstitutionalMemory(
+            this.database,
+            command,
+            input as Input<'deleteInstitutionalMemory'>,
+          )) as Output<Name>;
+        }
+        return (await reportInstitutionalMemoryUsed(
           this.database,
-          this.authorizedCommand,
-          input as Input<'proposeInstitutionalMemory'>,
-          this.afterCommit,
+          command,
+          input as Input<'reportInstitutionalMemoryUsed'>,
         )) as Output<Name>;
+      }
       case 'searchInstitutionalMemory':
         if (!this.commandTransaction || !this.authorizedCommand) {
           throw new Error('institutional memory search requires an active command');
@@ -3189,6 +3175,7 @@ export class DaemonService {
           observedAt: number;
           releaseVersion?: string;
           sourceSha?: string;
+          held?: unknown;
         };
         updated_at: Date;
       }>(
@@ -3198,7 +3185,9 @@ export class DaemonService {
     ).rows[0];
     return row
       ? {
-          status: isAgentReachable(row.body.status, row.updated_at.getTime())
+          status: isAgentReachable(
+            row.body.status, row.updated_at.getTime(), Date.now(), row.body.held === true,
+          )
             ? 'online'
             : 'offline',
           observedAt: Math.max(row.body.observedAt, Math.floor(row.updated_at.getTime() / 1_000)),
@@ -3218,6 +3207,7 @@ export class DaemonService {
         observedAt?: number;
         releaseVersion?: string;
         sourceSha?: string;
+        held?: unknown;
       } | null;
     }>(
       `SELECT a.agent_id,lo.body,lo.updated_at
@@ -3238,7 +3228,12 @@ export class DaemonService {
       const observedAt = body?.observedAt;
       const state = !body
         ? 'never-seen'
-        : !isAgentReachable(body.status === 'online' ? 'online' : 'offline', row.updated_at?.getTime())
+        : !isAgentReachable(
+            body.status === 'online' ? 'online' : 'offline',
+            row.updated_at?.getTime(),
+            Date.now(),
+            body.held === true,
+          )
           ? 'offline'
           : 'ready';
       return {
@@ -3399,27 +3394,34 @@ export class DaemonService {
       throw new Error('invalid relay');
     if (relay.direction === 'up') throw new Error('relay up is retired');
     const command = this.authorizedCommand;
-    if (!this.commandTransaction || !command) throw new Error('relay requires an active command');
+    if (!this.commandTransaction || !command || command.room_id !== relay.fromRoomId)
+      throw new Error('relay requires an active source command');
     const cornerId = relay.toRoomId;
     const roomId = relay.fromRoomId;
-    // Lock both current memberships and rooms against removal/closure for the whole write.
+    // Lock the source, destination and parent against removal/closure for the whole write.
     const pair = (
       await this.database.query<{
-        room_name: string;
+        source_name: string;
+        source_parent_id: string | null;
         owner_agent_id: string;
       }>(
-        `SELECT parent.name room_name,f.owner_agent_id
+        `SELECT source.name source_name,source.parent_id source_parent_id,f.owner_agent_id
        FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
+       JOIN rooms source ON source.id=$2 AND (source.id=parent.id OR source.parent_id=parent.id)
        JOIN corner_facts f ON f.corner_id=corner.id
        JOIN memberships cm ON cm.room_id=corner.id AND cm.identity_id=$3 AND cm.removed_at IS NULL
        JOIN memberships pm ON pm.room_id=parent.id AND pm.identity_id=$3 AND pm.removed_at IS NULL
-       WHERE corner.id=$1 AND parent.id=$2 AND parent.parent_id IS NULL
-         AND corner.archived_at IS NULL AND parent.archived_at IS NULL
-       FOR SHARE OF corner,parent,cm,pm`,
+       JOIN memberships sm ON sm.room_id=source.id AND sm.identity_id=$3 AND sm.removed_at IS NULL
+       WHERE corner.id=$1 AND source.id<>corner.id AND parent.parent_id IS NULL
+         AND source.workspace_id=parent.workspace_id AND corner.workspace_id=parent.workspace_id
+         AND corner.archived_at IS NULL AND parent.archived_at IS NULL AND source.archived_at IS NULL
+       FOR SHARE OF corner,parent,source,cm,pm,sm`,
         [cornerId, roomId, agentId],
       )
     ).rows[0];
     if (!pair) throw new Error('relay requires current Room and corner membership');
+    if (pair.source_parent_id !== null && relay.reply === 'once')
+      throw new Error('corner questions require a Room source');
     const target = pair.owner_agent_id;
     const received = Boolean(
       (
@@ -3434,7 +3436,7 @@ export class DaemonService {
       fromRoomId: relay.fromRoomId,
       toRoomId: relay.toRoomId,
       direction: relay.direction,
-      fromName: pair.room_name,
+      fromName: pair.source_name,
       cornerId,
       received,
       ...(relay.reply === 'once' ? { reply: 'once' } : {}),
@@ -6070,8 +6072,6 @@ export class DaemonService {
       throw new Error('app and reason are required');
     const continuation = normalizeAppContinuation(input.continuation);
     const context = await this.offerContext(input.roomId, agentId);
-    if (context.isCorner)
-      throw new Error('connect_app is invalid: connect an app from the Room, not from a corner');
     const outcome = await connectApp(this.database, this.mcpRegistry, {
       workspaceId: context.workspaceId,
       ownerId: context.owner.pubkey,
@@ -7407,12 +7407,11 @@ function laterCursor(
  * failed wake as "resolved" — became a spin against the server.
  */
 const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
-  claimInstitutionalMemoryJob: true,
-  heartbeatInstitutionalMemoryJob: true,
-  completeInstitutionalMemoryJob: true,
-  failInstitutionalMemoryJob: true,
   getInstitutionalContext: true,
-  proposeInstitutionalMemory: true,
+  saveInstitutionalMemory: true,
+  updateInstitutionalMemory: true,
+  deleteInstitutionalMemory: true,
+  reportInstitutionalMemoryUsed: true,
   searchInstitutionalMemory: true,
   searchInstitutionalHistory: true,
   getInstitutionalMemoryTurnStats: true,

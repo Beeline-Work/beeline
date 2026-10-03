@@ -14,7 +14,8 @@ It keeps only four responsibilities:
 Room data and writes go through `DaemonApiClient`. The helper has no relay transport, legacy
 pairing-code redemption, approval or mandate engine, work calendar, repository lifecycle, or
 GitHub event consumer. Its action surface is repository corner start/status plus Room-to-corner
-steering: `read-only-mcp.ts` exposes `steer_corner` in top-level Rooms, `open_corner` in Rooms
+and sibling-corner steering: `read-only-mcp.ts` exposes `steer_corner` in top-level Rooms and
+code/no-code corners, `open_corner` in Rooms
 and corners (a corner's new corner opens beside it in the parent Room), and `pr_checks_status` in
 corners through the `beeline-agent` MCP surface. A no-code corner of a
 repository-backed Room also gets `upgrade_corner_to_code`, its one-way lane upgrade, which the
@@ -22,6 +23,14 @@ agent calls on its own judgment when the work needs the repository, while answer
 message in that same corner; the corner then restarts with a branch, token and worktree, and the
 code session writes the brief. Corners do not post
 reports back to their parent Room; their Room-facing output is server-owned cards.
+Corner turns receive the parent's current member-corner list and may steer a distinct sibling
+under that parent. The server checks live source, destination and parent membership and preserves
+the source corner, root human requester and command linkage. A steer queues the destination
+opener without completing the source turn. Membership alone never authorizes a turn;
+`ask_corner`, `get_corner_ask` and `inspect_corner` remain Room-only.
+To demonstrate sibling steering through the built helper, authenticated server and phone read,
+run `npm run prove:sibling-steer` from the repository root. Deploy the server
+authorization change before the helper that exposes corner steers.
 
 When an imported MCP server is added or removed from the selected harness's operator
 configuration, the helper replaces its retained Room or corner session before the next turn.

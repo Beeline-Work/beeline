@@ -30,6 +30,15 @@ import { phoneReadLimits, type PhoneReadLimits } from './phone-read-limit.js';
 import type { ConnectionPresence } from './connection-presence.js';
 import { parseDashboardPlatforms, readOperatorDashboard, recordOperatorFunctionEvent } from './operator-dashboard.js';
 import { HelperVersionGate, helperVersionBelowMinimum } from './helper-version-gate.js';
+import {
+  DaemonConnectionRegistry,
+  LIVE_HEARTBEAT_MS,
+  MACHINE_SOCKET_PROTOCOL,
+  MAX_LIVE_SUBSCRIBE_FRAME_ROOMS,
+  serveAgentSocket,
+  serveMachineSocket,
+  type DaemonLiveDependencies,
+} from './daemon-live.js';
 
 export const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
 
@@ -48,8 +57,9 @@ const MAX_LIVE_WAITING_TASKS = 512;
 const MAX_LIVE_SOCKET_TASKS = 8_192;
 const MAX_LIVE_SOCKET_QUEUED_BYTES = 2 * 1024 * 1024;
 const MAX_LIVE_ROOMS_PER_SOCKET = 8_192;
-const MAX_LIVE_SUBSCRIBE_FRAME_ROOMS = 32;
 const MAX_LIVE_OUTBOUND_BUFFERED_BYTES = 16 * 1024 * 1024;
+/** Machine sockets authenticate per agent after upgrade; cap them per client address. */
+const MAX_MACHINE_SOCKETS_PER_CLIENT = 8;
 /**
  * Clearing a chat-list dismissal is per-viewer state that no Room read
  * projects, so it invalidates no Room for anybody. Its writer is the Room that
@@ -108,6 +118,8 @@ export interface ServerOptions {
   webAppOrigins?: readonly string[];
   /** Per-identity limits on phone history and outline reads; defaults in phone-read-limit.ts. */
   phoneReadLimits?: PhoneReadLimits;
+  /** Protocol ping interval for helper sockets; tests shorten it. */
+  liveHeartbeatMs?: number;
 }
 
 function applyWebAppCors(
@@ -203,8 +215,10 @@ function isIanaTimeZone(value: string): boolean {
   }
 }
 
-function isInboxCursor(value: unknown): value is string {
-  return typeof value === 'string' && /^\d+,[0-9a-f]{64}$/.test(value);
+function isMachineSocket(request: IncomingMessage): boolean {
+  const protocol = request.headers['sec-websocket-protocol'];
+  return typeof protocol === 'string' &&
+    protocol.split(',').some((item) => item.trim() === MACHINE_SOCKET_PROTOCOL);
 }
 function isRetryableLiveError(error: unknown): boolean {
   const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
@@ -244,18 +258,19 @@ export function createBeelineServer(options: ServerOptions): Server {
   const daemonSockets = new Map<string, Set<{ socket: Duplex; release: () => void }>>();
   const socketSubscriptions = new Map<WebSocket, () => number>();
   const liveErrors = { database: 0, invalid: 0, internal: 0, overload: 0 };
-  let helperVersionRefusals = 0;
-  let helperForceUpdates = 0;
+  const liveCounters = { helperVersionRefusals: 0, helperForceUpdates: 0, heartbeatTerminations: 0 };
+  const machineSocketCounts = new Map<string, number>();
   const liveHealth = () => ({
     sockets: webSockets.clients.size,
     subscriptions: [...socketSubscriptions.values()].reduce((total, count) => total + count(), 0),
     activeDbTasks: liveDbTasks,
     waitingDbTasks: liveDbWaiters.length,
     errors: { ...liveErrors },
+    heartbeatTerminations: liveCounters.heartbeatTerminations,
     ...(helperVersionGate.minimum ? { helperMinimum: {
       minVersion: helperVersionGate.minimum,
-      refusals: helperVersionRefusals,
-      forceUpdates: helperForceUpdates,
+      refusals: liveCounters.helperVersionRefusals,
+      forceUpdates: liveCounters.helperForceUpdates,
     } } : {}),
   });
   const releaseLiveDbTask = () => {
@@ -273,6 +288,54 @@ export function createBeelineServer(options: ServerOptions): Server {
     await new Promise<void>((resolve) => liveDbWaiters.push(resolve));
     return releaseLiveDbTask;
   };
+  const daemonRegistry = new DaemonConnectionRegistry();
+  let shuttingDown = false;
+  const daemonLive: DaemonLiveDependencies = {
+    auth: options.auth,
+    phone: options.phone,
+    daemon: options.daemon,
+    live: options.live,
+    database: options.database,
+    ...(options.connectionPresence ? { connectionPresence: options.connectionPresence } : {}),
+    ...(options.releaseNotify ? { releaseNotify: options.releaseNotify } : {}),
+    helperVersionGate,
+    acquireLiveDbTask,
+    errors: liveErrors,
+    counters: liveCounters,
+    registry: daemonRegistry,
+    shuttingDown: () => shuttingDown,
+  };
+  // Another server instance accepted a newer connection for an agent this
+  // instance still serves: drop ours. Own claims arrive here too and change nothing.
+  let releaseConnectionEpochs: (() => void) | undefined;
+  const watchConnectionEpochs = () => {
+    releaseConnectionEpochs ??= options.live.subscribeAll((event) => {
+      if (event.type === 'agent-connection') daemonRegistry.observeEpoch(event.agentId, event.epoch);
+    });
+  };
+  // Protocol-level heartbeat for every helper socket. A ping is a control
+  // frame: no database work, no read, no Room event. A socket that has not
+  // answered the previous ping by the next tick is dead and is terminated;
+  // the helper drops a socket that stops pinging it and reconnects.
+  const heartbeatMs = options.liveHeartbeatMs ?? LIVE_HEARTBEAT_MS;
+  const heartbeatSockets = new Map<WebSocket, boolean>();
+  const heartbeat = setInterval(() => {
+    for (const [client, answered] of heartbeatSockets) {
+      if (!answered) {
+        liveCounters.heartbeatTerminations++;
+        heartbeatSockets.delete(client);
+        client.terminate();
+        continue;
+      }
+      heartbeatSockets.set(client, false);
+      try {
+        client.ping();
+      } catch {
+        // A socket that cannot queue a ping misses the next tick.
+      }
+    }
+  }, heartbeatMs);
+  heartbeat.unref?.();
   const invitePreview = new InvitePreviewAccess(options.database);
   const readLimits = options.phoneReadLimits ?? phoneReadLimits();
   const server = createServer((request, response) => {
@@ -306,7 +369,7 @@ export function createBeelineServer(options: ServerOptions): Server {
     const reportedVersion = request.headers['x-beeline-helper-version'];
     if (minimum && method === 'POST' && url.pathname.startsWith('/v1/daemon/') &&
         helperVersionBelowMinimum(typeof reportedVersion === 'string' ? reportedVersion : undefined, minimum)) {
-      helperVersionRefusals++;
+      liveCounters.helperVersionRefusals++;
       json(response, 426, { error: 'update_required', minVersion: minimum });
       return;
     }
@@ -352,6 +415,11 @@ export function createBeelineServer(options: ServerOptions): Server {
   // that wait, otherwise an idle daemon subscription can hold shutdown open.
   const closeHttp = server.close.bind(server);
   server.close = ((callback?: (error?: Error) => void) => {
+    // Connections stay held across a restart: helpers reconnect to a running
+    // instance, and this instance's lease releases whatever never returns.
+    shuttingDown = true;
+    clearInterval(heartbeat);
+    releaseConnectionEpochs?.();
     for (const client of webSockets.clients) client.terminate();
     webSockets.close();
     return closeHttp(callback);
@@ -367,12 +435,40 @@ export function createBeelineServer(options: ServerOptions): Server {
       const helperVersion = url.searchParams.get('helperVersion') ?? undefined;
       const helperSourceSha = url.searchParams.get('sourceSha') ?? undefined;
       const minimum = helperVersionGate.minimum;
-      if (raw?.startsWith('bdt_') && minimum &&
+      const machine = isMachineSocket(request);
+      if ((machine || raw?.startsWith('bdt_')) && minimum &&
           helperVersionBelowMinimum(helperVersion, minimum)) {
-        helperVersionRefusals++;
+        liveCounters.helperVersionRefusals++;
         const payload = JSON.stringify({ error: 'update_required', minVersion: minimum });
         socket.write(`HTTP/1.1 426 Upgrade Required\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(payload)}\r\nConnection: close\r\n\r\n${payload}`);
         socket.destroy();
+        return;
+      }
+      if (machine) {
+        // Identity arrives per agent after the upgrade; bound the anonymous
+        // sockets one client address can hold open meanwhile.
+        const key = clientKey(request);
+        const open = machineSocketCounts.get(key) ?? 0;
+        if (open >= MAX_MACHINE_SOCKETS_PER_CLIENT) {
+          liveErrors.overload++;
+          socket.write('HTTP/1.1 503 Service Unavailable\r\nRetry-After: 5\r\n\r\n');
+          socket.destroy();
+          return;
+        }
+        machineSocketCounts.set(key, open + 1);
+        socket.once('close', () => {
+          const remaining = (machineSocketCounts.get(key) ?? 1) - 1;
+          if (remaining <= 0) machineSocketCounts.delete(key);
+          else machineSocketCounts.set(key, remaining);
+        });
+        webSockets.handleUpgrade(request, socket, head, (client) =>
+          webSockets.emit('connection', client, request, {
+            identityId: '',
+            kind: 'machine',
+            helperVersion,
+            helperSourceSha,
+          }),
+        );
         return;
       }
       // Daemon tokens have a distinct prefix. Avoid making every phone socket
@@ -439,7 +535,12 @@ export function createBeelineServer(options: ServerOptions): Server {
     (
       client: WebSocket,
       _request: IncomingMessage,
-      principal: { identityId: string; kind: 'phone' | 'daemon'; helperVersion?: string; helperSourceSha?: string },
+      principal: {
+        identityId: string;
+        kind: 'phone' | 'daemon' | 'machine';
+        helperVersion?: string;
+        helperSourceSha?: string;
+      },
     ) => {
       const sendLive = (payload: string) => {
         if (client.readyState !== client.OPEN) return;
@@ -450,90 +551,28 @@ export function createBeelineServer(options: ServerOptions): Server {
         }
         client.send(payload);
       };
-      if (principal.kind === 'phone') options.live.humanConnected(principal.identityId);
+      if (principal.kind !== 'phone') {
+        watchConnectionEpochs();
+        heartbeatSockets.set(client, true);
+        client.on('pong', () => {
+          if (heartbeatSockets.has(client)) heartbeatSockets.set(client, true);
+        });
+        const trackSubscriptions = (count: () => number) => socketSubscriptions.set(client, count);
+        client.on('close', () => {
+          heartbeatSockets.delete(client);
+          socketSubscriptions.delete(client);
+        });
+        if (principal.kind === 'machine')
+          serveMachineSocket(daemonLive, client, principal, sendLive, trackSubscriptions, heartbeatMs);
+        else serveAgentSocket(daemonLive, client, principal, sendLive, trackSubscriptions);
+        return;
+      }
+      options.live.humanConnected(principal.identityId);
       const releases = new Map<string, () => void>();
-      let helperVersion = principal.helperVersion;
-      let pushedMinimum: string | undefined;
-      const forceUpdate = (minimum: string) => {
-        if (principal.kind !== 'daemon' ||
-            !helperVersionBelowMinimum(helperVersion, minimum) ||
-            pushedMinimum === minimum) return false;
-        pushedMinimum = minimum;
-        helperForceUpdates++;
-        sendLive(JSON.stringify({ type: 'force-update', minVersion: minimum }));
-        return true;
-      };
-      const helperMinimumRelease = principal.kind === 'daemon'
-        ? helperVersionGate.subscribe((minimum) => {
-            if (forceUpdate(minimum)) client.close(1008, 'update required');
-          })
-        : undefined;
       socketSubscriptions.set(client, () => releases.size);
-      if (principal.kind === 'daemon')
-        sendLive(JSON.stringify({
-          type: 'hello',
-          protocolMin: 1,
-          protocolMax: 1,
-          capabilities: { discoveryWake: true, pushIntake: true },
-          ...(principal.helperVersion ? { reportedHelper: {
-            releaseVersion: principal.helperVersion,
-            ...(principal.helperSourceSha ? { sourceSha: principal.helperSourceSha } : {}),
-          } } : {}),
-        }));
       let socketTasks = 0;
       let socketQueuedBytes = 0;
       let socketTaskTail = Promise.resolve();
-      // A fresh Room (or any Room/corner membership change) inserts a
-      // `memberships` row whose live notification is Room-scoped — a Room this
-      // daemon has never heard of, so it holds no socket subscription for it.
-      // The workspace reconciliation heartbeat would eventually discover it;
-      // deliver an agent-directed wake instead so discovery starts now.
-      const membershipWakeRelease =
-        principal.kind === 'daemon'
-          ? options.live.subscribeAll((event) => {
-              if (
-                event.type !== 'invalidate' ||
-                event.targetAgentId !== principal.identityId ||
-                client.readyState !== client.OPEN
-              )
-                return;
-              if (event.reason === 'connector-assignment') {
-                sendLive(JSON.stringify({ type: 'connector-assignment' }));
-                return;
-              }
-              if (event.reason === 'memory-job') {
-                sendLive(JSON.stringify({ type: 'memory-job', roomId: event.roomId }));
-                return;
-              }
-              if (event.reason !== 'postgres:memberships') return;
-              sendLive(
-                JSON.stringify({
-                  type: 'rooms-changed',
-                  ...(event.roomId ? { roomId: event.roomId } : {}),
-                  ...(event.parentRoomId ? { parentRoomId: event.parentRoomId } : {}),
-                  ...(event.openedBy ? { openedBy: event.openedBy } : {}),
-                  ...(event.archived ? { archived: true } : {}),
-                  ...(event.removed ? { removed: true } : {}),
-                }),
-              );
-            })
-          : undefined;
-      const helperReleaseSubscription = principal.kind === 'daemon'
-        ? options.releaseNotify?.subscribeHelperRelease((release) => {
-            if (client.readyState === client.OPEN)
-              sendLive(JSON.stringify({ type: 'helper-release', ...release }));
-          })
-        : undefined;
-      const listenerResyncRelease = principal.kind === 'daemon'
-        ? options.live.subscribeResync(() => sendLive(JSON.stringify({
-            type: 'discovery-wake', reason: 'listener-resync',
-          })))
-        : undefined;
-      const databaseRecoveryRelease = principal.kind === 'daemon'
-        ? options.database.onRecovery?.(() => sendLive(JSON.stringify({
-            type: 'discovery-wake', reason: 'database-recovered',
-          })))
-        : undefined;
       const pendingPaintTraces = new Map<
         string,
         {
@@ -558,14 +597,6 @@ export function createBeelineServer(options: ServerOptions): Server {
         }
       };
       client.on('message', (raw) => {
-        const minimum = helperVersionGate.minimum;
-        if (principal.kind === 'daemon' && minimum &&
-            helperVersionBelowMinimum(helperVersion, minimum)) {
-          helperVersionRefusals++;
-          forceUpdate(minimum);
-          client.close(1008, 'update required');
-          return;
-        }
         const frameBytes = Array.isArray(raw)
           ? raw.reduce((total, part) => total + part.length, 0)
           : raw.byteLength;
@@ -588,21 +619,6 @@ export function createBeelineServer(options: ServerOptions): Server {
           }
           if (!message || typeof message !== 'object') return;
           const item = message as Record<string, unknown>;
-          if (principal.kind === 'daemon') {
-            if (!helperVersion && item.type === 'subscribe' &&
-                typeof item.releaseVersion === 'string') helperVersion = item.releaseVersion;
-            const minimum = helperVersionGate.minimum;
-            if (minimum && forceUpdate(minimum)) {
-              helperVersionRefusals++;
-              client.close(1008, 'update required');
-              return;
-            }
-            if (minimum && helperVersionBelowMinimum(helperVersion, minimum)) {
-              helperVersionRefusals++;
-              client.close(1008, 'update required');
-              return;
-            }
-          }
           if (item.type === 'trace-paint' && typeof item.id === 'string') {
             const trace = pendingPaintTraces.get(item.id);
             if (!trace || client.readyState !== client.OPEN) return;
@@ -671,185 +687,6 @@ export function createBeelineServer(options: ServerOptions): Server {
             );
             for (const roomId of requestedRoomIds) {
               if (!readableRooms.has(roomId) || releases.has(roomId)) continue;
-            if (principal.kind === 'daemon') {
-              let cursor = isInboxCursor(item.cursor) ? item.cursor : undefined;
-              let replaying = false;
-              let replayRequested = false;
-              let replayTrigger: { reason: string; trace: LiveTrace } | undefined;
-              let commandsPushing = false;
-              let commandsRequested = false;
-              let commandTrigger: { reason: string; trace: LiveTrace } | undefined;
-              const replay = async (trigger?: { reason: string; trace: LiveTrace }) => {
-                replayRequested = true;
-                if (trigger) replayTrigger = trigger;
-                if (replaying) return;
-                replaying = true;
-                try {
-                  while (replayRequested && client.readyState === client.OPEN) {
-                    replayRequested = false;
-                    const inbox = await options.daemon.execute(
-                      'getRoomInbox',
-                      {
-                        roomId,
-                        ...(cursor ? { after: cursor, rewind: true } : { startAtLatest: true }),
-                        limit: 200,
-                      },
-                      principal.identityId,
-                    );
-                    cursor = inbox.cursor ?? cursor;
-                    const currentTrigger = replayTrigger;
-                    replayTrigger = undefined;
-                    sendLive(
-                      JSON.stringify({
-                        type: 'inbox',
-                        roomId,
-                        items: inbox.items,
-                        ...(cursor ? { cursor } : {}),
-                        ...(currentTrigger ? { trigger: currentTrigger } : {}),
-                      }),
-                    );
-                  }
-                } catch (error) {
-                  console.error(
-                    '[live] daemon replay failed',
-                    error instanceof Error ? error.message : String(error),
-                  );
-                } finally {
-                  replaying = false;
-                }
-              };
-              const pushCommands = async (trigger?: { reason: string; trace: LiveTrace }) => {
-                commandsRequested = true;
-                if (trigger) commandTrigger = trigger;
-                if (commandsPushing) return;
-                commandsPushing = true;
-                try {
-                  while (commandsRequested && client.readyState === client.OPEN) {
-                    commandsRequested = false;
-                    const page = await options.daemon.execute(
-                      'getAgentCommands',
-                      { roomId },
-                      principal.identityId,
-                    );
-                    const currentTrigger = commandTrigger;
-                    commandTrigger = undefined;
-                    sendLive(
-                      JSON.stringify({
-                        type: 'commands',
-                        roomId,
-                        commandProtocol: page.commandProtocol,
-                        commands: page.commands,
-                        ...(currentTrigger ? { trigger: currentTrigger } : {}),
-                      }),
-                    );
-                  }
-                } catch (error) {
-                  console.error(
-                    '[live] daemon command push failed',
-                    error instanceof Error ? error.message : String(error),
-                  );
-                } finally {
-                  commandsPushing = false;
-                }
-              };
-              releases.set(
-                roomId,
-                options.live.subscribe(roomId, (event) => {
-                  // Presence and streaming overlays are not durable inbox
-                  // invalidations. Replaying for them turns every evidence
-                  // refresh into an unrelated Room read on every daemon
-                  // listener. Commands have their own targeted projection;
-                  // their source message is delivered by its message event.
-                  if (event.type !== 'invalidate') return;
-                  // Read marks only reconcile the reader's phone devices.
-                  if (event.readerId) return;
-                  // A child corner's status changed; only corner lists read it.
-                  if (event.reason === 'corner-status') return;
-                  const trigger = event.trace
-                    ? { reason: event.reason, trace: event.trace }
-                    : undefined;
-                  if (event.reason === 'agent-config') {
-                    // A phone-side model/effort selection change for this
-                    // agent. No inbox replay: the durable fact is the
-                    // agent-model system line, and the daemon needs only the
-                    // wake to hot-restart its retained sessions.
-                    if (
-                      event.targetAgentId === principal.identityId &&
-                      client.readyState === client.OPEN
-                    ) {
-                      sendLive(JSON.stringify({ type: 'config-changed', roomId }));
-                    }
-                    return;
-                  }
-                  if (event.reason === 'postgres:agent_commands') {
-                    if (event.targetAgentId === principal.identityId) void pushCommands(trigger);
-                    return;
-                  }
-                  if (event.reason === 'memory-job') {
-                    if (!event.targetAgentId && client.readyState === client.OPEN)
-                      sendLive(JSON.stringify({ type: 'memory-job', roomId }));
-                    return;
-                  }
-                  if (event.reason === 'postgres:rooms' && event.repositoryChanged &&
-                      principal.kind === 'daemon') {
-                    if (client.readyState === client.OPEN)
-                      sendLive(JSON.stringify({ type: 'rooms-changed', roomId,
-                        repositoryChanged: true }));
-                    return;
-                  }
-                  if (event.closeRequested && event.reason === 'postgres:corner_facts') {
-                    if (client.readyState === client.OPEN)
-                      sendLive(JSON.stringify({ type: 'corner-complete', roomId }));
-                    return;
-                  }
-                  if (
-                    event.reason === 'postgres:corner_facts' &&
-                    event.laneChanged &&
-                    event.lane === 'code'
-                  ) {
-                    if (client.readyState === client.OPEN)
-                      sendLive(JSON.stringify({ type: 'corner-restart', roomId }));
-                    return;
-                  }
-                  void replay(trigger);
-                }),
-              );
-              const lifecycleId =
-                typeof item.lifecycleId === 'string' && item.lifecycleId.length <= 128
-                  ? item.lifecycleId
-                  : undefined;
-              if (lifecycleId)
-                try {
-                  await options.connectionPresence?.announce(roomId, principal.identityId, {
-                    lifecycleId,
-                    ...(typeof item.releaseVersion === 'string'
-                      ? { releaseVersion: item.releaseVersion }
-                      : {}),
-                    ...(typeof item.sourceSha === 'string' ? { sourceSha: item.sourceSha } : {}),
-                    ...(typeof item.available === 'boolean' ? { available: item.available } : {}),
-                  });
-                } catch (error) {
-                  console.error('[presence] startup announcement failed', error);
-                }
-              if (client.readyState !== client.OPEN) return;
-              sendLive(
-                JSON.stringify({
-                  type: 'subscribed',
-                  roomId,
-                  capabilities: {
-                    pushIntake: true,
-                    connectionPresence: Boolean(options.connectionPresence),
-                    discoveryWake: true,
-                  },
-                }),
-              );
-              // Both projections use the app pool. Keep one socket's startup
-              // reads inside its single admission slot instead of doubling
-              // connection demand during a reconnect fan-in.
-              await replay();
-              await pushCommands();
-              continue;
-            }
             // Agents whose draft this socket has already been handed live.
             // The snapshot below is read asynchronously, so a delta can land
             // first; replacing it with the older row would show the reader the
@@ -1019,12 +856,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       });
       client.on('close', () => {
         socketSubscriptions.delete(client);
-        if (principal.kind === 'phone') options.live.humanDisconnected(principal.identityId);
-        membershipWakeRelease?.();
-        helperReleaseSubscription?.();
-        helperMinimumRelease?.();
-        listenerResyncRelease?.();
-        databaseRecoveryRelease?.();
+        options.live.humanDisconnected(principal.identityId);
         pendingPaintTraces.clear();
         for (const release of releases.values()) release();
         releases.clear();

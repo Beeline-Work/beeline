@@ -550,7 +550,7 @@ export async function installRegistryMcp(input: {
 export function registryMcpBrokerLaunch(
   connectorId: string,
   turnContextPath: string,
-  brokerSocket = process.env.BEELINE_REGISTRY_MCP_BROKER_SOCKET,
+  brokerSocket: string | undefined,
 ): {
   command: string;
   args: string[];
@@ -590,7 +590,7 @@ export function registryMcpBrokerLaunch(
 export function registryMcpHostDeclarations(
   routes: readonly RegistryMcpRoute[] | undefined,
   turnContextPath: string,
-  brokerSocket = process.env.BEELINE_REGISTRY_MCP_BROKER_SOCKET,
+  brokerSocket: string | undefined,
 ): Record<string, Record<string, unknown>> {
   return Object.fromEntries(
     (routes ?? []).map((route) => {
@@ -613,7 +613,7 @@ export function registryMcpHostDeclarations(
 /** The broker socket is the only host path a Registry route needs inside a sandbox. */
 export function registryMcpHostBindPaths(
   routes: readonly RegistryMcpRoute[] | undefined,
-  brokerSocket = process.env.BEELINE_REGISTRY_MCP_BROKER_SOCKET,
+  brokerSocket: string | undefined,
 ): string[] {
   return routes?.length && brokerSocket ? [dirname(brokerSocket)] : [];
 }

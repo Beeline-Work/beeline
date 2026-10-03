@@ -86,7 +86,7 @@ import {
   type PublishedBundle,
 } from './self-update-manifest.js';
 import { convergeLaunchdTrustySquireBrokerService } from './launchd.js';
-import { convergeAgentServiceUnit, convergeTrustySquireBrokerService } from './systemd.js';
+import { convergeHelperServiceUnit, convergeTrustySquireBrokerService } from './systemd.js';
 
 // ---------------------------------------------------------------------------
 // Layout
@@ -1188,10 +1188,10 @@ export class SelfUpdateManager {
         env: this.options.env,
         log: this.log,
       });
-      // The agent template carries OOMPolicy=continue; an install/pair path
-      // rewrites it, but this update path is how an already-running host gets
-      // it. The restart that follows this activation starts under the new unit.
-      await convergeAgentServiceUnit({
+      // An install/pair path rewrites the helper unit, but this update path is
+      // how an already-running host gets a changed one. The restart that
+      // follows this activation starts under the new unit.
+      await convergeHelperServiceUnit({
         libDir: this.options.layout.libDir,
         env: this.options.env,
         log: this.log,

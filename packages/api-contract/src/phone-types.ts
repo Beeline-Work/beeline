@@ -132,6 +132,8 @@ export type RoomViewMember = {
   readonly presence?: {
     readonly status: 'online' | 'offline';
     readonly observedAt: number;
+    /** A live helper connection holds this presence; it does not age out. */
+    readonly held?: true;
     readonly roomId?: string;
   };
 };
@@ -772,6 +774,8 @@ export type ChatListItem = {
     readonly presence?: {
       readonly status: 'online' | 'offline';
       readonly observedAt: number;
+      /** A live helper connection holds this presence; it does not age out. */
+      readonly held?: true;
     };
   };
 };

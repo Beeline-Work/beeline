@@ -94,11 +94,15 @@ export type ConnectSessionClaim = {
   readonly onExit?: (listener: () => void) => () => void;
 };
 
-let activeConnectSession: ConnectSessionClaim | undefined;
+/**
+ * Claims per agent: one helper process hosts every agent on the machine, and
+ * one agent's fresh connect must never abort another agent's sign-in.
+ */
+const connectSessions = new Map<string, ConnectSessionClaim>();
 
-/** The connect session this helper currently claims, if any. */
-export function squireConnectSession(): ConnectSessionClaim | undefined {
-  return activeConnectSession;
+/** The connect session this agent currently claims, if any. */
+export function squireConnectSession(owner = ''): ConnectSessionClaim | undefined {
+  return connectSessions.get(owner);
 }
 
 /** Whether a process id is still running (`kill(pid, 0)`; EPERM means alive). */
@@ -119,9 +123,9 @@ export function isProcessAlive(pid: number | undefined): boolean {
  * claim outlived its spawn) is cleared outright; a still-live owner is
  * aborted — the fresh attempt supersedes it.
  */
-export function releaseSquireConnectSession(log?: (message: string) => void): void {
-  const claim = activeConnectSession;
-  activeConnectSession = undefined;
+export function releaseSquireConnectSession(log?: (message: string) => void, owner = ''): void {
+  const claim = connectSessions.get(owner);
+  connectSessions.delete(owner);
   if (!claim) return;
   if (isProcessAlive(claim.pid)) {
     log?.(
@@ -199,6 +203,8 @@ export type StreamedShellRunner = (
   command: string,
   args: readonly string[],
   env?: NodeJS.ProcessEnv,
+  /** The agent whose connect claim the spawned process holds. */
+  owner?: string,
 ) => Promise<StreamedCommandResult>;
 
 /** Safety bound for the connect process, and the life of the ceremony it prints. */
@@ -223,7 +229,7 @@ function killConnectTree(child: { pid?: number; kill: () => boolean }): void {
   child.kill();
 }
 
-export const defaultStreamedRunner: StreamedShellRunner = (command, args, env) =>
+export const defaultStreamedRunner: StreamedShellRunner = (command, args, env, owner = '') =>
   new Promise((resolve) => {
     const child = spawn(command, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -280,7 +286,7 @@ export const defaultStreamedRunner: StreamedShellRunner = (command, args, env) =
       for (const listener of exitListeners) listener();
       exitListeners.clear();
     };
-    activeConnectSession = claim;
+    connectSessions.set(owner, claim);
 
     const finish = (result: StreamedCommandResult) => {
       if (!resolved) {
@@ -688,9 +694,9 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
   };
   emit();
 
-  // Stop only the connect ceremony this helper spawned. Squire alone decides
+  // Stop only the connect ceremony this agent spawned. Squire alone decides
   // whether its profile is busy or connected in the next typed report.
-  releaseSquireConnectSession(log);
+  releaseSquireConnectSession(log, options.workspaceId);
 
   // Verify the copy npx resolves BEFORE connect runs, re-resolving a stale
   // one against the release this reader is written for.
@@ -723,6 +729,7 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
         : []),
     ],
     squireConnectProcessEnv(profileDir),
+    options.workspaceId,
   );
   const report = install.report;
   const version = resolution.resolvedVersion;

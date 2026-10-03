@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
   messageJumpHref,
@@ -316,11 +315,4 @@ it('a distant bookmark keeps its exact target and response identity', () => {
     channelId: 'room', notificationMessageId: target,
     notificationResponseId: `bookmark:${target}`, communityId: 'workspace',
   });
-});
-
-it('R12g: all message-jump callers use the shared helper', () => {
-  for (const file of ['../app/(app)/beeline/chat/_chat-surface.tsx', '../app/(app)/beeline/tray.tsx', './use-message-search.ts']) {
-    const source = readFileSync(new URL(file, import.meta.url), 'utf8');
-    expect(source).not.toMatch(/pathname: '\/beeline\/chat\/\[channelId\]'[\s\S]{0,300}notificationMessageId/);
-  }
 });

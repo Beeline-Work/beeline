@@ -1323,6 +1323,11 @@ export function BuzzChatSurface({
       ...foldSystemLines(foldSettledActivityRuns(anchored.slice(boundary))),
     ];
   }, [combinedMessages, firstUnreadMessageId, isCorner]);
+  const arrivalMessages = useMemo(() => {
+    if (!anchoredSegmentActive) return foldedMessages;
+    const tail = mergeDisplayPages(cachedMessages, liveMessages, roomSendFrame.optimistic);
+    return foldSystemLines(foldSettledActivityRuns(anchorCornerMarkers(anchorRelayReports(tail))));
+  }, [anchoredSegmentActive, cachedMessages, foldedMessages, liveMessages, roomSendFrame.optimistic]);
   const transcriptArrivalStateRef = useRef(EMPTY_TRANSCRIPT_ARRIVAL_STATE);
   const transcriptCardMotionStore = useMemo(createTranscriptCardMotionStore, [decodedId]);
   const transcriptArrivalObservation = useMemo(() => {
@@ -1331,9 +1336,9 @@ export function BuzzChatSurface({
       hydrated: Boolean(roomSurface),
       // A fold can gain a new durable fact without changing its host row id.
       // Observe every represented id so that arrival still joins the queue.
-      ids: foldedMessages.flatMap(messageBoundaryIds),
+      ids: arrivalMessages.flatMap(messageBoundaryIds),
     });
-  }, [decodedId, foldedMessages, roomSurface]);
+  }, [arrivalMessages, decodedId, roomSurface]);
   useEffect(() => {
     // Keep the comparison anchored to the last committed transcript. Mutating
     // this ref during render makes React's development double-render consume a
@@ -2269,6 +2274,9 @@ export function BuzzChatSurface({
   // The row the jump control exists to reach. Read from the chronological
   // order so the inverted phone list and the desktop list name the same row.
   const newestTranscriptMessageId = newestTranscriptRowId(visibleMessages);
+  const newestArrivalMessageId = anchoredSegmentActive
+    ? newestTranscriptRowId(arrivalMessages)
+    : newestTranscriptMessageId;
   // Rooms use the unread divider and queue; corners use only the viewport-
   // driven jump control (`buzz/use-new-message-control.ts`).
   // The divider answers one question: where the reader's unread run began when
@@ -2289,12 +2297,12 @@ export function BuzzChatSurface({
     settleQueueAtBoundary,
   } = useNewMessageControl({
     roomId: decodedId,
-    queueableMessages: foldedMessages,
+    queueableMessages: arrivalMessages,
     arrivingIds: transcriptArrivalObservation.arrivingIds,
-    newestMessageId: newestTranscriptMessageId,
+    newestMessageId: newestArrivalMessageId,
     firstUnreadMessageId: isCorner ? null : firstUnreadMessageId,
     openingUnreadCounts: isCorner ? null : openingUnreadCounts,
-    isPinnedToTail: () => isPinnedToTailRef.current,
+    isPinnedToTail: () => !anchoredSegmentActive && isPinnedToTailRef.current,
     enabled: !isCorner,
   });
   // The catch-up sheet, reached from the strip and from a long-press on the
@@ -2313,9 +2321,9 @@ export function BuzzChatSurface({
     () =>
       !isCorner && catchUpSheetVisible
         ? buildCatchUpReport({
-            messages: foldedMessages,
+            messages: arrivalMessages,
             boundaryId: catchUpBoundaryId,
-            newestId: newestTranscriptMessageId,
+            newestId: newestArrivalMessageId,
             viewerPubkey: userPubkey ?? null,
             // The roster the bylines already resolve against, so an ask whose
             // requester is not the row's author is still named correctly.
@@ -2326,9 +2334,9 @@ export function BuzzChatSurface({
       catchUpBoundaryId,
       catchUpSheetVisible,
       conversationIdentities,
-      foldedMessages,
+      arrivalMessages,
       isCorner,
-      newestTranscriptMessageId,
+      newestArrivalMessageId,
       userPubkey,
     ],
   );

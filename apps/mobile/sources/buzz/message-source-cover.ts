@@ -1,7 +1,4 @@
-export function shouldCoverMessageSource(input: {
-  desktop: boolean;
-  abandoned: boolean;
-}): boolean {
+export function shouldCoverMessageSource(input: { desktop: boolean; abandoned: boolean }): boolean {
   return !input.desktop && !input.abandoned;
 }
 

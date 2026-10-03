@@ -1,3 +1,4 @@
+import { readWorkflowOwnership } from './workflow-ownership.js';
 import type {
   WorkflowActorView,
   WorkflowContract,
@@ -302,8 +303,9 @@ export async function listRoomWorkflowRuns(
   db: SqlDatabase,
   roomId: string,
   viewerId: string,
+  workflowSlug?: string,
 ): Promise<WorkflowRunListResult> {
-  const heads = await loadRunHeads(db, roomId, viewerId);
+  const heads = await loadRunHeads(db, roomId, viewerId, workflowSlug);
   if (heads.length === 0) return { workflows: [] };
   const workspaceId = heads[0]!.workspaceId;
   const contracts = await loadContracts(
@@ -326,26 +328,32 @@ export async function listRoomWorkflowRuns(
     )
       newest.set(head.slug, head);
   }
-  const chosen = [...newest.values()];
+  const chosen = workflowSlug ? readable : [...newest.values()];
   const [actors, viewer] = await Promise.all([
     loadActors(db, chosen.flatMap(headBindingIds)),
     loadViewer(db, viewerId),
   ]);
-  const workflows = chosen
-    .map((head) =>
-      summarize(
-        head,
-        contracts.get(`${head.slug}@${head.version}`)!,
-        actors,
-        viewer,
-        earlierThan(readable, head),
-      ),
+  const workflows = (
+    await Promise.all(
+      chosen.map(async (head) => ({
+        ...summarize(
+          head,
+          contracts.get(`${head.slug}@${head.version}`)!,
+          actors,
+          viewer,
+          earlierThan(readable, head),
+        ),
+        ...(await workflowStartInfo(db, head.roomId, head.runId)),
+        ...(head.slug !== CORNER_WORKFLOW_SLUG
+          ? { ownership: await readWorkflowOwnership(db, head.roomId, head.slug, viewerId) }
+          : {}),
+      })),
     )
-    .sort(
-      (left, right) =>
-        Number(right.status === 'live') - Number(left.status === 'live') ||
-        right.updatedAt - left.updatedAt,
-    );
+  ).sort(
+    (left, right) =>
+      Number(right.status === 'live') - Number(left.status === 'live') ||
+      right.updatedAt - left.updatedAt,
+  );
   return { workflows };
 }
 
@@ -569,9 +577,40 @@ export async function readWorkflowRun(
     };
   });
   return {
-    run: summarize(head, contract, actors, viewer, earlierThan(heads, head)),
+    ...(head.slug !== CORNER_WORKFLOW_SLUG
+      ? { ownership: await readWorkflowOwnership(db, input.roomId, head.slug, viewerId) }
+      : {}),
+    run: {
+      ...summarize(head, contract, actors, viewer, earlierThan(heads, head)),
+      ...(await workflowStartInfo(db, head.roomId, head.runId)),
+    },
     contract,
     history,
     roleHolders,
   };
+}
+
+async function workflowStartInfo(
+  db: SqlDatabase,
+  roomId: string,
+  runId: string,
+): Promise<Pick<WorkflowRunSummaryView, 'startedBy' | 'startKind'>> {
+  const row = (
+    await db.query<{
+      id: string;
+      name: string;
+      kind: 'human' | 'agent';
+      start_kind: 'owner' | 'schedule' | 'human_admin' | null;
+    }>(
+      `SELECT identity.id,identity.name,identity.kind,message.card->>'startKind' start_kind FROM messages message
+    JOIN identities identity ON identity.id=message.author_id WHERE message.room_id=$1 AND message.id=$2`,
+      [roomId, runId],
+    )
+  ).rows[0];
+  return row
+    ? {
+        startedBy: { id: row.id, name: row.name, kind: row.kind },
+        ...(row.start_kind ? { startKind: row.start_kind } : {}),
+      }
+    : {};
 }

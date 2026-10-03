@@ -6800,6 +6800,18 @@ export function BuzzChatSurface({
           }}
           testID="room-participant-roster-trigger"
         />
+        {getBuzzRuntimeConfig().monolithUrl ? (
+          <HullActionSheetRow
+            accessibilityLabel="View workflow owners and runs"
+            chevron="right"
+            label="Workflows"
+            onPress={() => {
+              setRoomActionsVisible(false);
+              router.push({ pathname: '/beeline/workflow', params: { roomId: decodedId } });
+            }}
+            testID="room-workflows-trigger"
+          />
+        ) : null}
         {canManageWorkspace && getBuzzRuntimeConfig().monolithEnabled && (
           <HullActionSheetRow
             accessibilityLabel={`View ${ROOM_LABEL} scheduled work`}

@@ -131,6 +131,7 @@ export default function RootLayout() {
         />
         {/* A workflow run's state graph draws the shared PageHeader (corner over workflow). */}
         <Stack.Screen name="beeline/workflow-run" options={{ headerShown: false }} />
+        <Stack.Screen name="beeline/workflow" options={{ headerShown: false }} />
         <Stack.Screen
           name="beeline/settings/workflows"
           options={{

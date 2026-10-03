@@ -485,6 +485,8 @@ export interface LoadWorkspaceSkillInput {
 }
 
 export interface LoadWorkspaceSkillResult {
+  readonly owner?: import('./phone-operations.js').WorkflowOwnershipView['owner'];
+  readonly activeRunIds?: readonly string[];
   readonly skillId: string;
   readonly slug: string;
   readonly description: string;

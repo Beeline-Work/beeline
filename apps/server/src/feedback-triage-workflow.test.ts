@@ -1,3 +1,4 @@
+import { transferWorkflowOwner } from './workflow-ownership.js';
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readWorkflowContract } from '@beeline/api-contract/daemon';
@@ -150,7 +151,7 @@ describe('feedback-triage workflow', () => {
     expect(await backfillFeedbackTriageWorkflow(database)).toBe(0);
   });
 
-  it('lets the scheduled agent find, read and start it right after install, with no setting', async () => {
+  it('lets the scheduled agent find and read it, and blocks starts until a human assigns an owner', async () => {
     await backfillFeedbackTriageWorkflow(database);
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text) VALUES('schedule-ran',$1,$2,$3)`,
@@ -167,6 +168,8 @@ describe('feedback-triage workflow', () => {
       slug: 'feedback-triage-steps',
     });
     expect(steps.markdown).toContain('## dispatch');
+    await expect(startWorkflow(database, turn, { name: 'feedback-triage', roleBindings: { triager: TRIAGER } })).rejects.toThrow('no owner, starts blocked');
+    await transferWorkflowOwner(database, TRIAGE_CORNER, 'feedback-triage', CREATOR, TRIAGER);
     const started = await startWorkflow(database, turn, {
       name: 'feedback-triage',
       roleBindings: { triager: TRIAGER },

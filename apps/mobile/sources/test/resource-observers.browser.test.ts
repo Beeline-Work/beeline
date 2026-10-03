@@ -114,17 +114,20 @@ describe('resource observers in the desktop web renderer', () => {
         import { createRoot } from 'react-dom/client';
         import WorkflowRun from '@/app/(app)/beeline/workflow-run';
         createRoot(document.getElementById('root')).render(<WorkflowRun />);
+        setTimeout(() => document.querySelector('[data-testid="workflow-change-owner"]')?.click(), 200);
+        setTimeout(() => document.querySelector('[aria-label="Make Second agent the workflow owner"]')?.click(), 400);
         setTimeout(() => { globalThis.__invalidate?.({ monolithLive: { type: 'subscribed', roomId: 'corner' } }); globalThis.__offline = true;
           globalThis.__invalidate?.({ monolithLive: { type: 'invalidate', roomId: 'corner', reason: 'postgres:messages' } });
         }, 600);
         setTimeout(() => { globalThis.__failureText = document.getElementById('root').textContent; globalThis.__offline = false; globalThis.__done = true;
           globalThis.__invalidate?.({ monolithLive: { type: 'subscribed', roomId: 'corner' } }); }, 1000);
         setTimeout(() => { document.getElementById('result').textContent = JSON.stringify({
-          failureText: globalThis.__failureText, status: document.querySelector('[data-testid="workflow-run-status"]')?.textContent,
+          ownerText: document.querySelector('[data-testid="workflow-ownership"]')?.textContent, failureText: globalThis.__failureText, status: document.querySelector('[data-testid="workflow-run-status"]')?.textContent,
           reads: globalThis.__reads, errors: globalThis.__console });
         }, 1600);`);
       const detail = {
         run: { runId: 'run', workflowSlug: 'demo', description: 'Demo', roomId: 'corner', roomName: 'Corner', state: 'work', status: 'live', viewerHolds: false, startedAt: 1790000000, updatedAt: 1790000001, earlierRunCount: 0 },
+        ownership: { owner: { id: 'first', name: 'First agent' }, canTransfer: true, ownerCandidates: [{ id: 'second', name: 'Second agent' }] },
         contract: { slug: 'demo', description: 'Demo', initial: 'work', roles: {}, states: { work: { kind: 'terminal' } } }, history: [],
       };
       const result = await runBrowserProof({ entry, mobile, width: 1000, shims: {
@@ -133,8 +136,11 @@ describe('resource observers in the desktop web renderer', () => {
           export const useLocalSearchParams = () => ({ roomId: 'corner', runId: 'run' }); export const router = { back() {}, replace() {}, push() {} };`,
         '@/auth/buzz-identity-storage': `export const loadBuzzIdentity = async () => ({ publicKey: 'a' });`,
         '@/sync/transport/live-connection': `export const sharedLiveConnection = () => ({ register: async (_, listener) => { globalThis.__invalidate = listener; return () => { delete globalThis.__invalidate; }; } });`,
-        '@/sync/transport/monolith-operation': `export const monolithPhoneOperation = async () => {
+        '@/components/buzz/IdentityMark': `export const IdentityMark = () => null;`,
+        '@/sync/transport/monolith-operation': `export const monolithPhoneOperation = async operation => {
+          if (operation === 'transferWorkflowOwner') { globalThis.__transferred = true; return {}; }
           globalThis.__reads = (globalThis.__reads ?? 0) + 1; if (globalThis.__offline) throw new Error('offline'); const detail = ${JSON.stringify(detail)};
+          if (globalThis.__transferred) detail.ownership.owner = { id: 'second', name: 'Second agent' };
           if (globalThis.__done) { detail.run.status = 'done'; detail.run.updatedAt = 1790000100; }
           return detail; };`,
       } });
@@ -142,7 +148,8 @@ describe('resource observers in the desktop web renderer', () => {
       console.log('Reproductions R9d and R9-OBS-01 desktop web:', result.result);
       expect(JSON.parse(result.result).status).toBe('Done');
       expect(JSON.parse(result.result).failureText).toContain('offline');
-      expect(JSON.parse(result.result).reads).toBe(3);
+      expect(JSON.parse(result.result).reads).toBe(4);
+      expect(JSON.parse(result.result).ownerText).toContain('Second agent');
     } finally { await rm(directory, { recursive: true, force: true }); }
   }, 90000);
 });

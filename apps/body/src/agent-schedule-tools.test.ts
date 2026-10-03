@@ -40,6 +40,35 @@ function deps(ops: Array<{ name: string; input: Record<string, unknown> }>): Age
 }
 
 describe('beeline-agent schedule tools', () => {
+  it('carries the workflow target through create/update and exposes its owner and active IDs', async () => {
+    const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
+    await createSchedule(
+      { prompt: 'Scan', workflowName: 'daily', cadence: { kind: 'interval', everyMinutes: 1 } },
+      deps(ops),
+    );
+    await updateSchedule({ scheduleId: 'sched-1', workflowName: 'daily' }, deps(ops));
+    expect(ops.map((op) => op.input.workflowName)).toEqual(['daily', 'daily']);
+    const activeRunId = 'b'.repeat(64);
+    const listed = await listSchedules({
+      roomId: 'room-1',
+      execute: async () => ({
+        schedules: [
+          {
+            scheduleId: 'sched-1',
+            agentId: 'agent-1',
+            prompt: 'Scan',
+            cadence: { kind: 'interval', everyMinutes: 1 },
+            workflowName: 'daily',
+            owner: { id: 'agent-1', name: 'Scanner' },
+            activeRunIds: [activeRunId],
+          },
+        ],
+      }),
+    });
+    expect(listed).toContain('Owner Scanner');
+    expect(listed).toContain(`Active run IDs: ${activeRunId}`);
+  });
+
   it('create_schedule calls createAgentSchedule and reports the 1-minute floor', async () => {
     const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
     const result = await createSchedule(

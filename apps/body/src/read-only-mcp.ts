@@ -960,6 +960,23 @@ const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: 'watch_corner',
+    description:
+      'Watch a sibling corner (or a child of this Room) for merged, check-passed or check-failed events and get its current snapshot. Replaces any earlier watch on that corner; an empty list removes it. Wakes arrive in your own Room or corner and name the watched corner and event.',
+    inputSchema: {
+      type: 'object',
+      required: ['cornerId', 'kinds'],
+      properties: {
+        cornerId: { type: 'string' },
+        kinds: {
+          type: 'array',
+          items: { type: 'string', enum: ['merged', 'check-passed', 'check-failed'] },
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'list_event_subscriptions',
     description: 'List the events you currently react to in this Room.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
@@ -1665,7 +1682,7 @@ export function agentToolsFor(
     ) {
       return institutionalMemoryEnabled;
     }
-    if (tool.name === 'steer_corner') return !directMessage;
+    if (tool.name === 'steer_corner' || tool.name === 'watch_corner') return !directMessage;
     if (['ask_corner', 'get_corner_ask', 'inspect_corner'].includes(tool.name))
       return !directMessage && !cornerTurn;
     // Every code-lane corner turn may record a PASS: the server, not the
@@ -4276,6 +4293,16 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       return createSchedule(args);
     case 'subscribe_events':
       return subscribeEvents(args);
+    case 'watch_corner': {
+      const deps = agentScheduleDepsFromEnv();
+      const result = await deps.execute('watchCorner', {
+        roomId: deps.roomId,
+        cornerId: args.cornerId,
+        kinds: args.kinds,
+      });
+      const kinds = (result.kinds as string[]).join(', ');
+      return `${kinds ? `Watching for ${kinds}` : 'Watch removed'}\n${JSON.stringify(result.snapshot, null, 2)}`;
+    }
     case 'list_event_subscriptions':
       return listEventSubscriptions();
     case 'emit_event':

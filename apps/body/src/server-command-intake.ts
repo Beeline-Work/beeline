@@ -4,7 +4,8 @@ import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { isAgentCommand, type AgentCommand } from '@beeline/api-contract/daemon';
-import type { DaemonApiClient } from './daemon-api-client.js';
+import { DaemonApiError, type DaemonApiClient } from './daemon-api-client.js';
+import { isNetworkFailure } from './live-link.js';
 
 /** Session-local output context. No transcript or sender policy enters this boundary. */
 export class CommandExecutionContext {
@@ -120,7 +121,7 @@ export async function runServerCommandIntake(options: {
    * to be) and about to execute. `onClaimFailed` undoes the mark when the
    * claim itself is refused (lost to a concurrent claimant, a stale
    * generation, etc.) so a failed attempt never leaves this caller stuck
-   * "busy" over nothing.
+   * "busy" over nothing. It also undoes the mark if context entry fails.
    */
   onClaiming?: (command: AgentCommand) => void;
   onClaimFailed?: (command: AgentCommand) => void;
@@ -215,18 +216,52 @@ export async function runServerCommandIntake(options: {
         // context.enter()'s own I/O afterward (C112).
         const startingTurn = command.action !== 'restart' && command.action !== 'stop';
         if (startingTurn) options.onClaiming?.(command);
+        let claimSucceeded = false;
         try {
-          await api.execute('claimAgentCommand', {
-            roomId,
-            commandId: command.id,
-            generationId: context.generationId,
-          });
+          // A lost response may already have committed this generation's claim.
+          for (let attempt = 0; ; attempt += 1) {
+            if (signal?.aborted) break;
+            try {
+              await api.execute('claimAgentCommand', {
+                roomId,
+                commandId: command.id,
+                generationId: context.generationId,
+              });
+              claimSucceeded = true;
+              break;
+            } catch (error) {
+              const retryable = error instanceof DaemonApiError
+                ? error.status !== 403 && error.status !== 409 && error.retryable
+                : isNetworkFailure(error);
+              if (!retryable) {
+                options.onError?.(error);
+                break;
+              }
+              if (attempt === 3) throw error;
+              const waitMs = Math.max(250 * 2 ** attempt,
+                error instanceof DaemonApiError ? error.retryAfterMs ?? 0 : 0);
+              await new Promise<void>((resolve) => {
+                const done = () => {
+                  clearTimeout(timer);
+                  signal?.removeEventListener('abort', done);
+                  resolve();
+                };
+                const timer = setTimeout(done, waitMs);
+                signal?.addEventListener('abort', done, { once: true });
+                if (signal?.aborted) done();
+              });
+            }
+          }
         } catch (error) {
-          claimed.delete(command.id);
-          if (startingTurn) options.onClaimFailed?.(command);
-          options.onError?.(error);
-          continue;
+          if (!signal?.aborted) throw error;
+        } finally {
+          if (!claimSucceeded) {
+            claimed.delete(command.id);
+            requeued.delete(command.id);
+            if (startingTurn) options.onClaimFailed?.(command);
+          }
         }
+        if (!claimSucceeded) continue;
         if (command.action === 'restart') {
           if (!options.restart) throw new Error('restart command is not supported by this helper');
           // Leave the command claimed. A genuinely new process lifecycle completes
@@ -240,21 +275,58 @@ export async function runServerCommandIntake(options: {
             generationId: context.generationId,
           });
         } else {
-          await context.enter(command);
-          options.onEnter?.(command);
-          busy = options
-            .run(command)
+          const release = () => {
+            context.current = undefined;
+            claimed.delete(command.id);
+            const again = requeued.get(command.id);
+            requeued.delete(command.id);
+            busy = undefined;
+            notify(again ? [again] : []);
+          };
+          try {
+            await context.enter(command);
+            options.onEnter?.(command);
+          } catch (error) {
+            context.current = undefined;
+            if (startingTurn) options.onClaimFailed?.(command);
+            options.onError?.(error);
+            try {
+              try {
+                await context.leave();
+              } catch (leaveError) {
+                options.onError?.(leaveError);
+              }
+              await api.execute('postAgentTurnReceipt', {
+                agentId, roomId, requestId: command.turnRequestId,
+                generationId: context.generationId, status: 'failed',
+                reason: 'Could not enter command execution context',
+              });
+            } finally {
+              release();
+            }
+            continue;
+          }
+          busy = Promise.resolve()
+            .then(() => options.run(command))
             .catch((error) => {
               options.onError?.(error);
             })
             .finally(async () => {
-              options.onLeave?.(command);
-              await context.leave();
-              claimed.delete(command.id);
-              const again = requeued.get(command.id);
-              requeued.delete(command.id);
-              busy = undefined;
-              notify(again ? [again] : []);
+              try {
+                try {
+                  options.onLeave?.(command);
+                } catch (error) {
+                  options.onError?.(error);
+                } finally {
+                  try {
+                    await context.leave();
+                  } catch (error) {
+                    options.onError?.(error);
+                  }
+                }
+              } finally {
+                release();
+              }
             });
         }
       }

@@ -167,14 +167,15 @@ export class DaemonApiClient {
     {
       cursor?: string;
       pushedIds: Set<string>;
-      pushedCommandIds: Set<string>;
-      onItems?: (items: readonly InboxItem[], cursor?: string) => void;
-      onState?: (
-        connected: boolean,
-        capabilities?: { pushIntake: boolean; connectionPresence: boolean },
-      ) => void;
-      onCommands?: (commands: readonly AgentCommand[]) => void;
-      presence?: { releaseVersion?: string; sourceSha?: string; available?: boolean };
+      registrations: Set<{
+        onItems?: (items: readonly InboxItem[], cursor?: string) => void;
+        onState?: (
+          connected: boolean,
+          capabilities?: { pushIntake: boolean; connectionPresence: boolean },
+        ) => void;
+        onCommands?: (commands: readonly AgentCommand[]) => void;
+        presence?: { releaseVersion?: string; sourceSha?: string; available?: boolean };
+      }>;
     }
   >();
   private roomsChangedListener?: (event?: RoomMembershipChange) => void;
@@ -217,7 +218,8 @@ export class DaemonApiClient {
       onOpen: () => this.liveOpened(),
       onMessage: (event) => this.liveMessage(event),
       onClose: () => {
-        for (const room of this.liveRooms.values()) room.onState?.(false);
+        for (const room of this.liveRooms.values())
+          for (const registration of room.registrations) registration.onState?.(false);
       },
       // A settled removal is learned through the next reconcile's HTTP answer.
       onRefused: (code) => {
@@ -280,27 +282,18 @@ export class DaemonApiClient {
     presence?: { releaseVersion?: string; sourceSha?: string; available?: boolean },
     onCommands?: (commands: readonly AgentCommand[]) => void,
   ): () => void {
-    const existing = this.liveRooms.get(roomId);
-    if (existing) {
-      existing.cursor = cursor ?? existing.cursor;
-      existing.onItems = onItems ?? existing.onItems;
-      existing.onState = onState ?? existing.onState;
-      existing.presence = presence ?? existing.presence;
-      existing.onCommands = onCommands ?? existing.onCommands;
-    } else {
-      this.liveRooms.set(roomId, {
-        ...(cursor ? { cursor } : {}),
-        pushedIds: new Set(),
-        pushedCommandIds: new Set(),
-        ...(onItems ? { onItems } : {}),
-        ...(onState ? { onState } : {}),
-        ...(presence ? { presence } : {}),
-        ...(onCommands ? { onCommands } : {}),
-      });
+    let room = this.liveRooms.get(roomId);
+    if (!room) {
+      room = { pushedIds: new Set(), registrations: new Set() };
+      this.liveRooms.set(roomId, room);
     }
+    room.cursor = cursor ?? room.cursor;
+    const registration = { onItems, onState, presence, onCommands };
+    room.registrations.add(registration);
     this.ensureLiveSocket();
     this.sendLiveSubscription(roomId);
     return () => {
+      if (!room.registrations.delete(registration) || room.registrations.size) return;
       this.liveRooms.delete(roomId);
       this.channel.send({ type: 'unsubscribe', roomId });
       if (!this.liveRooms.size && !this.roomsChangedListener) this.channel.stop();
@@ -464,10 +457,11 @@ export class DaemonApiClient {
     }
     if (event.type === 'subscribed' && typeof event.roomId === 'string') {
       const capabilities = event.capabilities as Record<string, unknown> | undefined;
-      this.liveRooms.get(event.roomId)?.onState?.(true, {
-        pushIntake: capabilities?.pushIntake === true,
-        connectionPresence: capabilities?.connectionPresence === true,
-      });
+      for (const registration of this.liveRooms.get(event.roomId)?.registrations ?? [])
+        registration.onState?.(true, {
+          pushIntake: capabilities?.pushIntake === true,
+          connectionPresence: capabilities?.connectionPresence === true,
+        });
       return;
     }
     if (
@@ -478,20 +472,12 @@ export class DaemonApiClient {
     ) {
       const room = this.liveRooms.get(event.roomId);
       if (!room) return;
-      const commands = event.commands.filter((command): command is AgentCommand => {
-        if (
-          !isAgentCommand(command) ||
-          command.roomId !== event.roomId ||
-          command.agentId !== this.agentId ||
-          room.pushedCommandIds.has(command.id)
-        )
-          return false;
-        room.pushedCommandIds.add(command.id);
-        return true;
-      });
-      while (room.pushedCommandIds.size > 10_000)
-        room.pushedCommandIds.delete(room.pushedCommandIds.values().next().value!);
-      if (commands.length) room.onCommands?.(commands);
+      const commands = event.commands.filter((command): command is AgentCommand =>
+        isAgentCommand(command) &&
+        command.roomId === event.roomId &&
+        command.agentId === this.agentId,
+      );
+      for (const registration of room.registrations) registration.onCommands?.(commands);
       return;
     }
     if (event.type !== 'inbox' || typeof event.roomId !== 'string' || !Array.isArray(event.items))
@@ -510,7 +496,8 @@ export class DaemonApiClient {
     while (room.pushedIds.size > 10_000)
       room.pushedIds.delete(room.pushedIds.values().next().value!);
     if (items.length)
-      room.onItems?.(items, typeof event.cursor === 'string' ? event.cursor : undefined);
+      for (const registration of room.registrations)
+        registration.onItems?.(items, typeof event.cursor === 'string' ? event.cursor : undefined);
   }
 
   private sendLiveSubscription(roomId: string): void {
@@ -522,7 +509,7 @@ export class DaemonApiClient {
       roomId,
       lifecycleId: this.presenceLifecycleId,
       ...(room.cursor ? { cursor: room.cursor } : {}),
-      ...room.presence,
+      ...[...room.registrations].reverse().find((registration) => registration.presence)?.presence,
     });
   }
 }

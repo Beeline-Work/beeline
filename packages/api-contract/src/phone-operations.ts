@@ -487,16 +487,23 @@ export type AgentGrantDecisionResult = {
   readonly roomId: string;
 };
 export type AcceptConnectorOfferInput = { readonly offerId: string };
-export type AcceptConnectorOfferResult = {
-  readonly offerId: string;
-  /** The offer settles only after the helper reports the connector connected. */
-  readonly status: 'connecting';
-  readonly roomId: string;
-  /** The Workbench connector row the acceptance created or re-armed. */
-  readonly connectorId: string;
-  /** Google consent can open immediately without a helper ceremony. */
-  readonly authorizationUrl?: string;
-};
+export type AcceptConnectorOfferResult =
+  | {
+      readonly offerId: string;
+      /** The offer settles only after the helper reports the connector connected. */
+      readonly status: 'connecting';
+      readonly roomId: string;
+      /** The Workbench connector row the acceptance created or re-armed. */
+      readonly connectorId: string;
+      /** Google consent can open immediately without a helper ceremony. */
+      readonly authorizationUrl?: string;
+    }
+  | {
+      readonly offerId: string;
+      /** The wallet settles in the acceptance itself: accepting is the grant. */
+      readonly status: 'accepted';
+      readonly roomId: string;
+    };
 export type AnswerChoiceInput = {
   readonly choiceId: string;
   readonly optionId: string;

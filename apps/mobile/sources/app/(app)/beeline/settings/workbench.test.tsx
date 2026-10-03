@@ -103,6 +103,7 @@ vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
 });
 
 import WorkbenchScreen from './workbench';
+import { WALLET_GRANT_ENDED_MESSAGE } from '@/buzz/workbench';
 import { setWorkbenchSource } from '@/buzz/workbench-source';
 import { MockWorkbenchSource } from '@/buzz/workbench-source.mock';
 import { setWalletSource } from '@/buzz/wallet-source';
@@ -492,16 +493,54 @@ describe('Workbench settings screen', () => {
     expect(renderer.root.findByProps({ testID: 'workbench-connect-app' })).toBeTruthy();
   });
 
-  it('creates a wallet from Connect and opens the dashboard', async () => {
+  it('creates a wallet and grants it from Connect, then opens the dashboard', async () => {
+    const source = new MockWalletSource();
+    const order: string[] = [];
+    const create = source.createWallet.bind(source);
+    source.createWallet = async () => {
+      order.push('create');
+      return create();
+    };
+    const grant = source.grantDelegation.bind(source);
+    source.grantDelegation = async () => {
+      order.push('grant');
+      return grant();
+    };
+    setWalletSource(source);
     const renderer = await render();
     const wallet = renderer.root.findByProps({ testID: 'workbench-connector-wallet-head' });
     await act(async () => {
       await wallet.props.trailingPress.onPress();
     });
+    expect(order).toEqual(['create', 'grant']);
     expect(navigation.push.mock.calls.at(-1)![0]).toEqual({
       pathname: '/beeline/settings/workbench/wallet',
       params: { workspaceId: 'workspace-1' },
     });
+  });
+
+  it('offers Reconnect, not connected, once the wallet grant has ended', async () => {
+    const source = new MockWorkbenchSource();
+    const read = source.readWorkbench.bind(source);
+    source.readWorkbench = async (input) => {
+      const view = await read(input);
+      return {
+        ...view,
+        connectors: view.connectors.map((connector) =>
+          connector.id === 'wallet'
+            ? { ...connector, status: 'error' as const, errorMessage: WALLET_GRANT_ENDED_MESSAGE }
+            : connector,
+        ),
+      };
+    };
+    setWorkbenchSource(source);
+    const renderer = await render();
+    const wallet = renderer.root.findByProps({ testID: 'workbench-connector-wallet-head' });
+    expect(wallet.props.action).toBe('Reconnect');
+    expect(wallet.props.value).toBeUndefined();
+    expect(
+      renderer.root.findByProps({ testID: 'workbench-connector-wallet' }).props.errorText,
+    ).toBe(WALLET_GRANT_ENDED_MESSAGE);
   });
 
   it('resolves a Workspace for the personal Settings entry before opening Wallet', async () => {

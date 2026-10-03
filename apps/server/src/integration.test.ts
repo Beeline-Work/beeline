@@ -11497,8 +11497,8 @@ describe('monolith integration', () => {
       expect.objectContaining({ offerable: true, available: true, purpose: expect.any(String) }),
     );
     expect(squire?.paired).toBeUndefined();
-    // The wallet is created only from the Workbench page; it has no offer shape.
-    expect(status.catalog.find((entry) => entry.connectorType === 'wallet')?.offerable).toBe(false);
+    // The wallet is offerable: accepting its card is the addressee's grant to sign.
+    expect(status.catalog.find((entry) => entry.connectorType === 'wallet')?.offerable).toBe(true);
     expect(status.catalog.find((entry) => entry.connectorType === 'tailscale')?.offerable).toBe(
       true,
     );
@@ -11509,7 +11509,7 @@ describe('monolith integration', () => {
         await daemonOperation('offerConnector', {
           roomId: ROOM,
           requestId: ask.messageId,
-          connectorType: 'wallet',
+          connectorType: 'nonsense',
           reason: 'hold funds',
         })
       ).status,

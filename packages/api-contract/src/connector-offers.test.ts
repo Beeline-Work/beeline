@@ -16,12 +16,10 @@ import { CONNECTABLE_CONNECTOR_KINDS } from './workbench.js';
 import { formatGrantDecisionLine } from './agent-grants.js';
 
 describe('connector offers (R5)', () => {
-  it('offers only what the Workbench can pair, and never the wallet', () => {
-    expect(OFFERABLE_CONNECTOR_KINDS).toEqual(
-      CONNECTABLE_CONNECTOR_KINDS.filter((kind) => kind !== 'wallet'),
-    );
+  it('offers what the Workbench can pair, the wallet included', () => {
+    expect(OFFERABLE_CONNECTOR_KINDS).toEqual([...CONNECTABLE_CONNECTOR_KINDS, 'wallet']);
     expect(isOfferableConnectorKind('trusty-squire')).toBe(true);
-    expect(isOfferableConnectorKind('wallet')).toBe(false);
+    expect(isOfferableConnectorKind('wallet')).toBe(true);
     expect(isOfferableConnectorKind('tailscale')).toBe(true);
     expect(isOfferableConnectorKind('nonsense')).toBe(false);
     expect([...CONNECTOR_OFFER_STATUSES]).toEqual(['pending', 'connecting', 'accepted']);
@@ -39,6 +37,9 @@ describe('connector offers (R5)', () => {
     );
     expect(withReason).toBe(
       'This changes your Workbench. Once it is added, I can provision the 1inch API key into its vault — still no raw key in chat',
+    );
+    expect(connectorOfferConsequence('wallet')).toBe(
+      'This changes your Workbench. Once it is added, I can pay from your wallet — you can revoke permission any time',
     );
     const google = connectorOfferConsequence('google-gmail');
     expect(google).toMatch(/^This changes your Workbench\./);

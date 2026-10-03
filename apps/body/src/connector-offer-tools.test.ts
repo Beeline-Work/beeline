@@ -43,13 +43,13 @@ describe('beeline-agent workbench_status + offer_connector (R5)', () => {
     );
   });
 
-  it('offer_connector accepts only offerable kinds: never the wallet', () => {
+  it('offer_connector accepts only offerable kinds, the wallet included', () => {
     const tool = agentToolsFor(true, false).find((entry) => entry.name === 'offer_connector')!;
     const kinds = (tool.inputSchema.properties as { connectorType: { enum: string[] } }).connectorType
       .enum;
     expect(kinds).toContain('trusty-squire');
     expect(kinds).not.toContain('google-gmail');
-    expect(kinds).not.toContain('wallet');
+    expect(kinds).toContain('wallet');
     expect(kinds).toContain('tailscale');
   });
 
@@ -57,6 +57,7 @@ describe('beeline-agent workbench_status + offer_connector (R5)', () => {
     const tool = agentToolsFor(true, false).find((entry) => entry.name === 'offer_connector')!;
     expect(tool.description).toContain('ONE affirmative action');
     expect(tool.description).toContain('Only that person or a Workspace admin can accept');
+    expect(tool.description).toContain('The wallet is the exception: only that person can accept');
     expect(tool.description).toContain('Your turn pauses on the card');
     expect(tool.description).toContain('research it first and say so in your reply BEFORE calling this');
     expect(tool.description).toContain('This is setup, not authority');
@@ -203,7 +204,7 @@ describe('beeline-agent workbench_status + offer_connector (R5)', () => {
   it('refuses a non-offerable kind and an empty reason before the server is called', async () => {
     const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
     const answer = deps({ offerId: 'never' }, ops);
-    await expect(offerConnector({ connectorType: 'wallet', reason: 'hold funds' }, answer)).rejects.toThrow(
+    await expect(offerConnector({ connectorType: 'google-gmail', reason: 'hold funds' }, answer)).rejects.toThrow(
       'connectorType must be one of',
     );
     await expect(offerConnector({ connectorType: 'trusty-squire', reason: '  ' }, answer)).rejects.toThrow(

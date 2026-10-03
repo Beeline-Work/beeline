@@ -13,6 +13,7 @@ import { WalletQr } from '@/components/buzz/WalletQr';
 import { chainIcon, tokenIcon } from '@/buzz/wallet-icons';
 import { getWalletSource } from '@/buzz/wallet-source';
 import { resolveWalletWorkspaceId } from '@/buzz/wallet-workspace';
+import { WALLET_GRANT_ENDED_MESSAGE } from '@/buzz/workbench';
 import { phoneOperationFailureReason } from '@/sync/transport/monolith-operation';
 import type { WalletLedgerEntry, WalletView } from '@beeline/api-contract/wallet';
 
@@ -38,7 +39,8 @@ function activityStamp(createdAt: number, now: number = Date.now()): string {
  * Data contracts: `WalletView` carries address/total/coins; the history
  * feed comes from `readWalletHistory` (the server's own ledger rows —
  * oldest first as stored, rendered newest first). The balance IS the
- * limit; the delegation banner stays the one header-only fact.
+ * limit. Until agents hold an active grant to sign, the page shows only the
+ * one row that connects it.
  */
 export default function WalletScreen() {
   const params = useLocalSearchParams<{ workspaceId?: string | string[] }>();
@@ -105,7 +107,7 @@ export default function WalletScreen() {
       // grantWalletDelegation throws `wallet not created` when there is no
       // binding; every other refusal rides the server's `{error}` through
       // MonolithPhoneOperationError. A fetch miss keeps its own message.
-      // That sentence belongs on this banner — `error` only paints the
+      // That sentence belongs on the connect row — `error` only paints the
       // empty-wallet NetworkUnavailableState.
       setGrantError(phoneOperationFailureReason(failure));
     } finally {
@@ -176,21 +178,25 @@ export default function WalletScreen() {
         testID="wallet-scroll"
       >
         <View testID="wallet-screen">
+          {needsGrant ? (
+            // Nothing of the wallet shows until the connect sequence (the
+            // grant to sign) has finished.
+            <SettingsRow
+              action={granting ? undefined : wallet.delegation.expiresAt !== null ? 'reconnect' : 'connect'}
+              description={grantError ?? (wallet.delegation.expiresAt !== null
+                ? WALLET_GRANT_ENDED_MESSAGE
+                : 'Connect to let your agents sign and spend.')}
+              descriptionTone={grantError ? 'danger' : undefined}
+              onPress={grant}
+              statusGlyph={granting ? 'pulse' : undefined}
+              testID="wallet-connect-row"
+              title="Wallet not connected"
+              tone="action"
+              value={granting ? 'Connecting…' : undefined}
+              valueTone={granting ? 'accent' : undefined}
+            />
+          ) : (
           <>
-            {needsGrant ? (
-              <SettingsRow
-                action={granting ? undefined : 'grant'}
-                description={grantError ?? 'Your agents need permission again to spend.'}
-                descriptionTone={grantError ? 'danger' : undefined}
-                onPress={grant}
-                statusGlyph={granting ? 'pulse' : undefined}
-                testID="wallet-delegation-banner"
-                title="Permission expired"
-                tone="action"
-                value={granting ? 'Granting…' : undefined}
-                valueTone={granting ? 'accent' : undefined}
-              />
-            ) : null}
 
             {/* Address: one row, copy on the trailing axis, QR on demand. */}
             <View style={styles.addressBlock} testID="wallet-address">
@@ -364,6 +370,7 @@ export default function WalletScreen() {
               ))
             )}
           </>
+          )}
         </View>
       </ScrollView>
     </View>

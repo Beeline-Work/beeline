@@ -41,12 +41,14 @@ export const CONNECTOR_OFFER_KEY_BOUNDARY = 'still no raw key in chat';
 
 /**
  * Connector kinds an agent may OFFER from a Room: everything the Workbench can
- * pair today except the wallet, whose only UI is the Workbench page itself
- * (creating a wallet binds a signing key to a person; that is not a helper
- * install and has no offer shape).
+ * pair today, plus the wallet. The wallet has no helper install: accepting its
+ * card is the addressee's own grant to sign, the same step as Connect on the
+ * Workbench.
  */
-export const OFFERABLE_CONNECTOR_KINDS: readonly ConnectorKind[] =
-  CONNECTABLE_CONNECTOR_KINDS.filter((kind) => kind !== 'wallet');
+export const OFFERABLE_CONNECTOR_KINDS: readonly ConnectorKind[] = [
+  ...CONNECTABLE_CONNECTOR_KINDS,
+  'wallet',
+];
 
 export function isOfferableConnectorKind(value: unknown): value is ConnectorKind {
   return (OFFERABLE_CONNECTOR_KINDS as readonly string[]).includes(value as string);
@@ -71,6 +73,8 @@ export function connectorOfferConsequence(kind: ConnectorKind, reason?: string):
     case 'google-drive':
     case 'google-youtube':
       return 'This changes your Workbench. Once it is added, you sign in to Google yourself and I work through that sign-in — I never see your password';
+    case 'wallet':
+      return `This changes your Workbench. Once it is added, I can pay from your wallet — ${boundary}`;
     default:
       return `This changes your Workbench. Once it is added, I can use the tool from there — ${boundary}`;
   }
@@ -94,6 +98,8 @@ function connectorOfferBoundary(kind: ConnectorKind): string {
     case 'google-drive':
     case 'google-youtube':
       return 'I never see your password';
+    case 'wallet':
+      return 'you can revoke permission any time';
     default:
       return 'its credentials stay in the tool, never in chat';
   }
@@ -111,7 +117,7 @@ export function connectorPurpose(kind: ConnectorKind): string {
     case 'trusty-squire':
       return 'A credential vault and browser broker on this machine: it signs up for services, provisions API keys into its vault, and lets me use them without a raw key ever reaching chat.';
     case 'wallet':
-      return 'An on-chain wallet bound to a person; created only from the Workbench page itself.';
+      return 'An on-chain wallet bound to a person; it connects when that person grants agents permission to sign, from the Workbench or an offer card.';
     case 'tailscale':
       return 'Private network access between connected machines, including the Tailscale CLI, tailnet services, and Taildrop file exchange.';
     case 'google-gmail':

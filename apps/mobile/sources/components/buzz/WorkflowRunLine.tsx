@@ -31,12 +31,12 @@ import { HullLivePulse } from './MonoHull';
 const CIRCLE = 20;
 const HALO = 32;
 /** The circle's top within a step row, and the line's x (the circle's centre). */
-const CIRCLE_TOP = 12;
+const CIRCLE_TOP = 8;
 const LINE_X = 28;
 /** Where a step's copy column starts, right of the rail and its halo. */
 const COPY_X = 56;
 /** The readout's line-number column; item lists hang under the key, past it. */
-const LINE_INDEX_WIDTH = 22;
+const LINE_INDEX_WIDTH = 24;
 
 const CLOCK = new Intl.DateTimeFormat(undefined, {
   hour: '2-digit',

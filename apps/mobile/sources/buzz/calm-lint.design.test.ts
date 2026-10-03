@@ -64,17 +64,19 @@ describe('Borrowing Calm lint', () => {
     ]);
   });
 
-  it('flags computed sizes — arithmetic and ternaries — even from theme values', () => {
+  it('flags computed sizes — arithmetic, ternaries, parentheses and calls — even from theme values', () => {
     const source = [
       'const s = StyleSheet.create((theme) => ({',
       '  a: { fontSize: theme.buzz.type.body.fontSize - 1 },',
       '  b: { lineHeight: size * 1.4 },',
       '  c: { fontSize: desktop ? 17 : 16 },',
       '  d: { fontSize: theme.buzz.type.meta.fontSize, letterSpacing: -0.3 },',
+      '  e: { fontSize: (17) },',
+      '  f: { fontSize: Math.round(17) },',
       '}));',
       'const { lineHeight: _drop, ...rest } = role;',
     ].join('\n');
-    expect(scanCalmSource(source, 'y.ts').map((o) => o.line)).toEqual([2, 3, 4]);
+    expect(scanCalmSource(source, 'y.ts').map((o) => o.line)).toEqual([2, 3, 4, 6, 7]);
   });
 
   it('flags a WELCOME_TYPE-style key-renamed constant table referenced from fontSize/lineHeight/letterSpacing', () => {

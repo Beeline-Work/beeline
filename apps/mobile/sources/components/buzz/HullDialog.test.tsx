@@ -164,7 +164,7 @@ describe('Hull dialog family', () => {
     });
     const copy = renderer.root
       .findAllByType('View' as any)
-      .find((node: any) => node.props.style?.some?.((style: any) => style?.paddingTop === 22))!;
+      .find((node: any) => node.props.style?.some?.((style: any) => style?.paddingTop === 24))!;
     expect(copy.props.style).not.toContainEqual({ flex: 1 });
     expect(
       renderer.root.findAllByType('Text' as any).flatMap((node: any) => node.children),

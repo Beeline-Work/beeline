@@ -3,9 +3,11 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   DESIGN_ALLOWLIST,
+  DESIGN_BASELINE_REASONS,
   DESIGN_RADII,
   DESIGN_SPACING,
   designCounts,
+  designScope,
   judgeDesign,
   scanDesignSource,
   scanDesignTree,
@@ -93,6 +95,45 @@ describe('design lint', () => {
       for (const [file, reason] of Object.entries(files)) {
         expect(reason.length, `${rule} ${file} needs a real reason`).toBeGreaterThan(10);
       }
+    }
+  });
+
+  it('traces values a literal check misses', () => {
+    const source = [
+      'const s = { elevation: 20 };',
+      'const PAD = 12; const t = { padding: PAD };',
+      'const u = { padding: 8 + 2, borderRadius: 8 + 1 };',
+      'const v = { margin: (12), gap: Math.round(12), padding: -PAD };',
+      'const TABLE = { inset: 20 };',
+      'const w = { paddingTop: TABLE.inset, borderRadius: hull.radius + 2 };',
+      'const x = { padding: isDesktop ? 12 : 16, marginTop: insets.top + 40 };',
+      'const y = { paddingTop: SHARED_INSET };',
+      'const ok = { elevation: 0, padding: (16), gap: Math.max(8, 4), marginTop: insets.top + 8 };',
+      'const round = { borderRadius: DOT / 2, borderTopLeftRadius: 14 / 2, padding: -space.md };',
+    ].join('\n');
+    const exports = new Map([['SHARED_INSET', { expr: '20', scope: designScope('') }]]);
+    expect(scanDesignSource(source, 'x.tsx', exports).map(({ rule, line }) => `${rule}@${line}`)).toEqual([
+      'shadow@1',
+      'spacing@2',
+      'spacing@3',
+      'radius@3',
+      'spacing@4',
+      'spacing@4',
+      'spacing@4',
+      'spacing@6',
+      'radius@6',
+      'spacing@7',
+      'spacing@7',
+      'spacing@8',
+    ]);
+  });
+
+  it('names the reason for every baseline row, and only for baseline rows', () => {
+    const baseline = readBaseline();
+    for (const rule of new Set([...Object.keys(baseline), ...Object.keys(DESIGN_BASELINE_REASONS)])) {
+      const held = Object.keys(baseline[rule as keyof DesignBaseline] ?? {}).sort();
+      const named = Object.keys(DESIGN_BASELINE_REASONS[rule as keyof DesignBaseline] ?? {}).sort();
+      expect(held, `${rule}: every baseline row needs a reason in DESIGN_BASELINE_REASONS`).toEqual(named);
     }
   });
 

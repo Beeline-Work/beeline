@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Pressable, Text, View, useWindowDimensions } from 'react-native';
+import { Text, View, useWindowDimensions } from 'react-native';
 import { SvgXml } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -7,6 +7,7 @@ import { LedgerEntry } from './Ledger';
 import { IdentityMark } from './IdentityMark';
 import { ChevronGlyph } from './ChevronGlyph';
 import { CornerGlyph } from './CornerGlyph';
+import { Button } from './Button';
 import { HullModal } from './HullDialog';
 import { welcomeBrandMarks } from './welcome-brand-marks';
 import { WelcomeToolMark } from './WelcomeToolMark';
@@ -272,20 +273,14 @@ export function WelcomeCards({ visible, onDone }: { visible: boolean; onDone: ()
           <View key={i} style={[card.step, i === index && card.stepActive]} />
         ))}
       </View>
-      <Pressable
+      <Button
+        label={index === 3 ? 'Get started' : 'Next'}
         onPress={() => void next()}
         disabled={working}
-        accessibilityRole="button"
         accessibilityLabel={index === 3 ? 'Get started' : 'Next'}
-        style={({ pressed }) => [
-          card.next,
-          desktop && card.desktopNext,
-          pressed && card.nextPressed,
-        ]}
+        style={card.next}
         testID="welcome-next"
-      >
-        <Text style={card.nextText}>{index === 3 ? 'Get started' : 'Next'}</Text>
-      </Pressable>
+      />
     </View>
   );
   return (
@@ -389,18 +384,7 @@ const card = StyleSheet.create((theme) => ({
     backgroundColor: theme.buzz.borderStrong,
   },
   stepActive: { width: STEP_ACTIVE_WIDTH, backgroundColor: theme.buzz.textPrimary },
-  next: {
-    minHeight: 48,
-    minWidth: 120,
-    paddingHorizontal: theme.buzz.space.md,
-    borderRadius: theme.buzz.radius,
-    backgroundColor: theme.buzz.buttonPrimaryFill,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  nextPressed: { opacity: 0.85 },
-  desktopNext: { width: 136, height: 48 },
-  nextText: { ...theme.buzz.type.bodyStrong, color: theme.buzz.buttonPrimaryText },
+  next: { minWidth: 136 },
 }));
 const scene = StyleSheet.create((theme) => ({
   shell: {

@@ -66,11 +66,12 @@ export const CALM_TOKEN_SOURCES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * A computed size: arithmetic or a ternary in the value (`size - 1`,
- * `hull.type.body.fontSize * 1.2`, `desktop ? 17 : 16`). Its result cannot be
- * proven to be a role value, so it counts like a raw literal.
+ * A computed size: arithmetic, a ternary, parentheses or a call in the value
+ * (`size - 1`, `hull.type.body.fontSize * 1.2`, `desktop ? 17 : 16`, `(17)`,
+ * `Math.round(17)`). Its result cannot be proven to be a role value, so it
+ * counts like a raw literal.
  */
-const COMPUTED_TYPE = /\b(fontSize|lineHeight|letterSpacing):\s*([^,}\n;]*[-+*/?][^,}\n;]*)/g;
+const COMPUTED_TYPE = /\b(fontSize|lineHeight|letterSpacing):\s*([^,}\n;]*[-+*/?(][^,}\n;]*)/g;
 
 const FONT_SIZE = /\bfontSize:\s*(-?\d+(?:\.\d+)?)\b/g;
 const LINE_HEIGHT = /\blineHeight:\s*(-?\d+(?:\.\d+)?)\b/g;

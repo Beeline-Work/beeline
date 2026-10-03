@@ -58,7 +58,6 @@ const styles = StyleSheet.create((theme) => ({
         right: theme.buzz.space.md,
         alignItems: 'center',
         zIndex: 2000,
-        elevation: 20,
     },
     prompt: {
         width: '100%',

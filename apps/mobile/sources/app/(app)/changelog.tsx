@@ -43,7 +43,7 @@ export default function ChangelogScreen() {
                 contentContainerStyle={[
                     styles.content,
                     {
-                        paddingBottom: insets.bottom + 40,
+                        paddingBottom: insets.bottom + 32,
                         maxWidth: isCompact ? '100%' : layout.maxWidth,
                         alignSelf: 'center',
                         width: '100%'

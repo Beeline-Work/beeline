@@ -683,7 +683,7 @@ export function TranscriptCardHandle({
 /** How far the arrival halo's outer ring reaches past the card. The shell
  *  bleeds out by the same amount (negative margin, equal padding) so the halo
  *  has room to draw without moving the card. */
-const HALO_REACH = 20;
+const HALO_REACH = 24;
 
 const styles = StyleSheet.create((theme) => {
   const card = theme.buzz;
@@ -716,25 +716,25 @@ const styles = StyleSheet.create((theme) => {
     },
     haloNear: {
       position: 'absolute',
-      top: -5,
-      right: -5,
-      bottom: -5,
-      left: -5,
+      top: -4,
+      right: -4,
+      bottom: -4,
+      left: -4,
       borderWidth: 4,
       borderColor: withAlpha(card.accent, 0.3),
       backgroundColor: withAlpha(card.accent, 0.1),
-      borderRadius: metric.cornerRadius + 5,
+      borderRadius: metric.cornerRadius + 4,
     },
     haloMid: {
       position: 'absolute',
-      top: -12,
-      right: -12,
-      bottom: -12,
-      left: -12,
+      top: -16,
+      right: -16,
+      bottom: -16,
+      left: -16,
       borderWidth: 7,
       borderColor: withAlpha(card.accent, 0.16),
       backgroundColor: withAlpha(card.accent, 0.06),
-      borderRadius: metric.cornerRadius + 12,
+      borderRadius: metric.cornerRadius + 16,
     },
     haloFar: {
       position: 'absolute',

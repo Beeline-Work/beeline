@@ -72,6 +72,7 @@
         "scripts/new-corner-dialog-proof.tsx",
         "scripts/composer-dictation-proof.tsx",
         "scripts/page-headers-proof.tsx",
+        "scripts/design-proof.tsx",
         "scripts/connect-app-nav-inset-proof.tsx",
         "scripts/workbench-nav-inset-proof.tsx",
         "scripts/star-prompt-proof.tsx",

@@ -606,7 +606,6 @@ const styles = StyleSheet.create((theme) => {
       right: 0,
       bottom: REPO_SLOT_HEIGHT - 1,
       zIndex: 3,
-      elevation: 3,
       borderWidth: 1,
       borderColor: hull.border,
       borderRadius: hull.radius,

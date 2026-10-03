@@ -235,7 +235,7 @@ export const Item = React.memo<ItemProps>((props) => {
                         <Text 
                             style={[
                                 styles.detail, 
-                                { marginRight: showAccessory ? 6 : 0 },
+                                { marginRight: showAccessory ? 8 : 0 },
                                 detailStyle
                             ]}
                             numberOfLines={1}
@@ -247,7 +247,7 @@ export const Item = React.memo<ItemProps>((props) => {
                         <ActivityIndicator 
                             size="small" 
                             color={theme.colors.textSecondary}
-                            style={{ marginRight: showAccessory ? 6 : 0 }}
+                            style={{ marginRight: showAccessory ? 8 : 0 }}
                         />
                     )}
                     {rightElement}

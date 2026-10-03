@@ -35,8 +35,8 @@ export const HULL_DIALOG_LAYOUT = {
   bodyLineHeight: typeRoles.meta.lineHeight,
   bodyMarginTop: 8,
   copyPaddingBottom: 16,
-  copyPaddingTop: 22,
-  inputMarginTop: 14,
+  copyPaddingTop: 24,
+  inputMarginTop: 16,
   inputMinHeight: 44,
   titleLineHeight: typeRoles.bodyStrong.lineHeight,
 } as const;

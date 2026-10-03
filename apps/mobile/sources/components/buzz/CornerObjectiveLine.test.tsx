@@ -156,6 +156,16 @@ describe('CornerObjectiveLine', () => {
     ).toHaveLength(0);
   });
 
+
+  it('R12k: shows workflow errors inline and retries from the objective line', () => {
+    const retry = vi.fn();
+    const renderer = render(<CornerObjectiveLine objective="Ship it" workflowError="offline" onRetryWorkflow={retry} />);
+    expect(flatText(renderer.root.findByProps({ testID: 'corner-objective-line-workflow-error' }))).toContain('offline');
+    act(() => renderer.root.findByProps({ testID: 'corner-objective-line-workflow-retry' }).props.onPress());
+    expect(retry).toHaveBeenCalledTimes(1);
+    console.log('R12k Demonstrated: objective line shows offline inline; Retry invokes the workflow read retry.');
+  });
+
   it('shows the objective once and keeps the brief behind Read brief', () => {
     const objective =
       'Assess false agent stalls during long release polling and propose liveness and timeout behavior that preserves healthy turns.';

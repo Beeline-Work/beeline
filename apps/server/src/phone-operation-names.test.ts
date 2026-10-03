@@ -77,6 +77,7 @@ const ALL_PHONE_OPERATION_NAMES = {
   readWebPushKey: true,
   readWelcomeCards: true,
   readWorkbench: true,
+  readConnectorInstall: true,
   readWorkflowRun: true,
   recoverGitHubIdentity: true,
   redeemInvite: true,

@@ -242,6 +242,7 @@ import {
   type ChannelKind,
 } from '@/buzz/corner-session';
 import {
+  messageJumpHref,
   chatBackAction,
   cornerOpenAction,
   cornerHref,
@@ -1356,9 +1357,8 @@ export function BuzzChatSurface({
     [cornerBrief],
   );
   // A live workflow run in this corner: one line under the objective, → its run page.
-  const cornerWorkflowRun = useCornerWorkflowRun(
+  const { workflow: cornerWorkflowRun, error: workflowError, retry: retryWorkflow } = useCornerWorkflowRun(
     isCorner ? decodedId : undefined,
-    (error, retry) => Modal.alert('Workflow unavailable', error, [{ text: 'Retry', onPress: retry }]),
   );
   const openCornerWorkflowRun = useCallback(() => {
     if (cornerWorkflowRun) router.push(workflowRunHref(cornerWorkflowRun));
@@ -2482,14 +2482,7 @@ export function BuzzChatSurface({
   const sourceJumpSequenceRef = useRef(0);
   const handleOpenMessageSource = useCallback((roomId: string, messageId: string) => {
     sourceJumpSequenceRef.current += 1;
-    router.navigate({
-      pathname: '/beeline/chat/[channelId]',
-      params: {
-        channelId: roomId,
-        notificationMessageId: messageId,
-        notificationResponseId: `message-source:${sourceJumpSequenceRef.current}`,
-      },
-    });
+    router.navigate(messageJumpHref(roomId, messageId, `message-source:${sourceJumpSequenceRef.current}`));
   }, []);
   const raiseArrivalFlash = useCallback((messageId: string) => {
     if (arrivalFlashTimerRef.current !== null) clearTimeout(arrivalFlashTimerRef.current);
@@ -5031,10 +5024,7 @@ export function BuzzChatSurface({
       void Haptics.selectionAsync();
       switch (verb) {
         case 'build':
-          router.push({
-            pathname: '/beeline/corners/[roomId]',
-            params: { roomId: decodedId },
-          } as Href);
+          router.push(roomCornersHref(decodedId));
           return;
         case 'poll':
           setCreatePollVisible(true);
@@ -5224,14 +5214,7 @@ export function BuzzChatSurface({
             actionId={grantActionId}
             onDecision={handleGrantDecision}
             onOpenSource={(roomId, messageId) =>
-              router.navigate({
-                pathname: '/beeline/chat/[channelId]',
-                params: {
-                  channelId: roomId,
-                  notificationMessageId: messageId,
-                  notificationResponseId: `squire-grant:${item.id}`,
-                },
-              })
+              router.navigate(messageJumpHref(roomId, messageId, `squire-grant:${item.id}`))
             }
           />
         );
@@ -5241,14 +5224,7 @@ export function BuzzChatSurface({
           <SquireApprovalCard
             message={item}
             onOpenSource={(roomId, messageId) =>
-              router.navigate({
-                pathname: '/beeline/chat/[channelId]',
-                params: {
-                  channelId: roomId,
-                  notificationMessageId: messageId,
-                  notificationResponseId: `squire-approval:${item.id}`,
-                },
-              })
+              router.navigate(messageJumpHref(roomId, messageId, `squire-approval:${item.id}`))
             }
           />
         );
@@ -5845,6 +5821,8 @@ export function BuzzChatSurface({
               onOpenBrief={openCurrentBrief}
               onOpenWorkflow={openCornerWorkflowRun}
               workflow={cornerWorkflowRun}
+              workflowError={workflowError}
+              onRetryWorkflow={retryWorkflow}
             />
           )}
 

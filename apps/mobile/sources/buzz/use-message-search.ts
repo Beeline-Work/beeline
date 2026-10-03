@@ -1,3 +1,4 @@
+import { messageJumpHref } from './corner-navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { RoomViewHttpError } from '@beeline/buzz-client';
 import {
@@ -173,13 +174,5 @@ let messageSearchJump = 0;
  */
 export function messageSearchHref(result: MessageSearchResult, workspaceId: string) {
   messageSearchJump += 1;
-  return {
-    pathname: '/beeline/chat/[channelId]' as const,
-    params: {
-      channelId: result.roomId,
-      communityId: workspaceId,
-      notificationResponseId: `message-search:${messageSearchJump}:${result.messageId}`,
-      notificationMessageId: result.messageId,
-    },
-  };
+  return messageJumpHref(result.roomId, result.messageId, `message-search:${messageSearchJump}:${result.messageId}`, workspaceId);
 }

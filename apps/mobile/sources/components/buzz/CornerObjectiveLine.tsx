@@ -12,6 +12,8 @@ export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
   onOpenBrief,
   workflow,
   onOpenWorkflow,
+  workflowError,
+  onRetryWorkflow,
   testID = 'corner-objective-line',
 }: {
   objective?: string;
@@ -20,11 +22,13 @@ export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
   /** The corner's live workflow run, if any. */
   workflow?: WorkflowRunSummaryView;
   onOpenWorkflow?: () => void;
+  workflowError?: string | null;
+  onRetryWorkflow?: () => void;
   testID?: string;
 }) {
   const line = objective?.trim();
   const run = workflow?.status === 'live' && onOpenWorkflow ? workflow : undefined;
-  if (!line && !onOpenBrief && !run) return null;
+  if (!line && !onOpenBrief && !run && !workflowError) return null;
   return (
     <View style={styles.line} testID={testID}>
       <View style={styles.rail} />
@@ -34,6 +38,14 @@ export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
             <Text accessibilityRole="text" style={styles.copy} testID={`${testID}-copy`}>
               {line}
             </Text>
+          </View>
+        ) : null}
+        {workflowError ? (
+          <View testID={`${testID}-workflow-error`}>
+            <Text accessibilityRole="alert" style={styles.copy}>{workflowError}</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel="Retry workflow" onPress={onRetryWorkflow} style={styles.briefLink} testID={`${testID}-workflow-retry`}>
+              <Text style={styles.briefLinkText}>Retry</Text>
+            </Pressable>
           </View>
         ) : null}
         {run || onOpenBrief ? (

@@ -1055,12 +1055,42 @@ export class PhoneService {
       visibility: 'public' | 'invite-only';
       role: 'owner' | 'admin' | 'member' | 'spectator';
       updated_at: Date;
+      room_count: string;
+      attention: boolean;
     }>(
-      `SELECT w.id, w.name, w.avatar, w.visibility, m.role, w.updated_at
+      `SELECT w.id, w.name, w.avatar, w.visibility, m.role, w.updated_at, summary.room_count, summary.attention
        FROM memberships m JOIN workspaces w ON w.id = m.workspace_id
+       LEFT JOIN LATERAL (
+         SELECT count(*)::text room_count,COALESCE(bool_or(
+           (latest.id IS NOT NULL AND (mark.message_created_at IS NULL OR
+             latest.id<>mark.message_id AND (latest.created_at,latest.id)>(mark.message_created_at,mark.message_id)))
+           OR EXISTS(SELECT 1 FROM permission_authority p WHERE p.status='pending'
+             AND (p.room_id=r.id OR p.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id)))
+         ),false) attention
+         FROM rooms r JOIN memberships member ON member.room_id=r.id
+           AND member.identity_id=$2 AND member.removed_at IS NULL
+         LEFT JOIN room_read_marks mark ON mark.room_id=r.id AND mark.identity_id=$2
+         LEFT JOIN LATERAL (
+           SELECT message.id,message.created_at FROM messages message
+           WHERE message.room_id=r.id AND ${unreadMessageSql('message')}
+           ORDER BY message.created_at DESC,message.id DESC LIMIT 1
+         ) latest ON true
+         LEFT JOIN LATERAL (
+           SELECT message.id FROM messages message
+           WHERE message.room_id=r.id AND ${visibleChatMessageSql('message')}
+           ORDER BY message.created_at DESC,message.id DESC LIMIT 1
+         ) visible ON true
+         LEFT JOIN identities peer ON jsonb_typeof(r.direct_participants)='array'
+           AND peer.id=(SELECT p FROM jsonb_array_elements_text(
+             CASE WHEN jsonb_typeof(r.direct_participants)='array' THEN r.direct_participants ELSE '[]'::jsonb END
+           ) p WHERE p<>$2 LIMIT 1)
+         WHERE r.workspace_id=w.id AND r.parent_id IS NULL AND r.archived_at IS NULL
+           AND (r.direct_participants IS NULL OR peer.id IS NULL
+             OR NOT (peer.id=ANY($3::text[])) OR visible.id IS NOT NULL)
+       ) summary ON true
        WHERE m.identity_id = $1 AND m.room_id IS NULL AND m.removed_at IS NULL
        ORDER BY w.updated_at DESC, w.id LIMIT 51`,
-      [viewerId],
+      [viewerId, viewerId, connectorIdentityIds()],
     );
     const deletedNotices = await this.database.query<{
       id: string;
@@ -1079,6 +1109,8 @@ export class PhoneService {
         visibility: row.visibility,
         role: row.role,
         updatedAt: unix(row.updated_at),
+        roomCount: Number(row.room_count),
+        attention: row.attention,
       })),
       viewer: await this.requireIdentity(viewerId),
       truncated: rows.rows.length > 50,
@@ -1180,8 +1212,8 @@ export class PhoneService {
     viewerId: string,
     query: WorkspaceMemberListQuery = {},
   ): Promise<WorkspaceMemberListView | null> {
-    const access = await this.database.query(
-      `SELECT 1 FROM memberships
+    const access = await this.database.query<{ role: 'owner' | 'admin' | 'member' | 'spectator' }>(
+      `SELECT role FROM memberships
        WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL`,
       [workspaceId, viewerId],
     );
@@ -1191,7 +1223,9 @@ export class PhoneService {
         this.members(workspaceId, null, query.memberId),
         this.memberGrants(workspaceId, query.memberId, viewerId),
       ]);
+      const role = access.rows[0]!.role;
       return {
+        viewer: { identity: await this.requireIdentity(viewerId), role, permissions: { send: role !== 'spectator', manage: role === 'owner' || role === 'admin' } },
         members: members.filter((m) => m.identity.kind === 'human'),
         agents: [],
         grants,
@@ -2848,6 +2882,7 @@ export class PhoneService {
       reason: string;
       status: AgentGrantStatus;
       room_id: string;
+      room_name: string;
       auto: boolean;
       created_at: Date;
       decided_at: Date | null;
@@ -2858,8 +2893,9 @@ export class PhoneService {
       script: unknown;
     }>(
       `SELECT g.id,g.kind,g.target,g.reason,g.status,g.room_id,g.auto,g.created_at,g.decided_at,g.expires_at,
-              g.script,to_jsonb(agent_identity) agent,to_jsonb(requester) requester,to_jsonb(decider) decider
+              room.name room_name,g.script,to_jsonb(agent_identity) agent,to_jsonb(requester) requester,to_jsonb(decider) decider
        FROM agent_grants g
+       JOIN rooms room ON room.id=g.room_id
        JOIN agents a ON a.agent_id=g.agent_id AND a.owner_id=$2
        JOIN identities agent_identity ON agent_identity.id=g.agent_id
        JOIN identities requester ON requester.id=g.requested_by
@@ -2878,6 +2914,7 @@ export class PhoneService {
       requestedBy: identity(row.requester, this.publicOrigin),
       ...(row.decider ? { decidedBy: identity(row.decider, this.publicOrigin) } : {}),
       roomId: row.room_id,
+      roomName: row.room_name,
       createdAt: unix(row.created_at),
       ...(row.decided_at ? { decidedAt: unix(row.decided_at) } : {}),
       ...(row.expires_at ? { expiresAt: unix(row.expires_at) } : {}),
@@ -3997,6 +4034,8 @@ export class PhoneService {
           ),
         } as Output<Name>;
       }
+      case 'readConnectorInstall':
+        return (await this.readConnectorInstall(input as Input<'readConnectorInstall'>, viewerId)) as Output<Name>;
       case 'readConnectionDetail':
         return (await this.readConnectionDetail(
           input as Input<'readConnectionDetail'>,
@@ -7723,6 +7762,26 @@ export class PhoneService {
     });
   }
 
+  async readConnectorInstall(input: Input<'readConnectorInstall'>, viewerId: string): Promise<Output<'readConnectorInstall'>> {
+    const row = (await this.database.query<{
+      id: string; owner_identity_id: string; status: ConnectorStatus['status'];
+      status_steps: ConnectorStep[]; sign_in: ConnectorStatus['signIn']; helper_name: string | null;
+    }>(
+      `SELECT c.id,c.owner_identity_id,c.status,c.status_steps,c.sign_in,
+         COALESCE((SELECT MAX(sibling.machine_name) FROM agents sibling
+           WHERE sibling.machine_id=c.machine_id AND sibling.owner_id=c.owner_identity_id),i.name) helper_name
+       FROM workspace_connectors c JOIN identities i ON i.id=c.helper_agent_id
+       WHERE c.id::text=$1 OR (c.connector_type=$1 AND c.owner_identity_id=$2)
+       ORDER BY c.created_at DESC LIMIT 1`, [input.connectorId, viewerId],
+    )).rows[0];
+    if (!row) return null;
+    if (row.owner_identity_id !== viewerId) throw new Error('connector not found (access denied)');
+    return { connectorId: row.id, status: { connectorId: row.id, status: row.status,
+      steps: row.status_steps ?? [], ...(row.sign_in ? { signIn: row.sign_in } : {}),
+      ...(row.helper_name ? { helperName: row.helper_name } : {}),
+    } };
+  }
+
   /**
    * Every read here is scoped to the VIEWER and to nobody else.
    *
@@ -9296,6 +9355,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'sendPushTest',
   'reportRunningUpdate',
   'readWorkbench',
+  'readConnectorInstall',
   'pairConnector',
   'cancelGoogleSignIn',
   'beginGoogleSignIn',

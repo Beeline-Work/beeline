@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  messageJumpHref,
   chatBackAction,
   cornerOpenAction,
   cornerHref,
@@ -299,4 +301,18 @@ describe('opening a resolved member mention', () => {
       resolveMentionDirectMessageAction(resolveDirectMessage, 'workspace-1', 'member-1', 'dm-1'),
     ).resolves.toEqual({ type: 'stay' });
   });
+});
+
+it('R12g: message jumps preserve the notification target and response id', () => {
+  expect(messageJumpHref('room', 'message', 'response')).toEqual({
+    pathname: '/beeline/chat/[channelId]',
+    params: { channelId: 'room', notificationMessageId: 'message', notificationResponseId: 'response' },
+  });
+});
+
+it('R12g: all message-jump callers use the shared helper', () => {
+  for (const file of ['../app/(app)/beeline/chat/_chat-surface.tsx', '../app/(app)/beeline/tray.tsx', './use-message-search.ts']) {
+    const source = readFileSync(new URL(file, import.meta.url), 'utf8');
+    expect(source).not.toMatch(/pathname: '\/beeline\/chat\/\[channelId\]'[\s\S]{0,300}notificationMessageId/);
+  }
 });

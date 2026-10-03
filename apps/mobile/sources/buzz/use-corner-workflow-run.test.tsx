@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import React from 'react';
 // @ts-expect-error No renderer declarations in this workspace.
 import { act, create } from 'react-test-renderer';
@@ -19,26 +20,29 @@ it('Reproduction R9a: focused corner opens with exactly one workflow read', asyn
   } finally { await act(async () => tree.unmount()); }
 });
 
-it('R9-OBS-06: alerts once per failure streak, including after a successful empty list', async () => {
+
+it('R12k: exposes an inline error and Retry recovers the workflow read', async () => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-  const alert = vi.fn();
   read.mockRejectedValue(new Error('offline'));
-  function Corner() { useCornerWorkflowRun('corner-errors', alert); return null; }
+  let current: any;
+  function Corner() { current = useCornerWorkflowRun('corner-errors'); return <span>{current.error}</span>; }
   let tree: any;
   try {
     await act(async () => { tree = create(<Corner />); });
-    await act(async () => wire.listener({ monolithLive: { type: 'subscribed', roomId: 'corner-errors' } }));
-    let reject!: (error: Error) => void;
-    read.mockImplementation(() => new Promise((_, fail) => { reject = fail; }));
-    for (let i = 0; i < 5; i++) {
-      await act(async () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'corner-errors', reason: 'message' } }));
-      await act(async () => reject(new Error('offline')));
-    }
-    expect(read).toHaveBeenCalledTimes(6);
-    expect(alert).toHaveBeenCalledTimes(1);
-    read.mockRejectedValue(new Error('offline')).mockResolvedValueOnce({ workflows: [] });
-    await act(async () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'corner-errors', reason: 'message' } }));
-    await act(async () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'corner-errors', reason: 'message' } }));
-    expect(alert).toHaveBeenCalledTimes(2);
+    expect(current.error).toBe('offline');
+    read.mockRejectedValue(new Error('second failure'));
+    await act(async () => current.retry());
+    expect(current.error).toBe('offline');
+    read.mockResolvedValue({ workflows: [] });
+    await act(async () => current.retry());
+    expect(current.error).toBeNull();
+    expect(read).toHaveBeenCalledTimes(3);
   } finally { await act(async () => tree.unmount()); }
+});
+
+it('R12k: the chat surface carries the error and Retry inline without a modal', () => {
+  const source = readFileSync(new URL('../app/(app)/beeline/chat/_chat-surface.tsx', import.meta.url), 'utf8');
+  expect(source).not.toContain("Modal.alert('Workflow unavailable'");
+  expect(source).toContain('workflowError={workflowError}');
+  expect(source).toContain('onRetryWorkflow={retryWorkflow}');
 });

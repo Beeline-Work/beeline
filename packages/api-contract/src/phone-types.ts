@@ -449,6 +449,7 @@ export type AgentGrantView = {
 
 /** A settled grant attributed to one agent owned by a Workspace member. */
 export type WorkspaceMemberGrantView = AgentGrantView & {
+  readonly roomName?: string;
   readonly agent: RoomViewIdentity;
 };
 
@@ -781,6 +782,8 @@ export type ChatListItem = {
 };
 
 export type ChatListWorkspace = {
+  readonly roomCount?: number;
+  readonly attention?: boolean;
   readonly id: string;
   readonly name: string;
   readonly avatar?: string;
@@ -865,6 +868,7 @@ export type WorkspaceView = {
 
 /** One page of the Workspace Members roster, including search and load-more. */
 export type WorkspaceMemberListView = {
+  readonly viewer?: RoomViewer;
   readonly members: readonly RoomViewMember[];
   readonly agents: readonly WorkspaceAgentView[];
   /** Present on a single-human profile query; absent from ordinary roster pages. */

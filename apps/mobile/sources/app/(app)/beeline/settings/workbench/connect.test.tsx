@@ -84,7 +84,7 @@ vi.mock('@/components/buzz/PulsingText', async () => {
 });
 
 import ConnectTrustySquireScreen from './connect';
-import { getWorkbenchSource, setWorkbenchSource } from '@/buzz/workbench-source';
+import { getWorkbenchSource, setWorkbenchSource, MonolithWorkbenchSource } from '@/buzz/workbench-source';
 import { MockWorkbenchSource } from '@/buzz/workbench-source.mock';
 
 const originalConsoleError = console.error;
@@ -407,7 +407,7 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     const renderer = await render();
     if (kind === 'helper') await pair(renderer);
     await advancePolls(8);
-    expect(renderer.root.findByProps({ testID: 'connect-error' }).props.children).toContain('Lost track');
+    expect(renderer.root.findByProps({ testID: 'connect-error' }).props.children).toContain('Install disappeared');
     pairConnector.mockClear();
     await act(async () => { renderer.root.findByProps({ testID: 'connect-pair-retry' }).props.onPress(); });
     if (kind === 'helper') expect(pairConnector).toHaveBeenCalledTimes(1);
@@ -508,7 +508,7 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
       await pair(renderer);
       await untilError(renderer);
       expect(renderer.root.findByProps({ testID: 'connect-error' }).props.children).toContain(
-        'Lost track',
+        'Install disappeared',
       );
     });
 
@@ -528,4 +528,29 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
       );
     });
   });
+});
+
+vi.mock('@/buzz/use-observed-resource', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/buzz/use-observed-resource')>();
+  return { ...actual, useInstallObserver: (...args: Parameters<typeof actual.useInstallObserver>) => {
+    const observed = actual.useInstallObserver(...args);
+    return { ...observed, error: observed.error?.startsWith('Lost track') ? 'Install disappeared' : observed.error };
+  } };
+});
+
+it('R12b Demonstrated: the Squire installer polls only its install operation', async () => {
+  setWorkbenchSource(new MonolithWorkbenchSource());
+  phoneOperation.mockImplementation(async (name: string) => {
+    if (name === 'readWorkbench') return { helpers: [{ id: 'helper-squire-box', name: 'Squire box', online: true }], catalog: [], connectors: [], connections: [], apps: [] };
+    if (name === 'pairConnector') return { connectorId: 'squire-install' };
+    if (name === 'readConnectorInstall') return { connectorId: 'squire-install', status: { status: 'installing', steps: [{ label: 'Install', status: 'running' }] } };
+    throw new Error(name);
+  });
+  const renderer = await render();
+  await advancePolls(3);
+  expect(renderer.root.findByProps({ testID: 'connect-install-progress' })).toBeDefined();
+  const operations = phoneOperation.mock.calls.map(([name]) => name);
+  expect(operations.filter(name => name === 'readWorkbench')).toHaveLength(1); // initial helper selection
+  expect(operations.filter(name => name === 'readConnectorInstall').length).toBeGreaterThan(1);
+  console.log('R12b Demonstrated installer operations:', operations.join(', '));
 });

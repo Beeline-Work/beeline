@@ -1,3 +1,4 @@
+import { roomHref } from './corner-navigation';
 export type ConnectorOfferCeremonyRouteInput = {
   readonly workspaceId: string;
   readonly viewerId: string;
@@ -25,8 +26,5 @@ export function connectorOfferCeremonyRoute(input: ConnectorOfferCeremonyRouteIn
 /** Settings returns to Workbench; an in-chat ceremony returns to its Room. */
 export function connectorOfferCompletionRoute(roomId?: string) {
   if (!roomId) return '/beeline/settings/workbench' as const;
-  return {
-    pathname: '/beeline/chat/[channelId]' as const,
-    params: { channelId: roomId },
-  };
+  return roomHref(roomId);
 }

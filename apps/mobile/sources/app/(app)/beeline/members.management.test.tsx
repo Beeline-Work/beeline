@@ -478,6 +478,7 @@ beforeEach(() => {
   roomView.workspace.mockImplementation(async () => state.workspace);
   roomView.agent.mockImplementation(async () => state.agent);
   roomView.workspaceMembers.mockImplementation(async () => ({
+    viewer: state.workspace.viewer,
     members: state.workspace.members,
     agents: state.workspace.agents,
     grants: [
@@ -490,6 +491,7 @@ beforeEach(() => {
         requestedBy: { pubkey: MEMBER, kind: 'human', name: 'Builder' },
         decidedBy: { pubkey: VIEWER, kind: 'human', name: 'Viewer' },
         roomId: '22222222-2222-4222-8222-222222222222',
+        roomName: 'ship-the-slab',
         createdAt: 1_756_900_000,
         decidedAt: 1_756_900_060,
         auto: false,
@@ -762,6 +764,7 @@ describe('Members workspace management', () => {
 
   it('saves role edits from the human profile and supports cancel', async () => {
     const renderer = await personProfile();
+    expect(roomView.workspace).not.toHaveBeenCalled(); // R12c
     await press(renderer, 'edit-person-role');
     await press(renderer, 'person-role-admin');
     expect(phoneOperation).not.toHaveBeenCalled();
@@ -807,6 +810,8 @@ describe('Members workspace management', () => {
       .map((node: any) => String(node.props.children));
     expect(lines).toContain('Requested by Builder');
     expect(lines).toContain('Room ship-the-slab');
+    expect(roomView.workspace).not.toHaveBeenCalled();
+    console.log('R12c Demonstrated: human profile shows role edit and Room ship-the-slab; zero Workspace reads.');
     expect(phoneOperation).not.toHaveBeenCalled();
   });
 
@@ -1591,6 +1596,7 @@ describe('Members workspace management', () => {
           requestedBy: { pubkey: MEMBER, kind: 'human', name: 'Builder' },
           decidedBy: { pubkey: VIEWER, kind: 'human', name: 'Viewer' },
           roomId: '22222222-2222-4222-8222-222222222222',
+        roomName: 'ship-the-slab',
           createdAt: 1_756_900_000,
           decidedAt: 1_756_900_060,
           auto: true,

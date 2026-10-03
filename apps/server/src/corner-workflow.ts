@@ -41,7 +41,7 @@ import { WORKFLOW_HANDOFF_CARD_TYPE, workflowRunLockKey } from './workflow-runs.
  *
  * Every corner state change goes through `advanceCorner`: lane open, lane
  * upgrade, push, checks passed/failed, review verdict, merge refusal, merge
- * webhook and close. The callers (`createCorner`, `upgradeCornerLane`, the
+ * webhook, brief revision and close. The callers (`createCorner`, `upgradeCornerLane`, the
  * GitHub webhook handlers, `routeSystemCommand`, `approveCornerMerge`,
  * `queueCornerWorkerAfterReview`, `closeCornerState`, and the server merge in
  * `GitHubOperations.landCorner`) only REPORT their event. Under the run lock,
@@ -101,7 +101,7 @@ export const CORNER_WORKFLOW_CONTRACT: WorkflowContract = {
     implement: {
       role: 'implementer',
       requires: [],
-      on: { pushed: 'checks', rechecked: 'checks', rereview: 'review' },
+      on: { pushed: 'checks', rechecked: 'checks', rereview: 'review', brief_revised: 'review' },
     },
     // Green wakes the reviewer (live from the parent Room's
     // `reviewer_agent_id`/`reviewer_fallback_ids`), or skips review when the
@@ -110,7 +110,7 @@ export const CORNER_WORKFLOW_CONTRACT: WorkflowContract = {
     checks: {
       kind: 'server',
       requires: [],
-      on: { passing: 'review', failing: 'implement', no_reviewer: 'implement' },
+      on: { passing: 'review', failing: 'implement', no_reviewer: 'implement', brief_revised: 'review' },
       loop: { onEdge: 'failing', cap: 100, onExceeded: 'ask_human' },
     },
     // PASS is recorded by the configured reviewer's `approve_merge`; the end
@@ -126,6 +126,7 @@ export const CORNER_WORKFLOW_CONTRACT: WorkflowContract = {
         changes_requested: 'implement',
         pushed: 'checks',
         rechecked: 'checks',
+        brief_revised: 'review',
       },
       loop: { onEdge: 'changes_requested', cap: 3, onExceeded: 'ask_human' },
     },
@@ -135,7 +136,7 @@ export const CORNER_WORKFLOW_CONTRACT: WorkflowContract = {
     land: {
       kind: 'server',
       requires: [],
-      on: { merge_refused: 'implement', pushed: 'checks', rechecked: 'checks' },
+      on: { merge_refused: 'implement', pushed: 'checks', rechecked: 'checks', brief_revised: 'review' },
     },
     // A loop cap was reached. The corner names the commissioning human and
     // waits; a new push starts the next round.
@@ -147,8 +148,8 @@ export const CORNER_WORKFLOW_CONTRACT: WorkflowContract = {
   implicitEdges: ['landed', 'closed'],
   // Only an event from outside the run takes these: a new commit on the
   // branch, a check verdict re-reported on the same head, a reviewer's next
-  // verdict after a handback, or GitHub refusing the merge.
-  externalOutcomes: ['pushed', 'rechecked', 'rereview', 'merge_refused'],
+  // verdict after a handback, a brief revision, or GitHub refusing the merge.
+  externalOutcomes: ['pushed', 'rechecked', 'rereview', 'merge_refused', 'brief_revised'],
 };
 
 /** The review handback cap, read from the contract. */
@@ -179,6 +180,13 @@ export type CornerEvent =
     }
   | { kind: 'push'; headSha: string; contents: Record<string, unknown> }
   | { kind: 'checks'; result: 'passing' | 'failing'; sourceMessageId: string }
+  | {
+      kind: 'brief-revised';
+      revision: number;
+      sourceMessageId: string;
+      authorAgentId: string;
+      command: CommandRow;
+    }
   /** Checks started again on the same head (a re-run); the verdict that follows is reported as `checks`. */
   | { kind: 'checks-pending' }
   | { kind: 'approval'; headSha: string }
@@ -625,6 +633,30 @@ async function applyEvent(
       return OK;
     case 'checks':
       return checksReported(db, cornerId, corner, transition, event);
+    case 'brief-revised': {
+      if (corner.lifecycle.checks !== 'passing') return no('checks are not green');
+      if (!transition.allows('brief_revised')) return no('no brief revision review edge');
+      const reviewerAgentId = await reachableReviewer(
+        db,
+        cornerId,
+        corner,
+        event.sourceMessageId,
+        corner.lifecycle.pr?.headSha ?? null,
+        event.authorAgentId,
+      );
+      if (!reviewerAgentId) return no('no reachable reviewer for the revision');
+      const command = await createAgentCommand(db, {
+        roomId: cornerId,
+        agentId: reviewerAgentId,
+        sourceMessageId: event.sourceMessageId,
+        reason: 'corner_check',
+        parent: event.command,
+        retainDepth: true,
+      });
+      if (!command) return no('the reviewer cannot be woken');
+      await transition.take('brief_revised', { briefRevision: event.revision });
+      return OK;
+    }
     case 'checks-pending': {
       if (corner.lifecycle.checks !== 'pending') return no(`checks are ${corner.lifecycle.checks}`);
       const verdictHolds =
@@ -755,10 +787,14 @@ async function reachableReviewer(
   corner: CornerRow,
   sourceMessageId: string,
   headSha: string | null,
+  revisionAuthorId?: string,
 ): Promise<string | undefined> {
   if (!corner.configured_reviewer_id) return undefined;
   if (corner.reviewer_fallback_ids.length)
-    return dispatchableListReviewer(db, cornerId, corner, sourceMessageId, headSha);
+    return dispatchableListReviewer(
+      db, cornerId, corner, sourceMessageId, headSha, undefined, revisionAuthorId,
+    );
+  if (corner.configured_reviewer_id === revisionAuthorId) return undefined;
   if (!corner.reviewer_parent_member) {
     await noteUnreachableReviewer(db, {
       cornerId,
@@ -787,11 +823,12 @@ async function dispatchableListReviewer(
   sourceMessageId: string,
   headSha: string | null,
   failed?: string,
+  revisionAuthorId?: string,
 ): Promise<string | undefined> {
   const list = reviewerList({
     reviewer_agent_id: corner.configured_reviewer_id,
     reviewer_fallback_ids: corner.reviewer_fallback_ids,
-  }).filter((id) => id !== corner.owner_agent_id);
+  }).filter((id) => id !== corner.owner_agent_id && id !== revisionAuthorId);
   const reviewerAgentId = failed
     ? await nextHealthyAgent(db, corner.parent_id, list, failed)
     : await firstHealthyAgent(db, corner.parent_id, list);

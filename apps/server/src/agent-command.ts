@@ -900,14 +900,17 @@ export async function readAgentCommands(
      -- which is routinely while the corner's own worker is still mid-turn:
      -- two agents then stream into one transcript and can act on the same
      -- branch at once. Holding the wake here rather than at creation keeps
-     -- the command durable and needs no completion hook: the daemon polls,
-     -- and the row becomes deliverable as soon as no other agent in this
+     -- the command durable and needs no completion hook:
+     -- the row becomes deliverable as soon as no other agent in this
      -- corner holds a live lease. A dead worker cannot block it forever,
      -- because an expired lease no longer counts as busy.
      EXISTS(
        SELECT 1 FROM rooms corner
        JOIN rooms parent ON parent.id=corner.parent_id
-       WHERE corner.id=c.room_id AND parent.reviewer_agent_id=c.agent_id
+       WHERE corner.id=c.room_id
+         AND (parent.reviewer_agent_id=c.agent_id OR c.agent_id=ANY(parent.reviewer_fallback_ids))
+         AND (c.reason='corner_check'
+              OR (c.reason='subscribed_event' AND m.system_event->>'kind'='check-passed'))
      )
      AND EXISTS(
        SELECT 1 FROM agent_commands busy

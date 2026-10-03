@@ -14,7 +14,7 @@ const message = (digit: string, createdAt: number): RoomViewMessage => ({
   author: { pubkey: 'a'.repeat(64), kind: 'human', name: 'Owner' },
 });
 
-it.each(['quote', 'notification', 'bookmark'])('%s lands a distant target after one anchored read', async (source) => {
+it.each(['quote', 'notification', 'bookmark'])('%s fetches a distant target for the landing helper', async (source) => {
   const target = message('b', 2);
   const route = messageJumpHref('room', target.id, `${source}:${target.id}`);
   const around = vi.fn(async (): Promise<RoomHistoryView> => ({

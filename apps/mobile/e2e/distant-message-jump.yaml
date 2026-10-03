@@ -1,0 +1,36 @@
+appId: app.usebeeline
+name: Distant bookmark and notification land on target
+env:
+  ROOM_ID: ${ROOM_ID}
+  TARGET_MESSAGE_ID: ${TARGET_MESSAGE_ID}
+---
+- launchApp:
+    clearState: false
+- openLink: beeline://beeline/channels
+- extendedWaitUntil:
+    visible:
+      id: room-list
+    timeout: 10000
+- openLink: beeline://beeline/chat/${ROOM_ID}?notificationMessageId=${TARGET_MESSAGE_ID}&notificationResponseId=bookmark%3A${TARGET_MESSAGE_ID}
+- extendedWaitUntil:
+    visible:
+      id: chat-messages
+    timeout: 10000
+- extendedWaitUntil:
+    visible:
+      id: chat-message-${TARGET_MESSAGE_ID}
+    timeout: 9000
+- assertNotVisible:
+    id: message-source-locating
+- openLink: beeline://beeline/channels
+- extendedWaitUntil:
+    visible:
+      id: room-list
+    timeout: 10000
+- openLink: beeline://beeline/chat/${ROOM_ID}?notificationMessageId=${TARGET_MESSAGE_ID}&notificationResponseId=push%3A${TARGET_MESSAGE_ID}
+- extendedWaitUntil:
+    visible:
+      id: chat-message-${TARGET_MESSAGE_ID}
+    timeout: 9000
+- assertNotVisible:
+    id: message-source-locating

@@ -378,13 +378,32 @@ export async function installHelperService(
         `systemd failed to start ${SYSTEMD_HELPER_UNIT_NAME} (${status.result || 'unknown result'})`,
       );
     }
-    if (status.pid > 0 && (before.pid === 0 || status.pid !== before.pid)) {
+    // Type=notify: ActiveState reaches 'active' only once the helper itself
+    // calls sd_notify READY — i.e. it imported successfully, hosted every
+    // agent, and established them (machine-helper.ts). A changed MainPID
+    // alone is true the instant systemd spawns ANY attempt, including one
+    // that is about to crash on import and restart-loop forever without ever
+    // reaching 'failed' (Restart=always, no start limit) — exactly the
+    // incident that stopped every legacy per-agent unit the moment a
+    // crash-looping helper process first appeared, with nothing left able
+    // to serve.
+    if (status.activeState === 'active' && status.pid > 0) {
       await retireLegacyAgentUnits({ env, run });
       return status.pid;
     }
     await sleep(100);
   } while (Date.now() < deadline);
-  throw new Error(`systemd did not start ${SYSTEMD_HELPER_UNIT_NAME} before the restart deadline`);
+  // Never confirmed healthy: stop it so a crash-looping unit does not keep
+  // restarting in the background once this call returns control to a caller
+  // that assumes the attempt is over, and so the legacy per-agent units —
+  // never retired above — remain the only thing serving until a fixed
+  // release lands (the caller's own failure path rolls that back; see
+  // cli.ts's migrateLegacyAgentUnit / successorRollbackAllowed).
+  await run(['disable', SYSTEMD_HELPER_UNIT_NAME]).catch(() => undefined);
+  await run(['stop', '--no-block', SYSTEMD_HELPER_UNIT_NAME]).catch(() => undefined);
+  throw new Error(
+    `${SYSTEMD_HELPER_UNIT_NAME} did not become healthy before the restart deadline; legacy per-agent units were left serving`,
+  );
 }
 
 /** Ask a running machine helper to rescan paired agents. A stopped one is left stopped. */

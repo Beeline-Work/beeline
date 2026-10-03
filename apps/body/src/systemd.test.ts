@@ -211,6 +211,44 @@ describe('systemd supervision contract', () => {
     expect(await readdir(join(root, 'systemd/user'))).toEqual(['beeline-helper.service']);
   });
 
+  it('refuses to retire legacy units for a helper that never becomes healthy, and stops it instead', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-systemd-unhealthy-'));
+    roots.push(root);
+    await mkdir(join(root, 'systemd/user'), { recursive: true });
+    await writeFile(join(root, 'systemd/user/beeline-agent@.service'), agentServiceUnit());
+    const legacy = `beeline-agent@${'c'.repeat(64)}.service`;
+    const calls: string[][] = [];
+    let reads = 0;
+    const run = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      if (args[0] === 'show') {
+        // A new process spawns every restart (MainPID keeps changing) but
+        // Type=notify never reaches READY -- the exact crash-on-import shape:
+        // ActiveState stays 'activating' forever, never 'active' and never
+        // 'failed' either (Restart=always, StartLimitIntervalSec=0). The old
+        // check ("a pid appeared") declared this healthy on the very first
+        // poll and retired every legacy unit before the crash loop was ever
+        // detected.
+        reads += 1;
+        return { stdout: `MainPID=${reads}\nActiveState=activating\nResult=success\n` };
+      }
+      if (args[0] === 'list-unit-files' || args[0] === 'list-units') return { stdout: `${legacy} enabled` };
+      return { stdout: '' };
+    });
+    await expect(
+      installHelperService({ ...installed(root), run, waitTimeoutMs: 250 }),
+    ).rejects.toThrow(/did not become healthy/);
+    // The legacy unit was never even scanned, let alone stopped.
+    expect(calls.some((args) => args[0] === 'list-unit-files' || args[0] === 'list-units')).toBe(
+      false,
+    );
+    expect(calls.some((args) => args[1] === legacy)).toBe(false);
+    // The crash-looping helper itself is stopped so it does not keep
+    // restarting in the background once this call returns.
+    expect(calls).toContainEqual(['disable', 'beeline-helper.service']);
+    expect(calls).toContainEqual(['stop', '--no-block', 'beeline-helper.service']);
+  });
+
   it('asks a running helper to rescan instead of restarting it', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-systemd-'));
     roots.push(root);

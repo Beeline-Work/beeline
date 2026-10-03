@@ -6865,9 +6865,22 @@ export class DaemonService {
       const current = await currentCornerBrief(db, input.cornerId);
       if ((current?.revision ?? 0) !== input.expectedRevision)
         throw new Error('corner brief revision changed; read the current assignment');
+      const opening = (
+        await db.query<{ source_room_id: string }>(
+          `SELECT first.source_room_id FROM (
+             SELECT source_room_id FROM corner_brief_revisions
+             WHERE corner_id=$1 ORDER BY revision ASC LIMIT 1
+           ) first JOIN memberships member ON member.room_id=first.source_room_id
+           WHERE member.identity_id=$2 AND member.removed_at IS NULL`,
+          [input.cornerId, agentId],
+        )
+      ).rows[0];
+      const sourceRoomIds = [corner.parent_id, input.cornerId];
+      if (opening && !sourceRoomIds.includes(opening.source_room_id))
+        sourceRoomIds.push(opening.source_room_id);
       const explicitAttachments = await resolveCornerBriefAttachments(
         db,
-        [corner.parent_id],
+        sourceRoomIds,
         draft,
       );
       const attachments = [
@@ -6883,7 +6896,7 @@ export class DaemonService {
       if (attachments.length > 16) throw new Error('corner brief has too many attachments');
       const authority = await resolveCornerBriefApproval(
         db,
-        [corner.parent_id, input.cornerId],
+        sourceRoomIds,
         draft,
         attachments,
         command.root_source_message_id,

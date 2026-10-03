@@ -143,7 +143,7 @@ import {
   senderMayAddressAgent,
 } from '@beeline/api-contract/agent-access';
 import { taggedIdentityIdsSql, typedMentionHandles } from './message-mentions.js';
-import { agentWalletTool } from './wallet.js';
+import { agentWalletTool, delegationView } from './wallet.js';
 import {
   noteFirstSilence,
   TURN_FAILURE_REASON_MAX,
@@ -6485,15 +6485,22 @@ export class DaemonService {
     if (context.isCorner)
       throw new Error('connector offer is invalid: offer a tool from the Room, not from a corner');
     const connectorName = connectorDisplayName(connectorType);
-    const already = (
-      await this.database.query<{ status: string }>(
-        `SELECT status FROM workspace_connectors
-         WHERE workspace_id=$1 AND owner_identity_id=$2 AND connector_type=$3
-           AND status IN ('installing','connected')
-         ORDER BY updated_at DESC LIMIT 1`,
-        [context.workspaceId, context.addressee.pubkey, connectorType],
-      )
-    ).rows[0];
+    // The wallet has no connector row: it is connected while its owner's
+    // grant to sign is active.
+    const already =
+      connectorType === 'wallet'
+        ? (await delegationView(this.database, context.addressee.pubkey)).active
+          ? { status: 'connected' }
+          : undefined
+        : (
+            await this.database.query<{ status: string }>(
+              `SELECT status FROM workspace_connectors
+               WHERE workspace_id=$1 AND owner_identity_id=$2 AND connector_type=$3
+                 AND status IN ('installing','connected')
+               ORDER BY updated_at DESC LIMIT 1`,
+              [context.workspaceId, context.addressee.pubkey, connectorType],
+            )
+          ).rows[0];
     if (already)
       throw new Error(
         `connector offer conflict: ${context.addressee.name} already has ${connectorName} (${already.status}); check workbench_status`,

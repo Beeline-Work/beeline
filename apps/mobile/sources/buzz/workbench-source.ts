@@ -16,6 +16,7 @@ import {
   ledgerBytes,
   ledgerStamp,
   resolveGoogleConnectTarget,
+  WALLET_GRANT_ENDED_MESSAGE,
 } from './workbench';
 import type { PhoneOperationMap } from '@beeline/api-contract/phone';
 import { GOOGLE_ACCOUNT_CONNECTOR_ID } from '@beeline/api-contract/workbench';
@@ -189,14 +190,20 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
         ...dto.catalog.map((entry) => {
           // Wallet creation is a direct human operation, not a helper
           // connector install. The server catalog's helper availability does
-          // not govern whether this row can act.
+          // not govern whether this row can act. The row is connected only
+          // once agents hold an active grant to sign; a wallet whose earlier
+          // grant ended asks to reconnect.
           if (entry.connectorType === 'wallet') {
+            const ended = dto.wallet && !dto.wallet.delegationActive
+              && dto.wallet.delegationExpiresAt !== null;
             return {
               id: 'wallet' as const,
               name: entry.name,
               description: CONNECTOR_DESCRIPTIONS.wallet,
               available: true,
-              status: dto.wallet ? ('connected' as const) : ('disconnected' as const),
+              status: dto.wallet?.delegationActive ? ('connected' as const)
+                : ended ? ('error' as const) : ('disconnected' as const),
+              ...(ended ? { errorMessage: WALLET_GRANT_ENDED_MESSAGE } : {}),
             };
           }
           if (entry.connectorType.startsWith('google-') && dto.googleAccount) {

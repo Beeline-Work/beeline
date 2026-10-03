@@ -4100,7 +4100,11 @@ export function BuzzChatSurface({
       setConnectorOfferActionId(offerId);
       try {
         const accepted = await monolithPhoneOperation('acceptConnectorOffer', { offerId });
-        openConnectorOfferCeremony(offerId, connectorType, accepted.connectorId, accepted.roomId);
+        // A wallet offer settles in the acceptance itself: there is no
+        // install or sign-in ceremony to open.
+        if (accepted.status !== 'accepted') {
+          openConnectorOfferCeremony(offerId, connectorType, accepted.connectorId, accepted.roomId);
+        }
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
         console.warn('Connector offer acceptance failed:', err);

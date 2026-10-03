@@ -295,6 +295,77 @@ describe('wallet over the fake CDP seam', () => {
     ).toBe('delegation-expired');
   });
 
+  it('a wallet offer card connects the wallet when its addressee accepts', async () => {
+    const offered = await daemonOperation('offerConnector', {
+      connectorType: 'wallet',
+      reason: 'pay the hosting invoice',
+    });
+    expect(offered.status).toBe(200);
+    const offerId = offered.body.offerId as string;
+    const pending = await database.query<{ card: Record<string, any> }>(
+      `SELECT card FROM messages WHERE card_type='connector-offer'`,
+    );
+    expect(pending.rows[0]!.card).toMatchObject({
+      offerId,
+      connectorType: 'wallet',
+      status: 'pending',
+      consequence:
+        'This changes your Workbench. Once it is added, I can pay the hosting invoice — you can revoke permission any time',
+    });
+
+    // A Workspace admin who is not the addressee cannot grant someone else's wallet.
+    const adminToken = (await auth.exchangeGitHubOidc('mara')).accessToken;
+    const admin = (
+      await database.query<{ id: string }>(`SELECT id FROM identities WHERE github_subject='mara'`)
+    ).rows[0]!;
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'admin')`,
+      [WORKSPACE, admin.id],
+    );
+    const refused = await fetch(`${origin}/v1/phone/operations/acceptConnectorOffer`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ offerId }),
+    });
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({
+      error: 'Only the person the agent addressed can connect their own wallet',
+    });
+    expect(
+      (await database.query(`SELECT 1 FROM wallet_bindings WHERE identity_id=$1`, [HUMAN]))
+        .rowCount,
+    ).toBe(0);
+
+    // The addressee accepts: that tap creates the wallet and grants agents
+    // permission to sign, and the card settles without a helper ceremony.
+    expect(await phoneOperation('acceptConnectorOffer', { offerId })).toEqual({
+      offerId,
+      status: 'accepted',
+      roomId: ROOM,
+    });
+    const binding = await database.query<{ delegation_standing: boolean }>(
+      `SELECT delegation_standing FROM wallet_bindings WHERE identity_id=$1`,
+      [HUMAN],
+    );
+    expect(binding.rows[0]?.delegation_standing).toBe(true);
+    const settled = await database.query<{ card: Record<string, any> }>(
+      `SELECT card FROM messages WHERE card_type='connector-offer'`,
+    );
+    expect(settled.rows[0]!.card).toMatchObject({ status: 'accepted', acceptedAt: expect.any(Number) });
+    expect(settled.rows[0]!.card.acceptedBy.pubkey).toBe(HUMAN);
+    const decision = await database.query<{ card: Record<string, any> }>(
+      `SELECT card FROM messages WHERE card_type='connector-offer-decision'`,
+    );
+    expect(decision.rows.map((row) => row.card)).toEqual([{ offerId, status: 'accepted' }]);
+
+    // A connected wallet is not offered again.
+    const again = await daemonOperation('offerConnector', {
+      connectorType: 'wallet',
+      reason: 'pay the hosting invoice',
+    });
+    expect(again.status).toBe(409);
+  });
+
   it('a failing history read does not break createWallet or readWallet', async () => {
     // The real CDP v2 history endpoint is unconfirmed (it 401s/404s); the
     // wallet must be fully usable — address + balances — regardless.

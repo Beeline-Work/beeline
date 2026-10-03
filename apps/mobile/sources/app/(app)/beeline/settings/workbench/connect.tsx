@@ -169,7 +169,9 @@ function ConnectToolFlow() {
     setInstall(null);
     if (offerId) {
       void monolithPhoneOperation('acceptConnectorOffer', { offerId })
-        .then((accepted) => startPolling(accepted.connectorId))
+        .then((accepted) => {
+          if (accepted.status !== 'accepted') startPolling(accepted.connectorId);
+        })
         .catch((cause) => {
           setError(cause instanceof Error ? cause.message : 'Pairing failed');
         });

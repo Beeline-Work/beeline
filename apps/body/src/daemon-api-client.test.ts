@@ -17,6 +17,7 @@ import {
   type AgentRuntimeRecord,
 } from './runtime.js';
 import type { HostReadBudget } from './host-read-budget.js';
+import type { AgentCommand } from '@beeline/api-contract/daemon';
 
 const roots: string[] = [];
 
@@ -137,6 +138,58 @@ describe('DaemonApiClient', () => {
       this.onclose?.();
     }
   }
+
+  it.each([false, true])('R2a: keeps active delivery when watch leaves first=%s', (watchLeavesFirst) => {
+    FakeWebSocket.instances.length = 0;
+    const client = new DaemonApiClient('http://127.0.0.1:43123', 'token', 'agent', fetch,
+      ((url, protocols) => new FakeWebSocket(url, protocols)) as DaemonWebSocketFactory);
+    const watch = vi.fn();
+    const active = vi.fn();
+    const offWatch = client.liveSubscribe('room-1', undefined, undefined, undefined, undefined, watch);
+    const socket = FakeWebSocket.instances[0]!;
+    socket.open();
+    if (watchLeavesFirst) offWatch();
+    const offActive = client.liveSubscribe('room-1', undefined, undefined, undefined, undefined, active);
+    const current = FakeWebSocket.instances.at(-1)!;
+    if (current.readyState !== 1) current.open();
+    if (!watchLeavesFirst) offWatch();
+    const frame = { type: 'commands', roomId: 'room-1', commandProtocol: 1,
+      commands: [liveCommand()] };
+    current.message(frame);
+    const delivered = active.mock.calls.length;
+    const unsubsBefore = current.sent.filter((row) => JSON.parse(row).type === 'unsubscribe').length;
+    offWatch(); // A stale disposer cannot remove a later registration.
+    offActive();
+    offActive();
+    expect(delivered).toBe(1);
+    expect(watch).not.toHaveBeenCalled();
+    expect(unsubsBefore).toBe(0);
+    expect(current.sent.filter((row) => JSON.parse(row).type === 'unsubscribe')).toHaveLength(1);
+    client.closeLive();
+  });
+
+  const liveCommand = (): AgentCommand => ({
+    id: 'c1', roomId: 'room-1', agentId: 'agent', sourceMessageId: 'm1', turnRequestId: 'turn',
+    rootCommandId: 'root', rootSourceMessageId: 'm1', agentDepth: 0, action: 'input',
+    reason: 'human_tag', source: { id: 'm1', authorId: 'human', body: 'Do it', createdAt: 1,
+      type: 'message', attachments: [] },
+  });
+
+  it('R2b: forwards repeated and empty command snapshots without reconnecting', () => {
+    FakeWebSocket.instances.length = 0;
+    const client = new DaemonApiClient('http://127.0.0.1:43123', 'token', 'agent', fetch,
+      ((url, protocols) => new FakeWebSocket(url, protocols)) as DaemonWebSocketFactory);
+    const delivered = vi.fn();
+    const off = client.liveSubscribe('room-1', undefined, undefined, undefined, undefined, delivered);
+    const socket = FakeWebSocket.instances[0]!;
+    socket.open();
+    const frame = { type: 'commands', roomId: 'room-1', commandProtocol: 1, commands: [liveCommand()] };
+    socket.message(frame);
+    socket.message(frame);
+    socket.message({ ...frame, commands: [] });
+    off();
+    expect(delivered.mock.calls).toEqual([[frame.commands], [frame.commands], [[]]]);
+  });
 
   it('promotes a one-use exchange into a durable opaque token before operations run', async () => {
     const { runtime, configPath } = await stagedRuntime();

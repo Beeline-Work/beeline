@@ -349,6 +349,20 @@ describe('RoomViewClient', () => {
     expect(
       readRoomView({
         ...room,
+        repositoryResolution: 'repository',
+        repository: { ...repository, allowAutoMerge: true },
+      })?.repository,
+    ).toMatchObject({ allowAutoMerge: true });
+    expect(
+      readRoomView({
+        ...room,
+        repositoryResolution: 'repository',
+        repository: { ...repository, allowAutoMerge: 'yes' },
+      })?.repository,
+    ).not.toHaveProperty('allowAutoMerge');
+    expect(
+      readRoomView({
+        ...room,
         cornerLifecycle: { lifecycle: 'APPROVED', checks: 'unknown' },
       })?.cornerLifecycle,
     ).toEqual({ lifecycle: 'unknown', checks: 'unknown' });

@@ -12,8 +12,14 @@ export type RoomReviewerUpdate = {
   reviewerFallbackIds: string[];
 };
 
+/** What actually happens when a reviewer is configured on an auto-merge repo. */
+const AUTO_MERGE_REVIEWER_WARNING =
+  "Auto-merge is on for this repo: it merges a corner the moment its checks pass, before the reviewer is asked to look. The reviewer has no effect while auto-merge stays on — turn it off in the repo's GitHub settings.";
+
 type RoomReviewerActionsProps = {
   agents: readonly RoomViewIdentity[];
+  /** GitHub's repository-level auto-merge toggle for this Room's repo. */
+  allowAutoMerge?: boolean;
   canManage: boolean;
   hasRepository: boolean;
   onSaved?: () => void;
@@ -45,6 +51,7 @@ function reviewerOrder(
  */
 export function RoomReviewerActions({
   agents,
+  allowAutoMerge,
   canManage,
   hasRepository,
   onSaved,
@@ -113,11 +120,25 @@ export function RoomReviewerActions({
         }}
         testID="room-reviewer-action"
       />
+      {allowAutoMerge && order.length ? (
+        <View accessibilityRole="alert" style={styles.error} testID="room-reviewer-auto-merge-warning">
+          <Text style={styles.errorText}>! {AUTO_MERGE_REVIEWER_WARNING}</Text>
+        </View>
+      ) : null}
       <HullActionSheetModal
         accessibilityLabel="Close reviewer picker"
         dismissOnBackdrop={!busy}
         footer={
           <>
+            {allowAutoMerge ? (
+              <View
+                accessibilityRole="alert"
+                style={styles.error}
+                testID="room-reviewer-auto-merge-picker-warning"
+              >
+                <Text style={styles.errorText}>! {AUTO_MERGE_REVIEWER_WARNING}</Text>
+              </View>
+            ) : null}
             {error ? (
               <View accessibilityRole="alert" style={styles.error} testID="room-reviewer-error">
                 <Text style={styles.errorText}>! {error}</Text>

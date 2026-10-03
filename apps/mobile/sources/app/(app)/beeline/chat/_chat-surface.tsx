@@ -1021,6 +1021,7 @@ export function BuzzChatSurface({
       },
       targetBranch: repository.targetBranch,
       githubEventsEnabled: repository.githubEventsEnabled,
+      allowAutoMerge: repository.allowAutoMerge,
       source: 'config',
     };
   }, [activeCommunityId, decodedId, isCorner, roomSurface?.repository]);
@@ -6760,6 +6761,7 @@ export function BuzzChatSurface({
               agents={(roomSurface?.members ?? [])
                 .filter((member) => member.identity.kind === 'agent')
                 .map((member) => member.identity)}
+              allowAutoMerge={roomRepository?.allowAutoMerge}
               canManage={canManageWorkspace}
               hasRepository={roomRepository !== null}
               onSaved={() => refreshSignal.force()}

@@ -146,6 +146,44 @@ describe('RoomReviewerActions', () => {
     ).toEqual([]);
   });
 
+  it('warns on the settings row when a reviewer is set and the repo allows auto-merge', () => {
+    const { renderer } = render({ allowAutoMerge: true });
+    const text = renderer.root
+      .findByProps({ testID: 'room-reviewer-auto-merge-warning' })
+      .findByType('Text').props.children;
+    expect(text).toEqual(['! ', expect.stringContaining('Auto-merge is on')]);
+  });
+
+  it('shows no standing warning without a reviewer or with auto-merge off', () => {
+    expect(
+      render({ allowAutoMerge: true, reviewerAgentId: undefined }).renderer.root.findAllByProps({
+        testID: 'room-reviewer-auto-merge-warning',
+      }),
+    ).toHaveLength(0);
+    expect(
+      render({ allowAutoMerge: false }).renderer.root.findAllByProps({
+        testID: 'room-reviewer-auto-merge-warning',
+      }),
+    ).toHaveLength(0);
+  });
+
+  it('warns inside the picker before a reviewer is even chosen, so the choice is informed', () => {
+    const { renderer } = render({ allowAutoMerge: true, reviewerAgentId: undefined });
+    act(() => renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.onPress());
+    const text = renderer.root
+      .findByProps({ testID: 'room-reviewer-auto-merge-picker-warning' })
+      .findByType('Text').props.children;
+    expect(text).toEqual(['! ', expect.stringContaining('Auto-merge is on')]);
+  });
+
+  it('shows no picker warning when the repo does not allow auto-merge', () => {
+    const { renderer } = render({ allowAutoMerge: false, reviewerAgentId: undefined });
+    act(() => renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.onPress());
+    expect(
+      renderer.root.findAllByProps({ testID: 'room-reviewer-auto-merge-picker-warning' }),
+    ).toHaveLength(0);
+  });
+
   it('scrolls the agent list in a window of five rows with Done pinned below it', () => {
     const many = Array.from({ length: 12 }, (_, index) => ({
       pubkey: `agent-${index}`,

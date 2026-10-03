@@ -3550,6 +3550,8 @@ describe('monolith integration', () => {
   });
 
   it('outlines every day of a history longer than twenty thousand days', async () => {
+    // The synchronous PGlite load can outlast HTTP's default idle socket timeout.
+    server.keepAliveTimeout = 20_000;
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'long-history-outline',

@@ -242,6 +242,19 @@ export const SidebarView = React.memo(function SidebarView() {
   }, [refreshNonce]);
 
   React.useEffect(() => {
+    if (!client) return;
+    let cancelled = false;
+    void client.workspaces().then((list) => {
+      if (!cancelled) setWorkspaces(list.workspaces);
+    }).catch(() => {
+      if (!cancelled) setNavigationError(`Could not load ${WORKSPACE_LABEL.toLowerCase()}s.`);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, pathname]);
+
+  React.useEffect(() => {
     if (!client || !workspaceId) return;
     let cancelled = false;
     setNavigationError(null);

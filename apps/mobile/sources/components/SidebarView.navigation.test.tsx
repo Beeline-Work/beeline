@@ -12,6 +12,7 @@ const route = vi.hoisted(() => ({
   parent: undefined as string | undefined,
   pathname: '/beeline/channels',
 }));
+const pathnameListeners = vi.hoisted(() => new Set<() => void>());
 const viewer = vi.hoisted(() => ({ kind: 'human' as 'human' | 'agent' }));
 const workspaceRole = vi.hoisted(() => ({ current: 'owner' as 'owner' | 'admin' | 'member' }));
 const openCornerState = vi.hoisted(() => ({
@@ -50,6 +51,14 @@ const chats = vi.hoisted(() =>
         : [],
   })),
 );
+const workspaceSummary = vi.hoisted(() => ({ attention: true, roomCount: 3 }));
+const workspaces = vi.hoisted(() => vi.fn(async () => ({
+  workspaces: [
+    { id: 'workspace-a', name: 'Alpha Workspace' },
+    { id: 'workspace-empty', name: 'Empty Workspace', ...workspaceSummary },
+  ],
+  viewer: { pubkey: 'viewer', kind: 'human', name: 'Ada Lovelace' },
+})));
 const windowListeners = new Map<string, (event: any) => void>();
 const viewport = vi.hoisted(() => ({ width: 1280 }));
 const desktopShell = vi.hoisted(() => ({ current: false }));
@@ -113,11 +122,17 @@ vi.mock('@expo/vector-icons', async () => {
   return { Ionicons: (props: any) => ReactModule.createElement('Ionicons', props) };
 });
 vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
-vi.mock('expo-router', () => ({
+vi.mock('expo-router', async () => {
+  const { useSyncExternalStore } = await import('react');
+  return ({
   useGlobalSearchParams: () => route,
-  usePathname: () => route.pathname,
+  usePathname: () => useSyncExternalStore((listener) => {
+    pathnameListeners.add(listener);
+    return () => { pathnameListeners.delete(listener); };
+  }, () => route.pathname),
   useRouter: () => ({ push: routerPush, navigate: routerNavigate }),
-}));
+  });
+});
 vi.mock('@/utils/responsive', () => ({ useHeaderHeight: () => 56, useIsDesktop: () => true }));
 vi.mock('@/utils/isTauri', () => ({ isTauri: () => desktopShell.current }));
 vi.mock('@/utils/platform', () => ({ isDesktopPlatform: () => true }));
@@ -133,13 +148,7 @@ vi.mock('@/buzz/community-storage', () => ({
 }));
 vi.mock('@/sync/transport/room-view-client', () => ({
   RoomViewClient: class {
-    workspaces = vi.fn(async () => ({
-      workspaces: [
-        { id: 'workspace-a', name: 'Alpha Workspace' },
-        { id: 'workspace-empty', name: 'Empty Workspace', attention: true, roomCount: 3 },
-      ],
-      viewer: { pubkey: 'viewer', kind: 'human', name: 'Ada Lovelace' },
-    }));
+    workspaces = workspaces;
     chats = chats;
     corners = corners;
   },
@@ -295,6 +304,8 @@ describe('desktop Workspace navigation', () => {
     route.communityId = undefined;
     route.parent = undefined;
     route.pathname = '/beeline/channels';
+    workspaceSummary.attention = true;
+    workspaceSummary.roomCount = 3;
     openCornerState.current = 'working';
     viewport.width = 1280;
     desktopShell.current = false;
@@ -311,13 +322,33 @@ describe('desktop Workspace navigation', () => {
     expect(chats.mock.calls.every(([id]) => id === 'workspace-a')).toBe(true);
     const rail = tree.root.findByType('DesktopWorkspaceRail');
     expect(rail.props.workspaces.find((item: any) => item.id === 'workspace-empty')).toMatchObject({ needsAttention: true, roomCount: 3 });
-    chats.mockClear();
+    const initialReads = workspaces.mock.calls.length;
+    workspaceSummary.attention = false;
+    workspaceSummary.roomCount = 2;
     route.pathname = '/beeline/tray';
-    await act(async () => tree.update(<SidebarView key="pathname-change" />));
+    await act(async () => {
+      pathnameListeners.forEach((listener) => listener());
+      tree.update(<SidebarView />);
+    });
     await settle();
-    expect(chats).toHaveBeenCalled();
+    expect(workspaces).toHaveBeenCalledTimes(initialReads + 1);
+    expect(tree.root.findByType('DesktopWorkspaceRail').props.workspaces.find((item: any) => item.id === 'workspace-empty')).toMatchObject({ needsAttention: false, roomCount: 2 });
+
+    workspaceSummary.attention = true;
+    workspaceSummary.roomCount = 4;
+    route.pathname = '/beeline/members';
+    await act(async () => {
+      pathnameListeners.forEach((listener) => listener());
+      tree.update(<SidebarView />);
+    });
+    await settle();
+    expect(workspaces).toHaveBeenCalledTimes(initialReads + 2);
+    expect(tree.root.findByType('DesktopWorkspaceRail').props.workspaces.find((item: any) => item.id === 'workspace-empty')).toMatchObject({ needsAttention: true, roomCount: 4 });
+    expect(chats).toHaveBeenCalledTimes(3);
     expect(chats.mock.calls.every(([id]) => id === 'workspace-a')).toBe(true);
-    console.log('R12e Demonstrated: other Workspace marked needsAttention, 3 rooms; chats read only workspace-a.');
+    expect(tree.root.findByType('CommunitySwitcherTrigger').props.community.name).toBe('Alpha Workspace');
+    expect(saveActiveCommunityId).not.toHaveBeenCalled();
+    console.log('R12e Demonstrated: mounted Sidebar navigation clears and lights the other Workspace mark, updates room counts 3 → 2 → 4, and reads chats only for workspace-a.');
   });
 
   it('keeps both Mac workspace headers below the overlay title bar', async () => {

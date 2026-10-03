@@ -227,7 +227,7 @@ type CornerRow = {
  * corner (a push landing with a close, a redelivered webhook, two merge sweeps)
  * cannot both read the same state and both act on it.
  */
-async function lockCornerWorkflowRun(db: SqlDatabase, cornerId: string): Promise<void> {
+export async function lockCornerWorkflowRun(db: SqlDatabase, cornerId: string): Promise<void> {
   await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [workflowRunLockKey(cornerId)]);
 }
 
@@ -676,7 +676,7 @@ async function checksReported(
   if (event.result === 'failing') plan = { outcome: 'failing' };
   else if (!corner.configured_reviewer_id) plan = { outcome: 'no_reviewer' };
   else if (
-    reviewerIsAuthor(corner) ||
+    (corner.reviewer_parent_member && reviewerIsAuthor(corner)) ||
     (await approvedCurrentHead(db, cornerId, corner))
   )
     plan = { outcome: 'passing', skipReview: true };
@@ -1174,7 +1174,7 @@ async function workerYolo(db: SqlDatabase, cornerId: string): Promise<boolean> {
 }
 
 export type CornerMergeGate = {
-  /** A reviewer is configured. */
+  /** A reviewer is configured; the self-review bypass also requires current parent membership. */
   reviewerExists: boolean;
   reviewerIsAuthor: boolean;
   /** No PASS by the configured reviewer on this head and the latest brief revision, and the reviewer is not the author. */
@@ -1203,10 +1203,16 @@ export async function cornerMergeGate(
       owner_agent_id: string | null;
       lane: string;
       configured_reviewer_id: string | null;
+      reviewer_parent_member: boolean;
       reviewer_fallback_ids: string[];
     }>(
       `SELECT corner.parent_id,parent.workspace_id,fact.owner_agent_id,fact.lane,
-              parent.reviewer_agent_id configured_reviewer_id,parent.reviewer_fallback_ids
+              parent.reviewer_agent_id configured_reviewer_id,parent.reviewer_fallback_ids,
+              EXISTS (
+                SELECT 1 FROM memberships member JOIN identities reviewer ON reviewer.id=member.identity_id
+                WHERE member.room_id=parent.id AND member.identity_id=parent.reviewer_agent_id
+                  AND member.removed_at IS NULL AND reviewer.kind='agent'
+              ) reviewer_parent_member
        FROM corner_facts fact
        JOIN rooms corner ON corner.id=fact.corner_id
        JOIN rooms parent ON parent.id=corner.parent_id
@@ -1215,10 +1221,10 @@ export async function cornerMergeGate(
     )
   ).rows[0];
   if (!corner) throw new Error('corner not found');
-  const reviewerExists = Boolean(corner.configured_reviewer_id);
   const author = reviewerIsAuthor(corner);
+  const reviewerExists = Boolean(corner.configured_reviewer_id) && (!author || corner.reviewer_parent_member);
   const approvalPending =
-    reviewerExists && !author
+    corner.configured_reviewer_id && !author
       ? (await approvingReviewer(db, { ...corner, cornerId, ...head })) === undefined
       : false;
   const holds = await activeCornerHolds(db, cornerId);
@@ -1272,6 +1278,13 @@ export async function claimCornerMergeAttempt(
 ): Promise<boolean> {
   return database.transaction(async (db) => {
     await lockCornerWorkflowRun(db, cornerId);
+    const corner = await loadCorner(db, cornerId);
+    const pr = corner?.lifecycle.pr;
+    if (!corner || corner.archived || corner.lifecycle.checks !== 'passing' ||
+        !pr?.number || pr.headSha !== headSha) return false;
+    // Recheck local authority at claim after the earlier gate read.
+    // No provider request belongs in this transaction.
+    if (!(await cornerMergeGate(db, cornerId, { number: pr.number, headSha })).open) return false;
     const claimed = await db.query(
       `UPDATE corner_facts SET merge_attempt_head=$2,updated_at=now()
        WHERE corner_id=$1 AND workflow_state='land'

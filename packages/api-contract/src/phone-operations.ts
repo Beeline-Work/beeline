@@ -54,7 +54,17 @@ export type {
 
 export const HUMAN_CORNER_TITLE_MAX_LENGTH = 120;
 
+/** Omit releaseHoldId to set a hold; supply its ID for an authorized release. */
+export type CornerHoldInput = { readonly cornerId: string; readonly releaseHoldId?: string };
+export type CornerMergeHold = {
+  id: string;
+  actorId: string;
+  standing: 'owner' | 'admin' | 'member';
+  setAt: string;
+};
+
 export type PhoneOperationMap = {
+  setCornerHold: { input: CornerHoldInput; output: { holdId: string; roomId: string } };
   readWelcomeCards: { input: Record<string, never>; output: WelcomeCardsView };
   completeWelcomeCards: { input: Record<string, never>; output: WelcomeCardsView };
   /** The viewer's GitHub star card, when a reply milestone and a later win make it due. */

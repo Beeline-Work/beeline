@@ -755,6 +755,7 @@ export class GitHubOperations {
       reviewerIsAuthor,
       reviewerWake,
       held: gate.held,
+      holds: gate.holds,
       isWorkerYolo: gate.isWorkerYolo,
       mergeAllowed,
       rule,

@@ -1,4 +1,5 @@
 import type { AppRoute, AppTransport, ConnectAppStatus } from './app-connections.js';
+import type { CornerHoldInput, CornerMergeHold } from './phone-operations.js';
 import type { ServerEventKind, SystemEvent } from './system-events.js';
 import type {
   AgentGrantEscalation,
@@ -310,6 +311,7 @@ export type DaemonOperationMap = {
       };
       /** True when a person in the corner asked to hold the merge. */
       held: boolean;
+      holds: CornerMergeHold[];
       /** The corner worker's yolo mode (always off in a public Workspace). */
       isWorkerYolo: boolean;
       /**
@@ -510,6 +512,10 @@ export type DaemonOperationMap = {
     | { readonly status: 'ready'; readonly code: string }
   >;
   createCorner: Operation<CreateCornerInput, CornerResult>;
+  setCornerHold: Operation<
+    CornerHoldInput & TurnOutputAuthority & RoomInput & { requestId: string },
+    { holdId: string; roomId: string }
+  >;
   /**
    * One-way `no_code -> code` promotion of a repository-backed corner. The
    * active command must come from a human message in that same corner; the
@@ -1061,6 +1067,7 @@ export type PostTargetBranchProposalInput = RoomInput & {
 };
 export type CreateCornerInput = TurnOutputAuthority &
   RoomInput & {
+    readonly hold?: boolean;
     readonly requestId: string;
     /** Stable for one tool call, distinct between separate calls in the same turn. */
     readonly idempotencyKey?: string;

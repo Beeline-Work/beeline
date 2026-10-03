@@ -1,3 +1,4 @@
+import { setCornerHold } from './corner-holds.js';
 import {
   createAgentCommand,
   reconcileConfiguredCornerReviewers,
@@ -3508,6 +3509,10 @@ export class PhoneService {
         return (await this.createHumanCorner(
           input as Input<'createHumanCorner'>,
           viewerId,
+        )) as Output<Name>;
+      case 'setCornerHold':
+        return (await this.database.transaction((db) =>
+          setCornerHold(db, input as Input<'setCornerHold'>, viewerId),
         )) as Output<Name>;
       case 'requestCornerClose':
         await this.requestCornerClose((input as Input<'requestCornerClose'>).roomId, viewerId);
@@ -9019,6 +9024,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'cancelAgentTurn',
   'createHumanCorner',
   'requestCornerClose',
+  'setCornerHold',
   'decideWritePermission',
   'decideAgentGrant',
   'revokeAgentGrant',

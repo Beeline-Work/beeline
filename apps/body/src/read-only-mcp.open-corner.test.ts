@@ -236,6 +236,20 @@ describe('open_corner over the grok wire', () => {
     expect(creates[2]?.idempotencyKey).toBe(creates[0]?.idempotencyKey);
   }, 30_000);
 
+  it('R4: sends an atomic initial hold and bound hold/release calls', async () => {
+    const door = await daemonDoor();
+    const opened = await callTool(door.origin, { name: 'Held work', objective: 'Keep this work held', hold: true });
+    expect(opened.result?.isError).toBeUndefined();
+    expect(door.calls.find(call => call.operation === 'createCorner')).toMatchObject({ hold: true });
+    for (const args of [{}, { releaseHoldId: ROOM }]) {
+      const result = await callTool(door.origin, args, { name: 'set_corner_hold', cornerId: CORNER });
+      expect(result.error).toBeUndefined();
+      expect(result.result?.isError).toBeUndefined();
+      expect(door.calls.at(-1)).toMatchObject({ operation: 'setCornerHold', cornerId: CORNER,
+        roomId: CORNER, requestId: 'command-request', generationId: 'g1', ...args });
+    }
+  }, 30_000);
+
   it('opens a corner from the multi-line brief that used to be refused', async () => {
     const door = await daemonDoor();
     const { result, error } = await callTool(door.origin, {

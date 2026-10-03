@@ -6655,12 +6655,28 @@ export class DaemonService {
       // a concurrent retry waits, sees the winner, and returns its id without
       // creating another Room, command, or open card.
       await db.query(`SELECT id FROM rooms WHERE id=$1 FOR UPDATE`, [roomId]);
+      let implementerAgentId = agentId;
+      if (input.implementer !== undefined) {
+        const implementer = (
+          await db.query<{ id: string; kind: string }>(
+            `SELECT identity.id,identity.kind FROM memberships member
+             JOIN identities identity ON identity.id=member.identity_id
+             WHERE member.room_id=$1 AND member.removed_at IS NULL AND identity.handle=$2
+             FOR SHARE OF member,identity`,
+            [roomId, input.implementer],
+          )
+        ).rows[0];
+        if (!implementer) throw new Error('implementer must be a current member of the parent Room');
+        if (implementer.kind !== 'agent') throw new Error('implementer must be an agent');
+        implementerAgentId = implementer.id;
+      }
       const existing = (
         await db.query<{
           corner_id: string;
           name: string;
           objective: string;
           owner_agent_id: string;
+          created_by: string;
           request_id: string;
           repository_key: string | null;
           repository_target_branch: string;
@@ -6670,7 +6686,7 @@ export class DaemonService {
           brief_change: string | null;
           brief_attachments: import('@beeline/api-contract/daemon').CornerBriefAttachment[] | null;
         }>(
-          `SELECT child.id::text corner_id,child.name,fact.objective,fact.owner_agent_id,
+          `SELECT child.id::text corner_id,child.name,fact.objective,fact.owner_agent_id,child.created_by,
                   fact.request_id,child.repository_key,child.repository_target_branch,fact.lane,
                   initial.revision brief_revision,
                   initial.revision_hash brief_revision_hash,initial.change brief_change,
@@ -6705,7 +6721,8 @@ export class DaemonService {
             sameAttachments
           : existing.brief_revision === null;
         if (
-          existing.owner_agent_id !== agentId ||
+          existing.owner_agent_id !== implementerAgentId ||
+          existing.created_by !== agentId ||
           existing.request_id !== input.requestId ||
           existing.name !== name ||
           existing.objective !== objective ||
@@ -6715,7 +6732,8 @@ export class DaemonService {
           !sameBrief
         ) {
           const mismatches = [
-            existing.owner_agent_id !== agentId && 'owner',
+            existing.owner_agent_id !== implementerAgentId && 'implementer',
+            existing.created_by !== agentId && 'opener',
             existing.request_id !== input.requestId && 'request',
             existing.name !== name && 'name',
             existing.objective !== objective && 'objective',
@@ -6768,7 +6786,7 @@ export class DaemonService {
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')
          ON CONFLICT(room_id,identity_id) WHERE room_id IS NOT NULL
          DO UPDATE SET role='owner',removed_at=NULL`,
-        [parent.workspace_id, cornerId, agentId],
+        [parent.workspace_id, cornerId, implementerAgentId],
       );
       // A corner with no repository has nothing to commit, so it is the no-code
       // lane however the caller asked. Recording anything else would tell a
@@ -6779,7 +6797,7 @@ export class DaemonService {
          VALUES($1,$2,$3,$4,$5,$6,$7,'{"lifecycle":"working","checks":"unknown"}')`,
         [
           cornerId,
-          agentId,
+          implementerAgentId,
           commissionedBy ?? null,
           objective,
           input.requestId,
@@ -6834,14 +6852,10 @@ export class DaemonService {
           ],
         );
       }
-      // The objective is the OPENER's work. Every other agent is copied in as a
-      // member so it can read the corner and answer when tagged, but it gets no
-      // intake command: #1206 fanned the objective out to every agent member and
-      // every agent in the workspace started working the same corner at once
-      // (captain report 2026-09-14 02:4xZ, corner "Workspace Rail Labels").
+      // Only the implementer gets the objective; other members work when tagged.
       await createAgentCommand(db, {
         roomId: cornerId,
-        agentId,
+        agentId: implementerAgentId,
         sourceMessageId: parentCommand.source_message_id,
         reason: 'corner_objective',
         parent: parentCommand,
@@ -6866,7 +6880,7 @@ export class DaemonService {
         kind: 'open',
         lane,
         workspaceId: parent.workspace_id,
-        implementerAgentId: agentId,
+        implementerAgentId,
       });
     });
     this.live.publish({ type: 'invalidate', roomId, reason: 'corner', agentId });

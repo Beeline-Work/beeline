@@ -80,6 +80,8 @@ async function withOneBrowser<T>(run: () => T): Promise<T> {
  */
 export function webProofShims(mobile: string): Record<string, string> {
   return {
+    './draft-identity':
+      'export const useDraftIdentity = explicit => explicit === undefined ? "proof-viewer" : explicit;',
     'react-native-unistyles': `import { beelineThemes } from '${path.join(mobile, 'sources/buzz/groknight')}';
     const theme = { buzz: beelineThemes.obsidian };
     export const StyleSheet = { create: factory => (typeof factory === 'function' ? factory(theme) : factory), hairlineWidth: 1,

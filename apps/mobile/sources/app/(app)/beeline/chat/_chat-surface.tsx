@@ -1,3 +1,4 @@
+import { useTextDraft } from '@/buzz/use-text-draft';
 import { HumanProfile } from '../human-profile';
 import BuzzMembers from '../members';
 /** Room and corner conversation surface. */
@@ -128,9 +129,8 @@ import {
   desktopWorkPaneWindowClass,
   initialDesktopWorkPaneState,
   isDesktopWorkPaneCommand,
-  loadDesktopDraft,
+  desktopDraftKey,
   loadDesktopWorkPanePreference,
-  saveDesktopDraft,
   saveDesktopWorkPanePreference,
   desktopWorkPaneEventApplies,
   transitionDesktopWorkPane,
@@ -632,9 +632,13 @@ export function BuzzChatSurface({
     if (!roomSurface) return;
     markRoomOpen('layout-chrome', roomSurface.messages.at(-1)?.id);
   }, [roomSurface]);
-  const [inputText, setInputText] = useState('');
+  const [inputText, setInputText, composerDraft] = useTextDraft(
+    `composer:${decodedId}`, '', userPubkey || null,
+    desktopExperience ? desktopDraftKey(decodedId) : undefined,
+  );
+  const activeComposerDraftRef = useRef(composerDraft);
+  activeComposerDraftRef.current = composerDraft;
   const [composerInputRevision, setComposerInputRevision] = useState(0);
-  const loadedDraftForRef = useRef<string | null>(null);
   const workPaneHandleRef = useRef<React.ElementRef<typeof Pressable>>(null);
   const initialWorkPaneStateRef = useRef(initialDesktopWorkPaneState(windowWidth));
   const [desktopWorkPane, setDesktopWorkPane] = useState(initialWorkPaneStateRef.current);
@@ -759,7 +763,7 @@ export function BuzzChatSurface({
   const [roomActionsVisible, setRoomActionsVisible] = useState(false);
   const [cornerActionsVisible, setCornerActionsVisible] = useState(false);
   const [renameEditing, setRenameEditing] = useState(false);
-  const [renameDraft, setRenameDraft] = useState('');
+  const [renameDraft, setRenameDraft, renameTextDraft] = useTextDraft(`rename:${decodedId}`, '', userPubkey || null);
   const [renameBusy, setRenameBusy] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
   const [openingRandomCorner, setOpeningRandomCorner] = useState(false);
@@ -805,23 +809,8 @@ export function BuzzChatSurface({
     receivedAt: number;
   } | null>(null);
 
-  useEffect(() => {
-    if (!desktopExperience || !decodedId) return;
-    let cancelled = false;
-    loadedDraftForRef.current = null;
-    inputTextRef.current = '';
-    setInputText('');
-    setDesktopDeliveryState(null);
-    void loadDesktopDraft(decodedId).then((draft) => {
-      if (cancelled) return;
-      loadedDraftForRef.current = decodedId;
-      inputTextRef.current = draft;
-      setInputText(draft);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [decodedId, desktopExperience]);
+  useLayoutEffect(() => { inputTextRef.current = inputText; }, [inputText]);
+  useEffect(() => { setDesktopDeliveryState(null); }, [decodedId, userPubkey]);
 
   const stagedComposerFocusRef = useRef<{ start: number; end: number } | null>(null);
   useEffect(() => {
@@ -863,14 +852,6 @@ export function BuzzChatSurface({
       }
     });
   }, [composerMounted, decodedId]);
-
-  useEffect(() => {
-    if (!desktopExperience || loadedDraftForRef.current !== decodedId) return;
-    const timer = setTimeout(() => {
-      void saveDesktopDraft(decodedId, inputText);
-    }, 120);
-    return () => clearTimeout(timer);
-  }, [decodedId, desktopExperience, inputText]);
 
   const commitDesktopWorkPane = useCallback(
     (event: DesktopWorkPaneEvent) => {
@@ -3596,6 +3577,7 @@ export function BuzzChatSurface({
     // skipped the composer-clear block and the field kept its text after
     // every send). Only a real shortcut — it always carries text — qualifies.
     const sendShortcut = shortcut && typeof shortcut.text === 'string' ? shortcut : undefined;
+    const clearSubmittedDraft = composerDraft.captureMessage();
     const rawText = (sendShortcut?.text ?? inputTextRef.current).trim();
     const activeReplyTarget = sendShortcut?.replyTarget ?? replyTarget;
     const activePendingAttachments = sendShortcut ? [] : pendingAttachmentsRef.current;
@@ -3732,22 +3714,24 @@ export function BuzzChatSurface({
       releaseHistoryAnchorForSend(optimistic.id);
       addMessages([optimistic]);
       if (!sendShortcut) {
-        const nextInputRevision = composerInputRevisionRef.current + 1;
-        composerInputRevisionRef.current = nextInputRevision;
-        // Clear both owners of the controlled field. `clear()` removes the
-        // platform value immediately; the revision remount below guarantees
-        // the replacement starts empty even if native reconciliation lags.
-        composerRef.current?.clear();
-        inputTextRef.current = '';
-        setInputText('');
-        setComposerInputRevision(nextInputRevision);
-        setComposerHeight(COMPOSER_MIN_HEIGHT);
-        setInputSelection({ start: 0, end: 0 });
-        replacePendingAttachments((current) =>
-          current.filter((attachment) => !activePendingAttachments.includes(attachment)),
-        );
-        setReplyTarget(null);
-        if (desktopExperience) void saveDesktopDraft(decodedId, '');
+        const draftCleared = clearSubmittedDraft();
+        if (activeComposerDraftRef.current === composerDraft) {
+          if (draftCleared) {
+            const nextInputRevision = composerInputRevisionRef.current + 1;
+            composerInputRevisionRef.current = nextInputRevision;
+            // Reconcile only the remaining draft, including typing appended during send.
+            if (!composerDraft.value) composerRef.current?.clear();
+            inputTextRef.current = composerDraft.value;
+            setComposerInputRevision(nextInputRevision);
+            if (!composerDraft.value) setComposerHeight(COMPOSER_MIN_HEIGHT);
+            const end = composerDraft.value.length;
+            setInputSelection({ start: end, end });
+          }
+          replacePendingAttachments((current) =>
+            current.filter((attachment) => !activePendingAttachments.includes(attachment)),
+          );
+          setReplyTarget((current) => current === activeReplyTarget ? null : current);
+        }
       }
       await activeOutbox.attempted(preparedEvent.id);
       const writeResult = await sendTransport.publishPreparedMessage(preparedEvent);
@@ -3836,6 +3820,7 @@ export function BuzzChatSurface({
     roomRepoAccessIssue,
     roomSurface,
     desktopExperience,
+    composerDraft,
     releaseHistoryAnchorForSend,
   ]);
 
@@ -4067,14 +4052,16 @@ export function BuzzChatSurface({
   );
 
   const handleCreatePoll = useCallback(async (draft: PollDraft) => {
-    if (createPollBusy) return;
+    if (createPollBusy) return false;
     setCreatePollBusy(true);
     try {
       await monolithPhoneOperation('createRoomPoll', { roomId: decodedId, ...draft });
       setCreatePollVisible(false);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      return true;
     } catch (err) {
       Modal.alert('Could not create poll', phoneOperationFailureReason(err));
+      return false;
     } finally {
       setCreatePollBusy(false);
     }
@@ -4349,9 +4336,11 @@ export function BuzzChatSurface({
 
     setRenameBusy(true);
     setRenameError(null);
+    const clearSubmitted = renameTextDraft.capture(false);
     try {
       const client = await transport.ensureClient();
       await client.renameChannel(decodedId, name);
+      clearSubmitted();
       refreshSignal.force();
       setRenameEditing(false);
       setRoomActionsVisible(false);
@@ -4361,15 +4350,15 @@ export function BuzzChatSurface({
     } finally {
       setRenameBusy(false);
     }
-  }, [canRenameTitle, decodedId, isCorner, renameBusy, renameDraft, transport]);
+  }, [canRenameTitle, decodedId, isCorner, renameBusy, renameDraft, renameTextDraft, transport]);
 
   const startRenameFromTitle = useCallback(() => {
     if (!canRenameTitle) return;
-    setRenameDraft(storedRoomName);
+    renameTextDraft.initialize(storedRoomName);
     setRenameError(null);
     setRenameEditing(true);
     if (!isCorner) setRoomActionsVisible(true);
-  }, [canRenameTitle, isCorner, storedRoomName]);
+  }, [canRenameTitle, isCorner, storedRoomName, renameTextDraft]);
 
   const handleOpenRandomCorner = useCallback(async () => {
     if (openingRandomCorner || isArchived || viewerIsAgent) return;
@@ -6234,6 +6223,7 @@ export function BuzzChatSurface({
                   )}
                   {canManageWorkspace ? (
                     <RepoPicker
+                      draftContext={decodedId}
                       busy={roomRepoBusy}
                       candidates={roomRepoCandidates}
                       installations={githubInstallations}
@@ -6609,6 +6599,7 @@ export function BuzzChatSurface({
       />
 
       <ForwardMessagePickerSheet
+        draftContext={decodedId}
         busyRoomId={forwardBusyRoomId}
         error={forwardError}
         onClose={() => {
@@ -6742,6 +6733,7 @@ export function BuzzChatSurface({
           picker={
             <View style={styles.roomSheetInset}>
               <RepoPicker
+                draftContext={decodedId}
                 busy={roomRepoBusy || roomRepoListLoading}
                 candidates={roomRepoCandidates}
                 installations={githubInstallations}
@@ -6960,10 +6952,11 @@ export function BuzzChatSurface({
         visible={agentConnectVisible}
       />
       <CreatePollSheet
+        draftContext={decodedId}
         visible={createPollVisible}
         busy={createPollBusy}
         onClose={() => setCreatePollVisible(false)}
-        onCreate={(draft) => void handleCreatePoll(draft)}
+        onCreate={handleCreatePoll}
       />
     </BuzzCommunityShell>
   );

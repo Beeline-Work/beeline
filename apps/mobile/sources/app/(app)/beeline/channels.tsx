@@ -1,3 +1,4 @@
+import { useTextDraft } from '@/buzz/use-text-draft';
 import { useNeedsYouCount } from '@/buzz/needs-you';
 import { PinnedConversationsEmpty } from '@/components/buzz/PinnedConversationsEmpty';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
@@ -205,7 +206,6 @@ export default function BuzzChannels() {
   const [pairingError, setPairingError] = useState<string | null>(null);
   const [messagingPubkey, setMessagingPubkey] = useState<string | null>(null);
   const [showCreateRoom, setShowCreateRoom] = useState(false);
-  const [roomName, setRoomName] = useState('');
   const [inviteOnly, setInviteOnly] = useState(false);
   const [creatingRoom, setCreatingRoom] = useState(false);
   const [creatingRepository, setCreatingRepository] = useState(false);
@@ -247,7 +247,16 @@ export default function BuzzChannels() {
   }, [identity?.publicKey, Boolean(chatList), viewerIsAgent]);
   const canManageWorkspace =
     chatList?.workspace.role === 'owner' || chatList?.workspace.role === 'admin';
-  const [query, setQuery] = useState('');
+  const [roomName, setRoomName, roomNameDraft]= useTextDraft(
+    `new-room:${activeCommunityId}`,
+    '',
+    identity?.publicKey ?? null,
+  );
+  const [query, setQuery] = useTextDraft(`room-search:${
+    activeCommunityId}`,
+    '',
+    identity?.publicKey ?? null,
+  );
   const { pinned, pinsLoaded, togglePin, pinError } = useRoomPins(
     identity?.publicKey,
     activeCommunityId,
@@ -269,9 +278,6 @@ export default function BuzzChannels() {
     () => roomListSections(filterConversations(chatList?.chats ?? [], query, filter, pinned)),
     [chatList?.chats, query, filter, pinned],
   );
-  useEffect(() => {
-    setQuery('');
-  }, [activeCommunityId]);
   const searchClient = useMemo(
     () => (identity && relayUrl ? new RoomViewClient({ baseUrl: relayUrl, identity }) : null),
     [identity, relayUrl],
@@ -782,6 +788,7 @@ export default function BuzzChannels() {
       return;
     setCreatingRoom(true);
     setError(null);
+    const clearSubmittedRoom = roomNameDraft.capture();
     let publishAcknowledged = false;
     try {
       await transport.createRoom(name, {
@@ -790,7 +797,7 @@ export default function BuzzChannels() {
         repository: pendingRepo ?? undefined,
         onPublished: () => {
           publishAcknowledged = true;
-          setRoomName('');
+          clearSubmittedRoom();
           setInviteOnly(false);
           setPendingRepo(null);
           setShowRepoPicker(false);
@@ -799,7 +806,7 @@ export default function BuzzChannels() {
         },
       });
       if (!publishAcknowledged) {
-        setRoomName('');
+        clearSubmittedRoom();
         setInviteOnly(false);
         setPendingRepo(null);
         setShowRepoPicker(false);
@@ -823,6 +830,7 @@ export default function BuzzChannels() {
     inviteOnly,
     pendingRepo,
     roomName,
+    roomNameDraft,
     transport,
   ]);
 
@@ -974,6 +982,7 @@ export default function BuzzChannels() {
           </Text>
         )}
         <NewRoomDialog
+          draftContext={activeCommunityId ?? ''}
           visible={showCreateRoom}
           roomName={roomName}
           setRoomName={setRoomName}
@@ -1201,6 +1210,7 @@ export default function BuzzChannels() {
           />
         )}
         <DirectMessagePickerSheet
+          draftContext={activeCommunityId ?? ''}
           busyPubkey={messagingPubkey}
           members={workspaceMembers(workspaceDetail)}
           onClose={() => setMemberPickerVisible(false)}

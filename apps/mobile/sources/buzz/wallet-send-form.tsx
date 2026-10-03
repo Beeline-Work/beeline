@@ -1,3 +1,4 @@
+import { useTextDraft } from '@/buzz/use-text-draft';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -13,10 +14,10 @@ import type { WalletChainView, WalletSendOutcome, WalletView } from '@beeline/ap
  * are insufficient funds and an expired delegation; both settle as a named
  * outcome inline.
  */
-export function WalletSendForm({ workspaceId }: { workspaceId: string }) {
+export function WalletSendForm({ workspaceId}: { workspaceId: string }) {
   const [wallet, setWallet] = useState<WalletView | null>(null);
-  const [amount, setAmount] = useState('');
-  const [to, setTo] = useState('');
+  const [amount, setAmount, amountDraft] = useTextDraft(`wallet:${workspaceId}:amount`, '');
+  const [to, setTo, toDraft] = useTextDraft(`wallet:${workspaceId}:to`, '');
   const [chain, setChain] = useState<WalletChainView | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [outcome, setOutcome] = useState<WalletSendOutcome | null>(null);
@@ -24,7 +25,7 @@ export function WalletSendForm({ workspaceId }: { workspaceId: string }) {
 
   useEffect(() => {
     void getWalletSource()
-      .readWallet({ workspaceId })
+      .readWallet({ workspaceId})
       .then((view) => {
         setWallet(view);
         setChain(view.chains.find((candidate) => candidate.id === 'base') ?? view.chains[0] ?? null);
@@ -36,6 +37,8 @@ export function WalletSendForm({ workspaceId }: { workspaceId: string }) {
 
   const send = useCallback(async () => {
     if (!chain || !amount || !to) return;
+    const clearAmount = amountDraft.capture();
+    const clearTo = toDraft.capture();
     setSending(true);
     try {
       const result = await getWalletSource().sendFromWallet({
@@ -46,10 +49,14 @@ export function WalletSendForm({ workspaceId }: { workspaceId: string }) {
         to,
       });
       setOutcome(result);
+      if (result.outcome === 'sent') {
+        clearAmount();
+        clearTo();
+      }
     } finally {
       setSending(false);
     }
-  }, [workspaceId, chain, amount, to, defaultAsset]);
+  }, [workspaceId, chain, amount, to, defaultAsset, amountDraft, toDraft]);
 
   return (
     <View testID="wallet-send-form">

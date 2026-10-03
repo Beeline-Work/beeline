@@ -1,3 +1,4 @@
+import type { PromptDraft } from '@/modal/types';
 import type { ReportMessageIssueInput, ReportMessageIssueResult } from '@beeline/api-contract/phone';
 
 /** The note prompt's copy; the Hull input dialog paints it on every platform. */
@@ -30,13 +31,24 @@ export async function promptAndReportMessageIssue(
     prompt(
       title: string,
       message: string,
-      options: { placeholder: string; confirmText: string; cancelText: string },
+      options: { placeholder: string; confirmText: string; cancelText: string;
+        draft?: PromptDraft;
+      },
     ): Promise<string | null>;
     report(input: ReportMessageIssueInput): Promise<ReportMessageIssueResult>;
   },
 ): Promise<ReportMessageIssueOutcome> {
   const { title, message, ...options } = REPORT_ISSUE_PROMPT;
-  const answer = await deps.prompt(title, message, options);
+  let clearSubmitted: (() => boolean) | undefined;
+  const answer = await deps.prompt(title, message, {
+    ...options,
+    draft: {
+      context: `report:${target.roomId}:${target.messageId}`,
+      onSubmitted: (clear)=> {
+        clearSubmitted = clear;
+  },
+    },
+  });
   if (answer === null) return { status: 'cancelled' };
   const note = answer.trim();
   try {
@@ -45,6 +57,7 @@ export async function promptAndReportMessageIssue(
       messageId: target.messageId,
       ...(note ? { note } : {}),
     });
+    clearSubmitted?.();
     return { status: 'reported', duplicate: result.duplicate };
   } catch (error) {
     return { status: 'failed', error };

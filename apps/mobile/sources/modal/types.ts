@@ -31,7 +31,13 @@ export interface ConfirmModalConfig extends BaseModalConfig {
   destructive?: boolean;
 }
 
+export interface PromptDraft {
+  context: string;
+  onSubmitted: (clearSubmitted: () => boolean) => void;
+}
+
 export interface PromptModalConfig extends BaseModalConfig {
+  draft?: PromptDraft;
   type: 'prompt';
   title: string;
   message?: string;
@@ -97,6 +103,7 @@ export interface IModal {
       cancelText?: string;
       confirmText?: string;
       inputType?: 'default' | 'secure-text' | 'email-address' | 'numeric';
+    draft?: PromptDraft;
     },
   ): Promise<string | null>;
   actionSheet(

@@ -43,7 +43,7 @@ describe('the # channel-mark convention on the chat surface', () => {
   it('never lets the mark reach a mutation path', () => {
     // Rename seeds the STORED name; the marked header title must not be
     // written back as if it were the room's real name.
-    expect(chatSource).toContain('setRenameDraft(storedRoomName)');
+    expect(chatSource).toContain('renameTextDraft.initialize(storedRoomName)');
     expect(chatSource).toContain(
       'const storedRoomName = resolvedChannelName?.trim() || ROOM_LABEL',
     );

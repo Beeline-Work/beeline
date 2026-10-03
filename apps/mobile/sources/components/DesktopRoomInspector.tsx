@@ -1,3 +1,4 @@
+import { useTextDraft } from '@/buzz/use-text-draft';
 import * as React from 'react';
 import { FlatList, PanResponder, Platform, Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -464,7 +465,10 @@ function CornerCockpit({
 }) {
   const transcriptRef = React.useRef<FlatList<ChatDisplayMessage>>(null);
   const focusedAnchorRef = React.useRef<string | null>(null);
-  const [input, setInput] = React.useState('');
+  const [input, setInput, inputDraft] = useTextDraft(`inspector-composer:${roomId}`,
+    '',
+    detail?.viewer.identity.pubkey ?? null,
+  );
   const [focused, setFocused] = React.useState(false);
   const [height, setHeight] = React.useState(COMPOSER_MIN_HEIGHT);
   const [sending, setSending] = React.useState(false);
@@ -581,6 +585,7 @@ function CornerCockpit({
   const send = React.useCallback(async () => {
     const text = input.trim();
     if (!text || !detail || sending) return;
+    const clearInput = inputDraft.captureMessage();
     setSending(true);
     setSendError(null);
     try {
@@ -589,7 +594,7 @@ function CornerCockpit({
       const transport = new BuzzRigTransport(identity);
       const event = await transport.composeMessage({ sessionId: detail.room.id, text });
       await transport.publishPreparedMessage(event);
-      setInput('');
+      clearInput();
       setHeight(COMPOSER_MIN_HEIGHT);
       // The focus jump that put the reader up in this corner's history is
       // spent once they speak: mark it landed so the refresh below cannot pull
@@ -602,7 +607,7 @@ function CornerCockpit({
     } finally {
       setSending(false);
     }
-  }, [detail, focusMessageId, input, onRefresh, roomId, sending]);
+  }, [detail, focusMessageId, input, inputDraft, onRefresh, roomId, sending]);
   const bylineOpeners = React.useMemo(
     () =>
       transcriptBylineOpeners(

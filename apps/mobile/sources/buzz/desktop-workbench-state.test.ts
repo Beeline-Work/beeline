@@ -25,10 +25,8 @@ import {
   initialDesktopWorkPaneState,
   isDesktopWorkPaneCommand,
   type DesktopWorkPaneEvent,
-  loadDesktopDraft,
   loadDesktopWorkPanePreference,
   loadDesktopPaneWidth,
-  saveDesktopDraft,
   saveDesktopWorkPanePreference,
   saveDesktopPaneWidth,
   transitionDesktopWorkPane,
@@ -224,14 +222,10 @@ describe('desktop workbench state', () => {
     expect(await loadDesktopPaneWidth('inspector')).toBe(439);
   });
 
-  it('stores drafts independently by encoded Room or Corner id and removes empty drafts', async () => {
-    await saveDesktopDraft('room/one', 'Room draft');
-    await saveDesktopDraft('corner two', 'Corner draft');
+  it('keeps the encoded legacy draft key for migration without legacy storage writers', () => {
     expect(desktopDraftKey('room/one')).not.toBe(desktopDraftKey('corner two'));
-    expect(await loadDesktopDraft('room/one')).toBe('Room draft');
-    expect(await loadDesktopDraft('corner two')).toBe('Corner draft');
-    await saveDesktopDraft('room/one', '');
-    expect(await loadDesktopDraft('room/one')).toBe('');
+    expect(desktopDraftKey('room/one')).toContain('room%2Fone');
+    expect(desktopDraftKey('corner two')).toContain('corner%20two');
   });
 
   it('persists pane preference independently for regular and wide device windows', async () => {

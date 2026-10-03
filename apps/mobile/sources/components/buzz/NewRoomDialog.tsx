@@ -1,3 +1,4 @@
+import { useTextDraft } from '@/buzz/use-text-draft';
 import React, { useEffect, useState } from 'react';
 import { Keyboard, Platform, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -13,6 +14,7 @@ import { CHEVRON_ROW_SIZE, ChevronGlyph } from './ChevronGlyph';
 
 type Props = {
   visible: boolean;
+  draftContext?: string;
   roomName: string;
   setRoomName: (name: string) => void;
   inviteOnly: boolean;
@@ -39,6 +41,7 @@ const validRepositoryName = (name: string) => /^[A-Za-z0-9._-]{1,100}$/.test(nam
 
 export function NewRoomDialog({
   visible,
+  draftContext = 'global',
   roomName,
   setRoomName,
   inviteOnly,
@@ -62,7 +65,6 @@ export function NewRoomDialog({
 }: Props) {
   const { theme } = useUnistyles();
   const [creatingRepoStep, setCreatingRepoStep] = useState(false);
-  const [repositoryName, setRepositoryName] = useState('');
   const [installationId, setInstallationId] = useState<number | null>(null);
   const [choosingAccount, setChoosingAccount] = useState(false);
   const activeInstallations = repoInstallations.filter((item) => item.status === 'active');
@@ -70,10 +72,14 @@ export function NewRoomDialog({
     activeInstallations.find((item) => item.installationId === installationId) ??
     activeInstallations[0];
 
+  const [repositoryName, setRepositoryName, repositoryDraft] = useTextDraft(
+    `new-room:${draftContext}:repository:${selectedInstallation?.installationId ?? 'none'}`,
+    '',
+  );
+
   useEffect(() => {
     if (visible && showRepoPicker) return;
     setCreatingRepoStep(false);
-    setRepositoryName('');
     setChoosingAccount(false);
   }, [visible, showRepoPicker]);
 
@@ -93,10 +99,11 @@ export function NewRoomDialog({
   const createRepository = async () => {
     if (!selectedInstallation || !validRepositoryName(repositoryName) || !handleCreateRepository)
       return;
+    const clearRepository = repositoryDraft.capture();
     try {
       await handleCreateRepository(selectedInstallation.installationId, repositoryName);
       setCreatingRepoStep(false);
-      setRepositoryName('');
+      clearRepository();
     } catch {
       // The parent keeps the creation error visible in this step.
     }
@@ -224,6 +231,7 @@ export function NewRoomDialog({
         <View style={styles.picker} testID="create-room-picker">
           <View style={styles.pickerContent}>
             <RepoPicker
+              draftContext={draftContext}
               candidates={repoCandidates}
               currentKey={pendingRepo?.key ?? null}
               error={repoPickerError}

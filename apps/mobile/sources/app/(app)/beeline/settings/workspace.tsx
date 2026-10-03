@@ -1,3 +1,4 @@
+import { useTextDraft } from '@/buzz/use-text-draft';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
@@ -142,11 +143,15 @@ export default function WorkspaceSettings() {
   const [client, setClient] = useState<BuzzClient | null>(null);
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView | null>(null);
   const [chatList, setChatList] = useState<ChatListView | null>(null);
-  const [workspaceName, setWorkspaceName] = useState('');
+  const [workspaceName, setWorkspaceName, workspaceDraft] = useTextDraft(`workspace-name:${communityId}`,
+    '',
+  );
   const [renamingWorkspace, setRenamingWorkspace] = useState(false);
   const [visibilityPickerOpen, setVisibilityPickerOpen] = useState(false);
   const [deleteSheetOpen, setDeleteSheetOpen] = useState(false);
-  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleteConfirmText, setDeleteConfirmText, deletionDraft] = useTextDraft(`workspace-delete:${communityId}`,
+    '',
+  );
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [workingKey, setWorkingKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -224,7 +229,7 @@ export default function WorkspaceSettings() {
             fetch: () => http.workspace(communityId),
             apply: (value) => {
               setWorkspaceView(value);
-              setWorkspaceName((current) => current || value.workspace.name);
+              workspaceDraft.initialize(value.workspace.name);
               setLoading(false);
               setError(null);
             },
@@ -276,8 +281,10 @@ export default function WorkspaceSettings() {
     if (!client || !communityId || !workspaceName.trim()) return;
     setWorkingKey('name');
     setError(null);
+    const clearWorkspace = workspaceDraft.capture(false);
     try {
       await client.renameCommunity(communityId, workspaceName);
+      clearWorkspace();
       workspaceSchedulerRef.current?.force();
       setRenamingWorkspace(false);
     } catch (caught) {
@@ -285,7 +292,7 @@ export default function WorkspaceSettings() {
     } finally {
       setWorkingKey(null);
     }
-  }, [client, communityId, workspaceName]);
+  }, [client, communityId, workspaceName, workspaceDraft]);
 
   const changeWorkspacePicture = useCallback(async () => {
     if (!client || !communityId || !canManageWorkspace) return;
@@ -378,24 +385,24 @@ export default function WorkspaceSettings() {
   const closeDeleteSheet = useCallback(() => {
     if (deleteBusy) return;
     setDeleteSheetOpen(false);
-    setDeleteConfirmText('');
   }, [deleteBusy]);
 
   const confirmDeleteWorkspace = useCallback(async () => {
     if (!communityId || !workspace || deleteConfirmText.trim() !== workspace.name || deleteBusy)
       return;
+    const clearDeletion = deletionDraft.capture();
     setDeleteBusy(true);
     setError(null);
     try {
       await monolithPhoneOperation('deleteWorkspace', { workspaceId: communityId });
+      clearDeletion();
       setDeleteSheetOpen(false);
-      setDeleteConfirmText('');
       router.replace('/beeline/channels');
     } catch (caught) {
       setError(`Could not delete ${WORKSPACE_LABEL}: ${String(caught)}`);
       setDeleteBusy(false);
     }
-  }, [communityId, deleteBusy, deleteConfirmText, workspace]);
+  }, [communityId, deleteBusy, deleteConfirmText, workspace, deletionDraft]);
 
   if (loading) {
     return (
@@ -480,7 +487,7 @@ export default function WorkspaceSettings() {
               accessibilityLabel={`${WORKSPACE_LABEL} name`}
               chevron={renamingWorkspace ? 'down' : 'right'}
               onPress={() => {
-                setWorkspaceName(workspace?.name ?? '');
+                workspaceDraft.initialize(workspace?.name ?? '');
                 setRenamingWorkspace((open) => !open);
               }}
               testID="workspace-name-row"

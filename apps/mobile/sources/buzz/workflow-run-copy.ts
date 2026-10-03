@@ -4,6 +4,7 @@ import type {
   WorkflowContract,
   WorkflowRunSummaryView,
 } from '@beeline/api-contract/phone';
+import { SYSTEM_IDENTITY_PUBKEY } from './system-identity';
 import {
   workflowStateLabel,
   type WorkflowLineStep,
@@ -42,13 +43,32 @@ export function stateRole(contract: WorkflowContract, state: string): string | u
   return declared.role;
 }
 
-function holderOf(
-  contract: WorkflowContract,
-  state: string,
-  roleHolders: Readonly<Record<string, WorkflowActorView>>,
-): string | undefined {
-  const role = stateRole(contract, state);
-  return role ? roleHolders[role]?.name : undefined;
+/**
+ * Who holds or held a step, drawn at the row's right: the run's holder for the
+ * current step (the viewer when it waits on them), whoever left a reached step
+ * (the person who answered a gate), and the identity bound to a pending step's
+ * role. A step with no role (the server runs it, or it waits) and a skipped
+ * step have none.
+ */
+export function workflowStepAssignee(
+  step: WorkflowLineStep,
+  input: {
+    contract: WorkflowContract;
+    roleHolders: Readonly<Record<string, WorkflowActorView>>;
+    run: Pick<WorkflowRunSummaryView, 'viewerHolds' | 'holder'>;
+    viewer?: WorkflowActorView;
+  },
+): WorkflowActorView | undefined {
+  const role = stateRole(input.contract, step.state);
+  if (!role || step.status === 'skipped') return undefined;
+  const bound = input.roleHolders[role];
+  if (step.status === 'current')
+    return (input.run.viewerHolds ? input.viewer : undefined) ?? input.run.holder ?? bound;
+  if (step.status === 'pending') return bound;
+  const exit = step.visits[step.visits.length - 1];
+  // Corner lifecycle cards are written by the system identity, which holds no step.
+  const leftBy = exit?.leftBy?.id === SYSTEM_IDENTITY_PUBKEY ? undefined : exit?.leftBy;
+  return (step.kind === 'gate' ? exit?.gate?.answeredBy : undefined) ?? leftBy ?? bound;
 }
 
 /** The last visit's entry point: the state it came from. */
@@ -59,21 +79,22 @@ function enteredFrom(step: WorkflowLineStep, history: readonly { fromState?: str
 }
 
 /**
- * A step's one meta line: who held it and how the run left it, whose move it
- * is now, who will hold it, or why it was skipped.
+ * A step's one meta line beside its name: whose move it is now, that the
+ * server runs it, or why it was skipped. Who holds a step is its mark
+ * (`workflowStepAssignee`), so no name is repeated here.
  */
 export function workflowStepMeta(
   step: WorkflowLineStep,
   input: {
     contract: WorkflowContract;
-    roleHolders: Readonly<Record<string, WorkflowActorView>>;
-    run: Pick<WorkflowRunSummaryView, 'viewerHolds' | 'holder'>;
+    run: Pick<WorkflowRunSummaryView, 'viewerHolds'>;
     history: readonly { fromState?: string; toState: string }[];
   },
 ): string {
-  const automatic =
-    step.kind === 'server' ? 'Automatic' : step.kind === 'waiting' ? 'Waiting' : undefined;
-  const holder = holderOf(input.contract, step.state, input.roleHolders);
+  const roleless = !stateRole(input.contract, step.state);
+  const automatic = !roleless
+    ? undefined
+    : step.kind === 'server' ? 'Automatic' : step.kind === 'waiting' ? 'Waiting' : undefined;
   const round = loopRoundLabel(step.loop);
   if (step.status === 'skipped') {
     const by = step.skippedBy;
@@ -89,21 +110,11 @@ export function workflowStepMeta(
       ? capitalized(ended)
       : `${TERMINAL_LABEL[step.terminalStatus]} · ${ended}`;
   }
-  let parts: Array<string | undefined>;
-  if (step.status === 'current') {
-    parts = input.run.viewerHolds
+  // A reached step's outcome is on its exit line below the row.
+  const parts =
+    step.status === 'current' && input.run.viewerHolds
       ? [step.kind === 'gate' ? 'Your call' : 'Waiting on you', step.kind === 'gate' ? 'gate' : undefined, round]
-      : [input.run.holder?.name ?? holder ?? automatic, round];
-  } else if (step.status === 'pending') {
-    parts = [holder ?? automatic];
-  } else {
-    const exit = step.visits[step.visits.length - 1];
-    parts = [
-      // A settled gate names the person who answered it, not the agent that asked.
-      exit?.gate?.answeredBy?.name ?? holder ?? automatic ?? exit?.leftBy?.name,
-      exit?.outcome !== undefined ? outcomeLabel(exit.outcome) : undefined,
-    ];
-  }
+      : [automatic, step.status === 'current' ? round : undefined];
   return capitalized(parts.filter((part): part is string => Boolean(part)).join(' · '));
 }
 

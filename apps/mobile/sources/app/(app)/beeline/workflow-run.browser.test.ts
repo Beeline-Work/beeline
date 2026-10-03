@@ -4,8 +4,16 @@ import { describe, expect, it } from 'vitest';
 import { CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
 
 const STARTED = 1_790_000_000;
-const candy = { id: 'b'.repeat(64), name: 'Candy', kind: 'agent' };
-const owner = { id: 'a'.repeat(64), name: 'Owner', kind: 'human' };
+const candy = { id: 'b'.repeat(64), name: 'Candy', kind: 'agent', handle: 'candy', face: 'fox' };
+const owner = {
+  id: 'a'.repeat(64),
+  name: 'Owner',
+  kind: 'human',
+  handle: '@lunchboxfortwo@beeline.test',
+  face: 'owl',
+};
+/** Role names the contracts below declare; none may reach the page. */
+const ROLE_NAMES = ['triager', 'analyst', 'implementer', 'reviewer'];
 const GATE_OPTIONS = [
   { letter: 'A', label: 'dispatch', consequence: 'go to dispatch' },
   { letter: 'B', label: 'skip', consequence: 'go to done' },
@@ -38,13 +46,20 @@ function feedbackTriageDetail(
     contract,
     history,
     roleHolders: { triager: candy },
+    viewer: owner,
   };
 }
 
-function workflowRunShims(mobile: string, detail: unknown): Record<string, string> {
+/** `drafts` are live draft events the shared socket delivers to every registration. */
+function workflowRunShims(mobile: string, detail: unknown, drafts: unknown[] = []): Record<string, string> {
   return {
     ...webProofShims(mobile),
-    '@/sync/transport/live-connection': `export const sharedLiveConnection = () => ({ register: async () => () => undefined });`,
+    '@/sync/transport/live-connection': `export const sharedLiveConnection = () => ({
+      register: async (_filters, listener) => {
+        setTimeout(() => ${JSON.stringify(drafts)}.forEach((live) => listener({ monolithLive: live })), 0);
+        return () => undefined;
+      },
+    });`,
     'expo-router': `import React from 'react';
     export const useFocusEffect = (effect) => React.useEffect(effect, [effect]);
     export const useLocalSearchParams = () => ({ roomId: 'corner-2', runId: 'run-1' });
@@ -72,18 +87,23 @@ type Proof = {
   lines: string[];
   labels: string[];
   halo: number;
+  assignees: Record<
+    string,
+    { handle: string; viewer: boolean; mark: boolean; color: string; rightAligned: boolean }
+  >;
+  live: Record<string, string>;
   gate: { text: string[]; controls: number } | null;
   expanded: string[] | null;
   pushedBefore: unknown[];
   pushed: unknown[];
 };
 
-async function proof(detail: unknown, query: string, width = 390): Promise<Proof> {
+async function proof(detail: unknown, query: string, width = 390, drafts: unknown[] = []): Promise<Proof> {
   const mobile = process.cwd();
   const { result, status, stderr } = await runBrowserProof({
     entry: path.join(mobile, 'scripts/workflow-run-proof.tsx'),
     mobile,
-    shims: workflowRunShims(mobile, detail),
+    shims: workflowRunShims(mobile, detail, drafts),
     width,
     query,
   });
@@ -94,6 +114,8 @@ async function proof(detail: unknown, query: string, width = 390): Promise<Proof
 }
 
 const repo = () => path.resolve(process.cwd(), '../..');
+/** Obsidian brass (`accent`), the viewer's own name. */
+const BRASS = 'rgb(176, 138, 74)';
 
 describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
   it('draws one straight line with the gate recorded read-only and no way out to the corner', async () => {
@@ -132,12 +154,31 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     expect(page).toMatchObject({ overview: false, earlier: false, summary: null, receipts: [] });
     expect(page.text).not.toContain('#14');
     expect(page.exits['approve-exits']).toBe('Exits: dispatch → Dispatch · skip → Done');
-    expect(page.exits['pull-exit']).toBe('→ Approve via ranked · Candy');
+    expect(page.exits['pull-exit']).toBe('→ Approve via ranked');
     expect(page).toMatchObject({
       eyebrowFont: '13px SpaceGrotesk-Regular',
       titleFont: '16px SpaceGrotesk-SemiBold',
     });
     expect(page.text).toContain('Waiting on you');
+    // Each step's holder sits at the row's right as a mark and handle; the gate
+    // waiting on the viewer carries the viewer's own mark, in brass.
+    expect(
+      Object.fromEntries(
+        Object.entries(page.assignees).map(([state, entry]) => [
+          state,
+          [entry.handle, entry.viewer, entry.mark, entry.rightAligned],
+        ]),
+      ),
+    ).toEqual({
+      notify: ['@candy', false, true, true],
+      pull: ['@candy', false, true, true],
+      approve: ['@lunchboxfortwo', true, true, true],
+      dispatch: ['@candy', false, true, true],
+    });
+    expect(page.assignees.approve!.color).toBe(BRASS);
+    expect(page.assignees.pull!.color).not.toBe(BRASS);
+    expect(page.labels).toContain('Approve, current step, Owner, Your call · gate');
+    for (const role of ROLE_NAMES) expect(page.text.join(' ')).not.toContain(role);
     // One row per state on the main path, in order, each with its own circle.
     expect(page.circles).toEqual({
       notify: 'done',
@@ -161,38 +202,32 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     expect(page.gate).toEqual({
       text: [
         '1',
-        'role',
-        'triager · Candy',
-        '2',
         'entered',
         expect.stringMatching(/\d\d:\d\d:\d\d/),
-        '3',
+        '2',
         'asked',
         'feedback-triage: approve',
-        '4',
+        '3',
         'option A',
         'dispatch · go to dispatch',
-        '5',
+        '4',
         'option B',
         'skip · go to done',
-        '6',
+        '5',
         'answer',
         'waiting on you',
       ],
       controls: 0,
     });
-    // Tapping a step opens its readout in place: role, times, outcome, what it delivered.
+    // Tapping a step opens its readout in place: times, outcome, what it delivered.
     expect(page.expanded).toEqual([
       '1',
-      'role',
-      'triager · Candy',
-      '2',
       'entered',
       expect.stringMatching(/\d\d:\d\d:\d\d/),
-      '3',
+      '2',
       'left',
       expect.stringMatching(/\d\d:\d\d:\d\d.* · ranked → Approve$/),
-      '4',
+      '3',
       'delivered',
       'problems · 2',
       '1',
@@ -298,23 +333,29 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
       ],
     );
     const gate = await proof(detail, '?expand=approve');
+    // The viewer answered the gate, so the row carries their own mark and handle.
+    expect(gate.assignees.approve).toMatchObject({
+      handle: '@lunchboxfortwo',
+      viewer: true,
+      mark: true,
+      rightAligned: true,
+      color: BRASS,
+    });
+    expect(gate.labels).toContain('Approve, done, Owner');
     expect(gate.expanded).toEqual([
       '1',
-      'role',
-      'triager · Candy',
-      '2',
       'entered',
       expect.stringMatching(/\d\d:\d\d:\d\d/),
-      '3',
+      '2',
       'left',
       expect.stringMatching(/ · dispatch → Dispatch$/),
-      '4',
+      '3',
       'asked',
       'feedback-triage: approve',
-      '5',
+      '4',
       'answer',
       expect.stringMatching(/^dispatch · Owner · \d\d:\d\d:\d\d/),
-      '6',
+      '5',
       'note',
       'only the dropdown one, skip the rest',
     ]);
@@ -361,7 +402,7 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
       expect(page).toMatchObject({ overview: false, earlier: false, overflow: false,
         summary: detail.contract.summary });
       expect(Object.keys(page.circles)).toEqual(['collect', 'review', 'done']);
-      expect(page.exits).toEqual({ 'collect-exit': '→ Review via collected · Candy',
+      expect(page.exits).toEqual({ 'collect-exit': '→ Review via collected',
         'review-exits': 'Exits: approved → Done · rejected → Failed' });
       expect(page.text).toContain('Collected the indicators.');
       expect(page.refs).toHaveLength(3);
@@ -372,6 +413,46 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
       ]));
       expect(page.expanded).toEqual(expect.arrayContaining(['entered', 'left']));
     }
+  }, 120_000);
+
+  it("shows the working agent's live output on its step, and no mark on a step the server runs", async () => {
+    const detail = {
+      run: { runId: 'run-1', workflowSlug: 'ship', description: 'Implement and check',
+        roomId: 'corner-2', roomName: 'Ship', state: 'implement', status: 'live', viewerHolds: false,
+        holder: candy, startedAt: STARTED, updatedAt: STARTED + 10, earlierRunCount: 0 },
+      contract: { version: 1, name: 'ship', description: 'Implement and check', roles: ['implementer'],
+        start: 'opened',
+        handoffs: {
+          opened: { kind: 'server', requires: [], on: { code: 'implement' } },
+          implement: { role: 'implementer', requires: [], on: { pushed: 'checks' } },
+          checks: { kind: 'server', requires: [], on: { passing: 'done' } },
+          done: { kind: 'terminal', status: 'done' },
+        } },
+      history: [
+        { toState: 'opened', actor: owner, at: STARTED },
+        { fromState: 'opened', outcome: 'code', toState: 'implement', actor: owner, at: STARTED + 10 },
+      ],
+      roleHolders: { implementer: candy },
+      viewer: owner,
+    };
+    const drafts = [
+      { type: 'draft', roomId: 'corner-2', agentId: candy.id, turnId: 't1', text: 'Reading the run view.' },
+      { type: 'draft', roomId: 'corner-2', agentId: candy.id, turnId: 't1',
+        text: 'Reading the run view.\n\nAdding the handle to each row.' },
+    ];
+    const page = await proof(detail, '', 390, drafts);
+    expect(page.live).toEqual({ implement: 'Reading the run view. Adding the handle to each row.' });
+    expect(Object.keys(page.assignees)).toEqual(['implement']);
+    expect(page.assignees.implement).toMatchObject({ handle: '@candy', viewer: false, rightAligned: true });
+    expect(page.labels).toEqual(expect.arrayContaining([
+      'Opened, done, Automatic',
+      'Implement, current step, Candy',
+      'Checks, not yet reached, Automatic',
+    ]));
+    for (const role of ROLE_NAMES) expect(page.text.join(' ')).not.toContain(role);
+    // A draft from another agent paints nothing on this step.
+    const other = await proof(detail, '', 390, [{ ...drafts[0], agentId: 'd'.repeat(64) }]);
+    expect(other.live).toEqual({});
   }, 120_000);
 
 });

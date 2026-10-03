@@ -135,7 +135,9 @@ describe('resource observers in the desktop web renderer', () => {
         'expo-router': `import React from 'react'; export const useFocusEffect = effect => React.useEffect(effect, [effect]);
           export const useLocalSearchParams = () => ({ roomId: 'corner', runId: 'run' }); export const router = { back() {}, replace() {}, push() {} };`,
         '@/auth/buzz-identity-storage': `export const loadBuzzIdentity = async () => ({ publicKey: 'a' });`,
-        '@/sync/transport/live-connection': `export const sharedLiveConnection = () => ({ register: async (_, listener) => { globalThis.__invalidate = listener; return () => { delete globalThis.__invalidate; }; } });`,
+        // Every registration hears each event, as on the real shared socket.
+        '@/sync/transport/live-connection': `const listeners = new Set(); globalThis.__invalidate = event => [...listeners].forEach(listener => listener(event));
+          export const sharedLiveConnection = () => ({ register: async (_, listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; } });`,
         '@/components/buzz/IdentityMark': `export const IdentityMark = () => null;`,
         '@/sync/transport/monolith-operation': `export const monolithPhoneOperation = async operation => {
           if (operation === 'transferWorkflowOwner') { globalThis.__transferred = true; return {}; }

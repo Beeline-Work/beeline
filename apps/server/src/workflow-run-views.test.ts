@@ -425,6 +425,47 @@ describe('readWorkflowRun', () => {
     ]);
   });
 
+  it('carries handle, picture and face for each actor, the human who answered the gate, and the viewer', async () => {
+    await database.query(
+      `UPDATE identities SET handle=CASE id WHEN $1 THEN '@lunch@beeline.test' ELSE 'candy' END,
+         face_id=CASE id WHEN $1 THEN 'owl' ELSE 'fox' END,
+         avatar=CASE id WHEN $2 THEN '/v1/agent-avatars/candy.png' END
+       WHERE id IN ($1,$2)`,
+      [OWNER, TRIAGER],
+    );
+    await saveWorkflow(database, await command(CORNER, TRIAGER), { contract: TRIAGE });
+    const { runId } = await startWorkflow(database, await command(CORNER, TRIAGER), {
+      name: 'feedback-triage',
+      roleBindings: { triager: TRIAGER },
+    });
+    await handoff(database, await command(CORNER, TRIAGER), { runId, outcome: 'ranked', contents: {} });
+    const owner = { id: OWNER, name: 'Owner', kind: 'human', handle: '@lunch@beeline.test', face: 'owl' };
+    const candy = {
+      id: TRIAGER,
+      name: 'Candy',
+      kind: 'agent',
+      handle: 'candy',
+      face: 'fox',
+      avatar: 'http://test/v1/agent-avatars/candy.png',
+    };
+    // The gate waits on the viewer: the payload names them so the row can draw their own mark.
+    const waiting = await phone.execute('readWorkflowRun', { roomId: CORNER, runId }, OWNER);
+    expect(waiting.viewer).toEqual(owner);
+    expect(waiting.run).toMatchObject({ viewerHolds: true, holder: candy });
+    expect(waiting.roleHolders).toEqual({ triager: candy });
+    expect(waiting.history[1]!.actor).toEqual(candy);
+    const choice = (
+      await database.query<{ id: string; option_id: string }>(
+        `SELECT id::text id,options->0->>'optionId' option_id FROM room_choices WHERE room_id=$1`,
+        [CORNER],
+      )
+    ).rows[0]!;
+    await answerRoomChoice(database, { choiceId: choice.id, viewerId: OWNER, optionId: choice.option_id });
+    const answered = await phone.execute('readWorkflowRun', { roomId: CORNER, runId }, TRIAGER);
+    expect(answered.history[1]!.gate!.answeredBy).toEqual(owner);
+    expect(answered.viewer).toEqual(candy);
+  });
+
   it('refuses an unknown run', async () => {
     await expect(
       phone.execute('readWorkflowRun', { roomId: CORNER, runId: 'f'.repeat(64) }, OWNER),

@@ -3579,7 +3579,7 @@ export class PhoneService {
         return {
           contract: JSON.parse(row.markdown),
           ownership: await readWorkflowOwnership(this.database, request.roomId, request.name, viewerId),
-          runs: (await listRoomWorkflowRuns(this.database, request.roomId, viewerId, request.name))
+          runs: (await listRoomWorkflowRuns(this.database, request.roomId, viewerId, request.name, this.publicOrigin))
             .workflows,
         } as Output<Name>;
       }
@@ -4329,11 +4329,11 @@ export class PhoneService {
   }
   private async listRoomWorkflowRuns(roomId: string, viewerId: string) {
     if (!(await this.hasRoomAccess(roomId, viewerId))) throw new Error('room access denied');
-    return listRoomWorkflowRuns(this.database, roomId, viewerId);
+    return listRoomWorkflowRuns(this.database, roomId, viewerId, undefined, this.publicOrigin);
   }
   private async readWorkflowRun(input: Input<'readWorkflowRun'>, viewerId: string) {
     if (!(await this.hasRoomAccess(input.roomId, viewerId))) throw new Error('room access denied');
-    const run = await readWorkflowRun(this.database, input, viewerId);
+    const run = await readWorkflowRun(this.database, input, viewerId, this.publicOrigin);
     if (!run) throw new Error('workflow run not found');
     return run;
   }

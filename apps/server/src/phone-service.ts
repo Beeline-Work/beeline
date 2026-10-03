@@ -1671,6 +1671,21 @@ export class PhoneService {
           .rows[0],
       undefined,
     );
+    // Lives apart from the repository binding on the room row: it tracks
+    // GitHub's own setting, refreshed independently by the installation sync.
+    const allowAutoMergePromise = parentPromise.then((parent) => {
+      const repositoryId = (parent ?? room).repository_key?.match(/^github:(\d+)$/)?.[1];
+      if (!repositoryId) return undefined;
+      return this.optionalEnrichment(
+        'repository-auto-merge',
+        this.enrichmentDatabase
+          .query<{ allow_auto_merge: boolean | null }>(
+            `SELECT allow_auto_merge FROM github_repositories WHERE repository_id=$1`,
+            [repositoryId],
+          )
+          .then((result) => result.rows[0]?.allow_auto_merge ?? undefined),
+      );
+    });
     const factsPromise = cornerRead(
       'facts',
       async () =>
@@ -1794,6 +1809,7 @@ export class PhoneService {
     const [
       [allMembers, latestAgentTurns, messageResult],
       parent,
+      allowAutoMerge,
       facts,
       cornerBrief,
       cornerValidation,
@@ -1806,6 +1822,7 @@ export class PhoneService {
         ? this.projectTopLevelRoom(topLevelRows, roomId, viewerId)
         : this.readCornerMessages(room.workspace_id, roomId, viewerId, measured, briefingRowsPromise),
       parentPromise,
+      allowAutoMergePromise,
       factsPromise,
       cornerBriefPromise,
       cornerValidationPromise,
@@ -1939,6 +1956,7 @@ export class PhoneService {
                 ? { githubInstallationId: Number((parent ?? room).github_installation_id) }
                 : {}),
               githubEventsEnabled: (parent ?? room).github_events_enabled,
+              ...(typeof allowAutoMerge === 'boolean' ? { allowAutoMerge } : {}),
             },
           }
         : {}),

@@ -8585,6 +8585,44 @@ describe('monolith integration', () => {
     );
   });
 
+  it("surfaces a Room repository's auto-merge setting live, independent of its reviewer", async () => {
+    await database.query(
+      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
+       VALUES(77,$1,'42','owner','User','selected','active')`,
+      [HUMAN],
+    );
+    await database.query(
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch,allow_auto_merge)
+       VALUES(101,77,'owner/widgets','main',false)`,
+    );
+    await database.query(
+      `UPDATE rooms SET repository_key='github:101',repository_name='owner/widgets',
+         repository_remote='git://github.com/owner/widgets',repository_resolution='repository',
+         github_installation_id=77 WHERE id=$1`,
+      [ROOM],
+    );
+
+    const before = await request(`/v1/phone/rooms/${ROOM}`);
+    const beforeView = await before.json();
+    expect(isRoomView(beforeView)).toBe(true);
+    expect(beforeView.repository).toEqual(
+      expect.objectContaining({ key: 'github:101', allowAutoMerge: false }),
+    );
+
+    // GitHub's auto-merge toggle changes on its own, with nobody touching the
+    // Room's reviewer. The Room read reflects the current fact immediately.
+    await database.query(
+      `UPDATE github_repositories SET allow_auto_merge=true WHERE repository_id=101`,
+    );
+
+    const after = await request(`/v1/phone/rooms/${ROOM}`);
+    const afterView = await after.json();
+    expect(isRoomView(afterView)).toBe(true);
+    expect(afterView.repository).toEqual(
+      expect.objectContaining({ key: 'github:101', allowAutoMerge: true }),
+    );
+  });
+
   it('completes the GitHub App callback on the monolith route', async () => {
     const response = await fetch(
       `${origin}/v1/github/install/callback?state=server-state&installation_id=77`,

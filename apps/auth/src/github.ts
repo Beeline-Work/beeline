@@ -250,6 +250,8 @@ export interface GitHubInstallationRepository {
   defaultBranch: string;
   /** GitHub's `private` flag; an absent flag is treated as private. */
   private: boolean;
+  /** GitHub's repository-level auto-merge toggle; an absent flag is treated as off. */
+  allowAutoMerge: boolean;
 }
 
 export interface GitHubDispatchableWorkflow {
@@ -970,6 +972,7 @@ export class GitHubAppClient {
           remote,
           defaultBranch,
           private: repo.private !== false,
+          allowAutoMerge: repo.allow_auto_merge === true,
         };
       });
       repositories.push(...parsed);
@@ -1027,6 +1030,7 @@ export class GitHubAppClient {
       remote,
       defaultBranch,
       private: body.private !== false,
+      allowAutoMerge: body.allow_auto_merge === true,
     };
   }
 

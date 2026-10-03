@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { View } from 'react-native';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -36,7 +37,7 @@ vi.mock('./HullActionSheet', async () => {
     HullActionSheetRow: (props: any) => ReactModule.createElement('Row', props),
   };
 });
-import { RoomReviewerActions } from './RoomReviewerActions';
+import { RoomReviewerActions, RoomReviewerSurfaceNotice } from './RoomReviewerActions';
 
 const ECHO = 'echo-agent';
 const BEE = 'bee-agent';
@@ -74,6 +75,12 @@ function render(overrides: Partial<React.ComponentProps<typeof RoomReviewerActio
     );
   });
   return { renderer, updateRoom };
+}
+
+function renderedNotice(renderer: ReactTestRenderer, testID: string) {
+  return renderer.root
+    .findAllByType('View')
+    .filter((node: { props: { testID?: string } }) => node.props.testID === testID);
 }
 
 describe('RoomReviewerActions', () => {
@@ -144,6 +151,89 @@ describe('RoomReviewerActions', () => {
         .map((row: { props: { label: string } }) => row.props.label)
         .filter((label: string) => /class/i.test(label)),
     ).toEqual([]);
+  });
+
+  it('warns on the settings row when a reviewer is set and the repo allows auto-merge', () => {
+    const { renderer } = render({ allowAutoMerge: true });
+    const text = renderer.root
+      .findByProps({ testID: 'room-reviewer-auto-merge-warning' })
+      .findByType('Text').props.children;
+    expect(text).toEqual(['! ', expect.stringContaining('This repository allows auto-merge')]);
+  });
+
+  it('shows no standing warning without a reviewer or with auto-merge off', () => {
+    expect(renderedNotice(render({ allowAutoMerge: true, reviewerAgentId: undefined }).renderer,
+      'room-reviewer-auto-merge-warning')).toHaveLength(0);
+    expect(renderedNotice(render({ allowAutoMerge: false }).renderer,
+      'room-reviewer-auto-merge-warning')).toHaveLength(0);
+  });
+
+  it('warns inside the picker before a reviewer is even chosen, so the choice is informed', () => {
+    const { renderer } = render({ allowAutoMerge: true, reviewerAgentId: undefined });
+    act(() => renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.onPress());
+    const text = renderer.root
+      .findByProps({ testID: 'room-reviewer-auto-merge-picker-warning' })
+      .findByType('Text').props.children;
+    expect(text).toEqual(['! ', expect.stringContaining('This repository allows auto-merge')]);
+  });
+
+  it('still saves a reviewer after warning that the repository allows auto-merge', async () => {
+    const { renderer, updateRoom } = render({ allowAutoMerge: true, reviewerAgentId: undefined });
+    act(() => renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.onPress());
+    expect(renderedNotice(renderer, 'room-reviewer-auto-merge-picker-warning')).toHaveLength(1);
+    await act(async () => {
+      renderer.root.findByProps({ testID: `room-reviewer-agent-${BEE}` }).props.onPress();
+      await Promise.resolve();
+    });
+    expect(updateRoom).toHaveBeenCalledWith({
+      roomId: 'room-1', reviewerAgentId: BEE, reviewerFallbackIds: [],
+    });
+    expect(renderedNotice(renderer, 'room-reviewer-auto-merge-warning')).toHaveLength(1);
+  });
+
+  it('shows an inline Room notice when auto-merge becomes allowed for an existing reviewer', () => {
+    let renderer!: ReactTestRenderer;
+    const renderNotice = (
+      allowAutoMerge: boolean,
+      reviewerAgentId?: string,
+      canManage = true,
+      isCorner = false,
+    ) => (
+      <View>
+        <RoomReviewerSurfaceNotice
+          allowAutoMerge={allowAutoMerge}
+          canManage={canManage}
+          isCorner={isCorner}
+          reviewerAgentId={reviewerAgentId}
+        />
+      </View>
+    );
+    act(() => { renderer = create(renderNotice(false, ECHO)); });
+    expect(renderedNotice(renderer, 'room-auto-merge-reviewer-notice')).toHaveLength(0);
+
+    act(() => renderer.update(renderNotice(true, ECHO)));
+    const [notice] = renderedNotice(renderer, 'room-auto-merge-reviewer-notice');
+    expect(notice).toBeDefined();
+    expect(notice.props.accessibilityRole).toBe('alert');
+    const text = notice.findByType('Text').props.children.join('');
+    expect(text).toContain('This repository allows auto-merge');
+    expect(text).toContain("If auto-merge is turned on for a corner's pull request");
+    expect(text).toContain('GitHub merges it as soon as checks pass');
+    expect(text).toContain('before the Beeline reviewer is asked to look');
+    expect(text).toContain("Turn off auto-merge in this repository's GitHub settings");
+
+    act(() => renderer.update(renderNotice(true)));
+    expect(renderedNotice(renderer, 'room-auto-merge-reviewer-notice')).toHaveLength(0);
+    act(() => renderer.update(renderNotice(true, ECHO, false)));
+    expect(renderedNotice(renderer, 'room-auto-merge-reviewer-notice')).toHaveLength(0);
+    act(() => renderer.update(renderNotice(true, ECHO, true, true)));
+    expect(renderedNotice(renderer, 'room-auto-merge-reviewer-notice')).toHaveLength(0);
+  });
+
+  it('shows no picker warning when the repo does not allow auto-merge', () => {
+    const { renderer } = render({ allowAutoMerge: false, reviewerAgentId: undefined });
+    act(() => renderer.root.findByProps({ testID: 'room-reviewer-action' }).props.onPress());
+    expect(renderedNotice(renderer, 'room-reviewer-auto-merge-picker-warning')).toHaveLength(0);
   });
 
   it('scrolls the agent list in a window of five rows with Done pinned below it', () => {

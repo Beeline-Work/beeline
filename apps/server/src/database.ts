@@ -1921,6 +1921,10 @@ CREATE TABLE IF NOT EXISTS github_repositories (
 );
 -- NULL until the next installation refresh records GitHub's flag; read as private.
 ALTER TABLE github_repositories ADD COLUMN IF NOT EXISTS private boolean;
+-- NULL until the next installation refresh records GitHub's flag; a Beeline
+-- reviewer set on a Room whose repository allows auto-merge never gets a
+-- turn, since GitHub merges on the same green-checks signal that wakes it.
+ALTER TABLE github_repositories ADD COLUMN IF NOT EXISTS allow_auto_merge boolean;
 
 DROP TABLE IF EXISTS github_head_checks;
 

@@ -1066,6 +1066,8 @@ export type RoomRepositoryView = {
   readonly updatedAt: number;
   readonly githubInstallationId?: number;
   readonly githubEventsEnabled: boolean;
+  /** GitHub's repository-level auto-merge toggle; absent when it is not yet known. */
+  readonly allowAutoMerge?: boolean;
 };
 
 /**

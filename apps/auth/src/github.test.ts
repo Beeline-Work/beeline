@@ -168,6 +168,7 @@ describe('GitHub-only account and repository access', () => {
                 clone_url: 'https://github.com/acme/beeline.git',
                 default_branch: 'main',
                 private: false,
+                allow_auto_merge: true,
               },
               {
                 id: 10,
@@ -192,9 +193,14 @@ describe('GitHub-only account and repository access', () => {
     vi.stubGlobal('fetch', fetchMock);
     const app = new GitHubAppClient({ appId: '42', privateKey: privateKeyPem, slug: 'beeline' });
     await expect(app.listRepositories(77)).resolves.toEqual([
-      expect.objectContaining({ fullName: 'acme/beeline', installationId: 77, private: false }),
-      expect.objectContaining({ fullName: 'acme/secret', private: true }),
-      expect.objectContaining({ fullName: 'acme/unknown', private: true }),
+      expect.objectContaining({
+        fullName: 'acme/beeline',
+        installationId: 77,
+        private: false,
+        allowAutoMerge: true,
+      }),
+      expect.objectContaining({ fullName: 'acme/secret', private: true, allowAutoMerge: false }),
+      expect.objectContaining({ fullName: 'acme/unknown', private: true, allowAutoMerge: false }),
     ]);
     expect(fetchMock.mock.calls[0]![0]).toBe(
       'https://api.github.com/app/installations/77/access_tokens',
@@ -693,6 +699,7 @@ describe('GitHub-only account and repository access', () => {
             clone_url: 'https://github.com/acme/new-repo.git',
             default_branch: 'main',
             private: true,
+            allow_auto_merge: true,
           }),
           { status: 201 },
         ),
@@ -709,7 +716,12 @@ describe('GitHub-only account and repository access', () => {
         { login: 'acme', type: 'Organization' },
         { name: 'new-repo', private: true },
       ),
-    ).resolves.toMatchObject({ installationId: 77, fullName: 'acme/new-repo', private: true });
+    ).resolves.toMatchObject({
+      installationId: 77,
+      fullName: 'acme/new-repo',
+      private: true,
+      allowAutoMerge: true,
+    });
     expect(fetchMock.mock.calls[1]![0]).toBe('https://api.github.com/orgs/acme/repos');
     expect(JSON.parse(String(fetchMock.mock.calls[1]![1].body))).toEqual({
       name: 'new-repo',

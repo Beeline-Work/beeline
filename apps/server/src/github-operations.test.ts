@@ -949,6 +949,55 @@ describe('GitHub phone operations', () => {
       { repository_id: 102, private: false },
     ]);
   });
+  it('records a repository auto-merge toggle on the next installation sync', async () => {
+    await database.query(
+      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
+       VALUES(77,$1,'42','owner','User','selected','active')`,
+      [HUMAN],
+    );
+    await database.query(
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch,allow_auto_merge)
+       VALUES(101,77,'owner/widgets','main',false)`,
+    );
+    let widgetsAutoMerge = false;
+    const app = {
+      installationAccount: vi.fn(async () => ({
+        id: '42',
+        login: 'owner',
+        type: 'User' as const,
+        repositorySelection: 'selected' as const,
+      })),
+      listRepositories: vi.fn(async () => [
+        {
+          id: 101,
+          installationId: 77,
+          fullName: 'owner/widgets',
+          defaultBranch: 'main',
+          private: false,
+          allowAutoMerge: widgetsAutoMerge,
+        },
+      ]),
+    } as unknown as GitHubAppClient;
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
+    const stored = async () =>
+      (
+        await database.query<{ allow_auto_merge: boolean | null }>(
+          `SELECT allow_auto_merge FROM github_repositories WHERE repository_id=101`,
+        )
+      ).rows[0]?.allow_auto_merge;
+
+    expect(await stored()).toBe(false);
+
+    // A repo already bound to a Room with a reviewer gets auto-merge turned
+    // on later, on GitHub's side, with nobody touching the Room. The next
+    // webhook-triggered sync is the only thing that records it.
+    widgetsAutoMerge = true;
+    await operations.processWebhook('repository', {
+      action: 'edited',
+      installation: { id: 77 },
+    });
+    expect(await stored()).toBe(true);
+  });
   it('still refreshes the catalog for a repository lifecycle webhook', async () => {
     await database.query(
       `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)

@@ -97,6 +97,8 @@ export interface RoomRepository {
   targetBranch?: string;
   /** Absent means enabled — the shipped default is ON for the three event types. */
   githubEventsEnabled?: boolean;
+  /** GitHub's repository-level auto-merge toggle; absent when it is not yet known. */
+  allowAutoMerge?: boolean;
   source: 'config' | 'genesis';
   /** Room admin who authored a `config` binding; absent for `genesis`. */
   authoredBy?: string;

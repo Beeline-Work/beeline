@@ -12,8 +12,54 @@ export type RoomReviewerUpdate = {
   reviewerFallbackIds: string[];
 };
 
+const AUTO_MERGE_REVIEWER_WARNING =
+  "This repository allows auto-merge. If auto-merge is turned on for a corner's pull request, GitHub merges it as soon as checks pass, before the Beeline reviewer is asked to look. Turn off auto-merge in this repository's GitHub settings to protect reviewer approval.";
+
+export function RoomReviewerAutoMergeNotice({
+  visible,
+  surface = false,
+  testID,
+}: {
+  visible: boolean;
+  surface?: boolean;
+  testID: string;
+}) {
+  if (!visible) return null;
+  return (
+    <View
+      accessibilityRole="alert"
+      style={surface ? styles.surfaceWarning : styles.error}
+      testID={testID}
+    >
+      <Text style={styles.errorText}>! {AUTO_MERGE_REVIEWER_WARNING}</Text>
+    </View>
+  );
+}
+
+export function RoomReviewerSurfaceNotice({
+  allowAutoMerge,
+  canManage,
+  isCorner,
+  reviewerAgentId,
+}: {
+  allowAutoMerge?: boolean;
+  canManage: boolean;
+  isCorner: boolean;
+  reviewerAgentId?: string;
+}) {
+  return (
+    <RoomReviewerAutoMergeNotice
+      visible={Boolean(allowAutoMerge && canManage && !isCorner && reviewerAgentId)}
+      surface
+      testID="room-auto-merge-reviewer-notice"
+    />
+  );
+}
+
 type RoomReviewerActionsProps = {
   agents: readonly RoomViewIdentity[];
+  /** GitHub's repository-level auto-merge toggle for this Room's repo. */
+  allowAutoMerge?: boolean;
   canManage: boolean;
   hasRepository: boolean;
   onSaved?: () => void;
@@ -45,6 +91,7 @@ function reviewerOrder(
  */
 export function RoomReviewerActions({
   agents,
+  allowAutoMerge,
   canManage,
   hasRepository,
   onSaved,
@@ -113,11 +160,19 @@ export function RoomReviewerActions({
         }}
         testID="room-reviewer-action"
       />
+      <RoomReviewerAutoMergeNotice
+        visible={Boolean(allowAutoMerge && order.length)}
+        testID="room-reviewer-auto-merge-warning"
+      />
       <HullActionSheetModal
         accessibilityLabel="Close reviewer picker"
         dismissOnBackdrop={!busy}
         footer={
           <>
+            <RoomReviewerAutoMergeNotice
+              visible={Boolean(allowAutoMerge)}
+              testID="room-reviewer-auto-merge-picker-warning"
+            />
             {error ? (
               <View accessibilityRole="alert" style={styles.error} testID="room-reviewer-error">
                 <Text style={styles.errorText}>! {error}</Text>
@@ -188,6 +243,13 @@ const styles = StyleSheet.create((theme) => ({
     borderTopWidth: StyleSheet.hairlineWidth,
     paddingHorizontal: theme.buzz.space.md,
     paddingVertical: theme.buzz.space.sm,
+  },
+  surfaceWarning: {
+    borderBottomColor: theme.buzz.border,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: theme.buzz.space.md,
+    paddingVertical: theme.buzz.space.sm,
+    backgroundColor: theme.buzz.bgHighlight,
   },
   errorText: {
     ...theme.buzz.type.meta,

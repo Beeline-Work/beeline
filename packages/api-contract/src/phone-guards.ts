@@ -1372,6 +1372,10 @@ function readRepository(value: unknown): RoomRepositoryView | null {
       'githubInstallationId',
       integer(item.githubInstallationId) ? item.githubInstallationId : undefined,
     ),
+    ...field(
+      'allowAutoMerge',
+      typeof item.allowAutoMerge === 'boolean' ? item.allowAutoMerge : undefined,
+    ),
   };
 }
 

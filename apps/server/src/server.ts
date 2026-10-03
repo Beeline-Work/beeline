@@ -1105,9 +1105,25 @@ async function route(
     }
     const destination = new URL('beeline://beeline/settings/workbench/connect-signin');
     destination.searchParams.set('appSignInSession', sessionUri);
-    response.writeHead(302, { location: destination.toString(), 'cache-control': 'no-store',
-      'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff' });
-    response.end();
+    const href = destination.toString().replaceAll('&', '&amp;').replaceAll('"', '&quot;');
+    const nonce = randomUUID();
+    // Browsers can block an automatic app handoff. Keep the same session in a
+    // visible link so a deliberate tap can finish without starting sign-in again.
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-store', 'referrer-policy': 'no-referrer',
+      'x-content-type-options': 'nosniff',
+      'content-security-policy': `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` });
+    response.end(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Return to Beeline</title><style nonce="${nonce}">
+body { margin: 0; padding: 32px 24px; font: 18px/1.5 system-ui, sans-serif; background: #14091a; color: #f7f3f8; }
+main { max-width: 420px; margin: 12vh auto; } h1 { font-size: 28px; line-height: 1.2; }
+p { color: #d3c8d7; } a { display: inline-block; padding: 14px 24px; border-radius: 10px; background: #f7f3f8; color: #14091a; font-weight: 600; text-decoration: none; }
+a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
+</style></head><body><main><h1>Return to Beeline</h1>
+<p>Return to Beeline to finish connecting your app. If it doesn't open automatically, tap below.</p>
+<a id="open-beeline" href="${href}">Open Beeline</a>
+</main><script nonce="${nonce}">window.location.href = document.getElementById('open-beeline').href;</script></body></html>`);
     return;
   }
   if (method === 'GET' && url.pathname === '/v1/registry-mcp/oauth/callback') {

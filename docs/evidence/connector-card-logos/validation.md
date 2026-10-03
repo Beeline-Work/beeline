@@ -6,7 +6,7 @@ Brief revision 1. Story: a person connecting Instagram from a connector card see
 
 Reproduction CARD-1: connect Instagram or Figma through the agent's `connectApp`, read Workbench, then read the Room card. On the original code, Workbench has the provider logo and domain; the Room card has neither. Rendering the card also ignores supplied logo metadata and shows an initial. Both new server and mobile CARD-1 regressions failed before the fix.
 
-The reported live first-attempt Instagram failure and native Instagram app handoff were **not obtained**. `adb devices` reported `emulator-5574 offline`. Initial validation used server-backed tests and Chrome with a fixture provider. The subsequent authorized read of retained live diagnostics is recorded below.
+The reporter's exact historical first-attempt failure and native Instagram app handoff were **not obtained**. Initially, `adb devices` reported `emulator-5574 offline`. Initial validation used server-backed tests and Chrome with a fixture provider. Subsequent authorized diagnostics narrowed the failed attempt to the verifier return, and the now-reachable emulator reproduced the missing recovery surface as RETURN-1 below.
 
 ## Demonstrated
 
@@ -61,4 +61,34 @@ The retained timeline, in UTC:
 
 These observations establish the successful later connection, not the cause of the first failure or whether the native Instagram app opened. `beginComposioAppSignIn` deletes the previous provider account before requesting a fresh link, so the surviving account is insufficient to diagnose the earlier attempt.
 
-Both running Fly Machines report release `0.1.5-b4dfec78cc47`, which predates PR #2007's failure reporting. This is deployment evidence, not proof that #2007 fixes the reporter's original cause. The vaulted Fly key could read Machines and execute the scoped database query, but the Fly app-log endpoint returned HTTP 401. Historical request errors remain unread; the remaining scoped read is delegated to the reporter's authorized agent. R-1 remains unresolved, and no speculative connection or deep-link change was made.
+At this read, both running Fly Machines reported release `0.1.5-b4dfec78cc47`, which predates PR #2007's failure reporting. This is deployment evidence, not proof that #2007 fixes the reporter's original cause. The initial Fly app-log request returned HTTP 401; Jellybean subsequently corrected the authorization header and read the logs. The following evidence supersedes that access blocker.
+
+## Verifier return recovery
+
+Story: a person who finishes Instagram sign-in sees an Open Beeline action if the automatic return does not open the app.
+
+Jellybean's scoped log read, recorded in Room message `deeab0e560a6542009d899d9931b477307c66f8afd2ed74b9b9976a143290bdd`, found that the connector card called `beginAppSignIn` at 21:03:54 UTC and reached `/v1/apps/oauth/verify` at 21:04:18, with no following phone completion call. The later Workbench attempt reached the verifier and completed on the phone at 21:42. This locates the missing completion at the verifier-to-phone handoff. It does not identify the browser's rejection reason or prove whether Instagram's own native app opened.
+
+Reproduction RETURN-1: run the branch's built `createBeelineServer` on port 4190 with isolated database/auth stubs, forward that port to Android Chrome, temporarily disable the installed Beeline app handler, and open the verifier callback with `session_uri=return-fixture`. Before the change, the endpoint returned only a 302 to the app scheme with an empty body. Chrome stayed on a blank page with no recovery link. [Before capture](verifier-before.png).
+
+The verifier now responds with a small HTML page that tries the same Beeline app URL automatically and always provides an Open Beeline link carrying the original session. It does not redeem or activate the connection anonymously. The page remains available when the automatic handoff is blocked or scripts are disabled; it has no external resources, uses nonce-bound script/style policy, and retains no-store/no-referrer headers.
+
+Reproduction RETURN-1 now passes against the built change on `emulator-5574` in Android Chrome. With the app handler unavailable, the page displayed Open Beeline instead of remaining blank. Re-enable the handler and tap that action: Android's top resumed activity became `app.usebeeline/.MainActivity`, with the exact `beeline://beeline/settings/workbench/connect-signin?appSignInSession=return-fixture` intent. The same page also opened Beeline automatically with the handler available. [Recovery page capture](verifier-recovery-phone.png). The installed Beeline binary was version 0.2.21; the changed server response came from this branch's built service. Its fixture account could not complete a real provider session and displayed Network request failed. This phone proof establishes the app handoff, not a real Instagram authorization.
+
+Playwright in headless Chrome rendered the built verifier at 393px with scripts enabled and disabled; in both cases the recovery link was visible and contained the unchanged session. Initial desktop Chrome startup failed because the helper's temporary directory exceeded the Unix socket path limit; `TMPDIR=/tmp` resolved it. A navigation wait for full load timed out during the attempted external handoff; waiting for the HTTP document commit allowed the visible fallback to be measured. Connecting Playwright directly to Android Chrome timed out, so native proof used adb's UI hierarchy, screenshots, and activity intents instead.
+
+The SIGNIN-1 integration cases now exercise the real public verifier HTTP response and authenticated phone HTTP completion for both connector-card and Workbench entry. The fallback preserves the first session, anonymous completion returns 401 without calling the provider, authenticated completion connects the original account, and the card settles/resumes its original request. Each case issues only one provider link. The first fixture run used a phone token below the existing bearer length floor and received 401; correcting the fixture token made both cases pass without changing authorization code.
+
+Follow-up validation:
+
+```sh
+npm test -w @beeline/server -- src/server.test.ts
+BEELINE_SIGN_IN_PROOF=1 npm test -w @beeline/server -- src/app-connections.integration.test.ts src/composio-apps.test.ts
+BEELINE_SIGN_IN_PROOF=1 npm test -w @beeline/server -- src/app-connections.integration.test.ts -t SIGNIN-1
+npm test --prefix apps/mobile -- --run 'sources/app/(app)/beeline/settings/workbench/connect-signin.test.tsx'
+npm run build -w @beeline/server
+npm run typecheck -w @beeline/server
+git diff --check
+```
+
+47 server HTTP/live tests passed. The existing 39 app-connection and 25 provider tests passed before expanding the two SIGNIN-1 cases; both expanded cases then passed separately. Six mobile callback tests passed, including Room/Workbench routing after verified completion and failure remaining on the callback screen. Server build, typecheck, and diff check passed. The historical browser rejection reason and Instagram-native-app launch remain unrecorded; the reproduced unhandled Beeline return is fixed without a second connection attempt.

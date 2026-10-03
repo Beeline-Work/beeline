@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AcpClient } from './acp.js';
+import { AcpClient, AcpTurnBackstopError, TURN_BACKSTOP_MS } from './acp.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import {
@@ -3286,8 +3286,10 @@ describe('corner turn failure receipt', () => {
     const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
     vi.spyOn(acp, 'start').mockResolvedValue(undefined);
     vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'corner-session', raw: {} });
-    const failure = new Error(
-      'ACP session/prompt timed out after 120000ms of inactivity GH_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz',
+    const failure = new AcpTurnBackstopError(
+      TURN_BACKSTOP_MS,
+      'plan',
+      'GH_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz',
     );
     failure.stack = `${failure.message}\n    at AcpClient.request (/opt/beeline/acp.js:984:20)`;
     vi.spyOn(acp, 'sessionPrompt').mockRejectedValueOnce(failure).mockResolvedValue({
@@ -3334,7 +3336,7 @@ describe('corner turn failure receipt', () => {
     const failed = receipts.find((receipt) => receipt.status === 'failed')!;
     expect(failed).toEqual(expect.objectContaining({ roomId: 'corner-id', status: 'failed' }));
     const reason = failed.reason as string;
-    expect(reason).toContain('timed out after 120000ms of inactivity');
+    expect(reason).toContain('turn_backstop: no ACP traffic for 30 minutes; last activity: plan');
     expect(reason).toContain('[REDACTED]');
     expect(reason).not.toMatch(/ghp_abc|\n|\bat AcpClient/);
   });

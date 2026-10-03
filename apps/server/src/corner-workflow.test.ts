@@ -1284,6 +1284,27 @@ describe("the configured reviewer's verdict (AC-4)", () => {
 });
 
 describe('the server merges when the gate opens (AC-5)', () => {
+  it('reads the gate facts for mixed candidates in two queries', async () => {
+    const openCorner = await approved();
+    const held = await approved();
+    const unapproved = await approved();
+    const staleHead = await approved();
+    const staleBrief = await approved();
+    const workerOff = await approved();
+    await phone.execute('setCornerHold', { cornerId: held }, H);
+    await db.query(`DELETE FROM corner_merge_approvals WHERE corner_id=$1`, [unapproved]);
+    await db.query(`UPDATE corner_merge_approvals SET head_sha=$2 WHERE corner_id=$1`, [staleHead, '9'.repeat(40)]);
+    await db.query(`UPDATE corner_merge_approvals SET brief_revision=0 WHERE corner_id=$1`, [staleBrief]);
+    await db.query(`UPDATE corner_facts SET worker_agent_id=$2 WHERE corner_id=$1`, [workerOff, B]);
+    await db.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [B]);
+    const recorded = new RecordingDatabase(db);
+    expect(await cornersReadyToLand(recorded)).toEqual([openCorner]);
+    expect(recorded.calls).toHaveLength(2);
+    for (const cornerId of [openCorner, held, unapproved, staleHead, staleBrief, workerOff]) {
+      expect((await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).open).toBe(cornerId === openCorner);
+    }
+  });
+
   it('Reproduction R5c: a departed self-reviewer cannot authorize a merge', async () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
     const cornerId = await open(undefined, 'owner/widgets');

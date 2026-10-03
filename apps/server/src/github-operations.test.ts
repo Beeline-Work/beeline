@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { generateKeyPair, exportPKCS8 } from 'jose';
 import { GitHubAppClient, GitHubHttpError, GitHubOAuthClient } from '@beeline/auth/github';
-import { migrate } from './database.js';
+import { migrate, type SqlDatabase } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { GitHubOperations } from './github-operations.js';
 
@@ -20,6 +20,149 @@ describe('GitHub phone operations', () => {
   afterEach(async () => {
     vi.unstubAllGlobals();
     await database.close();
+  });
+
+  async function checksFixture(count = 1) {
+    const workspace = '11111111-1111-4111-8111-111111111111';
+    const room = '22222222-2222-4222-8222-222222222222';
+    const headSha = '1'.repeat(40);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Reviewer')`, [REVIEWER]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id,yolo_mode) VALUES($1,$2,true)`, [REVIEWER, HUMAN]);
+    await database.query(`INSERT INTO github_installations(
+      installation_id,owner_id,account_id,account_login,account_type,repository_selection,status
+    ) VALUES(77,$1,'42','owner','User','selected','active')`, [HUMAN]);
+    await database.query(`INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch)
+      VALUES(101,77,'owner/widgets','main')`);
+    await database.query(`INSERT INTO rooms(id,workspace_id,created_by,name,repository_key,repository_remote,
+      repository_resolution,github_installation_id,reviewer_agent_id)
+      VALUES($1,$2,$3,'General','owner/widgets','https://github.com/owner/widgets.git','repository',77,$4)`,
+    [room, workspace, HUMAN, REVIEWER]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,$2,$3,'member')`, [workspace, room, REVIEWER]);
+    const corners: string[] = [];
+    for (let number = 1; number <= count; number++) {
+      const corner = `33333333-3333-4333-8333-${String(number).padStart(12, '0')}`;
+      corners.push(corner);
+      await database.query(`INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
+        VALUES($1,$2,$3,$4,'Checks')`, [corner, workspace, room, HUMAN]);
+      await database.query(`INSERT INTO corner_facts(corner_id,objective,lane,owner_agent_id,feature_branch,lifecycle,workflow_state)
+        VALUES($1,'Fix checks','code',$2,$3,$4::jsonb,'land')`,
+      [corner, REVIEWER, `feature/checks-${number}`, JSON.stringify({ checks: 'passing',
+        pr: { number, headSha, url: `https://github.com/owner/widgets/pull/${number}`, mergeability: 'clean' } })]);
+    }
+    const app = {
+      installationToken: vi.fn(async () => ({ token: 'room-token', expiresAt: '2030-01-01T00:00:00Z' })),
+      readCommitCheckRollup: vi.fn(async () => ({ state: 'passed', total: 1, failing: [], checks: [] })),
+      readPullRequest: vi.fn(async (_token: string, _repository: string, number: number) => ({ number,
+        headSha, url: `https://github.com/owner/widgets/pull/${number}`, mergeability: 'clean' })),
+      mergePullRequest: vi.fn(async () => undefined),
+      deleteBranch: vi.fn(async () => undefined),
+    };
+    const payload = { action: 'completed', installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
+      check_run: { name: 'lint', status: 'completed', conclusion: 'success', head_sha: headSha,
+        check_suite: { head_branch: 'feature/checks-1', head_sha: headSha } } };
+    return { corners, headSha, app, payload };
+  }
+
+  it('Reproduction S08-1: check webhook fetches without an open transaction', async () => {
+    const { app, payload } = await checksFixture();
+    let depth = 0;
+    const depths: number[] = [];
+    const guarded: SqlDatabase = {
+      query: database.query.bind(database),
+      transaction: work => database.transaction(async tx => {
+        depth++;
+        try { return await work(tx); } finally { depth--; }
+      }),
+    };
+    let started!: () => void, release!: () => void;
+    const fetching = new Promise<void>(resolve => { started = resolve; });
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    app.installationToken.mockImplementation(async () => {
+      depths.push(depth);
+      return { token: 'room-token', expiresAt: '2030-01-01T00:00:00Z' };
+    });
+    app.readCommitCheckRollup.mockImplementation(async () => {
+      depths.push(depth); started(); await pending;
+      return { state: 'passed', total: 1, failing: [], checks: [] };
+    });
+    const operations = new GitHubOperations(guarded, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    const delivery = operations.processWebhook('check_run', payload);
+    await fetching;
+    try { expect(depths).toEqual([0, 0]); }
+    finally { release(); await delivery; }
+    console.log('Demonstrated S08-1: check_run webhook => token and held rollup fetch at transaction depth 0.');
+  });
+
+  it('Reproduction S09-1: a slow first GitHub read does not delay another eligible merge', async () => {
+    const { app } = await checksFixture(2);
+    let started!: () => void, release!: () => void;
+    const fetching = new Promise<void>(resolve => { started = resolve; });
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const read = app.readPullRequest.getMockImplementation()!;
+    app.readPullRequest.mockImplementation(async (token, repository, number) => {
+      if (number === 1) { started(); await pending; }
+      return read(token, repository, number);
+    });
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    const sweep = operations.landReadyCorners();
+    await fetching;
+    try {
+      await vi.waitFor(() => expect(app.mergePullRequest).toHaveBeenCalledWith(77, 101, 'owner/widgets', 2, '1'.repeat(40)), { timeout: 1000 });
+    } finally { release(); await sweep; }
+    expect(app.mergePullRequest).toHaveBeenCalledTimes(2);
+    console.log('Demonstrated S09-1: two eligible corners => second exact-head merge while first PR read is held.');
+  });
+
+  it.each(['moved', 'missing'])('discards a check fetch when the recorded head is %s', async kind => {
+    const { app, payload, corners } = await checksFixture();
+    let started!: () => void, release!: () => void;
+    const fetching = new Promise<void>(resolve => { started = resolve; });
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    app.readCommitCheckRollup.mockImplementation(async () => {
+      started(); await pending;
+      return { state: 'failed', total: 1, failing: ['lint'], checks: [] };
+    });
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    const delivery = operations.processWebhook('check_run', payload);
+    await fetching;
+    try {
+      if (kind === 'moved') await operations.processWebhook('push', {
+        installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
+        ref: 'refs/heads/feature/checks-1', after: '2'.repeat(40), commits: [],
+      });
+      else await database.query(`UPDATE corner_facts SET lifecycle=lifecycle-'pr' WHERE corner_id=$1`, [corners[0]]);
+      const before = await database.query(`SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corners[0]]);
+      const messages = await database.query(`SELECT id FROM messages WHERE room_id=$1 ORDER BY id`, [corners[0]]);
+      release(); await delivery;
+      expect((await database.query(`SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corners[0]])).rows).toEqual(before.rows);
+      expect((await database.query(`SELECT id FROM messages WHERE room_id=$1 ORDER BY id`, [corners[0]])).rows).toEqual(messages.rows);
+    } finally { release(); await delivery; }
+  });
+
+  it('limits concurrent candidate reads to four and merges every head once', async () => {
+    const { app } = await checksFixture(6);
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    let active = 0, maximum = 0;
+    const read = app.readPullRequest.getMockImplementation()!;
+    app.readPullRequest.mockImplementation(async (token, repository, number) => {
+      maximum = Math.max(maximum, ++active);
+      await pending;
+      active--;
+      return read(token, repository, number);
+    });
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    const sweep = operations.landReadyCorners();
+    try {
+      await vi.waitFor(() => expect(active).toBe(4));
+      expect(app.readPullRequest).toHaveBeenCalledTimes(4);
+    } finally { release(); await sweep; }
+    expect(maximum).toBe(4);
+    expect(app.mergePullRequest).toHaveBeenCalledTimes(6);
+    await operations.landReadyCorners();
+    expect(app.mergePullRequest).toHaveBeenCalledTimes(6);
   });
   it('routes a promoted corner PR and checks by its repository-scoped branch prefix', async () => {
     const workspace = '11111111-1111-4111-8111-111111111111';
@@ -179,8 +322,9 @@ describe('GitHub phone operations', () => {
       );
       await tx.query(
         `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lane,feature_branch,lifecycle)
-         VALUES($1,$2,'Convo chains','code',$3,'{"checks":"unknown"}')`,
-        [corner, opener, branch],
+         VALUES($1,$2,'Convo chains','code',$3,$4::jsonb)`,
+        [corner, opener, branch, JSON.stringify({ checks: 'unknown', pr: { number: 4, headSha,
+          url: 'https://github.com/owner/widgets/pull/4', mergeability: 'clean' } })],
       );
     });
     const app = {
@@ -820,7 +964,7 @@ describe('GitHub phone operations', () => {
     );
     expect(app.dispatchWorkflow).toHaveBeenCalledWith('room-token', 'owner/widgets', 12, 'trunk');
   });
-  it("serializes overlapping webhook refreshes and stores GitHub's latest rollup", async () => {
+  it("rejects the older overlapping webhook fetch and stores GitHub's latest rollup", async () => {
     const workspace = '11111111-1111-4111-8111-111111111111';
     const room = '22222222-2222-4222-8222-222222222222';
     const corner = '33333333-3333-4333-8333-333333333333';
@@ -933,10 +1077,10 @@ describe('GitHub phone operations', () => {
     // The aggregate turns green on another delivery for the same check. The
     // first delivery already used its ordinary GitHub note's deterministic ID.
     const second = operations.processWebhook('check_run', payload('lint', 'completed'));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(readCommitCheckRollup).toHaveBeenCalledTimes(1);
-    release();
-    await Promise.all([first, second]);
+    try {
+      await second;
+      expect(readCommitCheckRollup).toHaveBeenCalledTimes(2);
+    } finally { release(); await first; }
 
     expect(
       (

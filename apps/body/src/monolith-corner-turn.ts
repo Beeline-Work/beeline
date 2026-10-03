@@ -2115,11 +2115,24 @@ export class MonolithCornerTurnLoop {
       }
     }
     if (!token) throw new Error('corner repository credential lookup returned no token');
-    await syncCornerBranch({
-      worktreePath: this.options.worktreePath,
-      featureBranch: repository.featureBranch,
-      env: { ...process.env, GH_TOKEN: token, GITHUB_TOKEN: token, GIT_TERMINAL_PROMPT: '0' },
-    });
+    const stop = new AbortController();
+    let watchStop: NodeJS.Timeout | undefined;
+    const checkStop = () => {
+      if (this.forcedStop || (this.currentTurn && this.stoppedTurns.has(this.currentTurn.requestId)))
+        stop.abort();
+      else watchStop = setTimeout(checkStop, 25);
+    };
+    checkStop();
+    try {
+      await syncCornerBranch({
+        worktreePath: this.options.worktreePath,
+        featureBranch: repository.featureBranch,
+        env: { ...process.env, GH_TOKEN: token, GITHUB_TOKEN: token, GIT_TERMINAL_PROMPT: '0' },
+        signal: this.options.signal ? AbortSignal.any([this.options.signal, stop.signal]) : stop.signal,
+      });
+    } finally {
+      clearTimeout(watchStop);
+    }
   }
 
   async run(): Promise<void> {

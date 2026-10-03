@@ -1,12 +1,29 @@
 import { execFile } from 'node:child_process';
-import { access, mkdir, mkdtemp, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { MonolithCornerTurnLoop } from './monolith-corner-turn.js';
+import type { BodyConfig } from './config.js';
+import type { SessionScheduler } from './session-scheduler.js';
 import { DaemonApiError, type DaemonApiClient } from './daemon-api-client.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
-import { syncCornerBranch } from './corner-branch-sync.js';
+import {
+  CORNER_GIT_SYNC_TIMEOUT_MS,
+  CORNER_GIT_SYNC_KILL_GRACE_MS,
+  syncCornerBranch,
+} from './corner-branch-sync.js';
 import {
   materializeCornerWorktree,
   removeCornerWorktreeAndBranches,
@@ -664,6 +681,179 @@ describe('a helper joining a corner it did not open', () => {
 });
 
 describe('syncCornerBranch — two agents pushing to one branch', () => {
+  it('R3: settles a git seam that never resolves at the deadline', async () => {
+    vi.useFakeTimers();
+    try {
+      const result = syncCornerBranch({
+        worktreePath: '/unused',
+        featureBranch: FEATURE,
+        git: async () => new Promise<string>(() => undefined),
+      });
+      let settled = false;
+      const observed = result.catch((error) => {
+        settled = true;
+        return error;
+      });
+      await vi.advanceTimersByTimeAsync(122_000);
+      expect(settled).toBe(true);
+      expect((await observed).message).toContain('corner git sync');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(['merge-base', 'rebase', 'abort'])(
+    'keeps interruption out of reset recovery at %s',
+    async (command) => {
+      vi.useFakeTimers();
+      const calls: string[][] = [];
+      try {
+        const result = syncCornerBranch({
+          worktreePath: '/unused',
+          featureBranch: FEATURE,
+          git: async (args) => {
+            calls.push([...args]);
+            if (args[0] === command || (command === 'abort' && args[1] === '--abort'))
+              return new Promise<string>(() => undefined);
+            if (args[0] === 'rev-parse') return args[1] === 'HEAD' ? 'local' : 'remote';
+            if (args[0] === 'merge-base' || args[0] === 'rebase') throw new Error('conflict');
+            return '';
+          },
+        });
+        const observed = result.catch((error) => error);
+        await vi.waitFor(() =>
+          expect(
+            calls.some((args) =>
+              command === 'abort' ? args[1] === '--abort' : args[0] === command,
+            ),
+          ).toBe(true),
+        );
+        await vi.advanceTimersByTimeAsync(CORNER_GIT_SYNC_TIMEOUT_MS);
+        expect((await observed).message).toContain('corner git sync');
+        expect(calls.some((args) => args[0] === 'reset' || args[0] === 'clean')).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each(['deadline', 'stop', 'turn deadline', 'structured stop'])(
+    'R3: kills a real stalled git child on %s and preserves local commits',
+    async (cause) => {
+      const { worktree } = await helperWorktree('beeline-corner-stall-');
+      await writeFile(resolve(worktree.path, 'mine.txt'), 'keep me\n');
+      await git(worktree.path, 'add', '.');
+      await git(worktree.path, 'commit', '-m', 'local commit survives');
+      const head = await git(worktree.path, 'rev-parse', 'HEAD');
+      const bin = await mkdtemp(resolve(tmpdir(), 'beeline-stalled-git-'));
+      roots.push(bin);
+      const marker = resolve(bin, 'started');
+      // This executable is read here before it is run; it has no subprocesses.
+      await writeFile(
+        resolve(bin, 'git'),
+        `#!${process.execPath}
+const fs = require('node:fs');
+process.on('SIGTERM', () => {});
+fs.writeFileSync(${JSON.stringify(marker)}, String(process.pid));
+setInterval(() => {}, 1000);
+`,
+        { mode: 0o755 },
+      );
+      const stop = new AbortController();
+      vi.useFakeTimers();
+      const receipts: Array<Record<string, unknown>> = [];
+      const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+        if (name === 'getRoomGitHubToken') return { token: 'unused' };
+        if (name === 'postAgentTurnReceipt') receipts.push(input);
+        return {};
+      });
+      const identity = identityFromKey('11'.repeat(32), 'Sol');
+      const loop = new MonolithCornerTurnLoop({
+        cornerId: 'r3',
+        parentRoomId: 'parent',
+        workspaceId: 'workspace',
+        objective: 'R3',
+        worktreePath: worktree.path,
+        repository: {
+          featureBranch: FEATURE,
+          targetBranch: 'main',
+          gitCommonDir: worktree.gitCommonDir,
+          githubToken: 'unused',
+        },
+        runtime: {
+          supervisorRoot: worktree.path,
+          agent: {
+            name: 'Sol',
+            publicKey: identity.publicKey,
+            secretKeyHex: Buffer.from(identity.secretKey).toString('hex'),
+          },
+        } as AgentRuntimeRecord,
+        config: { workspaceRoot: worktree.path } as BodyConfig,
+        api: { execute } as unknown as DaemonApiClient,
+        // Admit the real turn body without starting a model: the stall precedes its prompt.
+        scheduler: {
+          snapshot: () => ({}),
+          run: async (_key: unknown, _lifecycle: unknown, work: () => Promise<void>) => work(),
+        } as unknown as SessionScheduler,
+      });
+      const turn = loop as unknown as {
+        prompt(id: string, trigger: string): Promise<void>;
+        stopTurn(id: string): void;
+      };
+      vi.stubEnv('PATH', bin + ':' + process.env.PATH);
+      const observed = (
+        cause.includes('turn') || cause === 'structured stop'
+          ? turn.prompt('r3-request', 'Fetch the corner branch')
+          : syncCornerBranch({
+              worktreePath: worktree.path,
+              featureBranch: FEATURE,
+              signal: stop.signal,
+            })
+      ).catch((error) => error);
+      try {
+        await vi.waitFor(async () => expect(await readFile(marker, 'utf8')).toBeTruthy());
+        const pid = Number(await readFile(marker, 'utf8'));
+        if (cause === 'structured stop') {
+          turn.stopTurn('r3-request');
+          await vi.advanceTimersByTimeAsync(25);
+        } else if (cause === 'stop') stop.abort();
+        else await vi.advanceTimersByTimeAsync(CORNER_GIT_SYNC_TIMEOUT_MS);
+        expect(() => process.kill(pid, 0)).not.toThrow();
+        await vi.advanceTimersByTimeAsync(CORNER_GIT_SYNC_KILL_GRACE_MS);
+        vi.useRealTimers();
+        const result = await observed;
+        if (cause === 'structured stop') {
+          expect(result).toBeUndefined();
+          expect(receipts.some((receipt) => receipt.status === 'failed')).toBe(false);
+          console.log(
+            'R3 demonstrated: structured stop released the turn; server cancellation remains authoritative.',
+          );
+        } else {
+          expect(result.message).toContain(cause === 'stop' ? 'stopped' : 'timed out');
+          if (cause === 'turn deadline') {
+            expect(receipts).toContainEqual(
+              expect.objectContaining({
+                status: 'failed',
+                reason: 'corner git sync fetch timed out after 120000ms',
+              }),
+            );
+            console.log(
+              'R3 demonstrated: failed receipt — corner git sync fetch timed out after 120000ms; local commit preserved.',
+            );
+          }
+        }
+        expect(() => process.kill(pid, 0)).toThrow();
+        vi.unstubAllEnvs();
+        expect(await git(worktree.path, 'rev-parse', 'HEAD')).toBe(head);
+        expect(await readFile(resolve(worktree.path, 'mine.txt'), 'utf8')).toBe('keep me\n');
+      } finally {
+        vi.useRealTimers();
+        vi.unstubAllEnvs();
+        stop.abort();
+      }
+    },
+  );
+
   it('does not treat an auth failure as an unpushed branch', async () => {
     await expect(
       syncCornerBranch({

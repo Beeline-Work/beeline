@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { View } from 'react-native';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -36,7 +37,7 @@ vi.mock('./HullActionSheet', async () => {
     HullActionSheetRow: (props: any) => ReactModule.createElement('Row', props),
   };
 });
-import { RoomReviewerActions } from './RoomReviewerActions';
+import { RoomReviewerActions, RoomReviewerSurfaceNotice } from './RoomReviewerActions';
 
 const ECHO = 'echo-agent';
 const BEE = 'bee-agent';
@@ -151,7 +152,7 @@ describe('RoomReviewerActions', () => {
     const text = renderer.root
       .findByProps({ testID: 'room-reviewer-auto-merge-warning' })
       .findByType('Text').props.children;
-    expect(text).toEqual(['! ', expect.stringContaining('Auto-merge is on')]);
+    expect(text).toEqual(['! ', expect.stringContaining('This repository allows auto-merge')]);
   });
 
   it('shows no standing warning without a reviewer or with auto-merge off', () => {
@@ -173,7 +174,45 @@ describe('RoomReviewerActions', () => {
     const text = renderer.root
       .findByProps({ testID: 'room-reviewer-auto-merge-picker-warning' })
       .findByType('Text').props.children;
-    expect(text).toEqual(['! ', expect.stringContaining('Auto-merge is on')]);
+    expect(text).toEqual(['! ', expect.stringContaining('This repository allows auto-merge')]);
+  });
+
+  it('shows an inline Room notice when auto-merge becomes allowed for an existing reviewer', () => {
+    let renderer!: ReactTestRenderer;
+    const renderNotice = (
+      allowAutoMerge: boolean,
+      reviewerAgentId?: string,
+      canManage = true,
+      isCorner = false,
+    ) => (
+      <View>
+        <RoomReviewerSurfaceNotice
+          allowAutoMerge={allowAutoMerge}
+          canManage={canManage}
+          isCorner={isCorner}
+          reviewerAgentId={reviewerAgentId}
+        />
+      </View>
+    );
+    act(() => { renderer = create(renderNotice(false, ECHO)); });
+    expect(renderer.root.findAllByProps({ testID: 'room-auto-merge-reviewer-notice' })).toHaveLength(0);
+
+    act(() => renderer.update(renderNotice(true, ECHO)));
+    const notice = renderer.root.findByProps({ testID: 'room-auto-merge-reviewer-notice' });
+    expect(notice.props.accessibilityRole).toBe('alert');
+    const text = notice.findByType('Text').props.children.join('');
+    expect(text).toContain('This repository allows auto-merge');
+    expect(text).toContain("If auto-merge is turned on for a corner's pull request");
+    expect(text).toContain('GitHub merges it as soon as checks pass');
+    expect(text).toContain('before the Beeline reviewer is asked to look');
+    expect(text).toContain("Turn off auto-merge in this repository's GitHub settings");
+
+    act(() => renderer.update(renderNotice(true)));
+    expect(renderer.root.findAllByProps({ testID: 'room-auto-merge-reviewer-notice' })).toHaveLength(0);
+    act(() => renderer.update(renderNotice(true, ECHO, false)));
+    expect(renderer.root.findAllByProps({ testID: 'room-auto-merge-reviewer-notice' })).toHaveLength(0);
+    act(() => renderer.update(renderNotice(true, ECHO, true, true)));
+    expect(renderer.root.findAllByProps({ testID: 'room-auto-merge-reviewer-notice' })).toHaveLength(0);
   });
 
   it('shows no picker warning when the repo does not allow auto-merge', () => {

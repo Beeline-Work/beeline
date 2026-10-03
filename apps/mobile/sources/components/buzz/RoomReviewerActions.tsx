@@ -12,9 +12,49 @@ export type RoomReviewerUpdate = {
   reviewerFallbackIds: string[];
 };
 
-/** What actually happens when a reviewer is configured on an auto-merge repo. */
 const AUTO_MERGE_REVIEWER_WARNING =
-  "Auto-merge is on for this repo: it merges a corner the moment its checks pass, before the reviewer is asked to look. The reviewer has no effect while auto-merge stays on — turn it off in the repo's GitHub settings.";
+  "This repository allows auto-merge. If auto-merge is turned on for a corner's pull request, GitHub merges it as soon as checks pass, before the Beeline reviewer is asked to look. Turn off auto-merge in this repository's GitHub settings to protect reviewer approval.";
+
+export function RoomReviewerAutoMergeNotice({
+  visible,
+  surface = false,
+  testID,
+}: {
+  visible: boolean;
+  surface?: boolean;
+  testID: string;
+}) {
+  if (!visible) return null;
+  return (
+    <View
+      accessibilityRole="alert"
+      style={surface ? styles.surfaceWarning : styles.error}
+      testID={testID}
+    >
+      <Text style={styles.errorText}>! {AUTO_MERGE_REVIEWER_WARNING}</Text>
+    </View>
+  );
+}
+
+export function RoomReviewerSurfaceNotice({
+  allowAutoMerge,
+  canManage,
+  isCorner,
+  reviewerAgentId,
+}: {
+  allowAutoMerge?: boolean;
+  canManage: boolean;
+  isCorner: boolean;
+  reviewerAgentId?: string;
+}) {
+  return (
+    <RoomReviewerAutoMergeNotice
+      visible={Boolean(allowAutoMerge && canManage && !isCorner && reviewerAgentId)}
+      surface
+      testID="room-auto-merge-reviewer-notice"
+    />
+  );
+}
 
 type RoomReviewerActionsProps = {
   agents: readonly RoomViewIdentity[];
@@ -120,25 +160,19 @@ export function RoomReviewerActions({
         }}
         testID="room-reviewer-action"
       />
-      {allowAutoMerge && order.length ? (
-        <View accessibilityRole="alert" style={styles.error} testID="room-reviewer-auto-merge-warning">
-          <Text style={styles.errorText}>! {AUTO_MERGE_REVIEWER_WARNING}</Text>
-        </View>
-      ) : null}
+      <RoomReviewerAutoMergeNotice
+        visible={Boolean(allowAutoMerge && order.length)}
+        testID="room-reviewer-auto-merge-warning"
+      />
       <HullActionSheetModal
         accessibilityLabel="Close reviewer picker"
         dismissOnBackdrop={!busy}
         footer={
           <>
-            {allowAutoMerge ? (
-              <View
-                accessibilityRole="alert"
-                style={styles.error}
-                testID="room-reviewer-auto-merge-picker-warning"
-              >
-                <Text style={styles.errorText}>! {AUTO_MERGE_REVIEWER_WARNING}</Text>
-              </View>
-            ) : null}
+            <RoomReviewerAutoMergeNotice
+              visible={Boolean(allowAutoMerge)}
+              testID="room-reviewer-auto-merge-picker-warning"
+            />
             {error ? (
               <View accessibilityRole="alert" style={styles.error} testID="room-reviewer-error">
                 <Text style={styles.errorText}>! {error}</Text>
@@ -209,6 +243,13 @@ const styles = StyleSheet.create((theme) => ({
     borderTopWidth: StyleSheet.hairlineWidth,
     paddingHorizontal: theme.buzz.space.md,
     paddingVertical: theme.buzz.space.sm,
+  },
+  surfaceWarning: {
+    borderBottomColor: theme.buzz.border,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: theme.buzz.space.md,
+    paddingVertical: theme.buzz.space.sm,
+    backgroundColor: theme.buzz.bgHighlight,
   },
   errorText: {
     ...theme.buzz.type.meta,

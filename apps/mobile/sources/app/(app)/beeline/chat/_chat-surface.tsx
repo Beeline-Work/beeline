@@ -369,7 +369,7 @@ import { RoomRepositoryActions } from '@/components/buzz/RoomRepositoryActions';
 import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { CornerGlyph } from '@/components/buzz/CornerGlyph';
 import { OverflowGlyph } from '@/components/buzz/OverflowGlyph';
-import { RoomReviewerActions } from '@/components/buzz/RoomReviewerActions';
+import { RoomReviewerActions, RoomReviewerSurfaceNotice } from '@/components/buzz/RoomReviewerActions';
 import { EmptyLedgerState, type EmptyLedgerVariant } from '@/components/buzz/EmptyLedgerState';
 import { CornerHeaderAgentText, HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
 import { ChannelHeaderTitle } from '@/components/buzz/ChannelHeaderTitle';
@@ -5817,6 +5817,13 @@ export function BuzzChatSurface({
               </View>
             )}
           </View>
+
+          <RoomReviewerSurfaceNotice
+            allowAutoMerge={roomRepository?.allowAutoMerge}
+            canManage={canManageWorkspace}
+            isCorner={isCorner}
+            reviewerAgentId={roomSurface?.room.reviewerAgentId}
+          />
 
           <KeyboardAvoidingView
             style={styles.keyboardBody}

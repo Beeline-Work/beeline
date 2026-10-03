@@ -5178,7 +5178,6 @@ export class DaemonService {
         input.objective,
         JSON.stringify({
           lifecycle: input.status,
-          checks: 'unknown',
           ...(input.outcome ? { outcome: input.outcome } : {}),
         }),
       ],
@@ -6931,33 +6930,13 @@ export class DaemonService {
         parent: command,
         retainDepth: true,
       });
-      const reviewer = (
-        await db.query<{ reviewer_agent_id: string | null; checks: string; reachable: boolean }>(
-          `SELECT parent.reviewer_agent_id,fact.lifecycle->>'checks' checks,
-            EXISTS (SELECT 1 FROM memberships member WHERE member.room_id=corner.id
-              AND member.identity_id=parent.reviewer_agent_id AND member.removed_at IS NULL)
-            AND EXISTS (SELECT 1 FROM memberships parent_member WHERE parent_member.room_id=parent.id
-              AND parent_member.identity_id=parent.reviewer_agent_id AND parent_member.removed_at IS NULL) reachable
-         FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
-         JOIN corner_facts fact ON fact.corner_id=corner.id WHERE corner.id=$1`,
-          [input.cornerId],
-        )
-      ).rows[0];
-      if (
-        reviewer?.reviewer_agent_id &&
-        reviewer.reviewer_agent_id !== agentId &&
-        reviewer.checks === 'passing' &&
-        reviewer.reachable
-      ) {
-        await createAgentCommand(db, {
-          roomId: input.cornerId,
-          agentId: reviewer.reviewer_agent_id,
-          sourceMessageId: note.id,
-          reason: 'corner_check',
-          parent: command,
-          retainDepth: true,
-        });
-      }
+      await advanceCorner(db, input.cornerId, {
+        kind: 'brief-revised',
+        revision,
+        sourceMessageId: note.id,
+        authorAgentId: agentId,
+        command,
+      });
       return currentCornerBrief(db, input.cornerId);
     });
     this.live.publish({ type: 'invalidate', roomId: input.cornerId, reason: 'corner', agentId });

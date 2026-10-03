@@ -13,7 +13,6 @@ import type { DaemonAttachment, DaemonOperationMap } from '@beeline/api-contract
 import {
   AcpClient,
   isPureRetryNarration,
-  isSilentPromptTimeout,
   type McpServerWire,
   type PromptResult,
   type ToolCallEntry,
@@ -71,7 +70,7 @@ import { harnessIdentityLabel } from './cursor-acp-bridge.js';
 import {
   approvedDeviceGrant,
   deviceGrantResumePrompt,
-  ROOM_PROMPT_INACTIVITY_TIMEOUT_MS,
+  ROOM_PROMPT_BACKSTOP_MS,
 } from './monolith-room-turn.js';
 import type { BodyConfig } from './config.js';
 import { type DaemonApiClient } from './daemon-api-client.js';
@@ -1714,7 +1713,7 @@ export class MonolithCornerTurnLoop {
                 return this.client!.sessionPrompt(
                   this.sessionId!,
                   promptWithImages(prompt, attachmentImageBlocks(delivered, this.acceptsImages())),
-                  ROOM_PROMPT_INACTIVITY_TIMEOUT_MS,
+                  ROOM_PROMPT_BACKSTOP_MS,
                   (delta, full, currentRun, runs) => {
                     trace.firstModelOutput();
                     if (runs) {
@@ -2047,9 +2046,6 @@ export class MonolithCornerTurnLoop {
         void finishTrace('complete').catch(() => undefined);
         return;
       }
-      // A silent session is wedged. Stop it so it no longer holds this corner;
-      // the next turn here opens a fresh one in this same process.
-      if (isSilentPromptTimeout(error)) await this.discardSession().catch(() => undefined);
       const reason = distillTurnFailureReason(error);
       startTraceStats();
       await api.execute('postAgentTurnReceipt', {

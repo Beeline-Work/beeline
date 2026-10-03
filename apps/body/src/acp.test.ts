@@ -2011,7 +2011,7 @@ describe('AcpClient live steering', () => {
       timeoutSpy = vi.spyOn(globalThis, 'setTimeout');
       const started = Date.now();
       await expect(client.sessionPrompt(sessionId, 'go', 200)).rejects.toThrow(
-        'ACP session/prompt timed out after 200ms of inactivity',
+        /turn_backstop: no ACP traffic for .* minutes; last activity: session\/prompt/,
       );
       const elapsed = Date.now() - started;
       expect(timeoutSpy).toHaveBeenCalledWith(expect.any(Function), 200);

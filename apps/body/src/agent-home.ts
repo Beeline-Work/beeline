@@ -35,7 +35,8 @@
  * are rewritten there like Claude's `.claude.json`. The Pi installer chooses
  * that native inventory only when the executable proves it can load it;
  * otherwise `pi-mcp-bridge.ts` republishes the filtered stdio inventory.
- * Isolated homes still exclude `settings.json`. This does NOT touch the #376
+ * Isolated homes exclude operator `settings.json`; Pi receives generated
+ * stream-liveness settings. This does NOT touch the #376
  * credential armor: masked stores (`~/.ssh`, `~/.netrc`, `~/.config/gh`,
  * `~/.config/trusty-squire`, `~/.git-credentials`) are never linked. Imported
  * MCP declarations are classified `local` (copied as-is) or `host` (rewritten
@@ -674,6 +675,18 @@ async function provisionAgentSkillsAndMcp(
     squireScope,
   );
   await provisionPiCustomModelConfig(root, operatorHome, failClosed, openRouterRouting);
+  // Pi 0.84.3 owns byte-level HTTP idleness and retries dropped streams.
+  // Generate only our liveness settings, preserving isolation from operator defaults.
+  if (appliesToHarness(agentKind, 'pi')) {
+    const settings = {
+      httpIdleTimeoutMs: 300_000,
+      retry: { enabled: true, maxRetries: 3, baseDelayMs: 2_000 },
+    };
+    await writeIsolatedHarnessFile(
+      resolve(root, 'pi', 'settings.json'),
+      `${JSON.stringify(settings, null, 2)}\n`,
+    );
+  }
 }
 
 function appliesToHarness(selected: AgentKind | undefined, harness: AgentKind): boolean {

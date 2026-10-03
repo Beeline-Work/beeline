@@ -15,9 +15,9 @@ import {
 import { type SystemEvent } from '@beeline/api-contract/daemon';
 import {
   AcpClient,
-  AcpRequestTimeoutError,
+  AcpTurnBackstopError,
+  TURN_BACKSTOP_MS,
   isPureRetryNarration,
-  isSilentPromptTimeout,
   type AcpPermissionDecision,
   type AcpPermissionRequest,
   type McpServerWire,
@@ -119,7 +119,7 @@ import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js'
 import { WarmTranscript } from './warm-transcript.js';
 import type { RoomSupervisor } from './room-supervisor.js';
 
-export const ROOM_PROMPT_INACTIVITY_TIMEOUT_MS = 180_000;
+export const ROOM_PROMPT_BACKSTOP_MS = TURN_BACKSTOP_MS;
 
 type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
 type RoomRepositoryState = DaemonOperationMap['getRoomRepositoryState']['output'];
@@ -1515,7 +1515,7 @@ export class MonolithRoomTurnLoop {
                     result = await this.client!.sessionPrompt(
                       this.sessionId!,
                       nextPrompt,
-                      ROOM_PROMPT_INACTIVITY_TIMEOUT_MS,
+                      ROOM_PROMPT_BACKSTOP_MS,
                       (delta, full, currentRun) => {
                         trace.firstModelOutput();
                         stream.onChunk(delta, full, currentRun);
@@ -1748,22 +1748,12 @@ export class MonolithRoomTurnLoop {
         void finishTrace('cancelled').catch(() => undefined);
         return;
       }
-      // An inactivity timeout on a turn that already opened a corner is not a
-      // failure: the work moved to the corner, and the Room going quiet is the
-      // correct successful ending — the same one the success path produces for
-      // a corner-opening turn that returns normally. Only the inactivity
-      // timeout is excused; a provider error, a crash, or a stop keeps
-      // reporting exactly as before. The timeout does real work on turns that
-      // genuinely wedge and is not lengthened or removed.
-      if (
-        liveCornerOpened &&
-        error instanceof AcpRequestTimeoutError &&
-        error.inactivity &&
-        error.method === 'session/prompt'
-      ) {
+      // A backstop after opening a corner settles the Room reply through
+      // the existing corner card. Runtime and provider errors still fail.
+      if (liveCornerOpened && error instanceof AcpTurnBackstopError) {
         console.log(
           `[thin-core] monolith Room ${this.options.roomId} turn ${item.id}: ` +
-            'inactivity timeout after opening a corner; the work continues in the corner',
+            'turn_backstop after opening a corner; the work continues in the corner',
         );
         this.options.onCornerOpened?.();
         // The prose the reader watched arrive is the same completion as the
@@ -1802,9 +1792,6 @@ export class MonolithRoomTurnLoop {
         void finishTrace('complete').catch(() => undefined);
         return;
       }
-      // A silent session is wedged. Stop it so it no longer holds this Room;
-      // the next turn here opens a fresh one in this same process.
-      if (isSilentPromptTimeout(error)) await this.discardSession().catch(() => undefined);
       // A failed turn ends owning no live output. Only `settle` dissolves the
       // draft on the way out and a throw never reaches one, so without this the
       // last snapshot the model streamed stays live under a turn the Room has
@@ -1921,7 +1908,7 @@ function openCornerToolCall(calls: readonly ToolCallEntry[]): ToolCallEntry | un
  * True only for a corner this turn actually opened.
  *
  * A completed open is what lets a textless turn settle through the card alone,
- * and what excuses the empty-turn retry and the inactivity timeout, so it asks
+ * and what excuses the empty-turn retry and the turn backstop, so it asks
  * the harness for an affirmative `completed` and accepts nothing weaker. A call
  * still `pending` when the turn ended, or carrying no status at all, opened no
  * corner: read as success it would let a turn that said nothing pass as

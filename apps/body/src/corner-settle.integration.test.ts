@@ -22,11 +22,11 @@ import { migrate } from '../../server/src/database.js';
 import { PhoneService } from '../../server/src/phone-service.js';
 import { DaemonService } from '../../server/src/daemon-service.js';
 import { LiveHub } from '../../server/src/live.js';
-import { AcpClient, AcpRequestTimeoutError, type ToolCallEntry } from './acp.js';
+import { AcpClient, AcpTurnBackstopError, type ToolCallEntry } from './acp.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
-import { MonolithRoomTurnLoop, ROOM_PROMPT_INACTIVITY_TIMEOUT_MS } from './monolith-room-turn.js';
+import { MonolithRoomTurnLoop, ROOM_PROMPT_BACKSTOP_MS } from './monolith-room-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SessionScheduler } from './session-scheduler.js';
 
@@ -288,12 +288,7 @@ describe('a Room turn that opens a corner, read back through the server', () => 
         onToolCalls([OPEN_CORNER_CALL]);
         onChunk(answer, `${narration}\n\n${answer}`, answer);
         await new Promise((resolve) => setImmediate(resolve));
-        throw new AcpRequestTimeoutError(
-          'session/prompt',
-          ROOM_PROMPT_INACTIVITY_TIMEOUT_MS,
-          '',
-          true,
-        );
+        throw new AcpTurnBackstopError(ROOM_PROMPT_BACKSTOP_MS, 'session/prompt');
       },
     });
     expect(cornerCards(view)).toHaveLength(1);

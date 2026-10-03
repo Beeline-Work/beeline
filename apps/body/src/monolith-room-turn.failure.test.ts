@@ -4,10 +4,10 @@ import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { existsSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AcpClient, AcpRequestTimeoutError, type ToolCallEntry } from './acp.js';
+import { AcpClient, AcpTurnBackstopError, type ToolCallEntry } from './acp.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
-import { MonolithRoomTurnLoop, ROOM_PROMPT_INACTIVITY_TIMEOUT_MS } from './monolith-room-turn.js';
+import { MonolithRoomTurnLoop, ROOM_PROMPT_BACKSTOP_MS } from './monolith-room-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SessionScheduler } from './session-scheduler.js';
 
@@ -404,7 +404,7 @@ describe('Room turn failure receipt', () => {
     expect(receipts).not.toContainEqual(expect.objectContaining({ status: 'failed' }));
   });
 
-  it('excuses an inactivity timeout after the turn opened a corner: complete, no failure line', async () => {
+  it('excuses a turn backstop after the turn opened a corner: complete, no failure line', async () => {
     // The production shape (2026-09-15, #ai-study): Charles's turn opened the
     // corner, the Room session then went quiet, and the timeout reported
     // "could not answer" two minutes before the corner reached `done`. The
@@ -412,12 +412,7 @@ describe('Room turn failure receipt', () => {
     // runPrompt() never produces the result the success path reads — so the
     // timeout settles the turn the same quiet, successful way a corner-opening
     // turn that returns normally without text does.
-    const timeout = new AcpRequestTimeoutError(
-      'session/prompt',
-      ROOM_PROMPT_INACTIVITY_TIMEOUT_MS,
-      '',
-      true,
-    );
+    const timeout = new AcpTurnBackstopError(ROOM_PROMPT_BACKSTOP_MS, 'session/prompt');
     const { receipts, posted, cornerOpens } = await runTurn({
       agentCommand: '/fake-agent',
       agentKind: 'codex',
@@ -442,12 +437,7 @@ describe('Room turn failure receipt', () => {
     // session wedged after the corner opened, and the `complete` receipt ended
     // the draft — leaving the card alone and an empty `live_outputs`. The words
     // already read are the same completion as the card, so they settle durably.
-    const timeout = new AcpRequestTimeoutError(
-      'session/prompt',
-      ROOM_PROMPT_INACTIVITY_TIMEOUT_MS,
-      '',
-      true,
-    );
+    const timeout = new AcpTurnBackstopError(ROOM_PROMPT_BACKSTOP_MS, 'session/prompt');
     const { receipts, posted, cornerOpens } = await runTurn({
       agentCommand: '/fake-agent',
       agentKind: 'codex',
@@ -491,12 +481,7 @@ describe('Room turn failure receipt', () => {
     // past its own retract. The same server trouble can refuse the `complete`
     // receipt that would otherwise clean the row up, leaving a half-written
     // answer pulsing under a turn the Room never settled.
-    const timeout = new AcpRequestTimeoutError(
-      'session/prompt',
-      ROOM_PROMPT_INACTIVITY_TIMEOUT_MS,
-      '',
-      true,
-    );
+    const timeout = new AcpTurnBackstopError(ROOM_PROMPT_BACKSTOP_MS, 'session/prompt');
     const { writes, posted } = await runTurn({
       agentCommand: '/fake-agent',
       agentKind: 'codex',
@@ -516,15 +501,10 @@ describe('Room turn failure receipt', () => {
     expect(laneWrites(writes).at(-1)).toBe('retractAgentLiveOutput');
   });
 
-  it('still reports failed when the inactivity timeout hits a turn that opened no corner', async () => {
+  it('still reports failed when the turn backstop hits a turn that opened no corner', async () => {
     // The timeout is doing real work on turns that genuinely wedge. Without a
-    // corner to excuse it, an inactivity timeout keeps its old ending.
-    const timeout = new AcpRequestTimeoutError(
-      'session/prompt',
-      ROOM_PROMPT_INACTIVITY_TIMEOUT_MS,
-      '',
-      true,
-    );
+    // corner to excuse it, a turn backstop keeps its old ending.
+    const timeout = new AcpTurnBackstopError(ROOM_PROMPT_BACKSTOP_MS, 'session/prompt');
     const { receipts, posted, cornerOpens } = await runTurn({
       agentCommand: '/fake-agent',
       agentKind: 'codex',
@@ -534,40 +514,35 @@ describe('Room turn failure receipt', () => {
     const failed = receipts.find((receipt) => receipt.status === 'failed')!;
     expect(failed).toEqual(expect.objectContaining({ requestId: 'ask-1', status: 'failed' }));
     expect(failed.reason).toBe(
-      `ACP session/prompt timed out after ${ROOM_PROMPT_INACTIVITY_TIMEOUT_MS}ms of inactivity`,
+      `turn_backstop: no ACP traffic for 30 minutes; last activity: session/prompt`,
     );
     expect(receipts).not.toContainEqual(expect.objectContaining({ status: 'complete' }));
     expect(posted).toEqual([]);
     expect(cornerOpens).toBe(0);
   });
 
-  it('stops a session silent for the whole window and answers the next turn in a fresh one', async () => {
+  it('cancels a silent turn and answers the next turn in the retained runtime', async () => {
     const { receipts, posted, promptTimeouts, sessionsOpened } = await runTurn({
       agentCommand: '/fake-agent',
       agentKind: 'codex',
       turnCount: 2,
       prompt: async ({ attempt }) => {
         if (attempt === 1)
-          throw new AcpRequestTimeoutError(
-            'session/prompt',
-            ROOM_PROMPT_INACTIVITY_TIMEOUT_MS,
-            '',
-            true,
-          );
+          throw new AcpTurnBackstopError(ROOM_PROMPT_BACKSTOP_MS, 'session/prompt');
         return { stopReason: 'end_turn', updates: [], agentText: 'Back again.', toolCalls: [] };
       },
     });
 
-    expect(promptTimeouts).toEqual([180_000, 180_000]);
+    expect(promptTimeouts).toEqual([1_800_000, 1_800_000]);
     expect(receipts.filter((receipt) => receipt.status !== 'working')).toEqual([
       expect.objectContaining({ requestId: 'ask-1', status: 'failed' }),
       expect.objectContaining({ requestId: 'ask-2', status: 'complete' }),
     ]);
     expect(posted).toEqual([expect.objectContaining({ text: 'Back again.' })]);
-    expect(sessionsOpened).toBe(2);
+    expect(sessionsOpened).toBe(1);
   });
 
-  it('allows a Room model three minutes of inactivity before timing out', async () => {
+  it('allows a Room model thirty minutes of silence before its backstop', async () => {
     const { promptTimeouts, posted } = await runTurn({
       agentCommand: '/opt/harness/pi-acp',
       agentKind: 'pi',
@@ -579,8 +554,8 @@ describe('Room turn failure receipt', () => {
       }),
     });
 
-    expect(promptTimeouts).toEqual([ROOM_PROMPT_INACTIVITY_TIMEOUT_MS]);
-    expect(ROOM_PROMPT_INACTIVITY_TIMEOUT_MS).toBe(180_000);
+    expect(promptTimeouts).toEqual([ROOM_PROMPT_BACKSTOP_MS]);
+    expect(ROOM_PROMPT_BACKSTOP_MS).toBe(1_800_000);
     expect(posted).toEqual([expect.objectContaining({ text: 'A late but valid answer' })]);
   });
 

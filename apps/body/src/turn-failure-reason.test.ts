@@ -1,8 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { ModelSelectionUnavailableError } from './model-config.js';
 import { distillTurnFailureReason, TURN_FAILURE_REASON_MAX } from './turn-failure-reason.js';
+import { AcpRuntimeExitedError, AcpTurnBackstopError, TURN_BACKSTOP_MS } from './acp.js';
+import { classifyTurnSilence, phraseTurnSilence } from '@beeline/api-contract/daemon';
 
 describe('distillTurnFailureReason', () => {
+  it.each([
+    [new AcpRuntimeExitedError('ACP agent pi-acp exited code=7 signal=null'), 'runtime_exited'],
+    [new AcpTurnBackstopError(TURN_BACKSTOP_MS, 'plan'), 'turn_backstop'],
+  ])('keeps the layer cause in the receipt and stalled card', (error, cause) => {
+    const reason = distillTurnFailureReason(error);
+    expect(reason.text).toContain(cause);
+    const card = phraseTurnSilence('Bee', classifyTurnSilence(reason.text, reason.kind));
+    expect(card.consequence).toContain(cause);
+    if (cause === 'turn_backstop') expect(card.consequence).toContain('30 minutes; last activity: plan');
+  });
   it('keeps one line of the harness error and drops the stack', () => {
     const error = new Error('ACP error -32000: provider error 429 concurrency_limit');
     error.stack = `${error.message}\n    at AcpClient.request (/opt/beeline/acp.js:984:20)\n    at async prompt (/opt/beeline/turn.js:1:1)`;

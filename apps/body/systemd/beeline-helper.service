@@ -1,0 +1,39 @@
+[Unit]
+Description=Beeline helper (every agent on this machine)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=notify
+NotifyAccess=all
+Environment=BEELINE_MANAGED_BY_SYSTEMD=1
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.local/bin/beeline daemon --machine
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5s
+RestartSteps=5
+RestartMaxDelaySec=60s
+RestartPreventExitStatus=79
+SuccessExitStatus=79
+WatchdogSec=180s
+CPUWeight=1000
+IOWeight=1000
+Nice=-5
+OOMScoreAdjust=-1000
+OOMPolicy=continue
+TimeoutStartSec=90s
+TimeoutStopSec=90s
+KillMode=control-group
+UMask=0077
+# A desktop-launched user manager may inherit Ubuntu's unprivileged_userns
+# AppArmor profile. Without an explicit transition every agent inherits it too,
+# so /usr/bin/bwrap cannot enter its package-provided bwrap profile.
+# Do not set NoNewPrivileges or PrivateTmp on this outer service: systemd applies
+# either before AppArmorProfile, which blocks this transition. Bubblewrap sets
+# no-new-privs and a private /tmp inside each agent sandbox it creates.
+AppArmorProfile=-unconfined
+
+[Install]
+WantedBy=default.target

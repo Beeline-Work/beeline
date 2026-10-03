@@ -57,7 +57,7 @@ export function nextAgentPresenceTransitionAt(
   for (const presence of Object.values(presences)) {
     const observedAt = presence.observedAt * 1_000;
     const deadlines = [
-      ...(presence.status === 'online' ? [observedAt + AGENT_PRESENCE_STALE_MS] : []),
+      ...(presence.status === 'online' && !presence.held ? [observedAt + AGENT_PRESENCE_STALE_MS] : []),
       observedAt + AGENT_PRESENCE_DORMANT_MS,
     ];
     for (const deadline of deadlines) {

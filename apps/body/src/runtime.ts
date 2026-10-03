@@ -330,19 +330,123 @@ async function reclaimStaleDaemonRecord(configPath: string): Promise<void> {
   await unlink(daemonBirthPath(configPath)).catch(() => undefined);
 }
 
+/** The machine helper hosts every runtime; `daemon --config` hosts exactly one. */
 async function daemonIsThisRuntime(pid: number, configPath: string): Promise<boolean> {
   try {
     const argv = (await readFile(`/proc/${pid}/cmdline`, 'utf8')).split('\0').filter(Boolean);
+    if (isMachineHelperArgv(argv)) return true;
     const flag = argv.lastIndexOf('--config');
     return flag > 0 && argv[flag - 1] === 'daemon' && resolve(argv[flag + 1]!) === resolve(configPath);
   } catch {
     try {
       const { stdout } = await execFileAsync('ps', ['-p', String(pid), '-o', 'command=']);
-      return stdout.includes(' daemon ') && stdout.includes(resolve(configPath));
+      return stdout.includes(' daemon ') &&
+        (stdout.includes(' --machine') || stdout.includes(resolve(configPath)));
     } catch {
       return false;
     }
   }
+}
+
+function isMachineHelperArgv(argv: readonly string[]): boolean {
+  const flag = argv.lastIndexOf('--machine');
+  return flag > 0 && argv[flag - 1] === 'daemon';
+}
+
+/** Where the one machine helper keeps its pid and its per-agent status. */
+export function helperStateDirectory(supervisorRoot: string): string {
+  return resolve(supervisorRoot, 'beeline', 'helper');
+}
+
+export function helperPidPath(supervisorRoot: string): string {
+  return resolve(helperStateDirectory(supervisorRoot), 'helper.pid');
+}
+
+function helperBirthPath(supervisorRoot: string): string {
+  return resolve(helperStateDirectory(supervisorRoot), 'helper.birth');
+}
+
+export async function writeHelperPidRecord(supervisorRoot: string, pid: number): Promise<void> {
+  await mkdir(helperStateDirectory(supervisorRoot), { recursive: true, mode: 0o700 });
+  await writeFile(helperPidPath(supervisorRoot), `${pid}\n`, { mode: 0o600 });
+  const birth = processBirthIdentity(pid);
+  if (birth) await writeFile(helperBirthPath(supervisorRoot), `${birth}\n`, { mode: 0o600 });
+}
+
+export async function clearHelperPidRecordIfPid(supervisorRoot: string, pid: number): Promise<void> {
+  const recorded = Number(
+    (await readFile(helperPidPath(supervisorRoot), 'utf8').catch(() => '')).trim(),
+  );
+  if (recorded !== pid) return;
+  await unlink(helperPidPath(supervisorRoot)).catch(() => undefined);
+  await unlink(helperBirthPath(supervisorRoot)).catch(() => undefined);
+}
+
+/** The live machine helper's pid, or null; a recycled pid is never mistaken for it. */
+export async function runningHelperPid(supervisorRoot: string): Promise<number | null> {
+  const pid = Number(
+    (await readFile(helperPidPath(supervisorRoot), 'utf8').catch(() => '')).trim(),
+  );
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return null;
+  }
+  const recordedBirth = (await readFile(helperBirthPath(supervisorRoot), 'utf8').catch(() => '')).trim();
+  const liveBirth = processBirthIdentity(pid);
+  if (recordedBirth && liveBirth) return recordedBirth === liveBirth ? pid : null;
+  try {
+    const { stdout } = await execFileAsync('ps', ['-p', String(pid), '-o', 'command=']);
+    return stdout.includes(' daemon ') && stdout.includes(' --machine') ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Without a service manager the helper is one detached process too: a running
+ * helper is told to rescan its agents (SIGHUP), otherwise one is started.
+ */
+export async function startMachineHelper(
+  opts: { env?: NodeJS.ProcessEnv; entrypoint?: string } = {},
+): Promise<{ pid: number; started: boolean }> {
+  const env = opts.env ?? process.env;
+  const supervisorRoot = defaultSupervisorRoot(env);
+  const running = await runningHelperPid(supervisorRoot);
+  if (running) {
+    process.kill(running, 'SIGHUP');
+    return { pid: running, started: false };
+  }
+  const directory = helperStateDirectory(supervisorRoot);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const output = openSync(resolve(directory, 'helper.log'), 'a', 0o600);
+  const entrypoint = opts.entrypoint ?? process.argv[1];
+  if (!entrypoint) throw new Error('cannot resolve daemon CLI entrypoint');
+  const child = spawn(process.execPath, [entrypoint, 'daemon', '--machine'], {
+    cwd: directory,
+    env,
+    detached: true,
+    stdio: ['ignore', output, output],
+  });
+  child.unref();
+  closeSync(output);
+  if (!child.pid) throw new Error('helper process did not start');
+  return { pid: child.pid, started: true };
+}
+
+/** `beeline stop` leaves this marker; the machine helper does not host a stopped agent. */
+export function agentStoppedPath(configPath: string): string {
+  return resolve(dirname(configPath), 'stopped');
+}
+
+export async function isAgentStopped(configPath: string): Promise<boolean> {
+  return stat(agentStoppedPath(configPath)).then(() => true, () => false);
+}
+
+export async function setAgentStopped(configPath: string, stopped: boolean): Promise<void> {
+  if (stopped) await writeFile(agentStoppedPath(configPath), `${new Date().toISOString()}\n`, { mode: 0o600 });
+  else await unlink(agentStoppedPath(configPath)).catch(() => undefined);
 }
 
 /**

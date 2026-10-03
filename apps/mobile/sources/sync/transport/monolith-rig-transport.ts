@@ -72,6 +72,8 @@ export type LiveWireEvent =
       agentId: string;
       status: 'online' | 'offline';
       observedAt: number;
+      /** A live helper connection holds this presence; it does not age out. */
+      held?: boolean;
     };
 
 export type MonolithSurfaceEvent = {

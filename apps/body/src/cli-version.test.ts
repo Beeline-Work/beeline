@@ -22,9 +22,10 @@ test('start help describes update-then-start-all, not a single-agent restart', (
       },
     });
     const text = `${result.stdout}${result.stderr}`;
-    expect(text).toContain('Update the helper, then start every');
-    expect(text).toContain('Already-');
-    expect(text).toContain('running agents are left untouched');
+    expect(text).toContain("Update the helper, then have this");
+    expect(text).toContain("machine's one helper process host every");
+    expect(text).toContain('paired agent. Agents it already serves');
+    expect(text).toContain('are left untouched.');
     expect(text).not.toMatch(/RESTART when already running/);
   } finally {
     rmSync(home, { recursive: true, force: true });

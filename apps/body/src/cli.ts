@@ -20,7 +20,6 @@ import { dirname, resolve } from 'node:path';
 import { stdin, stdout } from 'node:process';
 import * as clack from '@clack/prompts';
 import pc from 'picocolors';
-import { loadBodyConfig } from './config.js';
 import { CURSOR_ACP_BRIDGE_FLAG, runCursorAcpStdioServer } from './cursor-acp-bridge.js';
 import {
   runSquireBroker,
@@ -29,67 +28,24 @@ import {
   SQUIRE_FACADE_FLAG,
 } from './squire-host.js';
 import { runSquireTaskProxy } from './squire-task-relay.js';
-import {
-  formatAdapterInstallCommand,
-  formatAgentCommand,
-  installLatestAgentAdapter,
-  latestAdapterInstallCommand,
-} from './agent-command.js';
-import {
-  AGENT_ACCESS_POLICIES,
-  isAgentAccessPolicy,
-  LEGACY_ACCESS_POLICY,
-} from './access-policy.js';
-import {
-  applyRuntimeModelPreflight,
-  resolvePreflightModelSelection,
-} from './runtime-model-validation.js';
-import { modelUnavailableState } from './model-availability.js';
-import { syncAgentModelCatalog } from './model-catalog-sync.js';
-import { ConnectorAssignmentLoop } from './connector-assignments.js';
-import {
-  REGISTRY_MCP_BROKER_FLAG,
-  RegistryMcpHostBroker,
-  runRegistryMcpBroker,
-} from './registry-mcp.js';
-import {
-  InstitutionalMemoryShadowWorker,
-  institutionalMemoryShadowEnabled,
-} from './institutional-memory-shadow-worker.js';
-import { ThinDaemonCore } from './thin-core.js';
+import { AGENT_ACCESS_POLICIES, isAgentAccessPolicy } from './access-policy.js';
+import { REGISTRY_MCP_BROKER_FLAG, runRegistryMcpBroker } from './registry-mcp.js';
 import {
   HELPER_EXIT_CODES,
-  HelperLifecycle,
   installUnhandledRejectionGuard,
-  retryBeforeReady,
   successorRollbackAllowed,
+  type HelperLifecycle,
   type HelperExitReason,
 } from './helper-lifecycle.js';
-import { DEFAULT_DRAIN_DEADLINE_MS } from './room-runtime.js';
-import { activateDaemonTransport, DaemonApiError } from './daemon-api-client.js';
-import { reportInterruptedTurns } from './force-update-journal.js';
-import { ForceUpdateCoordinator } from './force-update.js';
-import {
-  clearDaemonPidRecordIfPid,
-  convergeRuntimeRecordFileModes,
-  findAgentRuntimeConfigPaths,
-  migrateRuntimeRecordAccessPolicy,
-  readRuntimeRecord,
-  resolveRuntimeConfigPath,
-  runtimeAgentCommand,
-  stopRuntimeDaemon,
-  writeDaemonPidRecord,
-} from './runtime.js';
-import { retireRemovedAgent } from './agent-retirement.js';
+import { activateDaemonTransport } from './daemon-api-client.js';
+import { findAgentRuntimeConfigPaths, readRuntimeRecord, setAgentStopped } from './runtime.js';
 import { runStartCommand } from './start-command.js';
 import {
   parseConnectSubscriptions,
-  readMachineId,
   runConnectCommand,
   runConnectFinishCommand,
 } from './connect-command.js';
 import { runUpdateCommand } from './self-update-cli.js';
-import { BUBBLEWRAP_INSTALL_BUDGET_MS, ensureBwrapSandbox } from './bwrap-sandbox.js';
 import {
   activeReleaseId,
   beelineInstallLayout,
@@ -97,53 +53,11 @@ import {
   readInstalledBundleIdentity,
   readUpdateAttempt,
   repairInstallForwarders,
-  settleUpdateAttemptOnStart,
 } from './self-update.js';
-import { clearDaemonStartFailures, settleDaemonStartFailure } from './daemon-failure.js';
-import {
-  SystemdNotifier,
-  startLocalWatchdog,
-  disableAgentService,
-  extendSystemdStartTimeout,
-  installTrustySquireBrokerService,
-  reconcileAgentServices,
-  rewriteAgentServiceUnit,
-} from './systemd.js';
-import {
-  ManagedUpdateDrain,
-  attemptFailureText,
-  gateManagedSuccessor,
-  managedRestartStaggerMs,
-  ManagedUpdateHandoff,
-  withInstallLock,
-  forceInstallMinimum,
-  rollbackFailedSuccessor,
-  runningRuntimeProbeIds,
-  runManagedUpdateWorker,
-} from './managed-update.js';
-import {
-  retryWhileAdapterReinstalls,
-  runUpdateFunctionalProbe,
-} from './update-functional-probe.js';
-import {
-  CURRENT_RELEASE_PROBE_TIMEOUT_MS,
-  probeReleaseInSubprocess,
-  runUpdateProbeCommand,
-  UPDATE_PROBE_COMMAND,
-} from './current-release-probe.js';
-import {
-  reportUpdateRollback,
-  queueUpdateRollbackAlert,
-  clearUpdateRollbackAlert,
-  clearUpdateRollbackAlertIfConfirmed,
-} from './update-rollback-alert.js';
-import { writeDaemonReleaseStatus } from './release-status.js';
-import { runScratchSweep } from './scratch-sweep.js';
-import {
-  disableLaunchdAgentService,
-  installLaunchdTrustySquireBrokerService,
-  reconcileLaunchdAgentServices,
-} from './launchd.js';
+import { rollbackFailedSuccessor, runManagedUpdateWorker } from './managed-update.js';
+import { runUpdateProbeCommand, UPDATE_PROBE_COMMAND } from './current-release-probe.js';
+import { ensureMachineHelper, reloadMachineHelper } from './helper-service.js';
+import { runMachineHelper, standDownAfterRollback } from './machine-helper.js';
 
 function usage(exitCode = 1): void {
   console.error(`
@@ -156,13 +70,14 @@ ${pc.dim('Usage:')}
                                             event kinds it reacts to (e.g. joined);
                                             --access is everyone|creator|allowlist
                                             (default creator)
-  beeline start                             Update the helper, then start every
-                                            paired agent on this host. Already-
-                                            running agents are left untouched.
-                                            Reports started, already running, or
-                                            failed for each.
-  beeline start --agent <agent-pubkey>      Same, for one agent only
-  beeline stop --agent <agent-pubkey>       Stop and disable the supervised agent
+  beeline start                             Update the helper, then have this
+                                            machine's one helper process host every
+                                            paired agent. Agents it already serves
+                                            are left untouched. Reports started,
+                                            already running, or failed for each.
+  beeline start --agent <agent-pubkey>      Same, for one agent only (undoes stop)
+  beeline stop --agent <agent-pubkey>       Stop serving one agent; every other
+                                            agent on this machine keeps serving
   beeline update [--check|--status|--rollback|--force]
                                             Self-update the installed bundle
 
@@ -175,16 +90,7 @@ All other config via env vars (see config.ts).
   process.exit(exitCode);
 }
 
-let daemonFailureRuntimeDir: string | undefined;
 let daemonLifecycle: HelperLifecycle | undefined;
-
-const SCRATCH_SWEEP_INTERVAL_MS = 6 * 60 * 60_000;
-
-function runScratchSweepLogged(runtimeDir: string): void {
-  void runScratchSweep(runtimeDir).catch((error) =>
-    console.error('[body] scratch sweep failed:', error),
-  );
-}
 
 class DaemonExitError extends Error {
   constructor(
@@ -196,639 +102,28 @@ class DaemonExitError extends Error {
   }
 }
 
-async function runStoredDaemon(pathOrPointer: string): Promise<HelperExitReason> {
-  // `--config` may point at the repo-anchored compatibility pointer; every
-  // per-daemon path below (workspace, daemon.pid, Room roots) must hang off the
-  // real runtime directory, not the pointer's.
-  const configPath = await resolveRuntimeConfigPath(pathOrPointer);
-  daemonFailureRuntimeDir = dirname(configPath);
-  // Existing installs converge on the private file modes a fresh runtime
-  // record already gets: defense-in-depth alongside the sandbox mask below,
-  // for the same-machine case file modes alone can actually help with.
-  await convergeRuntimeRecordFileModes(configPath);
-  // One-time, idempotent migration: a runtime record that predates per-agent
-  // access policies gets an explicit `accessPolicy: 'everyone'` stamped on it,
-  // so flipping DEFAULT_ACCESS_POLICY to owner-only never re-gates an
-  // already-paired agent. A record with any explicit policy is untouched.
-  const accessMigration = await migrateRuntimeRecordAccessPolicy(configPath);
-  let runtime = accessMigration.runtime;
-  if (!runtime.transport) {
-    throw new Error('legacy relay runtime is unsupported; reconnect this agent from the app');
-  }
-  const activated = await activateDaemonTransport(configPath);
-  if (!activated) throw new Error('monolith daemon transport activation failed');
-  runtime = activated.runtime;
-  const daemonApi = activated.client;
-  const refreshRuntimeAdapter = async (): Promise<void> => {
-    const kind = runtime.agentKind;
-    if (!kind) return;
-    const install = latestAdapterInstallCommand(kind);
-    if (!install) return;
-    console.log(`[body] refreshing ${kind} adapter: ${formatAdapterInstallCommand(install)}`);
-    await installLatestAgentAdapter(kind);
-  };
+/**
+ * A per-agent unit from before the machine helper started this (new) bundle
+ * as `daemon --agent <key>`. Hand the agent to the machine helper, retire the
+ * per-agent units, and exit with the status those units never restart.
+ */
+async function migrateLegacyAgentUnit(agentPubkey: string): Promise<never> {
+  // Retiring this process's own unit sends it SIGTERM; finish the handoff first.
+  process.on('SIGTERM', () => undefined);
   try {
-    await refreshRuntimeAdapter();
+    const helper = await ensureMachineHelper({ selfAgent: agentPubkey });
+    console.log(
+      `[beeline] agent ${agentPubkey} moved to the machine helper (${helper.supervisor}, pid ${helper.pid})`,
+    );
   } catch (error) {
-    console.error(
-      `[body] adapter refresh failed; validating the installed copy (${error instanceof Error ? error.message : String(error)})`,
+    // Nothing was retired before the helper was running; this unit stays and
+    // the service manager tries again.
+    throw new DaemonExitError(
+      `machine helper did not start: ${error instanceof Error ? error.message : String(error)}`,
+      'failed',
     );
   }
-  const agent = runtimeAgentCommand(runtime);
-  await writeDaemonPidRecord(configPath, process.pid);
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    BUZZ_AGENT_BIN: agent.command,
-    BUZZ_DEV_MCP_BIN: runtime.mcpBinary,
-  };
-  const config = loadBodyConfig({
-    workspaceRoot: resolve(dirname(configPath), 'workspace'),
-    llmEnvFile: runtime.llmEnvFile,
-    env,
-    agent,
-  });
-  // Per-agent access policy is a property of the paired runtime, not the
-  // process env, so inject it here where both are in hand. The supervisor's
-  // per-Room config spread carries it to every Body. A record still carrying
-  // no explicit policy at this point can only be pre-policy (the migration
-  // above stamps every canonical one), so it keeps the frozen legacy
-  // behaviour — never the new pairing default.
-  config.accessPolicy = runtime.accessPolicy ?? LEGACY_ACCESS_POLICY;
-  config.accessOwnerPubkey = runtime.pairedBy;
-  if (runtime.accessAllowlist) config.accessAllowlist = [...runtime.accessAllowlist];
-  if (runtime.accessAutoResponse) config.accessAutoResponse = runtime.accessAutoResponse;
-  if (runtime.externalMcpCapabilities) {
-    config.externalMcpCapabilities = [...runtime.externalMcpCapabilities];
-  }
-  if (runtime.sharedSkills) config.sharedSkills = [...runtime.sharedSkills];
-  // The server's current selection is authoritative for this preflight: a
-  // stale local runtime.json cache (an id already corrected server-side, or
-  // a retired alias) must not re-poison config.modelUnavailable on this
-  // restart just because it never received the correction.
-  const serverModelSelection = await daemonApi
-    .execute('getAgentConfiguration', { agentId: runtime.agent.publicKey })
-    .then((result) =>
-      result.model || result.effort
-        ? { ...(result.model ? { model: result.model } : {}), ...(result.effort ? { effort: result.effort } : {}) }
-        : undefined,
-    )
-    .catch(() => undefined);
-  const preflightModelSelection = resolvePreflightModelSelection(
-    runtime.modelSelection,
-    serverModelSelection,
-  );
-  if (preflightModelSelection) {
-    await applyRuntimeModelPreflight(
-      config,
-      agent,
-      preflightModelSelection,
-      undefined,
-      refreshRuntimeAdapter,
-    );
-    if (!config.modelUnavailable) {
-      console.log('[body] persisted model/effort selection passed live startup validation');
-    } else {
-      console.error(`[body] ${config.modelUnavailable.detail}`);
-    }
-  }
-  // Pinned so corner-session git credential helpers (`corner-read-token.ts`)
-  // can exec this bundle's CLI against the exact runtime record — no state-home
-  // discovery inside the sandbox, where XDG dirs are deliberately relocated.
-  config.runtimeConfigPath = configPath;
-  // OS sandbox for every ACP child (`bwrap-sandbox.ts`). Settled exactly once
-  // here, at daemon start, so an unusable bwrap costs one advisory line rather
-  // than a failed spawn per session — and so the operator learns the state of
-  // the boundary before any Room comes online. Absent bubblewrap is installed
-  // on this one pass: a Room shell is approved only inside that sandbox, so
-  // without it the helper silently has no shell at all. That install does not
-  // come out of the unit's own start budget — an unreachable apt mirror would
-  // otherwise time the unit out and restart into the same install forever — so
-  // the start deadline is extended first, and only when a package command is
-  // really about to run.
-  const sandbox = await ensureBwrapSandbox({
-    ...(runtime.sandbox ? { policy: runtime.sandbox } : {}),
-    stateDir: dirname(configPath),
-    beforeInstall: () => extendSystemdStartTimeout(BUBBLEWRAP_INSTALL_BUDGET_MS),
-  });
-  if (sandbox.path) config.bwrapPath = sandbox.path;
-  else if (sandbox.shellDetail) config.shellUnavailableDetail = sandbox.shellDetail;
-  // Owner-configured credential masks ride the runtime record; the
-  // BUZZY_BODY_SANDBOX_MASK env var is already folded into `config` by
-  // loadBodyConfig. Both are unioned at spawn time in Body.sessionSpawnCommand.
-  if (runtime.sandboxMaskPaths?.length) {
-    config.sandboxMaskPaths = [...(config.sandboxMaskPaths ?? []), ...runtime.sandboxMaskPaths];
-  }
-  const controller = new AbortController();
-  const lifecycle = new HelperLifecycle({ controller });
-  daemonLifecycle = lifecycle;
-  const disposeStopSignals = lifecycle.installSignals();
-
-  // The service manager, never this process, owns resurrection and handoff.
-  const runtimeDir = dirname(configPath);
-  const layout = beelineInstallLayout(process.env);
-  const notifier = new SystemdNotifier();
-  let rollbackAlertDrain: Promise<void> | undefined;
-  const drainRollbackAlert = (channelId: string | undefined): Promise<void> => {
-    if (!channelId) return Promise.resolve();
-    if (rollbackAlertDrain) return rollbackAlertDrain;
-    rollbackAlertDrain = reportUpdateRollback({
-      runtimeDir,
-    })
-      .then(() => undefined)
-      .catch((alertError) =>
-        console.error('[thin-core] automatic rollback alert remains queued:', alertError),
-      )
-      .finally(() => {
-        rollbackAlertDrain = undefined;
-      });
-    return rollbackAlertDrain;
-  };
-  let loadedRelease: string | undefined;
-  let loadedReleaseIdentity: Awaited<ReturnType<typeof readInstalledBundleIdentity>> | undefined;
-  let update: ManagedUpdateHandoff | undefined;
-  let pendingSuccessor = false;
-  let successorRolledBack = false;
-  /** A pending successor is never rolled back for an outage before this. */
-  let attemptDeadlineAt: number | undefined;
-  if (layout) {
-    const settle = await settleUpdateAttemptOnStart(layout);
-    if (settle.kind === 'rolled-back') {
-      await queueUpdateRollbackAlert(runtimeDir, settle.record.releaseId);
-      await drainRollbackAlert(runtime.rooms[0]?.channelId);
-      console.error(
-        `[body] self-update ROLLED BACK: bundle ${describeIdentity(settle.record.to)} never confirmed healthy; ` +
-          `restored ${settle.record.previousReleaseId ?? 'previous release'}`,
-      );
-      throw new DaemonExitError(
-        'stale unconfirmed release rolled back; supervisor must restart',
-        'rolled-back',
-      );
-    } else if (settle.kind === 'pending') {
-      pendingSuccessor = true;
-      attemptDeadlineAt = (await readUpdateAttempt(layout))?.confirmBy;
-    }
-    loadedRelease = await activeReleaseId(layout);
-    // A prior process may have queued a rollback alert that has since been
-    // overtaken by events (this exact release later confirmed active
-    // fleet-wide). Check before this process has any chance to queue an
-    // alert of its own for a failure of ITS OWN — that check happens later
-    // and must never observe this early clear.
-    await clearUpdateRollbackAlertIfConfirmed(runtimeDir, loadedRelease);
-    loadedReleaseIdentity = await readInstalledBundleIdentity(layout);
-    config.daemonReleaseVersion = loadedReleaseIdentity?.version;
-    config.daemonSourceSha = loadedReleaseIdentity?.commit;
-    daemonApi.setHelperIdentity({
-      releaseVersion: loadedReleaseIdentity?.version,
-      sourceSha: loadedReleaseIdentity?.commit,
-    });
-    update = await ManagedUpdateHandoff.create(layout, runtimeDir, Date.now, {
-      requiredProbeIds: [...(await runningRuntimeProbeIds(process.env)), runtime.agent.publicKey],
-    });
-    if (
-      pendingSuccessor &&
-      process.platform === 'linux' &&
-      process.env.BEELINE_SYSTEMD_USER !== '0'
-    ) {
-      // This daemon is the first process running a newly-activated bundle. The
-      // process that activated it may have been the PREVIOUS release (the
-      // managed worker runs from the bundle it replaces), so converge the host
-      // Squire elector here too: the swap does not rewrite or restart the unit
-      // installed by `beeline start`/pairing, and a pre-#1653 host would keep
-      // its PATH-less unit forever. Best-effort — the release is already live.
-      // The agent unit converges the same way, without restarting any agent.
-      await rewriteAgentServiceUnit({ lock: (work) => withInstallLock(layout, work) }).catch((error) => {
-        console.error(
-          `[beeline] agent unit not converged: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      });
-      await installTrustySquireBrokerService().catch((error) => {
-        console.error(
-          `[beeline] host Squire broker unit not converged: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      });
-    } else if (
-      pendingSuccessor &&
-      process.platform === 'darwin' &&
-      process.env.BEELINE_LAUNCHD_USER !== '0'
-    ) {
-      await installLaunchdTrustySquireBrokerService().catch((error) => {
-        console.error(
-          `[beeline] host Squire broker launchd job not converged: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      });
-    }
-  }
-
-  console.log(
-    `[beeline] thin daemon core ${runtime.communityId} starting with ${runtime.rooms.length} Room binding(s)`,
-  );
-  console.log(`[body] agent binary: ${formatAgentCommand(agent)}`);
-  console.log(`[body] ${sandbox.advisory}`);
-
-  // The attach scratch roots (`scratch-sweep.ts`) are settled the moment the
-  // per-agent runtime layout above is: swept once now, then on a fixed
-  // interval for the life of this process.
-  runScratchSweepLogged(runtimeDir);
-  const scratchSweepTimer = setInterval(
-    () => runScratchSweepLogged(runtimeDir),
-    SCRATCH_SWEEP_INTERVAL_MS,
-  );
-  scratchSweepTimer.unref();
-  // Socket-idle is healthy. Keep systemd's local watchdog alive without a
-  // discovery tick or any daemon API read.
-  let lastCoreStatus = 'starting';
-  let currentCore: ThinDaemonCore | undefined;
-  const stopWatchdog = startLocalWatchdog(
-    notifier,
-    () =>
-      `loaded_release=${loadedRelease ?? 'development'}; ${currentCore?.healthStatus() ?? lastCoreStatus}`,
-  );
-
-  let ready = false;
-  let connectorLoop: ConnectorAssignmentLoop | undefined;
-  let registryMcpBroker: RegistryMcpHostBroker | undefined;
-  let institutionalMemoryWorker: InstitutionalMemoryShadowWorker | undefined;
-  let catalogRefresh: Promise<void> | undefined;
-  const refreshCatalog = (): Promise<void> => {
-    catalogRefresh ??= syncAgentModelCatalog({
-      api: daemonApi,
-      agent,
-      agentEnv: config.agentEnv,
-      agentId: runtime.agent.publicKey,
-      workspaceId: runtime.communityId,
-      runtimeDir,
-      ...(runtime.modelSelection ? { runtimeSelection: runtime.modelSelection } : {}),
-      force: true,
-    })
-      .then(() => undefined)
-      .finally(() => {
-        catalogRefresh = undefined;
-      });
-    return catalogRefresh;
-  };
-  let stoppingStatus = 'daemon stopped';
-  let exitReason: HelperExitReason | undefined;
-  try {
-    registryMcpBroker = new RegistryMcpHostBroker(
-      config.operatorHome,
-      fetch,
-      // The one per-call gate a Registry route has: the server's existing
-      // requester-aware resource approval, asked here because the broker
-      // socket — not the harness MCP client — is what every caller reaches.
-      async ({ roomId, requestId, generationId, target, consume, operation }) =>
-        (
-          await daemonApi.execute('authorizeResourceCall', {
-            roomId,
-            requestId,
-            generationId,
-            target,
-            consume,
-            ...(operation ? { operation } : {}),
-          })
-        ).allowed === true,
-    );
-    await registryMcpBroker.start();
-    process.env.BEELINE_REGISTRY_MCP_BROKER_SOCKET = registryMcpBroker.socketPath;
-    let lifecycleRestart: Promise<void> | undefined;
-    const core = new ThinDaemonCore(runtime, configPath, config, {
-      daemonApi,
-      onConfigChanged: refreshCatalog,
-      onRestartRequested: () => {
-        // `/restart` cancels at once, and takes over an update still waiting.
-        if (lifecycleRestart || !lifecycle.quiesce('restart')) return;
-        lifecycleRestart = (async () => {
-          const cancelled = await core.cancelActiveWorkForRestart();
-          stoppingStatus = cancelled
-            ? 'restart requested; active work cancelled'
-            : 'restart requested; no active work';
-          await notifier.stopping(stoppingStatus).catch((error) =>
-            console.error('[thin-core] stopping notification failed:', error),
-          );
-          lifecycle.stop('restart-requested');
-        })().catch((error) => {
-          console.error('[thin-core] requested restart failed:', error);
-          lifecycle.stop('restart-requested');
-        });
-      },
-    });
-    currentCore = core;
-    const forceUpdate = layout ? new ForceUpdateCoordinator({
-      loadedVersion: loadedReleaseIdentity?.version,
-      runtimeDir,
-      interrupt: () => {
-        lifecycle.quiesce('force-update');
-        core.setDrainDeadlineAt(Date.now() + 60_000);
-        return core.interruptForServerMinimum();
-      },
-      install: async (minVersion) => {
-        stoppingStatus = `server requires helper ${minVersion}; installing published release`;
-        await notifier.progress(stoppingStatus);
-        return forceInstallMinimum({
-          layout,
-          minVersion,
-          requiredProbeIds: await runningRuntimeProbeIds(process.env),
-        });
-      },
-      restart: async (desiredRelease) => {
-        const deadlineAt = Date.now() + DEFAULT_DRAIN_DEADLINE_MS;
-        const staggerMs = managedRestartStaggerMs(
-          runtime.agent.publicKey, desiredRelease, deadlineAt,
-        );
-        if (staggerMs > 0) await new Promise((resolve) => setTimeout(resolve, staggerMs));
-        stoppingStatus = `server minimum installed; restarting onto ${desiredRelease}`;
-        await notifier.stopping(stoppingStatus).catch((error) =>
-          console.error('[thin-core] stopping notification failed:', error),
-        );
-        lifecycle.stop('update');
-      },
-      failed: (error) => {
-        // The interrupted-turn journal stays for the next process to report.
-        console.error('[thin-core] forced helper update failed:', error);
-        lifecycle.stop('force-update-failed');
-      },
-    }) : undefined;
-    daemonApi.setForceUpdateListener((minVersion) => {
-      if (!forceUpdate) {
-        console.error('[thin-core] server requires a published helper, but this process has no install layout');
-        lifecycle.stop('stopped');
-        return;
-      }
-      forceUpdate.request(minVersion);
-    });
-    // Busy means a turn is executing right now. An idle helper restarts on the
-    // tick that arms the update; a busy one when its current work finishes.
-    const updateDrain = update
-      ? new ManagedUpdateDrain({
-          update,
-          quiesceIfIdle: () =>
-            !forceUpdate?.active && lifecycle.quiesceUpdateIfIdle(() => core.quiesceForUpdateIfIdle()),
-          activeTurnCount: () => core.activeTurnCount(),
-          restart: async ({ desiredRelease, drainDeadlineAt }) => {
-            core.setDrainDeadlineAt(drainDeadlineAt);
-            const staggerMs = managedRestartStaggerMs(
-              runtime.agent.publicKey,
-              desiredRelease,
-              drainDeadlineAt,
-            );
-            if (staggerMs > 0) await new Promise((resolve) => setTimeout(resolve, staggerMs));
-            stoppingStatus =
-              `update pending, converging; loaded_release=${loadedRelease ?? 'unknown'}; ` +
-              `desired_release=${desiredRelease}; ` +
-              `active work drained; intake quiesced`;
-            await notifier.stopping(stoppingStatus).catch((error) =>
-              console.error('[thin-core] stopping notification failed:', error),
-            );
-            lifecycle.stop('update');
-          },
-          waiting: async ({ desiredRelease }) => {
-            await notifier.progress(
-              `loaded_release=${loadedRelease ?? 'unknown'}; update ready; ` +
-                `active agent work is still running; handoff deferred; ` +
-                `desired_release=${desiredRelease}`,
-            );
-          },
-        })
-      : undefined;
-    // A managed restart that fails after intake closed must not leave a
-    // helper that refuses every turn: it goes back to serving.
-    const tickUpdate = async (): Promise<void> => {
-      try {
-        await updateDrain?.tick();
-      } catch (error) {
-        console.error('[thin-core] managed restart failed; serving again:', error);
-        lifecycle.resumeAfterFailedUpdate(() => core.resumeServing());
-      }
-    };
-    daemonApi.setHelperReleaseListener(({ version, sha }) => {
-      update?.notifyReleaseAvailable(`${version}:${sha}`);
-      void tickUpdate();
-    });
-    // The update check reads the static release manifest, never the server.
-    daemonApi.onLiveOpen(() => void tickUpdate());
-    core.setInteractiveIdleListener(() => {
-      institutionalMemoryWorker?.wake();
-      void tickUpdate();
-    });
-    const result = await core.run({
-      signal: controller.signal,
-      onEstablished: async () => {
-        let functionalProof: Awaited<ReturnType<typeof runUpdateFunctionalProbe>> | undefined;
-        if (layout && pendingSuccessor) {
-          // The release this successor would roll back to; a provider refusal
-          // or ACP turn failure it shares with the successor is not the
-          // successor's fault.
-          const currentReleaseId = (await readUpdateAttempt(layout))?.previousReleaseId;
-          const gate = await gateManagedSuccessor({
-            layout,
-            runtimeDir,
-            loadedRelease,
-            probeId: runtime.agent.publicKey,
-            probe: () =>
-              retryWhileAdapterReinstalls(
-                () =>
-                  runUpdateFunctionalProbe({
-                    config,
-                    runtimeDir,
-                    releaseId: loadedRelease ?? 'unknown',
-                    sandboxRequired: runtime.sandbox !== 'off',
-                    sandboxUnavailableDetail: sandbox.advisory,
-                    ...(currentReleaseId
-                      ? {
-                          compareWithCurrentRelease: async (appeal) => {
-                            console.warn(
-                              `[thin-core] successor probe got no answer from the provider ` +
-                                `(${appeal.reason}); probing the current release ${currentReleaseId} ` +
-                                `for the same outcome`,
-                            );
-                            await extendSystemdStartTimeout(
-                              CURRENT_RELEASE_PROBE_TIMEOUT_MS + 15_000,
-                            );
-                            return probeReleaseInSubprocess({
-                              layout,
-                              releaseId: currentReleaseId,
-                              runtimeConfigPath: configPath,
-                            });
-                          },
-                        }
-                      : {}),
-                  }),
-                {
-                  sleep: async (ms) => {
-                    await extendSystemdStartTimeout(ms + 15_000);
-                    await new Promise<void>((resolve) => setTimeout(resolve, ms));
-                  },
-                },
-              ),
-          });
-          if (gate.kind === 'failed') {
-            successorRolledBack = gate.rolledBack;
-            throw gate.error;
-          }
-          if (gate.kind === 'agent-failed') {
-            if (!config.modelUnavailable)
-              config.modelUnavailable = modelUnavailableState(
-                config.modelSelection ?? runtime.modelSelection ?? {}, gate.error,
-              );
-            console.warn('[thin-core] server-minimum release retained; this agent probe failed:', gate.error);
-          }
-          if (gate.kind === 'agent-unavailable') {
-            if (!config.modelUnavailable) {
-              config.modelUnavailable = modelUnavailableState(
-                config.modelSelection ?? runtime.modelSelection ?? {},
-                gate.error.cause ?? gate.error,
-              );
-            }
-            console.warn(
-              `[thin-core] new release retained; this agent's selected model is unavailable: ${gate.error.message}`,
-            );
-          } else if (gate.kind === 'passed') {
-            functionalProof = gate.proof;
-          }
-          pendingSuccessor = false;
-          // A fresh gate pass proves this update path is healthy right now,
-          // whichever release it names — it supersedes any stale rollback
-          // record from an earlier failed attempt.
-          await clearUpdateRollbackAlert(runtimeDir);
-          if (functionalProof)
-            console.log(
-              `[thin-core] successor functional probe passed on exact release ${loadedRelease}: ` +
-                `${functionalProof?.harness ?? 'unknown'} session/new + turn` +
-                (functionalProof?.modelAnswer === 'unavailable'
-                  ? ` (model answer unavailable: ${functionalProof.modelAnswerReason})`
-                  : ''),
-            );
-        }
-        try {
-          // Interrupted-turn replay waits out an outage on every open
-          // instead of failing the start (or rolling a successor back).
-          await retryBeforeReady(
-            () => reportInterruptedTurns(runtimeDir, daemonApi, runtime.agent.publicKey),
-            {
-              onLinkOpen: (listener) => daemonApi.onLiveOpen(listener),
-              extendStartTimeout: extendSystemdStartTimeout,
-              ...(attemptDeadlineAt !== undefined ? { deadlineAt: attemptDeadlineAt } : {}),
-              signal: controller.signal,
-            },
-          );
-        } catch (error) {
-          if (error instanceof DaemonApiError && error.status === 426 &&
-              error.code === 'update_required' && forceUpdate?.pending) {
-            await forceUpdate.pending;
-            return;
-          }
-          throw error;
-        }
-        await clearDaemonStartFailures(runtimeDir);
-        await writeDaemonReleaseStatus(runtimeDir, runtime.agent.publicKey, loadedReleaseIdentity);
-        await notifier.ready(`ready; loaded_release=${loadedRelease ?? 'development'}`);
-        ready = true;
-        // One bounded harness probe per activation keeps the phone's MODEL /
-        // EFFORT rows current; it never blocks readiness or the Room loop.
-        void syncAgentModelCatalog({
-          api: daemonApi,
-          agent,
-          agentEnv: config.agentEnv,
-          agentId: runtime.agent.publicKey,
-          workspaceId: runtime.communityId,
-          runtimeDir,
-          ...(runtime.modelSelection ? { runtimeSelection: runtime.modelSelection } : {}),
-          ...(config.modelUnavailable
-            ? { startupUnavailable: config.modelUnavailable.unavailable.label }
-            : {}),
-        });
-        // Report the machine identity once per activation so the server can
-        // collapse multiple agents on one physical host into one machine row
-        // in readWorkbench. Best-effort: a failed report does not block
-        // readiness or the Room loop.
-        void readMachineId(process.env)
-          .then(({ machineId, machineName }) =>
-            daemonApi.execute('postAgentMachineReport', { machineId, machineName }),
-          )
-          .then(() => institutionalMemoryWorker?.wake())
-          .catch((error) => console.warn('[body] machine report failed:', error));
-        // The connector work queue drains on the live Connect push.
-        // One loop per daemon process also handles reconnects.
-        connectorLoop ??= new ConnectorAssignmentLoop({
-          api: daemonApi,
-          agentId: runtime.agent.publicKey,
-          registryHome: config.operatorHome,
-          log: (message) => console.log(`[body] connector: ${message}`),
-        });
-        daemonApi.setConnectorAssignmentListener(() => connectorLoop?.wake());
-        connectorLoop.start();
-        // Institutional review is dark unless the host opts into shadow or
-        // live mode. It waits for interactive idleness; the server decides
-        // whether a claimed job is measurement-only or may create an item.
-        if (institutionalMemoryShadowEnabled()) {
-          institutionalMemoryWorker ??= new InstitutionalMemoryShadowWorker({
-            api: daemonApi,
-            agentId: runtime.agent.publicKey,
-            agent,
-            agentEnv: config.agentEnv,
-            ...(runtime.modelSelection ? { modelSelection: runtime.modelSelection } : {}),
-            isInteractiveIdle: () => core.isWorkspaceIdle(),
-            log: (message) => console.log(`[body] institutional memory: ${message}`),
-          });
-          daemonApi.setMemoryJobListener(() => institutionalMemoryWorker?.wake());
-          institutionalMemoryWorker.start();
-        }
-      },
-      onProgress: async (status) => {
-        lastCoreStatus = status;
-        void drainRollbackAlert(core.activeRoomIds()[0] ?? runtime.rooms[0]?.channelId);
-        // Reconciliation refreshes the status; the local timer keeps an idle
-        // connected helper healthy between pushed events.
-        await notifier
-          .progress(`loaded_release=${loadedRelease ?? 'development'}; ${status}`)
-          .catch((error) => console.error('[thin-core] progress notification failed:', error));
-        await tickUpdate();
-      },
-    });
-    if (result === 'agent-removed') {
-      controller.abort();
-      const archivedRuntime = await retireRemovedAgent(runtime);
-      exitReason = 'agent-removed';
-      console.log(
-        `[beeline] agent ${runtime.agent.publicKey} removed; runtime archived at ${archivedRuntime}`,
-      );
-    }
-  } catch (error) {
-    const rolledBack =
-      successorRolledBack ||
-      (layout &&
-        pendingSuccessor &&
-        !ready &&
-        successorRollbackAllowed(error, attemptDeadlineAt) &&
-        // Named, so a sibling daemon's journal can say whose failure reverted
-        // the attempt it shares with this one.
-        (await rollbackFailedSuccessor(layout, runtimeDir, {
-          probeId: runtime.agent.publicKey,
-          failure: attemptFailureText(error),
-        })));
-    if (rolledBack) {
-      console.error('[thin-core] successor failed before READY; previous release restored once');
-      const alertRoom = runtime.rooms[0]?.channelId;
-      await drainRollbackAlert(alertRoom);
-    }
-    throw error;
-  } finally {
-    clearInterval(scratchSweepTimer);
-    stopWatchdog();
-    connectorLoop?.stop();
-    delete process.env.BEELINE_REGISTRY_MCP_BROKER_SOCKET;
-    await registryMcpBroker?.stop();
-    institutionalMemoryWorker?.stop();
-    await notifier.stopping(stoppingStatus).catch(() => undefined);
-    // Only clear the pid record while it still names THIS process — a
-    // self-update handover has already written the replacement's pid there.
-    await clearDaemonPidRecordIfPid(configPath, process.pid);
-    disposeStopSignals();
-  }
-  return exitReason ?? lifecycle.stopReason ?? 'stopped';
+  process.exit(HELPER_EXIT_CODES['unknown-agent']);
 }
 
 async function main(): Promise<void> {
@@ -939,30 +234,22 @@ async function main(): Promise<void> {
     installUnhandledRejectionGuard();
     const configFlag = args.indexOf('--config');
     const agentFlag = args.indexOf('--agent');
-    let configPath = configFlag >= 0 ? args[configFlag + 1] : undefined;
+    const configPath = configFlag >= 0 ? args[configFlag + 1] : undefined;
     const agentPubkey = agentFlag >= 0 ? args[agentFlag + 1] : undefined;
-    if (agentPubkey && process.platform === 'linux') {
-      await reconcileAgentServices({ env: process.env }).catch((error) => {
-        console.error('[beeline] failed to enumerate orphan agent units:', error);
-      });
-    } else if (agentPubkey && process.platform === 'darwin') {
-      await reconcileLaunchdAgentServices({ env: process.env }).catch((error) => {
-        console.error('[beeline] failed to enumerate orphan agent launchd jobs:', error);
-      });
+    if (agentPubkey && !configPath) {
+      if (!/^[0-9a-f]{64}$/i.test(agentPubkey))
+        throw new DaemonExitError(`unknown agent ${agentPubkey}`, 'unknown-agent');
+      await migrateLegacyAgentUnit(agentPubkey.toLowerCase());
     }
-    if (!configPath && agentPubkey) {
-      const configs = await findAgentRuntimeConfigPaths(process.env, process.cwd());
-      configPath = configs.find((candidate) => dirname(candidate).endsWith(agentPubkey));
-    }
-    if (!configPath && agentPubkey) {
-      throw new DaemonExitError(
-        `unknown agent ${agentPubkey}: no durable runtime exists; refusing service restart loop`,
-        'unknown-agent',
-      );
-    }
-    if (!configPath) throw new Error('daemon requires --config <runtime.json> or --agent <pubkey>');
-    const reason = await runStoredDaemon(resolve(configPath));
-    daemonLifecycle?.exit(reason);
+    if (!configPath && !args.includes('--machine'))
+      throw new Error('daemon requires --machine, or --config <runtime.json> for one agent');
+    // `--machine` hosts every paired agent; `--config` hosts exactly one, for
+    // a development checkout or a test that runs one helper by hand.
+    const { reason, lifecycle } = await runMachineHelper(
+      configPath ? { configPaths: [resolve(configPath)] } : {},
+    );
+    daemonLifecycle = lifecycle;
+    lifecycle.exit(reason);
     return;
   }
 
@@ -991,14 +278,13 @@ async function main(): Promise<void> {
     const configPath = configs.find((candidate) => dirname(candidate).endsWith(agentPubkey));
     if (!configPath) throw new Error(`no stored runtime found for agent ${agentPubkey}`);
     const runtime = await readRuntimeRecord(configPath);
-    if (process.platform === 'linux' && process.env.BEELINE_SYSTEMD_USER !== '0') {
-      await disableAgentService(runtime.agent.publicKey);
-    } else if (process.platform === 'darwin' && process.env.BEELINE_LAUNCHD_USER !== '0') {
-      await disableLaunchdAgentService(runtime.agent.publicKey);
-    } else {
-      await stopRuntimeDaemon(configPath, { timeoutMs: 30 * 60_000 });
-    }
-    console.log(`[beeline] agent ${runtime.agent.publicKey} disabled; graceful stop requested`);
+    // The machine helper stops hosting this agent on its rescan and drains
+    // it; every other agent on the machine keeps serving.
+    await setAgentStopped(configPath, true);
+    const reloaded = await reloadMachineHelper();
+    console.log(
+      `[beeline] agent ${runtime.agent.publicKey} stopped${reloaded ? '; graceful stop requested' : ''}`,
+    );
     return;
   }
 
@@ -1006,10 +292,10 @@ async function main(): Promise<void> {
 }
 
 main().catch(async (err) => {
-  // Cover failures before runStoredDaemon reaches its core-level try/catch
-  // (runtime migration, safety/config parsing, sandbox detection). A pending
-  // release that cannot reach READY rolls back once; the service manager starts the
-  // restored anchor. Worker/interactive command failures never touch it.
+  // Cover failures before the machine helper reaches its own handling. A
+  // pending release that cannot reach READY rolls back once, and every agent
+  // is handed back to a unit that can run the restored release.
+  let reason: HelperExitReason = err instanceof DaemonExitError ? err.reason : 'failed';
   if (process.argv[2] === 'daemon') {
     const layout = beelineInstallLayout(process.env);
     const attempt = layout ? await readUpdateAttempt(layout).catch(() => undefined) : undefined;
@@ -1019,6 +305,7 @@ main().catch(async (err) => {
       (await rollbackFailedSuccessor(layout).catch(() => false))
     ) {
       console.error('[thin-core] successor failed during startup; previous release restored once');
+      if (process.argv.includes('--machine')) reason = await standDownAfterRollback();
     }
   }
   // `daemon` is never a human at a keyboard — always the plain, full-detail
@@ -1039,21 +326,6 @@ main().catch(async (err) => {
     console.error(pc.red('[body] fatal:'), err);
   }
   if (process.argv[2] !== 'daemon') process.exit(1);
-  let reason: HelperExitReason = err instanceof DaemonExitError ? err.reason : 'failed';
-  if (daemonFailureRuntimeDir && reason === 'failed') {
-    try {
-      const failure = await settleDaemonStartFailure(daemonFailureRuntimeDir, err);
-      if (failure.distressed) {
-        reason = 'distress';
-        console.error(
-          `[thin-core] daemon start failed ${failure.count} times; service restart stopped. ` +
-            `operator record: ${failure.path}`,
-        );
-      }
-    } catch (recordError) {
-      console.error('[thin-core] could not persist daemon distress record:', recordError);
-    }
-  }
   if (daemonLifecycle) daemonLifecycle.exit(reason);
   else process.exit(HELPER_EXIT_CODES[reason]);
 });

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { assertSchemaCurrent, markSchemaCurrent, migrate, migrateData, PostgresDatabase } from './database.js';
 import { retryMigrationStep } from './migration-retry.js';
 import { databaseConnectionBudget } from './database-budget.js';
@@ -229,7 +230,11 @@ async function main() {
   const schedules = new AgentScheduleLoop(jobsDatabase, (roomId) =>
     live.publish({ type: 'invalidate', roomId, reason: 'schedule' }),
   );
-  const connectionPresence = new ConnectionPresence(database, live);
+  // Each process is its own lease holder: a restarted machine is a new
+  // instance, and the old one's connections expire with its lease.
+  const connectionPresence = new ConnectionPresence(database, live, undefined, undefined, {
+    instanceId: `${process.env.FLY_MACHINE_ID ?? 'local'}:${randomUUID()}`,
+  });
   const mediaExpiryMediaMaximumBytes = Number(
     process.env.MEDIA_MAX_BYTES ?? String(DEFAULT_MEDIA_MAXIMUM_BYTES),
   );

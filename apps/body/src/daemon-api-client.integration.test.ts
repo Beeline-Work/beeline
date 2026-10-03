@@ -467,6 +467,8 @@ describe('daemon API client against the local monolith', () => {
       connectionPresence,
       releaseNotify,
       mediaMaximumBytes: 1024,
+      // The production heartbeat, scaled: ping every 250 ms.
+      liveHeartbeatMs: 250,
       authHandler: mountedAuth.handle,
       github: {
         webhookSecret: 'local-proof-secret',
@@ -891,9 +893,17 @@ createInterface({ input: process.stdin }).on('line', (line) => {
           [AGENT],
         )
       ).rows;
+      const published: string[] = [];
+      const stopWatching = live.subscribe(ROOM, (event) => {
+        if (event.type === 'presence' && event.agentId === AGENT) published.push(event.status);
+      });
       sockets[0]!.close();
       await vi.waitFor(() => expect(connected).toBe(false));
-      expect(await state()).toBe('online');
+      // The connection held the agent's presence; a socket that ended releases
+      // it at once, and the reconnect holds it again.
+      await vi.waitFor(() => expect(published).toContain('offline'));
+      await vi.waitFor(() => expect(published.at(-1)).toBe('online'), { timeout: 5_000 });
+      stopWatching();
       await vi.waitFor(
         () => {
           expect(sockets).toHaveLength(2);
@@ -1049,6 +1059,128 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       for (const [socket, entry] of relayed) {
         socket.destroy();
         entry.upstream.destroy();
+      }
+      await new Promise<void>((resolve) => relay.close(() => resolve()));
+    }
+  });
+
+  it('reconnects an idle helper whose socket silently died and serves the work and release it missed', async () => {
+    // The incident: an idle helper sat for hours on a socket that had silently
+    // died. It performed no operation, so nothing it did could notice; TCP
+    // keepalive was answered by the edge proxy. Only the server's heartbeat
+    // can tell it, and here it must, with no request and no new Room event.
+    const serverPort = Number(new URL(origin).port);
+    const relayed = new Set<{ client: Socket; upstream: Socket }>();
+    let down = false;
+    const relay = createTcpServer((client) => {
+      if (down) {
+        client.destroy();
+        return;
+      }
+      const upstream = connect(serverPort, '127.0.0.1');
+      const pair = { client, upstream };
+      relayed.add(pair);
+      for (const socket of [client, upstream]) socket.on('error', () => undefined);
+      client.on('data', (chunk) => {
+        if (!down) upstream.write(chunk);
+      });
+      upstream.on('data', (chunk) => {
+        if (!down) client.write(chunk);
+      });
+      // A dead path carries no close either: the server dropping its end
+      // never reaches the helper, which must notice on its own.
+      client.on('close', () => {
+        if (!down) upstream.destroy();
+        relayed.delete(pair);
+      });
+      upstream.on('close', () => {
+        if (!down) client.destroy();
+      });
+    });
+    await new Promise<void>((resolve) => relay.listen(0, '127.0.0.1', resolve));
+    const relayOrigin = `http://127.0.0.1:${(relay.address() as AddressInfo).port}`;
+    const exchange = await auth.createDaemonExchange(AGENT);
+    const daemonToken = (await auth.exchangeDaemonToken(exchange.exchangeToken))!.daemonToken;
+    const client = new DaemonApiClient(relayOrigin, daemonToken, AGENT, fetch, undefined, undefined, {
+      // The production deadline is 75 s against a 30 s ping; same ratio here.
+      heartbeatTimeoutMs: 625,
+      handshakeTimeoutMs: 1_000,
+      backoffBaseMs: 100,
+      backoffMaxMs: 400,
+    });
+    const activation = await client.execute('getRoomInbox', { roomId: ROOM, startAtLatest: true });
+    const operations = vi.spyOn(client, 'execute');
+    let connected = false;
+    let replies = Promise.resolve();
+    let answered = 0;
+    const releases: string[] = [];
+    client.setHelperReleaseListener(({ version }) => releases.push(version));
+    const disconnect = client.liveSubscribe(
+      ROOM,
+      activation.cursor,
+      (_items, cursor) => client.updateLiveCursor(ROOM, cursor),
+      (value) => {
+        connected = value;
+      },
+      undefined,
+      (commands) => commands.forEach((command) => {
+        replies = replies.then(async () => {
+          await client.execute('claimAgentCommand', {
+            roomId: ROOM, commandId: command.id, generationId: 'generation-1',
+          });
+          await client.execute('postRoomMessage', {
+            roomId: ROOM, requestId: command.turnRequestId, generationId: 'generation-1',
+            text: `Answer ${answered + 1}`,
+          });
+          answered += 1;
+        });
+      }),
+    );
+    const presence = async () =>
+      (await phone.readRoom(ROOM, HUMAN))?.members.find((member) => member.identity.pubkey === AGENT)
+        ?.presence;
+    try {
+      await vi.waitFor(() => expect(connected).toBe(true));
+      // Idle and healthy past the old 90-second horizon's role: held online.
+      await vi.waitFor(async () => expect(await presence()).toMatchObject({ status: 'online', held: true }));
+      operations.mockClear();
+
+      // The path goes dead: no error, no close, on either side.
+      down = true;
+      const diedAt = Date.now();
+      // Room work arrives while the helper cannot hear it.
+      await phone.execute('sendRoomMessage', { roomId: ROOM, text: '@bee while you were away' }, HUMAN);
+      live.publish({ type: 'invalidate', roomId: ROOM, reason: 'postgres:messages' });
+      live.publish({
+        type: 'invalidate', roomId: ROOM, reason: 'postgres:agent_commands', targetAgentId: AGENT,
+      });
+      // The server misses its pongs and says so: the agent goes offline promptly.
+      await vi.waitFor(async () => expect((await presence())?.status).toBe('offline'), { timeout: 3_000 });
+      // The helper misses the server's pings and drops the socket by itself,
+      // at its own deadline: nothing told it the socket was gone.
+      await vi.waitFor(() => expect(connected).toBe(false), { timeout: 3_000 });
+      expect(Date.now() - diedAt).toBeGreaterThanOrEqual(625 - 250);
+      expect(Date.now() - diedAt).toBeLessThan(625 + 1_000);
+      await releaseNotify.notifyReleaseDelivered({
+        version: 'v0.0.200', sha: 'c'.repeat(40), changelogUrl: 'https://example.test/200',
+      });
+      expect(answered).toBe(0);
+
+      // The path comes back. Nothing else happens: no request, no Room event.
+      down = false;
+      await vi.waitFor(() => expect(answered).toBe(1), { timeout: 10_000 });
+      await vi.waitFor(() => expect(releases).toContain('v0.0.200'), { timeout: 10_000 });
+      await vi.waitFor(async () => expect(await presence()).toMatchObject({ status: 'online', held: true }));
+      // The only operations were serving the missed command, never a probe.
+      expect([...new Set(operations.mock.calls.map(([name]) => name))].sort())
+        .toEqual(['claimAgentCommand', 'postRoomMessage']);
+    } finally {
+      disconnect();
+      await replies;
+      client.closeLive();
+      for (const pair of relayed) {
+        pair.client.destroy();
+        pair.upstream.destroy();
       }
       await new Promise<void>((resolve) => relay.close(() => resolve()));
     }

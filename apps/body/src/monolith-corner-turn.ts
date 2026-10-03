@@ -811,6 +811,7 @@ export class MonolithCornerTurnLoop {
     const registryHostDeclarations = registryMcpHostDeclarations(
       configuration.registryMcpRoutes,
       this.commandContext.path,
+      this.options.config.registryMcpBrokerSocket,
     );
     const mountedHostRoutes = [...grantedHostRoutes, ...Object.keys(registryHostDeclarations)];
     const squireScope = {
@@ -946,7 +947,10 @@ export class MonolithCornerTurnLoop {
           npmCacheDir,
           pnpmStoreDir,
           cargoTargetDir,
-          ...registryMcpHostBindPaths(configuration.registryMcpRoutes),
+          ...registryMcpHostBindPaths(
+            configuration.registryMcpRoutes,
+            this.options.config.registryMcpBrokerSocket,
+          ),
         ],
         devices: grantedDevices,
         maskPaths: [

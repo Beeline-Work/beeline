@@ -178,7 +178,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 17;
+export const REQUIRED_SCHEMA_VERSION = 18;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -1493,6 +1493,26 @@ CREATE TABLE IF NOT EXISTS live_outputs (
 );
 
 CREATE INDEX IF NOT EXISTS live_outputs_agent_presence ON live_outputs(agent_id,updated_at DESC) WHERE kind='presence';
+
+-- One row per agent: the newest live connection a helper holds for it. The
+-- epoch only grows, so a late close of an older socket (on any server
+-- instance) can never release a newer connection.
+CREATE TABLE IF NOT EXISTS agent_connections (
+  agent_id text PRIMARY KEY,
+  epoch bigint NOT NULL,
+  connection_id text NOT NULL,
+  instance_id text NOT NULL,
+  connected_at timestamptz NOT NULL DEFAULT now(),
+  released_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS agent_connections_held ON agent_connections(instance_id) WHERE released_at IS NULL;
+
+-- Each server instance renews its own row; an instance that stops renewing
+-- releases the connections it held, so a crashed server's agents go offline.
+CREATE TABLE IF NOT EXISTS live_server_instances (
+  instance_id text PRIMARY KEY,
+  renewed_at timestamptz NOT NULL DEFAULT now()
+);
 
 CREATE TABLE IF NOT EXISTS room_read_marks (
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,

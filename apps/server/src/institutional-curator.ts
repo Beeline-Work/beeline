@@ -31,7 +31,8 @@ const WORKSPACE_HOST_AVAILABLE_SQL = `EXISTS (
       ON presence.agent_id=member.identity_id AND presence.kind='presence'
     WHERE member.workspace_id=$1 AND member.room_id IS NULL AND member.removed_at IS NULL
       AND presence.body->>'status'='online'
-      AND presence.updated_at>=$2::timestamptz-interval '${DELIVERY_PICKUP_WINDOW_MS} milliseconds'
+      AND (presence.body->>'held'='true'
+        OR presence.updated_at>=$2::timestamptz-interval '${DELIVERY_PICKUP_WINDOW_MS} milliseconds')
   )`;
 
 /** Seconds since `anchor` in which no authorized helper host was available. */

@@ -34,7 +34,7 @@ function spawnReportedConnect() {
   return defaultStreamedRunner(process.execPath, [
     '-e',
     `process.stdout.write(${JSON.stringify(`${line}\n`)}); setInterval(() => {}, 30_000);`,
-  ]);
+  ], undefined, 'agent-1');
 }
 
 type ExecuteCall = { op: string; input: Record<string, unknown> };
@@ -617,7 +617,7 @@ describe('ConnectorAssignmentLoop', () => {
     // helper brings up a fresh Xvfb/x11vnc/websockify/cloudflared rig every
     // five minutes for the daemon's lifetime.
     const connect = await spawnReportedConnect();
-    const claimed = squireConnectSession();
+    const claimed = squireConnectSession('agent-1');
     const api = apiMock([{ kind: 'install', connectorId: 'conn-1' }], {
       connectorId: 'conn-1',
       steps: [{ label: 'waiting for sign-in', status: 'pending' }],
@@ -657,7 +657,7 @@ describe('ConnectorAssignmentLoop', () => {
     // short-circuit. The connect process exiting is that signal, so the phone
     // must not wait out the five-minute recovery interval for it.
     const connect = await spawnReportedConnect();
-    const claimed = squireConnectSession();
+    const claimed = squireConnectSession('agent-1');
     const api = apiMock([{ kind: 'install', connectorId: 'conn-1' }]);
     const armed: (() => void)[] = [];
     let started = 0;
@@ -751,7 +751,7 @@ describe('ConnectorAssignmentLoop', () => {
     // websockify/cloudflared rig under it — alive. Past the ceremony's life the
     // tunnel is no use to anybody, so the next install reclaims the display.
     const connect = await spawnReportedConnect();
-    const claimed = squireConnectSession();
+    const claimed = squireConnectSession('agent-1');
     expect(claimed?.pid).toBeDefined();
     const api = apiMock([{ kind: 'install', connectorId: 'conn-1' }]);
     let started = 0;

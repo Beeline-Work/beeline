@@ -93,17 +93,23 @@ export function senderMayAddressAgent(
  */
 export const AGENT_REACHABLE_HORIZON_MS = 90_000;
 
-/** The same authenticated-evidence verdict used by routing and phone presence. */
+/**
+ * The same authenticated-evidence verdict used by routing and phone presence.
+ * `held` presence belongs to a live, heartbeat-checked helper connection: it
+ * stays online until the server sees that connection end, so it never ages.
+ */
 export function isAgentReachable(
   status: 'online' | 'offline' | undefined,
   observedAtMs: number | undefined,
   now = Date.now(),
+  held = false,
 ): boolean {
   return (
     status === 'online' &&
-    observedAtMs !== undefined &&
-    Number.isFinite(observedAtMs) &&
-    now - observedAtMs < AGENT_REACHABLE_HORIZON_MS
+    (held ||
+      (observedAtMs !== undefined &&
+        Number.isFinite(observedAtMs) &&
+        now - observedAtMs < AGENT_REACHABLE_HORIZON_MS))
   );
 }
 

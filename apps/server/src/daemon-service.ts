@@ -3189,6 +3189,7 @@ export class DaemonService {
           observedAt: number;
           releaseVersion?: string;
           sourceSha?: string;
+          held?: unknown;
         };
         updated_at: Date;
       }>(
@@ -3198,7 +3199,9 @@ export class DaemonService {
     ).rows[0];
     return row
       ? {
-          status: isAgentReachable(row.body.status, row.updated_at.getTime())
+          status: isAgentReachable(
+            row.body.status, row.updated_at.getTime(), Date.now(), row.body.held === true,
+          )
             ? 'online'
             : 'offline',
           observedAt: Math.max(row.body.observedAt, Math.floor(row.updated_at.getTime() / 1_000)),
@@ -3218,6 +3221,7 @@ export class DaemonService {
         observedAt?: number;
         releaseVersion?: string;
         sourceSha?: string;
+        held?: unknown;
       } | null;
     }>(
       `SELECT a.agent_id,lo.body,lo.updated_at
@@ -3238,7 +3242,12 @@ export class DaemonService {
       const observedAt = body?.observedAt;
       const state = !body
         ? 'never-seen'
-        : !isAgentReachable(body.status === 'online' ? 'online' : 'offline', row.updated_at?.getTime())
+        : !isAgentReachable(
+            body.status === 'online' ? 'online' : 'offline',
+            row.updated_at?.getTime(),
+            Date.now(),
+            body.held === true,
+          )
           ? 'offline'
           : 'ready';
       return {

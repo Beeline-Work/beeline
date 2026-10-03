@@ -5,16 +5,16 @@ import {
 } from '@beeline/api-contract/daemon';
 import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import WebSocket from 'ws';
 import { helperVersion, helperVersionHeader } from './helper-version.js';
 import { HostReadBudget, ReadBudgetFullError } from './host-read-budget.js';
 import {
   isNetworkFailure,
-  LiveLink,
   retryAfterMs,
+  type LiveLink,
   type LiveLinkTiming,
   type LiveSocketFactory,
 } from './live-link.js';
+import { MachineLink, type AgentChannel } from './machine-link.js';
 import {
   readRuntimeRecord,
   runtimeDirectory,
@@ -154,8 +154,9 @@ const REQUEST_DEADLINE_MS = 30_000;
 /** Typed client for the complete named daemon operation contract. */
 export class DaemonApiClient {
   private readonly presenceLifecycleId = randomUUID();
-  /** The one live socket; it reconnects by itself for as long as it is wanted. */
-  readonly link: LiveLink;
+  /** This agent's registration on the machine's one live socket. */
+  readonly channel: AgentChannel;
+  readonly machine: MachineLink;
   private inFlight = 0;
   private requestCount = 0;
   private timeoutCount = 0;
@@ -193,26 +194,43 @@ export class DaemonApiClient {
     private readonly daemonToken: string,
     readonly agentId: string,
     private readonly fetchImpl: DaemonFetch = fetch,
-    webSocketFactory: DaemonWebSocketFactory = (url, protocols, options) =>
-      new WebSocket(url, protocols, options),
+    webSocketFactory?: DaemonWebSocketFactory,
     readBudget?: HostReadBudget,
     linkTiming?: Partial<LiveLinkTiming>,
+    /** The process's shared machine socket; a standalone client opens its own. */
+    machine?: MachineLink,
   ) {
     // Test transports may supply their own admission model. The real network
     // transport always takes the machine-wide budget.
     this.readBudget = readBudget ?? (fetchImpl === fetch ? new HostReadBudget(baseUrl) : undefined);
-    this.link = new LiveLink({
-      url: () => this.liveUrl(),
-      protocols: () => [`bearer.${this.daemonToken}`],
-      factory: webSocketFactory,
+    this.machine = machine ?? new MachineLink({
+      baseUrl,
+      ...(webSocketFactory ? { factory: webSocketFactory } : {}),
+      ...(linkTiming ? { timing: linkTiming } : {}),
+    });
+    this.channel = this.machine.attach(agentId, {
+      registration: () => ({
+        token: this.daemonToken,
+        lifecycleId: this.presenceLifecycleId,
+        releaseVersion: this.helperIdentity.releaseVersion,
+        ...(this.helperIdentity.sourceSha ? { sourceSha: this.helperIdentity.sourceSha } : {}),
+      }),
       onOpen: () => this.liveOpened(),
-      onMessage: (data) => this.liveMessage(data),
+      onMessage: (event) => this.liveMessage(event),
       onClose: () => {
         for (const room of this.liveRooms.values()) room.onState?.(false);
       },
+      // A settled removal is learned through the next reconcile's HTTP answer.
+      onRefused: (code) => {
+        if (code === AGENT_REMOVED_CODE) this.roomsChangedListener?.();
+      },
       onUpdateRequired: (minVersion) => this.forceUpdateListener?.(minVersion),
-      ...(linkTiming ? { timing: linkTiming } : {}),
     });
+  }
+
+  /** The machine socket under this agent's registration. */
+  get link(): LiveLink {
+    return this.machine.link;
   }
 
   /** Connection material for the daemon-owned MCP proxy and corner credentials. */
@@ -226,6 +244,7 @@ export class DaemonApiClient {
       releaseVersion: helperVersion(identity.releaseVersion),
       ...(identity.sourceSha ? { sourceSha: identity.sourceSha } : {}),
     };
+    this.machine.setHelperIdentity(identity);
   }
 
   setForceUpdateListener(listener: (minVersion: string) => void): void {
@@ -238,7 +257,7 @@ export class DaemonApiClient {
       inFlight: this.inFlight,
       requests: this.requestCount,
       timeouts: this.timeoutCount,
-      reconnects: this.link.reconnects,
+      reconnects: this.channel.reconnects,
       subscriptionsSent: this.subscriptionCount,
       readQueueDepth: budget?.waiting ?? 0,
       readQueueWaitMs: budget?.totalWaitMs ?? 0,
@@ -247,7 +266,7 @@ export class DaemonApiClient {
 
   /** Called on every live socket open, after resubscription and the wakes. */
   onLiveOpen(listener: () => void): () => void {
-    return this.link.onOpen(listener);
+    return this.channel.onOpen(listener);
   }
 
   /** Add one Room to this agent's shared live socket. */
@@ -284,8 +303,8 @@ export class DaemonApiClient {
     this.sendLiveSubscription(roomId);
     return () => {
       this.liveRooms.delete(roomId);
-      this.link.send(JSON.stringify({ type: 'unsubscribe', roomId }));
-      if (!this.liveRooms.size && !this.roomsChangedListener) this.link.stop();
+      this.channel.send({ type: 'unsubscribe', roomId });
+      if (!this.liveRooms.size && !this.roomsChangedListener) this.channel.stop();
     };
   }
 
@@ -334,9 +353,9 @@ export class DaemonApiClient {
     if (room && cursor) room.cursor = cursor;
   }
 
-  /** Release the long-lived socket when the helper itself is shutting down. */
+  /** Leave the machine socket when this agent's runtime stops. */
   closeLive(): void {
-    this.link.stop();
+    this.channel.stop();
   }
 
   async execute<Name extends keyof DaemonOperationMap>(
@@ -380,7 +399,7 @@ export class DaemonApiClient {
       if (!response.ok) {
         const error = await responseError(response);
         if (error.status === 426 && error.code === 'update_required' && error.minVersion)
-          this.link.requireUpdate(error.minVersion);
+          this.channel.requireUpdate(error.minVersion);
         throw error;
       }
       output = (await response.json()) as Output<Name>;
@@ -392,10 +411,10 @@ export class DaemonApiClient {
         this.timeoutCount += 1;
         // An admitted request that hears nothing for its whole deadline may be
         // riding a dead path; ask the socket. A queued one only waited here.
-        if (admitted) this.link.suspect();
+        if (admitted) this.channel.suspect();
         throw new DaemonApiError(`monolith daemon ${String(name)} timed out`, 408, true, 'deadline_exceeded');
       }
-      if (isNetworkFailure(error)) this.link.suspect();
+      if (isNetworkFailure(error)) this.channel.suspect();
       throw error;
     } finally {
       clearTimeout(deadline);
@@ -406,15 +425,7 @@ export class DaemonApiClient {
   }
 
   private ensureLiveSocket(): void {
-    if (this.liveRooms.size || this.roomsChangedListener) this.link.start();
-  }
-
-  private liveUrl(): string {
-    const liveUrl = new URL('/v1/phone/live', this.baseUrl);
-    liveUrl.protocol = liveUrl.protocol === 'https:' ? 'wss:' : 'ws:';
-    liveUrl.searchParams.set('helperVersion', this.helperIdentity.releaseVersion);
-    if (this.helperIdentity.sourceSha) liveUrl.searchParams.set('sourceSha', this.helperIdentity.sourceSha);
-    return liveUrl.toString();
+    if (this.liveRooms.size || this.roomsChangedListener) this.channel.start();
   }
 
   private liveOpened(): void {
@@ -428,19 +439,7 @@ export class DaemonApiClient {
     this.memoryJobListener?.();
   }
 
-  private liveMessage(data: string): void {
-    let value: unknown;
-    try {
-      value = JSON.parse(data);
-    } catch {
-      return;
-    }
-    if (!value || typeof value !== 'object') return;
-    const event = value as Record<string, unknown>;
-    if (event.type === 'force-update' && typeof event.minVersion === 'string') {
-      this.link.requireUpdate(event.minVersion);
-      return;
-    }
+  private liveMessage(event: Record<string, unknown>): void {
     if (event.type === 'helper-release' && typeof event.version === 'string' &&
         typeof event.sha === 'string') {
       this.helperReleaseListener?.({ version: event.version, sha: event.sha });
@@ -528,17 +527,15 @@ export class DaemonApiClient {
 
   private sendLiveSubscription(roomId: string): void {
     const room = this.liveRooms.get(roomId);
-    if (!room || !this.link.isOpen()) return;
+    if (!room || !this.channel.isOpen()) return;
     this.subscriptionCount += 1;
-    this.link.send(
-      JSON.stringify({
-        type: 'subscribe',
-        roomId,
-        lifecycleId: this.presenceLifecycleId,
-        ...(room.cursor ? { cursor: room.cursor } : {}),
-        ...room.presence,
-      }),
-    );
+    this.channel.send({
+      type: 'subscribe',
+      roomId,
+      lifecycleId: this.presenceLifecycleId,
+      ...(room.cursor ? { cursor: room.cursor } : {}),
+      ...room.presence,
+    });
   }
 }
 
@@ -555,6 +552,7 @@ export interface ActivatedDaemonTransport {
 export async function activateDaemonTransport(
   path: string,
   fetchImpl: DaemonFetch = fetch,
+  machine?: MachineLink,
 ): Promise<ActivatedDaemonTransport | undefined> {
   const runtime = await readRuntimeRecord(path);
   const expectedPath = resolve(
@@ -574,6 +572,10 @@ export async function activateDaemonTransport(
         transport.daemonToken,
         runtime.agent.publicKey,
         fetchImpl,
+        undefined,
+        undefined,
+        undefined,
+        machine,
       ),
     };
   }
@@ -608,6 +610,10 @@ export async function activateDaemonTransport(
       result.daemonToken,
       runtime.agent.publicKey,
       fetchImpl,
+      undefined,
+      undefined,
+      undefined,
+      machine,
     ),
   };
 }

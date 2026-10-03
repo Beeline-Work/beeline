@@ -19,7 +19,7 @@ import {
 } from './self-update.js';
 import { findAgentRuntimeConfigPaths, readRuntimeRecord, runtimeDaemonPid } from './runtime.js';
 import { convergeLaunchdTrustySquireBrokerService } from './launchd.js';
-import { convergeAgentServiceUnit, convergeTrustySquireBrokerService } from './systemd.js';
+import { convergeHelperServiceUnit, convergeTrustySquireBrokerService } from './systemd.js';
 import type { UpdateFunctionalProbeResult } from './update-functional-probe.js';
 import { UpdateFunctionalProbeError } from './update-functional-probe.js';
 import { queueUpdateRollbackAlert } from './update-rollback-alert.js';
@@ -424,9 +424,9 @@ export class ManagedUpdateHandoff {
           env: this.#env,
           log: (line) => console.log(line),
         });
-        // Carry the agent template's OOMPolicy=continue onto a host that
-        // installed before it existed; the restart below applies it.
-        await convergeAgentServiceUnit({
+        // Carry a changed helper unit onto a host that installed an older
+        // one; the restart below applies it.
+        await convergeHelperServiceUnit({
           libDir: this.#layout.libDir,
           env: this.#env,
           log: (line) => console.log(line),

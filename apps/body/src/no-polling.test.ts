@@ -41,13 +41,27 @@ describe('no timer-driven helper server reads', () => {
       if (name === 'claimInstitutionalMemoryJob') return Response.json({ enabled: true, job: null });
       throw new Error(`unexpected daemon operation ${name}`);
     });
-    let socket!: { readyState: number; onopen?: () => void; onclose?: () => void;
-      onmessage?: (event: { data: string }) => void;
-      send: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> };
-    const client = new DaemonApiClient('http://localhost:3000', 'token', staged.runtime.agent.publicKey,
+    const agentId = staged.runtime.agent.publicKey;
+    type FakeSocket = { readyState: number; onopen?: () => void; onclose?: () => void;
+      onmessage?: (event: { data: string }) => void; listeners: Map<string, () => void>;
+      on: (event: string, listener: () => void) => void;
+      send: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn>; terminate: ReturnType<typeof vi.fn> };
+    const opened: FakeSocket[] = [];
+    let socket!: FakeSocket;
+    const client = new DaemonApiClient('http://localhost:3000', 'token', agentId,
       fetchImpl as typeof fetch, () => {
-        socket = { readyState: 0, send: vi.fn(), close: vi.fn() };
-        return socket as unknown as WebSocket;
+        const created: FakeSocket = {
+          readyState: 0, listeners: new Map(), close: vi.fn(), terminate: vi.fn(),
+          on: (event, listener) => created.listeners.set(event, listener),
+          // The server takes the agent's registration on the machine socket.
+          send: vi.fn((raw: string) => {
+            if (JSON.parse(raw).type === 'register')
+              created.onmessage?.({ data: JSON.stringify({ type: 'registered', agentId }) });
+          }),
+        };
+        socket = created;
+        opened.push(created);
+        return created as unknown as WebSocket;
       });
     const config: BodyConfig = { agentBinary: '/nonexistent', agentKind: 'codex',
       agentCommand: '/nonexistent', agentArgs: [], mcpBinary: 'unused', readonlyMcpCommand: '/nonexistent',
@@ -69,13 +83,21 @@ describe('no timer-driven helper server reads', () => {
     for (let i = 0; i < 20; i += 1) await Promise.resolve();
     expect(operations).toContain('getDaemonBootstrap');
     const baseline = [...operations];
-    await vi.advanceTimersByTimeAsync(4 * 60 * 60_000);
+    // Four idle hours on a healthy socket: the server's heartbeat pings it
+    // every 30 seconds. A ping is answered by the socket itself and causes no
+    // read, no reconnect and no reconciliation.
+    for (let elapsed = 0; elapsed < 4 * 60 * 60_000; elapsed += 30_000) {
+      await vi.advanceTimersByTimeAsync(30_000);
+      socket.listeners.get('ping')?.();
+    }
     expect(operations).toEqual(baseline);
-    socket.onmessage?.({ data: JSON.stringify({ type: 'memory-job', roomId: 'room-1' }) });
+    expect(opened).toHaveLength(1);
+    expect(socket.terminate).not.toHaveBeenCalled();
+    socket.onmessage?.({ data: JSON.stringify({ type: 'memory-job', roomId: 'room-1', agentId }) });
     await vi.advanceTimersByTimeAsync(0);
     expect(operations.filter((name) => name === 'claimInstitutionalMemoryJob').length)
       .toBeGreaterThan(baseline.filter((name) => name === 'claimInstitutionalMemoryJob').length);
-    socket.onmessage?.({ data: JSON.stringify({ type: 'connector-assignment' }) });
+    socket.onmessage?.({ data: JSON.stringify({ type: 'connector-assignment', agentId }) });
     await vi.advanceTimersByTimeAsync(0);
     expect(operations.filter((name) => name === 'getConnectorAssignments').length)
       .toBeGreaterThan(baseline.filter((name) => name === 'getConnectorAssignments').length);
@@ -100,7 +122,7 @@ describe('no timer-driven helper server reads', () => {
     // Recovery is the reconnect backoff and the bounded retries, both
     // setTimeout; none of these intervals reads from the server.
     expect(intervals.sort()).toEqual([
-      'cli.ts', // scratch sweep (local disk)
+      'agent-runtime.ts', // scratch sweep (local disk)
       'institutional-memory-shadow-worker.ts', // lease heartbeat while a claimed job runs
       'session-scheduler.ts', // idle session sweep (local)
       'systemd.ts', // local watchdog feed

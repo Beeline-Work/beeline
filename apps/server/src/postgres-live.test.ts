@@ -2,7 +2,11 @@ import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { LiveHub, type LiveEvent } from './live.js';
-import { announceAgentLifecycle, ConnectionPresence } from './connection-presence.js';
+import {
+  announceAgentLifecycle,
+  claimAgentConnection,
+  ConnectionPresence,
+} from './connection-presence.js';
 import {
   notifyAgentConfigChange,
   notifyConnectorAssignment,
@@ -328,6 +332,29 @@ describe('Postgres live fanout', () => {
     expect(received).toEqual([
       expect.objectContaining({ messageId: 'message-id' }),
       expect.objectContaining({ requestId: 'request-id' }),
+    ]);
+  });
+
+  it('relays a newer helper connection epoch to every other server instance', async () => {
+    const agent = 'f'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [agent]);
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const received: LiveEvent[] = [];
+    live.subscribeAll((event) => received.push(event));
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    received.length = 0;
+
+    // Server A accepts the connection against its own hub; B learns through PostgreSQL.
+    const epoch = await claimAgentConnection(database, new LiveHub(), agent, { lifecycleId: 'life' }, {
+      connectionId: 'connection-a', instanceId: 'server-a',
+    });
+    await eventually(() => received.some((event) => event.type === 'agent-connection'));
+    expect(received.filter((event) => event.type === 'agent-connection')).toEqual([
+      { type: 'agent-connection', roomId: '', agentId: agent, epoch },
     ]);
   });
 

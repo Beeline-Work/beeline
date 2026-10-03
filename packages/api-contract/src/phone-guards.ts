@@ -219,6 +219,7 @@ function readPresence(value: unknown): RoomViewMember['presence'] | undefined {
   return {
     status: item.status,
     observedAt: item.observedAt,
+    ...field('held', item.held === true ? (true as const) : undefined),
     ...field('roomId', uuid(item.roomId) ? item.roomId : undefined),
   };
 }
@@ -1186,7 +1187,11 @@ function readChat(value: unknown): ChatListItem | null {
   const presenceStatus = oneOf(presence?.status, ['online', 'offline']);
   const projectedPresence =
     presence && presenceStatus && integer(presence.observedAt)
-      ? { status: presenceStatus, observedAt: presence.observedAt }
+      ? {
+          status: presenceStatus,
+          observedAt: presence.observedAt,
+          ...field('held', presence.held === true ? (true as const) : undefined),
+        }
       : undefined;
   const attentionReason = record(item.attentionReason);
   const projectedAttentionReason =

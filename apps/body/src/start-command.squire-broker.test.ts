@@ -12,20 +12,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const controls = vi.hoisted(() => ({
   installBroker: vi.fn(async () => undefined),
-  installAgent: vi.fn(async () => 4242),
+  installHelper: vi.fn(async () => 4242),
   installLaunchdBroker: vi.fn(async () => undefined),
-  installLaunchdAgent: vi.fn(async () => 5252),
+  installLaunchdHelper: vi.fn(async () => 5252),
   daemonPid: vi.fn(async () => null as number | null),
 }));
 
 vi.mock('./systemd.js', () => ({
   installTrustySquireBrokerService: controls.installBroker,
-  installAgentService: controls.installAgent,
+  installHelperService: controls.installHelper,
+  reloadHelperService: vi.fn(),
 }));
 
 vi.mock('./launchd.js', () => ({
   installLaunchdTrustySquireBrokerService: controls.installLaunchdBroker,
-  installLaunchdAgentService: controls.installLaunchdAgent,
+  installLaunchdHelperService: controls.installLaunchdHelper,
+  launchdAgentLabel: (key: string) => `app.usebeeline.agent.${key}`,
+  reloadLaunchdHelperService: vi.fn(),
 }));
 
 vi.mock('./runtime.js', async (importOriginal) => {
@@ -47,9 +50,9 @@ describe('beeline start installs the host Squire elector', () => {
 
   beforeEach(() => {
     controls.installBroker.mockClear();
-    controls.installAgent.mockClear();
+    controls.installHelper.mockClear();
     controls.installLaunchdBroker.mockClear();
-    controls.installLaunchdAgent.mockClear();
+    controls.installLaunchdHelper.mockClear();
     controls.daemonPid.mockReset().mockResolvedValue(null);
     root = mkdtempSync(resolve(tmpdir(), 'beeline-start-broker-'));
     mkdirSync(resolve(root, 'beeline', 'agents', 'ff'.repeat(32)), { recursive: true });
@@ -79,7 +82,8 @@ describe('beeline start installs the host Squire elector', () => {
     const reports = await start();
 
     expect(reports.map((report) => report.status)).toEqual(['already-running']);
-    expect(controls.installAgent).not.toHaveBeenCalled();
+    // The running helper is only asked to rescan; nothing restarts the agent.
+    expect(controls.installHelper).toHaveBeenCalledTimes(1);
     expect(controls.installBroker).toHaveBeenCalledTimes(1);
   });
 
@@ -87,7 +91,7 @@ describe('beeline start installs the host Squire elector', () => {
     const reports = await start();
 
     expect(reports.map((report) => report.status)).toEqual(['started']);
-    expect(controls.installAgent).toHaveBeenCalledTimes(1);
+    expect(controls.installHelper).toHaveBeenCalledTimes(1);
     expect(controls.installBroker).toHaveBeenCalledTimes(1);
   });
 
@@ -97,10 +101,10 @@ describe('beeline start installs the host Squire elector', () => {
     const reports = await start();
 
     expect(reports.map((report) => report.status)).toEqual(['started']);
-    expect(controls.installAgent).toHaveBeenCalledTimes(1);
+    expect(controls.installHelper).toHaveBeenCalledTimes(1);
   });
 
-  it('uses launchd for the broker and agent on macOS', async () => {
+  it('uses launchd for the broker and the machine helper on macOS', async () => {
     Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
 
     const reports = await start();
@@ -109,8 +113,8 @@ describe('beeline start installs the host Squire elector', () => {
       expect.objectContaining({ status: 'started', pid: 5252 }),
     ]);
     expect(controls.installLaunchdBroker).toHaveBeenCalledTimes(1);
-    expect(controls.installLaunchdAgent).toHaveBeenCalledTimes(1);
+    expect(controls.installLaunchdHelper).toHaveBeenCalledTimes(1);
     expect(controls.installBroker).not.toHaveBeenCalled();
-    expect(controls.installAgent).not.toHaveBeenCalled();
+    expect(controls.installHelper).not.toHaveBeenCalled();
   });
 });

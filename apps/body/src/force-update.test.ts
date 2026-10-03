@@ -35,8 +35,8 @@ describe('server-enforced helper handoff', () => {
       const install = vi.fn(async () => { events.push('install'); return 'release-v0.0.70'; });
       const restart = vi.fn(async () => { events.push('restart'); });
       const coordinator = new ForceUpdateCoordinator({
-        loadedVersion: 'v0.0.69', runtimeDir: root,
-        interrupt: () => { events.push('interrupt'); return [turn]; },
+        loadedVersion: 'v0.0.69',
+        interrupt: () => { events.push('interrupt'); return [{ runtimeDir: root, turns: [turn] }]; },
         install, restart, failed: (error) => { throw error; },
       });
       const socket = new Socket();

@@ -2,21 +2,18 @@ import { basename, dirname } from 'node:path';
 import * as clack from '@clack/prompts';
 import pc from 'picocolors';
 import { formatAgentCommand } from './agent-command.js';
+import { ensureMachineHelper } from './helper-service.js';
 import {
   findAgentRuntimeConfigPaths,
   findRuntimeConfigPaths,
-  launchRuntimeDaemon,
   readRuntimeRecord,
   runtimeAgentCommand,
   runtimeDaemonPid,
   selectRuntimeConfigPaths,
+  setAgentStopped,
+  startMachineHelper,
 } from './runtime.js';
 import { runUpdateCommand } from './self-update-cli.js';
-import {
-  installLaunchdAgentService,
-  installLaunchdTrustySquireBrokerService,
-} from './launchd.js';
-import { installAgentService, installTrustySquireBrokerService } from './systemd.js';
 
 export type AgentStartStatus = 'started' | 'already-running' | 'failed';
 
@@ -35,13 +32,14 @@ export interface AgentStartReport {
 
 export interface StartRuntimeDependencies {
   readPid: typeof runtimeDaemonPid;
-  launch: typeof launchRuntimeDaemon;
+  /** Start the machine helper, or have the running one pick this runtime up. */
+  launch: (configPath: string) => Promise<number>;
   log: (message: string) => void;
 }
 
 const startDefaults: StartRuntimeDependencies = {
   readPid: runtimeDaemonPid,
-  launch: launchRuntimeDaemon,
+  launch: async () => (await startMachineHelper()).pid,
   log: console.log,
 };
 
@@ -59,8 +57,8 @@ function defaultUpdateBundle(): Promise<void> {
 }
 
 /**
- * Launch one stored runtime daemon when it is not already alive.
- * A live daemon for this runtime is a no-op.
+ * Have the machine helper host one stored runtime when nothing serves it yet.
+ * A runtime the helper already serves is a no-op.
  */
 export async function startStoredRuntime(
   configPath: string,
@@ -77,7 +75,7 @@ export async function startStoredRuntime(
     return { status: 'already-running', pid: existingPid };
   }
   const pid = await deps.launch(configPath);
-  report(`[beeline] agent started (pid ${pid})`);
+  report(`[beeline] agent started in the machine helper (pid ${pid})`);
   return { status: 'started', pid };
 }
 
@@ -94,45 +92,20 @@ async function startRuntime(
   const runtime = await readRuntimeRecord(configPath);
   const selectedAgent = runtimeAgentCommand(runtime);
   report(`[body] agent ${runtime.agent.publicKey} binary: ${formatAgentCommand(selectedAgent)}`);
-  if (process.platform === 'linux' && process.env.BEELINE_SYSTEMD_USER !== '0') {
-    try {
-      await installTrustySquireBrokerService();
-    } catch (error) {
-      report(
-        `[beeline] trusty-squire host broker not installed: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-    const existingPid = await runtimeDaemonPid(configPath);
-    if (existingPid) {
-      report(`[beeline] agent already running (pid ${existingPid})`);
-      return { status: 'already-running', pid: existingPid };
-    }
-    const pid = await installAgentService(runtime.agent.publicKey);
-    report(`[beeline] agent daemon supervised by systemd (pid ${pid})`);
-    return { status: 'started', pid };
+  // `start` undoes `stop`: the helper hosts this agent again on its next scan.
+  await setAgentStopped(configPath, false);
+  const existingPid = await runtimeDaemonPid(configPath);
+  if (existingPid) {
+    // Already served. The Squire elector and the machine helper unit are
+    // still converged here: a host on per-agent units migrates on this call.
+    await ensureMachineHelper({ report }).catch((error) =>
+      report(`[beeline] machine helper not converged: ${error instanceof Error ? error.message : String(error)}`));
+    report(`[beeline] agent already running (pid ${existingPid})`);
+    return { status: 'already-running', pid: existingPid };
   }
-  if (process.platform === 'darwin' && process.env.BEELINE_LAUNCHD_USER !== '0') {
-    try {
-      await installLaunchdTrustySquireBrokerService();
-    } catch (error) {
-      report(
-        `[beeline] trusty-squire host broker not installed: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-    const existingPid = await runtimeDaemonPid(configPath);
-    if (existingPid) {
-      report(`[beeline] agent already running (pid ${existingPid})`);
-      return { status: 'already-running', pid: existingPid };
-    }
-    const pid = await installLaunchdAgentService(runtime.agent.publicKey);
-    report(`[beeline] agent daemon supervised by launchd (pid ${pid})`);
-    return { status: 'started', pid };
-  }
-  return startStoredRuntime(configPath, { report });
+  const helper = await ensureMachineHelper({ report });
+  report(`[beeline] agent hosted by the machine helper, supervised by ${helper.supervisor} (pid ${helper.pid})`);
+  return { status: 'started', pid: helper.pid };
 }
 
 function formatAgentReport(report: AgentStartReport): string {

@@ -97,6 +97,7 @@ describe('server readiness', () => {
         activeDbTasks: 0,
         waitingDbTasks: 0,
         errors: { database: 0, invalid: 0, internal: 0, overload: 0 },
+        heartbeatTerminations: 0,
       },
     });
   });

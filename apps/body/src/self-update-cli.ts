@@ -15,6 +15,7 @@ import {
   type AdapterInstallCommand,
   type AgentKind,
 } from './agent-command.js';
+import { helperStatusLines } from './helper-status.js';
 import {
   findAgentRuntimeConfigPaths,
   findRuntimeConfigPaths,
@@ -148,6 +149,9 @@ async function runningDaemonConfigPaths(): Promise<string[]> {
 }
 
 async function printStatus(layout: BeelineInstallLayout): Promise<void> {
+  const [helper, ...agents] = await helperStatusLines();
+  console.log(`${pc.bold('helper')}            ${helper}`);
+  for (const line of agents) console.log(`  ${line}`);
   const installed = await readInstalledBundleIdentity(layout);
   const active = await activeReleaseId(layout);
   const state = await readUpdateState(layout);

@@ -113,6 +113,8 @@ export interface BodyConfig {
    * Absent for standalone/test Bodies: those simply never wire the helper.
    */
   runtimeConfigPath?: string;
+  /** This agent's Registry MCP broker socket; each hosted agent has its own. */
+  registryMcpBrokerSocket?: string;
   /** Host-enforced Room delegation hop limit (always clamped to 1..8 by Body). */
   agentDelegationMaxHops?: number;
   /**

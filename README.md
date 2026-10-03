@@ -138,22 +138,23 @@ corners also mount the release-owned `codegraph` server after its local index is
 | `read_agent_file`                               | Read the agent's approved materialized skills |
 
 The retired private per-agent `MEMORY.md` and `write_memory` tool are not part of the live
-Room/corner runtime. Institutional memory is ON by default on server and Body: host-side review
-records sourced Workspace facts and requester-profile preferences. Each turn receives one
-relevance-selected, command-bound snapshot capped at 8,000 UTF-8 bytes; failures omit the optional
-block. `propose_memory_item` is the active-command-bound write path.
-`BEELINE_INSTITUTIONAL_MEMORY_ENABLED=false` turns live memory off and
+Room/corner runtime. Institutional memory is ON by default on server and Body. No background
+review exists: the answering agent keeps memory current with `search_memory`, `save_memory`,
+`update_memory`, `delete_memory`, and an end-of-turn `report_memory_used`. Each turn receives one
+relevance-selected, command-bound snapshot capped at 1,000 UTF-8 bytes; failures omit the optional
+block. `BEELINE_INSTITUTIONAL_MEMORY_ENABLED=false` turns live memory off and
 `BEELINE_INSTITUTIONAL_MEMORY_SHADOW_ENABLED=false` turns the measurement-only mode off (set both
 to stop the feature entirely). `search_history` intersects every result with the requester,
-answering agent, and complete output audience. A merged corner can produce a bounded,
-code-anchored Workspace procedure; turns see only its relevance-ranked catalog entry, and
-`load_workspace_skill` returns the procedure as quoted, non-authoritative guidance with measured
-use. Generated procedures are never installed as native harness skills. Every Workspace is
-enrolled at the `live` stage by default; the release migration advances existing `shadow`/`pilot`
-rows to `live` and enrolls Workspaces that have no row, so `stage` is only an off switch (`paused`
-stops the curator without unstaging, `off` removes the Workspace from every lane). The server's
-idempotent weekly curator ages and retains items, queues audience-partitioned consolidation on
-authorized user hosts, and honors Workspace job/token budgets.
+answering agent, and complete output audience. `save_skill` and `save_workflow` record Workspace
+procedures; turns see only their relevance-ranked catalog entry, and `load_workspace_skill` returns
+the procedure as quoted, non-authoritative guidance with measured use. Generated procedures are
+never installed as native harness skills. Every Workspace is enrolled at the `live` stage by
+default; the release migration advances existing `shadow`/`pilot` rows to `live` and enrolls
+Workspaces that have no row, so `stage` is only an off switch (`paused` stops the curator without
+unstaging, `off` removes the Workspace from every lane). The server's idempotent weekly curator
+deletes a Workspace fact an agent saved on its own once it goes the Workspace's expiry days
+(default 90) without a save, update, or used report; profile facts, standing orders (facts a person
+asked to keep), skills, and workflows never expire.
 
 `codegraph` — indexed code relationships in repository-backed Rooms and corners:
 
@@ -176,9 +177,10 @@ Rooms run CodeGraph without a file watcher and keep source files read-only; only
 | `update_schedule`, `delete_schedule`                   | Everywhere     | Edit or delete any agent-created schedule in the Room         |
 | `request_grant`                                        | Everywhere     | Ask the correct Room manager or resource owner for access     |
 | `run_granted_command`                                  | Everywhere     | Run a command an approved grant covers, outside the sandbox   |
-| `propose_memory_item`                                  | Live memory    | Propose one sourced fact or requester working preference      |
+| `save_memory`, `update_memory`, `delete_memory`        | Live memory    | Save, replace, or delete one sourced fact at its version      |
+| `report_memory_used`                                   | Live memory    | Report the memory items this turn's answer relied on          |
 | `search_history`                                       | Live memory    | Search history visible to the full output audience            |
-| `load_workspace_skill`                                 | Live memory    | Load one restricted merge-derived Workspace procedure         |
+| `load_workspace_skill`                                 | Live memory    | Load one restricted Workspace procedure                       |
 
 ## The app
 

@@ -293,11 +293,9 @@ describe('LiveLink against a real server and a black-holing proxy', () => {
     const { server, client } = await harness();
     const rooms = vi.fn();
     const connectors = vi.fn();
-    const memory = vi.fn();
     const updateCheck = vi.fn();
     client.setRoomsChangedListener(rooms);
     client.setConnectorAssignmentListener(connectors);
-    client.setMemoryJobListener(memory);
     client.onLiveOpen(updateCheck);
     client.liveSubscribe('room-1', `1000,${'a'.repeat(64)}`);
     for (let open = 1; open <= 2; open++) {
@@ -307,7 +305,6 @@ describe('LiveLink against a real server and a black-holing proxy', () => {
       expect(rooms).toHaveBeenCalledTimes(open);
       expect(rooms).toHaveBeenLastCalledWith();
       expect(connectors).toHaveBeenCalledTimes(open);
-      expect(memory).toHaveBeenCalledTimes(open);
       expect(updateCheck).toHaveBeenCalledTimes(open);
       server.openClients()[0]?.terminate();
     }

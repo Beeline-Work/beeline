@@ -25,10 +25,3 @@ export async function institutionalWorkspaceRolloutStage(
 export function rolloutAllowsLive(stage: InstitutionalRolloutStage | undefined): boolean {
   return stage === undefined || stage === 'pilot' || stage === 'live';
 }
-
-/** A missing row is the default: live. Only `off`/`paused` withhold host jobs. */
-export function rolloutAllowsJobs(stage: InstitutionalRolloutStage | undefined): boolean {
-  return (
-    stage === undefined || stage === 'shadow' || stage === 'pilot' || stage === 'live'
-  );
-}

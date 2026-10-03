@@ -1088,7 +1088,7 @@ CREATE TABLE IF NOT EXISTS institutional_memory_items (
   content_hash text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
-  last_served_at timestamptz,
+  last_used_at timestamptz,
   deleted_at timestamptz,
   CONSTRAINT institutional_memory_items_body_check CHECK (
     (deleted_at IS NULL AND octet_length(convert_to(body,'UTF8')) BETWEEN 1 AND 4000) OR
@@ -1116,6 +1116,9 @@ ALTER TABLE institutional_memory_items
   FOREIGN KEY (created_by_job_id) REFERENCES institutional_memory_jobs(id) ON DELETE SET NULL;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS created_by_command_id text;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS explicit_save boolean NOT NULL DEFAULT false;
+-- An item's age resets only on save, update, or an end-of-turn used report
+-- (last_used_at); being loaded into a snapshot no longer counts as use.
+ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS last_used_at timestamptz;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
 ALTER TABLE institutional_memory_items ADD COLUMN IF NOT EXISTS curated_at timestamptz;
 -- Only a keyword match loads an item into a turn. Rows saved before keywords

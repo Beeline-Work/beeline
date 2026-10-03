@@ -52,10 +52,6 @@ import {
   RegistryMcpHostBroker,
   runRegistryMcpBroker,
 } from './registry-mcp.js';
-import {
-  InstitutionalMemoryShadowWorker,
-  institutionalMemoryShadowEnabled,
-} from './institutional-memory-shadow-worker.js';
 import { ThinDaemonCore } from './thin-core.js';
 import {
   HELPER_EXIT_CODES,
@@ -451,7 +447,6 @@ async function runStoredDaemon(pathOrPointer: string): Promise<HelperExitReason>
   let ready = false;
   let connectorLoop: ConnectorAssignmentLoop | undefined;
   let registryMcpBroker: RegistryMcpHostBroker | undefined;
-  let institutionalMemoryWorker: InstitutionalMemoryShadowWorker | undefined;
   let catalogRefresh: Promise<void> | undefined;
   const refreshCatalog = (): Promise<void> => {
     catalogRefresh ??= syncAgentModelCatalog({
@@ -610,7 +605,6 @@ async function runStoredDaemon(pathOrPointer: string): Promise<HelperExitReason>
     // The update check reads the static release manifest, never the server.
     daemonApi.onLiveOpen(() => void tickUpdate());
     core.setInteractiveIdleListener(() => {
-      institutionalMemoryWorker?.wake();
       void tickUpdate();
     });
     const result = await core.run({
@@ -748,7 +742,6 @@ async function runStoredDaemon(pathOrPointer: string): Promise<HelperExitReason>
           .then(({ machineId, machineName }) =>
             daemonApi.execute('postAgentMachineReport', { machineId, machineName }),
           )
-          .then(() => institutionalMemoryWorker?.wake())
           .catch((error) => console.warn('[body] machine report failed:', error));
         // The connector work queue drains on the live Connect push.
         // One loop per daemon process also handles reconnects.
@@ -760,22 +753,6 @@ async function runStoredDaemon(pathOrPointer: string): Promise<HelperExitReason>
         });
         daemonApi.setConnectorAssignmentListener(() => connectorLoop?.wake());
         connectorLoop.start();
-        // Institutional review is dark unless the host opts into shadow or
-        // live mode. It waits for interactive idleness; the server decides
-        // whether a claimed job is measurement-only or may create an item.
-        if (institutionalMemoryShadowEnabled()) {
-          institutionalMemoryWorker ??= new InstitutionalMemoryShadowWorker({
-            api: daemonApi,
-            agentId: runtime.agent.publicKey,
-            agent,
-            agentEnv: config.agentEnv,
-            ...(runtime.modelSelection ? { modelSelection: runtime.modelSelection } : {}),
-            isInteractiveIdle: () => core.isWorkspaceIdle(),
-            log: (message) => console.log(`[body] institutional memory: ${message}`),
-          });
-          daemonApi.setMemoryJobListener(() => institutionalMemoryWorker?.wake());
-          institutionalMemoryWorker.start();
-        }
       },
       onProgress: async (status) => {
         lastCoreStatus = status;
@@ -821,7 +798,6 @@ async function runStoredDaemon(pathOrPointer: string): Promise<HelperExitReason>
     connectorLoop?.stop();
     delete process.env.BEELINE_REGISTRY_MCP_BROKER_SOCKET;
     await registryMcpBroker?.stop();
-    institutionalMemoryWorker?.stop();
     await notifier.stopping(stoppingStatus).catch(() => undefined);
     // Only clear the pid record while it still names THIS process — a
     // self-update handover has already written the replacement's pid there.

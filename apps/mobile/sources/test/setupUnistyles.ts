@@ -1,5 +1,5 @@
 import React from 'react';
-import { vi } from 'vitest';
+import { beforeEach, vi } from 'vitest';
 import { beelineThemes } from '../buzz/groknight';
 
 (globalThis as typeof globalThis & { __DEV__?: boolean }).__DEV__ = false;
@@ -91,3 +91,26 @@ vi.mock('react-native-unistyles', () => ({
   },
   useUnistyles: () => ({ theme }),
 }));
+
+// Draft component tests use public test addressing; identity-storage/session
+// suites retain their own real modules and platform mocks.
+vi.mock('@/buzz/draft-identity', () => ({
+  useDraftIdentity: (explicit?: string | null) =>
+    explicit === undefined ? 'test-viewer' : explicit,
+}));
+const draftTestValues = vi.hoisted(() => new Map<string, string>());
+beforeEach(() => draftTestValues.clear());
+vi.mock('@react-native-async-storage/async-storage', () => {
+  const values = draftTestValues;
+  return {
+    default: {
+      getItem: vi.fn(async (key: string) => values.get(key) ?? null),
+      setItem: vi.fn(async (key: string, value: string) => {
+        values.set(key, value);
+      }),
+      removeItem: vi.fn(async (key: string) => {
+        values.delete(key);
+      }),
+    },
+  };
+});

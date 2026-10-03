@@ -1,3 +1,4 @@
+import { useTextDraft } from '@/buzz/use-text-draft';
 import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -21,22 +22,22 @@ export type PollDraft = {
 
 export function CreatePollSheet({
   visible,
+  draftContext = 'global',
   busy,
   onClose,
   onCreate,
 }: {
   visible: boolean;
+  draftContext?: string;
   busy: boolean;
   onClose: () => void;
-  onCreate: (draft: PollDraft) => void;
+  onCreate: (draft: PollDraft) => Promise<boolean>;
 }) {
-  const [prompt, setPrompt] = useState('');
-  const [options, setOptions] = useState(['', '']);
+  const [prompt, setPrompt, promptDraft] = useTextDraft(`poll:${draftContext}:prompt`, '');
+  const [options, setOptions, optionsDraft] = useTextDraft(`poll:${draftContext}:options`, ['', '']);
   const [ttlSeconds, setTtlSeconds] = useState<number>(3600);
   useEffect(() => {
     if (!visible) {
-      setPrompt('');
-      setOptions(['', '']);
       setTtlSeconds(3600);
     }
   }, [visible]);
@@ -60,16 +61,22 @@ export function CreatePollSheet({
               disabled={busy || !ready}
               label="Create poll"
               loading={busy}
-              onPress={() =>
-                onCreate({
+              onPress={async () => {
+                const clearPrompt = promptDraft.capture();
+                const clearOptions = optionsDraft.capture();
+                const succeeded = await onCreate({
                   prompt: prompt.trim(),
                   options: options.map((option) => ({
                     label: option.trim(),
                     consequence: option.trim(),
                   })),
                   ttlSeconds,
-                })
-              }
+                });
+                if (succeeded) {
+                  clearPrompt();
+                  clearOptions();
+                }
+              }}
               testID="create-poll-submit"
               variant="primary"
             />

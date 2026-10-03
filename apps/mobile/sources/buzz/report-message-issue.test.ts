@@ -23,6 +23,7 @@ describe('Report issue', () => {
       placeholder: REPORT_ISSUE_PROMPT.placeholder,
       confirmText: 'Report',
       cancelText: 'Cancel',
+    draft: { context: 'report:room-1:msg-7', onSubmitted: expect.any(Function) },
     });
     expect(d.report).toHaveBeenCalledWith({
       roomId: 'room-1',

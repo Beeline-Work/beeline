@@ -14,6 +14,7 @@ const roomWire = vi.hoisted(() => ({ listener: undefined as any }));
 vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ register: async (_: unknown, listener: unknown) => { roomWire.listener = listener; return () => undefined; } }) }));
 
 const phoneOperation = vi.hoisted(() => vi.fn());
+const publishMessage = vi.hoisted(() => vi.fn<(event: { text: string }) => Promise<unknown>>());
 const modalConfirm = vi.hoisted(() => vi.fn());
 const openCornerBriefViewer = vi.hoisted(() => vi.fn());
 /** Scroll calls the transcript makes on its list, in order. */
@@ -24,6 +25,7 @@ vi.mock('react-native', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
+    AppState: { addEventListener: () => ({ remove: () => undefined }) },
     FlatList: ReactModule.forwardRef((props: any, ref: any) => {
       ReactModule.useImperativeHandle(ref, () => ({
         scrollToEnd: () => listScrolls.push('end'),
@@ -141,8 +143,8 @@ vi.mock('@/sync/transport', () => ({
     async composeMessage({ text }: { sessionId: string; text: string }) {
       return { id: 'sent-1', created_at: 9, text };
     }
-    async publishPreparedMessage() {
-      return {};
+    async publishPreparedMessage(event: { text: string }) {
+      return publishMessage(event);
     }
   },
 }));
@@ -160,6 +162,8 @@ import {
   openArtifactInDesktopWorkPane,
 } from '@/buzz/desktop-artifact-pane';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { textDraftKey } from '@/buzz/text-draft-store';
 import { DesktopRoomInspector } from './DesktopRoomInspector';
 import { buildChannelReferenceIndex } from '@/buzz/channel-reference';
 
@@ -291,6 +295,7 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
   phoneOperation.mockReset();
+  publishMessage.mockReset().mockResolvedValue({});
   modalConfirm.mockReset();
   listScrolls.length = 0;
 });
@@ -812,6 +817,33 @@ describe('DesktopRoomInspector work pane', () => {
     expect(tree.root.findAllByType('OrdinaryLedgerMessage' as any)).toHaveLength(2);
     expect(client.history).not.toHaveBeenCalled();
     act(() => tree.unmount());
+  });
+
+  it('Reproduction draft-send-R1: keeps only appended typing after a delayed send succeeds', async () => {
+    const detail = { ...room(), room: corners[0].corner, parent: room().room } as any;
+    const client = { room: vi.fn(async () => detail) } as any;
+    (loadBuzzIdentity as any).mockResolvedValue({ pubkey: person.pubkey });
+    let finish!: (value: unknown) => void;
+    publishMessage.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const tree = await render(props({ client, selectedCornerId: 'working' }));
+    const composer = () => tree.root.findByType('ConversationComposer' as any);
+    try {
+      await act(async () => composer().props.onChangeText('already sent'));
+      let pending!: Promise<void>;
+      await act(async () => { pending = composer().props.onSend(); });
+      await act(async () => composer().props.onChangeText('already sent next'));
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 550)); });
+      await act(async () => { finish({}); await pending; });
+      console.log('Reproduction draft-send-R1: delayed send + append → composer', JSON.stringify(composer().props.value));
+      expect(composer().props.value).toBe(' next');
+      const key = textDraftKey(person.pubkey, 'inspector-composer:working');
+      expect(await AsyncStorage.getItem(key)).toBe(JSON.stringify(' next'));
+      await act(async () => { await composer().props.onSend(); });
+      expect(publishMessage.mock.calls.map(([event]) => event.text)).toEqual(['already sent', 'next']);
+      expect(composer().props.value).toBe('');
+      expect(await AsyncStorage.getItem(key)).toBeNull();
+      console.log('Demonstrated draft-send-R1: second Send posts only "next"; UI and stored draft then empty.');
+    } finally { act(() => tree.unmount()); }
   });
 
   /**

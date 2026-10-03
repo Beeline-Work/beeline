@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const focus = vi.hoisted(() => vi.fn());
 
 vi.mock('react-native', () => ({
+  AppState: { addEventListener: () => ({ remove: () => undefined }) },
   Platform: { OS: 'ios' },
   TextInput: () => null,
 }));

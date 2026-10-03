@@ -1,3 +1,4 @@
+import { useTextDraft } from '@/buzz/use-text-draft';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -30,7 +31,10 @@ export default function CreateWorkspace() {
   const createAttempted = useRef(false);
   const confirmedName = useRef<string | null>(null);
   const [identity, setIdentity] = useState<Identity | null>(null);
-  const [workspaceName, setWorkspaceName] = useState('');
+  const [workspaceName, setWorkspaceName, workspaceDraft] = useTextDraft('create-workspace:name',
+    '',
+    identity?.publicKey ?? null,
+  );
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,6 +58,7 @@ export default function CreateWorkspace() {
     if (!identity || !name || working) return;
     setWorking(true);
     setError(null);
+    const clearWorkspace = workspaceDraft.capture();
     const firstAttempt = !createAttempted.current;
     createAttempted.current = true;
     try {
@@ -65,6 +70,7 @@ export default function CreateWorkspace() {
         await monolithPhoneOperation('updateWorkspace', { workspaceId, name });
         confirmedName.current = name;
       }
+      clearWorkspace();
       await saveActiveCommunityId(identity.publicKey, created.id);
       enterWorkspaceRoom(workspaceId, created.roomId ?? null);
     } catch (reason) {
@@ -73,7 +79,7 @@ export default function CreateWorkspace() {
       );
       setWorking(false);
     }
-  }, [identity, workspaceId, workspaceName, working]);
+  }, [identity, workspaceId, workspaceName, workspaceDraft, working]);
 
   const back = () => {
     if (router.canGoBack()) router.back();

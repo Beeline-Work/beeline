@@ -14,6 +14,7 @@ vi.mock('react-native', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
+    AppState: { addEventListener: () => ({ remove: () => undefined }) },
     Pressable: host('Pressable'),
     ScrollView: host('ScrollView'),
     Text: host('Text'),

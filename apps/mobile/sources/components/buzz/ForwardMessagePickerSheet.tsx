@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useTextDraft } from '@/buzz/use-text-draft';
+import React, { useMemo } from 'react';
 import { ScrollView, Text, TextInput, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { ForwardTarget, ForwardTargetGroup } from '@/buzz/message-forward';
@@ -18,6 +19,7 @@ type ForwardMessagePickerSheetProps = {
   onForward: (target: ForwardTarget) => void;
   targets: readonly ForwardTarget[] | null;
   visible: boolean;
+  draftContext?: string;
 };
 
 const SECTIONS: readonly { group: ForwardTargetGroup; label: string }[] = [
@@ -33,13 +35,10 @@ export function ForwardMessagePickerSheet({
   onForward,
   targets,
   visible,
+  draftContext = 'global',
 }: ForwardMessagePickerSheetProps) {
   const { theme } = useUnistyles();
-  const [query, setQuery] = useState('');
-
-  useEffect(() => {
-    if (!visible) setQuery('');
-  }, [visible]);
+  const [query, setQuery] = useTextDraft(`forward-search:${draftContext}`, '');
 
   const filteredTargets = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();

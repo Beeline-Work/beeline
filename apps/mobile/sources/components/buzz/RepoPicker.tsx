@@ -1,3 +1,4 @@
+import { useTextDraft } from '@/buzz/use-text-draft';
 import React, { memo, useMemo, useState } from 'react';
 import { SectionList, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -49,6 +50,7 @@ export type RepoPickerProps = {
   /** Owners the server has already reported as never covered (`owner_grant_needed`). */
   uncoveredOwners?: ReadonlySet<string>;
   testIDPrefix?: string;
+  draftContext?: string;
 };
 
 /**
@@ -83,13 +85,17 @@ export const RepoPicker = memo(function RepoPicker({
   onAskOwnerGrant,
   uncoveredOwners,
   testIDPrefix = 'repo-picker',
+  draftContext = 'global',
 }: RepoPickerProps) {
   const { theme } = useUnistyles();
   const groknight = theme.buzz;
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useTextDraft(`repo-search:${draftContext}:${testIDPrefix}`, '');
   const [creating, setCreating] = useState(false);
-  const [newName, setNewName] = useState('');
   const [createInstallationId, setCreateInstallationId] = useState<number | null>(null);
+  const [newName, setNewName, repositoryDraft] = useTextDraft(
+    `repo-create:${draftContext}:${testIDPrefix}:${createInstallationId ?? 'default'}`,
+    '',
+  );
   const [pendingLinkage, setPendingLinkage] = useState<Exclude<
     GitHubRepositoryLinkagePlan,
     { kind: 'available' }
@@ -346,9 +352,10 @@ export const RepoPicker = memo(function RepoPicker({
                   }
                   onPress={() => {
                     if (!createInstallationId) return;
+                    const clearRepository = repositoryDraft.capture();
                     void Promise.resolve(onCreateRepository(createInstallationId, newName))
                       .then(() => {
-                        setNewName('');
+                        clearRepository();
                         setCreating(false);
                       })
                       .catch(() => undefined);

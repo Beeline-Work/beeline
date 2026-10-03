@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useTextDraft } from '@/buzz/use-text-draft';
+import React, { useEffect, useRef} from 'react';
 import { Platform, TextInput, type KeyboardTypeOptions } from 'react-native';
 import { HullDialog, HullDialogInput } from '@/components/buzz/HullDialog';
 import { PromptModalConfig } from '../types';
@@ -10,7 +11,13 @@ interface WebPromptModalProps {
 
 /** Historical export name; every platform now uses the Hull input dialog. */
 export function WebPromptModal({ config, onConfirm }: WebPromptModalProps) {
-  const [inputValue, setInputValue] = useState(config.defaultValue || '');
+  const [inputValue, setInputValue, inputDraft] = useTextDraft(config.inputType === 'secure-text' ? null : (config.draft?.context ?? null),
+    config.defaultValue || '',
+  );
+  const submit = () => {
+    config.draft?.onSubmitted(inputDraft.capture());
+    onConfirm(inputValue);
+  };
   const inputRef = useRef<TextInput>(null);
 
   useEffect(() => {
@@ -31,7 +38,7 @@ export function WebPromptModal({ config, onConfirm }: WebPromptModalProps) {
         { label: config.cancelText || 'Cancel', onPress: () => onConfirm(null), variant: 'quiet' },
         {
           label: config.confirmText || 'OK',
-          onPress: () => onConfirm(inputValue),
+          onPress: submit,
           variant: 'primary',
         },
       ]}
@@ -48,7 +55,7 @@ export function WebPromptModal({ config, onConfirm }: WebPromptModalProps) {
         autoFocus={Platform.OS === 'web'}
         keyboardType={keyboardType}
         onChangeText={setInputValue}
-        onSubmitEditing={() => onConfirm(inputValue)}
+        onSubmitEditing={submit}
         placeholder={config.placeholder}
         ref={inputRef}
         returnKeyType="done"

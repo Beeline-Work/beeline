@@ -8,6 +8,7 @@ vi.mock('react-native', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
+    AppState: { addEventListener: () => ({ remove: () => undefined }) },
     Platform: { select: (choices: Record<string, unknown>) => choices.default },
     ScrollView: host('ScrollView'),
     StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
@@ -152,7 +153,7 @@ describe('direct message picker', () => {
     expect(onMessage).toHaveBeenCalledWith(members[2]);
   });
 
-  it('shows a filtered empty state and clears the query after dismissal', () => {
+  it('shows a filtered empty state and retains the query after dismissal', () => {
     const props = {
       busyPubkey: null,
       members,
@@ -173,7 +174,7 @@ describe('direct message picker', () => {
       renderer.update(React.createElement(DirectMessagePickerSheet, { ...props, visible: false })),
     );
     expect(renderer.root.findByProps({ testID: 'direct-message-picker-search' }).props.value).toBe(
-      '',
+      'nobody',
     );
   });
 });

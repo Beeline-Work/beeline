@@ -27,6 +27,7 @@ function seatShims(mobile: string): Record<string, string> {
     '@/modal': `export const Modal = { actionSheet: async () => undefined, alert: async () => undefined,
       confirm: async () => false };`,
     '@/auth/buzz-identity-storage': `export const getEffectiveRelayUrl = async () => 'https://relay.test';
+    export const loadBuzzViewerPubkey = async () => 'a'.repeat(64);
     export const loadBuzzIdentity = async () => ({ publicKey: 'a'.repeat(64), secretKey: new Uint8Array(32) });`,
     '@/buzz/avatar-upload': 'export const pickAndUploadAvatar = async () => undefined;',
     '@/buzz/runtime-config':

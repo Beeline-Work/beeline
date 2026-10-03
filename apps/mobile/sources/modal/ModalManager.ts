@@ -1,5 +1,5 @@
 import { t } from '@/text';
-import { AlertButton, ModalConfig, CustomModalConfig, IModal } from './types';
+import { AlertButton, ModalConfig, CustomModalConfig, IModal , PromptDraft } from './types';
 
 class ModalManagerClass implements IModal {
   private showModalFn: ((config: Omit<ModalConfig, 'id'>) => string) | null = null;
@@ -112,9 +112,10 @@ class ModalManagerClass implements IModal {
     options?: {
       placeholder?: string;
       defaultValue?: string;
-      cancelText?: string;
+      cancelText?: string
       confirmText?: string;
       inputType?: 'default' | 'secure-text' | 'email-address' | 'numeric';
+    draft?: PromptDraft;
     },
   ): Promise<string | null> {
     if (!this.showModalFn) {
@@ -131,6 +132,7 @@ class ModalManagerClass implements IModal {
       cancelText: options?.cancelText,
       confirmText: options?.confirmText,
       inputType: options?.inputType,
+    draft: options?.draft,
     } as Omit<ModalConfig, 'id'>);
 
     return new Promise<string | null>((resolve) => {

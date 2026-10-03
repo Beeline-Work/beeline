@@ -1,3 +1,4 @@
+import { useTextDraft } from '@/buzz/use-text-draft';
 import { useNeedsYouCount } from '@/buzz/needs-you';
 import { PinnedConversationsEmpty } from '@/components/buzz/PinnedConversationsEmpty';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
@@ -200,7 +201,7 @@ export const SidebarView = React.memo(function SidebarView() {
   const [workspaces, setWorkspaces] = React.useState<WorkspaceListView['workspaces']>([]);
   const [workspaceId, setWorkspaceId] = React.useState<string | null>(null);
   const [surface, setSurface] = React.useState<ChatListView | null>(null);
-  const [query, setQuery] = React.useState('');
+  const [query, setQuery] = useTextDraft(`sidebar-room-search:${workspaceId}`, '', identityPubkey);
   const [desktopSearchOpen, setDesktopSearchOpen] = React.useState(false);
   const [navigationError, setNavigationError] = React.useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = React.useState(0);
@@ -279,8 +280,7 @@ export const SidebarView = React.memo(function SidebarView() {
       workspaceIdRef.current = nextWorkspaceId;
       setWorkspaceId(nextWorkspaceId);
       setSurface(null);
-      setQuery('');
-    });
+      });
   }, [identityPubkey, workspaces]);
 
   React.useEffect(() => {
@@ -294,7 +294,6 @@ export const SidebarView = React.memo(function SidebarView() {
     workspaceIdRef.current = routeWorkspaceId;
     setWorkspaceId(routeWorkspaceId);
     setSurface(null);
-    setQuery('');
     if (identityPubkey) void saveActiveCommunityId(identityPubkey, routeWorkspaceId);
   }, [identityPubkey, routeWorkspaceId, workspaces]);
 
@@ -462,7 +461,6 @@ export const SidebarView = React.memo(function SidebarView() {
       workspaceIdRef.current = nextId;
       setWorkspaceId(nextId);
       setSurface(null);
-      setQuery('');
       if (identityPubkey) void saveActiveCommunityId(identityPubkey, nextId);
       if (client) {
         setNavigationError(null);

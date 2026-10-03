@@ -6,12 +6,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
-import { migrate } from '../apps/server/dist/database.js';
-import { TokenAuth } from '../apps/server/dist/auth.js';
-import { PhoneService } from '../apps/server/dist/phone-service.js';
-import { DaemonService } from '../apps/server/dist/daemon-service.js';
-import { LiveHub } from '../apps/server/dist/live.js';
-import { createBeelineServer } from '../apps/server/dist/server.js';
+import { pathToFileURL } from 'node:url';
 import { PgliteDatabase } from '../apps/server/src/test-support.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import type { RoomView } from '@beeline/api-contract/phone';
@@ -25,6 +20,26 @@ const SOURCE = '33333333-3333-4333-8333-333333333333';
 const TARGET = '44444444-4444-4444-8444-444444444444';
 
 async function main(): Promise<void> {
+  // Runtime uses the build; typechecking does not require generated server declarations.
+  const serverBuild = (file: string) => pathToFileURL(resolve('apps/server/dist', file)).href;
+  const { migrate } = (await import(
+    serverBuild('database.js')
+  )) as typeof import('../apps/server/src/database.js');
+  const { TokenAuth } = (await import(
+    serverBuild('auth.js')
+  )) as typeof import('../apps/server/src/auth.js');
+  const { PhoneService } = (await import(
+    serverBuild('phone-service.js')
+  )) as typeof import('../apps/server/src/phone-service.js');
+  const { DaemonService } = (await import(
+    serverBuild('daemon-service.js')
+  )) as typeof import('../apps/server/src/daemon-service.js');
+  const { LiveHub } = (await import(
+    serverBuild('live.js')
+  )) as typeof import('../apps/server/src/live.js');
+  const { createBeelineServer } = (await import(
+    serverBuild('server.js')
+  )) as typeof import('../apps/server/src/server.js');
   const db = new PgliteDatabase();
   const root = await mkdtemp(join(tmpdir(), 'beeline-sibling-proof-'));
   const live = new LiveHub();

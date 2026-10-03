@@ -27,7 +27,9 @@ const fakeServer = vi.hoisted(() => {
         signIn: { method: string; url: string } | null;
       };
     }>,
-    wallet: false,
+    wallet: false as
+      | false
+      | { createdAt: number; delegationActive: boolean; delegationExpiresAt: number | null },
   };
   return state;
 });
@@ -48,9 +50,7 @@ vi.mock('@/sync/transport/monolith-operation', () => ({
         ],
         connectors: fakeServer.rows,
         connections: [],
-        ...(fakeServer.wallet
-          ? { wallet: { createdAt: 1, delegationActive: true, delegationExpiresAt: null } }
-          : {}),
+        ...(fakeServer.wallet ? { wallet: fakeServer.wallet } : {}),
       };
     }
     if (name === 'pairConnector') {
@@ -153,9 +153,22 @@ describe('real monolith Workbench source — install-state row resolution', () =
       available: true,
       status: 'disconnected',
     });
-    fakeServer.wallet = true;
+    fakeServer.wallet = { createdAt: 1, delegationActive: true, delegationExpiresAt: null };
     view = await source.readWorkbench({ workspaceId: 'ws', viewerId: MEMBER_A });
     expect(view.connectors.find((entry) => entry.id === 'wallet')?.status).toBe('connected');
+  });
+
+  it('keeps a wallet without an active grant out of connected', async () => {
+    const source = new MonolithWorkbenchSource();
+    fakeServer.wallet = { createdAt: 1, delegationActive: false, delegationExpiresAt: null };
+    let view = await source.readWorkbench({ workspaceId: 'ws', viewerId: MEMBER_A });
+    expect(view.connectors.find((entry) => entry.id === 'wallet')?.status).toBe('disconnected');
+    fakeServer.wallet = { createdAt: 1, delegationActive: false, delegationExpiresAt: 2 };
+    view = await source.readWorkbench({ workspaceId: 'ws', viewerId: MEMBER_A });
+    expect(view.connectors.find((entry) => entry.id === 'wallet')).toMatchObject({
+      status: 'error',
+      errorMessage: 'Permission to sign ended. Reconnect to let agents spend.',
+    });
   });
 });
 

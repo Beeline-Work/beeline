@@ -3028,7 +3028,7 @@ describe('Room message variant components', () => {
       ).toHaveLength(0);
     });
 
-    it('settles in place naming WHO acted, with the Manage in Workbench door and no action left', () => {
+    it('settles in place naming WHO acted, with the short Manage door and no action left', () => {
       const onOpenWorkbench = vi.fn();
       const mara = { pubkey: 'mara', kind: 'human' as const, name: 'Mara', handle: 'mara' };
       const settled = render(
@@ -3061,6 +3061,8 @@ describe('Room message variant components', () => {
       expect(outcome).toMatch(/^added by @mara · \d{1,2}:\d{2}/);
       const door = settled.root.findByProps({ testID: 'connector-offer-offer-1-workbench' });
       expect(door.props.accessibilityRole).toBe('link');
+      // The longer "Manage in Workbench ›" overflowed the settled card.
+      expect(JSON.stringify(settled.toJSON())).toContain('Manage ›');
       act(() => door.props.onPress());
       expect(onOpenWorkbench).toHaveBeenCalledTimes(1);
     });
@@ -3071,6 +3073,8 @@ describe('Room message variant components', () => {
         "monolithPhoneOperation('acceptConnectorOffer', { offerId })",
       );
       expect(conversationSource).toContain('openConnectorOfferCeremony');
+      // A wallet acceptance settles on the server; only a connecting offer opens a ceremony.
+      expect(conversationSource).toContain("if (accepted.status !== 'accepted') {");
       expect(conversationSource).toContain("pathname: '/beeline/settings/workbench'");
     });
   });

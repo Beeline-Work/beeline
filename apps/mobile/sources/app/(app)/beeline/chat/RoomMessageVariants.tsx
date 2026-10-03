@@ -549,7 +549,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
         : !pending && !connecting
           ? [
               {
-                label: 'Manage in Workbench ›',
+                label: 'Manage ›',
                 accessibilityRole: 'link',
                 onPress: onOpenWorkbench,
                 testID: `connector-offer-${offer.offerId}-workbench`,

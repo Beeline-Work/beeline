@@ -48,6 +48,7 @@ async function runTurns(options: {
   posted: Array<Record<string, unknown>>;
   activations: number;
   receiptTimes: number[];
+  receipts: Array<Record<string, unknown>>;
 }> {
   const root = await mkdtemp(join(tmpdir(), 'beeline-room-trace-'));
   roots.push(root);
@@ -156,7 +157,7 @@ async function runTurns(options: {
   vi.spyOn(acp, 'start').mockImplementation(async () => {
     activations += 1;
   });
-  vi.spyOn(acp, 'sessionNew').mockResolvedValue({
+  vi.spyOn(acp, 'sessionNew').mockImplementation(async () => ({
     sessionId: `room-session-${activations}`,
     raw: options.advertisedModel
       ? {
@@ -166,7 +167,7 @@ async function runTurns(options: {
           },
         }
       : {},
-  });
+  }));
   vi.spyOn(acp, 'canPromptWithImages').mockReturnValue(false);
   vi.spyOn(acp, 'setModel').mockResolvedValue(undefined);
   let attempt = 0;
@@ -222,7 +223,7 @@ async function runTurns(options: {
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line) as TurnTraceRecord);
-  return { traces, operations, posted, activations, receiptTimes };
+  return { traces, operations, posted, activations, receiptTimes, receipts };
 }
 
 const answer = (text: string) => ({
@@ -233,6 +234,21 @@ const answer = (text: string) => ({
 });
 
 describe('Room turn phase trace', () => {
+  it('records the assembled Room bytes with its selected model window', async () => {
+    const piHome = await mkdtemp(join(tmpdir(), 'room-window-'));
+    roots.push(piHome);
+    await writeFile(join(piHome, 'models.json'), JSON.stringify({ providers: {
+      local: { models: [{ id: 'tiny', contextWindow: 4096 }] },
+    } }));
+    const { traces } = await runTurns({
+      asks: [{ id: 'ask-1', body: 'work' }],
+      configOverrides: { agentHomeRoot: undefined, agentEnv: { PI_CODING_AGENT_DIR: piHome }, modelSelection: { model: 'tiny' } },
+      prompt: async () => answer('Done'),
+    });
+    expect(traces[0]?.promptWindow).toMatchObject({ modelContextTokens: 4096, promptBytes: expect.any(Number) });
+    expect(traces[0]?.promptWindow?.promptBytes).toBeGreaterThan(0);
+  });
+
   it('records a cold turn and the warm turn after it as separate timelines', async () => {
     const { traces, posted, activations } = await runTurns({
       asks: [
@@ -308,7 +324,7 @@ describe('Room turn phase trace', () => {
       }),
     );
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const { traces, posted } = await runTurns({
+    const { traces, posted, receipts } = await runTurns({
       asks: [{ id: 'ask-1', body: 'first' }],
       agentCommand: '/opt/harness/pi-acp',
       agentKind: 'pi',
@@ -328,7 +344,7 @@ describe('Room turn phase trace', () => {
             JSON.stringify({ type: 'message', message: { role: 'user', content: [] } }),
             JSON.stringify({
               type: 'message',
-              message: { role: 'assistant', content: [], stopReason: 'end_turn' },
+              message: { role: 'assistant', content: [], stopReason: 'end_turn', usage: { input: attempt * 10 } },
             }),
           ].join('\n'),
         );
@@ -349,6 +365,10 @@ describe('Room turn phase trace', () => {
     expect(trace!.attempts[1]!.phases.activation).toBeGreaterThanOrEqual(0);
     expect(trace!.attempts[1]!.phases.publish).toBeGreaterThanOrEqual(0);
     expect(posted.map((message) => message.text)).toEqual(['Sorry about that.']);
+    expect(receipts.find((receipt) => receipt.status === 'complete')).toMatchObject({
+      inputTokens: 20, totalInputTokens: 30, modelCalls: 2, modelCallsWithoutUsage: 0,
+    });
+    console.log('Reproduction H-11 demonstrated: Room provider retry receipt final=20, total=30, calls=2.');
   });
 
   it('adds nothing to the Room: the same operations run with tracing on and off', async () => {

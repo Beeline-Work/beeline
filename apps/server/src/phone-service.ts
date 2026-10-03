@@ -192,6 +192,7 @@ import {
 import { ARTIFACT_TTL_HOURS, mediaIdFromUrl, mediaTtlHours } from './media-ttl.js';
 import type { ObjectService } from './object-service.js';
 import { closeCornerState } from './corner-close.js';
+import { completeWalletConnectorOffer } from './connector-offer-completion.js';
 import { writeCornerTitle } from './corner-title.js';
 import { listRoomWorkflowRuns, readWorkflowRun } from './workflow-run-views.js';
 import { answerStarPrompt, readStarPrompt, recordStarPromptWin } from './github-star-prompt.js';
@@ -6734,6 +6735,7 @@ export class PhoneService {
     if (!isOfferableConnectorKind(offer.connector_type))
       throw new Error(`connector offer is invalid: ${offer.connector_type} cannot be added`);
     const connectorType: ConnectorKind = offer.connector_type;
+    if (connectorType === 'wallet') return this.acceptWalletOffer(offer, viewerId);
     if (offer.addressee_id !== viewerId) {
       const manager = await this.database.query(
         `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2
@@ -6795,6 +6797,56 @@ export class PhoneService {
     };
   }
   /**
+   * Accepting a wallet offer IS connecting the wallet: the addressee's own
+   * grant to sign, the same step as Connect on the Workbench. A wallet binds a
+   * signing key to one person, so a Workspace manager cannot accept it for
+   * them. The card settles here and wakes the offering agent; there is no
+   * helper ceremony to wait on.
+   */
+  private async acceptWalletOffer(
+    offer: {
+      id: string;
+      workspace_id: string;
+      room_id: string;
+      addressee_id: string;
+      status: ConnectorOfferStatus;
+    },
+    viewerId: string,
+  ): Promise<Output<'acceptConnectorOffer'>> {
+    if (offer.addressee_id !== viewerId) throw new Error(CONNECTOR_OFFER_WALLET_AUTHORITY_MESSAGE);
+    await this.requireWorkspaceMember(offer.workspace_id, viewerId);
+    if (offer.status !== 'pending') throw new Error('connector offer conflict: already accepted');
+    await createWallet(this.database, viewerId, await this.viewerWorkbenchWorkspace(viewerId));
+    await grantWalletDelegation(this.database, viewerId, offer.workspace_id);
+    const acceptor = await this.requireIdentity(viewerId);
+    const completed = await this.database.transaction(async (database) => {
+      const updated = await database.query<{ accepted_at: Date }>(
+        `UPDATE connector_offers SET status='connecting',accepted_by=$2,
+             accepted_at=COALESCE(accepted_at,now())
+         WHERE id=$1::uuid AND status='pending' RETURNING accepted_at`,
+        [offer.id, viewerId],
+      );
+      const acceptedAt = updated.rows[0]?.accepted_at;
+      if (!acceptedAt) throw new Error('connector offer conflict: already accepted');
+      await this.markConnectorOfferConnecting(database, {
+        roomId: offer.room_id,
+        offerId: offer.id,
+        acceptedBy: acceptor,
+        acceptedAt,
+      });
+      return completeWalletConnectorOffer(database, offer.id);
+    });
+    for (const settled of completed) {
+      this.live?.publish({
+        type: 'invalidate',
+        roomId: settled.roomId,
+        reason: 'connector-offer',
+        agentId: settled.agentId,
+      });
+    }
+    return { offerId: offer.id, status: 'accepted', roomId: offer.room_id };
+  }
+  /**
    * Mark the card as an in-progress ceremony. It still names who acted and
    * carries the Workbench row id, but it cannot claim the tool was added until
    * the helper's connected report settles it.
@@ -6806,7 +6858,7 @@ export class PhoneService {
       offerId: string;
       acceptedBy: RoomViewIdentity;
       acceptedAt: Date;
-      connectorId: string;
+      connectorId?: string;
     },
   ) {
     const card = (
@@ -6823,7 +6875,7 @@ export class PhoneService {
       status: 'connecting',
       acceptedBy: input.acceptedBy,
       acceptedAt: unix(input.acceptedAt),
-      connectorId: input.connectorId,
+      ...(input.connectorId ? { connectorId: input.connectorId } : {}),
     };
     await database.query(`UPDATE messages SET card=$2::jsonb WHERE id=$1`, [
       card.id,
@@ -9111,6 +9163,10 @@ export const YOLO_AUTHORITY_MESSAGE = "Only the agent's owner or a workspace adm
  */
 export const CONNECTOR_OFFER_AUTHORITY_MESSAGE =
   'Only the person the agent addressed or a workspace admin can add this tool';
+
+/** A wallet binds a signing key to one person; nobody can grant it for them. */
+export const CONNECTOR_OFFER_WALLET_AUTHORITY_MESSAGE =
+  'Only the person the agent addressed can connect their own wallet';
 
 /** Agent configuration belongs only to the human who connected that agent. */
 export const AGENT_OWNER_AUTHORITY_MESSAGE = "Only the agent's owner can change this";

@@ -8,6 +8,7 @@ import { bearer, type TokenAuth } from './auth.js';
 import {
   AGENT_OWNER_AUTHORITY_MESSAGE,
   CONNECTOR_OFFER_AUTHORITY_MESSAGE,
+  CONNECTOR_OFFER_WALLET_AUTHORITY_MESSAGE,
   TURN_REQUESTER_AUTHORITY_MESSAGE,
   PHONE_OPERATION_NAMES,
   YOLO_AUTHORITY_MESSAGE,
@@ -397,7 +398,8 @@ export function createBeelineServer(options: ServerOptions): Server {
                 message.includes(TURN_REQUESTER_AUTHORITY_MESSAGE) ||
                 message.includes('yolo cannot be enabled in a public workspace') ||
                 message.includes(YOLO_AUTHORITY_MESSAGE) ||
-                message.includes(CONNECTOR_OFFER_AUTHORITY_MESSAGE)
+                message.includes(CONNECTOR_OFFER_AUTHORITY_MESSAGE) ||
+                message.includes(CONNECTOR_OFFER_WALLET_AUTHORITY_MESSAGE)
               ? 403
               : message.includes('not found')
                 ? 404

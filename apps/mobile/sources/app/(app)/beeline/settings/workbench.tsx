@@ -193,7 +193,10 @@ export default function WorkbenchScreen() {
         return;
       }
       setWalletWorkspaceMissing(false);
+      // Connecting IS the grant: agents may sign only after it lands, so the
+      // row reads connected only then.
       await getWalletSource().createWallet({ workspaceId: selectedId });
+      await getWalletSource().grantDelegation({ workspaceId: selectedId });
       router.push({
         pathname: '/beeline/settings/workbench/wallet',
         params: { workspaceId: selectedId },
@@ -331,7 +334,8 @@ export default function WorkbenchScreen() {
             return <ToolDetailsCell
               appBoard
               key={connector.id}
-              action={canConnect ? (isWallet && walletConnecting ? 'Connecting' : 'Connect') : undefined}
+              action={canConnect ? (isWallet && walletConnecting ? 'Connecting'
+                : isWallet && connector.status === 'error' ? 'Reconnect' : 'Connect') : undefined}
               actionDisabled={isWallet && walletConnecting}
               actionTestID={`workbench-connector-${connector.id}-connect`}
               detailText={connector.description}

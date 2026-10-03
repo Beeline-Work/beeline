@@ -1,4 +1,4 @@
-import { readHarnessTurnUsage } from './turn-usage.js';
+import { TurnUsageAccumulator } from './turn-usage.js';
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
 import type { InterruptedTurn } from './force-update-journal.js';
 import { SquireTaskRelay } from './squire-task-relay.js';
@@ -46,6 +46,7 @@ import { openRouterRoutingInput } from './openrouter-routing.js';
 import { agentCommandCatalogPublisher } from './agent-command-catalog.js';
 import {
   attachmentImageBlocks,
+  attachmentMarkerLines,
   attachmentPromptLines,
   deliverAttachments,
   promptWithImages,
@@ -446,7 +447,14 @@ export class MonolithRoomTurnLoop {
    * sent it is still alive — `discardSession` clears both the client and the id,
    * and the terminal receipt is posted on a path that may run after it.
    */
-  private turnMetrics: { inputTokens?: number; promptBytes?: number } = {};
+  private turnMetrics: {
+    inputTokens?: number;
+    promptBytes?: number;
+    totalInputTokens?: number;
+    modelCalls?: number;
+    modelCallsWithoutUsage?: number;
+  } = {};
+  private turnUsage = new TurnUsageAccumulator();
   /** OpenRouter providers this activation pinned, in order (C92). */
   private pinnedProviders: string[] = [];
   /** The one provider re-pinned after an empty completion, until the session ends. */
@@ -656,16 +664,11 @@ export class MonolithRoomTurnLoop {
    * institutional block's share of a real prompt instead of a byte estimate.
    * Missing numbers are omitted rather than zeroed.
    */
-  private async captureTurnMetrics(): Promise<{
-    inputTokens?: number;
-    promptBytes?: number;
-  }> {
-    const usage = this.sessionId
-      ? await readHarnessTurnUsage({ agentEnv: this.agentEnv, sessionId: this.sessionId })
-      : undefined;
+  private async captureTurnMetrics() {
+    const { model: _model, ...usage } = this.turnUsage.usage ?? {};
     const promptBytes = this.client?.lastPromptBytes;
     return {
-      ...(usage ? { inputTokens: usage.inputTokens } : {}),
+      ...usage,
       ...(promptBytes ? { promptBytes } : {}),
     };
   }
@@ -1285,6 +1288,7 @@ export class MonolithRoomTurnLoop {
     // prompt size on its failure receipt, and the budget gate would read a
     // number belonging to somebody else's prompt.
     this.turnMetrics = {};
+    this.turnUsage = new TurnUsageAccumulator();
     const trace = this.beginTurnTrace(item.id);
     // Kicked off now, alongside activation rather than after it, so its own
     // network round trip has somewhere to hide (see institutional-context.ts).
@@ -1405,12 +1409,10 @@ export class MonolithRoomTurnLoop {
                 .map((message) => ({
                   id: message.id,
                   authorId: message.authorId,
-                  line: roomMessagePrompt(
+                  line: transcriptMessagePrompt(
                     names.get(message.authorId) ?? message.authorId.slice(0, 12),
                     message.body,
                     message.attachments,
-                    this.deliveredAttachments.get(message.id),
-                    this.acceptsImages(),
                     message.id,
                   ),
                 }));
@@ -1480,6 +1482,7 @@ export class MonolithRoomTurnLoop {
                   },
                 });
                 trace.notePromptSections(assembled.report);
+                trace.notePromptWindow(assembled.text, this.modelContextTokens);
                 this.commandContext.notePromptSections([
                   ...this.sessionPromptSectionIds,
                   ...assembled.report.map((section) => section.id),
@@ -1512,19 +1515,23 @@ export class MonolithRoomTurnLoop {
                   try {
                     stream.beginRun();
                     trace.promptSent();
-                    result = await this.client!.sessionPrompt(
-                      this.sessionId!,
-                      nextPrompt,
-                      ROOM_PROMPT_INACTIVITY_TIMEOUT_MS,
-                      (delta, full, currentRun) => {
-                        trace.firstModelOutput();
-                        stream.onChunk(delta, full, currentRun);
-                      },
-                      undefined,
-                      (calls) => {
-                        trace.toolCalls(calls);
-                        if (openedACorner(openCornerToolCall(calls))) liveCornerOpened = true;
-                      },
+                    result = await this.turnUsage.measure(
+                      { agentEnv: this.agentEnv, sessionId: this.sessionId! },
+                      () =>
+                        this.client!.sessionPrompt(
+                          this.sessionId!,
+                          nextPrompt,
+                          ROOM_PROMPT_INACTIVITY_TIMEOUT_MS,
+                          (delta, full, currentRun) => {
+                            trace.firstModelOutput();
+                            stream.onChunk(delta, full, currentRun);
+                          },
+                          undefined,
+                          (calls) => {
+                            trace.toolCalls(calls);
+                            if (openedACorner(openCornerToolCall(calls))) liveCornerOpened = true;
+                          },
+                        ),
                     );
                   } catch (error) {
                     promptError = error;
@@ -1929,6 +1936,23 @@ function openCornerToolCall(calls: readonly ToolCallEntry[]): ToolCallEntry | un
  */
 function openedACorner(call: ToolCallEntry | undefined): boolean {
   return !!call && isCompletedToolCall(call);
+}
+
+/**
+ * An earlier transcript message: its attachments are markers the agent can
+ * pass to download_attachment, never a download made while building the prompt.
+ */
+function transcriptMessagePrompt(
+  author: string,
+  body: string,
+  attachments: RoomMessage['attachments'],
+  messageId: string,
+): string {
+  return [
+    `[message id: ${messageId}]`,
+    `${author}: ${body.trim() || '(shared attachments)'}`,
+    ...attachmentMarkerLines(attachments),
+  ].join('\n');
 }
 
 function roomMessagePrompt(

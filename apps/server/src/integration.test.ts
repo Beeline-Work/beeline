@@ -3285,7 +3285,38 @@ describe('monolith integration', () => {
     const parentResult = await call('triage-root');
     expect(parentResult.status).toBe(200);
     expect(await parentResult.json()).toMatchObject({ body: 'Inspect this result' });
-    expect((await call('triage-private')).ok).toBe(false);
+    // A message that exists but is outside the authorized rooms is a refusal
+    // (download_attachment's `forbidden`), distinct from a missing id.
+    expect((await call('triage-private')).status).toBe(403);
+    expect((await call('triage-missing')).status).toBe(404);
+  });
+
+  it('names the stored sha256 of each ready attachment in getRoomMessage', async () => {
+    const mediaId = '33333333-3333-4333-8333-333333333331';
+    const digest = createHash('sha256').update('screenshot-bytes').digest('hex');
+    await database.query(
+      `INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
+       VALUES($1,$2,'media',$3,'image/jpeg','24419.jpg',16,$4,'ready',now()+interval '24 hours')`,
+      [mediaId, HUMAN, `media/${HUMAN}/${digest}`, digest],
+    );
+    const messageId = createHash('sha256').update('attachment-digest-message').digest('hex');
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,attachments)
+       VALUES($1,$2,$3,'screenshot','message',$4::jsonb)`,
+      [
+        messageId,
+        ROOM,
+        HUMAN,
+        JSON.stringify([
+          { url: `https://server.example/v1/media/${mediaId}`, name: '24419.jpg', mimeType: 'image/jpeg', size: 16 },
+          { url: 'https://media.example/legacy.png', mimeType: 'image/png' },
+        ]),
+      ],
+    );
+    const read = (await (
+      await daemonOperation('getRoomMessage', { roomId: ROOM, messageId })
+    ).json()) as { attachments: Array<{ sha256?: string }> };
+    expect(read.attachments.map((attachment) => attachment.sha256)).toEqual([digest, undefined]);
   });
 
   it('never reports unread for the viewer’s own latest message', async () => {
@@ -11497,8 +11528,8 @@ describe('monolith integration', () => {
       expect.objectContaining({ offerable: true, available: true, purpose: expect.any(String) }),
     );
     expect(squire?.paired).toBeUndefined();
-    // The wallet is created only from the Workbench page; it has no offer shape.
-    expect(status.catalog.find((entry) => entry.connectorType === 'wallet')?.offerable).toBe(false);
+    // The wallet is offerable: accepting its card is the addressee's grant to sign.
+    expect(status.catalog.find((entry) => entry.connectorType === 'wallet')?.offerable).toBe(true);
     expect(status.catalog.find((entry) => entry.connectorType === 'tailscale')?.offerable).toBe(
       true,
     );
@@ -11509,7 +11540,7 @@ describe('monolith integration', () => {
         await daemonOperation('offerConnector', {
           roomId: ROOM,
           requestId: ask.messageId,
-          connectorType: 'wallet',
+          connectorType: 'nonsense',
           reason: 'hold funds',
         })
       ).status,

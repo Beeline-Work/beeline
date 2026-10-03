@@ -12,6 +12,33 @@ afterEach(async () => {
 });
 
 describe('idle corner discovery', () => {
+  it('Reproduction H-10: counts ten active corners of one parent once', () => {
+    const runtime = new RoomRuntimeCoordinator(
+      {
+        agent: { publicKey: identityFromKey('11'.repeat(32), 'Bee').publicKey, secretKeyHex: '11'.repeat(32), name: 'Bee' },
+        rooms: [],
+        transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
+      } as unknown as AgentRuntimeRecord,
+      '/tmp/unused-agent.json',
+      {} as never,
+      { daemonApi: {} as DaemonApiClient },
+    );
+    const subject = runtime as unknown as {
+      running: Map<string, unknown>;
+      monolithCornerParents: Map<string, string>;
+      scheduler: { snapshot(): { maxLive: number } };
+    };
+    for (let i = 0; i < 10; i++) {
+      subject.running.set(`corner-${i}`, {});
+      subject.monolithCornerParents.set(`corner-${i}`, 'parent');
+    }
+    expect(runtime.activeRoomCount()).toBe(1);
+    expect(subject.scheduler.snapshot().maxLive).toBe(10);
+    subject.monolithCornerParents.clear();
+    expect(runtime.activeRoomCount()).toBe(10);
+    expect(subject.scheduler.snapshot().maxLive).toBe(100);
+  });
+
   it('subscribes before checkout and hydrates only after a pending command arrives', async () => {
     const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-idle-corner-'));
     roots.push(supervisorRoot);

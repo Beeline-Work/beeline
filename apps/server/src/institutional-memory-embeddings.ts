@@ -64,6 +64,33 @@ export type EmbedBatchFn = (
   inputType: EmbeddingInputType,
 ) => Promise<(readonly number[] | undefined)[] | undefined>;
 
+/** Bounded so a dead key or outage cannot flood logs: the first failure
+ *  always logs, afterward only every Nth. Never logs input text or the key —
+ *  only the HTTP status / error reason and the input type. */
+const EMBEDDING_FAILURE_LOG_PERIOD = 100;
+let embeddingFailureCount = 0;
+
+function noteEmbeddingFailure(reason: string, inputType: EmbeddingInputType): void {
+  embeddingFailureCount += 1;
+  if (embeddingFailureCount === 1 || embeddingFailureCount % EMBEDDING_FAILURE_LOG_PERIOD === 0) {
+    console.error(
+      `[institutional-memory] embedding call failed: ${reason} (input_type=${inputType}, failure #${embeddingFailureCount} since startup)`,
+    );
+  }
+}
+
+/** Only for tests: reset the bounded failure-log counter between cases. */
+export function resetEmbeddingFailureLogForTests(): void {
+  embeddingFailureCount = 0;
+}
+
+function describeEmbeddingFailure(error: unknown): string {
+  if (error instanceof Error) {
+    return error.name === 'AbortError' || error.name === 'TimeoutError' ? 'timed out' : error.name;
+  }
+  return 'unknown error';
+}
+
 async function callOpenRouterEmbeddings(
   texts: readonly string[],
   inputType: EmbeddingInputType,
@@ -93,11 +120,17 @@ async function callOpenRouterEmbeddings(
       }),
       signal: options.signal ?? AbortSignal.timeout(options.timeoutMs ?? EMBEDDING_FETCH_TIMEOUT_MS),
     });
-    if (!response.ok) return undefined;
+    if (!response.ok) {
+      noteEmbeddingFailure(`HTTP ${response.status}`, inputType);
+      return undefined;
+    }
     const body = (await response.json()) as {
       data?: readonly { embedding?: readonly number[]; index?: number }[];
     };
-    if (!Array.isArray(body.data)) return undefined;
+    if (!Array.isArray(body.data)) {
+      noteEmbeddingFailure('malformed response body', inputType);
+      return undefined;
+    }
     const byIndex = new Map(body.data.map((entry, position) => [entry.index ?? position, entry.embedding]));
     return texts.map((_, index) => {
       const vector = byIndex.get(index);
@@ -105,7 +138,8 @@ async function callOpenRouterEmbeddings(
         ? vector
         : undefined;
     });
-  } catch {
+  } catch (error) {
+    noteEmbeddingFailure(describeEmbeddingFailure(error), inputType);
     return undefined;
   }
 }
@@ -296,6 +330,17 @@ function embeddingDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return !env[INSTITUTIONAL_MEMORY_EMBEDDING_ENV_VAR]?.trim();
 }
 
+/** Call once at server start. Loud and unmissable, because a missing key
+ *  silently degrades meaning-based recall to keyword-only with no other
+ *  signal (this is exactly the outage that shipped unembedded for three days
+ *  in production before this warning existed). */
+export function warnIfEmbeddingKeyMissing(env: NodeJS.ProcessEnv = process.env): void {
+  if (!embeddingDisabled(env)) return;
+  console.error(
+    `[institutional-memory] ${INSTITUTIONAL_MEMORY_EMBEDDING_ENV_VAR} is not set: meaning-based recall is OFF, falling back to keyword-only recall.`,
+  );
+}
+
 /**
  * Embed one just-saved/updated `institutional_memory_items` row. Fire-and-
  * forget from the caller's perspective (never awaited, never blocks or fails
@@ -329,10 +374,23 @@ export function scheduleEmbedWorkspaceSkillVersion(
 
 export interface EmbeddingBackfillCounts {
   itemsEmbedded: number;
+  itemsAttempted: number;
+  itemsFailed: number;
   skillsEmbedded: number;
+  skillsAttempted: number;
+  skillsFailed: number;
   /** True when another pass (this process or another machine) held the lock. */
   skipped?: boolean;
 }
+
+const EMPTY_BACKFILL_COUNTS = {
+  itemsEmbedded: 0,
+  itemsAttempted: 0,
+  itemsFailed: 0,
+  skillsEmbedded: 0,
+  skillsAttempted: 0,
+  skillsFailed: 0,
+} as const;
 
 const EMBEDDING_BACKFILL_LOCK = `hashtext('institutional-memory-embedding-backfill')`;
 let embeddingBackfillRunning = false;
@@ -371,7 +429,7 @@ export async function backfillInstitutionalMemoryEmbeddingsOnce(
   embedBatch: EmbedBatchFn = createDefaultEmbedBatchFn(),
   batchSize = EMBEDDING_BACKFILL_BATCH,
 ): Promise<EmbeddingBackfillCounts> {
-  if (embeddingBackfillRunning) return { itemsEmbedded: 0, skillsEmbedded: 0, skipped: true };
+  if (embeddingBackfillRunning) return { ...EMPTY_BACKFILL_COUNTS, skipped: true };
   embeddingBackfillRunning = true;
   let session: BackfillSession | undefined;
   let sessionError: Error | undefined;
@@ -381,7 +439,7 @@ export async function backfillInstitutionalMemoryEmbeddingsOnce(
     const acquired = (await locked.query<{ acquired: boolean }>(
       `SELECT pg_try_advisory_lock(${EMBEDDING_BACKFILL_LOCK}) acquired`,
     )).rows[0]?.acquired;
-    if (!acquired) return { itemsEmbedded: 0, skillsEmbedded: 0, skipped: true };
+    if (!acquired) return { ...EMPTY_BACKFILL_COUNTS, skipped: true };
     try {
       const attemptedItems: string[] = [];
       const attemptedSkills: string[] = [];
@@ -407,7 +465,14 @@ export async function backfillInstitutionalMemoryEmbeddingsOnce(
         failedBatches = batch.embedded === 0 ? failedBatches + 1 : 0;
         if (failedBatches >= 3) break;
       }
-      return { itemsEmbedded, skillsEmbedded };
+      return {
+        itemsEmbedded,
+        itemsAttempted: attemptedItems.length,
+        itemsFailed: attemptedItems.length - itemsEmbedded,
+        skillsEmbedded,
+        skillsAttempted: attemptedSkills.length,
+        skillsFailed: attemptedSkills.length - skillsEmbedded,
+      };
     } finally {
       try {
         await locked.query(`SELECT pg_advisory_unlock(${EMBEDDING_BACKFILL_LOCK})`);

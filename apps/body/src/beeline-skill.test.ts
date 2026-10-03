@@ -433,8 +433,9 @@ describe('using-beeline "Tools and the Workbench" section', () => {
     expect(markdown).toContain('do not send them to a settings page');
     expect(markdown).toContain('Call workbench_status first');
     expect(markdown).toContain(
-      'Then call offer_connector with the connectorType and one short reason',
+      'In a Room or DM, call offer_connector with the connectorType and one short reason',
     );
+    expect(markdown).toContain('Connector offers are unavailable in corners');
     expect(markdown).toContain('Your turn pauses on the card');
     expect(markdown).not.toContain('Settings → Workbench → Tools');
     expect(markdown).not.toContain('tell the person exactly where to go');

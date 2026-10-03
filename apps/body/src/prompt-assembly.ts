@@ -50,8 +50,8 @@ const EVERYWHERE: readonly PromptSurface[] = PROMPT_SURFACES;
  * replace or shorten one.
  */
 export const CORE_BUDGET_BYTES = 2_300;
-/** Ceiling for one surface's own rules, on top of the core. A code corner uses ~3.9 KB. */
-export const SURFACE_BUDGET_BYTES = 4_000;
+/** Ceiling for one surface's own rules, on top of the core. A code corner uses ~4.1 KB. */
+export const SURFACE_BUDGET_BYTES = 4_120;
 
 /**
  * Whether this session can run shell commands, and why not when it cannot.
@@ -331,12 +331,13 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
   {
     id: 'surface.tools',
     topic: 'tools',
-    why: 'Agents said a tool was missing without checking, while a forced check on every request cost a tool call every turn. Corners have none of these tools.',
+    why: 'Agents need app discovery before use in every turn; connector offers remain in Rooms and DMs.',
     budgetBytes: 240,
     layer: 'surface',
-    surfaces: ['room', 'dm'],
-    render: () =>
-      'When you need a tool you do not have, call workbench_status; offer_connector the tool it lists, otherwise call connect_app for the app.',
+    surfaces: EVERYWHERE,
+    render: ({ surface }) => surface === 'room' || surface === 'dm'
+      ? 'When you need a tool you do not have, call workbench_status; offer_connector the tool it lists, otherwise call connect_app for the app.'
+      : 'In corners, workbench_status discovers apps; connect_app starts sign-in here. Connector offers stay in Rooms and DMs.',
   },
 
   // --- Room ----------------------------------------------------------------

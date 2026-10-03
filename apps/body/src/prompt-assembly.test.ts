@@ -331,12 +331,13 @@ describe('prompt assembly guards', () => {
     expect(skill).toContain('reviewed head SHA');
   });
 
-  it('keeps Workbench tools out of corners, which do not have them', () => {
+  it('documents Workbench discovery and connection in every agent turn', () => {
     for (const [name, context] of Object.entries(SESSION_VARIANTS)) {
       const text = assembleSessionPrompt(context).systemPrompt;
-      if (context.surface === 'room' || context.surface === 'dm')
-        expect(text, name).toContain('workbench_status');
-      else expect(text, name).not.toMatch(/workbench_status|connect_app|offer_connector/);
+      expect(text, name).toContain('workbench_status');
+      expect(text, name).toContain('connect_app');
+      if (context.surface.includes('corner'))
+        expect(text, name).toContain('connect_app starts sign-in here');
     }
   });
 

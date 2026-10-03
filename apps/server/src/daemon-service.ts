@@ -6077,8 +6077,6 @@ export class DaemonService {
       throw new Error('app and reason are required');
     const continuation = normalizeAppContinuation(input.continuation);
     const context = await this.offerContext(input.roomId, agentId);
-    if (context.isCorner)
-      throw new Error('connect_app is invalid: connect an app from the Room, not from a corner');
     const outcome = await connectApp(this.database, this.mcpRegistry, {
       workspaceId: context.workspaceId,
       ownerId: context.owner.pubkey,

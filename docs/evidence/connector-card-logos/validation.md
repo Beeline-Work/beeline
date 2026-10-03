@@ -6,7 +6,7 @@ Brief revision 1. Story: a person connecting Instagram from a connector card see
 
 Reproduction CARD-1: connect Instagram or Figma through the agent's `connectApp`, read Workbench, then read the Room card. On the original code, Workbench has the provider logo and domain; the Room card has neither. Rendering the card also ignores supplied logo metadata and shows an initial. Both new server and mobile CARD-1 regressions failed before the fix.
 
-The reported live first-attempt Instagram failure and native Instagram app handoff were **not obtained**. `adb devices` reported `emulator-5574 offline`. The reporter's account was not accessed. Server-backed tests and Chrome with a fixture provider were used instead.
+The reported live first-attempt Instagram failure and native Instagram app handoff were **not obtained**. `adb devices` reported `emulator-5574 offline`. Initial validation used server-backed tests and Chrome with a fixture provider. The subsequent authorized read of retained live diagnostics is recorded below.
 
 ## Demonstrated
 
@@ -45,3 +45,20 @@ Reproduction CI-1: BODY SUITE job 111089163023 failed in the inherited `squire-b
 The unmodified seven-test file passed locally using `TMPDIR=/tmp`. The helper's default temporary path is too long for Unix sockets. GitHub rejected rerunning the completed job because its encompassing workflow was still running. The CI correction is limited to test synchronization.
 
 After the correction, `TMPDIR=/tmp npm test -w @beeline/body -- src/squire-broker-squatter.test.ts` passed all seven real-process/socket tests, including the exact failed test and SIGKILL case. `npm run typecheck -w @beeline/body` and `git diff --check` passed.
+
+## Authorized live investigation
+
+The reporter authorized reading the failed sign-in diagnostics in Room message `a4bc2ec42c8c88be13a834fb322ffca2d3e9c2dd592a1387dba691bf873c9698`. This authorizes investigation; it does not change brief revision 1 or clear reviewer blocker R-1.
+
+On 2026-10-03, a read-only PostgreSQL transaction through the server's Fly Machine inspected only the reporter's Instagram app, sign-in cards, route history, and the initiating report timestamp. A provider GET filtered by that same owner and the Instagram toolkit inspected account status metadata only. No account tokens, provider credentials, sign-in URLs, or other users' records were returned; no production data was changed.
+
+The retained timeline, in UTC:
+
+- The Instagram app and its single Composio route were created at 2026-10-02 20:54:07.643.
+- Its only retained sign-in card was created at 21:03:49.008 and now has status `connected`, with no retained `errorMessage`.
+- Composio returned exactly one account, created at 21:42:33.045 and updated at 21:42:51.568, with status `ACTIVE` and no `status_reason`. No failed first account was returned.
+- The app was updated at 21:42:51.607, has no pending-link expiry, and has no retained `sign_in_error`.
+
+These observations establish the successful later connection, not the cause of the first failure or whether the native Instagram app opened. `beginComposioAppSignIn` deletes the previous provider account before requesting a fresh link, so the surviving account is insufficient to diagnose the earlier attempt.
+
+Both running Fly Machines report release `0.1.5-b4dfec78cc47`, which predates PR #2007's failure reporting. This is deployment evidence, not proof that #2007 fixes the reporter's original cause. The vaulted Fly key could read Machines and execute the scoped database query, but the Fly app-log endpoint returned HTTP 401. Historical request errors remain unread; the remaining scoped read is delegated to the reporter's authorized agent. R-1 remains unresolved, and no speculative connection or deep-link change was made.

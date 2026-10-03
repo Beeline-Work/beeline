@@ -1,12 +1,12 @@
+import { messageJumpHref, roomHref } from '@/buzz/corner-navigation';
+import { useIsDesktop } from '@/utils/responsive';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AccessibilityInfo,
   FlatList,
-  Platform,
   Pressable,
   Text,
   View,
-  useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useLocalSearchParams, useRouter, type Href } from 'expo-router';
@@ -65,8 +65,7 @@ type Row =
 export default function TrayScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
-  const desktop = Platform.OS === 'web' && width >= 760;
+  const desktop = useIsDesktop();
   const params = useLocalSearchParams<{ communityId?: string | string[] }>();
   const workspaceId = first(params.communityId);
   const [needs, setNeeds] = useState<readonly NeedsYouItemView[]>([]);
@@ -176,15 +175,7 @@ export default function TrayScreen() {
 
   const open = useCallback(
     (target: Target, via: 'bookmark' | 'needs-you') => {
-      router.push({
-        pathname: '/beeline/chat/[channelId]',
-        params: {
-          channelId: target.roomId,
-          communityId: target.workspaceId,
-          notificationResponseId: `${via}:${target.messageId}`,
-          notificationMessageId: target.messageId,
-        },
-      } as Href);
+      router.push(messageJumpHref(target.roomId, target.messageId, `${via}:${target.messageId}`, target.workspaceId));
     },
     [router],
   );
@@ -204,13 +195,7 @@ export default function TrayScreen() {
         );
         return;
       }
-      router.push({
-        pathname: '/beeline/chat/[channelId]',
-        params: {
-          channelId: cornerId,
-          ...(selected?.workspaceId ? { communityId: selected.workspaceId } : {}),
-        },
-      } as Href);
+      router.push(roomHref(cornerId, selected?.workspaceId));
     },
     [bookmarks, inspectRoom, open, router, selected],
   );

@@ -242,6 +242,7 @@ import {
   type ChannelKind,
 } from '@/buzz/corner-session';
 import {
+  messageJumpHref,
   chatBackAction,
   cornerOpenAction,
   cornerHref,
@@ -326,6 +327,7 @@ import { RoomCatchUpControls } from '@/components/buzz/RoomCatchUpControls';
 import { TranscriptScrubber } from '@/components/buzz/TranscriptScrubber';
 import { continueScrubLanding, type ScrubLanding } from '@/buzz/transcript-scrubber';
 import { useTranscriptScrubber } from '@/buzz/use-transcript-scrubber';
+import { usePhoneUnderfillHistory } from '@/buzz/phone-underfill-history';
 import { RoomCatchUpSheet } from '@/components/buzz/RoomCatchUpSheet';
 import { buildCatchUpReport } from '@/buzz/room-catch-up-report';
 import { createTranscriptCardMotionStore } from '@/components/buzz/transcript-card-motion-context';
@@ -1356,9 +1358,8 @@ export function BuzzChatSurface({
     [cornerBrief],
   );
   // A live workflow run in this corner: one line under the objective, → its run page.
-  const cornerWorkflowRun = useCornerWorkflowRun(
+  const { workflow: cornerWorkflowRun, error: workflowError, retry: retryWorkflow } = useCornerWorkflowRun(
     isCorner ? decodedId : undefined,
-    (error, retry) => Modal.alert('Workflow unavailable', error, [{ text: 'Retry', onPress: retry }]),
   );
   const openCornerWorkflowRun = useCallback(() => {
     if (cornerWorkflowRun) router.push(workflowRunHref(cornerWorkflowRun));
@@ -2237,6 +2238,15 @@ export function BuzzChatSurface({
   transcriptMessagesRef.current = transcriptMessages;
   const transcriptScrubber = useTranscriptScrubber();
   useEffect(() => transcriptScrubber.reset(), [decodedId, transcriptScrubber]);
+  // A folded tail shorter than the phone list never scrolls, so no drag
+  // opens the older-history gate; page in without one until it fills.
+  const phoneUnderfill = usePhoneUnderfillHistory({
+    enabled: !desktopTranscript && transcriptMessages.length > 0,
+    status: transcriptHistoryStatus,
+    historyRevision: visibleMessageCount,
+    threshold: TAIL_PIN_THRESHOLD,
+    loadOlder: loadOlderTranscriptMessages,
+  });
   // The read cursor ranks rows by index to decide which is newest, so it reads
   // the chronological order for the same reason the jump control does: on the
   // phone `transcriptMessages` IS the reversed list, and ranking that array
@@ -2482,14 +2492,7 @@ export function BuzzChatSurface({
   const sourceJumpSequenceRef = useRef(0);
   const handleOpenMessageSource = useCallback((roomId: string, messageId: string) => {
     sourceJumpSequenceRef.current += 1;
-    router.navigate({
-      pathname: '/beeline/chat/[channelId]',
-      params: {
-        channelId: roomId,
-        notificationMessageId: messageId,
-        notificationResponseId: `message-source:${sourceJumpSequenceRef.current}`,
-      },
-    });
+    router.navigate(messageJumpHref(roomId, messageId, `message-source:${sourceJumpSequenceRef.current}`));
   }, []);
   const raiseArrivalFlash = useCallback((messageId: string) => {
     if (arrivalFlashTimerRef.current !== null) clearTimeout(arrivalFlashTimerRef.current);
@@ -5031,10 +5034,7 @@ export function BuzzChatSurface({
       void Haptics.selectionAsync();
       switch (verb) {
         case 'build':
-          router.push({
-            pathname: '/beeline/corners/[roomId]',
-            params: { roomId: decodedId },
-          } as Href);
+          router.push(roomCornersHref(decodedId));
           return;
         case 'poll':
           setCreatePollVisible(true);
@@ -5224,14 +5224,7 @@ export function BuzzChatSurface({
             actionId={grantActionId}
             onDecision={handleGrantDecision}
             onOpenSource={(roomId, messageId) =>
-              router.navigate({
-                pathname: '/beeline/chat/[channelId]',
-                params: {
-                  channelId: roomId,
-                  notificationMessageId: messageId,
-                  notificationResponseId: `squire-grant:${item.id}`,
-                },
-              })
+              router.navigate(messageJumpHref(roomId, messageId, `squire-grant:${item.id}`))
             }
           />
         );
@@ -5241,14 +5234,7 @@ export function BuzzChatSurface({
           <SquireApprovalCard
             message={item}
             onOpenSource={(roomId, messageId) =>
-              router.navigate({
-                pathname: '/beeline/chat/[channelId]',
-                params: {
-                  channelId: roomId,
-                  notificationMessageId: messageId,
-                  notificationResponseId: `squire-approval:${item.id}`,
-                },
-              })
+              router.navigate(messageJumpHref(roomId, messageId, `squire-approval:${item.id}`))
             }
           />
         );
@@ -5845,6 +5831,8 @@ export function BuzzChatSurface({
               onOpenBrief={openCurrentBrief}
               onOpenWorkflow={openCornerWorkflowRun}
               workflow={cornerWorkflowRun}
+              workflowError={workflowError}
+              onRetryWorkflow={retryWorkflow}
             />
           )}
 
@@ -6000,7 +5988,11 @@ export function BuzzChatSurface({
               userDraggingRef.current = false;
               resumePendingNewMessageLanding();
             }}
-            onContentSizeChange={(_width, height) => transcriptScrubber.observeContentSize(height)}
+            onLayout={(event) => phoneUnderfill.observeListHeight(event.nativeEvent.layout.height)}
+            onContentSizeChange={(_width, height) => {
+              transcriptScrubber.observeContentSize(height);
+              phoneUnderfill.observeContentHeight(height);
+            }}
             renderItem={renderItem}
             onScrollToIndexFailed={({ averageItemLength, highestMeasuredFrameIndex }) => {
               const notification = pendingNotificationLandingRef.current;

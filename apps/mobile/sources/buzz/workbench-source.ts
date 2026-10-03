@@ -57,10 +57,10 @@ export interface WorkbenchSource {
   }): Promise<ConnectorInstallState | null>;
   readConnectionDetail(input: {
     workspaceId: string;
-    ref: string;
+    connectionId: string;
     viewerId: string;
   }): Promise<ConnectionDetailView | null>;
-  revokeAllGrants(input: { workspaceId: string; ref: string }): Promise<{
+  revokeAllGrants(input: { workspaceId: string; connectionId: string }): Promise<{
     revoked: number;
     pending?: number;
   }>;
@@ -111,6 +111,7 @@ function toConnection(
   viewerId: string,
 ): WorkbenchView['connections'][number] {
   return {
+    connectionId: dto.connectionId,
     ref: dto.reference,
     name: dto.label,
     // The vault's own service, carried through as itself. A server that
@@ -307,15 +308,7 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
         connected: state.connected && !state.authorizationUrl,
         signIn: state.authorizationUrl ? { method: 'oauth', url: state.authorizationUrl } : null };
     }
-    const dto = await monolithPhoneOperation('readWorkbench', { workspaceId: input.workspaceId });
-    // `pairConnector` returns the ROW's id, and the connect screen polls with
-    // exactly that; the sign-in overlay still polls by connector type. Match
-    // both — a row id alone must never read as "no install" (the silent stall).
-    const row = dto.connectors.find(
-      (candidate) =>
-        candidate.connectorId === input.connectorId ||
-        candidate.connectorType === input.connectorId,
-    );
+    const row = await monolithPhoneOperation('readConnectorInstall', input);
     if (!row) return null;
     return {
       connectorId: row.connectorId,
@@ -337,15 +330,12 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
 
   async readConnectionDetail(input: {
     workspaceId: string;
-    ref: string;
+    connectionId: string;
     viewerId: string;
   }): Promise<ConnectionDetailView | null> {
-    const dto = await monolithPhoneOperation('readWorkbench', { workspaceId: input.workspaceId });
-    const connection = dto.connections.find((candidate) => candidate.reference === input.ref);
-    if (!connection) return null;
     const detail = await monolithPhoneOperation('readConnectionDetail', {
       workspaceId: input.workspaceId,
-      connectionId: connection.connectionId,
+      connectionId: input.connectionId,
     });
     return {
       connection: toConnection(detail.connection, input.viewerId),
@@ -374,14 +364,11 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
 
   async revokeAllGrants(input: {
     workspaceId: string;
-    ref: string;
+    connectionId: string;
   }): Promise<{ revoked: number; pending?: number }> {
-    const dto = await monolithPhoneOperation('readWorkbench', { workspaceId: input.workspaceId });
-    const connection = dto.connections.find((candidate) => candidate.reference === input.ref);
-    if (!connection) return { revoked: 0 };
     const result = await monolithPhoneOperation('revokeConnectionGrants', {
       workspaceId: input.workspaceId,
-      connectionId: connection.connectionId,
+      connectionId: input.connectionId,
     });
     return {
       revoked: result.revoked,

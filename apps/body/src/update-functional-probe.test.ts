@@ -66,8 +66,9 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       send({ jsonrpc: '2.0', id: message.id, error: { code, message: text } });
       return;
     }
-    // Never answers, and streams nothing: the prompt's inactivity timer fires.
+    // Never answers, and streams nothing: the prompt's backstop fires.
     if (behavior === 'silent') return;
+    if (behavior === 'runtime-exit') process.exit(7);
     if (behavior === 'served') {
       send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'probe-session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'READY' } } } });
     } else if (records[behavior]) {
@@ -406,7 +407,7 @@ describe('runUpdateFunctionalProbe', () => {
       );
     });
 
-    it('passes when the prompt times out on inactivity for the current release too', async () => {
+    it('passes when the prompt backstop expires for the current release too', async () => {
       vi.spyOn(console, 'warn').mockImplementation(() => undefined);
       const result = await probe('silent', {
         turnTimeoutMs: 1_000,
@@ -414,11 +415,40 @@ describe('runUpdateFunctionalProbe', () => {
           probeOutcome(() => probe('silent', { turnTimeoutMs: 1_000 })),
       });
       expect(result).toMatchObject({ turnCompleted: false, modelAnswer: 'unavailable' });
-      expect(result.modelAnswerReason).toContain(
-        'ACP session/prompt timed out after 1000ms of inactivity',
-      );
+      expect(result.modelAnswerReason).toContain('turn_backstop: no ACP traffic for');
       expect(result.modelAnswerReason).toContain('(the current release fails the same way)');
     }, 30_000);
+
+    it('compares a backstop to the silence timeout reported by an older installed release', async () => {
+      const compare = vi.fn(async () => ({
+        kind: 'unavailable' as const,
+        reason: 'functional update probe failed (turn-failed): ' +
+          'ACP session/prompt timed out after 45000ms of inactivity',
+      }));
+      const result = await probe('silent,silent', {
+        turnTimeoutMs: 300,
+        compareWithCurrentRelease: compare,
+      });
+      expect(result).toMatchObject({ turnCompleted: false, modelAnswer: 'unavailable' });
+      expect(result.modelAnswerReason).toContain('turn_backstop:');
+      expect(result.modelAnswerReason).toContain('(the current release fails the same way)');
+      expect(compare).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'acp-turn-failure',
+          failure: { kind: 'prompt-inactivity' },
+        }),
+      );
+    });
+
+    it('keeps runtime_exited distinct from a silent prompt instead of retrying or appealing', async () => {
+      const compare = vi.fn(async () => ({ kind: 'served' as const }));
+      const error = await probe('runtime-exit,served', {
+        compareWithCurrentRelease: compare,
+      }).catch((error: unknown) => error);
+      expect(error).toBeInstanceOf(UpdateFunctionalProbeError);
+      expect((error as Error).message).toContain('runtime_exited:');
+      expect(compare).not.toHaveBeenCalled();
+    });
 
     it('still fails when the current release fails some other way', async () => {
       const error = await probe('silent', {

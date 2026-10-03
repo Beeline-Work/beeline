@@ -40,11 +40,11 @@ export default function ConnectionDetailScreen() {
   const params = useLocalSearchParams<{
     workspaceId?: string | string[];
     viewerId?: string | string[];
-    ref?: string | string[];
+    connectionId?: string | string[];
   }>();
   const workspaceId = singleParam(params.workspaceId) ?? '';
   const viewerId = singleParam(params.viewerId) ?? '';
-  const ref = singleParam(params.ref) ?? '';
+  const connectionId = singleParam(params.connectionId) ?? '';
   const insets = useSafeAreaInsets();
   const [detail, setDetail] = useState<ConnectionDetailView | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -58,7 +58,7 @@ export default function ConnectionDetailScreen() {
     setDetail(null);
     setError(null);
     void getWorkbenchSource()
-      .readConnectionDetail({ workspaceId, ref, viewerId })
+      .readConnectionDetail({ workspaceId, connectionId, viewerId })
       .then((result) => {
         if (cancelled) return;
         if (result === null) {
@@ -73,13 +73,13 @@ export default function ConnectionDetailScreen() {
     return () => {
       cancelled = true;
     };
-  }, [loadGeneration, ref, viewerId, workspaceId]);
+  }, [loadGeneration, connectionId, viewerId, workspaceId]);
 
   const revoke = useCallback(async () => {
     if (!detail) return;
     setRevoking(true);
     try {
-      const { revoked, pending } = await getWorkbenchSource().revokeAllGrants({ workspaceId, ref });
+      const { revoked, pending } = await getWorkbenchSource().revokeAllGrants({ workspaceId, connectionId });
       if (pending) {
         setDetail({
           ...detail,
@@ -102,7 +102,7 @@ export default function ConnectionDetailScreen() {
     } finally {
       setRevoking(false);
     }
-  }, [detail, ref, workspaceId]);
+  }, [detail, connectionId, workspaceId]);
 
   const company = detail ? connectionCompany(detail.connection) : '';
   const headerTitle = detail

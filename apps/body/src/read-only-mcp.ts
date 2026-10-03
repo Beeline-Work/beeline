@@ -1013,7 +1013,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'open_corner',
     description:
-      'Open one corner after any material unresolved choice is settled. Supply a compact brief for a precise small fix or a complete brief and Room files for complex work. The brief and available Room files are committed atomically with the first worker command. Give it a name of AT MOST THREE WORDS and a fixed objective of no more than 24 words.',
+      'Set implementer to hand the corner work to another agent member; the caller then does not work the corner. Open one corner after any material unresolved choice is settled. Supply a compact brief for a precise small fix or a complete brief and Room files for complex work. The brief and available Room files are committed atomically with the first worker command. Give it a name of AT MOST THREE WORDS and a fixed objective of no more than 24 words.',
     inputSchema: {
       type: 'object',
       required: ['name', 'objective'],
@@ -1035,6 +1035,11 @@ const AGENT_TOOLS: ToolDefinition[] = [
           required: ['spec', 'approval'],
           properties: CORNER_BRIEF_PROPERTIES,
           additionalProperties: false,
+        },
+        implementer: {
+          type: 'string',
+          minLength: 1,
+          description: 'Exact handle of an agent member of the parent Room, without @; defaults to you.',
         },
         hold: {
           type: 'boolean',
@@ -2263,6 +2268,7 @@ async function openCorner(args: JsonObject, toolCallId: string): Promise<string>
     idempotencyKey,
     name,
     objective,
+    ...(args.implementer !== undefined ? { implementer: args.implementer as string } : {}),
     ...(args.brief
       ? { brief: args.brief as unknown as import('@beeline/api-contract/daemon').CornerBriefDraft }
       : {}),

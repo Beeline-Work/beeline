@@ -483,7 +483,7 @@ function readWorkspaceMemberGrantView(value: unknown): WorkspaceMemberGrantView 
   const grant = readAgentGrantView(value);
   const agent = readIdentity(item?.agent);
   if (!grant || !agent || agent.kind !== 'agent') return null;
-  return { ...grant, agent };
+  return { ...grant, agent, ...field('roomName', typeof item?.roomName === 'string' ? item.roomName : undefined) };
 }
 
 function readGrantRequest(value: unknown): GrantRequestCardView | null {
@@ -1138,6 +1138,8 @@ function readWorkspace(value: unknown): ChatListWorkspace | null {
     name: typeof item.name === 'string' ? item.name : '',
     role: oneOf(item.role, ['owner', 'admin', 'member', 'spectator']) ?? 'member',
     updatedAt: integer(item.updatedAt) ? item.updatedAt : 0,
+    ...field('roomCount', integer(item.roomCount) ? item.roomCount : undefined),
+    ...field('attention', typeof item.attention === 'boolean' ? item.attention : undefined),
     ...field('visibility', oneOf(item.visibility, ['public', 'invite-only'])),
     ...field('avatar', typeof item.avatar === 'string' ? item.avatar : undefined),
   };
@@ -1782,6 +1784,7 @@ export function readWorkspaceMemberListView(value: unknown): WorkspaceMemberList
     agents,
     membersTruncated: typeof item.membersTruncated === 'boolean' ? item.membersTruncated : false,
     agentsTruncated: typeof item.agentsTruncated === 'boolean' ? item.agentsTruncated : false,
+    ...field('viewer', item.viewer ? readViewer(item.viewer) : undefined),
     ...field('grants', readList(item.grants, readWorkspaceMemberGrantView)),
     ...field('peopleTotal', integer(item.peopleTotal) ? item.peopleTotal : undefined),
     ...field('agentTotal', integer(item.agentTotal) ? item.agentTotal : undefined),

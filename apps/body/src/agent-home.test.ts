@@ -450,7 +450,10 @@ describe('per-room harness state isolation', () => {
     expect(JSON.parse(readFileSync(isolatedModels, 'utf8')).providers).toEqual([
       expect.objectContaining({ name: 'openrouter-ox', apiKey: 'inline-secret' }),
     ]);
-    expect(existsSync(resolve(roomRoot, 'pi/settings.json'))).toBe(false);
+    expect(JSON.parse(readFileSync(resolve(roomRoot, 'pi/settings.json'), 'utf8'))).toEqual({
+      httpIdleTimeoutMs: 300_000,
+      retry: { enabled: true, maxRetries: 3, baseDelayMs: 2_000 },
+    });
     const modelOptions = [
       {
         id: 'model',

@@ -53,6 +53,7 @@ vi.mock('@/sync/transport/monolith-operation', () => ({
         ...(fakeServer.wallet ? { wallet: fakeServer.wallet } : {}),
       };
     }
+    if (name === 'readConnectorInstall') return fakeServer.rows.find((row) => row.connectorId === input.connectorId || row.connectorType === input.connectorId) ?? null;
     if (name === 'pairConnector') {
       fakeServer.rows = fakeServer.rows.filter((row) => row.connectorType !== input.connectorType);
       const row = {
@@ -274,7 +275,7 @@ describe('mock Workbench source', () => {
     const source = getWorkbenchSource();
     const forOwner = await source.readConnectionDetail({
       workspaceId: 'ws',
-      ref: 'cred_vercel',
+      connectionId: 'cred_vercel',
       viewerId: MEMBER_A,
     });
     expect(forOwner?.connection.name).toBe('Vercel');
@@ -283,16 +284,16 @@ describe('mock Workbench source', () => {
 
     const forOther = await source.readConnectionDetail({
       workspaceId: 'ws',
-      ref: 'cred_vercel',
+      connectionId: 'cred_vercel',
       viewerId: MEMBER_B,
     });
     expect(forOther).toBeNull();
 
-    const { revoked } = await source.revokeAllGrants({ workspaceId: 'ws', ref: 'cred_vercel' });
+    const { revoked } = await source.revokeAllGrants({ workspaceId: 'ws', connectionId: 'cred_vercel' });
     expect(revoked).toBe(2);
     const after = await source.readConnectionDetail({
       workspaceId: 'ws',
-      ref: 'cred_vercel',
+      connectionId: 'cred_vercel',
       viewerId: MEMBER_A,
     });
     expect(after?.grants).toEqual([]);

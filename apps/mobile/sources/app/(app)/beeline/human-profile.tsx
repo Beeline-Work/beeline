@@ -8,6 +8,7 @@ import type {
   RoomViewMember,
   WorkspaceMemberGrantView,
   WorkspaceView,
+  RoomViewer,
 } from '@beeline/api-contract/phone';
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
@@ -36,7 +37,7 @@ export function HumanProfile({
   const navigation = useNavigation();
   const allowNavigation = useRef(false);
   const [member, setMember] = useState<RoomViewMember | null>(null);
-  const [workspace, setWorkspace] = useState<WorkspaceView | null>(null);
+  const [viewer, setViewer] = useState<RoomViewer | undefined>();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -51,7 +52,7 @@ export function HumanProfile({
     let cancelled = false;
     setLoading(true);
     setMember(null);
-    setWorkspace(null);
+    setViewer(undefined);
     setError(null);
     setEditing(false);
     void (async () => {
@@ -59,19 +60,18 @@ export function HumanProfile({
       if (!identity) throw new Error('Sign in to view this profile.');
       const baseUrl = await getEffectiveRelayUrl();
       const client = new RoomViewClient({ identity, baseUrl });
-      const [surface, page, owned] = await Promise.all([
-        client.workspace(workspaceId),
+      const [page, owned] = await Promise.all([
         client.workspaceMembers(workspaceId, { memberId }),
         client.workspaceMembers(workspaceId, { kind: 'agent', ownerId: memberId }),
       ]);
       const person = page.members.find((entry) => entry.identity.pubkey === memberId);
       if (!person) throw new Error('This person is no longer a member of this Workspace.');
       if (!cancelled) {
-        if (surface.viewer.identity.pubkey === memberId) {
+        if (identity.publicKey === memberId) {
           router.replace('/beeline/settings');
           return;
         }
-        setWorkspace(surface);
+        setViewer(page.viewer);
         setConnectedAgents(owned.agents);
         setGrants(page.grants ?? []);
         setAgentsHasMore(owned.agentsTruncated);
@@ -89,14 +89,14 @@ export function HumanProfile({
       cancelled = true;
     };
   }, [workspaceId, memberId, retry]);
-  const self = workspace?.viewer.identity.pubkey === memberId;
-  const manager = Boolean(workspace?.viewer.permissions.manage);
+  const self = viewer?.identity.pubkey === memberId;
+  const manager = Boolean(viewer?.permissions.manage);
   const canEditRole =
     !self &&
     manager &&
     Boolean(member) &&
-    ((workspace?.viewer.role === 'owner' && member?.role !== 'owner') ||
-      (workspace?.viewer.role === 'admin' &&
+    ((viewer?.role === 'owner' && member?.role !== 'owner') ||
+      (viewer?.role === 'admin' &&
         (member?.role === 'member' || member?.role === 'spectator')));
   const perform = async (action: () => Promise<void>) => {
     if (mutation.current) return;
@@ -321,10 +321,7 @@ export function HumanProfile({
                 <MemberGrantRow
                   key={grant.grantId}
                   grant={grant}
-                  roomName={
-                    workspace?.managerSettings?.rooms?.find((room) => room.id === grant.roomId)
-                      ?.name
-                  }
+                  roomName={grant.roomName}
                 />
               ))
             ) : (

@@ -107,11 +107,31 @@ export class AcpRequestTimeoutError extends Error {
   }
 }
 
-/** A prompt whose session produced nothing for its whole inactivity window. */
-export function isSilentPromptTimeout(error: unknown): boolean {
-  return (
-    error instanceof AcpRequestTimeoutError && error.inactivity && error.method === 'session/prompt'
-  );
+export const TURN_BACKSTOP_MS = 30 * 60_000;
+
+export class AcpTurnBackstopError extends Error {
+  override readonly cause = 'turn_backstop';
+  constructor(
+    readonly timeoutMs: number,
+    readonly lastActivity: string,
+    stderrTail = '',
+    detail = '',
+  ) {
+    const meaningful = flattenHarnessCause(stderrTail);
+    super(
+      `turn_backstop: no ACP traffic for ${timeoutMs / 60_000} minutes; last activity: ${lastActivity}` +
+      `${detail ? ` (${detail})` : ''}${meaningful ? `; harness stderr: ${meaningful}` : ''}`,
+    );
+    this.name = 'AcpTurnBackstopError';
+  }
+}
+
+export class AcpRuntimeExitedError extends Error {
+  override readonly cause = 'runtime_exited';
+  constructor(detail: string) {
+    super(`runtime_exited: ${detail}`);
+    this.name = 'AcpRuntimeExitedError';
+  }
 }
 
 function killChildProcessGroup(
@@ -640,6 +660,9 @@ interface Pending {
   method?: string;
   /** Named in this request's timeout so the cause is not just "inactivity". */
   detail?: string;
+  sessionId?: string;
+  lastActivity?: string;
+  openToolCalls?: Set<string>;
 }
 
 export class AcpClient extends EventEmitter {
@@ -779,9 +802,25 @@ export class AcpClient extends EventEmitter {
 
     this.child.stdout.setEncoding('utf8');
     this.child.stdout.on('data', (chunk: string) => this.onData(chunk));
+    const child = this.child;
+    // A harness can close a protocol pipe while its process is still alive.
+    // Let an exit already in progress retain its code/signal and OOM diagnosis.
+    const pipeClosed = (pipe: string) => {
+      setTimeout(() => {
+        if (this.child === child && this.alive) {
+          const stderr = flattenHarnessCause(this.stderrTail);
+          this.failRuntime(`ACP agent ${this.agentLabel} ${pipe} pipe closed${stderr ? `: ${stderr}` : ''}`);
+        }
+      }, 25);
+    };
+    this.child.stdout.on('end', () => pipeClosed('stdout'));
+    this.child.stdout.on('close', () => pipeClosed('stdout'));
+    this.child.stdout.on('error', (error) => this.failRuntime(`stdout: ${error.message}`));
+    this.child.stdin.on('close', () => pipeClosed('stdin'));
+    this.child.stdin.on('error', (error) => this.failRuntime(`stdin: ${error.message}`));
 
     this.child.on('exit', (code, signal) => {
-      void this.handleChildExit(code, signal);
+      if (this.child === child) void this.handleChildExit(code, signal);
     });
 
     this.child.on('error', (err) => {
@@ -789,12 +828,7 @@ export class AcpClient extends EventEmitter {
       // in-flight `initialize` request (and every later one) would hang until
       // its full timeout instead of failing now — which is what a catalog
       // probe or a session spawn against a broken agent binary needs.
-      this.alive = false;
-      for (const [, p] of this.pending) {
-        clearTimeout(p.timer);
-        p.reject(err);
-      }
-      this.pending.clear();
+      this.failRuntime(`ACP agent ${this.agentLabel}: ${err.message}`);
       // EventEmitter's 'error' event is special: emitting it with no
       // listener attached throws the error as an uncaught exception instead
       // of merely going unheard. No caller currently subscribes to this
@@ -837,8 +871,23 @@ export class AcpClient extends EventEmitter {
     signal: NodeJS.Signals | null,
   ): Promise<void> {
     this.alive = false;
-    const oomKilled =
-      signal === 'SIGKILL' && !this.stopping && (await this.oomKills.consume().catch(() => false));
+    // Exit owns the outcome immediately; diagnostic I/O cannot turn it into
+    // a backstop timeout or keep an already-dead runtime's turn hanging.
+    for (const p of this.pending.values()) this.clearTimer(p);
+    let oomKilled = false;
+    if (signal === 'SIGKILL' && !this.stopping) {
+      let diagnosticTimer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        oomKilled = await Promise.race([
+          this.oomKills.consume().catch(() => false),
+          new Promise<boolean>((resolve) => {
+            diagnosticTimer = setTimeout(() => resolve(false), 100);
+          }),
+        ]);
+      } finally {
+        clearTimeout(diagnosticTimer);
+      }
+    }
     const exitText = oomKilled
       ? `ACP agent ${this.agentLabel} was killed by the kernel OOM killer (signal=SIGKILL)`
       : `ACP agent ${this.agentLabel} exited code=${code} signal=${signal}`;
@@ -846,7 +895,7 @@ export class AcpClient extends EventEmitter {
     const stderrSuffix = meaningful ? `: ${meaningful}` : '';
     for (const [, p] of this.pending) {
       this.clearTimer(p);
-      p.reject(new Error(`${exitText}${stderrSuffix}`));
+      p.reject(new AcpRuntimeExitedError(`${exitText}${stderrSuffix}`));
     }
     this.pending.clear();
     this.activeRunIds.clear();
@@ -856,8 +905,16 @@ export class AcpClient extends EventEmitter {
     this.emit('exit', { code, signal });
   }
 
+  private failRuntime(detail: string): void {
+    this.alive = false;
+    for (const p of this.pending.values()) {
+      this.clearTimer(p);
+      p.reject(new AcpRuntimeExitedError(detail));
+    }
+    this.pending.clear();
+  }
+
   async stop(): Promise<void> {
-    if (!this.alive) return;
     const child = this.child;
     if (!child) return;
     this.stopping = true;
@@ -1046,10 +1103,10 @@ export class AcpClient extends EventEmitter {
 
   /**
    * Run one prompt turn. `timeoutMs` is an idle window, not a hard cap on
-   * turn length: every `session/update` for this session (message chunk,
-   * tool call, or otherwise) re-arms it, so an actively-working agent can
-   * run indefinitely while a genuinely wedged one (zero activity for
-   * `timeoutMs`) still gets cancelled. `onChunk` is the ACP-boundary
+   * turn length: every inbound ACP message for this session re-arms it.
+   * Open tool calls suspend the backstop until completion. A silent session
+   * with no open tool is cancelled without stopping the runtime.
+   * `onChunk` is the ACP-boundary
    * streaming hook: called for every incremental `agent_message_chunk`
    * delta as it arrives, so a caller can project live text without waiting
    * for the turn to finish. A harness that only emits a final message
@@ -1068,7 +1125,7 @@ export class AcpClient extends EventEmitter {
   async sessionPrompt(
     sessionId: string,
     text: string | readonly AcpPromptBlock[],
-    timeoutMs = 120_000,
+    timeoutMs = TURN_BACKSTOP_MS,
     onChunk?: AcpTextChunkHandler,
     onActivity?: AcpStreamHandler,
     onToolCalls?: (calls: readonly ToolCallEntry[]) => void,
@@ -1077,12 +1134,10 @@ export class AcpClient extends EventEmitter {
       typeof text === 'string' ? Buffer.byteLength(text, 'utf8') : undefined;
     const updates: SessionUpdate[] = [];
     let promptRunId: string | undefined;
-    let requestId: number | undefined;
     const onUpdate = (u: SessionUpdate) => {
       if (u.sessionId !== sessionId) return;
       updates.push(u);
       promptRunId ??= this.activeRunIdFromUpdate(u.update);
-      if (requestId !== undefined) this.resetPendingIdleTimeout(requestId);
       onActivity?.(agentStreamSnapshot(updates, this.agentLabel));
       onToolCalls?.(toolCallEntries(updates));
       if (onChunk) {
@@ -1104,9 +1159,7 @@ export class AcpClient extends EventEmitter {
           prompt: typeof text === 'string' ? [{ type: 'text', text }] : [...text],
         },
         timeoutMs,
-        (id) => {
-          requestId = id;
-        },
+        true,
         promptPayloadNote(text),
       )) as { stopReason?: string };
 
@@ -1212,28 +1265,20 @@ export class AcpClient extends EventEmitter {
   }
 
   /**
-   * Re-arm a pending request's idle timer from its full `idleTimeoutMs`,
-   * called on every ACP activity signal for that request (streamed text
-   * delta, session/update, tool call). A request only times out after this
-   * much wall-clock time with zero activity, not after a fixed deadline —
-   * so an actively-working turn can run indefinitely while a genuinely
-   * wedged one still gets caught.
+   * A tool owns its deadline. Silence while it is open is never a turn failure.
+   * After the last tool closes, start a full backstop window for this session.
    */
   private resetPendingIdleTimeout(id: number): void {
     const p = this.pending.get(id);
     if (!p || p.idleTimeoutMs === undefined) return;
     this.clearTimer(p);
-    const { idleTimeoutMs, method, reject, detail } = p;
+    if (p.openToolCalls?.size) return;
+    const { idleTimeoutMs, reject, detail, sessionId, lastActivity } = p;
     p.timer = setTimeout(() => {
       this.pending.delete(id);
+      if (sessionId) this.sessionCancel(sessionId);
       reject(
-        new AcpRequestTimeoutError(
-          method ?? 'request',
-          idleTimeoutMs,
-          this.stderrTail,
-          true,
-          detail ?? '',
-        ),
+        new AcpTurnBackstopError(idleTimeoutMs, lastActivity ?? 'session/prompt', this.stderrTail, detail),
       );
     }, idleTimeoutMs);
   }
@@ -1258,6 +1303,29 @@ export class AcpClient extends EventEmitter {
   private handleMessage(msg: Record<string, unknown>): void {
     const id = msg.id;
     const method = msg.method as string | undefined;
+    const params = msg.params as { sessionId?: string; update?: Record<string, unknown> } | undefined;
+    const response = !method && id !== undefined ? this.pending.get(Number(id)) : undefined;
+    const sessionId = params?.sessionId ?? response?.sessionId;
+    if (sessionId) {
+      for (const [requestId, pending] of this.pending) {
+        if (pending.method !== 'session/prompt' || pending.sessionId !== sessionId) continue;
+        const update = params?.update;
+        pending.lastActivity = typeof update?.sessionUpdate === 'string'
+          ? update.sessionUpdate
+          : method ?? `response:${response?.method ?? 'request'}`;
+        if (
+          typeof update?.toolCallId === 'string' &&
+          (update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'tool_call_update')
+        ) {
+          if (update.status === 'pending' || update.status === 'in_progress') {
+            pending.openToolCalls?.add(update.toolCallId);
+          } else if (update.status === 'completed' || update.status === 'failed') {
+            pending.openToolCalls?.delete(update.toolCallId);
+          }
+        }
+        this.resetPendingIdleTimeout(requestId);
+      }
+    }
 
     // Response to our request.
     if (id !== undefined && !method) {
@@ -1438,17 +1506,12 @@ export class AcpClient extends EventEmitter {
     });
   }
 
-  /**
-   * `onStart`, when given, receives the assigned request id synchronously
-   * and marks the request as idle-resettable at `timeoutMs`: callers can
-   * then call `resetPendingIdleTimeout(id)` on activity to defer the
-   * timeout instead of it firing at a fixed deadline.
-   */
+  /** Prompt backstops reset on session traffic; other requests use a fixed deadline. */
   private request(
     method: string,
     params: unknown,
     timeoutMs = 60_000,
-    onStart?: (id: number) => void,
+    backstop = false,
     detail = '',
   ): Promise<unknown> {
     if (!this.child || !this.alive) {
@@ -1457,21 +1520,23 @@ export class AcpClient extends EventEmitter {
     const id = this.nextId++;
     const payload = { jsonrpc: '2.0', id, method, params };
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const timer = backstop ? undefined : setTimeout(() => {
         this.pending.delete(id);
         reject(
-          new AcpRequestTimeoutError(method, timeoutMs, this.stderrTail, Boolean(onStart), detail),
+          new AcpRequestTimeoutError(method, timeoutMs, this.stderrTail, false, detail),
         );
       }, timeoutMs);
+      const sessionId = (params as { sessionId?: string })?.sessionId;
       this.pending.set(id, {
         resolve,
         reject,
         timer,
         method,
+        ...(sessionId ? { sessionId } : {}),
         ...(detail ? { detail } : {}),
-        ...(onStart ? { idleTimeoutMs: timeoutMs } : {}),
+        ...(backstop ? { idleTimeoutMs: timeoutMs, lastActivity: method, openToolCalls: new Set<string>() } : {}),
       });
-      onStart?.(id);
+      if (backstop) this.resetPendingIdleTimeout(id);
       this.write(payload);
     });
   }
@@ -1481,8 +1546,13 @@ export class AcpClient extends EventEmitter {
   }
 
   private write(obj: unknown): void {
-    if (!this.child?.stdin.writable) return;
-    this.child.stdin.write(JSON.stringify(obj) + '\n');
+    if (!this.child?.stdin.writable) {
+      if (this.child) this.failRuntime(`ACP agent ${this.agentLabel} stdin pipe closed`);
+      return;
+    }
+    this.child.stdin.write(JSON.stringify(obj) + '\n', (error) => {
+      if (error) this.failRuntime(`stdin: ${error.message}`);
+    });
   }
 }
 

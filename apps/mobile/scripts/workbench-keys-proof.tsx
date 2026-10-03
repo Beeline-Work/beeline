@@ -20,6 +20,7 @@ import {
 // `faviconDomain` the Workbench DTO now projects.
 const CONNECTIONS: WorkbenchConnection[] = [
   {
+    connectionId: 'resend-squire-corpus',
     ref: 'resend-squire-corpus',
     name: 'default',
     service: 'resend',
@@ -29,6 +30,7 @@ const CONNECTIONS: WorkbenchConnection[] = [
     ownerId: 'proof',
   },
   {
+    connectionId: 'resend-firstmate-rc34',
     ref: 'resend-firstmate-rc34',
     name: 'firstmate-rc34',
     service: 'resend',
@@ -38,6 +40,7 @@ const CONNECTIONS: WorkbenchConnection[] = [
     ownerId: 'proof',
   },
   {
+    connectionId: 'sentry-test-atlas-dsn',
     ref: 'sentry-test-atlas-dsn',
     name: 'default',
     service: 'Sentry',
@@ -47,6 +50,7 @@ const CONNECTIONS: WorkbenchConnection[] = [
     ownerId: 'proof',
   },
   {
+    connectionId: 'ipinfo-default',
     ref: 'ipinfo-default',
     name: 'default',
     service: 'ipinfo',

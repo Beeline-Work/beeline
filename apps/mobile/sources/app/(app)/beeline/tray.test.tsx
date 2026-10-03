@@ -1,3 +1,6 @@
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import { CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -245,6 +248,7 @@ async function renderTray(): Promise<ReactTestRenderer> {
 describe.each([
   { surface: 'desktop', os: 'web', width: 1200, action: 'REMOVE' },
   { surface: 'mobile', os: 'ios', width: 390, action: 'OPEN →' },
+  { surface: 'R12a compact web', os: 'web', width: 760, action: 'OPEN →' },
 ])('Bookmarks $surface rows', ({ os, width, action }) => {
   it('shows each save age once at the right and no footer time', async () => {
     layout.os = os;
@@ -582,3 +586,31 @@ describe('Tray Needs you', () => {
     expect(textOf(tree)).toContain('message is not available');
   });
 });
+
+it.skipIf(!existsSync(CHROME))('R12a Demonstrated: Chrome at 760px paints OPEN → in a compact Tray', async () => {
+  const mobile = process.cwd();
+  const { result, status, stderr } = await runBrowserProof({
+    entry: path.join(mobile, 'scripts/tray-empty-proof.tsx'), mobile, width: 760, query: '?surface=phone&mode=row',
+    shims: {
+      ...webProofShims(mobile),
+      'expo-router': `import React from 'react';
+        export const useFocusEffect = (effect) => React.useEffect(effect, [effect]);
+        export const useLocalSearchParams = () => ({ communityId: 'workspace-1' });
+        export const useRouter = () => ({ back: () => undefined, push: () => undefined });`,
+      '@/sync/transport/monolith-operation': `export const monolithPhoneOperation = async (name) => name === 'readNeedsYou' ? { items: [] } : { bookmarks: [{
+        messageId: 'msg-1', workspaceId: 'workspace-1', roomId: 'room-1', roomName: 'Room', roomKind: 'room',
+        messageCreatedAt: Math.floor(Date.now()/1000)-7200, bookmarkedAt: Math.floor(Date.now()/1000)-120,
+        available: true, author: { name: 'Avery' }, text: 'Bookmarked line'
+      }] };`,
+      '@/sync/transport/room-view-client': 'export class RoomViewClient {}',
+      '@/auth/buzz-identity-storage': "export const getEffectiveRelayUrl = async () => 'http://local'; export const loadBuzzIdentity = async () => null;",
+      '@/components/DesktopRoomInspector': 'export const DesktopRoomInspector = () => null;',
+      'react-native-gesture-handler': 'export const Swipeable = ({ children }) => children;',
+      '@expo/vector-icons': "import React from 'react'; export const Ionicons = () => React.createElement('span');",
+    },
+  });
+  expect(status, stderr).toBe(0);
+  expect(result).toContain('PASS');
+  expect(result).toContain('OPEN →');
+  console.log('R12a Demonstrated, Chrome 760px:', result);
+}, 90_000);

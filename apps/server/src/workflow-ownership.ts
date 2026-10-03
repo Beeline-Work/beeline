@@ -65,7 +65,8 @@ export async function readWorkflowOwnership(
       OR surface.parent_id=COALESCE(requested.parent_id,requested.id))
       AND message.card_type='workflow-handoff' AND message.card->>'workflowSlug'=$2
       AND message.deleted_at IS NULL
-    ORDER BY message.card->>'runId',message.created_at DESC,message.id DESC
+    ORDER BY message.card->>'runId',(message.card->>'seq')::int DESC NULLS LAST,
+      message.created_at DESC,message.id DESC
   ) SELECT latest.run_id FROM latest JOIN workspace_skill_versions version
     ON version.skill_id=$3 AND version.version=latest.version::int
     WHERE (version.markdown::jsonb->'handoffs'->latest.state->>'kind') IS DISTINCT FROM 'terminal'

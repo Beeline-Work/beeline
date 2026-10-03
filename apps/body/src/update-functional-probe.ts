@@ -48,7 +48,7 @@ export interface ProviderRefusal {
  * then failed, so pi records no HTTP status the refusal path could read. Two
  * shapes are named because the fleet has seen both (2026-09-06, v0.0.51): a
  * JSON-RPC error carrying a server-internal code (codex out of credits answers
- * `ACP error -32603: Internal error`), and the prompt's inactivity timeout
+ * `ACP error -32603: Internal error`), and the prompt's silence backstop
  * (OpenRouter throttling z-ai/glm-5.3-flash streams nothing for the whole 45s).
  */
 export type AcpTurnFailure =
@@ -63,6 +63,7 @@ export type ProbeAppeal =
 
 const ACP_ERROR_CODE = /\bACP error (-\d+):/;
 const ACP_PROMPT_INACTIVITY = /\bACP session\/prompt timed out after \d+ms of inactivity\b/;
+const ACP_TURN_BACKSTOP = /\bturn_backstop: no ACP traffic for [\d.]+ minutes; last activity:/;
 
 /** JSON-RPC's own internal error, plus its implementation-defined server range. */
 function isServerInternalCode(code: number): boolean {
@@ -79,7 +80,10 @@ export function classifyAcpTurnFailure(error: unknown): AcpTurnFailure | undefin
   const message =
     error instanceof Error ? error.message : typeof error === 'string' ? error : undefined;
   if (!message) return undefined;
-  if (ACP_PROMPT_INACTIVITY.test(message)) return { kind: 'prompt-inactivity' };
+  // The current installed release may still report the earlier timeout wording.
+  if (ACP_TURN_BACKSTOP.test(message) || ACP_PROMPT_INACTIVITY.test(message)) {
+    return { kind: 'prompt-inactivity' };
+  }
   const code = Number(ACP_ERROR_CODE.exec(message)?.[1]);
   if (Number.isFinite(code) && isServerInternalCode(code)) return { kind: 'server-internal', code };
   return undefined;
@@ -198,7 +202,7 @@ export interface UpdateFunctionalProbeResult {
  *
  * A probe turn that failed at the ACP boundary with no status to record gets
  * the SAME court of appeal (`classifyAcpTurnFailure`): a JSON-RPC error with a
- * server-internal code, and the prompt's inactivity timeout. Both are what a
+ * server-internal code, and the prompt's silence backstop. Both are what a
  * throttled or exhausted provider looks like from here (2026-09-06: codex
  * helpers out of credits answered `-32603 Internal error` while pi/GLM helpers
  * timed out on OpenRouter 429s, and the fleet rolled back a sound bundle). The

@@ -300,3 +300,5 @@ export {
   connectorAdapter,
   connectorRequesterRole,
 } from './connector-adapter.js';
+
+export type ReadConnectorInstallInput = { readonly workspaceId: string; readonly connectorId: string };

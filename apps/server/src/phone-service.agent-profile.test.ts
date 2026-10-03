@@ -1,3 +1,4 @@
+import { readWorkspaceMemberListView } from '@beeline/api-contract/phone';
 import { afterEach, describe, expect, it } from 'vitest';
 import { migrate } from './database.js';
 import { PhoneService } from './phone-service.js';
@@ -128,7 +129,16 @@ describe('persistent Workspace bans', () => {
       [workspace, parent, other],
     );
     const phone = new PhoneService(database, 'https://server.example');
+    await database.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)', [agent, other]);
+    await database.query(
+      `INSERT INTO agent_grants(id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status)
+       VALUES($1,$2,$3,'repository','acme/repo','Ship it',$4,$5,'approved')`,
+      ['55555555-5555-4555-8555-555555555555', agent, workspace, other, parent],
+    );
     const invite = await phone.execute('createInvite', { workspaceId: workspace }, viewer);
+    const profile = readWorkspaceMemberListView(await phone.readWorkspaceMembers(workspace, viewer, { memberId: other }));
+    expect(profile?.viewer).toMatchObject({ role: 'owner', permissions: { manage: true } }); // R12c
+    expect(profile?.grants?.[0]).toMatchObject({ roomName: 'Room' });
     expect(
       (await phone.readWorkspaceMembers(workspace, viewer, { memberId: other }))?.members.map(
         (m) => m.identity.pubkey,

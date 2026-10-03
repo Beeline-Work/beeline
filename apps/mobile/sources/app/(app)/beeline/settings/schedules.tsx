@@ -98,14 +98,14 @@ export default function ScheduledWork() {
       try {
         await monolithPhoneOperation('deleteRoomSchedule', { roomId, scheduleId });
         setConfirmStop(null);
-        await reload();
+        setSchedules((current) => current.filter((schedule) => schedule.id !== scheduleId));
       } catch (caught) {
         setError(`Could not stop scheduled work: ${String(caught)}`);
       } finally {
         setWorking(false);
       }
     },
-    [reload, roomId],
+    [roomId],
   );
 
   const renderSchedule = (schedule: RoomScheduleView) => {

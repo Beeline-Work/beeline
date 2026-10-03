@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useRef } from 'react';
 import { observeRoomResource, useObservedResource } from './use-observed-resource';
 import type { WorkflowRunSummaryView } from '@beeline/api-contract/phone';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
@@ -18,8 +18,7 @@ export function pickCornerWorkflowRun(
 /** Reads workflow changes independently of the visible transcript. */
 export function useCornerWorkflowRun(
   cornerId: string | undefined,
-  onError?: (error: string, retry: () => void) => void,
-): WorkflowRunSummaryView | undefined {
+) {
   const observed = useObservedResource(cornerId ? `corner-workflow:${cornerId}` : undefined, {
     load: async () =>
       pickCornerWorkflowRun(
@@ -28,14 +27,10 @@ export function useCornerWorkflowRun(
       ),
     subscribe: cornerId ? observeRoomResource(cornerId) : undefined,
   });
-  const alerted = useRef<{ cornerId: string | undefined; successVersion: number } | null>(null);
-  const errorHandler = useRef(onError);
-  errorHandler.current = onError;
-  useEffect(() => {
-    if (!observed.error || !errorHandler.current) return;
-    if (alerted.current && alerted.current.cornerId === cornerId && alerted.current.successVersion === observed.successVersion) return;
-    alerted.current = { cornerId, successVersion: observed.successVersion };
-    errorHandler.current(observed.error, observed.retry);
-  }, [cornerId, observed.error, observed.retry, observed.successVersion]);
-  return observed.data;
+  const notice = useRef<{ cornerId?: string; successVersion: number; error: string | null }>({ cornerId, successVersion: 0, error: null });
+  if (notice.current.cornerId !== cornerId || notice.current.successVersion !== observed.successVersion) {
+    notice.current = { cornerId, successVersion: observed.successVersion, error: null };
+  }
+  if (observed.error && !notice.current.error) notice.current.error = observed.error;
+  return { workflow: observed.data, error: notice.current.error, retry: observed.retry };
 }

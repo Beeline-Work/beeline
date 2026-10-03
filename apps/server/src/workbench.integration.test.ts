@@ -277,6 +277,15 @@ describe('workbench connectors', () => {
     expect(grants.rows.map((row) => row.agent_id)).not.toContain(OTHER_HELPER);
   });
 
+
+  it('R12b: reads one owner install by row id or type, with a 403 for another member', async () => {
+    const connectorId = await pairOwnerConnector();
+    for (const target of [connectorId, 'trusty-squire']) {
+      expect(await phoneOperation('readConnectorInstall', { workspaceId: WORKSPACE, connectorId: target })).toMatchObject({ connectorId, status: { status: 'connected' } });
+    }
+    expect((await operation('readConnectorInstall', { workspaceId: WORKSPACE, connectorId }, recipientToken)).status).toBe(403);
+  });
+
   it('pairs, syncs metadata, and scopes the workbench view to the viewer', async () => {
     const connectorId = await pairOwnerConnector();
     const view = (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as {

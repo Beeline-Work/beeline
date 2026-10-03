@@ -1,4 +1,4 @@
-import { activeCornerHolds } from './corner-holds.js';
+import type { activeCornerHolds } from './corner-holds.js';
 import { createHash, randomBytes } from 'node:crypto';
 import type { WorkflowContract, WorkflowTerminalState } from '@beeline/api-contract/daemon';
 import { cornerRunFromLifecycle, type CornerLifecycleView } from '@beeline/api-contract/phone';
@@ -1194,22 +1194,6 @@ async function approvingReviewer(
   return (await isCornerReviewer(db, input.cornerId, approvedBy)) ? approvedBy : undefined;
 }
 
-/** The corner worker's yolo mode; always off in a public Workspace. */
-async function workerYolo(db: SqlDatabase, cornerId: string): Promise<boolean> {
-  const row = (
-    await db.query<{ yolo_mode: boolean }>(
-      `SELECT (agent.yolo_mode AND workspace.visibility<>'public') yolo_mode
-       FROM corner_facts fact
-       JOIN rooms corner ON corner.id=fact.corner_id
-       JOIN workspaces workspace ON workspace.id=corner.workspace_id
-       JOIN agents agent ON agent.agent_id=${cornerImplementerSql('fact', 'corner')}
-       WHERE fact.corner_id=$1`,
-      [cornerId],
-    )
-  ).rows[0];
-  return row?.yolo_mode === true;
-}
-
 export type CornerMergeGate = {
   /** A reviewer is configured; the self-review bypass also requires current parent membership. */
   reviewerExists: boolean;
@@ -1233,49 +1217,78 @@ export async function cornerMergeGate(
   cornerId: string,
   head: { number: number; headSha: string },
 ): Promise<CornerMergeGate> {
-  const corner = (
-    await db.query<{
-      parent_id: string;
-      workspace_id: string;
-      owner_agent_id: string | null;
-      lane: string;
-      configured_reviewer_id: string | null;
-      reviewer_parent_member: boolean;
-      reviewer_fallback_ids: string[];
-    }>(
-      `SELECT corner.parent_id,parent.workspace_id,fact.owner_agent_id,fact.lane,
+  const gates = await cornerMergeGates(db, [
+    { corner_id: cornerId, number: head.number, head_sha: head.headSha },
+  ]);
+  const gate = gates.get(cornerId);
+  if (!gate) throw new Error('corner not found');
+  return gate;
+}
+
+/** Shared gate facts and rules for a single head and the whole candidate sweep. */
+async function cornerMergeGates(
+  db: SqlDatabase,
+  heads: { corner_id: string; number: number; head_sha: string }[],
+): Promise<Map<string, CornerMergeGate>> {
+  const rows = await db.query<{
+    corner_id: string;
+    owner_agent_id: string | null;
+    configured_reviewer_id: string | null;
+    reviewer_parent_member: boolean;
+    reviewer_fallback_ids: string[];
+    approved: boolean;
+    holds: CornerMergeGate['holds'];
+    yolo_mode: boolean | null;
+  }>(
+      `SELECT fact.corner_id,fact.owner_agent_id,
               parent.reviewer_agent_id configured_reviewer_id,parent.reviewer_fallback_ids,
               EXISTS (
                 SELECT 1 FROM memberships member JOIN identities reviewer ON reviewer.id=member.identity_id
                 WHERE member.room_id=parent.id AND member.identity_id=parent.reviewer_agent_id
                   AND member.removed_at IS NULL AND reviewer.kind='agent'
-              ) reviewer_parent_member
-       FROM corner_facts fact
+              ) reviewer_parent_member,
+              EXISTS (
+                SELECT 1 FROM corner_merge_approvals approval
+                JOIN memberships member ON member.room_id=parent.id AND member.identity_id=approval.approved_by
+                  AND member.removed_at IS NULL
+                JOIN identities reviewer ON reviewer.id=member.identity_id AND reviewer.kind='agent'
+                WHERE approval.corner_id=fact.corner_id AND approval.pull_request_number=head.number
+                  AND approval.head_sha=head.head_sha
+                  AND approval.brief_revision IS NOT DISTINCT FROM
+                    (SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=fact.corner_id)
+                  AND approval.approved_by IS DISTINCT FROM fact.owner_agent_id
+                  AND parent.reviewer_agent_id IS NOT NULL
+                  AND (approval.approved_by=parent.reviewer_agent_id OR approval.approved_by=ANY(parent.reviewer_fallback_ids))
+              ) approved,
+              COALESCE((SELECT jsonb_agg(jsonb_build_object('id',hold.id::text,'actorId',hold.actor_id,
+                'standing',hold.standing,'setAt',hold.set_at::text) ORDER BY hold.set_at,hold.id)
+                FROM corner_merge_holds hold WHERE hold.corner_id=fact.corner_id AND hold.released_at IS NULL),
+                '[]'::jsonb) holds,
+              (agent.yolo_mode AND workspace.visibility<>'public') yolo_mode
+       FROM jsonb_to_recordset($1::jsonb) head(corner_id uuid,number int,head_sha text)
+       JOIN corner_facts fact ON fact.corner_id=head.corner_id
        JOIN rooms corner ON corner.id=fact.corner_id
        JOIN rooms parent ON parent.id=corner.parent_id
-       WHERE fact.corner_id=$1`,
-      [cornerId],
-    )
-  ).rows[0];
-  if (!corner) throw new Error('corner not found');
-  const author = reviewerIsAuthor(corner);
-  const reviewerExists = Boolean(corner.configured_reviewer_id) && (!author || corner.reviewer_parent_member);
-  const approvalPending =
-    corner.configured_reviewer_id && !author
-      ? (await approvingReviewer(db, { ...corner, cornerId, ...head })) === undefined
-      : false;
-  const holds = await activeCornerHolds(db, cornerId);
-  const held = holds.length > 0;
-  const isWorkerYolo = await workerYolo(db, cornerId);
-  return {
-    reviewerExists,
-    reviewerIsAuthor: author,
-    approvalPending,
-    held,
-    holds,
-    isWorkerYolo,
-    open: reviewerExists && !approvalPending && !held && isWorkerYolo,
-  };
+       JOIN workspaces workspace ON workspace.id=corner.workspace_id
+       LEFT JOIN agents agent ON agent.agent_id=${cornerImplementerSql('fact', 'corner')}`,
+    [JSON.stringify(heads)],
+  );
+  return new Map(rows.rows.map(corner => {
+    const author = reviewerIsAuthor(corner);
+    const reviewerExists = Boolean(corner.configured_reviewer_id) && (!author || corner.reviewer_parent_member);
+    const approvalPending = Boolean(corner.configured_reviewer_id) && !author && !corner.approved;
+    const held = corner.holds.length > 0;
+    const isWorkerYolo = corner.yolo_mode === true;
+    return [corner.corner_id, {
+      reviewerExists,
+      reviewerIsAuthor: author,
+      approvalPending,
+      held,
+      holds: corner.holds,
+      isWorkerYolo,
+      open: reviewerExists && !approvalPending && !held && isWorkerYolo,
+    }];
+  }));
 }
 
 /**
@@ -1294,12 +1307,9 @@ export async function cornersReadyToLand(db: SqlDatabase): Promise<string[]> {
        AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
        AND fact.merge_attempt_head IS DISTINCT FROM fact.lifecycle->'pr'->>'headSha'`,
   );
-  const ready: string[] = [];
-  for (const row of rows.rows) {
-    const gate = await cornerMergeGate(db, row.corner_id, { number: row.number, headSha: row.head_sha });
-    if (gate.open) ready.push(row.corner_id);
-  }
-  return ready;
+  if (!rows.rows.length) return [];
+  const gates = await cornerMergeGates(db, rows.rows);
+  return rows.rows.filter(row => gates.get(row.corner_id)?.open).map(row => row.corner_id);
 }
 
 /**

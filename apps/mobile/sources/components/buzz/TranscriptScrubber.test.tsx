@@ -234,9 +234,7 @@ describe('TranscriptScrubber on the Room transcript', () => {
       resolve(__dirname, '../../app/(app)/beeline/chat/_chat-surface.tsx'),
       'utf8',
     );
-    expect(surface).toContain(
-      'onContentSizeChange={(_width, height) => transcriptScrubber.observeContentSize(height)}',
-    );
+    expect(surface).toContain('transcriptScrubber.observeContentSize(height);');
     expect(surface).toContain(
       'useEffect(() => transcriptScrubber.reset(), [decodedId, transcriptScrubber]);',
     );

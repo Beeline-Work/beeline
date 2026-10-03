@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { randomBytes } from 'node:crypto';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { createAgentCommand, readAgentCommands, type CommandRow } from './agent-command.js';
@@ -12,6 +13,11 @@ import { handoff, saveWorkflow, startWorkflow } from './workflow-runs.js';
  * `startWorkflow`/`handoff`, and a corner's own lifecycle cards written by
  * `advanceCorner` — never hand-built rows.
  */
+
+vi.mock('node:crypto', async (importOriginal) => {
+  const crypto = await importOriginal<typeof import('node:crypto')>();
+  return { ...crypto, randomBytes: vi.fn(crypto.randomBytes) };
+});
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000001';
 const ROOM = '20000000-0000-4000-8000-000000000001';
@@ -70,6 +76,9 @@ async function command(roomId: string, agentId: string): Promise<CommandRow> {
 }
 
 beforeEach(async () => {
+  vi.mocked(randomBytes).mockReset();
+  const crypto = await vi.importActual<typeof import('node:crypto')>('node:crypto');
+  vi.mocked(randomBytes).mockImplementation(crypto.randomBytes);
   database = new PgliteDatabase();
   await migrate(database);
   await database.query(
@@ -240,6 +249,36 @@ describe('listRoomWorkflowRuns', () => {
 });
 
 describe('readWorkflowRun', () => {
+  it('S05-1 lists the head and history in sequence for same-transaction descending IDs', async () => {
+    const starter = await command(CORNER, TRIAGER);
+    await saveWorkflow(database, starter, { contract: TRIAGE });
+    const runId = await database.transaction(async (tx) => {
+      vi.mocked(randomBytes).mockImplementationOnce(() => Buffer.alloc(32, 0xff));
+      const { runId } = await startWorkflow(tx, starter, {
+        name: 'feedback-triage',
+        roleBindings: { triager: TRIAGER },
+      });
+      vi.mocked(randomBytes).mockImplementationOnce(() => Buffer.alloc(32, 0));
+      await handoff(tx, starter, { runId, outcome: 'ranked', contents: {} });
+      expect(
+        (
+          await tx.query<{ count: string }>(
+            `SELECT count(DISTINCT created_at)::text count FROM messages
+         WHERE card->>'runId'=$1 AND card_type='workflow-handoff'`,
+            [runId],
+          )
+        ).rows[0]!.count,
+      ).toBe('1');
+      return runId;
+    });
+    const detail = await phone.execute('readWorkflowRun', { roomId: CORNER, runId }, OWNER);
+    expect({ head: detail.run.state, history: detail.history.map((step) => step.toState) }).toEqual(
+      { head: 'approve', history: ['pull', 'approve'] },
+    );
+    const listed = await phone.execute('listRoomWorkflowRuns', { roomId: ROOM }, OWNER);
+    expect(listed.workflows.find((run) => run.runId === runId)?.state).toBe('approve');
+  });
+
   it('returns the pinned contract and the ordered history of a run that looped', async () => {
     const runId = await triageRun();
     const detail = await phone.execute('readWorkflowRun', { roomId: CORNER, runId }, OWNER);

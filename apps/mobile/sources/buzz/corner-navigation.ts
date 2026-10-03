@@ -50,8 +50,15 @@ export function cornerOpenAction(
 }
 
 /** Open a top-level Room transcript. */
-export function roomHref(channelId: string): Href {
-  return { pathname: '/beeline/chat/[channelId]', params: { channelId } } as unknown as Href;
+export function roomHref(channelId: string, communityId?: string): Href {
+  return { pathname: '/beeline/chat/[channelId]', params: { channelId, ...(communityId ? { communityId } : {}) } } as unknown as Href;
+}
+
+export function messageJumpHref(channelId: string, notificationMessageId: string, notificationResponseId: string, communityId?: string) {
+  return { pathname: '/beeline/chat/[channelId]' as const, params: {
+    channelId, notificationMessageId, notificationResponseId,
+    ...(communityId ? { communityId } : {}),
+  } };
 }
 
 /**

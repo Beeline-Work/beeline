@@ -1,3 +1,4 @@
+import { readWorkspaceListView } from '@beeline/api-contract/phone';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { migrate } from './database.js';
 import { PhoneService } from './phone-service.js';
@@ -155,6 +156,26 @@ describe('PhoneService Needs-you tray', () => {
       [WORKSPACE, VIEWER, PEER, AGENT, ROOM, CORNER, OTHER_ROOM],
     );
     phone = new PhoneService(database, 'https://server.example');
+  });
+
+
+  it('R12e: projects the switcher room count and unread/approval mark', async () => {
+    expect((await phone.readWorkspaces(VIEWER)).workspaces[0]).toMatchObject({ roomCount: 1, attention: false });
+    await post(ROOM, PEER, 'New message');
+    const projected = readWorkspaceListView(await phone.readWorkspaces(VIEWER))!.workspaces[0];
+    const deck = await phone.readChats(WORKSPACE, VIEWER);
+    expect(projected).toMatchObject({ roomCount: deck!.chats.length, attention: deck!.chats.some((room) => room.unread || room.agentState === 'needs-you') });
+    await database.query(
+      `INSERT INTO room_read_marks(room_id,identity_id,message_id,message_created_at)
+       SELECT room_id,$1,id,created_at FROM messages WHERE room_id=$2 ORDER BY created_at DESC LIMIT 1`,
+      [VIEWER, ROOM],
+    );
+    expect((await phone.readWorkspaces(VIEWER)).workspaces[0]?.attention).toBe(false);
+    await database.query(
+      `INSERT INTO permission_authority(permission_id,room_id,principal_id,request_id,scope,status)
+       VALUES('approval',$1,$2,'request','{}','pending')`, [CORNER, AGENT],
+    );
+    expect((await phone.readWorkspaces(VIEWER)).workspaces[0]?.attention).toBe(true);
   });
 
   it('holds a message only when it both tags the reader and asks', async () => {

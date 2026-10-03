@@ -14,7 +14,7 @@ describe('desktop layout mode', () => {
     expect(sidebar).not.toContain('isDesktopPlatform()');
     expect(sidebar).toContain('<CommunitySwitcherTrigger');
     expect(sidebar).toContain('<DesktopWorkspaceRail');
-    expect(sidebar).toContain('roomCount: workspaceRoomCounts.get(workspace.id) ?? 0');
+    expect(sidebar).toContain('roomCount: workspace.roomCount ?? 0');
     expect(sidebar).toContain('needsAttention: attentionWorkspaceIds.has(workspace.id)');
     expect(sidebar).toContain("event.key.toLowerCase() === 's'");
     expect(sidebar).toContain('event.metaKey || event.ctrlKey');

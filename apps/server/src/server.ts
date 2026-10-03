@@ -379,6 +379,7 @@ export function createBeelineServer(options: ServerOptions): Server {
     void route(request, response, options, invitePreview, readLimits, liveHealth, helperVersionGate).catch((error) => {
       const message = error instanceof Error ? error.message : 'request failed';
       const status = error instanceof WorkflowOwnershipError ? error.status :
+        message.startsWith('corner brief attachment ') && message.endsWith('is missing or unavailable in this Room') ||
         message.includes('required') ||
         message.includes('invalid') ||
         message.includes('too large') ||
@@ -1626,6 +1627,9 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     const input = await body(request);
     const result = await options.phone.execute(name as never, input as never, identityId!);
     console.log('[phone-op]', name, `identity=${identityId}`, 'ok');
+    if ((name === 'sendRoomMessage' || name === 'sendRoomReply') && typeof input.roomId === 'string')
+      void options.github?.onWebhook?.('beeline:human-message', { cornerId: input.roomId })
+        .catch(error => console.error('[server] human-triggered merge recovery failed:', error));
     const invalidatedRoom =
       typeof input.roomId === 'string'
         ? input.roomId

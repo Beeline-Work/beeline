@@ -440,8 +440,7 @@ describe('PR-scoped check gate', () => {
 
   it('reports waiting while checks are still pending so the author does not invent a missed wake', async () => {
     await ownPr();
-    await db.query(`UPDATE identities SET handle='reviewer' WHERE id=$1`, [A]);
-    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
     await db.query(
       `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
       [
@@ -466,8 +465,7 @@ describe('PR-scoped check gate', () => {
 
   it('reports dispatched after the green transition consumed the reviewer wake', async () => {
     await ownPr();
-    await db.query(`UPDATE identities SET handle='reviewer' WHERE id=$1`, [A]);
-    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
     await db.query(`UPDATE corner_facts SET command_check_state='passing' WHERE corner_id=$1`, [
       AUTHOR,
     ]);

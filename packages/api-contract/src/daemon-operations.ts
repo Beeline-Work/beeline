@@ -286,18 +286,22 @@ export type DaemonOperationMap = {
   listRoomCorners: Operation<RoomInput, CornerListResult>;
   getCornerRestoreState: Operation<CornerInput, CornerRestoreResult>;
   listCornerBriefRevisions: Operation<
-    CornerInput & { readonly beforeRevision?: number },
+    CornerInput & { readonly beforeRevision?: number; readonly limit?: number },
     {
       readonly revisions: readonly CornerBrief[];
       readonly nextBeforeRevision?: number;
     }
   >;
-  reviseCornerBrief: Operation<ReviseCornerBriefInput, CornerBrief>;
+  reviseCornerBrief: Operation<
+    ReviseCornerBriefInput,
+    CornerBrief & { readonly wake: { readonly queued: boolean; readonly agentId?: string; readonly reason?: string } }
+  >;
   postCornerValidationStage: Operation<PostCornerValidationStageInput, CornerValidationStage>;
   getPrChecksStatus: Operation<
     CornerInput & { pullRequest?: number | string },
     {
       checks: 'passed' | 'failed' | 'pending';
+      recordedChecks?: 'passing' | 'failing' | 'pending' | 'unknown';
       /** Number of check-run and commit-status contexts GitHub reports for the current head. */
       checkCount: number;
       pullRequest: string;
@@ -308,7 +312,7 @@ export type DaemonOperationMap = {
       reviewer: string | null;
       /** True when the parent Room has a configured reviewer, even if that identity has no handle. */
       reviewerExists: boolean;
-      /** True when `reviewer` is also this corner's opener/author — self-review is not required. */
+      /** True when `reviewer` is also this corner's implementer — self-review is not required. */
       reviewerIsAuthor: boolean;
       /**
        * Whether the configured reviewer was or can be woken for this corner's
@@ -316,7 +320,7 @@ export type DaemonOperationMap = {
        * not a current parent-Room member", and pending checks from a dispatch.
        */
       reviewerWake: {
-        status: 'unconfigured' | 'unreachable' | 'waiting' | 'dispatched';
+        status: 'unconfigured' | 'unreachable' | 'waiting' | 'dispatched' | 'not_required';
         detail: string;
       };
       /** True when a person in the corner asked to hold the merge. */
@@ -1168,6 +1172,7 @@ export type CornerBrief = {
 export type ReviseCornerBriefInput = TurnOutputAuthority &
   CornerInput & {
     readonly requestId: string;
+    readonly roomId?: string;
     readonly expectedRevision: number;
     readonly brief: CornerBriefDraft;
   };

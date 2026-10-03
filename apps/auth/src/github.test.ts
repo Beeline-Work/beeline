@@ -861,3 +861,23 @@ describe('file blob lookup for code anchors', () => {
     ).rejects.toThrow(GitHubHttpError);
   });
 });
+
+
+it('Reproduction F1-1: a hung merge aborts within the provider deadline', async () => {
+  const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+  vi.spyOn(app, 'installationToken').mockResolvedValue({ token: 'test', expiresAt: '' });
+  const timeout = AbortSignal.timeout.bind(AbortSignal);
+  const deadline = vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => timeout(20));
+  vi.stubGlobal('fetch', (_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
+    init.signal?.addEventListener('abort', () => reject(init.signal!.reason), { once: true });
+  }));
+  try {
+    const observed = await Promise.race([
+      app.mergePullRequest(77, 101, 'owner/widgets', 7, 'a'.repeat(40)).then(() => 'merged', () => 'aborted'),
+      new Promise(resolve => setTimeout(() => resolve('hung'), 100)),
+    ]);
+    console.info(`Reproduction F1-1: wrong=hung; right=aborted; observed=${observed}`);
+    expect(observed).toBe('aborted');
+    expect(deadline).toHaveBeenCalledWith(15_000);
+  } finally { deadline.mockRestore(); }
+});

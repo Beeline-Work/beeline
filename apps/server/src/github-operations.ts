@@ -171,7 +171,7 @@ function challenge(value: string): string {
   return createHash('sha256').update(value).digest('base64url');
 }
 
-export type ReviewerWakeStatus = 'unconfigured' | 'unreachable' | 'waiting' | 'dispatched';
+export type ReviewerWakeStatus = 'unconfigured' | 'unreachable' | 'waiting' | 'dispatched' | 'not_required';
 
 /** Whether the configured reviewer can be / was woken for this corner's current check state. */
 export function reviewerWakeFromFacts(input: {
@@ -719,7 +719,9 @@ export class GitHubOperations {
         ? `@${corner.reviewer_handle}`
         : null;
     const reviewerLabel = reviewer ?? 'the configured reviewer';
-    const reviewerWake = listLabel
+    const reviewerWake = reviewerIsAuthor
+      ? { status: 'not_required' as const, detail: "Review is not required because the reviewer is this corner's implementer." }
+      : listLabel
       ? await this.listReviewerWake({
           parentId: corner.parent_id,
           candidates: listed.filter((id) => id !== corner.owner_agent_id),
@@ -739,10 +741,12 @@ export class GitHubOperations {
           lifecycleChecks: corner.lifecycle.checks,
           commandCheckState: corner.command_check_state,
         });
+    if (!reviewerIsAuthor && corner.lifecycle.checks !== (checks === 'passed' ? 'passing' : checks === 'failed' ? 'failing' : 'pending'))
+      reviewerWake.detail += ` Recorded checks (${corner.lifecycle.checks ?? 'unknown'}) are behind the live rollup (${checks}); this is the recorded dispatch state.`;
     const approval = listLabel ? `approve_merge from ${reviewerLabel}` : `${reviewerLabel}'s approve_merge`;
     const woken = listLabel ? `the first healthy agent on ${listLabel}` : reviewerLabel;
     const rule = reviewerIsAuthor
-      ? `You opened this corner and are also this Room's configured reviewer (${reviewerLabel}), so self-review is not required — approve_merge cannot add signal over your own work. The reviewer outcome is PASS; the merge gate still requires worker yolo mode, no human hold, and a configured reviewer who is a current agent member of the parent Room.`
+      ? `You are this corner's implementer and also this Room's configured reviewer (${reviewerLabel}), so self-review is not required — approve_merge cannot add signal over your own work. The reviewer outcome is PASS; the merge gate still requires worker yolo mode, no human hold, and a configured reviewer who is a current agent member of the parent Room.`
       : configuredReviewerId
         ? reviewerWake.status === 'unreachable'
           ? `Only ${approval} records PASS for the reviewer outcome; tagging or asking any other agent to review cannot record an approval or change this verdict. ${reviewerWake.detail} Do not invent a cause and do not poll this gate with a schedule. No Room owner/admin approve control exists in the app yet, so only ${reviewerLabel} can record PASS.`
@@ -751,6 +755,7 @@ export class GitHubOperations {
     const mergeAllowed = checks === 'passed' && gate.open;
     return {
       checks,
+      recordedChecks: corner.lifecycle.checks,
       checkCount: rollup.total,
       pullRequest: pr.url,
       headSha: pr.headSha,
@@ -992,6 +997,11 @@ export class GitHubOperations {
   async processWebhook(event: string, payload: unknown) {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
     const body = payload as Record<string, unknown>;
+    // The authenticated phone route uses this internal signal after a human message commits.
+    if (event === 'beeline:human-message' && typeof body.cornerId === 'string') {
+      await this.recoverUnfinishedMergeClaims(body.cornerId);
+      return;
+    }
     const installation = body.installation;
     if (!installation || typeof installation !== 'object' || Array.isArray(installation)) return;
     const install = installation as Record<string, unknown>;
@@ -1280,8 +1290,8 @@ export class GitHubOperations {
   }
 
   /** The leader recovers unfinished claims; it never sends a merge itself. */
-  async recoverUnfinishedMergeClaims(): Promise<void> {
-    for (const claim of await unfinishedCornerMergeClaims(this.database)) {
+  async recoverUnfinishedMergeClaims(cornerId?: string): Promise<void> {
+    for (const claim of await unfinishedCornerMergeClaims(this.database, cornerId)) {
       try {
         const target = (await this.database.query<CornerWebhookTarget & { repository: string; branch: string }>(
           `SELECT corner.id corner_id,parent.id parent_id,corner.name corner_name,
@@ -1295,19 +1305,37 @@ export class GitHubOperations {
                '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
            WHERE corner.id=$1 AND fact.feature_branch IS NOT NULL`, [claim.corner_id],
         )).rows[0];
-        if (!target) continue;
+        if (!target) throw new Error(`Repository target unavailable for PR #${claim.number}`);
         const token = await this.app.installationToken(Number(target.installation_id), {
           repositoryIds: [Number(target.repository_id)],
         });
         const pr = await this.app.readPullRequest(token.token, target.repository, claim.number);
         if (pr.merged) {
-          if (pr.headRef === target.branch)
-            await this.recordConfirmedCornerMerge(target, target.repository, claim.number, pr, claim.head_sha);
+          if (pr.headRef !== target.branch || pr.headSha !== claim.head_sha)
+            throw new Error(`Merged PR #${claim.number} does not match the claimed branch and head`);
+          await this.recordConfirmedCornerMerge(target, target.repository, claim.number, pr, claim.head_sha);
         } else {
           await clearUnfinishedCornerMergeClaim(this.database, claim.corner_id, claim.head_sha, claim.number);
         }
       } catch (error) {
-        console.error(`[server] unfinished merge recovery failed for ${claim.corner_id}:`, error);
+        const lastError = (error instanceof Error ? error.message : String(error)).slice(0, 500);
+        await this.database.transaction(async db => {
+          await lockCornerWorkflowRun(db, claim.corner_id);
+          const row = (await db.query<{ attempts: number }>(
+            `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{mergeRecovery}',jsonb_build_object(
+               'attempts',COALESCE((lifecycle->'mergeRecovery'->>'attempts')::int,0)+1,
+               'lastAttemptAt',extract(epoch FROM clock_timestamp()),'lastError',$4::text,
+               'nextAttemptAt',extract(epoch FROM clock_timestamp())+LEAST(3600,
+                 300*power(2,LEAST(4,COALESCE((lifecycle->'mergeRecovery'->>'attempts')::int,0))))))
+             WHERE corner_id=$1 AND merge_attempt_head=$2 AND (lifecycle->'pr'->>'number')::int=$3
+             RETURNING (lifecycle->'mergeRecovery'->>'attempts')::int attempts`,
+            [claim.corner_id, claim.head_sha, claim.number, lastError],
+          )).rows[0];
+          if (row?.attempts === 5)
+            await advanceCorner(db, claim.corner_id, { kind: 'merge-unconfirmed', number: claim.number, error: lastError });
+        });
+        this.onRoomChanged?.(claim.corner_id);
+        console.error(`[server] unfinished merge recovery failed for ${claim.corner_id}:`, lastError);
       }
     }
   }
@@ -1701,6 +1729,9 @@ export class GitHubOperations {
             }
           });
           if (mergeability === 'unknown') await this.refreshUnknownMergeability(target.corner_id);
+          if (body.action === 'opened' || body.action === 'synchronize')
+            await this.refreshCheckRollup({ ...target, has_pr: true }, repository,
+              { name: 'Pull request checks', status: 'pending', headSha, url }, database);
         }
         if (merged && url) {
           await this.mergeCorner(
@@ -1759,7 +1790,7 @@ export class GitHubOperations {
                 total: 0,
                 failing: [],
                 checks: [],
-                updatedAt: Math.floor(Date.now() / 1_000),
+                updatedAt: Math.floor((await database.query<{ now: number }>(`SELECT extract(epoch FROM clock_timestamp())::double precision now`)).rows[0]!.now),
               },
               ...(lifecycle.pr ? { pr: { ...lifecycle.pr, headSha: head } } : {}),
             },
@@ -1793,8 +1824,15 @@ export class GitHubOperations {
         continue;
       }
       const check = checkFact(event, body);
-      const checkHeadSha = check?.headSha;
-      if (check && checkHeadSha) {
+      if (check?.headSha) await this.refreshCheckRollup(target, repository, check, database);
+    }
+  }
+
+  private async refreshCheckRollup(
+    target: CornerWebhookTarget & { has_pr?: boolean }, repository: string,
+    check: NonNullable<ReturnType<typeof checkFact>>, database: SqlDatabase,
+  ) {
+    const checkHeadSha = check.headSha!;
         // Use the database clock across server instances, with subsecond precision
         // to order overlapping fetches while keeping updatedAt in epoch seconds.
         const fetchStartedAt = (await database.query<{ started_at: number }>(
@@ -1825,7 +1863,7 @@ export class GitHubOperations {
           if (fetchStartedAt < latestFetch) return;
           const summary = {
             status:
-              rollup.state === 'passed'
+              rollup.total === 0 ? ('unknown' as const) : rollup.state === 'passed'
                 ? ('passing' as const)
                 : rollup.state === 'failed'
                   ? ('failing' as const)
@@ -1877,15 +1915,13 @@ export class GitHubOperations {
             },
             becamePassing
               ? `github:checks:green:${check.headSha}`
-              : `github:checks:${label}:${check.name}:${check.headSha ?? hash(JSON.stringify(body))}`,
+              : `github:checks:${label}:${check.name}:${check.headSha ?? hash(JSON.stringify(check))}`,
             database,
           );
           if (summary.status === 'failing' && !becameFailing)
             await reconcileCornerMergeBlockers(database, target.corner_id);
         });
         await this.refreshUnknownMergeability(target.corner_id);
-      }
-    }
   }
 
   private async lifecycle(
@@ -2011,8 +2047,8 @@ export class GitHubOperations {
       if (!changed.rowCount) return;
       archived = true;
       await database.query(
-        `UPDATE corner_facts SET close_requested=true,
-           lifecycle=lifecycle||$2::jsonb,
+        `UPDATE corner_facts SET close_requested=true,merge_attempt_head=NULL,
+           lifecycle=(lifecycle-'mergeRecovery')||$2::jsonb,
            updated_at=now() WHERE corner_id=$1`,
         [
           target.corner_id,

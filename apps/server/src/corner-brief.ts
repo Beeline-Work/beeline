@@ -67,6 +67,7 @@ export async function resolveCornerBriefAttachments(
   db: SqlDatabase,
   sourceRoomIds: readonly string[],
   draft: CornerBriefDraft,
+  pending?: { roomId: string; agentId: string; requestId: string; generationId?: string },
 ): Promise<CornerBriefAttachment[]> {
   validateCornerBrief(draft);
   const resolved: CornerBriefAttachment[] = [];
@@ -86,15 +87,19 @@ export async function resolveCornerBriefAttachments(
            CROSS JOIN LATERAL jsonb_array_elements(pinned.attachments) file
            WHERE file->>'objectId'=o.id::text
          ))
-         AND EXISTS (
+         AND (EXISTS (
+           SELECT 1 FROM agent_pending_attachments p
+           WHERE p.room_id=$3 AND p.agent_id=$4 AND p.request_id=$5 AND p.generation_id=$6
+             AND o.owner_id=p.agent_id AND p.url LIKE '%/v1/media/' || o.id::text
+         ) OR EXISTS (
            SELECT 1 FROM messages m,
              LATERAL jsonb_array_elements(m.attachments) a
            WHERE m.room_id=ANY($2::uuid[])
              AND m.author_id=o.owner_id
              AND (a->>'url' LIKE '%/v1/media/' || o.id::text
                OR a->>'mediaId'=o.id::text)
-         ) FOR SHARE OF o`,
-        [item.objectId, sourceRoomIds],
+         )) FOR SHARE OF o`,
+        [item.objectId, sourceRoomIds, pending?.roomId ?? null, pending?.agentId ?? null, pending?.requestId ?? null, pending?.generationId ?? null],
       )
     ).rows[0];
     if (!object)

@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process';
+import { access, readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 
 export const CORNER_GIT_SYNC_TIMEOUT_MS = 120_000;
 export const CORNER_GIT_SYNC_KILL_GRACE_MS = 1_000;
@@ -35,9 +37,9 @@ export interface CornerBranchSyncInput {
 }
 
 export async function syncCornerBranch(input: CornerBranchSyncInput): Promise<CornerBranchSync> {
-  const git = async (args: readonly string[]): Promise<string> => {
+  const git = async (args: readonly string[], cleanup = false): Promise<string> => {
     const controller = new AbortController();
-    const signal = input.signal
+    const signal = input.signal && !cleanup
       ? AbortSignal.any([input.signal, controller.signal])
       : controller.signal;
     const timer = setTimeout(() => controller.abort(), CORNER_GIT_SYNC_TIMEOUT_MS);
@@ -92,6 +94,12 @@ export async function syncCornerBranch(input: CornerBranchSyncInput): Promise<Co
       clearTimeout(timer);
     }
   };
+  const marker = await readFile(resolve(input.worktreePath, '.git'), 'utf8').catch(() => '');
+  const gitDir = resolve(input.worktreePath, marker.startsWith('gitdir: ') ? marker.slice(8).trim() : '.git');
+  for (const directory of ['rebase-merge', 'rebase-apply']) {
+    if (await access(resolve(gitDir, directory)).then(() => true, () => false))
+      await git(['rebase', '--abort'], true);
+  }
   const remoteRef = `refs/remotes/origin/${input.featureBranch}`;
   const fetched = await git([
     'fetch',
@@ -125,10 +133,10 @@ export async function syncCornerBranch(input: CornerBranchSyncInput): Promise<Co
     await git(behind ? ['merge', '--ff-only', remote] : ['rebase', remote]);
     return behind ? 'fast-forwarded' : 'rebased';
   } catch (error) {
-    if (error instanceof CornerGitSyncInterruptedError) throw error;
-    await git(['rebase', '--abort']).catch((error) => {
+    await git(['rebase', '--abort'], true).catch((error) => {
       if (error instanceof CornerGitSyncInterruptedError) throw error;
     });
+    if (error instanceof CornerGitSyncInterruptedError) throw error;
     await git(['reset', '--hard', remote]);
     return 'realigned';
   }

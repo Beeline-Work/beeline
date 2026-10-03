@@ -1075,11 +1075,12 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'revise_corner_brief',
     description:
-      'Record a correction as the next immutable assignment revision. Supply the complete replacement spec, the human message that approved it, and the revision you read; the worker and reviewer will use the new revision.',
+      'Record a correction as the next immutable assignment revision. Supply the complete replacement spec, the human message that approved it, and the revision you read; the result reports whether a wake was queued and its recipient.',
     inputSchema: {
       type: 'object',
       required: ['expectedRevision', 'spec', 'approval', 'change'],
       properties: {
+        cornerId: { type: 'string', format: 'uuid', description: 'Omit to revise the active corner; an opener may name its sibling corner from this Room command.' },
         expectedRevision: { type: 'integer', minimum: 0 },
         ...CORNER_BRIEF_PROPERTIES,
         change: { type: 'string', maxLength: 1000 },
@@ -1090,12 +1091,13 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'read_corner_brief',
     description:
-      'Read the current and earlier immutable brief revisions for a corner you belong to. Use before revising or reviewing an assignment. Results are paged newest first.',
+      'Read the current and earlier immutable brief revisions for a corner you belong to. Use before revising or reviewing an assignment. Defaults to the current revision, with a cursor for older revisions.',
     inputSchema: {
       type: 'object',
       required: [],
       properties: {
         cornerId: { type: 'string', format: 'uuid', description: 'Omit inside the active corner.' },
+        limit: { type: 'integer', minimum: 1, maximum: 20, default: 1 },
         beforeRevision: { type: 'integer', minimum: 1 },
       },
       additionalProperties: false,
@@ -1693,7 +1695,7 @@ export function agentToolsFor(
     if (tool.name === 'offer_connector') return !cornerTurn;
     // From a corner, open_corner opens a sibling corner in the parent Room.
     if (tool.name === 'open_corner') return !directMessage;
-    if (tool.name === 'revise_corner_brief') return cornerTurn;
+    if (tool.name === 'revise_corner_brief') return !directMessage;
     if (tool.name === 'record_validation_stage') return cornerTurn;
     if (tool.name === 'upgrade_corner_to_code') return cornerTurn && agentMayUpgradeCorner;
     if (tool.name === 'close_corner') return cornerTurn && agentMayCloseCorner;
@@ -2315,11 +2317,12 @@ async function openCorner(args: JsonObject, toolCallId: string): Promise<string>
 }
 
 async function reviseCornerBrief(args: JsonObject): Promise<string> {
-  const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
+  const cornerId = typeof args.cornerId === 'string' ? args.cornerId : requiredEnv('BEELINE_DAEMON_CORNER_ID');
   const requestId = (await activeCommandContext()).requestId;
   return JSON.stringify(
     await daemonExecute('reviseCornerBrief', {
       cornerId,
+      roomId: (await activeCommandContext()).roomId,
       requestId,
       expectedRevision: args.expectedRevision as number,
       brief: {
@@ -2339,6 +2342,7 @@ async function readCornerBrief(args: JsonObject): Promise<string> {
   return JSON.stringify(
     await daemonExecute('listCornerBriefRevisions', {
       cornerId,
+      ...(args.limit !== undefined ? { limit: args.limit as number } : {}),
       ...(Number.isInteger(args.beforeRevision)
         ? { beforeRevision: args.beforeRevision as number }
         : {}),

@@ -8,6 +8,7 @@ import { PageHeader } from '@/components/buzz/PageHeader';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { PulsingText } from '@/components/buzz/PulsingText';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
+import { useInstallObserver } from '@/buzz/use-observed-resource';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { connectorOfferCompletionRoute } from '@/buzz/connector-offer-ceremony';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
@@ -31,10 +32,6 @@ function connectorNameFor(connectorId: string): string {
   return CONNECTOR_NAMES[connectorId] ?? connectorId;
 }
 
-const INSTALL_POLL_MS = 700;
-/** Consecutive failed/missing install reads before the poll reports a loss
- *  through `connect-error` instead of spinning silently on the picker. */
-const INSTALL_POLL_MISS_LIMIT = 8;
 /** Bounded feedback for a pair POST that never settles: the transport sets
  *  no timeout of its own, so a hung await must still reach the user. */
 const PAIR_FEEDBACK_MS = 15_000;
@@ -87,7 +84,9 @@ function ConnectToolFlow() {
   const [error, setError] = useState<string | null>(null);
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [observedId, setObservedId] = useState(pairedConnectorId);
+  const observed = useInstallObserver(workspaceId, observedId);
+  useEffect(() => { if (pairedConnectorId) setObservedId(pairedConnectorId); }, [pairedConnectorId]);
   const pairedHelperRef = useRef<string | null>(null);
   const autoPairRef = useRef(false);
 
@@ -107,69 +106,18 @@ function ConnectToolFlow() {
     };
   }, [offerCeremony, workspaceId]);
 
-  useEffect(
-    () => () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    },
-    [],
-  );
-
-  const stopPolling = useCallback(() => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-  }, []);
-
-  const finishPolling = useCallback(
-    (state: ConnectorInstallState) => {
-      stopPolling();
-      if (state.connected) {
-        router.replace(connectorOfferCompletionRoute(roomId) as unknown as Href);
-      }
-    },
-    [roomId, stopPolling],
-  );
-
-  const startPolling = useCallback(
-    (pairedConnectorId: string) => {
-      stopPolling();
-      let misses = 0;
-      pollRef.current = setInterval(() => {
-        void getWorkbenchSource()
-          .readInstallState({ connectorId: pairedConnectorId, workspaceId })
-          .then((state) => {
-            if (!state) {
-              // The paired row vanished (unpaired/reset server-side): a
-              // bounded miss count surfaces it, never a silent stall.
-              misses += 1;
-              if (misses >= INSTALL_POLL_MISS_LIMIT) {
-                stopPolling();
-                setError('Lost track of the install — pair the machine again');
-              }
-              return;
-            }
-            misses = 0;
-            setInstall(state);
-            if (state.connected || state.steps.some((step) => step.status === 'failed')) {
-              finishPolling(state);
-            }
-          })
-          .catch(() => {
-            misses += 1;
-            if (misses >= INSTALL_POLL_MISS_LIMIT) {
-              stopPolling();
-              setError('Lost contact while installing — check the helper and pair again');
-            }
-          });
-      }, INSTALL_POLL_MS);
-    },
-    [finishPolling, stopPolling, workspaceId],
-  );
-
+  const stopPolling = useCallback(() => setObservedId(undefined), []);
+  const startPolling = useCallback((id: string) => {
+    setObservedId(id);
+    if (id === observedId) observed.retry();
+  }, [observedId, observed.retry]);
   useEffect(() => {
-    if (pairedConnectorId) startPolling(pairedConnectorId);
-  }, [pairedConnectorId, startPolling]);
+    if (observed.data) {
+      setInstall(observed.data);
+      if (observed.data.connected) router.replace(connectorOfferCompletionRoute(roomId) as Href);
+    }
+  }, [observed.data, roomId]);
+  useEffect(() => { if (observed.error) setError(observed.error); }, [observed.error]);
 
   const pair = useCallback(
     async (helperId: string) => {
@@ -212,6 +160,12 @@ function ConnectToolFlow() {
   }, [helpers, offerCeremony, pair]);
 
   const retry = useCallback(() => {
+    setError(null);
+    if (observed.error && !observed.error.startsWith('Lost track of the install')) {
+      void observed.retry();
+      return;
+    }
+    stopPolling();
     setInstall(null);
     if (offerId) {
       void monolithPhoneOperation('acceptConnectorOffer', { offerId })
@@ -223,7 +177,7 @@ function ConnectToolFlow() {
     }
     const helperId = pairedHelperRef.current;
     if (helperId) void pair(helperId);
-  }, [offerId, pair, startPolling]);
+  }, [observed.error, observed.retry, offerId, pair, startPolling, stopPolling]);
 
   const connectorName = connectorNameFor(connectorId);
   const machineName = install?.helperName ?? selectedHelperName;
@@ -398,7 +352,7 @@ function ConnectToolFlow() {
             <Text accessibilityRole="alert" style={styles.errorText} testID="connect-error">
               {error}
             </Text>
-            {pairedHelperRef.current ? <TouchableOpacity accessibilityRole="button"
+            {pairedHelperRef.current || observedId ? <TouchableOpacity accessibilityRole="button"
               onPress={retry} style={styles.retryButton} testID="connect-pair-retry">
               <Text style={styles.retryText}>Retry</Text>
             </TouchableOpacity> : null}

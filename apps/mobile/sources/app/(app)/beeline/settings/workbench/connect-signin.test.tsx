@@ -125,6 +125,34 @@ afterEach(() => {
 });
 
 describe('ConnectorSignInScreen', () => {
+  it('Reproduction R9b: pending reads never overlap', async () => {
+    vi.useFakeTimers();
+    let release!: (state: null) => void;
+    readInstallState.mockImplementation(() => new Promise(resolve => { release = resolve; }));
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => { renderer = create(<ConnectorSignInScreen />); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(4500); });
+      expect(readInstallState).toHaveBeenCalledTimes(1);
+    } finally { await act(async () => { renderer.unmount(); release(null); }); vi.useRealTimers(); }
+  });
+
+  it.each(['missing', 'rejected'])('Reproduction R9b: %s reads end visibly and retry', async (kind) => {
+    vi.useFakeTimers();
+    if (kind === 'rejected') readInstallState.mockRejectedValue(new Error('offline'));
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => { renderer = create(<ConnectorSignInScreen />); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(15000); });
+      const retry = renderer.root.findByProps({ testID: 'signin-retry' });
+      const calls = readInstallState.mock.calls.length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(15000); });
+      expect(readInstallState).toHaveBeenCalledTimes(calls);
+      await act(async () => retry.props.onPress());
+      expect(readInstallState.mock.calls.length).toBeGreaterThan(calls);
+    } finally { await act(async () => renderer.unmount()); vi.useRealTimers(); }
+  });
+
   it('carries a Squire ceremony through connector state to sign-in dismissal', async () => {
     // Load the helper implementation at runtime so the isolated mobile
     // typecheck does not compile the helper's host-only dependency graph.

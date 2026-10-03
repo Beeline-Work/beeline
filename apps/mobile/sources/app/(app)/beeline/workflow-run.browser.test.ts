@@ -44,6 +44,7 @@ function feedbackTriageDetail(
 function workflowRunShims(mobile: string, detail: unknown): Record<string, string> {
   return {
     ...webProofShims(mobile),
+    '@/sync/transport/live-connection': `export const sharedLiveConnection = () => ({ register: async () => () => undefined });`,
     'expo-router': `import React from 'react';
     export const useFocusEffect = (effect) => React.useEffect(effect, [effect]);
     export const useLocalSearchParams = () => ({ roomId: 'corner-2', runId: 'run-1' });

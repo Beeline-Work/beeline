@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { useFocusEffect } from 'expo-router';
+import { useEffect, useRef } from 'react';
+import { observeRoomResource, useObservedResource } from './use-observed-resource';
 import type { WorkflowRunSummaryView } from '@beeline/api-contract/phone';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 
@@ -15,34 +15,27 @@ export function pickCornerWorkflowRun(
   return live.find((run) => run.workflowSlug !== 'corner') ?? live[0];
 }
 
-/**
- * Reads the corner's live workflow run on focus and whenever `refreshKey`
- * (the newest transcript message) changes. A failed read hides the line; it
- * never blocks the corner.
- */
+/** Reads workflow changes independently of the visible transcript. */
 export function useCornerWorkflowRun(
   cornerId: string | undefined,
-  refreshKey: string | undefined,
+  onError?: (error: string, retry: () => void) => void,
 ): WorkflowRunSummaryView | undefined {
-  const [run, setRun] = useState<WorkflowRunSummaryView | undefined>(undefined);
-  const load = useCallback(() => {
-    if (!cornerId) {
-      setRun(undefined);
-      return () => undefined;
-    }
-    let cancelled = false;
-    monolithPhoneOperation('listRoomWorkflowRuns', { roomId: cornerId })
-      .then((listed) => {
-        if (!cancelled) setRun(pickCornerWorkflowRun(cornerId, listed.workflows));
-      })
-      .catch(() => {
-        if (!cancelled) setRun(undefined);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [cornerId]);
-  useFocusEffect(load);
-  useEffect(() => load(), [load, refreshKey]);
-  return run;
+  const observed = useObservedResource(cornerId ? `corner-workflow:${cornerId}` : undefined, {
+    load: async () =>
+      pickCornerWorkflowRun(
+        cornerId!,
+        (await monolithPhoneOperation('listRoomWorkflowRuns', { roomId: cornerId! })).workflows,
+      ),
+    subscribe: cornerId ? observeRoomResource(cornerId) : undefined,
+  });
+  const alerted = useRef<{ cornerId: string | undefined; successVersion: number } | null>(null);
+  const errorHandler = useRef(onError);
+  errorHandler.current = onError;
+  useEffect(() => {
+    if (!observed.error || !errorHandler.current) return;
+    if (alerted.current && alerted.current.cornerId === cornerId && alerted.current.successVersion === observed.successVersion) return;
+    alerted.current = { cornerId, successVersion: observed.successVersion };
+    errorHandler.current(observed.error, observed.retry);
+  }, [cornerId, observed.error, observed.retry, observed.successVersion]);
+  return observed.data;
 }

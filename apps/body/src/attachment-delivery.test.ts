@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -6,6 +6,7 @@ import {
   attachmentImageBlocks,
   attachmentPromptLines,
   deliverAttachments,
+  fetchBoundedBytes,
   MAX_ATTACHMENT_BYTES,
   MAX_INLINE_IMAGE_BYTES,
   promptWithImages,
@@ -42,6 +43,118 @@ function fakeFetch(bodies: Record<string, { bytes: Buffer; type: string; status?
 }
 
 describe('attachment delivery', () => {
+  it.each([undefined, '4'])(
+    'cancels a chunked 26 MiB body with Content-Length %s',
+    async (declared) => {
+      let chunks = 0;
+      const cancel = vi.fn();
+      const body = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            if (chunks === 26) return controller.close();
+            chunks += 1;
+            controller.enqueue(new Uint8Array(1024 * 1024));
+          },
+          cancel,
+        },
+        { highWaterMark: 0 },
+      );
+      const fetchImpl = vi.fn(
+        async () =>
+          new Response(body, {
+            headers: declared ? { 'content-length': declared } : {},
+          }),
+      ) as unknown as typeof fetch;
+      await expect(fetchBoundedBytes(PDF.url, fetchImpl)).rejects.toThrow(
+        'exceeds the 26214400-byte limit',
+      );
+      expect(chunks).toBe(26);
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(body.locked).toBe(false);
+    },
+  );
+
+  it('accepts a body exactly at the 25 MiB cap', async () => {
+    const fetched = await fetchBoundedBytes(
+      PDF.url,
+      fakeFetch({
+        [PDF.url]: { bytes: Buffer.alloc(MAX_ATTACHMENT_BYTES), type: 'application/pdf' },
+      }),
+    );
+    expect(fetched.bytes.length).toBe(MAX_ATTACHMENT_BYTES);
+  });
+
+  it('reports mkdir failures for every file instead of rejecting the delivery', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'beeline-attachments-'));
+    roots.push(dir);
+    const blocker = join(dir, 'not-a-directory');
+    await writeFile(blocker, 'block mkdir');
+    const fetchImpl = fakeFetch({});
+    const delivered = await deliverAttachments([PHOTO, PDF], join(blocker, 'files'), fetchImpl);
+    expect(delivered).toHaveLength(2);
+    for (const entry of delivered) {
+      expect(entry.path).toBeUndefined();
+      expect(entry.reason).toContain('download failed:');
+      expect(entry.reason).toContain('ENOTDIR');
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('a write failure affects only that file', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'beeline-attachments-'));
+    roots.push(dir);
+    await mkdir(join(dir, PHOTO.name));
+    const delivered = await deliverAttachments(
+      [PHOTO, PDF],
+      dir,
+      fakeFetch({
+        [PHOTO.url]: { bytes: Buffer.from('jpg'), type: 'image/jpeg' },
+        [PDF.url]: { bytes: Buffer.from('%PDF'), type: 'application/pdf' },
+      }),
+    );
+    expect(delivered[0]?.reason).toContain('EISDIR');
+    expect(await readFile(delivered[1]!.path!, 'utf8')).toBe('%PDF');
+  });
+
+  it.each(['503', 'network'])(
+    'bounds temporary %s failures to three attempts; a later delivery retries',
+    async (failure) => {
+      const dir = await mkdtemp(join(tmpdir(), 'beeline-attachments-'));
+      roots.push(dir);
+      let failing = true;
+      const fetchImpl = vi.fn(async () => {
+        if (failing && failure === 'network') throw new TypeError('temporary network failure');
+        return new Response(failing ? '' : '%PDF', { status: failing ? 503 : 200 });
+      }) as unknown as typeof fetch;
+      expect((await deliverAttachments([PDF], dir, fetchImpl))[0]?.reason).toContain(
+        'download failed:',
+      );
+      expect(fetchImpl).toHaveBeenCalledTimes(3);
+      failing = false;
+      const delivered = await deliverAttachments([PDF], dir, fetchImpl);
+      expect(fetchImpl).toHaveBeenCalledTimes(4);
+      expect(await readFile(delivered[0]!.path!, 'utf8')).toBe('%PDF');
+    },
+  );
+
+  it('does not retry permanent HTTP failures or oversize streams and still delivers a sibling', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'beeline-attachments-'));
+    roots.push(dir);
+    const fetchImpl = fakeFetch({
+      [PHOTO.url]: { bytes: Buffer.from('missing'), type: 'image/jpeg', status: 404 },
+      [PDF.url]: { bytes: Buffer.from('%PDF'), type: 'application/pdf' },
+    });
+    const delivered = await deliverAttachments([PHOTO, PDF], dir, fetchImpl);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(delivered[0]?.reason).toContain('HTTP 404');
+    expect(await readFile(delivered[1]!.path!, 'utf8')).toBe('%PDF');
+    const hugeFetch = fakeFetch({
+      [PDF.url]: { bytes: Buffer.alloc(MAX_ATTACHMENT_BYTES + 1), type: 'application/pdf' },
+    });
+    expect((await deliverAttachments([PDF], dir, hugeFetch))[0]?.reason).toContain('exceeds');
+    expect(hugeFetch).toHaveBeenCalledOnce();
+  });
+
   it('writes an image and a PDF into the scratch dir and names the local paths in the prompt', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'beeline-attachments-'));
     roots.push(dir);
@@ -128,7 +241,9 @@ describe('attachment delivery', () => {
       attachment: flagged,
       reason: 'expired: these attachment bytes are past their retention window',
     });
-    expect(delivered[1]?.reason).toBe('expired: these attachment bytes are past their retention window');
+    expect(delivered[1]?.reason).toBe(
+      'expired: these attachment bytes are past their retention window',
+    );
     expect(delivered[1]?.path).toBeUndefined();
 
     const lines = attachmentPromptLines([flagged, goneOnFetch], delivered);
@@ -162,7 +277,9 @@ describe('attachment delivery', () => {
     expect(seen).toHaveLength(2);
 
     const unseen = attachmentPromptLines([PHOTO], delivered, false);
-    expect(unseen[1]).toContain('NOT shown to you as an image: this session cannot take image content');
+    expect(unseen[1]).toContain(
+      'NOT shown to you as an image: this session cannot take image content',
+    );
     expect(unseen[1]).toContain(`local file ${join(dir, 'photo.jpg')}`);
     expect(unseen.at(-1)).toBe(
       'You were not shown the picture itself: this session cannot take image content. If you are asked about it, say that in one plain sentence rather than describing an image you cannot see.',
@@ -182,7 +299,9 @@ describe('attachment delivery', () => {
     );
     expect(delivered[0]?.path).toBe(join(dir, 'photo.jpg'));
     expect(delivered[0]?.image).toBeUndefined();
-    expect(delivered[0]?.inlineSkipped).toContain(`past the ${MAX_INLINE_IMAGE_BYTES}-byte inline image limit`);
+    expect(delivered[0]?.inlineSkipped).toContain(
+      `past the ${MAX_INLINE_IMAGE_BYTES}-byte inline image limit`,
+    );
     expect(attachmentImageBlocks(delivered, true)).toEqual([]);
 
     const lines = attachmentPromptLines([PHOTO], delivered, true);
@@ -197,11 +316,15 @@ describe('attachment delivery', () => {
     const delivered = await deliverAttachments(
       [PHOTO],
       dir,
-      fakeFetch({ [PHOTO.url]: { bytes: Buffer.alloc(MAX_INLINE_IMAGE_BYTES + 1, 7), type: 'image/jpeg' } }),
+      fakeFetch({
+        [PHOTO.url]: { bytes: Buffer.alloc(MAX_INLINE_IMAGE_BYTES + 1, 7), type: 'image/jpeg' },
+      }),
     );
     const cached = withoutImageData(delivered);
     expect(cached[0]?.image).toBeUndefined();
-    expect(attachmentPromptLines([PHOTO], cached, true)[1]).toContain('NOT shown to you as an image');
+    expect(attachmentPromptLines([PHOTO], cached, true)[1]).toContain(
+      'NOT shown to you as an image',
+    );
   });
 
   // The existing text-only path is unchanged: a non-image attachment is never

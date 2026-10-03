@@ -623,17 +623,18 @@ export class MonolithRoomTurnLoop {
     return this.modelTakesImages ?? true;
   }
 
-  /** Download a message's attachments into the session scratch directory once. */
+  /** Reuse successful local copies; a later delivery retries failed files. */
   private async deliver(item: HumanMessage): Promise<DeliveredAttachment[]> {
     if (!item.attachments.length || !this.attachmentDir) return [];
     const cached = this.deliveredAttachments.get(item.id);
-    if (cached) return cached;
+    if (cached?.length === item.attachments.length) return cached;
     const delivered = await deliverAttachments(
       item.attachments,
       join(this.attachmentDir, item.id.replace(/[^\w-]/g, '_')),
       this.options.fetchImpl,
+      cached,
     );
-    this.deliveredAttachments.set(item.id, withoutImageData(delivered));
+    this.deliveredAttachments.set(item.id, withoutImageData(delivered.filter((entry) => entry.path)));
     return delivered;
   }
 

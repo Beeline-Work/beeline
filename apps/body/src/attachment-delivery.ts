@@ -57,7 +57,8 @@ export interface BoundedFetchResult {
  * The one daemon-side download: 30 s timeout, 25 MB ceiling. A 410 or other
  * non-OK status returns without reading the body so callers can name expiry
  * separately from a failed fetch. Size is refused from Content-Length before
- * the body is read.
+ * the body is read. The stream is cancelled as soon as its byte count exceeds
+ * the same ceiling, even when Content-Length is missing or understated.
  */
 export async function fetchBoundedBytes(
   url: string,
@@ -67,12 +68,34 @@ export async function fetchBoundedBytes(
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   if (response.status === 410 || !response.ok) {
+    await response.body?.cancel();
     return { status: response.status, ok: response.ok, bytes: Buffer.alloc(0), mimeType: '' };
   }
   const declared = Number(response.headers.get('content-length') ?? 0);
-  if (declared > MAX_ATTACHMENT_BYTES) throw new BoundedSizeError(declared);
-  const bytes = Buffer.from(await response.arrayBuffer());
-  if (bytes.length > MAX_ATTACHMENT_BYTES) throw new BoundedSizeError(bytes.length);
+  if (declared > MAX_ATTACHMENT_BYTES) {
+    await response.body?.cancel();
+    throw new BoundedSizeError(declared);
+  }
+  const reader = response.body?.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  if (reader) {
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > MAX_ATTACHMENT_BYTES) {
+          await reader.cancel();
+          throw new BoundedSizeError(size);
+        }
+        chunks.push(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+  const bytes = Buffer.concat(chunks, size);
   const mimeType = (response.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
   return { status: response.status, ok: true, bytes, mimeType };
 }
@@ -118,16 +141,18 @@ function safeFileName(attachment: DaemonAttachment, index: number, taken: Set<st
 
 /**
  * Download every attachment of one message into `dir`. Never throws: a skipped
- * or failed download degrades to a URL-only prompt line for that file.
+ * or failed download degrades to a reason for that file. Successful cached
+ * copies are reused; temporary fetch failures get at most three attempts.
  */
 export async function deliverAttachments(
   attachments: readonly DaemonAttachment[],
   dir: string,
   fetchImpl: typeof fetch = fetch,
+  cached: readonly DeliveredAttachment[] = [],
 ): Promise<DeliveredAttachment[]> {
   if (!attachments.length) return [];
   const taken = new Set<string>();
-  await mkdir(dir, { recursive: true });
+  const names = attachments.map((attachment, index) => safeFileName(attachment, index, taken));
   return Promise.all(
     attachments.map(async (attachment, index): Promise<DeliveredAttachment> => {
       const tooLarge = (bytes: number) => ({
@@ -137,13 +162,31 @@ export async function deliverAttachments(
       if (attachment.size && attachment.size > MAX_ATTACHMENT_BYTES)
         return tooLarge(attachment.size);
       if (attachment.expired) return { attachment, reason: EXPIRED_REASON };
+      const previous = cached.find((entry) => entry.path && entry.attachment.url === attachment.url);
+      if (previous) return previous;
       try {
-        const fetched = await fetchBoundedBytes(attachment.url, fetchImpl);
+        await mkdir(dir, { recursive: true });
+        // Each delivery makes at most three attempts at temporary media failures.
+        let fetched: BoundedFetchResult | undefined;
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          try {
+            fetched = await fetchBoundedBytes(attachment.url, fetchImpl);
+            if (
+              attempt < 3 &&
+              (fetched.status >= 500 || fetched.status === 408 || fetched.status === 429)
+            )
+              continue;
+            break;
+          } catch (error) {
+            if (error instanceof BoundedSizeError || attempt === 3) throw error;
+          }
+        }
+        if (!fetched) throw new Error('no download response');
         // 410 Gone is the server's own word for the TTL sweep, and the one
         // status that is never worth a retry.
         if (fetched.status === 410) return { attachment, reason: EXPIRED_REASON };
         if (!fetched.ok) throw new Error(`HTTP ${fetched.status}`);
-        const path = join(dir, safeFileName(attachment, index, taken));
+        const path = join(dir, names[index]!);
         await writeFile(path, fetched.bytes);
         const bytes = fetched.bytes;
         const mimeType = attachment.mimeType ?? fetched.mimeType;

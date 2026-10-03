@@ -79,6 +79,8 @@ export type AgentScheduleEntry = {
   readonly maxRuns?: number;
   readonly runCount: number;
   readonly nextRunAt: number;
+  /** Still-active runs this schedule has started, of any saved workflow (requirement: duplicate-run visibility). */
+  readonly activeRunIds?: readonly string[];
 };
 export type AgentScheduleListResult = { readonly schedules: readonly AgentScheduleEntry[] };
 export type DeleteAgentScheduleInput = AgentRoomInput & { readonly scheduleId: string };

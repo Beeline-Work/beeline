@@ -178,6 +178,7 @@ import {
 import type { AfterCommit, EmbedFn } from './institutional-memory-embeddings.js';
 import { loadWorkspaceSkill, saveSkill } from './institutional-skills.js';
 import {
+  activeRunIdsForSchedule,
   archiveWorkflow,
   assignWorkflowRole,
   handoff,
@@ -4852,23 +4853,15 @@ export class DaemonService {
        ORDER BY schedule.created_at,schedule.id`,
       [input.roomId, agentId],
     );
-    return {
-      schedules: await Promise.all(
-        rows.rows.map(async (row) => ({
-          ...(row.workflow_slug
-            ? {
-                workflowName: row.workflow_slug,
-                ...(await (async () => {
-                  const info = await readWorkflowOwnership(
-                    this.database,
-                    input.roomId,
-                    row.workflow_slug!,
-                    agentId,
-                  );
-                  return { owner: info.owner, activeRunIds: info.activeRunIds };
-                })()),
-              }
-            : {}),
+    const schedules = await Promise.all(
+      rows.rows.map(async (row) => {
+        const info = row.workflow_slug
+          ? await readWorkflowOwnership(this.database, input.roomId, row.workflow_slug, agentId)
+          : undefined;
+        const scheduleRunIds = await activeRunIdsForSchedule(this.database, input.roomId, row.id);
+        const activeRunIds = [...new Set([...(info?.activeRunIds ?? []), ...scheduleRunIds])];
+        return {
+          ...(row.workflow_slug ? { workflowName: row.workflow_slug, owner: info?.owner } : {}),
           scheduleId: row.id,
           agentId: row.agent_id,
           ...(row.agent_handle ? { agentHandle: row.agent_handle } : {}),
@@ -4877,9 +4870,11 @@ export class DaemonService {
           ...(row.max_runs !== null ? { maxRuns: row.max_runs } : {}),
           runCount: row.run_count,
           nextRunAt: Math.floor(row.next_run_at.getTime() / 1_000),
-        })),
-      ),
-    };
+          ...(row.workflow_slug || activeRunIds.length ? { activeRunIds } : {}),
+        };
+      }),
+    );
+    return { schedules };
   }
   private async deleteAgentSchedule(input: Input<'deleteAgentSchedule'>, agentId: string) {
     const deleted = await this.database.query(

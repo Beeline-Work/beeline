@@ -51,6 +51,7 @@ type WorkflowRunCard = {
   status?: 'done' | 'failed';
   /** A same-state reassignment card (list failover or `assign_workflow_role`): no outcome, same toState as before. */
   reassigned?: true;
+  trigger?: { scheduleId: string; period: string };
 };
 
 type IdentityRow = { id: string; kind: 'human' | 'agent'; name: string };
@@ -336,9 +337,103 @@ function roleAgentList(binding: WorkflowRoleBinding): string[] | null {
   return new Set(binding).size === binding.length ? [...binding] : null;
 }
 
+/**
+ * The active run THIS wake is evidence of: the command's own triggering
+ * message is a `workflow-handoff` card for the named workflow, the run it
+ * names has not ended, and this agent is still the one bound to its current
+ * state's role. A stale wake (the run already moved past this card, or past
+ * this agent) is not "currently acting" and is left alone — only a genuinely
+ * live hold on the named workflow blocks a fresh `start_workflow`.
+ */
+async function runThisWakeContinues(
+  db: SqlDatabase,
+  input: { roomId: string; agentId: string; sourceMessageId: string; workflowName: string },
+): Promise<{ runId: string } | undefined> {
+  const wake = (
+    await db.query<{ card_type: string | null; card: WorkflowRunCard | null }>(
+      `SELECT card_type,card FROM messages WHERE id=$1 AND room_id=$2`,
+      [input.sourceMessageId, input.roomId],
+    )
+  ).rows[0];
+  if (!wake?.card || wake.card_type !== WORKFLOW_HANDOFF_CARD_TYPE) return undefined;
+  if (wake.card.workflowSlug !== input.workflowName) return undefined;
+  const run = await loadRun(db, input.roomId, wake.card.runId);
+  if (!run) return undefined;
+  const contract = await loadPinnedContract(db, input.roomId, run.workflowSlug, run.workflowVersion);
+  if (!contract) return undefined;
+  const state = contract.handoffs[run.toState];
+  if (!state || state.kind === 'terminal') return undefined;
+  const role = (state as WorkflowHandoffState | WorkflowGateState).role;
+  if (run.roleBindings[role] !== input.agentId) return undefined;
+  return { runId: run.runId };
+}
+
+/** The schedule occurrence (if any) whose wake message triggered this call. */
+async function scheduleTriggerPeriod(
+  db: SqlDatabase,
+  sourceMessageId: string,
+): Promise<{ scheduleId: string; period: string } | undefined> {
+  const row = (
+    await db.query<{ schedule_id: string; scheduled_for: Date }>(
+      `SELECT schedule_id,scheduled_for FROM agent_schedule_occurrences WHERE message_id=$1`,
+      [sourceMessageId],
+    )
+  ).rows[0];
+  return row ? { scheduleId: row.schedule_id, period: row.scheduled_for.toISOString() } : undefined;
+}
+
+/** An active run of `workflowName` in `roomId` whose start card recorded this exact schedule+period. */
+async function activeRunForTrigger(
+  db: SqlDatabase,
+  roomId: string,
+  workflowName: string,
+  trigger: { scheduleId: string; period: string },
+): Promise<{ runId: string } | undefined> {
+  const candidates = await db.query<{ id: string }>(
+    `SELECT id FROM messages
+     WHERE room_id=$1 AND card_type=$2 AND card->>'runId'=id
+       AND card->>'workflowSlug'=$3
+       AND card->'trigger'->>'scheduleId'=$4 AND card->'trigger'->>'period'=$5`,
+    [roomId, WORKFLOW_HANDOFF_CARD_TYPE, workflowName, trigger.scheduleId, trigger.period],
+  );
+  for (const candidate of candidates.rows) {
+    const run = await loadRun(db, roomId, candidate.id);
+    if (!run) continue;
+    const contract = await loadPinnedContract(db, roomId, run.workflowSlug, run.workflowVersion);
+    if (!contract) continue;
+    const state = contract.handoffs[run.toState];
+    if (state && state.kind !== 'terminal') return { runId: run.runId };
+  }
+  return undefined;
+}
+
+/** Every still-active run id this schedule has ever started (any workflow), for `list_schedules`. */
+export async function activeRunIdsForSchedule(
+  db: SqlDatabase,
+  roomId: string,
+  scheduleId: string,
+): Promise<string[]> {
+  const candidates = await db.query<{ id: string; slug: string }>(
+    `SELECT id,card->>'workflowSlug' slug FROM messages
+     WHERE room_id=$1 AND card_type=$2 AND card->>'runId'=id
+       AND card->'trigger'->>'scheduleId'=$3`,
+    [roomId, WORKFLOW_HANDOFF_CARD_TYPE, scheduleId],
+  );
+  const active: string[] = [];
+  for (const candidate of candidates.rows) {
+    const run = await loadRun(db, roomId, candidate.id);
+    if (!run) continue;
+    const contract = await loadPinnedContract(db, roomId, run.workflowSlug, run.workflowVersion);
+    if (!contract) continue;
+    const state = contract.handoffs[run.toState];
+    if (state && state.kind !== 'terminal') active.push(run.runId);
+  }
+  return active;
+}
+
 export async function startWorkflow(
   database: SqlDatabase,
-  command: Pick<CommandRow, 'room_id' | 'agent_id'> & { reason?: string },
+  command: Pick<CommandRow, 'room_id' | 'agent_id'> & { reason?: string; source_message_id?: string },
   input: { name: string; roleBindings: Readonly<Record<string, WorkflowRoleBinding>> },
 ): Promise<{ runId: string; state: string }> {
   if (typeof input.name !== 'string' || !input.name) throw new Error('workflow name is required');
@@ -346,6 +441,19 @@ export async function startWorkflow(
     throw new Error('roleBindings is required');
   }
   return database.transaction(async (db) => {
+    if (command.source_message_id) {
+      const held = await runThisWakeContinues(db, {
+        roomId: command.room_id,
+        agentId: command.agent_id,
+        sourceMessageId: command.source_message_id,
+        workflowName: input.name,
+      });
+      if (held) {
+        throw new Error(
+          `You are already in run ${held.runId} of ${input.name}. Continue it or hand off within it.`,
+        );
+      }
+    }
     const room = (
       await db.query<{ workspace_id: string }>(`SELECT workspace_id FROM rooms WHERE id=$1`, [
         command.room_id,
@@ -366,6 +474,17 @@ export async function startWorkflow(
     if (!skill) throw new Error('workflow is unavailable');
     const ownership = await requireWorkflowOwner(db, command.room_id, input.name, command.agent_id);
     const contract = JSON.parse(skill.markdown) as WorkflowContract;
+    const trigger = command.source_message_id
+      ? await scheduleTriggerPeriod(db, command.source_message_id)
+      : undefined;
+    if (trigger) {
+      const collision = await activeRunForTrigger(db, command.room_id, input.name, trigger);
+      if (collision) {
+        throw new Error(
+          `${input.name} already has an active run ${collision.runId} started by this schedule for this period. Continue it, or ask a human admin to override.`,
+        );
+      }
+    }
     const missingRole = contract.roles.find((role) => !input.roleBindings[role]);
     if (missingRole) throw new Error(`role binding is missing for ${missingRole}`);
     const roleBindings: Record<string, string> = {};
@@ -428,6 +547,7 @@ export async function startWorkflow(
       subject: identitySubject(starter),
       verb: 'started workflow',
       object: contract.name,
+      consequence: `run ${runId}`,
       kind: 'workflow-handoff',
       ...(!exhausted && !isGate ? { wakes: [(resolution as { agentId: string }).agentId] } : {}),
       presentation: 'card',
@@ -447,6 +567,7 @@ export async function startWorkflow(
         ...(Object.keys(roleAgents).length ? { roleAgents } : {}),
         toState: contract.start,
         ...(startState.hint ? { receiptHint: startState.hint } : {}),
+        ...(trigger ? { trigger } : {}),
       },
     });
     if (exhausted) {
@@ -478,6 +599,30 @@ export async function startWorkflow(
     }
     return { runId, state: contract.start };
   });
+}
+
+/**
+ * A human admin's override of requirement 4's schedule/trigger refusal: a
+ * person with Workspace owner/admin rights may always start a fresh run,
+ * attributed to them by name rather than to any agent. `PhoneService` is the
+ * one caller and verifies the admin right before reaching here. Requirement
+ * 3's self-run guard never applies to a human: a person holds no workflow
+ * role to already be "in."
+ */
+export async function startWorkflowRunOverride(
+  database: SqlDatabase,
+  input: {
+    roomId: string;
+    actorId: string;
+    name: string;
+    roleBindings: Readonly<Record<string, WorkflowRoleBinding>>;
+  },
+): Promise<{ runId: string; state: string }> {
+  return startWorkflow(
+    database,
+    { room_id: input.roomId, agent_id: input.actorId },
+    { name: input.name, roleBindings: input.roleBindings },
+  );
 }
 
 export async function handoff(
@@ -562,6 +707,7 @@ export async function handoff(
       subject: identitySubject(actor),
       verb: 'handed off',
       object: toState,
+      consequence: `run ${input.runId} of ${run.workflowSlug}`,
       kind: 'workflow-handoff',
       ...(!isTerminal && !isGate && !exhausted
         ? { wakes: [(nextResolution as { agentId: string }).agentId] }

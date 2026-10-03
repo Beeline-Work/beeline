@@ -1395,6 +1395,7 @@ export class MonolithCornerTurnLoop {
                 restored,
                 activeReviewerInstruction,
                 institutionalContext,
+                memberCorners,
               ] = await trace.measure('context-fetch', () =>
                 Promise.all([
                   api.execute('getRoomConversation', {
@@ -1408,6 +1409,7 @@ export class MonolithCornerTurnLoop {
                   awaitInstitutionalContext(institutionalContextFetch, (message) =>
                     console.warn(`[thin-core] corner ${cornerId}: ${message}`),
                   ),
+                  api.execute('listRoomCorners', { roomId: this.options.parentRoomId }),
                 ]),
               );
               trace.noteInstitutionalMemory(institutionalContext.outcome);
@@ -1510,6 +1512,9 @@ export class MonolithCornerTurnLoop {
                   },
                   members: roomMentionDirectory(roster, this.agent.publicKey),
                   memory: institutionalContext.text,
+                  corners: memberCorners.corners?.filter(
+                    (corner) => corner.cornerId !== cornerId && !corner.archived,
+                  ),
                   ...(activeReviewerInstruction
                     ? { reviewerTarget: activeReviewerInstruction }
                     : {}),

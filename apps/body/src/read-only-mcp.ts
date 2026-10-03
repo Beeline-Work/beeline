@@ -664,7 +664,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'steer_corner',
     description:
-      'Pass a change in this Room down to work in a corner you belong to. The hand-off queues input for the corner opener.',
+      'Pass input from your active Room or corner turn to another corner you belong to under the same parent Room. The hand-off queues input for the destination opener and keeps your turn active; membership alone never authorizes a turn.',
     inputSchema: {
       type: 'object',
       required: ['cornerId', 'text'],
@@ -1548,7 +1548,8 @@ export function agentToolsFor(
     ) {
       return institutionalMemoryEnabled;
     }
-    if (['steer_corner', 'ask_corner', 'get_corner_ask', 'inspect_corner'].includes(tool.name))
+    if (tool.name === 'steer_corner') return !directMessage;
+    if (['ask_corner', 'get_corner_ask', 'inspect_corner'].includes(tool.name))
       return !directMessage && !cornerTurn;
     // Every code-lane corner turn may record a PASS: the server, not the
     // session's boot role, decides whether this agent is the configured reviewer.
@@ -2108,8 +2109,8 @@ export function cornerCallText(args: JsonObject): { name: string; objective: str
 
 async function relayMessage(direction: 'down', args: JsonObject, reply = false): Promise<string> {
   const cornerId = process.env.BEELINE_DAEMON_CORNER_ID?.trim();
-  if (process.env.BEELINE_AGENT_DM === '1' || Boolean(cornerId))
-    throw new Error('corner relay requires a Room turn');
+  if (process.env.BEELINE_AGENT_DM === '1' || (reply && Boolean(cornerId)))
+    throw new Error('corner questions require a Room turn; steers require a Room or corner turn');
   if (typeof args.text !== 'string' || !args.text.trim() || args.text.length > 16000)
     throw new Error('relay text must contain 1 to 16000 characters');
   const context = await activeCommandContext();

@@ -1231,9 +1231,13 @@ export function BuzzChatSurface({
   // converted to render props only below, never persisted as a derived
   // transcript or folded into the current Room response.
   const {
-    olderPages,
-    aroundPage,
     aroundStatus,
+    anchoredSegmentActive,
+    segmentRows,
+    loadNewerAround,
+    retryNewerAround,
+    abandonAround,
+    leaveAround,
     loadAround: loadAroundTranscriptMessage,
     visibleMessageCount,
     status: transcriptHistoryStatus,
@@ -1260,12 +1264,12 @@ export function BuzzChatSurface({
     [liveOverlays, roomSurface],
   );
   const olderMessages = useMemo(
-    () => (cacheViewerPubkey ? displayRoomMessages([...olderPages.flat(), ...aroundPage], cacheViewerPubkey) : []),
-    [cacheViewerPubkey, olderPages, aroundPage],
+    () => (cacheViewerPubkey ? displayRoomMessages(segmentRows, cacheViewerPubkey) : []),
+    [cacheViewerPubkey, segmentRows],
   );
   const durableMessages = useMemo(
-    () => mergeDisplayPages(olderMessages, cachedMessages, liveMessages),
-    [cachedMessages, liveMessages, olderMessages],
+    () => anchoredSegmentActive ? olderMessages : mergeDisplayPages(olderMessages, cachedMessages, liveMessages),
+    [anchoredSegmentActive, cachedMessages, liveMessages, olderMessages],
   );
   const {
     frame: roomSendFrame,
@@ -1295,8 +1299,8 @@ export function BuzzChatSurface({
   // outbox row may be older than the current server tail after an interrupted
   // publish, so it must never claim the inverted list's newest slot.
   const combinedMessages = useMemo(
-    () => mergeDisplayPages(durableMessages, roomSendFrame.optimistic),
-    [durableMessages, roomSendFrame.optimistic],
+    () => anchoredSegmentActive ? durableMessages : mergeDisplayPages(durableMessages, roomSendFrame.optimistic),
+    [anchoredSegmentActive, durableMessages, roomSendFrame.optimistic],
   );
   // Current server message authors refresh the same membership roster that
   // drives Room and corner bylines, mention suggestions, and mention glossing.
@@ -1380,6 +1384,11 @@ export function BuzzChatSurface({
   const retryOlderTranscriptMessages = useCallback(() => {
     retryOlderHistory(visibleTranscriptWindow(foldedMessages, Number.MAX_SAFE_INTEGER).length);
   }, [foldedMessages, retryOlderHistory]);
+  const transcriptForwardLine = aroundForwardStatus === 'error' ? (
+    <LedgerHistoryLine text="Couldn't load later messages · tap to retry" onPress={retryNewerAround} />
+  ) : aroundForwardStatus === 'loading' ? (
+    <LedgerHistoryLine text="Loading later messages…" />
+  ) : null;
   const transcriptHistoryLine =
     transcriptHistoryStatus === 'loading' ? (
       <LedgerHistoryLine text="Loading earlier messages…" />
@@ -2773,6 +2782,8 @@ export function BuzzChatSurface({
       isPinnedToTailRef.current =
         node.scrollHeight - node.scrollTop - node.clientHeight <= TAIL_PIN_THRESHOLD;
       observeTailPinned(isPinnedToTailRef.current);
+      if (anchoredSegmentActive && isPinnedToTailRef.current &&
+          locatingMessageSourceIdRef.current === null) loadNewerAround();
       if (
         (!isPinnedToTailRef.current ||
           node.scrollHeight <= node.clientHeight + TAIL_PIN_THRESHOLD) &&
@@ -2781,7 +2792,7 @@ export function BuzzChatSurface({
         loadOlderTranscriptMessages();
       }
     },
-    [loadOlderTranscriptMessages, observeTailPinned],
+    [anchoredSegmentActive, loadNewerAround, loadOlderTranscriptMessages, observeTailPinned],
   );
   // Pinned? Native offset 0 is the visual bottom of the inverted list. iOS
   // drops `onScroll` ticks inside the throttle window and never sends the
@@ -2923,6 +2934,10 @@ export function BuzzChatSurface({
   // here: the tap is the reader saying they are done being behind.
   const landAtNewestMessage = useCallback(() => {
     pendingNewMessageLandingRef.current = null;
+    messageSourceLandingAbandonedRef.current = true;
+    locatingMessageSourceIdRef.current = null;
+    setIsLocatingMessageSource(false);
+    leaveAround();
     scrollToNewestMessage();
     // The badge is NOT cleared here. A press is not visibility: this scroll
     // can be clamped, interrupted by a drag, or land short while the extent
@@ -2930,7 +2945,7 @@ export function BuzzChatSurface({
     // reader they had seen rows they never reached. The viewability pass
     // clears it when the newest row is actually on screen — the same rule
     // that clears it when they scroll there under their own finger.
-  }, [scrollToNewestMessage]);
+  }, [leaveAround, scrollToNewestMessage]);
   // The viewer sending is the viewer saying they are speaking at the live end
   // of the log, so the transcript lands there and shows them their own
   // message. Everything holding the viewport in history is released here: the
@@ -2939,12 +2954,16 @@ export function BuzzChatSurface({
   // which the arrival rule reads to decide whether the appended row follows.
   const releaseHistoryAnchorForSend = useCallback((messageId: string) => {
     pendingNewMessageLandingRef.current = null;
+    messageSourceLandingAbandonedRef.current = true;
+    locatingMessageSourceIdRef.current = null;
+    setIsLocatingMessageSource(false);
+    leaveAround();
     if (desktopTranscript) pendingOwnSendTailIdRef.current = messageId;
     if (firstUnreadMessageId) completedUnreadLandingRef.current = firstUnreadMessageId;
     setReleasedHistoryAnchorKey(historyAnchorKey({ messageAnchorId, firstUnreadMessageId }));
     isPinnedToTailRef.current = true;
     scrollToNewestMessage();
-  }, [desktopTranscript, firstUnreadMessageId, messageAnchorId, scrollToNewestMessage]);
+  }, [desktopTranscript, firstUnreadMessageId, leaveAround, messageAnchorId, scrollToNewestMessage]);
   useEffect(
     () =>
       liveDraftStore.subscribeCommit(() => {
@@ -2989,6 +3008,7 @@ export function BuzzChatSurface({
       requestedAroundMessageIdRef.current = null;
       messageSourceLandingAbandonedRef.current = false;
     }
+    if (messageSourceLandingAbandonedRef.current) return;
     if (
       locatingMessageSourceIdRef.current !== null &&
       locatingMessageSourceIdRef.current !== messageId
@@ -5957,6 +5977,7 @@ export function BuzzChatSurface({
                         {renderItem({ item })}
                       </View>
                     ))}
+                    {transcriptForwardLine}
                   </>
                 )}
               </View>
@@ -6000,6 +6021,8 @@ export function BuzzChatSurface({
             onScroll={(event) => {
               observePhoneTailOffset(event.nativeEvent.contentOffset.y);
               transcriptScrubber.observeScroll(event.nativeEvent);
+              if (anchoredSegmentActive && event.nativeEvent.contentOffset.y <= TAIL_PIN_THRESHOLD &&
+                  locatingMessageSourceIdRef.current === null) loadNewerAround();
             }}
             // One frame, the list's own default. A wider window leaves the
             // viewability report (which settles the badge and the unread
@@ -6014,6 +6037,7 @@ export function BuzzChatSurface({
               // touch: this never fires for a programmatic scrollToIndex/
               // scrollToOffset, only an actual drag gesture.
               messageSourceLandingAbandonedRef.current = true;
+              abandonAround();
               if (locatingMessageSourceIdRef.current !== null) {
                 locatingMessageSourceIdRef.current = null;
                 setIsLocatingMessageSource(false);
@@ -6146,13 +6170,18 @@ export function BuzzChatSurface({
             }
             // Inverted native list: the header is the newest end of the transcript.
             ListHeaderComponent={
-              starPrompt.prompt ? (
-                <View style={styles.starPrompt}>
-                  <StarPromptCard
-                    prompt={starPrompt.prompt}
-                    busy={starPrompt.busy}
-                    onAnswer={(action) => void starPrompt.answer(action)}
-                  />
+              starPrompt.prompt || transcriptForwardLine ? (
+                <View>
+                  {transcriptForwardLine}
+                  {starPrompt.prompt ? (
+                    <View style={styles.starPrompt}>
+                      <StarPromptCard
+                        prompt={starPrompt.prompt}
+                        busy={starPrompt.busy}
+                        onAnswer={(action) => void starPrompt.answer(action)}
+                      />
+                    </View>
+                  ) : null}
                 </View>
               ) : null
             }

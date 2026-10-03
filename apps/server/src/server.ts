@@ -1503,6 +1503,16 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
       json(response, 429, { error: 'too_many_requests' });
       return;
     }
+    const after = url.searchParams.get('after');
+    if (after !== null) {
+      if (!/^[0-9a-f]{64}$/.test(after)) {
+        json(response, 400, { error: 'invalid_message_id' });
+        return;
+      }
+      const result = await options.phone.readHistoryAfter(match[1]!, identityId!, after);
+      json(response, result ? 200 : 404, result ?? { error: 'not_found' });
+      return;
+    }
     const around = url.searchParams.get('around');
     if (around !== null) {
       if (!/^[0-9a-f]{64}$/.test(around)) {

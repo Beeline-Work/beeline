@@ -78,7 +78,9 @@ function render(overrides: Partial<React.ComponentProps<typeof RoomReviewerActio
 }
 
 function renderedNotice(renderer: ReactTestRenderer, testID: string) {
-  return renderer.root.findAllByType('View').filter((node) => node.props.testID === testID);
+  return renderer.root
+    .findAllByType('View')
+    .filter((node: { props: { testID?: string } }) => node.props.testID === testID);
 }
 
 describe('RoomReviewerActions', () => {

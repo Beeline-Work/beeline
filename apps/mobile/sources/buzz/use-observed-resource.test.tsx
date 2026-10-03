@@ -56,6 +56,21 @@ it('a failed read stays visible, stops automatic reads, and retry recovers', asy
   expect(current.data).toBe('recovered');
 });
 
+it('R9-OBS-01: reconnect recovers a failed room read', async () => {
+  const load = vi.fn().mockResolvedValueOnce('initial').mockRejectedValueOnce(new Error('offline')).mockResolvedValue('current');
+  let current: any;
+  function Reader() { current = useObservedResource<string>('reconnect', { load, subscribe: observeRoomResource('room') }); return <span>{current.error ?? current.data}</span>; }
+  await act(async () => { mount(<Reader />); });
+  await act(async () => wire.listener({ monolithLive: { type: 'subscribed', roomId: 'room' } }));
+  expect(load).toHaveBeenCalledTimes(1);
+  await act(async () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'room', reason: 'message' } }));
+  expect(current.error).toBe('offline');
+  await act(async () => wire.listener({ monolithLive: { type: 'subscribed', roomId: 'room' } }));
+  expect(load).toHaveBeenCalledTimes(3);
+  expect(current.error).toBeNull();
+  expect(current.data).toBe('current');
+});
+
 it('selection switches hide old values and late reads cannot overwrite the new selection', async () => {
   let release!: (value: string) => void;
   let current: any;

@@ -6,7 +6,7 @@ import type { ConnectorInstallState } from './workbench';
 type Snapshot<T> = { data: T | undefined; loading: boolean; error: string | null };
 type Options<T> = {
   load(): Promise<T>;
-  subscribe?: (invalidate: () => void) => Promise<() => void>;
+  subscribe?: (invalidate: () => void, reconnect: () => void) => Promise<() => void>;
   /** Only resources without a live signal use completion-paced refresh. */
   refreshAfter?: (data: T | undefined) => number | false;
   missLimit?: number;
@@ -89,7 +89,7 @@ class Resource<T> {
         subscriptionStop?.();
       };
       void Promise.resolve()
-        .then(() => (active ? this.options.subscribe?.(this.invalidate) : undefined))
+        .then(() => (active ? this.options.subscribe?.(this.invalidate, this.retry) : undefined))
         .then((stop) => {
           if (active) subscriptionStop = stop;
           else stop?.();
@@ -134,14 +134,14 @@ export function useObservedResource<T>(key: string | undefined, options: Options
 
 /** Room pushes include hidden workflow/lifecycle cards; poll fallbacks do not invalidate reads. */
 export function observeRoomResource(roomId: string) {
-  return (invalidate: () => void) => {
+  return (invalidate: () => void, reconnect: () => void) => {
     let subscribed = false;
     return sharedLiveConnection().register([{ '#h': [roomId] }], (event) => {
       if (!('monolithLive' in event)) return;
       const live = event.monolithLive;
       if (!('roomId' in live) || live.roomId !== roomId) return;
       if (live.type === 'subscribed') {
-        if (subscribed) invalidate();
+        if (subscribed) reconnect();
         subscribed = true;
       } else if (
         live.type === 'message-delta' ||

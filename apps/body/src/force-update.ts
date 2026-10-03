@@ -1,15 +1,18 @@
 import { journalInterruptedTurns, type InterruptedTurn } from './force-update-journal.js';
 import { versionAtLeast } from './managed-update.js';
 
-/** One forced handoff per daemon process, regardless of how many routes are refused. */
+/**
+ * One forced handoff per helper process, regardless of how many agents or
+ * routes are refused. Each hosted agent's interrupted turns are journaled in
+ * that agent's own runtime directory, where its successor replays them.
+ */
 export class ForceUpdateCoordinator {
   private started = false;
   private work?: Promise<void>;
 
   constructor(private readonly options: {
     loadedVersion?: string;
-    runtimeDir: string;
-    interrupt: () => InterruptedTurn[];
+    interrupt: () => ReadonlyArray<{ runtimeDir: string; turns: InterruptedTurn[] }>;
     install: (minimum: string) => Promise<string>;
     restart: (desiredRelease: string) => Promise<void>;
     failed: (error: unknown) => void;
@@ -26,7 +29,8 @@ export class ForceUpdateCoordinator {
     try {
       // No await between cancellation and the local journal. The successor
       // owns the receipt because the old release's HTTP writes now get 426.
-      journalInterruptedTurns(this.options.runtimeDir, this.options.interrupt());
+      for (const { runtimeDir, turns } of this.options.interrupt())
+        journalInterruptedTurns(runtimeDir, turns);
     } catch (error) {
       this.work = Promise.resolve().then(() => this.options.failed(error));
       return;

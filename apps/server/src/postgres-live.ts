@@ -285,6 +285,8 @@ interface LiveNotificationPayload {
   registryState?: string;
   registryConnectorId?: string;
   registryDueAt?: number;
+  /** Connection epoch an instance accepted for `agentId` (table `agent_connection`). */
+  epoch?: number;
 }
 
 function decodePayload(value: string | undefined): LiveNotificationPayload | undefined {
@@ -308,6 +310,7 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
       ...(typeof parsed.turnId === 'string' ? { turnId: parsed.turnId } : {}),
       ...(typeof parsed.kind === 'string' ? { kind: parsed.kind } : {}),
       ...(typeof parsed.observedAt === 'number' ? { observedAt: parsed.observedAt } : {}),
+      ...(typeof parsed.epoch === 'number' ? { epoch: parsed.epoch } : {}),
       ...(typeof parsed.ownerEpoch === 'string' ? { ownerEpoch: parsed.ownerEpoch } : {}),
       ...(typeof parsed.expiresAt === 'number' ? { expiresAt: parsed.expiresAt } : {}),
       ...(typeof parsed.traceId === 'string' ? { traceId: parsed.traceId } : {}),
@@ -590,6 +593,7 @@ export class PostgresLiveListener {
             agentId: payload.agentId,
             status: row.body.status,
             observedAt: row.body.observedAt,
+            ...(row.body.held === true ? { held: true } : {}),
           });
         }
         return;
@@ -613,6 +617,13 @@ export class PostgresLiveListener {
         });
         return;
       }
+      return;
+    }
+    if (payload.table === 'agent_connection' && payload.agentId && payload.epoch !== undefined) {
+      // Another instance accepted a newer helper connection for this agent.
+      this.live.publish({
+        type: 'agent-connection', roomId: '', agentId: payload.agentId, epoch: payload.epoch,
+      });
       return;
     }
     if (payload.table === 'agent_config' && payload.agentId) {

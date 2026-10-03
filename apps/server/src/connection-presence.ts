@@ -6,16 +6,28 @@ import type { CommittedTurnLiveRow, LiveHub } from './live.js';
 import { tagsKnownIdentitySql } from './message-mentions.js';
 import { noteFirstSilence } from './turn-silence-notice.js';
 import { systemLine } from './system-line.js';
+import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
 
 export const DELIVERY_PICKUP_WINDOW_MS = 90_000;
 export const PRESENCE_OBSERVE_DEBOUNCE_MS = 25;
 export const PRESENCE_EVIDENCE_MIN_INTERVAL_MS = 30_000;
+/** How often a server instance renews its lease row. Constant per instance:
+ *  no work here scales with agents or with heartbeat pings. */
+export const SERVER_LEASE_RENEW_MS = 30_000;
+/** A server that has not renewed for this long is gone; its connections are released. */
+export const SERVER_LEASE_EXPIRY_MS = 90_000;
 
 interface PresenceMetadata {
   releaseVersion?: string;
   sourceSha?: string;
   available?: boolean;
   lifecycleId?: string;
+}
+
+/** One live helper connection for one agent, held by one server instance. */
+interface HeldConnection {
+  connectionId: string;
+  instanceId: string;
 }
 interface Delivery {
   room_id: string;
@@ -53,7 +65,12 @@ export class ConnectionPresence {
   #observeWorker: Promise<void> | undefined;
   readonly #release: () => void;
   readonly #releaseResync: () => void;
+  #leaseTimer: ReturnType<typeof setInterval> | undefined;
   #stopped = false;
+  /** This server process; it holds the connections it accepted. */
+  readonly instanceId: string;
+  readonly #leaseRenewMs: number;
+  readonly #leaseExpiryMs: number;
 
   constructor(
     private readonly database: SqlDatabase,
@@ -63,7 +80,11 @@ export class ConnectionPresence {
       PRESENCE_EVIDENCE_MIN_INTERVAL_MS,
       Math.floor(pickupWindowMs / 3),
     ),
+    lease: { instanceId?: string; renewMs?: number; expiryMs?: number } = {},
   ) {
+    this.instanceId = lease.instanceId ?? randomUUID();
+    this.#leaseRenewMs = lease.renewMs ?? SERVER_LEASE_RENEW_MS;
+    this.#leaseExpiryMs = lease.expiryMs ?? SERVER_LEASE_EXPIRY_MS;
     this.#releaseResync = live.subscribeResync(() => {
       void this.recoverWorkingStalls().catch(this.report);
       this.scheduleObserve();
@@ -97,8 +118,60 @@ export class ConnectionPresence {
   /** One recovery read on server startup; pending deadlines come from messages,
    * not a poll or a separately written delivery ledger. */
   async start(): Promise<void> {
+    this.startLease();
     await this.recoverWorkingStalls();
     await this.observe();
+  }
+
+  /**
+   * Renew this instance's lease and release connections whose server stopped
+   * renewing (crashed or scaled away). One statement pair per server instance
+   * per interval, whatever the number of agents; heartbeat pings never touch
+   * the database.
+   */
+  startLease(): void {
+    if (this.#leaseTimer || this.#stopped) return;
+    const tick = () => void this.renewLease().catch(this.report);
+    tick();
+    this.#leaseTimer = setInterval(tick, this.#leaseRenewMs);
+    this.#leaseTimer.unref?.();
+  }
+
+  async renewLease(): Promise<void> {
+    if (this.#stopped) return;
+    await this.database.query(
+      `INSERT INTO live_server_instances(instance_id,renewed_at) VALUES($1,clock_timestamp())
+       ON CONFLICT(instance_id) DO UPDATE SET renewed_at=EXCLUDED.renewed_at`,
+      [this.instanceId],
+    );
+    const released = await releaseStaleServerConnections(
+      this.database,
+      this.#leaseExpiryMs,
+    );
+    for (const agentId of released) await broadcastAgentPresence(this.database, this.live, agentId);
+  }
+
+  /**
+   * A helper connection for this agent was accepted here. Returns its epoch:
+   * larger than every earlier connection's, on any server instance.
+   */
+  async claimConnection(
+    agentId: string,
+    metadata: PresenceMetadata & { connectionId: string },
+  ): Promise<number> {
+    if (this.#stopped) throw new Error('connection presence stopped');
+    this.#authenticatedAt.set(agentId, Date.now());
+    const { connectionId, ...presence } = metadata;
+    return claimAgentConnection(this.database, this.live, agentId, presence, {
+      connectionId,
+      instanceId: this.instanceId,
+    });
+  }
+
+  /** The connection ended. Only the agent's current connection goes offline. */
+  async releaseConnection(agentId: string, connectionId: string): Promise<void> {
+    if (this.#stopped) return;
+    await releaseAgentConnection(this.database, this.live, agentId, connectionId);
   }
 
   async announce(roomId: string, agentId: string, metadata: PresenceMetadata = {}): Promise<void> {
@@ -172,6 +245,8 @@ export class ConnectionPresence {
 
   async stop(): Promise<void> {
     this.#stopped = true;
+    clearInterval(this.#leaseTimer);
+    this.#leaseTimer = undefined;
     this.#release();
     this.#releaseResync();
     for (const timer of this.#timers.values()) clearTimeout(timer);
@@ -470,77 +545,210 @@ export async function announceAgentLifecycle(
   agentId: string,
   metadata: PresenceMetadata & { lifecycleId: string },
 ): Promise<void> {
-  const lifecycle = metadata.lifecycleId;
-  const changed = await database.transaction(async (db) => {
+  const changed = await database.transaction((db) =>
+    writeAgentAnnouncement(db, roomId, agentId, metadata),
+  );
+  if (changed) await broadcastAgentPresence(database, live, agentId);
+}
+
+/**
+ * Record a newly accepted helper connection and hold the agent's presence
+ * online for as long as it lives. The epoch only grows, so whichever instance
+ * accepted the newest connection wins, and every other instance drops its own.
+ */
+export async function claimAgentConnection(
+  database: SqlDatabase,
+  live: LiveHub,
+  agentId: string,
+  metadata: PresenceMetadata,
+  connection: HeldConnection,
+): Promise<number> {
+  const epoch = await database.transaction(async (db) => {
     await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`presence:${agentId}`]);
-    const previous = (
-      await db.query<{ room_id: string; body: Record<string, unknown> }>(
-        `SELECT room_id,body FROM live_outputs WHERE agent_id=$1 AND kind='presence'
-         ORDER BY updated_at DESC LIMIT 1`,
-        [agentId],
-      )
-    ).rows[0];
-    const observedAt = Math.max(
-      Math.floor(Date.now() / 1000),
-      Number(previous?.body.observedAt ?? 0) + 1,
+    const claimed = await db.query<{ epoch: string | number }>(
+      `INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id,connected_at,released_at)
+       VALUES($1,1,$2,$3,clock_timestamp(),NULL)
+       ON CONFLICT(agent_id) DO UPDATE SET epoch=agent_connections.epoch+1,
+         connection_id=EXCLUDED.connection_id,instance_id=EXCLUDED.instance_id,
+         connected_at=EXCLUDED.connected_at,released_at=NULL
+       RETURNING epoch`,
+      [agentId, connection.connectionId, connection.instanceId],
     );
-    const body = {
-      status: metadata.available === false ? 'offline' : 'online',
-      observedAt,
-      evidenceNonce: randomUUID(),
-      lifecycleId: lifecycle,
-      ...(metadata.releaseVersion ? { releaseVersion: metadata.releaseVersion } : {}),
-      ...(metadata.sourceSha ? { sourceSha: metadata.sourceSha } : {}),
-    };
-    if (previous)
-      await db.query(
-        `UPDATE live_outputs SET body=$3::jsonb,updated_at=clock_timestamp()
-         WHERE room_id=$1 AND agent_id=$2 AND turn_id='presence' AND kind='presence'`,
-        [previous.room_id, agentId, JSON.stringify(body)],
-      );
-    else
-      await db.query(
-        `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body,updated_at)
-         VALUES($1,$2,'presence','presence',$3::jsonb,clock_timestamp())
-         ON CONFLICT(room_id,agent_id,turn_id,kind) DO UPDATE SET
-           body=EXCLUDED.body,updated_at=EXCLUDED.updated_at`,
-        [roomId, agentId, JSON.stringify(body)],
-      );
-    const restarts = await db.query<{
-      id: string;
-      room_id: string;
-      source_message_id: string;
-      handle: string | null;
-      name: string;
-    }>(
-      `UPDATE agent_commands command SET state='complete',completed_at=now(),restart_confirmed_at=now()
-       FROM identities identity
-       WHERE command.agent_id=$1 AND command.agent_id=identity.id
-         AND command.action='restart' AND command.state='claimed'
-         AND command.lifecycle_before IS DISTINCT FROM $2
-       RETURNING command.id,command.room_id,command.source_message_id,identity.handle,identity.name`,
-      [agentId, lifecycle],
+    await writeAgentAnnouncement(db, undefined, agentId, metadata, connection, true);
+    return Number(claimed.rows[0]?.epoch ?? 0);
+  });
+  await database.query(`SELECT pg_notify($1, $2)`, [
+    POSTGRES_LIVE_CHANNEL,
+    JSON.stringify({ table: 'agent_connection', operation: 'UPDATE', roomId: '', agentId, epoch }),
+  ]);
+  live.publish({ type: 'agent-connection', roomId: '', agentId, epoch });
+  await broadcastAgentPresence(database, live, agentId);
+  return epoch;
+}
+
+/** Fenced: a connection that is no longer the agent's newest changes nothing. */
+export async function releaseAgentConnection(
+  database: SqlDatabase,
+  live: LiveHub,
+  agentId: string,
+  connectionId: string,
+): Promise<boolean> {
+  const released = await database.transaction(async (db) => {
+    await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`presence:${agentId}`]);
+    const current = await db.query(
+      `UPDATE agent_connections SET released_at=clock_timestamp()
+       WHERE agent_id=$1 AND connection_id=$2 AND released_at IS NULL RETURNING 1`,
+      [agentId, connectionId],
     );
-    for (const restart of restarts.rows)
-      await systemLine(db, {
-        id: createHash('sha256')
-          .update(`agent-restart-confirmed:${restart.id}:${lifecycle}`)
-          .digest('hex'),
-        roomId: restart.room_id,
-        authorId: agentId,
-        subject: {
-          kind: 'agent',
-          id: agentId,
-          name: restart.handle ? `@${restart.handle}` : restart.name,
-        },
-        verb: 'reconnected after restart',
-        afterMessageId: restart.source_message_id,
-      });
-    // Presence is an agent fact. Change one durable row; the PostgreSQL
-    // listener expands its one notification across current Room memberships.
+    if (!current.rowCount) return false;
+    await db.query(
+      `UPDATE live_outputs SET body=body || jsonb_build_object('status','offline','held',false,
+         'observedAt',GREATEST($3::bigint,COALESCE((body->>'observedAt')::bigint,0)+1)),
+         updated_at=clock_timestamp()
+       WHERE agent_id=$1 AND kind='presence' AND body->>'connectionId'=$2`,
+      [agentId, connectionId, Math.floor(Date.now() / 1000)],
+    );
     return true;
   });
-  if (changed) await broadcastAgentPresence(database, live, agentId);
+  if (released) await broadcastAgentPresence(database, live, agentId);
+  return released;
+}
+
+/** Release every connection held by a server instance whose lease expired. */
+export async function releaseStaleServerConnections(
+  database: SqlDatabase,
+  expiryMs: number,
+): Promise<string[]> {
+  const released = await database.query<{ agent_id: string }>(
+    `WITH stale AS (
+       UPDATE agent_connections connection SET released_at=clock_timestamp()
+       WHERE connection.released_at IS NULL AND NOT EXISTS(
+         SELECT 1 FROM live_server_instances server
+         WHERE server.instance_id=connection.instance_id
+           AND server.renewed_at>clock_timestamp()-make_interval(secs => $1::double precision / 1000))
+       RETURNING connection.agent_id,connection.connection_id
+     ), demoted AS (
+       UPDATE live_outputs presence SET body=presence.body || jsonb_build_object(
+         'status','offline','held',false,
+         'observedAt',GREATEST($2::bigint,COALESCE((presence.body->>'observedAt')::bigint,0)+1)),
+         updated_at=clock_timestamp()
+       FROM stale
+       WHERE presence.agent_id=stale.agent_id AND presence.kind='presence'
+         AND presence.body->>'connectionId'=stale.connection_id
+       RETURNING presence.agent_id
+     ) SELECT DISTINCT agent_id FROM demoted`,
+    [expiryMs, Math.floor(Date.now() / 1000)],
+  );
+  await database.query(
+    `DELETE FROM live_server_instances WHERE renewed_at<clock_timestamp()-interval '1 day'`,
+  );
+  return released.rows.map((row) => row.agent_id);
+}
+
+/**
+ * Write one presence announcement inside the caller's transaction. A
+ * connection claim marks the presence held by that connection; any other
+ * announcement keeps whatever connection already holds it.
+ */
+async function writeAgentAnnouncement(
+  db: SqlDatabase,
+  roomId: string | undefined,
+  agentId: string,
+  metadata: PresenceMetadata,
+  connection?: HeldConnection,
+  locked = false,
+): Promise<boolean> {
+  const lifecycle = metadata.lifecycleId;
+  if (!locked)
+    await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`presence:${agentId}`]);
+  const previous = (
+    await db.query<{ room_id: string; body: Record<string, unknown> }>(
+      `SELECT room_id,body FROM live_outputs WHERE agent_id=$1 AND kind='presence'
+       ORDER BY updated_at DESC LIMIT 1`,
+      [agentId],
+    )
+  ).rows[0];
+  const targetRoomId =
+    previous?.room_id ??
+    roomId ??
+    (
+      await db.query<{ room_id: string }>(
+        `SELECT room_id FROM memberships
+         WHERE identity_id=$1 AND room_id IS NOT NULL AND removed_at IS NULL LIMIT 1`,
+        [agentId],
+      )
+    ).rows[0]?.room_id;
+  // An agent in no Room has no reader to show presence to.
+  if (!targetRoomId) return false;
+  const observedAt = Math.max(
+    Math.floor(Date.now() / 1000),
+    Number(previous?.body.observedAt ?? 0) + 1,
+  );
+  const held = connection
+    ? { held: true, connectionId: connection.connectionId }
+    : {
+        ...(typeof previous?.body.held === 'boolean' ? { held: previous.body.held } : {}),
+        ...(typeof previous?.body.connectionId === 'string'
+          ? { connectionId: previous.body.connectionId }
+          : {}),
+      };
+  const body = {
+    status: metadata.available === false ? 'offline' : 'online',
+    observedAt,
+    evidenceNonce: randomUUID(),
+    ...(lifecycle ? { lifecycleId: lifecycle } : {}),
+    ...(metadata.releaseVersion ? { releaseVersion: metadata.releaseVersion } : {}),
+    ...(metadata.sourceSha ? { sourceSha: metadata.sourceSha } : {}),
+    ...held,
+  };
+  if (previous)
+    await db.query(
+      `UPDATE live_outputs SET body=$3::jsonb,updated_at=clock_timestamp()
+       WHERE room_id=$1 AND agent_id=$2 AND turn_id='presence' AND kind='presence'`,
+      [previous.room_id, agentId, JSON.stringify(body)],
+    );
+  else
+    await db.query(
+      `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body,updated_at)
+       VALUES($1,$2,'presence','presence',$3::jsonb,clock_timestamp())
+       ON CONFLICT(room_id,agent_id,turn_id,kind) DO UPDATE SET
+         body=EXCLUDED.body,updated_at=EXCLUDED.updated_at`,
+      [targetRoomId, agentId, JSON.stringify(body)],
+    );
+  if (!lifecycle) return true;
+  const restarts = await db.query<{
+    id: string;
+    room_id: string;
+    source_message_id: string;
+    handle: string | null;
+    name: string;
+  }>(
+    `UPDATE agent_commands command SET state='complete',completed_at=now(),restart_confirmed_at=now()
+     FROM identities identity
+     WHERE command.agent_id=$1 AND command.agent_id=identity.id
+       AND command.action='restart' AND command.state='claimed'
+       AND command.lifecycle_before IS DISTINCT FROM $2
+     RETURNING command.id,command.room_id,command.source_message_id,identity.handle,identity.name`,
+    [agentId, lifecycle],
+  );
+  for (const restart of restarts.rows)
+    await systemLine(db, {
+      id: createHash('sha256')
+        .update(`agent-restart-confirmed:${restart.id}:${lifecycle}`)
+        .digest('hex'),
+      roomId: restart.room_id,
+      authorId: agentId,
+      subject: {
+        kind: 'agent',
+        id: agentId,
+        name: restart.handle ? `@${restart.handle}` : restart.name,
+      },
+      verb: 'reconnected after restart',
+      afterMessageId: restart.source_message_id,
+    });
+  // Presence is an agent fact. Change one durable row; the PostgreSQL
+  // listener expands its one notification across current Room memberships.
+  return true;
 }
 
 export async function recordAgentEvidence(
@@ -595,7 +803,7 @@ async function broadcastAgentPresence(
   if (live.listenerOwnsPresenceFanout()) return;
   const result = await database.query<{
     room_id: string;
-    body: { status: 'online' | 'offline'; observedAt: number };
+    body: { status: 'online' | 'offline'; observedAt: number; held?: unknown };
   }>(
     `SELECT m.room_id,p.body FROM memberships m
         JOIN LATERAL(SELECT body FROM live_outputs WHERE agent_id=$1 AND kind='presence'
@@ -610,5 +818,6 @@ async function broadcastAgentPresence(
       agentId,
       status: row.body.status,
       observedAt: row.body.observedAt,
+      ...(row.body.held === true ? { held: true } : {}),
     });
 }

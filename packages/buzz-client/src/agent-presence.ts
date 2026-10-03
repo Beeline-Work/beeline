@@ -35,6 +35,8 @@ export type AgentPresence = {
   status: AgentPresenceStatus;
   /** Unix seconds on the wire and in RoomView; convert only when comparing with Date.now(). */
   observedAt: number;
+  /** A live helper connection holds this presence: online until the server says otherwise. */
+  held?: boolean;
 };
 
 const observedAtMs = (presence: AgentPresence): number => presence.observedAt * 1_000;
@@ -44,7 +46,12 @@ export function isAgentPresenceOnline(
   presence: AgentPresence | undefined,
   now = Date.now(),
 ): boolean {
-  return isAgentReachable(presence?.status, presence ? observedAtMs(presence) : undefined, now);
+  return isAgentReachable(
+    presence?.status,
+    presence ? observedAtMs(presence) : undefined,
+    now,
+    presence?.held === true,
+  );
 }
 
 export function resolveAgentPresenceTier(

@@ -105,9 +105,14 @@ export type LiveEvent =
       agentId: string;
       status: 'online' | 'offline';
       observedAt: number;
+      /** A live helper connection holds this presence: it does not age out. */
+      held?: boolean;
       ownerEpoch?: string;
       expiresAt?: number;
-    };
+    }
+  /** A server instance accepted a newer connection for this agent. Never sent
+   *  to a socket; every instance drops its own older connection for the agent. */
+  | { type: 'agent-connection'; roomId: ''; agentId: string; epoch: number };
 
 export class LiveHub {
   readonly #events = new EventEmitter();

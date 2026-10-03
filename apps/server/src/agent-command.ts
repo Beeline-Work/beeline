@@ -241,6 +241,7 @@ type LifecycleTarget = {
   source_sha: string | null;
   presence_status: string | null;
   presence_updated_at: Date | null;
+  presence_held: boolean | null;
 };
 
 function lifecycleSubject(target: LifecycleTarget) {
@@ -268,7 +269,8 @@ async function routeTaggedLifecycleCommand(
          presence.body->>'lifecycleId' lifecycle_id,
          presence.body->>'releaseVersion' release_version,
          presence.body->>'sourceSha' source_sha,
-         presence.body->>'status' presence_status,presence.updated_at presence_updated_at
+         presence.body->>'status' presence_status,presence.updated_at presence_updated_at,
+         presence.body->>'held'='true' presence_held
        FROM agents agent
        JOIN identities identity ON identity.id=agent.agent_id
        JOIN memberships target_member ON target_member.room_id=$2
@@ -356,8 +358,9 @@ async function routeTaggedLifecycleCommand(
   }
   const online =
     target.presence_status === 'online' &&
-    Boolean(target.presence_updated_at) &&
-    Date.now() - target.presence_updated_at!.getTime() < 90_000;
+    (target.presence_held === true ||
+      (Boolean(target.presence_updated_at) &&
+        Date.now() - target.presence_updated_at!.getTime() < 90_000));
   if (action === 'status') {
     await line(
       online ? 'is online' : 'is offline',

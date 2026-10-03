@@ -21,12 +21,15 @@ export type HelperExitReason =
   | 'force-update-failed'
   | 'distress'
   | 'agent-removed'
-  | 'unknown-agent';
+  | 'unknown-agent'
+  | 'no-agents';
 
 /**
  * One code per reason. 0 and 75 are restarted by the service manager; 77, 78
  * and 79 are in RestartPreventExitStatus and wait for an operator (77), mean
- * the agent was removed (78), or name an agent with no runtime (79).
+ * the agent was removed (78), or name an agent with no runtime (79). The
+ * machine helper exits 79 when it has no agent to host, or handed its agents
+ * back to per-agent units after a rollback.
  */
 export const HELPER_EXIT_CODES: Readonly<Record<HelperExitReason, 0 | 75 | 77 | 78 | 79>> = {
   stopped: 0,
@@ -38,6 +41,7 @@ export const HELPER_EXIT_CODES: Readonly<Record<HelperExitReason, 0 | 75 | 77 | 
   distress: DAEMON_DISTRESS_EXIT_STATUS as 77,
   'agent-removed': DELIBERATE_REMOVAL_EXIT_STATUS as 78,
   'unknown-agent': UNKNOWN_AGENT_EXIT_STATUS as 79,
+  'no-agents': UNKNOWN_AGENT_EXIT_STATUS as 79,
 };
 
 /** Why intake is closing: an update waits for turns; the others cancel at once. */

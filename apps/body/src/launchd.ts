@@ -5,18 +5,21 @@ import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
-import { defaultSupervisorRoot, runtimeConfigPath } from './runtime.js';
 import { SQUIRE_BROKER_FLAG, squireHostRewriteEnv, writeSquireBrokerUnitMarker } from './squire-host.js';
 import {
   DAEMON_DISTRESS_EXIT_STATUS,
   DELIBERATE_REMOVAL_EXIT_STATUS,
   isCanonicalInstalledLauncher,
+  NO_AGENTS_EXIT_STATUS,
   UNKNOWN_AGENT_EXIT_STATUS,
 } from './systemd.js';
 
 const execFileAsync = promisify(execFile);
 
+/** Pre-machine per-agent jobs; only migration and rollback still name them. */
 export const LAUNCHD_AGENT_LABEL_PREFIX = 'app.usebeeline.agent.';
+/** One helper job per machine hosts every paired agent. */
+export const LAUNCHD_HELPER_LABEL = 'app.usebeeline.helper';
 export const LAUNCHD_BROKER_LABEL = 'app.usebeeline.trusty-squire-broker';
 export const LAUNCHD_COMMAND_TIMEOUT_MS = 15_000;
 export const LAUNCHD_RESTART_WAIT_MS = 10 * 60_000 + 30_000;
@@ -76,6 +79,90 @@ export function launchdAgentPlistPath(
     'LaunchAgents',
     `${launchdAgentLabel(publicKey)}.plist`,
   );
+}
+
+export function launchdHelperPlistPath(env: NodeJS.ProcessEnv = process.env): string {
+  return resolve(launchdHome(env), 'Library', 'LaunchAgents', `${LAUNCHD_HELPER_LABEL}.plist`);
+}
+
+export function launchdHelperSupervisorPath(env: NodeJS.ProcessEnv = process.env): string {
+  return resolve(
+    launchdHome(env),
+    'Library',
+    'Application Support',
+    'Beeline',
+    'bin',
+    'supervise-helper',
+  );
+}
+
+/**
+ * The machine helper's wrapper: the same SIGTERM forwarding and status
+ * mapping as the per-agent one. A helper that found no agent to host exits
+ * with the no-agents status, which maps to 0 so KeepAlive leaves it stopped
+ * until pairing starts it again; every other exit is restarted.
+ */
+export function launchdHelperSupervisorScript(): string {
+  return `#!/bin/sh
+set -u
+"$1" daemon --machine &
+child=$!
+trap 'kill -TERM "$child" 2>/dev/null' TERM INT
+trap 'kill -HUP "$child" 2>/dev/null' HUP
+wait "$child"
+status=$?
+while [ "$status" -gt 128 ] && kill -0 "$child" 2>/dev/null; do
+  wait "$child"
+  status=$?
+done
+case "$status" in
+  ${NO_AGENTS_EXIT_STATUS}) exit 0 ;;
+  *) exit 1 ;;
+esac
+`;
+}
+
+export function launchdHelperPlist(env: NodeJS.ProcessEnv = process.env): string {
+  const home = launchdHome(env);
+  const logDir = resolve(home, 'Library', 'Logs', 'Beeline');
+  const path = launchdJobPath(home);
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${LAUNCHD_HELPER_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${xml(launchdHelperSupervisorPath(env))}</string>
+    <string>${xml(resolve(home, '.local', 'bin', 'beeline'))}</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+${environmentXml({ HOME: home, PATH: path })}
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>${xml(home)}</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+  <key>ExitTimeOut</key>
+  <integer>${LAUNCHD_EXIT_TIMEOUT_SECONDS}</integer>
+  <key>Umask</key>
+  <integer>63</integer>
+  <key>StandardOutPath</key>
+  <string>${xml(resolve(logDir, 'helper.log'))}</string>
+  <key>StandardErrorPath</key>
+  <string>${xml(resolve(logDir, 'helper.log'))}</string>
+</dict>
+</plist>
+`;
 }
 
 export function launchdBrokerPlistPath(env: NodeJS.ProcessEnv = process.env): string {
@@ -338,177 +425,152 @@ function bootstrapRefusedWhileRemoving(error: unknown): boolean {
   return /Bootstrap failed:\s*(?:5|36|37)\b/.test(launchctlFailureText(error));
 }
 
-/** The loaded/pid view of one installed agent job, for callers that must wait. */
-export async function launchdAgentJobStatus(
-  publicKey: string,
-  options: { env?: NodeJS.ProcessEnv; run?: LaunchdRunner } = {},
-): Promise<{ pid: number; state: string; lastExitStatus?: number }> {
-  const label = launchdAgentLabel(publicKey);
-  return launchdStatus(options.run ?? runLaunchctl, `${launchdUserDomain()}/${label}`);
-}
-
 /**
- * Load the installed plist, which is what a login and a `beeline start` both do.
- * `launchctl bootout` returns before launchd has taken its job out of the
- * domain, and a bootstrap of a label still in the domain is refused — so an
- * install that follows a stop, a removal, or a re-pair races launchd's own
- * bookkeeping. The refusal is transient and the identical call succeeds moments
- * later, so this retries it up to `waitMs` and otherwise rethrows it with what
- * launchd reports for the label.
+ * Install the machine helper job and make it host the current set of paired
+ * agents. A running helper is sent SIGHUP to rescan: agents already serving
+ * are not restarted. A job that is not loaded is bootstrapped. Every per-agent
+ * job left from before the machine helper is retired first.
  */
-export async function bootstrapLaunchdAgentService(
-  publicKey: string,
-  options: { env?: NodeJS.ProcessEnv; run?: LaunchdRunner; waitMs?: number } = {},
-): Promise<void> {
-  const env = options.env ?? process.env;
-  const run = options.run ?? runLaunchctl;
-  const domain = launchdUserDomain();
-  const label = launchdAgentLabel(publicKey);
-  const plistPath = launchdAgentPlistPath(publicKey, env);
-  const deadline = Date.now() + (options.waitMs ?? LAUNCHD_BOOTSTRAP_WAIT_MS);
-  for (;;) {
-    try {
-      await run(['bootstrap', domain, plistPath]);
-      return;
-    } catch (error) {
-      if (!bootstrapRefusedWhileRemoving(error)) throw error;
-      if (Date.now() >= deadline) {
-        const status = await launchdStatus(run, `${domain}/${label}`);
-        throw new Error(
-          `launchctl bootstrap never accepted ${label}: ${launchctlFailureText(error).trim()}` +
-            ` · launchd reports state=${status.state || 'unknown'} pid=${status.pid}`,
-          { cause: error },
-        );
-      }
-      await sleep(LAUNCHD_BOOTSTRAP_RETRY_INTERVAL_MS);
-    }
-  }
-}
-
-export async function installLaunchdAgentService(
-  publicKey: string,
+export async function installLaunchdHelperService(
   options: {
     env?: NodeJS.ProcessEnv;
     run?: LaunchdRunner;
     waitTimeoutMs?: number;
     invocationPath?: string;
+    /** The calling process's own legacy job, so retiring it comes last. */
+    selfLabel?: string;
   } = {},
 ): Promise<number> {
   const env = options.env ?? process.env;
   assertCanonicalInstalledLauncher(env, options.invocationPath);
   const home = launchdHome(env);
-  const label = launchdAgentLabel(publicKey);
-  const plistPath = launchdAgentPlistPath(publicKey, env);
   await mkdir(resolve(home, 'Library', 'Logs', 'Beeline'), { recursive: true, mode: 0o700 });
-  await writeManagedFile(launchdAgentSupervisorPath(env), launchdAgentSupervisorScript(), 0o700);
-  await writeManagedFile(plistPath, launchdAgentPlist(publicKey, env), 0o600);
+  await writeManagedFile(launchdHelperSupervisorPath(env), launchdHelperSupervisorScript(), 0o700);
+  const changed = await writeManagedFile(launchdHelperPlistPath(env), launchdHelperPlist(env), 0o600);
   const run = options.run ?? runLaunchctl;
   const domain = launchdUserDomain();
-  const target = `${domain}/${label}`;
+  const target = `${domain}/${LAUNCHD_HELPER_LABEL}`;
+  // The helper starts before any per-agent job is retired: this may run inside
+  // one of those jobs, and retiring it stops this very process.
+  const retire = () => retireLegacyLaunchdAgents({
+    env, run, ...(options.selfLabel ? { selfLabel: options.selfLabel } : {}),
+  });
   const before = await launchdStatus(run, target);
-  await bootoutIfLoaded(run, target);
+  if (before.pid > 0 && !changed) {
+    process.kill(before.pid, 'SIGHUP');
+    await retire();
+    return before.pid;
+  }
+  if (changed) await bootoutIfLoaded(run, target);
   await run(['enable', target]);
-  // `RunAtLoad` starts the job as part of bootstrap, and the job was booted
-  // out above, so there is nothing left for a `kickstart -k` to replace.
-  await bootstrapLaunchdAgentService(publicKey, { env, run });
+  if ((await launchdStatus(run, target)).state === 'unloaded') {
+    const deadline = Date.now() + LAUNCHD_BOOTSTRAP_WAIT_MS;
+    for (;;) {
+      try {
+        await run(['bootstrap', domain, launchdHelperPlistPath(env)]);
+        break;
+      } catch (error) {
+        if (!bootstrapRefusedWhileRemoving(error) || Date.now() >= deadline) throw error;
+        await sleep(LAUNCHD_BOOTSTRAP_RETRY_INTERVAL_MS);
+      }
+    }
+  } else {
+    await run(['kickstart', target]);
+  }
   const deadline = Date.now() + (options.waitTimeoutMs ?? LAUNCHD_RESTART_WAIT_MS);
   do {
     const status = await launchdStatus(run, target);
-    if (status.pid > 0 && (before.pid === 0 || status.pid !== before.pid)) return status.pid;
-    // `KeepAlive.SuccessfulExit=false` leaves a job that exited 0 stopped
-    // forever: the wrapper maps the deliberate terminal daemon statuses to 0,
-    // so waiting out the restart deadline would report the wrong cause.
-    if (status.pid === 0 && status.lastExitStatus === 0) {
-      throw new Error(
-        `launchd left ${label} stopped: the daemon exited with a deliberate terminal status`,
-      );
+    if (status.pid > 0 && (before.pid === 0 || status.pid !== before.pid)) {
+      await retire();
+      return status.pid;
     }
     await sleep(100);
   } while (Date.now() < deadline);
-  throw new Error(`launchd did not replace ${label}'s pid before the restart deadline`);
+  throw new Error(`launchd did not start ${LAUNCHD_HELPER_LABEL} before the restart deadline`);
 }
 
-export async function disableLaunchdAgentService(
-  publicKey: string,
-  options: { env?: NodeJS.ProcessEnv; run?: LaunchdRunner; stop?: boolean } = {},
+/** Ask a running machine helper to rescan paired agents. */
+export async function reloadLaunchdHelperService(
+  options: { run?: LaunchdRunner } = {},
+): Promise<boolean> {
+  const run = options.run ?? runLaunchctl;
+  const status = await launchdStatus(run, `${launchdUserDomain()}/${LAUNCHD_HELPER_LABEL}`);
+  if (status.pid === 0) return false;
+  process.kill(status.pid, 'SIGHUP');
+  return true;
+}
+
+/**
+ * Retire every per-agent job from before the machine helper: disabled, its
+ * plist removed, and booted out without waiting for a drain. The calling
+ * process's own job, if it is one of them, goes last.
+ */
+export async function retireLegacyLaunchdAgents(
+  options: { env?: NodeJS.ProcessEnv; run?: LaunchdRunner; selfLabel?: string } = {},
+): Promise<string[]> {
+  const env = options.env ?? process.env;
+  const run = options.run ?? runLaunchctl;
+  const directory = resolve(launchdHome(env), 'Library', 'LaunchAgents');
+  const entries = await readdir(directory).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return [] as string[];
+    throw error;
+  });
+  const match = /^app\.usebeeline\.agent\.([0-9a-f]{64})\.plist$/i;
+  const labels = entries
+    .map((entry) => match.exec(entry)?.[1]?.toLowerCase())
+    .filter((key): key is string => Boolean(key))
+    .map((key) => launchdAgentLabel(key))
+    .sort((left, right) => Number(left === options.selfLabel) - Number(right === options.selfLabel));
+  const domain = launchdUserDomain();
+  for (const label of labels) {
+    await run(['disable', `${domain}/${label}`]).catch(() => undefined);
+    await rm(resolve(directory, `${label}.plist`), { force: true });
+    await run(['bootout', `${domain}/${label}`]).catch(() => undefined);
+  }
+  return labels;
+}
+
+/**
+ * A rollback restored a release that may predate the machine helper. Give each
+ * paired agent its per-agent job back and stand the helper job down; a restored
+ * release that knows the machine helper migrates straight back.
+ */
+export async function restoreLegacyLaunchdAgents(
+  publicKeys: readonly string[],
+  options: { env?: NodeJS.ProcessEnv; run?: LaunchdRunner } = {},
 ): Promise<void> {
   const env = options.env ?? process.env;
   const run = options.run ?? runLaunchctl;
-  const label = launchdAgentLabel(publicKey);
-  const target = `${launchdUserDomain()}/${label}`;
-  await run(['disable', target]);
-  // Retirement runs inside this job: leave that process alive long enough to
-  // archive its runtime and exit with the deliberate terminal status. The
-  // launchd wrapper maps that status to success, so KeepAlive leaves it down.
-  if (options.stop !== false) await bootoutIfLoaded(run, target);
-  await rm(launchdAgentPlistPath(publicKey, env), { force: true });
+  const domain = launchdUserDomain();
+  await writeManagedFile(launchdAgentSupervisorPath(env), launchdAgentSupervisorScript(), 0o700);
+  for (const publicKey of publicKeys) {
+    if (!/^[0-9a-f]{64}$/i.test(publicKey)) continue;
+    await writeManagedFile(launchdAgentPlistPath(publicKey, env), launchdAgentPlist(publicKey, env), 0o600);
+    await run(['enable', `${domain}/${launchdAgentLabel(publicKey)}`]);
+    await run(['bootstrap', domain, launchdAgentPlistPath(publicKey, env)]).catch((error) =>
+      console.error(`[beeline] could not restore ${launchdAgentLabel(publicKey)}:`, error));
+  }
+  await run(['disable', `${domain}/${LAUNCHD_HELPER_LABEL}`]);
+  await rm(launchdHelperPlistPath(env), { force: true });
 }
 
+/** A retired agent's per-agent job, if one is still installed, must not resurrect it. */
 export async function cleanupLaunchdAgentService(
   publicKey: string,
   options: { env?: NodeJS.ProcessEnv; run?: LaunchdRunner } = {},
 ): Promise<boolean> {
-  const path = launchdAgentPlistPath(publicKey, options.env ?? process.env);
+  const env = options.env ?? process.env;
+  const path = launchdAgentPlistPath(publicKey, env);
   try {
     await stat(path);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
     throw error;
   }
-  await disableLaunchdAgentService(publicKey, { ...options, stop: false });
+  const run = options.run ?? runLaunchctl;
+  await run(['disable', `${launchdUserDomain()}/${launchdAgentLabel(publicKey)}`]);
+  await rm(path, { force: true });
   return true;
-}
-
-export async function reconcileLaunchdAgentServices(
-  options: {
-    env?: NodeJS.ProcessEnv;
-    run?: LaunchdRunner;
-    hasRuntime?: (configPath: string) => Promise<boolean>;
-    reportFailure?: (label: string, error: unknown) => void;
-  } = {},
-): Promise<string[]> {
-  const env = options.env ?? process.env;
-  const directory = resolve(launchdHome(env), 'Library', 'LaunchAgents');
-  const entries = await readdir(directory).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === 'ENOENT') return [];
-    throw error;
-  });
-  const match = /^app\.usebeeline\.agent\.([0-9a-f]{64})\.plist$/i;
-  const hasRuntime =
-    options.hasRuntime ??
-    (async (path: string) => {
-      try {
-        await stat(path);
-        return true;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
-        throw error;
-      }
-    });
-  const reportFailure =
-    options.reportFailure ??
-    ((label: string, error: unknown) =>
-      console.error(`[beeline] failed to reconcile orphan launchd job ${label}:`, error));
-  const reconciled: string[] = [];
-  for (const entry of entries) {
-    const publicKey = match.exec(entry)?.[1]?.toLowerCase();
-    if (!publicKey) continue;
-    try {
-      if (await hasRuntime(runtimeConfigPath(defaultSupervisorRoot(env), publicKey))) continue;
-      // Heal the job definition, never the running process: this pass runs
-      // inside a starting daemon, and booting out a live orphan (or this job
-      // itself) waits out that agent's whole drain before anything else starts.
-      await disableLaunchdAgentService(publicKey, {
-        env,
-        stop: false,
-        ...(options.run ? { run: options.run } : {}),
-      });
-      reconciled.push(publicKey);
-    } catch (error) {
-      reportFailure(launchdAgentLabel(publicKey), error);
-    }
-  }
-  return reconciled;
 }
 
 export async function installLaunchdTrustySquireBrokerService(

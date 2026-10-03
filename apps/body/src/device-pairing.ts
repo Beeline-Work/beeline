@@ -4,16 +4,8 @@ import { loadBodyConfig } from './config.js';
 import { activateDaemonTransport, type DaemonFetch } from './daemon-api-client.js';
 import { validateAgentModelSelection } from './model-catalog.js';
 import { selectPairAgentCommand } from './pair-agent-selection.js';
-import {
-  identityFromKey,
-  launchRuntimeDaemon,
-  stageMonolithAgentRuntime,
-} from './runtime.js';
-import {
-  installLaunchdAgentService,
-  installLaunchdTrustySquireBrokerService,
-} from './launchd.js';
-import { installAgentService, installTrustySquireBrokerService } from './systemd.js';
+import { ensureMachineHelper } from './helper-service.js';
+import { identityFromKey, stageMonolithAgentRuntime } from './runtime.js';
 
 const DEFAULT_BODY_IDENTITY_NAME = 'beeline-body';
 
@@ -142,33 +134,7 @@ async function pairDevice(
   try {
     pid = await (
       options.launch ??
-      (async (configPath, publicKey) => {
-        if (process.platform === 'linux' && process.env.BEELINE_SYSTEMD_USER !== '0') {
-          try {
-            await installTrustySquireBrokerService();
-          } catch (error) {
-            console.warn(
-              `[beeline] trusty-squire host broker not installed: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
-            );
-          }
-          return installAgentService(publicKey);
-        }
-        if (process.platform === 'darwin' && process.env.BEELINE_LAUNCHD_USER !== '0') {
-          try {
-            await installLaunchdTrustySquireBrokerService();
-          } catch (error) {
-            console.warn(
-              `[beeline] trusty-squire host broker not installed: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
-            );
-          }
-          return installLaunchdAgentService(publicKey);
-        }
-        return launchRuntimeDaemon(configPath);
-      })
+      (async () => (await ensureMachineHelper()).pid)
     )(staged.configPath, agentIdentity.publicKey);
   } catch (error) {
     throw new Error(

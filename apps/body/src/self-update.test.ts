@@ -594,6 +594,9 @@ describe('self-update end to end against a local fixture manifest', () => {
       const unitPath = join(configRoot, 'systemd', 'user', 'trusty-squire-broker.service');
       await mkdir(dirname(unitPath), { recursive: true });
       await writeFile(unitPath, '[Service]\nExecStart=%h/.local/bin/beeline --squire-broker\n');
+      // A helper unit from an older release, before this one changed it.
+      const helperUnitPath = join(configRoot, 'systemd', 'user', 'beeline-helper.service');
+      await writeFile(helperUnitPath, '[Service]\nExecStart=%h/.local/bin/beeline daemon --machine\n');
 
       // The updater finds the real `systemctl` on PATH; this shim records the
       // control calls without touching the test host's user manager.
@@ -630,13 +633,11 @@ describe('self-update end to end against a local fixture manifest', () => {
       const control = await readFile(systemctlLog, 'utf8');
       expect(control).toContain('restart --no-block trusty-squire-broker.service');
 
-      // The same update carries the agent template's OOMPolicy=continue onto a
-      // host installed before it existed, so the next daemon restart survives
-      // an OOM-killed child.
-      const agentUnitPath = join(configRoot, 'systemd', 'user', 'beeline-agent@.service');
-      const agentUnit = await readFile(agentUnitPath, 'utf8');
-      expect(agentUnit).toContain('OOMPolicy=continue');
-      expect(agentUnit).toContain('OOMScoreAdjust=-1000');
+      // An installed helper unit is converged by the same update, so the next
+      // helper restart runs under the current unit.
+      const helperUnit = await readFile(helperUnitPath, 'utf8');
+      expect(helperUnit).toContain('ExecStart=%h/.local/bin/beeline daemon --machine');
+      expect(helperUnit).toContain('OOMPolicy=continue');
       expect(control).toContain('daemon-reload');
     } finally {
       if (previousPlatform) Object.defineProperty(process, 'platform', previousPlatform);

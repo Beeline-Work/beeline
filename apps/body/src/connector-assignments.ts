@@ -162,7 +162,7 @@ export class ConnectorAssignmentLoop {
    */
   private watchConnectSignIn(): void {
     if (this.stopped || this.connectWatch) return;
-    const claim = squireConnectSession();
+    const claim = squireConnectSession(this.agentId);
     this.connectWatch = claim?.onExit?.(() => {
       this.connectWatch = undefined;
       if (!this.stopped) void this.runOnce();
@@ -375,7 +375,7 @@ export class ConnectorAssignmentLoop {
     // with it. That protection is bounded by the ceremony's own life — past
     // it the tunnel is no use to anybody, and an abandoned connect would hold
     // its Xvfb/x11vnc/websockify/cloudflared rig for the daemon's lifetime.
-    const claim = squireConnectSession();
+    const claim = squireConnectSession(this.agentId);
     const spent = claim ? Date.now() - claim.claimedAt >= CONNECT_TIMEOUT_MS : false;
     if (claim && !spent && isProcessAlive(claim.pid)) {
       if (!(await this.rearmedByHuman(connectorId))) {
@@ -392,7 +392,7 @@ export class ConnectorAssignmentLoop {
       // re-issuing this assignment; starting another connect would raise
       // another Xvfb/x11vnc/websockify/cloudflared rig every five minutes
       // forever. Stop the row and say why — Retry re-arms it.
-      releaseSquireConnectSession((message) => this.log(`[trusty-squire] ${message}`));
+      releaseSquireConnectSession((message) => this.log(`[trusty-squire] ${message}`), this.agentId);
       await this.api.execute('postConnectorStatus', {
         agentId: this.agentId,
         connectorId,

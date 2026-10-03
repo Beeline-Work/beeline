@@ -22,7 +22,11 @@ const TIMING: LiveLinkTiming = {
   stableSocketMs: 400,
   stableCloseJitterMs: 30,
   keepAliveDelayMs: 5 * 60_000,
+  heartbeatTimeoutMs: 600,
 };
+
+/** The fake server pings like the real one, scaled to the timings above. */
+const SERVER_PING_MS = 150;
 
 type UpgradeAnswer =
   | { kind: 'accept' }
@@ -35,6 +39,9 @@ class LiveServer {
   readonly frames: Array<Record<string, unknown>> = [];
   readonly clients: WebSocket[] = [];
   answer: (attempt: number) => UpgradeAnswer = () => ({ kind: 'accept' });
+  readonly #heartbeat = setInterval(() => {
+    for (const client of this.openClients()) client.ping();
+  }, SERVER_PING_MS);
 
   constructor() {
     this.http = createServer();
@@ -56,7 +63,13 @@ class LiveServer {
       }
       this.wss.handleUpgrade(request, socket, head, (client) => {
         this.clients.push(client);
-        client.on('message', (raw) => this.frames.push(JSON.parse(raw.toString())));
+        client.on('message', (raw) => {
+          const frame = JSON.parse(raw.toString()) as Record<string, unknown>;
+          this.frames.push(frame);
+          // Every agent that registers is taken, as the real server takes a valid token.
+          if (frame.type === 'register')
+            client.send(JSON.stringify({ type: 'registered', agentId: frame.agentId }));
+        });
       });
     });
   }
@@ -70,7 +83,13 @@ class LiveServer {
     return this.clients.filter((client) => client.readyState === WebSocket.OPEN);
   }
 
+  /** Send one frame on every open socket. */
+  push(frame: Record<string, unknown>): void {
+    for (const client of this.openClients()) client.send(JSON.stringify(frame));
+  }
+
   async close(): Promise<void> {
+    clearInterval(this.#heartbeat);
     for (const client of this.clients) client.terminate();
     this.wss.close();
     await new Promise<void>((resolve) => this.http.close(() => resolve()));
@@ -167,6 +186,7 @@ describe('LiveLink against a real server and a black-holing proxy', () => {
       stableSocketMs: 30_000,
       stableCloseJitterMs: 10_000,
       keepAliveDelayMs: 300_000,
+      heartbeatTimeoutMs: 75_000,
     });
   });
 
@@ -337,6 +357,45 @@ describe('LiveLink against a real server and a black-holing proxy', () => {
     expect(client.link.state).toBe('update-required');
     expect(server.upgrades).toHaveLength(1);
     expect(update).toHaveBeenCalledOnce();
+  });
+
+  it('drops an idle socket that stops hearing server pings and resumes Room work and release notices', async () => {
+    // The incident: an idle helper performs no operation, so nothing it does
+    // can notice that its socket died. Only the server's heartbeat can.
+    const fetchImpl = vi.fn<typeof fetch>();
+    const { server, proxy, client, sockets } = await harness({ fetchImpl });
+    const delivered: string[] = [];
+    const releases: Array<{ version: string; sha: string }> = [];
+    client.setRoomsChangedListener(() => undefined);
+    client.setHelperReleaseListener((release) => releases.push(release));
+    client.liveSubscribe('room-1', undefined, (items) => delivered.push(...items.map((item) => item.id)));
+    await vi.waitFor(() => expect(server.frames.filter((frame) => frame.type === 'subscribe')).toHaveLength(1));
+    const first = sockets[0]!;
+    const deadAt = Date.now();
+    proxy.blackhole = true; // No error and no close on either side: the path just stops.
+    const closedAt = await new Promise<number>((resolve) => first.once('close', () => resolve(Date.now())));
+    expect(closedAt - deadAt).toBeGreaterThanOrEqual(TIMING.heartbeatTimeoutMs - SERVER_PING_MS - 20);
+    expect(closedAt - deadAt).toBeLessThan(TIMING.heartbeatTimeoutMs + 300);
+    proxy.blackhole = false;
+    await vi.waitFor(() =>
+      expect(server.frames.filter((frame) => frame.type === 'subscribe')).toHaveLength(2), { timeout: 5_000 });
+    server.push({ type: 'inbox', agentId: 'agent', roomId: 'room-1', items: [{ id: 'after-outage' }] });
+    server.push({ type: 'helper-release', version: 'v0.0.99', sha: 'abc1234' });
+    await vi.waitFor(() => {
+      expect(delivered).toEqual(['after-outage']);
+      expect(releases).toEqual([{ version: 'v0.0.99', sha: 'abc1234' }]);
+    });
+    // Nothing the helper did found the dead socket: it made no request at all.
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('keeps an idle socket that keeps hearing server pings', async () => {
+    const { server, client, sockets } = await harness();
+    client.setRoomsChangedListener(() => undefined);
+    await vi.waitFor(() => expect(client.channel.isOpen()).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, TIMING.heartbeatTimeoutMs * 3));
+    expect(sockets).toHaveLength(1);
+    expect(server.upgrades).toHaveLength(1);
   });
 
   it('enables TCP keepalive at five minutes on the socket under the WebSocket', async () => {

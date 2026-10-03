@@ -1,31 +1,32 @@
 import { spawn } from 'node:child_process';
-import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  LAUNCHD_BOOTSTRAP_WAIT_MS,
   LAUNCHD_BROKER_LABEL,
-  LAUNCHD_EXIT_TIMEOUT_SECONDS,
-  LAUNCHD_STOP_TIMEOUT_MS,
-  bootstrapLaunchdAgentService,
+  LAUNCHD_HELPER_LABEL,
   cleanupLaunchdAgentService,
-  disableLaunchdAgentService,
-  installLaunchdAgentService,
+  installLaunchdHelperService,
   installLaunchdTrustySquireBrokerService,
   launchdAgentLabel,
   launchdAgentPlist,
   launchdAgentPlistPath,
   launchdAgentSupervisorPath,
   launchdAgentSupervisorScript,
-  launchdBrokerPlist,
   launchdBrokerPlistPath,
+  launchdHelperPlist,
+  launchdHelperPlistPath,
+  launchdHelperSupervisorPath,
+  launchdHelperSupervisorScript,
   launchdUserDomain,
-  reconcileLaunchdAgentServices,
+  restoreLegacyLaunchdAgents,
+  retireLegacyLaunchdAgents,
 } from './launchd.js';
 import {
   DAEMON_DISTRESS_EXIT_STATUS,
   DELIBERATE_REMOVAL_EXIT_STATUS,
+  NO_AGENTS_EXIT_STATUS,
   UNKNOWN_AGENT_EXIT_STATUS,
 } from './systemd.js';
 
@@ -101,7 +102,7 @@ function parsePlist(source: string): Record<string, PlistValue> {
  */
 async function runSupervisor(
   daemon: string,
-  options: { signal?: NodeJS.Signals } = {},
+  options: { signal?: NodeJS.Signals; helper?: boolean } = {},
 ): Promise<{ status: number | null; signal: NodeJS.Signals | null; log: string }> {
   const root = await mkdtemp(resolve(tmpdir(), 'beeline-launchd-wrapper-'));
   roots.push(root);
@@ -109,7 +110,11 @@ async function runSupervisor(
   const stub = resolve(root, 'beeline');
   const ready = resolve(root, 'ready');
   const log = resolve(root, 'log');
-  await writeFile(supervisor, launchdAgentSupervisorScript(), { mode: 0o700 });
+  await writeFile(
+    supervisor,
+    options.helper ? launchdHelperSupervisorScript() : launchdAgentSupervisorScript(),
+    { mode: 0o700 },
+  );
   await chmod(supervisor, 0o700);
   await writeFile(
     stub,
@@ -117,7 +122,7 @@ async function runSupervisor(
     { mode: 0o700 },
   );
   await chmod(stub, 0o700);
-  const child = spawn(supervisor, ['a'.repeat(64), stub], { stdio: 'ignore' });
+  const child = spawn(supervisor, options.helper ? [stub] : ['a'.repeat(64), stub], { stdio: 'ignore' });
   if (options.signal) {
     await vi.waitFor(async () => expect(await readFile(ready, 'utf8')).toContain('ready'), {
       timeout: 5_000,
@@ -168,14 +173,6 @@ function terminatingJob(): (args: string[]) => Promise<{ stdout: string }> {
   };
 }
 
-/** A launchd that reports a fresh pid each time, so an install sees a replacement. */
-function installRun(): (args: string[]) => Promise<{ stdout: string }> {
-  let pid = 100;
-  return async (args) => ({
-    stdout: args[0] === 'print' ? `state = running\npid = ${pid++}\n` : '',
-  });
-}
-
 async function canonicalEnv() {
   const home = await mkdtemp(resolve(tmpdir(), 'beeline-launchd-home-'));
   roots.push(home);
@@ -187,14 +184,12 @@ async function canonicalEnv() {
 }
 
 describe('launchd supervision contract', () => {
-  it('renders a login-persistent agent with throttled unsuccessful-exit restart', () => {
-    const publicKey = 'a'.repeat(64);
+  it('renders one login-persistent helper job for every agent, restarted on unsuccessful exit', () => {
     const env = { HOME: '/Users/operator' };
-    const job = parsePlist(launchdAgentPlist(publicKey, env));
-    expect(job.Label).toBe(launchdAgentLabel(publicKey));
+    const job = parsePlist(launchdHelperPlist(env));
+    expect(job.Label).toBe(LAUNCHD_HELPER_LABEL);
     expect(job.ProgramArguments).toEqual([
-      launchdAgentSupervisorPath(env),
-      publicKey,
+      launchdHelperSupervisorPath(env),
       '/Users/operator/.local/bin/beeline',
     ]);
     expect(job.RunAtLoad).toBe(true);
@@ -204,15 +199,47 @@ describe('launchd supervision contract', () => {
     // A `Background` ProcessType puts the job — and every ACP harness and build
     // it spawns — in darwin's throttled background task role.
     expect(job.ProcessType).toBeUndefined();
-    expect(job.WorkingDirectory).toBe('/Users/operator');
     const environment = job.EnvironmentVariables as Record<string, PlistValue>;
-    expect(environment.HOME).toBe('/Users/operator');
     expect(String(environment.PATH).split(':')).toContain('/Users/operator/.local/bin');
-    expect(job.StandardOutPath).toBe(`/Users/operator/Library/Logs/Beeline/agent-${publicKey}.log`);
-    expect(job.StandardErrorPath).toBe(job.StandardOutPath);
+    expect(job.StandardOutPath).toBe('/Users/operator/Library/Logs/Beeline/helper.log');
+    expect(launchdHelperSupervisorScript()).toContain('"$1" daemon --machine &');
   });
 
-  it('maps ordinary exits to restart and terminal daemon statuses to stop', async () => {
+  it('keeps the per-agent job a rollback hands agents back to', () => {
+    const publicKey = 'a'.repeat(64);
+    const env = { HOME: '/Users/operator' };
+    const job = parsePlist(launchdAgentPlist(publicKey, env));
+    expect(job.Label).toBe(launchdAgentLabel(publicKey));
+    expect(job.ProgramArguments).toEqual([
+      launchdAgentSupervisorPath(env),
+      publicKey,
+      '/Users/operator/.local/bin/beeline',
+    ]);
+  });
+
+  it('stops the helper for good only when it has no agent to host', async () => {
+    await expect(runSupervisor(`exit ${NO_AGENTS_EXIT_STATUS}`, { helper: true }))
+      .resolves.toMatchObject({ status: 0 });
+    for (const status of [0, 1, 75])
+      await expect(runSupervisor(`exit ${status}`, { helper: true })).resolves.toMatchObject({ status: 1 });
+  }, 20_000);
+
+  it('forwards a stop to the helper so every agent drains, and a hangup so it rescans', async () => {
+    await expect(
+      runSupervisor(
+        `trap 'printf drained > "$LOG"; exit 0' TERM\nprintf ready > "$READY"\nwhile :; do sleep 1; done`,
+        { signal: 'SIGTERM', helper: true },
+      ),
+    ).resolves.toMatchObject({ status: 1, signal: null, log: 'drained' });
+    await expect(
+      runSupervisor(
+        `trap 'printf rescanned > "$LOG"; exit ${NO_AGENTS_EXIT_STATUS}' HUP\nprintf ready > "$READY"\nwhile :; do sleep 1; done`,
+        { signal: 'SIGHUP', helper: true },
+      ),
+    ).resolves.toMatchObject({ status: 0, signal: null, log: 'rescanned' });
+  }, 20_000);
+
+  it('maps the per-agent job statuses the way it always has', async () => {
     for (const status of [
       DAEMON_DISTRESS_EXIT_STATUS,
       DELIBERATE_REMOVAL_EXIT_STATUS,
@@ -220,57 +247,119 @@ describe('launchd supervision contract', () => {
     ]) {
       await expect(runSupervisor(`exit ${status}`)).resolves.toMatchObject({ status: 0 });
     }
-    for (const status of [0, 1, 70]) {
-      await expect(runSupervisor(`exit ${status}`)).resolves.toMatchObject({ status: 1 });
-    }
+    await expect(runSupervisor('exit 1')).resolves.toMatchObject({ status: 1 });
   }, 20_000);
 
-  it('forwards a stop signal to the daemon and reports the status it drained to', async () => {
-    // `launchctl bootout` SIGTERMs the wrapper: a foreground child would never
-    // see it, so the daemon's own drain (and the plist's ExitTimeOut ceiling)
-    // would be skipped and the terminal status lost.
-    await expect(
-      runSupervisor(
-        `trap 'printf drained > "$LOG"; exit ${DELIBERATE_REMOVAL_EXIT_STATUS}' TERM\n` +
-          'printf ready > "$READY"\nwhile :; do sleep 1; done',
-        { signal: 'SIGTERM' },
-      ),
-    ).resolves.toMatchObject({ status: 0, signal: null, log: 'drained' });
-  }, 20_000);
+  async function legacyJobs(env: { HOME: string }, keys: string[]) {
+    const directory = resolve(env.HOME, 'Library', 'LaunchAgents');
+    await mkdir(directory, { recursive: true });
+    for (const key of keys) await writeFile(launchdAgentPlistPath(key, env), launchdAgentPlist(key, env));
+    await writeFile(resolve(directory, 'app.usebeeline.agent.short.plist'), '');
+  }
 
-  it('installs, bootstraps, and replaces an agent job from the canonical launcher', async () => {
+  it('bootstraps the helper job, then retires every per-agent job, its own last', async () => {
     const { env, invocationPath } = await canonicalEnv();
-    const publicKey = 'b'.repeat(64);
-    const target = `${launchdUserDomain()}/${launchdAgentLabel(publicKey)}`;
+    const own = 'b'.repeat(64);
+    const other = 'c'.repeat(64);
+    await legacyJobs(env, [own, other]);
+    const domain = launchdUserDomain();
+    const target = `${domain}/${LAUNCHD_HELPER_LABEL}`;
     const calls: string[][] = [];
-    let replaced = false;
+    let loaded = false;
     const run = vi.fn(async (args: string[]) => {
       calls.push(args);
-      if (args[0] === 'bootstrap') replaced = true;
+      if (args[0] === 'bootstrap') loaded = true;
       if (args[0] === 'print') {
-        return { stdout: `state = running\npid = ${replaced ? 222 : 111}\n` };
+        if (!loaded) throw new Error('Could not find service');
+        return { stdout: 'state = running\npid = 222\n' };
       }
       return { stdout: '' };
     });
-
-    await expect(
-      installLaunchdAgentService(publicKey, { env, invocationPath, run, waitTimeoutMs: 1_000 }),
-    ).resolves.toBe(222);
-    // `RunAtLoad` starts the job with bootstrap, so exactly one daemon starts.
+    await expect(installLaunchdHelperService({
+      env, invocationPath, run, waitTimeoutMs: 1_000, selfLabel: launchdAgentLabel(own),
+    })).resolves.toBe(222);
+    const ownLabel = `${domain}/${launchdAgentLabel(own)}`;
+    const otherLabel = `${domain}/${launchdAgentLabel(other)}`;
     expect(calls).toEqual([
       ['print', target],
       ['print', target],
-      ['bootout', target],
       ['enable', target],
-      ['bootstrap', launchdUserDomain(), launchdAgentPlistPath(publicKey, env)],
       ['print', target],
+      ['bootstrap', domain, launchdHelperPlistPath(env)],
+      ['print', target],
+      ['disable', otherLabel], ['bootout', otherLabel],
+      ['disable', ownLabel], ['bootout', ownLabel],
     ]);
-    expect(await readFile(launchdAgentPlistPath(publicKey, env), 'utf8')).toBe(
-      launchdAgentPlist(publicKey, env),
-    );
-    expect(await readFile(launchdAgentSupervisorPath(env), 'utf8')).toBe(
-      launchdAgentSupervisorScript(),
-    );
+    await expect(stat(launchdAgentPlistPath(own, env))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(stat(launchdAgentPlistPath(other, env))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await readFile(launchdHelperSupervisorPath(env), 'utf8')).toBe(launchdHelperSupervisorScript());
+  });
+
+  it('asks a running, unchanged helper to rescan with SIGHUP instead of replacing it', async () => {
+    const { env, invocationPath } = await canonicalEnv();
+    const first = vi.fn(async (args: string[]) => {
+      if (args[0] === 'print') throw new Error('not loaded');
+      return { stdout: '' };
+    });
+    await installLaunchdHelperService({ env, invocationPath, run: async (args) => {
+      if (args[0] === 'bootstrap') first.mockImplementation(async () => ({ stdout: 'state = running\npid = 5\n' }));
+      return first(args);
+    }, waitTimeoutMs: 1_000 });
+    const helper = spawn('sleep', ['30'], { stdio: 'ignore' });
+    const hungUp = new Promise<NodeJS.Signals | null>((done) => helper.once('exit', (_code, signal) => done(signal)));
+    const calls: string[][] = [];
+    const run = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      return { stdout: args[0] === 'print' ? `state = running\npid = ${helper.pid}\n` : '' };
+    });
+    await expect(installLaunchdHelperService({ env, invocationPath, run })).resolves.toBe(helper.pid);
+    await expect(hungUp).resolves.toBe('SIGHUP');
+    expect(calls.some((args) => ['bootout', 'bootstrap', 'kickstart'].includes(args[0]!))).toBe(false);
+  });
+
+  it('hands every agent back to its per-agent job after a rollback, and stands the helper down', async () => {
+    const { env } = await canonicalEnv();
+    await mkdir(resolve(env.HOME, 'Library', 'LaunchAgents'), { recursive: true });
+    await writeFile(launchdHelperPlistPath(env), launchdHelperPlist(env));
+    const keys = ['a'.repeat(64), 'b'.repeat(64)];
+    const calls: string[][] = [];
+    const run = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      return { stdout: '' };
+    });
+    await restoreLegacyLaunchdAgents(keys, { env, run });
+    const domain = launchdUserDomain();
+    expect(calls).toEqual([
+      ['enable', `${domain}/${launchdAgentLabel(keys[0]!)}`],
+      ['bootstrap', domain, launchdAgentPlistPath(keys[0]!, env)],
+      ['enable', `${domain}/${launchdAgentLabel(keys[1]!)}`],
+      ['bootstrap', domain, launchdAgentPlistPath(keys[1]!, env)],
+      ['disable', `${domain}/${LAUNCHD_HELPER_LABEL}`],
+    ]);
+    expect(await readFile(launchdAgentPlistPath(keys[0]!, env), 'utf8')).toBe(launchdAgentPlist(keys[0]!, env));
+    await expect(stat(launchdHelperPlistPath(env))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('retires nothing on a host that never had per-agent jobs', async () => {
+    const { env } = await canonicalEnv();
+    const run = vi.fn(async () => ({ stdout: '' }));
+    await expect(retireLegacyLaunchdAgents({ env, run })).resolves.toEqual([]);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('clears a retired agent\'s leftover per-agent job without booting anything out', async () => {
+    const { env } = await canonicalEnv();
+    const publicKey = 'e'.repeat(64);
+    await legacyJobs(env, [publicKey]);
+    const calls: string[][] = [];
+    const run = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      return { stdout: '' };
+    });
+    await expect(cleanupLaunchdAgentService(publicKey, { env, run })).resolves.toBe(true);
+    expect(calls).toEqual([['disable', `${launchdUserDomain()}/${launchdAgentLabel(publicKey)}`]]);
+    await expect(stat(launchdAgentPlistPath(publicKey, env))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(cleanupLaunchdAgentService(publicKey, { env, run })).resolves.toBe(false);
   });
 
   it('installs one launchd Squire broker with the shared host paths', async () => {
@@ -326,55 +415,8 @@ describe('launchd supervision contract', () => {
     ]);
   });
 
-  it('lets a bootout outlast the daemon drain and waits out removal in progress', async () => {
-    const { env, invocationPath } = await canonicalEnv();
-    const publicKey = 'c'.repeat(64);
-    const timeouts: (number | undefined)[] = [];
-    const launchd = terminatingJob();
-    const run = vi.fn(async (args: string[], options?: { timeoutMs?: number }) => {
-      if (args[0] === 'bootout') timeouts.push(options?.timeoutMs);
-      return launchd(args);
-    });
-    await installLaunchdAgentService(publicKey, {
-      env,
-      invocationPath,
-      waitTimeoutMs: 1_000,
-      run: installRun(),
-    });
-
-    await expect(disableLaunchdAgentService(publicKey, { env, run })).resolves.toBeUndefined();
-
-    // The plist is gone, and only once launchd finished tearing the job down.
-    await expect(stat(launchdAgentPlistPath(publicKey, env))).rejects.toMatchObject({
-      code: 'ENOENT',
-    });
-    expect(timeouts).toEqual([LAUNCHD_STOP_TIMEOUT_MS]);
-    expect(LAUNCHD_STOP_TIMEOUT_MS).toBeGreaterThan(LAUNCHD_EXIT_TIMEOUT_SECONDS * 1_000);
-  });
-
-  it('bootstraps an agent job only after a removal in progress has finished', async () => {
-    const { env, invocationPath } = await canonicalEnv();
-    const publicKey = '1'.repeat(64);
-    const target = `${launchdUserDomain()}/${launchdAgentLabel(publicKey)}`;
-    const launchd = terminatingJob();
-    const calls: string[][] = [];
-    const run = vi.fn(async (args: string[]) => {
-      calls.push(args);
-      return launchd(args);
-    });
-
-    await expect(
-      installLaunchdAgentService(publicKey, { env, invocationPath, run, waitTimeoutMs: 5_000 }),
-    ).resolves.toBe(222);
-    expect(calls.filter((args) => args[0] === 'bootstrap')).toEqual([
-      ['bootstrap', launchdUserDomain(), launchdAgentPlistPath(publicKey, env)],
-    ]);
-    expect(calls.at(-1)).toEqual(['print', target]);
-  });
-
   it('bootstraps the broker after a removal in progress instead of kickstarting a dying job', async () => {
     const { env, invocationPath } = await canonicalEnv();
-    const target = `${launchdUserDomain()}/${LAUNCHD_BROKER_LABEL}`;
     await installLaunchdTrustySquireBrokerService({
       env,
       invocationPath,
@@ -396,193 +438,5 @@ describe('launchd supervision contract', () => {
     expect(calls.filter((args) => args[0] === 'bootstrap')).toEqual([
       ['bootstrap', launchdUserDomain(), launchdBrokerPlistPath(env)],
     ]);
-  });
-
-  it('still reports a bootout that failed for any other reason', async () => {
-    const { env, invocationPath } = await canonicalEnv();
-    const publicKey = 'd'.repeat(64);
-    await installLaunchdAgentService(publicKey, {
-      env,
-      invocationPath,
-      waitTimeoutMs: 1_000,
-      run: installRun(),
-    });
-    const run = vi.fn(async (args: string[]) => {
-      if (args[0] === 'bootout') throw new Error('Boot-out failed: 5: Input/output error');
-      return { stdout: args[0] === 'print' ? 'state = running\npid = 777\n' : '' };
-    });
-
-    await expect(disableLaunchdAgentService(publicKey, { env, run })).rejects.toThrow(
-      /Input\/output error/,
-    );
-    await expect(stat(launchdAgentPlistPath(publicKey, env))).resolves.toMatchObject({});
-  });
-
-  it('retries a bootstrap launchd refused while it was still removing the label', async () => {
-    const { env } = await canonicalEnv();
-    const publicKey = '2'.repeat(64);
-    // `bootout` returns before launchd is done with its job, and the refusal it
-    // answers a bootstrap with while the label is still in the domain clears on
-    // a later attempt: `5: Input/output error` on this host, `37: Operation
-    // already in progress` elsewhere.
-    const refusals = [
-      'Bootstrap failed: 5: Input/output error',
-      'Bootstrap failed: 37: Operation already in progress',
-      'Bootstrap failed: 36: Operation now in progress',
-    ];
-    const calls: string[][] = [];
-    const run = vi.fn(async (args: string[]) => {
-      calls.push(args);
-      const refusal = args[0] === 'bootstrap' ? refusals.shift() : undefined;
-      if (refusal) throw Object.assign(new Error(refusal), { stderr: `${refusal}\n` });
-      return { stdout: '' };
-    });
-
-    await expect(
-      bootstrapLaunchdAgentService(publicKey, { env, run, waitMs: 5_000 }),
-    ).resolves.toBeUndefined();
-    expect(calls.filter((args) => args[0] === 'bootstrap')).toHaveLength(4);
-    expect(LAUNCHD_BOOTSTRAP_WAIT_MS).toBeGreaterThan(0);
-  }, 20_000);
-
-  it('reports the refusal that never cleared with launchd own view of the label', async () => {
-    const { env } = await canonicalEnv();
-    const publicKey = '3'.repeat(64);
-    const calls: string[][] = [];
-    const run = vi.fn(async (args: string[]) => {
-      calls.push(args);
-      if (args[0] === 'bootstrap') {
-        throw Object.assign(new Error('Command failed: launchctl bootstrap'), {
-          stderr: 'Bootstrap failed: 5: Input/output error\n',
-        });
-      }
-      return { stdout: 'state = not running\npid = 0\n' };
-    });
-
-    // A plist launchd will never accept answers 5 too, so the retry is only a
-    // bound: what surfaces is launchd's own refusal plus what it says about the
-    // label, never a made-up cause.
-    await expect(bootstrapLaunchdAgentService(publicKey, { env, run, waitMs: 0 })).rejects.toThrow(
-      /never accepted app\.usebeeline\.agent\.3{64}[^]*Input\/output error/,
-    );
-    expect(calls.filter((args) => args[0] === 'bootstrap')).toHaveLength(1);
-  });
-
-  it('does not retry a bootstrap launchd refused for any other reason', async () => {
-    const { env } = await canonicalEnv();
-    const publicKey = '4'.repeat(64);
-    const calls: string[][] = [];
-    const run = vi.fn(async (args: string[]) => {
-      calls.push(args);
-      if (args[0] === 'bootstrap') throw new Error('Bootstrap failed: 3: No such process');
-      return { stdout: '' };
-    });
-
-    await expect(
-      bootstrapLaunchdAgentService(publicKey, { env, run, waitMs: 5_000 }),
-    ).rejects.toThrow(/No such process/);
-    expect(calls.filter((args) => args[0] === 'bootstrap')).toHaveLength(1);
-  });
-
-  it('fails fast when launchd leaves the job stopped after a terminal daemon exit', async () => {
-    const { env, invocationPath } = await canonicalEnv();
-    const publicKey = 'f'.repeat(64);
-    const run = vi.fn(async (args: string[]) => {
-      if (args[0] !== 'print') return { stdout: '' };
-      return { stdout: 'state = not running\nlast exit code = 0\n' };
-    });
-
-    await expect(
-      installLaunchdAgentService(publicKey, { env, invocationPath, run, waitTimeoutMs: 30_000 }),
-    ).rejects.toThrow(/deliberate terminal status/);
-  });
-
-  it('keeps waiting while a job that has never exited is still starting', async () => {
-    const { env, invocationPath } = await canonicalEnv();
-    const publicKey = '9'.repeat(64);
-    let prints = 0;
-    const run = vi.fn(async (args: string[]) => {
-      if (args[0] !== 'print') return { stdout: '' };
-      prints += 1;
-      return prints > 2
-        ? { stdout: 'state = running\npid = 4242\nlast exit code = (never exited)\n' }
-        : { stdout: 'state = not running\nlast exit code = (never exited)\n' };
-    });
-
-    await expect(
-      installLaunchdAgentService(publicKey, { env, invocationPath, run, waitTimeoutMs: 5_000 }),
-    ).resolves.toBe(4242);
-  });
-
-  it('disables retirement without booting out the process before it archives its runtime', async () => {
-    const { env, invocationPath } = await canonicalEnv();
-    const publicKey = 'e'.repeat(64);
-    let pid = 100;
-    await installLaunchdAgentService(publicKey, {
-      env,
-      invocationPath,
-      waitTimeoutMs: 1_000,
-      run: async (args) => ({
-        stdout: args[0] === 'print' ? `state = running\npid = ${pid++}\n` : '',
-      }),
-    });
-    const calls: string[][] = [];
-    const run = vi.fn(async (args: string[]) => {
-      calls.push(args);
-      return { stdout: 'state = running\npid = 101\n' };
-    });
-
-    await expect(cleanupLaunchdAgentService(publicKey, { env, run })).resolves.toBe(true);
-
-    expect(calls).toEqual([['disable', `${launchdUserDomain()}/${launchdAgentLabel(publicKey)}`]]);
-    await expect(stat(launchdAgentPlistPath(publicKey, env))).rejects.toMatchObject({
-      code: 'ENOENT',
-    });
-  });
-
-  it('reconciles only exact orphan agent plists without stopping a running one', async () => {
-    const { env, invocationPath } = await canonicalEnv();
-    const orphan = 'c'.repeat(64);
-    const live = 'd'.repeat(64);
-    let nextPid = 100;
-    const installRun = vi.fn(async (args: string[]) => {
-      if (args[0] === 'print') return { stdout: `state = running\npid = ${nextPid++}\n` };
-      return { stdout: '' };
-    });
-    await installLaunchdAgentService(orphan, {
-      env,
-      invocationPath,
-      run: installRun,
-      waitTimeoutMs: 1_000,
-    });
-    await installLaunchdAgentService(live, {
-      env,
-      invocationPath,
-      run: installRun,
-      waitTimeoutMs: 1_000,
-    });
-    const calls: string[][] = [];
-    const run = vi.fn(async (args: string[]) => {
-      calls.push(args);
-      return { stdout: args[0] === 'print' ? 'state = running\npid = 555\n' : '' };
-    });
-
-    await expect(
-      reconcileLaunchdAgentServices({
-        env,
-        run,
-        hasRuntime: async (path) => path.includes(live),
-      }),
-    ).resolves.toEqual([orphan]);
-    // This pass runs inside a starting daemon: a bootout here would wait out the
-    // orphan's whole drain (up to ExitTimeOut) before that daemon could run, and
-    // on a single-agent host the job being booted out is its own.
-    expect(calls).toEqual([['disable', `${launchdUserDomain()}/${launchdAgentLabel(orphan)}`]]);
-    await expect(stat(launchdAgentPlistPath(orphan, env))).rejects.toMatchObject({
-      code: 'ENOENT',
-    });
-    await expect(stat(launchdAgentPlistPath(live, env))).resolves.toMatchObject({});
-
-    await expect(cleanupLaunchdAgentService(orphan, { env, run })).resolves.toBe(false);
   });
 });

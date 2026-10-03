@@ -23,6 +23,13 @@ describe('mobile live presence overlay', () => {
     expect(agentPresenceTier(presence, AGENT_PRESENCE_DORMANT_MS)).toBe('dormant');
   });
 
+  it('never schedules an expiry for presence a live connection holds', () => {
+    const held: RoomAgentPresence = { ...presence, held: true };
+    expect(nextAgentPresenceTransitionAt({ [agent]: held }, 0)).toBe(AGENT_PRESENCE_DORMANT_MS);
+    expect(agentPresenceTier(held, AGENT_PRESENCE_STALE_MS * 10)).toBe('online');
+    expect(agentPresenceTier({ ...held, status: 'offline' }, 1)).toBe('offline');
+  });
+
   it('keeps offline agents addressable but excludes dormant agents', () => {
     const candidates = [{ pubkey: agent }, { pubkey: 'c'.repeat(64) }];
     expect(

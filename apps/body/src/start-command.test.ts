@@ -35,7 +35,7 @@ describe('startStoredRuntime (beeline start already-running is a no-op)', () => 
     const f = fixture();
     const outcome = await startStoredRuntime('/tmp/x/runtime.json', {}, f.deps);
     expect(outcome).toEqual({ status: 'started', pid: 1001 });
-    expect(f.calls.join('\n')).toContain('[beeline] agent started (pid 1001)');
+    expect(f.calls.join('\n')).toContain('[beeline] agent started in the machine helper (pid 1001)');
   });
 
   it('leaves a live daemon untouched', async () => {

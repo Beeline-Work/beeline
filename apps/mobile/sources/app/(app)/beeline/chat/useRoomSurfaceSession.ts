@@ -490,6 +490,7 @@ export function useRoomSurfaceSession({
           agentPubkey: overlay.agentPubkey,
           status: overlay.status,
           observedAt: overlay.createdAt,
+          ...(overlay.held ? { held: true } : {}),
         });
         return;
       }
@@ -571,6 +572,7 @@ export function useRoomSurfaceSession({
                     agentPubkey: member.identity.pubkey,
                     status: member.presence.status,
                     observedAt: member.presence.observedAt,
+                    ...(member.presence.held ? { held: true } : {}),
                   },
                 ],
               ]
@@ -780,6 +782,7 @@ export function useRoomSurfaceSession({
                 agentPubkey: live.agentId,
                 status: live.status,
                 createdAt: live.observedAt,
+                ...(live.held === true ? { held: true } : {}),
               });
             } else if (live.type === 'draft') {
               applyDecodedOverlay({

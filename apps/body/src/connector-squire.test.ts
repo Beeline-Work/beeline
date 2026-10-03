@@ -82,8 +82,8 @@ function report(overrides: Record<string, unknown> = {}): SquireConnectReport {
   return parseConnectReport(reportLine(overrides))!;
 }
 
-/** A live stand-in for the connect process the streamed runner would spawn. */
-function spawnLongLivedConnect() {
+/** A live stand-in for the connect process the streamed runner would spawn for `owner`. */
+function spawnLongLivedConnect(owner = 'ws-1') {
   const line = reportLine({
     state: 'needs-sign-in',
     sign_in_url: 'https://squire.test/vnc#p=1',
@@ -92,7 +92,7 @@ function spawnLongLivedConnect() {
   return defaultStreamedRunner(process.execPath, [
     '-e',
     `process.stdout.write(${JSON.stringify(`${line}\n`)}); setInterval(() => {}, 30_000)`,
-  ]);
+  ], undefined, owner);
 }
 
 async function until(predicate: () => boolean): Promise<void> {
@@ -792,7 +792,7 @@ describe('connect session claim', () => {
   it('the streamed runner claims the session with the child pid, and abort kills it', async () => {
     const result = await spawnLongLivedConnect();
     expect(result.report?.state).toBe('needs-sign-in');
-    const claim = squireConnectSession();
+    const claim = squireConnectSession('ws-1');
     expect(claim?.pid).toBeTypeOf('number');
     expect(isProcessAlive(claim!.pid)).toBe(true);
     claim!.abort();
@@ -801,31 +801,31 @@ describe('connect session claim', () => {
 
   it('releases a live claim by aborting its owner before a fresh connect', async () => {
     await spawnLongLivedConnect();
-    const claim = squireConnectSession()!;
+    const claim = squireConnectSession('ws-1')!;
     const logs: string[] = [];
-    releaseSquireConnectSession((message) => logs.push(message));
-    expect(squireConnectSession()).toBeUndefined();
+    releaseSquireConnectSession((message) => logs.push(message), 'ws-1');
+    expect(squireConnectSession('ws-1')).toBeUndefined();
     expect(logs.join('\n')).toContain('still live');
     await until(() => !isProcessAlive(claim.pid));
   });
 
   it('clears a dead claim (owner process gone) without touching anything', async () => {
     await spawnLongLivedConnect();
-    const claim = squireConnectSession()!;
+    const claim = squireConnectSession('ws-1')!;
     process.kill(claim.pid!, 'SIGKILL');
     await until(() => !isProcessAlive(claim.pid));
     // The claim intentionally outlives its owner; the next connect attempt is
     // what detects the dead owner and clears it.
-    expect(squireConnectSession()).toBeDefined();
+    expect(squireConnectSession('ws-1')).toBeDefined();
     const logs: string[] = [];
-    releaseSquireConnectSession((message) => logs.push(message));
-    expect(squireConnectSession()).toBeUndefined();
+    releaseSquireConnectSession((message) => logs.push(message), 'ws-1');
+    expect(squireConnectSession('ws-1')).toBeUndefined();
     expect(logs.join('\n')).toContain('dead');
   });
 
   it('installSquire releases a live previous claim before spawning connect', async () => {
     await spawnLongLivedConnect();
-    const claim = squireConnectSession()!;
+    const claim = squireConnectSession('ws-1')!;
     const { run } = scriptedRunner([
       { stdout: '1.1.16' },
       { stdout: '1.1.16' },
@@ -843,6 +843,30 @@ describe('connect session claim', () => {
       mcp: mockSquire({ list_credentials: () => ({}) }).client,
     });
     await until(() => !isProcessAlive(claim.pid));
+  });
+
+  it("never aborts another hosted agent's sign-in", async () => {
+    // One helper process hosts every agent on the machine: a fresh connect for
+    // one agent must leave a sibling's ceremony, and its human, alone.
+    await spawnLongLivedConnect('other-agent');
+    const sibling = squireConnectSession('other-agent')!;
+    const { run } = scriptedRunner([{ stdout: '1.1.16' }, { stdout: '1.1.16' }]);
+    await installSquire({
+      workspaceId: 'ws-1',
+      streamRun: fakeStreamRunner({
+        report: report({
+          state: 'needs-sign-in',
+          sign_in_url: 'https://squire.example/install?token=x',
+          browser_location: { kind: 'host_screen' },
+        }),
+      }),
+      run,
+      mcp: mockSquire({ list_credentials: () => ({}) }).client,
+    });
+    expect(isProcessAlive(sibling.pid)).toBe(true);
+    expect(squireConnectSession('other-agent')).toBe(sibling);
+    releaseSquireConnectSession(undefined, 'other-agent');
+    await until(() => !isProcessAlive(sibling.pid));
   });
 });
 

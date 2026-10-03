@@ -183,7 +183,6 @@ async function main() {
         process.env.GITHUB_CLIENT_SECRET!,
         mountedAuth.sealedGitHubUserToken,
         (roomId) => live.publish({ type: 'invalidate', roomId, reason: 'github' }),
-        institutionalMemory,
       )
     : undefined;
   const githubJobs = githubClients
@@ -194,7 +193,6 @@ async function main() {
         process.env.GITHUB_CLIENT_SECRET!,
         mountedAuth.sealedGitHubUserToken,
         (roomId) => live.publish({ type: 'invalidate', roomId, reason: 'github' }),
-        institutionalMemory,
       )
     : undefined;
   // Generated procedures are anchored to real code, so the curator's staleness

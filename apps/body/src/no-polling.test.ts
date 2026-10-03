@@ -6,7 +6,6 @@ import ts from 'typescript';
 import type WebSocket from 'ws';
 import { DaemonApiClient } from './daemon-api-client.js';
 import { ConnectorAssignmentLoop } from './connector-assignments.js';
-import { InstitutionalMemoryShadowWorker } from './institutional-memory-shadow-worker.js';
 import { identityFromKey, stageMonolithAgentRuntime } from './runtime.js';
 import { ThinDaemonCore } from './thin-core.js';
 import type { BodyConfig } from './config.js';
@@ -38,7 +37,6 @@ describe('no timer-driven helper server reads', () => {
       if (name === 'getDaemonBootstrap')
         return Response.json({ workspaceIds: ['workspace'], rooms: [] });
       if (name === 'getConnectorAssignments') return Response.json({ assignments: [] });
-      if (name === 'claimInstitutionalMemoryJob') return Response.json({ enabled: true, job: null });
       throw new Error(`unexpected daemon operation ${name}`);
     });
     const agentId = staged.runtime.agent.publicKey;
@@ -68,15 +66,10 @@ describe('no timer-driven helper server reads', () => {
       agentEnv: {}, workspaceRoot: root, autoApprovePermissions: false };
     const core = new ThinDaemonCore(staged.runtime, staged.configPath, config, { daemonApi: client });
     const connector = new ConnectorAssignmentLoop({ api: client, agentId: staged.runtime.agent.publicKey });
-    const memory = new InstitutionalMemoryShadowWorker({ api: client,
-      agentId: staged.runtime.agent.publicKey,
-      agent: { kind: 'reference', command: '/nonexistent', args: [] }, agentEnv: {},
-      isInteractiveIdle: () => core.isWorkspaceIdle(), extract: async () => { throw new Error('no job'); } });
     const abort = new AbortController();
     const running = core.run({ signal: abort.signal, onEstablished: () => {
       client.setConnectorAssignmentListener(() => connector.wake());
-      client.setMemoryJobListener(() => memory.wake());
-      connector.start(); memory.start();
+      connector.start();
     } });
     socket.readyState = 1;
     socket.onopen?.();
@@ -93,15 +86,16 @@ describe('no timer-driven helper server reads', () => {
     expect(operations).toEqual(baseline);
     expect(opened).toHaveLength(1);
     expect(socket.terminate).not.toHaveBeenCalled();
+    // No background memory review exists: an old server's memory-job frame
+    // claims nothing and opens no hidden session.
     socket.onmessage?.({ data: JSON.stringify({ type: 'memory-job', roomId: 'room-1', agentId }) });
     await vi.advanceTimersByTimeAsync(0);
-    expect(operations.filter((name) => name === 'claimInstitutionalMemoryJob').length)
-      .toBeGreaterThan(baseline.filter((name) => name === 'claimInstitutionalMemoryJob').length);
+    expect(operations).toEqual(baseline);
     socket.onmessage?.({ data: JSON.stringify({ type: 'connector-assignment', agentId }) });
     await vi.advanceTimersByTimeAsync(0);
     expect(operations.filter((name) => name === 'getConnectorAssignments').length)
       .toBeGreaterThan(baseline.filter((name) => name === 'getConnectorAssignments').length);
-    abort.abort(); connector.stop(); memory.stop();
+    abort.abort(); connector.stop();
     await running;
   });
 
@@ -123,7 +117,6 @@ describe('no timer-driven helper server reads', () => {
     // setTimeout; none of these intervals reads from the server.
     expect(intervals.sort()).toEqual([
       'agent-runtime.ts', // scratch sweep (local disk)
-      'institutional-memory-shadow-worker.ts', // lease heartbeat while a claimed job runs
       'session-scheduler.ts', // idle session sweep (local)
       'systemd.ts', // local watchdog feed
       'turn-receipt-heartbeat.ts', // receipt heartbeat while a turn runs

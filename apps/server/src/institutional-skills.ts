@@ -5,8 +5,6 @@ import {
   WORKSPACE_SKILL_SLUG_MAX_LENGTH,
   INSTITUTIONAL_MEMORY_VECTOR_MAX_DISTANCE,
   INSTITUTIONAL_MEMORY_ALIGN_MAX_DISTANCE,
-  parseInstitutionalMergeReviewProposal,
-  type InstitutionalMergeReviewProposal,
   type LoadWorkspaceSkillInput,
   type LoadWorkspaceSkillResult,
   type WorkspaceSkillProposal,
@@ -37,13 +35,6 @@ export function assertSkillTextSafe(description: string, markdown: string): void
   if (PROHIBITED_SKILL_PATTERNS.some((pattern) => pattern.test(text))) {
     throw new Error('workspace skill proposal crosses the restricted guidance boundary');
   }
-}
-
-export function assertRestrictedWorkspaceSkillSafe(
-  proposal: InstitutionalMergeReviewProposal,
-): void {
-  if (!proposal.skill) return;
-  assertSkillTextSafe(proposal.skill.description, proposal.skill.markdown);
 }
 
 type SkillRow = {
@@ -548,12 +539,4 @@ export async function loadWorkspaceSkill(
       },
     };
   });
-}
-
-export function parseAndValidateMergeReviewProposal(
-  value: unknown,
-): InstitutionalMergeReviewProposal {
-  const proposal = parseInstitutionalMergeReviewProposal(value);
-  assertRestrictedWorkspaceSkillSafe(proposal);
-  return proposal;
 }

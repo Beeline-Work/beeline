@@ -154,16 +154,14 @@ import {
   notifyConnectorHelper,
 } from './postgres-live.js';
 import {
-  claimInstitutionalMemoryJob,
-  completeInstitutionalMemoryJob,
-  enqueueInstitutionalMemoryTurnReview,
-  failInstitutionalMemoryJob,
+  deleteInstitutionalMemory,
   getInstitutionalContext,
   getInstitutionalMemoryTurnStats,
-  heartbeatInstitutionalMemoryJob,
   precomputeInstitutionalQueryEmbedding,
-  proposeInstitutionalMemory,
+  reportInstitutionalMemoryUsed,
+  saveInstitutionalMemory,
   searchInstitutionalMemory,
+  updateInstitutionalMemory,
   recordInstitutionalMemoryTurnOutcome,
   recordInstitutionalServeUsage,
   type InstitutionalMemoryShadowConfig,
@@ -395,7 +393,10 @@ export class DaemonService {
       'requestCornerAppOpen',
       'renameCorner',
       'getInstitutionalContext',
-      'proposeInstitutionalMemory',
+      'saveInstitutionalMemory',
+      'updateInstitutionalMemory',
+      'deleteInstitutionalMemory',
+      'reportInstitutionalMemoryUsed',
       'searchInstitutionalMemory',
       'searchInstitutionalHistory',
       'getRoomMessage',
@@ -683,14 +684,6 @@ export class DaemonService {
               command.id,
               candidate.status === 'cancelled' ? 'cancelled' : 'complete',
             ]);
-            if (candidate.status === 'complete') {
-              await enqueueInstitutionalMemoryTurnReview(db, {
-                roomId: scopedRoom!,
-                sourceMessageId: command.root_source_message_id,
-                requestId: command.turn_request_id,
-                config: this.institutionalMemoryShadow,
-              });
-            }
             await recordInstitutionalMemoryTurnOutcome(
               db,
               scopedRoom!,
@@ -750,40 +743,6 @@ export class DaemonService {
         return { status: 'permission-required', grantId: permission.grantId } as Output<Name>;
     }
     switch (name) {
-      case 'claimInstitutionalMemoryJob': {
-        if (!this.institutionalMemoryShadow.enabled) return { enabled: false } as Output<Name>;
-        const job = await claimInstitutionalMemoryJob(
-          this.database,
-          authenticatedAgentId,
-          this.institutionalMemoryShadow,
-          (input as { extractorVersion?: string }).extractorVersion,
-        );
-        return { enabled: true, ...(job ? { job } : {}) } as Output<Name>;
-      }
-      case 'heartbeatInstitutionalMemoryJob':
-        await heartbeatInstitutionalMemoryJob(
-          this.database,
-          authenticatedAgentId,
-          input as Input<'heartbeatInstitutionalMemoryJob'>,
-          this.institutionalMemoryShadow,
-        );
-        return this.writeResult() as Output<Name>;
-      case 'completeInstitutionalMemoryJob':
-        await completeInstitutionalMemoryJob(
-          this.database,
-          authenticatedAgentId,
-          input as Input<'completeInstitutionalMemoryJob'>,
-          this.institutionalMemoryShadow,
-        );
-        return this.writeResult() as Output<Name>;
-      case 'failInstitutionalMemoryJob':
-        await failInstitutionalMemoryJob(
-          this.database,
-          authenticatedAgentId,
-          input as Input<'failInstitutionalMemoryJob'>,
-          this.institutionalMemoryShadow,
-        );
-        return this.writeResult() as Output<Name>;
       case 'getInstitutionalContext':
         if (!this.commandTransaction || !this.authorizedCommand) {
           throw new Error('institutional context requires an active command');
@@ -802,19 +761,46 @@ export class DaemonService {
           this.authorizedCommand,
           this.memoryEmbed,
         )) as Output<Name>;
-      case 'proposeInstitutionalMemory':
+      case 'saveInstitutionalMemory':
+      case 'updateInstitutionalMemory':
+      case 'deleteInstitutionalMemory':
+      case 'reportInstitutionalMemoryUsed': {
         if (!this.commandTransaction || !this.authorizedCommand) {
-          throw new Error('institutional memory proposal requires an active command');
+          throw new Error('institutional memory changes require an active command');
         }
         if (!this.institutionalMemoryShadow.live) {
           throw new Error('institutional memory is disabled');
         }
-        return (await proposeInstitutionalMemory(
+        const command = this.authorizedCommand;
+        if (name === 'saveInstitutionalMemory') {
+          return (await saveInstitutionalMemory(
+            this.database,
+            command,
+            input as Input<'saveInstitutionalMemory'>,
+            this.afterCommit,
+          )) as Output<Name>;
+        }
+        if (name === 'updateInstitutionalMemory') {
+          return (await updateInstitutionalMemory(
+            this.database,
+            command,
+            input as Input<'updateInstitutionalMemory'>,
+            this.afterCommit,
+          )) as Output<Name>;
+        }
+        if (name === 'deleteInstitutionalMemory') {
+          return (await deleteInstitutionalMemory(
+            this.database,
+            command,
+            input as Input<'deleteInstitutionalMemory'>,
+          )) as Output<Name>;
+        }
+        return (await reportInstitutionalMemoryUsed(
           this.database,
-          this.authorizedCommand,
-          input as Input<'proposeInstitutionalMemory'>,
-          this.afterCommit,
+          command,
+          input as Input<'reportInstitutionalMemoryUsed'>,
         )) as Output<Name>;
+      }
       case 'searchInstitutionalMemory':
         if (!this.commandTransaction || !this.authorizedCommand) {
           throw new Error('institutional memory search requires an active command');
@@ -7423,12 +7409,11 @@ function laterCursor(
  * failed wake as "resolved" — became a spin against the server.
  */
 const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
-  claimInstitutionalMemoryJob: true,
-  heartbeatInstitutionalMemoryJob: true,
-  completeInstitutionalMemoryJob: true,
-  failInstitutionalMemoryJob: true,
   getInstitutionalContext: true,
-  proposeInstitutionalMemory: true,
+  saveInstitutionalMemory: true,
+  updateInstitutionalMemory: true,
+  deleteInstitutionalMemory: true,
+  reportInstitutionalMemoryUsed: true,
   searchInstitutionalMemory: true,
   searchInstitutionalHistory: true,
   getInstitutionalMemoryTurnStats: true,

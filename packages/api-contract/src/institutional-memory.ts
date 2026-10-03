@@ -113,9 +113,6 @@ export const INSTITUTIONAL_RETIRED_STANDING_KEY = 'standing';
 export const INSTITUTIONAL_MEMORY_CANONICAL_KEY_MAX_LENGTH = 160;
 export const INSTITUTIONAL_MEMORY_RATIONALE_MAX_LENGTH = 500;
 export const INSTITUTIONAL_MEMORY_SOURCE_MESSAGE_MAX = 16;
-export const INSTITUTIONAL_MEMORY_EXTRACTOR_VERSION_MAX_LENGTH = 120;
-export const INSTITUTIONAL_MEMORY_MODEL_MAX_LENGTH = 160;
-export const INSTITUTIONAL_MEMORY_JOB_ERROR_MAX_LENGTH = 1_000;
 /** Everything memory adds to one turn, header included. */
 export const INSTITUTIONAL_CONTEXT_HARD_MAX_BYTES = 1_000;
 export const INSTITUTIONAL_HISTORY_QUERY_MAX_BYTES = 500;
@@ -156,7 +153,6 @@ export const INSTITUTIONAL_MEMORY_EMBEDDING_ENV_VAR = 'OPENROUTER_EMBEDDING_API_
 export const INSTITUTIONAL_MEMORY_VECTOR_CANDIDATES_MAX = 20;
 export const INSTITUTIONAL_MEMORY_VECTOR_MAX_DISTANCE = 0.66;
 export const INSTITUTIONAL_CONTEXT_VECTOR_ITEMS_MAX = 3;
-export const INSTITUTIONAL_MEMORY_ALIGN_CANDIDATES = 8;
 export const INSTITUTIONAL_MEMORY_ALIGN_MAX_DISTANCE = 0.75;
 /** A snapshot's embedding call gets a slice of the whole 200ms context-fetch
  *  budget; the rest stays for the DB queries the snapshot already runs. A
@@ -165,7 +161,6 @@ export const INSTITUTIONAL_CONTEXT_EMBEDDING_TIMEOUT_MS = 100;
 export const WORKSPACE_SKILL_DESCRIPTION_MAX_LENGTH = 60;
 export const WORKSPACE_SKILL_MARKDOWN_MAX_BYTES = 32 * 1_024;
 export const WORKSPACE_SKILL_SLUG_MAX_LENGTH = 64;
-export const INSTITUTIONAL_REVIEW_FINDING_MAX = 20;
 export const INSTITUTIONAL_CURATOR_ACTION_MAX = 50;
 
 export type InstitutionalMemoryCandidateType =
@@ -286,27 +281,6 @@ export interface InstitutionalMemoryProposal {
   readonly cas: InstitutionalMemoryProposalCas;
 }
 
-export interface InstitutionalMemoryReviewProposalV2 {
-  readonly proposalVersion: 2;
-  readonly action: 'create' | 'supersede' | 'retire';
-  readonly candidateType?: InstitutionalMemoryCandidateType;
-  readonly memoryKind?: InstitutionalMemoryKind;
-  readonly subjectIdentityId?: string;
-  readonly canonicalKey?: string;
-  readonly body?: string;
-  readonly keywords?: readonly string[];
-  readonly source: InstitutionalMemoryProposalSource;
-  readonly audience?: InstitutionalMemoryAudience;
-  readonly confidence: number;
-  readonly classification: InstitutionalMemoryProposal['classification'];
-  readonly target?: { readonly itemId: string; readonly baseVersion: number };
-  readonly retire?: readonly {
-    readonly itemId: string;
-    readonly baseVersion: number;
-    readonly reason: 'contradicted' | 'duplicate' | 'obsolete';
-  }[];
-}
-
 export interface InstitutionalMemoryJobUsage {
   readonly inputTokens?: number;
   readonly outputTokens?: number;
@@ -315,59 +289,6 @@ export interface InstitutionalMemoryJobUsage {
   readonly outputBytes: number;
   readonly model: string;
   readonly extractorVersion: string;
-}
-
-export interface InstitutionalMemoryShadowMessage {
-  readonly id: string;
-  readonly authorId: string;
-  readonly createdAt: number;
-  readonly text: string;
-  /**
-   * Files and pictures on this message, `expired` once their bytes are past
-   * the media TTL. Save-time review reads them before the upload is deleted
-   * and may keep what they say as a fact; the bytes themselves are not kept.
-   */
-  readonly attachments?: readonly DaemonAttachment[];
-}
-
-export interface InstitutionalMemoryShadowJob {
-  readonly id: string;
-  readonly leaseToken: string;
-  readonly leaseExpiresAt: number;
-  readonly workspaceId: string;
-  readonly sourceRoomId: string;
-  readonly sourceMessageId: string;
-  readonly requesterIdentityId: string;
-  readonly directMessage: boolean;
-  readonly mode: 'shadow' | 'live';
-  readonly triggerKind: 'turn_review' | 'merge_review' | 'curator';
-  readonly context?: Readonly<Record<string, unknown>>;
-  readonly messages: readonly InstitutionalMemoryShadowMessage[];
-  readonly existingItems: readonly (Pick<
-    InstitutionalMemoryItem,
-    'id' | 'kind' | 'subjectIdentityId' | 'canonicalKey' | 'body' | 'version'
-  > & { readonly distance?: number; readonly explicitSave?: boolean })[];
-}
-
-export type ClaimInstitutionalMemoryJobResult =
-  | { readonly enabled: false }
-  | { readonly enabled: true; readonly job?: InstitutionalMemoryShadowJob };
-
-export interface CompleteInstitutionalMemoryJobInput {
-  readonly agentId: string;
-  readonly jobId: string;
-  readonly leaseToken: string;
-  /** Null is a valid shadow verdict: the source contained no durable lesson. */
-  readonly proposal: InstitutionalMemoryJobProposal | null;
-  readonly usage: InstitutionalMemoryJobUsage;
-}
-
-export interface FailInstitutionalMemoryJobInput {
-  readonly agentId: string;
-  readonly jobId: string;
-  readonly leaseToken: string;
-  readonly error: string;
-  readonly retryable: boolean;
 }
 
 export interface InstitutionalContextSnapshot {
@@ -383,24 +304,68 @@ export interface InstitutionalContextSnapshot {
   readonly embeddingOutcome?: 'served' | 'timed-out' | 'disabled' | 'error';
 }
 
-export interface ProposeInstitutionalMemoryInput {
+/** Turn-bound fields every memory write carries. */
+interface InstitutionalMemoryWriteInput {
   readonly agentId: string;
   readonly roomId: string;
   readonly requestId?: string;
   readonly generationId?: string;
+  /** Current Room message ids the change rests on, the root request first or among them. */
+  readonly sourceMessageIds: readonly string[];
+  /**
+   * True only when a person in the cited messages explicitly asked for this:
+   * to keep a fact (a standing order, which never expires) or to correct or
+   * delete one.
+   */
+  readonly personAsked: boolean;
+}
+
+export interface SaveInstitutionalMemoryInput extends InstitutionalMemoryWriteInput {
   readonly memoryKind: InstitutionalMemoryKind;
   readonly canonicalKey: string;
   readonly body: string;
   readonly keywords: readonly string[];
-  readonly sourceMessageIds: readonly string[];
-  readonly correction: boolean;
   readonly confidence: number;
-  readonly cas: InstitutionalMemoryProposalCas;
 }
 
-export interface ProposeInstitutionalMemoryResult {
+export interface UpdateInstitutionalMemoryInput extends InstitutionalMemoryWriteInput {
+  readonly itemId: string;
+  /** The item's current version; any other version is refused. */
+  readonly version: number;
+  readonly body: string;
+  /** Replaces the keywords; omitted keeps the item's own. */
+  readonly keywords?: readonly string[];
+}
+
+export interface DeleteInstitutionalMemoryInput extends InstitutionalMemoryWriteInput {
   readonly itemId: string;
   readonly version: number;
+  readonly reason: 'wrong' | 'duplicate' | 'obsolete';
+}
+
+export interface InstitutionalMemoryWriteResult {
+  readonly itemId: string;
+  readonly version: number;
+}
+
+/**
+ * The items this turn's answer relied on. Only this report, a save, or an
+ * update keeps a Workspace fact from expiring; being loaded into a snapshot or
+ * returned by search does not.
+ */
+export interface ReportInstitutionalMemoryUsedInput {
+  readonly agentId: string;
+  readonly roomId: string;
+  readonly requestId?: string;
+  readonly generationId?: string;
+  /** Item ids from search_memory results. */
+  readonly itemIds?: readonly string[];
+  /** 1-based numbers of this turn's snapshot lines, as shown in the Memory block. */
+  readonly snapshotItems?: readonly number[];
+}
+
+export interface ReportInstitutionalMemoryUsedResult {
+  readonly refreshed: number;
 }
 
 export interface SearchInstitutionalMemoryInput {
@@ -423,10 +388,13 @@ export interface InstitutionalMemoryTurnStats {
 
 export interface SearchInstitutionalMemoryResult {
   /** Quoted, fallible context; never instructions or authority. */
-  readonly results: readonly Pick<
+  readonly results: readonly (Pick<
     InstitutionalMemoryItem,
     'id' | 'kind' | 'canonicalKey' | 'body' | 'version'
-  >[];
+  > & {
+    /** A person asked to keep it: change it only on a person's instruction. */
+    readonly standingOrder: boolean;
+  })[];
   readonly quotedContext: true;
 }
 
@@ -506,7 +474,7 @@ export interface InstitutionalCuratorProposal {
 }
 
 export type InstitutionalMemoryJobProposal =
-  InstitutionalMemoryProposal | InstitutionalMemoryReviewProposalV2 | InstitutionalMergeReviewProposal | InstitutionalCuratorProposal;
+  InstitutionalMemoryProposal | InstitutionalMergeReviewProposal | InstitutionalCuratorProposal;
 
 export interface LoadWorkspaceSkillInput {
   readonly agentId: string;
@@ -777,239 +745,6 @@ export function parseInstitutionalMemoryProposal(value: unknown): InstitutionalM
       ...(supersedesItemId ? { supersedesItemId } : {}),
     },
   };
-}
-
-export function parseInstitutionalMemoryReviewProposal(
-  value: unknown,
-): InstitutionalMemoryProposal | InstitutionalMemoryReviewProposalV2 {
-  const raw = record(value, 'institutional memory review proposal');
-  if (raw.proposalVersion !== 2) return parseInstitutionalMemoryProposal(value);
-  exactKeys(raw, [
-    'proposalVersion', 'action', 'candidateType', 'memoryKind', 'subjectIdentityId',
-    'canonicalKey', 'body', 'keywords', 'source', 'audience', 'confidence',
-    'classification', 'target', 'retire',
-  ], 'institutional memory review proposal');
-  if (raw.action !== 'create' && raw.action !== 'supersede' && raw.action !== 'retire') {
-    throw new Error('institutional memory review action is invalid');
-  }
-  const source = record(raw.source, 'institutional memory source');
-  exactKeys(source, ['roomId', 'messageIds'], 'institutional memory source');
-  const roomId = boundedText(source.roomId, 'institutional memory source room', 200);
-  if (!Array.isArray(source.messageIds) || source.messageIds.length < 1 ||
-      source.messageIds.length > INSTITUTIONAL_MEMORY_SOURCE_MESSAGE_MAX) {
-    throw new Error('institutional memory source messages are invalid');
-  }
-  const messageIds = source.messageIds.map((id) =>
-    boundedText(id, 'institutional memory source message', 200));
-  if (new Set(messageIds).size !== messageIds.length) {
-    throw new Error('institutional memory source messages must be unique');
-  }
-  if (typeof raw.confidence !== 'number' || !Number.isFinite(raw.confidence) ||
-      raw.confidence < 0 || raw.confidence > 1) {
-    throw new Error('institutional memory confidence is invalid');
-  }
-  const classification = record(raw.classification, 'institutional memory classification');
-  exactKeys(classification, ['stillTrueForAnotherRequester', 'subjectIsRequester', 'rationale'],
-    'institutional memory classification');
-  const rationale = boundedText(classification.rationale, 'institutional memory classification rationale',
-    INSTITUTIONAL_MEMORY_RATIONALE_MAX_LENGTH);
-  if (classification.subjectIsRequester !== undefined &&
-      typeof classification.subjectIsRequester !== 'boolean') {
-    throw new Error('institutional memory subject classification is invalid');
-  }
-  if (classification.stillTrueForAnotherRequester !== undefined &&
-      typeof classification.stillTrueForAnotherRequester !== 'boolean') {
-    throw new Error('institutional memory classification test is invalid');
-  }
-  const retire = omitted(raw.retire) ? [] : raw.retire;
-  if (!Array.isArray(retire) || retire.length > 3) {
-    throw new Error('institutional memory retired items are invalid');
-  }
-  const retireItems = retire.map((entry) => {
-    const item = record(entry, 'institutional memory retired item');
-    exactKeys(item, ['itemId', 'baseVersion', 'reason'], 'institutional memory retired item');
-    if (!Number.isSafeInteger(item.baseVersion) || (item.baseVersion as number) < 1 ||
-        !['contradicted', 'duplicate', 'obsolete'].includes(String(item.reason))) {
-      throw new Error('institutional memory retired item is invalid');
-    }
-    return {
-      itemId: boundedText(item.itemId, 'institutional memory retired item id', 200),
-      baseVersion: item.baseVersion as number,
-      reason: item.reason as 'contradicted' | 'duplicate' | 'obsolete',
-    };
-  });
-  if (new Set(retireItems.map((item) => item.itemId)).size !== retireItems.length) {
-    throw new Error('institutional memory retired items must be unique');
-  }
-  let target: InstitutionalMemoryReviewProposalV2['target'];
-  if (raw.action === 'supersede') {
-    const item = record(raw.target, 'institutional memory review target');
-    exactKeys(item, ['itemId', 'baseVersion'], 'institutional memory review target');
-    if (!Number.isSafeInteger(item.baseVersion) || (item.baseVersion as number) < 1) {
-      throw new Error('institutional memory review target version is invalid');
-    }
-    target = {
-      itemId: boundedText(item.itemId, 'institutional memory review target id', 200),
-      baseVersion: item.baseVersion as number,
-    };
-  } else if (!omitted(raw.target)) {
-    throw new Error('institutional memory review target is not allowed');
-  }
-  if (target && retireItems.some((item) => item.itemId === target!.itemId)) {
-    throw new Error('institutional memory review target cannot also be retired');
-  }
-  if (raw.action === 'retire') {
-    if (!retireItems.length || ['body', 'canonicalKey', 'keywords', 'memoryKind', 'audience',
-      'candidateType', 'subjectIdentityId']
-      .some((key) => !omitted(raw[key]))) {
-      throw new Error('institutional memory retire action is invalid');
-    }
-    return {
-      proposalVersion: 2, action: 'retire', source: { roomId, messageIds },
-      confidence: raw.confidence, classification: { rationale }, retire: retireItems,
-    };
-  }
-  const fact = parseInstitutionalMemoryProposal({
-    proposalVersion: 1, candidateType: raw.candidateType, memoryKind: raw.memoryKind,
-    subjectIdentityId: omitted(raw.subjectIdentityId) ? undefined : raw.subjectIdentityId,
-    canonicalKey: raw.canonicalKey,
-    body: raw.body, keywords: raw.keywords, source: raw.source,
-    audience: raw.audience, confidence: raw.confidence, classification: raw.classification,
-    cas: { baseVersion: null },
-  });
-  const { cas: _cas, ...validated } = fact;
-  return {
-    ...validated, proposalVersion: 2, action: raw.action,
-    ...(target ? { target } : {}),
-    ...(retireItems.length ? { retire: retireItems } : {}),
-  };
-}
-
-/** Strict parser for one merge-derived, restricted procedure proposal. */
-/**
- * A path the model can name from its own evidence is kept; an unverifiable value
- * is DROPPED rather than kept or treated as fatal, because rejecting would
- * discard a whole valid procedure and its review findings over metadata the
- * model was told was optional.
- *
- * There is no content-digest field: the model is given no file bytes, so any
- * digest it emitted would be asserted rather than computed. Staling a procedure
- * on code-anchor mismatch needs a producer that reads the anchored file, which
- * is not part of this change (see AGENTS.md).
- */
-function repositoryRelativePath(value: unknown): string | undefined {
-  if (typeof value !== 'string' || value.length === 0 || value.length > 500) return undefined;
-  if (
-    value.startsWith('/') ||
-    value.includes('\\') ||
-    value.split('/').some((segment) => segment === '..' || segment === '')
-  ) {
-    return undefined;
-  }
-  return value;
-}
-
-function optionalAnchorField(key: 'path', value: string | undefined) {
-  return value === undefined ? {} : { [key]: value };
-}
-
-export function parseInstitutionalMergeReviewProposal(
-  value: unknown,
-): InstitutionalMergeReviewProposal {
-  const proposal = record(value, 'institutional merge review proposal');
-  exactKeys(
-    proposal,
-    ['proposalVersion', 'skill', 'findings'],
-    'institutional merge review proposal',
-  );
-  if (proposal.proposalVersion !== 1) {
-    throw new Error('institutional merge review proposal version is unsupported');
-  }
-  let skill: WorkspaceSkillProposal | null = null;
-  if (!omitted(proposal.skill)) {
-    const rawSkill = record(proposal.skill, 'workspace skill proposal');
-    exactKeys(
-      rawSkill,
-      ['slug', 'description', 'markdown', 'baseVersion', 'anchor'],
-      'workspace skill proposal',
-    );
-    const slug = boundedText(
-      rawSkill.slug,
-      'workspace skill slug',
-      WORKSPACE_SKILL_SLUG_MAX_LENGTH,
-    );
-    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
-      throw new Error('workspace skill slug is invalid');
-    }
-    const anchor = record(rawSkill.anchor, 'workspace skill code anchor');
-    exactKeys(anchor, ['repository', 'targetCommit', 'path'], 'workspace skill code anchor');
-    if (
-      rawSkill.baseVersion !== null &&
-      (!Number.isSafeInteger(rawSkill.baseVersion) || (rawSkill.baseVersion as number) <= 0)
-    ) {
-      throw new Error('workspace skill base version is invalid');
-    }
-    skill = {
-      slug,
-      description: boundedText(
-        rawSkill.description,
-        'workspace skill description',
-        WORKSPACE_SKILL_DESCRIPTION_MAX_LENGTH,
-      ),
-      markdown: boundedText(
-        rawSkill.markdown,
-        'workspace skill markdown',
-        WORKSPACE_SKILL_MARKDOWN_MAX_BYTES,
-        true,
-      ),
-      baseVersion: rawSkill.baseVersion as number | null,
-      anchor: {
-        repository: boundedText(anchor.repository, 'workspace skill repository', 300),
-        targetCommit: boundedText(anchor.targetCommit, 'workspace skill target commit', 160),
-        ...optionalAnchorField('path', repositoryRelativePath(anchor.path)),
-      },
-    };
-  }
-  if (
-    !Array.isArray(proposal.findings) ||
-    proposal.findings.length > INSTITUTIONAL_REVIEW_FINDING_MAX
-  ) {
-    throw new Error('institutional review findings are invalid');
-  }
-  const findings = proposal.findings.map<InstitutionalReviewFindingProposal>((value) => {
-    const finding = record(value, 'institutional review finding');
-    exactKeys(
-      finding,
-      ['taxonomy', 'summary', 'severity', 'confidence', 'path'],
-      'institutional review finding',
-    );
-    if (
-      finding.severity !== 'info' &&
-      finding.severity !== 'warning' &&
-      finding.severity !== 'error'
-    ) {
-      throw new Error('institutional review finding severity is invalid');
-    }
-    const severity = finding.severity;
-    if (
-      typeof finding.confidence !== 'number' ||
-      !Number.isFinite(finding.confidence) ||
-      finding.confidence < 0 ||
-      finding.confidence > 1
-    ) {
-      throw new Error('institutional review finding confidence is invalid');
-    }
-    return {
-      taxonomy: boundedText(finding.taxonomy, 'institutional review finding taxonomy', 120),
-      summary: boundedText(finding.summary, 'institutional review finding summary', 1_000),
-      severity,
-      confidence: finding.confidence,
-      ...(omitted(finding.path)
-        ? {}
-        : { path: boundedText(finding.path, 'institutional review finding path', 500) }),
-    };
-  });
-  return { proposalVersion: 1, skill, findings };
 }
 
 export function parseInstitutionalCuratorProposal(value: unknown): InstitutionalCuratorProposal {

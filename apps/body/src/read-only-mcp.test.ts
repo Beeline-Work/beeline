@@ -2,7 +2,11 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { workflowContractError } from '@beeline/api-contract/daemon';
 import { CORNER_BRIEF_PROPERTIES, agentToolsFor, cornerCallText } from './read-only-mcp.js';
-import { assembleSessionPrompt, SEARCH_MEMORY_FIRST_RULE } from './prompt-assembly.js';
+import {
+  assembleSessionPrompt,
+  MEMORY_UPKEEP_RULE,
+  SEARCH_MEMORY_FIRST_RULE,
+} from './prompt-assembly.js';
 
 describe('direct message helper surface', () => {
   it('opens no corners from a direct message', () => {
@@ -34,7 +38,8 @@ describe('direct message helper surface', () => {
 
   it('advertises the memory tools by default and hides them only when explicitly disabled', () => {
     const byDefault = agentToolsFor(true, false).map((tool) => tool.name);
-    expect(byDefault).toContain('propose_memory_item');
+    for (const name of ['save_memory', 'update_memory', 'delete_memory', 'report_memory_used']) expect(byDefault).toContain(name);
+    expect(byDefault).not.toContain('propose_memory_item');
     expect(byDefault).toContain('search_history');
     expect(byDefault).toContain('search_memory');
     expect(byDefault).toContain('load_workspace_skill');
@@ -47,7 +52,7 @@ describe('direct message helper surface', () => {
     const disabled = agentToolsFor(true, false, false, false, true, false, false).map(
       (tool) => tool.name,
     );
-    expect(disabled).not.toContain('propose_memory_item');
+    for (const name of ['save_memory', 'update_memory', 'delete_memory', 'report_memory_used']) expect(disabled).not.toContain(name);
     expect(disabled).not.toContain('search_history');
     expect(disabled).not.toContain('search_memory');
     expect(disabled).not.toContain('load_workspace_skill');
@@ -60,7 +65,7 @@ describe('direct message helper surface', () => {
     const enabled = agentToolsFor(true, false, false, false, true, false, true).map(
       (tool) => tool.name,
     );
-    expect(enabled).toContain('propose_memory_item');
+    for (const name of ['save_memory', 'update_memory', 'delete_memory', 'report_memory_used']) expect(enabled).toContain(name);
     expect(enabled).toContain('search_history');
     expect(enabled).toContain('search_memory');
     expect(enabled).toContain('load_workspace_skill');
@@ -70,9 +75,24 @@ describe('direct message helper surface', () => {
     expect(enabled).toContain('handoff');
     expect(enabled).toContain('archive_workflow');
     expect(enabled).toContain('assign_workflow_role');
-    const proposal = agentToolsFor(true, false).find((tool) => tool.name === 'propose_memory_item');
-    expect(proposal?.inputSchema.required).toContain('subject_is_requester');
-    expect(proposal?.inputSchema.properties).not.toHaveProperty('memory_kind');
+    const tools = agentToolsFor(true, false);
+    const save = tools.find((tool) => tool.name === 'save_memory');
+    expect(save?.inputSchema.required).toContain('subject_is_requester');
+    expect(save?.inputSchema.required).toContain('person_asked');
+    expect(save?.inputSchema.properties).not.toHaveProperty('memory_kind');
+    for (const name of ['update_memory', 'delete_memory']) {
+      expect(tools.find((tool) => tool.name === name)?.inputSchema.required).toEqual(
+        expect.arrayContaining(['item_id', 'version', 'source_message_ids', 'person_asked']),
+      );
+    }
+  });
+
+  it('states the agent memory upkeep rule on save_memory', () => {
+    const save = agentToolsFor(true, false).find((tool) => tool.name === 'save_memory');
+    expect(save?.description).toContain(MEMORY_UPKEEP_RULE);
+    expect(MEMORY_UPKEEP_RULE).toContain('Before saving, call search_memory');
+    expect(MEMORY_UPKEEP_RULE).toContain('instead of deleting and saving again');
+    expect(MEMORY_UPKEEP_RULE).toContain('report_memory_used');
   });
 
   it('tells the agent to call search_memory before ever saying a fact was never saved', () => {

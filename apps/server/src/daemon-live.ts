@@ -143,10 +143,6 @@ export class DaemonAgentSession {
           transport.send({ type: 'connector-assignment' });
           return;
         }
-        if (event.reason === 'memory-job') {
-          transport.send({ type: 'memory-job', roomId: event.roomId });
-          return;
-        }
         if (event.reason !== 'postgres:memberships') return;
         transport.send({
           type: 'rooms-changed',
@@ -404,11 +400,6 @@ export class DaemonAgentSession {
         }
         if (event.reason === 'postgres:agent_commands') {
           if (event.targetAgentId === agentId) void pushCommands(trigger);
-          return;
-        }
-        if (event.reason === 'memory-job') {
-          if (!event.targetAgentId && transport.isOpen())
-            transport.send({ type: 'memory-job', roomId });
           return;
         }
         if (event.reason === 'postgres:rooms' && event.repositoryChanged) {

@@ -448,9 +448,6 @@ describe('GitHub phone operations', () => {
       {} as GitHubOAuthClient,
       app,
       'secret',
-      undefined,
-      undefined,
-      { enabled: true, live: true },
     );
     // A reviewer approved an earlier head; the merged head is a different one.
     await database.query(
@@ -521,19 +518,10 @@ describe('GitHub phone operations', () => {
       ).rowCount,
     ).toBe(1);
     expect(app.deleteBranch).toHaveBeenCalledTimes(1);
-    // The merge overwrote lifecycle.checks to 'passing'; the job must carry the
-    // state last observed before that, and must not present a stale approval.
+    // A merge no longer queues a hidden memory-review job.
     expect(
-      (
-        await database.query<{
-          trigger_kind: string;
-          context: { targetCommit: string; checks: string; reviewerVerdict: unknown };
-        }>(`SELECT trigger_kind,context FROM institutional_memory_jobs`)
-      ).rows[0],
-    ).toMatchObject({
-      trigger_kind: 'merge_review',
-      context: { targetCommit: 'f'.repeat(40), checks: 'failing', reviewerVerdict: null },
-    });
+      (await database.query(`SELECT 1 FROM institutional_memory_jobs`)).rowCount,
+    ).toBe(0);
   });
   it('mints a token only for the exact active repository bound to a top-level Room', async () => {
     const workspace = '11111111-1111-4111-8111-111111111111';

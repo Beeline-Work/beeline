@@ -2471,6 +2471,15 @@ export function BuzzChatSurface({
   // which provoke momentum events on the shared `dragEndSequenceRef` just
   // like a real gesture would. Reset when a new landing starts.
   const messageSourceLandingAbandonedRef = useRef(false);
+  // The id a message-source jump is walking server history pages (and then
+  // chasing onScrollToIndexFailed's retries) to reach, or null when no jump
+  // is mid-flight. Native only: desktop's `scrollIntoView` is synchronous
+  // real DOM with no paging wait or retry chase to cover. While set, the
+  // transcript stays covered by a "Locating message…" overlay instead of
+  // sitting blank through the history walk and then visibly hopping through
+  // onScrollToIndexFailed's corrective scrolls before it settles.
+  const locatingMessageSourceIdRef = useRef<string | null>(null);
+  const [isLocatingMessageSource, setIsLocatingMessageSource] = useState(false);
   const visibleTranscriptMessagesRef = useRef<ChatDisplayMessage[]>([]);
   const dragEndSequenceRef = useRef(0);
   const completedUnreadLandingRef = useRef<string | null>(null);
@@ -2530,6 +2539,8 @@ export function BuzzChatSurface({
     desktopIntersectingIdsRef.current.clear();
     desktopPrependOldestIdRef.current = null;
     desktopPrependScrollHeightRef.current = null;
+    locatingMessageSourceIdRef.current = null;
+    setIsLocatingMessageSource(false);
   }, [decodedId]);
   const completePendingNewMessageLanding = useCallback(() => {
     const pending = pendingNewMessageLandingRef.current;
@@ -2609,6 +2620,10 @@ export function BuzzChatSurface({
             });
           }
           raiseSourceLandingFlash(landing.messageId);
+          if (locatingMessageSourceIdRef.current === landing.messageId) {
+            locatingMessageSourceIdRef.current = null;
+            setIsLocatingMessageSource(false);
+          }
         }
       }
       // The list recomputes viewability on scroll AND on every committed
@@ -2968,6 +2983,15 @@ export function BuzzChatSurface({
 
     const messageId = notificationMessageId?.trim();
     if (!messageId) return;
+    if (
+      locatingMessageSourceIdRef.current !== null &&
+      locatingMessageSourceIdRef.current !== messageId
+    ) {
+      // A different target replaced the one the cover was still walking
+      // history pages (or chasing retries) for.
+      locatingMessageSourceIdRef.current = null;
+      setIsLocatingMessageSource(false);
+    }
     const visibleIndex = transcriptMessages.findIndex(
       (message) => message.id === messageId || message.relayId === messageId,
     );
@@ -3013,8 +3037,29 @@ export function BuzzChatSurface({
     }
     // Bookmark links may target any durable message, not only the cached
     // tail. Walk bounded history pages until the exact id arrives or the
-    // server reports the beginning of the Room.
-    if (transcriptHistoryStatus === 'idle') loadOlderTranscriptMessages();
+    // server reports the beginning of the Room. Native only: cover the
+    // transcript for the whole walk (see `locatingMessageSourceIdRef`) so a
+    // genuinely distant target reads as one continuous "locating" state
+    // instead of a blank screen while pages load, then a visibly hopping
+    // scroll position while onScrollToIndexFailed's retries chase it in.
+    if (transcriptHistoryStatus === 'idle') {
+      if (!desktopTranscript && locatingMessageSourceIdRef.current !== messageId) {
+        locatingMessageSourceIdRef.current = messageId;
+        setIsLocatingMessageSource(true);
+      }
+      loadOlderTranscriptMessages();
+    } else if (
+      !desktopTranscript &&
+      locatingMessageSourceIdRef.current === messageId &&
+      transcriptHistoryStatus !== 'loading'
+    ) {
+      // 'complete' (history exhausted) or 'error' (page fetch failed): stop
+      // covering so the reader regains control — the existing retry
+      // affordance (scroll up to "Couldn't load earlier messages") must
+      // stay reachable, never hidden under this cover.
+      locatingMessageSourceIdRef.current = null;
+      setIsLocatingMessageSource(false);
+    }
   }, [
     combinedMessages,
     transcriptMessages,
@@ -5951,6 +5996,10 @@ export function BuzzChatSurface({
               // touch: this never fires for a programmatic scrollToIndex/
               // scrollToOffset, only an actual drag gesture.
               messageSourceLandingAbandonedRef.current = true;
+              if (locatingMessageSourceIdRef.current !== null) {
+                locatingMessageSourceIdRef.current = null;
+                setIsLocatingMessageSource(false);
+              }
             }}
             onScrollEndDrag={(event) => {
               // Drag-end precedes momentum-begin. Missing optional velocity is
@@ -6084,6 +6133,16 @@ export function BuzzChatSurface({
           )}
           {!desktopTranscript && (
             <TranscriptScrubber scrubber={transcriptScrubber} onScrubTo={scrubTranscriptTo} />
+          )}
+          {!desktopTranscript && isLocatingMessageSource && (
+            <View
+              pointerEvents="none"
+              style={styles.messageSourceLocating}
+              testID="message-source-locating"
+            >
+              <SurfaceGlyphLoader compact testID="message-source-locating-glyph" />
+              <Text style={styles.messageSourceLocatingText}>Locating message…</Text>
+            </View>
           )}
           <RoomCatchUpControls
             corner={isCorner}
@@ -7202,6 +7261,25 @@ const styles = StyleSheet.create((theme) => {
     },
     messageList: {
       flex: 1,
+    },
+    // Covers the transcript while a message-source jump walks server
+    // history pages and then chases onScrollToIndexFailed's retries — see
+    // `locatingMessageSourceIdRef`.
+    messageSourceLocating: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: groknight.space.sm,
+      backgroundColor: groknight.bgTerminal,
+    },
+    messageSourceLocatingText: {
+      ...theme.buzz.type.meta,
+      fontFamily: groknight.proseRegular,
+      color: groknight.ledgerQuiet,
     },
     // Desktop transcript only: a plain scrollable View over real DOM (no
     // FlatList/VirtualizedList) — see `shouldFollowDesktopTail` in

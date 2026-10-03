@@ -56,3 +56,69 @@ describe('message-source landing settles on viewability, never a clock', () => {
     expect(chatSurfaceSource).toContain('raiseSourceLandingFlash');
   });
 });
+
+/**
+ * Regression coverage for a genuinely distant target (one not resident in
+ * any cached page): the jump effect walked server history pages with no
+ * visible feedback — a blank transcript for however long pagination took —
+ * then, once the target became resident, chased `onScrollToIndexFailed`'s
+ * retries with the scroll position visibly hopping before it settled.
+ * `locatingMessageSourceIdRef`/`isLocatingMessageSource` now cover the
+ * transcript for that entire walk, so neither phase is bare to the reader.
+ */
+describe('a distant message-source jump covers the transcript instead of sitting blank', () => {
+  it('arms the cover only on the branch that must page server history', () => {
+    const pagingBranch = chatSurfaceSource.slice(
+      chatSurfaceSource.indexOf('Bookmark links may target any durable message'),
+      chatSurfaceSource.indexOf('}, [', chatSurfaceSource.indexOf('Bookmark links may target any durable message')),
+    );
+    expect(pagingBranch).toContain('locatingMessageSourceIdRef.current = messageId');
+    expect(pagingBranch).toContain('setIsLocatingMessageSource(true)');
+    // Desktop's `scrollIntoView` is synchronous real DOM with no paging
+    // wait or retry chase to cover — the cover is native-only.
+    expect(pagingBranch).toMatch(/!desktopTranscript\s*&&\s*locatingMessageSourceIdRef\.current/);
+  });
+
+  it('releases the cover if history is exhausted or errors without finding the target', () => {
+    const pagingBranch = chatSurfaceSource.slice(
+      chatSurfaceSource.indexOf('Bookmark links may target any durable message'),
+      chatSurfaceSource.indexOf('}, [', chatSurfaceSource.indexOf('Bookmark links may target any durable message')),
+    );
+    // Never stuck covering the retry affordance ("Couldn't load earlier
+    // messages · tap to retry") once there is nothing left to walk toward.
+    expect(pagingBranch).toContain("transcriptHistoryStatus !== 'loading'");
+    expect(pagingBranch).toContain('setIsLocatingMessageSource(false)');
+  });
+
+  it('releases the cover at the same settle point as the brass flash', () => {
+    const viewabilityCallback = chatSurfaceSource.slice(
+      chatSurfaceSource.indexOf('const observeVisibleTranscriptMessages'),
+      chatSurfaceSource.indexOf('Follow a new row only from the tail'),
+    );
+    const flashIndex = viewabilityCallback.indexOf('raiseSourceLandingFlash(landing.messageId)');
+    const clearIndex = viewabilityCallback.indexOf(
+      'setIsLocatingMessageSource(false)',
+      flashIndex,
+    );
+    expect(flashIndex).toBeGreaterThan(-1);
+    expect(clearIndex).toBeGreaterThan(flashIndex);
+  });
+
+  it('releases the cover on a real touch, the same signal that abandons the landing', () => {
+    const dragHandler = chatSurfaceSource.slice(
+      chatSurfaceSource.indexOf('onScrollBeginDrag={() => {'),
+      chatSurfaceSource.indexOf('onScrollEndDrag={'),
+    );
+    const abandonIndex = dragHandler.indexOf('messageSourceLandingAbandonedRef.current = true');
+    const clearIndex = dragHandler.indexOf('setIsLocatingMessageSource(false)');
+    expect(abandonIndex).toBeGreaterThan(-1);
+    expect(clearIndex).toBeGreaterThan(abandonIndex);
+  });
+
+  it('renders the cover gated on the locating state, native transcript only', () => {
+    expect(chatSurfaceSource).toMatch(
+      /!desktopTranscript\s*&&\s*isLocatingMessageSource\s*&&/,
+    );
+    expect(chatSurfaceSource).toContain('testID="message-source-locating"');
+  });
+});

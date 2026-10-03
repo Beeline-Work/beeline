@@ -29,9 +29,8 @@ describe('the tray: Needs you and Saved', () => {
 
   it('opens the exact original and pages beyond the cached tail', () => {
     expect(bookmarks).toContain('messageJumpHref(target.roomId, target.messageId');
-    expect(chat).toContain(
-      "if (transcriptHistoryStatus === 'idle') loadOlderTranscriptMessages();",
-    );
+    expect(chat).toMatch(/if \(transcriptHistoryStatus === 'idle'\) \{/);
+    expect(chat).toContain('loadOlderTranscriptMessages();');
   });
 
   it('opens a selected desktop bookmark in the shared Room work pane', () => {

@@ -6,7 +6,7 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { systemLine } from './system-line.js';
 import { routeSystemCommand } from './agent-command.js';
-import { cornerMergeGate } from './corner-workflow.js';
+import { claimCornerMergeAttempt, cornerMergeGate } from './corner-workflow.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 
 const H = 'a'.repeat(64);
@@ -292,6 +292,27 @@ describe('a failed review turn', () => {
 });
 
 describe('approve_merge with a reviewer list', () => {
+  it('Reproduction R5e: a fallback approval opens the gate after the primary reviewer leaves', async () => {
+    await setReviewers(REVIEWER_A, REVIEWER_B);
+    await db.query(
+      `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
+      [R, REVIEWER_A],
+    );
+    await daemon.execute(
+      'approveCornerMerge',
+      { cornerId: C, briefRevision: 0, headSha: '1'.repeat(40) },
+      REVIEWER_B,
+    );
+    expect(await cornerMergeGate(db, C, { number: 7, headSha: '1'.repeat(40) })).toMatchObject({
+      reviewerExists: true,
+      reviewerIsAuthor: false,
+      approvalPending: false,
+      open: true,
+    });
+    expect(await claimCornerMergeAttempt(db, C, '1'.repeat(40))).toBe(true);
+    expect(await claimCornerMergeAttempt(db, C, '1'.repeat(40))).toBe(false);
+  });
+
   it('accepts an approval from a fallback reviewer', async () => {
     await setReviewers(REVIEWER_A, REVIEWER_B);
     const result = await daemon.execute(

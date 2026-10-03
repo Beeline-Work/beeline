@@ -427,7 +427,7 @@ describe('PR-scoped check gate', () => {
       checks: 'passed',
       approvalPending: true,
       reviewer: '@reviewer',
-      reviewerExists: false,
+      reviewerExists: true,
       reviewerIsAuthor: false,
       reviewerWake: {
         status: 'unreachable',

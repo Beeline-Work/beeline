@@ -1174,7 +1174,7 @@ async function workerYolo(db: SqlDatabase, cornerId: string): Promise<boolean> {
 }
 
 export type CornerMergeGate = {
-  /** The configured reviewer is a current agent member of the parent Room. */
+  /** A reviewer is configured; the self-review bypass also requires current parent membership. */
   reviewerExists: boolean;
   reviewerIsAuthor: boolean;
   /** No PASS by the configured reviewer on this head and the latest brief revision, and the reviewer is not the author. */
@@ -1221,8 +1221,8 @@ export async function cornerMergeGate(
     )
   ).rows[0];
   if (!corner) throw new Error('corner not found');
-  const reviewerExists = corner.reviewer_parent_member;
   const author = reviewerIsAuthor(corner);
+  const reviewerExists = Boolean(corner.configured_reviewer_id) && (!author || corner.reviewer_parent_member);
   const approvalPending =
     corner.configured_reviewer_id && !author
       ? (await approvingReviewer(db, { ...corner, cornerId, ...head })) === undefined

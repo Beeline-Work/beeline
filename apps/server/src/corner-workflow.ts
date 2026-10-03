@@ -1,3 +1,4 @@
+import { activeCornerHolds } from './corner-holds.js';
 import { createHash, randomBytes } from 'node:crypto';
 import type { WorkflowContract, WorkflowTerminalState } from '@beeline/api-contract/daemon';
 import { cornerRunFromLifecycle, type CornerLifecycleView } from '@beeline/api-contract/phone';
@@ -1156,26 +1157,6 @@ async function approvingReviewer(
   return (await isCornerReviewer(db, input.cornerId, approvedBy)) ? approvedBy : undefined;
 }
 
-/**
- * A person in the corner holding the merge: the newest human line saying hold
- * / do not merge, not followed by one saying resume / proceed / go ahead /
- * merge now.
- */
-async function cornerHeld(db: SqlDatabase, cornerId: string): Promise<boolean> {
-  const lines = await db.query<{ text: string }>(
-    `SELECT message.text FROM messages message
-     JOIN identities author ON author.id=message.author_id AND author.kind='human'
-     WHERE message.room_id=$1
-     ORDER BY message.created_at DESC,message.id DESC LIMIT 200`,
-    [cornerId],
-  );
-  for (const { text } of lines.rows) {
-    if (/\bresume\b|\bproceed\b|\bgo ahead\b|\bmerge now\b/i.test(text)) return false;
-    if (/\bhold\b|\bdo not merge\b|\bdon't merge\b/i.test(text)) return true;
-  }
-  return false;
-}
-
 /** The corner worker's yolo mode; always off in a public Workspace. */
 async function workerYolo(db: SqlDatabase, cornerId: string): Promise<boolean> {
   const row = (
@@ -1199,6 +1180,7 @@ export type CornerMergeGate = {
   /** No PASS by the configured reviewer on this head and the latest brief revision, and the reviewer is not the author. */
   approvalPending: boolean;
   held: boolean;
+  holds: Awaited<ReturnType<typeof activeCornerHolds>>;
   isWorkerYolo: boolean;
   /** Everything but checks: PASS (or self-review), yolo on, no hold, reviewer present. */
   open: boolean;
@@ -1239,13 +1221,15 @@ export async function cornerMergeGate(
     reviewerExists && !author
       ? (await approvingReviewer(db, { ...corner, cornerId, ...head })) === undefined
       : false;
-  const held = await cornerHeld(db, cornerId);
+  const holds = await activeCornerHolds(db, cornerId);
+  const held = holds.length > 0;
   const isWorkerYolo = await workerYolo(db, cornerId);
   return {
     reviewerExists,
     reviewerIsAuthor: author,
     approvalPending,
     held,
+    holds,
     isWorkerYolo,
     open: reviewerExists && !approvalPending && !held && isWorkerYolo,
   };

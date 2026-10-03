@@ -1,3 +1,4 @@
+import { CORNER_MERGE_HOLDS_SCHEMA } from './migrations/corner-merge-holds.js';
 import {
   AGENT_COMMAND_SCHEMA,
   reconcileConfiguredCornerReviewers,
@@ -178,7 +179,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 18;
+export const REQUIRED_SCHEMA_VERSION = 19;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -2613,6 +2614,7 @@ export async function migrate(
     `CREATE INDEX CONCURRENTLY messages_grant_request_idx
      ON messages(room_id,created_at DESC) WHERE card_type='grant-request'`,
   ));
+  await ddlScript('corner merge holds', CORNER_MERGE_HOLDS_SCHEMA);
   await ddlScript('corner owed schema', cornerOwedSchemaSql());
   await ddlScript('live notification schema', POSTGRES_LIVE_SCHEMA);
   if (!options.deferData) await migrateData(database);

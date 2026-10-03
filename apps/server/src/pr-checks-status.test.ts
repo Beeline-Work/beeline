@@ -585,14 +585,12 @@ describe('PR-scoped check gate', () => {
     });
 
     await db.query(`UPDATE agents SET yolo_mode=true WHERE agent_id=$1`, [A]);
-    await db.query(
-      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'do not merge')`,
-      ['d'.repeat(64), C, H],
-    );
+    const { holdId } = await new PhoneService(db, 'http://test').execute('setCornerHold', { cornerId: C }, H);
     await expect(callGate(4)).resolves.toMatchObject({
       approvalPending: true,
       mergeAllowed: false,
       didHumanSayDontMerge: true,
+      holds: [{ id: holdId, actorId: H, standing: 'owner', setAt: expect.any(String) }],
     });
     child.kill();
   });

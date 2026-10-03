@@ -980,6 +980,19 @@ const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: 'set_corner_hold',
+    description:
+      'Set an explicit merge hold for this turn’s original human requester. Supply releaseHoldId to release a stored hold: only its holder or a human with higher standing may do so. Chat never sets or releases holds; pr_checks_status lists active hold IDs.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        cornerId: { type: 'string', format: 'uuid' },
+        releaseHoldId: { type: 'string', format: 'uuid' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'open_corner',
     description:
       'Open one corner after any material unresolved choice is settled. Supply a compact brief for a precise small fix or a complete brief and Room files for complex work. The brief and available Room files are committed atomically with the first worker command. Give it a name of AT MOST THREE WORDS and a fixed objective of no more than 24 words.',
@@ -1004,6 +1017,10 @@ const AGENT_TOOLS: ToolDefinition[] = [
           required: ['spec', 'approval'],
           properties: CORNER_BRIEF_PROPERTIES,
           additionalProperties: false,
+        },
+        hold: {
+          type: 'boolean',
+          description: 'Create a merge hold atomically, for the original human requester.',
         },
         lane: {
           type: 'string',
@@ -2232,6 +2249,7 @@ async function openCorner(args: JsonObject, toolCallId: string): Promise<string>
       ? { brief: args.brief as unknown as import('@beeline/api-contract/daemon').CornerBriefDraft }
       : {}),
     lane,
+    ...(args.hold === true ? { hold: true } : {}),
     ...(repository.resolution === 'repository'
       ? {
           repository: repository.key,
@@ -2432,6 +2450,7 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
     ...(headSha ? { headSha } : {}),
     held,
     didHumanSayDontMerge,
+    ...(verdict?.holds ? { holds: verdict.holds } : {}),
     reviewFailed,
     isWorkerYolo,
     reviewerExists,
@@ -3833,6 +3852,15 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
           fromAsset: String(args.fromAsset ?? 'usdc'),
           toAsset: String(args.toAsset ?? 'eth'),
           amount: String(args.amount ?? ''),
+        }),
+      );
+    case 'set_corner_hold':
+      return JSON.stringify(
+        await daemonExecute('setCornerHold', {
+          ...await activeCommandContext(),
+          cornerId: typeof args.cornerId === 'string'
+            ? args.cornerId : requiredEnv('BEELINE_DAEMON_CORNER_ID'),
+          ...(args.releaseHoldId !== undefined ? { releaseHoldId: args.releaseHoldId } : {}),
         }),
       );
     case 'open_corner':

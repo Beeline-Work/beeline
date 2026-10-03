@@ -200,7 +200,7 @@ function brief(sourceMessageId: string) {
   };
 }
 
-async function open(lane?: 'code' | 'no_code', repository?: string): Promise<string> {
+async function open(lane?: 'code' | 'no_code', repository?: string, hold?: boolean): Promise<string> {
   const command = await commissioned(R);
   const { cornerId } = await daemon.execute(
     'createCorner',
@@ -210,6 +210,7 @@ async function open(lane?: 'code' | 'no_code', repository?: string): Promise<str
       generationId: 'g1',
       name: 'Ship widget',
       objective: 'Ship the widget end to end',
+      ...(hold ? { hold } : {}),
       ...(lane ? { lane } : {}),
       ...(repository ? { repository, targetBranch: 'main' } : {}),
       ...(lane !== 'no_code' && repository ? { brief: brief(command.sourceMessageId) } : {}),
@@ -1105,6 +1106,14 @@ describe('at most one merge attempt per head (AC-7)', () => {
 });
 
 describe('the gate stays shut (AC-8)', () => {
+  it('Reproduction R4: a negated proceed instruction cannot release a hold', async () => {
+    const cornerId = await approved();
+    await phone.execute('setCornerHold', { cornerId }, H);
+    await say(cornerId, 'hold');
+    await say(cornerId, 'Do not proceed until I check this');
+    expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ held: true, open: false });
+    expect(await github.prChecksStatus({ cornerId })).toMatchObject({ held: true, mergeAllowed: false });
+  });
   it('after a push following PASS', async () => {
     const cornerId = await approved();
     const next = '8'.repeat(40);
@@ -1118,12 +1127,147 @@ describe('the gate stays shut (AC-8)', () => {
 
   it('while a person holds it, and opens when they lift the hold', async () => {
     const cornerId = await approved();
-    await say(cornerId, 'hold this one');
+    const { holdId } = await phone.execute('setCornerHold', { cornerId }, H);
     expect(await github.landReadyCorners()).toBe(0);
     expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
     await say(cornerId, 'go ahead');
+    expect(await github.landReadyCorners()).toBe(0);
+    await phone.execute('setCornerHold', { cornerId, releaseHoldId: holdId }, H);
     expect(await github.landReadyCorners()).toBe(1);
     expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('R4: holds survive more than 200 messages and deletion, without chat-derived releases', async () => {
+    const cornerId = await approved();
+    const { holdId } = await phone.execute('setCornerHold', { cornerId }, H);
+    await say(cornerId, 'hold');
+    await db.query(`UPDATE messages SET deleted_at=now() WHERE room_id=$1 AND text='hold'`, [cornerId]);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text)
+      SELECT md5($1 || n::text) || md5(n::text || $1),$1::uuid,$2,'unrelated'
+      FROM generate_series(1,205) n`, [cornerId, H]);
+    await say(cornerId, 'merge now');
+    await db.query(`UPDATE messages SET deleted_at=now() WHERE room_id=$1 AND text='merge now'`, [cornerId]);
+    expect(await github.prChecksStatus({ cornerId })).toMatchObject({ held: true, mergeAllowed: false,
+      holds: [{ id: holdId, actorId: H, standing: 'owner', setAt: expect.any(String) }] });
+    expect(await github.landReadyCorners()).toBe(0);
+  });
+
+  it('R4: refuses peer and lower-standing release; higher-standing release records its actor', async () => {
+    const cornerId = await approved();
+    const peer = 'f'.repeat(64), admin = '9'.repeat(64);
+    for (const [id, role] of [[peer, 'member'], [admin, 'admin']]) {
+      await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human',$1) ON CONFLICT DO NOTHING`, [id]);
+      await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,$3),($1,$4,$2,'member')
+        ON CONFLICT DO NOTHING`, [W, id, role, cornerId]);
+    }
+    await db.query(`UPDATE memberships SET role='member' WHERE room_id IS NULL AND identity_id=$1`, [H]);
+    try {
+      const { holdId } = await phone.execute('setCornerHold', { cornerId }, H);
+      await expect(phone.execute('setCornerHold', { cornerId, releaseHoldId: holdId }, peer)).rejects.toThrow(/above their member standing/);
+      expect(await github.landReadyCorners()).toBe(0);
+      await phone.execute('sendRoomMessage', { roomId: cornerId, messageId: randomBytes(32).toString('hex'),
+        text: '@hoots release the hold' }, peer);
+      const peerCommand = (await daemon.execute('getAgentCommands', { roomId: cornerId }, A)).commands.at(-1)!;
+      await claim(peerCommand);
+      await expect(daemon.execute('setCornerHold', { cornerId, roomId: cornerId,
+        requestId: peerCommand.turnRequestId, generationId: 'g1', releaseHoldId: holdId }, A)).rejects.toThrow(/above their member standing/);
+      await phone.execute('setCornerHold', { cornerId, releaseHoldId: holdId }, admin);
+      expect((await db.query(`SELECT standing,released_by,released_at IS NOT NULL released FROM corner_merge_holds WHERE id=$1`, [holdId])).rows[0])
+        .toMatchObject({ standing: 'member', released_by: admin, released: true });
+      const higher = await phone.execute('setCornerHold', { cornerId }, admin);
+      await expect(phone.execute('setCornerHold', { cornerId, releaseHoldId: higher.holdId }, H)).rejects.toThrow(/above their admin standing/);
+      await db.query(`UPDATE memberships SET role='owner' WHERE room_id IS NULL AND identity_id=$1`, [H]);
+      await phone.execute('setCornerHold', { cornerId, releaseHoldId: higher.holdId }, H);
+      expect(await github.landReadyCorners()).toBe(1);
+    } finally {
+      await db.query(`UPDATE memberships SET role='owner' WHERE room_id IS NULL AND identity_id=$1`, [H]);
+    }
+  });
+
+  it('R4: creates the hold at open and the agent acts for the original human requester', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
+    const cornerId = await open(undefined, 'owner/widgets', true);
+    const holds = (await db.query(`SELECT id,actor_id,standing FROM corner_merge_holds WHERE corner_id=$1`, [cornerId])).rows;
+    expect(holds).toEqual([{ id: expect.any(String), actor_id: H, standing: 'owner' }]);
+    expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ held: true, open: false });
+    await greenHead(cornerId, 7, SHA);
+    githubHead = SHA; githubRollupState = 'passed';
+    expect(await github.landReadyCorners()).toBe(0);
+    const command = await commissioned(cornerId);
+    await daemon.execute('setCornerHold', { cornerId, roomId: cornerId, requestId: command.turnRequestId,
+      generationId: 'g1', releaseHoldId: holds[0]!.id }, A);
+    expect(await github.landReadyCorners()).toBe(1);
+  });
+
+  it('R4: chat alone creates no hold and migration intentionally starts inferred holds clean', async () => {
+    const cornerId = await approved();
+    await say(cornerId, 'hold');
+    await migrate(db);
+    expect((await github.prChecksStatus({ cornerId })).held).toBe(false);
+    expect(await github.landReadyCorners()).toBe(1);
+  });
+
+  it('R4: a failed initial hold rolls back the entire corner', async () => {
+    const command = await commissioned(R);
+    const count = (await db.query(`SELECT count(*) n FROM rooms WHERE parent_id=$1`, [R])).rows;
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [R, H]);
+    try {
+      await expect(daemon.execute('createCorner', { roomId: R, requestId: command.turnRequestId,
+        generationId: 'g1', name: 'Held work', objective: 'Keep this corner held', lane: 'no_code', hold: true }, A))
+        .rejects.toThrow(/current human corner membership required/);
+      expect((await db.query(`SELECT count(*) n FROM rooms WHERE parent_id=$1`, [R])).rows).toEqual(count);
+      expect((await db.query(`SELECT count(*) n FROM corner_merge_holds`)).rows).toEqual([{ n: 0 }]);
+    } finally {
+      await db.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [R, H]);
+    }
+  });
+
+  it('Demonstrated R4: HTTP service keeps the merge blocked until explicit release', async () => {
+    const { createBeelineServer } = await import('./server.js');
+    const { PhoneService: BuiltPhone } = await import('./phone-service.js');
+    const { DaemonService: BuiltDaemon } = await import('./daemon-service.js');
+    const { GitHubOperations: BuiltGitHub } = await import('./github-operations.js');
+    const { TokenAuth, tokenHash } = await import('./auth.js');
+    const auth = new TokenAuth(db, async () => { throw new Error('fixture does not sign in'); });
+    const token = 'R4-fixture-phone-token';
+    await db.query(`INSERT INTO phone_access_tokens(token_hash,identity_id,family_id,expires_at)
+      VALUES($1,$2,$3,now()+interval '1 hour') ON CONFLICT DO NOTHING`, [tokenHash(token), H, W]);
+    const exchange = await auth.createDaemonExchange(A);
+    const daemonToken = (await auth.exchangeDaemonToken(exchange.exchangeToken))!.daemonToken;
+    const builtGitHub = new BuiltGitHub(db, {} as GitHubOAuthClient, githubApp as unknown as GitHubAppClient, 'secret');
+    const live = new LiveHub();
+    const builtDaemon = new BuiltDaemon(db, live, undefined, undefined, false, undefined, false, undefined,
+      input => builtGitHub.prChecksStatus(input));
+    const server = createBeelineServer({ database: db, auth, phone: new BuiltPhone(db, 'http://test'),
+      daemon: builtDaemon, live, mediaMaximumBytes: 1 });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address() as { port: number };
+    const post = async (lane: 'phone' | 'daemon', operation: string, body: unknown) => {
+      const response = await fetch(`http://127.0.0.1:${address.port}/v1/${lane}/operations/${operation}`, {
+        method: 'POST', headers: { authorization: `Bearer ${lane === 'phone' ? token : daemonToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const result = await response.json();
+      expect(response.status, JSON.stringify(result)).toBe(200);
+      return result;
+    };
+    try {
+      const cornerId = await approved();
+      const { holdId } = await post('phone', 'setCornerHold', { cornerId });
+      await post('phone', 'sendRoomMessage', { roomId: cornerId, messageId: randomBytes(32).toString('hex'), text: 'Do not proceed until I check this' });
+      const held = await post('daemon', 'getPrChecksStatus', { cornerId });
+      expect(held).toMatchObject({ held: true, mergeAllowed: false,
+        holds: [{ id: holdId, actorId: H, standing: 'owner', setAt: expect.any(String) }] });
+      expect(await builtGitHub.landReadyCorners()).toBe(0);
+      expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
+      await post('phone', 'setCornerHold', { cornerId, releaseHoldId: holdId });
+      const released = await post('daemon', 'getPrChecksStatus', { cornerId });
+      expect(released).toMatchObject({ held: false, mergeAllowed: true, holds: [] });
+      expect(await builtGitHub.landReadyCorners()).toBe(1);
+      console.log('Demonstrated R4: authenticated HTTP hold + negated chat => held=true, mergeAllowed=false, merges=0; explicit holder release => held=false, mergeAllowed=true, merges=1 (fixture GitHub).');
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
   });
 
   it('while the worker yolo is off, and opens when it turns on', async () => {
@@ -1247,8 +1391,9 @@ describe('migrating a research corner to the code lane', () => {
     ).rejects.toThrow(/corner_facts_lane_check/);
   });
 
-  it("keeps a migrated corner held while a person's don't-merge message stands", async () => {
+  it("keeps a migrated corner held while a stored hold stands", async () => {
     const cornerId = await open(undefined, 'owner/widgets');
+    await phone.execute('setCornerHold', { cornerId }, H);
     await say(cornerId, "don't merge this yet");
     await asLegacyResearchCorner(cornerId);
 

@@ -1,3 +1,4 @@
+import { setCornerHold } from './corner-holds.js';
 import { renderAgentAvatar } from './agent-avatar.js';
 import {
   authorizeCommandOutput,
@@ -1462,6 +1463,20 @@ export class DaemonService {
           input as Input<'offerConnector'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'setCornerHold': {
+        const hold = input as Input<'setCornerHold'>;
+        await this.access(hold.cornerId, authenticatedAgentId);
+        return (await this.database.transaction(async (db) => {
+          const command = await authorizeCommandOutput(
+            db, hold.roomId, authenticatedAgentId, hold.requestId, hold.generationId,
+          );
+          const actor = (await db.query<{ author_id: string }>(
+            `SELECT author_id FROM messages WHERE id=$1`, [command.root_source_message_id],
+          )).rows[0];
+          if (!actor) throw new Error('hold requires a human requester');
+          return setCornerHold(db, hold, actor.author_id);
+        })) as Output<Name>;
+      }
       case 'createCorner':
         return (await this.createCorner(
           input as Input<'createCorner'>,
@@ -6661,6 +6676,10 @@ export class DaemonService {
           lane,
         ],
       );
+      if (input.hold === true) {
+        if (!commissionedBy) throw new Error('hold requires a human requester');
+        await setCornerHold(db, { cornerId }, commissionedBy);
+      }
       if (input.brief) {
         const sourceRoomIds = [...new Set([roomId, commandRoomId])];
         const explicitAttachments = await resolveCornerBriefAttachments(
@@ -7526,6 +7545,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   executeAppTool: true,
   offerConnector: true,
   createCorner: true,
+  setCornerHold: true,
   upgradeCornerLane: true,
   archiveCorner: true,
   ensureAgentMembership: true,

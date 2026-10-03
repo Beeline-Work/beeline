@@ -1,3 +1,5 @@
+import { readWorkflowOwnership, requireWorkflowOwner, scheduleWorkflowName, transferWorkflowOwner, workflowHumanAdmin } from './workflow-ownership.js';
+import { startWorkflow } from './workflow-runs.js';
 import {
   createAgentCommand,
   reconcileConfiguredCornerReviewers,
@@ -3496,6 +3498,130 @@ export class PhoneService {
           (input as Input<'listRoomWorkflowRuns'>).roomId,
           viewerId,
         )) as Output<Name>;
+      case 'listWorkflowDefinitions': {
+        const request = input as Input<'listWorkflowDefinitions'>;
+        if (!(await this.hasRoomAccess(request.roomId, viewerId)))
+          throw new Error('room access denied');
+        const definitions = await this.database.query<{ slug: string }>(
+          `SELECT skill.slug FROM workspace_skills skill
+              JOIN rooms room ON room.workspace_id=skill.workspace_id WHERE room.id=$1 AND skill.kind='workflow' AND skill.state='active'
+              ORDER BY skill.slug`,
+          [request.roomId],
+        );
+        return {
+          workflows: await Promise.all(
+            definitions.rows.map(async (row) => ({
+              name: row.slug,
+              ownership: await readWorkflowOwnership(this.database, request.roomId, row.slug, viewerId),
+            })),
+          ),
+        } as Output<Name>;
+      }
+      case 'readWorkflowDefinition': {
+        const request = input as Input<'readWorkflowDefinition'>;
+        if (!(await this.hasRoomAccess(request.roomId, viewerId)))
+          throw new Error('room access denied');
+        const row = (
+          await this.database.query<{ markdown: string }>(
+            `SELECT version.markdown FROM workspace_skills skill
+              JOIN rooms room ON room.workspace_id=skill.workspace_id
+              JOIN workspace_skill_versions version ON version.skill_id=skill.id AND version.version=skill.current_version
+              WHERE room.id=$1 AND skill.slug=$2 AND skill.kind='workflow'`,
+            [request.roomId, request.name],
+          )
+        ).rows[0];
+        if (!row) throw new Error('workflow is unavailable');
+        return {
+          contract: JSON.parse(row.markdown),
+          ownership: await readWorkflowOwnership(this.database, request.roomId, request.name, viewerId),
+          runs: (await listRoomWorkflowRuns(this.database, request.roomId, viewerId, request.name))
+            .workflows,
+        } as Output<Name>;
+      }
+      case 'readWorkflowOwnership': {
+        const request = input as Input<'readWorkflowOwnership'>;
+        if (!(await this.hasRoomAccess(request.roomId, viewerId)))
+          throw new Error('room access denied');
+        return (await readWorkflowOwnership(
+          this.database,
+          request.roomId,
+          request.name,
+          viewerId,
+        )) as Output<Name>;
+      }
+      case 'transferWorkflowOwner': {
+        const request = input as Input<'transferWorkflowOwner'>;
+        if (!(await this.hasRoomAccess(request.roomId, viewerId)))
+          throw new Error('room access denied');
+        return (await transferWorkflowOwner(
+          this.database,
+          request.roomId,
+          request.name,
+          viewerId,
+          request.ownerId,
+        )) as Output<Name>;
+      }
+      case 'startOwnedWorkflow': {
+        const request = input as Input<'startOwnedWorkflow'>;
+        if (!(await workflowHumanAdmin(this.database, request.roomId, viewerId))) throw new Error('human Room/Workspace admin required');
+        return (await startWorkflow(
+          this.database,
+          { room_id: request.roomId, agent_id: viewerId },
+          request,
+        )) as Output<Name>;
+      }
+      case 'updateRoomSchedule': {
+        if (!this.routingTransaction)
+          return this.database.transaction((db) =>
+            new PhoneService(
+              db,
+              this.publicOrigin,
+              this.github,
+              this.sendPushTest,
+              this.live,
+              true,
+            ).execute('updateRoomSchedule', input as Input<'updateRoomSchedule'>, viewerId),
+          ) as Promise<Output<Name>>;
+        const db = this.database;
+        const request = input as Input<'updateRoomSchedule'>;
+        if (!(await workflowHumanAdmin(this.database, request.roomId, viewerId))) throw new Error('human Room/Workspace admin required');
+        if (request.message !== undefined && !request.message.trim())
+          throw new Error('schedule message is required');
+        if (request.cadence) validateScheduleCadence(request.cadence);
+        const existing = (
+          await db.query<{ message: string; workflow_slug: string | null }>(
+            `SELECT message,workflow_slug FROM agent_schedules WHERE id=$1 AND room_id=$2`,
+            [request.scheduleId, request.roomId],
+          )
+        ).rows[0];
+        if (!existing) throw new Error('schedule not found');
+        const workflowName =
+          (await scheduleWorkflowName(
+            db,
+            request.roomId,
+            request.message ?? existing.message,
+            request.workflowName,
+          )) ?? existing.workflow_slug;
+        if (workflowName) await requireWorkflowOwner(db, request.roomId, workflowName, viewerId);
+        const updated = await db.query<{ next_run_at: Date }>(
+          `UPDATE agent_schedules SET message=COALESCE($3,message),
+                  cadence=COALESCE($4::jsonb,cadence),next_run_at=COALESCE($5,next_run_at),updated_by=$6,updated_at=now(),workflow_slug=$7
+                  WHERE id=$1 AND room_id=$2 RETURNING next_run_at`,
+          [
+            request.scheduleId,
+            request.roomId,
+            request.message?.trim() ?? null,
+            request.cadence ? JSON.stringify(request.cadence) : null,
+            request.cadence ? nextScheduleOccurrence(request.cadence, new Date()) : null,
+            viewerId,
+            workflowName ?? null,
+          ],
+        );
+        return {
+          scheduleId: request.scheduleId,
+          nextRunAt: Math.floor(updated.rows[0]!.next_run_at.getTime() / 1000),
+        } as Output<Name>;
+      }
       case 'readWorkflowRun':
         return (await this.readWorkflowRun(
           input as Input<'readWorkflowRun'>,
@@ -4080,16 +4206,24 @@ export class PhoneService {
       };
     });
   }
-  private async createRoomSchedule(input: Input<'createRoomSchedule'>, viewerId: string) {
+  private async createRoomSchedule(
+    input: Input<'createRoomSchedule'>,
+    viewerId: string,
+  ): Promise<Output<'createRoomSchedule'>> {
+    if (!this.routingTransaction)
+      return this.database.transaction(db => new PhoneService(
+        db, this.publicOrigin, this.github, this.sendPushTest, this.live, true,
+      ).createRoomSchedule(input, viewerId));
+    const db = this.database;
     const target = await this.requireTopLevelRoom(input.roomId);
     if (target.workspace_id !== input.workspaceId) throw new Error('room is not in workspace');
-    await this.requireRoomWorkspaceManager(input.roomId, viewerId);
+    if (!(await workflowHumanAdmin(db, input.roomId, viewerId))) throw new Error('human Room/Workspace admin required');
     if (typeof input.message !== 'string' || !input.message.trim())
       throw new Error('schedule message is required');
     if (!input.cadence || typeof input.cadence !== 'object')
       throw new Error('schedule cadence is invalid');
     validateScheduleCadence(input.cadence);
-    const agent = await this.database.query(
+    const agent = await db.query(
       `SELECT 1 FROM identities identity
        JOIN memberships membership ON membership.identity_id=identity.id
        WHERE identity.id=$1 AND identity.kind='agent' AND membership.room_id=$2
@@ -4097,22 +4231,32 @@ export class PhoneService {
       [input.agentId, input.roomId, input.workspaceId],
     );
     if (!agent.rowCount) throw new Error('agent not found in room');
+    const workflowName = await scheduleWorkflowName(
+      db,
+      input.roomId,
+      input.message,
+      input.workflowName,
+    );
+    const ownership = workflowName
+      ? await requireWorkflowOwner(db, input.roomId, workflowName, viewerId)
+      : null;
     const id = randomUUID();
     const nextRunAt = nextScheduleOccurrence(input.cadence, new Date());
-    const inserted = await this.database.query<RoomScheduleRow>(
+    const inserted = await db.query<RoomScheduleRow>(
       `INSERT INTO agent_schedules(
-         id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at
-       ) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8)
+         id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,workflow_slug
+       ) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9)
        RETURNING id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,created_at`,
       [
         id,
         input.workspaceId,
         input.roomId,
-        input.agentId,
+        ownership?.owner?.id ?? input.agentId,
         viewerId,
         JSON.stringify(input.cadence),
         input.message.trim(),
         nextRunAt,
+        workflowName ?? null,
       ],
     );
     return roomSchedule(inserted.rows[0]!);
@@ -9016,6 +9160,12 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'deleteRoomSchedule',
   'listRoomWorkflowRuns',
   'readWorkflowRun',
+  'readWorkflowOwnership',
+  'readWorkflowDefinition',
+  'listWorkflowDefinitions',
+  'transferWorkflowOwner',
+  'startOwnedWorkflow',
+  'updateRoomSchedule',
   'cancelAgentTurn',
   'createHumanCorner',
   'requestCornerClose',
@@ -9108,6 +9258,9 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
 ]);
 
 const SPECTATOR_READ_OPERATIONS = new Set<keyof PhoneOperationMap>([
+  'readWorkflowOwnership',
+  'readWorkflowDefinition',
+  'listWorkflowDefinitions',
   'leaveWorkspace',
   'leaveRoom',
   'closeChat',

@@ -1,3 +1,4 @@
+import { WorkflowOwnershipError } from './workflow-ownership.js';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -376,7 +377,7 @@ export function createBeelineServer(options: ServerOptions): Server {
     if (isWebAppCorsPath(url.pathname) && applyWebAppCors(request, response, options)) return;
     void route(request, response, options, invitePreview, readLimits, liveHealth, helperVersionGate).catch((error) => {
       const message = error instanceof Error ? error.message : 'request failed';
-      const status =
+      const status = error instanceof WorkflowOwnershipError ? error.status :
         message.includes('required') ||
         message.includes('invalid') ||
         message.includes('too large') ||

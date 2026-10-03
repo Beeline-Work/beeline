@@ -1,3 +1,4 @@
+import { scheduleWorkflowName, requireWorkflowOwner, readWorkflowOwnership } from './workflow-ownership.js';
 import { renderAgentAvatar } from './agent-avatar.js';
 import {
   authorizeCommandOutput,
@@ -1020,6 +1021,7 @@ export class DaemonService {
       case 'updateAgentSchedule':
         return (await this.updateAgentSchedule(
           input as Input<'updateAgentSchedule'>,
+          authenticatedAgentId,
         )) as Output<Name>;
       case 'getAgentToolMandate':
         return (await this.mandate(
@@ -4634,7 +4636,14 @@ export class DaemonService {
   /** Agent-driven schedules (beeline-agent create_schedule) run through the
    *  same agent_schedules loop as manager-created schedules, with the agent as
    *  both creator and beneficiary. */
-  private async createAgentSchedule(input: Input<'createAgentSchedule'>, agentId: string) {
+  private async createAgentSchedule(
+    input: Input<'createAgentSchedule'>,
+    agentId: string,
+    transaction?: SqlDatabase,
+  ): Promise<Output<'createAgentSchedule'>> {
+    if (!transaction)
+      return this.database.transaction((db) => this.createAgentSchedule(input, agentId, db));
+    const db = transaction;
     if (typeof input.prompt !== 'string' || !input.prompt.trim()) {
       throw new Error('schedule prompt is required');
     }
@@ -4645,17 +4654,24 @@ export class DaemonService {
     ) {
       throw new Error('maxRuns must be a positive integer');
     }
-    const room = await this.database.query<{ workspace_id: string }>(
+    const room = await db.query<{ workspace_id: string }>(
       `SELECT workspace_id FROM rooms WHERE id=$1`,
       [input.roomId],
     );
     if (!room.rows[0]) throw new Error('schedule room not found');
+    const workflowName = await scheduleWorkflowName(
+      db,
+      input.roomId,
+      input.prompt,
+      input.workflowName,
+    );
+    if (workflowName) await requireWorkflowOwner(db, input.roomId, workflowName, agentId);
     const scheduleId = randomUUID();
     const nextRunAt = nextScheduleOccurrence(input.cadence, new Date());
-    await this.database.query(
+    await db.query(
       `INSERT INTO agent_schedules(
-         id,workspace_id,room_id,agent_id,creator_id,cadence,message,max_runs,next_run_at
-       ) VALUES($1,$2,$3,$4,$4,$5::jsonb,$6,$7,$8)`,
+         id,workspace_id,room_id,agent_id,creator_id,cadence,message,max_runs,next_run_at,workflow_slug
+       ) VALUES($1,$2,$3,$4,$4,$5::jsonb,$6,$7,$8,$9)`,
       [
         scheduleId,
         room.rows[0].workspace_id,
@@ -4665,6 +4681,7 @@ export class DaemonService {
         input.prompt.trim(),
         input.maxRuns ?? null,
         nextRunAt,
+        workflowName ?? null,
       ],
     );
     return { scheduleId, nextRunAt: Math.floor(nextRunAt.getTime() / 1_000) };
@@ -4804,6 +4821,7 @@ export class DaemonService {
   private async listAgentSchedules(input: Input<'listAgentSchedules'>, agentId: string) {
     const rows = await this.database.query<{
       id: string;
+      workflow_slug: string | null;
       agent_id: string;
       agent_handle: string | null;
       cadence: import('@beeline/api-contract/phone').RoomScheduleCadence;
@@ -4812,24 +4830,40 @@ export class DaemonService {
       run_count: number;
       next_run_at: Date;
     }>(
-      `SELECT schedule.id,schedule.agent_id,agent.handle agent_handle,schedule.cadence,
+      `SELECT schedule.workflow_slug,schedule.id,schedule.agent_id,agent.handle agent_handle,schedule.cadence,
          schedule.message,schedule.max_runs,schedule.run_count,schedule.next_run_at
        FROM agent_schedules schedule JOIN identities agent ON agent.id=schedule.agent_id
-       WHERE schedule.room_id=$1 AND (schedule.agent_id=$2 OR schedule.creator_id=schedule.agent_id)
+       WHERE schedule.room_id=$1 AND (schedule.workflow_slug IS NOT NULL OR schedule.agent_id=$2 OR schedule.creator_id=schedule.agent_id)
        ORDER BY schedule.created_at,schedule.id`,
       [input.roomId, agentId],
     );
     return {
-      schedules: rows.rows.map((row) => ({
-        scheduleId: row.id,
-        agentId: row.agent_id,
-        ...(row.agent_handle ? { agentHandle: row.agent_handle } : {}),
-        prompt: row.message,
-        cadence: row.cadence,
-        ...(row.max_runs !== null ? { maxRuns: row.max_runs } : {}),
-        runCount: row.run_count,
-        nextRunAt: Math.floor(row.next_run_at.getTime() / 1_000),
-      })),
+      schedules: await Promise.all(
+        rows.rows.map(async (row) => ({
+          ...(row.workflow_slug
+            ? {
+                workflowName: row.workflow_slug,
+                ...(await (async () => {
+                  const info = await readWorkflowOwnership(
+                    this.database,
+                    input.roomId,
+                    row.workflow_slug!,
+                    agentId,
+                  );
+                  return { owner: info.owner, activeRunIds: info.activeRunIds };
+                })()),
+              }
+            : {}),
+          scheduleId: row.id,
+          agentId: row.agent_id,
+          ...(row.agent_handle ? { agentHandle: row.agent_handle } : {}),
+          prompt: row.message,
+          cadence: row.cadence,
+          ...(row.max_runs !== null ? { maxRuns: row.max_runs } : {}),
+          runCount: row.run_count,
+          nextRunAt: Math.floor(row.next_run_at.getTime() / 1_000),
+        })),
+      ),
     };
   }
   private async deleteAgentSchedule(input: Input<'deleteAgentSchedule'>, agentId: string) {
@@ -4847,8 +4881,20 @@ export class DaemonService {
    * an edit cannot put words in anybody's mouth; a person's schedule is not
    * editable here.
    */
-  private async updateAgentSchedule(input: Input<'updateAgentSchedule'>) {
-    if (input.prompt === undefined && input.cadence === undefined && input.maxRuns === undefined)
+  private async updateAgentSchedule(
+    input: Input<'updateAgentSchedule'>,
+    agentId: string,
+    transaction?: SqlDatabase,
+  ): Promise<Output<'updateAgentSchedule'>> {
+    if (!transaction)
+      return this.database.transaction((db) => this.updateAgentSchedule(input, agentId, db));
+    const db = transaction;
+    if (
+      input.prompt === undefined &&
+      input.cadence === undefined &&
+      input.maxRuns === undefined &&
+      input.workflowName === undefined
+    )
       throw new Error('give a prompt, cadence, or maxRuns to change');
     if (input.prompt !== undefined && (typeof input.prompt !== 'string' || !input.prompt.trim()))
       throw new Error('schedule prompt is required');
@@ -4859,13 +4905,30 @@ export class DaemonService {
     ) {
       throw new Error('maxRuns must be a positive integer');
     }
+    const existing = (
+      await db.query<{ message: string; workflow_slug: string | null }>(
+        `SELECT message,workflow_slug FROM agent_schedules WHERE id=$1 AND room_id=$2`,
+        [input.scheduleId, input.roomId],
+      )
+    ).rows[0];
+    if (!existing) throw new Error('schedule not found');
+    if (existing.workflow_slug)
+      await requireWorkflowOwner(db, input.roomId, existing.workflow_slug, agentId);
+    const workflowName =
+      (await scheduleWorkflowName(
+        db,
+        input.roomId,
+        input.prompt ?? existing.message,
+        input.workflowName,
+      )) ?? existing.workflow_slug;
+    if (workflowName) await requireWorkflowOwner(db, input.roomId, workflowName, agentId);
     const nextRunAt =
       input.cadence === undefined ? null : nextScheduleOccurrence(input.cadence, new Date());
-    const updated = await this.database.query<{ next_run_at: Date }>(
+    const updated = await db.query<{ next_run_at: Date }>(
       `UPDATE agent_schedules SET message=COALESCE($3,message),
          cadence=COALESCE($4::jsonb,cadence),max_runs=COALESCE($5,max_runs),
-         next_run_at=COALESCE($6,next_run_at),updated_at=now()
-       WHERE id=$1 AND room_id=$2 AND creator_id=agent_id
+         next_run_at=COALESCE($6,next_run_at),updated_at=now(),workflow_slug=$7,updated_by=$8
+       WHERE id=$1 AND room_id=$2 AND (creator_id=agent_id OR workflow_slug IS NOT NULL)
        RETURNING next_run_at`,
       [
         input.scheduleId,
@@ -4874,6 +4937,8 @@ export class DaemonService {
         input.cadence === undefined ? null : JSON.stringify(input.cadence),
         input.maxRuns ?? null,
         nextRunAt,
+        workflowName ?? null,
+        agentId,
       ],
     );
     const row = updated.rows[0];

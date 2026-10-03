@@ -177,3 +177,10 @@ export function deliveredFields(contents: Readonly<Record<string, unknown>>): De
       : { field, items: value === null || value === undefined ? [] : [itemText(value)] },
   );
 }
+
+/** The starter is recorded on the start card, independent of later handoffs or transfers. */
+export function workflowStarterLine(run: import('@beeline/api-contract/phone').WorkflowRunSummaryView): string {
+  const name = run.startedBy?.name;
+  if (!name) return '';
+  return run.startKind === 'schedule' ? `Schedule (as ${name})` : run.startKind === 'human_admin' ? `${name} · human admin` : run.startKind === 'owner' ? `${name} · owner` : name;
+}

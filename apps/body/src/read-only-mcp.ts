@@ -816,6 +816,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
       type: 'object',
       required: ['prompt', 'cadence'],
       properties: {
+        workflowName: { type: 'string', description: 'Saved workflow targeted by this schedule; only its owner may schedule starts.' },
         prompt: {
           type: 'string',
           minLength: 1,
@@ -863,6 +864,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
       type: 'object',
       required: ['scheduleId'],
       properties: {
+        workflowName: { type: 'string', description: 'Saved workflow targeted by this schedule; only its owner may schedule starts.' },
         scheduleId: {
           type: 'string',
           description: 'The scheduleId from list_schedules.',
@@ -2899,6 +2901,7 @@ export async function createSchedule(
     roomId: deps.roomId,
     prompt,
     cadence,
+    ...(stringArg(args, 'workflowName') ? { workflowName: stringArg(args, 'workflowName')! } : {}),
     ...(maxRuns !== undefined ? { maxRuns } : {}),
   });
   const scheduleId = typeof created.scheduleId === 'string' ? created.scheduleId : 'unknown';
@@ -2941,7 +2944,8 @@ export async function listSchedules(
           ? `, next run ${new Date(schedule.nextRunAt * 1_000).toISOString()}`
           : '';
       return [
-        `${String(schedule.scheduleId)} (${typeof schedule.agentHandle === 'string' ? `@${schedule.agentHandle}` : `agent ${String(schedule.agentId)}`}): ${cadenceText}${runs}${nextRunAt} — ${String(schedule.prompt)}`,
+        `${String(schedule.scheduleId)} (${typeof schedule.agentHandle === 'string' ? `@${schedule.agentHandle}` : `agent ${String(schedule.agentId)}`}): ${cadenceText}${runs}${nextRunAt} — ${String(schedule.prompt)}` +
+          (schedule.workflowName ? ` · Workflow ${String(schedule.workflowName)} · Owner ${schedule.owner ? String((schedule.owner as Record<string, unknown>).name) : 'no owner, starts blocked'} · Active run IDs: ${Array.isArray(schedule.activeRunIds) ? schedule.activeRunIds.join(', ') || 'none' : 'none'}` : ''),
       ];
     })
     .join('\n');
@@ -3053,11 +3057,12 @@ export async function updateSchedule(
   ) {
     throw new Error('maxRuns must be a positive integer');
   }
-  if (prompt === undefined && parsed === undefined && maxRuns === undefined)
+  if (prompt === undefined && parsed === undefined && maxRuns === undefined && !stringArg(args, 'workflowName'))
     throw new Error('give a prompt, cadence, or maxRuns to change');
   const updated = await deps.execute('updateAgentSchedule', {
     roomId: deps.roomId,
     scheduleId,
+    ...(stringArg(args, 'workflowName') ? { workflowName: stringArg(args, 'workflowName')! } : {}),
     ...(prompt !== undefined ? { prompt } : {}),
     ...(parsed ? { cadence: parsed.cadence } : {}),
     ...(maxRuns !== undefined ? { maxRuns } : {}),

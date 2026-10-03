@@ -1593,6 +1593,42 @@ CREATE TABLE IF NOT EXISTS agent_schedules (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS creator_agent_id text REFERENCES identities(id);
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS owner_agent_id text REFERENCES identities(id);
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS ownership_initialized boolean NOT NULL DEFAULT false;
+ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS workflow_slug text;
+ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS updated_by text REFERENCES identities(id);
+CREATE TABLE IF NOT EXISTS workflow_owner_transfers (
+  id bigserial PRIMARY KEY,
+  workflow_id uuid NOT NULL REFERENCES workspace_skills(id) ON DELETE CASCADE,
+  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  actor_id text NOT NULL REFERENCES identities(id),
+  previous_owner_id text REFERENCES identities(id),
+  new_owner_id text NOT NULL REFERENCES identities(id),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+-- Older definitions have no saver column. Only an agent-authored original
+-- source records a creator; a human request does not identify the saving agent.
+UPDATE workspace_skills skill SET creator_agent_id=(
+  SELECT message.author_id FROM workspace_skill_versions version
+  JOIN messages message ON message.id=ANY(version.source_message_ids)
+  JOIN identities identity ON identity.id=message.author_id AND identity.kind='agent'
+  WHERE version.skill_id=skill.id AND version.version=1
+  ORDER BY message.created_at,message.id LIMIT 1
+) WHERE skill.kind='workflow' AND NOT skill.ownership_initialized AND skill.creator_agent_id IS NULL;
+UPDATE agent_schedules schedule SET workflow_slug=skill.slug
+FROM workspace_skills skill
+WHERE skill.workspace_id=schedule.workspace_id AND skill.kind='workflow'
+  AND schedule.workflow_slug IS NULL
+  AND (schedule.message ~ ('(?i)(start_workflow|start workflow|workflow)[[:space:]]+["\`]?' || skill.slug || '([[:space:][:punct:]]|$)')
+    OR schedule.message ~ ('(?i)\\m' || skill.slug || '["\`]?[[:space:]]+workflow\\M'));
+UPDATE workspace_skills skill SET owner_agent_id=COALESCE(skill.creator_agent_id,(
+  SELECT latest.creator_id FROM (
+    SELECT schedule.creator_id FROM agent_schedules schedule
+    WHERE schedule.workspace_id=skill.workspace_id AND schedule.workflow_slug=skill.slug
+    ORDER BY schedule.created_at DESC,schedule.id DESC LIMIT 1
+  ) latest JOIN identities identity ON identity.id=latest.creator_id AND identity.kind='agent'
+)),ownership_initialized=true WHERE skill.kind='workflow' AND NOT skill.ownership_initialized;
 CREATE INDEX IF NOT EXISTS agent_schedules_due_idx ON agent_schedules(next_run_at, id);
 CREATE INDEX IF NOT EXISTS agent_schedules_room_idx ON agent_schedules(room_id, created_at, id);
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS max_runs integer;

@@ -1,3 +1,4 @@
+import { WorkflowOwnership } from '@/components/buzz/WorkflowOwnership';
 import React, { useCallback, useMemo, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams, type Href } from 'expo-router';
@@ -7,7 +8,7 @@ import type { WorkflowRunDetailView } from '@beeline/api-contract/phone';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { cornerHref } from '@/buzz/corner-navigation';
 import { workflowDisplayName, workflowRunLine } from '@/buzz/workflow-graph';
-import { formatRunDuration, runDayLabel, workflowRunHeadline } from '@/buzz/workflow-run-copy';
+import { formatRunDuration, runDayLabel, workflowRunHeadline, workflowStarterLine } from '@/buzz/workflow-run-copy';
 import { HullLivePulse } from '@/components/buzz/MonoHull';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
@@ -76,7 +77,7 @@ export default function WorkflowRun() {
   const run = detail?.run;
   const live = run?.status === 'live';
   const last = detail?.history[detail.history.length - 1];
-  const starter = detail?.history[0]?.actor?.name;
+  const starter = detail ? workflowStarterLine(detail.run) || detail.history[0]?.actor?.name : undefined;
   const ran = line.filter((step) => step.visits.length > 0).length;
   const skipped = line.filter((step) => step.status === 'skipped').length;
   const done = line.filter((step) => step.status === 'done').length;
@@ -111,6 +112,12 @@ export default function WorkflowRun() {
           contentContainerStyle={{ paddingBottom: 24 + insets.bottom }}
           testID="workflow-run-page"
         >
+          {detail.ownership && roomId ? <>
+            <WorkflowOwnership roomId={roomId} name={run.workflowSlug} ownership={detail.ownership} onChange={() => void reload()} />
+            <Pressable accessibilityRole="button" style={styles.allRuns} onPress={() => router.push({ pathname: '/beeline/workflow', params: { roomId, name: run.workflowSlug } })}>
+              <Text style={styles.allRunsText}>All runs</Text>
+            </Pressable>
+          </> : null}
           <View style={styles.plate} testID="workflow-run-summary">
             <View style={styles.status}>
               {live ? (
@@ -167,6 +174,8 @@ export default function WorkflowRun() {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  allRuns: { minHeight: 44, justifyContent: 'center', paddingHorizontal: theme.buzz.space.md },
+  allRunsText: { ...theme.buzz.type.meta, color: theme.buzz.accent },
   screen: { flex: 1, backgroundColor: theme.buzz.bgBase },
   loading: { padding: 28, alignItems: 'center', justifyContent: 'center' },
   plate: { paddingTop: theme.buzz.layout.screenTop, paddingHorizontal: theme.buzz.space.md },

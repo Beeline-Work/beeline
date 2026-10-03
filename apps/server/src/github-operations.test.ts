@@ -272,7 +272,7 @@ describe('GitHub phone operations', () => {
     )).rows).toEqual([{ feature_branch: null }, { feature_branch: null }]);
     expect(app.openPullRequestsForBranch).toHaveBeenCalledTimes(1);
   });
-  it('authors corner check notes as the corner opener, not a copied parent owner', async () => {
+  it('Reproduction R10-1: records pre-PR checks as the corner opener', async () => {
     const workspace = '11111111-1111-4111-8111-111111111111';
     const room = '22222222-2222-4222-8222-222222222222';
     const corner = '33333333-3333-4333-8333-333333333333';
@@ -323,8 +323,7 @@ describe('GitHub phone operations', () => {
       await tx.query(
         `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lane,feature_branch,lifecycle)
          VALUES($1,$2,'Convo chains','code',$3,$4::jsonb)`,
-        [corner, opener, branch, JSON.stringify({ checks: 'unknown', pr: { number: 4, headSha,
-          url: 'https://github.com/owner/widgets/pull/4', mergeability: 'clean' } })],
+        [corner, opener, branch, JSON.stringify({ branch })],
       );
     });
     const app = {
@@ -347,11 +346,20 @@ describe('GitHub phone operations', () => {
         check_suite: { head_branch: branch, head_sha: headSha },
       },
     });
+    const checks = (await database.query<{ lifecycle: { checks?: string } }>(
+      `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corner],
+    )).rows[0]?.lifecycle.checks;
+    console.log(`Reproduction R10-1: checks=${checks}`);
+    expect(checks).toBe('passing');
     const authors = (await database.query<{ author_id: string }>(
       `SELECT DISTINCT author_id FROM messages WHERE room_id=$1 AND card_type='github-corner-note'`,
       [corner],
     )).rows.map((row) => row.author_id);
     expect(authors).toEqual([opener]);
+    expect((await database.query<{ kind: string }>(
+      `SELECT system_event->>'kind' kind FROM messages WHERE room_id=$1 AND card_type='github-corner-note'`,
+      [corner],
+    )).rows).toEqual([{ kind: 'check-passed' }]);
   });
   it('credits the first agent to speak in an ownerless corner on merge, not a copied parent owner', async () => {
     const workspace = '11111111-1111-4111-8111-111111111111';

@@ -28,7 +28,7 @@ describe('resource observers in the desktop web renderer', () => {
         function App() {
           const [id, select] = React.useState('original'); globalThis.__select = select;
           const workflow = useCornerWorkflowRun('corner');
-          return <><CornerObjectiveLine objective="Observer proof" workflow={workflow} onOpenWorkflow={() => {}} />
+          return <><CornerObjectiveLine objective="Observer proof" workflow={workflow.workflow} workflowError={workflow.error} onRetryWorkflow={workflow.retry} onOpenWorkflow={() => {}} />
             <SignIn /><Installer /><DesktopRoomInspector room={room} client={client} selectedCornerId={id} onSelectCorner={() => {}} onOpenInMain={() => {}} onNewCorner={() => {}} onClose={() => {}} /></>;
         }
         createRoot(document.getElementById('root')).render(<App />);
@@ -56,7 +56,7 @@ describe('resource observers in the desktop web renderer', () => {
           globalThis.__recover = true;
           globalThis.__roomListeners.broken?.({ monolithLive: { type: 'invalidate', roomId: 'broken', reason: 'message' } });
           document.querySelector('[data-testid="connect-pair-retry"]')?.click(); }, 8500);
-        setTimeout(() => { output.retryReads = globalThis.__installReads; output.repaired = globalThis.__repaired;
+        setTimeout(() => { output.retryReads = globalThis.__installReads; output.repaired = globalThis.__repaired; output.returnedToInstaller = globalThis.__backs;
           output.recoveredTranscript = !!document.querySelector('[data-testid="desktop-work-corner-transcript"]');
           output.workflowReads = globalThis.__workflowReads;
           output.workflowText = document.querySelector('[data-testid="corner-objective-line-workflow-copy"]')?.textContent;
@@ -67,7 +67,7 @@ describe('resource observers in the desktop web renderer', () => {
         ...shims,
         '@expo/vector-icons': `export const Ionicons = () => null; export const FontAwesome = () => null;`,
         'expo-web-browser': `export const openBrowserAsync = async () => undefined;`,
-        'expo-router': `export const useLocalSearchParams = () => ({ workspaceId: 'workspace', connectorId: 'install', connectorName: 'Squire', pairedConnectorId: 'install', offerId: 'offer', roomId: 'parent', url: 'https://example.test', method: 'oauth' }); export const router = { back() {}, replace() {}, push() {} };`,
+        'expo-router': `export const useLocalSearchParams = () => ({ workspaceId: 'workspace', connectorId: 'install', connectorName: 'Squire', pairedConnectorId: 'install', offerId: 'offer', roomId: 'parent', url: 'https://example.test', method: 'oauth' }); export const router = { back() { globalThis.__backs = (globalThis.__backs ?? 0) + 1; }, replace() {}, push() {} };`,
         '@/sync/transport/live-connection': `globalThis.__roomListeners = {}; export const sharedLiveConnection = () => ({ register: async (filters, listener) => { const id = filters[0]['#h'][0]; globalThis.__roomListeners[id] = listener; return () => { delete globalThis.__roomListeners[id]; }; } });`,
         '@/buzz/workbench-source': `export const getWorkbenchSource = () => ({ readInstallState: ({ connectorId }) => {
           globalThis.__installReads = (globalThis.__installReads ?? 0) + 1;
@@ -97,11 +97,11 @@ describe('resource observers in the desktop web renderer', () => {
       expect(result.status, result.stderr).toBe(0);
       console.log('Reproductions R9a–R9c desktop web:', result.result);
       const proof = JSON.parse(result.result);
-      expect(proof).toMatchObject({ pendingReads: 1, initialTranscript: true, staleTranscript: false, workflowReads: 1, recoveredTranscript: true, terminalReads: 8, stoppedReads: 8, retryReads: 10, sameTranscript: true, loaderDuringRefresh: false, sentBeforeRead: false, sentAfterRead: true, repaired: true, messageVisible: true, stoppedBeforeRead: false, stoppedAfterRead: true });
+      expect(proof).toMatchObject({ pendingReads: 1, initialTranscript: true, staleTranscript: false, workflowReads: 1, recoveredTranscript: true, terminalReads: 8, stoppedReads: 8, retryReads: 9, returnedToInstaller: 1, sameTranscript: true, loaderDuringRefresh: false, sentBeforeRead: false, sentAfterRead: true, repaired: true, messageVisible: true, stoppedBeforeRead: false, stoppedAfterRead: true });
       expect(proof.signInError).toContain('Retry');
       expect(proof.installerError).toContain('Lost track');
       expect(proof.inspectorError).toContain('Selected corner unavailable');
-      expect(proof.workflowText).toBeTruthy();
+      expect(proof.workflowText).toBe('Implement');
     } finally { await rm(directory, { recursive: true, force: true }); }
   }, 90000);
 
@@ -152,7 +152,7 @@ describe('resource observers in the desktop web renderer', () => {
       expect(JSON.parse(result.result).ownerText).toContain('Second agent');
     } finally { await rm(directory, { recursive: true, force: true }); }
   }, 90000);
-  it('Reproduction R9-OBS-06: workflow alerts stay quiet through a failure streak', async () => {
+  it('Reproductions R9-OBS-06 and R12k: one inline workflow notice per failure streak, with Retry', async () => {
     const mobile = process.cwd();
     const directory = await mkdtemp(path.join(mobile, 'sources/test/observer-proof-'));
     try {
@@ -161,35 +161,38 @@ describe('resource observers in the desktop web renderer', () => {
         import { CornerObjectiveLine } from '@/components/buzz/CornerObjectiveLine';
         import { useCornerWorkflowRun } from '@/buzz/use-corner-workflow-run';
         function App() {
-          const [error, setError] = React.useState(null);
-          const run = useCornerWorkflowRun('corner', error => {
-            globalThis.__alerts = (globalThis.__alerts ?? 0) + 1; setError(error);
-          });
-          return <><CornerObjectiveLine objective="Workflow proof" workflow={run} onOpenWorkflow={() => {}} />
-            {error && <div role="alert">Workflow unavailable: {error}</div>}</>;
+          const run = useCornerWorkflowRun('corner');
+          return <CornerObjectiveLine objective="Workflow proof" workflow={run.workflow} workflowError={run.error} onRetryWorkflow={run.retry} onOpenWorkflow={() => {}} />;
         }
+        let visible = false, notices = 0;
+        const errorLine = () => document.querySelector('[data-testid="corner-objective-line-workflow-error"]');
+        new MutationObserver(() => { const present = !!errorLine(); if (present && !visible) notices++; visible = present; })
+          .observe(document.getElementById('root'), { childList: true, subtree: true });
         createRoot(document.getElementById('root')).render(<App />);
         const push = () => globalThis.__listener({ monolithLive: { type: 'invalidate', roomId: 'corner', reason: 'message' } });
         setTimeout(() => globalThis.__listener({ monolithLive: { type: 'subscribed', roomId: 'corner' } }), 150);
         for (let i = 1; i <= 5; i++) setTimeout(push, i * 200);
-        setTimeout(() => { globalThis.__streakAlerts = globalThis.__alerts; globalThis.__recover = true; push(); }, 1200);
+        setTimeout(() => { globalThis.__streakNotices = notices; globalThis.__streakText = errorLine()?.textContent; globalThis.__recover = true; push(); }, 1200);
+        setTimeout(() => { globalThis.__clearedAfterSuccess = !errorLine(); }, 1400);
         setTimeout(() => { globalThis.__recover = false; push(); }, 1500);
+        setTimeout(() => { globalThis.__secondError = errorLine()?.textContent; globalThis.__noticesAfterSuccess = notices;
+          globalThis.__recover = true; document.querySelector('[data-testid="corner-objective-line-workflow-retry"]')?.click(); }, 1800);
         setTimeout(() => { document.getElementById('result').textContent = JSON.stringify({
-          streakAlerts: globalThis.__streakAlerts, alertsAfterSuccess: globalThis.__alerts,
-          reads: globalThis.__reads, visibleError: document.querySelector('[role="alert"]')?.textContent }); }, 1800);`);
-      const result = await runBrowserProof({ entry, mobile, width: 1000, budgetMs: 2200, shims: {
+          streakNotices: globalThis.__streakNotices, noticesAfterSuccess: globalThis.__noticesAfterSuccess,
+          streakText: globalThis.__streakText, visibleError: globalThis.__secondError,
+          clearedAfterSuccess: globalThis.__clearedAfterSuccess, retryRecovered: !errorLine(), reads: globalThis.__reads }); }, 2100);`);
+      const result = await runBrowserProof({ entry, mobile, width: 1000, budgetMs: 2500, shims: {
         ...webProofShims(mobile),
         '@/sync/transport/live-connection': `export const sharedLiveConnection = () => ({ register: async (_, listener) => { globalThis.__listener = listener; return () => {}; } });`,
         '@/sync/transport/monolith-operation': `export const monolithPhoneOperation = async () => {
           globalThis.__reads = (globalThis.__reads ?? 0) + 1;
           await new Promise(resolve => setTimeout(resolve, 80));
-          if (!globalThis.__recover) throw new Error('offline'); return { workflows: [] };
+          if (!globalThis.__recover) throw new Error('offline ' + globalThis.__reads); return { workflows: [] };
         };`,
       } });
       expect(result.status, result.stderr).toBe(0);
-      console.log('Reproduction R9-OBS-06 desktop web:', result.result);
-      expect(JSON.parse(result.result)).toMatchObject({ streakAlerts: 1, alertsAfterSuccess: 2, reads: 8 });
-      expect(JSON.parse(result.result).visibleError).toContain('offline');
+      console.log('Reproductions R9-OBS-06 and R12k desktop web:', result.result);
+      expect(JSON.parse(result.result)).toMatchObject({ streakNotices: 1, noticesAfterSuccess: 2, reads: 9, clearedAfterSuccess: true, retryRecovered: true, streakText: 'offline 1Retry', visibleError: 'offline 8Retry' });
     } finally { await rm(directory, { recursive: true, force: true }); }
   }, 90000);
 

@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { randomBytes } from 'node:crypto';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QueryResultRow } from 'pg';
 import { migrate, type QueryResult, type SqlDatabase } from './database.js';
 import { PgliteDatabase } from './test-support.js';
@@ -15,6 +16,11 @@ import {
   startWorkflow,
   workflowRunLockKey,
 } from './workflow-runs.js';
+
+vi.mock('node:crypto', async (importOriginal) => {
+  const crypto = await importOriginal<typeof import('node:crypto')>();
+  return { ...crypto, randomBytes: vi.fn(crypto.randomBytes) };
+});
 
 /**
  * Records every SQL statement issued through this wrapper, in order,
@@ -140,6 +146,9 @@ async function reportPresence(agentId: string, status: 'online' | 'offline'): Pr
 }
 
 beforeEach(async () => {
+  vi.mocked(randomBytes).mockReset();
+  const crypto = await vi.importActual<typeof import('node:crypto')>('node:crypto');
+  vi.mocked(randomBytes).mockImplementation(crypto.randomBytes);
   database = new PgliteDatabase();
   await migrate(database);
   await database.query(
@@ -1122,6 +1131,7 @@ const LIST_CONTRACT = {
 };
 
 async function listRunCard(runId: string): Promise<{
+  seq?: number;
   toState: string;
   roleBindings: Record<string, string>;
   roleAgents?: Record<string, string[]>;
@@ -1129,7 +1139,7 @@ async function listRunCard(runId: string): Promise<{
 }> {
   const row = await database.query<{ card: any }>(
     `SELECT card FROM messages WHERE room_id=$1 AND card_type='workflow-handoff' AND card->>'runId'=$2
-     ORDER BY created_at DESC,id DESC LIMIT 1`,
+     ORDER BY (card->>'seq')::int DESC NULLS LAST,created_at DESC,id DESC LIMIT 1`,
     [ROOM, runId],
   );
   return row.rows[0]!.card;
@@ -1146,6 +1156,152 @@ async function startedListRun(
     roleBindings: { worker, closer },
   });
 }
+
+describe('per-run sequence (S05-1)', () => {
+  it('continues from a same-transaction handoff and reassignment with descending IDs', async () => {
+    const starter = await commandFor(IMPLEMENTER);
+    const workerA = await commandFor(WORKER_A);
+    const workerB = await commandFor(WORKER_B);
+    const closer = await commandFor(APPROVER);
+    await saveWorkflow(database, starter, { contract: LIST_CONTRACT });
+    await database.transaction(async (db) => {
+      vi.mocked(randomBytes).mockImplementationOnce(() => Buffer.alloc(32, 0xff));
+      const { runId } = await startWorkflow(db, starter, {
+        name: 'list-flow',
+        roleBindings: { worker: [WORKER_A, WORKER_B], closer: APPROVER },
+      });
+      vi.mocked(randomBytes).mockImplementationOnce(() => Buffer.alloc(32, 0xee));
+      await handoff(db, workerA, { runId, outcome: 'retry', contents: { note: 'retry' } });
+      vi.mocked(randomBytes).mockImplementationOnce(() => Buffer.alloc(32, 0x11));
+      await assignWorkflowRole(db, starter, { runId, role: 'worker', targetAgentId: WORKER_B });
+      const cards = (
+        await db.query<{ id: string; seq: number; at: Date }>(
+          `SELECT id,(card->>'seq')::int seq,created_at at FROM messages
+         WHERE card->>'runId'=$1 AND card_type='workflow-handoff'
+         ORDER BY (card->>'seq')::int NULLS LAST,id DESC`,
+          [runId],
+        )
+      ).rows;
+      expect(cards.map((card) => card.id)).toEqual([
+        'ff'.repeat(32),
+        'ee'.repeat(32),
+        '11'.repeat(32),
+      ]);
+      expect(new Set(cards.map((card) => card.at.getTime())).size).toBe(1);
+      // This fails with timestamp/ID ordering: it still binds work to WorkerA.
+      vi.mocked(randomBytes).mockImplementationOnce(() => Buffer.alloc(32, 0));
+      expect(
+        await handoff(db, workerB, { runId, outcome: 'done', contents: { note: 'finished' } }),
+      ).toMatchObject({ state: 'close' });
+      expect(cards.map((card) => card.seq)).toEqual([0, 1, 2]);
+      expect(
+        (
+          await db.query(
+            `SELECT 1 FROM agent_commands WHERE agent_id=$1 AND source_message_id=$2`,
+            [WORKER_B, '11'.repeat(32)],
+          )
+        ).rowCount,
+      ).toBe(1);
+      expect(
+        (
+          await db.query(
+            `SELECT 1 FROM agent_commands WHERE agent_id=$1 AND source_message_id=$2`,
+            [APPROVER, '00'.repeat(32)],
+          )
+        ).rowCount,
+      ).toBe(1);
+      expect(
+        await handoff(db, closer, { runId, outcome: 'done', contents: { note: 'closed' } }),
+      ).toMatchObject({ state: 'land', status: 'done' });
+      console.info(
+        'Reproduction S05-1: same-transaction descending IDs → WorkerB continued work → close woke Approver → land',
+      );
+    });
+  });
+
+  it('fails over the newest dispatch and ignores the superseded higher-ID dispatch', async () => {
+    const starter = await commandFor(IMPLEMENTER);
+    const worker = await commandFor(WORKER_A);
+    await saveWorkflow(database, starter, { contract: LIST_CONTRACT });
+    await database.transaction(async (db) => {
+      vi.mocked(randomBytes).mockImplementationOnce(() => Buffer.alloc(32, 0xff));
+      const { runId } = await startWorkflow(db, starter, {
+        name: 'list-flow',
+        roleBindings: { worker: [WORKER_A, WORKER_B], closer: APPROVER },
+      });
+      vi.mocked(randomBytes).mockImplementationOnce(() => Buffer.alloc(32, 0x11));
+      await handoff(db, worker, { runId, outcome: 'retry', contents: { note: 'retry' } });
+      vi.mocked(randomBytes).mockImplementationOnce(() => Buffer.alloc(32, 0));
+      await reassignFailedWorkflowRole(db, {
+        roomId: ROOM,
+        requestId: '11'.repeat(32),
+        agentId: WORKER_A,
+      });
+      expect(
+        (
+          await db.query<{ card: { seq: number; roleBindings: Record<string, string> } }>(
+            `SELECT card FROM messages WHERE id=$1`,
+            ['00'.repeat(32)],
+          )
+        ).rows[0]?.card,
+      ).toMatchObject({ seq: 2, roleBindings: { worker: WORKER_B } });
+      expect(
+        (
+          await db.query(
+            `SELECT 1 FROM agent_commands WHERE agent_id=$1 AND source_message_id=$2`,
+            [WORKER_B, '00'.repeat(32)],
+          )
+        ).rowCount,
+      ).toBe(1);
+      await reassignFailedWorkflowRole(db, { roomId: ROOM, requestId: runId, agentId: WORKER_A });
+      expect(
+        (
+          await db.query(
+            `SELECT 1 FROM messages WHERE card->>'runId'=$1 AND card->>'reassigned'='true'`,
+            [runId],
+          )
+        ).rowCount,
+      ).toBe(1);
+    });
+  });
+
+  it('sequences a legacy run from one and continues above its unsequenced card', async () => {
+    const { runId } = await startedListRun();
+    await database.query(`UPDATE messages SET card=card-'seq' WHERE id=$1`, [runId]);
+    await handoff(database, await commandFor(WORKER_A), {
+      runId,
+      outcome: 'retry',
+      contents: { note: 'legacy retry' },
+    });
+    const latest = (
+      await database.query<{ id: string; card: { seq: number } }>(
+        `SELECT id,card FROM messages WHERE card->>'runId'=$1 AND id<>$1`,
+        [runId],
+      )
+    ).rows[0]!;
+    expect(latest.card.seq).toBe(1);
+    // Even a legacy timestamp ahead of the sequenced card must not displace it.
+    await database.query(`UPDATE messages SET created_at=now()+interval '1 day' WHERE id=$1`, [
+      runId,
+    ]);
+    await database.transaction((db) =>
+      reassignFailedWorkflowRole(db, {
+        roomId: ROOM,
+        requestId: latest.id,
+        agentId: WORKER_A,
+      }),
+    );
+    expect(await listRunCard(runId)).toMatchObject({ seq: 2, roleBindings: { worker: WORKER_B } });
+    expect(
+      await handoff(database, await commandFor(WORKER_B), {
+        runId,
+        outcome: 'done',
+        contents: { note: 'finished' },
+      }),
+    ).toMatchObject({ state: 'close' });
+    expect(await listRunCard(runId)).toMatchObject({ seq: 3 });
+  });
+});
 
 describe('list roles', () => {
   it('gives a list role to the first agent on the list and records the list on the start card', async () => {

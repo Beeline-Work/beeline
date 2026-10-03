@@ -1,4 +1,5 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { randomBytes } from 'node:crypto';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { createAgentCommand } from './agent-command.js';
@@ -8,6 +9,11 @@ import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
+
+vi.mock('node:crypto', async (importOriginal) => {
+  const crypto = await importOriginal<typeof import('node:crypto')>();
+  return { ...crypto, randomBytes: vi.fn(crypto.randomBytes) };
+});
 
 const ROOM = '20000000-0000-4000-8000-000000000001';
 const CORNER = '20000000-0000-4000-8000-000000000002';
@@ -58,6 +64,9 @@ beforeAll(async () => {
   await seed.close();
 });
 beforeEach(async () => {
+  vi.mocked(randomBytes).mockReset();
+  const crypto = await vi.importActual<typeof import('node:crypto')>('node:crypto');
+  vi.mocked(randomBytes).mockImplementation(crypto.randomBytes);
   db = PgliteDatabase.fromSnapshot(snapshot);
   daemon = new DaemonService(db, new LiveHub());
   phone = new PhoneService(db, 'http://test');
@@ -113,6 +122,38 @@ const schedule = (actor = OWNER) =>
   );
 
 describe('workflow ownership', () => {
+  it('S05-1 excludes a same-transaction terminal card whose ID sorts below the start', async () => {
+    await save();
+    const worker = await command(OTHER);
+    await db.transaction(async (tx) => {
+      vi.mocked(randomBytes).mockImplementationOnce(() => Buffer.alloc(32, 0xff));
+      const { runId } = await startWorkflow(
+        tx,
+        { room_id: ROOM, agent_id: OWNER },
+        {
+          name: 'daily',
+          roleBindings: { scanner: OTHER },
+        },
+      );
+      vi.mocked(randomBytes).mockImplementationOnce(() => Buffer.alloc(32, 0));
+      await handoff(tx, worker, { runId, outcome: 'done', contents: {} });
+      expect(
+        (
+          await tx.query<{ count: string }>(
+            `SELECT count(DISTINCT created_at)::text count FROM messages WHERE card->>'runId'=$1`,
+            [runId],
+          )
+        ).rows[0]!.count,
+      ).toBe('1');
+      expect((await readWorkflowOwnership(tx, ROOM, 'daily', OTHER)).activeRunIds).toEqual([]);
+      // Sequenced cards also outrank legacy cards with a later timestamp.
+      await tx.query(
+        `UPDATE messages SET card=card-'seq',created_at=now()+interval '1 day' WHERE id=$1`,
+        [runId],
+      );
+      expect((await readWorkflowOwnership(tx, ROOM, 'daily', OTHER)).activeRunIds).toEqual([]);
+    });
+  });
   it('shows parent Room active run IDs in corner start errors, reads and schedules', async () => {
     await save();
     await surface(CORNER, ROOM);

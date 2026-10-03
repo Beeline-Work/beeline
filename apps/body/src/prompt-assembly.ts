@@ -106,21 +106,26 @@ export interface SectionReport {
 // the same words and for tests.
 // ---------------------------------------------------------------------------
 
-export const CORNER_AUTHOR_CONTRACT = `The current brief's spec is the scope and its checklist says what done means. Its approval quote is the human's own words and wins any conflict with the spec. The short objective is navigation-only text and cannot add, remove, or narrow a requirement.
-Complete every checklist item in the current spec and use the brief's file manifest. Record your stages with record_validation_stage for this revision and head: intent, base, tests, docs, lint_types, publication, ci, final_authorization; the configured reviewer records review. Do not call a missing stage passed.
-When a human correction changes the assignment, read the latest revision and use revise_corner_brief with the complete updated brief and a change description before doing dependent work. A chat reply does not revise the assignment.
+export const VALIDATION_STAGE_OWNERSHIP = `Validation stages (merge effect: none for every stage):
+Stage | Recorder | Server checks
+--- | --- | ---
+intent, base, tests, docs, lint_types, publication, final_authorization | implementer | current revision/head
+review | configured reviewer records the review stage | current revision/head and reviewer identity
+ci | implementer | current revision/head; passed requires passing checks
+The server merge gate is the authority: pr_checks_status reports mergeAllowed true for the current head; the server then merges that head. final_authorization grants nothing; do not wait for mergeAllowed.`;
+
+export const CORNER_AUTHOR_CONTRACT = `The current brief's spec and checklist define scope and done. The human approval quote wins any conflict. The short objective is navigation-only, never scope.
+Complete the spec checklist; use its file manifest. Use record_validation_stage for this revision and head. Do not call a missing stage passed.
+${VALIDATION_STAGE_OWNERSHIP}
+For a human correction, read the latest revision and use revise_corner_brief with the complete updated brief and change description before dependent work. Chat does not revise the assignment.
 Before any code, write its end-user story in one sentence: "a person who does X sees Y".
 Follow the beeline-triage skill's bugfix execution contract when the spec or its approval quote reports a defect.
-Attempt to reproduce it as triage isolated it, using every tool the host offers: emulator, Playwright, browser, test runner. Record what was tried and what was observed. If a reproduction is obtained, record it under Reproduction <id>, reusing triage's identifier when it recorded one. If reproduction fails, warn and continue; never stop and never condition the fix on reproduction.
-Narrow the fix to the current spec and its approval quote. When a reproduction exists, change only what removes it while meeting the checklist.
-Before opening the pull request, produce Y against the built change: run the app or affected service from your branch and perform X.
-If no interactive surface is reachable, run the narrowest test or script that exercises the exact user path and prints the observable Y.
-A unit test of an inner function, a log line, or reading the code is not a demonstration.
-The pull request body MUST contain two sections with exactly these headings: ## Reproduced and ## Demonstrated.
-Under ## Reproduced, name Reproduction <id> and give the steps or command and what was observed; write "not obtained" when reproduction failed, or "not a defect report" for feature work.
-Under ## Demonstrated, cite the same identifier and show that reproduction now passing when one exists; when none was obtained, state that plainly and show the regression instead.
-A pull request without both sections is not deliverable and the Room's reviewer will fail it.
-Change only what the current spec and its approval quote authorize. No unrequested features, flags, compatibility shims, or refactors.`;
+Reproduce as triage isolated it with available emulator, Playwright, browser and test runner. Record attempts and observations. If a reproduction is obtained, record it under Reproduction <id>, reusing triage's identifier when it recorded one. If reproduction fails, warn and continue; never stop and never condition the fix on reproduction.
+Fix only the spec and approval quote. With a reproduction, change only what removes it and meets the checklist.
+Only when the brief calls for repository changes, follow the PR procedure below. Otherwise do not commit, push or open a PR; deliver with post_artifact.
+Before the PR, demonstrate Y: run the built app or affected service and perform X. If no interactive surface is reachable, run the narrowest test or script exercising the exact user path and printing Y. An inner-function unit test, log line or code read is not a demonstration.
+The PR body MUST have ## Reproduced and ## Demonstrated. Cite Reproduction <id> in both, with steps, the wrong result and the now-passing result. In ## Demonstrated, when none was obtained, state that plainly ("not obtained") and show the regression; for feature work say "not a defect report".
+No unrequested features, flags, compatibility shims or refactors.`;
 
 export const CORNER_REVIEWER_SESSION_INSTRUCTION =
   "You are this Room's configured reviewer. The active turn prompt names the latest stable green PR head. Review and approve only that exact head; if no stable green head is named, end the turn without a verdict. Never merge yourself.";
@@ -129,7 +134,7 @@ export const CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION =
   'There is no stable green PR head for this active reviewer turn. Do not review or call approve_merge. End this turn without a verdict; the next green transition will wake you.';
 
 export const CORNER_DELIVERY_NUDGE =
-  'Before ending this turn, inspect the repository state and finish delivering the work unless a human hold stands: commit and push the intended changes and open the pull request if one does not exist. Decide yourself whether any remaining dirty work belongs to the objective; do not discard it merely to make the worktree clean. The pull request body must carry ## Reproduced and ## Demonstrated; if they are missing, add them before ending the turn.';
+  'Only when the brief calls for repository changes, inspect the repository state and finish delivering the work unless a human hold stands: commit and push the intended changes and open the pull request if one does not exist. Decide yourself whether any remaining dirty work belongs to the brief; do not discard it merely to make the worktree clean. The pull request body must carry ## Reproduced and ## Demonstrated; if they are missing, add them before ending the turn. Otherwise do not commit, push or open a PR; deliver with post_artifact.';
 
 export const CORNER_YOLO_MERGE_NUDGE =
   'Yolo is on. Call pr_checks_status now. If checks="failed", fix the failure and push. If checks="unknown", reply in this corner with the tool reason and stop instead of retrying. Otherwise stop: the server merges this pull request itself once mergeAllowed=true. Never merge it yourself.';
@@ -440,7 +445,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
         `You are in an isolated git worktree on ${worktree?.featureBranch ?? 'the feature branch'}, targeting ${worktree?.targetBranch ?? 'the target branch'}.`,
         surface !== 'code-corner'
           ? ''
-          : `Commit and push only ${worktree?.featureBranch}; never force-push or write to ${worktree?.targetBranch}. Before pushing, rebase on origin/${worktree?.featureBranch}; resolve conflicts autonomously, realigning to that remote branch and redoing the work if needed, then rerun affected tests. Open the pull request with gh.`,
+          : `Only when the brief calls for repository changes: commit and push only ${worktree?.featureBranch}; never force-push or write to ${worktree?.targetBranch}. Before pushing, rebase on origin/${worktree?.featureBranch}; resolve conflicts autonomously, realigning to that remote branch and redoing the work if needed, then rerun affected tests. Open the pull request with gh.`,
       ]
         .filter(Boolean)
         .join('\n'),

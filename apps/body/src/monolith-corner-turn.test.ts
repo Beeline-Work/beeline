@@ -275,7 +275,14 @@ describe('corner merge instructions', () => {
     await scheduler.dispose();
   });
 
-  it('refreshes a non-opener reviewer to the latest stable head inside the live session', async () => {
+  it.each([
+    ['approve_merge', 'completed'],
+    ['record_validation_stage', 'completed'],
+    ['approve_merge', 'in_progress'],
+    ['approve_merge', 'failed'],
+    ['unrelated_tool', 'completed'],
+  ])('R8e refreshes reviewer %s (%s) without duplicating a completed verdict', async (tool, status) => {
+    const stableRuns = status === 'completed' && tool !== 'unrelated_tool' ? 1 : 2;
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-reviewer-'));
     roots.push(root);
     await execFileAsync('git', ['init', root]);
@@ -480,7 +487,7 @@ describe('corner merge instructions', () => {
         stopReason: 'end_turn',
         updates: [],
         agentText: `review pass ${promptRun}`,
-        toolCalls: [],
+        toolCalls: [{ id: 'verdict', title: `beeline.${tool}`, status }],
       };
     });
     const stableTrigger = `GitHub passed a check on ${latestHead}`;
@@ -495,15 +502,12 @@ describe('corner merge instructions', () => {
         ): Promise<void>;
       }
     ).prompt('stable-review-turn', stableTrigger, [], undefined, [stableTrigger]);
-    expect(sessionPrompt).toHaveBeenCalledTimes(2);
+    expect(sessionPrompt).toHaveBeenCalledTimes(stableRuns);
     expect(sessionPrompt.mock.calls[0]?.[1]).toContain(
       `Checks are green on PR #7 at ${latestHead}`,
     );
-    expect(sessionPrompt.mock.calls[1]?.[1]).toContain(
-      `Checks are green on PR #7 at ${latestHead}`,
-    );
     expect(api.execute.mock.calls.filter(([name]) => name === 'postRoomMessage')[0]?.[1]).toEqual(
-      expect.objectContaining({ text: 'review pass 2' }),
+      expect.objectContaining({ text: `review pass ${stableRuns}` }),
     );
 
     moveHeadOnPrompt = true;
@@ -519,19 +523,19 @@ describe('corner merge instructions', () => {
         ): Promise<void>;
       }
     ).prompt('review-turn', trigger, [], undefined, [trigger]);
-    expect(sessionPrompt).toHaveBeenCalledTimes(4);
-    expect(sessionPrompt.mock.calls[2]?.[1]).toContain(
+    expect(sessionPrompt).toHaveBeenCalledTimes(stableRuns + 2);
+    expect(sessionPrompt.mock.calls[stableRuns]?.[1]).toContain(
       `Checks are green on PR #7 at ${latestHead}`,
     );
-    expect(sessionPrompt.mock.calls[3]?.[1]).toContain(
+    expect(sessionPrompt.mock.calls[stableRuns + 1]?.[1]).toContain(
       `Checks are green on PR #7 at ${newestHead}`,
     );
-    expect(sessionPrompt.mock.calls[3]?.[1]).not.toContain(latestHead);
+    expect(sessionPrompt.mock.calls[stableRuns + 1]?.[1]).not.toContain(latestHead);
     const durableReplies = api.execute.mock.calls.filter(([name]) => name === 'postRoomMessage');
     expect(durableReplies).toHaveLength(2);
-    expect(durableReplies[1]?.[1]).toEqual(expect.objectContaining({ text: 'review pass 4' }));
+    expect(durableReplies[1]?.[1]).toEqual(expect.objectContaining({ text: `review pass ${stableRuns + 2}` }));
     await (loop as unknown as { discardSession(): Promise<void> }).discardSession();
-  });
+  }, 30_000);
 });
 
 describe('corner close-request delivery', () => {
@@ -2428,7 +2432,7 @@ describe('thin monolith corner turn', () => {
     });
   });
 
-  it('starts in edit mode, streams to the corner, and carries the server-check merge gate', async () => {
+  it.each(['completed', 'in_progress', 'failed', 'missing'])('R8f checks outcome (%s) controls the yolo follow-up', async (status) => {
     vi.stubEnv('BEELINE_INSTITUTIONAL_MEMORY_ENABLED', 'true');
     const root = await mkdtemp(join(tmpdir(), 'beeline-thin-corner-'));
     roots.push(root);
@@ -2603,7 +2607,7 @@ describe('thin monolith corner turn', () => {
         draft?.('Opening PR', 'Opening PR');
         const checksTurn = prompt.includes('passed a check') || prompt === CORNER_YOLO_MERGE_NUDGE;
         const toolCalls = checksTurn
-          ? []
+          ? (status === 'missing' ? [] : [{ id: 'checks', title: 'beeline.pr_checks_status', status }])
           : [
               {
                 id: 'read-1',
@@ -2658,10 +2662,12 @@ describe('thin monolith corner turn', () => {
 
     expect(conversationReads).toBeGreaterThanOrEqual(2);
     expect(institutionalReads).toBe(2);
-    expect(sessionPrompt).toHaveBeenCalledTimes(3);
+    expect(sessionPrompt).toHaveBeenCalledTimes(status === 'completed' ? 2 : 3);
     expect(onCloseRequested).toHaveBeenCalledOnce();
     expect(sessionPrompt.mock.calls[1]?.[1]).toContain('passed a check');
-    expect(sessionPrompt.mock.calls[2]?.[1]).toBe(CORNER_YOLO_MERGE_NUDGE);
+    if (status === 'completed')
+      expect(sessionPrompt.mock.calls.map((call) => call[1])).not.toContain(CORNER_YOLO_MERGE_NUDGE);
+    else expect(sessionPrompt.mock.calls[2]?.[1]).toBe(CORNER_YOLO_MERGE_NUDGE);
     // The first turn on a cold session renders the whole transcript window.
     const firstPrompt = String(sessionPrompt.mock.calls[0]?.[1]);
     const secondPrompt = String(sessionPrompt.mock.calls[1]?.[1]);
@@ -2835,7 +2841,7 @@ describe('thin monolith corner turn', () => {
         input: expect.objectContaining({ presentation: 'system' }),
       }),
     );
-    expect(writes.filter((write) => write.name === 'postAgentActivity')).toEqual([
+    expect(writes.filter((write) => write.name === 'postAgentActivity')[0]).toEqual(
       expect.objectContaining({
         input: expect.objectContaining({
           activity: [
@@ -2852,7 +2858,17 @@ describe('thin monolith corner turn', () => {
           ],
         }),
       }),
-    ]);
+    );
+    if (status === 'completed' || status === 'failed')
+      expect(writes.filter((write) => write.name === 'postAgentActivity')).toContainEqual(
+        expect.objectContaining({
+          input: expect.objectContaining({
+            activity: expect.arrayContaining([
+              expect.objectContaining({ kind: 'tool', title: 'beeline.pr_checks_status' }),
+            ]),
+          }),
+        }),
+      );
     // The draft lane's turn id must equal its turn's durable final request id,
     // so a missed retract event is healed by the settled message instead of
     // leaving the final message rendered twice (#802 regression).

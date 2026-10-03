@@ -100,6 +100,7 @@ import {
 import { describeTailscaleReach } from './connector-tailscale.js';
 import { sandboxDevicePath } from './bwrap-sandbox.js';
 import {
+  VALIDATION_STAGE_OWNERSHIP,
   MEMORY_UPKEEP_RULE,
   SEARCH_MEMORY_FIRST_RULE,
   UPGRADE_INTENT_RULE,
@@ -368,12 +369,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'save_workflow',
     description:
-      'Save a declarative workflow contract for a multi-agent (or agent+human) team: named roles, handoffs between roles with required contents, loop caps with an ask-a-human escape, human decision points via gate states, and done/failed terminals. Stored Workspace-wide, versioned by name; a run already in progress keeps the version it started with. Pass the whole contract as one JSON object under "contract". Minimal valid example: ' +
-      '{"version":1,"name":"draft-and-approve","description":"Draft a note and get a human yes or no","roles":["writer"],"start":"draft","handoffs":{"draft":{"role":"writer","requires":["text"],"on":{"drafted":"approve"}},"approve":{"kind":"gate","role":"writer","requires":["decision"],"on":{"publish":"done","redo":"draft"}},"done":{"kind":"terminal","status":"done"}}}. ' +
-      'Rules: name is lowercase words joined by hyphens (a-z, 0-9, no underscores), at most 64 characters; description is 1-60 characters; optional summary is one line of plaintext up to 140 characters; roles are 1-16 lowercase names; start is a non-terminal state; handoffs has 2-64 states keyed by lowercase name. ' +
-      'Every state may have an optional free-text hint describing what to attach in its receipt. A handoff state allows hint, role, requires (field names the handoff must carry), on (outcome -> next state, 1-16 outcomes), loop, timeoutSeconds and roleBinding. A gate is {"kind":"gate", role, requires, on, hint?} with 2-4 outcomes; a human picks one. A terminal is {"kind":"terminal","status":"done"|"failed"|"abandoned"}. No other keys except optional hint. ' +
-      'Every state must be reachable from start, and at least one terminal is required. Every cycle must pass through a gate or have a loop cap on a state in it: "loop":{"onEdge":"<outcome>","cap":1-100,"onExceeded":"<another state>"}. A rejected contract returns the rule that failed and where.' +
-      ` How to write and run workflows: ${WORKFLOW_GUIDE_URL}`,
+      `Save a Workspace-wide, versioned declarative workflow. Pass the whole JSON contract under "contract"; active runs keep their starting version. A rejected contract returns the rule that failed and where. Procedure: ${WORKFLOW_GUIDE_URL}`,
     inputSchema: {
       type: 'object',
       required: ['contract'],
@@ -1069,7 +1065,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'record_validation_stage',
     description:
-      'Record one observed Beeline validation stage for the current brief revision and code head. This is evidence, not merge authorization. Use headSha="draft" before publication; after publication use the current PR head, either the full 40-character SHA or an unambiguous short prefix of it. Only the configured reviewer records the review stage; an implementer records intent, base, tests, docs, lint_types, publication, ci, and final_authorization. Give a concrete command, observation, finding, or reason.',
+      `Record one observed stage with concrete evidence. Use headSha="draft" before publication, then the current PR head (full SHA or unambiguous short prefix). ${VALIDATION_STAGE_OWNERSHIP}`,
     inputSchema: {
       type: 'object',
       required: ['briefRevision', 'headSha', 'stage', 'status', 'evidence'],
@@ -1433,7 +1429,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'connect_app',
     description:
-      'Connect an app after workbench_status shows it is missing. Pass a request-specific continuation sentence for the sign-in card, stating what you will do after sign-in; omit links, secrets, and private data. The server chooses managed OAuth when supported and posts the card to the owner. Wait for the connection wake, then use the app ID with list_app_tools and execute_app_tool. Only when the provider reports managed OAuth unsupported does the server choose Trusty Squire. An outage or refusal never permits a silent route switch. Never put sign-in links or credentials in chat. This is setup, not use permission.',
+      'Connect an app after workbench_status shows it is missing. The continuation is optional: pass a request-specific sentence stating what you will do after sign-in; without it the card says "continues the request right after". Omit links, secrets, and private data. The server chooses managed OAuth when supported and posts the card to the owner. Wait for the connection wake, then use the app ID with list_app_tools and execute_app_tool. Only when the provider reports managed OAuth unsupported does the server choose Trusty Squire. An outage or refusal never permits a silent route switch. Never put sign-in links or credentials in chat. This is setup, not use permission.',
     inputSchema: {
       type: 'object',
       required: ['app', 'reason'],

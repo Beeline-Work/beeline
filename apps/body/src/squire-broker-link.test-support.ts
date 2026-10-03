@@ -11,6 +11,8 @@ import { createServer, type Server, type Socket } from 'node:net';
 export type FakeMcpBroker = {
   readonly server: Server;
   readonly sockets: Set<Socket>;
+  /** Every connection's one identity line, in arrival order. */
+  readonly identities: string[];
   /** Drop every live connection without closing the listener — a mid-session hiccup. */
   dropConnections(): void;
 };
@@ -42,6 +44,7 @@ function respond(socket: Socket, id: unknown, method: string): void {
 /** Bind and start listening on `path`; resolves once accepting connections. */
 export async function startFakeMcpBroker(path: string): Promise<FakeMcpBroker> {
   const sockets = new Set<Socket>();
+  const identities: string[] = [];
   const server = createServer((socket) => {
     sockets.add(socket);
     socket.on('close', () => sockets.delete(socket));
@@ -57,6 +60,7 @@ export async function startFakeMcpBroker(path: string): Promise<FakeMcpBroker> {
         buffer = buffer.subarray(end + 1);
         if (!gotIdentity) {
           gotIdentity = true;
+          identities.push(line);
           continue;
         }
         let frame: { id?: unknown; method?: string };
@@ -76,6 +80,7 @@ export async function startFakeMcpBroker(path: string): Promise<FakeMcpBroker> {
   return {
     server,
     sockets,
+    identities,
     dropConnections: () => {
       for (const socket of sockets) socket.destroy();
     },

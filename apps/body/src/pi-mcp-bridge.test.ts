@@ -1,14 +1,18 @@
-import { mkdtemp, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import type { AgentCommand } from '@beeline/api-contract/daemon';
 import {
   PI_MCP_BRIDGE_FILENAME,
   harnessMountsSessionMcpServers,
   installPiMcpBridge,
   piMcpBridgeSource,
 } from './pi-mcp-bridge.js';
+import { SquireTaskRelay } from './squire-task-relay.js';
+import { squireFacadeLaunch } from './squire-host.js';
+import type { StdioSquireMcpClient } from './squire-mcp-client.js';
 
 const SERVER = {
   name: 'beeline-agent',
@@ -419,4 +423,155 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       await tools.get('beeline-agent__subscribe_events')!.execute('fallback', {}),
     ).toMatchObject({ content: [{ text: 'You now react to joined in this Room.' }] });
   });
+});
+
+describe('pi MCP bridge, through a real Squire task relay (the live Pi route)', () => {
+  /**
+   * Proves the property live Pi actually depends on: `callServer()` above
+   * spawns a brand-new facade PROCESS for every single `execute()` call —
+   * that part of the bug report is true and intentional (a cheap stdio↔HTTP
+   * proxy). What must NOT happen per call is a new SQUIRE CONNECTION, because
+   * Trusty Squire 1.1.25 ties a browser session to the agent connection that
+   * opened it and closes it a few seconds after that connection ends. This
+   * drives the REAL generated bridge module (via `piMcpBridgeSource`,
+   * imported and executed exactly like Pi would) through a REAL
+   * `SquireTaskRelay`, across three separate turns of one task, and asserts
+   * the relay's own backing connection (`spawns`) never grows past the one
+   * opened for the initial tools/list inventory call — no matter how many
+   * facade processes `execute()` spawns — and that no call ever sees
+   * `stale_lease`.
+   */
+  it('reuses exactly one Squire connection across many per-call facade spawns, over several turns of one task', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pi-bridge-squire-relay-'));
+    const contextFile = resolve(root, 'turn.json');
+    let spawns = 0;
+    const relay = new SquireTaskRelay(
+      'agent',
+      'room',
+      contextFile,
+      async () => true,
+      root,
+      (hooks) => {
+        spawns++;
+        hooks.onSpawn(9000 + spawns);
+        return {
+          pid: 9000 + spawns,
+          requestMcp: async (
+            method: string,
+            params: { name?: string; arguments?: Record<string, unknown> },
+          ) => {
+            if (method === 'tools/list')
+              return {
+                tools: ['operate_start', 'operate_observe', 'operate_scroll', 'operate_finish'].map(
+                  (name) => ({ name }),
+                ),
+              };
+            if (params.name === 'operate_start')
+              return { content: [{ type: 'text', text: '{"sessionId":"browser-1"}' }] };
+            return { content: [{ type: 'text', text: `${params.name} ok` }] };
+          },
+          close: () => {},
+        } as unknown as StdioSquireMcpClient;
+      },
+    );
+    const endpoint = await relay.listen();
+    const daemon = createServer(async (request, response) => {
+      for await (const _chunk of request) void _chunk;
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ allowed: true }));
+    });
+    await new Promise<void>((resolveListen) => daemon.listen(0, '127.0.0.1', resolveListen));
+    try {
+      const launch = squireFacadeLaunch(root, { agentId: 'agent', roomId: 'room', relay: endpoint });
+      const squireServer = {
+        name: 'squire',
+        command: launch.command,
+        args: launch.args,
+        env: Object.entries(launch.env).map(([name, value]) => ({ name, value })),
+      };
+      const daemonAddress = daemon.address() as { port: number };
+      const beelineAgentServer = {
+        name: 'beeline-agent',
+        command: process.execPath,
+        args: ['-e', ''],
+        env: [
+          { name: 'BEELINE_DAEMON_BASE_URL', value: `http://127.0.0.1:${daemonAddress.port}` },
+          { name: 'BEELINE_DAEMON_TOKEN', value: 'daemon-token' },
+          { name: 'BEELINE_TURN_CONTEXT_FILE', value: contextFile },
+        ],
+      };
+      const bridgePath = resolve(root, 'bridge.mjs');
+      await writeFile(bridgePath, piMcpBridgeSource([squireServer, beelineAgentServer]), 'utf8');
+      const module = (await import(`file://${bridgePath}`)) as {
+        default: (pi: { registerTool: (tool: Record<string, unknown>) => void }) => Promise<void>;
+      };
+      const tools = new Map<string, { execute: (id: string, params: unknown) => Promise<unknown> }>();
+      await module.default({
+        registerTool: (tool) => tools.set(tool.name as string, tool as never),
+      });
+      expect([...tools.keys()]).toEqual(
+        expect.arrayContaining([
+          'squire__operate_start',
+          'squire__operate_observe',
+          'squire__operate_scroll',
+          'squire__operate_finish',
+        ]),
+      );
+      // The inventory tools/list probe above already opened the one Squire
+      // connection this whole test keeps proving stays singular.
+      expect(spawns).toBe(1);
+
+      const runTurn = async (
+        requestId: string,
+        calls: Array<{ tool: string; args?: Record<string, unknown> }>,
+      ) => {
+        await writeFile(
+          contextFile,
+          JSON.stringify({ roomId: 'room', requestId, taskId: 'task-1', generationId: 'gen-1' }),
+        );
+        relay.activate(
+          {
+            id: requestId,
+            roomId: 'room',
+            agentId: 'agent',
+            sourceMessageId: requestId,
+            turnRequestId: requestId,
+            action: 'input',
+            reason: 'message',
+            rootCommandId: 'task-1',
+            rootSourceMessageId: requestId,
+            agentDepth: 0,
+            source: {} as AgentCommand['source'],
+          } as AgentCommand,
+          'gen-1',
+        );
+        const results: unknown[] = [];
+        for (const call of calls) {
+          const tool = tools.get(`squire__${call.tool}`)!;
+          results.push(await tool.execute(`${requestId}-${call.tool}`, call.args ?? {}));
+        }
+        relay.deactivate(requestId);
+        return results;
+      };
+
+      await runTurn('turn-1', [{ tool: 'operate_start' }]);
+      await runTurn('turn-2', [
+        { tool: 'operate_observe', args: { sessionId: 'browser-1' } },
+        { tool: 'operate_scroll', args: { sessionId: 'browser-1', direction: 'down' } },
+      ]);
+      const finished = await runTurn('turn-3', [
+        { tool: 'operate_finish', args: { sessionId: 'browser-1' } },
+      ]);
+
+      for (const result of finished) expect(JSON.stringify(result)).not.toContain('stale_lease');
+      // Four more facade processes spawned across three turns — and the
+      // underlying Squire connection is still the single one from inventory.
+      expect(spawns).toBe(1);
+    } finally {
+      daemon.closeAllConnections();
+      await new Promise<void>((resolveClose) => daemon.close(() => resolveClose()));
+      relay.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

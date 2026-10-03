@@ -66,9 +66,9 @@ env:
 - tapOn:
     id: create-room-repo-row
 - assertVisible:
-    id: create-room-no-repository
+    id: create-room-repo-mode-none
 - tapOn:
-    id: create-room-no-repository
+    id: create-room-repo-mode-none
 - tapOn:
     id: create-room-name
 - inputText: 'SMOKE CREATE ONE'

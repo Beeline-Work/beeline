@@ -21,6 +21,13 @@ human cancellations retain their paths. The helper's distilled receipt text
 already flows into the stalled card, so neither server nor mobile needs a new
 reason enum.
 
+The helper's functional update probe recognizes `turn_backstop` as the same
+silent-prompt failure that triggers its existing fresh-session retry and
+current-release comparison. That comparison still reads the old inactivity
+wording from an older installed helper. A runtime exit remains distinct.
+Reproduction ACP-L2 in `update-functional-probe.test.ts` covers this consumer;
+the initial cause migration failed five of its integration cases.
+
 Pi's repository-pinned `pi-ai` and `pi-coding-agent` version is 0.84.3. At that
 version, `httpIdleTimeoutMs` configures Undici's HTTP header/body idle deadlines;
 the SDK also passes it to providers that support explicit stream idle handling.

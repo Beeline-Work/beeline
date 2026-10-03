@@ -40,7 +40,10 @@ import { PostgresLiveListener } from './postgres-live.js';
 import { listenAfterBestEffortRecovery } from './startup.js';
 import { institutionalMemoryShadowConfigFromEnv } from './institutional-memory-shadow.js';
 import { runInstitutionalCuratorCycle } from './institutional-curator.js';
-import { backfillInstitutionalMemoryEmbeddingsOnce } from './institutional-memory-embeddings.js';
+import {
+  backfillInstitutionalMemoryEmbeddingsOnce,
+  warnIfEmbeddingKeyMissing,
+} from './institutional-memory-embeddings.js';
 import type { InstitutionalSkillAnchorSource } from './institutional-skill-anchors.js';
 import { retireWelcomeWorkspace, welcomeRetirementPreflight } from './welcome-retirement.js';
 import { feedbackConfigFromEnv } from './feedback.js';
@@ -109,6 +112,7 @@ async function main() {
   // One-time sweep at server start — never on an interval; fire-and-forget so
   // it never delays this machine coming up and serving requests. Its session
   // lock lets only one machine run it; the other logs `skipped:true`.
+  warnIfEmbeddingKeyMissing();
   void backfillInstitutionalMemoryEmbeddingsOnce(jobsDatabase)
     .then((counts) => console.log(`[startup] institutional memory embedding backfill: ${JSON.stringify(counts)}`))
     .catch((error) => console.error('[startup] institutional memory embedding backfill failed:', error));

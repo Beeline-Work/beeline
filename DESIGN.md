@@ -414,9 +414,11 @@ summaries retain a `space.md` bottom margin before the next conversation.
 Wide desktop windows keep a 76px Workspace rail beside the 380px default Room
 sidebar; narrower windows retain the existing Workspace switcher overlay.
 
-A Room row that holds open corners carries the brass `CornerGlyph` toggle; the
-count rides the toggle's accessible name (`Expand N corners`), never a second
-visible label.
+A Room row carries the brass `CornerGlyph` toggle only when its dropdown lists
+at least one of the viewer's open corners (`mine`). That listed count rides the
+toggle's accessible name (`Expand N corners`), never a second visible label.
+Other people's open corners, or an empty or missing list, show no toggle; the
+Room's unread dot remains independent.
 The API batches canonical state derivation for visible corners; archived work
 is excluded. The toggle expands an inline list, waiting first, with each corner
 independently selectable and draggable; a tap opens the corner. Opening a Room

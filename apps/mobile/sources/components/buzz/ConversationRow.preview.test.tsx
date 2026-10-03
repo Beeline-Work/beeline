@@ -37,7 +37,13 @@ const latestMessage = {
   author: { pubkey: 'speedy', kind: 'agent' as const, name: 'Speedy', handle: '@speedy' },
 };
 
-function renderRow(changes: Partial<ChatListItem> = {}) {
+const mineCorner = { id: 'mine', name: 'My corner', state: 'working' as const, mine: true };
+const otherCorner = { id: 'other', name: 'Other corner', state: 'working' as const };
+
+function renderRow(
+  changes: Partial<ChatListItem> = {},
+  props: Partial<React.ComponentProps<typeof ConversationRow>> = {},
+) {
   const item = {
     room: { id: 'room', name: 'experiments', updatedAt: 100 },
     latestMessage,
@@ -53,6 +59,7 @@ function renderRow(changes: Partial<ChatListItem> = {}) {
         onPress={() => {}}
         onPin={() => {}}
         testID="room"
+        {...props}
       />,
     );
   });
@@ -65,16 +72,46 @@ function renderRow(changes: Partial<ChatListItem> = {}) {
 }
 
 describe('ConversationRow preview', () => {
-  it('shows the corner control only when the mark exists', () => {
-    const shown = renderRow({ cornerCount: 1 }).root;
-    const mark = shown.findByProps({ testID: 'room-corners' });
-    expect(mark.props.style).toEqual(
-      expect.arrayContaining([expect.objectContaining({ position: 'absolute' })]),
-    );
-    expect(
-      renderRow({ cornerCount: 0 }).root.findAllByProps({ testID: 'room-corners' }),
-    ).toHaveLength(0);
-  });
+  it.each([false, true])(
+    'hides empty corner controls and keeps unread dots (desktop=%s)',
+    (desktop) => {
+      for (const openCorners of [[otherCorner], [], undefined]) {
+        const { root, visibleText } = renderRow(
+          { cornerCount: 5, openCorners, unread: true },
+          { desktop, cornersExpanded: true },
+        );
+        expect(root.findAllByProps({ testID: 'room-corners' })).toHaveLength(0);
+        expect(root.findByProps({ testID: 'room-unread' }).props.accessibilityLabel).toBe(
+          'new messages',
+        );
+        expect(visibleText).toBe('@speedy\u00a0\u00b7\u00a0@viewer The build is ready');
+      }
+    },
+  );
+
+  it.each([false, true])(
+    'shows a viewer corner, counts listed corners and retains toggling (desktop=%s)',
+    (desktop) => {
+      const onToggleCorners = vi.fn();
+      const item = { cornerCount: 5, openCorners: [otherCorner, mineCorner], unread: true };
+      for (const cornersExpanded of [false, true]) {
+        const shown = renderRow(item, { desktop, cornersExpanded, onToggleCorners }).root;
+        const mark = shown.findByProps({ testID: 'room-corners' });
+        expect(mark.props.style).toEqual(
+          expect.arrayContaining([expect.objectContaining({ position: 'absolute' })]),
+        );
+        expect(mark.props.accessibilityLabel).toBe(
+          `${cornersExpanded ? 'Collapse' : 'Expand'} 1 corners`,
+        );
+        expect(mark.props.accessibilityState).toEqual({ expanded: cornersExpanded });
+        act(() => mark.props.onPress());
+        expect(shown.findByProps({ testID: 'room-unread' }).props.accessibilityLabel).toBe(
+          'new messages',
+        );
+      }
+      expect(onToggleCorners).toHaveBeenCalledTimes(2);
+    },
+  );
   it('shows the latest sender and text for an unread mention while retaining its attention state', () => {
     const { root, visibleText } = renderRow({
       unread: true,

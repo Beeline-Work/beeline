@@ -30,7 +30,12 @@ const item = (id: string, name: string, cornerCount: number) =>
     unread: false,
     cornerCount,
     waitingCornerCount: 0,
-    openCorners: [],
+    openCorners: Array.from({ length: cornerCount }, (_, i) => ({
+      id: `${id}-corner-${i}`,
+      name: `Existing corner ${i}`,
+      state: 'working',
+      mine: true,
+    })),
     latestMessage: {
       text: 'The new Room list is ready for your review.',
       createdAt: now / 1000 - 60,
@@ -86,15 +91,7 @@ async function tap(roomId: string) {
   await sleep(80);
 }
 
-function Probe({
-  roomId,
-  desktop,
-  wired,
-}: {
-  roomId: string;
-  desktop: boolean;
-  wired: boolean;
-}) {
+function Probe({ roomId, desktop, wired }: { roomId: string; desktop: boolean; wired: boolean }) {
   const { theme } = useUnistyles();
   const t = theme.buzz;
   const [expanded, setExpanded] = useState(false);
@@ -177,10 +174,12 @@ async function run() {
   await longPress('room-a');
   const created = calls.create[0] ?? ['', ''];
   expectLine('long press creates in the pressed Room', created[0], 'room-a');
-  expectLine('created title is three words ending in corner', /^\w+ \w+ corner$/.test(created[1]), true);
-  expectLine('long press opens the created corner', calls.opened, [
-    ['corner-room-a', created[1]],
-  ]);
+  expectLine(
+    'created title is three words ending in corner',
+    /^\w+ \w+ corner$/.test(created[1]),
+    true,
+  );
+  expectLine('long press opens the created corner', calls.opened, [['corner-room-a', created[1]]]);
   expectLine(
     'the opened corner is the pressed Room corner',
     calls.navigations[0],

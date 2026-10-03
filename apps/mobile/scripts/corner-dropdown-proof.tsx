@@ -37,7 +37,7 @@ const response = (phase: Phase) => {
   const alphaRow = {
     room: { id: alpha, name: 'alpha', workspaceId, updatedAt: 1_790_000_000 },
     unread: false,
-    cornerCount: 4,
+    cornerCount: 5,
     waitingCornerCount: waiting ? 1 : 0,
     latestMessage: {
       id: 'm-alpha',
@@ -90,7 +90,11 @@ function RoomList({ desktop }: { desktop: boolean }) {
   return (
     <div data-testid={`${prefix}-list`} style={{ width: desktop ? 320 : 390 }}>
       {view.chats.map((item) => (
-        <div key={item.room.id} data-room={item.room.name}>
+        <div
+          key={item.room.id}
+          data-room={item.room.name}
+          data-expanded={dropdowns.expanded.has(item.room.id)}
+        >
           <ConversationRow
             item={item}
             now={1_790_001_000_000}
@@ -202,6 +206,12 @@ async function flows() {
   for (const prefix of ['phone', 'desktop']) {
     const s = describe(prefix, '1 nothing waiting');
     check(s.rooms.join() === 'beta,alpha' && !s.open, `${prefix}: collapsed, alpha below beta`);
+    check(
+      document
+        .querySelector(`[data-testid="${prefix}-row-alpha-corners"]`)
+        ?.getAttribute('aria-label') === 'Expand 4 corners',
+      `${prefix}: accessible count matches the four listed viewer corners, not all five`,
+    );
   }
   setView(readChatListView(response('waiting'))!);
   await settleOpen(true);
@@ -274,6 +284,36 @@ async function flows() {
   for (const prefix of ['phone', 'desktop']) {
     const s = describe(prefix, '10 answered');
     check(!s.open && s.rooms.join() === 'beta,alpha', `${prefix}: closes once none is waiting`);
+  }
+  // CM-1: the Room still has open corners, but none belongs in the viewer's dropdown.
+  for (const openCorners of [[{ id: uuid(5), name: 'theirs', state: 'working' }], [], undefined]) {
+    const next = response('working');
+    const room = next.chats.find((item) => item.room.id === alpha)!;
+    setView(
+      readChatListView({
+        ...next,
+        chats: next.chats.map((item) =>
+          item === room ? { ...item, unread: true, openCorners } : item,
+        ),
+      })!,
+    );
+    await pause(100);
+    for (const prefix of ['phone', 'desktop']) {
+      const mark = document.querySelector<HTMLElement>(
+        `[data-testid="${prefix}-row-alpha-corners"]`,
+      );
+      // On the unfixed branch this performs the human's tap and exposes the empty expansion.
+      mark?.click();
+      await pause();
+      const list = document.querySelector(`[data-testid="${prefix}-list"]`)!;
+      const expanded = list.querySelector('[data-room="alpha"]')?.getAttribute('data-expanded');
+      const rows = list.querySelectorAll('[aria-label^="Open corner"]').length;
+      const unread = Boolean(list.querySelector(`[data-testid="${prefix}-row-alpha-unread"]`));
+      lines.push(
+        `CM-1 ${prefix}: openCorners=${openCorners === undefined ? 'missing' : openCorners.length ? 'others only' : 'empty'} mark=${Boolean(mark)} expanded=${expanded ?? 'absent'} dropdownRows=${rows} unread=${unread}`,
+      );
+      check(!mark && rows === 0 && unread, `CM-1 ${prefix}: no empty toggle; unread dot retained`);
+    }
   }
   root.unmount();
 }

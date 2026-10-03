@@ -55,6 +55,7 @@ export function ConversationRow({
   const showReason = item.agentState === 'needs-you' && reason;
   const status = needsYou ? 'needs you' : item.unread ? 'new messages' : null;
   const hasCorners = roomRowShowsCornerMark(item);
+  const cornerCount = item.openCorners?.filter((corner) => corner.mine).length ?? 0;
   const cornerPosition = desktop ? styles.desktopCornerToggle : styles.mobileCornerToggle;
   const cornerRotation = useSharedValue(cornersExpanded ? 1 : 0);
   React.useEffect(() => {
@@ -71,7 +72,7 @@ export function ConversationRow({
   // native window rect from the glyph it encloses.
   const cornerMark = (
     <Pressable
-      accessibilityLabel={`${cornersExpanded ? 'Collapse' : 'Expand'} ${item.cornerCount} corners`}
+      accessibilityLabel={`${cornersExpanded ? 'Collapse' : 'Expand'} ${cornerCount} corners`}
       accessibilityRole="button"
       accessibilityState={{ expanded: cornersExpanded }}
       accessibilityHint={onLongPressCorners ? 'Long press to open a new corner' : undefined}

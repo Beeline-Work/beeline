@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Image, StyleSheet, View } from 'react-native';
+import { Image, Platform, StyleSheet, View } from 'react-native';
 import Svg, { G, Path, Rect, SvgUri } from 'react-native-svg';
 import {
   ALIVE_RING_PAD,
@@ -248,8 +248,14 @@ export const IdentityMark = React.memo(function IdentityMark(props: IdentityMark
         testID={testID ?? 'identity-system-logo'}
       >
         <Svg
-          accessible
-          accessibilityLabel="Beeline logo"
+          // `accessible` is a native-only View prop: react-native-svg forwards it
+          // to the DOM on web, where React rejects `accessible={true}` as a
+          // non-boolean attribute. Web gets the same public contract in DOM
+          // terms — one element named as an image; native keeps the prop it
+          // actually understands.
+          {...(Platform.OS === 'web'
+            ? { role: 'img' as const, 'aria-label': 'Beeline logo' }
+            : { accessible: true, accessibilityLabel: 'Beeline logo' })}
           width={size}
           height={size}
           viewBox="40 40 160 160"

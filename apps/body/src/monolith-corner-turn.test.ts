@@ -2548,6 +2548,36 @@ describe('thin monolith corner turn', () => {
               body: `corner row ${index + 1}`,
               attachments: [],
             })),
+            {
+              id: 'corner-screenshot',
+              authorId: 'human-pubkey',
+              createdAt: 50,
+              type: 'message',
+              body: 'The stall looked like this',
+              attachments: [
+                {
+                  url: 'https://server.example/v1/media/0b1c2d3e-4f50-4617-8293-a4b5c6d7e8f9',
+                  name: '24419.jpg',
+                  mimeType: 'image/jpeg',
+                  size: 482 * 1024,
+                },
+              ],
+            },
+            {
+              id: 'corner-artifact',
+              authorId: 'other-agent',
+              createdAt: 51,
+              type: 'message',
+              body: '',
+              attachments: [
+                {
+                  url: 'https://server.example/v1/media/1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+                  name: 'findings.md',
+                  mimeType: 'text/markdown',
+                  size: 2048,
+                },
+              ],
+            },
           ],
           cursor: 'latest',
         };
@@ -2627,6 +2657,7 @@ describe('thin monolith corner turn', () => {
           toolCalls,
         };
       });
+    const cornerFetch = vi.fn(async () => new Response('')) as unknown as typeof fetch;
     const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
     const onCloseRequested = vi.fn(async () => undefined);
     const loop = new MonolithCornerTurnLoop({
@@ -2656,6 +2687,7 @@ describe('thin monolith corner turn', () => {
       onFailure: vi.fn(),
       onCloseRequested,
       createAcpClient: () => acp,
+      fetchImpl: cornerFetch,
     });
     await loop.run();
     await scheduler.dispose();
@@ -2676,6 +2708,15 @@ describe('thin monolith corner turn', () => {
     expect(secondPrompt).toContain('Corner institutional snapshot 2');
     expect(firstPrompt).toContain('[message id: corner-row-1]\nBeeline [message]: corner row 1');
     expect(firstPrompt).toContain('corner row 1');
+    // Attachments render as markers with the id download_attachment takes,
+    // including an attachment-only agent artifact, and nothing is fetched.
+    expect(firstPrompt).toContain(
+      '[message id: corner-screenshot]\nBeeline [message]: The stall looked like this\n📎 24419.jpg (image/jpeg, 482 KB) id=0b1c2d3e-4f50-4617-8293-a4b5c6d7e8f9',
+    );
+    expect(firstPrompt).toContain(
+      '[message id: corner-artifact]\nBeeline [message]: (shared attachments)\n📎 findings.md (text/markdown, 2 KB) id=1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+    );
+    expect(cornerFetch).not.toHaveBeenCalled();
     expect(firstPrompt).toContain('Reaction target message id: cornerid\nNewest message:');
     // The second turn is the SAME warm session: it sends only what is new —
     // here nothing, so no transcript at all — and the objective, which lives

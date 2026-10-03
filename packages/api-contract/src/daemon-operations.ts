@@ -696,6 +696,8 @@ export type DaemonAttachment = {
   readonly mimeType?: string;
   readonly size?: number;
   readonly thumbnailUrl?: string;
+  /** Hex sha256 of the stored bytes; set by getRoomMessage while the object is ready. */
+  readonly sha256?: string;
 };
 export type RoomConversationResult = RoomInboxResult & {
   /** Durable corner output text for narrationRequestId, scoped to the reading agent. */

@@ -32,7 +32,7 @@ export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
  * those words, so an agent asked about an old file says it expired instead of
  * "not found", which reads like a bug it should retry.
  */
-const EXPIRED_REASON = 'expired: these attachment bytes are past their retention window';
+export const EXPIRED_REASON = 'expired: these attachment bytes are past their retention window';
 /** One download may not wedge a turn; a slow media read degrades to the URL line. */
 export const FETCH_TIMEOUT_MS = 30_000;
 
@@ -126,6 +126,16 @@ export interface DeliveredAttachment {
   readonly inlineSkipped?: string;
 }
 
+/**
+ * One sanitized, collision-free file name per attachment of a message, in
+ * order. Path separators, leading dots and other unsafe characters never
+ * survive, so a name joined under a directory stays inside it.
+ */
+export function safeAttachmentNames(attachments: readonly DaemonAttachment[]): string[] {
+  const taken = new Set<string>();
+  return attachments.map((attachment, index) => safeFileName(attachment, index, taken));
+}
+
 function safeFileName(attachment: DaemonAttachment, index: number, taken: Set<string>): string {
   const raw = basename(attachment.name ?? '')
     .replace(/[^\w.-]+/g, '_')
@@ -151,8 +161,7 @@ export async function deliverAttachments(
   cached: readonly DeliveredAttachment[] = [],
 ): Promise<DeliveredAttachment[]> {
   if (!attachments.length) return [];
-  const taken = new Set<string>();
-  const names = attachments.map((attachment, index) => safeFileName(attachment, index, taken));
+  const names = safeAttachmentNames(attachments);
   return Promise.all(
     attachments.map(async (attachment, index): Promise<DeliveredAttachment> => {
       const tooLarge = (bytes: number) => ({
@@ -208,6 +217,41 @@ export async function deliverAttachments(
       }
     }),
   );
+}
+
+const MEDIA_ID =
+  /\/v1\/media\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[?#]|$)/i;
+
+/**
+ * The stable id `download_attachment` takes: the server media id the
+ * attachment URL names. Undefined for a URL that names no server media.
+ */
+export function attachmentId(attachment: Pick<DaemonAttachment, 'url'>): string | undefined {
+  return MEDIA_ID.exec(attachment.url)?.[1]?.toLowerCase();
+}
+
+function readableSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * One marker line per attachment of a transcript message: name, type, size
+ * and the id `download_attachment` takes. Building it downloads nothing; an
+ * older message is re-rendered every turn, so its files are fetched only when
+ * the agent asks for one.
+ */
+export function attachmentMarkerLines(attachments: readonly DaemonAttachment[]): string[] {
+  return attachments.map((attachment) => {
+    const metadata = [attachment.mimeType, attachment.size ? readableSize(attachment.size) : '']
+      .filter(Boolean)
+      .join(', ');
+    const id = attachmentId(attachment);
+    return `📎 ${attachment.name ?? 'attachment'}${metadata ? ` (${metadata})` : ''} ${
+      id ? `id=${id}` : 'id unavailable'
+    }${attachment.expired ? ' (expired)' : ''}`;
+  });
 }
 
 /** Drop the inline image bytes once the prompt is built, so a transcript cache stays small. */

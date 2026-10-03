@@ -46,6 +46,7 @@ import { openRouterRoutingInput } from './openrouter-routing.js';
 import { agentCommandCatalogPublisher } from './agent-command-catalog.js';
 import {
   attachmentImageBlocks,
+  attachmentMarkerLines,
   attachmentPromptLines,
   deliverAttachments,
   promptWithImages,
@@ -1405,12 +1406,10 @@ export class MonolithRoomTurnLoop {
                 .map((message) => ({
                   id: message.id,
                   authorId: message.authorId,
-                  line: roomMessagePrompt(
+                  line: transcriptMessagePrompt(
                     names.get(message.authorId) ?? message.authorId.slice(0, 12),
                     message.body,
                     message.attachments,
-                    this.deliveredAttachments.get(message.id),
-                    this.acceptsImages(),
                     message.id,
                   ),
                 }));
@@ -1929,6 +1928,23 @@ function openCornerToolCall(calls: readonly ToolCallEntry[]): ToolCallEntry | un
  */
 function openedACorner(call: ToolCallEntry | undefined): boolean {
   return !!call && isCompletedToolCall(call);
+}
+
+/**
+ * An earlier transcript message: its attachments are markers the agent can
+ * pass to download_attachment, never a download made while building the prompt.
+ */
+function transcriptMessagePrompt(
+  author: string,
+  body: string,
+  attachments: RoomMessage['attachments'],
+  messageId: string,
+): string {
+  return [
+    `[message id: ${messageId}]`,
+    `${author}: ${body.trim() || '(shared attachments)'}`,
+    ...attachmentMarkerLines(attachments),
+  ].join('\n');
 }
 
 function roomMessagePrompt(

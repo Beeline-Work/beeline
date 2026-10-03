@@ -332,12 +332,12 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
   {
     id: 'core.files',
     topic: 'files',
-    why: 'Agents fetched the reference URL of a shared file instead of the copy already downloaded for them.',
+    why: 'Files on earlier messages are shown only as markers and never pre-downloaded; agents fetched media URLs instead.',
     budgetBytes: 160,
     layer: 'core',
     surfaces: EVERYWHERE,
     render: () =>
-      'Files people share are downloaded for you: read the local path in the prompt and never fetch the reference URL.',
+      "For a 📎 file, call download_attachment and read its path. Never fetch media URLs; on failure, say you couldn't open it.",
   },
   {
     id: 'surface.tools',

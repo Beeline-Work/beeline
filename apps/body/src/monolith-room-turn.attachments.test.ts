@@ -58,6 +58,7 @@ async function runTurn(
   acceptsImages: boolean,
   modelInputModalities?: string[],
   temporaryFailures = 0,
+  transcript: unknown[] = [],
 ) {
   const root = await mkdtemp(join(tmpdir(), 'beeline-room-attachments-'));
   roots.push(root);
@@ -133,7 +134,7 @@ async function runTurn(
       }
       return { items: [], cursor: 'latest' };
     }
-    if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+    if (name === 'getRoomConversation') return { items: transcript, cursor: 'latest' };
     if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
     return { id: 'write-id', createdAt: 1 };
   });
@@ -214,6 +215,50 @@ async function runTurn(
     ).deliver({ id: 'msg-photo', attachments: [PHOTO, PDF] });
   return { prompt: sessionPrompt.mock.calls[0]![1], scratch, execute, fetchImpl, redeliver };
 }
+
+describe('Room transcript attachment markers', () => {
+  const SCREENSHOT_ID = '0b1c2d3e-4f50-4617-8293-a4b5c6d7e8f9';
+  const REPORT_ID = '1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d';
+  it('marks earlier human and agent attachments with ids and downloads none of them', async () => {
+    const { prompt, fetchImpl } = await runTurn(true, undefined, 0, [
+      {
+        id: 'msg-screenshot',
+        authorId: HUMAN,
+        createdAt: 0,
+        type: 'message',
+        body: 'Here is what I saw',
+        attachments: [
+          {
+            url: `https://server.example/v1/media/${SCREENSHOT_ID}`,
+            name: '24419.jpg',
+            mimeType: 'image/jpeg',
+            size: 482 * 1024,
+          },
+        ],
+      },
+      {
+        id: 'msg-report',
+        authorId: AGENT_HEX,
+        createdAt: 0,
+        type: 'message',
+        body: '',
+        attachments: [
+          {
+            url: `https://server.example/v1/media/${REPORT_ID}`,
+            name: 'report.md',
+            mimeType: 'text/markdown',
+            size: 2048,
+          },
+        ],
+      },
+    ]);
+    const text = String(Array.isArray(prompt) ? (prompt[0] as { text: string }).text : prompt);
+    expect(text).toContain(`📎 24419.jpg (image/jpeg, 482 KB) id=${SCREENSHOT_ID}`);
+    expect(text).toContain(`📎 report.md (text/markdown, 2 KB) id=${REPORT_ID}`);
+    const fetched = vi.mocked(fetchImpl).mock.calls.map(([url]) => String(url));
+    expect(fetched.some((url) => url.includes(SCREENSHOT_ID) || url.includes(REPORT_ID))).toBe(false);
+  });
+});
 
 describe('Room turn voice', () => {
   it('carries the shared voice rule even when the Workspace grants no persona', async () => {

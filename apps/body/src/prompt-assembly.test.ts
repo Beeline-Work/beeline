@@ -375,6 +375,15 @@ describe('prompt assembly guards', () => {
     expect(room).toContain('open_corner');
   });
 
+  it('tells the agent a corner ends at merge, so a multi-item ask opens one corner per item', () => {
+    const room = assembleSessionPrompt(SESSION_VARIANTS.room!).systemPrompt;
+    expect(room).toContain('A corner ends when its pull request merges');
+    expect(room).toContain('a person may merge minutes after it opens');
+    expect(room).toContain('anything still needed must already live in a different corner');
+    expect(room).toContain('A request covering several items is one corner per item');
+    expect(room).toContain('never one corner returned to for a later item');
+  });
+
   it('carries the proactivity and finish-the-work rules on every surface', () => {
     for (const [name, context] of Object.entries(SESSION_VARIANTS)) {
       const text = assembleSessionPrompt(context).systemPrompt;

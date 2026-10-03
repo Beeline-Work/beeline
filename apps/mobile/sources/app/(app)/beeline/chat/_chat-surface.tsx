@@ -269,7 +269,7 @@ import { storeTempText } from '@/sync/persistence';
 import { useRoomMessageRenderItem } from '@/buzz/room-message-cell';
 import { arrivalFlashTiming, landingFlashesArrival } from '@/buzz/room-arrival-flash';
 import {
-  shouldSettleMessageSourceLanding,
+  completeMessageSourceLanding,
   startMessageSourceLanding,
   type MessageSourceLanding,
 } from '@/buzz/message-source-landing';
@@ -2609,30 +2609,23 @@ export function BuzzChatSurface({
           visibleMessageIds.add(message.id);
           if (message.relayId) visibleMessageIds.add(message.relayId);
         }
-        if (
-          shouldSettleMessageSourceLanding(landing, {
-            messageAnchorId: messageAnchorIdRef.current,
-            abandoned: messageSourceLandingAbandonedRef.current,
-            visibleMessageIds,
-          })
-        ) {
-          landing.settled = true;
-          const measuredIndex = transcriptMessagesRef.current.findIndex(
-            (message) => message.id === landing.messageId || message.relayId === landing.messageId,
-          );
-          if (measuredIndex >= 0) {
-            flatListRef.current?.scrollToIndex({
-              index: measuredIndex,
-              viewPosition: 0.5,
-              animated: false,
-            });
-          }
-          raiseSourceLandingFlash(landing.messageId);
-          if (locatingMessageSourceIdRef.current === landing.messageId) {
-            locatingMessageSourceIdRef.current = null;
-            setIsLocatingMessageSource(false);
-          }
-        }
+        completeMessageSourceLanding({
+          landing,
+          messageAnchorId: messageAnchorIdRef.current,
+          abandoned: messageSourceLandingAbandonedRef.current,
+          visibleMessageIds,
+          rows: transcriptMessagesRef.current,
+          scrollToIndex: (index) => flatListRef.current?.scrollToIndex({
+            index, viewPosition: 0.5, animated: false,
+          }),
+          flash: raiseSourceLandingFlash,
+          dismissCover: (messageId) => {
+            if (locatingMessageSourceIdRef.current === messageId) {
+              locatingMessageSourceIdRef.current = null;
+              setIsLocatingMessageSource(false);
+            }
+          },
+        });
       }
       // The list recomputes viewability on scroll AND on every committed
       // update, so an arrival that lands below the fold reports itself unseen

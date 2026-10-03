@@ -2081,7 +2081,7 @@ export class PhoneService {
     const rows = (await this.database.query<MessageRow>(
       `WITH target AS (
          SELECT created_at,id FROM messages WHERE room_id=$1 AND id=$2
-       ), window AS (
+       ), target_rows AS (
          (SELECT m.id FROM messages m,target
           WHERE m.room_id=$1 AND (m.created_at,m.id)>=(target.created_at,target.id)
             AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
@@ -2098,7 +2098,7 @@ export class PhoneService {
          i.avatar author_avatar,i.face_id author_face,
          ${reactionIdentitiesSql('m')} reaction_identities,
          '{}'::text[] tagged_ids
-       FROM window JOIN messages m ON m.id=window.id
+       FROM target_rows JOIN messages m ON m.id=target_rows.id
        JOIN identities i ON i.id=m.author_id
        ORDER BY m.created_at,m.id`,
       [roomId, targetId],

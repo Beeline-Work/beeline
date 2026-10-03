@@ -94,3 +94,26 @@ export function shouldSettleMessageSourceLanding(
   }
   return visibleMessageIds.has(landing.messageId);
 }
+
+export function completeMessageSourceLanding(input: {
+  landing: MessageSourceLanding | null;
+  messageAnchorId: string | null;
+  abandoned: boolean;
+  visibleMessageIds: ReadonlySet<string>;
+  rows: readonly { id: string; relayId?: string | null }[];
+  scrollToIndex: (index: number) => void;
+  flash: (messageId: string) => void;
+  dismissCover: (messageId: string) => void;
+}): boolean {
+  const { landing } = input;
+  if (!shouldSettleMessageSourceLanding(landing, input)) return false;
+  const index = input.rows.findIndex(
+    (row) => row.id === landing.messageId || row.relayId === landing.messageId,
+  );
+  if (index < 0) return false;
+  landing.settled = true;
+  input.scrollToIndex(index);
+  input.flash(landing.messageId);
+  input.dismissCover(landing.messageId);
+  return true;
+}

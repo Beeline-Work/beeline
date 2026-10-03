@@ -2,7 +2,14 @@ import { performance } from 'node:perf_hooks';
 import type { InstitutionalContextSnapshot } from '@beeline/api-contract/daemon';
 import type { DaemonApiClient } from './daemon-api-client.js';
 
-export const INSTITUTIONAL_CONTEXT_TIMEOUT_MS = 200;
+/**
+ * Raised alongside `INSTITUTIONAL_CONTEXT_EMBEDDING_TIMEOUT_MS` (400ms,
+ * packages/api-contract/src/institutional-memory.ts): this whole-snapshot
+ * budget must stay above that slice plus room for the DB queries the
+ * snapshot runs after it, or the embedding call would never get to spend its
+ * own full deadline before this race cuts the whole RPC off first.
+ */
+export const INSTITUTIONAL_CONTEXT_TIMEOUT_MS = 500;
 export const INSTITUTIONAL_MEMORY_LIVE_FLAG = 'BEELINE_INSTITUTIONAL_MEMORY_ENABLED';
 
 /** Institutional memory is ON by default: the flag is an OFF switch, so only an

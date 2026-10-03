@@ -154,10 +154,13 @@ export const INSTITUTIONAL_MEMORY_VECTOR_CANDIDATES_MAX = 20;
 export const INSTITUTIONAL_MEMORY_VECTOR_MAX_DISTANCE = 0.66;
 export const INSTITUTIONAL_CONTEXT_VECTOR_ITEMS_MAX = 3;
 export const INSTITUTIONAL_MEMORY_ALIGN_MAX_DISTANCE = 0.75;
-/** A snapshot's embedding call gets a slice of the whole 200ms context-fetch
- *  budget; the rest stays for the DB queries the snapshot already runs. A
- *  miss here degrades to keyword-only candidates, never to an empty snapshot. */
-export const INSTITUTIONAL_CONTEXT_EMBEDDING_TIMEOUT_MS = 100;
+/** A snapshot's embedding call gets a slice of the whole 500ms context-fetch
+ *  budget (`INSTITUTIONAL_CONTEXT_TIMEOUT_MS`, apps/body/src/institutional-context.ts);
+ *  the rest stays for the DB queries the snapshot already runs. A miss here
+ *  degrades to keyword-only candidates, never to an empty snapshot. Raised
+ *  100ms→400ms after production showed real OpenRouter embedding calls
+ *  routinely exceeding 100ms, so the budget never let one actually land. */
+export const INSTITUTIONAL_CONTEXT_EMBEDDING_TIMEOUT_MS = 400;
 export const WORKSPACE_SKILL_DESCRIPTION_MAX_LENGTH = 60;
 export const WORKSPACE_SKILL_MARKDOWN_MAX_BYTES = 32 * 1_024;
 export const WORKSPACE_SKILL_SLUG_MAX_LENGTH = 64;

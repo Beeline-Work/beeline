@@ -3030,12 +3030,12 @@ describe('corner turn institutional-memory prefetch', () => {
       if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
       if (name === 'getCornerRestoreState') return { cornerId: 'corner-id' };
       if (name === 'getInstitutionalContext') {
-        // Activation (below) takes 300ms; this snapshot alone needs 250ms —
-        // longer than the raw 200ms budget on its own, but shorter than
+        // Activation (below) takes 600ms; this snapshot alone needs 550ms —
+        // longer than the raw 500ms budget on its own, but shorter than
         // activation, so a fetch started alongside activation (not after it)
         // has already resolved by the time the turn asks for it.
         order.push('institutional-context');
-        await delay(250);
+        await delay(550);
         return {
           snapshotRevision: 1,
           text: 'Prefetched institutional snapshot',
@@ -3059,7 +3059,7 @@ describe('corner turn institutional-memory prefetch', () => {
     vi.spyOn(acp, 'start').mockResolvedValue(undefined);
     const sessionNew = vi.spyOn(acp, 'sessionNew').mockImplementation(async () => {
       order.push('session-new');
-      await delay(300);
+      await delay(600);
       return { sessionId: 'corner-session', raw: {} };
     });
     const sessionPrompt = vi.spyOn(acp, 'sessionPrompt').mockResolvedValue({
@@ -3104,9 +3104,9 @@ describe('corner turn institutional-memory prefetch', () => {
     // it resolved.
     expect(order).toEqual(['institutional-context', 'session-new']);
     expect(sessionNew).toHaveBeenCalledOnce();
-    // A snapshot that took longer than the raw 200ms budget on its own is
+    // A snapshot that took longer than the raw 500ms budget on its own is
     // still served, because it was already in flight once activation's own
-    // 300ms gave it somewhere to finish.
+    // 600ms gave it somewhere to finish.
     expect(String(sessionPrompt.mock.calls[0]?.[1])).toContain('Prefetched institutional snapshot');
     expect(receipts.some((receipt) => receipt.status === 'complete')).toBe(true);
   }, 10_000);

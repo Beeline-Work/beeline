@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, beforeEach, vi } from 'vitest';
-import { INSTITUTIONAL_MEMORY_EMBEDDING_DIMENSIONS } from '@beeline/api-contract/daemon';
+import {
+  INSTITUTIONAL_CONTEXT_EMBEDDING_TIMEOUT_MS,
+  INSTITUTIONAL_MEMORY_EMBEDDING_DIMENSIONS,
+} from '@beeline/api-contract/daemon';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { claimAgentCommand, createAgentCommand } from './agent-command.js';
@@ -11,7 +14,7 @@ import { getInstitutionalContext } from './institutional-memory-shadow.js';
 // The per-turn snapshot (getInstitutionalContext) is hybrid the same way
 // search_memory is: its keyword/word-overlap candidates UNION the nearest
 // vector matches under the same scope filters. Its own embedding call is
-// bounded to a slice of the snapshot's 200ms budget (INSTITUTIONAL_CONTEXT_
+// bounded to a slice of the snapshot's 500ms budget (INSTITUTIONAL_CONTEXT_
 // EMBEDDING_TIMEOUT_MS) — a slow call degrades to keyword-only, never to an
 // empty snapshot.
 
@@ -274,6 +277,30 @@ describe('getInstitutionalContext hybrid vector snapshot', () => {
     );
     expect(context.embeddingOutcome).toBe('timed-out');
     expect(context.itemIds).toContain(saved.itemId);
+  });
+
+  it('serves the embedding when it resolves within the real INSTITUTIONAL_CONTEXT_EMBEDDING_TIMEOUT_MS budget', async () => {
+    stubEmbeddingFetch(INSTITUTIONAL_CONTEXT_EMBEDDING_TIMEOUT_MS - 150);
+    const daemon = liveDaemon();
+    await openCommand('turn-budget-served', 'gen-budget-served');
+    const context = await daemon.execute(
+      'getInstitutionalContext',
+      { roomId: ROOM, requestId: 'turn-budget-served', generationId: 'gen-budget-served' },
+      RONNIE,
+    );
+    expect(context.embeddingOutcome).toBe('served');
+  });
+
+  it('times out an embedding that resolves just past the real INSTITUTIONAL_CONTEXT_EMBEDDING_TIMEOUT_MS budget', async () => {
+    stubEmbeddingFetch(INSTITUTIONAL_CONTEXT_EMBEDDING_TIMEOUT_MS + 150);
+    const daemon = liveDaemon();
+    await openCommand('turn-budget-timeout', 'gen-budget-timeout');
+    const context = await daemon.execute(
+      'getInstitutionalContext',
+      { roomId: ROOM, requestId: 'turn-budget-timeout', generationId: 'gen-budget-timeout' },
+      RONNIE,
+    );
+    expect(context.embeddingOutcome).toBe('timed-out');
   });
 
   it('reports disabled and makes no network call when no embedding key is configured', async () => {

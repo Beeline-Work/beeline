@@ -1,3 +1,5 @@
+import * as promptRules from './prompt-assembly.js';
+import { agentToolsFor } from './read-only-mcp.js';
 import { describe, expect, it } from 'vitest';
 import type { CornerBrief } from '@beeline/api-contract/daemon';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
@@ -305,12 +307,30 @@ describe('prompt assembly guards', () => {
     expect(CORNER_YOLO_MERGE_NUDGE).toContain('Never merge it yourself.');
   });
 
-  it('asks the implementer only for the validation stages an implementer may record', () => {
+  it('R8a makes publication conditional on the brief, including dirty-work nudges', () => {
     const author = assembleSessionPrompt(SESSION_VARIANTS['code-corner-reviewed']!).systemPrompt;
-    expect(author).toContain(
-      'intent, base, tests, docs, lint_types, publication, ci, final_authorization',
-    );
-    expect(author).toContain('the configured reviewer records review');
+    expect(author).not.toMatch(/^Commit and push/m);
+    expect(author).toContain('Only when the brief calls for repository changes');
+    expect(author).toContain('do not commit, push or open a PR; deliver with post_artifact');
+    expect(promptRules.CORNER_DELIVERY_NUDGE).toContain('Only when the brief calls for repository changes');
+  });
+
+  it('R8b shares stage ownership and server checks across all three instructions', () => {
+    const table = (promptRules as unknown as Record<string, string>).VALIDATION_STAGE_OWNERSHIP;
+    expect(table).toBeDefined();
+    for (const stage of ['intent', 'base', 'tests', 'docs', 'lint_types', 'publication', 'ci', 'final_authorization', 'review'])
+      expect(table).toContain(stage);
+    expect(table).toContain('merge effect: none for every stage');
+    expect(table).toContain('current revision/head');
+    expect(table).toContain('server merge gate is the authority');
+    for (const text of [
+      promptRules.CORNER_AUTHOR_CONTRACT,
+      agentToolsFor(true, false, true, true).find((tool) => tool.name === 'record_validation_stage')!.description,
+      beelineReviewSkillMarkdown('test'),
+    ]) {
+      expect(text).toContain(table);
+      expect(text).not.toContain('after pr_checks_status reports checks passed and mergeAllowed true');
+    }
   });
 
   it('records the reviewed head SHA in a FAIL verdict', () => {

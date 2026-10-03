@@ -105,10 +105,11 @@ describe('save_workflow description', () => {
   const description = agentToolsFor(true, false).find((tool) => tool.name === 'save_workflow')!
     .description;
 
-  it('carries a minimal example that the validator accepts', () => {
-    const example = description.match(/Minimal valid example: (\{.*?\}\}\})\. /)?.[1];
-    expect(example).toBeDefined();
-    expect(workflowContractError(JSON.parse(example!))).toBeNull();
+  it('R8c keeps the procedure in the guide', () => {
+    expect(description.length).toBeLessThanOrEqual(400);
+    expect(description).not.toContain('Minimal valid example');
+    expect(description).not.toContain('Rules:');
+    expect(description).toContain('returns the rule that failed');
   });
 
   it('links every workflow tool to the workflow guide, whose example the validator accepts', () => {
@@ -123,14 +124,6 @@ describe('save_workflow description', () => {
     const example = guide.match(/```json\n([\s\S]*?)\n```/)?.[1];
     expect(example).toBeDefined();
     expect(workflowContractError(JSON.parse(example!))).toBeNull();
-  });
-
-  it('states the name, description, gate, loop and terminal rules', () => {
-    expect(description).toContain('name is lowercase words joined by hyphens');
-    expect(description).toContain('description is 1-60 characters');
-    expect(description).toContain('with 2-4 outcomes');
-    expect(description).toContain('Every cycle must pass through a gate or have a loop cap');
-    expect(description).toContain('at least one terminal is required');
   });
 });
 
@@ -327,4 +320,11 @@ it('advertises sibling steers in both corner lanes, but reads and questions only
     expect(cornerPrompt).not.toContain('report_to_room');
     expect(cornerPrompt).not.toContain('report the tool reason to the Room');
   }
+});
+
+it('R8d documents the optional continuation and generic fallback', () => {
+  const tool = agentToolsFor(true, false).find((tool) => tool.name === 'connect_app')!;
+  expect(tool.description).toContain('optional');
+  expect(tool.description).toContain('continues the request right after');
+  expect(tool.inputSchema.required).toEqual(['app', 'reason']);
 });

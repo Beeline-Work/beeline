@@ -19,6 +19,21 @@ function deferred(): { promise: Promise<void>; resolve(): void } {
 }
 
 describe('Workspace session scheduler', () => {
+  it('Reproduction H-10: ten logical corners share one Room ceiling and retain corner suspend keys', async () => {
+    const scheduler = new SessionScheduler({ perRoomLiveSessions: 2, workspaceFloor: 1, idleMs: 60_000 });
+    const suspended: string[] = [];
+    for (let i = 0; i < 10; i++) {
+      const key = `corner-${i}`;
+      await scheduler.run(key, { activate: async () => key, suspend: async () => { suspended.push(key); } },
+        async () => undefined, { roomKey: 'parent', priority: 'interactive' });
+      expect(scheduler.snapshot().maxLive).toBe(2);
+      expect(scheduler.snapshot().live).toBeLessThanOrEqual(2);
+    }
+    await scheduler.suspend('corner-9');
+    expect(suspended).toContain('corner-9');
+    await scheduler.dispose();
+  });
+
   it('defaults each Room and a single-Room Workspace to ten live sessions', async () => {
     const scheduler = new SessionScheduler({ idleMs: 60_000 });
     expect(DEFAULT_PER_ROOM_LIVE_SESSIONS).toBe(10);

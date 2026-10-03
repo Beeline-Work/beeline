@@ -40,6 +40,14 @@ function trace(now: () => number, sink?: { write(record: TurnTraceRecord): Promi
 }
 
 describe('turn phase trace', () => {
+  it('records UTF-8 prompt bytes beside a known window and clears an unknown window', () => {
+    const turn = trace(clock().now);
+    turn.notePromptWindow('hello 🐝', 4096);
+    expect(turn.snapshot('complete').promptWindow).toEqual({ promptBytes: Buffer.byteLength('hello 🐝'), modelContextTokens: 4096 });
+    turn.notePromptWindow('unknown');
+    expect(turn.snapshot('complete')).not.toHaveProperty('promptWindow');
+  });
+
   it('separates queue, activation, context, model and publish time on one attempt', async () => {
     const { now, advance } = clock();
     const turn = trace(now);

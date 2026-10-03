@@ -1389,13 +1389,23 @@ export function BuzzChatSurface({
   const retryOlderTranscriptMessages = useCallback(() => {
     retryOlderHistory(visibleTranscriptWindow(foldedMessages, Number.MAX_SAFE_INTEGER).length);
   }, [foldedMessages, retryOlderHistory]);
+  const retryAroundTranscriptMessage = useCallback(() => {
+    if (!messageAnchorId || messageSourceLandingAbandonedRef.current) return;
+    if (!desktopTranscript) {
+      locatingMessageSourceIdRef.current = messageAnchorId;
+      setIsLocatingMessageSource(true);
+    }
+    loadAroundTranscriptMessage(messageAnchorId);
+  }, [desktopTranscript, loadAroundTranscriptMessage, messageAnchorId]);
   const transcriptForwardLine = aroundForwardStatus === 'error' ? (
     <LedgerHistoryLine text="Couldn't load later messages · tap to retry" onPress={retryNewerAround} />
   ) : aroundForwardStatus === 'loading' ? (
     <LedgerHistoryLine text="Loading later messages…" />
   ) : null;
   const transcriptHistoryLine =
-    transcriptHistoryStatus === 'loading' ? (
+    aroundStatus === 'error' && messageAnchorId ? (
+      <LedgerHistoryLine text="Couldn't locate message · tap to retry" onPress={retryAroundTranscriptMessage} />
+    ) : transcriptHistoryStatus === 'loading' ? (
       <LedgerHistoryLine text="Loading earlier messages…" />
     ) : transcriptHistoryStatus === 'error' ? (
       <LedgerHistoryLine
@@ -3093,7 +3103,7 @@ export function BuzzChatSurface({
         locatingMessageSourceIdRef.current = null;
         setIsLocatingMessageSource(false);
       }
-      handledNotificationAnchorRef.current = anchorKey;
+      if (aroundStatus === 'missing') handledNotificationAnchorRef.current = anchorKey;
       return;
     }
     if (requestedAroundMessageIdRef.current === messageId || messageSourceLandingAbandonedRef.current ||

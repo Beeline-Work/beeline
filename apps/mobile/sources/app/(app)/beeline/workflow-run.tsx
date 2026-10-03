@@ -13,7 +13,6 @@ import { PageHeader } from '@/components/buzz/PageHeader';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import {
   WorkflowRunLine,
-  WorkflowRunOverview,
   WorkflowStepCircle,
 } from '@/components/buzz/WorkflowRunLine';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
@@ -28,7 +27,7 @@ const LIVE_HALO = 20;
 
 /**
  * One workflow run, read the way a GitHub Actions run reads (mock v12): a
- * status plate, the whole run as a strip of circles, then each step on one
+ * status plate, an optional workflow summary, then each state on one
  * straight line, opening in place. The page only records the run: it has no
  * controls and no way back to the run's own corner; Back returns to where the
  * reader came from. Corners a step opened are links.
@@ -89,12 +88,7 @@ export default function WorkflowRun() {
         onBack={() => router.back()}
         testID="workflow-run-header"
         title={run ? workflowDisplayName(run.workflowSlug) : 'Workflow'}
-        {...(run
-          ? {
-              trailing: `#${run.earlierRunCount + 1}`,
-              trailingAccessibilityLabel: `Run ${run.earlierRunCount + 1}`,
-            }
-          : {})}
+
       />
       {error && (
         <Pressable
@@ -147,7 +141,11 @@ export default function WorkflowRun() {
               </Text>
             </Text>
           </View>
-          <WorkflowRunOverview line={line} />
+          {detail.contract.summary ? (
+            <Text style={styles.workflowSummary} testID="workflow-run-description">
+              {detail.contract.summary}
+            </Text>
+          ) : null}
           <View style={styles.section}>
             <Text style={styles.sectionHead}>Steps</Text>
             <Text style={styles.sectionCount} testID="workflow-run-step-count">
@@ -161,10 +159,7 @@ export default function WorkflowRun() {
               router.push(cornerHref(corner.id, corner.parentRoomId, corner.name))
             }
           />
-          <View style={styles.earlier} testID="workflow-run-earlier">
-            <Text style={styles.earlierLabel}>Earlier runs</Text>
-            <Text style={styles.earlierCount}>{run.earlierRunCount}</Text>
-          </View>
+
         </ScrollView>
       ) : null}
     </View>
@@ -207,17 +202,12 @@ const styles = StyleSheet.create((theme) => ({
   },
   sectionHead: { ...theme.buzz.type.sectionHead, color: theme.buzz.ledgerQuiet },
   sectionCount: { ...theme.buzz.type.machine, color: theme.buzz.ledgerGhost },
-  earlier: {
-    minHeight: 48,
-    marginTop: theme.buzz.space.md,
+  workflowSummary: {
+    ...theme.buzz.type.body,
+    color: theme.buzz.textSecondary,
     paddingHorizontal: theme.buzz.space.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: theme.buzz.border,
+    paddingVertical: theme.buzz.space.md,
   },
-  earlierLabel: { ...theme.buzz.type.meta, flex: 1, color: theme.buzz.textMuted },
-  earlierCount: { ...theme.buzz.type.meta, color: theme.buzz.accent },
   error: {
     minHeight: 44,
     justifyContent: 'center',

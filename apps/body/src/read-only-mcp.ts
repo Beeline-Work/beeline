@@ -343,8 +343,8 @@ const AGENT_TOOLS: ToolDefinition[] = [
     description:
       'Save a declarative workflow contract for a multi-agent (or agent+human) team: named roles, handoffs between roles with required contents, loop caps with an ask-a-human escape, human decision points via gate states, and done/failed terminals. Stored Workspace-wide, versioned by name; a run already in progress keeps the version it started with. Pass the whole contract as one JSON object under "contract". Minimal valid example: ' +
       '{"version":1,"name":"draft-and-approve","description":"Draft a note and get a human yes or no","roles":["writer"],"start":"draft","handoffs":{"draft":{"role":"writer","requires":["text"],"on":{"drafted":"approve"}},"approve":{"kind":"gate","role":"writer","requires":["decision"],"on":{"publish":"done","redo":"draft"}},"done":{"kind":"terminal","status":"done"}}}. ' +
-      'Rules: name is lowercase words joined by hyphens (a-z, 0-9, no underscores), at most 64 characters; description is 1-60 characters; roles are 1-16 lowercase names; start is a non-terminal state; handoffs has 2-64 states keyed by lowercase name. ' +
-      'A handoff state allows only role, requires (field names the handoff must carry), on (outcome -> next state, 1-16 outcomes), loop, timeoutSeconds and roleBinding. A gate is {"kind":"gate", role, requires, on} with 2-4 outcomes; a human picks one. A terminal is {"kind":"terminal","status":"done"|"failed"|"abandoned"}. No other keys. ' +
+      'Rules: name is lowercase words joined by hyphens (a-z, 0-9, no underscores), at most 64 characters; description is 1-60 characters; optional summary is one line of plaintext up to 140 characters; roles are 1-16 lowercase names; start is a non-terminal state; handoffs has 2-64 states keyed by lowercase name. ' +
+      'Every state may have an optional free-text hint describing what to attach in its receipt. A handoff state allows hint, role, requires (field names the handoff must carry), on (outcome -> next state, 1-16 outcomes), loop, timeoutSeconds and roleBinding. A gate is {"kind":"gate", role, requires, on, hint?} with 2-4 outcomes; a human picks one. A terminal is {"kind":"terminal","status":"done"|"failed"|"abandoned"}. No other keys except optional hint. ' +
       'Every state must be reachable from start, and at least one terminal is required. Every cycle must pass through a gate or have a loop cap on a state in it: "loop":{"onEdge":"<outcome>","cap":1-100,"onExceeded":"<another state>"}. A rejected contract returns the rule that failed and where.' +
       ` How to write and run workflows: ${WORKFLOW_GUIDE_URL}`,
     inputSchema: {
@@ -388,6 +388,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
     name: 'handoff',
     description:
       'Advance a workflow run you are currently holding: validated against the run\'s pinned contract (you must be bound to the current state\'s role, the outcome must be one the state declares, and contents must satisfy its required fields). Posted as a normal message and deterministically wakes whichever agent is bound to the next state\'s role - no @mention needed. A capped loop is enforced from the transcript itself: exceeding it is redirected to the loop\'s own escape state instead of your requested outcome. A state that reaches a human decision point posts a card instead of waking anyone directly; that role\'s agent is woken once a human answers it.' +
+      ' You may attach an optional receipt: line is one line of plaintext up to 140 characters; refs is 0-3 links with kind (brief, file, message, pr, checks, memory, url), label and an http(s) url. Omit either or both to leave them empty; never generate a fallback. The engine records the exit and actor. Follow the current state’s receipt hint when supplied.' +
       ` How to write and run workflows: ${WORKFLOW_GUIDE_URL}`,
     inputSchema: {
       type: 'object',
@@ -396,6 +397,19 @@ const AGENT_TOOLS: ToolDefinition[] = [
         runId: { type: 'string', minLength: 1, maxLength: 128 },
         outcome: { type: 'string', minLength: 1, maxLength: 64 },
         contents: { type: 'object' },
+        receipt: {
+          type: 'object', additionalProperties: false,
+          properties: {
+            line: { type: 'string', maxLength: 140 },
+            refs: { type: 'array', maxItems: 3, items: {
+              type: 'object', required: ['kind', 'label', 'url'], additionalProperties: false,
+              properties: {
+                kind: { type: 'string', enum: ['brief', 'file', 'message', 'pr', 'checks', 'memory', 'url'] },
+                label: { type: 'string', minLength: 1 }, url: { type: 'string' },
+              },
+            } },
+          },
+        },
       },
       additionalProperties: false,
     },
@@ -3604,6 +3618,7 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
           runId: args.runId,
           outcome: args.outcome,
           contents: args.contents,
+          ...(args.receipt !== undefined ? { receipt: args.receipt } : {}),
         }),
       );
     case 'archive_workflow':

@@ -1,11 +1,12 @@
 import React, { useMemo, useState } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Linking, Pressable, Text, View } from 'react-native';
 import Svg, { Circle, Line, Path } from 'react-native-svg';
 import { StyleSheet } from 'react-native-unistyles';
 import type {
   WorkflowContract,
   WorkflowOpenedCornerView,
   WorkflowRunDetailView,
+  WorkflowReceiptInput,
 } from '@beeline/api-contract/phone';
 import {
   workflowRunLine,
@@ -28,8 +29,6 @@ import { DECORATIVE_GLYPH_PROPS } from './decorative-glyph';
 import { HullLivePulse } from './MonoHull';
 
 const CIRCLE = 20;
-const STRIP_CIRCLE = 14;
-const ATTEMPT_CIRCLE = 16;
 const HALO = 32;
 /** The circle's top within a step row, and the line's x (the circle's centre). */
 const CIRCLE_TOP = 12;
@@ -171,51 +170,10 @@ function Segment({
   );
 }
 
-/** The run at a glance: the same circles in a row, each with its label. */
-export function WorkflowRunOverview({
-  line,
-  testID = 'workflow-run-overview',
-}: {
-  line: readonly WorkflowLineStep[];
-  testID?: string;
-}) {
-  return (
-    <ScrollView
-      contentContainerStyle={styles.strip}
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      testID={testID}
-    >
-      {line.map((step, index) => (
-        <View key={step.state} style={styles.stripNode} testID={`${testID}-${step.state}`}>
-          {index > 0 ? (
-            <Segment style={styles.stripLeft} tone={segmentTone(line[index - 1]!, step)} vertical={false} />
-          ) : null}
-          {index < line.length - 1 ? (
-            <Segment style={styles.stripRight} tone={segmentTone(step, line[index + 1]!)} vertical={false} />
-          ) : null}
-          <WorkflowStepCircle size={STRIP_CIRCLE} status={step.status} />
-          <Text numberOfLines={1} style={[styles.stripLabel, stripTone(step.status)]}>
-            {workflowStateLabel(step.state)}
-          </Text>
-        </View>
-      ))}
-    </ScrollView>
-  );
-}
-
-function stripTone(status: WorkflowLineStatus) {
-  if (status === 'current') return styles.brass;
-  if (status === 'skipped') return styles.ghost;
-  if (status === 'pending') return styles.quiet;
-  return styles.secondary;
-}
-
 /**
- * The run page's steps (mock v12): one straight line of circles, a row per
- * step with its name, one meta line and its duration. Tapping a step opens its
- * readout in place. Nothing here acts on the run; a gate shows the answer it
- * got, and a step that opened corners links to them.
+ * One state rail, with receipts and transition exits inside each state.
+ * Tapping a state expands its recorded visits. The page reads the run;
+ * decisions stay on the choice cards in the Room.
  */
 export function WorkflowRunLine({
   detail,
@@ -288,12 +246,16 @@ function StepRow({
   onOpenCorner: (corner: WorkflowOpenedCornerView) => void;
   testID: string;
 }) {
-  const meta = workflowStepMeta(step, {
+  const latest = step.visits[step.visits.length - 1];
+  const recordedMeta = workflowStepMeta(step, {
     contract: detail.contract,
     roleHolders: detail.roleHolders,
     run: detail.run,
     history: detail.history,
   });
+  const meta = step.status === 'done' && step.kind !== 'terminal'
+    ? (latest?.receipt ? latest.leftBy?.name : latest?.gate?.answeredBy?.name) ?? latest?.leftBy?.name ?? recordedMeta
+    : step.status === 'current' ? detail.run.holder?.name ?? recordedMeta : recordedMeta;
   const name = workflowStateLabel(step.state);
   const seconds = step.kind === 'terminal' ? undefined : stepSeconds(step, now);
   const reachedAt = step.kind === 'terminal' ? step.visits[0]?.enteredAt : undefined;
@@ -311,16 +273,10 @@ function StepRow({
         <WorkflowStepCircle status={step.status} testID={`${testID}-circle-${step.status}`} />
       </View>
       <View style={styles.copy}>
-        <Text numberOfLines={1} style={[current ? styles.nameCurrent : styles.name, muted]}>
+        <Text style={[current ? styles.nameCurrent : styles.name, muted]}>
           {name}
           {step.visits.length > 1 ? <Text style={styles.times}>{`  ×${step.visits.length}`}</Text> : null}
-        </Text>
-        <Text
-          numberOfLines={1}
-          style={[styles.meta, current && styles.brass, step.status === 'skipped' && styles.ghost]}
-          testID={`${testID}-meta`}
-        >
-          {meta}
+          {meta ? <Text style={styles.meta}>{` · ${meta}`}</Text> : null}
         </Text>
       </View>
       <View style={styles.right}>
@@ -357,6 +313,18 @@ function StepRow({
           {summary}
         </View>
       )}
+      <View style={styles.outcome}>
+        <Receipt receipt={latest?.receipt} testID={testID} />
+        {current ? (
+          <Text style={styles.exits} testID={`${testID}-exits`}>
+            {stateExits(step, detail.contract)}
+          </Text>
+        ) : latest?.outcome && latest.nextState ? (
+          <Text style={styles.exits} testID={`${testID}-exit`}>
+            {`→ ${workflowStateLabel(latest.nextState)} via ${latest.receipt?.exit.gate ?? latest.outcome}${meta ? ` · ${meta}` : ''}`}
+          </Text>
+        ) : null}
+      </View>
       {canOpen && expanded ? (
         <View style={styles.readout} testID={`${testID}-readout`}>
           <StepReadout
@@ -394,6 +362,44 @@ function Chevron({ open }: { open: boolean }) {
 }
 
 type ReadoutLine = { key: string; value: React.ReactNode; items?: readonly string[] };
+
+function stateExits(step: WorkflowLineStep, contract: WorkflowContract): string {
+  const state = contract.handoffs[step.state];
+  if (!state || !('on' in state)) return '';
+  return `Exits: ${Object.entries(state.on).map(([gate, target]) =>
+    `${gate} → ${workflowStateLabel(target)}`).join(' · ')}`;
+}
+
+/** Every workflow uses the same optional outcome line and typed reference chips. */
+function Receipt({ receipt, testID }: { receipt?: WorkflowReceiptInput; testID: string }) {
+  const [error, setError] = useState(false);
+  if (!receipt?.line && !receipt?.refs?.length) return null;
+  return (
+    <View testID={`${testID}-receipt`}>
+      {receipt.line ? <Text style={styles.receiptLine}>{receipt.line}</Text> : null}
+      {receipt.refs?.length ? (
+        <View style={styles.refs}>
+          {receipt.refs.map((ref, index) => (
+            <Pressable
+              accessibilityLabel={`${ref.kind}: ${ref.label}`}
+              accessibilityRole="link"
+              key={`${ref.kind}:${index}`}
+              onPress={() => {
+                setError(false);
+                void Linking.openURL(ref.url).catch(() => setError(true));
+              }}
+              style={({ pressed }) => [styles.ref, pressed && styles.pressed]}
+              testID={`${testID}-ref-${ref.kind}-${index}`}
+            >
+              <Text style={styles.refText}>{`${ref.kind} · ${ref.label}`}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+      {error ? <Text accessibilityRole="alert" style={styles.meta}>Could not open this reference. Tap to retry.</Text> : null}
+    </View>
+  );
+}
 
 /** Numbered machine lines on a quiet 2pt rule, the way a run log reads. */
 function Readout({ lines, testID }: { lines: readonly ReadoutLine[]; testID?: string }) {
@@ -469,7 +475,7 @@ function gateLines(
         : [];
   const lines: ReadoutLine[] = [
     { key: 'asked', value: gate.question },
-    ...gate.options.map((option) => ({
+    ...(open ? gate.options : []).map((option) => ({
       key: `option ${option.letter}`,
       value: (
         <>
@@ -542,7 +548,6 @@ function visitLines(
       : []),
     ...(step.kind === 'gate' ? gateLines(visit, detail, open) : []),
     ...deliveredLines(visit),
-    ...(open && step.kind !== 'gate' ? outcomeLines(step, detail.contract) : []),
   ];
 }
 
@@ -596,6 +601,7 @@ function VisitBody({
   return (
     <>
       <Readout lines={visitLines(step, visit, detail, { withRole })} />
+      {step.visits.length > 1 ? <Receipt receipt={visit.receipt} testID={testID} /> : null}
       {visit.openedCorners?.length ? (
         <OpenedCorners corners={visit.openedCorners} onOpenCorner={onOpenCorner} testID={testID} />
       ) : null}
@@ -679,7 +685,6 @@ function Attempts({
               style={({ pressed }) => [styles.attempt, pressed && styles.pressed]}
               testID={`${testID}-attempt-${number}-toggle`}
             >
-              <WorkflowStepCircle size={ATTEMPT_CIRCLE} status={live ? 'current' : 'done'} />
               <Text numberOfLines={1} style={styles.attemptText}>
                 {`Attempt ${number}`}
                 <Text style={styles.quiet}>
@@ -733,17 +738,6 @@ const styles = StyleSheet.create((theme) => {
     ghost: { color: theme.buzz.ledgerGhost },
     quiet: { color: theme.buzz.ledgerQuiet },
     ink: { color: theme.buzz.textSecondary },
-    secondary: { color: theme.buzz.textSecondary },
-    strip: {
-      flexGrow: 1,
-      paddingHorizontal: space.md,
-      paddingTop: space.lg,
-      paddingBottom: space.sm,
-    },
-    stripNode: { flex: 1, minWidth: 64, alignItems: 'center', gap: space.sm },
-    stripLeft: { position: 'absolute', left: 0, right: '50%', top: STRIP_CIRCLE / 2 - 1, height: 2 },
-    stripRight: { position: 'absolute', left: '50%', right: 0, top: STRIP_CIRCLE / 2 - 1, height: 2 },
-    stripLabel: { ...type.meta, maxWidth: 64, paddingHorizontal: 2 },
     step: { position: 'relative' },
     lineAbove: { position: 'absolute', left: LINE_X - 1, width: 2, top: 0, height: CIRCLE_TOP },
     lineBelow: {
@@ -753,6 +747,13 @@ const styles = StyleSheet.create((theme) => {
       top: CIRCLE_TOP + CIRCLE,
       bottom: 0,
     },
+    outcome: { marginLeft: 56, marginRight: space.md, paddingBottom: space.sm },
+    receiptLine: { ...type.body, color: theme.buzz.textSecondary, marginBottom: space.xs },
+    refs: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
+    ref: { minHeight: 44, justifyContent: 'center', paddingHorizontal: space.sm,
+      borderRadius: theme.buzz.radius, backgroundColor: theme.buzz.bgPressed },
+    refText: { ...type.meta, color: theme.buzz.accent },
+    exits: { ...type.meta, color: theme.buzz.textSecondary, marginTop: space.xs },
     summary: {
       minHeight: theme.buzz.layout.row,
       flexDirection: 'row',

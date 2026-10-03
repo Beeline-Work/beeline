@@ -197,7 +197,8 @@ async function writeChoiceCard(
   messageId: string,
   card: ChoiceCardView,
 ): Promise<void> {
-  await database.query(`UPDATE messages SET card=$2::jsonb WHERE id=$1`, [
+  // A workflow gate's hint must survive settlement for the answering agent.
+  await database.query(`UPDATE messages SET card=jsonb_strip_nulls(jsonb_build_object('receiptHint',card->'receiptHint')) || $2::jsonb WHERE id=$1`, [
     messageId,
     JSON.stringify(card),
   ]);

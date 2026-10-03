@@ -856,6 +856,7 @@ export async function readAgentCommands(
   const rows = await db.query<
     CommandRow & {
       text: string;
+      receipt_hint: string | null;
       author_id: string;
       attachments: RoomInboxResult['items'][number]['attachments'];
       system_event: RoomInboxResult['items'][number]['systemEvent'];
@@ -867,7 +868,9 @@ export async function readAgentCommands(
       created_at: Date;
     }
   >(
-    `SELECT c.*,CASE WHEN c.reason='corner_objective' THEN f.objective ELSE m.text END text,CASE WHEN m.card_type='daemon-fact' AND m.card->>'type'='corner-complete' THEN m.card END merge_card,m.author_id,m.attachments,m.system_event,m.presentation,m.card->>'askId' corner_ask_id,m.reply_to_message_id,(SELECT author_id FROM messages WHERE id=m.reply_to_message_id) reply_to_author_id FROM agent_commands c JOIN messages m ON m.id=c.source_message_id LEFT JOIN corner_facts f ON f.corner_id=c.room_id
+    `SELECT c.*,CASE WHEN c.reason='corner_objective' THEN f.objective ELSE m.text END text,CASE WHEN m.card_type='daemon-fact' AND m.card->>'type'='corner-complete' THEN m.card END merge_card,COALESCE(m.card->>'receiptHint',choice_message.card->>'receiptHint') receipt_hint,m.author_id,m.attachments,m.system_event,m.presentation,m.card->>'askId' corner_ask_id,m.reply_to_message_id,(SELECT author_id FROM messages WHERE id=m.reply_to_message_id) reply_to_author_id FROM agent_commands c JOIN messages m ON m.id=c.source_message_id LEFT JOIN corner_facts f ON f.corner_id=c.room_id
+ LEFT JOIN room_choices choice ON choice.id::text=m.card->>'choiceId' AND choice.room_id=c.room_id
+ LEFT JOIN messages choice_message ON choice_message.id=choice.message_id
  WHERE c.room_id=$1 AND c.agent_id=$2 AND (c.state='pending' OR (c.state='claimed' AND c.lease_expires_at<=now()))
    AND NOT (
      -- A review wake waits for the corner to go quiet. The checks-passed
@@ -910,7 +913,7 @@ export async function readAgentCommands(
       source: {
         id: r.source_message_id,
         authorId: r.author_id,
-        body: r.text + mergeCardDetail(r.merge_card),
+        body: r.text + mergeCardDetail(r.merge_card) + (r.receipt_hint ? `\nReceipt hint for this state: ${r.receipt_hint}. Attach an optional receipt when you call handoff.` : ''),
         attachments: r.attachments ?? [],
         createdAt: Math.floor(r.created_at.getTime() / 1000),
         type: r.presentation,

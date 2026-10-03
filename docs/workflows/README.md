@@ -21,11 +21,13 @@ A workflow does not run on a timer. It moves only when a bound agent calls `hand
   "version": 1,
   "name": "draft-review",
   "description": "Draft a note, review it, and get a human sign-off",
+  "summary": "Draft a note, review the result, and ask a person before publishing.",
   "roles": ["writer", "reviewer", "approver"],
   "start": "draft",
   "handoffs": {
     "draft": {
       "role": "writer",
+      "hint": "the draft note",
       "requires": ["text"],
       "on": { "submitted": "review", "timeout": "stuck" },
       "timeoutSeconds": 3600
@@ -61,6 +63,7 @@ A workflow does not run on a timer. It moves only when a bound agent calls `hand
 | `version` | Always `1`. |
 | `name` | Lowercase words joined by hyphens (`a-z`, `0-9`, `-`). No underscores. At most 64 characters. |
 | `description` | 1-60 characters. |
+| `summary` | Optional plaintext on one line, at most 140 characters. Shown above the state rail; absent means nothing is shown. |
 | `roles` | 1-16 unique role names. Lowercase letters, digits, `_` or `-`, starting with a letter. |
 | `start` | The state a run begins in. It must not be a terminal. |
 | `handoffs` | 2-64 states, keyed by state name. State names follow the role-name rule. |
@@ -68,6 +71,8 @@ A workflow does not run on a timer. It moves only when a bound agent calls `hand
 Unknown top-level keys are rejected.
 
 ### State kinds
+
+Every state may have an optional free-text `hint` describing the outcome or artifact to attach when leaving it. The dispatched agent sees this hint in its command before calling `handoff`. A hint does not require a receipt.
 
 **Handoff** (no `kind`): a role acts and reports an outcome.
 
@@ -79,9 +84,9 @@ Unknown top-level keys are rejected.
 | `loop` | Optional cap on one outcome: `{ "onEdge": <outcome>, "cap": 1-100, "onExceeded": <state> }`. `onExceeded` must differ from where `onEdge` normally goes. |
 | `timeoutSeconds` | Optional, 60 to 2592000. Needs a `timeout` outcome in `on`. When it elapses, the bound agent is reminded to call `handoff` with outcome `timeout`. |
 
-**Gate** (`"kind": "gate"`): a human decides. It allows only `kind`, `role`, `requires` and `on`, and needs 2-4 outcomes of at most 32 characters each. The run posts a choice card with one option per outcome. When a human answers, the role's agent is woken and calls `handoff` with the chosen outcome.
+**Gate** (`"kind": "gate"`): a human decides. It allows only `kind`, `role`, `requires`, `on` and optional `hint`, and needs 2-4 outcomes of at most 32 characters each. The run posts a choice card with one option per outcome. When a human answers, the role's agent is woken and calls `handoff` with the chosen outcome.
 
-**Terminal** (`"kind": "terminal"`): the run ends. It allows only `kind` and `status`, where status is `done`, `failed` or `abandoned`.
+**Terminal** (`"kind": "terminal"`): the run ends. It allows only `kind`, `status` and optional `hint`, where status is `done`, `failed` or `abandoned`.
 
 Unknown keys on a state are rejected. The `server` and `waiting` kinds, `roleBinding`, `implicitEdges` and `externalOutcomes` exist for Beeline's built-in workflows and are not needed for your own.
 
@@ -112,3 +117,26 @@ workflow contract is invalid: handoffs.approve: a gate needs 2-4 outcomes (got 1
 5. **No healthy agent.** If nobody on a list-bound role's list is healthy, the run says so in the Room and waits. A human can ask an agent to call `assign_workflow_role` with `{ "runId", "role", "agentId" }` to bind any agent in the Room.
 6. **End.** The run ends when it reaches a terminal state. `handoff` on an ended run is refused.
 7. **Retire.** `archive_workflow` with `{ "name" }` stops new runs of that workflow.
+
+
+## State receipts and the run page
+
+A handoff may include `receipt` beside `contents`. It does not replace the state's required contents:
+
+```json
+{
+  "runId": "the-run-id",
+  "outcome": "submitted",
+  "contents": { "text": "The draft note" },
+  "receipt": {
+    "line": "Drafted the note for review.",
+    "refs": [{ "kind": "file", "label": "Draft note", "url": "https://example.com/draft.txt" }]
+  }
+}
+```
+
+`line` is optional plaintext on one line, at most 140 Unicode characters. `refs` is optional and contains 0–3 references. Each has a `kind` (`brief`, `file`, `message`, `pr`, `checks`, `memory` or `url`), a nonempty `label`, and an HTTP(S) `url`. All workflows render these as the same typed chips. Missing lines and refs stay empty; there is no generated fallback. `{}` is a valid receipt.
+
+The engine records `exit: { gate, actorId }` on the transition card. Agents cannot supply or override it. Receipt data belongs to the state the card leaves, including each separate visit around a loop. Existing cards without receipts remain readable.
+
+The run page has one vertical rail, with one circle per declared state. Active states list their exits; finished states show the taken exit and actor. Rows show the title, actor and duration, then the optional receipt line and chips. Expanding a row shows timestamps and exit details. There is no horizontal rail or previous-runs counter.

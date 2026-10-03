@@ -285,7 +285,7 @@ describe('save_workflow error reasons', () => {
   it('names the rule that failed', async () => {
     const command = await commandFor(IMPLEMENTER);
     const cases: Record<string, unknown> = {
-      'handoffs.watch: unknown key "schedule" (a handoff allows role, roleBinding, requires, on, loop, timeoutSeconds)':
+      'handoffs.watch: unknown key "schedule" (a handoff allows role, roleBinding, requires, on, loop, timeoutSeconds, hint)':
         withStates({
           watch: { ...MM_DESK.handoffs.watch, schedule: '*/3 * * * *' },
         }),
@@ -331,13 +331,13 @@ describe('save_workflow error reasons', () => {
         Bad: { kind: 'terminal', status: 'done' },
       }),
       'handoffs.orphan must be an object': withStates({ orphan: 'x' }),
-      'handoffs.done: unknown key "note" (a terminal allows kind, status)': withStates({
+      'handoffs.done: unknown key "note" (a terminal allows kind, status, hint)': withStates({
         done: { kind: 'terminal', status: 'done', note: 'x' },
       }),
       'handoffs.done: terminal status must be done, failed or abandoned': withStates({
         done: { kind: 'terminal', status: 'ok' },
       }),
-      'handoffs.parked: unknown key "on" (a waiting state allows kind, role)': withStates({
+      'handoffs.parked: unknown key "on" (a waiting state allows kind, role, hint)': withStates({
         parked: { kind: 'waiting', on: {} },
       }),
       'handoffs.parked: role "ghost" is not in roles': withStates({
@@ -346,7 +346,7 @@ describe('save_workflow error reasons', () => {
       'handoffs.summary: kind must be gate, server, terminal or waiting, or omitted for a handoff': withStates({
         summary: { ...MM_DESK.handoffs.summary, kind: 'timer' },
       }),
-      'handoffs.kill_switch: unknown key "loop" (a gate allows kind, role, requires, on)': withStates({
+      'handoffs.kill_switch: unknown key "loop" (a gate allows kind, role, requires, on, hint)': withStates({
         kill_switch: {
           ...MM_DESK.handoffs.kill_switch,
           loop: { onEdge: 'resume', cap: 3, onExceeded: 'stopped' },

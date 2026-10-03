@@ -501,7 +501,7 @@ Scheduled Work lists schedules only: no Workflows section and no section
 heads. The run page has no way back to the run's own corner (no Open →), so
 the two pages never loop; Back returns to where the reader came from. The
 corner and the run page share one header title role: `bodyStrong` under a
-`meta` eyebrow, with the run number (`#14`) trailing on the run page.
+`meta` eyebrow. The run page has no previous-runs counter.
 
 **The run page is one straight line, read like a GitHub Actions run.**
 `workflowRunLine` (`buzz/workflow-graph.ts`) turns a contract and the run's
@@ -525,11 +525,12 @@ handoff history into ordered steps; `WorkflowRunLine` paints them. The rules:
   (`Skipped · Pull: nothing new`, or `Skipped · run ended at Closed`).
 - The 2pt line between two circles is brass where the run went, dashed
   `ledgerGhost` beside a skipped step, and `borderStrong` ahead.
-- Each row is the state name (`body`, `bodyStrong` for the current step),
-  one `meta` line (holder and the outcome taken, whose move it is, the
-  holder to come, or why skipped) and, on the right, its duration in
-  `machine` (a reached terminal shows the time instead). A capped loop adds
-  `round 2 of 3` to the current step's meta line.
+- Each row shows the state name (`body`, `bodyStrong` for the current step),
+  actor (`meta`) and duration (`machine`). Optional receipt text (`body`,
+  `textSecondary`) and typed reference chips (`meta`, brass, 44pt targets,
+  3pt radius) sit beneath it. Missing receipt text and refs leave no placeholder.
+- Transition gates have no circles: the active state lists `Exits: gate → State`
+  inside its row; finished states show only `→ State via gate · actor`.
 - Tapping a step opens its readout in place: numbered `machine` lines on a
   2pt `borderStrong` left rule — role and holder, entered and left times,
   the outcome it left by and the next step, and what it delivered (the
@@ -538,19 +539,21 @@ handoff history into ordered steps; `WorkflowRunLine` paints them. The rules:
   step entered more than once lists each attempt, newest first, each
   opening the same readout, then `N of cap rounds used` for a capped loop.
   The current step starts open.
-- A gate is a record, never a control: the question, each option with its
-  consequence, and the answer, who chose it and when — or, while open,
+- A gate is a record, never a control: while active it shows the question and
+  each option with its consequence; once finished it shows only the answer, who chose it and when — or, while open,
   `waiting on you` or on a person in the Room. Answering stays on the card
   in the corner.
 - A step that opened corners lists each under `OPENED` as a 44pt link (corner
   glyph and name, brass →) that navigates to that corner.
 
-Above the steps sits the run's plate and overview: a `hero` status line
+Above the steps sits the run's plate: a `hero` status line
 (`Waiting on you` in brass with the breathing live dot; `In review`; `Done ·
-nothing new` beside a done circle), a `meta` line with who started it, when,
-and how long it has run or took, then the same circles as a horizontal strip
-with a `meta` label under each, then a `STEPS` section head with `2 of 5`
-(live) or `3 ran · 2 skipped` (ended).
+nothing new` beside a done circle), and a `meta` line with who started it,
+when, and how long it has run or took. The workflow's agent-written plaintext
+`summary` (at most 140 characters) follows in `body`, `textSecondary`, with
+`space.md` padding; no summary means no replacement text. A `STEPS` section
+head with `2 of 5` (live) or `3 ran · 2 skipped` (ended) precedes the one
+vertical rail. No horizontal overview or previous-runs count appears.
 
 ## Identity
 

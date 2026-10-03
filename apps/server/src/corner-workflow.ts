@@ -1269,7 +1269,8 @@ export async function cornersReadyToLand(db: SqlDatabase): Promise<string[]> {
  * Claims the one server merge attempt for this head, under the run lock and
  * only while the run is in `land` on that head. Returns false when the head
  * was already attempted or the corner moved on, so concurrent sweeps and
- * redelivered events never merge a head twice.
+ * redelivered events never merge a head twice. Stale unfinished claims are
+ * recovered only after reading GitHub to establish whether the merge landed.
  */
 export async function claimCornerMergeAttempt(
   database: SqlDatabase,
@@ -1294,6 +1295,43 @@ export async function claimCornerMergeAttempt(
       [cornerId, headSha],
     );
     return claimed.rowCount > 0;
+  });
+}
+
+/** Five minutes exceeds the 15-second provider read timeout by a wide margin. */
+const MERGE_CLAIM_GRACE_SECONDS = 300;
+
+/** Shared by the background scan and its revalidation under the run lock. */
+export async function unfinishedCornerMergeClaims(db: SqlDatabase, cornerId?: string) {
+  return (await db.query<{ corner_id: string; number: number; head_sha: string }>(
+    `SELECT fact.corner_id,(fact.lifecycle->'pr'->>'number')::int number,
+            fact.merge_attempt_head head_sha
+     FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
+     WHERE fact.workflow_state='land' AND corner.archived_at IS NULL
+       AND fact.merge_attempt_head=fact.lifecycle->'pr'->>'headSha'
+       AND fact.lifecycle->'pr'->>'number' ~ '^[1-9][0-9]*$'
+       AND fact.updated_at < now()-($1 * interval '1 second')
+       AND ($2::uuid IS NULL OR fact.corner_id=$2)
+       AND NOT EXISTS (SELECT 1 FROM messages refusal WHERE refusal.id=
+         encode(sha256(convert_to('beeline:'||fact.corner_id::text||':github:merge-refused:'||fact.merge_attempt_head,'UTF8')),'hex'))`,
+    [MERGE_CLAIM_GRACE_SECONDS, cornerId ?? null],
+  )).rows;
+}
+
+/** Clear only the unfinished claim whose provider state was just read. */
+export async function clearUnfinishedCornerMergeClaim(
+  database: SqlDatabase, cornerId: string, headSha: string, number: number,
+) {
+  return database.transaction(async db => {
+    await lockCornerWorkflowRun(db, cornerId);
+    const corner = await loadCorner(db, cornerId);
+    const claim = (await unfinishedCornerMergeClaims(db, cornerId))[0];
+    if (!corner || claim?.head_sha !== headSha || claim.number !== number) return;
+    const gate = await cornerMergeGate(db, cornerId, { number: claim.number, headSha });
+    await db.query(`UPDATE corner_facts SET merge_attempt_head=NULL,updated_at=now() WHERE corner_id=$1`, [cornerId]);
+    // Only the normal sweep can act on an open gate, with a fresh GitHub read
+    // and claim. A closed gate still clears the stale claim for later recovery.
+    return gate.open && corner.lifecycle.checks === 'passing';
   });
 }
 

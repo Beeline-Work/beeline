@@ -77,7 +77,7 @@ import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedul
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import { closeCornerState } from './corner-close.js';
 import { writeCornerTitle } from './corner-title.js';
-import { advanceCorner } from './corner-workflow.js';
+import { advanceCorner, lockCornerWorkflowRun } from './corner-workflow.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import {
   LiveHub,
@@ -475,6 +475,8 @@ export class DaemonService {
             : undefined;
       const committedTasks: Parameters<AfterCommit>[0][] = [];
       const output = await this.database.transaction(async (db) => {
+        if (name === 'createCorner' || name === 'upgradeCornerLane' || name === 'reviseCornerBrief')
+          await lockCornerWorkflowRun(db, scopedRoom);
         const requestId = candidate.requestId ?? candidate.turnId;
         if (name === 'postAgentTurnReceipt' && candidate.status === 'failed') {
           await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
@@ -1469,12 +1471,20 @@ export class DaemonService {
         const hold = input as Input<'setCornerHold'>;
         await this.access(hold.cornerId, authenticatedAgentId);
         return (await this.database.transaction(async (db) => {
+          await lockCornerWorkflowRun(db, hold.cornerId);
           const command = await authorizeCommandOutput(
             db, hold.roomId, authenticatedAgentId, hold.requestId, hold.generationId,
           );
+          const releasing = hold.releaseHoldId !== undefined;
           const actor = (await db.query<{ author_id: string }>(
-            `SELECT author_id FROM messages WHERE id=$1`, [command.root_source_message_id],
+            `SELECT message.author_id FROM messages message
+             JOIN identities person ON person.id=message.author_id AND person.kind='human'
+             WHERE message.id=$1 AND ($2::uuid IS NULL OR message.room_id=$2)`,
+            [releasing ? command.source_message_id : command.root_source_message_id,
+              releasing ? hold.cornerId : null],
           )).rows[0];
+          if (releasing && (!actor || command.reason === 'corner_objective' || command.room_id !== hold.cornerId))
+            throw new Error('a direct human instruction in this corner is required to release a hold');
           if (!actor) throw new Error('hold requires a human requester');
           return setCornerHold(db, hold, actor.author_id);
         })) as Output<Name>;
@@ -1620,6 +1630,7 @@ export class DaemonService {
     }
 
     await this.database.transaction(async (db) => {
+      await lockCornerWorkflowRun(db, cornerId);
       const current = (
         await db.query<{
           reviewer_agent_id: string | null;
@@ -3001,7 +3012,7 @@ export class DaemonService {
    */
   private async approveCornerMerge(input: Input<'approveCornerMerge'>, agentId: string) {
     return this.database.transaction(async (db) => {
-      await db.query(`SELECT id FROM rooms WHERE id=$1 FOR UPDATE`, [input.cornerId]);
+      await lockCornerWorkflowRun(db, input.cornerId);
       const target = (
         await db.query<{
           pull_request_number: number | null;
@@ -6604,6 +6615,7 @@ export class DaemonService {
     let cornerId: string = randomUUID();
     const opener = await this.identity(agentId);
     await this.database.transaction(async (db) => {
+      await lockCornerWorkflowRun(db, cornerId);
       // Opening a corner is idempotent for one confirmed tool call while that
       // corner remains active. Locking the parent closes the read/insert race:
       // a concurrent retry waits, sees the winner, and returns its id without
@@ -6832,6 +6844,7 @@ export class DaemonService {
     if (!draft.change?.trim())
       throw new Error('corner brief revision requires a change description');
     const brief = await this.database.transaction(async (db) => {
+      await lockCornerWorkflowRun(db, input.cornerId);
       const corner = (
         await db.query<{ parent_id: string; owner_agent_id: string | null; kind: string }>(
           `SELECT room.parent_id,fact.owner_agent_id,fact.kind FROM rooms room
@@ -7082,6 +7095,7 @@ export class DaemonService {
     // to an idempotent no-op below before any resume/complete bookkeeping.
     let alreadyUpgraded = false;
     await this.database.transaction(async (db) => {
+      await lockCornerWorkflowRun(db, cornerId);
       const target = (
         await db.query<{
           lane: string;

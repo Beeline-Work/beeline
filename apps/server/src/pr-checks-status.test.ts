@@ -283,6 +283,7 @@ describe('PR-scoped check gate', () => {
       reviewer: '@reviewer',
       reviewerExists: true,
       reviewerIsAuthor: true,
+      rule: expect.stringContaining('current agent member of the parent Room'),
     });
   });
 

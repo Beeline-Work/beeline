@@ -19,6 +19,7 @@ import { reportUnansweredCornerAsks } from './corner-close.js';
 import {
   advanceCorner,
   claimCornerMergeAttempt,
+  lockCornerWorkflowRun,
   cornerMergeGate,
   cornersReadyToLand,
 } from './corner-workflow.js';
@@ -737,7 +738,7 @@ export class GitHubOperations {
     const approval = listLabel ? `approve_merge from ${reviewerLabel}` : `${reviewerLabel}'s approve_merge`;
     const woken = listLabel ? `the first healthy agent on ${listLabel}` : reviewerLabel;
     const rule = reviewerIsAuthor
-      ? `You opened this corner and are also this Room's configured reviewer (${reviewerLabel}), so self-review is not required — approve_merge cannot add signal over your own work. The reviewer outcome is PASS; the merge gate still applies worker yolo mode, human hold, and reviewer-existence conditions.`
+      ? `You opened this corner and are also this Room's configured reviewer (${reviewerLabel}), so self-review is not required — approve_merge cannot add signal over your own work. The reviewer outcome is PASS; the merge gate still requires worker yolo mode, no human hold, and a configured reviewer who is a current agent member of the parent Room.`
       : configuredReviewerId
         ? reviewerWake.status === 'unreachable'
           ? `Only ${approval} records PASS for the reviewer outcome; tagging or asking any other agent to review cannot record an approval or change this verdict. ${reviewerWake.detail} Do not invent a cause and do not poll this gate with a schedule. No Room owner/admin approve control exists in the app yet, so only ${reviewerLabel} can record PASS.`
@@ -1722,6 +1723,7 @@ export class GitHubOperations {
       const checkHeadSha = check?.headSha;
       if (check && checkHeadSha) {
         await database.transaction(async (database) => {
+          await lockCornerWorkflowRun(database, target.corner_id);
           // Webhooks are wake-up signals. Serialize refreshes for this corner, then ask GitHub
           // for its current aggregate instead of treating any delivery as the complete verdict.
           const current = (
@@ -1893,6 +1895,7 @@ export class GitHubOperations {
     const mergeKey = `github:pull-request:merged:${pullRequest.url}`;
     let archived = false;
     await database.transaction(async (database) => {
+      await lockCornerWorkflowRun(database, target.corner_id);
       const currentLifecycle = (
         await database.query<{ lifecycle: CornerLifecycleView }>(
           `SELECT lifecycle FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,

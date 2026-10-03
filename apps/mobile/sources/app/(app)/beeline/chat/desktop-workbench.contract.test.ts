@@ -33,7 +33,7 @@ describe('desktop workbench wiring', () => {
     expect(room).toContain("workPaneMode === 'dismissed'");
     expect(room).toContain('workPaneHandleRef.current?.focus()');
     expect(room).not.toContain('desktop-inspector-toggle');
-    expect(inspector).toMatch(/client\.room\(selectedCornerId\)/);
+    expect(inspector).toMatch(/client!?\.room\(selectedCornerId!?\)/);
     expect(inspector).toContain('desktop-work-corners-header');
     expect(inspector).toContain('desktop-work-cockpit');
     expect(inspector).toContain('desktop-work-objective');

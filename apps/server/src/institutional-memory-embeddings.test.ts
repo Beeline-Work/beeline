@@ -14,6 +14,8 @@ import {
   scheduleEmbedWorkspaceSkillVersion,
   hasPendingEmbedRetry,
   backfillInstitutionalMemoryEmbeddingsOnce,
+  warnIfEmbeddingKeyMissing,
+  resetEmbeddingFailureLogForTests,
   EMBED_RETRY_BACKOFF_MS,
   OPENROUTER_EMBEDDINGS_URL,
   type EmbedBatchFn,
@@ -32,6 +34,32 @@ function okResponse(body: unknown): Response {
 afterEach(() => {
   delete process.env.OPENROUTER_EMBEDDING_API_KEY;
   vi.useRealTimers();
+  resetEmbeddingFailureLogForTests();
+});
+
+describe('warnIfEmbeddingKeyMissing', () => {
+  it('logs one loud console.error naming the variable when no key is configured', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    warnIfEmbeddingKeyMissing({});
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(errorSpy.mock.calls[0]?.[0]).toContain('OPENROUTER_EMBEDDING_API_KEY');
+    expect(errorSpy.mock.calls[0]?.[0]).toContain('OFF');
+    errorSpy.mockRestore();
+  });
+
+  it('logs when the key is set but blank', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    warnIfEmbeddingKeyMissing({ OPENROUTER_EMBEDDING_API_KEY: '   ' });
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    errorSpy.mockRestore();
+  });
+
+  it('stays silent when a key is configured', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    warnIfEmbeddingKeyMissing({ OPENROUTER_EMBEDDING_API_KEY: 'test-key' });
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
 });
 
 describe('createDefaultEmbedFn', () => {
@@ -95,6 +123,45 @@ describe('createDefaultEmbedFn', () => {
     const embed = createDefaultEmbedFn({ env: { OPENROUTER_EMBEDDING_API_KEY: 'test-key' }, fetchImpl });
     const result = await embed('x', 'query');
     expect(result.outcome).toBe('error');
+  });
+
+  it('logs a non-200 response with the HTTP status and input type, never the key or text', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const fetchImpl = vi.fn(async () => new Response('{}', { status: 503 }));
+    const embed = createDefaultEmbedFn({ env: { OPENROUTER_EMBEDDING_API_KEY: 'super-secret-key' }, fetchImpl });
+    await embed('this memory text must never be logged', 'document');
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const message = String(errorSpy.mock.calls[0]?.[0]);
+    expect(message).toContain('503');
+    expect(message).toContain('document');
+    expect(message).not.toContain('super-secret-key');
+    expect(message).not.toContain('this memory text must never be logged');
+    errorSpy.mockRestore();
+  });
+
+  it('logs a network failure reason without leaking the key or text', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('ECONNRESET');
+    });
+    const embed = createDefaultEmbedFn({ env: { OPENROUTER_EMBEDDING_API_KEY: 'super-secret-key' }, fetchImpl });
+    await embed('private memory contents', 'query');
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const message = String(errorSpy.mock.calls[0]?.[0]);
+    expect(message).toContain('query');
+    expect(message).not.toContain('super-secret-key');
+    expect(message).not.toContain('private memory contents');
+    errorSpy.mockRestore();
+  });
+
+  it('bounds repeated failure logging: logs the first failure, stays quiet, then logs again periodically', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const fetchImpl = vi.fn(async () => new Response('{}', { status: 500 }));
+    const embed = createDefaultEmbedFn({ env: { OPENROUTER_EMBEDDING_API_KEY: 'test-key' }, fetchImpl });
+    for (let i = 0; i < 100; i++) await embed('x', 'query');
+    // First failure (#1) and the 100th both log; the 98 in between stay quiet.
+    expect(errorSpy).toHaveBeenCalledTimes(2);
+    errorSpy.mockRestore();
   });
 });
 
@@ -429,7 +496,11 @@ describe('backfillInstitutionalMemoryEmbeddingsOnce (one pass, never repeats its
     });
     const embedBatch = vi.fn(async (texts: readonly string[]) => texts.map(() => VECTOR));
     expect(await backfillInstitutionalMemoryEmbeddingsOnce(withSession(true), embedBatch))
-      .toEqual({ itemsEmbedded: 0, skillsEmbedded: 0, skipped: true });
+      .toEqual({
+        itemsEmbedded: 0, itemsAttempted: 0, itemsFailed: 0,
+        skillsEmbedded: 0, skillsAttempted: 0, skillsFailed: 0,
+        skipped: true,
+      });
     expect(embedBatch).not.toHaveBeenCalled();
     expect(released).toBe(1);
     statements.length = 0;
@@ -499,8 +570,27 @@ describe('backfillInstitutionalMemoryEmbeddingsOnce (one pass, never repeats its
     );
     const secondPass = vi.fn();
     const counts = await backfillInstitutionalMemoryEmbeddingsOnce(database, secondPass);
-    expect(counts).toEqual({ itemsEmbedded: 0, skillsEmbedded: 0 });
+    expect(counts).toEqual({
+      itemsEmbedded: 0, itemsAttempted: 0, itemsFailed: 0,
+      skillsEmbedded: 0, skillsAttempted: 0, skillsFailed: 0,
+    });
     expect(secondPass).not.toHaveBeenCalled();
+  });
+
+  it('reports how many rows it attempted and how many failed, alongside how many embedded', async () => {
+    const database = new PgliteDatabase();
+    await seed(database);
+    for (const suffix of ['c1', 'c2', 'c3']) {
+      await insertItem(database, `ffffffff-ffff-4fff-8fff-ffffffffff${suffix}`);
+    }
+    let calls = 0;
+    const counts = await backfillInstitutionalMemoryEmbeddingsOnce(database, async () => {
+      calls++;
+      return calls === 1 ? [undefined] : [VECTOR];
+    }, 1);
+    expect(counts.itemsAttempted).toBe(3);
+    expect(counts.itemsFailed).toBe(1);
+    expect(counts.itemsEmbedded).toBe(2);
   });
 
   it('covers workspace_skills too, re-embedding a version bump', async () => {

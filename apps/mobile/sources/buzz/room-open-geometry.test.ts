@@ -49,7 +49,7 @@ describe('Room-open bottom chrome geometry', () => {
     expect(newest.fontFamily).toBe(groknight.proseRegular);
     expect(newest.fontSize).toBe(groknight.proseSize);
     expect(newest.lineHeight).toBe(groknight.proseLineHeight);
-    expect(newest.lineHeight).toBe(25);
+    expect(newest.lineHeight).toBe(23);
     expect(ledger).toContain('lineHeight: theme.buzz.proseLineHeight');
   });
 

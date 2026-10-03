@@ -78,7 +78,7 @@ export function CommandPaletteItem({
 const styles = StyleSheet.create((theme) => ({
   container: {
     paddingHorizontal: 24,
-    paddingVertical: 12,
+    paddingVertical: theme.buzz.space.sm,
     backgroundColor: 'transparent',
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.buzz.border,
@@ -102,23 +102,23 @@ const styles = StyleSheet.create((theme) => ({
     height: 32,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
+    marginRight: theme.buzz.space.md,
   },
   textContainer: {
     flex: 1,
-    marginRight: 12,
+    marginRight: theme.buzz.space.md,
   },
   title: {
     ...theme.buzz.type.body,
     color: theme.buzz.textPrimary,
-    marginBottom: 2,
+    marginBottom: theme.buzz.space.xs,
   },
   subtitle: {
     ...theme.buzz.type.meta,
     color: theme.buzz.textSecondary,
   },
   shortcutContainer: {
-    paddingLeft: 10,
+    paddingLeft: theme.buzz.space.sm,
   },
   shortcut: {
     ...theme.buzz.type.machine,

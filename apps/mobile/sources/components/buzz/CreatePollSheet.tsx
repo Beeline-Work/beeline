@@ -4,7 +4,7 @@ import { Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { HullDialogInput } from './HullDialog';
 import { HULL_SHEET_INSET, HullActionSheetCancel, HullActionSheetModal } from './HullActionSheet';
-import { MonoButton } from './MonoHull';
+import { Button } from './Button';
 
 const CLOSING_TIMES = [
   { label: '5 min', seconds: 300 },
@@ -57,7 +57,7 @@ export function CreatePollSheet({
       footer={
         <View>
           <View style={styles.submitInset}>
-            <MonoButton
+            <Button
               disabled={busy || !ready}
               label="Create poll"
               loading={busy}
@@ -152,13 +152,13 @@ export function CreatePollSheet({
 
 const styles = StyleSheet.create((theme) => ({
   content: { maxHeight: 470, paddingHorizontal: HULL_SHEET_INSET },
-  submitInset: { paddingHorizontal: HULL_SHEET_INSET, paddingTop: 12, paddingBottom: 8 },
+  submitInset: { paddingHorizontal: HULL_SHEET_INSET, paddingTop: 16, paddingBottom: 8 },
   label: {
     ...theme.buzz.type.meta,
     color: theme.buzz.textPrimary,
     fontWeight: '600',
     marginTop: 16,
-    marginBottom: 6,
+    marginBottom: 8,
   },
   optionRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   optionLetter: { color: theme.buzz.textPrimary, width: 18 },
@@ -170,7 +170,7 @@ const styles = StyleSheet.create((theme) => ({
   time: {
     minHeight: 44,
     minWidth: 70,
-    paddingHorizontal: 10,
+    paddingHorizontal: 8,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: StyleSheet.hairlineWidth,

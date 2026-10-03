@@ -1,12 +1,13 @@
 import React from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
-import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { StyleSheet } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { retrieveTempText } from '@/sync/persistence';
 import { t } from '@/text';
 import * as Clipboard from 'expo-clipboard';
 import { HullDialog } from '@/components/buzz/HullDialog';
+import { PageHeader } from '@/components/buzz/PageHeader';
 
 type Notice = {
     title: string;
@@ -16,7 +17,6 @@ type Notice = {
 
 export default function TextSelectionScreen() {
     const router = useRouter();
-    const navigation = useNavigation();
     const { textId } = useLocalSearchParams<{ textId: string }>();
     const insets = useSafeAreaInsets();
     const [fullText, setFullText] = React.useState('');
@@ -36,26 +36,6 @@ export default function TextSelectionScreen() {
             setNotice({ title: t('common.error'), message: t('textSelection.failedToCopy') });
         }
     }, [fullText]);
-
-    React.useLayoutEffect(() => {
-        const disabled = loading || !fullText;
-        navigation.setOptions({
-            headerRight: () => (
-                <Pressable
-                    accessibilityLabel={t('common.copy')}
-                    accessibilityRole="button"
-                    disabled={disabled}
-                    onPress={handleCopyAll}
-                    style={({ pressed }) => [
-                        styles.copyButton,
-                        pressed && styles.copyButtonPressed,
-                    ]}
-                >
-                    <Text style={[styles.copyGlyph, disabled && styles.copyGlyphDisabled]}>⧉</Text>
-                </Pressable>
-            ),
-        });
-    }, [navigation, handleCopyAll, loading, fullText]);
 
     React.useEffect(() => {
         if (!textId) {
@@ -81,6 +61,8 @@ export default function TextSelectionScreen() {
         setLoading(false);
     }, [textId]);
 
+    const copyDisabled = loading || !fullText;
+
     const dismissNotice = () => {
         if (notice?.exitsScreen) {
             router.back();
@@ -90,7 +72,28 @@ export default function TextSelectionScreen() {
     };
 
     return (
-        <View style={styles.container}>
+        <View style={[styles.container, { paddingTop: insets.top }]}>
+            <PageHeader
+                action={
+                    <Pressable
+                        accessibilityLabel={t('common.copy')}
+                        accessibilityRole="button"
+                        disabled={copyDisabled}
+                        onPress={handleCopyAll}
+                        style={({ pressed }) => [
+                            styles.copyButton,
+                            pressed && styles.copyButtonPressed,
+                        ]}
+                        testID="text-selection-copy"
+                    >
+                        <Text style={[styles.copyGlyph, copyDisabled && styles.copyGlyphDisabled]}>⧉</Text>
+                    </Pressable>
+                }
+                backAccessibilityLabel={t('common.back')}
+                onBack={() => router.back()}
+                testID="text-selection-header"
+                title={t('textSelection.title')}
+            />
             {loading ? (
                 <Text style={styles.loadingText}>{t('common.loading')}</Text>
             ) : (
@@ -131,18 +134,18 @@ const styles = StyleSheet.create((theme) => ({
         backgroundColor: theme.buzz.bgTerminal,
     },
     loadingText: {
-        marginTop: 50,
+        marginTop: theme.buzz.space.xxl,
         color: theme.buzz.textMuted,
         ...theme.buzz.type.body,
         textAlign: 'center',
     },
     textContainer: {
         flex: 1,
-        paddingHorizontal: 18,
+        paddingHorizontal: theme.buzz.space.md,
     },
     scrollContent: {
         flexGrow: 1,
-        paddingTop: 18,
+        paddingTop: theme.buzz.space.md,
     },
     textContent: {
         minHeight: 200,
@@ -159,7 +162,6 @@ const styles = StyleSheet.create((theme) => ({
         minHeight: 44,
         alignItems: 'center',
         justifyContent: 'center',
-        marginRight: 4,
     },
     copyButtonPressed: {
         backgroundColor: theme.buzz.bgPressed,

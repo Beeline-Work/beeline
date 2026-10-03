@@ -14,7 +14,7 @@ import { enterWorkspaceRoom } from '@/buzz/enter-workspace';
 import { clearPendingInvite, savePendingInvite } from '@/buzz/pending-invite';
 import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { Typography } from '@/constants/Typography';
-import { BrassButton } from '@/components/buzz/MonoHull';
+import { Button } from '@/components/buzz/Button';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { RoomViewClient, RoomViewHttpError } from '@/sync/transport/room-view-client';
@@ -187,7 +187,7 @@ export default function CommunityInviteJoin() {
                 </View>
               </View>
             ) : null}
-            <BrassButton
+            <Button
               disabled={joining}
               label={joining ? 'Joining…' : `Join ${preview.name}`}
               loading={joining}
@@ -219,7 +219,7 @@ export default function CommunityInviteJoin() {
               connection and try again.
             </Text>
             {error ? <Text style={styles.meta}>{error}</Text> : null}
-            <BrassButton
+            <Button
               label="Retry"
               onPress={retry}
               style={styles.primary}
@@ -243,7 +243,7 @@ export default function CommunityInviteJoin() {
               It may have expired, been used up, or been withdrawn. Ask for a new link, or start
               your own {WORKSPACE_LABEL.toLowerCase()}.
             </Text>
-            <BrassButton
+            <Button
               label="Choose another way in"
               onPress={() => void otherWay()}
               style={styles.primary}
@@ -256,6 +256,8 @@ export default function CommunityInviteJoin() {
   );
 }
 
+const BADGE_DOT_SIZE = 7;
+
 const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
@@ -264,7 +266,7 @@ const styles = StyleSheet.create((theme) => {
     column: { width: '100%', maxWidth: 460, alignSelf: 'center', gap: hull.space.md },
     loadingBlock: { alignItems: 'center', gap: hull.space.md, paddingTop: hull.space.xxl },
     badge: { flexDirection: 'row', alignItems: 'center', gap: hull.space.sm },
-    badgeDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: hull.accent },
+    badgeDot: { width: BADGE_DOT_SIZE, height: BADGE_DOT_SIZE, borderRadius: BADGE_DOT_SIZE / 2, backgroundColor: hull.accent },
     badgeText: { ...Typography.default(), ...hull.type.sectionHead, color: hull.accent },
     title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
     body: { ...Typography.default(), ...hull.type.body, color: hull.textSecondary },

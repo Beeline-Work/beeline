@@ -39,10 +39,10 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     header: {
         paddingTop: 24,
         paddingBottom: 8,
-        paddingHorizontal: 20,
+        paddingHorizontal: theme.buzz.space.lg,
     },
     headerNoTitle: {
-        paddingTop: 12,
+        paddingTop: theme.buzz.space.md,
     },
     headerText: {
         ...theme.buzz.type.sectionHead,
@@ -57,7 +57,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     footer: {
         paddingTop: 8,
         paddingBottom: 4,
-        paddingHorizontal: 20,
+        paddingHorizontal: theme.buzz.space.lg,
     },
     footerText: {
         ...theme.buzz.type.meta,

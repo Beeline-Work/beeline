@@ -40,10 +40,10 @@ vi.mock('react-native', async () => {
 vi.mock('@/constants/Typography', () => ({
   Typography: { default: () => ({}), mono: () => ({}) },
 }));
-vi.mock('./MonoHull', async () => {
+vi.mock('./Button', async () => {
   const ReactModule = await import('react');
   return {
-    OnboardingButton: (props: any) => ReactModule.createElement('OnboardingButton', props),
+    Button: (props: any) => ReactModule.createElement('Button', props),
   };
 });
 vi.mock('./IdentityMark', async () => {

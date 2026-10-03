@@ -74,11 +74,9 @@ vi.mock('@/components/buzz/HullActionSheet', async () => {
     HullActionSheetRow: host('Row'),
   };
 });
-vi.mock('@/components/buzz/MonoHull', async () => {
+vi.mock('@/components/buzz/Button', async () => {
   const ReactModule = await import('react');
-  return {
-    MonoButton: (props: Record<string, unknown>) => ReactModule.createElement('Button', props),
-  };
+  return { Button: (props: any) => ReactModule.createElement('Button', props, props.children) };
 });
 vi.mock('@/components/buzz/SettingsRow', async () => {
   const ReactModule = await import('react');

@@ -7,6 +7,8 @@ import type { RoomWorkflowListResult, RoomWorkflowView } from '@beeline/api-cont
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { Typography } from '@/constants/Typography';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
+import { PageHeader } from '@/components/buzz/PageHeader';
+import { displayRoomIndexTitle } from '@/buzz/room-list-row';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { Modal } from '@/modal/ModalManager';
@@ -90,12 +92,14 @@ export default function RoomWorkflows() {
   );
 
   return (
-    <View style={[styles.container, { paddingBottom: insets.bottom }]}>
-      <View style={styles.header}>
-        <Text numberOfLines={1} style={styles.subtitle} testID="workflows-room">
-          {roomName}
-        </Text>
-      </View>
+    <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+      <PageHeader
+        backAccessibilityLabel="Back to Room"
+        eyebrow={displayRoomIndexTitle(roomName) ?? 'Room'}
+        onBack={() => router.back()}
+        testID="workflows-room"
+        title="Workflows"
+      />
       {loading ? (
         <View style={styles.loading}>
           <SurfaceGlyphLoader testID="workflows-loader" />
@@ -154,24 +158,22 @@ export default function RoomWorkflows() {
 
 const styles = StyleSheet.create((theme) => ({
   container: { flex: 1, backgroundColor: theme.buzz.bgTerminal },
-  header: { paddingHorizontal: 16, paddingTop: 8 },
-  subtitle: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.textMuted },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  content: { padding: 16, gap: 10 },
+  content: { padding: 16, gap: theme.buzz.space.sm },
   notice: {
     ...Typography.default(),
     ...theme.buzz.type.meta,
     color: theme.buzz.textMuted,
-    marginBottom: 2,
+    marginBottom: theme.buzz.space.xs,
   },
   workflowRow: {
     minHeight: 58,
     borderTopWidth: 1,
     borderTopColor: theme.buzz.border,
-    paddingVertical: 10,
+    paddingVertical: theme.buzz.space.sm,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: theme.buzz.space.sm,
   },
   workflowCopy: { flex: 1, minWidth: 0, gap: 4 },
   workflowName: {

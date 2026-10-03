@@ -32,7 +32,7 @@ describe('CornerAppScreen', () => {
       });
       const scroll = renderer.root.findByProps({ testID: 'corner-app-scroll' });
       const contentStyle = Object.assign({}, ...[scroll.props.contentContainerStyle].flat(Infinity as 1));
-      expect(contentStyle.paddingBottom).toBe(56 + 48);
+      expect(contentStyle.paddingBottom).toBe(48 + 48);
     } finally {
       safeArea.bottom = 0;
     }

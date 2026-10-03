@@ -44,9 +44,9 @@ vi.mock('./HullActionSheet', async () => {
       ReactModule.createElement('HullActionSheetCancel', props),
   };
 });
-vi.mock('./MonoHull', async () => {
+vi.mock('./Button', async () => {
   const ReactModule = await import('react');
-  return { MonoButton: (props: any) => ReactModule.createElement('MonoButton', props) };
+  return { Button: (props: any) => ReactModule.createElement('Button', props, props.children) };
 });
 
 import { CreatePollSheet } from './CreatePollSheet';

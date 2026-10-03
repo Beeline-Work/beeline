@@ -12,7 +12,7 @@ import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { Typography } from '@/constants/Typography';
-import { OnboardingButton } from '@/components/buzz/MonoHull';
+import { Button } from '@/components/buzz/Button';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { CHEVRON_BACK_SIZE, CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { RoomGlyph } from '@/components/buzz/RoomGlyph';
@@ -172,7 +172,7 @@ export default function WorkspaceChoice() {
                   testID="choice-join-input"
                   value={inviteInput}
                 />
-                <OnboardingButton
+                <Button
                   disabled={!inviteInput.trim()}
                   label="Preview invite"
                   onPress={handleJoin}

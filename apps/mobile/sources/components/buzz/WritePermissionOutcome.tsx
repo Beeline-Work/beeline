@@ -51,12 +51,15 @@ export function WritePermissionOutcome(props: {
   if (cornerMark && props.subchannelId && props.onOpen) {
     return (
       <Pressable
+        accessibilityRole="link"
+        accessibilityLabel="Corner approved. View corner"
         testID="write-permission-open-corner"
         onPress={props.onOpen}
-        style={styles.outcome}
+        style={({ pressed }) => [styles.outcome, styles.link, pressed && styles.linkPressed]}
       >
         <CornerGlyph size={CORNER_STATUS_SIZE} />
-        <Text style={styles.status}>CORNER APPROVED · VIEW →</Text>
+        <Text style={styles.linkLead}>Corner approved ·</Text>
+        <Text style={styles.linkAction}>View corner</Text>
       </Pressable>
     );
   }
@@ -83,8 +86,8 @@ const styles = StyleSheet.create((theme) => {
     outcome: {
       width: '100%',
       minWidth: 0,
-      marginBottom: 22,
-      paddingVertical: 3,
+      marginBottom: groknight.space.lg,
+      paddingVertical: groknight.space.xs,
       paddingRight: LEDGER_MARGINALIA_WIDTH,
       flexDirection: 'row',
       alignItems: 'center',
@@ -93,6 +96,22 @@ const styles = StyleSheet.create((theme) => {
     status: {
       ...groknight.type.machine,
       color: groknight.ledgerQuiet,
+    },
+    /** The approval's one action: a 44pt link with a pressed ground. */
+    link: {
+      minHeight: 44,
+      paddingVertical: 0,
+      borderRadius: groknight.radius,
+    },
+    linkPressed: { backgroundColor: groknight.bgPressed },
+    linkLead: {
+      ...groknight.type.meta,
+      color: groknight.ledgerQuiet,
+    },
+    linkAction: {
+      ...groknight.type.meta,
+      fontFamily: groknight.proseMedium,
+      color: groknight.accent,
     },
   };
 });

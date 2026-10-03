@@ -92,10 +92,13 @@ vi.mock('@/components/buzz/MonoHull', async () => {
     ReactModule.createElement(name, props, props.children);
   return {
     HullSurface: host('HullSurface'),
-    MonoButton: host('MonoButton'),
     PixelGateReveal: host('PixelGateReveal'),
     PixelLoader: host('PixelLoader'),
   };
+});
+vi.mock('@/components/buzz/Button', async () => {
+  const ReactModule = await import('react');
+  return { Button: (props: any) => ReactModule.createElement('Button', props, props.children) };
 });
 vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
   const ReactModule = await import('react');

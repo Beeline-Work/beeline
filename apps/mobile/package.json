@@ -25,7 +25,6 @@
     "typecheck": "node scripts/generate-typed-routes.cjs && tsc --noEmit",
     "postinstall": "patch-package || true; (command -v setup-skia-web >/dev/null && setup-skia-web public) || true",
     "eas-build-post-install": "tsc -p scripts/tsconfig.eas-nostr.json && tsc -p scripts/tsconfig.eas-api-contract.json && tsc -p scripts/tsconfig.eas-buzz-client.json",
-    "generate-theme": "tsx sources/theme.gen.ts",
     "identity-mark:proof": "node scripts/render-identity-axis-proof.mjs",
     "turn-band:proof": "node scripts/turn-band-hold-proof.mjs",
     "emoji-clip:proof": "node scripts/render-emoji-clip-proof.mjs",

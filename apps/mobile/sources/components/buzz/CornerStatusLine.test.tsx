@@ -85,7 +85,7 @@ describe('CornerStatusLine', () => {
         .findAllByProps({ accessibilityRole: 'button' })
         .filter((node: any) => typeof node.type === 'string'),
     ).toHaveLength(0);
-    expect(renderer.root.findAllByType('MonoButton' as any)).toHaveLength(0);
+    expect(renderer.root.findAllByType('Button' as any)).toHaveLength(0);
     expect(renderer.root.findAllByType('View' as any)).toHaveLength(0);
     expect(renderer.root.findByProps({ testID: 'corner-status-copy' }).props.children).toBe(
       'PR #840 · 1/15 tests passed · running',

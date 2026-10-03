@@ -61,11 +61,11 @@ describe('Chat header — one language for Room and Corner', () => {
     );
     expect(directMessageMeta, 'missing Direct Message metadata').toBeTruthy();
     expect(directMessageMeta![0]).not.toContain('formatRoomParticipantTotal');
-    // Room overflow carries the one Members row; a corner inherits the Room's
-    // membership and shows none. The header diamond opens corners, not the
-    // roster (#1432 masking).
+    // The Room and corner overflow sheets each carry one Members row. The
+    // header diamond opens corners, not the roster (#1432 masking).
     expect(chatSource.match(/testID="room-participant-roster-trigger"/g)).toHaveLength(1);
-    expect(chatSource.match(/label="Members"/g)).toHaveLength(1);
+    expect(chatSource.match(/testID="corner-participant-roster-trigger"/g)).toHaveLength(1);
+    expect(chatSource.match(/label="Members"/g)).toHaveLength(2);
     expect(
       chatSource.match(/formatRoomParticipantTotal\(roomParticipantTotal\)/g).length,
     ).toBeGreaterThanOrEqual(1);
@@ -99,26 +99,26 @@ describe('Chat header — one language for Room and Corner', () => {
   });
 
   it('hangs the title on the Room list’s own name axis (C83)', () => {
-    // 12 (header padding) + 44 (back target) + 12 = 68, the same left edge a
-    // Room-list row's name sits on (16 + 40 tile slot + 12, `channels.tsx`).
-    // Pushing a row open must not shift the name sideways.
+    // 16 (header padding) + 44 (back target) + 8 = 68 — the same title edge
+    // as before the spacing-scale snap — so pushing a row open never shifts
+    // the name sideways.
     const header = chatSource.match(/\n    header:\s*\{[\s\S]*?\n    \},/);
     expect(header, 'missing header style').toBeTruthy();
-    expect(header![0]).toContain('paddingHorizontal: 12');
+    expect(header![0]).toContain('paddingHorizontal: groknight.space.md');
     const back = chatSource.match(/backButton:\s*\{[\s\S]*?\n    \},/);
     expect(back, 'missing backButton style').toBeTruthy();
     expect(back![0]).toContain('width: 44');
-    expect(back![0]).toContain('marginRight: 12');
+    expect(back![0]).toContain('marginRight: groknight.space.sm');
   });
 
   it('parts trailing actions from the title column and keeps edge targets over 48', () => {
     const actions = chatSource.match(/roomActionsButton:\s*\{[\s\S]*?\n    \},/);
     expect(actions, 'missing roomActionsButton style').toBeTruthy();
     expect(actions![0]).toContain('minWidth: 44');
-    expect(actions![0]).toContain('marginLeft: 12');
+    expect(actions![0]).toContain('marginLeft: groknight.space.sm');
     // The archived badge takes the same trailing axis.
     const badge = chatSource.match(/archivedBadge:\s*\{[\s\S]*?\n    \},/);
-    expect(badge![0]).toContain('marginLeft: 12');
+    expect(badge![0]).toContain('marginLeft: groknight.space.sm');
     // 44 of chrome + 4 all round clears Android's 48dp floor without moving a
     // pixel, so every header glyph stays optically centred on its own margins.
     expect(chatSource).toContain(
@@ -177,7 +177,7 @@ describe('Chat header — one language for Room and Corner', () => {
     const doorButton = chatSource.match(/roomCornersButton:\s*\{[\s\S]*?\n    \},/);
     expect(doorButton![0]).toContain('minWidth: 44');
     expect(doorButton![0]).toContain('minHeight: 44');
-    expect(doorButton![0]).toContain('marginLeft: 12');
+    expect(doorButton![0]).toContain('marginLeft: groknight.space.sm');
     // No word rides along any more.
     expect(chatSource).not.toContain('roomCornersLabel');
     // Siblings: the door and the overflow carry the SAME box, so neither
@@ -245,7 +245,7 @@ describe('Chat header — one language for Room and Corner', () => {
     // gap it carried before.
     const metaRow = ladderSource.match(/metaRow:\s*\{[\s\S]*?\n\s*\},/);
     expect(metaRow, 'missing metaRow style').toBeTruthy();
-    expect(metaRow![0]).toContain('marginTop: 2');
+    expect(metaRow![0]).toContain('marginTop: groknight.space.xs');
   });
 
   it('carries no presence light or state glyph, but states canonical progress in words', () => {

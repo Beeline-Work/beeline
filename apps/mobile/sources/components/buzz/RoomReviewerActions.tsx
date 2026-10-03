@@ -186,8 +186,8 @@ const styles = StyleSheet.create((theme) => ({
   error: {
     borderTopColor: theme.buzz.border,
     borderTopWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 18,
-    paddingVertical: 12,
+    paddingHorizontal: theme.buzz.space.md,
+    paddingVertical: theme.buzz.space.sm,
   },
   errorText: {
     ...theme.buzz.type.meta,

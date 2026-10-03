@@ -7,6 +7,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Typography } from '@/constants/Typography';
 import { AppMark } from '@/components/buzz/AppMark';
+import { Button } from '@/components/buzz/Button';
 import { AppPageHeader } from '@/components/buzz/AppPageHeader';
 import { POPULAR_APPS } from '@/buzz/app-catalog';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
@@ -89,7 +90,7 @@ export default function ConnectAppScreen() {
           return <View key={app.name} style={styles.row} testID={`connect-app-${app.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`}>
             <AppMark name={app.name} domain={app.domain} logo={metadata?.logo ?? existing?.logo} size={34} />
             <View style={styles.name}><Text style={styles.nameText} numberOfLines={1}>{app.name}</Text>{key === 'instagram' ? <Text style={styles.description}>{INSTAGRAM_SIGN_IN_REQUIREMENT}</Text> : metadata?.description ? <Text style={styles.description} numberOfLines={2}>{metadata.description}</Text> : null}</View>
-            {existing?.status === 'connected' ? <Text style={styles.connected}>connected</Text> : <TouchableOpacity accessibilityRole="button" disabled={busy !== null} onPress={() => void connect(app.name)} style={styles.button}><Text style={styles.buttonText}>{busy === app.name ? 'Connecting' : existing?.status === 'error' ? 'Retry' : 'Connect'}</Text></TouchableOpacity>}
+            {existing?.status === 'connected' ? <Text style={styles.connected}>connected</Text> : <Button disabled={busy !== null} label={busy === app.name ? 'Connecting' : existing?.status === 'error' ? 'Retry' : 'Connect'} onPress={() => void connect(app.name)} />}
             {existing ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Disconnect ${app.name}`} disabled={busy !== null} onPress={() => void disconnect(existing)} testID={`disconnect-app-${app.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`}><Text style={styles.connected}>Disconnect</Text></TouchableOpacity> : null}
           </View>;
         })}
@@ -104,19 +105,17 @@ const styles = StyleSheet.create(theme => {
   const board = appBoardColors(hull);
   return {
   screen: { flex: 1, backgroundColor: board.canvas },
-  searchWrap: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 6 },
-  search: { flexDirection: 'row', alignItems: 'center', gap: 10, height: 48, paddingHorizontal: 14, borderWidth: 1, borderColor: board.strongBorder, borderRadius: 12, backgroundColor: board.tile },
+  searchWrap: { paddingHorizontal: hull.space.lg, paddingTop: 16, paddingBottom: hull.space.sm },
+  search: { flexDirection: 'row', alignItems: 'center', gap: hull.space.sm, height: 48, paddingHorizontal: hull.space.md, borderWidth: 1, borderColor: board.strongBorder, borderRadius: theme.buzz.radius, backgroundColor: board.tile },
   input: { ...Typography.ledger(), ...hull.type.body, flex: 1, color: board.ink, paddingVertical: 0 },
   placeholder: { color: board.quiet },
-  section: { ...Typography.default(), ...hull.type.sectionHead, paddingHorizontal: 20, paddingTop: 12, paddingBottom: 4, color: board.quiet },
-  list: { paddingHorizontal: 20 },
-  row: { minHeight: 54, flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: board.border },
+  section: { ...Typography.default(), ...hull.type.sectionHead, paddingHorizontal: hull.space.lg, paddingTop: hull.space.md, paddingBottom: 4, color: board.quiet },
+  list: { paddingHorizontal: hull.space.lg },
+  row: { minHeight: 54, flexDirection: 'row', alignItems: 'center', gap: hull.space.md, paddingVertical: hull.space.sm, borderBottomWidth: 1, borderBottomColor: board.border },
   name: { flex: 1 },
   nameText: { ...Typography.ledger(), ...hull.type.body, color: board.ink },
   description: { ...Typography.ledger(), ...hull.type.meta, color: board.quiet },
   connected: { ...Typography.ledger(), ...hull.type.meta, color: board.quiet },
-  button: { minHeight: 36, paddingHorizontal: 14, justifyContent: 'center', borderRadius: 9, backgroundColor: board.buttonFill },
-  buttonText: { ...Typography.ledger(), ...hull.type.body, color: board.buttonText },
-  error: { ...Typography.default(), margin: 20, color: theme.buzz.dialogDanger },
+  error: { ...Typography.default(), margin: hull.space.lg, color: theme.buzz.dialogDanger },
   };
 });

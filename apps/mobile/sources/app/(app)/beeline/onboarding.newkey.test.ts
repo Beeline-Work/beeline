@@ -92,10 +92,12 @@ vi.mock('@/components/buzz/MonoHull', async () => {
   return {
     hairlineDivider: { borderBottomWidth: 1, borderBottomColor: '#4e4e4e' },
     HullSurface: host('HullSurface'),
-    MonoButton: host('MonoButton'),
-    OnboardingButton: host('OnboardingButton'),
     PixelGateReveal: host('PixelGateReveal'),
   };
+});
+vi.mock('@/components/buzz/Button', async () => {
+  const ReactModule = await import('react');
+  return { Button: (props: any) => ReactModule.createElement('Button', props, props.children) };
 });
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');

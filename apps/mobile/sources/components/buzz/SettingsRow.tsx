@@ -340,8 +340,8 @@ const styles = StyleSheet.create((theme) => {
       borderWidth: 1,
       borderColor: hull.buttonSecondaryText,
       borderRadius: hull.radius,
-      paddingVertical: 5,
-      paddingHorizontal: 14,
+      paddingVertical: hull.space.xs,
+      paddingHorizontal: hull.space.md,
     },
     actionControlLabel: {
       ...Typography.default(),

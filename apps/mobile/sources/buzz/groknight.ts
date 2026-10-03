@@ -12,6 +12,9 @@ const shared = {
   brandMark: brand.mark,
   // The one box radius, shared by every theme (DESIGN.md → Shape).
   radius: 3,
+  // The one floating-surface shadow ink; its density is per theme
+  // (`dialogShadowOpacity`).
+  dialogShadowColor: '#000000',
   // Human and agent relay photos defeat their identity axes, so their shared
   // photo gate stays off. Workspace pictures are the explicit exception and
   // are gated separately in photo-overrides.ts.
@@ -19,41 +22,33 @@ const shared = {
   transcriptCard: {
     cornerRadius: 10,
     marginTop: 8,
-    marginBottom: 12,
-    headTop: 14,
+    marginBottom: 8,
+    headTop: 16,
     side: 16,
     identitySize: 26,
-    bodySize: 15,
+    bodySize: 16,
     bodyLineHeight: 23,
     rowStateWidth: 92,
-    rowVertical: 10,
-    codeTop: 10,
-    codeVertical: 10,
-    codeHorizontal: 12,
+    rowVertical: 8,
+    codeTop: 8,
+    codeVertical: 8,
+    codeHorizontal: 16,
     codeRadius: 8,
-    codePathSize: 12,
-    rowTitleSize: 15,
-    rowKindSize: 12,
-    footerTop: 12,
-    footerVertical: 12,
+    codePathSize: 13,
+    rowTitleSize: 16,
+    rowKindSize: 13,
+    footerTop: 16,
+    footerVertical: 8,
     footerMinHeight: 44,
-    actionGap: 22,
-    actionSize: 15,
+    actionGap: 24,
+    actionSize: 16,
   },
   // Mobile Room list cards (approved Room list card mock). Desktop rows keep
   // the body/meta roles.
   roomCard: {
     cornerRadius: 14,
-    inset: 12,
-    gap: 10,
-    padding: 14,
-    // Top padding when the preview is the card's last line: its baseline sits
-    // 5.8 above the bottom padding, the name's cap line 7.2 below the top.
-    previewCardTop: 13,
-    nameSize: 19,
-    nameLineHeight: 28,
-    previewSize: 15,
-    previewLineHeight: 22,
+    inset: 16,
+    gap: 8,
   },
   agentProfileTypography: { name: { fontSize: 28, lineHeight: 36 } },
 } as const;
@@ -139,8 +134,8 @@ export const beelineThemes = {
     label: 'Obsidian Refined',
     description: 'Readable sans prose on a quiet obsidian field',
     dark: true,
-    // Canvas = Speakeasy's brand canvas `#14091A` (apps/mobile/src/theme/
-    // tokens.ts), applied at the token level so every screen inherits it.
+    // Canvas = Speakeasy's brand canvas `#14091A`, applied at the token level
+    // so every screen inherits it.
     // Every elevation stop below keeps the EXACT channel offset its stop had
     // from the old near-black base (#070708), so borders/dividers/text
     // contrast relationships are unchanged — the ladder just rises from the
@@ -177,7 +172,6 @@ export const beelineThemes = {
     appBorder: '#291e33',
     appStrongBorder: '#3b3048',
     appCardBorder: '#3b3048',
-    appBrass: '#b08a4a',
     chrome: '#83838d',
     steel: '#83838d',
     signalBright: '#c9c9d1',
@@ -229,8 +223,10 @@ export const beelineThemes = {
     borderActive: '#83838d',
     brassWash: 'rgba(176,138,74,0.18)',
     brassWashStrong: 'rgba(176,138,74,0.28)',
+    // The one floating-surface shadow (HullDialog, HullActionSheet). Dense on
+    // near-black; on Bone the same density reads as a grey smear.
+    dialogShadowOpacity: 0.55,
     proseRegular: 'SpaceGrotesk-Regular',
-    proseItalic: 'IBMPlexSans-Italic',
     proseSemibold: 'SpaceGrotesk-SemiBold',
     monoRegular: 'IBMPlexMono-Regular',
     monoItalic: 'IBMPlexMono-Italic',
@@ -238,9 +234,9 @@ export const beelineThemes = {
     // ONE message size: hierarchy on a long agent turn comes from weight
     // (proseMedium lead vs proseRegular body) and brightness, never size.
     proseSize: 16,
-    proseLineHeight: 25,
+    proseLineHeight: 23,
     leadSize: 16,
-    leadLineHeight: 25,
+    leadLineHeight: 23,
     messageGap: 0,
     messagePaddingVertical: 6,
     railWidth: 2,
@@ -296,7 +292,6 @@ export const beelineThemes = {
     appBorder: '#E2D9CB',
     appStrongBorder: '#B8A27A',
     appCardBorder: '#D8CCB8',
-    appBrass: '#7A5A1E',
     chrome: '#8B7F6E',
     steel: '#8B7F6E',
     signalBright: '#4A4038',
@@ -348,16 +343,16 @@ export const beelineThemes = {
     borderActive: '#8B7F6E',
     brassWash: 'rgba(138,99,35,0.18)',
     brassWashStrong: 'rgba(138,99,35,0.28)',
+    dialogShadowOpacity: 0.14,
     proseRegular: 'SpaceGrotesk-Regular',
-    proseItalic: 'IBMPlexSans-Italic',
     proseSemibold: 'SpaceGrotesk-SemiBold',
     monoRegular: 'IBMPlexMono-Regular',
     monoItalic: 'IBMPlexMono-Italic',
     monoSemibold: 'IBMPlexMono-SemiBold',
     proseSize: 16,
-    proseLineHeight: 25,
+    proseLineHeight: 23,
     leadSize: 16,
-    leadLineHeight: 25,
+    leadLineHeight: 23,
     messageGap: 0,
     messagePaddingVertical: 6,
     railWidth: 2,
@@ -366,6 +361,16 @@ export const beelineThemes = {
     codeError: '#a8524f',
   },
 } as const;
+
+/**
+ * A theme colour at a given opacity, for washes and glows that fade a token
+ * (`withAlpha(theme.buzz.accent, 0.14)`). Takes a `#rrggbb` token.
+ */
+export function withAlpha(color: string, alpha: number): string {
+  const hex = color.replace('#', '');
+  const channel = (offset: number) => parseInt(hex.slice(offset, offset + 2), 16);
+  return `rgba(${channel(0)},${channel(2)},${channel(4)},${alpha})`;
+}
 
 export type BeelineThemeName = keyof typeof beelineThemes;
 export type BeelineThemeTokens = (typeof beelineThemes)[BeelineThemeName];

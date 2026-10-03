@@ -32,7 +32,7 @@ import {
 import { AppMark } from '@/components/buzz/AppMark';
 import { appDomain } from '@/buzz/app-catalog';
 import { INSTAGRAM_SIGN_IN_REQUIREMENT } from '@/buzz/app-sign-in-copy';
-import { appBoardColors, appBoardType } from '@/buzz/app-board-style';
+import { appBoardColors } from '@/buzz/app-board-style';
 import { shouldShowReplyReference } from '@/buzz/reply-reference';
 import {
   draftRequestId,
@@ -60,7 +60,6 @@ import { ROOM_LABEL, CORNER_LABEL } from '@/buzz/vocabulary';
 import { cornerName } from '@/buzz/corners';
 import { CornerGlyph } from '@/components/buzz/CornerGlyph';
 import {
-  TRANSCRIPT_BRASS,
   TRANSCRIPT_SETTLE_MS,
   transcriptSteadyColors,
 } from '@/buzz/transcript-motion';
@@ -81,7 +80,8 @@ import {
   LedgerSteer,
   type LedgerByline,
 } from '@/components/buzz/Ledger';
-import { MonoButton, NewMessageMaterialize } from '@/components/buzz/MonoHull';
+import { Button } from '@/components/buzz/Button';
+import { NewMessageMaterialize } from '@/components/buzz/MonoHull';
 import {
   TranscriptCard,
   TranscriptCardHandle,
@@ -479,7 +479,7 @@ export function AppSignInCard({ message, agentName, canConnect, onConnect, busy 
       <Text style={appSignInStyles.detail}>Sign in once. {app.continuation ?? `${agentName} continues the request right after.`}</Text>
       {app.appKey === 'instagram' ? <Text style={appSignInStyles.detail}>{INSTAGRAM_SIGN_IN_REQUIREMENT}</Text> : null}
       {app.status === 'failed' ? <Text accessibilityRole="alert" style={appSignInStyles.error}>{app.errorMessage ?? 'App sign-in failed. Try again.'}</Text> : null}
-      {canConnect ? <Pressable accessibilityRole="button" disabled={busy} onPress={onConnect} style={appSignInStyles.button} testID={`app-sign-in-${app.appKey}-connect`}><Text style={appSignInStyles.buttonText}>{busy ? 'Connecting' : app.status === 'failed' ? `Retry ${app.name}` : `Connect ${app.name}`}</Text></Pressable> : <Text style={appSignInStyles.detail}>Waiting for the account owner to connect {app.name}.</Text>}
+      {canConnect ? <Button disabled={busy} label={busy ? 'Connecting' : app.status === 'failed' ? `Retry ${app.name}` : `Connect ${app.name}`} onPress={onConnect} style={appSignInStyles.button} testID={`app-sign-in-${app.appKey}-connect`} /> : <Text style={appSignInStyles.detail}>Waiting for the account owner to connect {app.name}.</Text>}
     </View>
   </View>;
 }
@@ -487,15 +487,21 @@ export function AppSignInCard({ message, agentName, canConnect, onConnect, busy 
 const appSignInStyles = StyleSheet.create(theme => {
   const board = appBoardColors(theme.buzz);
   return {
-  wrap: { gap: 8, marginVertical: 8, marginHorizontal: 6 },
-  card: { borderWidth: 1, borderColor: board.cardBorder, borderRadius: 14, padding: 14, gap: 12, backgroundColor: board.card },
-  heading: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  title: { ...Typography.ledger(), ...appBoardType.cardTitle, color: board.ink },
-  detail: { ...Typography.ledger(), ...appBoardType.cardDetail, color: board.secondary },
-  error: { ...Typography.ledger(), ...appBoardType.cardDetail, color: theme.buzz.dialogDanger },
-  button: { alignSelf: 'flex-start', minHeight: 44, paddingHorizontal: 18, borderRadius: 10, justifyContent: 'center', backgroundColor: board.buttonFill },
-  buttonText: { ...Typography.ledger(), ...appBoardType.cardAction, color: board.buttonText },
-  settled: { ...Typography.mono(), ...appBoardType.cardSettled, color: board.quiet, marginVertical: 8, marginHorizontal: 6 },
+  wrap: { gap: 8, marginVertical: 8, marginHorizontal: 8 },
+  // The TranscriptCard frame, read from the same tokens (DESIGN.md → Transcript cards).
+  card: {
+    borderWidth: 1,
+    borderColor: theme.buzz.borderStrong,
+    borderRadius: theme.buzz.transcriptCard.cornerRadius,
+    padding: theme.buzz.transcriptCard.side,
+    gap: theme.buzz.space.sm,
+  },
+  heading: { flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.sm },
+  title: { ...theme.buzz.type.bodyStrong, color: board.ink },
+  detail: { ...theme.buzz.type.meta, color: board.secondary },
+  error: { ...theme.buzz.type.meta, color: theme.buzz.dialogDanger },
+  button: { alignSelf: 'flex-start' },
+  settled: { ...theme.buzz.type.sectionHead, color: board.quiet, marginVertical: 8, marginHorizontal: 8 },
   };
 });
 
@@ -1099,7 +1105,7 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
     ? {
         color: presentedStateRef.current.interpolate({
           inputRange: [0, 1],
-          outputRange: [TRANSCRIPT_BRASS, animState.stateColor],
+          outputRange: [theme.buzz.accent, animState.stateColor],
         }),
       }
     : { color: animState.stateColor };
@@ -2391,8 +2397,8 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
           <View style={styles.outboxFailure} testID={`outbox-delivery-failed-${message.id}`}>
             <Text style={styles.outboxFailureText}>DELIVERY FAILED</Text>
             <View style={styles.outboxFailureActions}>
-              <MonoButton label="RETRY" onPress={() => onRetry(message.id)} variant="secondary" />
-              <MonoButton
+              <Button label="RETRY" onPress={() => onRetry(message.id)} variant="secondary" />
+              <Button
                 label="DISMISS"
                 onPress={() => onDismiss(message.id)}
                 variant="secondary"
@@ -2443,13 +2449,13 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
 });
 
 const styles = StyleSheet.create((theme) => ({
-  relay: { paddingVertical: 12, gap: 6 },
+  relay: { paddingVertical: theme.buzz.space.sm, gap: theme.buzz.space.sm },
   relayCaption: { ...theme.buzz.type.sectionHead, color: theme.buzz.textSecondary },
   relayText: { ...theme.buzz.type.body, color: theme.buzz.textSecondary },
   relayToggle: { ...theme.buzz.type.sectionHead, color: theme.buzz.accent },
   relayMeasure: { position: 'absolute', top: 0, left: 0, right: 0, opacity: 0 },
   activityGroup: { width: '100%', minWidth: 0 },
-  replyReference: { minWidth: 0, marginBottom: 5 },
+  replyReference: { minWidth: 0, marginBottom: theme.buzz.space.xs },
   replyReferenceText: {
     ...theme.buzz.type.machine,
     // The quoted reply excerpt is provenance a reader actually reads, so it
@@ -2463,7 +2469,7 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.buzz.borderStrong,
     borderRadius: 3,
     padding: 8,
-    gap: 2,
+    gap: theme.buzz.space.xs,
   },
   connectorReceiptHead: {
     ...Typography.mono('semiBold'),
@@ -2489,7 +2495,7 @@ const styles = StyleSheet.create((theme) => ({
     fontFamily: theme.buzz.monoSemibold,
     color: theme.buzz.textPrimary,
   },
-  outboxFailureActions: { flexDirection: 'row', gap: 8, marginTop: 6 },
+  outboxFailureActions: { flexDirection: 'row', gap: 8, marginTop: theme.buzz.space.sm },
   replySwipeContainer: { marginHorizontal: -ALIVE_RING_PAD },
   replySwipeChildren: { paddingHorizontal: ALIVE_RING_PAD },
   replyDesktopRow: { position: 'relative', flexDirection: 'row', alignItems: 'flex-start' },
@@ -2540,21 +2546,21 @@ const styles = StyleSheet.create((theme) => ({
   reactionChips: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 6,
-    marginTop: 3,
-    marginBottom: 3,
+    gap: theme.buzz.space.sm,
+    marginTop: theme.buzz.space.xs,
+    marginBottom: theme.buzz.space.xs,
     marginLeft: 8,
   },
   reactionEmoji: emojiTextStyle(theme.buzz.type.body),
   forwardCaption: {
     ...theme.buzz.type.sectionHead,
-    marginTop: 5,
+    marginTop: theme.buzz.space.xs,
     marginLeft: 8,
     color: theme.buzz.ledgerQuiet,
   },
   replyDesktopLabel: {
     ...theme.buzz.type.sectionHead,
-    marginTop: 1,
+    marginTop: theme.buzz.space.xs,
     color: theme.buzz.textMuted,
   },
   replySwipeAction: {
@@ -2584,7 +2590,7 @@ const styles = StyleSheet.create((theme) => ({
   replySwipeLabel: {
     ...theme.buzz.type.sectionHead,
     fontFamily: theme.buzz.monoSemibold,
-    marginTop: 2,
+    marginTop: theme.buzz.space.xs,
     color: theme.buzz.textMuted,
   },
   attachmentCard: {
@@ -2592,10 +2598,10 @@ const styles = StyleSheet.create((theme) => ({
     width: '100%',
     minHeight: 58,
     marginTop: 8,
-    paddingVertical: 6,
+    paddingVertical: theme.buzz.space.sm,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 9,
+    gap: theme.buzz.space.sm,
   },
   attachmentThumbnail: { width: 46, height: 46, backgroundColor: theme.buzz.bgHighlight },
   attachmentFileGlyph: { width: 46, height: 46, alignItems: 'center', justifyContent: 'center' },
@@ -2610,7 +2616,7 @@ const styles = StyleSheet.create((theme) => ({
   attachmentMeta: {
     ...theme.buzz.type.machine,
     fontSize: theme.buzz.transcriptCard.rowKindSize,
-    marginTop: 3,
+    marginTop: theme.buzz.space.xs,
     color: theme.buzz.textMuted,
   },
   attachmentOpenGlyph: {
@@ -2623,23 +2629,24 @@ const styles = StyleSheet.create((theme) => ({
   // Notification lifecycle card accordion — one cell per PR/check
   ncFrameShell: {
     minWidth: 0,
-    marginTop: theme.buzz.transcriptCard.marginTop - 20,
-    marginRight: -20,
-    marginBottom: theme.buzz.transcriptCard.marginBottom - 20,
-    marginLeft: -20,
-    padding: 20,
+    marginTop: theme.buzz.transcriptCard.marginTop - theme.buzz.space.md,
+    marginRight: -theme.buzz.space.md,
+    marginBottom: theme.buzz.transcriptCard.marginBottom - theme.buzz.space.md,
+    marginLeft: -theme.buzz.space.md,
+    padding: theme.buzz.space.md,
   },
+  // The TranscriptCard frame, read from the same tokens (DESIGN.md → Transcript cards).
   ncFrame: {
     minWidth: 0,
     borderWidth: 1,
-    borderColor: theme.buzz.border,
+    borderColor: theme.buzz.borderStrong,
     borderRadius: theme.buzz.transcriptCard.cornerRadius,
     overflow: 'hidden',
   },
   ncHead: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 10,
+    gap: theme.buzz.space.sm,
     paddingVertical: theme.buzz.space.sm,
     paddingHorizontal: theme.buzz.transcriptCard.side,
   },
@@ -2661,7 +2668,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.buzz.ledgerQuiet,
     fontVariant: ['tabular-nums'],
   },
-  ncSubline: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet, marginTop: 2 },
+  ncSubline: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet, marginTop: theme.buzz.space.xs },
   ncCell: {
     borderTopWidth: 1,
     borderTopColor: theme.buzz.border,
@@ -2671,7 +2678,7 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: 'row',
     paddingVertical: theme.buzz.transcriptCard.rowVertical,
     paddingHorizontal: theme.buzz.transcriptCard.side,
-    gap: 10,
+    gap: theme.buzz.space.sm,
   },
   ncStateSlot: { width: theme.buzz.transcriptCard.rowStateWidth },
   ncState: {
@@ -2689,7 +2696,7 @@ const styles = StyleSheet.create((theme) => ({
     ...theme.buzz.type.bodyStrong,
     color: theme.buzz.textPrimary,
     minWidth: 0,
-    marginBottom: 2,
+    marginBottom: theme.buzz.space.xs,
   },
   ncCellTitleContracted: {
     ...theme.buzz.type.bodyStrong,
@@ -2700,7 +2707,7 @@ const styles = StyleSheet.create((theme) => ({
     ...theme.buzz.type.machine,
     fontSize: 13,
     color: theme.buzz.ledgerGhost,
-    marginTop: 2,
+    marginTop: theme.buzz.space.xs,
   },
   ncObjective: {
     ...theme.buzz.type.body,
@@ -2724,7 +2731,7 @@ const styles = StyleSheet.create((theme) => ({
     borderTopColor: theme.buzz.border,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 22,
+    gap: theme.buzz.space.lg,
     justifyContent: 'flex-end',
   },
   ncFooterSpacer: { flex: 1 },
@@ -2744,7 +2751,7 @@ const styles = StyleSheet.create((theme) => ({
   ncMoreStrip: {
     flexDirection: 'row',
     justifyContent: 'center',
-    paddingVertical: 9,
+    paddingVertical: theme.buzz.space.sm,
     paddingHorizontal: theme.buzz.transcriptCard.side,
     borderTopWidth: 1,
     borderTopColor: theme.buzz.border,

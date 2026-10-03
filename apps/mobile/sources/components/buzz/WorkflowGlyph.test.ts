@@ -10,8 +10,15 @@ vi.mock('react-native-svg', async () => {
   return { default: host('Svg'), Polygon: host('Polygon') };
 });
 
-import { WORKFLOW_IDLE_COLOR, WORKFLOW_POINTS, WorkflowGlyph } from './WorkflowGlyph';
+const activeTheme = vi.hoisted(() => ({ name: 'obsidian' as 'obsidian' | 'bone' }));
+vi.mock('react-native-unistyles', async () => {
+  const { beelineThemes } = await import('@/buzz/groknight');
+  return { useUnistyles: () => ({ theme: { buzz: beelineThemes[activeTheme.name] } }) };
+});
+
+import { WORKFLOW_POINTS, WorkflowGlyph } from './WorkflowGlyph';
 import brand from '@/buzz/brand.json';
+import { beelineThemes } from '@/buzz/groknight';
 
 const originalConsoleError = console.error;
 beforeAll(() => {
@@ -54,9 +61,14 @@ describe('WorkflowGlyph', () => {
     expect(polygons[0]!.props.fill).toBe(brand.mark);
   });
 
-  it('is mark gold while a run is live and ghost when idle', () => {
-    const idle = render({ live: false });
-    expect(idle.root.findByType('Polygon' as never).props.fill).toBe(WORKFLOW_IDLE_COLOR);
-    expect(WORKFLOW_IDLE_COLOR).toBe('#6c6c76');
+  it("is mark gold while a run is live and the active theme's ghost when idle", () => {
+    for (const name of ['obsidian', 'bone'] as const) {
+      activeTheme.name = name;
+      const idle = render({ live: false });
+      expect(idle.root.findByType('Polygon' as never).props.fill).toBe(
+        beelineThemes[name].ledgerGhost,
+      );
+    }
+    expect(beelineThemes.bone.ledgerGhost).toBe('#A79C89');
   });
 });

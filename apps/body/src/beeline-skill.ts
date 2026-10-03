@@ -142,6 +142,15 @@ The record informs the verdict but never replaces approve_merge or pr_checks_sta
 - Record every command and exit code.
 - A review with no executed command is invalid and must FAIL.
 
+### Design rules
+
+When the diff touches UI and the repository has a DESIGN.md, check every changed style against its rules: colours from theme tokens only, the type roles, the spacing scale, the allowed radii, elevation, the shared components, and touch targets.
+
+- Run the repository's design lints. In Beeline, from \`apps/mobile\`: \`npx vitest run sources/buzz/calm-lint sources/buzz/design-lint\`.
+- FAIL when a design baseline count grows, or when an allowlist entry is added without naming the design decision behind it.
+- Require a screenshot or rendered proof of every visual change in each theme the app ships (in Beeline, Obsidian and Bone).
+- A design-rule violation is an engineering finding and blocks PASS.
+
 ## 4. Adversarial pass
 
 - For every changed function, name one concrete input or sequence that breaks it.

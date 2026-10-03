@@ -11,7 +11,7 @@ import { saveActiveCommunityId } from '@/buzz/community-storage';
 import { enterWorkspaceRoom } from '@/buzz/enter-workspace';
 import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { Typography } from '@/constants/Typography';
-import { OnboardingButton } from '@/components/buzz/MonoHull';
+import { Button } from '@/components/buzz/Button';
 import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 
@@ -124,7 +124,7 @@ export default function CreateWorkspace() {
               testID="create-workspace-name"
               value={workspaceName}
             />
-            <OnboardingButton
+            <Button
               disabled={!workspaceName.trim() || working}
               label={`Create ${WORKSPACE_LABEL}`}
               loading={working}

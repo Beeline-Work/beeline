@@ -43,7 +43,7 @@ export default function ChangelogScreen() {
                 contentContainerStyle={[
                     styles.content,
                     {
-                        paddingBottom: insets.bottom + 40,
+                        paddingBottom: insets.bottom + 32,
                         maxWidth: isCompact ? '100%' : layout.maxWidth,
                         alignSelf: 'center',
                         width: '100%'
@@ -119,7 +119,7 @@ const styles = StyleSheet.create((theme) => ({
         flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
-        padding: 40,
+        padding: theme.buzz.space.xxl,
     },
     emptyText: {
         ...theme.buzz.type.body,

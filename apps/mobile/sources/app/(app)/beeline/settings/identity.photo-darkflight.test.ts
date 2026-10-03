@@ -135,7 +135,6 @@ vi.mock('@/components/buzz/MonoHull', async () => {
   const host = (name: string) => (props: unknown) => ReactModule.createElement(name, props);
   return {
     HullSurface: host('HullSurface'),
-    MonoButton: host('MonoButton'),
     PixelGateReveal: host('PixelGateReveal'),
     PixelLoader: host('PixelLoader'),
   };

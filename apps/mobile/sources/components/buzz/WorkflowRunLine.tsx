@@ -35,8 +35,12 @@ import { HullLivePulse } from './MonoHull';
 const CIRCLE = 20;
 const HALO = 32;
 /** The circle's top within a step row, and the line's x (the circle's centre). */
-const CIRCLE_TOP = 12;
+const CIRCLE_TOP = 8;
 const LINE_X = 28;
+/** Where a step's copy column starts, right of the rail and its halo. */
+const COPY_X = 56;
+/** The readout's line-number column; item lists hang under the key, past it. */
+const LINE_INDEX_WIDTH = 24;
 /** The assignee's mark: the step circle's size, so the row keeps one height. */
 const ASSIGNEE_MARK = CIRCLE;
 
@@ -796,7 +800,7 @@ const styles = StyleSheet.create((theme) => {
       top: CIRCLE_TOP + CIRCLE,
       bottom: 0,
     },
-    outcome: { marginLeft: 56, marginRight: space.md, paddingBottom: space.sm },
+    outcome: { marginLeft: COPY_X, marginRight: space.md, paddingBottom: space.sm },
     receiptLine: { ...type.body, color: theme.buzz.textSecondary, marginBottom: space.xs },
     refs: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
     ref: { minHeight: 44, justifyContent: 'center', paddingHorizontal: space.sm,
@@ -807,7 +811,7 @@ const styles = StyleSheet.create((theme) => {
       minHeight: theme.buzz.layout.row,
       flexDirection: 'row',
       alignItems: 'flex-start',
-      paddingLeft: 56,
+      paddingLeft: COPY_X,
       paddingRight: space.md,
     },
     pressed: { backgroundColor: theme.buzz.bgPressed },
@@ -826,30 +830,30 @@ const styles = StyleSheet.create((theme) => {
       borderWidth: 1,
       borderColor: theme.buzz.accent,
     },
-    copy: { flex: 1, minWidth: 0, paddingTop: 10, paddingBottom: 12 },
+    copy: { flex: 1, minWidth: 0, paddingTop: space.sm, paddingBottom: space.sm },
     name: { ...type.body, color: theme.buzz.textPrimary },
     nameCurrent: { ...type.bodyStrong, color: theme.buzz.textPrimary },
     times: { ...type.machine, color: theme.buzz.accent },
     meta: { ...type.meta, color: theme.buzz.ledgerQuiet },
-    right: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingTop: CIRCLE_TOP },
+    right: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingTop: CIRCLE_TOP },
     assignee: { flexDirection: 'row', alignItems: 'center', gap: space.sm, maxWidth: 140 },
     handle: { ...type.meta, flexShrink: 1 },
     live: { ...type.meta, color: theme.buzz.ledgerQuiet, marginBottom: space.xs },
     duration: { ...type.machine, color: theme.buzz.ledgerGhost },
     chevronOpen: { transform: [{ rotate: '90deg' }] },
-    readout: { marginLeft: 56, marginRight: space.md, paddingTop: 2, paddingBottom: space.md },
+    readout: { marginLeft: COPY_X, marginRight: space.md, paddingTop: space.xs, paddingBottom: space.md },
     rule: {
       borderLeftWidth: 2,
       borderLeftColor: theme.buzz.borderStrong,
-      paddingLeft: 12,
-      paddingVertical: 2,
+      paddingLeft: space.md,
+      paddingVertical: space.xs,
     },
     line: { flexDirection: 'row' },
-    lineIndex: { ...type.machine, width: 22, color: theme.buzz.ledgerGhost },
+    lineIndex: { ...type.machine, width: LINE_INDEX_WIDTH, color: theme.buzz.ledgerGhost },
     lineKey: { ...type.machine, width: 76, color: theme.buzz.ledgerQuiet },
     lineValue: { ...type.machine, flex: 1, minWidth: 0, color: theme.buzz.textSecondary },
-    items: { marginLeft: 22, marginTop: space.xs, marginBottom: space.xs },
-    item: { flexDirection: 'row', gap: 10, paddingVertical: 2 },
+    items: { marginLeft: LINE_INDEX_WIDTH, marginTop: space.xs, marginBottom: space.xs },
+    item: { flexDirection: 'row', gap: space.sm, paddingVertical: space.xs },
     itemIndex: { ...type.machine, width: 12, color: theme.buzz.ledgerGhost },
     itemText: { ...type.meta, flex: 1, minWidth: 0, color: theme.buzz.textSecondary },
     corners: { marginTop: space.sm },
@@ -857,8 +861,8 @@ const styles = StyleSheet.create((theme) => {
     cornerLink: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: space.sm },
     cornerName: { ...type.meta, flex: 1, minWidth: 0, color: theme.buzz.textPrimary },
     cornerArrow: { ...type.meta, color: theme.buzz.accent },
-    attempt: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10 },
+    attempt: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: space.sm },
     attemptText: { ...type.meta, flex: 1, minWidth: 0, color: theme.buzz.textSecondary },
-    attemptBody: { marginLeft: 26, marginBottom: space.sm },
+    attemptBody: { marginLeft: space.lg, marginBottom: space.sm },
   };
 });

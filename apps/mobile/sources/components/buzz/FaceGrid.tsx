@@ -84,8 +84,8 @@ export function FaceGrid({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  grid: { alignItems: 'center', gap: 10 },
-  row: { flexDirection: 'row', gap: 10 },
+  grid: { alignItems: 'center', gap: theme.buzz.space.sm },
+  row: { flexDirection: 'row', gap: theme.buzz.space.sm },
   tile: {
     width: FACE_TILE_SIZE,
     height: FACE_TILE_SIZE,

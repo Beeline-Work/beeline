@@ -46,8 +46,6 @@ vi.mock('expo-router', async () => {
   };
 });
 
-vi.mock('@/components/navigation/Header', () => ({ createHeader: () => null }));
-vi.mock('@/utils/platform', () => ({ isRunningOnMac: () => false }));
 vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
 vi.mock('@/text', () => ({ t: (key: string) => key }));
 

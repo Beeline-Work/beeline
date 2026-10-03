@@ -270,7 +270,7 @@ const styles = StyleSheet.create((theme) => {
     // Spacing only. The face and the tone are the ledger's one provisional
     // definition (`Ledger.provisionalProseStyle`), so a draft and the reply
     // that settles it are the same words in the same column (C98).
-    messageDraft: { marginTop: 2 },
+    messageDraft: { marginTop: groknight.space.xs },
     // The whole line is the tap target; 44 keeps every ledger line inside the
     // comfortable minimum touch size.
     ledgerRow: {

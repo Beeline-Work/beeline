@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { space } from '@/buzz/groknight';
 import type { ChannelMember } from '@beeline/buzz-client';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { normalizedRoomRole } from '@/buzz/room-management';
@@ -118,7 +119,7 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
   return (
     <HullActionSheetModal
       accessibilityLabel={`Close ${ROOM_LABEL} roster`}
-      contentStyle={{ maxHeight: '82%', paddingBottom: Math.max(bottomInset, 18) }}
+      contentStyle={{ maxHeight: '82%', paddingBottom: Math.max(bottomInset, space.md) }}
       onClose={onClose}
       visible={visible}
       testID="room-roster-sheet"
@@ -317,8 +318,8 @@ const styles = StyleSheet.create((theme) => {
     rosterModalClose: {
       width: 44,
       height: 44,
-      marginTop: -10,
-      marginRight: -10,
+      marginTop: -hull.space.sm,
+      marginRight: -hull.space.sm,
       alignItems: 'center',
       justifyContent: 'center',
     },

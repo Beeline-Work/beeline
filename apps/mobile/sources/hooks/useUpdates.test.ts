@@ -46,13 +46,13 @@ vi.mock('@/components/StyledText', async () => {
 });
 vi.mock('@/constants/Typography', () => ({ Typography: { default: () => ({}) } }));
 vi.mock('react-native-unistyles', async () => {
-  const { typeRoles } = await import('@/buzz/groknight');
+  const { beelineThemes } = await import('@/buzz/groknight');
   return {
     StyleSheet: {
       hairlineWidth: 1,
       create: (factory: any) =>
         factory({
-          buzz: { type: typeRoles },
+          buzz: beelineThemes.obsidian,
           colors: {
             surface: '#111',
             text: '#fff',
@@ -62,7 +62,7 @@ vi.mock('react-native-unistyles', async () => {
         }),
     },
     useUnistyles: () => ({
-      theme: { buzz: { type: typeRoles }, colors: { textLink: '#fc0', textSecondary: '#aaa' } },
+      theme: { buzz: beelineThemes.obsidian, colors: { textLink: '#fc0', textSecondary: '#aaa' } },
     }),
   };
 });

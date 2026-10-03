@@ -143,14 +143,14 @@ const styles = StyleSheet.create((theme) => {
     section: {
       ...groknight.type.sectionHead,
       color: groknight.chrome,
-      paddingTop: 14,
+      paddingTop: groknight.space.md,
       paddingBottom: 4,
       paddingHorizontal: HULL_SHEET_INSET,
     },
     loading: {
       alignItems: 'center',
       paddingHorizontal: HULL_SHEET_INSET,
-      paddingVertical: 18,
+      paddingVertical: groknight.space.md,
       gap: 8,
     },
     status: {

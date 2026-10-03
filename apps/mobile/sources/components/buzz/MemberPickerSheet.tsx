@@ -4,7 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { HullActionSheetModal } from './HullActionSheet';
 import { IdentityMark } from './IdentityMark';
-import { BrassButton } from './MonoHull';
+import { Button } from './Button';
 import { SurfaceGlyphLoader } from './SurfaceGlyphLoader';
 import { RoomMemberPickerActions, type MemberPickerKind } from './RoomMemberPickerActions';
 
@@ -119,7 +119,7 @@ export function MemberPickerSheet({
             )}
             {!agentConnectOnly && (
               <View style={styles.addInset}>
-                <BrassButton
+                <Button
                   disabled={chosen.length === 0}
                   label={chosen.length > 0 ? `Add ${chosen.length}` : 'Add'}
                   loading={busy}

@@ -31,7 +31,7 @@ export function PinnedConversationsEmpty({
   );
 }
 const styles = StyleSheet.create((theme) => ({
-  empty: { alignItems: 'center', paddingHorizontal: 20, paddingVertical: 72, gap: 24 },
+  empty: { alignItems: 'center', paddingHorizontal: theme.buzz.space.lg, paddingVertical: theme.buzz.space.xxl, gap: 24 },
   title: {
     ...theme.buzz.type.hero,
     color: theme.buzz.textPrimary,
@@ -45,10 +45,10 @@ const styles = StyleSheet.create((theme) => ({
   action: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: theme.buzz.space.sm,
     minHeight: 44,
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: theme.buzz.space.sm,
     borderWidth: 1,
     borderColor: theme.buzz.buttonSecondaryText,
     borderRadius: theme.buzz.radius,

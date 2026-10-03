@@ -26,22 +26,22 @@ vi.mock('react-native', async () => {
 });
 
 vi.mock('react-native-unistyles', async () => {
-  const { typeRoles } = await import('@/buzz/groknight');
+  const { space, typeRoles } = await import('@/buzz/groknight');
   return {
     StyleSheet: {
       create: (factory: any) =>
         factory({
           colors: { text: 'text', textSecondary: 'secondary' },
           // index.tsx reads the Beeline typography tokens for its prose.
-          buzz: { proseRegular: 'proseRegular', proseSemibold: 'proseSemibold', type: typeRoles },
+          buzz: { proseRegular: 'proseRegular', proseSemibold: 'proseSemibold', type: typeRoles, space },
         }),
     },
   };
 });
 
-vi.mock('@/components/RoundButton', async () => {
+vi.mock('@/components/buzz/Button', async () => {
   const ReactModule = await import('react');
-  return { RoundButton: (props: any) => ReactModule.createElement('RoundButton', props) };
+  return { Button: (props: any) => ReactModule.createElement('Button', props) };
 });
 
 vi.mock('@/constants/Typography', () => ({ Typography: { default: () => ({}) } }));

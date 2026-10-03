@@ -1,19 +1,22 @@
-import { describe, expect, it, vi } from 'vitest';
-
-vi.mock('react-native', () => ({ Platform: { OS: 'android' } }));
+import { describe, expect, it } from 'vitest';
 
 import { FontFamilies, Typography, getDefaultFont, getMonoFont } from './Typography';
 
 describe('Typography', () => {
-  it('splits prose, and machine identity into bundled families', () => {
-    expect(FontFamilies.default).not.toEqual(FontFamilies.mono);
-    expect(getDefaultFont('regular')).toBe('IBMPlexSans-Regular');
-    expect(getDefaultFont('italic')).toBe('IBMPlexSans-Italic');
-    expect(getDefaultFont('semiBold')).toBe('IBMPlexSans-SemiBold');
+  it('splits prose and machine identity into two bundled families', () => {
+    expect(FontFamilies.sans).not.toEqual(FontFamilies.mono);
+    expect(getDefaultFont('regular')).toBe('SpaceGrotesk-Regular');
+    expect(getDefaultFont('medium')).toBe('SpaceGrotesk-Medium');
+    expect(getDefaultFont('semiBold')).toBe('SpaceGrotesk-SemiBold');
     expect(getMonoFont('regular')).toBe('IBMPlexMono-Regular');
     expect(getMonoFont('italic')).toBe('IBMPlexMono-Italic');
     expect(getMonoFont('semiBold')).toBe('IBMPlexMono-SemiBold');
-    expect(Typography.default().fontFamily).toBe('IBMPlexSans-Regular');
+  });
+
+  it('renders the default face as Space Grotesk, never IBM Plex Sans', () => {
+    expect(Typography.default().fontFamily).toBe('SpaceGrotesk-Regular');
+    expect(Typography.default('semiBold').fontFamily).toBe('SpaceGrotesk-SemiBold');
+    expect(Typography.ledger().fontFamily).toBe(Typography.default().fontFamily);
     expect(Typography.mono().fontFamily).toBe('IBMPlexMono-Regular');
   });
 });

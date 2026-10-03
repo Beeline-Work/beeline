@@ -4,7 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { defaultFaceForSeed, type FaceId } from '@/buzz/faces';
 import { FaceGrid } from './FaceGrid';
-import { OnboardingButton } from './MonoHull';
+import { Button } from './Button';
 
 /** The one canvas crossfade in the app: the You step into the app. */
 export const FACE_CEREMONY_CROSSFADE_MS = 240;
@@ -120,7 +120,7 @@ export function YouStep({
                 {error}
               </Text>
             ) : null}
-            <OnboardingButton
+            <Button
               disabled={!selected || busy}
               label="Continue"
               loading={busy}
@@ -166,7 +166,7 @@ const styles = StyleSheet.create((theme) => {
     handleLine: { ...Typography.default(), fontSize: handleSize, lineHeight: 52, marginTop: hull.space.xs },
     at: { color: hull.accent },
     handle: { color: hull.textPrimary },
-    period: { color: hull.dark ? hull.textPrimary : '#111111' },
+    period: { color: hull.textPrimary },
     hint: {
       ...Typography.default(),
       ...hull.type.meta,

@@ -118,8 +118,8 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'flex-start',
     minWidth: 0,
     // Align the text with the transcript's prose margin.
-    paddingHorizontal: 12,
-    paddingTop: 6,
+    paddingHorizontal: 16,
+    paddingTop: 8,
     paddingBottom: 4,
     gap: 8,
   },
@@ -130,7 +130,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   inner: { flex: 1, minWidth: 0 },
   objective: { flexDirection: 'row', alignItems: 'flex-start', minWidth: 0, gap: 8 },
-  links: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', columnGap: 12 },
+  links: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', columnGap: 8 },
   workflow: {
     flexDirection: 'row',
     alignItems: 'center',

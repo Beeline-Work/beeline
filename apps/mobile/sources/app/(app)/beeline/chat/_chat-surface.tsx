@@ -398,7 +398,7 @@ import { RepoPicker } from '@/components/buzz/RepoPicker';
 import { SlashVerbPicker } from '@/components/buzz/SlashVerbPicker';
 import { CreatePollSheet, type PollDraft } from '@/components/buzz/CreatePollSheet';
 import { CornerAppRow } from '@/components/buzz/CornerAppScreen';
-import { MonoButton } from '@/components/buzz/MonoHull';
+import { Button } from '@/components/buzz/Button';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import {
   COMPOSER_MAX_INPUT_HEIGHT,
@@ -5594,8 +5594,8 @@ export function BuzzChatSurface({
             <Text style={styles.hydrationErrorText}>
               {transcriptHydrationError ?? 'Could not load this conversation.'}
             </Text>
-            <MonoButton
-              label="RETRY"
+            <Button
+              label="Retry"
               onPress={retryHydration}
               style={styles.hydrationErrorRetry}
               variant="secondary"
@@ -6681,7 +6681,7 @@ export function BuzzChatSurface({
               <Text style={styles.roomRenameLabel}>{ROOM_SLUG_HINT}</Text>
             )}
             <View style={styles.roomRenameControls}>
-              <MonoButton
+              <Button
                 disabled={renameBusy}
                 label="Cancel"
                 onPress={() => {
@@ -6690,7 +6690,7 @@ export function BuzzChatSurface({
                 }}
                 variant="secondary"
               />
-              <MonoButton
+              <Button
                 disabled={renameBusy || !validRoomSlug(renameDraft.trim())}
                 label={renameBusy ? 'Renaming…' : 'Apply'}
                 loading={renameBusy}
@@ -6847,6 +6847,20 @@ export function BuzzChatSurface({
         visible={cornerActionsVisible}
       >
         <HullActionSheetRow
+          accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)}`}
+          chevron="right"
+          disabled={!memberManagement.canOpenRoster}
+          label="Members"
+          metadata={
+            participantsHydrated ? formatRoomParticipantTotal(roomParticipantTotal) : 'Loading'
+          }
+          onPress={() => {
+            setCornerActionsVisible(false);
+            setRosterVisible(true);
+          }}
+          testID="corner-participant-roster-trigger"
+        />
+        <HullActionSheetRow
           accessibilityLabel={`Close ${CORNER_LABEL}`}
           description={`Ends the edit session and archives this ${CORNER_LABEL}. Unmerged work is lost.`}
           destructive
@@ -6968,7 +6982,7 @@ const styles = StyleSheet.create((theme) => {
     keyboardBody: {
       flex: 1,
     },
-    starPrompt: { paddingTop: 12 },
+    starPrompt: { paddingTop: groknight.space.md },
     agentProfilePane: { width: 380, maxWidth: '50%', borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: groknight.border },
     desktopConversationFrame: {
       flex: 1,
@@ -6984,7 +6998,7 @@ const styles = StyleSheet.create((theme) => {
     },
     desktopStatusText: {
       ...theme.buzz.type.machine,
-      paddingHorizontal: 14,
+      paddingHorizontal: groknight.space.md,
       color: groknight.dim,
     },
     desktopStatusFailed: {
@@ -6998,7 +7012,7 @@ const styles = StyleSheet.create((theme) => {
       flexDirection: 'row',
       alignItems: 'center',
       minHeight: 60,
-      paddingHorizontal: 12,
+      paddingHorizontal: groknight.space.md,
       paddingBottom: 8,
       borderBottomWidth: 1,
       borderBottomColor: groknight.border,
@@ -7008,7 +7022,7 @@ const styles = StyleSheet.create((theme) => {
       flex: 1,
       alignItems: 'flex-start',
       justifyContent: 'center',
-      paddingHorizontal: 28,
+      paddingHorizontal: groknight.space.xl,
     },
     errorLabel: {
       ...theme.buzz.type.sectionHead,
@@ -7017,14 +7031,14 @@ const styles = StyleSheet.create((theme) => {
     },
     hydrationErrorText: {
       ...theme.buzz.type.body,
-      marginTop: 10,
+      marginTop: groknight.space.sm,
       color: groknight.textSecondary,
     },
-    hydrationErrorRetry: { marginTop: 20 },
+    hydrationErrorRetry: { marginTop: groknight.space.md },
     loadingText: {
       ...theme.buzz.type.sectionHead,
       fontFamily: groknight.monoSemibold,
-      marginTop: 12,
+      marginTop: groknight.space.sm,
       color: groknight.textMuted,
     },
 
@@ -7033,19 +7047,19 @@ const styles = StyleSheet.create((theme) => {
       zIndex: 1,
       flexDirection: 'row',
       alignItems: 'center',
-      paddingHorizontal: 12,
+      paddingHorizontal: groknight.space.md,
       paddingBottom: 8,
       borderBottomWidth: 1,
       borderBottomColor: groknight.border,
       backgroundColor: groknight.bgBase,
     },
-    // The leading gutter is 12 (header padding) + 44 + 12, so the title starts
+    // The leading gutter is 16 (header padding) + 44 + 8, so the title starts
     // on the SAME left axis as a Room-list row's name (16 + 40 tile slot + 12,
     // `channels.tsx`) and pushing a row open never shifts the name sideways.
     backButton: {
       width: 44,
       height: 44,
-      marginRight: 12,
+      marginRight: groknight.space.sm,
       alignItems: 'center',
       justifyContent: 'center',
     },
@@ -7064,7 +7078,7 @@ const styles = StyleSheet.create((theme) => {
     channelNameSkeleton: {
       width: 132,
       height: 13,
-      marginVertical: 5,
+      marginVertical: groknight.space.xs,
       backgroundColor: groknight.bgHover,
       borderRadius: groknight.radius,
     },
@@ -7090,7 +7104,7 @@ const styles = StyleSheet.create((theme) => {
     roomActionsButton: {
       minWidth: 44,
       minHeight: 44,
-      marginLeft: 12,
+      marginLeft: groknight.space.sm,
       alignItems: 'center',
       justifyContent: 'center',
     },
@@ -7100,7 +7114,7 @@ const styles = StyleSheet.create((theme) => {
     roomCornersButton: {
       minWidth: 44,
       minHeight: 44,
-      marginLeft: 12,
+      marginLeft: groknight.space.sm,
       alignItems: 'center',
       justifyContent: 'center',
     },
@@ -7121,9 +7135,9 @@ const styles = StyleSheet.create((theme) => {
     archivedBadge: {
       backgroundColor: groknight.bgHighlight,
       borderRadius: groknight.radius,
-      marginLeft: 12,
-      paddingHorizontal: 6,
-      paddingVertical: 2,
+      marginLeft: groknight.space.sm,
+      paddingHorizontal: groknight.space.sm,
+      paddingVertical: groknight.space.xs,
     },
     archivedBadgeText: {
       ...theme.buzz.type.machine,
@@ -7198,8 +7212,8 @@ const styles = StyleSheet.create((theme) => {
       overflowY: 'auto',
     } as any,
     messageListContent: {
-      paddingHorizontal: 12,
-      paddingVertical: 12,
+      paddingHorizontal: groknight.space.md,
+      paddingVertical: groknight.space.md,
     },
     messageListContentDesktop: {
       flexGrow: 1,
@@ -7224,7 +7238,7 @@ const styles = StyleSheet.create((theme) => {
     outboxFailureActions: {
       flexDirection: 'row',
       gap: 8,
-      marginTop: 6,
+      marginTop: groknight.space.sm,
     },
     replySwipeAction: {
       width: 78,
@@ -7243,14 +7257,14 @@ const styles = StyleSheet.create((theme) => {
     replySwipeLabel: {
       ...theme.buzz.type.sectionHead,
       fontFamily: groknight.monoSemibold,
-      marginTop: 2,
+      marginTop: groknight.space.xs,
       color: groknight.textMuted,
     },
     /* A person reaching back up the transcript quotes what they reached for, on
      * one dim line and with no rule beside it — the ledger has no delimiters. */
     replyReference: {
       minWidth: 0,
-      marginBottom: 5,
+      marginBottom: groknight.space.xs,
     },
     replyReferenceText: {
       ...theme.buzz.type.machine,
@@ -7262,10 +7276,10 @@ const styles = StyleSheet.create((theme) => {
       width: '100%',
       minHeight: 58,
       marginTop: 8,
-      paddingVertical: 6,
+      paddingVertical: groknight.space.sm,
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 9,
+      gap: groknight.space.sm,
     },
     attachmentThumbnail: {
       width: 46,
@@ -7291,7 +7305,7 @@ const styles = StyleSheet.create((theme) => {
     attachmentMeta: {
       ...theme.buzz.type.machine,
       fontSize: groknight.transcriptCard.rowKindSize,
-      marginTop: 3,
+      marginTop: groknight.space.xs,
       color: groknight.textMuted,
     },
     attachmentOpenGlyph: {
@@ -7309,13 +7323,13 @@ const styles = StyleSheet.create((theme) => {
     activityGroup: {
       width: '100%',
       minWidth: 0,
-      marginBottom: 20,
+      marginBottom: groknight.space.md,
     },
 
     // ── Archived notice ─────────────────────────────────────────────
     archivedBubble: {
       paddingVertical: 8,
-      marginBottom: 20,
+      marginBottom: groknight.space.md,
       alignSelf: 'center',
       maxWidth: '90%',
     },
@@ -7338,7 +7352,7 @@ const styles = StyleSheet.create((theme) => {
     bottomChromeStack: bottomChrome.stack,
     inputBar: bottomChrome.composerRow,
     previewLinkRow: {
-      marginTop: 6,
+      marginTop: groknight.space.sm,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 8,
@@ -7359,8 +7373,8 @@ const styles = StyleSheet.create((theme) => {
     targetBranchCard: {
       minWidth: 0,
       marginBottom: 8,
-      paddingHorizontal: 14,
-      paddingVertical: 14,
+      paddingHorizontal: groknight.space.md,
+      paddingVertical: groknight.space.md,
       borderWidth: 1,
       borderColor: groknight.borderStrong,
       gap: 8,
@@ -7388,20 +7402,20 @@ const styles = StyleSheet.create((theme) => {
     writePermissionCard: {
       minWidth: 0,
       marginBottom: 8,
-      paddingHorizontal: 14,
-      paddingVertical: 14,
+      paddingHorizontal: groknight.space.md,
+      paddingVertical: groknight.space.md,
       borderWidth: 1,
       borderColor: groknight.borderStrong,
-      gap: 10,
+      gap: groknight.space.sm,
     },
     githubEventPressable: { marginBottom: 8 },
     githubEventCard: {
       minWidth: 0,
-      paddingHorizontal: 14,
-      paddingVertical: 13,
+      paddingHorizontal: groknight.space.md,
+      paddingVertical: groknight.space.md,
       borderWidth: 1,
       borderColor: groknight.borderStrong,
-      gap: 6,
+      gap: groknight.space.sm,
     },
     githubEventTitle: {
       ...theme.buzz.type.bodyStrong,
@@ -7415,7 +7429,7 @@ const styles = StyleSheet.create((theme) => {
     writePermissionHeading: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 10,
+      gap: groknight.space.sm,
     },
     writePermissionCopy: { flex: 1, minWidth: 0 },
     writePermissionTitle: {
@@ -7425,7 +7439,7 @@ const styles = StyleSheet.create((theme) => {
     writePermissionIntent: {
       ...theme.buzz.type.meta,
       color: groknight.textMuted,
-      marginTop: 2,
+      marginTop: groknight.space.xs,
     },
     writePermissionRepository: {
       ...theme.buzz.type.machine,
@@ -7449,8 +7463,8 @@ const styles = StyleSheet.create((theme) => {
     },
     repoPromptBanner: {
       minWidth: 0,
-      marginBottom: 6,
-      padding: 10,
+      marginBottom: groknight.space.sm,
+      padding: groknight.space.sm,
       borderLeftWidth: 3,
       borderWidth: 1,
       borderColor: groknight.borderStrong,
@@ -7463,10 +7477,10 @@ const styles = StyleSheet.create((theme) => {
     },
     repoPromptHint: {
       ...theme.buzz.type.meta,
-      marginTop: 2,
+      marginTop: groknight.space.xs,
       color: groknight.textMuted,
     },
-    repoPromptConnect: { minHeight: 40, justifyContent: 'center', marginTop: 6 },
+    repoPromptConnect: { minHeight: 40, justifyContent: 'center', marginTop: groknight.space.sm },
     repoPromptConnectText: {
       ...theme.buzz.type.meta,
       fontFamily: groknight.proseSemibold,
@@ -7479,7 +7493,7 @@ const styles = StyleSheet.create((theme) => {
     },
     archivedInputBar: {
       paddingHorizontal: 16,
-      paddingTop: 12,
+      paddingTop: groknight.space.md,
       paddingBottom: 8,
       borderTopWidth: 1,
       borderTopColor: groknight.border,
@@ -7488,9 +7502,7 @@ const styles = StyleSheet.create((theme) => {
     },
     archivedInputText: {
       ...theme.buzz.type.meta,
-      fontFamily: groknight.proseItalic,
       color: groknight.muted,
-      fontStyle: 'italic',
     },
     cornerArchivedInputText: { ...Typography.mono('italic'), color: groknight.textMuted },
   };

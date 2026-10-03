@@ -92,6 +92,9 @@ function DesktopCornerDragSource({
   );
 }
 
+/** The viewer's face in the settings row. */
+const SETTINGS_FACE_SIZE = 22;
+
 const stylesheet = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
@@ -100,25 +103,25 @@ const stylesheet = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.groupped.background,
   },
   desktopWorkspaceHeader: {
-    paddingHorizontal: 12,
+    paddingHorizontal: theme.buzz.space.md,
     paddingTop: 8,
     paddingBottom: 8,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.colors.divider,
   },
   workspaceBlock: {
-    paddingHorizontal: 12,
-    paddingBottom: 10,
+    paddingHorizontal: theme.buzz.space.md,
+    paddingBottom: theme.buzz.space.sm,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.colors.divider,
   },
-  workspaceRow: { flexDirection: 'row', gap: 6 },
+  workspaceRow: { flexDirection: 'row', gap: theme.buzz.space.sm },
   workspaceButton: {
     minWidth: 34,
     maxWidth: 150,
-    paddingHorizontal: 9,
-    paddingVertical: 7,
-    borderRadius: 7,
+    paddingHorizontal: theme.buzz.space.sm,
+    paddingVertical: theme.buzz.space.sm,
+    borderRadius: theme.buzz.radius,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.divider,
   },
@@ -134,23 +137,23 @@ const stylesheet = StyleSheet.create((theme) => ({
   roomRowSelected: { backgroundColor: theme.colors.surfaceSelected },
   empty: {
     ...theme.buzz.type.meta,
-    paddingHorizontal: 18,
+    paddingHorizontal: theme.buzz.space.md,
     paddingVertical: 24,
     color: theme.colors.textSecondary,
   },
   loading: {
     alignItems: 'center',
-    paddingHorizontal: 18,
+    paddingHorizontal: theme.buzz.space.md,
     paddingVertical: 24,
     gap: 8,
   },
   settingsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: theme.buzz.space.sm,
     minHeight: 48,
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingVertical: theme.buzz.space.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: theme.colors.divider,
   },
@@ -159,9 +162,9 @@ const stylesheet = StyleSheet.create((theme) => ({
   desktopWorkspaceHeaderActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 2,
+    gap: theme.buzz.space.xs,
   },
-  settingsFaceSlot: { width: 22, height: 22, borderRadius: 11 },
+  settingsFaceSlot: { width: SETTINGS_FACE_SIZE, height: SETTINGS_FACE_SIZE, borderRadius: SETTINGS_FACE_SIZE / 2 },
   settingsViewerName: {
     ...theme.buzz.type.meta,
     color: theme.colors.textSecondary,

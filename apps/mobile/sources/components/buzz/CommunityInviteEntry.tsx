@@ -59,14 +59,14 @@ const styles = StyleSheet.create((theme) => {
   return ({
   communityEntry: {
     minHeight: 46,
-    marginTop: 10,
+    marginTop: groknight.space.sm,
     paddingHorizontal: 16,
-    paddingVertical: 6,
+    paddingVertical: groknight.space.sm,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     flexWrap: 'wrap',
-    gap: 18,
+    gap: groknight.space.md,
     backgroundColor: groknight.bgTerminal,
   },
   action: {
@@ -74,7 +74,7 @@ const styles = StyleSheet.create((theme) => {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 5,
+    gap: groknight.space.xs,
   },
   actionIcon: { ...theme.buzz.type.body, color: groknight.steel },
   actionText: {

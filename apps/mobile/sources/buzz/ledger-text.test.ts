@@ -1,28 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodePercentEncoding, splitLedgerText } from './ledger-text';
-
-describe('decodePercentEncoding', () => {
-  it('renders a percent-escaped character as the character', () => {
-    expect(decodePercentEncoding('Should I rebase%3F')).toBe('Should I rebase?');
-    expect(decodePercentEncoding('a%20b%20c')).toBe('a b c');
-  });
-
-  it('decodes a multi-byte run as one sequence', () => {
-    expect(decodePercentEncoding('done %E2%9C%93')).toBe('done ✓');
-  });
-
-  it('leaves anything that is not an escape exactly as written', () => {
-    expect(decodePercentEncoding('coverage rose to 100%')).toBe('coverage rose to 100%');
-    expect(decodePercentEncoding('50% of 3%z runs')).toBe('50% of 3%z runs');
-    expect(decodePercentEncoding('truncated %3')).toBe('truncated %3');
-    expect(decodePercentEncoding('no escapes here')).toBe('no escapes here');
-  });
-
-  it('keeps an invalid UTF-8 run literal instead of throwing', () => {
-    expect(decodePercentEncoding('bad %E0%A4%A')).toBe('bad %E0%A4%A');
-    expect(decodePercentEncoding('lone %FF byte')).toBe('lone %FF byte');
-  });
-});
+import { splitLedgerText } from './ledger-text';
 
 describe('splitLedgerText', () => {
   const PUSH_REJECTION = [

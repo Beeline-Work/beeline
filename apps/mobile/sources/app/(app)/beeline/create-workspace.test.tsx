@@ -58,11 +58,9 @@ vi.mock('@/buzz/vocabulary', () => ({ WORKSPACE_LABEL: 'Workspace' }));
 vi.mock('@/constants/Typography', () => ({
   Typography: { default: () => ({}), mono: () => ({}) },
 }));
-vi.mock('@/components/buzz/MonoHull', async () => {
+vi.mock('@/components/buzz/Button', async () => {
   const ReactModule = await import('react');
-  return {
-    OnboardingButton: (props: any) => ReactModule.createElement('OnboardingButton', props),
-  };
+  return { Button: (props: any) => ReactModule.createElement('Button', props, props.children) };
 });
 vi.mock('@/components/buzz/ChevronGlyph', () => ({
   CHEVRON_BACK_SIZE: 18,
@@ -144,7 +142,7 @@ describe('creating a Workspace', () => {
       false,
     );
     const button = find(renderer, 'create-continue')[0]!;
-    expect(button.type).toBe('OnboardingButton');
+    expect(button.type).toBe('Button');
     expect(button.props.label).toBe('Create Workspace');
 
     await type(renderer, 'create-workspace-name', 'Northstar Lab');

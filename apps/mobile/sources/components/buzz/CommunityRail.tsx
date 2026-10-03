@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useState } from 'react';
 import { Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { space } from '@/buzz/groknight';
 import * as Haptics from 'expo-haptics';
 import Animated, {
   Easing,
@@ -186,7 +187,7 @@ export function CommunityRail({
       style={[
         styles.rail,
         column && styles.columnPicker,
-        { paddingTop: column ? 0 : Math.max(insets.top, 10) },
+        { paddingTop: column ? 0 : Math.max(insets.top, space.sm) },
       ]}
     >
       <ScrollView
@@ -637,7 +638,7 @@ const styles = StyleSheet.create((theme) => {
     railDivider: {
       width: 40,
       height: 1,
-      marginVertical: 6,
+      marginVertical: groknight.space.sm,
       backgroundColor: groknight.border,
     },
     railCommand: {
@@ -646,7 +647,7 @@ const styles = StyleSheet.create((theme) => {
       paddingVertical: 4,
       alignItems: 'center',
       justifyContent: 'center',
-      gap: 3,
+      gap: groknight.space.xs,
     },
     columnCommand: {
       width: '100%',
@@ -654,7 +655,7 @@ const styles = StyleSheet.create((theme) => {
       paddingHorizontal: 16,
       flexDirection: 'row',
       justifyContent: 'flex-start',
-      gap: 12,
+      gap: groknight.space.sm,
     },
     /* A rail command is named, so its glyph does not also have to shout: the
      * mono micro-label under it carries the meaning and the glyph sits on the

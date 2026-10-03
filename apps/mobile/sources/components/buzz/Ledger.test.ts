@@ -133,7 +133,7 @@ describe('the ledger — an agent turn', () => {
     expect(digest.props.style).toMatchObject({
       fontFamily: 'SpaceGrotesk-Regular',
       fontSize: 13,
-      marginLeft: 18,
+      marginLeft: 16,
     });
     expect(digest.props.style.fontStyle).toBeUndefined();
     expect(digest.props.style.fontWeight).toBeUndefined();
@@ -701,7 +701,7 @@ describe('the ledger — machine noise', () => {
       .find((node: { type: unknown }) => typeof node.type === 'string');
     const block = host.props.style;
     expect(block.borderLeftWidth).toBe(2);
-    expect(block.paddingLeft).toBe(13);
+    expect(block.paddingLeft).toBe(16);
 
     const [summary, affordance] = renderer.root.findAllByType('Text');
     // The summary truncates; the disclosure copy beside it never does — the

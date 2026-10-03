@@ -39,6 +39,7 @@ import {
 const SETUP_SURFACES = ['/beeline/community', '/beeline/create-workspace'];
 
 export const SidebarNavigator = React.memo(() => {
+  const drawerGround = useUnistyles().theme.buzz.bgBase;
   const isTablet = useIsTablet();
   const inDesktopShell = isTauri();
   const desktopPlatform = isDesktopPlatform();
@@ -164,7 +165,7 @@ export const SidebarNavigator = React.memo(() => {
       headerShown: false,
       drawerType: 'permanent' as const,
       drawerStyle: {
-        backgroundColor: 'white',
+        backgroundColor: drawerGround,
         borderRightWidth: 0,
         width: drawerWidth,
         overflow: 'hidden' as const,
@@ -175,7 +176,7 @@ export const SidebarNavigator = React.memo(() => {
       drawerItemStyle: { display: 'none' as const },
       drawerLabelStyle: { display: 'none' as const },
     };
-  }, [isDesktopLayout, drawerWidth]);
+  }, [isDesktopLayout, drawerWidth, drawerGround]);
 
   const drawerContent = React.useCallback(() => <SidebarView />, []);
 

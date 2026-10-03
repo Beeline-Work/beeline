@@ -27,6 +27,10 @@ vi.mock('./HullDialog', async () => {
     HullDialogInput: (props: any) => React.createElement('TextInput', props),
   };
 });
+vi.mock('./Button', async () => {
+  const React = await import('react');
+  return { Button: (props: any) => React.createElement('Button', props) };
+});
 vi.mock('./RepoPicker', () => ({ RepoPicker: 'RepoPicker' }));
 vi.mock('./ChevronGlyph', () => ({ ChevronGlyph: 'ChevronGlyph', CHEVRON_ROW_SIZE: 16 }));
 vi.mock('./HullActionSheet', async () => {

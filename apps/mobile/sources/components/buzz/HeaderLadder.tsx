@@ -84,17 +84,17 @@ const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
   return {
     // One gutter value across the whole bar: the back chevron, the mark, and
-    // the trailing control all part from what follows them by 12.
+    // the trailing control all part from what follows them by one step (sm).
     identitySlot: {
-      marginRight: 12,
+      marginRight: groknight.space.sm,
       alignItems: 'center',
       justifyContent: 'center',
     },
     metaRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 6,
-      marginTop: 2,
+      gap: groknight.space.sm,
+      marginTop: groknight.space.xs,
       minWidth: 0,
     },
     // The one subtitle voice is the calm `meta` role (DESIGN.md → Type):

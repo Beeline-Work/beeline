@@ -3,7 +3,7 @@ import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useURL } from 'expo-linking';
-import { MonoButton } from '@/components/buzz/MonoHull';
+import { Button } from '@/components/buzz/Button';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { signInWithReviewSecret } from '@/auth/review-sign-in';
 import { parseReviewSecret } from '@/buzz/review-link';
@@ -49,7 +49,7 @@ export default function ReviewSignIn() {
         <View accessibilityRole="alert" style={styles.failure} testID="review-sign-in-error">
           <Text style={styles.failureTitle}>Review sign-in failed</Text>
           <Text style={styles.failureText}>{failure}</Text>
-          <MonoButton
+          <Button
             label="Return to sign in"
             onPress={() => router.replace('/beeline/onboarding')}
             variant="secondary"

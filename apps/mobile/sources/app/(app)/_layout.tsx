@@ -1,12 +1,9 @@
 import { Stack } from 'expo-router';
 import 'react-native-reanimated';
 import * as React from 'react';
-import { createHeader } from '@/components/navigation/Header';
-import { Platform, View } from 'react-native';
-import { isRunningOnMac } from '@/utils/platform';
+import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { statusBarStyleForTheme } from '@/components/StatusBarProvider';
-import { t } from '@/text';
 import { useIsDesktop } from '@/utils/responsive';
 
 export const unstable_settings = {
@@ -14,10 +11,7 @@ export const unstable_settings = {
 };
 
 export default function RootLayout() {
-  // Keep UIKit in charge of iPhone/iPad headers. A custom React header makes
-  // native-stack animate every blur/glass subview during each push and pop.
   const isDesktop = useIsDesktop();
-  const shouldUseCustomHeader = Platform.OS === 'android' || isRunningOnMac() || isDesktop;
   const { theme } = useUnistyles();
 
   return (
@@ -34,20 +28,11 @@ export default function RootLayout() {
           // light icons over Obsidian, on every platform the stack runs on.
           // Per-screen overrides were dropped — the theme is the one author.
           statusBarStyle: statusBarStyleForTheme(theme),
-          header: shouldUseCustomHeader ? createHeader : undefined,
-          headerBackTitle: t('common.back'),
-          headerBackButtonDisplayMode: Platform.OS === 'ios' ? 'minimal' : undefined,
-          headerShadowVisible: false,
+          // Every screen draws the shared PageHeader itself (DESIGN.md →
+          // Components); the stack never renders a header of its own.
+          headerShown: false,
           contentStyle: {
             backgroundColor: isDesktop ? theme.colors.surface : theme.colors.groupped.background,
-          },
-          headerStyle: {
-            backgroundColor: isDesktop ? theme.colors.header.background : 'transparent',
-          },
-          headerTintColor: theme.colors.header.tint,
-          headerTitleStyle: {
-            color: theme.colors.header.tint,
-            fontFamily: theme.buzz.proseSemibold,
           },
         }}
       >
@@ -132,12 +117,7 @@ export default function RootLayout() {
         {/* A workflow run's state graph draws the shared PageHeader (corner over workflow). */}
         <Stack.Screen name="beeline/workflow-run" options={{ headerShown: false }} />
         <Stack.Screen name="beeline/workflow" options={{ headerShown: false }} />
-        <Stack.Screen
-          name="beeline/settings/workflows"
-          options={{
-            headerTitle: 'Workflows',
-          }}
-        />
+        <Stack.Screen name="beeline/settings/workflows" options={{ headerShown: false }} />
         {/* Workbench and its tool/key pages draw the shared PageHeader
             (Settings over Workbench, Workbench over the tool or key name). */}
         <Stack.Screen
@@ -202,12 +182,7 @@ export default function RootLayout() {
             headerShown: false,
           }}
         />
-        <Stack.Screen
-          name="settings/language"
-          options={{
-            headerTitle: t('settingsLanguage.title'),
-          }}
-        />
+        <Stack.Screen name="settings/language" options={{ headerShown: false }} />
         <Stack.Screen
           name="changelog"
           options={{
@@ -216,14 +191,7 @@ export default function RootLayout() {
         />
         <Stack.Screen name="artifact-viewer" options={{ headerShown: false }} />
         <Stack.Screen name="beeline/corner-app/[slug]" options={{ headerShown: false }} />
-        <Stack.Screen
-          name="text-selection"
-          options={{
-            headerShown: true,
-            headerTitle: t('textSelection.title'),
-            headerBackTitle: t('common.back'),
-          }}
-        />
+        <Stack.Screen name="text-selection" options={{ headerShown: false }} />
       </Stack>
     </View>
   );

@@ -391,7 +391,7 @@ export function HullActionSheetModal({
 
 /** The sheet's own horizontal inset. Rows own it, so anything a caller hangs
  *  between rows (an inline editor, a picker) lines up by spreading it too. */
-export const HULL_SHEET_INSET = 22;
+export const HULL_SHEET_INSET = 24;
 
 const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
@@ -478,7 +478,7 @@ const styles = StyleSheet.create((theme) => {
     destructive: { color: hull.dialogDanger },
     cancel: {
       minHeight: 54,
-      paddingHorizontal: 22,
+      paddingHorizontal: HULL_SHEET_INSET,
       alignItems: 'center',
       justifyContent: 'center',
       borderTopWidth: StyleSheet.hairlineWidth,

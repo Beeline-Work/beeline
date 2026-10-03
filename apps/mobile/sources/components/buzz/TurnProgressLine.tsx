@@ -11,8 +11,8 @@ import {
   roomBottomChromeStyles,
 } from '@/buzz/room-bottom-chrome';
 
-/** Smaller than the 18pt mark it sits beside. Hit slop keeps the 44pt target. */
-const STOP_HIT_SLOP = 9;
+/** The stop label sits in the row's own height; hit slop makes up the 44pt target. */
+export const STOP_HIT_SLOP = (44 - TURN_LINE_ROW_MIN_HEIGHT) / 2;
 
 /**
  * The ordinary per-turn indicator: the agent has taken this Room's question

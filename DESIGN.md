@@ -72,7 +72,7 @@ typography:
   prose:
     fontFamily: "SpaceGrotesk-Regular"
     fontSize: "16px"
-    lineHeight: "25px"
+    lineHeight: "23px"
 rounded:
   house: "3px"
   code: "8px"
@@ -86,12 +86,7 @@ spacing:
   xl: "32px"
   xxl: "48px"
 components:
-  button-mono:
-    rounded: "{rounded.house}"
-    height: "46px"
-    typography: "{typography.meta}"
-  button-brass:
-    backgroundColor: "{colors.brass}"
+  button:
     rounded: "{rounded.house}"
     height: "44px"
     typography: "{typography.body}"
@@ -161,7 +156,7 @@ Stated so no one re-litigates them. Each is redundant with a non-colour signal, 
 
 **Reading face:** Space Grotesk (Regular, Medium, SemiBold)
 **Machine face:** IBM Plex Mono (Regular, Italic, SemiBold)
-**Italic prose:** IBM Plex Sans Italic (`proseItalic`)
+**Emphasis:** Space Grotesk Medium. Space Grotesk ships no italic, so emphasis is weight, never a second family.
 
 **Character:** a technical grotesk for everything a person reads, and a plex mono reserved for strings a machine produced.
 
@@ -177,11 +172,11 @@ Four sizes, one mono role, held by a lint. The roles live in `typeRoles` (on eve
 | `sectionHead` | Space Grotesk Medium   | 10   | 15   | section heads only (tracking 2, uppercase)                       |
 | `machine`     | IBM Plex Mono          | 13   | 19   | commands, paths, hashes, code, tool rows, byline tags and stamps |
 
-Transcript prose uses `proseSize` 16 on `proseLineHeight` 25 (≈1.56) so long turns breathe. Transcript cards use their own 15/23 body (`transcriptCard`).
+Transcript prose uses `proseSize` 16 on `proseLineHeight` 23, the `body` role's own leading. Transcript cards use the same 16/23 body, with `machine`-size (13) kinds and paths (`transcriptCard`).
 
 The transcript's day caption is the one caption exception: `sectionHead` in the `machine` face at `ledgerQuiet` (`THU 17 SEP`). The date also rides that day's first byline stamp when the day is not today.
 
-**The Calm Lint.** `calm-lint.design.test.ts` scans every `sources/**/*.tsx` for raw `fontSize:` outside {22, 16, 13, 10} and `letterSpacing:` outside {−0.3, 0, 2}, and holds each file to its count in `apps/mobile/design/calm-baseline.json`. Counts only shrink; regenerate with `CALM_BASELINE_WRITE=1 npx vitest run sources/buzz/calm-lint`. `Typography.mono()` marks deliberate machine identifiers (allowlist in `components/buzz/Typography.test.ts`).
+**The Calm Lint.** `calm-lint.design.test.ts` scans every `sources/**/*.ts(x)` for raw `fontSize:` outside {22, 16, 13, 10}, `letterSpacing:` outside {−0.3, 0, 2}, and computed sizes (arithmetic or ternaries), and holds each file to its count in `apps/mobile/design/calm-baseline.json`. The token sources (`buzz/groknight.ts`, `theme.ts`) are not scanned. Counts only shrink; regenerate with `CALM_BASELINE_WRITE=1 npx vitest run sources/buzz/calm-lint`. `Typography.mono()` marks deliberate machine identifiers (allowlist in `components/buzz/Typography.test.ts`).
 
 **The Mono Is For Machines Rule.** Space Grotesk carries names, rows, buttons, labels and bylines. Mono is for strings a machine produced, plus the byline's model tag and stamp.
 
@@ -189,7 +184,7 @@ The transcript's day caption is the one caption exception: `sectionHead` in the 
 
 - **Spacing scale** (`space`): 4 · 8 · 16 · 24 · 32 · 48 (`xs`…`xxl`). `layout`: rows 64, sections 24 apart, screens start 24 below the header.
 - **Transcript rhythm:** 12 between entries in a same-speaker run, 24 at a speaker change, by proximity alone; no turn dividers. Prose shares one left content edge; stamps hang in a right gutter.
-- **Phone Room list:** each section is one card (`roomCard`: radius 14, inset 12, 10 between sections) with hairlines between rows inside it. Rows have a 68 minimum height on phone, 62 on desktop, and a one-line `meta` preview.
+- **Phone Room list:** each section is one card (`roomCard`: radius 14, inset 16, 8 between sections) with hairlines between rows inside it. Rows have a 68 minimum height on phone, 62 on desktop, and a one-line `meta` preview.
 - **Desktop:** a 76 px Workspace rail beside a 380 px Room sidebar at windows ≥1360 px wide; narrower windows use the Workspace switcher overlay. A second pane (corners, artifacts) defaults dismissed and opens only with a reason.
 - **Touch targets:** 44 pt for every control (corners door, overflow, compose, reference chips, opened-corner links).
 
@@ -197,8 +192,9 @@ The transcript's day caption is the one caption exception: `sectionHead` in the 
 
 Flat by default. Depth is tonal: the elevation ladder in Colors, one hairline, and type weight. Chrome carries no plate, texture, or shadow.
 
-- **Lifted surfaces** (`HullSurface`, a faint scratch texture) are reserved for something that genuinely floats over the slab and does not repeat: modal sheets, the merge-approval panel, and the textured `MonoButton`.
-- **Floating surfaces** (`HullDialog`, `HullActionSheet`) carry the one product-wide shadow (`#000`, opacity 0.55, radius 48, y-offset 18).
+- **Lifted surfaces** (`HullSurface`, a faint scratch texture) are reserved for something that genuinely floats over the slab and does not repeat: modal sheets and the merge-approval panel.
+- **Floating surfaces** (`HullDialog`, `HullActionSheet`) carry the one product-wide shadow (`dialogShadowColor` `#000`, radius 48, y-offset 18) at a per-theme `dialogShadowOpacity`: 0.55 on Obsidian, 0.14 on Bone, where the denser shadow reads as a grey smear.
+- **No other shadow and no blur.** Prompts, toasts and hint panels sit flat on `bgRaised` with a hairline. The one exception is the listening mic's brass glow, which tracks voice volume (a live signal, not elevation).
 - Transcript asks use `TranscriptCard`'s raised fill without texture; transcript records have no fill.
 
 **The Flat Chrome Rule.** Headers, rails and lists never gain a fill or shadow to separate themselves; a hairline and weight do that work.
@@ -222,25 +218,24 @@ A **rule** is one edge, no fill, no radius. Hairlines divide an index (Room list
 ### The ledger
 Rooms and corners render one transcript primitive, `components/buzz/Ledger.tsx`, fed by one branch in `app/(app)/beeline/chat/_chat-surface.tsx`. A shape only one surface needs is a design fork, not a quiet second implementation.
 
-- **One size.** Every message is Space Grotesk 16/25. A long agent turn's first line takes Medium at `textPrimary`; following paragraphs take Regular one step down. A human message is plain body text, never bolded or enlarged.
+- **One size.** Every message is Space Grotesk 16/23. A long agent turn's first line takes Medium at `textPrimary`; following paragraphs take Regular one step down. A human message is plain body text, never bolded or enlarged.
 - **Byline.** Each run opens with a 26 px face tile, the name in the speaker's signature hue (Medium, body size), a mono `machine` tag (the model name, or `AGENT`), and the mono HH:MM stamp pinned right. The written parts share one baseline; the tile is centred. Brass on the name marks the viewer (and agents with a generated portrait). A human run's first entry carries the byline; every agent message carries its own (`buzz/ledger-attribution.ts`).
 - **Machine runs.** Agent tool work folds to one mono line: `N steps · F failed · duration`. Expanded, each call is one line: family glyph (`>_` shell, `≡` file, `⋯` thought, `·` other) at `ledgerGhost`, the object at content tone, duration only past one second, and a verdict pinned right (dim `✓`, brass `✗` with the reason inline, or the one spinner). Long commands truncate in the middle. Opening a call shows its output in `ToolOutputSheet`, never inline (`buzz/tool-call-row.ts`, `buzz/tool-ledger.ts`, `components/buzz/ActivityTimeline.tsx`).
 - **Machine noise.** A wall of git/CLI output an agent pastes into its narration is projected as a separate ghost line (`buzz/ledger-text.ts` `splitLedgerText`) with a 2 px `agentRail` left rule. The unit is a run of consecutive machine lines, not a blank-line block.
 - **Fenced code.** A fence of up to four lines stays inline with Copy. A longer fence is one inscribed line (language · lines · bytes) plus a four-line peek, and opens the full-page `ArtifactViewer` route; Back re-centres the originating message. Copy copies the whole block. Plain labels (`text`, `md`, …) stay monochrome; others use Two Inks; very large bodies use the monochrome fallback (`CodeBlock.tsx`, `syntax-highlight.ts`, `CodeHighlighter.tsx`).
-- **Provisional text.** A streaming draft renders as plain text in `proseItalic` at `ledgerQuiet`, at the same size, leading and column as a settled turn, under the same byline. When the durable reply lands it cross-fades in over 220 ms; reduced motion settles instantly. A failed turn keeps the draft with the failure line beneath (`components/buzz/StreamingProse.tsx`, `Ledger.tsx`).
+- **Provisional text.** A streaming draft renders as plain prose at `ledgerQuiet`, in the same face, size, leading and column as a settled turn, under the same byline. When the durable reply lands it cross-fades in over 220 ms; reduced motion settles instantly. A failed turn keeps the draft with the failure line beneath (`components/buzz/StreamingProse.tsx`, `Ledger.tsx`).
 - **System lines.** One sentence, `<subject> <verb>[ <object>][ · <consequence>]`, rendered by `LedgerSystemLine` in `meta` at `ledgerQuiet`: no avatar, no rule, names in brass and tappable, stamp in the right gutter. Same-verb runs fold ("@a, @b and @c joined", `buzz/system-lines.ts`). A card is only for what a tap must settle.
 - **No corner status in the transcript.** A Room's one active-corner affordance is the corners door in its header; nothing pins a corner above the composer.
 - **Turn line.** A question being answered shows one line above the composer: activity verb + elapsed seconds, `· received` when a steer lands, `· stopping` then `stopped` after a stop. The stop control (`■ STOP`, brass `sectionHead`) is offered to the requester and Room owners/admins (`viewerMayStopTurn`); a stop keeps what was written.
 - **Replies and quotes.** The `↳ author · preview` reference and the `FORWARDED FROM #room` caption read at `ledgerQuiet`. A reply to the message directly above shows no echo.
-- **Header.** A corner shows its name; a Room shows its linked repository as the subtitle. A corner's subtitle names its opener and canonical state: `waiting` in brass, `working`/`review` at `ledgerQuiet`, `archived` at `ledgerGhost`. The Room header's trailing slot holds the corners door (brass `CornerGlyph` alone in a 44 pt box) beside the overflow dots; the overflow sheet carries Members with a live count.
+- **Header.** A corner shows its name; a Room shows its linked repository as the subtitle. A corner's subtitle names its opener and canonical state: `waiting` in brass, `working`/`review` at `ledgerQuiet`, `archived` at `ledgerGhost`. The Room header's trailing slot holds the corners door (brass `CornerGlyph` alone in a 44 pt box) beside the overflow dots. The Room and corner overflow sheets both carry Members with a live count.
 - **Corner objective.** Under a corner's header, `CornerObjectiveLine` shows the objective in `textSecondary` behind a 2 px `humanRail`, a brief preview (≤3 lines) with a brass "Read brief" link, and the live workflow step when one runs. No box, no label; it wraps rather than truncates.
 
 ### Transcript cards
 `TranscriptCard` is the one structured-card anatomy (grant, permission, merge summary, choice, notification): head with identity, title, subline and stamp; rows; code block; footer verbs. Record tier for facts and settled asks, ask tier (raised fill) only while a response is needed. Radius 10, 1 px border, 16 side padding, 26 px identity.
 
 ### Buttons
-- **`MonoButton`**: house radius, 1 px border, 46 tall, textured, `meta` SemiBold label; primary, secondary and dashed-destructive variants.
-- **`BrassButton` / `OnboardingButton`**: house radius, borderless, 44 tall, `body` / `bodyStrong` label.
+- **`Button`** (`components/buzz/Button.tsx`) is the one button: house radius, 44 tall, `body` label in Space Grotesk Medium, sentence case, a pressed state. Variants: `primary` (filled `buttonPrimaryFill`), `secondary` (1 px `borderStrong`), `brass` (1 px `accent`, brass label).
 - **Busy:** `PixelLoader` (four frames, ~7.5 fps) appears only inside a labelled control.
 
 ### Index rows
@@ -254,7 +249,7 @@ Rooms and corners render one transcript primitive, `components/buzz/Ledger.tsx`,
 - **Workspace rail.** The drawer marks selection with an edge bar, the mark's heavier frame, and receding tone for the others. The desktop strip uses framed avatars, an icon-only Add, and the account avatar at the bottom.
 
 ### Workflows
-- **`WorkflowGlyph`** is one filled polygon in the corner's 24 viewBox: the corner mark turned 135° with a stem rising from the elbow. Brand-mark gold while a run is live, ghost when idle; inline at `CORNER_META_SIZE` (13).
+- **`WorkflowGlyph`** is one filled polygon in the corner's 24 viewBox: the corner mark turned 135° with a stem rising from the elbow. Brand-mark gold while a run is live, the theme's `ledgerGhost` when idle; inline at `CORNER_META_SIZE` (13).
 - **Run page** (`app/(app)/beeline/workflow-run.tsx`, `WorkflowRunLine`, data from `buzz/workflow-graph.ts` `workflowRunLine`): a `hero` status line, a `meta` line of who/when/how long, an optional ≤140-char `summary` in `body`/`textSecondary`, then a `Steps` section head and one vertical line read like a GitHub Actions run. No forks or back edges; a repeated state shows `×N` in brass `machine`.
 - **Steps** are 20 pt circles, never colour alone: done (brass disc + check), current (brass ring + dot under a 32 pt breathing halo), pending (hollow `textMuted` ring), skipped (dashed ghost ring with a slash), failed (`textSecondary` ring with an x). Connectors are 2 pt: brass where the run went, dashed ghost beside a skip, `borderStrong` ahead. Tapping a step opens its readout on a 2 pt `borderStrong` rule. Gates are records, never controls; answering stays in the corner.
 - **Step assignee.** Each step with a role shows who holds or held it at the row's right, beside the duration: a 20 pt `IdentityMark` and the `@handle` in `meta`, in the identity's hue, brass when it is the viewer (`workflowStepAssignee`). The current step is the run's holder (the viewer when it waits on them), a reached step whoever left it (the person who answered a gate), a pending step its bound holder. Steps with no role read `Automatic` and carry no mark. Role names never appear on the page. A working agent's streaming reply shows under its current step in `meta`/`ledgerQuiet`, two lines, newest text kept.
@@ -275,7 +270,7 @@ Rooms and corners render one transcript primitive, `components/buzz/Ledger.tsx`,
 **Names and vocabulary.** An agent's name comes from its registered `displayName` via `resolveAgentDisplayIdentity`; the soul shapes personality and art, never the name. "Room," never "Channel." `Members` names the surface (`MEMBERS_LABEL`); its sections are `People N` and `Agents N`. Room and corner names carry the `#` mark wherever they are exposed (`displayRoomIndexTitle`, `displayCornerTitle`), added at render only. Room and corner state is the drawn `StateCircle`, never a typed diamond.
 
 ### Motion
-Primitives live in `components/buzz/MonoHull.tsx` with `motionTokens`: press in 70 ms / out 110 ms (`BrittlePress`), reveal 176 ms (`PixelGateReveal`), confirm 240 ms, loader frame 133 ms, new-message 140 ms fade+rise (`NewMessageMaterialize`), demote dip 90 ms, and one live clock `liveCycle` 1120 ms. All respect `ReduceMotion.System`; continuous ones stop when the app backgrounds. Nothing but the continuous loops exceeds ~240 ms.
+Primitives live in `components/buzz/MonoHull.tsx` with `motionTokens`: reveal 176 ms (`PixelGateReveal`), confirm 240 ms, loader frame 133 ms, new-message 140 ms fade+rise (`NewMessageMaterialize`), demote dip 90 ms, and one live clock `liveCycle` 1120 ms. All respect `ReduceMotion.System`; continuous ones stop when the app backgrounds. Nothing but the continuous loops exceeds ~240 ms.
 
 - **Live breathes, never travels.** `HullLivePulse` (one opacity breath) is the only motion "live" may have. It is mounted only where something is genuinely live, so mount it conditionally, never `active={false}`. No sweeping bands, progress bars, or marching dashes for turns, corners or checks.
 - At most two of `PixelLoader` / `HullWaveSignal` run on screen at once.
@@ -300,50 +295,19 @@ Profiles reuse Settings typography, spacing and `SettingsRow`. Bylines open prof
 - **Don't** box ordinary messages, attachments or avatars, or add speaker rails.
 - **Don't** style a human message differently from body text.
 - **Don't** show live work with anything that travels or fills.
-- **Don't** add another avatar component, button family, or card frame; extend `IdentityMark`, `MonoButton`/`BrassButton`, or `TranscriptCard`.
-- **Don't** use Bricolage Grotesque or IBM Plex Sans as a reading face.
+- **Don't** add another avatar component, button family, card frame or page header; extend `IdentityMark`, `Button`, `TranscriptCard` or `PageHeader`.
+- **Don't** use IBM Plex Sans or Bricolage Grotesque in the app; the app loads neither.
+- **Don't** write a colour literal, an off-scale spacing value or radius, or a shadow in a component.
+
+## Enforcement
+
+The rules above are held by lints in the mobile vitest suite, which CI's MOBILE SUITE runs on every change under `apps/mobile`:
+
+- **The Calm Lint** (`buzz/calm-lint.design.test.ts`): type sizes, line heights and tracking (see Type), including raw values placed on the next line. A computed value (arithmetic, a ternary, parentheses or a call such as `Math.round(17)`) counts as raw.
+- **The Design Lint** (`buzz/design-lint.design.test.ts`): colour literals outside the token source and named brand-mark files; padding, margin and gap off the spacing scale; radii outside {3, 8, 10, 14} (a circle is `size / 2`); shadows, including any nonzero Android `elevation`, outside `HullDialog`/`HullActionSheet`; IBM Plex Sans, Bricolage Grotesque and `SpaceGrotesk-Bold`; and the retired `MonoButton`, `BrassButton`, `OnboardingButton`, `RoundButton`, `MobileGlass` and `navigation/Header`. A spacing or radius value is traced to its literal, even across lines, through local constants (before trusting a theme alias), local tables, the module an imported constant comes from, parentheses, arithmetic and `Math.*`. Each branch of a ternary or fallback is checked, and so is a number beside a runtime value in `Math.max`/`Math.min`. A number added to a token or a runtime value (`space.sm + 2`, `insets.bottom + 40`) must itself be on the scale, and a radius token takes nothing added.
+
+Each file is held to its per-rule count in `apps/mobile/design/design-baseline.json`; counts only shrink. Regenerate with `DESIGN_BASELINE_WRITE=1 npx vitest run sources/buzz/design-lint`. Every baseline row must carry the reason its geometry is not a scale step in `DESIGN_BASELINE_REASONS` (`buzz/design-lint.ts`), and an allowlist entry (`DESIGN_ALLOWLIST`) must name the decision that licenses it. The `beeline-review` skill checks UI changes against this file and these lints, and requires proof in both themes.
 
 ## Design inconsistencies
 
-Observed in the app source on 2026-10-03; recorded here, not fixed. Paths are relative to `apps/mobile/sources/`.
-
-**Theme bypasses (wrong in Bone)**
-- Obsidian brass is hard-coded in transcript motion: `components/buzz/TranscriptCard.tsx:99-100` and `:707-740` (`rgba(176,138,74,…)`), and `buzz/transcript-motion.ts:1` `TRANSCRIPT_BRASS = '#b08a4a'` (used at `TranscriptCard.tsx:141`, `app/(app)/beeline/chat/RoomMessageVariants.tsx:1083`). `card.brassWash` exists for this.
-- `components/buzz/WorkflowGlyph.tsx:20` fixes the idle colour at Obsidian's `#6c6c76`; Bone's `ledgerGhost` is `#A79C89`.
-- `theme.ts` `createBeelineAppTheme` spreads the legacy `darkTheme` into every theme, so Bone inherits dark `glass.*` (`components/RoundButton.tsx:49-50`, `components/MobileGlass.tsx`), `textDestructive` `#FF453A` and `surfaceRipple` (`components/Item.tsx:77,298`).
-- `components/SidebarNavigator.tsx:170` sets the desktop drawer background to `'white'`; `components/buzz/YouStep.tsx:169` falls back to `'#111111'`.
-- `components/buzz/WelcomeCards.tsx` hard-codes 23 colours, 16 of them copies of Bone `app*` tokens, plus its own radii (22/12) and type table.
-- Bone has two brasses: `accent` `#8a6323` and `appBrass` `#7A5A1E` (`buzz/groknight.ts`).
-
-**Unused or half-used tokens**
-- `bgUnread` is defined but never read; unread rows stay transparent (`components/buzz/ConversationRow.tsx:178-181`).
-- `roomCard.padding`, `previewCardTop`, `nameSize` 19, `previewSize` 15 and their line heights are unreferenced; only `cornerRadius`, `inset` and `gap` are used (`app/(app)/beeline/channels.tsx:1263,1311-1332`).
-- `typeRoles` line heights (16 → 23) differ from `proseLineHeight` 25, and `transcriptCard` uses off-scale 15/12 sizes, so the four-size rule has three token-level exceptions.
-
-**Type and fonts**
-- `proseItalic` is IBM Plex Sans Italic, so italic prose switches family (`buzz/groknight.ts:233`).
-- `Typography.default()` (`constants/Typography.ts`) renders IBM Plex Sans wherever a role does not override it: `components/RoundButton.tsx:42`, `components/buzz/NewRoomDialog.tsx:390`, `components/buzz/YouStep.tsx:166`, the error text in `app/(app)/beeline/settings/workbench/connect-app.tsx:120` / `connect-signin.tsx:91` (same folder) / `workbench/app.tsx:111`.
-- `buzz/app-board-style.ts:26-29` defines 17/14/15/11 sizes and 1 px tracking; the calm lint scans only `.tsx`, so it is not counted. Arithmetic sizes also escape it (`app/(app)/beeline/channels.tsx:1302,1308`).
-- Bricolage Grotesque is loaded (`app/_layout.tsx`) but has no runtime reference; `SpaceGrotesk-Bold.ttf` ships but is never loaded.
-
-**Spacing and radius**
-- About 64% of literal padding/margin/gap values are off the 4/8/16/24/32/48 scale (most often 12, 10, 6, 2, 14). Heaviest: `app/(app)/beeline/chat/_chat-surface.tsx`, `RoomMessageVariants.tsx`, `app/(app)/beeline/onboarding.tsx`, `components/buzz/CornerAppScreen.tsx`, `components/buzz/WorkflowRunLine.tsx`. The `transcriptCard` and `roomCard` tokens are themselves off-scale (12, 14, 10, 22).
-- Radius 10, meant for transcript cards, is reused on buttons and banners (`connect-signin.tsx:96`, `workbench/app.tsx:107`, `channels.tsx:1296`). Off-scale radii: `components/UpdateReadyPrompt.tsx:72` (16), `components/buzz/ConversationComposer.tsx:503` (13), `components/ShortcutHints.tsx` (14/9/6), `components/SidebarView.tsx:121` (7).
-
-**Competing components**
-- Buttons: `MonoButton` (46, `meta` SemiBold), `BrassButton`/`OnboardingButton` (44, `body`), and the pill `RoundButton` with glass blur (`app/(app)/index.tsx`), plus roughly a dozen hand-rolled Pressables with radius 3, 9 or 10 and heights 32–48.
-- Card frames outside `TranscriptCard`: `components/buzz/ArtifactCard.tsx` (radius 10, own frame), the connector board card (`RoomMessageVariants.tsx:491`, radius 14), and the notification frame (`RoomMessageVariants.tsx:2613`).
-- `components/navigation/Header.tsx` is still the stack header for `settings/workflows`, `settings/language` and `text-selection` (`app/(app)/_layout.tsx`), instead of `PageHeader`.
-
-**Elevation**
-- Shadows outside the dialog: `components/UpdateReadyPrompt.tsx:61,76-79` and `components/ShortcutHints.tsx:45`. The 0.55-opacity dialog shadow (`components/buzz/HullDialog.tsx:434-438`) reads as a dark smudge on Bone. `MobileGlass` blur goes against the flat language.
-
-**Behaviour that drifted from earlier design notes**
-- `buzz/streaming-prose.ts` still carries per-character arrival-fade maths, but `StreamingProse.tsx` renders plain text; only the settle cross-fade runs.
-- `decodePercentEncoding` (`buzz/ledger-text.ts:30`) has no production caller, so percent escapes are not decoded at a projection funnel.
-- The stop control's hit area is 42 pt (24 + 9 slop each side, `components/buzz/TurnProgressLine.tsx`), below the 44 pt floor.
-- `WritePermissionOutcome`'s `VIEW →` sits inline in uppercase `ledgerQuiet` with no pressed state (`components/buzz/WritePermissionOutcome.tsx:53-60`).
-- The corner overflow sheet has no Members row, though `_chat-surface.tsx:5755` says it does.
-- The Room-list corner dropdown (`components/buzz/DesktopRoomCorners.tsx`) uses `displayGroupedCornerTitle` with no `#` mark.
-- Comments still cite the old 10 px mono byline tag (`components/buzz/Ledger.tsx:380`) and `src/theme/tokens.ts` (`buzz/groknight.ts`), which no longer exist.
-- Dead or parallel palettes remain: `utils/userMessageBubbleColor.ts`, `components/navigation/MobileHeaderScrim.tsx` (unused), `theme.light.json`, `theme.dark.json`, `theme.figma.json`, and the legacy `lightTheme`/`darkTheme` in `theme.ts`.
+None open. The list recorded on 2026-10-03 was fixed in full; the lints in Enforcement keep those classes from returning. The off-scale geometry the design baseline still holds (the arrival halo's concentric radii, the Ledger marginalia column, the QR quiet zone, centring and border compensation, the turn line's pixel budget, the workflow rail column) is not spacing rhythm, and each file names its reason in `DESIGN_BASELINE_REASONS`. Record a newly found inconsistency here, with its file and line, until it is fixed.

@@ -38,11 +38,13 @@ describe('Room deck bootstrap', () => {
     expect(emptyDeck).toContain('onPress={onAddRoom}');
     expect(emptyDeck).toContain('testID="empty-connect-agent"');
     expect(emptyDeck).toContain('onPress={onConnectAgent}');
-    expect(emptyDeck).toContain('Start a Room</Text>');
-    expect(emptyDeck).toContain('Connect an agent</Text>');
+    expect(emptyDeck).toContain('label="Start a Room"');
+    expect(emptyDeck).toContain('label="Connect an agent"');
     expect(emptyDeck).not.toContain('label="ADD ROOM"');
     expect(emptyDeck).not.toContain('label="CONNECT AGENT"');
-    expect(emptyDeck).not.toContain('<MonoButton');
+    // Both are the one shared Button, not hand-rolled Pressables.
+    expect(emptyDeck.match(/<Button\n/g)).toHaveLength(2);
+    expect(emptyDeck).not.toContain('<Pressable');
   });
 
   it('wires the buttons to the existing Room dialog and shared agent-connect sheet', () => {

@@ -377,7 +377,7 @@ function Byline({ byline }: { byline: LedgerByline }) {
         />
       )}
       {/* The three written parts sit on ONE baseline. They are set at two sizes
-       *  in two faces (16px prose name, 10px mono tag and stamp), so centring
+       *  in two faces (16px prose name, 13px `machine` tag and stamp), so centring
        *  them against each other leaves the small type floating half a line
        *  above the name's feet. Baseline alignment is the type rule; the mark
        *  is a picture, not a word, so it stays centred on the row — hence the
@@ -939,6 +939,8 @@ export function LedgerGhostLine({
   );
 }
 
+const BYLINE_DOT_SIZE = 5;
+
 const styles = StyleSheet.create((theme) => ({
   entry: {
     width: '100%',
@@ -973,7 +975,7 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginBottom: 9,
+    marginBottom: theme.buzz.space.sm,
   },
   // The words of the byline, on one baseline. `flex: 1` so the stamp's auto
   // margin still has the whole remaining row to push against, `minWidth: 0`
@@ -986,9 +988,9 @@ const styles = StyleSheet.create((theme) => ({
     gap: 8,
   },
   bylineDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 1.5,
+    width: BYLINE_DOT_SIZE,
+    height: BYLINE_DOT_SIZE,
+    borderRadius: BYLINE_DOT_SIZE / 2,
     backgroundColor: theme.buzz.agentRail,
   },
   bylineDotViewer: { backgroundColor: theme.buzz.accent },
@@ -1013,7 +1015,7 @@ const styles = StyleSheet.create((theme) => ({
     ...theme.buzz.type.machine,
     color: theme.buzz.ledgerQuiet,
   },
-  bylineStatus: { marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', gap: 5 },
+  bylineStatus: { marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.xs },
   bookmarkMark: { color: theme.buzz.accent },
   // ONE message size. The lead differs from the body by weight (medium) and
   // brightness (primary), never by size.
@@ -1028,20 +1030,13 @@ const styles = StyleSheet.create((theme) => ({
   /** Hung over the settled words, so the dissolve never moves the column. */
   settleGhost: { position: 'absolute', left: 0, right: 0, top: 0 },
   /**
-   * A turn still being written (C98). Same size, same leading, same column as
-   * the settled body — the ONLY differences are the italic face and the quiet
-   * tone, so a settling reply changes how the words read without moving them.
+   * A turn still being written (C98). Same face, size, leading and column as
+   * the settled body — the ONLY difference is the quiet tone, so a settling
+   * reply changes how the words read without moving them (one family means
+   * no wrap point shifts at the settle).
    */
   ledgerProvisional: {
-    // The italic FACE, not a synthetic slant: Space Grotesk ships no italic
-    // here, so `fontStyle: 'italic'` would substitute a platform default (see
-    // `roomUpdateLine`), and the ledger already spells italic as this family
-    // everywhere else (`MonoMarkdown.styles.italic`). A geometric skew is not
-    // an option through Markdown — it would apply to the block Text and again
-    // to every span nested in it. The one cost is Plex's slightly different
-    // advance widths, which can move a wrap point; that difference is exactly
-    // what the settle dissolves across.
-    fontFamily: theme.buzz.proseItalic,
+    fontFamily: theme.buzz.proseRegular,
     width: '100%',
     minWidth: 0,
     color: theme.buzz.ledgerQuiet,
@@ -1078,9 +1073,9 @@ const styles = StyleSheet.create((theme) => ({
     position: 'relative',
     width: '100%',
     minWidth: 0,
-    paddingVertical: 5,
+    paddingVertical: theme.buzz.space.xs,
     paddingRight: LEDGER_MARGINALIA_WIDTH + 8,
-    marginBottom: 12,
+    marginBottom: theme.buzz.space.sm,
   },
   roomUpdateLine: {
     ...theme.buzz.type.meta,
@@ -1141,7 +1136,7 @@ const styles = StyleSheet.create((theme) => ({
     ...theme.buzz.type.meta,
     fontFamily: theme.buzz.proseRegular,
     marginTop: 4,
-    marginLeft: 18,
+    marginLeft: theme.buzz.space.md,
     color: theme.buzz.ledgerBody,
   },
   marginalia: {
@@ -1157,7 +1152,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   marginaliaDetail: {
     ...theme.buzz.type.machine,
-    marginTop: 1,
+    marginTop: theme.buzz.space.xs,
     color: theme.buzz.ledgerGhost,
   },
   // Tool readouts take the quiet left-rule mono treatment — clearly not
@@ -1165,10 +1160,10 @@ const styles = StyleSheet.create((theme) => ({
   ghostBlock: {
     width: '100%',
     minWidth: 0,
-    marginTop: 6,
+    marginTop: theme.buzz.space.sm,
     borderLeftWidth: 2,
     borderLeftColor: theme.buzz.agentRail,
-    paddingLeft: 13,
+    paddingLeft: theme.buzz.space.md,
   },
   ghostRow: { minWidth: 0, flexDirection: 'row', alignItems: 'baseline' },
   ghostLine: {

@@ -70,6 +70,7 @@ vi.mock('react-native-reanimated', async () => {
 import { groknight } from '@/buzz/groknight';
 import { GLYPH_PAINT, MARK_CELL, ribbon } from '@/buzz/beeline-glyph';
 import { TurnProgressLine, TurnSettledLine } from './TurnProgressLine';
+import { TURN_LINE_ROW_MIN_HEIGHT } from '@/buzz/room-bottom-chrome';
 
 const originalConsoleError = console.error;
 
@@ -154,7 +155,8 @@ describe('the per-turn progress indicator', () => {
     expect(stop.props.testID).toBe('turn-progress-line-stop');
     expect(stop.props.accessibilityRole).toBe('button');
     expect(stop.props.accessibilityLabel).toBe('Stop this turn');
-    expect(stop.props.hitSlop).toBe(9);
+    // The row is 24 tall; 10 on each side makes the 44pt touch floor.
+    expect(TURN_LINE_ROW_MIN_HEIGHT + 2 * stop.props.hitSlop).toBe(44);
     expect(stop.props.disabled).toBe(false);
     expect(pressableStyle(stop)).toEqual(
       expect.arrayContaining([

@@ -45,6 +45,7 @@ export function DesktopRoomCorners({
               >
                 <CornerGlyph size={CORNER_META_SIZE} testID={`desktop-corner-glyph-${corner.id}`} />
                 <Text numberOfLines={1} style={styles.name}>
+                  <Text style={styles.sigil}>#</Text>
                   {displayGroupedCornerTitle(item.room.name, corner.name, corner.id)}
                 </Text>
                 <CornerWaitingPulse state={corner.state}>
@@ -60,11 +61,11 @@ export function DesktopRoomCorners({
 }
 const styles = StyleSheet.create((theme) => ({
   list: {
-    paddingLeft: 46,
+    paddingLeft: theme.buzz.space.xxl,
     paddingRight: theme.buzz.space.md,
     paddingBottom: theme.buzz.space.sm,
   },
-  mobileList: { paddingLeft: 14, paddingRight: 14 },
+  mobileList: { paddingLeft: theme.buzz.space.md, paddingRight: theme.buzz.space.md },
   corner: {
     // On web the row is a <button>; inside the rail's draggable <div> it would
     // shrink to its content and pull the status in beside the name.
@@ -78,6 +79,8 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomColor: theme.buzz.border,
   },
   name: { ...theme.buzz.type.meta, color: theme.buzz.textSecondary, flex: 1 },
+  // The same brass `#` every other corner name carries.
+  sigil: { color: theme.buzz.accent },
   state: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   waiting: { color: theme.buzz.accent },
 }));

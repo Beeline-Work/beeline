@@ -160,7 +160,9 @@ function snapshot(prefix: string) {
     const texts = Array.from(row.querySelectorAll<HTMLElement>('div, span')).filter(
       (node) => node.children.length === 0 && node.textContent,
     );
-    const name = texts[0]!;
+    // The name line carries the brass `#` as a nested span; measure the line.
+    const sigil = texts.find((node) => node.textContent === '#');
+    const name = sigil?.parentElement ?? texts[0]!;
     const label = texts[texts.length - 1]!;
     return {
       state: label.textContent!,

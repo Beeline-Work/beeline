@@ -27,6 +27,10 @@ const decorativeAccentFills = new Set([
   'components/buzz/RoomListToolbar.tsx:needsCount',
   'components/buzz/StateDot.tsx:pulse',
   'components/buzz/TranscriptCard.tsx:initialValues',
+  // The arrival halo's three glow layers (the theme brass at falling opacity).
+  'components/buzz/TranscriptCard.tsx:haloNear',
+  'components/buzz/TranscriptCard.tsx:haloMid',
+  'components/buzz/TranscriptCard.tsx:haloFar',
   'components/buzz/TranscriptCard.tsx:rowRule',
   'components/buzz/TranscriptCard.tsx:choiceWash',
   'components/buzz/TranscriptCard.tsx:choiceWashLeader',

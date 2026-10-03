@@ -55,9 +55,12 @@ vi.mock('./MonoHull', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
-    BrassButton: host('BrassButton'),
     HullSurface: host('HullSurface'),
   };
+});
+vi.mock('./Button', async () => {
+  const ReactModule = await import('react');
+  return { Button: (props: any) => ReactModule.createElement('Button', props, props.children) };
 });
 vi.mock('./SurfaceGlyphLoader', async () => {
   const ReactModule = await import('react');
@@ -124,7 +127,7 @@ function has(renderer: ReactTestRenderer, testID: string): boolean {
 }
 
 function addButton(renderer: ReactTestRenderer) {
-  return renderer.root.findByType('BrassButton' as any);
+  return renderer.root.findByType('Button' as any);
 }
 
 describe('MemberPickerSheet', () => {

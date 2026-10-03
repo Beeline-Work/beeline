@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { appBoardType } from '@/buzz/app-board-style';
+import * as appBoardStyle from '@/buzz/app-board-style';
 
 const appPageHeader = readFileSync(new URL('./AppPageHeader.tsx', import.meta.url), 'utf8');
 const workbenchApp = readFileSync(
@@ -25,14 +25,8 @@ describe('App-board sub-pages share the ordinary PageHeader scale', () => {
     expect(appPageHeader).not.toContain('appBoard');
   });
 
-  it('the retired header/row app-board sizes are gone from the shared scale', () => {
-    expect(appBoardType).not.toHaveProperty('eyebrow');
-    expect(appBoardType).not.toHaveProperty('title');
-    expect(appBoardType).not.toHaveProperty('rowTitle');
-    expect(appBoardType).not.toHaveProperty('rowValue');
-    expect(appBoardType).not.toHaveProperty('pickerName');
-    expect(appBoardType).not.toHaveProperty('pickerAction');
-    expect(appBoardType).not.toHaveProperty('meta');
+  it('the copied-mock app-board type scale is gone; every board size is a shared role', () => {
+    expect(appBoardStyle).not.toHaveProperty('appBoardType');
   });
 
   it('the app detail page reads its text sizes from the shared type roles', () => {

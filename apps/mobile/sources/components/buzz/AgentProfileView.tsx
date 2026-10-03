@@ -5,7 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AGENT_NAME_MAX_LENGTH, type AgentDetailView } from '@beeline/buzz-client';
 import { ProfileIdentity } from './ProfileIdentity';
-import { MonoButton } from './MonoHull';
+import { Button } from './Button';
 import { SurfaceGlyphLoader } from './SurfaceGlyphLoader';
 import { SettingsRow } from './SettingsRow';
 import { PageHeader } from './PageHeader';
@@ -144,7 +144,7 @@ export function AgentProfileView({
             <Text style={styles.copy} accessibilityRole="alert">
               {error}
             </Text>
-            <MonoButton label="Retry" onPress={onRetry} />
+            <Button label="Retry" onPress={onRetry} />
           </View>
         )}
         {identity && (
@@ -287,7 +287,7 @@ export function AgentProfileView({
                 </Text>
               )}
               {cursor && loadMoreWork && (
-                <MonoButton
+                <Button
                   label={workLoading ? 'Loading…' : workError ? 'Retry recent work' : 'More'}
                   loading={workLoading}
                   disabled={workLoading}
@@ -346,13 +346,13 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: 1,
     borderColor: theme.buzz.border,
     borderRadius: theme.buzz.radius,
-    padding: 12,
+    padding: theme.buzz.space.md,
   },
   placeholder: { color: theme.buzz.textMuted },
   message: {
     minHeight: 44,
     paddingHorizontal: 24,
-    paddingVertical: 12,
+    paddingVertical: theme.buzz.space.sm,
     borderWidth: 1,
     borderColor: theme.buzz.accent,
     borderRadius: theme.buzz.radius,

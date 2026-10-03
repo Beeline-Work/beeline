@@ -44,17 +44,17 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     container: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: 20,
+        paddingHorizontal: theme.buzz.space.lg,
         minHeight: 56,
     },
     containerWithSubtitle: {
-        paddingVertical: 12,
+        paddingVertical: theme.buzz.space.sm,
     },
     containerWithoutSubtitle: {
-        paddingVertical: 12,
+        paddingVertical: theme.buzz.space.sm,
     },
     iconContainer: {
-        marginRight: 14,
+        marginRight: theme.buzz.space.md,
         width: 24,
         minHeight: 24,
         alignItems: 'center',
@@ -79,7 +79,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     subtitle: {
         ...theme.buzz.type.meta,
         color: theme.buzz.textMuted,
-        marginTop: 2,
+        marginTop: theme.buzz.space.xs,
     },
     rightSection: {
         flexDirection: 'row',
@@ -235,7 +235,7 @@ export const Item = React.memo<ItemProps>((props) => {
                         <Text 
                             style={[
                                 styles.detail, 
-                                { marginRight: showAccessory ? 6 : 0 },
+                                { marginRight: showAccessory ? 8 : 0 },
                                 detailStyle
                             ]}
                             numberOfLines={1}
@@ -247,7 +247,7 @@ export const Item = React.memo<ItemProps>((props) => {
                         <ActivityIndicator 
                             size="small" 
                             color={theme.colors.textSecondary}
-                            style={{ marginRight: showAccessory ? 6 : 0 }}
+                            style={{ marginRight: showAccessory ? 8 : 0 }}
                         />
                     )}
                     {rightElement}
@@ -269,7 +269,8 @@ export const Item = React.memo<ItemProps>((props) => {
                     style={[
                         styles.divider,
                         { 
-                            marginLeft: (isAndroid || isWeb) ? 0 : (dividerInset + (icon || leftElement ? 55 : 16))
+                            // Under the title: the row's side padding, plus the icon and its gap.
+                            marginLeft: (isAndroid || isWeb) ? 0 : (dividerInset + theme.buzz.space.lg + (icon || leftElement ? theme.buzz.space.lg + theme.buzz.space.md : 0))
                         }
                     ]}
                 />

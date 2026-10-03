@@ -79,10 +79,12 @@ vi.mock('@/components/buzz/MonoHull', async () => {
   return {
     hairlineDivider: { borderBottomWidth: 1, borderBottomColor: '#4e4e4e' },
     HullSurface: host('HullSurface'),
-    MonoButton: host('MonoButton'),
-    OnboardingButton: host('OnboardingButton'),
     PixelGateReveal: host('PixelGateReveal'),
   };
+});
+vi.mock('@/components/buzz/Button', async () => {
+  const ReactModule = await import('react');
+  return { Button: (props: any) => ReactModule.createElement('Button', props, props.children) };
 });
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
@@ -163,20 +165,20 @@ describe('onboarding — canonical brand treatment', () => {
     const signIn = tree.root.findAll(
       (node: any) => node.props?.testID === 'onboarding-github-sign-in',
     );
-    expect(signIn.map((node: any) => node.type)).toContain('MonoButton');
-    expect(signIn.find((node: any) => node.type === 'MonoButton')?.props.label).toBe(
+    expect(signIn.map((node: any) => node.type)).toContain('Button');
+    expect(signIn.find((node: any) => node.type === 'Button')?.props.label).toBe(
       'Continue with GitHub',
     );
 
-    // Every login-screen button label rides the canonical family through
-    // MonoButton's labelStyle override.
+    // Every login-screen button is the shared Button, whose label face is
+    // fixed by the component (DESIGN.md → Buttons): no per-call override.
     const buttons = tree.root.findAll(
-      (node: any) => typeof node.type === 'string' && node.type === 'MonoButton',
+      (node: any) => typeof node.type === 'string' && node.type === 'Button',
       { deep: true },
     );
     expect(buttons.length).toBeGreaterThan(0);
     for (const button of buttons) {
-      expect(button.props.labelStyle).toEqual({ fontFamily: canonical });
+      expect(button.props.labelStyle).toBeUndefined();
     }
   });
 });
@@ -200,11 +202,10 @@ describe('onboarding — canonical brand source assertions', () => {
     expect(src).toMatch(/noticeText: \{\s*\.\.\.theme\.buzz\.type\.body/);
   });
 
-  it('passes the canonical family to every onboarding button label', () => {
+  it('renders every onboarding action through the one shared Button', () => {
     const src = source();
-    const calls = src.match(/<MonoButton\n/g) ?? [];
-    expect(calls.length).toBeGreaterThan(0);
-    expect(src.match(/labelStyle=\{styles\.buttonLabel\}/g)?.length).toBe(calls.length);
-    expect(src).toContain('buttonLabel: { fontFamily: groknight.proseSemibold }');
+    expect(src.match(/<Button\n/g)?.length ?? 0).toBeGreaterThan(0);
+    expect(src).not.toMatch(/<(MonoButton|BrassButton|OnboardingButton|RoundButton)\b/);
+    expect(src).not.toContain('labelStyle=');
   });
 });

@@ -15,6 +15,9 @@ import {
 import { useUpdates } from '@/hooks/useUpdates';
 import * as Localization from 'expo-localization';
 import { HullDialog } from '@/components/buzz/HullDialog';
+import { PageHeader } from '@/components/buzz/PageHeader';
+import { router } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type LanguageOption = 'auto' | SupportedLanguage;
 
@@ -26,6 +29,7 @@ interface LanguageItem {
 
 export default function LanguageSettingsScreen() {
   const { theme } = useUnistyles();
+  const insets = useSafeAreaInsets();
   const [preferredLanguage, setPreferredLanguage] = useSettingMutable('preferredLanguage');
   const { reloadApp } = useUpdates();
   const [pendingLanguage, setPendingLanguage] = React.useState<LanguageOption | null>(null);
@@ -82,7 +86,13 @@ export default function LanguageSettingsScreen() {
   };
 
   return (
-    <View style={styles.screen}>
+    <View style={[styles.screen, { paddingTop: insets.top }]}>
+      <PageHeader
+        eyebrow={t('settings.title')}
+        onBack={() => router.back()}
+        testID="language-header"
+        title={t('settingsLanguage.title')}
+      />
       <ItemList style={{ paddingTop: 0 }}>
         <ItemGroup
           title={t('settingsLanguage.currentLanguage')}

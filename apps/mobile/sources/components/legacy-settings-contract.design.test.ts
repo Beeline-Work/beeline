@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const settings = Object.fromEntries(
@@ -10,12 +10,15 @@ const settings = Object.fromEntries(
 const item = readFileSync(new URL('./Item.tsx', import.meta.url), 'utf8');
 const itemGroup = readFileSync(new URL('./ItemGroup.tsx', import.meta.url), 'utf8');
 const itemList = readFileSync(new URL('./ItemList.tsx', import.meta.url), 'utf8');
-const header = readFileSync(new URL('./navigation/Header.tsx', import.meta.url), 'utf8');
 const textSelection = readFileSync(
   new URL('../app/(app)/text-selection.tsx', import.meta.url),
   'utf8',
 );
 const appLayout = readFileSync(new URL('../app/(app)/_layout.tsx', import.meta.url), 'utf8');
+const workflows = readFileSync(
+  new URL('../app/(app)/beeline/settings/workflows.tsx', import.meta.url),
+  'utf8',
+);
 
 describe('retained settings leaves use the Beeline design contract', () => {
   it('keeps leaf screens free of glass, generic icon packs, and local palette colors', () => {
@@ -42,20 +45,14 @@ describe('retained settings leaves use the Beeline design contract', () => {
     expect(itemList).toContain('backgroundColor: theme.buzz.bgTerminal');
   });
 
-  it('uses flat header defaults', () => {
-    expect(header).not.toMatch(/MobileGlass|Ionicons|@expo\/vector-icons/);
-    expect(header).toContain('backgroundColor: theme.buzz.bgTerminal');
-
-    const backButton = header.slice(
-      header.indexOf('const DefaultBackButton'),
-      header.indexOf('// Component wrapper for navigation header'),
-    );
-    expect(backButton).not.toMatch(/MobileGlass|Ionicons/);
-    // The back mark is the shared drawn chevron at the one back size, not a
-    // `‹` set in whatever face this header happened to have to hand.
-    expect(backButton).toContain('<ChevronGlyph');
-    expect(backButton).toContain('direction="left"');
-    expect(backButton).toContain('size={CHEVRON_BACK_SIZE}');
+  it('draws the shared PageHeader instead of a stack header', () => {
+    expect(existsSync(new URL('./navigation/Header.tsx', import.meta.url))).toBe(false);
+    expect(appLayout).not.toContain('createHeader');
+    expect(appLayout).toMatch(/screenOptions=\{\{[\s\S]*?headerShown: false/);
+    for (const source of [settings.language, textSelection, workflows]) {
+      expect(source).toContain('<PageHeader');
+    }
+    expect(textSelection).not.toContain('navigation.setOptions');
   });
 
   it('reuses the shared navigation and dialog idioms on migrated leaves', () => {
@@ -63,6 +60,7 @@ describe('retained settings leaves use the Beeline design contract', () => {
     expect(textSelection).toContain('<HullDialog');
     expect(textSelection).not.toMatch(/MobileGlass|Ionicons|@expo\/vector-icons|@\/modal/);
     expect(appLayout).toContain('name="settings/language"');
-    expect(appLayout).toContain("headerTitle: t('settingsLanguage.title')");
+    expect(appLayout).toContain('<Stack.Screen name="settings/language" options={{ headerShown: false }} />');
+    expect(settings.language).toContain("title={t('settingsLanguage.title')}");
   });
 });

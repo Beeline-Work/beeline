@@ -15,7 +15,7 @@ import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { ProfileIdentity } from '@/components/buzz/ProfileIdentity';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
-import { MonoButton } from '@/components/buzz/MonoHull';
+import { Button } from '@/components/buzz/Button';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import { ProfileActions } from '@/components/buzz/ProfileActions';
 import { MemberGrantRow } from '@/components/buzz/MemberGrantRow';
@@ -166,7 +166,7 @@ export function HumanProfile({
             <Text style={styles.copy} accessibilityRole="alert">
               {error}
             </Text>
-            {!member && <MonoButton label="Retry" onPress={() => setRetry((value) => value + 1)} />}
+            {!member && <Button label="Retry" onPress={() => setRetry((value) => value + 1)} />}
           </View>
         )}
         {member && (
@@ -292,7 +292,7 @@ export function HumanProfile({
               <Text style={styles.copy}>No connected agents in this Workspace.</Text>
             )}
             {agentsHasMore && (
-              <MonoButton
+              <Button
                 label="More"
                 disabled={busy}
                 testID="more-connected-agents"

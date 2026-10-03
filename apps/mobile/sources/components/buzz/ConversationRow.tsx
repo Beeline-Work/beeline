@@ -108,6 +108,7 @@ export function ConversationRow({
           styles.rowPressable,
           desktop && styles.desktopRow,
           !desktop && styles.mobileRow,
+          item.unread && styles.unreadRow,
           pressed && styles.pressed,
         ]}
         testID={testID}
@@ -182,12 +183,12 @@ const styles = StyleSheet.create((theme) => ({
   rowPressable: {
     minHeight: 62,
     paddingHorizontal: theme.buzz.space.md,
-    paddingVertical: 9,
+    paddingVertical: theme.buzz.space.sm,
     flexDirection: 'row',
-    gap: 12,
+    gap: theme.buzz.space.sm,
   },
-  desktopRow: { minHeight: 62, paddingLeft: 20 },
-  mobileRow: { minHeight: 68, paddingHorizontal: 14, paddingVertical: 10 },
+  desktopRow: { minHeight: 62, paddingLeft: theme.buzz.space.lg },
+  mobileRow: { minHeight: 68, paddingHorizontal: theme.buzz.space.md, paddingVertical: theme.buzz.space.sm },
   copy: { flex: 1, minWidth: 0 },
   heading: { minHeight: 23, flexDirection: 'row', alignItems: 'center' },
   pin: { width: 14, alignItems: 'flex-start', justifyContent: 'center' },
@@ -196,11 +197,13 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     color: theme.buzz.textPrimary,
   },
+  // One luminance step above the canvas: freshness is an area, never a stroke.
+  unreadRow: { backgroundColor: theme.buzz.bgUnread },
   unreadName: { fontFamily: theme.buzz.proseSemibold },
   sigil: { color: theme.buzz.accent },
   previewLine: {
     minHeight: 20,
-    marginTop: 1,
+    marginTop: theme.buzz.space.xs,
     flexDirection: 'row',
     alignItems: 'baseline',
     gap: 8,
@@ -224,11 +227,11 @@ const styles = StyleSheet.create((theme) => ({
   statusMark: {
     width: 14,
     height: 14,
-    borderRadius: 7,
+    borderRadius: 14 / 2,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: theme.buzz.accent },
+  dot: { width: 8, height: 8, borderRadius: 8 / 2, backgroundColor: theme.buzz.accent },
   needsRing: {
     borderWidth: 1,
     borderColor: theme.buzz.accent,

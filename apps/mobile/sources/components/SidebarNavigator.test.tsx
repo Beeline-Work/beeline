@@ -43,7 +43,9 @@ vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 vi.mock('react-native-unistyles', () => ({
-  useUnistyles: () => ({ theme: { colors: { header: { tint: '#fff' }, textLink: '#b08a4a' } } }),
+  useUnistyles: () => ({
+    theme: { buzz: { bgBase: '#14091A' }, colors: { header: { tint: '#fff' }, textLink: '#b08a4a' } },
+  }),
 }));
 vi.mock('@/text', () => ({ t: (key: string) => key }));
 vi.mock('@/utils/isTauri', () => ({ isTauri: () => false }));

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { Animated, StyleSheet, Platform } from 'react-native';
+import { Animated, StyleSheet, Platform, useWindowDimensions } from 'react-native';
 import { HullModal } from '@/components/buzz/HullDialog';
 
 interface CommandPaletteModalProps {
@@ -9,6 +9,7 @@ interface CommandPaletteModalProps {
 }
 
 export function CommandPaletteModal({ visible, onClose, children }: CommandPaletteModalProps) {
+  const { height } = useWindowDimensions();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.95)).current;
   const [isModalVisible, setIsModalVisible] = React.useState(true);
@@ -70,6 +71,7 @@ export function CommandPaletteModal({ visible, onClose, children }: CommandPalet
       <Animated.View
         style={[
           styles.content,
+          Platform.OS !== 'web' && { marginTop: height * PALETTE_TOP_SHARE },
           {
             opacity: fadeAnim,
             transform: [{ scale: scaleAnim }],
@@ -82,12 +84,15 @@ export function CommandPaletteModal({ visible, onClose, children }: CommandPalet
   );
 }
 
+/** The palette card sits 30% of the window down, as web's 30vh. */
+const PALETTE_TOP_SHARE = 0.3;
+
 const styles = StyleSheet.create({
   content: {
     zIndex: 1,
     width: '90%',
     maxWidth: 800,
     alignSelf: 'center',
-    ...(Platform.OS === 'web' ? ({ marginTop: '30vh' } as any) : { marginTop: 200 }),
+    ...(Platform.OS === 'web' ? ({ marginTop: '30vh' } as any) : {}),
   },
 });

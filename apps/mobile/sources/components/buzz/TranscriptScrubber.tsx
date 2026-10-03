@@ -9,6 +9,8 @@ import type { TranscriptScrubberStore } from '@/buzz/use-transcript-scrubber';
 export const SCRUBBER_STRIP_WIDTH = 44;
 const BAR_HEIGHT = 36;
 const GRAB_HEIGHT = 64;
+const BAR_WIDTH = 3;
+const HANDLE_WIDTH = 6;
 
 /**
  * The transcript's own scroll bar. It shows while the list scrolls, placed by
@@ -130,23 +132,23 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'flex-end',
     },
     bar: {
-      marginRight: 3,
-      width: 3,
+      marginRight: groknight.space.xs + (HANDLE_WIDTH - BAR_WIDTH) / 2,
+      width: BAR_WIDTH,
       height: BAR_HEIGHT,
-      borderRadius: 2,
+      borderRadius: BAR_WIDTH / 2,
       backgroundColor: groknight.textMuted,
     },
     handle: {
-      marginRight: 2,
-      width: 6,
+      marginRight: groknight.space.xs,
+      width: HANDLE_WIDTH,
       borderRadius: 3,
       backgroundColor: groknight.accent,
     },
     bubble: {
       position: 'absolute',
       right: SCRUBBER_STRIP_WIDTH,
-      paddingHorizontal: 10,
-      paddingVertical: 6,
+      paddingHorizontal: groknight.space.sm,
+      paddingVertical: groknight.space.sm,
       borderWidth: 1,
       borderColor: groknight.borderStrong,
       borderRadius: groknight.radius,

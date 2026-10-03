@@ -91,9 +91,9 @@ const styles = StyleSheet.create((theme) => {
   return ({
   preamble: {
     paddingHorizontal: 16,
-    paddingTop: 18,
-    paddingBottom: 22,
-    gap: 10,
+    paddingTop: groknight.space.md,
+    paddingBottom: groknight.space.lg,
+    gap: groknight.space.sm,
   },
   disclosureRow: {
     flexDirection: 'row',

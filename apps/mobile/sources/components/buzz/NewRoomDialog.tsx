@@ -6,6 +6,7 @@ import { githubFullNameFromInput, type RepoCandidate } from '@/buzz/room-repo-pi
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 import { ROOM_SLUG_HINT, validRoomSlug } from '@/buzz/room-name';
 import { Typography } from '@/constants/Typography';
+import { Button } from './Button';
 import { HullDialogInput } from './HullDialog';
 import { HullActionSheetModal, HULL_SHEET_INSET } from './HullActionSheet';
 import { RepoPicker } from './RepoPicker';
@@ -376,16 +377,14 @@ export function NewRoomDialog({
             <Text style={styles.cancelText}>{showRepoPicker ? 'Back' : 'Cancel'}</Text>
           </TouchableOpacity>
           {step === 'form' && (
-            <TouchableOpacity
-              accessibilityRole="button"
-              accessibilityState={{ busy, disabled: submitDisabled }}
+            <Button
               disabled={submitDisabled}
+              label={busy ? 'Creating…' : 'Create Room'}
+              loading={busy}
               onPress={() => void submit()}
-              style={[styles.primaryAction, submitDisabled && styles.disabledAction]}
+              style={styles.primaryAction}
               testID="create-room-submit"
-            >
-              <Text style={styles.primaryActionText}>{busy ? 'Creating…' : 'Create Room'}</Text>
-            </TouchableOpacity>
+            />
           )}
         </View>
       }
@@ -525,7 +524,7 @@ const styles = StyleSheet.create((theme) => {
       ...Typography.default(),
       ...hull.type.meta,
       color: hull.textMuted,
-      marginTop: 6,
+      marginTop: hull.space.sm,
       marginHorizontal: HULL_SHEET_INSET,
     },
     row: {
@@ -533,7 +532,7 @@ const styles = StyleSheet.create((theme) => {
       paddingHorizontal: HULL_SHEET_INSET,
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 10,
+      gap: hull.space.sm,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: hull.border,
     },
@@ -549,9 +548,9 @@ const styles = StyleSheet.create((theme) => {
     selectedMark: { ...hull.type.body, color: hull.accent },
     repoBlock: {
       paddingHorizontal: HULL_SHEET_INSET,
-      paddingTop: 12,
-      paddingBottom: 12,
-      gap: 8,
+      paddingTop: hull.space.md,
+      paddingBottom: hull.space.md,
+      gap: hull.space.sm,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: hull.border,
     },
@@ -571,17 +570,17 @@ const styles = StyleSheet.create((theme) => {
     slot: { position: 'relative', zIndex: 2 },
     slotRow: {
       height: REPO_SLOT_HEIGHT,
-      paddingHorizontal: 12,
+      paddingHorizontal: hull.space.md,
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 10,
+      gap: hull.space.sm,
       borderWidth: 1,
       borderColor: hull.border,
       borderRadius: hull.radius,
     },
     takenRow: { borderColor: hull.warning },
-    twoLine: { flex: 1, minWidth: 0, gap: 2 },
-    ownerLineRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    twoLine: { flex: 1, minWidth: 0, gap: hull.space.xs },
+    ownerLineRow: { flexDirection: 'row', alignItems: 'center', gap: hull.space.sm },
     ownerLine: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
     ownerChip: {
       flexDirection: 'row',
@@ -607,7 +606,6 @@ const styles = StyleSheet.create((theme) => {
       right: 0,
       bottom: REPO_SLOT_HEIGHT - 1,
       zIndex: 3,
-      elevation: 3,
       borderWidth: 1,
       borderColor: hull.border,
       borderRadius: hull.radius,
@@ -615,10 +613,10 @@ const styles = StyleSheet.create((theme) => {
     },
     ownerMenuRow: {
       minHeight: OWNER_ROW_HEIGHT,
-      paddingHorizontal: 12,
+      paddingHorizontal: hull.space.md,
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 10,
+      gap: hull.space.sm,
     },
     ownerMenuConnect: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: hull.border },
     connectText: { ...Typography.default(), ...hull.type.body, color: hull.accent },
@@ -633,22 +631,12 @@ const styles = StyleSheet.create((theme) => {
       flexDirection: 'row',
       alignItems: 'center',
       paddingHorizontal: HULL_SHEET_INSET,
-      paddingTop: 10,
+      paddingTop: hull.space.sm,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: hull.border,
     },
     cancelAction: { minHeight: 44, flex: 1, justifyContent: 'center', alignItems: 'center' },
     cancelText: { ...Typography.default(), ...hull.type.body, color: hull.buttonSecondaryText },
-    primaryAction: {
-      minHeight: 44,
-      minWidth: 118,
-      paddingHorizontal: 14,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderRadius: hull.radius,
-      backgroundColor: hull.buttonPrimaryFill,
-    },
-    disabledAction: { opacity: 0.42 },
-    primaryActionText: { ...Typography.default('semiBold'), color: hull.buttonPrimaryText },
+    primaryAction: { minWidth: 118 },
   };
 });

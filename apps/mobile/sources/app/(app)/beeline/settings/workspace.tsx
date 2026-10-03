@@ -27,7 +27,8 @@ import {
   HullActionSheetModal,
   HullActionSheetRow,
 } from '@/components/buzz/HullActionSheet';
-import { MonoButton, PixelGateReveal } from '@/components/buzz/MonoHull';
+import { Button } from '@/components/buzz/Button';
+import { PixelGateReveal } from '@/components/buzz/MonoHull';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { Typography } from '@/constants/Typography';
@@ -428,7 +429,7 @@ export default function WorkspaceSettings() {
           <Text style={styles.deniedTitle}>
             {error ?? `Could not load ${WORKSPACE_LABEL} settings`}
           </Text>
-          <MonoButton
+          <Button
             label="RETRY"
             onPress={() => setRetryGeneration((value) => value + 1)}
             testID="workspace-settings-retry"
@@ -512,13 +513,13 @@ export default function WorkspaceSettings() {
                   value={workspaceName}
                 />
                 <View style={styles.inlineEditorControls}>
-                  <MonoButton
+                  <Button
                     disabled={workingKey === 'name'}
                     label="Cancel"
                     onPress={() => setRenamingWorkspace(false)}
                     variant="secondary"
                   />
-                  <MonoButton
+                  <Button
                     disabled={
                       !workspaceName.trim() ||
                       workspaceName.trim() === workspace?.name ||

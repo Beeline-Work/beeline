@@ -6,13 +6,13 @@ import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Typography } from '@/constants/Typography';
 import { AnimatedBlurBackdrop } from '@/components/AnimatedOverlay';
+import { Button } from '@/components/buzz/Button';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import { useSandboxWebView } from '@/components/buzz/sandbox-webview';
 import { useInstallObserver } from '@/buzz/use-observed-resource';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { connectorOfferCompletionRoute } from '@/buzz/connector-offer-ceremony';
 import { takeAppSignInReturn } from '@/buzz/app-sign-in';
-import { appBoardType } from '@/buzz/app-board-style';
 
 function first(value: string | string[] | undefined): string | undefined { return Array.isArray(value) ? value[0] : value; }
 
@@ -80,8 +80,8 @@ function ConnectorSignInOverlay() {
       {observed.error ? <TouchableOpacity accessibilityRole="button" onPress={observed.installMissing ? () => router.back() : observed.retry} testID="signin-retry"><Text accessibilityRole="alert" style={styles.error}>{observed.error} · Retry</Text></TouchableOpacity> : null}
       {signIn.method === 'oauth' ? <View style={styles.centered} testID="signin-oauth-browser">
         <Text style={styles.note}>{connectorName} sign-in opens in your browser. Return here after granting access.</Text>
-        <TouchableOpacity accessibilityRole="button" onPress={() => void openBrowser()} style={styles.button} testID="signin-open-external"><Text style={styles.buttonText}>Continue with {connectorName}</Text></TouchableOpacity>
-      </View> : WebView && signIn.url ? React.createElement(WebView, { source: { uri: signIn.url }, style: styles.webView, javaScriptEnabled: true, domStorageEnabled: true, testID: 'signin-webview' }) : fallback ? <View style={styles.centered}><Text style={styles.note}>Finish sign-in in the browser, then return here.</Text></View> : <ScrollView contentContainerStyle={styles.centered}><ActivityIndicator testID="signin-webview-loading" /><TouchableOpacity accessibilityRole="button" onPress={() => void openBrowser()} style={styles.button} testID="signin-open-external"><Text style={styles.buttonText}>Open in browser</Text></TouchableOpacity></ScrollView>}
+        <Button label={`Continue with ${connectorName}`} onPress={() => void openBrowser()} testID="signin-open-external" />
+      </View> : WebView && signIn.url ? React.createElement(WebView, { source: { uri: signIn.url }, style: styles.webView, javaScriptEnabled: true, domStorageEnabled: true, testID: 'signin-webview' }) : fallback ? <View style={styles.centered}><Text style={styles.note}>Finish sign-in in the browser, then return here.</Text></View> : <ScrollView contentContainerStyle={styles.centered}><ActivityIndicator testID="signin-webview-loading" /><Button label="Open in browser" onPress={() => void openBrowser()} testID="signin-open-external" /></ScrollView>}
     </View>
   </View>;
 }
@@ -90,10 +90,8 @@ const styles = StyleSheet.create(theme => ({
   returnScreen: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: theme.buzz.bgTerminal },
   error: { ...Typography.default(), color: theme.buzz.dialogDanger },
   scrim: { flex: 1, justifyContent: 'center' },
-  card: { flex: 1, marginHorizontal: 16, borderRadius: 12, overflow: 'hidden', backgroundColor: theme.buzz.bgTerminal },
+  card: { flex: 1, marginHorizontal: 16, borderRadius: theme.buzz.radius, overflow: 'hidden', backgroundColor: theme.buzz.bgTerminal },
   centered: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', gap: 16, padding: 24 },
-  note: { ...Typography.default(), ...appBoardType.cardAction, color: theme.buzz.textSecondary, textAlign: 'center' },
-  button: { minHeight: 44, paddingHorizontal: 18, justifyContent: 'center', borderRadius: 10, backgroundColor: theme.buzz.textPrimary },
-  buttonText: { ...Typography.default(), ...appBoardType.cardAction, color: theme.buzz.bgTerminal },
+  note: { ...theme.buzz.type.body, color: theme.buzz.textSecondary, textAlign: 'center' },
   webView: { flex: 1 },
 }));

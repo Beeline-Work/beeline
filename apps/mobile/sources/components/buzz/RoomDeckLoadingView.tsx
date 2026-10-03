@@ -27,9 +27,9 @@ const styles = StyleSheet.create((theme) => {
       flex: 1,
       alignItems: 'center',
       justifyContent: 'center',
-      gap: 14,
+      gap: hull.space.md,
       backgroundColor: hull.bgTerminal,
-      paddingHorizontal: 28,
+      paddingHorizontal: hull.space.xl,
     },
     loading: {
       ...hull.type.sectionHead,

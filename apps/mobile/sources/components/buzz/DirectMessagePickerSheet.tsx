@@ -147,7 +147,7 @@ const styles = StyleSheet.create((theme) => {
       ...Typography.default(),
       ...groknight.type.meta,
       minHeight: 44,
-      marginHorizontal: 10,
+      marginHorizontal: groknight.space.sm,
       paddingHorizontal: 0,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: groknight.border,
@@ -158,10 +158,10 @@ const styles = StyleSheet.create((theme) => {
     list: { paddingBottom: 4 },
     row: {
       minHeight: 60,
-      paddingHorizontal: 10,
+      paddingHorizontal: groknight.space.sm,
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 10,
+      gap: groknight.space.sm,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: groknight.border,
     },
@@ -186,9 +186,9 @@ const styles = StyleSheet.create((theme) => {
     section: {
       ...groknight.type.sectionHead,
       color: groknight.chrome,
-      paddingTop: 14,
+      paddingTop: groknight.space.md,
       paddingBottom: 4,
-      paddingHorizontal: 10,
+      paddingHorizontal: groknight.space.sm,
     },
   };
 });

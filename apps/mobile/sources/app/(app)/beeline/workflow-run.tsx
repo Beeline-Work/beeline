@@ -167,9 +167,9 @@ const styles = StyleSheet.create((theme) => ({
   allRuns: { minHeight: 44, justifyContent: 'center', paddingHorizontal: theme.buzz.space.md },
   allRunsText: { ...theme.buzz.type.meta, color: theme.buzz.accent },
   screen: { flex: 1, backgroundColor: theme.buzz.bgBase },
-  loading: { padding: 28, alignItems: 'center', justifyContent: 'center' },
+  loading: { padding: theme.buzz.space.xl, alignItems: 'center', justifyContent: 'center' },
   plate: { paddingTop: theme.buzz.layout.screenTop, paddingHorizontal: theme.buzz.space.md },
-  status: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  status: { flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.sm },
   liveMark: { width: LIVE_HALO, height: LIVE_HALO, alignItems: 'center', justifyContent: 'center' },
   liveHalo: { position: 'absolute', left: 0, top: 0, width: LIVE_HALO, height: LIVE_HALO },
   liveRing: {

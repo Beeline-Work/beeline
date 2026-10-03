@@ -322,6 +322,15 @@ describe('beeline-review reviewer skill', () => {
     expect(markdown).not.toContain('gh pr merge');
   });
 
+  it('checks UI diffs against DESIGN.md, its lints and every shipped theme', () => {
+    expect(markdown).toContain('### Design rules');
+    expect(markdown).toContain('the repository has a DESIGN.md');
+    expect(markdown).toContain('npx vitest run sources/buzz/calm-lint sources/buzz/design-lint');
+    expect(markdown).toContain('FAIL when a design baseline count grows');
+    expect(markdown).toContain('in each theme the app ships (in Beeline, Obsidian and Bone)');
+    expect(markdown).toContain('A design-rule violation is an engineering finding and blocks PASS.');
+  });
+
   it('carries no bare never-merge sentence the implementer could borrow', () => {
     expect(markdown).not.toContain('Never merge');
   });

@@ -79,8 +79,7 @@ function seatShims(mobile: string): Record<string, string> {
     '@/components/buzz/MonoHull': `import React from 'react';
     export const HullSurface = ({ children, style }) => React.createElement('div', { style }, children);
     export const PixelGateReveal = ({ children }) => React.createElement(React.Fragment, null, children);
-    export const PixelLoader = () => null;
-    export const MonoButton = () => null;`,
+    export const PixelLoader = () => null;`,
     // Person photos stay darkflighted. The proof still needs a real square so
     // the corners this seat rounds are visible, the same way the Workspace
     // proof feeds a loud picture through IdentityMark.

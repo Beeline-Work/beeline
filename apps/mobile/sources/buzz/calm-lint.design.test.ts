@@ -79,6 +79,24 @@ describe('Borrowing Calm lint', () => {
     expect(scanCalmSource(source, 'y.ts').map((o) => o.line)).toEqual([2, 3, 4, 6, 7]);
   });
 
+  it('flags raw type values when the property value starts on the next line', () => {
+    const source = [
+      'const s = {',
+      '  fontSize:',
+      '    17,',
+      '  lineHeight:',
+      '    25,',
+      '  letterSpacing:',
+      '    1,',
+      '  valid: { fontSize:',
+      '    16, lineHeight:',
+      '    23, letterSpacing:',
+      '    2 },',
+      '};',
+    ].join('\n');
+    expect(scanCalmSource(source, 'multiline.ts').map((o) => o.line)).toEqual([2, 4, 6]);
+  });
+
   it('flags a WELCOME_TYPE-style key-renamed constant table referenced from fontSize/lineHeight/letterSpacing', () => {
     // A digit-after-property-name scan alone misses this: the raw numbers
     // sit under renamed keys (size36, trackingTight), never literally next

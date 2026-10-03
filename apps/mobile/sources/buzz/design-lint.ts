@@ -90,9 +90,10 @@ const COLOUR_LITERAL =
 const SPACING_PROPERTY =
   /\b(?:(?:padding|margin)(?:Top|Bottom|Left|Right|Horizontal|Vertical|Start|End)?|gap|rowGap|columnGap):\s*/g;
 const RADIUS_PROPERTY = /\bborder(?:TopLeft|TopRight|BottomLeft|BottomRight)?Radius:\s*/g;
-/** iOS/web shadows and Android `elevation` (any value but 0). */
-const SHADOW =
-  /\b(?:shadowOpacity|shadowRadius|shadowOffset|boxShadow|textShadow\w*):|\belevation:\s*(?!0\b)[^\s,}]/g;
+/** iOS/web shadows; Android elevation is checked as a complete value below. */
+const SHADOW = /\b(?:shadowOpacity|shadowRadius|shadowOffset|boxShadow|textShadow\w*):/g;
+const ELEVATION_PROPERTY = /\belevation:\s*/g;
+const ZERO_ELEVATION = /^[-+]?0(?:\.0+)?$/;
 const RETIRED_FONT = /IBMPlexSans|BricolageGrotesque|SpaceGrotesk-Bold\b/g;
 /** Components DESIGN.md retired in favour of Button and PageHeader. */
 const RETIRED_COMPONENT =
@@ -483,6 +484,10 @@ export function scanDesignSource(
   offScale(SPACING_PROPERTY, 'spacing', onSpacingScale);
   offScale(RADIUS_PROPERTY, 'radius', onRadiusSet);
   for (const match of code.matchAll(SHADOW)) push('shadow', match.index!);
+  for (const match of code.matchAll(ELEVATION_PROPERTY)) {
+    const value = valueAt(code, match.index! + match[0].length).trim();
+    if (!ZERO_ELEVATION.test(value)) push('shadow', match.index!);
+  }
   for (const match of code.matchAll(RETIRED_FONT)) push('font', match.index!);
   for (const match of code.matchAll(RETIRED_COMPONENT)) push('component', match.index!);
   return offences

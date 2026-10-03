@@ -132,6 +132,17 @@ describe('design lint', () => {
     ]);
   });
 
+  it('flags fractional Android elevation while allowing exact zero', () => {
+    const source = [
+      'const s = { elevation: 0.5 };',
+      'const t = { elevation: 0.0 };',
+      'const u = { elevation: 0 };',
+    ].join('\n');
+    expect(scanDesignSource(source, 'android.tsx').map(({ rule, line }) => `${rule}@${line}`)).toEqual([
+      'shadow@1',
+    ]);
+  });
+
   it('traces branches, aliases, multiline values and imports by module', () => {
     const probe = (source: string, modules?: { file: string; source: string }[]) =>
       scanDesignSource(

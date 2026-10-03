@@ -247,19 +247,15 @@ export function scanCalmSource(source: string, file: string): CalmOffence[] {
     offences.push({ file, line: lineIndex + 1, text: lines[lineIndex]!.trim() });
   };
 
-  lines.forEach((text, index) => {
-    for (const [pattern, allowed] of [
-      [FONT_SIZE, CALM_FONT_SIZES],
-      [LINE_HEIGHT, CALM_LINE_HEIGHTS],
-      [LETTER_SPACING, CALM_LETTER_SPACINGS],
-    ] as const) {
-      for (const match of text.matchAll(pattern)) {
-        if (!allowed.has(Number(match[1]))) {
-          offences.push({ file, line: index + 1, text: text.trim() });
-        }
-      }
+  for (const [pattern, allowed] of [
+    [FONT_SIZE, CALM_FONT_SIZES],
+    [LINE_HEIGHT, CALM_LINE_HEIGHTS],
+    [LETTER_SPACING, CALM_LETTER_SPACINGS],
+  ] as const) {
+    for (const match of source.matchAll(pattern)) {
+      if (!allowed.has(Number(match[1]))) pushOffence(match.index!);
     }
-  });
+  }
 
   for (const match of source.matchAll(COMPUTED_TYPE)) {
     const value = match[2]!.trim();

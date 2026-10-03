@@ -387,6 +387,23 @@ describe('prompt assembly guards', () => {
     const turn = assembleTurnPrompt(TURN_VARIANTS['room-turn']!).text;
     expect(turn.split('Why did the release migration fail?')).toHaveLength(2);
   });
+
+  it('gives both corner lanes sibling steer context without Room question instructions', () => {
+    for (const surface of ['code-corner', 'no-code-corner', 'review-corner'] as const) {
+      const session = assembleSessionPrompt({ surface, agentName: 'Bee' }).systemPrompt;
+      expect(session).toContain('Use steer_corner during a turn');
+      expect(session).toContain('Membership alone grants no turn');
+      const turn = assembleTurnPrompt({
+        surface,
+        corners: [{ cornerId: 'sibling-id', parentRoomId: 'room-id', objective: 'Other work' }],
+        task: { body: 'Steer the sibling' },
+      }).text;
+      expect(turn).toContain('sibling-id');
+      expect(turn).toContain('steer_corner for a sibling under this parent Room');
+      expect(turn).not.toContain('ask_corner');
+      expect(turn).not.toContain('inspect_corner');
+    }
+  });
 });
 
 describe('assigned corner brief', () => {

@@ -3399,27 +3399,34 @@ export class DaemonService {
       throw new Error('invalid relay');
     if (relay.direction === 'up') throw new Error('relay up is retired');
     const command = this.authorizedCommand;
-    if (!this.commandTransaction || !command) throw new Error('relay requires an active command');
+    if (!this.commandTransaction || !command || command.room_id !== relay.fromRoomId)
+      throw new Error('relay requires an active source command');
     const cornerId = relay.toRoomId;
     const roomId = relay.fromRoomId;
-    // Lock both current memberships and rooms against removal/closure for the whole write.
+    // Lock the source, destination and parent against removal/closure for the whole write.
     const pair = (
       await this.database.query<{
-        room_name: string;
+        source_name: string;
+        source_parent_id: string | null;
         owner_agent_id: string;
       }>(
-        `SELECT parent.name room_name,f.owner_agent_id
+        `SELECT source.name source_name,source.parent_id source_parent_id,f.owner_agent_id
        FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
+       JOIN rooms source ON source.id=$2 AND (source.id=parent.id OR source.parent_id=parent.id)
        JOIN corner_facts f ON f.corner_id=corner.id
        JOIN memberships cm ON cm.room_id=corner.id AND cm.identity_id=$3 AND cm.removed_at IS NULL
        JOIN memberships pm ON pm.room_id=parent.id AND pm.identity_id=$3 AND pm.removed_at IS NULL
-       WHERE corner.id=$1 AND parent.id=$2 AND parent.parent_id IS NULL
-         AND corner.archived_at IS NULL AND parent.archived_at IS NULL
-       FOR SHARE OF corner,parent,cm,pm`,
+       JOIN memberships sm ON sm.room_id=source.id AND sm.identity_id=$3 AND sm.removed_at IS NULL
+       WHERE corner.id=$1 AND source.id<>corner.id AND parent.parent_id IS NULL
+         AND source.workspace_id=parent.workspace_id AND corner.workspace_id=parent.workspace_id
+         AND corner.archived_at IS NULL AND parent.archived_at IS NULL AND source.archived_at IS NULL
+       FOR SHARE OF corner,parent,source,cm,pm,sm`,
         [cornerId, roomId, agentId],
       )
     ).rows[0];
     if (!pair) throw new Error('relay requires current Room and corner membership');
+    if (pair.source_parent_id !== null && relay.reply === 'once')
+      throw new Error('corner questions require a Room source');
     const target = pair.owner_agent_id;
     const received = Boolean(
       (
@@ -3434,7 +3441,7 @@ export class DaemonService {
       fromRoomId: relay.fromRoomId,
       toRoomId: relay.toRoomId,
       direction: relay.direction,
-      fromName: pair.room_name,
+      fromName: pair.source_name,
       cornerId,
       received,
       ...(relay.reply === 'once' ? { reply: 'once' } : {}),

@@ -344,6 +344,7 @@ describe('corner merge instructions', () => {
           };
         if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
         if (name.startsWith('post')) return { id: 'write-id', createdAt: 1 };
+        if (name === 'listRoomCorners') return { corners: [] };
         if (name === 'retractAgentLiveOutput') return { id: 'write-id', createdAt: 1 };
         throw new Error(`unexpected operation ${name}`);
       }),
@@ -1260,6 +1261,30 @@ describe('corner close-request delivery', () => {
       scheduler,
     };
   }
+
+  it('loads member siblings from the parent and excludes itself from steer context', async () => {
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getWorkspaceRoster') return { members: [] };
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'listRoomCorners')
+        return {
+          corners: [
+            { cornerId: 'corner-id', parentRoomId: 'room-id', objective: 'This work' },
+            { cornerId: 'sibling-id', parentRoomId: 'room-id', objective: 'Coordinate endpoint' },
+            { cornerId: 'closed-id', parentRoomId: 'room-id', objective: 'Old work', archived: true },
+          ],
+        };
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const { acp, loop, scheduler } = await cornerHarness(execute, 60_000);
+    const prompt = vi.spyOn(acp, 'sessionPrompt');
+    await loop.run();
+    await scheduler.dispose();
+    expect(execute).toHaveBeenCalledWith('listRoomCorners', { roomId: 'room-id' });
+    expect(prompt.mock.calls[0]?.[1]).toContain('sibling-id');
+    expect(prompt.mock.calls[0]?.[1]).not.toContain('"cornerId":"corner-id"');
+    expect(prompt.mock.calls[0]?.[1]).not.toContain('closed-id');
+  });
 
   it('publishes a settled tool call before a still-running sibling call completes', async () => {
     let closeReads = 0;

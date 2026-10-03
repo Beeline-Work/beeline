@@ -1647,6 +1647,238 @@ it('stores an ambiguous agent tag as prose without dispatching either candidate'
   }
 });
 
+describe('sibling corner steers', () => {
+  let sibling: string;
+  beforeEach(async () => {
+    sibling = randomUUID();
+    await db.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Source corner')`,
+      [sibling, W, R],
+    );
+    await db.query(
+      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle)
+       VALUES($1,$2,'Coordinate the endpoint','{}')`,
+      [sibling, A],
+    );
+    for (const who of [H, A, B, P])
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+        [W, sibling, who],
+      );
+  });
+  const steer = (source: AgentCommand, text = 'Sibling steer', extra = {}, generation = 'g1') =>
+    result(source, text, generation, {
+      relay: { fromRoomId: sibling, toRoomId: C, direction: 'down', ...extra },
+    });
+  async function sourceCommand(sender = A) {
+    await send(sender === A ? '@hoots steer the sibling' : '@goosy steer the sibling', sibling);
+    const source = (await commands(sender, sibling))[0]!;
+    await claim(source);
+    return source;
+  }
+
+  it.each([A, B])(
+    'delivers a delegated steer from Room sender %s with attribution and requester intact',
+    async (sender) => {
+      // Start with a different human than either agent's owner and delegate through a Room.
+      await phone.execute(
+        'sendRoomMessage',
+        {
+          roomId: R,
+          text: sender === A ? '@hoots coordinate work' : '@goosy coordinate work',
+        },
+        P,
+      );
+      const root = (await commands(sender))[0]!;
+      await claim(root);
+      const first = await result(root, 'Coordinate in the source corner', 'g1', {
+        relay: { fromRoomId: R, toRoomId: sibling, direction: 'down' },
+      });
+      const source = (await commands(A, sibling)).find(
+        (command) => command.sourceMessageId === first.id,
+      )!;
+      await claim(source);
+      const delivery = await steer(source, 'Use the new sibling endpoint', {
+        fromName: 'forged',
+        anchorMessageId: 'forged',
+      });
+      const [queued] = await commands(B, C);
+      expect(await commands(A, C)).toEqual([]);
+      expect(queued).toMatchObject({
+        reason: 'relay_steer',
+        action: 'input',
+        sourceMessageId: delivery.id,
+        rootCommandId: root.rootCommandId,
+        rootSourceMessageId: root.rootSourceMessageId,
+        parentCommandId: source.id,
+        agentDepth: source.agentDepth + 1,
+        source: { body: 'Use the new sibling endpoint', type: 'card' },
+      });
+      expect(
+        (await db.query('SELECT state FROM agent_commands WHERE id=$1', [source.id])).rows[0],
+      ).toEqual({ state: 'claimed' });
+      expect(
+        (
+          await db.query('SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2', [
+            sibling,
+            source.turnRequestId,
+          ])
+        ).rows[0],
+      ).toEqual({ status: 'working' });
+      const cards = (await phone.readRoom(C, P))!.messages.filter(
+        (message) => message.id === delivery.id,
+      );
+      expect(cards).toHaveLength(1);
+      expect(cards[0]).toMatchObject({
+        presentation: 'card',
+        text: 'Use the new sibling endpoint',
+        relay: {
+          direction: 'down',
+          fromRoomId: sibling,
+          toRoomId: C,
+          fromName: 'Source corner',
+          cornerId: C,
+        },
+      });
+      expect(cards[0]!.relay).not.toHaveProperty('anchorMessageId');
+      await claim(queued!, 'delivery-generation');
+      expect((await phone.readRoom(C, P))!.latestAgentTurns).toContainEqual(
+        expect.objectContaining({ requestId: queued!.turnRequestId, requestedBy: P }),
+      );
+      await result(source, 'Source work continues');
+      expect(
+        (await phone.readRoom(sibling, P))!.messages.some(
+          (message) => message.text === 'Source work continues',
+        ),
+      ).toBe(true);
+      console.info(
+        'Demonstrated sibling steer: destination shows Source corner and input; opener command retains root human requester; source turn continues.',
+      );
+    },
+  );
+
+  it.each(['source', 'destination', 'parent'] as const)(
+    'refuses removed %s membership without delivery',
+    async (surface) => {
+      const source = await sourceCommand();
+      const roomId = surface === 'source' ? sibling : surface === 'destination' ? C : R;
+      await db.query(
+        'UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2',
+        [roomId, A],
+      );
+      await expect(steer(source)).rejects.toThrow();
+      expect(
+        (await db.query("SELECT id FROM messages WHERE room_id=$1 AND text='Sibling steer'", [C]))
+          .rowCount,
+      ).toBe(0);
+      expect(await commands(B, C)).toEqual([]);
+    },
+  );
+
+  it('lets a source member who is not its opener steer the destination opener', async () => {
+    const source = await sourceCommand(B);
+    const delivery = await steer(source, 'Member steer');
+    expect(await commands(A, C)).toEqual([]);
+    expect(await commands(B, C)).toHaveLength(1);
+    expect((await commands(B, C))[0]).toMatchObject({
+      sourceMessageId: delivery.id,
+      parentCommandId: source.id,
+    });
+  });
+
+  it.each(['source', 'destination', 'parent'] as const)(
+    'refuses archived %s without delivery',
+    async (surface) => {
+      const source = await sourceCommand();
+      const roomId = surface === 'source' ? sibling : surface === 'destination' ? C : R;
+      await db.query('UPDATE rooms SET archived_at=now() WHERE id=$1', [roomId]);
+      try {
+        await expect(steer(source)).rejects.toThrow();
+        expect(
+          (await db.query("SELECT id FROM messages WHERE room_id=$1 AND text='Sibling steer'", [C]))
+            .rowCount,
+        ).toBe(0);
+        expect(await commands(B, C)).toEqual([]);
+      } finally {
+        await db.query('UPDATE rooms SET archived_at=NULL WHERE id=$1', [roomId]);
+      }
+    },
+  );
+
+  it.each([
+    'unrelated parent',
+    'self steer',
+    'forged source',
+    'question',
+    'stale generation',
+    'cancelled command',
+    'completed command',
+    'reclaimed command',
+    'delegation limit',
+    'removed opener',
+  ])('refuses %s atomically', async (boundary) => {
+    const source = await sourceCommand();
+    let extra: Record<string, unknown> = {};
+    let generation = 'g1';
+    if (boundary === 'unrelated parent') {
+      const unrelated = randomUUID();
+      await db.query("INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Other Room')", [
+        unrelated,
+        W,
+      ]);
+      await db.query('UPDATE rooms SET parent_id=$1 WHERE id=$2', [unrelated, sibling]);
+    }
+    if (boundary === 'self steer') extra = { toRoomId: sibling };
+    if (boundary === 'forged source') extra = { fromRoomId: R };
+    if (boundary === 'question') extra = { reply: 'once' };
+    if (boundary === 'stale generation') generation = 'stale';
+    if (boundary === 'cancelled command' || boundary === 'completed command')
+      await db.query('UPDATE agent_commands SET state=$1 WHERE id=$2', [
+        boundary === 'cancelled command' ? 'cancelled' : 'complete',
+        source.id,
+      ]);
+    if (boundary === 'reclaimed command') {
+      await db.query(
+        "UPDATE agent_commands SET lease_expires_at=now()-interval '1 second' WHERE id=$1",
+        [source.id],
+      );
+      await claim(source, 'new-generation');
+    }
+    if (boundary === 'delegation limit')
+      await db.query('UPDATE agent_commands SET agent_depth=3 WHERE id=$1', [source.id]);
+    if (boundary === 'removed opener')
+      await db.query(
+        'UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2',
+        [C, B],
+      );
+    const beforeCards = (await db.query("SELECT id FROM messages WHERE card_type='relay'"))
+      .rowCount;
+    const beforeCommands = (await db.query('SELECT id FROM agent_commands')).rowCount;
+    await expect(steer(source, 'Refused sibling input', extra, generation)).rejects.toThrow();
+    expect((await db.query("SELECT id FROM messages WHERE card_type='relay'")).rowCount).toBe(
+      beforeCards,
+    );
+    expect((await db.query('SELECT id FROM agent_commands')).rowCount).toBe(beforeCommands);
+  });
+  it('refuses a member without a claimed command', async () => {
+    await expect(
+      daemon.execute(
+        'postRoomMessage',
+        {
+          roomId: sibling,
+          text: 'No active request',
+          relay: { fromRoomId: sibling, toRoomId: C, direction: 'down' },
+        },
+        A,
+      ),
+    ).rejects.toThrow();
+    expect(await commands(B, C)).toEqual([]);
+    expect(
+      (await db.query("SELECT id FROM messages WHERE text='No active request'")).rowCount,
+    ).toBe(0);
+  });
+});
+
 describe('Room/corner relays', () => {
   it('links one muted question answer to the corner card and leaves steers unanswered', async () => {
     const anchor = id();

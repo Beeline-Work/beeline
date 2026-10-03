@@ -117,6 +117,8 @@ async function callTool(
   options: {
     name?: string;
     cornerId?: string;
+    codeLane?: boolean;
+    directMessage?: boolean;
     agentMayCloseCorner?: boolean;
     agentMayUpgradeCorner?: boolean;
     toolCallId?: string;
@@ -143,9 +145,10 @@ async function callTool(
       BEELINE_HELPER_VERSION: 'v0.0.69',
       BEELINE_DAEMON_ROOM_ID: ROOM,
       BEELINE_DAEMON_CORNER_ID: options.cornerId ?? '',
+      BEELINE_CORNER_LANE: options.codeLane ? 'code' : 'no_code',
       BEELINE_CORNER_AGENT_CLOSE: options.agentMayCloseCorner ? '1' : '',
       BEELINE_CORNER_CAN_UPGRADE: options.agentMayUpgradeCorner ? '1' : '',
-      BEELINE_AGENT_DM: '0',
+      BEELINE_AGENT_DM: options.directMessage ? '1' : '0',
     },
     stdio: ['pipe', 'pipe', 'ignore'],
   });
@@ -668,16 +671,54 @@ describe('relay tools', () => {
     expect(raw.length).toBeLessThanOrEqual(12000);
     expect(JSON.parse(raw).next).toBeDefined();
   });
-  it('refuses steering from a corner turn', async () => {
+  it.each([false, true])(
+    'posts a sibling steer from the actual corner command (code=%s)',
+    async (codeLane) => {
+      const door = await daemonDoor();
+      const sibling = '33333333-3333-4333-8333-333333333333';
+      const steer = await callTool(
+        door.origin,
+        { text: 'Use the new endpoint', cornerId: sibling },
+        { name: 'steer_corner', cornerId: CORNER, codeLane },
+      );
+      expect(steer.error).toBeUndefined();
+      expect(steer.result?.isError).not.toBe(true);
+      expect(door.calls).toEqual([
+        {
+          operation: 'postRoomMessage',
+          roomId: CORNER,
+          requestId: 'command-request',
+          generationId: 'g1',
+          text: 'Use the new endpoint',
+          relay: { fromRoomId: CORNER, toRoomId: sibling, direction: 'down' },
+        },
+      ]);
+    },
+  );
+  it('refuses questions from a corner turn', async () => {
     const door = await daemonDoor();
     const steer = await callTool(
       door.origin,
       { text: 'No', cornerId: CORNER },
-      { name: 'steer_corner', cornerId: CORNER },
+      { name: 'ask_corner', cornerId: CORNER },
     );
     expect(steer.result?.isError ?? Boolean(steer.error)).toBe(true);
     expect(door.calls).toHaveLength(0);
   });
+  it('refuses steers from a direct message', async () => {
+    const door = await daemonDoor();
+    const steer = await callTool(
+      door.origin,
+      { text: 'No', cornerId: CORNER },
+      {
+        name: 'steer_corner',
+        directMessage: true,
+      },
+    );
+    expect(steer.result?.isError ?? Boolean(steer.error)).toBe(true);
+    expect(door.calls).toHaveLength(0);
+  });
+
 });
 
 describe('avatar skill tools over MCP', () => {

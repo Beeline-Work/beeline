@@ -412,6 +412,16 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
 
   // --- Corners -------------------------------------------------------------
   {
+    id: 'corner.steering',
+    topic: 'corner-steering',
+    why: 'Active corner turns can steer member siblings without borrowing parent Room authority.',
+    budgetBytes: 160,
+    layer: 'surface',
+    surfaces: ['code-corner', 'no-code-corner', 'review-corner'],
+    render: () =>
+      'Use steer_corner during a turn to send input to a member sibling under this parent. Membership alone grants no turn.',
+  },
+  {
     id: 'corner.worktree',
     topic: 'place',
     why: 'The agent must know its branch and target; only a code-corner author is told to push and open the pull request.',
@@ -714,16 +724,16 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
   {
     id: 'turn.corners',
     topic: 'corners',
-    why: 'Room agents need exact corner ids to inspect, steer, or ask their corners.',
+    why: 'Room and corner agents need exact member corner ids for supported relay actions.',
     budgetBytes: 8_000,
     layer: 'turn',
-    surfaces: ['room'],
-    render: ({ corners, closedCorners }) =>
+    surfaces: ['room', 'code-corner', 'no-code-corner', 'review-corner'],
+    render: ({ surface, corners, closedCorners }) =>
       [
         corners?.length
-          ? `Current corners you belong to (use the exact cornerId with inspect_corner, steer_corner, or ask_corner):\n${JSON.stringify(corners)}`
+          ? `Current corners you belong to (use the exact cornerId with ${surface === 'room' ? 'inspect_corner, steer_corner, or ask_corner' : 'steer_corner for a sibling under this parent Room'}):\n${JSON.stringify(corners)}`
           : '',
-        closedCorners?.length
+        surface === 'room' && closedCorners?.length
           ? `Corners you belong to closed in the last 24 hours (merge commit is unavailable when absent):\n${closedCorners
               .map(
                 (corner) =>

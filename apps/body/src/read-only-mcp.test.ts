@@ -277,14 +277,20 @@ describe('open_corner arguments', () => {
   });
 });
 
-it('advertises deliberate corner reads, steers, and questions only in Rooms', () => {
+it('advertises sibling steers in both corner lanes, but reads and questions only in Rooms', () => {
   expect(agentToolsFor(true, false).map((t) => t.name)).toContain('steer_corner');
   expect(agentToolsFor(true, false).map((t) => t.name)).toContain('ask_corner');
   expect(agentToolsFor(true, false).map((t) => t.name)).toContain('get_corner_ask');
   expect(agentToolsFor(true, false).map((t) => t.name)).toContain('inspect_corner');
   expect(agentToolsFor(true, false).map((t) => t.name)).not.toContain('report_to_room');
   expect(agentToolsFor(true, false, true).map((t) => t.name)).not.toContain('report_to_room');
-  expect(agentToolsFor(true, false, true).map((t) => t.name)).not.toContain('steer_corner');
+  for (const codeLane of [false, true]) {
+    const names = agentToolsFor(true, false, true, codeLane).map((t) => t.name);
+    expect(names).toContain('steer_corner');
+    for (const name of ['ask_corner', 'get_corner_ask', 'inspect_corner'])
+      expect(names).not.toContain(name);
+    expect(agentToolsFor(true, true, true, codeLane).map((t) => t.name)).not.toContain('steer_corner');
+  }
   expect(agentToolsFor(true, true).map((t) => t.name)).not.toContain('steer_corner');
   expect(agentToolsFor(true, false, true).map((t) => t.name)).not.toContain('ask_corner');
   expect(agentToolsFor(true, false, true).map((t) => t.name)).not.toContain('get_corner_ask');

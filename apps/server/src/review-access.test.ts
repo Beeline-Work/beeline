@@ -182,6 +182,13 @@ describe('the review identity', () => {
     expect(deck).not.toBeNull();
     const proofRoom = deck!.chats.find((chat) => chat.room.id === REVIEW_PROOF_ROOM_ID);
     expect(proofRoom?.cornerCount).toBe(1);
+    // The deck's corner toggle only renders a corner the viewer's dropdown
+    // marks `mine` (chatCornerCounts); a corner with no owner, no turns and no
+    // commissioner reads `mine: undefined` and never reaches the deck's
+    // room-corners-toggle, so the release proof must see it here too.
+    expect(proofRoom?.openCorners).toEqual([
+      expect.objectContaining({ id: REVIEW_PROOF_CORNER_ID, mine: true }),
+    ]);
     const corners = await phone.readCorners(REVIEW_PROOF_ROOM_ID, REVIEW_IDENTITY_ID);
     expect(corners?.corners.map((corner) => corner.corner.id)).toEqual([REVIEW_PROOF_CORNER_ID]);
     // Nothing in it is owed to anyone, so it reads idle.

@@ -7204,6 +7204,13 @@ export class PhoneService {
          WHERE worker_agent_id=ANY($1)`,
         [gone],
       );
+      // A corner this person commissioned keeps that attribution until here; a
+      // surviving `commissioned_by` would also trip the foreign key below.
+      await database.query(
+        `UPDATE corner_facts SET commissioned_by=NULL,updated_at=now()
+         WHERE commissioned_by=ANY($1)`,
+        [gone],
+      );
       await database.query(
         `DELETE FROM agent_schedules WHERE agent_id=ANY($1) OR creator_id=ANY($1)`,
         [gone],

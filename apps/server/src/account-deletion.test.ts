@@ -78,8 +78,9 @@ describe('deleteAccount', () => {
       [OWNER, WORKSPACE, PARTNER],
     );
     await database.query(
-      `INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id,objective,lifecycle) VALUES($1,$2,$2,'ship it','{"lifecycle":"working"}'::jsonb)`,
-      [CORNER, AGENT],
+      `INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id,commissioned_by,objective,lifecycle)
+       VALUES($1,$2,$2,$3,'ship it','{"lifecycle":"working"}'::jsonb)`,
+      [CORNER, AGENT, OWNER],
     );
     // Authored content: the owner in the shared Room mentioning the partner,
     // the agent in the shared Room mentioning the owner, the owner in the
@@ -255,6 +256,14 @@ describe('deleteAccount', () => {
     // `DELETE FROM identities` below and fail the whole deletion with a 503.
     await expectRowCount(
       `SELECT 1 FROM corner_facts WHERE corner_id=$1 AND worker_agent_id IS NULL`,
+      [CORNER],
+      1,
+    );
+    // The commissioner pointer clears the same way: a surviving
+    // `commissioned_by` would trip its own foreign key on the same
+    // `DELETE FROM identities` and fail the whole deletion with a 503.
+    await expectRowCount(
+      `SELECT 1 FROM corner_facts WHERE corner_id=$1 AND commissioned_by IS NULL`,
       [CORNER],
       1,
     );

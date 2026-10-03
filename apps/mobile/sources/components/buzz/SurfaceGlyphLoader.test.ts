@@ -55,10 +55,10 @@ const LOADING_SURFACES: readonly LoadingSurface[] = [
   { id: 'review-signin', file: 'app/(app)/review/[secret].tsx', treatment: 'glyph' },
   {
     id: 'button-busy',
-    file: 'components/buzz/MonoHull.tsx',
+    file: 'components/buzz/Button.tsx',
     treatment: 'exception',
     reason:
-      'MonoButton/BrassButton compact busy sits on a labeled 44pt control; a release-loop glyph would crowd the plate and flash on sub-100ms submits.',
+      'Button compact busy sits on a labeled 44pt control; a release-loop glyph would crowd the plate and flash on sub-100ms submits.',
   },
   {
     id: 'ota-check-busy',
@@ -99,12 +99,6 @@ const LOADING_SURFACES: readonly LoadingSurface[] = [
     file: 'app/(app)/beeline/settings/workbench/connect-signin.tsx',
     treatment: 'exception',
     reason: 'Native WebView document chrome, not a Beeline surface load gate.',
-  },
-  {
-    id: 'legacy-round-button',
-    file: 'components/RoundButton.tsx',
-    treatment: 'exception',
-    reason: 'Vendored Happy control busy indicator; not a Beeline load gate.',
   },
   {
     id: 'legacy-item',

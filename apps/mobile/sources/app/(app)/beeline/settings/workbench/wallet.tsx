@@ -370,6 +370,8 @@ export default function WalletScreen() {
   );
 }
 
+const TOKEN_ICON_SIZE = 36;
+
 const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
@@ -389,7 +391,7 @@ const styles = StyleSheet.create((theme) => {
       gap: hull.space.sm,
       paddingVertical: hull.space.sm,
     },
-    addressCopy: { flex: 1, minWidth: 0, gap: 2 },
+    addressCopy: { flex: 1, minWidth: 0, gap: hull.space.xs },
     address: { ...hull.type.machine, color: hull.textPrimary },
     addressAction: {
       alignItems: 'center',
@@ -402,7 +404,7 @@ const styles = StyleSheet.create((theme) => {
     },
     addressActionText: { ...hull.type.meta, color: hull.textSecondary },
     qrBlock: { alignItems: 'center', paddingBottom: hull.space.sm },
-    balanceBlock: { alignItems: 'center', paddingVertical: hull.space.xl, gap: 2 },
+    balanceBlock: { alignItems: 'center', paddingVertical: hull.space.xl, gap: hull.space.xs },
     balance: { ...hull.type.hero, color: hull.textPrimary, textAlign: 'center' },
     balanceLabel: { ...hull.type.meta, color: hull.textMuted, textAlign: 'center' },
     balanceActions: { flexDirection: 'row', gap: hull.space.lg, marginTop: hull.space.md },
@@ -436,21 +438,21 @@ const styles = StyleSheet.create((theme) => {
       gap: hull.space.sm,
       minWidth: 0,
     },
-    tokenIcon: { borderRadius: 18, height: 36, width: 36 },
+    tokenIcon: { borderRadius: TOKEN_ICON_SIZE / 2, height: TOKEN_ICON_SIZE, width: TOKEN_ICON_SIZE },
     tokenMonogram: {
       alignItems: 'center',
       backgroundColor: hull.border,
       justifyContent: 'center',
     },
     monogramText: { ...hull.type.meta, color: hull.textSecondary },
-    coinCopy: { flex: 1, gap: 2, minWidth: 0 },
+    coinCopy: { flex: 1, gap: hull.space.xs, minWidth: 0 },
     coinChainLine: { alignItems: 'center', flexDirection: 'row', gap: hull.space.sm },
     coinName: { ...hull.type.body, color: hull.textPrimary },
     coinSymbol: { ...hull.type.meta, color: hull.textSecondary },
     chainBadge: { alignItems: 'center', flexDirection: 'row', gap: 4 },
-    chainIcon: { borderRadius: 7, height: 14, width: 14 },
+    chainIcon: { borderRadius: 14 / 2, height: 14, width: 14 },
     chainName: { ...hull.type.meta, color: hull.textMuted },
-    coinRight: { alignItems: 'flex-end', gap: 2 },
+    coinRight: { alignItems: 'flex-end', gap: hull.space.xs },
     coinUsd: { ...hull.type.body, color: hull.textPrimary },
     coinAmount: { ...hull.type.meta, color: hull.textSecondary },
     activityRow: {
@@ -472,10 +474,10 @@ const styles = StyleSheet.create((theme) => {
     directionIn: { backgroundColor: hull.border },
     directionOut: { opacity: 0.7 },
     directionText: { ...hull.type.meta, color: hull.textSecondary },
-    activityCopy: { flex: 1, gap: 2, minWidth: 0 },
+    activityCopy: { flex: 1, gap: hull.space.xs, minWidth: 0 },
     activityTitle: { ...hull.type.body, color: hull.textPrimary },
     activitySub: { ...hull.type.meta, color: hull.textMuted },
-    activityRight: { alignItems: 'flex-end', gap: 2 },
+    activityRight: { alignItems: 'flex-end', gap: hull.space.xs },
     activityAmount: { ...hull.type.body, color: hull.textPrimary },
     activityAmountIn: { color: hull.agentAccent },
     activityStamp: { ...hull.type.meta, color: hull.textMuted },

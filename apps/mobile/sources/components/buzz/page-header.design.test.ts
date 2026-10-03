@@ -62,7 +62,7 @@ describe('the one page header', () => {
       expect(source).toContain('<SettingsRow');
     }
     expect(agentProfile).not.toContain('headerActions');
-    expect(humanProfile).not.toContain('<MonoButton label="Back"');
+    expect(humanProfile).not.toContain('<Button label="Back"');
     expect(portrait).not.toContain('avatar-direction');
     expect(portrait).not.toContain('TextInput');
     expect(portrait).toContain('generating, will DM you when the avatar is ready');

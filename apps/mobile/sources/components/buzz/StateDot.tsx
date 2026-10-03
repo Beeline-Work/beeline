@@ -48,7 +48,7 @@ function PulsingDot({ testID }: { testID?: string }) {
 const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
-    dot: { width: 8, height: 8, borderRadius: 4, flexShrink: 0 },
+    dot: { width: 8, height: 8, borderRadius: 8 / 2, flexShrink: 0 },
     live: { backgroundColor: hull.success },
     pulse: { backgroundColor: hull.accent },
     failed: { backgroundColor: hull.dialogDanger },

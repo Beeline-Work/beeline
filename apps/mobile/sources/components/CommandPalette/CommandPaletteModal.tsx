@@ -82,12 +82,15 @@ export function CommandPaletteModal({ visible, onClose, children }: CommandPalet
   );
 }
 
+/** Native drop from the top of the screen to the palette card (web uses 30vh). */
+const PALETTE_TOP_OFFSET = 200;
+
 const styles = StyleSheet.create({
   content: {
     zIndex: 1,
     width: '90%',
     maxWidth: 800,
     alignSelf: 'center',
-    ...(Platform.OS === 'web' ? ({ marginTop: '30vh' } as any) : { marginTop: 200 }),
+    ...(Platform.OS === 'web' ? ({ marginTop: '30vh' } as any) : { marginTop: PALETTE_TOP_OFFSET }),
   },
 });

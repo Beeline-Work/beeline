@@ -39,14 +39,24 @@ describe('the legacy-theme bridge carries the Speakeasy language to lesser scree
     }
   });
 
-  it('carries dark/light through the bridge, not the legacy base object it was spread from', () => {
-    // The bridge builds every theme by spreading the legacy darkTheme object
-    // (whose own `dark` field is a fixed `true`) and layering buzz tokens on
-    // top. `theme.dark` is what MobileGlass/StatusBarProvider/AnimatedOverlay
-    // branch their blur tint and status bar style on, so it must track the
-    // buzz set actually in use, not the legacy base's literal default.
+  it('carries dark/light from the buzz set', () => {
+    // `theme.dark` is what StatusBarProvider/AnimatedOverlay branch their
+    // status bar style on, so it must track the buzz set actually in use.
     expect(obsidianTheme.dark).toBe(true);
     expect(boneTheme.dark).toBe(false);
+  });
+
+  it('derives every legacy colour from the active theme, so Bone never inherits a dark literal', () => {
+    const leaves = (value: unknown): string[] =>
+      typeof value === 'string'
+        ? [value]
+        : Object.values(value as Record<string, unknown>).flatMap(leaves);
+    for (const theme of bridged) {
+      const own = new Set(Object.values(theme.buzz).filter((v) => typeof v === 'string'));
+      for (const colour of leaves(theme.colors)) expect(own).toContain(colour);
+    }
+    expect(boneTheme.colors.textDestructive).toBe(beelineThemes.bone.dialogDanger);
+    expect(boneTheme.colors.surfaceRipple).toBe(beelineThemes.bone.bgPressed);
   });
 
   it('never ships the iOS default green or blue through toggles or status', () => {

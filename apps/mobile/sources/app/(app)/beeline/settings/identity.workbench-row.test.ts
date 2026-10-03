@@ -159,7 +159,6 @@ vi.mock('@/components/buzz/MonoHull', async () => {
   return {
     Dimensions: { get: () => ({ width: 390, height: 844 }) },
     HullSurface: host('HullSurface'),
-    MonoButton: host('MonoButton'),
     PixelGateReveal: host('PixelGateReveal'),
     PixelLoader: host('PixelLoader'),
   };

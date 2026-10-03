@@ -44,7 +44,7 @@ export function CornerAppScreen({
           ) : null}
         </View>
       </View>
-      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: 56 + insets.bottom }]} testID="corner-app-scroll">
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: 48 + insets.bottom }]} testID="corner-app-scroll">
         {!app ? (
           <Text style={styles.empty}>
             {unavailableMessage ?? 'This app is not available in the corner.'}
@@ -162,36 +162,36 @@ const styles = StyleSheet.create((theme) => ({
   backText: { color: theme.buzz.textPrimary },
   headerCopy: { flex: 1, minWidth: 0 },
   title: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
-  byline: { ...theme.buzz.type.machine, color: theme.buzz.textMuted, marginTop: 2 },
+  byline: { ...theme.buzz.type.machine, color: theme.buzz.textMuted, marginTop: theme.buzz.space.xs },
   content: {
     width: '100%',
     maxWidth: 720,
     alignSelf: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 28,
-    paddingBottom: 56,
+    paddingHorizontal: theme.buzz.space.lg,
+    paddingTop: theme.buzz.space.xl,
+    paddingBottom: theme.buzz.space.xxl,
   },
   description: {
     ...theme.buzz.type.body,
     color: theme.buzz.ledgerQuiet,
-    marginBottom: 30,
+    marginBottom: theme.buzz.space.xl,
   },
   heading: {
     ...theme.buzz.type.hero,
     color: theme.buzz.textPrimary,
-    marginTop: 28,
-    marginBottom: 10,
+    marginTop: theme.buzz.space.xl,
+    marginBottom: theme.buzz.space.sm,
   },
   body: {
     ...theme.buzz.type.body,
     color: theme.buzz.textSecondary,
-    marginBottom: 18,
+    marginBottom: theme.buzz.space.md,
   },
   fields: { marginVertical: 8 },
   field: {
-    paddingVertical: 12,
+    paddingVertical: theme.buzz.space.sm,
     flexDirection: 'row',
-    gap: 20,
+    gap: theme.buzz.space.md,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.buzz.borderQuiet,
   },
@@ -208,9 +208,9 @@ const styles = StyleSheet.create((theme) => ({
     textAlign: 'right',
   },
   notice: {
-    marginVertical: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    marginVertical: theme.buzz.space.sm,
+    paddingHorizontal: theme.buzz.space.md,
+    paddingVertical: theme.buzz.space.md,
     borderWidth: 1,
     borderColor: theme.buzz.border,
     borderRadius: theme.buzz.radius,
@@ -222,8 +222,8 @@ const styles = StyleSheet.create((theme) => ({
   },
   action: {
     minHeight: 48,
-    marginTop: 14,
-    paddingHorizontal: 14,
+    marginTop: theme.buzz.space.md,
+    paddingHorizontal: theme.buzz.space.md,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -235,12 +235,12 @@ const styles = StyleSheet.create((theme) => ({
   actionBusy: { opacity: 0.6 },
   actionLabel: { ...theme.buzz.type.bodyStrong, color: theme.buzz.buttonSecondaryText },
   actionArrow: { ...theme.buzz.type.bodyStrong, color: theme.buzz.accent },
-  revision: { ...theme.buzz.type.machine, color: theme.buzz.textMuted, marginTop: 38 },
+  revision: { ...theme.buzz.type.machine, color: theme.buzz.textMuted, marginTop: theme.buzz.space.xl },
   empty: { ...theme.buzz.type.body, color: theme.buzz.ledgerQuiet },
   appRow: {
     minHeight: 58,
-    marginVertical: 6,
-    paddingHorizontal: 14,
+    marginVertical: theme.buzz.space.sm,
+    paddingHorizontal: theme.buzz.space.md,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -248,7 +248,7 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.buzz.border,
     borderRadius: 10,
   },
-  appRowCopy: { flex: 1, minWidth: 0, gap: 3 },
+  appRowCopy: { flex: 1, minWidth: 0, gap: theme.buzz.space.xs },
   appRowLabel: { ...theme.buzz.type.sectionHead, color: theme.buzz.textMuted },
   appRowTitle: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
 }));

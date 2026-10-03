@@ -78,7 +78,8 @@ import {
 } from '@/buzz/person-name';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { BeelineMark } from '@/components/buzz/BeelineMark';
-import { HullSurface, MonoButton, PixelGateReveal } from '@/components/buzz/MonoHull';
+import { Button } from '@/components/buzz/Button';
+import { HullSurface, PixelGateReveal } from '@/components/buzz/MonoHull';
 import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
 import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
@@ -119,6 +120,10 @@ const WEB_NOTICE: OnboardingNotice = {
   retryable: false,
 };
 const DESKTOP_WORDMARK_SCALE = 34 / 28;
+/** The key input's resting and focused borders. The focused state trims its
+ *  padding by the extra border so the text never shifts. */
+const INPUT_BORDER_WIDTH = 1;
+const INPUT_FOCUSED_BORDER_WIDTH = 2;
 
 export default function BuzzOnboarding() {
   const { theme } = useUnistyles();
@@ -813,8 +818,7 @@ export default function BuzzOnboarding() {
               <Text style={styles.noticeText}>{notice.message}</Text>
             </View>
           )}
-          <MonoButton
-            labelStyle={styles.buttonLabel}
+          <Button
             disabled={!normalized || loading}
             label={t('beelineIdentity.claimHandle')}
             loading={loadingAction === 'name'}
@@ -920,16 +924,14 @@ export default function BuzzOnboarding() {
             </View>
           )}
 
-          <MonoButton
-            labelStyle={styles.buttonLabel}
+          <Button
             disabled={!canEnter || loading}
             label="Enter Beeline"
             loading={loadingAction === 'enter'}
             onPress={() => void handleEnterWithNewKey()}
             testID="onboarding-new-key-enter"
           />
-          <MonoButton
-            labelStyle={styles.buttonLabel}
+          <Button
             disabled={loading}
             label="Discard this key"
             onPress={resetNewKey}
@@ -971,9 +973,8 @@ export default function BuzzOnboarding() {
             No key yet? Create one on this device. You back it up before entering Beeline.
           </Text>
           <View style={styles.importAction}>
-            <MonoButton
-              labelStyle={styles.buttonLabel}
-              label="Create a new key"
+            <Button
+                label="Create a new key"
               loading={loadingAction === 'create'}
               variant="secondary"
               onPress={() => void handleCreateKey()}
@@ -1004,9 +1005,8 @@ export default function BuzzOnboarding() {
             onSubmitEditing={() => void handleImport()}
           />
           <View style={styles.importAction}>
-            <MonoButton
-              labelStyle={styles.buttonLabel}
-              label="Import key"
+            <Button
+                label="Import key"
               loading={loadingAction === 'import'}
               variant="secondary"
               onPress={() => void handleImport()}
@@ -1025,9 +1025,8 @@ export default function BuzzOnboarding() {
               Rooms, and repository approvals follow this account — agents and people you work with
               keep working with you, no re-invites.
             </Text>
-            <MonoButton
-              labelStyle={styles.buttonLabel}
-              label="Replace device key"
+            <Button
+                label="Replace device key"
               loading={loadingAction === 'recover'}
               onPress={() => void handleReplaceDeviceKey()}
               disabled={loading}
@@ -1035,16 +1034,14 @@ export default function BuzzOnboarding() {
             />
           </View>
         ) : !showAdvanced && canRetryBind ? (
-          <MonoButton
-            labelStyle={styles.buttonLabel}
+          <Button
             label="Retry device bind"
             loading={loadingAction === 'bind'}
             onPress={() => pendingBind.current && void finishPendingBind(pendingBind.current)}
             disabled={loading}
           />
         ) : !showAdvanced && canSignIn ? (
-          <MonoButton
-            labelStyle={styles.buttonLabel}
+          <Button
             label={signInLabel}
             testID="onboarding-github-sign-in"
             loading={
@@ -1055,8 +1052,7 @@ export default function BuzzOnboarding() {
           />
         ) : null}
         {!monolithEnabled && (
-          <MonoButton
-            labelStyle={styles.buttonLabel}
+          <Button
             label={showAdvanced ? 'Hide Advanced' : 'Advanced'}
             variant="secondary"
             onPress={() => {
@@ -1081,8 +1077,8 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'center',
       backgroundColor: groknight.bgVoid,
     },
-    brandSurface: { alignItems: 'center', marginBottom: 28 },
-    desktopBrandSurface: { marginBottom: 36 },
+    brandSurface: { alignItems: 'center', marginBottom: groknight.space.xl },
+    desktopBrandSurface: { marginBottom: groknight.space.xl },
     title: {
       // Canonical brand family (theme prose voice, Space Grotesk) — the login
       // wordmark is a brand surface, not a logo-font exception.
@@ -1092,10 +1088,10 @@ const styles = StyleSheet.create((theme) => {
       lineHeight: 32,
       color: groknight.textPrimary,
       textAlign: 'center',
-      marginTop: 2,
+      marginTop: groknight.space.xs,
       marginBottom: 8,
     },
-    desktopTitle: { transform: [{ scale: DESKTOP_WORDMARK_SCALE }], marginTop: 6 },
+    desktopTitle: { transform: [{ scale: DESKTOP_WORDMARK_SCALE }], marginTop: groknight.space.sm },
     // The trailing period of the `beeline.` wordmark is the one brass glyph.
     // Same canonical family as the title it nests inside, per the typography
     // governor (every Text style names an app font).
@@ -1105,7 +1101,6 @@ const styles = StyleSheet.create((theme) => {
       color: groknight.accent,
     },
     // Canonical brand family on the login buttons' labels (theme prose voice).
-    buttonLabel: { fontFamily: groknight.proseSemibold },
     subtitle: {
       ...theme.buzz.type.body,
       maxWidth: 320,
@@ -1119,7 +1114,7 @@ const styles = StyleSheet.create((theme) => {
       borderWidth: 1,
       borderColor: groknight.borderStrong,
       backgroundColor: groknight.bgHighlight,
-      padding: 12,
+      padding: groknight.space.md,
       marginBottom: 16,
     },
     statusLabel: {
@@ -1142,30 +1137,34 @@ const styles = StyleSheet.create((theme) => {
     keyGuide: {
       ...theme.buzz.type.body,
       color: groknight.textSecondary,
-      marginBottom: 10,
+      marginBottom: groknight.space.sm,
     },
     input: {
       ...theme.buzz.type.machine,
       minHeight: 48,
-      borderWidth: 1,
+      borderWidth: INPUT_BORDER_WIDTH,
       borderColor: groknight.border,
       borderRadius: 3,
-      paddingHorizontal: 12,
-      paddingVertical: 10,
+      paddingHorizontal: groknight.space.md,
+      paddingVertical: groknight.space.sm,
       color: groknight.textPrimary,
       backgroundColor: groknight.bgBase,
     },
-    inputFocused: { borderWidth: 2, borderColor: groknight.focus, paddingHorizontal: 11 },
-    importAction: { marginTop: 10 },
-    actions: { width: '100%', maxWidth: 440, alignSelf: 'center', gap: 10 },
-    recoveryActions: { gap: 10 },
+    inputFocused: {
+      borderWidth: INPUT_FOCUSED_BORDER_WIDTH,
+      borderColor: groknight.focus,
+      paddingHorizontal: groknight.space.md - (INPUT_FOCUSED_BORDER_WIDTH - INPUT_BORDER_WIDTH),
+    },
+    importAction: { marginTop: groknight.space.sm },
+    actions: { width: '100%', maxWidth: 440, alignSelf: 'center', gap: groknight.space.sm },
+    recoveryActions: { gap: groknight.space.sm },
     recoveryWarning: {
       ...theme.buzz.type.meta,
       color: groknight.textSecondary,
     },
     custodyNote: {
       ...theme.buzz.type.meta,
-      marginTop: 18,
+      marginTop: groknight.space.md,
       color: groknight.textMuted,
       textAlign: 'center',
     },
@@ -1175,15 +1174,15 @@ const styles = StyleSheet.create((theme) => {
       marginTop: 16,
       marginBottom: 16,
     },
-    keyBox: { paddingHorizontal: 12, paddingVertical: 10, marginTop: 6, marginBottom: 10 },
+    keyBox: { paddingHorizontal: groknight.space.md, paddingVertical: groknight.space.sm, marginTop: groknight.space.sm, marginBottom: groknight.space.sm },
     keyText: {
       ...theme.buzz.type.machine,
       color: groknight.textPrimary,
     },
-    keyActions: { flexDirection: 'row', gap: 10, marginBottom: 16 },
+    keyActions: { flexDirection: 'row', gap: groknight.space.sm, marginBottom: 16 },
     keyAction: {
       minHeight: 44,
-      paddingHorizontal: 13,
+      paddingHorizontal: groknight.space.md,
       alignItems: 'center',
       justifyContent: 'center',
     },
@@ -1191,8 +1190,8 @@ const styles = StyleSheet.create((theme) => {
       ...theme.buzz.type.sectionHead,
       color: groknight.chrome,
     },
-    keyDiscard: { marginTop: 10 },
-    warning: { flexDirection: 'row', gap: 10, marginBottom: 16 },
+    keyDiscard: { marginTop: groknight.space.sm },
+    warning: { flexDirection: 'row', gap: groknight.space.sm, marginBottom: 16 },
     warningGlyph: {
       ...theme.buzz.type.body,
       fontFamily: groknight.proseSemibold,
@@ -1204,7 +1203,7 @@ const styles = StyleSheet.create((theme) => {
       minWidth: 0,
       color: groknight.textSecondary,
     },
-    confirmRow: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 44 },
+    confirmRow: { flexDirection: 'row', alignItems: 'center', gap: groknight.space.sm, minHeight: 44 },
     confirmBox: {
       ...theme.buzz.type.machine,
       fontFamily: groknight.monoSemibold,
@@ -1219,11 +1218,11 @@ const styles = StyleSheet.create((theme) => {
     confirmTextIdle: { color: groknight.textDisabled },
     confirmHint: {
       ...theme.buzz.type.meta,
-      marginBottom: 10,
+      marginBottom: groknight.space.sm,
       color: groknight.textMuted,
     },
     namePanel: { width: '100%', maxWidth: 420, alignSelf: 'center' },
-    nameAvatar: { alignItems: 'center', marginTop: 18, marginBottom: 18 },
+    nameAvatar: { alignItems: 'center', marginTop: groknight.space.md, marginBottom: groknight.space.md },
     nameTitle: {
       ...theme.buzz.type.hero,
       fontFamily: groknight.proseSemibold,
@@ -1232,8 +1231,8 @@ const styles = StyleSheet.create((theme) => {
     },
     nameBody: {
       ...theme.buzz.type.body,
-      marginTop: 10,
-      marginBottom: 18,
+      marginTop: groknight.space.sm,
+      marginBottom: groknight.space.md,
       color: groknight.textSecondary,
       textAlign: 'center',
     },
@@ -1244,7 +1243,7 @@ const styles = StyleSheet.create((theme) => {
       borderWidth: 1,
       borderColor: groknight.border,
       borderRadius: 3,
-      paddingHorizontal: 14,
+      paddingHorizontal: groknight.space.md,
       color: groknight.textPrimary,
       backgroundColor: groknight.bgBase,
       textAlign: 'center',
@@ -1253,7 +1252,7 @@ const styles = StyleSheet.create((theme) => {
       ...theme.buzz.type.machine,
       fontFamily: groknight.monoSemibold,
       marginTop: 8,
-      marginBottom: 18,
+      marginBottom: groknight.space.md,
       color: groknight.textMuted,
       textAlign: 'center',
     },

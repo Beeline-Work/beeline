@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { Typography } from '@/constants/Typography';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Button } from '@/components/buzz/Button';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { PulsingText } from '@/components/buzz/PulsingText';
@@ -301,18 +302,11 @@ function ConnectToolFlow() {
               ))}
             </View>
             {install.steps.some((step) => step.status === 'failed') ? (
-              <TouchableOpacity
-                accessibilityRole="button"
-                onPress={retry}
-                style={styles.retryButton}
-                testID="connect-retry"
-              >
-                <Text style={styles.retryText}>Retry</Text>
-              </TouchableOpacity>
+              <Button label="Retry" onPress={retry} testID="connect-retry" variant="secondary" />
             ) : install.signIn ? (
               <View style={styles.signInBlock}>
-                <TouchableOpacity
-                  accessibilityRole="button"
+                <Button
+                  label={`Sign in to ${connectorName}`}
                   onPress={() => {
                     const { signIn } = install;
                     if (!signIn) return;
@@ -333,11 +327,9 @@ function ConnectToolFlow() {
                       },
                     });
                   }}
-                  style={styles.signInButton}
                   testID="connect-sign-in"
-                >
-                  <Text style={styles.signInText}>Sign in to {connectorName}</Text>
-                </TouchableOpacity>
+                  variant="secondary"
+                />
                 {connectorSignInLocationLine(install.signIn.browserLocation) ? (
                   <Text style={styles.signInLocation} testID="connect-sign-in-location">
                     {connectorSignInLocationLine(install.signIn.browserLocation)}
@@ -352,10 +344,9 @@ function ConnectToolFlow() {
             <Text accessibilityRole="alert" style={styles.errorText} testID="connect-error">
               {error}
             </Text>
-            {pairedHelperRef.current || observedId ? <TouchableOpacity accessibilityRole="button"
-              onPress={retry} style={styles.retryButton} testID="connect-pair-retry">
-              <Text style={styles.retryText}>Retry</Text>
-            </TouchableOpacity> : null}
+            {pairedHelperRef.current || observedId ? (
+              <Button label="Retry" onPress={retry} testID="connect-pair-retry" variant="secondary" />
+            ) : null}
           </View>
         ) : null}
       </ScrollView>
@@ -403,24 +394,16 @@ const styles = StyleSheet.create((theme) => {
       ...Typography.mono(),
       ...hull.type.meta,
       color: hull.textMuted,
-      marginTop: 2,
+      marginTop: hull.space.xs,
     },
     stepOutput: {
       ...Typography.mono(),
       ...hull.type.meta,
       color: hull.textSecondary,
       opacity: 0.85,
-      marginTop: 2,
+      marginTop: hull.space.xs,
     },
     stepReason: { ...Typography.default(), ...hull.type.meta, color: hull.dialogDanger },
-    signInButton: {
-      minHeight: hull.layout.row,
-      borderWidth: 1,
-      borderColor: hull.buttonSecondaryText,
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingHorizontal: hull.space.md,
-    },
     signInBlock: { gap: hull.space.xs },
     signInLocation: {
       ...Typography.default(),
@@ -428,16 +411,6 @@ const styles = StyleSheet.create((theme) => {
       color: hull.textMuted,
       textAlign: 'center',
     },
-    signInText: { ...Typography.default(), ...hull.type.body, color: hull.buttonSecondaryText },
-    retryButton: {
-      minHeight: hull.layout.row,
-      borderWidth: 1,
-      borderColor: hull.buttonSecondaryText,
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingHorizontal: hull.space.md,
-    },
-    retryText: { ...Typography.default(), ...hull.type.body, color: hull.buttonSecondaryText },
     errorText: { ...Typography.default(), ...hull.type.meta, color: hull.dialogDanger },
   };
 });

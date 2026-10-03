@@ -20,6 +20,14 @@ vi.mock('expo-router', () => ({
   useLocalSearchParams: () => searchParams.params,
 }));
 
+vi.mock('@/components/buzz/Button', async () => {
+  const R = await import('react');
+  // The one Button, as a host press target carrying its label.
+  return {
+    Button: ({ label, ...props }: any) =>
+      R.createElement('TouchableOpacity', { ...props, label }, R.createElement('Text', null, label)),
+  };
+});
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
@@ -285,7 +293,7 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     await pair(renderer);
     await untilSignin(renderer);
     const button = renderer.root.findByProps({ testID: 'connect-sign-in' });
-    expect(button.findByType('Text').props.children).toEqual(['Sign in to ', 'Tailscale']);
+    expect(button.findByType('Text').props.children).toBe('Sign in to Tailscale');
 
     await act(async () => {
       button.props.onPress();

@@ -183,7 +183,7 @@ const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
   return {
     mentionMenu: {
-      marginBottom: 6,
+      marginBottom: groknight.space.sm,
       overflow: 'hidden',
       borderWidth: 1,
       borderColor: groknight.borderStrong,
@@ -193,16 +193,16 @@ const styles = StyleSheet.create((theme) => {
     mentionMenuLabel: {
       ...groknight.type.sectionHead,
       fontFamily: groknight.monoSemibold,
-      paddingHorizontal: 10,
-      paddingVertical: 5,
+      paddingHorizontal: groknight.space.sm,
+      paddingVertical: groknight.space.xs,
       color: groknight.textMuted,
     },
     mentionRow: {
       height: MENTION_ROW_HEIGHT,
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 9,
-      paddingHorizontal: 9,
+      gap: groknight.space.sm,
+      paddingHorizontal: groknight.space.sm,
       borderTopWidth: 1,
       borderTopColor: groknight.border,
     },
@@ -214,7 +214,7 @@ const styles = StyleSheet.create((theme) => {
       minWidth: 0,
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 6,
+      gap: groknight.space.sm,
     },
     mentionAgentIdentity: {
       flex: 1,
@@ -224,7 +224,7 @@ const styles = StyleSheet.create((theme) => {
     mentionTitleLine: {
       flexDirection: 'row',
       alignItems: 'baseline',
-      gap: 6,
+      gap: groknight.space.sm,
     },
     mentionModel: {
       ...groknight.type.machine,
@@ -266,8 +266,8 @@ const styles = StyleSheet.create((theme) => {
     mentionOverflow: {
       ...groknight.type.sectionHead,
       fontFamily: groknight.monoSemibold,
-      paddingHorizontal: 10,
-      paddingVertical: 6,
+      paddingHorizontal: groknight.space.sm,
+      paddingVertical: groknight.space.sm,
       borderTopWidth: 1,
       borderTopColor: groknight.border,
       color: groknight.textMuted,

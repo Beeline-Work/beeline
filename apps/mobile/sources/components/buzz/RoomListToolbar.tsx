@@ -143,6 +143,8 @@ export function RoomListToolbar({
     </View>
   );
 }
+const NEEDS_COUNT_SIZE = 17;
+
 const styles = StyleSheet.create((theme) => ({
   toolbar: {
     flexDirection: 'row',
@@ -156,7 +158,7 @@ const styles = StyleSheet.create((theme) => ({
   desktopToolbar: { paddingLeft: theme.buzz.space.md },
   desktopFilters: {
     flex: 1,
-    gap: 20,
+    gap: theme.buzz.space.md,
   },
   filter: { minHeight: 44, minWidth: 32, alignItems: 'center', justifyContent: 'center' },
   desktopFilter: { minHeight: 30, position: 'relative' },
@@ -178,10 +180,10 @@ const styles = StyleSheet.create((theme) => ({
     position: 'absolute',
     top: 8,
     right: 7,
-    minWidth: 17,
-    height: 17,
+    minWidth: NEEDS_COUNT_SIZE,
+    height: NEEDS_COUNT_SIZE,
     paddingHorizontal: 4,
-    borderRadius: 9,
+    borderRadius: NEEDS_COUNT_SIZE / 2,
     borderWidth: 1,
     borderColor: theme.buzz.bgBase,
     alignItems: 'center',

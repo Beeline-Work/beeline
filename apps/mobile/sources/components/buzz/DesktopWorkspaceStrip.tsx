@@ -91,7 +91,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRightColor: theme.buzz.border,
     backgroundColor: theme.buzz.bgTerminal,
   },
-  list: { alignItems: 'center', paddingTop: 16, gap: 12 },
+  list: { alignItems: 'center', paddingTop: 16, gap: theme.buzz.space.sm },
   tile: { width: 56, minHeight: 56, alignItems: 'center', justifyContent: 'center' },
   workspaceTile: {
     width: tile.size,

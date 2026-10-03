@@ -104,7 +104,7 @@ const styles = StyleSheet.create((theme) => ({
   headerEyebrow: { ...theme.buzz.type.meta, color: theme.buzz.textMuted },
   headerTitle: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
   headerHero: { ...theme.buzz.type.hero },
-  headerMeta: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet, marginTop: 2 },
+  headerMeta: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet, marginTop: theme.buzz.space.xs },
   // Reserved and right-aligned so a count ends at the same x for 9 and for 10.
   headerTrailing: {
     ...theme.buzz.type.meta,

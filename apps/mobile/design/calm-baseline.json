@@ -2,6 +2,5 @@
   "app/(app)/beeline/onboarding.tsx": 1,
   "components/buzz/ConversationComposer.tsx": 2,
   "components/buzz/TurnProgressLine.tsx": 2,
-  "components/buzz/WelcomeCards.tsx": 29,
   "components/buzz/YouStep.tsx": 1
 }

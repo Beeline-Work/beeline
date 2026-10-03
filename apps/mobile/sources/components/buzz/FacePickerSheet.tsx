@@ -81,11 +81,11 @@ export function FacePickerSheet({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  gridSlot: { alignItems: 'center', paddingVertical: 12 },
+  gridSlot: { alignItems: 'center', paddingVertical: theme.buzz.space.sm },
   error: {
     ...theme.buzz.type.meta,
     color: theme.buzz.textSecondary,
-    paddingHorizontal: 22,
+    paddingHorizontal: theme.buzz.space.lg,
     paddingBottom: 8,
   },
 }));

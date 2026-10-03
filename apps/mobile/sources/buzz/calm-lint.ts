@@ -39,8 +39,6 @@ export const CALM_DECORATIVE_ALLOWLIST: Readonly<Record<string, string>> = {
     'The Android/web composer input’s lineHeight is pinned BELOW Space Grotesk’s real glyph bounds on purpose (`chat.composer-layout.test.ts`), so native font padding centers text without cropping descenders — the body role’s calmer lineHeight sits above that bound and fails the invariant.',
   'components/buzz/TurnProgressLine.tsx':
     'TURN_LABEL_LINE_HEIGHT (`buzz/room-bottom-chrome.ts`) is the captain-authored exact-pixel budget for the turn line’s row (24px row, 18px label ink, equal air above/below — captain 2026-09-22): the label text’s lineHeight must equal that same 18, not the machine role’s 19, or the hand-derived geometry (TURN_LINE_INK_AIR, TURN_LINE_BAR_MARGIN_BOTTOM) drifts off its own stated arithmetic.',
-  'components/buzz/WelcomeCards.tsx':
-    'The approved onboarding Welcome Cards art (captain-approved fixed mock, its own bespoke Editorial Ink canvas — never the Obsidian theme; the desktop 36/43 title shipped in PR #1891) — WELCOME_TYPE is that mock’s own type scale, not a bypass of the app’s shared roles.',
   'app/(app)/beeline/onboarding.tsx':
     'The `beeline.` sign-in wordmark: a brand surface at its own size (28/32), not a reading-text role.',
   'components/buzz/YouStep.tsx':
@@ -54,6 +52,25 @@ export const CALM_DECORATIVE_ALLOWLIST: Readonly<Record<string, string>> = {
  * concurrent PR needs the same temporary carve-out.
  */
 export const CALM_PENDING_HEADER_UNIFY: Readonly<Record<string, string>> = {};
+
+/**
+ * Not scanned: the token sources DEFINE the roles (and scale them for the
+ * small/large UI sizes), so their numbers are the scale, not a bypass of it;
+ * the lints carry the property names in their own patterns.
+ */
+export const CALM_TOKEN_SOURCES: ReadonlySet<string> = new Set([
+  'buzz/groknight.ts',
+  'theme.ts',
+  'buzz/calm-lint.ts',
+  'buzz/design-lint.ts',
+]);
+
+/**
+ * A computed size: arithmetic or a ternary in the value (`size - 1`,
+ * `hull.type.body.fontSize * 1.2`, `desktop ? 17 : 16`). Its result cannot be
+ * proven to be a role value, so it counts like a raw literal.
+ */
+const COMPUTED_TYPE = /\b(fontSize|lineHeight|letterSpacing):\s*([^,}\n;]*[-+*/?][^,}\n;]*)/g;
 
 const FONT_SIZE = /\bfontSize:\s*(-?\d+(?:\.\d+)?)\b/g;
 const LINE_HEIGHT = /\blineHeight:\s*(-?\d+(?:\.\d+)?)\b/g;
@@ -106,8 +123,11 @@ export function resolveThemeRootedNames(source: string): {
   objectLiterals: Map<string, string>;
 } {
   const rooted = new Set<string>(['theme']);
-  if (/\bimport\s*\{[^}]*\btypeRoles\b[^}]*\}\s*from\s*['"][^'"]*groknight['"]/.test(source)) {
-    rooted.add('typeRoles');
+  for (const token of ['typeRoles', 'groknight', 'beelineThemes']) {
+    const imported = new RegExp(
+      `\\bimport\\s*\\{[^}]*\\b${token}\\b[^}]*\\}\\s*from\\s*['"][^'"]*groknight['"]`,
+    );
+    if (imported.test(source)) rooted.add(token);
   }
   const objectLiterals = new Map<string, string>();
 
@@ -240,8 +260,18 @@ export function scanCalmSource(source: string, file: string): CalmOffence[] {
     }
   });
 
+  for (const match of source.matchAll(COMPUTED_TYPE)) {
+    const value = match[2]!.trim();
+    // `fontSize: -0.3` style negatives are plain literals, handled above.
+    if (/^-?\d+(?:\.\d+)?$/.test(value)) continue;
+    pushOffence(match.index!);
+  }
+
   const { rooted, objectLiterals } = resolveThemeRootedNames(source);
   for (const match of source.matchAll(TYPE_REF)) {
+    // `const { lineHeight: _drop, ...rest } = role` renames, it sets nothing.
+    const lineStart = source.lastIndexOf('\n', match.index!) + 1;
+    if (/\b(?:const|let|var)\s*\{[^}]*$/.test(source.slice(lineStart, match.index!))) continue;
     const segments = match[2]!.split('.');
     const root = segments[0]!;
     if (TS_PRIMITIVE_TYPES.has(root)) continue;
@@ -254,21 +284,29 @@ export function scanCalmSource(source: string, file: string): CalmOffence[] {
   return offences.sort((a, b) => a.line - b.line);
 }
 
-const SCANNED = /\.tsx$/;
-const SKIPPED = /\.(test|spec)\.tsx$/;
+const SCANNED = /\.tsx?$/;
+const SKIPPED = /\.(test|spec)\.tsx?$|\.d\.ts$|\.gen\.ts$/;
+const SKIPPED_DIRS = new Set(['vendor', 'test']);
 
-function walk(dir: string, out: string[]) {
+function walk(root: string, dir: string, out: string[]) {
   for (const entry of readdirSync(dir)) {
     const path = join(dir, entry);
-    if (statSync(path).isDirectory()) walk(path, out);
-    else if (SCANNED.test(entry) && !SKIPPED.test(entry)) out.push(path);
+    if (statSync(path).isDirectory()) {
+      if (!SKIPPED_DIRS.has(entry)) walk(root, path, out);
+    } else if (
+      SCANNED.test(entry) &&
+      !SKIPPED.test(entry) &&
+      !CALM_TOKEN_SOURCES.has(relative(root, path).split(sep).join('/'))
+    ) {
+      out.push(path);
+    }
   }
   return out;
 }
 
-/** Scan every screen/component under `sourcesDir`; keys are posix paths relative to it. */
+/** Scan every screen, component and module under `sourcesDir`; keys are posix paths relative to it. */
 export function scanCalmTree(sourcesDir: string): CalmOffence[] {
-  return walk(sourcesDir, [])
+  return walk(sourcesDir, sourcesDir, [])
     .sort()
     .flatMap((path) =>
       scanCalmSource(readFileSync(path, 'utf8'), relative(sourcesDir, path).split(sep).join('/')),

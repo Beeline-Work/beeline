@@ -108,6 +108,14 @@ describe('write permission corner outcome', () => {
     expect(
       String(allowed.root.findAllByType('Text').map((node) => node.props.children)),
     ).not.toContain('◇');
+    expect(
+      allowed.root.findAllByType('Text').map((node) => node.props.children),
+    ).toEqual(['Corner approved ·', 'View corner']);
+    const resting = link!.props.style({ pressed: false }).filter(Boolean);
+    const pressed = link!.props.style({ pressed: true }).filter(Boolean);
+    expect(Object.assign({}, ...resting).minHeight).toBe(44);
+    expect(Object.assign({}, ...resting).backgroundColor).toBeUndefined();
+    expect(Object.assign({}, ...pressed).backgroundColor).toBeDefined();
     act(() => link!.props.onPress());
     expect(onOpen).toHaveBeenCalledOnce();
 

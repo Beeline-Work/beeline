@@ -1,4 +1,4 @@
-import { RoundButton } from '@/components/RoundButton';
+import { Button } from '@/components/buzz/Button';
 import { Text, View } from 'react-native';
 import * as React from 'react';
 import { router, usePathname } from 'expo-router';
@@ -130,8 +130,8 @@ export default function Home() {
           Beeline could not read your saved key: {buzzStorageError}
         </Text>
         <View style={styles.buttonContainer}>
-          <RoundButton
-            title="Open Beeline setup"
+          <Button
+            label="Open Beeline setup"
             onPress={() => router.push('/beeline/onboarding')}
           />
         </View>
@@ -145,8 +145,8 @@ export default function Home() {
   return (
     <View style={styles.portraitContainer}>
       <Text style={styles.title}>Opening Beeline…</Text>
-      <RoundButton
-        title="Try again"
+      <Button
+        label="Try again"
         onPress={() =>
           router.replace(
             hasBuzzIdentity && !personNameOnboardingPending
@@ -177,7 +177,7 @@ const styles = StyleSheet.create((theme) => ({
     marginTop: 16,
     textAlign: 'center',
     marginHorizontal: 24,
-    marginBottom: 64,
+    marginBottom: theme.buzz.space.xxl,
   },
   buttonContainer: {
     maxWidth: 280,

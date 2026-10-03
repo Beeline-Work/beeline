@@ -1,10 +1,11 @@
 import React, { useCallback, useState } from 'react';
-import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Typography } from '@/constants/Typography';
 import { AppMark } from '@/components/buzz/AppMark';
+import { Button } from '@/components/buzz/Button';
 import { AppPageHeader } from '@/components/buzz/AppPageHeader';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { openAppSignIn } from '@/buzz/app-sign-in';
@@ -84,8 +85,8 @@ export default function AppDetailScreen() {
         {app.key === 'instagram' && app.status !== 'connected' ? <Text style={styles.permission}>{INSTAGRAM_SIGN_IN_REQUIREMENT}</Text> : null}
         <Text style={styles.permission}>Your agents can use {app.name} as you. Other people’s agents ask you first.</Text>
         <Text style={styles.lastUsed}>{lastUsed}</Text>
-        {app.status !== 'connected' ? <TouchableOpacity accessibilityRole="button" disabled={working} onPress={() => void reconnect()} style={styles.ink} testID="app-detail-connect"><Text style={styles.inkText}>{working ? 'Connecting' : app.status === 'error' ? `Retry ${app.name}` : `Connect ${app.name}`}</Text></TouchableOpacity> : null}
-        <TouchableOpacity accessibilityRole="button" disabled={working} onPress={() => void disconnect()} style={styles.outline} testID="app-detail-disconnect"><Text style={styles.outlineText}>{working ? 'Disconnecting' : 'Disconnect'}</Text></TouchableOpacity>
+        {app.status !== 'connected' ? <Button disabled={working} label={working ? 'Connecting' : app.status === 'error' ? `Retry ${app.name}` : `Connect ${app.name}`} onPress={() => void reconnect()} style={styles.action} testID="app-detail-connect" /> : null}
+        <Button disabled={working} label={working ? 'Disconnecting' : 'Disconnect'} onPress={() => void disconnect()} style={styles.action} testID="app-detail-disconnect" variant="secondary" />
       </> : null}
       {error || app?.status === 'error' && app.errorMessage ? <Text accessibilityRole="alert" style={styles.error}>{error ?? appErrorCopy(app?.errorMessage ?? '')}</Text> : null}
     </ScrollView>
@@ -97,17 +98,14 @@ const styles = StyleSheet.create(theme => {
   const board = appBoardColors(hull);
   return {
   screen: { flex: 1, backgroundColor: board.canvas },
-  content: { paddingHorizontal: 20, paddingVertical: 24, gap: 18 },
-  identity: { flexDirection: 'row', alignItems: 'center', gap: 14 },
-  identityCopy: { gap: 2 },
+  content: { paddingHorizontal: hull.space.lg, paddingVertical: 24, gap: hull.space.md },
+  identity: { flexDirection: 'row', alignItems: 'center', gap: hull.space.md },
+  identityCopy: { gap: hull.space.xs },
   status: { ...Typography.ledger(), ...hull.type.body, color: board.ink },
   account: { ...Typography.ledger(), ...hull.type.meta, color: board.quiet },
   permission: { ...Typography.ledger(), ...hull.type.meta, color: board.secondary },
   lastUsed: { ...Typography.ledger(), ...hull.type.meta, color: board.quiet },
-  outline: { alignSelf: 'flex-start', minHeight: 44, paddingHorizontal: 18, justifyContent: 'center', borderRadius: 10, borderWidth: 2, borderColor: board.buttonOutline },
-  outlineText: { ...Typography.ledger(), ...hull.type.body, color: board.buttonOutline },
-  ink: { alignSelf: 'flex-start', minHeight: 44, paddingHorizontal: 18, justifyContent: 'center', borderRadius: 10, backgroundColor: board.buttonFill },
-  inkText: { ...Typography.ledger(), ...hull.type.body, color: board.buttonText },
+  action: { alignSelf: 'flex-start' },
   error: { ...Typography.default(), color: theme.buzz.dialogDanger },
   };
 });

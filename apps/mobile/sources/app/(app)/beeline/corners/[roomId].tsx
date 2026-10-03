@@ -14,7 +14,7 @@ import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-sto
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { displayRoomIndexTitle } from '@/buzz/room-list-row';
 import { CHANGES_LABEL, CORNER_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
-import { MonoButton } from '@/components/buzz/MonoHull';
+import { Button } from '@/components/buzz/Button';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { RoomCornersHeader } from '@/components/buzz/RoomCornersHeader';
 import { RoomCornersList } from '@/components/buzz/RoomCornersList';
@@ -197,7 +197,7 @@ export default function BuzzCorners() {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
         <Text style={[styles.error, styles.errorCentered]}>{error}</Text>
-        <MonoButton label="RETRY" onPress={() => setRetryGeneration((value) => value + 1)} />
+        <Button label="RETRY" onPress={() => setRetryGeneration((value) => value + 1)} />
       </View>
     );
   }

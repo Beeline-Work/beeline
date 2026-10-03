@@ -70,9 +70,9 @@ vi.mock('@/buzz/pending-invite', () => ({
   clearPendingInvite: controls.clearPendingInvite,
 }));
 vi.mock('@/buzz/vocabulary', () => ({ WORKSPACE_LABEL: 'Workspace' }));
-vi.mock('@/components/buzz/MonoHull', async () => {
+vi.mock('@/components/buzz/Button', async () => {
   const ReactModule = await import('react');
-  return { BrassButton: (props: any) => ReactModule.createElement('BrassButton', props) };
+  return { Button: (props: any) => ReactModule.createElement('Button', props, props.children) };
 });
 vi.mock('@/components/buzz/IdentityMark', async () => {
   const ReactModule = await import('react');

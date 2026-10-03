@@ -15,6 +15,14 @@ vi.mock('expo-constants', () => ({
 vi.mock('react-native-device-info', () => ({
   getDeviceType: () => 'Handset',
 }));
+// Haptics talk to the device; `Button` fires one on every primary press.
+vi.mock('expo-haptics', () => ({
+  impactAsync: vi.fn(async () => undefined),
+  selectionAsync: vi.fn(async () => undefined),
+  notificationAsync: vi.fn(async () => undefined),
+  ImpactFeedbackStyle: { Light: 'light', Medium: 'medium', Heavy: 'heavy' },
+  NotificationFeedbackType: { Success: 'success', Warning: 'warning', Error: 'error' },
+}));
 vi.mock('@expo/vector-icons', () => ({
   FontAwesome: 'FontAwesome',
   Ionicons: 'Ionicons',
@@ -52,7 +60,14 @@ vi.mock('react-native-reanimated', () => ({
     View: (props: Record<string, unknown>) => React.createElement('View', props),
     createAnimatedComponent: (component: unknown) => component,
   },
-  Easing: { cubic: 'cubic', inOut: (value: unknown) => value, out: (value: unknown) => value },
+  Easing: {
+    cubic: 'cubic',
+    linear: 'linear',
+    poly: () => 'poly',
+    inOut: (value: unknown) => value,
+    out: (value: unknown) => value,
+  },
+  FadeInDown: animationBuilder,
   FadeOut: animationBuilder,
   ReduceMotion: { System: 'system' },
   cancelAnimation: vi.fn(),

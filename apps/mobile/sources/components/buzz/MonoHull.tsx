@@ -3,17 +3,13 @@ import {
   AppState,
   Platform,
   type AppStateStatus,
-  Pressable,
-  type PressableProps,
   type StyleProp,
   Text,
-  type TextStyle,
   View,
   type ViewProps,
   type ViewStyle,
 } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import * as Haptics from 'expo-haptics';
 import Animated, {
   Easing,
   FadeInDown,
@@ -26,14 +22,10 @@ import Animated, {
   withTiming,
   type SharedValue,
 } from 'react-native-reanimated';
-import { typeRoles } from '@/buzz/groknight';
 import { hasMessageRevealed, markMessageRevealed } from '@/buzz/message-reveal';
 import type { CornerVisualState } from '@/buzz/corners';
-import { Typography } from '@/constants/Typography';
 
 export const motionTokens = {
-  pressIn: 70,
-  pressOut: 110,
   reveal: 176,
   confirm: 240,
   loaderFrame: 133,
@@ -113,183 +105,6 @@ export function HullSurface({
       </View>
       {children}
     </View>
-  );
-}
-
-type BrittlePressProps = Omit<PressableProps, 'children' | 'style'> & {
-  children: React.ReactNode;
-  contentStyle?: StyleProp<ViewStyle>;
-  highValue?: boolean;
-  style?: StyleProp<ViewStyle>;
-};
-
-export function BrittlePress({
-  children,
-  contentStyle,
-  highValue = false,
-  onPressIn,
-  onPressOut,
-  onPress,
-  style,
-  disabled,
-  ...props
-}: BrittlePressProps) {
-  const pressed = useSharedValue(0);
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: 1 - pressed.value * 0.015 }, { translateY: pressed.value }],
-  }));
-
-  return (
-    <Animated.View style={[style, animatedStyle]}>
-      <Pressable
-        {...props}
-        disabled={disabled}
-        onPressIn={(event) => {
-          pressed.value = withTiming(1, {
-            duration: motionTokens.pressIn,
-            easing: easeOutQuint,
-            reduceMotion: ReduceMotion.System,
-          });
-          onPressIn?.(event);
-        }}
-        onPressOut={(event) => {
-          pressed.value = withTiming(0, {
-            duration: motionTokens.pressOut,
-            easing: easeOutQuint,
-            reduceMotion: ReduceMotion.System,
-          });
-          onPressOut?.(event);
-        }}
-        onPress={(event) => {
-          if (highValue) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-          onPress?.(event);
-        }}
-        style={({ pressed: isPressed }) => [
-          styles.pressTarget,
-          contentStyle,
-          isPressed && styles.pressTargetPressed,
-          disabled && styles.pressTargetDisabled,
-        ]}
-      >
-        {children}
-      </Pressable>
-    </Animated.View>
-  );
-}
-
-type MonoButtonProps = Omit<BrittlePressProps, 'children'> & {
-  label: string;
-  loading?: boolean;
-  variant?: 'primary' | 'secondary' | 'destructive';
-  /** Optional extra style for the label Text (e.g. a theme prose family override). */
-  labelStyle?: StyleProp<TextStyle>;
-};
-
-export function MonoButton({
-  label,
-  loading = false,
-  variant = 'primary',
-  disabled,
-  style,
-  labelStyle,
-  ...props
-}: MonoButtonProps) {
-  const isDisabled = Boolean(disabled || loading);
-  return (
-    <BrittlePress
-      {...props}
-      accessibilityRole="button"
-      accessibilityState={{ disabled: isDisabled, busy: loading }}
-      disabled={isDisabled}
-      highValue={variant === 'primary'}
-      style={[styles.monoButtonFrame, style]}
-    >
-      <HullSurface
-        strength={variant === 'primary' ? 'raised' : 'quiet'}
-        style={[
-          styles.monoButton,
-          variant === 'primary' ? styles.primaryButton : styles.secondaryButton,
-          variant === 'destructive' && styles.destructiveButton,
-          isDisabled && styles.disabledButton,
-        ]}
-      >
-        {loading && <PixelLoader compact />}
-        <Text
-          style={[
-            styles.monoButtonText,
-            variant === 'primary' ? styles.primaryButtonText : styles.secondaryButtonText,
-            isDisabled && styles.disabledButtonText,
-            labelStyle,
-          ]}
-        >
-          {label}
-        </Text>
-      </HullSurface>
-    </BrittlePress>
-  );
-}
-
-type BrassButtonProps = Omit<BrittlePressProps, 'children'> & {
-  label: string;
-  loading?: boolean;
-};
-
-/** Flat primary kept under its existing public name for callers. */
-export function BrassButton({
-  label,
-  loading = false,
-  disabled,
-  style,
-  ...props
-}: BrassButtonProps) {
-  const isDisabled = Boolean(disabled || loading);
-  return (
-    <BrittlePress
-      {...props}
-      accessibilityRole="button"
-      accessibilityState={{ disabled: isDisabled, busy: loading }}
-      disabled={isDisabled}
-      highValue
-      style={[styles.brassButtonFrame, style]}
-    >
-      <View style={[styles.brassButton, isDisabled && styles.brassButtonDisabled]}>
-        {loading && <PixelLoader compact />}
-        <Text style={[styles.brassButtonText, isDisabled && styles.disabledButtonText]}>
-          {label}
-        </Text>
-      </View>
-    </BrittlePress>
-  );
-}
-
-/**
- * The onboarding primary: sign-in, You, Create or join, Name the Workspace,
- * and the tips' "Got it". It shares the app's primary button palette.
- */
-export function OnboardingButton({
-  label,
-  loading = false,
-  disabled,
-  style,
-  ...props
-}: BrassButtonProps) {
-  const isDisabled = Boolean(disabled || loading);
-  return (
-    <BrittlePress
-      {...props}
-      accessibilityRole="button"
-      accessibilityState={{ disabled: isDisabled, busy: loading }}
-      disabled={isDisabled}
-      highValue
-      style={[styles.brassButtonFrame, style]}
-    >
-      <View style={[styles.onboardingButton, isDisabled && styles.brassButtonDisabled]}>
-        {loading && <PixelLoader compact />}
-        <Text style={[styles.onboardingButtonText, isDisabled && styles.disabledButtonText]}>
-          {label}
-        </Text>
-      </View>
-    </BrittlePress>
   );
 }
 
@@ -809,58 +624,8 @@ const styles = StyleSheet.create((theme) => {
     },
     codeNotchTop: { top: 0, left: 0 },
     codeNotchBottom: { right: 0, bottom: 0 },
-    pressTarget: { minWidth: 44, minHeight: 44 },
-    pressTargetPressed: { backgroundColor: groknight.bgPressed },
-    pressTargetDisabled: { backgroundColor: groknight.bgBase },
-    monoButtonFrame: { minHeight: 46 },
-    monoButton: {
-      minHeight: 46,
-      paddingHorizontal: 16,
-      borderRadius: 3,
-      borderWidth: 1,
-      alignItems: 'center',
-      justifyContent: 'center',
-      flexDirection: 'row',
-      gap: 8,
-    },
-    primaryButton: { backgroundColor: groknight.buttonPrimaryFill, borderColor: groknight.buttonPrimaryFill },
-    secondaryButton: { backgroundColor: 'transparent', borderColor: groknight.buttonSecondaryText },
-    destructiveButton: { borderStyle: 'dashed', borderColor: groknight.borderStrong },
-    disabledButton: { backgroundColor: groknight.bgBase, borderColor: groknight.border },
-    monoButtonText: { ...groknight.type.meta, fontFamily: groknight.proseSemibold },
-    primaryButtonText: { color: groknight.buttonPrimaryText },
-    brassButtonFrame: { minHeight: 44 },
-    brassButton: {
-      minHeight: 44,
-      paddingHorizontal: 16,
-      borderRadius: 3,
-      backgroundColor: groknight.buttonPrimaryFill,
-      alignItems: 'center',
-      justifyContent: 'center',
-      flexDirection: 'row',
-      gap: 8,
-    },
-    brassButtonDisabled: { backgroundColor: groknight.bgRaised },
-    brassButtonText: { ...Typography.default(), ...typeRoles.body, color: groknight.buttonPrimaryText },
-    onboardingButton: {
-      minHeight: 44,
-      paddingHorizontal: 16,
-      borderRadius: 3,
-      backgroundColor: groknight.buttonPrimaryFill,
-      alignItems: 'center',
-      justifyContent: 'center',
-      flexDirection: 'row',
-      gap: 8,
-    },
-    onboardingButtonText: {
-      ...Typography.default(),
-      ...typeRoles.bodyStrong,
-      color: groknight.buttonPrimaryText,
-    },
-    secondaryButtonText: { color: groknight.buttonSecondaryText },
-    disabledButtonText: { color: groknight.textDisabled },
     pixelLoader: { width: 42, height: 14, flexDirection: 'row', alignItems: 'center', gap: 4 },
-    pixelLoaderCompact: { width: 30, height: 10, gap: 3 },
+    pixelLoaderCompact: { width: 32, height: 10, gap: 4 },
     loaderCell: { width: 7, height: 7, backgroundColor: groknight.signalBright },
     loaderCellCompact: { width: 5, height: 5 },
     staticLoader: {
@@ -882,7 +647,7 @@ const styles = StyleSheet.create((theme) => {
       backgroundColor: groknight.borderQuiet,
     },
     mechanismRailLive: { backgroundColor: groknight.accent },
-    activityTip: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 5 },
+    activityTip: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 4 },
     /* ── Unified state circle: Room rollup and corner state ──────────── */
     stateCircleSlot: {
       alignItems: 'center',
@@ -936,8 +701,8 @@ const styles = StyleSheet.create((theme) => {
       ...groknight.type.machine,
       color: groknight.accent,
     },
-    waveSignal: { minHeight: 20, flexDirection: 'row', alignItems: 'center', gap: 6 },
-    waveSegments: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+    waveSignal: { minHeight: 20, flexDirection: 'row', alignItems: 'center', gap: 8 },
+    waveSegments: { flexDirection: 'row', alignItems: 'center', gap: 4 },
     waveSegment: { width: 3, height: 6, backgroundColor: groknight.signalBright },
     waveSegmentLive: { backgroundColor: groknight.accent },
     waveLabel: {

@@ -395,7 +395,7 @@ describe('the output sheet', () => {
     expect(renderedText(renderer)).toContain('sh: 1: pnpm: not found');
   });
 
-  it('keeps tool activity and italic live ACP prose while omitting thought rows', () => {
+  it('keeps tool activity and quiet live ACP prose while omitting thought rows', () => {
     const renderer = render(
       <ActivityTimeline
         active
@@ -417,7 +417,7 @@ describe('the output sheet', () => {
     // `textStyle`.
     const draftStyle = renderer.root.findByProps({ testID: 'activity-message-draft' }).props
       .textStyle;
-    expect(draftStyle.fontFamily).toBe(groknight.proseItalic);
+    expect(draftStyle.fontFamily).toBe(groknight.proseRegular);
     expect(draftStyle.color).toBe(groknight.ledgerQuiet);
   });
 
@@ -537,7 +537,7 @@ describe('agent prose and drafts', () => {
 
     expect(
       renderer.root.findByProps({ testID: 'activity-message-draft' }).props.textStyle.marginTop,
-    ).toBeLessThanOrEqual(3);
+    ).toBeLessThanOrEqual(4);
   });
 
   it('prints streamed prose literally, never through the Markdown renderer or the thought lane', () => {

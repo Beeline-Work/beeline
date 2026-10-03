@@ -637,7 +637,7 @@ const styles = StyleSheet.create((theme) => {
     railDivider: {
       width: 40,
       height: 1,
-      marginVertical: 6,
+      marginVertical: groknight.space.sm,
       backgroundColor: groknight.border,
     },
     railCommand: {
@@ -646,7 +646,7 @@ const styles = StyleSheet.create((theme) => {
       paddingVertical: 4,
       alignItems: 'center',
       justifyContent: 'center',
-      gap: 3,
+      gap: groknight.space.xs,
     },
     columnCommand: {
       width: '100%',
@@ -654,7 +654,7 @@ const styles = StyleSheet.create((theme) => {
       paddingHorizontal: 16,
       flexDirection: 'row',
       justifyContent: 'flex-start',
-      gap: 12,
+      gap: groknight.space.sm,
     },
     /* A rail command is named, so its glyph does not also have to shout: the
      * mono micro-label under it carries the meaning and the glyph sits on the

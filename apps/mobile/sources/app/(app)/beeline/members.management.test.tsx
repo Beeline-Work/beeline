@@ -253,11 +253,13 @@ vi.mock('@/components/buzz/MonoHull', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
-    BrassButton: host('BrassButton'),
     HullSurface: host('HullSurface'),
-    MonoButton: host('MonoButton'),
     PixelLoader: host('PixelLoader'),
   };
+});
+vi.mock('@/components/buzz/Button', async () => {
+  const ReactModule = await import('react');
+  return { Button: (props: any) => ReactModule.createElement('Button', props, props.children) };
 });
 vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
   const ReactModule = await import('react');
@@ -597,7 +599,7 @@ describe('Members workspace management', () => {
       0,
     );
     expect(renderer.root.findAllByProps({ testID: 'add-members' })).toHaveLength(0);
-    expect(renderer.root.findAllByType('BrassButton' as any)).toHaveLength(0);
+    expect(renderer.root.findAllByType('Button' as any)).toHaveLength(0);
   });
 
   it('names the action and the kind on each section head +, with a 44pt hit area', async () => {

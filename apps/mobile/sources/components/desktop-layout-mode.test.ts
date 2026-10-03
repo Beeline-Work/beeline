@@ -83,16 +83,13 @@ describe('desktop layout mode', () => {
   it('routes web layout, header, and interaction choices through the live width class', () => {
     const appLayout = source('app/(app)/_layout.tsx');
     const rootLayout = source('app/_layout.tsx');
-    const header = source('components/navigation/Header.tsx');
     const bubble = source('components/BubblePressable.tsx');
     const layout = source('components/layout.ts');
 
-    expect(appLayout).toContain("Platform.OS === 'android' || isRunningOnMac() || isDesktop");
-    expect(appLayout).not.toContain("isRunningOnMac() || Platform.OS === 'web'");
+    expect(appLayout).toContain('const isDesktop = useIsDesktop();');
+    expect(appLayout).not.toContain("Platform.OS === 'web'");
     expect(rootLayout).toContain('const isDesktop = useIsDesktop();');
     expect(rootLayout).toMatch(/isDesktop\s*\?\s*\{\s*flex:\s*1\s*\}/);
-    expect(header).toContain("const isCompact = useLayoutClass() === 'compact';");
-    expect(header).not.toMatch(/Platform\.OS === 'web'/);
     expect(bubble).toContain('const isDesktop = useIsDesktop();');
     expect(bubble).not.toContain('Platform');
     expect(layout).not.toContain('Platform');

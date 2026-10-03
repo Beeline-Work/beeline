@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { appBoardType } from '@/buzz/app-board-style';
+import * as appBoardStyle from '@/buzz/app-board-style';
 
 const settingsRow = readFileSync(new URL('./SettingsRow.tsx', import.meta.url), 'utf8');
 const workbench = readFileSync(
@@ -39,7 +39,6 @@ describe('Workbench row text matches the standard body/meta sizes', () => {
   });
 
   it('the retired section/icon-mark app-board sizes are gone from the shared scale', () => {
-    expect(appBoardType).not.toHaveProperty('section');
-    expect(appBoardType).not.toHaveProperty('monoMark');
+    expect(appBoardStyle).not.toHaveProperty('appBoardType');
   });
 });

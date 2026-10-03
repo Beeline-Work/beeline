@@ -119,7 +119,7 @@ const styles = StyleSheet.create((theme) => ({
         flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
-        padding: 40,
+        padding: theme.buzz.space.xxl,
     },
     emptyText: {
         ...theme.buzz.type.body,

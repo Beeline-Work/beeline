@@ -37,6 +37,7 @@ vi.mock('react-native-unistyles', async () => {
           },
         }),
     },
+    useUnistyles: () => ({ theme: { buzz: { ledgerGhost: '#6c6c76' } } }),
   };
 });
 

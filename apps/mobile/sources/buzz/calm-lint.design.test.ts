@@ -15,9 +15,10 @@ import {
 } from './calm-lint';
 
 /**
- * Borrowing Calm, the lint (DESIGN.md → Type). Every `sources/**\/*.tsx`
- * screen or component — including a raw value fed through a local per-file
- * constant table — is held to its baseline count of raw `fontSize:` /
+ * Borrowing Calm, the lint (DESIGN.md → Type). Every `sources/**\/*.ts(x)`
+ * screen, component or style module — including a raw value fed through a
+ * local per-file constant table, and a computed (arithmetic or ternary)
+ * size — is held to its baseline count of raw `fontSize:` /
  * `lineHeight:` / `letterSpacing:` literals outside the type roles. A count
  * may only shrink, and every file outside `CALM_DECORATIVE_ALLOWLIST` /
  * `CALM_PENDING_HEADER_UNIFY` must already be at zero.
@@ -55,7 +56,25 @@ describe('Borrowing Calm lint', () => {
       { file: 'x.tsx', line: 3, text: 'a: { fontSize: 11 },' },
       { file: 'x.tsx', line: 4, text: 'b: { fontSize: 16, letterSpacing: 0.8 },' },
       { file: 'x.tsx', line: 6, text: 'e: { lineHeight: 21 },' },
+      {
+        file: 'x.tsx',
+        line: 7,
+        text: "d: { fontSize: theme.buzz.type.body.fontSize, fontSize: Platform.OS === 'web' ? 17 : 16 },",
+      },
     ]);
+  });
+
+  it('flags computed sizes — arithmetic and ternaries — even from theme values', () => {
+    const source = [
+      'const s = StyleSheet.create((theme) => ({',
+      '  a: { fontSize: theme.buzz.type.body.fontSize - 1 },',
+      '  b: { lineHeight: size * 1.4 },',
+      '  c: { fontSize: desktop ? 17 : 16 },',
+      '  d: { fontSize: theme.buzz.type.meta.fontSize, letterSpacing: -0.3 },',
+      '}));',
+      'const { lineHeight: _drop, ...rest } = role;',
+    ].join('\n');
+    expect(scanCalmSource(source, 'y.ts').map((o) => o.line)).toEqual([2, 3, 4]);
   });
 
   it('flags a WELCOME_TYPE-style key-renamed constant table referenced from fontSize/lineHeight/letterSpacing', () => {

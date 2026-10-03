@@ -63,6 +63,8 @@ export function useCopiedToast(testID: string): {
   return { showCopied, showCopyFailed, toast };
 }
 
+const CHECK_SIZE = 18;
+
 const styles = StyleSheet.create((theme) => ({
   dock: {
     position: 'absolute',
@@ -82,9 +84,9 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.buzz.bgRaised,
   },
   check: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+    width: CHECK_SIZE,
+    height: CHECK_SIZE,
+    borderRadius: CHECK_SIZE / 2,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: theme.buzz.success,

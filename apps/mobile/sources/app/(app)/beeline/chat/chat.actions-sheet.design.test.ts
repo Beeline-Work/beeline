@@ -93,7 +93,7 @@ describe('Room and corner actions sheets', () => {
     }
   });
 
-  it('puts the membership roster row on the Room sheet and none on the corner sheet', () => {
+  it('puts the membership roster row on the Room sheet and the corner sheet', () => {
     // Trigger: open a Room, tap overflow.
     // Masking: #1432 retired this Room-sheet row for a header diamond that
     // opens corners; #1436 then removed MEMBERS from the desktop work pane.
@@ -109,10 +109,13 @@ describe('Room and corner actions sheets', () => {
     expect(members).toContain('setRosterVisible(true)');
     expect(members).toContain('setRoomActionsVisible(false)');
     for (const testID of ROOM_ROWS) expect(roomSheet).toContain(`testID="${testID}"`);
-    // Corner membership is the parent Room's, so the corner sheet repeats no
-    // roster and carries no Feedback triage switch (the setting is retired).
-    expect(cornerSheet).not.toContain('room-participant-roster-trigger');
-    expect(cornerSheet).not.toContain('label="Members"');
+    // The corner sheet carries the same counted Members row (design fix,
+    // 2026-10-03), and no Feedback triage switch (the setting is retired).
+    const cornerMembers = row(cornerSheet, 'corner-participant-roster-trigger');
+    expect(cornerMembers).toContain('label="Members"');
+    expect(cornerMembers).toContain('formatRoomParticipantTotal(roomParticipantTotal)');
+    expect(cornerMembers).toContain('setRosterVisible(true)');
+    expect(cornerMembers).toContain('setCornerActionsVisible(false)');
     expect(cornerSheet).not.toContain('corner-feedback-triage-toggle');
     expect(cornerSheet).toContain('testID="close-corner-action"');
   });

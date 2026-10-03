@@ -98,10 +98,10 @@ function markdownAt(renderer: ReactTestRenderer, testID: string) {
 }
 
 describe('provisional prose (C98)', () => {
-  it('writes a streaming turn in the italic, quiet face and a settled one upright and content-toned', () => {
+  it('writes a streaming turn in the quiet tone and a settled one content-toned, both in the prose face', () => {
     const provisional = streamingRow().root.findByProps({ testID: 'activity-message-draft' }).props
       .textStyle;
-    expect(provisional.fontFamily).toBe(groknight.proseItalic);
+    expect(provisional.fontFamily).toBe(groknight.proseRegular);
     expect(provisional.color).toBe(groknight.ledgerQuiet);
 
     const settled = markdownAt(settledRow(), 'body')[0]!.props.textStyle;
@@ -162,7 +162,7 @@ describe('provisional prose (C98)', () => {
     expect(renderer.toJSON()).not.toBeNull();
     const draft = renderer.root.findByProps({ testID: 'activity-message-draft' });
     expect(draft.props.markdown).toBe('The answer is');
-    expect(draft.props.textStyle.fontFamily).toBe(groknight.proseItalic);
+    expect(draft.props.textStyle.fontFamily).toBe(groknight.proseRegular);
   });
 
   it('settles instantly under reduced motion, and still writes the draft as provisional', () => {
@@ -174,7 +174,7 @@ describe('provisional prose (C98)', () => {
 
     const provisional = streamingRow().root.findByProps({ testID: 'activity-message-draft' }).props
       .textStyle;
-    expect(provisional.fontFamily).toBe(groknight.proseItalic);
+    expect(provisional.fontFamily).toBe(groknight.proseRegular);
     expect(provisional.color).toBe(groknight.ledgerQuiet);
   });
 });

@@ -317,8 +317,8 @@ const styles = StyleSheet.create((theme) => {
     rosterModalClose: {
       width: 44,
       height: 44,
-      marginTop: -10,
-      marginRight: -10,
+      marginTop: -hull.space.sm,
+      marginRight: -hull.space.sm,
       alignItems: 'center',
       justifyContent: 'center',
     },

@@ -120,13 +120,17 @@ export function NeedsYouCell({
   );
 }
 
+/** The pointer's dismiss: its offset from the cell's right edge and its touch box. */
+const DISMISS_RIGHT = 4;
+const DISMISS_SIZE = 44;
+
 const styles = StyleSheet.create((theme) => ({
   cell: {
     minHeight: 78,
     justifyContent: 'center',
-    paddingVertical: 13,
+    paddingVertical: theme.buzz.space.md,
     paddingLeft: theme.buzz.space.md,
-    paddingRight: 36,
+    paddingRight: theme.buzz.space.xl,
     backgroundColor: theme.buzz.bgBase,
   },
   cellActive: { backgroundColor: theme.buzz.bgHighlight },
@@ -135,8 +139,8 @@ const styles = StyleSheet.create((theme) => ({
   meta: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 7,
-    marginTop: 5,
+    gap: theme.buzz.space.sm,
+    marginTop: theme.buzz.space.xs,
   },
   sigil: { ...theme.buzz.type.meta, color: brand.mark },
   metaText: { ...theme.buzz.type.meta, flexShrink: 1, color: theme.buzz.ledgerQuiet },
@@ -150,15 +154,15 @@ const styles = StyleSheet.create((theme) => ({
   chevronColor: { color: theme.buzz.ledgerGhost },
   // A pointer's dismiss sits on the source line, which keeps room for it, so
   // revealing it never covers the sentence or reflows the cell.
-  metaDesktop: { paddingRight: 64 },
+  metaDesktop: { paddingRight: DISMISS_RIGHT + DISMISS_SIZE + theme.buzz.space.md },
   dismiss: {
     position: 'absolute',
-    right: 4,
+    right: DISMISS_RIGHT,
     bottom: 0,
-    minWidth: 44,
-    minHeight: 44,
-    paddingHorizontal: 10,
-    paddingBottom: 14,
+    minWidth: DISMISS_SIZE,
+    minHeight: DISMISS_SIZE,
+    paddingHorizontal: theme.buzz.space.sm,
+    paddingBottom: theme.buzz.space.md,
     justifyContent: 'flex-end',
   },
   dismissText: { ...theme.buzz.type.sectionHead, color: theme.buzz.ledgerQuiet },

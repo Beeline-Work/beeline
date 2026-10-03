@@ -1,42 +1,9 @@
 /**
  * What the ledger does to raw text before inscribing it.
  *
- * Two independent jobs, both about the same thing: the slab shows the meaning,
- * never the transport. Percent escapes are transport. A wall of tool output is
- * transport. Neither belongs in the flowing column.
+ * The slab shows the meaning, never the transport: a wall of tool output is
+ * transport and does not belong in the flowing column.
  */
-
-/**
- * One or more consecutive percent escapes, decoded as a unit so multi-byte
- * UTF-8 sequences (`%E2%9C%93`) survive.
- */
-const PERCENT_RUN = /(?:%[0-9A-Fa-f]{2})+/g;
-
-/**
- * Render `%3F` as `?`.
- *
- * Message text reaches the transcript having crossed a URL-shaped boundary
- * somewhere upstream, and the escapes were arriving on screen literally. This
- * decodes only what is unambiguously an escape run and leaves everything else
- * exactly as written: a bare `100%`, a stray `%zz`, and a truncated `%3` all
- * pass through untouched, and a run that is not valid UTF-8 keeps its literal
- * form rather than throwing.
- *
- * The cost is that a message *about* percent-encoding renders the decoded
- * character instead of the escape it was discussing. That is the deliberate
- * trade: literal escapes on screen were the reported defect, and a message
- * discussing them is far rarer than one carrying them by accident.
- */
-export function decodePercentEncoding(text: string): string {
-  if (!text.includes('%')) return text;
-  return text.replace(PERCENT_RUN, (run) => {
-    try {
-      return decodeURIComponent(run);
-    } catch {
-      return run;
-    }
-  });
-}
 
 /**
  * Lines that are a machine talking to a machine.

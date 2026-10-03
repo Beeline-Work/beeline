@@ -30,6 +30,7 @@ import {
   openArtifactInBrowserOrExplain,
 } from '@/buzz/artifact-link';
 import { formatAttachmentSize } from '@/buzz/chat-attachment';
+import { withAlpha } from '@/buzz/groknight';
 import { openArtifactInDesktopWorkPane } from '@/buzz/desktop-artifact-pane';
 import { artifactWebViewProps } from '@/components/buzz/artifact-webview';
 import { useSandboxWebView } from '@/components/buzz/sandbox-webview';
@@ -451,14 +452,15 @@ export function ArtifactMarkdownPreview({ attachment }: { attachment: Attachment
 }
 
 const styles = StyleSheet.create((theme) => ({
+  // The TranscriptCard frame (DESIGN.md → Transcript cards), read from the
+  // same tokens: radius 10, 1 px borderStrong, no fill of its own.
   card: {
     minWidth: 0,
     width: '100%',
-    marginTop: 8,
+    marginTop: theme.buzz.transcriptCard.marginTop,
     borderWidth: 1,
-    borderColor: theme.buzz.border,
+    borderColor: theme.buzz.borderStrong,
     borderRadius: theme.buzz.transcriptCard.cornerRadius,
-    backgroundColor: theme.buzz.bgBase,
     overflow: 'hidden',
   },
   previewPress: { minWidth: 0 },
@@ -483,15 +485,15 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: theme.buzz.border,
-    borderRadius: theme.buzz.transcriptCard.cornerRadius,
-    backgroundColor: `${theme.buzz.bgBase}E6`,
+    borderRadius: theme.buzz.radius,
+    backgroundColor: withAlpha(theme.buzz.bgBase, 0.9),
   },
   photoNavigationMark: { color: theme.buzz.textPrimary },
   photoPosition: {
     ...theme.buzz.type.machine,
     color: theme.buzz.textPrimary,
-    backgroundColor: `${theme.buzz.bgBase}E6`,
-    borderRadius: theme.buzz.transcriptCard.cornerRadius,
+    backgroundColor: withAlpha(theme.buzz.bgBase, 0.9),
+    borderRadius: theme.buzz.radius,
     paddingHorizontal: theme.buzz.space.sm,
     paddingVertical: 4,
   },
@@ -502,7 +504,7 @@ const styles = StyleSheet.create((theme) => ({
     right: 0,
     bottom: 0,
     height: 44,
-    backgroundColor: `${theme.buzz.bgBase}CC`,
+    backgroundColor: withAlpha(theme.buzz.bgBase, 0.8),
   },
   markdownCrop: { overflow: 'hidden', padding: theme.buzz.space.sm },
   markdownText: { ...theme.buzz.type.body, color: theme.buzz.textPrimary },
@@ -516,8 +518,8 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 58,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 9,
-    paddingHorizontal: theme.buzz.space.sm,
+    gap: theme.buzz.space.sm,
+    paddingHorizontal: theme.buzz.transcriptCard.side,
   },
   docGlyph: { ...theme.buzz.type.body, color: theme.buzz.steel },
   docName: {
@@ -530,7 +532,7 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: 'row',
     alignItems: 'baseline',
     gap: theme.buzz.space.sm,
-    paddingHorizontal: theme.buzz.space.sm,
+    paddingHorizontal: theme.buzz.transcriptCard.side,
     paddingTop: theme.buzz.space.sm,
   },
   captionTitle: {

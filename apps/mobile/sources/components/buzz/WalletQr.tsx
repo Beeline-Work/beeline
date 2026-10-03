@@ -3,6 +3,9 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import QRCode from 'qrcode';
 
+/** One QR module, in points. The quiet zone around the code is one module. */
+const QR_MODULE = 6;
+
 /**
  * The wallet QR — the pure-JS matrix from `qrcode` painted as a grid of
  * tiles (no canvas, no WebView), shared by the receive screen and the
@@ -36,7 +39,7 @@ export function WalletQr({ payload, size = 180 }: { payload: string; size?: numb
     );
   }
   return (
-    <View style={[styles.qr, { backgroundColor: '#ffffff', padding: 6 }]} testID="wallet-qr">
+    <View style={[styles.qr, { backgroundColor: '#ffffff', padding: QR_MODULE }]} testID="wallet-qr">
       {Array.from({ length: modules.size }, (_, row) => (
         <View key={row} style={styles.qrRow}>
           {Array.from({ length: modules.size }, (_, col) => (
@@ -57,7 +60,7 @@ export function WalletQr({ payload, size = 180 }: { payload: string; size?: numb
 const styles = StyleSheet.create((theme) => ({
   qr: { borderRadius: 3 },
   qrRow: { flexDirection: 'row' },
-  tile: { height: 6, width: 6 },
+  tile: { height: QR_MODULE, width: QR_MODULE },
     placeholder: {
       borderColor: theme.buzz.textMuted,
       borderRadius: 3,

@@ -35,14 +35,14 @@ describe.skipIf(!existsSync(CHROME))('Room list card spacing in a browser', () =
     // rule. The exact measured rows below are now the approved 68px contract.
     const [, ...measurements] = result.split('\n');
     expect(measurements).toEqual([
-      'one-line: above=15.79 below=20.00 diff=-4.22',
-      'two-line: above=15.79 below=20.00 diff=-4.22',
-      'corners: above=15.79 below=20.00 diff=-4.22',
-      'message: above=15.79 below=20.00 diff=-4.22',
+      'one-line: above=13.79 below=19.00 diff=-5.22',
+      'two-line: above=13.79 below=19.00 diff=-5.22',
+      'corners: above=13.79 below=19.00 diff=-5.22',
+      'message: above=13.79 below=19.00 diff=-5.22',
     ]);
     expect(
       measurements.every(
-        (line) => Math.abs(Number(line.match(/diff=(-?\d+\.\d+)$/)?.[1]) + 4.22) <= 0.1,
+        (line) => Math.abs(Number(line.match(/diff=(-?\d+\.\d+)$/)?.[1]) + 5.22) <= 0.1,
       ),
     ).toBe(true);
   }, 90_000);
@@ -58,10 +58,10 @@ describe.skipIf(!existsSync(CHROME))('Room list card spacing in a browser', () =
     expect(result).toBe(
       [
         'DESKTOP',
-        'one-line: above=14.79 below=15.00 diff=-0.22',
-        'two-line: above=14.79 below=15.00 diff=-0.22',
-        'corners: above=14.79 below=15.00 diff=-0.22',
-        'message: above=14.79 below=15.00 diff=-0.22',
+        'one-line: above=13.79 below=14.00 diff=-0.22',
+        'two-line: above=13.79 below=14.00 diff=-0.22',
+        'corners: above=13.79 below=14.00 diff=-0.22',
+        'message: above=13.79 below=14.00 diff=-0.22',
       ].join('\n'),
     );
   }, 90_000);

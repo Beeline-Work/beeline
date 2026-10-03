@@ -18,6 +18,7 @@ import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import { AppMark } from '@/components/buzz/AppMark';
 import { appBoardColors } from '@/buzz/app-board-style';
+import { TOOL_BRAND_MARKS } from '@/buzz/tool-brand-marks';
 import { ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { authSessionOptions } from '@/auth/auth-session';
 import {
@@ -413,26 +414,26 @@ const styles = StyleSheet.create((theme) => {
     container: { flex: 1, backgroundColor: board.canvas },
     content: { flex: 1 },
     contentInner: {
-      paddingHorizontal: 20,
-      gap: 22,
+      paddingHorizontal: hull.space.lg,
+      gap: hull.layout.sectionGap,
       // Both section heads take the same air above them: the Keys head gets
       // `sectionGap` from the list it follows, so the Tools head takes the
       // screen's own `screenTop` rather than the smaller page padding —
       // which is what made the first head sit tighter than the second.
-      paddingTop: 22,
+      paddingTop: hull.layout.screenTop,
       paddingBottom: hull.space.xxl,
     },
-    sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: board.quiet, paddingBottom: 6 },
-    appsNote: { ...Typography.ledger(), ...hull.type.meta, marginTop: 18, color: board.quiet },
-    indexRow: { minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: board.border },
+    sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: board.quiet, paddingBottom: hull.space.sm },
+    appsNote: { ...Typography.ledger(), ...hull.type.meta, marginTop: hull.space.md, color: board.quiet },
+    indexRow: { minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: 16, paddingVertical: hull.space.md, borderBottomWidth: 1, borderBottomColor: board.border },
     rowTitle: { ...Typography.ledger(), ...hull.type.body, flex: 1, color: board.ink },
     rowAction: { color: board.brass },
     rowValue: { ...Typography.ledger(), ...hull.type.meta, color: board.quiet },
     toolMark: { width: 36, height: 36, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-    squireMark: { backgroundColor: '#141210' },
-    walletMark: { backgroundColor: '#1652F0' },
-    toolMarkText: { ...Typography.mono(), ...hull.type.machine, color: '#FFFFFF' },
-    squireMarkText: { color: '#9AA7FF' },
+    squireMark: { backgroundColor: TOOL_BRAND_MARKS.squire.ground },
+    walletMark: { backgroundColor: TOOL_BRAND_MARKS.wallet.ground },
+    toolMarkText: { ...Typography.mono(), ...hull.type.machine, color: TOOL_BRAND_MARKS.wallet.ink },
+    squireMarkText: { color: TOOL_BRAND_MARKS.squire.ink },
     centered: {
       flex: 1,
       alignItems: 'center',

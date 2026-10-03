@@ -45,7 +45,7 @@ import { MemberRosterRow } from '@/components/buzz/MemberRosterRow';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
 import { navigateToRoom } from '@/buzz/corner-navigation';
 import { displayModel } from '@/buzz/model-display';
-import { MonoButton } from '@/components/buzz/MonoHull';
+import { Button } from '@/components/buzz/Button';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { MEMBERS_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { BuzzRigTransport } from '@/sync/transport';
@@ -1281,7 +1281,7 @@ export default function BuzzMembers({
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
         <Text style={styles.error}>{displayedError}</Text>
-        <MonoButton label="RETRY" onPress={() => setRetryGeneration((value) => value + 1)} />
+        <Button label="RETRY" onPress={() => setRetryGeneration((value) => value + 1)} />
       </View>
     );
   }

@@ -33,11 +33,9 @@ vi.mock('expo-router', () => ({
   useLocalSearchParams: () => route,
 }));
 vi.mock('expo-linking', () => ({ useURL: () => null }));
-vi.mock('@/components/buzz/MonoHull', async () => {
+vi.mock('@/components/buzz/Button', async () => {
   const ReactModule = await import('react');
-  return {
-    MonoButton: (props: any) => ReactModule.createElement('MonoButton', props),
-  };
+  return { Button: (props: any) => ReactModule.createElement('Button', props, props.children) };
 });
 vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
   const ReactModule = await import('react');
@@ -83,7 +81,7 @@ describe('review deep-link screen', () => {
     const renderer = await renderRoute();
     expect(renderer.root.findByProps({ testID: 'review-sign-in-error' })).toBeTruthy();
     expect(replace).not.toHaveBeenCalled();
-    const button = renderer.root.findByType('MonoButton');
+    const button = renderer.root.findByType('Button');
     expect(button.props.label).toBe('Return to sign in');
     act(() => button.props.onPress());
     expect(replace).toHaveBeenCalledWith('/beeline/onboarding');

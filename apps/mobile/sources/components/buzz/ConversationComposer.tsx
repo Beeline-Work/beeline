@@ -486,11 +486,13 @@ export function ConversationComposer({
   );
 }
 
+const MIC_SIZE = 26;
+
 const styles = StyleSheet.create((theme) => ({
   // Speech recognition styles
   micButton: {
-    width: 26,
-    height: 26,
+    width: MIC_SIZE,
+    height: MIC_SIZE,
     // Same slot and size as the send control it swaps with, so the input's
     // width never jumps on the mic<->send exchange.
     marginLeft: 8,
@@ -500,7 +502,7 @@ const styles = StyleSheet.create((theme) => ({
   micButtonListening: {
     borderWidth: 1,
     borderColor: theme.buzz.accent,
-    borderRadius: 13,
+    borderRadius: MIC_SIZE / 2,
     shadowColor: theme.buzz.accent,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.4,
@@ -556,9 +558,9 @@ const styles = StyleSheet.create((theme) => ({
   interimPartial: { fontStyle: 'italic' },
   interimTextAndroid: { textAlignVertical: 'center' },
   statusLine: {
-    paddingHorizontal: 12,
-    paddingTop: 2,
-    paddingBottom: 6,
+    paddingHorizontal: theme.buzz.space.md,
+    paddingTop: theme.buzz.space.xs,
+    paddingBottom: theme.buzz.space.sm,
   },
   statusText: {
     ...(theme.buzz.type.machine as any),
@@ -586,7 +588,7 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 8,
-    paddingHorizontal: 10,
+    paddingHorizontal: theme.buzz.space.sm,
   },
   composerMultiline: { alignItems: 'flex-end' },
   composerFocused: {
@@ -600,13 +602,13 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'center',
     paddingLeft: 16,
   },
-  replyCopy: { flex: 1, minWidth: 0, paddingVertical: 10 },
+  replyCopy: { flex: 1, minWidth: 0, paddingVertical: theme.buzz.space.sm },
   replyLabel: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   replyGlyph: { color: theme.buzz.accent },
   replyHandle: { color: theme.buzz.accent },
   replyPreview: {
     ...theme.buzz.type.meta,
-    marginTop: 2,
+    marginTop: theme.buzz.space.xs,
     color: theme.buzz.textSecondary,
   },
   attachment: {

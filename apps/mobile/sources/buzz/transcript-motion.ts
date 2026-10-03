@@ -1,4 +1,3 @@
-export const TRANSCRIPT_BRASS = '#b08a4a';
 export const TRANSCRIPT_SETTLE_MS = 1_800;
 export const TRANSCRIPT_BURST_MS = 1_000;
 

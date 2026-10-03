@@ -141,7 +141,8 @@ Committed home for project-intrinsic agent knowledge: rule + authoritative file 
 ## Mobile UI
 
 - [DESIGN.md](DESIGN.md) is the UI authority; tokens live in `apps/mobile/sources/buzz/groknight.ts`. Box only what the user acts on or a non-repeating region.
-- **Type roles only.** `calm-lint.design.test.ts` ratchets raw `fontSize`/`letterSpacing` literals in `.tsx` against `apps/mobile/design/calm-baseline.json`; counts only shrink.
+- **Type roles only.** `calm-lint.design.test.ts` ratchets raw and computed `fontSize`/`lineHeight`/`letterSpacing` values in `.ts`/`.tsx` against `apps/mobile/design/calm-baseline.json`; counts only shrink.
+- **Tokens, scale, one component each.** `design-lint.design.test.ts` ratchets colour literals, off-scale spacing and radii, shadows, retired fonts and retired components against `apps/mobile/design/design-baseline.json` (DESIGN.md → Enforcement); counts only shrink.
 - **Rooms and corners render one ledger** (`Ledger.tsx`); ownership reads from the byline (`ledger-attribution.ts`). A live draft renders as plain `Text` in `StreamingProse.tsx`, never Markdown. A tool step is one line (`buzz/tool-ledger.ts`, `ActivityTimeline.tsx`); output opens in `ToolOutputSheet`.
 - **Identity marks are one component** (`IdentityMark.tsx`); an agent's face is server-assigned, never re-derived from a seed. The live ring paints outside the tile box, so a clipping ancestor must outset by it. Generated portraits (`postAgentAvatar`, `/v1/agent-avatars/`) are separate from photo overrides.
 - Drawn glyphs spread the platform-split props from `components/buzz/decorative-glyph.ts`/`.web.ts`; react-native-svg forwards unknown props to the element.

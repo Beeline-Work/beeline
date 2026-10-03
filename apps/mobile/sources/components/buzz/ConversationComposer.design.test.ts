@@ -20,7 +20,7 @@ describe('Option A composer chrome', () => {
     expect(surface).toContain('minHeight: 44');
     expect(inputRow).toContain("alignItems: 'center'");
     expect(inputRow).toContain('paddingVertical: 8');
-    expect(inputRow).toContain('paddingHorizontal: 10');
+    expect(inputRow).toContain('paddingHorizontal: theme.buzz.space.sm');
     expect(surface).toContain('borderRadius: 10');
     expect(surface).toContain('borderWidth: 1');
     expect(surface).toContain('borderColor: theme.buzz.border');

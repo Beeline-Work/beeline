@@ -45,7 +45,7 @@ import { DesktopRoomCorners } from '@/components/buzz/DesktopRoomCorners';
 import { DirectMessagePickerSheet } from '@/components/buzz/DirectMessagePickerSheet';
 import { ExitGlyph } from '@/components/buzz/ExitGlyph';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
-import { MonoButton } from '@/components/buzz/MonoHull';
+import { Button } from '@/components/buzz/Button';
 import { NoMatchingConversationsEmpty } from '@/components/buzz/NoMatchingConversationsEmpty';
 import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
 import {
@@ -85,7 +85,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AppState,
   Keyboard,
-  Pressable,
   SectionList,
   Text,
   TouchableOpacity,
@@ -101,7 +100,7 @@ const LOBBY_LIST_BOTTOM_SPACING = 24;
 const ROW_HEIGHT = 64;
 const LEAVE_TILE_HIT_SLOP = { top: 18, bottom: 18, left: 8, right: 8 };
 /** Match the fixed trailing inset used by Room and corner conversation headers. */
-const HEADER_RIGHT_SPACING = 12;
+const HEADER_RIGHT_SPACING = 16;
 
 type EmptyRoomActionsProps = {
   canAddRoom: boolean;
@@ -129,26 +128,22 @@ function EmptyRoomActions({
       </Text>
       <View style={styles.emptyActionList}>
         {canAddRoom && (
-          <Pressable
+          <Button
             accessibilityLabel="Add a Room"
-            accessibilityRole="button"
+            label="Start a Room"
             onPress={onAddRoom}
-            style={({ pressed }) => [styles.emptyButton, pressed && styles.emptyButtonPressed]}
             testID="empty-add-room"
-          >
-            <Text style={styles.emptyPrimaryLabel}>Start a Room</Text>
-          </Pressable>
+            variant="brass"
+          />
         )}
         {canConnectAgent && (
-          <Pressable
+          <Button
             accessibilityLabel="Connect an agent"
-            accessibilityRole="button"
+            label="Connect an agent"
             onPress={onConnectAgent}
-            style={({ pressed }) => [styles.emptyButton, pressed && styles.emptyButtonPressed]}
             testID="empty-connect-agent"
-          >
-            <Text style={styles.emptySecondaryLabel}>Connect an agent</Text>
-          </Pressable>
+            variant="secondary"
+          />
         )}
       </View>
     </View>
@@ -900,7 +895,7 @@ export default function BuzzChannels() {
     return (
       <View style={[styles.center, { paddingTop: insets.top }]}>
         <Text style={styles.error}>{error}</Text>
-        <MonoButton label="RETRY" onPress={() => setRetryGeneration((value) => value + 1)} />
+        <Button label="RETRY" onPress={() => setRetryGeneration((value) => value + 1)} />
       </View>
     );
   }
@@ -1230,9 +1225,9 @@ const styles = StyleSheet.create((theme) => {
       flex: 1,
       alignItems: 'center',
       justifyContent: 'center',
-      gap: 14,
+      gap: hull.space.md,
       backgroundColor: hull.bgTerminal,
-      paddingHorizontal: 28,
+      paddingHorizontal: hull.space.xl,
     },
     header: {
       minHeight: 62,
@@ -1284,29 +1279,8 @@ const styles = StyleSheet.create((theme) => {
     emptyActionList: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 10,
+      gap: hull.space.sm,
       marginTop: hull.space.md,
-    },
-    emptyButton: {
-      height: 44,
-      justifyContent: 'center',
-      paddingHorizontal: hull.space.md,
-      borderWidth: 1,
-      borderColor: hull.borderStrong,
-      borderRadius: 10,
-    },
-    emptyButtonPressed: { backgroundColor: hull.bgPressed },
-    emptyPrimaryLabel: {
-      ...Typography.ledger('medium'),
-      color: hull.accent,
-      fontSize: hull.type.body.fontSize - 1,
-      lineHeight: hull.type.body.lineHeight,
-    },
-    emptySecondaryLabel: {
-      ...Typography.ledger(),
-      color: hull.ledgerQuiet,
-      fontSize: hull.type.body.fontSize - 1,
-      lineHeight: hull.type.body.lineHeight,
     },
     rowSurface: {
       backgroundColor: hull.bgBase,

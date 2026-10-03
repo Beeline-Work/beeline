@@ -33,5 +33,5 @@ export function RoomRepositorySubtitle({
 }
 
 const styles = StyleSheet.create({
-  subtitle: { alignSelf: 'flex-start', marginTop: 2, maxWidth: '100%' },
+  subtitle: { alignSelf: 'flex-start', marginTop: 4, maxWidth: '100%' },
 });

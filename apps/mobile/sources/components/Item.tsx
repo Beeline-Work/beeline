@@ -44,17 +44,17 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     container: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: 20,
+        paddingHorizontal: theme.buzz.space.lg,
         minHeight: 56,
     },
     containerWithSubtitle: {
-        paddingVertical: 12,
+        paddingVertical: theme.buzz.space.sm,
     },
     containerWithoutSubtitle: {
-        paddingVertical: 12,
+        paddingVertical: theme.buzz.space.sm,
     },
     iconContainer: {
-        marginRight: 14,
+        marginRight: theme.buzz.space.md,
         width: 24,
         minHeight: 24,
         alignItems: 'center',
@@ -79,7 +79,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     subtitle: {
         ...theme.buzz.type.meta,
         color: theme.buzz.textMuted,
-        marginTop: 2,
+        marginTop: theme.buzz.space.xs,
     },
     rightSection: {
         flexDirection: 'row',

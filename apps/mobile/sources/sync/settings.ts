@@ -1,5 +1,4 @@
 import * as z from 'zod';
-import { DEFAULT_USER_MESSAGE_BUBBLE_COLOR } from '../utils/userMessageBubbleColor';
 
 export const SettingsSchema = z.object({
     userMessageBubbleColor: z.string(),
@@ -9,7 +8,7 @@ export const SettingsSchema = z.object({
 export type Settings = z.infer<typeof SettingsSchema>;
 
 export const settingsDefaults: Settings = Object.freeze({
-    userMessageBubbleColor: DEFAULT_USER_MESSAGE_BUBBLE_COLOR,
+    userMessageBubbleColor: 'gray',
     preferredLanguage: null,
 });
 

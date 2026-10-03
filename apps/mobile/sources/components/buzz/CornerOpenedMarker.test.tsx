@@ -22,7 +22,7 @@ vi.mock('react-native-unistyles', () => ({
         buzz: {
           space: { xs: 4, sm: 8, md: 16 },
           type: { meta: { fontSize: 13, lineHeight: 18 } },
-          proseRegular: 'IBMPlexSans-Regular',
+          proseRegular: 'SpaceGrotesk-Regular',
           ledgerQuiet: '#8a8a93',
           ledgerBody: '#e8e6e3',
           accent: '#E5A645',

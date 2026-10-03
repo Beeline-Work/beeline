@@ -7,6 +7,7 @@ import type { RepoCandidate } from '@/buzz/room-repo-picker';
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 import { ROOM_SLUG_HINT, validRoomSlug } from '@/buzz/room-name';
 import { Typography } from '@/constants/Typography';
+import { Button } from './Button';
 import { HullDialogInput } from './HullDialog';
 import { HullActionSheetModal, HULL_SHEET_INSET } from './HullActionSheet';
 import { RepoPicker } from './RepoPicker';
@@ -155,27 +156,22 @@ export function NewRoomDialog({
             <Text style={styles.cancelText}>Cancel</Text>
           </TouchableOpacity>
           {step !== 'picker' && (
-            <TouchableOpacity
-              accessibilityRole="button"
-              accessibilityState={{
-                busy: creatingRoom || creatingRepository,
-                disabled: submitDisabled,
-              }}
+            <Button
               disabled={submitDisabled}
-              onPress={() => (step === 'create' ? void createRepository() : void createRoom())}
-              style={[styles.primaryAction, submitDisabled && styles.disabledAction]}
-              testID={step === 'create' ? 'create-repository-submit' : 'create-room-submit'}
-            >
-              <Text style={styles.primaryActionText}>
-                {step === 'create'
+              label={
+                step === 'create'
                   ? creatingRepository
                     ? 'Creating…'
                     : 'Create'
                   : creatingRoom
                     ? 'Creating…'
-                    : 'Create Room'}
-              </Text>
-            </TouchableOpacity>
+                    : 'Create Room'
+              }
+              loading={creatingRoom || creatingRepository}
+              onPress={() => (step === 'create' ? void createRepository() : void createRoom())}
+              style={styles.primaryAction}
+              testID={step === 'create' ? 'create-repository-submit' : 'create-room-submit'}
+            />
           )}
         </View>
       }
@@ -327,14 +323,14 @@ const styles = StyleSheet.create((theme) => {
       ...Typography.default(),
       ...hull.type.meta,
       color: hull.textMuted,
-      marginTop: 6,
+      marginTop: hull.space.sm,
     },
     row: {
       minHeight: 54,
       paddingHorizontal: HULL_SHEET_INSET,
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 10,
+      gap: hull.space.sm,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: hull.border,
     },
@@ -358,35 +354,25 @@ const styles = StyleSheet.create((theme) => {
     backText: { ...Typography.default(), ...hull.type.meta, color: hull.chrome },
     picker: { paddingBottom: 8 },
     pickerContent: { paddingHorizontal: HULL_SHEET_INSET, flexShrink: 1 },
-    createForm: { paddingBottom: 12 },
+    createForm: { paddingBottom: hull.space.md },
     nameField: { paddingHorizontal: HULL_SHEET_INSET, paddingTop: 16 },
     error: {
       ...Typography.default(),
       ...hull.type.meta,
       color: hull.dialogDanger,
       marginHorizontal: HULL_SHEET_INSET,
-      marginTop: 12,
+      marginTop: hull.space.sm,
     },
     actions: {
       flexDirection: 'row',
       alignItems: 'center',
       paddingHorizontal: HULL_SHEET_INSET,
-      paddingTop: 10,
+      paddingTop: hull.space.sm,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: hull.border,
     },
     cancelAction: { minHeight: 44, flex: 1, justifyContent: 'center', alignItems: 'center' },
     cancelText: { ...Typography.default(), ...hull.type.body, color: hull.buttonSecondaryText },
-    primaryAction: {
-      minHeight: 44,
-      minWidth: 118,
-      paddingHorizontal: 14,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderRadius: hull.radius,
-      backgroundColor: hull.buttonPrimaryFill,
-    },
-    disabledAction: { opacity: 0.42 },
-    primaryActionText: { ...Typography.default('semiBold'), color: hull.buttonPrimaryText },
+    primaryAction: { minWidth: 118 },
   };
 });

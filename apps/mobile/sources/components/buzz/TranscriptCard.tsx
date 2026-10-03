@@ -21,8 +21,8 @@ import Animated, {
 } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { withAlpha } from '@/buzz/groknight';
 import {
-  TRANSCRIPT_BRASS,
   TRANSCRIPT_SETTLE_MS,
   transcriptSettleDecision,
   transcriptSteadyColors,
@@ -96,8 +96,6 @@ export type TranscriptCardProps = {
 };
 
 const settleEasing = Easing.out(Easing.cubic);
-const transparentBrass = 'rgba(176,138,74,0)';
-const brassWash = 'rgba(176,138,74,0.14)';
 
 function SettlingText({
   active,
@@ -114,6 +112,7 @@ function SettlingText({
   fadeMs?: number;
   delayMs?: number;
 }) {
+  const brass = useUnistyles().theme.buzz.accent;
   const progress = useSharedValue(active ? 0 : 1);
   const opacity = useSharedValue(active && fadeMs ? 0 : 1);
   useEffect(() => {
@@ -138,7 +137,7 @@ function SettlingText({
     }
   }, [active, delayMs, durationMs, fadeMs, opacity, progress]);
   const animatedStyle = useAnimatedStyle(() => ({
-    color: interpolateColor(progress.value, [0, 1], [TRANSCRIPT_BRASS, steadyColor]),
+    color: interpolateColor(progress.value, [0, 1], [brass, steadyColor]),
     opacity: opacity.value,
   }));
   return <Animated.Text {...props} style={[style, animatedStyle]} />;
@@ -158,7 +157,9 @@ const rowGrowEntering: EntryExitAnimationFunction = (values: EntryAnimationsValu
   };
 };
 
-function rowWashEntering(durationMs: number): EntryExitAnimationFunction {
+function rowWashEntering(durationMs: number, brass: string): EntryExitAnimationFunction {
+  const brassWash = withAlpha(brass, 0.14);
+  const transparentBrass = withAlpha(brass, 0);
   return () => {
     'worklet';
     return {
@@ -580,6 +581,7 @@ function TranscriptCardRowView({
   settleDurationMs: number;
   steady: ReturnType<typeof transcriptSteadyColors>;
 }) {
+  const brass = useUnistyles().theme.buzz.accent;
   const stateColor = steady.rowState[row.tone ?? 'settled'];
   const animateRowText = animateCardArrival || animateEntry;
   const content = (
@@ -652,7 +654,7 @@ function TranscriptCardRowView({
       {animateEntry ? (
         <>
           <Animated.View
-            entering={rowWashEntering(settleDurationMs)}
+            entering={rowWashEntering(settleDurationMs, brass)}
             pointerEvents="none"
             style={styles.rowWash}
           />
@@ -678,33 +680,38 @@ export function TranscriptCardHandle({
   return <Text style={meta ? styles.handleMeta : styles.handle}>{children}</Text>;
 }
 
+/** How far the arrival halo's outer ring reaches past the card. The shell
+ *  bleeds out by the same amount (negative margin, equal padding) so the halo
+ *  has room to draw without moving the card. */
+const HALO_REACH = 20;
+
 const styles = StyleSheet.create((theme) => {
   const card = theme.buzz;
   const metric = card.transcriptCard;
   return {
     frameShell: {
       minWidth: 0,
-      marginTop: metric.marginTop - 20,
-      marginRight: -20,
-      marginBottom: metric.marginBottom - 20,
-      marginLeft: -20,
-      padding: 20,
+      marginTop: metric.marginTop - HALO_REACH,
+      marginRight: -HALO_REACH,
+      marginBottom: metric.marginBottom - HALO_REACH,
+      marginLeft: -HALO_REACH,
+      padding: HALO_REACH,
       position: 'relative',
       borderRadius: metric.cornerRadius,
       overflow: 'visible',
     },
     haloLayer: {
       position: 'absolute',
-      top: 20,
-      right: 20,
-      bottom: 20,
-      left: 20,
+      top: HALO_REACH,
+      right: HALO_REACH,
+      bottom: HALO_REACH,
+      left: HALO_REACH,
       overflow: 'visible',
     },
     haloRing: {
       ...StyleSheet.absoluteFillObject,
       borderWidth: 1,
-      borderColor: 'rgba(176,138,74,0.95)',
+      borderColor: withAlpha(card.accent, 0.95),
       borderRadius: metric.cornerRadius,
     },
     haloNear: {
@@ -714,8 +721,8 @@ const styles = StyleSheet.create((theme) => {
       bottom: -5,
       left: -5,
       borderWidth: 4,
-      borderColor: 'rgba(176,138,74,0.30)',
-      backgroundColor: 'rgba(176,138,74,0.10)',
+      borderColor: withAlpha(card.accent, 0.3),
+      backgroundColor: withAlpha(card.accent, 0.1),
       borderRadius: metric.cornerRadius + 5,
     },
     haloMid: {
@@ -725,20 +732,20 @@ const styles = StyleSheet.create((theme) => {
       bottom: -12,
       left: -12,
       borderWidth: 7,
-      borderColor: 'rgba(176,138,74,0.16)',
-      backgroundColor: 'rgba(176,138,74,0.06)',
+      borderColor: withAlpha(card.accent, 0.16),
+      backgroundColor: withAlpha(card.accent, 0.06),
       borderRadius: metric.cornerRadius + 12,
     },
     haloFar: {
       position: 'absolute',
-      top: -20,
-      right: -20,
-      bottom: -20,
-      left: -20,
+      top: -HALO_REACH,
+      right: -HALO_REACH,
+      bottom: -HALO_REACH,
+      left: -HALO_REACH,
       borderWidth: 8,
-      borderColor: 'rgba(176,138,74,0.08)',
-      backgroundColor: 'rgba(176,138,74,0.03)',
-      borderRadius: metric.cornerRadius + 20,
+      borderColor: withAlpha(card.accent, 0.08),
+      backgroundColor: withAlpha(card.accent, 0.03),
+      borderRadius: metric.cornerRadius + HALO_REACH,
     },
     frame: {
       minWidth: 0,
@@ -751,7 +758,7 @@ const styles = StyleSheet.create((theme) => {
     head: {
       flexDirection: 'row',
       alignItems: 'flex-start',
-      gap: 10,
+      gap: card.space.sm,
       paddingTop: metric.headTop,
       paddingHorizontal: metric.side,
     },
@@ -772,7 +779,7 @@ const styles = StyleSheet.create((theme) => {
       fontVariant: ['tabular-nums'],
     },
     dismiss: { ...card.type.machine, color: card.ledgerQuiet },
-    subline: { ...card.type.meta, color: card.ledgerQuiet, marginTop: 2 },
+    subline: { ...card.type.meta, color: card.ledgerQuiet, marginTop: card.space.xs },
     body: {
       ...card.type.body,
       color: card.textSecondary,
@@ -865,15 +872,15 @@ const styles = StyleSheet.create((theme) => {
       position: 'relative',
       flexDirection: 'row',
       alignItems: 'flex-start',
-      gap: 10,
-      paddingVertical: 10,
-      paddingHorizontal: 12,
+      gap: card.space.sm,
+      paddingVertical: card.space.sm,
+      paddingHorizontal: card.space.md,
     },
     choiceLetter: {
       minWidth: metric.identitySize,
       minHeight: metric.identitySize,
-      paddingHorizontal: 2,
-      paddingVertical: 2,
+      paddingHorizontal: card.space.xs,
+      paddingVertical: card.space.xs,
       borderWidth: 1,
       borderColor: card.borderStrong,
       borderRadius: card.radius,
@@ -891,7 +898,7 @@ const styles = StyleSheet.create((theme) => {
     choiceCopy: { flex: 1, minWidth: 0 },
     choiceLabel: { ...card.type.body, color: card.textPrimary },
     choiceLabelLeader: { ...card.type.bodyStrong, color: card.textPrimary },
-    choiceConsequence: { ...card.type.meta, color: card.ledgerQuiet, marginTop: 1 },
+    choiceConsequence: { ...card.type.meta, color: card.ledgerQuiet, marginTop: card.space.xs },
     choiceCount: {
       ...card.type.machine,
       color: card.ledgerQuiet,

@@ -339,10 +339,10 @@ const styles = StyleSheet.create((theme) => ({
   catchUpPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: theme.buzz.space.xs + 1,
+    gap: theme.buzz.space.xs,
     height: 22,
-    paddingHorizontal: theme.buzz.space.sm + 2,
-    borderRadius: 11,
+    paddingHorizontal: theme.buzz.space.sm,
+    borderRadius: theme.buzz.radius,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.buzz.border,
     backgroundColor: theme.buzz.bgHighlight,

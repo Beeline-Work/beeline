@@ -49,8 +49,8 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       minWidth: 0,
       // The transcript's content inset, so the line sits on the prose margin.
-      paddingHorizontal: 12,
-      paddingVertical: 6,
+      paddingHorizontal: 16,
+      paddingVertical: 8,
     },
     linePressed: { opacity: 0.6 },
     copy: {

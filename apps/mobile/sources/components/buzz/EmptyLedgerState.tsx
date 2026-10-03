@@ -148,13 +148,13 @@ const styles = StyleSheet.create((theme) => ({
   },
   title: {
     ...theme.buzz.type.bodyStrong,
-    marginTop: 12,
+    marginTop: theme.buzz.space.sm,
     color: theme.buzz.textPrimary,
     textAlign: 'center',
   },
   body: {
     ...theme.buzz.type.meta,
-    marginTop: 7,
+    marginTop: theme.buzz.space.sm,
     color: theme.buzz.textSecondary,
     textAlign: 'center',
   },

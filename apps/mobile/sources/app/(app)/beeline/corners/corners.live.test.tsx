@@ -36,7 +36,7 @@ function hostModule(...names: string[]) {
     names.map((name) => [name, (props: any) => React.createElement(name, props, props?.children)]),
   );
 }
-vi.mock('@/components/buzz/MonoHull', () => hostModule('MonoButton'));
+vi.mock('@/components/buzz/Button', () => hostModule('Button'));
 vi.mock('@/components/buzz/SurfaceGlyphLoader', () => hostModule('SurfaceGlyphLoader'));
 vi.mock('@/components/buzz/RoomCornersHeader', () => hostModule('RoomCornersHeader'));
 vi.mock('@/components/buzz/RoomCornersList', () => hostModule('RoomCornersList'));

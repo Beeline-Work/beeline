@@ -1,7 +1,7 @@
 import React from 'react';
-import { Text, TouchableOpacity, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { Typography } from '@/constants/Typography';
+import { Button } from './Button';
 
 export type ProfileAction = {
   readonly disabled?: boolean;
@@ -15,17 +15,15 @@ export function ProfileActions({ actions }: { readonly actions: readonly Profile
   return (
     <View style={styles.actions} testID="profile-actions">
       {actions.map((action) => (
-        <TouchableOpacity
-          accessibilityRole="button"
-          accessibilityState={{ disabled: Boolean(action.disabled) }}
+        <Button
           disabled={action.disabled}
           key={action.testID ?? action.label}
+          label={action.label}
           onPress={action.onPress}
-          style={[styles.action, action.disabled && styles.disabled]}
+          style={styles.action}
           testID={action.testID}
-        >
-          <Text style={styles.label}>{action.label}</Text>
-        </TouchableOpacity>
+          variant="brass"
+        />
       ))}
     </View>
   );
@@ -39,21 +37,5 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.buzz.space.sm,
     justifyContent: 'center',
   },
-  action: {
-    alignItems: 'center',
-    backgroundColor: theme.buzz.bgBase,
-    borderColor: theme.buzz.borderStrong,
-    borderRadius: theme.buzz.radius,
-    borderWidth: StyleSheet.hairlineWidth,
-    justifyContent: 'center',
-    minHeight: 44,
-    minWidth: 76,
-    paddingHorizontal: theme.buzz.space.md,
-  },
-  disabled: { opacity: 0.45 },
-  label: {
-    ...Typography.default('semiBold'),
-    ...theme.buzz.type.meta,
-    color: theme.buzz.accent,
-  },
+  action: { minWidth: 76 },
 }));

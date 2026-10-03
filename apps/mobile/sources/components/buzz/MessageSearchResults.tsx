@@ -137,8 +137,8 @@ function Retry({ label, onPress, testID }: { label: string; onPress: () => void;
 const styles = StyleSheet.create((theme) => ({
   row: {
     paddingHorizontal: theme.buzz.space.md,
-    paddingVertical: 9,
-    gap: 2,
+    paddingVertical: theme.buzz.space.sm,
+    gap: theme.buzz.space.xs,
   },
   pressed: { backgroundColor: theme.buzz.bgPressed },
   meta: { flexDirection: 'row', alignItems: 'baseline', gap: theme.buzz.space.sm },
@@ -153,9 +153,9 @@ const styles = StyleSheet.create((theme) => ({
     ...theme.buzz.type.meta,
     color: theme.buzz.ledgerQuiet,
     paddingHorizontal: theme.buzz.space.md,
-    paddingVertical: 9,
+    paddingVertical: theme.buzz.space.sm,
   },
   retryLine: { flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.sm },
-  more: { paddingHorizontal: theme.buzz.space.md, paddingVertical: 9, minHeight: 44, justifyContent: 'center' },
+  more: { paddingHorizontal: theme.buzz.space.md, paddingVertical: theme.buzz.space.sm, minHeight: 44, justifyContent: 'center' },
   action: { ...theme.buzz.type.meta, color: theme.buzz.buttonSecondaryText },
 }));

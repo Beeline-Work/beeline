@@ -1,136 +1,45 @@
-import { Platform } from 'react-native';
-
 /**
- * Typography system for Happy Coder app
+ * Font families (DESIGN.md → Typography).
  *
- * Default/prose typography: IBM Plex Sans
- * Monospace typography: IBM Plex Mono
- * Transcript prose typography: Space Grotesk
- * Logo typography: Bricolage Grotesque (specific use only)
+ * One sans for everything a person reads: Space Grotesk. One mono for strings
+ * a machine produced: IBM Plex Mono. Sizes and tracking come from the type
+ * roles (`theme.buzz.type`), never from here.
  *
- * Usage Examples:
- *
- * // Default typography (IBM Plex Mono)
- * <Text style={{ fontSize: 16, ...Typography.default() }}>Regular text</Text>
- * <Text style={{ fontSize: 16, ...Typography.default('italic') }}>Italic text</Text>
- * <Text style={{ fontSize: 16, ...Typography.default('semiBold') }}>Semi-bold text</Text>
- *
- * // Monospace typography (IBM Plex Mono)
- * <Text style={{ fontSize: 14, ...Typography.mono() }}>Code text</Text>
- * <Text style={{ fontSize: 14, ...Typography.mono('italic') }}>Italic code</Text>
- * <Text style={{ fontSize: 14, ...Typography.mono('semiBold') }}>Bold code</Text>
- *
- * // Logo typography (Bricolage Grotesque - use sparingly!)
- * // Note: Don't add fontWeight as this font is already bold
- * <Text style={{ fontSize: 28, ...Typography.logo() }}>Logo Text</Text>
- *
- * // Alternative direct usage
- * <Text style={{ fontSize: 16, fontFamily: getDefaultFont('semiBold') }}>Direct usage</Text>
- * <Text style={{ fontSize: 14, fontFamily: getMonoFont() }}>Direct mono usage</Text>
- * <Text style={{ fontSize: 28, fontFamily: getLogoFont() }}>Direct logo usage</Text>
+ * <Text style={{ ...theme.buzz.type.body, ...Typography.default('semiBold') }}>Title</Text>
+ * <Text style={{ ...theme.buzz.type.machine, ...Typography.mono() }}>a1b2c3d</Text>
  */
-
-// Font family constants
 export const FontFamilies = {
-  // IBM Plex Sans (default prose typography)
-  default: {
-    regular: 'IBMPlexSans-Regular',
-    italic: 'IBMPlexSans-Italic',
-    semiBold: 'IBMPlexSans-SemiBold',
+  sans: {
+    regular: 'SpaceGrotesk-Regular',
+    medium: 'SpaceGrotesk-Medium',
+    semiBold: 'SpaceGrotesk-SemiBold',
   },
-
-  // IBM Plex Mono (default monospace)
   mono: {
     regular: 'IBMPlexMono-Regular',
     italic: 'IBMPlexMono-Italic',
     semiBold: 'IBMPlexMono-SemiBold',
   },
-
-  // Space Grotesk (transcript prose)
-  grotesk: {
-    regular: 'SpaceGrotesk-Regular',
-    medium: 'SpaceGrotesk-Medium',
-    semiBold: 'SpaceGrotesk-SemiBold',
-  },
-  // Bricolage Grotesque (logo/special use only)
-  logo: {
-    bold: 'BricolageGrotesque-Bold',
-  },
-  
-  // Legacy fonts (keep for backward compatibility)
-  legacy: {
-    systemMono: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-  }
-};
-
-// Helper functions for easy access to font families
-export const getDefaultFont = (weight: 'regular' | 'italic' | 'semiBold' = 'regular') => {
-  return FontFamilies.default[weight];
-};
-
-export const getMonoFont = (weight: 'regular' | 'italic' | 'semiBold' = 'regular') => {
-  return FontFamilies.mono[weight];
-};
-
-export const getGroteskFont = (weight: 'regular' | 'medium' | 'semiBold' = 'regular') => {
-  return FontFamilies.grotesk[weight];
-};
-
-export const getLogoFont = () => {
-  return FontFamilies.logo.bold;
-};
-
-// Font weight mappings for the font families
-export const FontWeights = {
-  regular: '400',
-  semiBold: '600', 
-  bold: '700',
 } as const;
 
-// Style utilities for easy inline usage
+export const getDefaultFont = (weight: 'regular' | 'medium' | 'semiBold' = 'regular') =>
+  FontFamilies.sans[weight];
+
+export const getMonoFont = (weight: 'regular' | 'italic' | 'semiBold' = 'regular') =>
+  FontFamilies.mono[weight];
+
 export const Typography = {
-  // Default font styles (IBM Plex Sans)
-  default: (weight: 'regular' | 'italic' | 'semiBold' = 'regular') => ({
+  /** Space Grotesk: the face for everything a person reads. */
+  default: (weight: 'regular' | 'medium' | 'semiBold' = 'regular') => ({
     fontFamily: getDefaultFont(weight),
   }),
-  
-  // Monospace font styles (IBM Plex Mono)
+
+  /** IBM Plex Mono: commands, paths, hashes, code, tool rows. */
   mono: (weight: 'regular' | 'italic' | 'semiBold' = 'regular') => ({
     fontFamily: getMonoFont(weight),
   }),
 
-  /**
-   * The semantic Buzz transcript voice: Space Grotesk, the Obsidian `prose*`
-   * families.
-   */
+  /** The transcript voice: the same Space Grotesk as `default`. */
   ledger: (weight: 'regular' | 'medium' | 'semiBold' = 'regular') => ({
-    fontFamily:
-      weight === 'medium'
-        ? getGroteskFont('medium')
-        : weight === 'semiBold'
-          ? getGroteskFont('semiBold')
-          : getGroteskFont('regular'),
+    fontFamily: getDefaultFont(weight),
   }),
-  
-  // Logo font style (Bricolage Grotesque)
-  logo: () => ({
-    fontFamily: getLogoFont(),
-  }),
-  
-  // Header text style
-  header: () => ({
-    fontFamily: getDefaultFont('semiBold'),
-  }),
-  
-  // Body text style
-  body: () => ({
-    fontFamily: getDefaultFont('regular'),
-  }),
-  
-  // Legacy font styles (for backward compatibility)
-  legacy: {
-    systemMono: () => ({
-      fontFamily: FontFamilies.legacy.systemMono,
-    }),
-  }
 };

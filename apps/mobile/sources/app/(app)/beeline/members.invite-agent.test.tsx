@@ -121,11 +121,13 @@ vi.mock('@/components/buzz/MonoHull', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
-    BrassButton: host('BrassButton'),
     HullSurface: host('HullSurface'),
-    MonoButton: host('MonoButton'),
     PixelLoader: host('PixelLoader'),
   };
+});
+vi.mock('@/components/buzz/Button', async () => {
+  const ReactModule = await import('react');
+  return { Button: (props: any) => ReactModule.createElement('Button', props, props.children) };
 });
 vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
   const ReactModule = await import('react');
@@ -326,7 +328,7 @@ describe('Members invite affordance design', () => {
   it('offers a quiet + on each section head, in place of the boxed mono invite pair and the full-width brass row (C82)', async () => {
     route.action = undefined;
     const renderer = await render();
-    expect(renderer.root.findAllByType('BrassButton' as any)).toHaveLength(0);
+    expect(renderer.root.findAllByType('Button' as any)).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'add-members' })).toHaveLength(0);
     expect(
       renderer.root.findByProps({ testID: 'members-add-people' }).props.accessibilityLabel,
@@ -336,7 +338,7 @@ describe('Members invite affordance design', () => {
     ).toBe('Add agents');
     expect(renderer.root.findAllByProps({ testID: 'invite-person' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'invite-agent' })).toHaveLength(0);
-    expect(renderer.root.findAllByType('MonoButton' as any)).toHaveLength(0);
+    expect(renderer.root.findAllByType('Button' as any)).toHaveLength(0);
     // Every size on the page comes from the type roles; the glyph is gone.
     expect(source).not.toMatch(/fontSize:\s*\d/);
     expect(source).not.toContain('MEMBERS_GLYPH');

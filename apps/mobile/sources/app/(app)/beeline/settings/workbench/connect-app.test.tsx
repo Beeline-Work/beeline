@@ -18,6 +18,14 @@ vi.mock('expo-router', () => ({
 
 vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
 
+vi.mock('@/components/buzz/Button', async () => {
+  const R = await import('react');
+  // The one Button, as a host press target carrying its label.
+  return {
+    Button: ({ label, ...props }: any) =>
+      R.createElement('TouchableOpacity', { ...props, label }, R.createElement('Text', null, label)),
+  };
+});
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>

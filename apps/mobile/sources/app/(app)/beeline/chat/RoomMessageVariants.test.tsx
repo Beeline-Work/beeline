@@ -146,10 +146,13 @@ vi.mock('@/components/buzz/MonoHull', async () => {
   const ReactModule = await import('react');
   return {
     HullSurface: (props: any) => ReactModule.createElement('HullSurface', props, props.children),
-    MonoButton: (props: any) => ReactModule.createElement('MonoButton', props),
     NewMessageMaterialize: (props: any) =>
       ReactModule.createElement('NewMessageMaterialize', props, props.children),
   };
+});
+vi.mock('@/components/buzz/Button', async () => {
+  const ReactModule = await import('react');
+  return { Button: (props: any) => ReactModule.createElement('Button', props, props.children) };
 });
 vi.mock('@/components/buzz/Ledger', async () => {
   const ReactModule = await import('react');
@@ -1112,8 +1115,8 @@ describe('Room message variant components', () => {
       );
 
       const reactionChips = renderer.root.findByProps({ testID: `reaction-chips-${row.id}` });
-      expect(reactionChips.props.style).toMatchObject({ marginTop: 3, marginBottom: 3 });
-      expect(reactionChips.props.style.marginTop + reactionChips.props.style.marginBottom).toBe(6);
+      expect(reactionChips.props.style).toMatchObject({ marginTop: 4, marginBottom: 4 });
+      expect(reactionChips.props.style.marginTop + reactionChips.props.style.marginBottom).toBe(8);
     },
   );
 

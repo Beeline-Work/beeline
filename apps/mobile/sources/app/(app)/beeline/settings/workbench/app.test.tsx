@@ -12,6 +12,14 @@ vi.mock('expo-router', () => ({ router: navigation, useLocalSearchParams: () => 
 vi.mock('@/buzz/app-sign-in', () => ({ openAppSignIn: signIn.open }));
 const safeArea = vi.hoisted(() => ({ bottom: 0 }));
 vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: safeArea.bottom, left: 0, right: 0 }) }));
+vi.mock('@/components/buzz/Button', async () => {
+  const R = await import('react');
+  // The one Button, as a host press target carrying its label.
+  return {
+    Button: ({ label, ...props }: any) =>
+      R.createElement('TouchableOpacity', { ...props, label }, R.createElement('Text', null, label)),
+  };
+});
 vi.mock('react-native', async () => {
   const R = await import('react');
   const host = (name: string) => (props: any) => R.createElement(name, props, props.children);

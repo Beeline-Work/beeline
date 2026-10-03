@@ -559,7 +559,9 @@ const styles = StyleSheet.create((theme) => ({
    * additionally gets air and tracking rather than mass.
    */
   bold: { fontFamily: theme.buzz.proseSemibold, color: theme.buzz.ledgerBright },
-  italic: { fontFamily: theme.buzz.proseItalic },
+  // Space Grotesk ships no italic: emphasis is spoken by weight, in the
+  // prose family, so an emphasised word never switches typeface.
+  italic: { fontFamily: theme.buzz.proseMedium },
   inlineCode: { fontFamily: theme.buzz.monoRegular, color: theme.buzz.ledgerQuiet },
   link: { textDecorationLine: 'underline' },
   // A tagged identity pops in the theme's brass — the one chromatic spend in
@@ -568,7 +570,7 @@ const styles = StyleSheet.create((theme) => ({
   heading: {
     fontFamily: theme.buzz.proseSemibold,
     color: theme.buzz.ledgerBright,
-    marginTop: 3,
+    marginTop: theme.buzz.space.xs,
   },
   documentHeading1: { ...theme.buzz.type.hero, fontFamily: theme.buzz.proseSemibold, color: theme.buzz.textPrimary },
   documentHeading2: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
@@ -578,7 +580,7 @@ const styles = StyleSheet.create((theme) => ({
   documentHeading6: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   documentHeadingSpace: { marginTop: theme.buzz.space.md, marginBottom: theme.buzz.space.sm },
   documentFirstHeading: { marginTop: 0 },
-  list: { width: '100%', gap: 3 },
+  list: { width: '100%', gap: theme.buzz.space.xs },
   documentList: { gap: theme.buzz.space.sm },
   listItem: { width: '100%' },
   documentListItem: { paddingLeft: theme.buzz.space.sm },
@@ -592,8 +594,8 @@ const styles = StyleSheet.create((theme) => ({
    */
   codeFrame: {
     maxWidth: '100%',
-    paddingLeft: 13,
-    paddingVertical: 3,
+    paddingLeft: theme.buzz.space.md,
+    paddingVertical: theme.buzz.space.xs,
     borderLeftWidth: 2,
     borderLeftColor: theme.buzz.bgTexturePeak,
   },
@@ -613,12 +615,12 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: 'row',
     alignItems: 'flex-start',
     columnGap: 8,
-    paddingVertical: 3,
+    paddingVertical: theme.buzz.space.xs,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.buzz.borderQuiet,
   },
   tableLastRow: { borderBottomWidth: 0 },
   tableCell: { minWidth: 0 },
   tableHeadText: { color: theme.buzz.ledgerBright },
-  rule: { height: 1, backgroundColor: theme.buzz.borderQuiet, marginVertical: 3 },
+  rule: { height: 1, backgroundColor: theme.buzz.borderQuiet, marginVertical: theme.buzz.space.xs },
 }));

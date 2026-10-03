@@ -4023,11 +4023,11 @@ export function BuzzChatSurface({
   );
 
   const handleChoiceAnswer = useCallback(
-    async (choiceId: string, optionId: string) => {
+    async (choiceId: string, optionId: string, note?: string) => {
       if (viewerIsAgent || choiceActionId) return;
       setChoiceActionId(choiceId);
       try {
-        await monolithPhoneOperation('answerChoice', { choiceId, optionId });
+        await monolithPhoneOperation('answerChoice', { choiceId, optionId, ...(note ? { note } : {}) });
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
         console.warn('Choice answer failed:', err);

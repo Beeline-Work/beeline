@@ -485,7 +485,7 @@ function gateLines(
       ),
     })),
   ];
-  if (gate.answer !== undefined)
+  if (gate.answer !== undefined) {
     lines.push({
       key: 'answer',
       value: (
@@ -496,7 +496,8 @@ function gateLines(
         </>
       ),
     });
-  else if (gate.status === 'open')
+    if (gate.note) lines.push({ key: 'note', value: gate.note });
+  } else if (gate.status === 'open')
     lines.push({ key: 'answer', value: <Ghost>{`waiting on ${waitingOn}`}</Ghost> });
   else lines.push({ key: 'answer', value: <Ghost>{gate.status}</Ghost> });
   return lines;

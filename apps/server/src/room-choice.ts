@@ -8,6 +8,7 @@ import {
   choiceClosedFooter,
   decorateChoiceOptions,
   normalizeChoiceConstraint,
+  normalizeChoiceNote,
   normalizeChoiceOptions,
   normalizeChoicePrompt,
   normalizeChoiceTtl,
@@ -160,6 +161,7 @@ export function buildChoiceCard(input: {
   answeredBy?: RoomViewIdentity;
   selectedOptionId?: string;
   footer?: string;
+  note?: string;
 }): ChoiceCardView {
   const closed = input.status === 'closed';
   const tally = closed
@@ -189,6 +191,7 @@ export function buildChoiceCard(input: {
       : tally
         ? { footer: choiceClosedFooter(tally, votedCount, input.electorate.length) }
         : {}),
+    ...(input.note ? { note: input.note } : {}),
   };
 }
 
@@ -524,8 +527,9 @@ function handleOf(identity: IdentityRow | undefined): string {
 
 export async function answerRoomChoice(
   database: SqlDatabase,
-  input: { choiceId: string; optionId: string; viewerId: string },
+  input: { choiceId: string; optionId: string; viewerId: string; note?: unknown },
 ): Promise<{ choiceId: string; status: ChoiceStatus; roomId: string }> {
+  const note = normalizeChoiceNote(input.note);
   const choice = await loadChoice(database, input.choiceId);
   if (!choice) throw new Error('choice not found');
   if (choice.status !== 'open') throw new Error('choice conflict: already decided');
@@ -542,6 +546,18 @@ export async function answerRoomChoice(
     )
   ).rows[0];
   if (!member) throw new Error('room access denied');
+  if (note) {
+    // Only a workflow gate takes a note; the agent it wakes reads it.
+    const gate = (
+      await database.query<{ run_id: string | null }>(
+        `SELECT card->>'runId' run_id FROM messages WHERE id=$1`,
+        [choice.message_id],
+      )
+    ).rows[0];
+    if (choice.mode !== 'question' || !gate?.run_id) {
+      throw new Error('choice note is only accepted on a workflow gate');
+    }
+  }
   if (choice.mode === 'poll') {
     if (!choice.electorate.includes(input.viewerId)) {
       throw new Error('choice access denied');
@@ -575,9 +591,9 @@ export async function answerRoomChoice(
     return { choiceId: choice.id, status: 'open', roomId: choice.room_id };
   }
   const inserted = await database.query(
-    `INSERT INTO room_choice_votes(choice_id,voter_id,option_id)
-     VALUES($1,$2,$3) ON CONFLICT(choice_id,voter_id) DO NOTHING`,
-    [choice.id, input.viewerId, input.optionId],
+    `INSERT INTO room_choice_votes(choice_id,voter_id,option_id,note)
+     VALUES($1,$2,$3,$4) ON CONFLICT(choice_id,voter_id) DO NOTHING`,
+    [choice.id, input.viewerId, input.optionId, note ?? null],
   );
   if (!inserted.rowCount) throw new Error('choice conflict: already decided');
   const closed = await database.query(
@@ -602,6 +618,7 @@ export async function answerRoomChoice(
     answeredBy: cardIdentity(viewer),
     selectedOptionId: input.optionId,
     footer: `picked ${option.letter} · @${handleOf(viewer)}`,
+    note,
   });
   await writeChoiceCard(database, choice.message_id, card);
   await wakeChoice(database, {
@@ -613,7 +630,12 @@ export async function answerRoomChoice(
     object: option.letter,
     consequence: option.label,
     kind: 'choice-answered',
-    card: { choiceId: choice.id, optionId: input.optionId, letter: option.letter },
+    card: {
+      choiceId: choice.id,
+      optionId: input.optionId,
+      letter: option.letter,
+      ...(note ? { note } : {}),
+    },
     settledMessageId: choice.message_id,
   });
   return { choiceId: choice.id, status: 'answered', roomId: choice.room_id };

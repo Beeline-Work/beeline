@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
+import type { AnswerChoiceInput, WorkflowGateRecordView } from './phone-operations.js';
 import {
+  CHOICE_NOTE_MAX_LENGTH,
   CHOICE_POLL_ELECTORATE_MAX,
   CHOICE_POLL_ELECTORATE_MIN,
   CHOICE_TTL_SECONDS,
@@ -9,6 +11,7 @@ import {
   formatChoiceClock,
   isChoiceTtlSeconds,
   normalizeChoiceConstraint,
+  normalizeChoiceNote,
   normalizeChoiceOptions,
   normalizeChoicePrompt,
   normalizeChoiceTtl,
@@ -126,5 +129,27 @@ describe('a closed poll tally is width, not permission', () => {
 
   it('formats a still close clock without travelling', () => {
     expect(formatChoiceClock(Date.UTC(2026, 8, 18, 16, 4) / 1000)).toMatch(/^\d{2}:\d{2}$/);
+  });
+});
+
+describe('workflow gate answer note', () => {
+  it('is an optional field on the answer and the gate record', () => {
+    expectTypeOf<AnswerChoiceInput>().toMatchTypeOf<{ choiceId: string; optionId: string }>();
+    expectTypeOf<{ choiceId: string; optionId: string }>().toMatchTypeOf<AnswerChoiceInput>();
+    expectTypeOf<AnswerChoiceInput['note']>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<WorkflowGateRecordView['note']>().toEqualTypeOf<string | undefined>();
+  });
+
+  it('trims to one line, treats empty as absent, and caps the length', () => {
+    expect(CHOICE_NOTE_MAX_LENGTH).toBe(140);
+    expect(normalizeChoiceNote('  ship only\n the fix  ')).toBe('ship only the fix');
+    expect(normalizeChoiceNote(undefined)).toBeUndefined();
+    expect(normalizeChoiceNote(null)).toBeUndefined();
+    expect(normalizeChoiceNote(' \n ')).toBeUndefined();
+    expect(normalizeChoiceNote('é'.repeat(CHOICE_NOTE_MAX_LENGTH))).toHaveLength(140);
+    expect(() => normalizeChoiceNote('x'.repeat(CHOICE_NOTE_MAX_LENGTH + 1))).toThrow(
+      'choice note is too long',
+    );
+    expect(() => normalizeChoiceNote(42)).toThrow('choice note is invalid');
   });
 });

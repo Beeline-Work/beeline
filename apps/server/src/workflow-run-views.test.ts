@@ -5,7 +5,7 @@ import { PgliteDatabase } from './test-support.js';
 import { createAgentCommand, readAgentCommands, type CommandRow } from './agent-command.js';
 import { advanceCorner, ensureCornerWorkflowSeeded } from './corner-workflow.js';
 import { PhoneService } from './phone-service.js';
-import { answerRoomChoice } from './room-choice.js';
+import { answerRoomChoice, postRoomChoice } from './room-choice.js';
 import { handoff, saveWorkflow, startWorkflow } from './workflow-runs.js';
 
 /**
@@ -473,5 +473,90 @@ describe('optional workflow receipts end to end', () => {
       await expect(handoff(database, worker, { runId, outcome: 'skip', contents: {}, receipt })).rejects.toThrow(/receipt/);
     const detail = await phone.execute('readWorkflowRun', { roomId: CORNER, runId }, OWNER);
     expect(detail.run.state).toBe('approve');
+  });
+});
+
+describe('a workflow gate answer with a note', () => {
+  async function openGate(): Promise<{ runId: string; choiceId: string; dispatch: string }> {
+    const runId = await triageRun();
+    const choice = (
+      await database.query<{ id: string; options: Array<{ optionId: string; label: string }> }>(
+        `SELECT id,options FROM room_choices WHERE room_id=$1 AND status='open'`,
+        [CORNER],
+      )
+    ).rows[0]!;
+    const dispatch = choice.options.find((option) => option.label === 'dispatch')!.optionId;
+    return { runId, choiceId: choice.id, dispatch };
+  }
+
+  it('stores the note, wakes the gate agent with it, and shows it on the run', async () => {
+    const { runId, choiceId, dispatch } = await openGate();
+    await phone.execute(
+      'answerChoice',
+      { choiceId, optionId: dispatch, note: '  only the dropdown one,\n skip the rest  ' },
+      OWNER,
+    );
+    const stored = await database.query<{ note: string | null }>(
+      `SELECT note FROM room_choice_votes WHERE choice_id=$1`,
+      [choiceId],
+    );
+    expect(stored.rows).toEqual([{ note: 'only the dropdown one, skip the rest' }]);
+    const inbox = await readAgentCommands(database, CORNER, TRIAGER);
+    const woken = inbox.commands.find((c) => c.source.systemEvent?.kind === 'choice-answered');
+    expect(woken?.source.body).toContain(
+      'Their note with the answer: "only the dropdown one, skip the rest"',
+    );
+    const detail = await phone.execute('readWorkflowRun', { roomId: CORNER, runId }, OWNER);
+    expect(detail.history[2]!.gate).toMatchObject({
+      status: 'answered',
+      answer: 'dispatch',
+      answeredBy: { id: OWNER, name: 'Owner', kind: 'human' },
+      note: 'only the dropdown one, skip the rest',
+    });
+  });
+
+  it('answers exactly as before without a note, and treats a blank note as none', async () => {
+    const { runId, choiceId, dispatch } = await openGate();
+    await phone.execute('answerChoice', { choiceId, optionId: dispatch, note: '   ' }, OWNER);
+    const inbox = await readAgentCommands(database, CORNER, TRIAGER);
+    const woken = inbox.commands.find((c) => c.source.systemEvent?.kind === 'choice-answered');
+    expect(woken?.source.body).not.toContain('note');
+    const detail = await phone.execute('readWorkflowRun', { roomId: CORNER, runId }, OWNER);
+    expect(detail.history[2]!.gate).toMatchObject({ status: 'answered', answer: 'dispatch' });
+    expect(detail.history[2]!.gate).not.toHaveProperty('note');
+  });
+
+  it('refuses a note from someone who may not answer the gate, and leaves it open', async () => {
+    const { runId, choiceId, dispatch } = await openGate();
+    await expect(
+      phone.execute('answerChoice', { choiceId, optionId: dispatch, note: 'sneaky' }, OUTSIDER),
+    ).rejects.toThrow('room access denied');
+    const votes = await database.query(`SELECT 1 FROM room_choice_votes WHERE choice_id=$1`, [
+      choiceId,
+    ]);
+    expect(votes.rows).toHaveLength(0);
+    const detail = await phone.execute('readWorkflowRun', { roomId: CORNER, runId }, OWNER);
+    expect(detail.history[2]!.gate).toMatchObject({ status: 'open' });
+    expect(detail.history[2]!.gate).not.toHaveProperty('note');
+  });
+
+  it('refuses an over-long note and a note on an ordinary choice card', async () => {
+    const { choiceId, dispatch } = await openGate();
+    await expect(
+      phone.execute('answerChoice', { choiceId, optionId: dispatch, note: 'x'.repeat(141) }, OWNER),
+    ).rejects.toThrow('choice note is too long');
+    const plain = await postRoomChoice(database, {
+      roomId: ROOM,
+      agentId: REVIEWER,
+      mode: 'question',
+      prompt: 'Ship it?',
+      options: [
+        { label: 'yes', consequence: 'ship' },
+        { label: 'no', consequence: 'hold' },
+      ],
+    });
+    await expect(
+      phone.execute('answerChoice', { choiceId: plain.choiceId, optionId: 'A', note: 'hi' }, OWNER),
+    ).rejects.toThrow('choice note is only accepted on a workflow gate');
   });
 });

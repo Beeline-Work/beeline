@@ -495,6 +495,24 @@ describe('start_workflow', () => {
     );
   });
 
+  it('shows the full run id on the handoff card: the stored text a human reads carries it verbatim', async () => {
+    // `messages.text` (not just the structured `card`) is what the mobile app
+    // renders for this card: `workflow-handoff` is not a card type
+    // `phone-service.ts`'s `toRoomViewMessage` gives a dedicated field, and it
+    // is not `presentation: 'system'` either, so it falls back to an ordinary
+    // ledger message bubble whose body is this exact `text` column.
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: CONTRACT });
+    const started = await startWorkflow(database, command, {
+      name: 'corner',
+      roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+    });
+    const row = await database.query<{ text: string }>(`SELECT text FROM messages WHERE id=$1`, [
+      started.runId,
+    ]);
+    expect(row.rows[0]?.text).toContain(started.runId);
+  });
+
   it('rejects start_workflow from an agent currently acting inside an active run of the same workflow, naming the run id', async () => {
     const { runId } = await startedRun();
     // IMPLEMENTER's own wake (the start card) is its triggering message here,
@@ -655,6 +673,13 @@ describe('handoff', () => {
     });
     expect(result.state).toBe('checks');
     expect(await pendingCommandsFor(IMPLEMENTER)).toBeGreaterThan(0);
+    // The handoff card's stored text (what the mobile app renders for it,
+    // same fallback as the start card) carries the full run id too.
+    const rows = await database.query<{ text: string }>(
+      `SELECT text FROM messages WHERE card_type='workflow-handoff' AND card->>'runId'=$1 ORDER BY created_at DESC LIMIT 1`,
+      [runId],
+    );
+    expect(rows.rows[0]?.text).toContain(runId);
   });
 
   it('rejects a handoff on a run that has already ended', async () => {

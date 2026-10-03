@@ -440,6 +440,7 @@ export async function startWorkflow(
   if (!input.roleBindings || typeof input.roleBindings !== 'object') {
     throw new Error('roleBindings is required');
   }
+
   return database.transaction(async (db) => {
     if (command.source_message_id) {
       const held = await runThisWakeContinues(db, {
@@ -790,6 +791,7 @@ async function reassignRole(
     subject: { kind: 'system', name: 'the workflow' },
     verb: 'reassigned',
     object: input.role,
+    consequence: `run ${input.runId} of ${input.run.workflowSlug}`,
     kind: 'workflow-handoff',
     ...(state.kind === 'gate' ? {} : { wakes: [input.picked] }),
     presentation: 'card',

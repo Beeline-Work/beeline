@@ -1631,14 +1631,9 @@ export function agentToolsFor(
     // Every code-lane corner turn may record a PASS: the server, not the
     // session's boot role, decides whether this agent is the configured reviewer.
     if (tool.name === 'approve_merge') return cornerTurn && codeLane;
-    // A connector is offered where a person is answering — a Room or a DM —
-    // never from a corner, whose work is the branch (R5).
-    if (
-      tool.name === 'workbench_status' ||
-      tool.name === 'offer_connector' ||
-      tool.name === 'connect_app'
-    )
-      return !cornerTurn;
+    // Connector installation stays in Rooms and DMs; app discovery and
+    // connection are available wherever an app tool can be used.
+    if (tool.name === 'offer_connector') return !cornerTurn;
     // From a corner, open_corner opens a sibling corner in the parent Room.
     if (tool.name === 'open_corner') return !directMessage;
     if (tool.name === 'revise_corner_brief') return cornerTurn;

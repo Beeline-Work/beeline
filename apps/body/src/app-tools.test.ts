@@ -112,4 +112,27 @@ describe('server-mediated connected app tools', () => {
     expect(text).toContain(`Slack (app:slack, id ${appId})`);
     expect(text.match(/app:slack/g)).toHaveLength(1);
   });
+
+  it('lets a corner turn discover X and start its connection with the same turn authority', async () => {
+    vi.stubEnv('BEELINE_DAEMON_CORNER_ID', 'corner-1');
+    writeFileSync(join(home, 'turn.json'), JSON.stringify({ roomId: 'corner-1',
+      requestId: 'request-1', generationId: 'generation-1' }));
+    answer = (name) => Response.json(name === 'readAgentWorkbench'
+      ? { apps: [{ appId, appKey: 'x', name: 'X', transport: 'composio',
+          status: 'connecting' }] }
+      : { status: 'needs_sign_in', appId, app: 'X', next: 'Sign in from the card.' });
+    const names = agentToolsFor(true, false, true, true).map((tool) => tool.name);
+    expect(names).toEqual(expect.arrayContaining([
+      'workbench_status', 'connect_app', 'list_app_tools', 'execute_app_tool',
+    ]));
+    expect(await callAgentTool('workbench_status', {}, 'call-1'))
+      .toContain(`X (app:x, id ${appId}) via composio: connecting`);
+    expect(JSON.parse(await callAgentTool('connect_app', { app: 'X',
+      reason: 'Check X posts', continuation: 'I will check the requested posts after sign-in.'
+    }, 'call-2'))).toMatchObject({ status: 'needs_sign_in', appId });
+    expect(calls.map((call) => [call.name, call.input.roomId]))
+      .toEqual([['readAgentWorkbench', 'corner-1'], ['connectApp', 'corner-1']]);
+    expect(calls[1]?.input).toMatchObject({ requestId: 'request-1',
+      generationId: 'generation-1' });
+  });
 });

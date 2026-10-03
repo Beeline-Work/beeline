@@ -13,6 +13,7 @@ import type { ObjectStorage } from './object-storage.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
+const CORNER = '44444444-4444-4444-8444-444444444444';
 const OWNER = 'a'.repeat(64);
 const HELPER = 'b'.repeat(64);
 const COMMAND = 'app-connect-command';
@@ -164,7 +165,7 @@ describe('connect_app', () => {
       objects,
     );
 
-  function fakeComposio() {
+  function fakeComposio(completedToolkit = 'slack') {
     let active = false;
     const provider = {
       supportsOAuth: vi.fn(async (toolkit: string) => ['slack', 'gmail'].includes(toolkit)),
@@ -181,7 +182,7 @@ describe('connect_app', () => {
       completeAuth: vi.fn(async (_session: string, person: string) => {
         if (person !== OWNER) throw new Error('App provider request failed (400)');
         active = true;
-        return { accountId: 'ca_fixture', toolkit: 'slack' };
+        return { accountId: 'ca_fixture', toolkit: completedToolkit };
       }),
       listTools: vi.fn(async () => [{ slug: 'SLACK_POST_MESSAGE', name: 'Post message',
         description: 'Post to a channel', inputParameters: {} }]),
@@ -306,6 +307,62 @@ describe('connect_app', () => {
     expect(afterUse).toMatchObject({ useCount: 1,
       lastUse: { agentId: HELPER, agentName: 'Bee', roomId: ROOM,
         roomName: 'Tools', usedAt: afterUse.lastUsedAt } });
+  });
+
+  it('WB-1: corner turn discovers X app ID and status, posts sign-in card, and wakes after connection', async () => {
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
+       VALUES($1,$2,$3,$4,'MM desk corner')`, [CORNER, WORKSPACE, ROOM, OWNER],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+      [WORKSPACE, CORNER, OWNER, HELPER],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text)
+       VALUES('corner-app-source',$1,$2,'Check access to X posts')`, [CORNER, OWNER],
+    );
+    await database.query(
+      `INSERT INTO agent_commands(
+         id,room_id,agent_id,source_message_id,turn_request_id,action,reason,
+         root_command_id,root_source_message_id,agent_depth,state,generation_id,lease_expires_at
+       ) VALUES('corner-app-command',$1,$2,'corner-app-source','corner-app-request',
+         'input','human_tag','corner-app-command','corner-app-source',0,
+         'claimed','corner-app-generation',now()+interval '10 minutes')`,
+      [CORNER, HELPER],
+    );
+    const provider = fakeComposio('x');
+    provider.supportsOAuth.mockResolvedValue(true);
+    const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const cornerTurn = { roomId: CORNER, requestId: 'corner-app-request',
+      generationId: 'corner-app-generation' };
+    const before = await daemon.execute('readAgentWorkbench', { roomId: CORNER }, HELPER);
+    expect(before.apps).toEqual([]);
+    const started = await daemon.execute('connectApp', { ...cornerTurn, app: 'X',
+      reason: 'Check access to X posts',
+      continuation: 'I will check the requested posts after sign-in.' }, HELPER);
+    expect(started).toMatchObject({ status: 'needs_sign_in', transport: 'composio',
+      appId: expect.any(String) });
+    const discovered = await daemon.execute('readAgentWorkbench', { roomId: CORNER }, HELPER);
+    expect(discovered.apps).toContainEqual(expect.objectContaining({
+      appId: started.appId, appKey: 'x', name: 'X', status: 'connecting',
+    }));
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    expect((await phone.readRoom(CORNER, OWNER))?.messages.find((message) =>
+      message.appSignIn?.appId === started.appId)?.appSignIn).toMatchObject({
+        status: 'pending', ownerId: OWNER, agentId: HELPER,
+      });
+    await phone.execute('beginAppSignIn', { appId: started.appId! }, OWNER);
+    await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture',
+      appId: started.appId! }, OWNER);
+    expect((await daemon.execute('readAgentWorkbench', { roomId: CORNER }, HELPER)).apps)
+      .toContainEqual(expect.objectContaining({
+        appId: started.appId, appKey: 'x', status: 'connected',
+      }));
+    expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1
+      AND agent_id=$2 AND reason='app_connected'`, [CORNER, HELPER])).rowCount).toBe(1);
   });
 
   it.each(['Linear', 'Example App'])('shows a failed provider link for %s on Workbench and clears it on retry', async (app) => {

@@ -346,7 +346,199 @@ describe('monolith integration', () => {
       [cornerId],
     );
     expect(sibling.rows[0]?.parent_id).toBe(ROOM);
+
+    // RO3a: reuse the human approval that dispatched this sibling corner.
+    const revision = await daemonCall('reviseCornerBrief', {
+      ...(await turnIn(cornerId)),
+      cornerId,
+      expectedRevision: 1,
+      brief: {
+        spec: 'Fix the grant card and preserve the approved label.',
+        change: 'Clarify the approved label.',
+        approval: { sourceMessageId: fix.messageId },
+      },
+    });
+    const revised = await revision.json();
+    expect({ status: revision.status, body: revised }).toMatchObject({
+      status: 200,
+      body: {
+        revision: 2,
+        sourceRoomId: corner,
+        approval: {
+          sourceMessageId: fix.messageId,
+          text: '@bee sweep the feedback',
+          approvedBy: HUMAN,
+        },
+      },
+    });
+    const unrelated = (
+      (await phone.execute(
+        'createHumanCorner',
+        { roomId: ROOM, title: 'Unrelated work' },
+        HUMAN,
+      )) as {
+        id: string;
+      }
+    ).id;
+    const unrelatedApproval = await turnIn(unrelated);
+    const agentApproval = await turnIn(corner, AGENT);
+    const attachments = new Map<string, { objectId: string; purpose: string; required: boolean }>();
+    for (const [index, sourceRoomId] of [ROOM, cornerId, corner, unrelated].entries()) {
+      const objectId = `65432109-0000-4000-8000-00000000000${index}`;
+      const bytes = Buffer.from(`Reference from ${sourceRoomId}`);
+      const sha = createHash('sha256').update(bytes).digest('hex');
+      await database.query(
+        `INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
+         VALUES($1,$2,'media',$3,'text/plain','reference.txt',$4,$5,'ready',now()+interval '1 hour')`,
+        [objectId, HUMAN, `media/${HUMAN}/${sha}`, bytes.length, sha],
+      );
+      const shared = await turnIn(sourceRoomId);
+      await database.query(`UPDATE messages SET attachments=$2::jsonb WHERE id=$1`, [
+        shared.messageId,
+        JSON.stringify([{ url: `${origin}/v1/media/${objectId}`, name: 'reference.txt' }]),
+      ]);
+      attachments.set(sourceRoomId, { objectId, purpose: 'Approved reference', required: true });
+    }
+    let expectedRevision = 2;
+    const revise = async (
+      sourceMessageId: string,
+      files: Array<{ objectId: string; purpose: string; required: boolean }> = [],
+    ) =>
+      daemonCall('reviseCornerBrief', {
+        ...(await turnIn(cornerId)),
+        cornerId,
+        expectedRevision,
+        brief: {
+          spec: 'Fix the grant card and preserve the approved label.',
+          change: 'Bind the approved reference.',
+          approval: { sourceMessageId },
+          attachments: files,
+        },
+      });
+    const expectRefusal = async (
+      sourceMessageId: string,
+      files: Parameters<typeof revise>[1] = [],
+    ) => {
+      const refused = await revise(sourceMessageId, files);
+      expect(refused.status).toBe(503);
+      expect(await refused.json()).toMatchObject({
+        error: files.length
+          ? expect.stringContaining('missing or unavailable in this Room')
+          : 'corner brief approval must name a human Room message',
+      });
+      expect(
+        (
+          await database.query<{ count: number }>(
+            `SELECT count(*)::integer count FROM corner_brief_revisions WHERE corner_id=$1`,
+            [cornerId],
+          )
+        ).rows[0]?.count,
+      ).toBe(expectedRevision);
+    };
+
+    // RO3b i/ii: neither unrelated rooms nor agent messages convey approval.
+    await expectRefusal(unrelatedApproval.messageId);
+    await expectRefusal(agentApproval.messageId);
+    await expectRefusal(fix.messageId, [attachments.get(unrelated)!]);
+
+    // Approvals and explicit files share the parent/self/opening room set.
+    // Move the latest approval to the parent, then self, then back to the opener:
+    // only the FIRST revision determines the extra room.
+    for (const sourceRoomId of [ROOM, cornerId, corner]) {
+      const approval = sourceRoomId === corner ? fix : await turnIn(sourceRoomId);
+      const accepted = await revise(approval.messageId, [attachments.get(sourceRoomId)!]);
+      expect(accepted.status).toBe(200);
+      expectedRevision += 1;
+      expect(await accepted.json()).toMatchObject({
+        revision: expectedRevision,
+        sourceRoomId,
+        approval: {
+          sourceMessageId: approval.messageId,
+          text: '@bee sweep the feedback',
+          approvedBy: HUMAN,
+        },
+        attachments: [attachments.get(sourceRoomId)!],
+      });
+    }
+
+    // RO3b iii: departing the opening room removes both forms of reuse.
+    await database.query(
+      `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
+      [corner, AGENT],
+    );
+    const afterDeparture = { messageId: createHash('sha256').update('after-departure').digest('hex') };
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`, [
+      afterDeparture.messageId,
+      corner,
+      HUMAN,
+      'Keep the approved label.',
+    ]);
+    await expectRefusal(afterDeparture.messageId);
+    await expectRefusal(fix.messageId);
+    const parentApproval = await turnIn(ROOM);
+    await expectRefusal(parentApproval.messageId, [attachments.get(corner)!]);
+    // A later parent approval must not replace an inaccessible opening source.
+    const parentRevision = await revise(parentApproval.messageId, [attachments.get(ROOM)!]);
+    expect(parentRevision.status).toBe(200);
+    expectedRevision += 1;
+    await expectRefusal(afterDeparture.messageId);
+    console.info(
+      'RO3a: authenticated sibling revision 2 quotes opening approval; parent/self/opening attachments accepted. RO3b: unrelated, agent-authored and departed-room approvals/files refused without a revision.',
+    );
   });
+  it.each(['parent', 'self'])(
+    'keeps parent/self approval scope when the first brief is from %s',
+    async (source) => {
+      const create = async (title: string) =>
+        ((await phone.execute('createHumanCorner', { roomId: ROOM, title }, HUMAN)) as { id: string })
+          .id;
+      const cornerId = await create('Unbriefed work');
+      const unrelated = await create('Other work');
+      const approvals = new Map<string, string>();
+      for (const roomId of [ROOM, cornerId, unrelated]) {
+        const messageId = createHash('sha256').update(roomId).digest('hex');
+        await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`, [
+          messageId,
+          roomId,
+          HUMAN,
+          'Approve this work.',
+        ]);
+        approvals.set(roomId, messageId);
+      }
+      const revise = (roomId: string, expectedRevision: number) =>
+        daemonOperation('reviseCornerBrief', {
+          roomId: cornerId,
+          cornerId,
+          expectedRevision,
+          brief: {
+            spec: 'Complete the approved work.',
+            change: 'Record the approved scope.',
+            approval: { sourceMessageId: approvals.get(roomId)! },
+          },
+        });
+      const firstSource = source === 'parent' ? ROOM : cornerId;
+      const first = await revise(firstSource, 0);
+      expect(first.status).toBe(200);
+      expect(await first.json()).toMatchObject({ revision: 1, sourceRoomId: firstSource });
+      const secondSource = source === 'parent' ? cornerId : ROOM;
+      const second = await revise(secondSource, 1);
+      expect(second.status).toBe(200);
+      expect(await second.json()).toMatchObject({ revision: 2, sourceRoomId: secondSource });
+      const refused = await revise(unrelated, 2);
+      expect(refused.status).toBe(503);
+      expect(await refused.json()).toMatchObject({
+        error: 'corner brief approval must name a human Room message',
+      });
+      expect(
+        (
+          await database.query<{ count: number }>(
+            `SELECT count(*)::integer count FROM corner_brief_revisions WHERE corner_id=$1`,
+            [cornerId],
+          )
+        ).rows[0]?.count,
+      ).toBe(2);
+    },
+  );
   // These fixtures test projections and lifecycle behavior downstream of intake.
   // Supply an explicit command first. Routing/refusal tests call DaemonService
   // directly in agent-command.integration.test.ts and never use this helper.

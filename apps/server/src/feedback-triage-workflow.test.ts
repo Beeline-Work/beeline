@@ -13,7 +13,7 @@ import {
 import { getInstitutionalContext } from './institutional-memory-shadow.js';
 import { loadWorkspaceSkill } from './institutional-skills.js';
 import { PgliteDatabase } from './test-support.js';
-import { startWorkflow } from './workflow-runs.js';
+import { handoff, startWorkflow } from './workflow-runs.js';
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000301';
 const OTHER_WORKSPACE = '10000000-0000-4000-8000-000000000302';
@@ -175,6 +175,37 @@ describe('feedback-triage workflow', () => {
       roleBindings: { triager: TRIAGER },
     });
     expect(started.state).toBe('notify');
+  });
+
+  it('lets a triager that cannot send Fixed DMs hand off notify as skipped, with a reason, and go on to pull', async () => {
+    await backfillFeedbackTriageWorkflow(database);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES('schedule-ran',$1,$2,$3)`,
+      [TRIAGE_CORNER, CREATOR, FEEDBACK_TRIAGE_SCHEDULE_PROMPT],
+    );
+    const turn = cornerTurn('schedule-ran');
+    await transferWorkflowOwner(database, TRIAGE_CORNER, 'feedback-triage', CREATOR, TRIAGER);
+    const { runId } = await startWorkflow(database, turn, {
+      name: 'feedback-triage',
+      roleBindings: { triager: TRIAGER },
+    });
+    await expect(
+      handoff(database, turn, { runId, outcome: 'skipped', contents: { fixedPullRequests: 'none' } }),
+    ).rejects.toThrow('skipReason is required');
+    await expect(
+      handoff(database, turn, {
+        runId,
+        outcome: 'skipped',
+        contents: {
+          fixedPullRequests: 'none',
+          skipReason: 'not_system_sender',
+          unnotifiedPullRequests: [1968, 1970],
+        },
+      }),
+    ).resolves.toEqual({ runId, state: 'pull' });
+    await expect(
+      handoff(database, turn, { runId, outcome: 'nothing_new', contents: { problems: [] } }),
+    ).resolves.toEqual({ runId, state: 'done', status: 'done' });
   });
 
   it("refreshes its own outdated seed but never a team's own workflow of the same name", async () => {

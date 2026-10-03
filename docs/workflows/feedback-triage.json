@@ -7,8 +7,8 @@
   "handoffs": {
     "notify": {
       "role": "triager",
-      "requires": ["fixedPullRequests"],
-      "on": { "notified": "pull" }
+      "requires": ["fixedPullRequests", "skipReason", "unnotifiedPullRequests"],
+      "on": { "notified": "pull", "skipped": "pull" }
     },
     "pull": {
       "role": "triager",

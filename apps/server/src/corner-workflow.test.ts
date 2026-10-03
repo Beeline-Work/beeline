@@ -702,6 +702,61 @@ async function fallback(cornerId: string, online = true) {
   if (online) await db.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence','{"status":"online"}')`, [R, F]);
 }
 
+it.each(['passing', 'unknown', 'unreachable'])('Reproduction F1-2: ask_human revision resumes %s', async checks => {
+  const cornerId = await approved();
+  await db.query(`UPDATE messages SET card=jsonb_set(card,'{toState}','"ask_human"') WHERE id=(SELECT id FROM messages WHERE room_id=$1 AND card_type='corner-workflow-handoff' ORDER BY (card->>'seq')::int DESC LIMIT 1)`, [cornerId]);
+  await db.query(`UPDATE corner_facts SET workflow_state='ask_human',lifecycle=jsonb_set(lifecycle,'{checks}',$2::jsonb) WHERE corner_id=$1`, [cornerId, JSON.stringify(checks === 'unknown' ? 'unknown' : 'passing')]);
+  if (checks === 'unreachable') await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [R, B]);
+  const result = await revise(cornerId);
+  const state = await currentState(cornerId);
+  console.info(`Reproduction F1-2: wrong=ask_human; right=${checks === 'passing' ? 'review' : 'implement'}; observed=${state}`);
+  expect(state).toBe(checks === 'passing' ? 'review' : 'implement');
+  expect(result).toMatchObject({ revision: 2, wake: { queued: true, agentId: checks === 'passing' ? B : A } });
+});
+
+it('Reproduction F1-7: opener revises a delegated sibling from its own command', async () => {
+  const source = await open(undefined, 'owner/widgets');
+  const command = await commissioned(source);
+  const input = { roomId: source, requestId: command.turnRequestId, generationId: 'g1', name: 'Delegate widget', objective: 'Ship the widget', repository: 'owner/widgets', implementer: 'goosy', brief: brief(command.sourceMessageId) };
+  const { cornerId } = await daemon.execute('createCorner', input, A);
+  const result = await daemon.execute('reviseCornerBrief', { roomId: source, cornerId, requestId: command.turnRequestId, generationId: 'g1', expectedRevision: 1, brief: { ...input.brief, spec: 'Corrected widget', change: 'Correct scope' } }, A);
+  console.info(`Reproduction F1-7: wrong=revision denied; right=revision 2; observed=${result.revision}`);
+  expect(result).toMatchObject({ revision: 2, wake: { queued: true, agentId: B } });
+  await fallback(cornerId);
+  const outsider = await createAgentCommand(db, { roomId: cornerId, agentId: F, sourceMessageId: command.sourceMessageId, reason: 'audit' });
+  await daemon.execute('claimAgentCommand', { roomId: cornerId, commandId: outsider!.id, generationId: 'g1' }, F);
+  await expect(daemon.execute('reviseCornerBrief', { roomId: cornerId, cornerId, requestId: outsider!.turn_request_id, generationId: 'g1', expectedRevision: 2, brief: { ...input.brief, change: 'Unauthorized' } }, F)).rejects.toThrow('revision denied');
+  await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [cornerId, B]);
+  const unwoken = await daemon.execute('reviseCornerBrief', { roomId: source, cornerId, requestId: command.turnRequestId, generationId: 'g1', expectedRevision: 2, brief: { ...input.brief, spec: 'Saved without a worker', change: 'Keep the revision' } }, A);
+  expect(unwoken).toMatchObject({ revision: 3, wake: { queued: false, reason: expect.any(String) } });
+  expect((await daemon.execute('listCornerBriefRevisions', { cornerId }, A)).revisions[0]!.revision).toBe(3);
+});
+
+it('Reproduction F1-9: brief history defaults to one revision with a cursor', async () => {
+  const cornerId = await open(undefined, 'owner/widgets');
+  await revise(cornerId);
+  const result = await daemon.execute('listCornerBriefRevisions', { cornerId }, A);
+  console.info(`Reproduction F1-9: wrong=2 full revisions; right=1 with cursor; observed=${result.revisions.length}`);
+  expect(result.revisions.map(r => r.revision)).toEqual([2]);
+  expect(result.nextBeforeRevision).toBe(2);
+  expect((await daemon.execute('listCornerBriefRevisions', { cornerId, beforeRevision: 2 }, A)).revisions[0]!.revision).toBe(1);
+  expect((await daemon.execute('listCornerBriefRevisions', { cornerId, limit: 20 }, A)).revisions).toHaveLength(2);
+  await expect(daemon.execute('listCornerBriefRevisions', { cornerId, limit: 21 }, A)).rejects.toThrow('invalid');
+});
+
+it('Reproduction F1-11: exact replay survives implementer departure', async () => {
+  const command = await commissioned(R);
+  const input = { roomId: R, requestId: command.turnRequestId, generationId: 'g1', idempotencyKey: 'f1-replay', name: 'Delegate widget', objective: 'Ship widget', repository: 'owner/widgets', implementer: 'goosy', brief: brief(command.sourceMessageId) };
+  const first = await daemon.execute('createCorner', input, A);
+  await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [R, B]);
+  const replay = await daemon.execute('createCorner', input, A);
+  console.info(`Reproduction F1-11: wrong=membership refusal; right=original corner; observed=${replay.cornerId}`);
+  expect(replay).toEqual(first);
+  await expect(daemon.execute('createCorner', { ...input, implementer: 'hoots' }, A)).rejects.toThrow('assignment conflict');
+  await expect(daemon.execute('createCorner', { ...input, brief: { ...input.brief, spec: 'Different' } }, A)).rejects.toThrow('assignment conflict');
+  await expect(daemon.execute('createCorner', { ...input, idempotencyKey: 'new-call' }, A)).rejects.toThrow('current member');
+});
+
 describe('Reproduction S-03: revised briefs use the lifecycle reviewer resolver', () => {
   it.each(['removed', 'offline'] as const)('wakes a healthy fallback when the primary is %s', async (condition) => {
     const cornerId = await approved();
@@ -1414,6 +1469,49 @@ describe('unfinished merge claim recovery (R6a–R6f)', () => {
     const visible = (await phone.readCorners(R, H, false, true))?.corners.find(row => row.corner.id === cornerId);
     expect(visible).toMatchObject({ state: 'archived', lifecycle: { outcome: 'landed' } });
   }
+
+  it.each([true, false])('Reproduction F1-3: recovery backs off and confirms merged=%s after human input', async merged => {
+    const cornerId = await claimed();
+    githubApp.readPullRequest.mockRejectedValue(new Error('permission denied'));
+    await recover();
+    const reads = githubApp.readPullRequest.mock.calls.length;
+    await recover();
+    console.info(`Reproduction F1-3: wrong=read every tick; right=no read before deadline; observed=${githubApp.readPullRequest.mock.calls.length - reads}`);
+    expect(githubApp.readPullRequest).toHaveBeenCalledTimes(reads);
+    for (let attempt = 2; attempt <= 6; attempt++) {
+      const timing = (await db.query(`SELECT (lifecycle->'mergeRecovery'->>'nextAttemptAt')::double precision - (lifecycle->'mergeRecovery'->>'lastAttemptAt')::double precision delay FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.delay;
+      expect(timing).toBeCloseTo(Math.min(3600, 300 * 2 ** (attempt - 2)), 1);
+      await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{mergeRecovery,nextAttemptAt}','0') WHERE corner_id=$1`, [cornerId]);
+      await recover();
+      expect(await currentState(cornerId)).toBe(attempt >= 5 ? 'ask_human' : 'land');
+    }
+    expect(await currentState(cornerId)).toBe('ask_human');
+    const notes = await db.query(`SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%merge outcome is unconfirmed%'`, [cornerId]);
+    expect(notes.rows).toHaveLength(1);
+    expect(notes.rows[0]!.text).toContain('#7');
+    expect(notes.rows[0]!.text).toContain('permission denied');
+    expect(await claimHead(cornerId)).toBe(SHA);
+    githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, merged));
+    await phone.execute('sendRoomMessage', { roomId: cornerId, messageId: randomBytes(32).toString('hex'), text: 'Permissions repaired' }, H);
+    await recover();
+    expect(await currentState(cornerId)).toBe(merged ? 'landed' : 'implement');
+    expect(await claimHead(cornerId)).toBeNull();
+    expect(Boolean((await db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0]!.archived_at)).toBe(merged);
+    expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it.each(['missing target', 'different merged head', 'different merged branch'])('Reproduction F1-3: %s remains unconfirmed', async condition => {
+    const cornerId = await claimed();
+    if (condition === 'missing target') await db.query(`UPDATE github_repositories SET active=false WHERE repository_id=101`);
+    else githubApp.readPullRequest.mockResolvedValue({ ...providerPr(cornerId, true, condition === 'different merged head' ? '9'.repeat(40) : SHA), ...(condition === 'different merged branch' ? { headRef: 'feature/somewhere-else' } : {}) });
+    try {
+      await recover();
+      expect(await claimHead(cornerId)).toBe(SHA);
+      expect(await currentState(cornerId)).toBe('land');
+      expect((await db.query(`SELECT lifecycle->'mergeRecovery'->>'attempts' attempts FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.attempts).toBe('1');
+      console.info(`Reproduction F1-3: ${condition}: wrong=unbounded read; right=claim retained with deadline; observed=attempt 1`);
+    } finally { await db.query(`UPDATE github_repositories SET active=true WHERE repository_id=101`); }
+  });
 
   it('Reproduction R6a: a crash before merge gets one fresh attempt through the normal sweep', async () => {
     const cornerId = await claimed();

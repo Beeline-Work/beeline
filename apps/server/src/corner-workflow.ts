@@ -136,11 +136,11 @@ export const CORNER_WORKFLOW_CONTRACT: WorkflowContract = {
     land: {
       kind: 'server',
       requires: [],
-      on: { merge_refused: 'implement', pushed: 'checks', rechecked: 'checks', brief_revised: 'review' },
+      on: { merge_unconfirmed: 'ask_human', merge_refused: 'implement', pushed: 'checks', rechecked: 'checks', brief_revised: 'review' },
     },
     // A loop cap was reached. The corner names the commissioning human and
     // waits; a new push starts the next round.
-    ask_human: { kind: 'server', requires: [], on: { pushed: 'checks' } },
+    ask_human: { kind: 'server', requires: [], on: { pushed: 'checks', brief_revised: 'review', revision_work: 'implement', merge_refused: 'implement' } },
     landed: { kind: 'terminal', status: 'done' },
     closed: { kind: 'terminal', status: 'abandoned' },
   },
@@ -191,11 +191,14 @@ export type CornerEvent =
   | { kind: 'checks-pending' }
   | { kind: 'approval'; headSha: string }
   | { kind: 'review-ended'; review: CommandRow; verdictMessageId: string }
+  | { kind: 'merge-unconfirmed'; number: number; error: string }
   | { kind: 'merge-refused'; headSha: string; reason: string }
   | { kind: 'merged'; contents: Record<string, unknown> }
   | { kind: 'closed' };
 
+type RevisionWake = { queued: boolean; agentId?: string; reason?: string };
 export type CornerAdvance = {
+  wake?: RevisionWake;
   /** The run's state after the event, or undefined when the corner has no run. */
   state: string | undefined;
   /** False when the event was not allowed from the current state (logged). */
@@ -606,11 +609,11 @@ export async function advanceCorner(
       rejected(cornerId, event, run.toState, accepted.why);
       return { state: transition.state, accepted: false };
     }
-    return { state: transition.state, accepted: true };
+    return { state: transition.state, accepted: true, ...(accepted.wake ? { wake: accepted.wake } : {}) };
   });
 }
 
-type Applied = { ok: true } | { ok: false; why: string };
+type Applied = { ok: true; wake?: RevisionWake } | { ok: false; why: string };
 const OK: Applied = { ok: true };
 const no = (why: string): Applied => ({ ok: false, why });
 
@@ -634,28 +637,26 @@ async function applyEvent(
     case 'checks':
       return checksReported(db, cornerId, corner, transition, event);
     case 'brief-revised': {
-      if (corner.lifecycle.checks !== 'passing') return no('checks are not green');
+      const resuming = transition.state === 'ask_human';
+      if (corner.lifecycle.checks !== 'passing' && !resuming) return no('checks are not green');
       if (!transition.allows('brief_revised')) return no('no brief revision review edge');
-      const reviewerAgentId = await reachableReviewer(
-        db,
-        cornerId,
-        corner,
-        event.sourceMessageId,
-        corner.lifecycle.pr?.headSha ?? null,
-        event.authorAgentId,
-      );
-      if (!reviewerAgentId) return no('no reachable reviewer for the revision');
+      const reviewerAgentId = corner.lifecycle.checks === 'passing' ? await reachableReviewer(
+        db, cornerId, corner, event.sourceMessageId, corner.lifecycle.pr?.headSha ?? null, event.authorAgentId,
+      ) : undefined;
+      if (!reviewerAgentId && !resuming) return no('no reachable reviewer for the revision');
+      const agentId = reviewerAgentId ?? corner.worker_agent_id;
+      if (!agentId) return { ok: true, wake: { queued: false, reason: 'No reachable implementer for the revision' } };
       const command = await createAgentCommand(db, {
         roomId: cornerId,
-        agentId: reviewerAgentId,
+        agentId,
         sourceMessageId: event.sourceMessageId,
-        reason: 'corner_check',
+        reason: reviewerAgentId ? 'corner_check' : 'corner_brief_revision',
         parent: event.command,
         retainDepth: true,
       });
-      if (!command) return no('the reviewer cannot be woken');
-      await transition.take('brief_revised', { briefRevision: event.revision });
-      return OK;
+      if (!command) return { ok: true, wake: { queued: false, reason: 'The revision recipient cannot be woken' } };
+      await transition.take(reviewerAgentId ? 'brief_revised' : 'revision_work', { briefRevision: event.revision });
+      return { ok: true, wake: { queued: true, agentId } };
     }
     case 'checks-pending': {
       if (corner.lifecycle.checks !== 'pending') return no(`checks are ${corner.lifecycle.checks}`);
@@ -672,6 +673,15 @@ async function applyEvent(
       return approvalRecorded(db, cornerId, corner, transition, event);
     case 'review-ended':
       return reviewEnded(db, cornerId, corner, transition, event);
+    case 'merge-unconfirmed':
+      if (!transition.allows('merge_unconfirmed')) return no('merge recovery already escalated');
+      await transition.take('merge_unconfirmed');
+      await ensureSystemIdentity(db);
+      await systemLine(db, {
+        roomId: cornerId, authorId: SYSTEM_IDENTITY_ID, subject: GITHUB_SUBJECT, verb: 'could not confirm the merge of',
+        object: `pull request #${event.number}`, consequence: `${event.error} · merge outcome is unconfirmed`,
+      });
+      return OK;
     case 'merge-refused':
       return mergeRefused(db, cornerId, corner, transition, event);
     case 'merged':
@@ -1003,7 +1013,7 @@ async function mergeRefused(
   transition: Transition,
   event: Extract<CornerEvent, { kind: 'merge-refused' }>,
 ): Promise<Applied> {
-  if (transition.state !== 'land') return no('not landing');
+  if (!transition.allows('merge_refused')) return no('not landing');
   if (corner.lifecycle.pr?.headSha !== event.headSha) return no('the head moved');
   await transition.take('merge_refused', { headSha: event.headSha, reason: event.reason });
   const pullRequest = corner.lifecycle.pr;
@@ -1334,7 +1344,7 @@ export async function claimCornerMergeAttempt(
     // No provider request belongs in this transaction.
     if (!(await cornerMergeGate(db, cornerId, { number: pr.number, headSha })).open) return false;
     const claimed = await db.query(
-      `UPDATE corner_facts SET merge_attempt_head=$2,updated_at=now()
+      `UPDATE corner_facts SET merge_attempt_head=$2,lifecycle=lifecycle-'mergeRecovery',updated_at=now()
        WHERE corner_id=$1 AND workflow_state='land'
          AND lifecycle->'pr'->>'headSha'=$2
          AND merge_attempt_head IS DISTINCT FROM $2
@@ -1354,10 +1364,15 @@ export async function unfinishedCornerMergeClaims(db: SqlDatabase, cornerId?: st
     `SELECT fact.corner_id,(fact.lifecycle->'pr'->>'number')::int number,
             fact.merge_attempt_head head_sha
      FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
-     WHERE fact.workflow_state='land' AND corner.archived_at IS NULL
+     WHERE fact.workflow_state IN ('land','ask_human') AND corner.archived_at IS NULL
        AND fact.merge_attempt_head=fact.lifecycle->'pr'->>'headSha'
        AND fact.lifecycle->'pr'->>'number' ~ '^[1-9][0-9]*$'
-       AND fact.updated_at < now()-($1 * interval '1 second')
+       AND (COALESCE((fact.lifecycle->'mergeRecovery'->>'nextAttemptAt')::double precision,
+             extract(epoch FROM fact.updated_at)+$1) <= extract(epoch FROM clock_timestamp())
+         OR EXISTS (SELECT 1 FROM messages m JOIN identities i ON i.id=m.author_id AND i.kind='human'
+           WHERE m.room_id=fact.corner_id AND m.presentation='message'
+             AND m.created_at > to_timestamp(COALESCE((fact.lifecycle->'mergeRecovery'->>'lastAttemptAt')::double precision,
+               extract(epoch FROM fact.updated_at)))))
        AND ($2::uuid IS NULL OR fact.corner_id=$2)
        AND NOT EXISTS (SELECT 1 FROM messages refusal WHERE refusal.id=
          encode(sha256(convert_to('beeline:'||fact.corner_id::text||':github:merge-refused:'||fact.merge_attempt_head,'UTF8')),'hex'))`,
@@ -1375,7 +1390,9 @@ export async function clearUnfinishedCornerMergeClaim(
     const claim = (await unfinishedCornerMergeClaims(db, cornerId))[0];
     if (!corner || claim?.head_sha !== headSha || claim.number !== number) return;
     const gate = await cornerMergeGate(db, cornerId, { number: claim.number, headSha });
-    await db.query(`UPDATE corner_facts SET merge_attempt_head=NULL,updated_at=now() WHERE corner_id=$1`, [cornerId]);
+    if ((await loadCornerWorkflowRunState(db, cornerId))?.toState === 'ask_human')
+      await advanceCorner(db, cornerId, { kind: 'merge-refused', headSha, reason: 'GitHub confirmed the pull request has not merged' });
+    await db.query(`UPDATE corner_facts SET merge_attempt_head=NULL,lifecycle=lifecycle-'mergeRecovery',updated_at=now() WHERE corner_id=$1`, [cornerId]);
     // Only the normal sweep can act on an open gate, with a fresh GitHub read
     // and claim. A closed gate still clears the stale claim for later recovery.
     return gate.open && corner.lifecycle.checks === 'passing';

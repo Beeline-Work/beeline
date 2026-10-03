@@ -684,16 +684,19 @@ describe('syncCornerBranch — two agents pushing to one branch', () => {
   it('R3: settles a git seam that never resolves at the deadline', async () => {
     vi.useFakeTimers();
     try {
+      let started!: () => void;
+      const ready = new Promise<void>(resolve => { started = resolve; });
       const result = syncCornerBranch({
         worktreePath: '/unused',
         featureBranch: FEATURE,
-        git: async () => new Promise<string>(() => undefined),
+        git: async () => { started(); return new Promise<string>(() => undefined); },
       });
       let settled = false;
       const observed = result.catch((error) => {
         settled = true;
         return error;
       });
+      await ready;
       await vi.advanceTimersByTimeAsync(122_000);
       expect(settled).toBe(true);
       expect((await observed).message).toContain('corner git sync');
@@ -713,7 +716,7 @@ describe('syncCornerBranch — two agents pushing to one branch', () => {
           featureBranch: FEATURE,
           git: async (args) => {
             calls.push([...args]);
-            if (args[0] === command || (command === 'abort' && args[1] === '--abort'))
+            if ((args[0] === command && args[1] !== '--abort') || (command === 'abort' && args[1] === '--abort'))
               return new Promise<string>(() => undefined);
             if (args[0] === 'rev-parse') return args[1] === 'HEAD' ? 'local' : 'remote';
             if (args[0] === 'merge-base' || args[0] === 'rebase') throw new Error('conflict');
@@ -920,6 +923,31 @@ setInterval(() => {}, 1000);
       'rebased',
     );
     expect(await git(worktree.path, 'log', '-2', '--format=%s')).toBe('my work\npeer work');
+  });
+
+  it.each(['interrupt', 'leftover'])('Reproduction F1-10: %s rebase preserves local commits', async mode => {
+    const { remote, worktree } = await helperWorktree('beeline-f1-rebase-');
+    await writeFile(resolve(worktree.path, 'mine.txt'), 'mine\n');
+    await git(worktree.path, 'add', '.');
+    await git(worktree.path, 'commit', '-m', 'my work');
+    await pushToRemote(remote, 'peer work');
+    await git(worktree.path, 'fetch', 'origin');
+    const stop = new AbortController();
+    const stalledRebase = async () => {
+      await git(worktree.path, '-c', 'sequence.editor=true', 'rebase', '-i', '--exec', 'false', `origin/${FEATURE}`).catch(() => undefined);
+    };
+    if (mode === 'leftover') await stalledRebase();
+    else await expect(syncCornerBranch({ worktreePath: worktree.path, featureBranch: FEATURE, signal: stop.signal, git: async args => {
+      if (args[0] === 'rebase' && args[1] !== '--abort') { await stalledRebase(); stop.abort(); return new Promise<string>(() => undefined); }
+      return git(worktree.path, ...args);
+    } })).rejects.toThrow('stopped');
+    const rebasePath = await git(worktree.path, 'rev-parse', '--git-path', 'rebase-merge');
+    if (mode === 'interrupt') await expect(access(rebasePath)).rejects.toThrow();
+    const result = await syncCornerBranch({ worktreePath: worktree.path, featureBranch: FEATURE });
+    const history = await git(worktree.path, 'log', '-2', '--format=%s');
+    console.info(`Reproduction F1-10: wrong=active rebase/lost commit; right=my work + peer work; observed=${result}: ${history.replaceAll('\n', ', ')}`);
+    expect(history).toBe('my work\npeer work');
+    await expect(access(rebasePath)).rejects.toThrow();
   });
 
   it('realigns to the shared remote branch when two unpushed changes conflict', async () => {

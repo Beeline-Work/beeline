@@ -19,6 +19,7 @@ The inventory below covers all 53 production raw-query call sites and all 37 pro
 | `getIdentitySuccession`                          | `body.ts:6195,10590`                                                                                   |
 | `getAgentConfiguration`, `getAgentPresence`      | `body.ts:7970`; configuration/presence reads embedded in current helper calls                          |
 | `getRequestCompletion`                           | `body.ts:12087`                                                                                        |
+| `listCornerBriefRevisions({ cornerId, beforeRevision?, limit? })` | Newest-first brief history; default one revision plus cursor, limit 1–20 |
 | `listRoomCorners`, `getCornerRestoreState`       | `body.ts:9727,9750,9796,9880,9936,10844,10900,11195,11311`                                             |
 | `listUntrackedCorners`, `getCornerCloseRequests` | `body.ts:10844,10868,10965`                                                                            |
 | `getRoomRepositoryState`, `getRoomTargetBranch`  | `body.ts:9185,9211`; existing higher-level repository reads remain named state reads                   |
@@ -40,6 +41,7 @@ Repeated reads in an authority check are preserved as retry semantics inside the
 | `postAgentTurnReceipt`                                          | `body.ts:4855` and terminal receipt publication routed through `events-service.ts:448`                                                  |
 | `postAgentDraft`, `postAgentThought`, `retractAgentLiveOutput`  | the four live-output publications at `activity.ts:1014,1030,1060,1088` split by their typed presentation                                |
 | `postTargetBranchProposal`                                      | current typed control publication reached from `body.ts:7940`                                                                           |
+| `reviseCornerBrief` | Records the full revision and returns `wake: { queued, agentId?, reason? }`; opener commands may come from the parent or a sibling via `roomId`, implementer commands from the target |
 | `createCorner`, `ensureAgentMembership`                         | current higher-level channel helpers invoked by Body; their relay publications become atomic named operations rather than raw endpoints |
 
 `events-service.ts:421` and `:422` are alternate injected/default publisher branches; `:448` is the bounded delivery attempt. They are three production publish call sites but one named domain write.
@@ -64,14 +66,14 @@ omitting it selects the corner's own PR. It returns `checks` (`passed`, `failed`
 `pullRequest` (URL), `headSha`, `checkCount`, `approvalPending`, `reviewer` (the parent Room's currently
 configured reviewer as `@handle`, or null), `reviewerExists` (the configuration fact independent
 of whether the identity has a handle), `reviewerIsAuthor` (true when that reviewer is also
-this corner's opener), `reviewerWake` (`unconfigured` | `unreachable` | `waiting` | `dispatched`,
-plus a `detail` sentence the author can restate), and `rule` (states which actor's `approve_merge`
+this corner's implementer), `reviewerWake` (`unconfigured` | `unreachable` | `waiting` | `dispatched` | `not_required`,
+plus a `detail` sentence the author can restate), `recordedChecks` (the stored verdict used for dispatch; distinct from the live `checks` verdict), and `rule` (states which actor's `approve_merge`
 clears the gate). The membership used to *deliver* a green wake is not the configuration itself:
 a reviewer id on the parent Room that is not a current parent member stays configured, reports
 `unreachable`, and does not collapse to "no reviewer". The server resolves the current head, shares
 head-bound check facts across corners, and reconciles
 missing/invalidated snapshots with GitHub check runs and combined commit status. A single webhook
-check is not a complete snapshot. When the configured reviewer opened the corner it is reviewing,
+check is not a complete snapshot. When the configured reviewer implements the corner it is reviewing,
 the operation's `approvalPending` reviewer outcome is false — self-review is not required, and no
 other agent's approval can add signal. The `pr_checks_status` helper then composes the complete
 merge gate: reviewer outcome must pass, worker yolo must be on, no existing human hold may apply,

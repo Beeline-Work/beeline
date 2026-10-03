@@ -249,13 +249,20 @@ describe('open_corner arguments', () => {
       expect(revise.properties[key]).toBe(value);
     expect(
       Object.keys(revise.properties).filter((key) => !(key in CORNER_BRIEF_PROPERTIES)),
-    ).toEqual(['expectedRevision', 'change']);
+    ).toEqual(['cornerId', 'expectedRevision', 'change']);
     expect(revise.required).toEqual(['expectedRevision', 'spec', 'approval', 'change']);
     expect(CORNER_BRIEF_PROPERTIES.spec).toMatchObject({ minLength: 1, maxLength: 16_000 });
     expect(CORNER_BRIEF_PROPERTIES.approval).toMatchObject({
       required: ['sourceMessageId'],
       additionalProperties: false,
     });
+  });
+
+  it('advertises bounded brief paging and opener revisions in parent Rooms', () => {
+    const tools = agentToolsFor(true, false);
+    expect(tools.some(tool => tool.name === 'revise_corner_brief')).toBe(true);
+    const read = tools.find(tool => tool.name === 'read_corner_brief')!.inputSchema as { properties: Record<string, unknown> };
+    expect(read.properties.limit).toEqual({ type: 'integer', minimum: 1, maximum: 20, default: 1 });
   });
 
   it('flattens an untidy call instead of refusing it', () => {

@@ -1664,7 +1664,7 @@ export class DaemonService {
           total: 0,
           failing: [],
           checks: [],
-          updatedAt: Math.floor(Date.now() / 1_000),
+          updatedAt: Math.floor((await db.query<{ now: number }>(`SELECT extract(epoch FROM clock_timestamp())::double precision now`)).rows[0]!.now),
         },
       };
       await db.query(
@@ -3024,17 +3024,19 @@ export class DaemonService {
       (!Number.isInteger(input.beforeRevision) || input.beforeRevision < 1)
     )
       throw new Error('invalid brief revision cursor');
+    const limit = input.limit ?? 1;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 20) throw new Error('invalid brief revision limit');
     const rows = (
       await this.database.query<CornerBriefRow>(
         `${CORNER_BRIEF_REVISION_SELECT}
        WHERE brief.corner_id=$1 AND ($2::integer IS NULL OR brief.revision<$2)
-       ORDER BY brief.revision DESC LIMIT 21`,
-        [input.cornerId, input.beforeRevision ?? null],
+       ORDER BY brief.revision DESC LIMIT $3`,
+        [input.cornerId, input.beforeRevision ?? null, limit + 1],
       )
     ).rows;
     return {
-      revisions: rows.slice(0, 20).map((row) => projectCornerBrief(input.cornerId, row)),
-      ...(rows.length > 20 ? { nextBeforeRevision: rows[19]!.revision } : {}),
+      revisions: rows.slice(0, limit).map((row) => projectCornerBrief(input.cornerId, row)),
+      ...(rows.length > limit ? { nextBeforeRevision: rows[limit - 1]!.revision } : {}),
     };
   }
   /**
@@ -6685,21 +6687,6 @@ export class DaemonService {
       // a concurrent retry waits, sees the winner, and returns its id without
       // creating another Room, command, or open card.
       await db.query(`SELECT id FROM rooms WHERE id=$1 FOR UPDATE`, [roomId]);
-      let implementerAgentId = agentId;
-      if (input.implementer !== undefined) {
-        const implementer = (
-          await db.query<{ id: string; kind: string }>(
-            `SELECT identity.id,identity.kind FROM memberships member
-             JOIN identities identity ON identity.id=member.identity_id
-             WHERE member.room_id=$1 AND member.removed_at IS NULL AND identity.handle=$2
-             FOR SHARE OF member,identity`,
-            [roomId, input.implementer],
-          )
-        ).rows[0];
-        if (!implementer) throw new Error('implementer must be a current member of the parent Room');
-        if (implementer.kind !== 'agent') throw new Error('implementer must be an agent');
-        implementerAgentId = implementer.id;
-      }
       const existing = (
         await db.query<{
           corner_id: string;
@@ -6733,6 +6720,13 @@ export class DaemonService {
           [roomId, idempotencyKey],
         )
       ).rows[0];
+      let implementerAgentId = agentId;
+      if (existing && input.implementer !== undefined) {
+        const named = (await db.query<{ id: string }>(
+          `SELECT id FROM identities WHERE handle=$1 AND kind='agent'`, [input.implementer],
+        )).rows[0];
+        implementerAgentId = named?.id ?? '';
+      }
       if (existing) {
         const sameAttachments =
           (input.brief?.attachments?.length ?? 0) <= (existing.brief_attachments?.length ?? 0) &&
@@ -6778,6 +6772,20 @@ export class DaemonService {
         }
         cornerId = existing.corner_id;
         return;
+      }
+      if (input.implementer !== undefined) {
+        const implementer = (
+          await db.query<{ id: string; kind: string }>(
+            `SELECT identity.id,identity.kind FROM memberships member
+             JOIN identities identity ON identity.id=member.identity_id
+             WHERE member.room_id=$1 AND member.removed_at IS NULL AND identity.handle=$2
+             FOR SHARE OF member,identity`,
+            [roomId, input.implementer],
+          )
+        ).rows[0];
+        if (!implementer) throw new Error('implementer must be a current member of the parent Room');
+        if (implementer.kind !== 'agent') throw new Error('implementer must be an agent');
+        implementerAgentId = implementer.id;
       }
       const parentCommand = await authorizeCommandOutput(
         db,
@@ -6845,6 +6853,7 @@ export class DaemonService {
           db,
           sourceRoomIds,
           input.brief,
+          { roomId: commandRoomId, agentId, requestId: input.requestId, generationId: input.generationId },
         );
         const attachments = [
           ...explicitAttachments,
@@ -6924,21 +6933,23 @@ export class DaemonService {
     const brief = await this.database.transaction(async (db) => {
       await lockCornerWorkflowRun(db, input.cornerId);
       const corner = (
-        await db.query<{ parent_id: string; owner_agent_id: string | null; kind: string }>(
-          `SELECT room.parent_id,fact.owner_agent_id,fact.kind FROM rooms room
+        await db.query<{ parent_id: string; owner_agent_id: string | null; kind: string; created_by: string; workflow_state: string }>(
+          `SELECT room.parent_id,fact.owner_agent_id,fact.kind,room.created_by,fact.workflow_state FROM rooms room
          JOIN corner_facts fact ON fact.corner_id=room.id
          WHERE room.id=$1 AND room.archived_at IS NULL FOR UPDATE OF room`,
           [input.cornerId],
         )
       ).rows[0];
-      if (!corner?.parent_id || (corner.owner_agent_id !== agentId && corner.kind !== 'human'))
+      if (!corner?.parent_id || (corner.owner_agent_id !== agentId && corner.created_by !== agentId && corner.kind !== 'human'))
         throw new Error('corner brief revision denied');
+      const commandRoomId = input.roomId ?? input.cornerId;
+      if (commandRoomId !== input.cornerId) {
+        const host = (await db.query<{ parent_id: string | null }>(`SELECT parent_id FROM rooms WHERE id=$1`, [commandRoomId])).rows[0];
+        if (corner.created_by !== agentId || (commandRoomId !== corner.parent_id && host?.parent_id !== corner.parent_id))
+          throw new Error('corner brief revision denied');
+      }
       const command = await authorizeCommandOutput(
-        db,
-        input.cornerId,
-        agentId,
-        input.requestId,
-        input.generationId,
+        db, commandRoomId, agentId, input.requestId, input.generationId,
       );
       const current = await currentCornerBrief(db, input.cornerId);
       if ((current?.revision ?? 0) !== input.expectedRevision)
@@ -6953,13 +6964,14 @@ export class DaemonService {
           [input.cornerId, agentId],
         )
       ).rows[0];
-      const sourceRoomIds = [corner.parent_id, input.cornerId];
+      const sourceRoomIds = [corner.parent_id, input.cornerId, commandRoomId];
       if (opening && !sourceRoomIds.includes(opening.source_room_id))
         sourceRoomIds.push(opening.source_room_id);
       const explicitAttachments = await resolveCornerBriefAttachments(
         db,
         sourceRoomIds,
         draft,
+        { roomId: commandRoomId, agentId, requestId: input.requestId, generationId: input.generationId },
       );
       const attachments = [
         ...explicitAttachments,
@@ -7006,22 +7018,24 @@ export class DaemonService {
         verb: 'revised the corner brief',
         object: { text: `Revision ${revision}`, id: input.cornerId },
       });
-      await createAgentCommand(db, {
+      const worker = corner.workflow_state === 'ask_human' ? undefined : await createAgentCommand(db, {
         roomId: input.cornerId,
-        agentId,
+        agentId: corner.owner_agent_id ?? agentId,
         sourceMessageId: note.id,
         reason: 'corner_brief_revision',
         parent: command,
         retainDepth: true,
       });
-      await advanceCorner(db, input.cornerId, {
+      const outcome = await advanceCorner(db, input.cornerId, {
         kind: 'brief-revised',
         revision,
         sourceMessageId: note.id,
         authorAgentId: agentId,
         command,
       });
-      return currentCornerBrief(db, input.cornerId);
+      return { ...(await currentCornerBrief(db, input.cornerId))!, wake: outcome.wake ?? {
+        queued: Boolean(worker), ...(worker ? { agentId: worker.agent_id } : { reason: 'No lifecycle wake queued' }),
+      } };
     });
     this.live.publish({ type: 'invalidate', roomId: input.cornerId, reason: 'corner', agentId });
     return brief!;

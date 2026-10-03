@@ -805,6 +805,7 @@ export class GitHubAppClient {
         method: 'PUT',
         headers: { ...githubHeaders(token.token), 'content-type': 'application/json' },
         body: JSON.stringify({ merge_method: 'squash', sha: expectedHeadSha }),
+        signal: AbortSignal.timeout(15_000),
       },
     );
     if (!response.ok) {

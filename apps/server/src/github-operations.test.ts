@@ -65,6 +65,53 @@ describe('GitHub phone operations', () => {
     return { corners, headSha, app, payload };
   }
 
+  it.each([4, 5])('Reproduction F1-%s: push/open records checks without another event', async n => {
+    const { corners, headSha, app, payload } = await checksFixture();
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"unknown"') WHERE corner_id=$1`, [corners[0]]);
+    const realNow = Date.now.bind(Date);
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + (new Error().stack?.includes('@electric-sql/pglite') ? 0 : 86_400_000));
+    try {
+      if (n === 4) {
+        await operations.processWebhook('push', { ...payload, ref: 'refs/heads/feature/checks-1', after: headSha, size: 1 });
+        await operations.processWebhook('check_run', payload);
+      } else {
+        for (const action of ['opened', 'synchronize']) {
+          await operations.processWebhook('pull_request', { ...payload, action, pull_request: {
+            number: 1, html_url: 'https://github.com/owner/widgets/pull/1', title: 'Checks',
+            head: { ref: 'feature/checks-1', sha: headSha }, base: { ref: 'main' }, mergeable_state: 'clean',
+          } });
+        }
+      }
+      const state = (await database.query(`SELECT lifecycle->>'checks' checks FROM corner_facts WHERE corner_id=$1`, [corners[0]])).rows[0]!.checks;
+      console.info(`Reproduction F1-${n}: wrong=unknown; right=passing; observed=${state}`);
+      expect(state).toBe('passing');
+      expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(n === 4 ? 1 : 2);
+      if (n === 5) {
+        app.readCommitCheckRollup.mockResolvedValueOnce({ state: 'pending', total: 0, failing: [], checks: [] });
+        await operations.processWebhook('pull_request', { ...payload, action: 'opened', pull_request: { number: 1, html_url: 'https://github.com/owner/widgets/pull/1', title: 'Checks', head: { ref: 'feature/checks-1', sha: headSha }, base: { ref: 'main' }, mergeable_state: 'clean' } });
+        expect((await database.query(`SELECT lifecycle->>'checks' checks FROM corner_facts WHERE corner_id=$1`, [corners[0]])).rows[0]!.checks).toBe('unknown');
+        await operations.processWebhook('check_run', payload);
+        expect((await database.query(`SELECT lifecycle->>'checks' checks FROM corner_facts WHERE corner_id=$1`, [corners[0]])).rows[0]!.checks).toBe('passing');
+      }
+    } finally { clock.mockRestore(); }
+  });
+
+  it('Reproduction F1-6: live verdict and dispatch remain separate, with no self-review wait', async () => {
+    const { corners, app } = await checksFixture();
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES('11111111-1111-4111-8111-111111111111',$1,$2,'member')`, [corners[0], REVIEWER]);
+    const self = await operations.prChecksStatus({ cornerId: corners[0]! });
+    console.info(`Reproduction F1-6: wrong=waiting/opener; right=not_required/implementer; observed=${self.reviewerWake.status}`);
+    expect(self.reviewerWake.status).toBe('not_required');
+    expect(self.rule).toContain("this corner's implementer");
+    expect(self.rule).not.toContain('You opened');
+    await database.query(`UPDATE corner_facts SET owner_agent_id=NULL,lifecycle=jsonb_set(lifecycle,'{checks}','"unknown"') WHERE corner_id=$1`, [corners[0]]);
+    const result = await operations.prChecksStatus({ cornerId: corners[0]! });
+    expect(result).toMatchObject({ checks: 'passed', recordedChecks: 'unknown', reviewerWake: { status: 'waiting' } });
+    expect(result.reviewerWake.detail).toContain('behind the live rollup');
+  });
+
   it('Reproduction S08-1: check webhook fetches without an open transaction', async () => {
     const { app, payload } = await checksFixture();
     let depth = 0;

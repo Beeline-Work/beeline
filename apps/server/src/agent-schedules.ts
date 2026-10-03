@@ -191,6 +191,10 @@ export class AgentScheduleLoop {
             [messageId, current.room_id, current.creator_id, current.message],
           );
         }
+        await database.query(
+          `UPDATE messages SET card=COALESCE(card,'{}'::jsonb) || jsonb_build_object('trigger',jsonb_build_object('scheduleId',$2::text,'period',$3::text)) WHERE id=$1`,
+          [messageId, current.id, current.next_run_at.toISOString()],
+        );
         await createAgentCommand(database, {
           roomId: current.room_id,
           agentId: current.agent_id,

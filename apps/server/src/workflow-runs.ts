@@ -20,6 +20,7 @@ import type { AfterCommit } from './institutional-memory-embeddings.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import { firstHealthyAgent, nextHealthyAgent } from './agent-health.js';
 import { postRoomChoice } from './room-choice.js';
+import { CHOICE_WAKE_CARD_TYPES } from '@beeline/api-contract/phone';
 import { ensureSystemIdentity, identitySubject, systemLine } from './system-line.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
@@ -276,9 +277,14 @@ async function postWorkflowGate(
       consequence: `go to ${target}`.slice(0, 80),
     })),
   });
-  if (input.state.hint)
-    await db.query(`UPDATE messages SET card=card || jsonb_build_object('receiptHint',$2::text) WHERE id=$1`,
-      [choice.messageId, input.state.hint]);
+  await db.query(
+    `UPDATE messages SET card=card || $2::jsonb WHERE id=$1`,
+    [choice.messageId, JSON.stringify({
+      runId: input.runId,
+      workflowSlug: input.contract.name,
+      ...(input.state.hint ? { receiptHint: input.state.hint } : {}),
+    })],
+  );
 }
 
 export async function saveWorkflow(
@@ -355,7 +361,9 @@ async function runThisWakeContinues(
       [input.sourceMessageId, input.roomId],
     )
   ).rows[0];
-  if (!wake?.card || wake.card_type !== WORKFLOW_HANDOFF_CARD_TYPE) return undefined;
+  if (!wake?.card) return undefined;
+  if (wake.card_type !== WORKFLOW_HANDOFF_CARD_TYPE &&
+      !CHOICE_WAKE_CARD_TYPES.some((type) => type === wake.card_type)) return undefined;
   if (wake.card.workflowSlug !== input.workflowName) return undefined;
   const run = await loadRun(db, input.roomId, wake.card.runId);
   if (!run) return undefined;
@@ -379,7 +387,11 @@ async function scheduleTriggerPeriod(
       [sourceMessageId],
     )
   ).rows[0];
-  return row ? { scheduleId: row.schedule_id, period: row.scheduled_for.toISOString() } : undefined;
+  if (row) return { scheduleId: row.schedule_id, period: row.scheduled_for.toISOString() };
+  const wake = (await db.query<{ trigger: { scheduleId: string; period: string } | null }>(
+    `SELECT card->'trigger' trigger FROM messages WHERE id=$1`, [sourceMessageId],
+  )).rows[0];
+  return wake?.trigger?.scheduleId && wake.trigger.period ? wake.trigger : undefined;
 }
 
 /** An active run of `workflowName` in `roomId` whose start card recorded this exact schedule+period. */
@@ -600,30 +612,6 @@ export async function startWorkflow(
     }
     return { runId, state: contract.start };
   });
-}
-
-/**
- * A human admin's override of requirement 4's schedule/trigger refusal: a
- * person with Workspace owner/admin rights may always start a fresh run,
- * attributed to them by name rather than to any agent. `PhoneService` is the
- * one caller and verifies the admin right before reaching here. Requirement
- * 3's self-run guard never applies to a human: a person holds no workflow
- * role to already be "in."
- */
-export async function startWorkflowRunOverride(
-  database: SqlDatabase,
-  input: {
-    roomId: string;
-    actorId: string;
-    name: string;
-    roleBindings: Readonly<Record<string, WorkflowRoleBinding>>;
-  },
-): Promise<{ runId: string; state: string }> {
-  return startWorkflow(
-    database,
-    { room_id: input.roomId, agent_id: input.actorId },
-    { name: input.name, roleBindings: input.roleBindings },
-  );
 }
 
 export async function handoff(

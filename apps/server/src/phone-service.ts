@@ -194,7 +194,6 @@ import type { ObjectService } from './object-service.js';
 import { closeCornerState } from './corner-close.js';
 import { writeCornerTitle } from './corner-title.js';
 import { listRoomWorkflowRuns, readWorkflowRun } from './workflow-run-views.js';
-import { startWorkflowRunOverride } from './workflow-runs.js';
 import { answerStarPrompt, readStarPrompt, recordStarPromptWin } from './github-star-prompt.js';
 import {
   DELETED_ACCOUNT_IDENTITY_ID,
@@ -3629,11 +3628,6 @@ export class PhoneService {
           input as Input<'readWorkflowRun'>,
           viewerId,
         )) as Output<Name>;
-      case 'startWorkflowRunOverride':
-        return (await this.startWorkflowRunOverride(
-          input as Input<'startWorkflowRunOverride'>,
-          viewerId,
-        )) as Output<Name>;
       case 'cancelAgentTurn':
         await this.cancelAgentTurn(input as Input<'cancelAgentTurn'>, viewerId);
         return undefined as Output<Name>;
@@ -4296,21 +4290,6 @@ export class PhoneService {
     const run = await readWorkflowRun(this.database, input, viewerId);
     if (!run) throw new Error('workflow run not found');
     return run;
-  }
-  private async startWorkflowRunOverride(input: Input<'startWorkflowRunOverride'>, viewerId: string) {
-    const room = (
-      await this.database.query<{ workspace_id: string }>(`SELECT workspace_id FROM rooms WHERE id=$1`, [
-        input.roomId,
-      ])
-    ).rows[0];
-    if (!room) throw new Error('room not found');
-    await this.requireWorkspaceManager(room.workspace_id, viewerId);
-    return startWorkflowRunOverride(this.database, {
-      roomId: input.roomId,
-      actorId: viewerId,
-      name: input.name,
-      roleBindings: input.roleBindings,
-    });
   }
   private async deleteRoomSchedule(
     input: Input<'deleteRoomSchedule'>,
@@ -9192,7 +9171,6 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'transferWorkflowOwner',
   'startOwnedWorkflow',
   'updateRoomSchedule',
-  'startWorkflowRunOverride',
   'cancelAgentTurn',
   'createHumanCorner',
   'requestCornerClose',

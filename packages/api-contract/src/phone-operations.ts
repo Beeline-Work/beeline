@@ -104,12 +104,6 @@ export type PhoneOperationMap = {
   startOwnedWorkflow: { input: RoomInput & { readonly name: string; readonly roleBindings: Readonly<Record<string, string | readonly string[]>> }; output: { readonly runId: string; readonly state: string } };
   updateRoomSchedule: { input: RoomInput & { readonly scheduleId: string; readonly message?: string; readonly cadence?: RoomScheduleCadence; readonly workflowName?: string }; output: { readonly scheduleId: string; readonly nextRunAt: number } };
   readWorkflowRun: { input: ReadWorkflowRunInput; output: WorkflowRunDetailView };
-  /**
-   * A Workspace owner/admin's override of `start_workflow`'s schedule/trigger
-   * duplicate-run refusal: starts a fresh run regardless, attributed to the
-   * calling human rather than any agent.
-   */
-  startWorkflowRunOverride: { input: StartWorkflowRunOverrideInput; output: StartWorkflowRunResult };
   cancelAgentTurn: { input: CancelAgentTurnInput; output: void };
   createHumanCorner: { input: CreateHumanCornerInput; output: IdResult };
   requestCornerClose: { input: RoomInput; output: void };
@@ -373,11 +367,6 @@ export type WorkflowRunSummaryView = {
 };
 export type WorkflowRunListResult = { readonly workflows: readonly WorkflowRunSummaryView[] };
 export type ReadWorkflowRunInput = RoomInput & { readonly runId: string };
-export type StartWorkflowRunOverrideInput = RoomInput & {
-  readonly name: string;
-  readonly roleBindings: Readonly<Record<string, WorkflowRoleBinding>>;
-};
-export type StartWorkflowRunResult = { readonly runId: string; readonly state: string };
 /**
  * The record of a gate's choice card: what it asked, what it offered, and how
  * it was settled. `status` is the card's own (`open` while it waits).

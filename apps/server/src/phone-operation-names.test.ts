@@ -103,7 +103,6 @@ const ALL_PHONE_OPERATION_NAMES = {
   setRoomRepository: true,
   setRoomTargetBranch: true,
   skipChoice: true,
-  startWorkflowRunOverride: true,
   unbanWorkspaceMember: true,
   unpairConnector: true,
   unregisterPushDevice: true,

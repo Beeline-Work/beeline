@@ -4,6 +4,7 @@ import { migrate, type QueryResult, type SqlDatabase } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { createAgentCommand, readAgentCommands, type CommandRow } from './agent-command.js';
 import { answerRoomChoice } from './room-choice.js';
+import { AgentScheduleLoop } from './agent-schedules.js';
 import {
   archiveWorkflow,
   assignWorkflowRole,
@@ -11,7 +12,6 @@ import {
   reassignFailedWorkflowRole,
   saveWorkflow,
   startWorkflow,
-  startWorkflowRunOverride,
   workflowRunLockKey,
 } from './workflow-runs.js';
 
@@ -593,7 +593,7 @@ describe('start_workflow schedule/trigger duplicate-run refusal', () => {
     });
     // A second wake for the exact same schedule occurrence (a retried turn,
     // or the agent resuming after a restart) must not start a duplicate run.
-    const secondCommand = await commandFor(REVIEWER, firstWake);
+    const secondCommand = firstCommand;
     await expect(
       startWorkflow(database, secondCommand, {
         name: 'corner',
@@ -614,9 +614,7 @@ describe('start_workflow schedule/trigger duplicate-run refusal', () => {
       name: 'corner',
       roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
     });
-    const overridden = await startWorkflowRunOverride(database, {
-      roomId: ROOM,
-      actorId: OWNER,
+    const overridden = await startWorkflow(database, { room_id: ROOM, agent_id: OWNER }, {
       name: 'corner',
       roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
     });
@@ -626,6 +624,38 @@ describe('start_workflow schedule/trigger duplicate-run refusal', () => {
       [overridden.runId],
     );
     expect(card.rows[0]?.system_event.subject.id).toBe(OWNER);
+  });
+
+  it('refuses a retry from a one-shot schedule after its occurrence is deleted', async () => {
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: CONTRACT });
+    await createSchedule(IMPLEMENTER, SCHEDULE);
+    await database.query(
+      `UPDATE agent_schedules SET max_runs=1,next_run_at=now()-interval '1 minute' WHERE id=$1`,
+      [SCHEDULE],
+    );
+    expect(await new AgentScheduleLoop(database).runOnce()).toBe(1);
+    expect((await database.query(`SELECT 1 FROM agent_schedules WHERE id=$1`, [SCHEDULE])).rowCount).toBe(0);
+    const wake = (await database.query<{ source_message_id: string }>(
+      `SELECT source_message_id FROM agent_commands WHERE reason='schedule' AND agent_id=$1`,
+      [IMPLEMENTER],
+    )).rows[0]!;
+    const scheduled = (await database.query<CommandRow>(
+      `SELECT * FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2`,
+      [wake.source_message_id, IMPLEMENTER],
+    )).rows[0]!;
+    const started = await startWorkflow(database, scheduled, {
+      name: 'corner',
+      roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+    });
+    const startCard = (await database.query<{ card: { trigger: { scheduleId: string; period: string } } }>(
+      `SELECT card FROM messages WHERE id=$1`, [started.runId],
+    )).rows[0]!;
+    expect(startCard.card.trigger.scheduleId).toBe(SCHEDULE);
+    await expect(startWorkflow(database, scheduled, {
+      name: 'corner',
+      roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+    })).rejects.toThrow(`active run ${started.runId}`);
   });
 });
 
@@ -704,6 +734,11 @@ describe('handoff', () => {
       [ROOM, APPROVER],
     );
     const approvedOption = choice.rows[0]!.options.find((option) => option.label === 'approved')!;
+    const gateCard = await database.query<{ card: { runId: string; workflowSlug: string } }>(
+      `SELECT message.card FROM messages message JOIN room_choices choice ON choice.message_id=message.id WHERE choice.id=$1`,
+      [choice.rows[0]!.id],
+    );
+    expect(gateCard.rows[0]?.card).toMatchObject({ runId, workflowSlug: 'corner' });
     await answerRoomChoice(database, {
       choiceId: choice.rows[0]!.id,
       optionId: approvedOption.optionId,
@@ -800,6 +835,12 @@ describe('handoff', () => {
     expect(woken?.source.body).toContain(
       `You are in run ${runId} of corner. Continue this run; do not start a new one.`,
     );
+    expect(woken?.sourceMessageId).toBeDefined();
+    const approverCommand = await commandFor(APPROVER, woken!.sourceMessageId);
+    await expect(startWorkflow(database, approverCommand, {
+      name: 'corner',
+      roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+    })).rejects.toThrow(`You are already in run ${runId} of corner.`);
   });
 
   it('schedules and cancels a state timeout across a handoff', async () => {

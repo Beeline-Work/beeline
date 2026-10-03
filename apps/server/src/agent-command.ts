@@ -8,7 +8,7 @@ import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-cont
 import { isResumeKind } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { isCornerReviewer } from './agent-health.js';
-import { advanceCorner } from './corner-workflow.js';
+import { advanceCorner, lockCornerWorkflowRun } from './corner-workflow.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import { hasSystemReportMention, taggedIdentityIdsSql } from './message-mentions.js';
 import { ensureSystemIdentity, GITHUB_SUBJECT, systemLine } from './system-line.js';
@@ -1159,73 +1159,78 @@ export async function reconcileCornerMergeBlockers(
   );
   let commands = 0;
   for (const row of stranded.rows) {
-    if (row.checks === 'failing') {
-      const existing = await db.query(
-        `SELECT 1 FROM agent_commands command
-         JOIN messages source ON source.id=command.source_message_id
-         WHERE command.room_id=$1 AND command.agent_id=$2
-           AND command.reason='corner_check'
-           AND source.system_event->'object'->>'headSha'=$3 LIMIT 1`,
-        [row.corner_id, row.owner_agent_id, row.head_sha],
-      );
-      if (!existing.rowCount) {
-        const source = await systemLine(db, {
-          id: createHash('sha256')
-            .update(`beeline:${row.corner_id}:github:checks-failed:${row.head_sha}`)
-            .digest('hex'),
+    commands += await db.transaction(async (db) => {
+      await lockCornerWorkflowRun(db, row.corner_id);
+      let routedCommands = 0;
+      if (row.checks === 'failing') {
+        const existing = await db.query(
+          `SELECT 1 FROM agent_commands command
+           JOIN messages source ON source.id=command.source_message_id
+           WHERE command.room_id=$1 AND command.agent_id=$2
+             AND command.reason='corner_check'
+             AND source.system_event->'object'->>'headSha'=$3 LIMIT 1`,
+          [row.corner_id, row.owner_agent_id, row.head_sha],
+        );
+        if (!existing.rowCount) {
+          const source = await systemLine(db, {
+            id: createHash('sha256')
+              .update(`beeline:${row.corner_id}:github:checks-failed:${row.head_sha}`)
+              .digest('hex'),
+            roomId: row.corner_id,
+            authorId: row.owner_agent_id,
+            subject: GITHUB_SUBJECT,
+            verb: 'found failing checks on',
+            kind: 'check-failed',
+            object: {
+              text: row.title ?? `pull request #${row.number}`,
+              url: row.url,
+              headSha: row.head_sha,
+            },
+          });
+          if (!source.inserted) {
+            await db.query(`UPDATE corner_facts SET command_check_state=NULL WHERE corner_id=$1`, [
+              row.corner_id,
+            ]);
+            await routeSystemCommand(db, {
+              roomId: row.corner_id,
+              sourceMessageId: source.id,
+              kind: 'check-failed',
+              targets: [],
+            });
+          }
+          const routed = await db.query(
+            `SELECT 1 FROM agent_commands WHERE room_id=$1 AND source_message_id=$2 AND agent_id=$3`,
+            [row.corner_id, source.id, row.owner_agent_id],
+          );
+          if (routed.rowCount) routedCommands += 1;
+        }
+      }
+      if (row.mergeability === 'dirty') {
+        const generation = `${row.number}:${row.head_sha}${row.base_sha ? `:${row.base_sha}` : ''}`;
+        const id = createHash('sha256')
+          .update(`beeline:${row.corner_id}:github:merge-conflict:${generation}`)
+          .digest('hex');
+        const exists = await db.query(
+          `SELECT 1 FROM agent_commands WHERE room_id=$1 AND source_message_id=$2 AND agent_id=$3`,
+          [row.corner_id, id, row.owner_agent_id],
+        );
+        if (exists.rowCount) return routedCommands;
+        const note = await systemLine(db, {
+          id,
           roomId: row.corner_id,
           authorId: row.owner_agent_id,
           subject: GITHUB_SUBJECT,
-          verb: 'found failing checks on',
-          kind: 'check-failed',
+          verb: 'found merge conflicts in',
           object: {
             text: row.title ?? `pull request #${row.number}`,
             url: row.url,
             headSha: row.head_sha,
           },
         });
-        if (!source.inserted) {
-          await db.query(`UPDATE corner_facts SET command_check_state=NULL WHERE corner_id=$1`, [
-            row.corner_id,
-          ]);
-          await routeSystemCommand(db, {
-            roomId: row.corner_id,
-            sourceMessageId: source.id,
-            kind: 'check-failed',
-            targets: [],
-          });
-        }
-        const routed = await db.query(
-          `SELECT 1 FROM agent_commands WHERE room_id=$1 AND source_message_id=$2 AND agent_id=$3`,
-          [row.corner_id, source.id, row.owner_agent_id],
-        );
-        if (routed.rowCount) commands += 1;
+        if (await queueCornerMergeConflict(db, row.corner_id, note.id)) routedCommands += 1;
       }
-    }
-    if (row.mergeability === 'dirty') {
-      const generation = `${row.number}:${row.head_sha}${row.base_sha ? `:${row.base_sha}` : ''}`;
-      const id = createHash('sha256')
-        .update(`beeline:${row.corner_id}:github:merge-conflict:${generation}`)
-        .digest('hex');
-      const exists = await db.query(
-        `SELECT 1 FROM agent_commands WHERE room_id=$1 AND source_message_id=$2 AND agent_id=$3`,
-        [row.corner_id, id, row.owner_agent_id],
-      );
-      if (exists.rowCount) continue;
-      const note = await systemLine(db, {
-        id,
-        roomId: row.corner_id,
-        authorId: row.owner_agent_id,
-        subject: GITHUB_SUBJECT,
-        verb: 'found merge conflicts in',
-        object: {
-          text: row.title ?? `pull request #${row.number}`,
-          url: row.url,
-          headSha: row.head_sha,
-        },
-      });
-      if (await queueCornerMergeConflict(db, row.corner_id, note.id)) commands += 1;
-    }
+      return routedCommands;
+    });
   }
   return commands;
 }

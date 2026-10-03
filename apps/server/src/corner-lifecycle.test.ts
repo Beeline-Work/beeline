@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QueryResultRow } from 'pg';
 import { readWorkflowContract } from '@beeline/api-contract/daemon';
 import { migrate, type QueryResult, type SqlDatabase } from './database.js';
@@ -15,14 +15,14 @@ import {
   advanceCorner,
   backfillCornerWorkflowRuns,
   CHECKS_FAILING_LIMIT,
-  CORNER_WORKFLOW_CONTRACT,
-  CORNER_WORKFLOW_SLUG,
+  CORNER_LIFECYCLE_CONTRACT,
+  CORNER_LIFECYCLE_SLUG,
   cornerMergeGate,
   cornersReadyToLand,
   claimCornerMergeAttempt,
-  ensureCornerWorkflowSeeded,
+  deleteStoredCornerWorkflows,
   REVIEW_HANDBACK_LIMIT,
-} from './corner-workflow.js';
+} from './corner-lifecycle.js';
 import {
   createAgentCommand,
   repairReviewerCornerMembership,
@@ -52,7 +52,7 @@ class RecordingDatabase implements SqlDatabase {
 }
 
 /**
- * The corner lifecycle expressed as the built-in "corner" workflow contract
+ * The corner lifecycle expressed as the in-code `CORNER_LIFECYCLE_CONTRACT`
  * (report: data/beeline-workflow-contracts-design/report.md). Every test here
  * proves TWO things together: the real corner machinery keeps behaving
  * exactly as it does on main (no regression), and a `workflow-handoff` card
@@ -110,11 +110,6 @@ beforeAll(async () => {
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner'),($1,$3,$2,'owner')`,
       [W, who, R],
     );
-  // This fixture inserts its Workspace directly (as every other corner test
-  // file does), bypassing both `createWorkspace`'s seeding and the deploy
-  // backfill — seed it explicitly here instead, the way an already-existing
-  // Workspace gets it in production.
-  await ensureCornerWorkflowSeeded(db, W, R);
   phone = new PhoneService(db, 'http://test');
   daemon = new DaemonService(db, new LiveHub());
   githubRollupState = 'pending';
@@ -305,15 +300,151 @@ const result = (c: AgentCommand, text: string, generationId = 'g1') =>
 
 describe('the corner workflow contract itself', () => {
   it('validates against the shared workflow-contract schema', () => {
-    expect(readWorkflowContract(CORNER_WORKFLOW_CONTRACT)).toEqual(CORNER_WORKFLOW_CONTRACT);
+    expect(readWorkflowContract(CORNER_LIFECYCLE_CONTRACT)).toEqual(CORNER_LIFECYCLE_CONTRACT);
   });
 
-  it('is seeded as an active, discoverable workspace_skills row of kind workflow', async () => {
-    const row = await db.query<{ kind: string; state: string }>(
-      `SELECT kind,state FROM workspace_skills WHERE workspace_id=$1 AND slug=$2`,
-      [W, CORNER_WORKFLOW_SLUG],
+  it('is never stored as a Workspace workflow, not even by creating a Workspace', async () => {
+    const { id } = await phone.execute('createWorkspace', { name: 'Fresh' }, H);
+    expect(
+      (await db.query(`SELECT 1 FROM workspace_skills WHERE slug=$1`, [CORNER_LIFECYCLE_SLUG])).rowCount,
+    ).toBe(0);
+    await db.query(`DELETE FROM workspaces WHERE id=$1`, [id]);
+  });
+
+  it('migration deletes the copy older servers seeded, with its versions, and keeps a saved corner workflow', async () => {
+    const seeded = '33333333-3333-4333-8333-333333333333';
+    await db.query(
+      `INSERT INTO workspace_skills
+         (id,workspace_id,slug,description,state,current_version,revision,source_room_id,
+          repository,target_commit,path,kind)
+       VALUES($1,$2,$3,'Corner lifecycle','active',2,2,$4,'','',NULL,'workflow')`,
+      [seeded, W, CORNER_LIFECYCLE_SLUG, R],
     );
-    expect(row.rows[0]).toEqual({ kind: 'workflow', state: 'active' });
+    for (const version of [1, 2])
+      await db.query(
+        `INSERT INTO workspace_skill_versions
+           (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,
+            repository,target_commit,path,extractor_version,model)
+         VALUES($1,$2,'{}',$3,NULL,$4,'','',NULL,'corner-workflow-v1','n/a')`,
+        [seeded, version, String(version).repeat(64), ['system:corner-workflow-seed']],
+      );
+    expect(await deleteStoredCornerWorkflows(db)).toBe(1);
+    expect((await db.query(`SELECT 1 FROM workspace_skills WHERE id=$1`, [seeded])).rowCount).toBe(0);
+    expect((await db.query(`SELECT 1 FROM workspace_skill_versions WHERE skill_id=$1`, [seeded])).rowCount).toBe(0);
+
+    const saved = '44444444-4444-4444-8444-444444444444';
+    await db.query(
+      `INSERT INTO workspace_skills
+         (id,workspace_id,slug,description,state,current_version,revision,source_room_id,
+          repository,target_commit,path,kind)
+       VALUES($1,$2,$3,'Mine','active',1,1,$4,'','',NULL,'workflow')`,
+      [saved, W, CORNER_LIFECYCLE_SLUG, R],
+    );
+    await db.query(
+      `INSERT INTO workspace_skill_versions
+         (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,
+          repository,target_commit,path,extractor_version,model)
+       VALUES($1,1,'{}',$2,NULL,$3,'','',NULL,'workflow-save','n/a')`,
+      [saved, 'a'.repeat(64), ['m']],
+    );
+    expect(await deleteStoredCornerWorkflows(db)).toBe(0);
+    expect((await db.query(`SELECT 1 FROM workspace_skills WHERE id=$1`, [saved])).rowCount).toBe(1);
+    await db.query(`DELETE FROM workspace_skills WHERE id=$1`, [saved]);
+  });
+});
+
+describe.each([
+  ['with no stored corner workflow', false],
+  ['with a stale stored corner workflow an older server seeded', true],
+])('%s, corners work exactly as before', (_name, stored) => {
+  const badge = async (cornerId: string, archived = false) =>
+    (await phone.readCorners(R, H, false, archived))!.corners.find((row) => row.corner.id === cornerId)!.state;
+  const STORED = '55555555-5555-4555-8555-555555555555';
+
+  beforeEach(async () => {
+    if (stored) {
+      // A version 9 copy whose contract differs from the code, as if edited.
+      await db.query(
+        `INSERT INTO workspace_skills
+           (id,workspace_id,slug,description,state,current_version,revision,source_room_id,
+            repository,target_commit,path,kind)
+         VALUES($1,$2,$3,'Stale copy','active',9,9,$4,'','',NULL,'workflow')`,
+        [STORED, W, CORNER_LIFECYCLE_SLUG, R],
+      );
+      await db.query(
+        `INSERT INTO workspace_skill_versions
+           (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,
+            repository,target_commit,path,extractor_version,model)
+         VALUES($1,9,$2,$3,NULL,$4,'','',NULL,'corner-workflow-v1','n/a')`,
+        [
+          STORED,
+          JSON.stringify({ ...CORNER_LIFECYCLE_CONTRACT, description: 'Stale copy' }),
+          'f'.repeat(64),
+          ['system:corner-workflow-seed'],
+        ],
+      );
+    }
+    expect(
+      (await db.query(`SELECT 1 FROM workspace_skills WHERE slug=$1`, [CORNER_LIFECYCLE_SLUG])).rowCount,
+    ).toBe(stored ? 1 : 0);
+  });
+  afterEach(async () => {
+    await db.query(`DELETE FROM workspace_skills WHERE id=$1`, [STORED]);
+  });
+
+  it('a code corner opens, advances implement -> checks -> review -> land -> landed, and renders on the run page', async () => {
+    const cornerId = await open(undefined, 'owner/widgets');
+    expect(await currentState(cornerId)).toBe('implement');
+    expect(await projected(cornerId)).toBe('implement');
+    const badges = [await badge(cornerId)];
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await pushToCorner(cornerId, SHA);
+    expect(await currentState(cornerId)).toBe('checks');
+    badges.push(await badge(cornerId));
+    await greenHead(cornerId, 7, SHA);
+    expect(await currentState(cornerId)).toBe('review');
+    badges.push(await badge(cornerId));
+    const [review] = await commands(B, cornerId);
+    await claim(review!);
+    await approve(cornerId);
+    await result(review!, `approved ${SHA}`);
+    expect(await currentState(cornerId)).toBe('land');
+    badges.push(await badge(cornerId));
+    githubHead = SHA;
+    githubRollupState = 'passed';
+    expect(await github.landReadyCorners()).toBe(1);
+    await mergedWebhook(cornerId, 7, SHA);
+    expect(await currentState(cornerId)).toBe('landed');
+    expect(await projected(cornerId)).toBe('landed');
+    badges.push(await badge(cornerId, true));
+    expect(badges).toEqual(BADGES);
+    expect((await cards(cornerId)).map((card) => (card as { workflowVersion?: number }).workflowVersion)).toEqual(
+      (await cards(cornerId)).map(() => 1),
+    );
+
+    const detail = await phone.execute('readWorkflowRun', { roomId: cornerId, runId: cornerId }, H);
+    expect(detail.contract).toEqual(CORNER_LIFECYCLE_CONTRACT);
+    expect(detail.run).toMatchObject({ workflowSlug: 'corner', state: 'landed', status: 'done' });
+    expect(detail.history.map((step) => step.toState)).toEqual([
+      'opened', 'implement', 'checks', 'review', 'land', 'landed',
+    ]);
+    const listed = await phone.execute('listRoomWorkflowRuns', { roomId: cornerId }, H);
+    expect(listed.workflows).toEqual([
+      expect.objectContaining({ runId: cornerId, workflowSlug: 'corner', state: 'landed', status: 'done' }),
+    ]);
+  });
+
+  it('a no-code corner opens on no_code_work and closes', async () => {
+    const cornerId = await open('no_code');
+    expect(await currentState(cornerId)).toBe('no_code_work');
+    const opened = await badge(cornerId);
+    await daemon.execute('archiveCorner', { cornerId }, A);
+    expect(await currentState(cornerId)).toBe('closed');
+    expect(await projected(cornerId)).toBe('closed');
+    expect([opened, await badge(cornerId, true)]).toEqual(NO_CODE_BADGES);
+    const detail = await phone.execute('readWorkflowRun', { roomId: cornerId, runId: cornerId }, H);
+    expect(detail.contract).toEqual(CORNER_LIFECYCLE_CONTRACT);
+    expect(detail.history.map((step) => step.toState)).toEqual(['opened', 'no_code_work', 'closed']);
   });
 });
 
@@ -372,10 +503,10 @@ describe('lane decided at open (row 1-3)', () => {
   });
 
   it('has only the code and no_code lanes, and no investigate state', () => {
-    expect(CORNER_WORKFLOW_CONTRACT.handoffs.opened).toMatchObject({
+    expect(CORNER_LIFECYCLE_CONTRACT.handoffs.opened).toMatchObject({
       on: { no_code: 'no_code_work', code: 'implement' },
     });
-    expect(Object.keys(CORNER_WORKFLOW_CONTRACT.handoffs)).not.toContain('investigate');
+    expect(Object.keys(CORNER_LIFECYCLE_CONTRACT.handoffs)).not.toContain('investigate');
   });
 });
 
@@ -615,6 +746,10 @@ describe('landing and closing from any state (finding 3, implicit edges)', () =>
 });
 
 const SHA = '7'.repeat(40);
+/** The phone badge at implement, checks, review, land and landed. */
+const BADGES = ['idle', 'review', 'review', 'review', 'archived'];
+/** The phone badge at no_code_work and closed. */
+const NO_CODE_BADGES = ['idle', 'archived'];
 const branchOf = (cornerId: string) => `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`;
 
 async function reasons(cornerId: string, agentId: string): Promise<string[]> {
@@ -2072,7 +2207,7 @@ describe('migrating a research corner to the code lane', () => {
 describe('every contract edge (AC-1)', () => {
   it('is taken by some test in this file', () => {
     const expected = new Set<string>();
-    for (const [from, state] of Object.entries(CORNER_WORKFLOW_CONTRACT.handoffs)) {
+    for (const [from, state] of Object.entries(CORNER_LIFECYCLE_CONTRACT.handoffs)) {
       if (!('on' in state)) continue;
       for (const [outcome, to] of Object.entries(state.on)) expected.add(`${from}:${outcome}:${to}`);
       if ('loop' in state && state.loop) expected.add(`${from}:${state.loop.onEdge}:${state.loop.onExceeded}`);
@@ -2080,7 +2215,7 @@ describe('every contract edge (AC-1)', () => {
     const taken = new Set([...recordedEdges].map((edge) => edge));
     const missing = [...expected].filter((edge) => !taken.has(edge));
     expect(missing).toEqual([]);
-    for (const terminal of CORNER_WORKFLOW_CONTRACT.implicitEdges ?? [])
+    for (const terminal of CORNER_LIFECYCLE_CONTRACT.implicitEdges ?? [])
       expect([...taken].some((edge) => edge.endsWith(`:${terminal}:${terminal}`))).toBe(true);
   });
 });

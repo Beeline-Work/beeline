@@ -23,7 +23,7 @@ const feedbackTriage = JSON.parse(
   readFileSync(path.join(repo, 'docs/workflows/feedback-triage.json'), 'utf8'),
 ) as WorkflowContract;
 
-/** A copy of the server's `CORNER_WORKFLOW_CONTRACT` (apps/server/src/corner-workflow.ts). */
+/** A copy of the server's `CORNER_LIFECYCLE_CONTRACT` (apps/server/src/corner-lifecycle.ts). */
 const corner: WorkflowContract = {
   version: 1,
   name: 'corner',
@@ -70,7 +70,7 @@ const corner: WorkflowContract = {
 };
 
 const serverCornerSource = readFileSync(
-  path.join(repo, 'apps/server/src/corner-workflow.ts'),
+  path.join(repo, 'apps/server/src/corner-lifecycle.ts'),
   'utf8',
 );
 

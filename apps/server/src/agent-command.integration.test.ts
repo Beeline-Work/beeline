@@ -14,7 +14,7 @@ import {
   routeSystemCommand,
 } from './agent-command.js';
 import { systemLine } from './system-line.js';
-import { advanceCorner } from './corner-workflow.js';
+import { advanceCorner } from './corner-lifecycle.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 const H = 'a'.repeat(64),
   A = 'b'.repeat(64),

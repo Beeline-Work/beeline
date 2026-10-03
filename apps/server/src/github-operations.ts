@@ -24,7 +24,7 @@ import {
   cornersReadyToLand,
   unfinishedCornerMergeClaims,
   clearUnfinishedCornerMergeClaim,
-} from './corner-workflow.js';
+} from './corner-lifecycle.js';
 import {
   queueCornerMergeConflict,
   reconcileCornerMergeBlockers,

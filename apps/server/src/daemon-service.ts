@@ -77,7 +77,7 @@ import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedul
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import { closeCornerState } from './corner-close.js';
 import { writeCornerTitle } from './corner-title.js';
-import { advanceCorner, lockCornerWorkflowRun } from './corner-workflow.js';
+import { advanceCorner, lockCornerWorkflowRun } from './corner-lifecycle.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import {
   LiveHub,

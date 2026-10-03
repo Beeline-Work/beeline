@@ -1,7 +1,7 @@
 import type { SqlDatabase } from './database.js';
 import { randomBytes } from 'node:crypto';
 import { createAgentCommand } from './agent-command.js';
-import { advanceCorner } from './corner-workflow.js';
+import { advanceCorner } from './corner-lifecycle.js';
 
 /** The terminal corner state shared by helper completion and a human close request. */
 export async function closeCornerState(database: SqlDatabase, cornerId: string) {

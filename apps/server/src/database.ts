@@ -16,7 +16,7 @@ import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { uniqueAgentHandle } from '@beeline/api-contract/phone';
 import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
-import { backfillCornerWorkflowRuns, backfillCornerWorkflowSeed } from './corner-workflow.js';
+import { backfillCornerWorkflowRuns, deleteStoredCornerWorkflows } from './corner-lifecycle.js';
 import { backfillFeedbackTriageWorkflow } from './feedback-triage-workflow.js';
 import { retireAgentClasses } from './agent-class-retirement.js';
 import { upgradeGrantPolicy, withdrawSupersededGrantAsks } from './grant-policy-upgrade.js';
@@ -1691,14 +1691,14 @@ ALTER TABLE corner_facts ADD CONSTRAINT corner_facts_kind_check
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS feedback_triage boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS corner_facts_owner_agent_idx ON corner_facts(owner_agent_id);
 -- The corner workflow run's current state, projected from its newest handoff
--- card in the same transaction (corner-workflow.ts), and the one head the
+-- card in the same transaction (corner-lifecycle.ts), and the one head the
 -- server has tried to merge.
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS workflow_state text;
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS workflow_outcome text;
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS merge_attempt_head text;
 -- The research lane is gone: a research corner is a code corner, and its run
 -- leaves the removed investigate state for implement. Its newest handoff card
--- is the run's state (corner-workflow.ts), so that card moves with it.
+-- is the run's state (corner-lifecycle.ts), so that card moves with it.
 UPDATE messages SET card=card || '{"toState":"implement"}'::jsonb
   || CASE WHEN card->>'outcome'='research' THEN '{"outcome":"code"}'::jsonb ELSE '{}'::jsonb END
   WHERE card_type='corner-workflow-handoff' AND card->>'toState'='investigate'
@@ -2692,7 +2692,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   await dataStep('corner owner backfill', () => backfillCornerOwners(database));
   await dataStep('corner owed backfill', () => backfillCornerOwed(database));
   await dataStep('inherited corner memberships', () => backfillInheritedCornerMemberships(database));
-  await dataStep('corner workflow seed', () => backfillCornerWorkflowSeed(database));
+  await dataStep('stored corner workflows', () => deleteStoredCornerWorkflows(database));
   await dataStep('corner workflow runs', () => backfillCornerWorkflowRuns(database));
   await dataStep('feedback triage workflow', () => backfillFeedbackTriageWorkflow(database));
   const blockers = await dataStep('corner merge blockers', () =>

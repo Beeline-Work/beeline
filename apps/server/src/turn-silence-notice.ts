@@ -18,7 +18,7 @@ import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
 import { restateSystemLine, systemLine, type SystemPhrase } from './system-line.js';
 import { reassignFailedWorkflowRole } from './workflow-runs.js';
-import { reassignFailedCornerReviewer } from './corner-workflow.js';
+import { reassignFailedCornerReviewer } from './corner-lifecycle.js';
 
 export const TURN_FAILURE_REASON_MAX = 200;
 

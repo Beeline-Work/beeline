@@ -1,6 +1,6 @@
 import type { CornerHoldInput, CornerMergeHold } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
-import { lockCornerWorkflowRun } from './corner-workflow.js';
+import { lockCornerWorkflowRun } from './corner-lifecycle.js';
 
 export async function activeCornerHolds(
   db: SqlDatabase,

@@ -14,7 +14,7 @@ import type {
 import { isAgentIdentityReference } from '@beeline/api-contract/daemon';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
-import { CORNER_WORKFLOW_CONTRACT, CORNER_WORKFLOW_SLUG } from './corner-workflow.js';
+import { CORNER_LIFECYCLE_CONTRACT } from './corner-lifecycle.js';
 import { CORNER_WORKFLOW_HANDOFF_CARD_TYPE } from './room-choice.js';
 import { WORKFLOW_HANDOFF_CARD_TYPE, workflowGatePrompt } from './workflow-runs.js';
 
@@ -28,6 +28,15 @@ import { WORKFLOW_HANDOFF_CARD_TYPE, workflowGatePrompt } from './workflow-runs.
  */
 
 const RUN_CARD_TYPES = [WORKFLOW_HANDOFF_CARD_TYPE, CORNER_WORKFLOW_HANDOFF_CARD_TYPE];
+
+/**
+ * A corner's own run is keyed by its card type, never by its `workflowSlug`
+ * or a stored workflow: it always renders from the in-code
+ * `CORNER_LIFECYCLE_CONTRACT`, and a Workspace workflow saved as `corner`
+ * stays a separate, ordinary workflow. Neither a `slug` nor a `slug@version`
+ * contains a colon.
+ */
+const CORNER_RUN_KEY = `${CORNER_WORKFLOW_HANDOFF_CARD_TYPE}:lifecycle`;
 
 /** The live role binding the corner contract's reviewer uses; resolved from the parent Room. */
 const PARENT_REVIEWER_BINDING = 'live:parent.reviewer_agent_id';
@@ -52,6 +61,7 @@ type RunHeadRow = {
   parent_id: string | null;
   reviewer_agent_id: string | null;
   workspace_id: string;
+  card_type: string;
   workflow_slug: string;
   workflow_version: number;
   to_state: string;
@@ -71,6 +81,12 @@ type RunHead = {
   workspaceId: string;
   slug: string;
   version: number;
+  /** True for a corner's own lifecycle run. */
+  corner: boolean;
+  /** Its contract: `CORNER_RUN_KEY`, or the pinned `slug@version`. */
+  key: string;
+  /** Runs of one workflow share this: `CORNER_RUN_KEY`, or the slug. */
+  family: string;
   state: string;
   /** The state the newest card left, when it is a handoff rather than the start. */
   fromState?: string;
@@ -107,7 +123,7 @@ async function loadRunHeads(
          LEFT JOIN rooms parent ON parent.id=room.parent_id
          WHERE (room.id=$1 OR room.parent_id=$1) AND ${VIEWER_CAN_READ_ROOM_SQL}
        ), cards AS (
-         SELECT message.id,message.room_id,message.created_at,
+         SELECT message.id,message.room_id,message.created_at,message.card_type,
                 message.card->>'runId' run_id,message.card->>'workflowSlug' workflow_slug,
                 COALESCE((message.card->>'workflowVersion')::int,1) workflow_version,
                 message.card->>'toState' to_state,message.card->>'fromState' from_state,
@@ -122,7 +138,7 @@ async function loadRunHeads(
          SELECT room_id,run_id,min(created_at) started_at FROM cards GROUP BY room_id,run_id
        )
        SELECT DISTINCT ON (cards.room_id,cards.run_id)
-              cards.run_id,cards.room_id,scope.name room_name,scope.parent_id,
+              cards.run_id,cards.room_id,cards.card_type,scope.name room_name,scope.parent_id,
               scope.reviewer_agent_id,scope.workspace_id,cards.workflow_slug,
               cards.workflow_version,cards.to_state,cards.from_state,cards.author_id,
               cards.role_bindings,started.started_at,cards.created_at updated_at
@@ -134,33 +150,43 @@ async function loadRunHeads(
       [topRoomId, viewerId, RUN_CARD_TYPES, slug ?? null],
     )
   ).rows;
-  return rows.map((row) => ({
-    runId: row.run_id,
-    roomId: row.room_id,
-    roomName: row.room_name,
-    ...(row.parent_id ? { parentRoomId: row.parent_id } : {}),
-    ...(row.reviewer_agent_id ? { reviewerAgentId: row.reviewer_agent_id } : {}),
-    workspaceId: row.workspace_id,
-    slug: row.workflow_slug,
-    version: row.workflow_version,
-    state: row.to_state,
-    ...(row.from_state ? { fromState: row.from_state } : {}),
-    authorId: row.author_id,
-    roleBindings: row.role_bindings ?? {},
-    startedAt: unix(row.started_at),
-    updatedAt: unix(row.updated_at),
-    startedAtMs: new Date(row.started_at).getTime(),
-    updatedAtMs: new Date(row.updated_at).getTime(),
-  }));
+  return rows.map((row) => {
+    const corner = row.card_type === CORNER_WORKFLOW_HANDOFF_CARD_TYPE;
+    return {
+      runId: row.run_id,
+      roomId: row.room_id,
+      roomName: row.room_name,
+      ...(row.parent_id ? { parentRoomId: row.parent_id } : {}),
+      ...(row.reviewer_agent_id ? { reviewerAgentId: row.reviewer_agent_id } : {}),
+      workspaceId: row.workspace_id,
+      slug: row.workflow_slug,
+      version: row.workflow_version,
+      corner,
+      key: corner ? CORNER_RUN_KEY : `${row.workflow_slug}@${row.workflow_version}`,
+      family: corner ? CORNER_RUN_KEY : row.workflow_slug,
+      state: row.to_state,
+      ...(row.from_state ? { fromState: row.from_state } : {}),
+      authorId: row.author_id,
+      roleBindings: row.role_bindings ?? {},
+      startedAt: unix(row.started_at),
+      updatedAt: unix(row.updated_at),
+      startedAtMs: new Date(row.started_at).getTime(),
+      updatedAtMs: new Date(row.updated_at).getTime(),
+    };
+  });
 }
 
-/** Pinned contracts by `slug@version`; the built-in corner contract stands in if its seed is missing. */
+/** Each head's contract by its `key`: the in-code corner contract, or the pinned stored version. */
 async function loadContracts(
   db: SqlDatabase,
   workspaceId: string,
-  pins: ReadonlyArray<{ slug: string; version: number }>,
+  heads: readonly RunHead[],
 ): Promise<Map<string, WorkflowContract>> {
   const contracts = new Map<string, WorkflowContract>();
+  if (heads.some((head) => head.corner)) contracts.set(CORNER_RUN_KEY, CORNER_LIFECYCLE_CONTRACT);
+  const pins = [
+    ...new Map(heads.filter((head) => !head.corner).map((head) => [head.key, head])).values(),
+  ];
   if (pins.length === 0) return contracts;
   const rows = (
     await db.query<{ slug: string; version: number; markdown: string }>(
@@ -181,9 +207,6 @@ async function loadContracts(
       // An unreadable stored contract leaves the run out rather than failing the list.
     }
   }
-  for (const pin of pins)
-    if (pin.slug === CORNER_WORKFLOW_SLUG && !contracts.has(`${pin.slug}@${pin.version}`))
-      contracts.set(`${pin.slug}@${pin.version}`, CORNER_WORKFLOW_CONTRACT);
   return contracts;
 }
 
@@ -292,20 +315,20 @@ function summarize(
   };
 }
 
-/** Every live run id, grouped by workflow slug, among the given heads. */
-function liveRunIdsBySlug(
+/** Every live run id, grouped by workflow family, among the given heads. */
+function liveRunIdsByFamily(
   heads: readonly RunHead[],
   contracts: ReadonlyMap<string, WorkflowContract>,
 ): Map<string, string[]> {
-  const bySlug = new Map<string, string[]>();
+  const byFamily = new Map<string, string[]>();
   for (const head of heads) {
-    const contract = contracts.get(`${head.slug}@${head.version}`);
+    const contract = contracts.get(head.key);
     if (!contract || runStatus(contract, head.state) !== 'live') continue;
-    const list = bySlug.get(head.slug) ?? [];
+    const list = byFamily.get(head.family) ?? [];
     list.push(head.runId);
-    bySlug.set(head.slug, list);
+    byFamily.set(head.family, list);
   }
-  return bySlug;
+  return byFamily;
 }
 
 /** Every bound role holder, and the newest card's author when it is a person or agent. */
@@ -335,7 +358,7 @@ async function loadViewer(
 function earlierThan(heads: readonly RunHead[], head: RunHead): number {
   return heads.filter(
     (other) =>
-      other.slug === head.slug &&
+      other.family === head.family &&
       other.runId !== head.runId &&
       (other.startedAtMs < head.startedAtMs ||
         (other.startedAtMs === head.startedAtMs && other.runId < head.runId)),
@@ -354,48 +377,45 @@ export async function listRoomWorkflowRuns(
   workflowSlug?: string,
   publicOrigin = '',
 ): Promise<WorkflowRunListResult> {
-  const heads = await loadRunHeads(db, roomId, viewerId, workflowSlug);
+  // A definition's runs never include a corner's lifecycle run, which no
+  // stored workflow defines.
+  const heads = (await loadRunHeads(db, roomId, viewerId, workflowSlug)).filter(
+    (head) => !workflowSlug || !head.corner,
+  );
   if (heads.length === 0) return { workflows: [] };
   const workspaceId = heads[0]!.workspaceId;
-  const contracts = await loadContracts(
-    db,
-    workspaceId,
-    [...new Map(heads.map((head) => [`${head.slug}@${head.version}`, head])).values()].map(
-      (head) => ({ slug: head.slug, version: head.version }),
-    ),
-  );
-  const readable = heads.filter((head) => contracts.has(`${head.slug}@${head.version}`));
-  const isLive = (head: RunHead) =>
-    runStatus(contracts.get(`${head.slug}@${head.version}`)!, head.state) === 'live';
+  const contracts = await loadContracts(db, workspaceId, heads);
+  const readable = heads.filter((head) => contracts.has(head.key));
+  const isLive = (head: RunHead) => runStatus(contracts.get(head.key)!, head.state) === 'live';
   const newest = new Map<string, RunHead>();
   for (const head of readable) {
-    const current = newest.get(head.slug);
+    const current = newest.get(head.family);
     if (
       !current ||
       Number(isLive(head)) > Number(isLive(current)) ||
       (isLive(head) === isLive(current) && head.updatedAtMs > current.updatedAtMs)
     )
-      newest.set(head.slug, head);
+      newest.set(head.family, head);
   }
   const chosen = workflowSlug ? readable : [...newest.values()];
   const [actors, viewer] = await Promise.all([
     loadActors(db, chosen.flatMap(headBindingIds), publicOrigin),
     loadViewer(db, viewerId, publicOrigin),
   ]);
-  const liveBySlug = liveRunIdsBySlug(readable, contracts);
+  const liveByFamily = liveRunIdsByFamily(readable, contracts);
   const workflows = (
     await Promise.all(
       chosen.map(async (head) => ({
         ...summarize(
           head,
-          contracts.get(`${head.slug}@${head.version}`)!,
+          contracts.get(head.key)!,
           actors,
           viewer,
           earlierThan(readable, head),
-          liveBySlug.get(head.slug) ?? [],
+          liveByFamily.get(head.family) ?? [],
         ),
         ...(await workflowStartInfo(db, head.roomId, head.runId)),
-        ...(head.slug !== CORNER_WORKFLOW_SLUG
+        ...(!head.corner
           ? { ownership: await readWorkflowOwnership(db, head.roomId, head.slug, viewerId) }
           : {}),
       })),
@@ -618,12 +638,8 @@ export async function readWorkflowRun(
   const heads = await loadRunHeads(db, topRoomId, viewerId, cards[0]!.workflow_slug);
   const head = heads.find((entry) => entry.runId === input.runId && entry.roomId === input.roomId);
   if (!head) return null;
-  const contracts = await loadContracts(
-    db,
-    head.workspaceId,
-    [...new Map(heads.map((entry) => [`${entry.slug}@${entry.version}`, entry])).values()],
-  );
-  const contract = contracts.get(`${head.slug}@${head.version}`);
+  const contracts = await loadContracts(db, head.workspaceId, heads);
+  const contract = contracts.get(head.key);
   if (!contract) return null;
   const visits = visitsOf(cards);
   const [actors, viewer, gates, corners] = await Promise.all([
@@ -664,9 +680,9 @@ export async function readWorkflowRun(
       ...(opened ? { openedCorners: opened } : {}),
     };
   });
-  const activeRunIds = liveRunIdsBySlug(heads, contracts).get(head.slug) ?? [];
+  const activeRunIds = liveRunIdsByFamily(heads, contracts).get(head.family) ?? [];
   return {
-    ...(head.slug !== CORNER_WORKFLOW_SLUG
+    ...(!head.corner
       ? { ownership: await readWorkflowOwnership(db, input.roomId, head.slug, viewerId) }
       : {}),
     run: {

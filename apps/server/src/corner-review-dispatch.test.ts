@@ -7,7 +7,7 @@ import { LiveHub } from './live.js';
 import { PushDeliveryLoop } from './background.js';
 import { systemLine } from './system-line.js';
 import { createAgentCommand, noteBlockedCornerChecks } from './agent-command.js';
-import { advanceCorner, REVIEW_HANDBACK_LIMIT } from './corner-workflow.js';
+import { advanceCorner, REVIEW_HANDBACK_LIMIT } from './corner-lifecycle.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import type { QueryResultRow } from 'pg';

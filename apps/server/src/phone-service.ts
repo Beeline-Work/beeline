@@ -116,13 +116,12 @@ import { HistoryOutlineCache } from './history-outline-cache.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
 import { deriveCornerState } from './corner-state.js';
-import { advanceCorner } from './corner-workflow.js';
+import { advanceCorner } from './corner-lifecycle.js';
 import { chatCornerCounts } from './chat-corner-counts.js';
 import { cornerOwedLookupSql } from './corner-owed.js';
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
 import { retireAgentFromWorkspace, settleGrantCard } from './agent-retirement.js';
 import { ensureFirstRoom, firstAccessibleRoomId } from './first-room.js';
-import { ensureCornerWorkflowSeeded } from './corner-workflow.js';
 import {
   joinRooms,
   joinWorkspaceMembersToPublicRoom,
@@ -5438,9 +5437,7 @@ export class PhoneService {
           [id, viewerId],
         );
       }
-      const firstRoomId = await ensureFirstRoom(db, id, viewerId);
-      await ensureCornerWorkflowSeeded(db, id, firstRoomId);
-      return firstRoomId;
+      return ensureFirstRoom(db, id, viewerId);
     });
     return { id, roomId };
   }

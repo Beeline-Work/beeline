@@ -5,7 +5,6 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { GITHUB_SUBJECT, systemLine } from './system-line.js';
 import { readAgentCommands } from './agent-command.js';
-import { ensureCornerWorkflowSeeded } from './corner-workflow.js';
 import type { CornerWatchKind } from '@beeline/api-contract/daemon';
 
 const W = 'a'.repeat(64),
@@ -42,7 +41,6 @@ beforeAll(async () => {
     [WS, A, W],
   );
   daemon = new DaemonService(db, new LiveHub());
-  await ensureCornerWorkflowSeeded(db, WS, P);
 }, 30_000);
 afterAll(async () => db?.close());
 beforeEach(async () => {

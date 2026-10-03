@@ -8,7 +8,7 @@ import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-cont
 import { isResumeKind } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { isCornerReviewer } from './agent-health.js';
-import { advanceCorner, lockCornerWorkflowRun } from './corner-workflow.js';
+import { advanceCorner, lockCornerWorkflowRun } from './corner-lifecycle.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import { hasSystemReportMention, taggedIdentityIdsSql } from './message-mentions.js';
 import { CORNER_WORKFLOW_HANDOFF_CARD_TYPE } from './room-choice.js';

@@ -23,11 +23,11 @@ import { typedMentionHandles } from './message-mentions.js';
 import { identitySubject, systemLine } from './system-line.js';
 
 /**
- * The corner workflow's own bookkeeping cards (`corner-workflow.ts`) — pure
+ * The corner workflow's own bookkeeping cards (`corner-lifecycle.ts`) — pure
  * SQL-queryable record-keeping over a corner's already-real conversation,
  * never something a human is meant to read as a chat line. Defined here
- * (not in `corner-workflow.ts`) so `hiddenWakeCardSql` can exclude it without
- * a circular import: `corner-workflow.ts` already imports from
+ * (not in `corner-lifecycle.ts`) so `hiddenWakeCardSql` can exclude it without
+ * a circular import: `corner-lifecycle.ts` already imports from
  * `workflow-runs.ts`, which imports `postRoomChoice` from this file.
  */
 export const CORNER_WORKFLOW_HANDOFF_CARD_TYPE = 'corner-workflow-handoff';

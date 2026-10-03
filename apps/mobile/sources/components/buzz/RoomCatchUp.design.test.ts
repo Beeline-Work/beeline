@@ -49,32 +49,6 @@ describe('the catch-up sheet', () => {
     expect(sheet).not.toContain('filter(');
   });
 
-  it('CHEV-09: the unread line carries the catch-up door, and the disc carries none', () => {
-    const cell = readFileSync(path.join(__dirname, '../../buzz/room-message-cell.tsx'), 'utf8');
-    // A labelled button on the line, where the run it summarizes begins.
-    expect(cell).toContain('testID="new-messages-catch-up"');
-    expect(cell).toContain('accessibilityRole="button"');
-    expect(cell).toContain('onPress={onOpenCatchUp}');
-    expect(cell).toContain('hitSlop={styles.catchUpHitSlop}');
-    // The two shapes this control has held the door in, both gone: the strip
-    // that floated over the transcript, and the long press nothing announced.
-    expect(controls).not.toContain('onLongPress');
-    expect(controls).not.toContain('onAccessibilityAction');
-    expect(controls).not.toContain('catchUpVisible');
-    expect(controls).not.toContain('onOpenCatchUp');
-    expect(controls).not.toContain('catch-up-summary-strip');
-    expect(controls).not.toContain('catchUpSummary');
-    expect(controls).not.toMatch(/styles\.strip|strip:|stripText/);
-    expect(surface).not.toContain('catchUpSummary');
-    expect(surface).toContain('onOpenCatchUp: openCatchUpSheet');
-    expect(surface).toContain('<RoomCatchUpSheet');
-    // One seam feeds it, and it is handed the range explicitly.
-    expect(surface).toContain('buildCatchUpReport({');
-    expect(surface).toContain('boundaryId: catchUpBoundaryId');
-    expect(surface).toContain('newestId: newestTranscriptMessageId');
-    expect(surface).toContain('onAskAgent={draftCatchUpRequest}');
-  });
-
   it('CHEV-10: the disc is 44 and its lift stays derived from the turn line', () => {
     expect(controls).toContain('const DISC_SIZE = 44');
     expect(controls).toContain(

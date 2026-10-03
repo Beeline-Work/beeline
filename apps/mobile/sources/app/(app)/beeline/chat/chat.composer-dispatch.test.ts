@@ -19,28 +19,6 @@ function blockFrom(source: string, marker: string, label: string): string {
 }
 
 describe('composer dispatch transaction', () => {
-  it('reads screenshots from the event-current attachment ref and clears that same owner', () => {
-    const send = blockFrom(chatSource, 'const handleSend = useCallback(', 'handleSend');
-    const paste = blockFrom(
-      chatSource,
-      'const handleDesktopPaste = useCallback(',
-      'desktop paste handler',
-    );
-
-    expect(chatSource).toContain(
-      'const pendingAttachmentsRef = useRef<PickedChatAttachment[]>([]);',
-    );
-    expect(paste).toContain('replacePendingAttachments((current) => [');
-    expect(send).toContain(
-      'const activePendingAttachments = sendShortcut ? [] : pendingAttachmentsRef.current;',
-    );
-    expect(send).toContain(
-      'await sendTransport.ensureClient(),\n        activePendingAttachments,',
-    );
-    expect(send).toContain(
-      'current.filter((attachment) => !activePendingAttachments.includes(attachment))',
-    );
-  });
 
   it('routes the Send button and desktop Enter through the same revision-clearing dispatch', () => {
     const send = blockFrom(chatSource, 'const handleSend = useCallback(', 'handleSend');

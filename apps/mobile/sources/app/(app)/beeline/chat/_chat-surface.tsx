@@ -1433,12 +1433,12 @@ export function BuzzChatSurface({
   }, [foldedMessages, retryOlderHistory]);
   const retryAroundTranscriptMessage = useCallback(() => {
     if (!messageAnchorId || messageSourceLandingAbandonedRef.current) return;
-    if (!desktopTranscript) {
+    if (!desktopExperience) {
       locatingMessageSourceIdRef.current = messageAnchorId;
       setIsLocatingMessageSource(true);
     }
     loadAroundTranscriptMessage(messageAnchorId);
-  }, [desktopTranscript, loadAroundTranscriptMessage, messageAnchorId]);
+  }, [desktopExperience, loadAroundTranscriptMessage, messageAnchorId]);
   const transcriptForwardLine =
     aroundForwardStatus === 'error' ? (
       <LedgerHistoryLine

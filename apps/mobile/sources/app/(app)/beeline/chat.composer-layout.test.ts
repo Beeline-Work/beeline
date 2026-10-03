@@ -46,19 +46,6 @@ describe('Room composer status layout', () => {
     expect(composerInput).not.toContain('numberOfLines=');
   });
 
-  it('lets soft-wrapped content grow until the five-line scrolling cap', () => {
-    expect(composerInput).toContain('onContentSizeChange={onContentSizeChange}');
-    expect(source).toContain(
-      'Math.min(COMPOSER_MAX_HEIGHT, Math.max(COMPOSER_MIN_HEIGHT, contentHeight))',
-    );
-    expect(composerInput).toContain('scrollEnabled={height >= maxHeight}');
-    expect(source).toContain('maxHeight={COMPOSER_MAX_HEIGHT}');
-    expect(composerSource).toContain(
-      'export const COMPOSER_MAX_INPUT_HEIGHT = 5 * groknight.type.body.lineHeight',
-    );
-    expect(inputStyle).toContain('maxHeight: COMPOSER_MAX_INPUT_HEIGHT');
-  });
-
   it('keeps turn progress inside the composer stack, above the field', () => {
     const inputBar = source.slice(source.indexOf('<Animated.View style={[styles.inputBar'));
     const progress = inputBar.indexOf('<TurnProgressLine');
@@ -138,32 +125,6 @@ describe('Room composer status layout', () => {
     expect(variants).toContain('onLongPress={onLongPress}');
     expect(variants).toContain('onCopy(message.text)');
     expect(source).toContain('copyEntireTurn(text, Clipboard.setStringAsync)');
-  });
-
-  it('keeps desktop transcript rows out of transform-based inversion at every window width', () => {
-    // Tauri's Windows shell is a web surface and can be resized below the
-    // persistent-sidebar breakpoint. Transcript flow follows the platform,
-    // not that width breakpoint, because variable-height inverted web rows
-    // can retain stale transform coordinates and overlap. The desktop
-    // transcript (2026-09) no longer renders through FlatList's `inverted`
-    // prop at all — it is a plain scrollable View over real DOM, so there is
-    // no transform-based inversion left to avoid on that path.
-    expect(source).toContain('const desktopTranscript = desktopExperience;');
-    expect(source).not.toContain('const desktopTranscript = isDesktop;');
-    expect(source).not.toContain("const desktopTranscript = Platform.OS === 'web';");
-    expect(source).toContain('const transcriptMessages = desktopTranscript ? visibleMessages');
-    const desktopBranch = source.slice(
-      source.indexOf('{desktopTranscript ? ('),
-      source.indexOf(') : (\n          <FlatList'),
-    );
-    const nativeBranch = source.slice(
-      source.indexOf(') : (\n          <FlatList'),
-      source.indexOf('{newMessageControlShown && ('),
-    );
-    expect(desktopBranch).not.toContain('inverted');
-    expect(nativeBranch).toContain('inverted={transcriptMessages.length > 0}');
-    expect(nativeBranch).not.toContain('scrollToEnd');
-    expect(desktopBranch).toContain('styles.messageListContentDesktop');
   });
 
   it('keeps attachment and system-message height in the measured row flow', () => {

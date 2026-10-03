@@ -5,9 +5,11 @@ import { dirname, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import {
+  ensureSquireBrokerInstall,
   TRUSTY_SQUIRE_BROKER_UNIT_NAME,
   trustySquireBrokerUnit,
   writeSquireBrokerUnitMarker,
+  type SquireInstallRunner,
 } from './squire-host.js';
 
 const execFileAsync = promisify(execFile);
@@ -197,12 +199,20 @@ export async function installTrustySquireBrokerService(
      * activation and must be re-executed onto the new bundle.
      */
     restart?: boolean;
+    /** Injectable for tests; forwarded to `ensureSquireBrokerInstall`. */
+    squireInstallRun?: SquireInstallRunner;
   } = {},
 ): Promise<void> {
   const env = options.env ?? process.env;
   assertCanonicalInstalledLauncher(env, options.invocationPath);
   const home = env.HOME?.trim() || homedir();
   writeSquireBrokerUnitMarker(home);
+  // Deliberate update point: pin the durable broker install before the unit
+  // (re)starts, so a crash-restart never has to touch npm at all.
+  await ensureSquireBrokerInstall(
+    home,
+    options.squireInstallRun ? { run: options.squireInstallRun } : {},
+  );
   const path = systemdBrokerUnitPath(env);
   const content = trustySquireBrokerUnit();
   const existing = await readFile(path, 'utf8').catch(() => '');

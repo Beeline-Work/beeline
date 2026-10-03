@@ -301,6 +301,12 @@ describe('trusty squire host broker unit', () => {
       calls.push(args);
       return { stdout: '' };
     });
+    const squireInstallRun = vi.fn(async (_command: string, _args: readonly string[], installOptions: { cwd: string }) => {
+      const entryDir = join(installOptions.cwd, 'node_modules', '@trusty-squire', 'mcp', 'dist');
+      await mkdir(entryDir, { recursive: true });
+      await writeFile(join(entryDir, 'bin.js'), '');
+      return { code: 0, stderr: '' };
+    });
     await installTrustySquireBrokerService({
       env: {
         HOME: home,
@@ -309,7 +315,9 @@ describe('trusty squire host broker unit', () => {
       },
       invocationPath: `${home}/.local/lib/beeline/lib/beeline/beeline-cli.mjs`,
       run,
+      squireInstallRun,
     });
+    expect(squireInstallRun).toHaveBeenCalledTimes(1);
     expect(calls).toEqual([
       ['daemon-reload'],
       ['enable', TRUSTY_SQUIRE_BROKER_UNIT_NAME],

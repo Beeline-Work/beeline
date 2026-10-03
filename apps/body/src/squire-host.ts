@@ -32,8 +32,10 @@ export const TRUSTY_SQUIRE_BROKER_UNIT_NAME = 'trusty-squire-broker.service';
 export const SQUIRE_FACADE_FLAG = '--squire-facade';
 /** Hidden CLI flag so the host user unit can elect through the installed launcher. */
 export const SQUIRE_BROKER_FLAG = '--squire-broker';
-export const SQUIRE_SERVER_ARGS = ['-y', '@trusty-squire/mcp@latest', 'server'] as const;
-export const SQUIRE_BROKER_ARGS = ['-y', '@trusty-squire/mcp@latest', 'broker'] as const;
+export const SQUIRE_MCP_PACKAGE_NAME = '@trusty-squire/mcp';
+/** Bounds a crash-restart storm (RestartSec=5s) to this many attempts per window. */
+export const SQUIRE_BROKER_START_LIMIT_INTERVAL_SEC = 60;
+export const SQUIRE_BROKER_START_LIMIT_BURST = 6;
 
 export type SquireHostPaths = {
   readonly dir: string;
@@ -202,19 +204,74 @@ export function squireFacadeLaunch(home: string, scope: SquireAgentScope): {
 }
 
 /**
- * Locate npx next to the running node so a systemd user unit does not depend
- * on a shell PATH. fnm/nvm/volta put `npx` beside `process.execPath`.
+ * A durable local copy of Squire the broker (re)starts from directly — never
+ * `npx`, never the registry, on every restart. A crash-restart storm used to
+ * mean hundreds of `npx …@latest broker` round trips (each one a registry
+ * resolution AND a full npm package load); after this copy exists, a restart
+ * costs one `existsSync`.
  */
-export function squireServerCommand(nodeExecPath = process.execPath): {
-  command: string;
-  args: string[];
-  pathPrefix: string;
-} {
-  const binDir = dirname(nodeExecPath);
-  const sibling = join(binDir, 'npx');
-  const args = [...SQUIRE_SERVER_ARGS];
-  if (existsSync(sibling)) return { command: sibling, args, pathPrefix: binDir };
-  return { command: 'npx', args, pathPrefix: binDir };
+export const SQUIRE_BROKER_INSTALL_DIRNAME = 'mcp-broker-install';
+
+export function squireBrokerInstallDir(home: string): string {
+  return join(squireHostPaths(home).dir, SQUIRE_BROKER_INSTALL_DIRNAME);
+}
+
+/** The installed package's own `bin.mcp` entry (`dist/bin.js`), resolved without touching npm. */
+export function squireBrokerInstallEntry(home: string): string {
+  return join(
+    squireBrokerInstallDir(home),
+    'node_modules',
+    '@trusty-squire',
+    'mcp',
+    'dist',
+    'bin.js',
+  );
+}
+
+export type SquireInstallRunner = (
+  command: string,
+  args: readonly string[],
+  options: { cwd: string },
+) => Promise<{ code: number | null; stderr: string }>;
+
+const defaultSquireInstallRunner: SquireInstallRunner = (command, args, options) =>
+  new Promise((resolveRun) => {
+    const child = spawn(command, [...args], { cwd: options.cwd, stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf8');
+    });
+    child.once('error', (error) => resolveRun({ code: 1, stderr: error.message }));
+    child.once('close', (code) => resolveRun({ code, stderr }));
+  });
+
+/**
+ * Pin the durable broker install, installing it only when it is missing.
+ * This is the one deliberate update point: `beeline start`/pairing and the
+ * managed update converge path call it before the unit (re)starts, so
+ * `runSquireBroker` itself never has to reach the network. Idempotent and
+ * network-free once the entry exists on disk.
+ */
+export async function ensureSquireBrokerInstall(
+  home: string,
+  options: { run?: SquireInstallRunner; spec?: string } = {},
+): Promise<string> {
+  const entry = squireBrokerInstallEntry(home);
+  if (existsSync(entry)) return entry;
+  const dir = squireBrokerInstallDir(home);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const run = options.run ?? defaultSquireInstallRunner;
+  const spec = options.spec ?? `${SQUIRE_MCP_PACKAGE_NAME}@latest`;
+  const result = await run(
+    'npm',
+    ['install', '--prefix', dir, spec, '--no-save', '--no-audit', '--no-fund', '--no-package-lock'],
+    { cwd: dir },
+  );
+  if (result.code !== 0 || !existsSync(entry))
+    throw new Error(
+      `Trusty Squire broker install failed: ${result.stderr.trim() || `${entry} is missing`}`,
+    );
+  return entry;
 }
 
 /** The host elector: one user unit, no PrivateTmp, same socket every façade sees. */
@@ -223,6 +280,8 @@ export function trustySquireBrokerUnit(nodeExecPath = process.execPath): string 
 Description=Trusty Squire host broker
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=${SQUIRE_BROKER_START_LIMIT_INTERVAL_SEC}
+StartLimitBurst=${SQUIRE_BROKER_START_LIMIT_BURST}
 
 [Service]
 Type=simple
@@ -243,15 +302,8 @@ WantedBy=default.target
 `;
 }
 
-function spawnSquireServer(env: NodeJS.ProcessEnv, locateNpx: boolean, args: readonly string[]): void {
-  const launch = locateNpx
-    ? { ...squireServerCommand(), args: [...args] }
-    : { command: 'npx', args: [...args], pathPrefix: '' };
-  const path = [launch.pathPrefix, env.PATH || '/usr/bin:/bin'].filter(Boolean).join(':');
-  const child = spawn(launch.command, launch.args, {
-    env: { ...env, PATH: path },
-    stdio: 'inherit',
-  });
+function spawnSquireBrokerProcess(entry: string, env: NodeJS.ProcessEnv): void {
+  const child = spawn(process.execPath, [entry, 'broker'], { env, stdio: 'inherit' });
   child.on('exit', (code, signal) => {
     if (signal) process.exit(1);
     process.exit(code ?? 1);
@@ -259,9 +311,12 @@ function spawnSquireServer(env: NodeJS.ProcessEnv, locateNpx: boolean, args: rea
 }
 
 /**
- * Host elector: spawn Squire's server even when no socket exists yet. A live
+ * Host elector: spawn Squire's broker even when no socket exists yet. A live
  * same-profile broker the unit did not start is stopped first; any other
  * holder of the unit's sockets fails the start with a reason naming it.
+ * Never `npx`: the durable install pinned by `ensureSquireBrokerInstall` is
+ * the only thing this ever launches, so a restart never resolves `@latest`
+ * from the registry or reloads the whole npm package.
  */
 export async function runSquireBroker(env: NodeJS.ProcessEnv = process.env): Promise<void> {
   const home = env.HOME?.trim() || homedir();
@@ -273,19 +328,28 @@ export async function runSquireBroker(env: NodeJS.ProcessEnv = process.env): Pro
   if (!reclaimed.ok) {
     process.stderr.write(`[beeline] Trusty Squire broker not started: ${reclaimed.reason}\n`);
     process.exit(1);
+    return;
   }
-  spawnSquireServer(
-    {
-      ...env,
-      ...squireHostRewriteEnv(home),
-      TRUSTY_SQUIRE_BROKER_SOCKET: paths.brokerSocket,
-      // Squire's daemon refuses to start under the managed marker unless the
-      // unit started it; launchd sets no INVOCATION_ID, so say so explicitly.
-      TRUSTY_SQUIRE_BROKER_UNIT: '1',
-    },
-    true,
-    SQUIRE_BROKER_ARGS,
-  );
+  let entry: string;
+  try {
+    entry = await ensureSquireBrokerInstall(home);
+  } catch (error) {
+    process.stderr.write(
+      `[beeline] Trusty Squire broker not started: ${
+        error instanceof Error ? error.message : String(error)
+      }\n`,
+    );
+    process.exit(1);
+    return;
+  }
+  spawnSquireBrokerProcess(entry, {
+    ...env,
+    ...squireHostRewriteEnv(home),
+    TRUSTY_SQUIRE_BROKER_SOCKET: paths.brokerSocket,
+    // Squire's daemon refuses to start under the managed marker unless the
+    // unit started it; launchd sets no INVOCATION_ID, so say so explicitly.
+    TRUSTY_SQUIRE_BROKER_UNIT: '1',
+  });
 }
 
 /**
@@ -315,8 +379,12 @@ export async function runSquireFacade(env: NodeJS.ProcessEnv = process.env): Pro
   // process's own $HOME has been rewritten for sandboxing, since
   // TRUSTY_SQUIRE_BROKER_SOCKET is always set to the real host path.
   const mcpSocket = join(dirname(socket), 'mcp.sock');
+  // The broker's wire protocol requires an identity line (`listenSharedMcp`),
+  // but #1790's per-agent value never affected a session (browser sessions
+  // are owned by the MCP connection, not this string) and its generator is
+  // already gone (#1797) — every façade is this one helper process.
   const { ok } = await runSquireBrokerLink({
-    agentId: env.TRUSTY_SQUIRE_AGENT_IDENTITY?.trim() || 'unknown',
+    agentId: 'beeline-helper',
     socketPath: mcpSocket,
   });
   // Squire's own `bin.js` force-exits after its relay resolves for the same

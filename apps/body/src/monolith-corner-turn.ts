@@ -22,6 +22,7 @@ import {
   AGENT_SKILL_DIRS,
   expectedMountedImportedMcpServerNames,
   freshHarnessLoginLine,
+  grantedSquireHostBindPaths,
   harnessStateDirsFromEnv,
   hostImportedMcpDeclarations,
   isExpiredHarnessLoginError,
@@ -951,6 +952,11 @@ export class MonolithCornerTurnLoop {
             configuration.registryMcpRoutes,
             this.options.config.registryMcpBrokerSocket,
           ),
+          ...grantedSquireHostBindPaths({
+            operatorHome,
+            agentKind: this.options.config.agentKind,
+            grantedHostRoutes: mountedHostRoutes,
+          }),
         ],
         devices: grantedDevices,
         maskPaths: [

@@ -26,6 +26,7 @@ import {
 } from './acp.js';
 import {
   expectedMountedImportedMcpServerNames,
+  grantedSquireHostBindPaths,
   harnessStateDirsFromEnv,
   hostImportedMcpDeclarations,
   hostImportedMcpServerNames,
@@ -950,6 +951,11 @@ export class MonolithRoomTurnLoop {
             configuration.registryMcpRoutes,
             this.options.config.registryMcpBrokerSocket,
           ),
+          ...grantedSquireHostBindPaths({
+            operatorHome,
+            agentKind: this.options.config.agentKind,
+            grantedHostRoutes: mountedHostRoutes,
+          }),
         ],
         devices: grantedDevices,
         maskPaths: [

@@ -25,18 +25,22 @@ import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { rewriteHostMcpDeclaration } from './host-mcp-route.js';
 import {
+  ensureSquireBrokerInstall,
   ensureSquireHostDir,
   SQUIRE_BROKER_FLAG,
+  SQUIRE_BROKER_INSTALL_DIRNAME,
+  SQUIRE_BROKER_START_LIMIT_BURST,
+  SQUIRE_BROKER_START_LIMIT_INTERVAL_SEC,
   SQUIRE_BROKER_UNIT_MARKER_FILE,
-  SQUIRE_BROKER_ARGS,
   SQUIRE_BROKER_UNAVAILABLE,
-  SQUIRE_SERVER_ARGS,
+  SQUIRE_MCP_PACKAGE_NAME,
+  squireBrokerInstallDir,
+  squireBrokerInstallEntry,
   squireBrokerSocketReady,
   squireFacadeLaunch,
   squireHostBindPaths,
   squireHostPaths,
   squireHostRewriteEnv,
-  squireServerCommand,
   TRUSTY_SQUIRE_BROKER_UNIT_NAME,
   trustySquireBrokerUnit,
   writeSquireBrokerUnitMarker,
@@ -224,6 +228,9 @@ describe('RED/GREEN broker election', () => {
             PATH: `${shimDir}:${process.env.PATH ?? ''}`,
             TMPDIR: privateTmp,
             HOME: join(home, agent),
+            // A stale #1790 leftover must have no effect: the façade sends a
+            // fixed identity line regardless of what this carries.
+            TRUSTY_SQUIRE_AGENT_IDENTITY: `stale-${agent}`,
           },
           stdio: ['pipe', 'pipe', 'ignore'],
         });
@@ -242,6 +249,9 @@ describe('RED/GREEN broker election', () => {
       // server` at all — the connect-only relay speaks the broker's shared
       // MCP socket directly, so there is nothing left that could elect.
       expect(brokerRecords(ledger)).toEqual([]);
+      // The retired #1790 per-agent identity setting has no effect: both
+      // façades send the same fixed identity line, never the stale env value.
+      expect(mcpBroker.identities).toEqual(['beeline-helper', 'beeline-helper']);
     } finally {
       await closeServer(broker);
       await stopFakeMcpBroker(mcpBroker);
@@ -342,29 +352,67 @@ describe('host broker unit', () => {
     expect(execStart).not.toMatch(/\bnpx\b/);
   });
 
-  it('elects npx from beside the running node, not from a shell PATH', async () => {
-    const dir = await scratch('beeline-squire-npx-');
-    const npx = join(dir, 'npx');
-    writeFileSync(npx, '#!/bin/sh\n');
-    chmodSync(npx, 0o755);
-    expect(squireServerCommand(join(dir, 'node'))).toEqual({
-      command: npx,
-      args: [...SQUIRE_SERVER_ARGS],
-      pathPrefix: dir,
-    });
-    expect(squireServerCommand(join(dir, 'missing', 'node'))).toEqual({
-      command: 'npx',
-      args: [...SQUIRE_SERVER_ARGS],
-      pathPrefix: join(dir, 'missing'),
-    });
-  });
-
-  it('pins the installation Node and selects the durable broker command', () => {
+  it('pins the installation Node', () => {
     expect(trustySquireBrokerUnit('/opt/node24/bin/node')).toContain(
       'Environment=PATH=/opt/node24/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin',
     );
-    expect(SQUIRE_BROKER_ARGS.at(-1)).toBe('broker');
-    expect(SQUIRE_SERVER_ARGS.at(-1)).toBe('server');
+  });
+
+  it('bounds a crash-restart storm instead of restarting forever', () => {
+    const unit = trustySquireBrokerUnit();
+    expect(unit).toContain('Restart=on-failure');
+    expect(unit).toContain('RestartSec=5s');
+    expect(unit).toContain(`StartLimitIntervalSec=${SQUIRE_BROKER_START_LIMIT_INTERVAL_SEC}`);
+    expect(unit).toContain(`StartLimitBurst=${SQUIRE_BROKER_START_LIMIT_BURST}`);
+    expect(SQUIRE_BROKER_START_LIMIT_INTERVAL_SEC).toBe(60);
+    expect(SQUIRE_BROKER_START_LIMIT_BURST).toBe(6);
+    // StartLimit* belongs under [Unit], never [Service] (systemd ignores it there).
+    const unitSection = unit.slice(unit.indexOf('[Unit]'), unit.indexOf('[Service]'));
+    expect(unitSection).toContain('StartLimitIntervalSec=');
+    expect(unitSection).toContain('StartLimitBurst=');
+  });
+});
+
+describe('durable broker install', () => {
+  it('installs once, from the pinned spec, and never touches npm again while the entry exists', async () => {
+    const home = await scratch('beeline-squire-install-');
+    const calls: Array<{ command: string; args: readonly string[]; cwd: string }> = [];
+    const run = async (
+      command: string,
+      args: readonly string[],
+      options: { cwd: string },
+    ): Promise<{ code: number | null; stderr: string }> => {
+      calls.push({ command, args, cwd: options.cwd });
+      const entry = squireBrokerInstallEntry(home);
+      mkdirSync(dirname(entry), { recursive: true });
+      writeFileSync(entry, '// fake bin.js\n');
+      return { code: 0, stderr: '' };
+    };
+    const entry = await ensureSquireBrokerInstall(home, { run });
+    expect(entry).toBe(squireBrokerInstallEntry(home));
+    expect(squireBrokerInstallDir(home)).toBe(join(home, '.trusty-squire', SQUIRE_BROKER_INSTALL_DIRNAME));
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.command).toBe('npm');
+    expect(calls[0]!.args).toEqual(
+      expect.arrayContaining(['install', '--prefix', squireBrokerInstallDir(home), `${SQUIRE_MCP_PACKAGE_NAME}@latest`]),
+    );
+    // The entry already exists: a second call never runs npm at all.
+    const again = await ensureSquireBrokerInstall(home, {
+      run: async () => {
+        throw new Error('must not be called once the entry exists');
+      },
+    });
+    expect(again).toBe(entry);
+    expect(existsSync(entry)).toBe(true);
+  });
+
+  it('fails loudly, and never silently falls back to npx, when the install cannot be produced', async () => {
+    const home = await scratch('beeline-squire-install-fail-');
+    await expect(
+      ensureSquireBrokerInstall(home, {
+        run: async () => ({ code: 1, stderr: 'network unreachable' }),
+      }),
+    ).rejects.toThrow(/network unreachable/);
   });
 });
 

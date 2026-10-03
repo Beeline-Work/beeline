@@ -124,6 +124,7 @@ export interface TurnTraceRecord {
   };
   /** Bytes per prompt section of the last prompt built (`prompt-assembly.ts`). */
   promptSections?: Record<string, number>;
+  promptWindow?: { promptBytes: number; modelContextTokens: number };
   /** How many times this turn called search_memory, and how many came back
    *  with nothing — read back once after the turn settles (best-effort;
    *  absent when the read failed or the turn never had a snapshot row). */
@@ -185,6 +186,7 @@ export class TurnTrace {
   private atAdmission?: SessionSchedulerSnapshot;
   private finished = false;
   private promptSections?: Record<string, number>;
+  private promptWindow?: { promptBytes: number; modelContextTokens: number };
   private searchMemoryCalls?: number;
   private searchMemoryMisses?: number;
   /** Every distinct tool call id this turn has seen, across retries. */
@@ -277,6 +279,14 @@ export class TurnTrace {
   /** What each section of the assembled prompt cost, so growth shows in the trace. */
   notePromptSections(report: readonly { id: string; bytes: number }[]): void {
     this.promptSections = Object.fromEntries(report.map((entry) => [entry.id, entry.bytes]));
+  }
+
+  /** Assembled text only; the harness's tool schema is outside this measurement. */
+  notePromptWindow(prompt: string, modelContextTokens?: number): void {
+    this.promptWindow =
+      modelContextTokens === undefined
+        ? undefined
+        : { promptBytes: Buffer.byteLength(prompt), modelContextTokens };
   }
 
   /** The prompt left for the harness. Idempotent: a steer resume is the same attempt. */
@@ -396,6 +406,7 @@ export class TurnTrace {
         ...(this.atAdmission ? { atAdmission: this.atAdmission } : {}),
       },
       ...(this.promptSections ? { promptSections: this.promptSections } : {}),
+      ...(this.promptWindow ? { promptWindow: this.promptWindow } : {}),
       ...(this.searchMemoryCalls !== undefined
         ? { searchMemoryCalls: this.searchMemoryCalls, searchMemoryMisses: this.searchMemoryMisses ?? 0 }
         : {}),

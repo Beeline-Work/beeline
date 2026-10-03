@@ -69,7 +69,6 @@ export type AgentScheduleResult = {
 export type AgentScheduleEntry = {
   readonly workflowName?: string;
   readonly owner?: import('./phone-operations.js').WorkflowOwnershipView['owner'];
-  readonly activeRunIds?: readonly string[];
   readonly scheduleId: string;
   /** The agent the schedule mentions on every run. */
   readonly agentId: string;
@@ -79,6 +78,8 @@ export type AgentScheduleEntry = {
   readonly maxRuns?: number;
   readonly runCount: number;
   readonly nextRunAt: number;
+  /** Still-active runs this schedule has started, of any saved workflow (requirement: duplicate-run visibility). */
+  readonly activeRunIds?: readonly string[];
 };
 export type AgentScheduleListResult = { readonly schedules: readonly AgentScheduleEntry[] };
 export type DeleteAgentScheduleInput = AgentRoomInput & { readonly scheduleId: string };
@@ -695,6 +696,8 @@ export type DaemonAttachment = {
   readonly mimeType?: string;
   readonly size?: number;
   readonly thumbnailUrl?: string;
+  /** Hex sha256 of the stored bytes; set by getRoomMessage while the object is ready. */
+  readonly sha256?: string;
 };
 export type RoomConversationResult = RoomInboxResult & {
   /** Durable corner output text for narrationRequestId, scoped to the reading agent. */
@@ -970,6 +973,11 @@ export type PostTurnReceiptInput = AgentRoomInput & {
    */
   readonly inputTokens?: number;
   readonly promptBytes?: number;
+  /** Sum of recorded prompt usage across every model call and attempt in this turn. */
+  readonly totalInputTokens?: number;
+  /** Calls included in the total, and calls whose usage was unavailable. */
+  readonly modelCalls?: number;
+  readonly modelCallsWithoutUsage?: number;
   /** Distinct tool calls this turn made, counted from the harness's own stream. */
   readonly toolCalls?: number;
   /** Typed Room-safe classification; detail stays in the daemon log. */

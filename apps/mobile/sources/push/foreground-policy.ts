@@ -12,8 +12,9 @@ import { ACTION_OUTCOME_DATA_KEY } from './notification-actions';
  * tracker), so the whole rule is unit-testable without React Native.
  *
  * Contracts:
- * - Suppress the OS heads-up whenever React Native AppState is 'active'; the
- *   app's own bounded banner owns that state so it can sit below app chrome.
+ * - While React Native AppState is 'active', a push for another conversation
+ *   is shown and kept in the notification list, but silently: no sound and no
+ *   vibration. It stays there until its conversation is opened.
  * - Always suppress when the notification's channel/Room id is the currently
  *   open Room, regardless of app state — even mid-transition they are already
  *   reading exactly that conversation.
@@ -34,6 +35,8 @@ export type ForegroundNotificationDecisionReason =
 export type ForegroundNotificationDecision = {
   /** Whether the OS may present the notification at all in the foreground. */
   shouldPresent: boolean;
+  /** Whether presenting it may ring or vibrate. */
+  shouldPlaySound: boolean;
   reason: ForegroundNotificationDecisionReason;
 };
 
@@ -73,7 +76,7 @@ export function decideForegroundNotificationDisplay(
     typeof data === 'object' &&
     (data as Record<string, unknown>)[ACTION_OUTCOME_DATA_KEY] === 'true'
   ) {
-    return { shouldPresent: true, reason: 'action-outcome' };
+    return { shouldPresent: true, shouldPlaySound: true, reason: 'action-outcome' };
   }
 
   // Open-Room suppression wins regardless of the broader app-state signal.
@@ -84,13 +87,30 @@ export function decideForegroundNotificationDisplay(
       (channelId && channelId === trimmedOpenChannelId) ||
       (roomId && roomId === trimmedOpenChannelId)
     ) {
-      return { shouldPresent: false, reason: 'open-room-match' };
+      return { shouldPresent: false, shouldPlaySound: false, reason: 'open-room-match' };
     }
   }
 
   if (appState === 'active') {
-    return { shouldPresent: false, reason: 'app-active' };
+    return { shouldPresent: true, shouldPlaySound: false, reason: 'app-active' };
   }
 
-  return { shouldPresent: true, reason: 'app-inactive' };
+  return { shouldPresent: true, shouldPlaySound: true, reason: 'app-inactive' };
+}
+
+/** Map a decision onto the behavior `Notifications.setNotificationHandler` returns. */
+export function foregroundNotificationBehavior(decision: ForegroundNotificationDecision): {
+  shouldShowAlert: boolean;
+  shouldPlaySound: boolean;
+  shouldSetBadge: boolean;
+  shouldShowBanner: boolean;
+  shouldShowList: boolean;
+} {
+  return {
+    shouldShowAlert: decision.shouldPresent,
+    shouldPlaySound: decision.shouldPresent && decision.shouldPlaySound,
+    shouldSetBadge: decision.shouldPresent,
+    shouldShowBanner: decision.shouldPresent,
+    shouldShowList: decision.shouldPresent,
+  };
 }

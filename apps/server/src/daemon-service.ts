@@ -178,6 +178,7 @@ import {
 import type { AfterCommit, EmbedFn } from './institutional-memory-embeddings.js';
 import { loadWorkspaceSkill, saveSkill } from './institutional-skills.js';
 import {
+  activeRunIdsForSchedule,
   archiveWorkflow,
   assignWorkflowRole,
   handoff,
@@ -2654,18 +2655,51 @@ export class DaemonService {
         ).rows[0];
       }
     }
-    if (!row) throw new Error('message not found in this Room');
+    if (!row) {
+      // A message that exists elsewhere in this Workspace is a refusal, not a
+      // miss: download_attachment reports `forbidden` instead of `not_found`.
+      const elsewhere = await this.database.query(
+        `SELECT 1 FROM messages message
+         JOIN rooms source ON source.id=message.room_id
+         JOIN rooms here ON here.id=$1 AND here.workspace_id=source.workspace_id
+         WHERE message.id=$2 AND message.deleted_at IS NULL AND message.presentation='message'`,
+        [input.roomId, input.messageId],
+      );
+      if (elsewhere.rowCount) throw new Error('message access denied from this Room');
+      throw new Error('message not found in this Room');
+    }
     if (offset > row.total) throw new Error('offset exceeds message body');
     const nextOffset = offset + [...row.body].length;
+    const attachments = markExpiredAttachments(
+      row.attachments ?? [],
+      await this.expiredMediaIds(row.attachments ?? []),
+    );
     return {
       messageId: input.messageId,
       body: row.body,
-      attachments: markExpiredAttachments(
-        row.attachments ?? [],
-        await this.expiredMediaIds(row.attachments ?? []),
-      ),
+      attachments: await this.withStoredDigests(attachments),
       ...(nextOffset < row.total ? { nextOffset } : {}),
     };
+  }
+
+  /** Each ready attachment's stored sha256, so a helper can skip re-downloading bytes it holds. */
+  private async withStoredDigests(
+    attachments: readonly DaemonAttachment[],
+  ): Promise<DaemonAttachment[]> {
+    const ids = attachments.flatMap((attachment) => mediaIdFromUrl(attachment.url) ?? []);
+    if (!ids.length) return [...attachments];
+    const digests = new Map(
+      (
+        await this.database.query<{ id: string; sha256: string }>(
+          `SELECT id::text id,sha256 FROM objects WHERE id=ANY($1::uuid[]) AND state='ready'`,
+          [ids],
+        )
+      ).rows.map((object) => [object.id, object.sha256]),
+    );
+    return attachments.map((attachment) => {
+      const sha256 = digests.get(mediaIdFromUrl(attachment.url) ?? '');
+      return sha256 ? { ...attachment, sha256 } : attachment;
+    });
   }
 
   /** Media ids these attachments name whose bytes are past the TTL (`media-ttl.ts`). */
@@ -4863,23 +4897,15 @@ export class DaemonService {
        ORDER BY schedule.created_at,schedule.id`,
       [input.roomId, agentId],
     );
-    return {
-      schedules: await Promise.all(
-        rows.rows.map(async (row) => ({
-          ...(row.workflow_slug
-            ? {
-                workflowName: row.workflow_slug,
-                ...(await (async () => {
-                  const info = await readWorkflowOwnership(
-                    this.database,
-                    input.roomId,
-                    row.workflow_slug!,
-                    agentId,
-                  );
-                  return { owner: info.owner, activeRunIds: info.activeRunIds };
-                })()),
-              }
-            : {}),
+    const schedules = await Promise.all(
+      rows.rows.map(async (row) => {
+        const info = row.workflow_slug
+          ? await readWorkflowOwnership(this.database, input.roomId, row.workflow_slug, agentId)
+          : undefined;
+        const scheduleRunIds = await activeRunIdsForSchedule(this.database, input.roomId, row.id);
+        const activeRunIds = [...new Set([...(info?.activeRunIds ?? []), ...scheduleRunIds])];
+        return {
+          ...(row.workflow_slug ? { workflowName: row.workflow_slug, owner: info?.owner } : {}),
           scheduleId: row.id,
           agentId: row.agent_id,
           ...(row.agent_handle ? { agentHandle: row.agent_handle } : {}),
@@ -4888,9 +4914,11 @@ export class DaemonService {
           ...(row.max_runs !== null ? { maxRuns: row.max_runs } : {}),
           runCount: row.run_count,
           nextRunAt: Math.floor(row.next_run_at.getTime() / 1_000),
-        })),
-      ),
-    };
+          ...(row.workflow_slug || activeRunIds.length ? { activeRunIds } : {}),
+        };
+      }),
+    );
+    return { schedules };
   }
   private async deleteAgentSchedule(input: Input<'deleteAgentSchedule'>, agentId: string) {
     const deleted = await this.database.query(
@@ -6865,9 +6893,22 @@ export class DaemonService {
       const current = await currentCornerBrief(db, input.cornerId);
       if ((current?.revision ?? 0) !== input.expectedRevision)
         throw new Error('corner brief revision changed; read the current assignment');
+      const opening = (
+        await db.query<{ source_room_id: string }>(
+          `SELECT first.source_room_id FROM (
+             SELECT source_room_id FROM corner_brief_revisions
+             WHERE corner_id=$1 ORDER BY revision ASC LIMIT 1
+           ) first JOIN memberships member ON member.room_id=first.source_room_id
+           WHERE member.identity_id=$2 AND member.removed_at IS NULL`,
+          [input.cornerId, agentId],
+        )
+      ).rows[0];
+      const sourceRoomIds = [corner.parent_id, input.cornerId];
+      if (opening && !sourceRoomIds.includes(opening.source_room_id))
+        sourceRoomIds.push(opening.source_room_id);
       const explicitAttachments = await resolveCornerBriefAttachments(
         db,
-        [corner.parent_id],
+        sourceRoomIds,
         draft,
       );
       const attachments = [
@@ -6883,7 +6924,7 @@ export class DaemonService {
       if (attachments.length > 16) throw new Error('corner brief has too many attachments');
       const authority = await resolveCornerBriefApproval(
         db,
-        [corner.parent_id, input.cornerId],
+        sourceRoomIds,
         draft,
         attachments,
         command.root_source_message_id,

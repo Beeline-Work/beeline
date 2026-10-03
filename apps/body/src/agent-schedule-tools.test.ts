@@ -143,6 +143,27 @@ describe('beeline-agent schedule tools', () => {
     ).toBe('No schedules in this Room.');
   });
 
+  it('list_schedules names a schedule\'s still-active workflow runs', async () => {
+    const activeRunId = 'b'.repeat(64);
+    const result = await listSchedules({
+      roomId: 'room-1',
+      execute: async () => ({
+        schedules: [
+          {
+            scheduleId: 'sched-1',
+            agentId: 'agent-1',
+            agentHandle: 'rival',
+            prompt: 'hello',
+            cadence: { kind: 'interval', everyMinutes: 1 },
+            runCount: 2,
+            activeRunIds: [activeRunId],
+          },
+        ],
+      }),
+    });
+    expect(result).toContain(`Active run IDs: ${activeRunId}`);
+  });
+
   it('delete_schedule calls deleteAgentSchedule scoped to this Room', async () => {
     const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
     const result = await deleteSchedule({ scheduleId: 'sched-1' }, deps(ops));

@@ -173,6 +173,7 @@ Rooms run CodeGraph without a file watcher and keep source files read-only; only
 | `pr_checks_status`                                     | Corners        | Read checks, human hold, and PR/head-bound merge approval     |
 | `post_artifact`                                        | Everywhere     | Upload one file (path or html/bytes) as an attachment         |
 | `fetch_image`                                          | Everywhere     | Download one photograph into scratch for a data: embed        |
+| `download_attachment`                                  | Everywhere     | Download one message attachment into scratch by its 📎 id     |
 | `create_schedule`, `list_schedules`                    | Everywhere     | Run a prompt again later — interval minutes or a 5-field cron |
 | `update_schedule`, `delete_schedule`                   | Everywhere     | Edit or delete any agent-created schedule in the Room         |
 | `request_grant`                                        | Everywhere     | Ask the correct Room manager or resource owner for access     |

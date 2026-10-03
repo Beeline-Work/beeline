@@ -6,17 +6,15 @@ import { workflowStateLabel } from '@/buzz/workflow-graph';
 import { CORNER_META_SIZE } from './CornerGlyph';
 import { WorkflowGlyph } from './WorkflowGlyph';
 
-/** A brief lead and its full revision sit above the compact workflow action. */
+/** The corner objective sits above the compact workflow and brief actions. */
 export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
   objective,
-  brief,
   onOpenBrief,
   workflow,
   onOpenWorkflow,
   testID = 'corner-objective-line',
 }: {
   objective?: string;
-  brief?: string;
   /** Present only when the corner has a brief. */
   onOpenBrief?: () => void;
   /** The corner's live workflow run, if any. */
@@ -25,11 +23,8 @@ export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
   testID?: string;
 }) {
   const line = objective?.trim();
-  const briefLine = brief?.split('\n').map((item) => item.trim());
-  const briefLead = (briefLine?.find((item) => item.startsWith('> ') && item.length > 2) ??
-    briefLine?.find((item) => item && !/^#{1,6}\s/.test(item)))?.replace(/^>\s*/, '');
   const run = workflow?.status === 'live' && onOpenWorkflow ? workflow : undefined;
-  if (!line && !briefLead && !onOpenBrief && !run) return null;
+  if (!line && !onOpenBrief && !run) return null;
   return (
     <View style={styles.line} testID={testID}>
       <View style={styles.rail} />
@@ -40,11 +35,6 @@ export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
               {line}
             </Text>
           </View>
-        ) : null}
-        {briefLead ? (
-          <Text style={styles.briefPreview} testID={`${testID}-brief-preview`} numberOfLines={3}>
-            {briefLead}
-          </Text>
         ) : null}
         {run || onOpenBrief ? (
           <View style={styles.links}>
@@ -128,11 +118,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   inner: { flex: 1, minWidth: 0 },
   objective: { flexDirection: 'row', alignItems: 'flex-start', minWidth: 0, gap: 8 },
-  briefPreview: {
-    ...theme.buzz.type.meta,
-    color: theme.buzz.textPrimary,
-    marginTop: 4,
-  },
   links: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', columnGap: 12 },
   workflow: {
     flexDirection: 'row',

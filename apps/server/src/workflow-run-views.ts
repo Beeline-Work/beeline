@@ -242,6 +242,7 @@ function summarize(
   actors: ReadonlyMap<string, WorkflowActorView>,
   viewer: { id: string; kind: 'human' | 'agent' },
   earlierRunCount: number,
+  activeRunIds: readonly string[] = [],
 ): WorkflowRunSummaryView {
   const status = runStatus(contract, head.state);
   const holderId = holderIdentityId(head, contract);
@@ -263,7 +264,24 @@ function summarize(
     startedAt: head.startedAt,
     updatedAt: head.updatedAt,
     earlierRunCount,
+    ...(activeRunIds.length ? { activeRunIds: [...activeRunIds] } : {}),
   };
+}
+
+/** Every live run id, grouped by workflow slug, among the given heads. */
+function liveRunIdsBySlug(
+  heads: readonly RunHead[],
+  contracts: ReadonlyMap<string, WorkflowContract>,
+): Map<string, string[]> {
+  const bySlug = new Map<string, string[]>();
+  for (const head of heads) {
+    const contract = contracts.get(`${head.slug}@${head.version}`);
+    if (!contract || runStatus(contract, head.state) !== 'live') continue;
+    const list = bySlug.get(head.slug) ?? [];
+    list.push(head.runId);
+    bySlug.set(head.slug, list);
+  }
+  return bySlug;
 }
 
 function headBindingIds(head: RunHead): string[] {
@@ -333,6 +351,7 @@ export async function listRoomWorkflowRuns(
     loadActors(db, chosen.flatMap(headBindingIds)),
     loadViewer(db, viewerId),
   ]);
+  const liveBySlug = liveRunIdsBySlug(readable, contracts);
   const workflows = (
     await Promise.all(
       chosen.map(async (head) => ({
@@ -342,6 +361,7 @@ export async function listRoomWorkflowRuns(
           actors,
           viewer,
           earlierThan(readable, head),
+          liveBySlug.get(head.slug) ?? [],
         ),
         ...(await workflowStartInfo(db, head.roomId, head.runId)),
         ...(head.slug !== CORNER_WORKFLOW_SLUG
@@ -543,9 +563,12 @@ export async function readWorkflowRun(
   const heads = await loadRunHeads(db, topRoomId, viewerId, cards[0]!.workflow_slug);
   const head = heads.find((entry) => entry.runId === input.runId && entry.roomId === input.roomId);
   if (!head) return null;
-  const contract = (await loadContracts(db, head.workspaceId, [head])).get(
-    `${head.slug}@${head.version}`,
+  const contracts = await loadContracts(
+    db,
+    head.workspaceId,
+    [...new Map(heads.map((entry) => [`${entry.slug}@${entry.version}`, entry])).values()],
   );
+  const contract = contracts.get(`${head.slug}@${head.version}`);
   if (!contract) return null;
   const visits = visitsOf(cards);
   const [actors, viewer, gates, corners] = await Promise.all([
@@ -576,12 +599,13 @@ export async function readWorkflowRun(
       ...(opened ? { openedCorners: opened } : {}),
     };
   });
+  const activeRunIds = liveRunIdsBySlug(heads, contracts).get(head.slug) ?? [];
   return {
     ...(head.slug !== CORNER_WORKFLOW_SLUG
       ? { ownership: await readWorkflowOwnership(db, input.roomId, head.slug, viewerId) }
       : {}),
     run: {
-      ...summarize(head, contract, actors, viewer, earlierThan(heads, head)),
+      ...summarize(head, contract, actors, viewer, earlierThan(heads, head), activeRunIds),
       ...(await workflowStartInfo(db, head.roomId, head.runId)),
     },
     contract,

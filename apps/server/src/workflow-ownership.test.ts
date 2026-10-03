@@ -197,8 +197,9 @@ describe('workflow ownership', () => {
     const info = await readWorkflowOwnership(db, ROOM, 'daily', OTHER);
     expect(info.owner).toMatchObject({ id: OWNER, name: 'Scanner' });
     expect(info.activeRunIds).toEqual([runId]);
-    await expect(start(OTHER)).rejects.toThrow(`Only Scanner can start runs of daily`);
-    await expect(start(OTHER)).rejects.toThrow(runId);
+    await expect(start(OTHER)).rejects.toThrow(
+      `You are already in run ${runId} of daily. Continue it or hand off within it.`,
+    );
     await saveWorkflow(db, await command(OTHER), { contract });
     expect((await readWorkflowOwnership(db, ROOM, 'daily', OTHER)).owner?.id).toBe(OWNER);
     // The role holder can join the existing run without being the workflow owner.

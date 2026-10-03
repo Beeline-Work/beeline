@@ -2,7 +2,11 @@ import type { AgentGrantDecision, AgentGrantStatus } from './agent-grants.js';
 import type { ChoiceStatus, ChoiceOptionInput } from './room-choices.js';
 import type { AgentAccessPolicy } from './agent-access.js';
 import type { PushLevel } from './push-level.js';
-import type { WorkflowContract, WorkflowTerminalState, WorkflowReceipt } from './workflow-contracts.js';
+import type {
+  WorkflowContract,
+  WorkflowTerminalState,
+  WorkflowReceipt,
+} from './workflow-contracts.js';
 import type { GrantWalletDelegationInput, GrantWalletDelegationResult } from './wallet.js';
 import type {
   AgentModelSelection,
@@ -358,6 +362,8 @@ export type WorkflowRunSummaryView = {
   readonly startedBy?: WorkflowActorView;
   readonly startKind?: 'owner' | 'schedule' | 'human_admin';
   readonly ownership?: WorkflowOwnershipView;
+  /** Every currently-live run id of this workflow in the same Room and its corners, this one included. */
+  readonly activeRunIds?: readonly string[];
 };
 export type WorkflowRunListResult = { readonly workflows: readonly WorkflowRunSummaryView[] };
 export type ReadWorkflowRunInput = RoomInput & { readonly runId: string };

@@ -2963,7 +2963,8 @@ export async function listSchedules(
           : '';
       return [
         `${String(schedule.scheduleId)} (${typeof schedule.agentHandle === 'string' ? `@${schedule.agentHandle}` : `agent ${String(schedule.agentId)}`}): ${cadenceText}${runs}${nextRunAt} — ${String(schedule.prompt)}` +
-          (schedule.workflowName ? ` · Workflow ${String(schedule.workflowName)} · Owner ${schedule.owner ? String((schedule.owner as Record<string, unknown>).name) : 'no owner, starts blocked'} · Active run IDs: ${Array.isArray(schedule.activeRunIds) ? schedule.activeRunIds.join(', ') || 'none' : 'none'}` : ''),
+          (schedule.workflowName ? ` · Workflow ${String(schedule.workflowName)} · Owner ${schedule.owner ? String((schedule.owner as Record<string, unknown>).name) : 'no owner, starts blocked'}` : '') +
+          (Array.isArray(schedule.activeRunIds) ? ` · Active run IDs: ${schedule.activeRunIds.join(', ') || 'none'}` : ''),
       ];
     })
     .join('\n');

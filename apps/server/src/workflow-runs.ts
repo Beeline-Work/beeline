@@ -51,6 +51,7 @@ type WorkflowRunCard = {
   status?: 'done' | 'failed';
   /** A same-state reassignment card (list failover or `assign_workflow_role`): no outcome, same toState as before. */
   reassigned?: true;
+  trigger?: { scheduleId: string; period: string };
 };
 
 type IdentityRow = { id: string; kind: 'human' | 'agent'; name: string };
@@ -212,6 +213,7 @@ async function scheduleWorkflowTimeout(
     workspaceId: string;
     roomId: string;
     runId: string;
+    workflowName: string;
     stateName: string;
     agentId: string;
     seconds: number;
@@ -225,11 +227,11 @@ async function scheduleWorkflowTimeout(
   const nextRunAt = nextScheduleOccurrence(cadence, new Date());
   await db.query(
     `INSERT INTO agent_schedules
-       (id,workspace_id,room_id,agent_id,creator_id,cadence,message,max_runs,next_run_at)
-     VALUES($1,$2,$3,$4,$4,$5::jsonb,$6,1,$7)
+       (id,workspace_id,room_id,agent_id,creator_id,cadence,message,max_runs,next_run_at,workflow_run)
+     VALUES($1,$2,$3,$4,$4,$5::jsonb,$6,1,$7,$8::jsonb)
      ON CONFLICT(id) DO UPDATE
        SET cadence=EXCLUDED.cadence,message=EXCLUDED.message,next_run_at=EXCLUDED.next_run_at,
-           run_count=0,updated_at=now()`,
+           workflow_run=EXCLUDED.workflow_run,run_count=0,updated_at=now()`,
     [
       workflowTimeoutScheduleId(input.runId, input.stateName),
       input.workspaceId,
@@ -238,6 +240,7 @@ async function scheduleWorkflowTimeout(
       JSON.stringify(cadence),
       `workflow run ${input.runId} timed out at ${input.stateName}; call handoff with outcome "timeout"${input.hint ? `; receipt hint: ${input.hint}` : ''}`,
       nextRunAt,
+      JSON.stringify({ runId: input.runId, workflowSlug: input.workflowName }),
     ],
   );
 }
@@ -275,9 +278,14 @@ async function postWorkflowGate(
       consequence: `go to ${target}`.slice(0, 80),
     })),
   });
-  if (input.state.hint)
-    await db.query(`UPDATE messages SET card=card || jsonb_build_object('receiptHint',$2::text) WHERE id=$1`,
-      [choice.messageId, input.state.hint]);
+  await db.query(
+    `UPDATE messages SET card=card || $2::jsonb WHERE id=$1`,
+    [choice.messageId, JSON.stringify({
+      runId: input.runId,
+      workflowSlug: input.contract.name,
+      ...(input.state.hint ? { receiptHint: input.state.hint } : {}),
+    })],
+  );
 }
 
 export async function saveWorkflow(
@@ -336,16 +344,93 @@ function roleAgentList(binding: WorkflowRoleBinding): string[] | null {
   return new Set(binding).size === binding.length ? [...binding] : null;
 }
 
+async function activeRunHeldByAgent(
+  db: SqlDatabase,
+  input: { roomId: string; agentId: string; workflowName: string },
+): Promise<{ runId: string } | undefined> {
+  const active = await db.query<{ id: string }>(
+    `SELECT id FROM messages
+     WHERE room_id=$1 AND card_type='workflow-handoff' AND card->>'active'='true'
+       AND card->>'workflowSlug'=$2 AND card->>'currentAgentId'=$3
+     ORDER BY id LIMIT 1`,
+    [input.roomId, input.workflowName, input.agentId],
+  );
+  return active.rows[0] ? { runId: active.rows[0].id } : undefined;
+}
+
+/** The schedule occurrence (if any) whose wake message triggered this call. */
+async function scheduleTriggerPeriod(
+  db: SqlDatabase,
+  sourceMessageId: string,
+): Promise<{ scheduleId: string; period: string } | undefined> {
+  const row = (
+    await db.query<{ schedule_id: string; scheduled_for: Date }>(
+      `SELECT schedule_id,scheduled_for FROM agent_schedule_occurrences WHERE message_id=$1`,
+      [sourceMessageId],
+    )
+  ).rows[0];
+  if (row) return { scheduleId: row.schedule_id, period: row.scheduled_for.toISOString() };
+  const wake = (await db.query<{ trigger: { scheduleId: string; period: string } | null }>(
+    `SELECT card->'trigger' trigger FROM messages WHERE id=$1`, [sourceMessageId],
+  )).rows[0];
+  return wake?.trigger?.scheduleId && wake.trigger.period ? wake.trigger : undefined;
+}
+
+/** An active run of `workflowName` in `roomId` whose start card recorded this exact schedule+period. */
+async function activeRunForTrigger(
+  db: SqlDatabase,
+  roomId: string,
+  workflowName: string,
+  trigger: { scheduleId: string; period: string },
+): Promise<{ runId: string } | undefined> {
+  const active = await db.query<{ id: string }>(
+    `SELECT id FROM messages
+     WHERE room_id=$1 AND card_type='workflow-handoff' AND card->>'active'='true'
+       AND card->>'workflowSlug'=$2
+       AND card->'trigger'->>'scheduleId'=$3 AND card->'trigger'->>'period'=$4
+     ORDER BY id LIMIT 1`,
+    [roomId, workflowName, trigger.scheduleId, trigger.period],
+  );
+  return active.rows[0] ? { runId: active.rows[0].id } : undefined;
+}
+
+/** Every still-active run id this schedule has ever started (any workflow), for `list_schedules`. */
+export async function activeRunIdsForSchedule(
+  db: SqlDatabase,
+  roomId: string,
+  scheduleId: string,
+): Promise<string[]> {
+  const active = await db.query<{ id: string }>(
+    `SELECT id FROM messages
+     WHERE room_id=$1 AND card_type='workflow-handoff' AND card->>'active'='true'
+       AND card->'trigger'->>'scheduleId'=$2
+     ORDER BY id`,
+    [roomId, scheduleId],
+  );
+  return active.rows.map((row) => row.id);
+}
+
 export async function startWorkflow(
   database: SqlDatabase,
-  command: Pick<CommandRow, 'room_id' | 'agent_id'> & { reason?: string },
+  command: Pick<CommandRow, 'room_id' | 'agent_id'> & { reason?: string; source_message_id?: string },
   input: { name: string; roleBindings: Readonly<Record<string, WorkflowRoleBinding>> },
 ): Promise<{ runId: string; state: string }> {
   if (typeof input.name !== 'string' || !input.name) throw new Error('workflow name is required');
   if (!input.roleBindings || typeof input.roleBindings !== 'object') {
     throw new Error('roleBindings is required');
   }
+
   return database.transaction(async (db) => {
+    const held = await activeRunHeldByAgent(db, {
+      roomId: command.room_id,
+      agentId: command.agent_id,
+      workflowName: input.name,
+    });
+    if (held) {
+      throw new Error(
+        `You are already in run ${held.runId} of ${input.name}. Continue it or hand off within it.`,
+      );
+    }
     const room = (
       await db.query<{ workspace_id: string }>(`SELECT workspace_id FROM rooms WHERE id=$1`, [
         command.room_id,
@@ -366,6 +451,17 @@ export async function startWorkflow(
     if (!skill) throw new Error('workflow is unavailable');
     const ownership = await requireWorkflowOwner(db, command.room_id, input.name, command.agent_id);
     const contract = JSON.parse(skill.markdown) as WorkflowContract;
+    const trigger = command.source_message_id
+      ? await scheduleTriggerPeriod(db, command.source_message_id)
+      : undefined;
+    if (trigger) {
+      const collision = await activeRunForTrigger(db, command.room_id, input.name, trigger);
+      if (collision) {
+        throw new Error(
+          `${input.name} already has an active run ${collision.runId} started by this schedule for this period. Continue it, or ask a human admin to override.`,
+        );
+      }
+    }
     const missingRole = contract.roles.find((role) => !input.roleBindings[role]);
     if (missingRole) throw new Error(`role binding is missing for ${missingRole}`);
     const roleBindings: Record<string, string> = {};
@@ -428,12 +524,15 @@ export async function startWorkflow(
       subject: identitySubject(starter),
       verb: 'started workflow',
       object: contract.name,
+      consequence: `run ${runId}`,
       kind: 'workflow-handoff',
       ...(!exhausted && !isGate ? { wakes: [(resolution as { agentId: string }).agentId] } : {}),
       presentation: 'card',
       cardType: WORKFLOW_HANDOFF_CARD_TYPE,
       card: {
         runId,
+        active: true,
+        currentAgentId: exhausted ? null : (resolution as { agentId: string }).agentId,
         workflowSlug: contract.name,
         workflowVersion: skill.current_version,
         ownerAtStart: ownership.owner!.id,
@@ -447,6 +546,7 @@ export async function startWorkflow(
         ...(Object.keys(roleAgents).length ? { roleAgents } : {}),
         toState: contract.start,
         ...(startState.hint ? { receiptHint: startState.hint } : {}),
+        ...(trigger ? { trigger } : {}),
       },
     });
     if (exhausted) {
@@ -470,6 +570,7 @@ export async function startWorkflow(
         workspaceId: room.workspace_id,
         roomId: command.room_id,
         runId,
+        workflowName: contract.name,
         stateName: contract.start,
         agentId: (resolution as { agentId: string }).agentId,
         seconds: (startState as WorkflowHandoffState).timeoutSeconds!,
@@ -562,6 +663,7 @@ export async function handoff(
       subject: identitySubject(actor),
       verb: 'handed off',
       object: toState,
+      consequence: `run ${input.runId} of ${run.workflowSlug}`,
       kind: 'workflow-handoff',
       ...(!isTerminal && !isGate && !exhausted
         ? { wakes: [(nextResolution as { agentId: string }).agentId] }
@@ -582,6 +684,12 @@ export async function handoff(
         ...(isTerminal ? { status: (nextState as { status: 'done' | 'failed' }).status } : {}),
       },
     });
+    await db.query(
+      `UPDATE messages SET card=card || jsonb_build_object('active',$3::boolean,'currentAgentId',$4::text)
+       WHERE id=$1 AND room_id=$2 AND card_type='workflow-handoff'`,
+      [input.runId, command.room_id, !isTerminal,
+        isTerminal || exhausted ? null : (nextResolution as { agentId: string }).agentId],
+    );
     if (exhausted) {
       await noteWorkflowRoleExhausted(db, {
         roomId: command.room_id,
@@ -603,6 +711,7 @@ export async function handoff(
         workspaceId: room.workspace_id,
         roomId: command.room_id,
         runId: input.runId,
+        workflowName: contract.name,
         stateName: toState,
         agentId: (nextResolution as { agentId: string }).agentId,
         seconds: (nextState as WorkflowHandoffState).timeoutSeconds!,
@@ -644,6 +753,7 @@ async function reassignRole(
     subject: { kind: 'system', name: 'the workflow' },
     verb: 'reassigned',
     object: input.role,
+    consequence: `run ${input.runId} of ${input.run.workflowSlug}`,
     kind: 'workflow-handoff',
     ...(state.kind === 'gate' ? {} : { wakes: [input.picked] }),
     presentation: 'card',
@@ -658,6 +768,11 @@ async function reassignRole(
       ...(state.hint ? { receiptHint: state.hint } : {}),
     },
   });
+  await db.query(
+    `UPDATE messages SET card=card || jsonb_build_object('currentAgentId',$3::text)
+     WHERE id=$1 AND room_id=$2 AND card_type='workflow-handoff'`,
+    [input.runId, input.roomId, input.picked],
+  );
   if (state.kind === 'gate') {
     await postWorkflowGate(db, {
       roomId: input.roomId,
@@ -679,6 +794,7 @@ async function reassignRole(
         workspaceId: room.workspace_id,
         roomId: input.roomId,
         runId: input.runId,
+        workflowName: input.run.workflowSlug,
         stateName: input.run.toState,
         agentId: input.picked,
         seconds: state.timeoutSeconds,

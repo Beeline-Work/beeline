@@ -131,6 +131,7 @@ export async function runBrowserProof(options: {
   width: number;
   height?: number;
   query?: string;
+  budgetMs?: number;
 }): Promise<{ result: string; status: number | null; stderr: string }> {
   const { entry, mobile, shims, width, height = 900, query = '' } = options;
   const directory = await mkdtemp(path.join(tmpdir(), 'browser-proof-'));
@@ -198,7 +199,7 @@ export async function runBrowserProof(options: {
           `--window-size=${width},${height}`,
           `--user-data-dir=${path.join(directory, 'profile')}`,
           '--dump-dom',
-          '--virtual-time-budget=6000',
+          `--virtual-time-budget=${options.budgetMs ?? 6000}`,
           `${pathToFileURL(html).href}${query}`,
         ],
         {

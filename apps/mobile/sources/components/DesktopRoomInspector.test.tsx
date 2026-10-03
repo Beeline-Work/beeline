@@ -1,7 +1,16 @@
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
-import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, create as createRenderer, type ReactTestRenderer } from 'react-test-renderer';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mounted: ReactTestRenderer[] = [];
+function create(element: React.ReactElement) {
+  const tree = createRenderer(element);
+  mounted.push(tree);
+  return tree;
+}
+afterEach(async () => { await act(async () => mounted.splice(0).forEach(tree => tree.unmount())); });
+vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ register: async () => () => undefined }) }));
 
 const phoneOperation = vi.hoisted(() => vi.fn());
 const modalConfirm = vi.hoisted(() => vi.fn());
@@ -307,6 +316,21 @@ function nodeText(node: { findAllByType(type: unknown): any[] }): string {
 }
 
 describe('DesktopRoomInspector work pane', () => {
+  it('Reproduction R9c: failed selection never shows the previous corner', async () => {
+    const detail = { ...room(), room: corners[0].corner, parent: room().room };
+    const client = { room: vi.fn(async (id: string) => {
+      if (id === 'broken') throw new Error('offline');
+      return detail;
+    }) } as any;
+    let tree!: ReactTestRenderer;
+    try {
+      await act(async () => { tree = create(<DesktopRoomInspector {...props({ client, selectedCornerId: 'working' })} />); });
+      await act(async () => { tree.update(<DesktopRoomInspector {...props({ client, selectedCornerId: 'broken' })} />); });
+      expect(tree.root.findAllByProps({ testID: 'desktop-work-corner-transcript' })).toHaveLength(0);
+      expect(tree.root.findByProps({ testID: 'desktop-corner-retry' })).toBeTruthy();
+    } finally { await act(async () => tree.unmount()); }
+  });
+
   it('renders the corner list with full objectives and one concluded row', async () => {
     const tree = await render();
     const copy = text(tree);
@@ -701,6 +725,7 @@ describe('DesktopRoomInspector work pane', () => {
     act(() => link.props.onPress());
     expect(openCornerBriefViewer).toHaveBeenCalledWith(cornerBrief);
 
+    await act(async () => tree.unmount());
     const bare = { ...detail, cornerBrief: undefined };
     await act(async () => {
       tree = create(

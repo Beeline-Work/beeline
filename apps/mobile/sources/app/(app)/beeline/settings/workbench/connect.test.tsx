@@ -113,7 +113,9 @@ beforeEach(() => {
   };
 });
 
-afterEach(() => {
+const mounted: ReactTestRenderer[] = [];
+afterEach(async () => {
+  await act(async () => mounted.splice(0).forEach(renderer => renderer.unmount()));
   vi.clearAllTimers();
 });
 
@@ -125,6 +127,7 @@ async function render(): Promise<ReactTestRenderer> {
     await Promise.resolve();
     await Promise.resolve();
   });
+  mounted.push(renderer);
   return renderer;
 }
 
@@ -262,7 +265,7 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     const renderer = await render();
     await pair(renderer);
     expect(renderer.root.findByProps({ testID: 'connect-header' }).props.meta).toBeUndefined();
-    await advancePolls(2);
+    await advancePolls();
     expect(renderer.root.findByProps({ testID: 'connect-install-progress' })).toBeDefined();
     expect(renderer.root.findByProps({ testID: 'connect-header' }).props.meta).toBeUndefined();
     const active = renderer.root.findAll(
@@ -384,7 +387,7 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(renderer.root.findAllByProps({ testID: 'connect-install-progress' }).length).toBe(0);
+    expect(renderer.root.findByProps({ testID: 'connect-install-progress' })).toBeDefined();
     await advancePolls(2);
     expect(renderer.root.findByProps({ testID: 'connect-install-progress' })).toBeDefined();
   });

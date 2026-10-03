@@ -8,6 +8,7 @@ import { Typography } from '@/constants/Typography';
 import { AnimatedBlurBackdrop } from '@/components/AnimatedOverlay';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import { useSandboxWebView } from '@/components/buzz/sandbox-webview';
+import { useInstallObserver } from '@/buzz/use-observed-resource';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { connectorOfferCompletionRoute } from '@/buzz/connector-offer-ceremony';
 import { takeAppSignInReturn } from '@/buzz/app-sign-in';
@@ -57,18 +58,14 @@ function ConnectorSignInOverlay() {
   const WebView = useSandboxWebView();
 
   const finish = useCallback(() => router.replace(roomId ? connectorOfferCompletionRoute(roomId) as Href : ({ pathname: '/beeline/settings/workbench', params: { workspaceId, viewerId } } as Href)), [roomId, viewerId, workspaceId]);
+  const observed = useInstallObserver(workspaceId, connectorId);
   useEffect(() => {
-    let live = true;
-    const poll = setInterval(() => {
-      void getWorkbenchSource().readInstallState({ workspaceId, connectorId }).then(state => {
-        if (!live || !state) return;
-        if (state.connected) { finish(); return; }
-        if (state.signIn) setSignIn(current => current.url === state.signIn!.url ? current : { url: state.signIn!.url, method: state.signIn!.method });
-        else if (state.steps?.some(step => step.status === 'failed')) router.back();
-      }).catch(() => undefined);
-    }, 1500);
-    return () => { live = false; clearInterval(poll); };
-  }, [connectorId, finish, workspaceId]);
+    const state = observed.data;
+    if (!state) return;
+    if (state.connected) { finish(); return; }
+    if (state.signIn) setSignIn(current => current.url === state.signIn!.url ? current : { url: state.signIn!.url, method: state.signIn!.method });
+    else if (state.steps?.some(step => step.status === 'failed')) router.back();
+  }, [observed.data, finish]);
 
   const openBrowser = useCallback(async () => {
     if (!signIn.url) return;
@@ -80,6 +77,7 @@ function ConnectorSignInOverlay() {
     <AnimatedBlurBackdrop interactive={false} blurIntensity={48} />
     <View style={[styles.card, { marginTop: insets.top + 24, marginBottom: insets.bottom + 24 }]} testID="signin-card">
       <PageHeader backAccessibilityLabel="Close sign-in" eyebrow="Workbench" prominent onBack={() => router.back()} testID="signin-header" title={`Sign in to ${connectorName}`} />
+      {observed.error ? <TouchableOpacity accessibilityRole="button" onPress={observed.retry} testID="signin-retry"><Text accessibilityRole="alert" style={styles.error}>{observed.error} · Retry</Text></TouchableOpacity> : null}
       {signIn.method === 'oauth' ? <View style={styles.centered} testID="signin-oauth-browser">
         <Text style={styles.note}>{connectorName} sign-in opens in your browser. Return here after granting access.</Text>
         <TouchableOpacity accessibilityRole="button" onPress={() => void openBrowser()} style={styles.button} testID="signin-open-external"><Text style={styles.buttonText}>Continue with {connectorName}</Text></TouchableOpacity>

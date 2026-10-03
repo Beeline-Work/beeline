@@ -1,8 +1,9 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
-import { router, useFocusEffect, useLocalSearchParams, type Href } from 'expo-router';
+import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
+import { observeRoomResource, useObservedResource } from '@/buzz/use-observed-resource';
 import type { WorkflowRunDetailView } from '@beeline/api-contract/phone';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { cornerHref } from '@/buzz/corner-navigation';
@@ -37,37 +38,26 @@ export default function WorkflowRun() {
   const params = useLocalSearchParams<{ roomId?: string | string[]; runId?: string | string[] }>();
   const roomId = first(params.roomId);
   const runId = first(params.runId);
-  const [detail, setDetail] = useState<WorkflowRunDetailView | null>(null);
-  const [loadedAt, setLoadedAt] = useState(() => Math.floor(Date.now() / 1_000));
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const reload = useCallback(async () => {
-    if (!roomId || !runId) {
-      setError('Workflow run is missing.');
-      setLoading(false);
-      return;
-    }
-    try {
-      if (!(await loadBuzzIdentity())) {
-        router.replace('/beeline/onboarding' as Href);
-        return;
-      }
-      setDetail(await monolithPhoneOperation('readWorkflowRun', { roomId, runId }));
-      setLoadedAt(Math.floor(Date.now() / 1_000));
-      setError(null);
-    } catch (caught) {
-      setError(`Could not load this workflow run: ${String(caught)}`);
-    } finally {
-      setLoading(false);
-    }
-  }, [roomId, runId]);
-
-  useFocusEffect(
-    useCallback(() => {
-      void reload();
-    }, [reload]),
+  const { data: detail, loading, error, retry } = useObservedResource<WorkflowRunDetailView>(
+    `workflow-run:${roomId}:${runId}`, {
+      load: async () => {
+        if (!roomId || !runId) throw new Error('Workflow run is missing.');
+        if (!(await loadBuzzIdentity())) {
+          router.replace('/beeline/onboarding' as Href);
+          throw new Error('Sign in to read this workflow run.');
+        }
+        return monolithPhoneOperation('readWorkflowRun', { roomId, runId });
+      },
+      subscribe: roomId ? observeRoomResource(roomId) : undefined,
+    },
   );
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1_000));
+  useEffect(() => {
+    if (detail?.run.status !== 'live') return;
+    setNow(Math.floor(Date.now() / 1_000));
+    const clock = setInterval(() => setNow(Math.floor(Date.now() / 1_000)), 1000);
+    return () => clearInterval(clock);
+  }, [detail?.run.status]);
 
   const line = useMemo(
     () => (detail ? workflowRunLine(detail.contract, detail.history) : []),
@@ -93,10 +83,7 @@ export default function WorkflowRun() {
       {error && (
         <Pressable
           accessibilityRole="alert"
-          onPress={() => {
-            setLoading(true);
-            void reload();
-          }}
+          onPress={retry}
           style={styles.error}
         >
           <Text style={styles.errorText}>{error} · Retry</Text>
@@ -137,7 +124,7 @@ export default function WorkflowRun() {
               </Text>
               {live ? ' · running ' : ' · took '}
               <Text style={styles.statusValue}>
-                {formatRunDuration((live ? loadedAt : run.updatedAt) - run.startedAt)}
+                {formatRunDuration((live ? now : run.updatedAt) - run.startedAt)}
               </Text>
             </Text>
           </View>
@@ -154,7 +141,7 @@ export default function WorkflowRun() {
           </View>
           <WorkflowRunLine
             detail={detail}
-            now={loadedAt}
+            now={now}
             onOpenCorner={(corner) =>
               router.push(cornerHref(corner.id, corner.parentRoomId, corner.name))
             }

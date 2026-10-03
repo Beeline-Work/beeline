@@ -1,3 +1,4 @@
+import { observeRoomResource, useObservedResource } from '@/buzz/use-observed-resource';
 import * as React from 'react';
 import { FlatList, PanResponder, Platform, Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -123,9 +124,7 @@ export function DesktopRoomInspector({
   onNewCorner,
   focusMessageId,
 }: Props) {
-  const [detail, setDetail] = React.useState<RoomView | null>(null);
   const [corners, setCorners] = React.useState<readonly CornerListItem[]>([]);
-  const [loading, setLoading] = React.useState(false);
   const [width, setWidth] = React.useState(DESKTOP_INSPECTOR_DEFAULT_WIDTH);
   const [cornersExpanded, setCornersExpanded] = React.useState(false);
   const dragStart = React.useRef(width);
@@ -137,7 +136,6 @@ export function DesktopRoomInspector({
 
   React.useEffect(() => void loadDesktopPaneWidth('inspector').then(setWidth), []);
   React.useEffect(() => {
-    setDetail(null);
     setCorners([]);
     setCornersExpanded(false);
   }, [room.room.id]);
@@ -161,31 +159,13 @@ export function DesktopRoomInspector({
     };
   }, [client, room.room.id]);
 
-  const refreshCorner = React.useCallback(async () => {
-    if (client && selectedCornerId) setDetail(await client.room(selectedCornerId));
-  }, [client, selectedCornerId]);
-
-  React.useEffect(() => {
-    let cancelled = false;
-    if (!client || !selectedCornerId) {
-      setDetail(null);
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    const load = () =>
-      client.room(selectedCornerId).then((next) => {
-        if (!cancelled) setDetail(next);
-      });
-    void load()
-      .catch(() => undefined)
-      .finally(() => !cancelled && setLoading(false));
-    const poll = setInterval(() => void load().catch(() => undefined), 10_000);
-    return () => {
-      cancelled = true;
-      clearInterval(poll);
-    };
-  }, [client, selectedCornerId]);
+  const observed = useObservedResource<RoomView>(client && selectedCornerId ? `inspector:${selectedCornerId}` : undefined, {
+    load: () => client!.room(selectedCornerId!),
+    subscribe: selectedCornerId ? observeRoomResource(selectedCornerId) : undefined,
+  });
+  const detail = observed.data?.room.id === selectedCornerId ? observed.data : null;
+  const loading = observed.loading;
+  const refreshCorner = React.useCallback(async () => observed.retry(), [observed.retry]);
 
   // Mirrors the navigation divider in SidebarNavigator. The pane is the last
   // child of its row, so its layout x plus its width is the row's width.
@@ -248,20 +228,27 @@ export function DesktopRoomInspector({
           onClose={() => clearDesktopArtifactPane()}
         />
       ) : selectedCornerId ? (
-        <CornerCockpit
-          client={client}
-          channelIndex={channelIndex}
-          onChannelReference={onChannelReference}
-          roomId={selectedCornerId}
-          detail={detail}
-          loading={loading}
-          summary={summary}
-          focusMessageId={focusMessageId}
-          onOpenInMain={() => onOpenInMain(selectedCornerId)}
-          onClose={onClose}
-          onOpenCorner={onSelectCorner}
-          onRefresh={refreshCorner}
-        />
+        <>
+          {observed.error ? (
+            <Pressable accessibilityRole="button" onPress={observed.retry} testID="desktop-corner-retry">
+              <Text accessibilityRole="alert" style={styles.error}>{observed.error} · Retry</Text>
+            </Pressable>
+          ) : null}
+          <CornerCockpit
+            client={client}
+            channelIndex={channelIndex}
+            onChannelReference={onChannelReference}
+            roomId={selectedCornerId}
+            detail={detail}
+            loading={loading}
+            summary={summary}
+            focusMessageId={focusMessageId}
+            onOpenInMain={() => onOpenInMain(selectedCornerId)}
+            onClose={onClose}
+            onOpenCorner={onSelectCorner}
+            onRefresh={refreshCorner}
+          />
+        </>
       ) : (
         <>
           <View style={styles.header} testID="desktop-work-corners-header">

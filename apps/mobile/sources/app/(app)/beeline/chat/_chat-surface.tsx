@@ -1377,7 +1377,7 @@ export function BuzzChatSurface({
   // A live workflow run in this corner: one line under the objective, → its run page.
   const cornerWorkflowRun = useCornerWorkflowRun(
     isCorner ? decodedId : undefined,
-    roomSurface?.messages.at(-1)?.id,
+    (error, retry) => Modal.alert('Workflow unavailable', error, [{ text: 'Retry', onPress: retry }]),
   );
   const openCornerWorkflowRun = useCallback(() => {
     if (cornerWorkflowRun) router.push(workflowRunHref(cornerWorkflowRun));

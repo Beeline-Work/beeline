@@ -33,6 +33,8 @@ import {
 import { recordInstitutionalCornerOutcome } from './institutional-memory-shadow.js';
 import { reviewerList, roomAgentHealth } from './agent-health.js';
 
+const CORNER_MERGE_CONCURRENCY = 4;
+
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
 
 type GitHubRecord = Record<string, unknown>;
@@ -880,10 +882,18 @@ export class GitHubOperations {
    * on).
    */
   async landReadyCorners(): Promise<number> {
+    const candidates = await cornersReadyToLand(this.database);
+    let next = 0;
     let attempted = 0;
-    for (const cornerId of await cornersReadyToLand(this.database)) {
-      if (await this.landCorner(cornerId)) attempted += 1;
-    }
+    await Promise.all(Array.from(
+      { length: Math.min(CORNER_MERGE_CONCURRENCY, candidates.length) },
+      async () => {
+        while (next < candidates.length) {
+          const cornerId = candidates[next++]!;
+          if (await this.landCorner(cornerId)) attempted += 1;
+        }
+      },
+    ));
     return attempted;
   }
 
@@ -1785,27 +1795,32 @@ export class GitHubOperations {
       const check = checkFact(event, body);
       const checkHeadSha = check?.headSha;
       if (check && checkHeadSha) {
+        // Use the database clock across server instances, with subsecond precision
+        // to order overlapping fetches while keeping updatedAt in epoch seconds.
+        const fetchStartedAt = (await database.query<{ started_at: number }>(
+          `SELECT extract(epoch FROM clock_timestamp())::double precision started_at`,
+        )).rows[0]!.started_at;
+        const token = await this.app.installationToken(Number(target.installation_id), {
+          repositoryIds: [Number(target.repository_id)],
+        });
+        const rollup = await this.app.readCommitCheckRollup(token.token, repository, checkHeadSha);
         await database.transaction(async (database) => {
           await lockCornerWorkflowRun(database, target.corner_id);
-          // Webhooks are wake-up signals. Serialize refreshes for this corner, then ask GitHub
-          // for its current aggregate instead of treating any delivery as the complete verdict.
+          // Webhooks signal a refresh. Revalidate its head and age only after
+          // the provider has replied, under the run lock then the fact row lock.
           const current = (
-            await database.query<{ lifecycle: CornerLifecycleView }>(
+            await database.query<{ lifecycle: CornerLifecycleView & {
+              checksSummary?: { fetchStartedAt?: number };
+            } }>(
               `SELECT lifecycle FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
               [target.corner_id],
             )
           ).rows[0]?.lifecycle;
           if (!current) return;
           // GitHub may deliver a completed run for the previous branch head after a push.
-          if (current.pr?.headSha && checkHeadSha !== current.pr.headSha) return;
-          const token = await this.app.installationToken(Number(target.installation_id), {
-            repositoryIds: [Number(target.repository_id)],
-          });
-          const rollup = await this.app.readCommitCheckRollup(
-            token.token,
-            repository,
-            checkHeadSha,
-          );
+          if (checkHeadSha !== current.pr?.headSha) return;
+          const latestFetch = current.checksSummary?.fetchStartedAt ?? current.checksSummary?.updatedAt ?? 0;
+          if (fetchStartedAt < latestFetch) return;
           const summary = {
             status:
               rollup.state === 'passed'
@@ -1816,7 +1831,8 @@ export class GitHubOperations {
             total: rollup.total,
             failing: rollup.failing,
             checks: rollup.checks,
-            updatedAt: Math.floor(Date.now() / 1_000),
+            updatedAt: Math.floor(fetchStartedAt),
+            fetchStartedAt,
           };
           await this.updateLifecycle(
             target.corner_id,

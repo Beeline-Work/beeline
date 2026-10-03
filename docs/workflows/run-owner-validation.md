@@ -15,8 +15,7 @@ The host’s `adb devices` listed an offline emulator. The server test runner an
 Run from the repository root:
 
 ```sh
-npm run build -w @beeline/server
-node --import tsx scripts/prove-workflow-owner.ts /tmp/workflow-owner-demonstrated.json
+npm run prove:workflow-owner -- /tmp/workflow-owner-demonstrated.json
 ```
 
 Reproduction OWNER-1 now passes. The proof starts an isolated HTTP server with two authenticated daemon identities and a human admin, saves and starts `daily`, and rejects the peer’s start with the owner and active run ID. It builds and opens the real workflow page in Chrome at 1280px and 390px. The page reads the live authenticated phone API, shows Owner / Scanner and the full run ID, and has no horizontal overflow. At phone width the human clicks Change owner, selects Peer, and the page reloads the server’s new owner. The existing run still identifies Scanner as its starter.

@@ -91,10 +91,13 @@ import { READ_ONLY_TOOL_NAMES } from './read-only-policy.js';
 import { validateArtifact } from './artifact-validation.js';
 import {
   BoundedSizeError,
+  EXPIRED_REASON,
   FETCH_TIMEOUT_MS,
   MAX_ATTACHMENT_BYTES,
+  attachmentId,
   fetchBoundedBytes,
   deliverAttachments,
+  safeAttachmentNames,
   withoutImageData,
 } from './attachment-delivery.js';
 import { describeTailscaleReach } from './connector-tailscale.js';
@@ -327,13 +330,27 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'get_room_message',
     description:
-      'Read one message by its stable transcript id from this Room or an authorized source Room. Returns at most 4000 text characters, attachments with a local path or a failure reason (read the local file; do not fetch its URL), and a nextOffset for the next text page.',
+      'Read one message by its stable transcript id from this Room or an authorized source Room. Returns at most 4000 text characters, attachments with their id and a local path or a failure reason (read the local file; do not fetch its URL), and a nextOffset for the next text page.',
     inputSchema: {
       type: 'object',
       required: ['messageId'],
       properties: {
         messageId: { type: 'string', minLength: 1, maxLength: 128 },
         offset: { type: 'integer', minimum: 0 },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'download_attachment',
+    description:
+      'Download one file attached to a Room message (a 📎 marker in your transcript, or an attachment id from get_room_message) into your writable session home and return {path, mimeType, size}; read the local path. Same access as get_room_message. Capped at 25 MB; a file already downloaded with the same sha256 is not fetched again. A failure is a JSON error whose `error` is not_found, forbidden, too_large, or download_failed: tell the requester you could not open the file, and never fetch its media URL yourself.',
+    inputSchema: {
+      type: 'object',
+      required: ['messageId', 'attachmentId'],
+      properties: {
+        messageId: { type: 'string', minLength: 1, maxLength: 128 },
+        attachmentId: { type: 'string', minLength: 1, maxLength: 64 },
       },
       additionalProperties: false,
     },
@@ -2675,6 +2692,147 @@ export async function fetchImage(
   return JSON.stringify({ path: resolved, mime, size: fetched.bytes.length });
 }
 
+type AttachmentDownloadFailure = 'not_found' | 'forbidden' | 'too_large' | 'download_failed';
+
+/** A refused download_attachment: the tool error text is `{"error":<reason>,"message":…}`. */
+class AttachmentDownloadError extends Error {
+  readonly reason: AttachmentDownloadFailure;
+  constructor(reason: AttachmentDownloadFailure, detail: string) {
+    super(JSON.stringify({ error: reason, message: detail }));
+    this.name = 'AttachmentDownloadError';
+    this.reason = reason;
+  }
+}
+
+interface DownloadAttachmentDeps {
+  /** Same writable session area write_scratch_file and fetch_image use. */
+  root?: string;
+  /** The daemon's authenticated server; media bytes are read from here, never a stored URL's host. */
+  serverBaseUrl: string;
+  readMessage: (messageId: string) => Promise<JsonObject>;
+  fetchImpl?: typeof fetch;
+}
+
+function downloadAttachmentDepsFromEnv(): DownloadAttachmentDeps {
+  return {
+    root: process.env.BEELINE_ATTACH_SCRATCH_ROOT?.trim() || undefined,
+    serverBaseUrl: requiredEnv('BEELINE_DAEMON_BASE_URL'),
+    readMessage: (messageId) =>
+      daemonExecute('getRoomMessage', {
+        roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+        messageId,
+      }),
+  };
+}
+
+/** The status in a `daemon operation … failed (<status>: …)` error, mapped to a reason. */
+function messageReadFailure(error: unknown): AttachmentDownloadError {
+  const text = error instanceof Error ? error.message : String(error);
+  const status = Number(/\((\d{3}):/.exec(text)?.[1]);
+  if (status === 403)
+    return new AttachmentDownloadError('forbidden', 'you cannot read that message from this Room');
+  if (status === 404 || status === 400)
+    return new AttachmentDownloadError('not_found', 'no such message');
+  return new AttachmentDownloadError('download_failed', `could not read the message (${text})`);
+}
+
+/**
+ * download_attachment: authorize through the same getRoomMessage read the
+ * agent already has, then copy one attachment's bytes from the server into
+ * `<scratch>/attachments/<messageId>/<safe-name>`. Nothing is downloaded
+ * while a prompt is built; this is the only on-demand path for a transcript file.
+ */
+async function downloadAttachment(
+  args: JsonObject,
+  deps: DownloadAttachmentDeps = downloadAttachmentDepsFromEnv(),
+): Promise<string> {
+  const messageId = stringArg(args, 'messageId')?.trim();
+  const wanted = stringArg(args, 'attachmentId')?.trim().toLowerCase();
+  if (!messageId || !wanted)
+    throw new AttachmentDownloadError('not_found', 'messageId and attachmentId are required');
+  let message: JsonObject;
+  try {
+    message = await deps.readMessage(messageId);
+  } catch (error) {
+    throw messageReadFailure(error);
+  }
+  const attachments = (
+    Array.isArray(message.attachments) ? message.attachments : []
+  ) as DaemonAttachment[];
+  const index = attachments.findIndex((attachment) => attachmentId(attachment) === wanted);
+  const attachment = attachments[index];
+  if (!attachment)
+    throw new AttachmentDownloadError('not_found', 'that message has no attachment with this id');
+  if (attachment.expired) throw new AttachmentDownloadError('not_found', EXPIRED_REASON);
+  const tooLarge = (bytes: number) =>
+    new AttachmentDownloadError(
+      'too_large',
+      `${bytes} bytes exceeds the ${MAX_ATTACHMENT_BYTES}-byte limit`,
+    );
+  if (attachment.size && attachment.size > MAX_ATTACHMENT_BYTES) throw tooLarge(attachment.size);
+  if (!deps.root)
+    throw new AttachmentDownloadError(
+      'download_failed',
+      'this session has no writable scratch directory',
+    );
+  let path: string;
+  try {
+    path = resolveWriteScratchPath(
+      deps.root,
+      join(
+        'attachments',
+        messageId.replace(/[^\w-]/g, '_'),
+        safeAttachmentNames(attachments)[index]!,
+      ),
+    );
+  } catch (error) {
+    throw new AttachmentDownloadError(
+      'download_failed',
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  const digest = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+  if (attachment.sha256 && existsSync(path)) {
+    const held = readFileSync(path);
+    if (digest(held) === attachment.sha256) {
+      return JSON.stringify({
+        path,
+        mimeType: attachment.mimeType || 'application/octet-stream',
+        size: held.length,
+      });
+    }
+  }
+  let fetched;
+  try {
+    fetched = await fetchBoundedBytes(
+      new URL(`/v1/media/${wanted}`, `${deps.serverBaseUrl}/`).toString(),
+      deps.fetchImpl ?? fetch,
+    );
+  } catch (error) {
+    if (error instanceof BoundedSizeError) throw tooLarge(error.bytes);
+    throw new AttachmentDownloadError(
+      'download_failed',
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  if (fetched.status === 410) throw new AttachmentDownloadError('not_found', EXPIRED_REASON);
+  if (fetched.status === 404)
+    throw new AttachmentDownloadError('not_found', 'the file is no longer stored');
+  if (!fetched.ok) throw new AttachmentDownloadError('download_failed', `HTTP ${fetched.status}`);
+  if (attachment.sha256 && digest(fetched.bytes) !== attachment.sha256) {
+    throw new AttachmentDownloadError(
+      'download_failed',
+      'downloaded bytes do not match the stored sha256',
+    );
+  }
+  writeFileSync(path, fetched.bytes);
+  return JSON.stringify({
+    path,
+    mimeType: attachment.mimeType || fetched.mimeType || 'application/octet-stream',
+    size: fetched.bytes.length,
+  });
+}
+
 function withinRoot(root: string, resolved: string): boolean {
   const rel = relative(root, resolved);
   return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
@@ -3675,9 +3833,15 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
           }));
       return JSON.stringify({
         ...message,
-        attachments: delivered.map(({ attachment, ...local }) => ({ ...attachment, ...local })),
+        attachments: delivered.map(({ attachment, ...local }) => ({
+          ...attachment,
+          ...(attachmentId(attachment) ? { id: attachmentId(attachment) } : {}),
+          ...local,
+        })),
       });
     }
+    case 'download_attachment':
+      return downloadAttachment(args);
     case 'load_workspace_skill':
       return JSON.stringify(
         await daemonExecute('loadWorkspaceSkill', {

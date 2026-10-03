@@ -2655,18 +2655,51 @@ export class DaemonService {
         ).rows[0];
       }
     }
-    if (!row) throw new Error('message not found in this Room');
+    if (!row) {
+      // A message that exists elsewhere in this Workspace is a refusal, not a
+      // miss: download_attachment reports `forbidden` instead of `not_found`.
+      const elsewhere = await this.database.query(
+        `SELECT 1 FROM messages message
+         JOIN rooms source ON source.id=message.room_id
+         JOIN rooms here ON here.id=$1 AND here.workspace_id=source.workspace_id
+         WHERE message.id=$2 AND message.deleted_at IS NULL AND message.presentation='message'`,
+        [input.roomId, input.messageId],
+      );
+      if (elsewhere.rowCount) throw new Error('message access denied from this Room');
+      throw new Error('message not found in this Room');
+    }
     if (offset > row.total) throw new Error('offset exceeds message body');
     const nextOffset = offset + [...row.body].length;
+    const attachments = markExpiredAttachments(
+      row.attachments ?? [],
+      await this.expiredMediaIds(row.attachments ?? []),
+    );
     return {
       messageId: input.messageId,
       body: row.body,
-      attachments: markExpiredAttachments(
-        row.attachments ?? [],
-        await this.expiredMediaIds(row.attachments ?? []),
-      ),
+      attachments: await this.withStoredDigests(attachments),
       ...(nextOffset < row.total ? { nextOffset } : {}),
     };
+  }
+
+  /** Each ready attachment's stored sha256, so a helper can skip re-downloading bytes it holds. */
+  private async withStoredDigests(
+    attachments: readonly DaemonAttachment[],
+  ): Promise<DaemonAttachment[]> {
+    const ids = attachments.flatMap((attachment) => mediaIdFromUrl(attachment.url) ?? []);
+    if (!ids.length) return [...attachments];
+    const digests = new Map(
+      (
+        await this.database.query<{ id: string; sha256: string }>(
+          `SELECT id::text id,sha256 FROM objects WHERE id=ANY($1::uuid[]) AND state='ready'`,
+          [ids],
+        )
+      ).rows.map((object) => [object.id, object.sha256]),
+    );
+    return attachments.map((attachment) => {
+      const sha256 = digests.get(mediaIdFromUrl(attachment.url) ?? '');
+      return sha256 ? { ...attachment, sha256 } : attachment;
+    });
   }
 
   /** Media ids these attachments name whose bytes are past the TTL (`media-ttl.ts`). */

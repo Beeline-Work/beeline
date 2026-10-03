@@ -38,6 +38,7 @@ import { openRouterRoutingInput } from './openrouter-routing.js';
 import { agentCommandCatalogPublisher } from './agent-command-catalog.js';
 import {
   attachmentImageBlocks,
+  attachmentMarkerLines,
   attachmentPromptLines,
   deliverAttachments,
   promptWithImages,
@@ -1479,7 +1480,7 @@ export class MonolithCornerTurnLoop {
                   (message) =>
                     message.id !== requestId &&
                     message.id !== sourceMessageId &&
-                    message.body.trim(),
+                    (message.body.trim() || message.attachments?.length),
                 )
                 .slice(-120)
                 .map((message) => ({
@@ -1487,7 +1488,8 @@ export class MonolithCornerTurnLoop {
                   authorId: message.authorId,
                   line: [
                     ...(message.type === 'message' ? [`[message id: ${message.id}]`] : []),
-                    `${names.get(message.authorId) ?? 'Beeline'} [${message.type}]: ${message.body}`,
+                    `${names.get(message.authorId) ?? 'Beeline'} [${message.type}]: ${message.body.trim() ? message.body : '(shared attachments)'}`,
+                    ...attachmentMarkerLines(message.attachments ?? []),
                   ].join('\n'),
                 }));
               // Built per ATTEMPT, never once per turn: a C92 re-pin runs the

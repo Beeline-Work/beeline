@@ -1,871 +1,349 @@
-# Buzzy visual language — Obsidian Refined
-
-The phone is a single slab of obsidian. Beeline's output is logged across it.
-
-That is the whole idea; everything below is what it costs to hold it. The
-interface recedes to almost nothing, so the agent's output _is_ the screen. No
-bubbles or ordinary per-message frames. Structured system records and asks use
-the one `TranscriptCard` anatomy; everything else stays on the slab.
-
-It should read like a focused technical conversation, not like a chat app. The
-governing readability rule is **content near-white, chrome dim — never the
-reverse**. Prose hierarchy uses weight: a semibold lead sentence or summary,
-then a regular body with tight line-height and visible space between turns.
-
-## The slab
-
-The default Buzz surface is the Speakeasy brand canvas, a very dark aubergine
-(`#14091A`, mapped at the token level in `groknight.ts` so every screen
-inherits it), edge to edge, with no second surface laid over it. Chrome — the
-Room-list header, the transcript header, the Workspace rail — carries no
-background, texture, or plate of its own: it is the same canvas as the content
-it introduces, held apart by one hairline and by type weight. Press and hover
-are the only luminance steps above the slab; every elevation stop keeps its
-pre-canvas offset from the base, so contrast relationships are unchanged.
-
-A lifted surface (`HullSurface`, with its faint scratch texture) is reserved for
-something that genuinely floats _over_ the slab and does not repeat, such as a
-modal sheet or merge-approval panel. Transcript asks use `TranscriptCard`'s
-raised fill without the HullSurface texture; transcript records have no fill.
-
-Source of truth: `apps/mobile/sources/buzz/groknight.ts`. It exports one
-semantic token shape and two sets built from it: Obsidian Refined (dark) and
-Bone (light), picked from a Settings → Appearance toggle (the former Editorial
-Ink and Ledger sets are still retired — this is not their return, just a
-light/dark pair of the one Speakeasy language). Obsidian content runs
-`#f0f0f3` / `#c9c9d1`. The ledger's quiet tier (`ledgerQuiet`) carries the
-ledger's own reading matter — previews, stamps, system lines, quoted
-reply/forward excerpts — so it holds a WCAG-AA floor (≥4.5:1) on every resting
-ground: `#90909B` in Obsidian, `#6F6455` in Bone (pinned in
-`groknight.test.ts`; never re-dim it). `#83838d` and `#6c6c76` remain
-reserved for chrome, muted labels, and the gutter's ghost tier. Brass is
-`#b08a4a` in Obsidian (the Editorial direction's single accent; the older
-gold `#c9a24b` is retired); diff green/red remains a domain-color
-exception, and Two Inks is the fenced-block exception (see Color exceptions).
-
-Bone is Obsidian's construction rules run in reverse: a warm bone canvas
-(`#F3EEE4`) instead of the warm-dark aubergine, "content near-black, chrome
-mid" instead of "content near-white, chrome dim," and brass darkened to
-`#8a6323` since the shipped `#b08a4a` is tuned for contrast against
-near-black and reads too light against bone. Every elevation, border, and
-divider step keeps Obsidian's relative position on the ladder, re-based on
-the bone canvas. Diff green/red ships as text color, not a swatch, so it is
-tuned per canvas the same way brass is: Obsidian keeps `#3FB950`/`#F85149`,
-Bone uses GitHub's light-mode diff text `#1a7f37`/`#cf222e` — that domain
-color stays the diff exception (never a third hue on the slab), it is just no
-longer one literal hex shared by every canvas. Two Inks lives only inside a
-fenced block. The ledger's quiet ink is tuned per
-canvas the same way: the gray bone shares with chrome (`#8B7F6E`) falls to
-3.4:1 on the bone canvas, so Bone darkens `ledgerQuiet` to `#6F6455` (5.0:1)
-while Obsidian lifts its own to `#90909B` (6.1:1). Both hold the AA floor
-pinned in `groknight.test.ts`, and Bone's quiet tier reads darker than
-chrome — content ink, tuned like brass and diff text rather than shared with
-the gutter.
-
-## Shape
-
-The general box radius is `groknight.radius = 3`. The transcript card family is
-the explicit exception: a 10px radius on a 1px `border` frame, matching the
-composer.
-
-The identity tiles are the one place a box holds a drawing: a person or an
-agent is one of Speakeasy's twelve creatures on a square plate at the house
-radius, and the plate's polarity — coloured creature on ink, ink creature on
-colour — is what states the type. See "Identity" below.
-
-A box (border + fill + radius) appears only around:
-
-- something the user must find and act on (an input, a button), or
-- a small number of genuinely distinct, non-repeating regions of a screen
-  (the merge-approval panel, a safety/policy notice).
-
-A box never appears around an ordinary message, attachment, or avatar. The
-structured system-card catalog uses `TranscriptCard`: record tier for facts and
-settled asks, ask tier only while a response is needed. Its head, body, rows,
-code block, and footer share one spacing and type system on phone and desktop.
-
-Choice options are plates, not ledger rows. A `choice` card (question or poll)
-still uses `TranscriptCard` for the ask/record shell — identity, title, subline,
-stamp, footer Skip. Its options are not `TranscriptCardRow`. That row is a
-two-line ledger fact (state word, title, kind line, hairline). A poll option is
-a tap target, so it is its own plate: house radius (`groknight.radius = 3`),
-1px border, a gap of `space.sm` between plates, letter on a 26px square, label
-in `body`, consequence in `meta` at `ledgerQuiet`. The plate is licensed by the
-box rule above (something the user must find and act on). Grant / permission /
-target-branch keep footer verbs; they are not option lists.
-
-A rule is not a box: one edge, no fill, no radius. It divides an _index_ — the
-Room list, the member list — and nothing else. Transcript messages use one
-compact vertical rhythm within a same-speaker run. A speaker-changing byline
-gets exactly twice that separation, using proximity alone; there are no turn
-dividers. The only edges in the transcript are the quiet 2px left rules shared
-by code blocks, tool readouts, and system lines. No speaker rails anywhere.
-
-## The ledger
-
-A Room transcript and a Corner transcript are the same thing, rendered by the
-same primitive: `apps/mobile/sources/components/buzz/Ledger.tsx`. Not a Room
-version and a Corner version that resemble each other — one component, fed by
-one branch in `app/(app)/beeline/chat/_chat-surface.tsx`. If a future change
-needs a shape only one surface has, that is a real design fork and needs its
-own pass, not a quiet second implementation.
-
-**Type follows content kind — at ONE size.** Every message renders at the same
-size (Space Grotesk 16 / lh ~1.55 in Obsidian); hierarchy on a long agent turn
-comes from weight and brightness, never size: the first line takes the medium
-weight at the primary tone, following paragraphs take regular at one step down.
-A human message is plain body text — regular weight, primary tone, same size as
-everything. It is NEVER bolded or enlarged; an earlier mockup auto-bolded user
-messages into headlines and was explicitly corrected by the captain. Commands,
-bylines, file paths, hashes, diffs, tool rows, and corner names always use IBM
-Plex Mono.
-
-**A turn is announced by its byline, and the byline says who is talking.**
-Each run opens with the speaker's 26px face tile, then the name in the
-speaker's own signature hue — sentence case, medium weight, at body size — a
-quiet mono `AGENT · model` label (falling back to `AGENT` when unavailable), and
-the mono HH:MM stamp pinned to
-the right. **The three written parts sit on one baseline.** They are set at two
-sizes in two faces, so centring them against each other floats the 10px mono
-half a line above the name's feet; the tile is a picture rather than a word, so
-it alone stays centred on the row. The name is never set in the 10px mono
-uppercase the design reserves for things it wants you to ignore: for a long
-time it was, and four voices read as one grey caption. Brass (#b08a4a) on the
-name marks the viewer
-alone: that accent is the ONLY thing distinguishing your own message, never
-weight, size, or geometry. There is no "YOU" caption and no dim-content trick.
-Tighter space within paragraphs and more space between turns make the
-transcript scannable without weakening the words.
-
-**A human voice states its name once per run, above the words.** A human run's
-opening turn carries the byline; consecutive human entries inherit it, and
-anything else (another person, an agent message, a merge summary) ends the run
-(`buzz/ledger-attribution.ts`). Every agent prose message instead carries its
-own full byline and face tile, including consecutive and legacy-projected
-messages: the top bar is context, never a substitute for the actual author.
-
-The two surfaces differ here, and only here, because they genuinely differ:
-
-- **A Corner's top bar complements, but never replaces, a message byline.** Its
-  own agent messages keep their full author identity even while roster data is
-  loading; a row must never fall back to a bare signer key or ordinary-grey prose.
-- **A Room holds several voices, so each human run opens with its full byline;
-  every agent message does** — name, quiet `AGENT · model` label, face tile,
-  stamp. Model labels preserve their casing and truncate at the tail; effort
-  never appears in the byline.
-
-**Prose turns carry their stamp inside the byline.** A folded machine run keeps
-its fixed-width 24h stamp in the same row as its labels, pinned to the right edge
-with tabular numerals. The middle summary truncates before the stamp moves or
-wraps. The disclosure starts at the transcript content edge with no extra indent
-gutter.
-
-**Machine steps form a one-line ledger.** Every run of agent machine work,
-including a single file edit, landing stage, or thought receipt, defaults to one
-compact mono disclosure: attribution, distinct step labels, thought duration
-when known, and the right-edge stamp all share one baseline. File edits are
-ordinary machine steps, never a separate file card or title block; real user
-attachments keep their attachment rows.
-
-**Expanding a machine run is one line per call, and opening a call is its
-output.** Three levels — fold, line, detail — and each says something the level
-above it did not. A call's line opens with its **family glyph** (mono, dim
-chrome: `>_` shell, `≡` file work, `⋯` thought, `·` everything else), then the
-**object** it acted on at the content tone — the object comes from the command,
-and the harness's own title is a last resort, because a harness will happily
-label a directory listing "Reviewed the current changes" — then a **duration**
-only once it passes a second (mono, tabular), and a quiet **verdict** pinned
-right: a dim `✓` on success, a brass `✗` on failure with the distilled reason
-inline beside the object, and the one spinner while the call runs. A long
-command truncates in the MIDDLE: the flags at the end are the half that says
-which command this was. Opening one call shows its real output in the full-width
-output sheet, never inline — and if all the wire handed us was a transport
-envelope with a terminal id, the sheet shows _nothing_, because a machine
-identifier is not a result. The run line above it counts the failed steps.
-Nothing is coloured by tool kind, the command is never printed twice, and there
-are no tool counters, file-count badges, title/body stacks, or failure chips
-(`buzz/tool-call-row.ts` decides what a call is, `buzz/tool-ledger.ts` shapes
-the line, `components/buzz/ActivityTimeline.tsx` draws it — captain report
-C88).
-
-A wall of git/CLI output an agent pasted into its own narration remains a
-separate ghost line, projected by `buzz/ledger-text.ts`; this rendering change
-does not rewrite narrative messages. A `git push` rejection dump never prints
-down the slab.
-
-The unit there is a **run of consecutive machine lines**, not a
-blank-line-delimited block — a dump is usually written directly under the
-sentence introducing it, and a block rule would either swallow that sentence or
-miss the dump. The summary truncates; the disclosure copy beside it never does,
-because the affordance is the reason the line exists. A fenced code block marks
-itself with a 2px left rule in Two Inks structure (see Color exceptions) —
-the same vocabulary tool readouts use — never a panel.
-Fences of up to four source lines stay inline with a Copy control and no inscription.
-A longer fence is one inscribed line (language, line count, and byte size)
-plus a four-line peek labelled with what it hides, and opens as a full-page
-in-app ArtifactViewer route (`CodeBlock.tsx`, `artifact-viewer.tsx`) where long lines wrap. The
-route carries the Room id, originating message id, and code-block index; Back restores the transcript and
-re-centres that exact message even if new rows arrived while the code was open.
-The byte size reads on the peek inscription and once at the top of the reader.
-Copy copies the complete block, including lines hidden by the peek;
-selectable text preserves source spaces and tabs. Unlabelled fences and the
-`text`, `txt`, `plaintext`, `markdown`, and `md` labels stay monochrome.
-Other labelled fences use Two Inks: `json` distinguishes keys from values;
-all other labels use the generic scanner (see `syntax-highlight.ts`). Very
-large bodies use the full-fidelity monochrome fallback in `CodeHighlighter.tsx`.
-
-**Text still being written says so, and settles by dissolving.** A streaming
-turn is not a finished message, and reading like one is a lie the reader pays
-for when the words are overwritten or retracted underneath them. So a draft is
-written in the provisional face and tone — the italic face (`proseItalic`, the
-same family every other italic in the ledger uses) at `ledgerQuiet` — at the
-identical size, leading and column as a settled turn, under the byline, tile
-and stamp a settled turn would carry, byte for byte. Nothing about the frame
-moves; only the words change register. The characters that just arrived fade up
-out of the transcript ground as they land, and only those: text already read
-never restates itself, nothing is revealed on a clock the producer did not set,
-and a harness that REWROTE what it wrote settles whole rather than pretending
-the replacement is new. When the durable reply lands, the provisional text
-cross-fades into it — italic to upright, quiet to content tone — over one short
-transition, and where the reply differs from what was streamed the dissolve is
-what carries the reader across the difference; it never snaps. A turn that
-FAILS keeps the words the reader was reading, still provisional, with the
-server's failure line beneath them: nothing a person was part-way through
-evaporates on its own. Reduced motion keeps the provisional register and drops
-both animations (`buzz/streaming-prose.ts`, `components/buzz/StreamingProse.tsx`,
-`Ledger.SettleFade` — captain report C98).
-
-**A status is inscribed, never framed.** A status is not something the reader
-must find and act on, so it earns no box: one dim line in `ledgerQuiet`, at the
-same left margin as the prose above it. Only its affordance lifts — `view →`
-hangs in the same right gutter the timestamps do, one tonal step brighter, with
-a faint tonal flash on press and no border at any point. The drawn corner mark
-(`CornerGlyph`: two strokes meeting at the bottom left) means corner, and `→`
-means enterable; that pairing is the one "enter this corner" vocabulary used
-by `WritePermissionOutcome`. The Room header uses the same mark as the corners
-door to open the list rather than one corner.
-
-**A system notification is one sentence in one voice.** The server phrases
-every one of them — a join, a leave, a yolo flip, a grant answer, a failed
-turn, a pull request, a check, a scheduled prompt — as `<subject> <verb>
-[ <object>][ · <consequence>]`: an `@handle`, a plain past-tense verb, the
-thing, one short clause. People without handles remain unnamed. No colon, no
-em dash, no trailing period, no URL in the text.
-The phone has one renderer for it (`LedgerSystemLine`): the `meta` role in
-`ledgerQuiet`, no avatar, the stamp in the right gutter, names in brass and
-tappable, the object linked when it has a URL. Consecutive lines that share a
-verb fold into one sentence — "@candy, @terra and @codex joined" — because three
-identical captions in a row are noise, not record. A card is only for what a
-tap must settle (a grant request, a permission ask, the merge summary), and
-its header sentence is the same grammar.
-
-**A corner's status is never stamped into the transcript.** Not while it runs,
-not after it ends. A note inscribed the moment a corner opened scrolls away and
-then lies — still saying "open" long after the corner merged — and a terminal
-stamp (`Alden ✕ FAILED`, `◇ OPEN`) interrupts a live conversation with a dead
-record. So a Room has exactly **one** active-corner affordance, the named
-corners door in its header, and that door opens the one place every corner —
-running or finished — is recorded, the Room's corners list (also shown in the
-desktop work-pane corner list). The transcript keeps the conversation and
-nothing else.
-
-**Nothing pins one corner above the composer.** There used to be a line there
-naming "the" open corner; a Room holds many at once, so it could only ever
-name one of them, and it sat between the reader and the field they were
-typing in — chrome in the one place the product asks for attention. It is
-retired, not dimmed: the door in the header is the way in, the corners list
-answers "what is running", and the Room-list row's own state mark answers it
-from outside. The turn line is now the only thing that hangs above the
-composer, and it hangs directly on the composer with no gap. There is no
-agent-offline footer: presence ages out while an idle agent waits on its
-socket, so it cannot say an agent is down. A mention nobody picks up is
-inscribed in the transcript instead.
-
-**A turn in progress and an open corner are two different facts.** A question
-being answered is transient and has nowhere to go, so it shows as one line with
-the primary activity verb and elapsed seconds,
-without a redundant `thinking` suffix, that disappears when the
-reply lands — it navigates nowhere and cannot strand a reader in a dead
-channel. When the server accepts a human steer into that exact running corner
-turn, the counter briefly appends `· received`; this is the write response made
-visible, not a transcript event or an optimistic client guess. The other thing
-the line admits is a **stop in its right-hand slot, offered to
-the person who asked and to nobody else** (`viewerMayStopTurn`): a question is
-the asker's to take back, and a Room where anyone can silence anyone else's
-agent mid-sentence is a different product. Everyone else sees the line exactly
-as it was. The control is a brass square smaller than the 18pt mark beside it
-(hit slop keeps the 44pt target). A press dims it; once pressed it empties to a
-brass outline and the counter appends `· stopping` until the cancelled receipt lands,
-so the press is visible before the write returns. **A stop keeps what was
-already written** — the half-finished answer
-settles as an ordinary message and the conversation carries on from it, the way
-every stop button a person has used already behaves; retracting it would delete
-words they had read and make stopping feel like undoing. The line's last word is
-`stopped`, never `done`. A corner is a place that exists, so the header's corners door names the
-place rather than the moment. Keeping the two apart is why the corner half
-never reaches the turn line: an agent busy on a plain Room reply must not
-report corner work. Finished corners remain accessible in the corners list
-for reading their history; they are never presented as current work.
-
-**There is no reply echo under an agent turn.** Body threads every Room/DM reply
-to the request that triggered it, so the quoted block was always the message
-directly above — pure noise on a linear log. A person's own reply is a
-deliberate reach back up the transcript, so it keeps its quote, on one dim line
-with no bar beside it.
-
-**A quoted excerpt is provenance a reader still reads.** Two lines carry the
-quote's provenance: the `↳` reply reference (`author · preview`) and the
-`FORWARDED FROM #room` caption under a forwarded body. Both read at the quiet
-tier — one tone below the body, never the gutter's ghost tier — and both
-clear the AA floor the quiet tier holds, because a provenance line too dim to
-read is a quote the reader cannot check
-(`chat.quoted-excerpt.design.test.ts`).
-
-**Text is decoded before it is inscribed.** Percent escapes (`%3F`) are
-transport, not content, and are resolved at the single projection funnel every
-surface reads through (`buzz-event-projection.ts` → `decodePercentEncoding`), so
-the transcript and the Room-list preview can never disagree.
-
-The header names the surface honestly or names nothing. A Corner shows its own
-kind:9007 slug, never the word "Room"; while either the channel kind or its name
-is still resolving, a skeleton stands in rather than a guess. A Room keeps its
-linked repository as the subtitle. A Corner's subtitle names its opener and its
-server-owned canonical state: `working`, `waiting`, `review`, or `archived`.
-Only `waiting` takes brass; `working` and `review` use `ledgerQuiet`, and `archived` uses `ledgerGhost`, because brass marks what wants the viewer.
-Every phone and desktop surface renders that contract field directly; PR and
-check lifecycle remains narration and never becomes a second client state
-machine. Membership consumes no
-header width on either surface: the existing overflow sheet carries one Members
-row with the current count and opens the existing roster. The Room header's
-trailing slot carries the **corners door**: the brass `CornerGlyph` ALONE,
-in its own 44pt box, touching the overflow dots' identical 44pt box. No word
-rides beside it. The two are **siblings** — same box, same baseline, their 28pt
-marks parted by the 16pt of slab between them — and the mark is sized to read at
-optically the SAME mark-size as the dots: 28 of ink in the 44 box, the same
-treatment as the Room-list pair, with the stroke held to the weight it painted
-at 16 so the larger box does not read heavier (captain, 2026-09-21). The
-accessible name carries the destination; the header stays quiet. It opens the Room's dedicated corners list
-(`corners/[roomId]`, windowed with the same cap and archived fallback as the
-desktop work-pane corner list) and is the Room's one active-corner affordance.
-The approval panel and diff review exist only in a Corner — that is a
-difference in content, not in shape language.
-
-Beneath that header a Corner holds its objective — the human's own request, as
-one inscribed line that stays for the life of the corner. A slug in the header
-does not say what the work is for, and an objective that lives only in the empty
-state disappears at the first message, which is when the transcript starts
-burying it. It is prose in the secondary tone behind a brass `humanRail`
-hairline, the mark the ledger already gives a human's words, and it carries no
-box, no fill and no label: a box is for something the reader must act on, and
-this is only ever a reminder. It wraps to its full height rather than
-truncating, and when there is no objective it renders nothing rather than a
-placeholder.
-
-## Index rows
-
-The Room list uses the approved Previews layout in Obsidian and Bone. The
-workspace name and existing bezel avatar head the list; the workspace menu
-(Members and authorized Workspace settings) sits beside that identity, with
-compose in the same header. The search field stays visible below the conversation
-toolbar on phone and desktop; its Search action focuses that field. The tray
-(`TrayGlyph`) is a separate brass action beside Search; it wears a brass count,
-compacting to `9+`, only while something needs the viewer. All, Unread, and Pinned text filters
-the list without removing access to quiet Rooms. The Messages section remains
-in the list. A Workspace with pinned Rooms opens on Pinned; otherwise it opens
-on All.
-
-`ConversationRow.tsx` is shared by mobile and desktop. Names use `body`. An
-unread row sits on `bgUnread` with a `bodyStrong` name and a `textPrimary`
-preview; a trailing brass dot means the Room has new messages, independent of
-corner state, and it takes a ring only while the Room asks the viewer to act —
-an approval waiting, or a mention still unread, because a mention the viewer
-has already read is no longer a need (`roomRowAttentionReason` in
-`buzz/room-list-row.ts`); the row's corner summary shares that ground. Read
-cursors are unchanged by this styling. Room names retain their brass `#`; DMs use the peer's identity.
-On phone, the byline sits above a two-line `body` preview in `textSecondary`;
-on desktop, author and preview share a two-line `meta` block. DMs omit the
-byline because the peer is already named in the heading. Rows have generous
-vertical space and a hairline between conversations. Self attribution is quiet;
-other authors use brass. The app's Space Grotesk roles and theme tokens own type
-and contrast. Rows grow with content; the old fixed 64px height is not a cap.
-
-Desktop selection uses a subtle fill, one-pixel brass rule and “Open” label.
-Mobile has no selected Room state: pressing a conversation navigates away.
-Long press immediately toggles pin/unpin; pins are device-local and scoped to viewer and
-workspace, separate from server-backed saved-message bookmarks.
-The Pinned filter uses text, while pinned rows show the pin glyph.
-
-The tray holds exactly two sections, Needs you then Saved, each under a
-`sectionHead` with its brass count. A Needs-you cell is the asking sentence
-(never the viewer's own tag) over one `meta` line of source and age, with
-`expires in Nh` only in its last six hours. Every cell has the same weight:
-no dot, ring, type label or box. A quiet chevron marks the tap. A phone
-swipes right onto a brass-wash DISMISS rail; a desktop pointer swaps the
-chevron for DISMISS on the source line. Each section has its own empty
-state, so one never hides the other. At the
-default desktop sidebar width, all filters and both actions fit on the first
-toolbar row; the visible search field stays below it. An empty Pinned view is
-one shared component (`PinnedConversationsEmpty.tsx`) on phone and desktop: a
-single pin glyph, a two-line 22px heading, copy explaining the long-press
-action, and a quiet outlined Show all conversations action that returns to All.
-Desktop section headings use 20px above and `space.xs` below; the following
-row starts after 18px, without a second large section gap. Phone corner
-summaries retain a `space.md` bottom margin before the next conversation.
-Wide desktop windows keep a 76px Workspace rail beside the 380px default Room
-sidebar; narrower windows retain the existing Workspace switcher overlay.
-
-A Room row carries the brass `CornerGlyph` toggle only when its dropdown lists
-at least one of the viewer's open corners (`mine`). That listed count rides the
-toggle's accessible name (`Expand N corners`), never a second visible label.
-Other people's open corners, or an empty or missing list, show no toggle; the
-Room's unread dot remains independent.
-The API batches canonical state derivation for visible corners; archived work
-is excluded. The toggle expands an inline list, waiting first, with each corner
-independently selectable and draggable; a tap opens the corner. Opening a Room
-row leaves its corner list collapsed; opening a corner directly expands its
-parent Room. Explicit per-Room expansion choices persist. Expanded rows use the
-canonical waiting/working/review/idle vocabulary rather than inventing an
-ambiguous “needs you” state. Long-pressing that same toggle — never the row,
-which still pins — opens a new, randomly
-named corner in the Room and lands the viewer in it. The long press is offered
-to a human viewer only; an agent's client gets no such affordance.
-
-**The standalone corners list is that same index, full height.** The screen
-opened from the Room header's corners door (`corners/[roomId]`) is chrome on
-the slab like every other index: a hairline header with the Room name as the
-eyebrow, the noun as the title, the count alone in a reserved gutter, and rows
-at the index's own height as a FLOOR. Its row leads with the opener's 26px face
-tile — the byline size, because the opener is secondary to the work — names the
-corner at the brightest tier, carries one quiet line (who opened it, and the
-PR/check narration once there is one), and closes with the state WORD in a
-reserved cell beside the state circle. **A corner's name is never truncated
-here**: this is the screen whose whole job is telling corners apart, so the
-name prints in full and wraps to as many lines as it needs, and the row grows
-with it. Uneven row heights are the accepted cost (captain, 2026-09-20). That
-is why this one surface composes its label through `fullCornerTitle` rather
-than `displayCornerTitle`'s three-word inline form. The word is not decoration: a circle alone encodes state in colour and
-shape only, which is exactly the encoding a colour-blind reader and a screen
-reader both lose. No explainer paragraph stands above the list; a screen that
-has to describe what its own contents are has not been designed yet.
-
-**The plus is a 44pt brass mark in the header.** On phone, compose is one 44pt
-box in the Room-list header's actions row holding a brass ink `+`, no shadow and
-no rounding — contrast with the slab is its only affordance — and it turns 45°
-into a close mark while the compose sheet is open. Desktop opens the same sheet
-from the Workspace menu's compose rows. The plus rides the header, never the
-list.
-
-The Workspace rail is the same slab with one hairline edge. In the drawer,
-selection reads three redundant ways: an edge bar (never a floating bracket),
-the mark's own heavier frame, and tone — the Workspaces you are _not_ in recede
-a step rather than the one you are in lighting up. Drawer commands have mono
-micro-labels; their glyphs sit on the chrome's quiet tier.
-
-The persistent desktop strip follows the approved original rail reference:
-framed workspace avatars, an icon-only Add control near the top, and the
-personal account avatar pinned at the bottom. Its selected workspace uses the
-accent frame; it does not inherit the drawer's edge bar or visible command
-labels. Each control still has an accessible name. Both rail forms share the
-framed workspace picture geometry. Add scrolls with the Workspace tiles;
-neither form carries Workspace Settings, which lives in the Room-list header
-menu.
-
-**Settings is one entry, not two.** The rail's account tile opens the account
-hub (`app/(app)/beeline/settings/`), which is itself an index in this same
-vocabulary — boxless rows, one hairline between them, the three tones, the
-trailing mark in the gutter. Every screen that mounts the rail routes there.
-Jumping past it
-straight into `settings/identity` is what stranded the hub, and the product's
-only sign-out with it.
-
-**A Settings child names its parent as the eyebrow.** The tray already
-does this (workspace name over large Tray); the standalone corners
-list does it (Room name over the noun). Workbench is the same ladder:
-small Settings over large Workbench, and each tool or key page is small
-Workbench over the large tool or key name. `PageHeader` is the one
-component. The stack header is not a second title.
-
-## Workflows
-
-**The workflow glyph is a stem standing on the corner mark.**
-`WorkflowGlyph` is one filled polygon in the corner's 24 viewBox: the corner
-polygon turned 135° so its elbow points up, with a stem rising from the elbow
-to the top edge (`9.93 3 14.07 3 14.07 13.81 21.76 21.5 15.9 21.5 12 17.6 8.1
-21.5 2.24 21.5 9.93 13.81`). It is brand mark gold while a run is live and
-`ledgerGhost` when the workflow is idle. Inline it sits at `CORNER_META_SIZE`
-beside `meta` text, exactly where a corner glyph would.
-
-**A run is reached from its corner, and only the run page draws it.** A
-corner with a live run adds one line under its objective, on the same rail:
-glyph · workflow · current step · whose move it is (`waiting on you` in
-brass), and → to the run page. That line is the only way onto a run page.
-Scheduled Work lists schedules only: no Workflows section and no section
-heads. The run page has no way back to the run's own corner (no Open →), so
-the two pages never loop; Back returns to where the reader came from. The
-corner and the run page share one header title role: `bodyStrong` under a
-`meta` eyebrow. The run page has no previous-runs counter.
-
-**The run page is one straight line, read like a GitHub Actions run.**
-`workflowRunLine` (`buzz/workflow-graph.ts`) turns a contract and the run's
-handoff history into ordered steps; `WorkflowRunLine` paints them. The rules:
-
-- The line is the contract's main path: from `start`, each state's first
-  `on` outcome. When that outcome returns to a state already on the line,
-  the next outcome that goes somewhere new is taken; with none, the first
-  `implicitEdges` terminal ends the line. A state the run visited off that
-  path (Ask human, Closed) is spliced in after the state the run entered it
-  from, and is otherwise not drawn.
-- No forks, lanes, back edges or chevrons. A state the run entered more
-  than once is one row with `×N` (`machine`, brass) after its name.
-- Five step states, each a distinct 20pt circle and never colour alone:
-  done is a brass disc with a check; current is a brass ring and dot under a
-  32pt ring that breathes on `HullLivePulse`; not yet reached is a hollow
-  `textMuted` ring; skipped is a dashed `ledgerGhost` ring with a slash and
-  ghosted copy; failed (a `failed` or `abandoned` terminal) is a
-  `textSecondary` ring with an x. Each step's screen-reader label names its
-  state in words, and a skipped step's meta line says why
-  (`Skipped · Pull: nothing new`, or `Skipped · run ended at Closed`).
-- The 2pt line between two circles is brass where the run went, dashed
-  `ledgerGhost` beside a skipped step, and `borderStrong` ahead.
-- Each row shows the state name (`body`, `bodyStrong` for the current step),
-  actor (`meta`) and duration (`machine`). Optional receipt text (`body`,
-  `textSecondary`) and typed reference chips (`meta`, brass, 44pt targets,
-  3pt radius) sit beneath it. Missing receipt text and refs leave no placeholder.
-- Transition gates have no circles: the active state lists `Exits: gate → State`
-  inside its row; finished states show only `→ State via gate · actor`.
-- Tapping a step opens its readout in place: numbered `machine` lines on a
-  2pt `borderStrong` left rule — role and holder, entered and left times,
-  the outcome it left by and the next step, and what it delivered (the
-  handoff's contents, an array as a numbered list). A step not yet reached
-  shows its role, what it will deliver (`requires`) and its outcomes. A
-  step entered more than once lists each attempt, newest first, each
-  opening the same readout, then `N of cap rounds used` for a capped loop.
-  The current step starts open.
-- A gate is a record, never a control: while active it shows the question and
-  each option with its consequence; once finished it shows only the answer, who chose it and when — or, while open,
-  `waiting on you` or on a person in the Room. Answering stays on the card
-  in the corner.
-- A step that opened corners lists each under `OPENED` as a 44pt link (corner
-  glyph and name, brass →) that navigates to that corner.
-
-Above the steps sits the run's plate: a `hero` status line
-(`Waiting on you` in brass with the breathing live dot; `In review`; `Done ·
-nothing new` beside a done circle), and a `meta` line with who started it,
-when, and how long it has run or took. The workflow's agent-written plaintext
-`summary` (at most 140 characters) follows in `body`, `textSecondary`, with
-`space.md` padding; no summary means no replacement text. A `STEPS` section
-head with `2 of 5` (live) or `3 ran · 2 skipped` (ended) precedes the one
-vertical rail. No horizontal overview or previous-runs count appears.
-
-## Identity
-
-A person or an agent is one of Speakeasy's twelve creatures — fox, owl,
-pigeon, hare, stag, whale, moth, octopus, heron, bear, cat, bat — on a square
-plate. Source of truth: `apps/mobile/sources/buzz/faces/` (the twelve static
-renders, Speakeasy's edge layer, the seed → face default) and
-`apps/mobile/sources/buzz/identity-mark.ts` (the hue palette, the Workspace
-plate), drawn by `components/buzz/IdentityMark.tsx`, the **one** identity
-component in the product. Every avatar, transcript byline tile, Members row,
-Workspace rail tile, picker row and Corner top bar renders that primitive; no
-other file composes `buzz/faces`. A second `SomethingAvatar` component is the
-drift this system replaced, and a test enforces that none comes back.
-
-**1 · Species is the face.** The drawings are Speakeasy's originals, path for
-path; nothing was redrawn. A person chooses their creature at onboarding
-(`RoomViewIdentity.face`, server column `identities.face_id`); an **agent is
-assigned** one — the first animal nobody in its Workspace wears, which also
-gives it its name and its soul (`assignSeededAgentIdentity`) — and an identity
-with neither wears `defaultFaceForSeed(pubkey)`, Speakeasy's FNV-1a into
-twelve, so every device draws the same animal for the same key. Because that
-assignment names the agent too, the face travels with the name through
-`resolveAgentDisplayIdentity` to every tile: a surface that redraws it from
-the seed puts a whale beside the name Foxy and un-does the dedup that kept two
-agents apart. The old rule that _shape is the type_ (△ agent, ○ human) is
-retired: at the 8px it actually shipped in the transcript no shape ever
-resolved, and a creature is a memory hook in a way a triangle never was.
-
-**2 · Plate polarity is the type.** A **person** is a coloured creature on an
-ink plate: the drawing with Speakeasy's BRASS swapped for the identity's hue,
-BONE and INK kept. An **agent** is the same creature with the hue moved out
-from under it — the figure takes BONE wherever the person's carries the hue,
-keeps INK, and stands on a plate filled with the agent's own hue. The class
-reads from the plate before the species resolves, which is why it survives at
-26px where a silhouette did not. Both classes draw the creature **whole**: the
-agent was once a flat ink figure with a BONE lens band across its eyes, and at
-26px that read as a blindfolded blob — the species never resolved and the eyes,
-the one feature that makes a face a face, were the part deliberately deleted.
-A Workspace keeps its own plate (below).
-
-**3 · Colour is the memory.** "beebee is the amber one." Each identity gets one
-deterministic signature hue from its seed — a pubkey for a person or agent, the
-community id for a Workspace — and keeps it forever, everywhere: on the
-person's creature, on the agent's plate, and on the name in the byline.
-
-The palette is **curated, never hashed**. Sixteen hand-placed hues span the
-whole wheel with a hard 20° floor between neighbours; a raw `hash % 360` was
-tried and it clusters, putting three identities in one list on three
-near-identical purples. The array is stored scrambled rather than in hue
-order, and a third luminance register helps two identities that do land on one
-hue. The hue anchors are not a uniqueness claim; exact hue repeats become
-likely in ordinary rosters, and the species and the name break the tie.
-
-Saturation stays low so every tile sits inside the obsidian world rather than
-on top of it, and each type carries a temperament as a quiet second reading:
-agents warmer and a step more saturated, people cooler and greyer.
-
-**4 · The edge layer is Speakeasy's, ported exactly.** BONE shapes vanish on a
-light plate and INK shapes on a dark one, so a creature is drawn twice: a
-second copy BEHIND it in which only the shapes painted the vanishing tone are
-recoloured to the contrast tone and grown by three units (`recolorEdge`,
-`EDGE_GROW`). For a person the hairline shows only where such a shape is the
-outer silhouette — bear, cat, bat, whale and pigeon on a dark plate; hare,
-heron, moth and owl on a light one; never the hue-bodied fox, octopus and
-stag. An agent's plate is always a light hue (lightness ≈0.62), so an agent
-takes the light rule in either theme: an INK hairline under its bone shapes,
-nothing under its ink ones. Obsidian is dark and Bone is light; the edge
-layer's light-ground treatment was carried by Bone before Bone shipped, so
-the same tile is already correct on either canvas.
-
-**5 · A gold ring means working.** An agent with a live turn or a live corner
-right now takes a gold ring plus a wider low-alpha halo drawn _around_ its
-plate, breathing on the shared live clock (`HullLivePulse`). Its proof is the
-server-indexed working receipt or the corner's canonical `working` state
-(`selectWorkingAgents`), the same signal as the thinking line — never the
-delivery-availability fact: a daemon can be available before it has claimed
-work, so availability says nothing about whether it is working (C77). It never touches the identity colour or the
-creature: who this is and what it is doing stay two separate reads, and a
-gold _fill_ would have destroyed the first to say the second. It is mounted
-only where something is genuinely live, so a quiet row pays for no clock.
-
-**Workspace exception — the house brass plate.** A Workspace is not someone to
-remember; it is the house itself. Every `▢` mark renders in ONE hue family —
-the Speakeasy brass (`WORKSPACE_BRASS_HUE`, ≈40°, matched to the theme
-accents) — regardless of its seed, as speakeasy's **3×3 block/slot/cut/void
-plate** in tones of that brass. Per-Workspace distinction rides the fill axis
-(solid / hollow / half), the nine-cell cypher and the luminance register only;
-no green/lavender/other-hued workspace glyph may exist anywhere. Below
-`CYPHER_MIN_SIZE` (24px) the plate goes solid. Fill and cypher live on the
-Workspace plate alone now; people and agents no longer carry them.
-
-For humans and agents, a relay `picture` field never overrides any of this:
-`groknight.photoIdentityMarksEnabled` and `PHOTO_OVERRIDES_ENABLED` both ship
-`false`. Their picture-setting surfaces stay hidden and stored photos remain
-inert data. **Workspace pictures are the sole exception (captain decision,
-2026-08-28):** owners and admins may set or clear one in Workspace Settings;
-the picture renders through the same `IdentityMark` primitive in the rail,
-header, and switcher, falling back to the generated Workspace mark when absent
-or unavailable. `apps/mobile/sources/buzz/photo-overrides.ts` owns both gates.
-
-**A picture in a bezel is seated in it, never cropped by it.** Every tile
-that wears one — the rail tile, the room-list header plate, the Workspace
-settings tile, and the person's Settings identity tile — derives one seat from
-its own geometry (`buzz/workspace-tile.ts`): the picture is centred inside the
-bezel and its radius is the tile's inner radius (tile radius less the bezel)
-less the margin of slab around it. That makes the picture's curve concentric
-with the bezel's, so the gap to the brass is the same width at the corners as
-along the flats at every size. The identity tile is `IDENTITY_SETTINGS_TILE`,
-not a Workspace constant. Coverage: `buzz/workspace-tile.test.ts`,
-`components/buzz/workspace-nav-parity.contract.test.ts`,
-`components/buzz/workspace-picture-seat.browser.test.ts`, and
-`app/(app)/beeline/settings/identity-picture-seat.browser.test.ts`.
-
-One concept gets one glyph, product-wide, and the Members destination is the
-word. `Members` is the accessible name and the label (`MEMBERS_LABEL`,
-`buzz/vocabulary.ts`): the shared Workspace menu carries it as a named row on
-phone and desktop, the Room overflow sheet carries it as a named row with the
-live participant count, and in-list titles (the Members page, Workspace
-settings, the roster sheet) keep it. `MembersGlyph`
-(`components/buzz/MembersGlyph.tsx`), a peer of `RoomGlyph` — stroke-only circle
-over a right-isosceles triangle (equal legs from the apex, 90° apex angle), no
-fill, no second person, with a heavier stroke than `RoomGlyph` — is not Members
-chrome: it marks the join choice on the entry screen and stays off the Room-list
-header, the roster rows, and the desktop work pane, which no longer offers
-members at all. The retired hexagon `⌬` and the Ionicons `people-outline`
-stand-in stay gone. Room and corner state is the drawn `StateCircle`
-(`components/buzz/MonoHull.tsx`), never a typed diamond: the circle is the state
-mark, and no state mark ever means people.
-
-An agent's _name_ is human-authored and never guessed twice. Every surface
-resolves it through `resolveAgentDisplayIdentity` — validated soul overlay, then
-the agent's own registered `displayName`, then the seed-derived placeholder —
-and that resolution is only as good as the roster it is handed. An empty or
-wrong-Workspace roster does not degrade the name; it replaces it with a
-confident fake.
-
-Both halves of an agent's registration are community-scoped: the identity record
-is published into the community channel (`#h`) and the soul overlay is keyed
-`communityId:agentPubkey`. So the transcript reads **every** Workspace the viewer
-belongs to, channel's own first, then the viewer's selection, then the rest
-(`agentRosterCommunityIds` + `mergeAgentRosters`) — because reading exactly one
-and guessing wrong shows a placeholder rather than nothing. A Room and the
-Members screen must never name the same key differently; if they do, one of them
-is reading an empty roster, not a different name.
-
-Vocabulary: "Room," never "Channel." `Members` names the surface and its entry
-rows; the page's two counted sections are `People N` and `Agents N`, the kinds
-inside it. Room and corner names carry the `#` channel mark everywhere a surface
-EXPOSES them — chat
-headers (`#<room>`, corners as `#<room>/<corner>`), push-notification titles
-(gateway `mapping.ts` owns those), Room index rows, the
-Room-list corner dropdown, the standalone corners list, Workspace-settings room
-lists, and Members references — all added at render through one
-presentation-only derivation pair (`displayRoomIndexTitle` /
-`displayCornerTitle`, `buzz/room-list-row.ts`). The mark is strictly
-display-only: stored names, search keys, cache entries, navigation params,
-route hints, and rename drafts never see it, a name already carrying the mark
-is never double-prefixed, and the generic ROOM_LABEL fallback gains no mark (a
-label is not a name). A corner whose parent Room name has not resolved yet
-degrades to the honest `#<corner>` rather than blocking on another read.
-Captain decision 2026-08, superseding the earlier no-`#` rule and the later
-"two surfaces only" narrowing.
-
-## Type
-
-Four sizes, one mono role, held by a lint. The roles live in
-`apps/mobile/sources/buzz/groknight.ts` (`typeRoles`, on every theme as
-`theme.buzz.type`); each carries family, size, line height (1.45×, rounded)
-and tracking. A screen spreads a role; it never sets a raw size.
-
-| role          | face                   | size | use                                                              |
-| ------------- | ---------------------- | ---- | ---------------------------------------------------------------- |
-| `hero`        | Space Grotesk Medium   | 22   | a screen's one big line, index row names (-0.3)                  |
-| `body`        | Space Grotesk Regular  | 16   | body text, row titles, buttons (sentence case)                   |
-| `bodyStrong`  | Space Grotesk SemiBold | 16   | the emphasised cut of `body`                                     |
-| `meta`        | Space Grotesk Regular  | 13   | everything secondary: previews, captions, stamps, counts         |
-| `sectionHead` | Space Grotesk Medium   | 10   | section heads ONLY (tracking 2, uppercase)                       |
-| `machine`     | IBM Plex Mono          | 13   | literal machine output: commands, paths, hashes, code, tool rows |
-
-Space Grotesk is the one reading face: names, rows, buttons, labels, bylines,
-stamps. Mono is for strings a machine produced, never for a byline or a label.
-The transcript's day caption is the one caption exception: the
-`sectionHead` role in the `machine` face, with `ledgerQuiet` ink and `space.md`
-vertical spacing (`Ledger.tsx`, wrapped onto the day-opener cell in
-`room-message-cell.tsx`). Absolute weekday+date (`THU 17 SEP`) between days;
-the date also rides that day's first byline stamp when the day is not today
-(`17 SEP 16:58`). Today never carries a date on the stamp.
-Small tracked capitals exist only to divide a list into sections. The spacing
-scale beside the roles is `space` (4 · 8 · 16 · 24 · 32 · 48) and `layout`
-(rows 64 tall, sections 24 apart, screens start 24 below the header).
-
-`calm-lint.design.test.ts` scans every `sources/**/*.tsx` for raw `fontSize:`
-outside {22, 16, 13, 10} and `letterSpacing:` outside {-0.3, 0, 2}, and holds
-each file to the count in `apps/mobile/design/calm-baseline.json`. A count may
-only shrink: a surface PR that removes raw values regenerates the baseline
-with `CALM_BASELINE_WRITE=1 npx vitest run sources/buzz/calm-lint`.
-
-`Typography.mono()` still marks the deliberate machine identifiers, enforced by
-the allowlist in `components/buzz/Typography.test.ts`; `Typography.ledger()`
-is the transcript seam. Bricolage Grotesque is the logo lockup only.
-
-## Motion
-
-Primitives live in `apps/mobile/sources/components/buzz/MonoHull.tsx`:
-`HullSurface` (the lifted-region texture), `BrittlePress` (70ms in / 110ms out
-press), `MonoButton`, `PixelLoader` (four-frame, ~7.5fps — labeled-control busy
-only), `HullWaveSignal`
-(9-segment sin² live wave), `HullLivePulse` (the same wave reduced to one
-mark), `StateCircle` (the three-state circle), `PixelGateReveal` (176ms strip
-reveal),
-`NewMessageMaterialize` (140ms fade+rise). All reduced-motion aware via
-`ReduceMotion.System`, and all of the continuous ones also stop when the app
-backgrounds. No primitive exceeds ~240ms except the continuous, low-duty-cycle
-loops, which share one clock (`motionTokens.liveCycle`).
-
-At most two of `PixelLoader` / `HullWaveSignal` run on-screen at once.
-`HullLivePulse` is deliberately outside that count: it is a single opacity
-breath — no geometry, no layout, one animated style — mounted _only_ where
-something is genuinely live, so its instance count is bounded by real concurrent
-agent work rather than by decoration. On the Room list that means one per live
-Room, and if several Rooms are working at once the index is supposed to look
-like it. A quiet row must never pay for a clock it does not use: mount the
-primitive conditionally, do not pass it `active={false}`.
-
-The provisional lane's two transitions (C98) are style-only and carry no
-geometry: an arriving tail walks its colour up from the ground over 160ms, and a
-settling reply cross-fades opacity with its provisional ghost over 220ms. Both
-are inside the ~240ms bound, both stop the moment they finish, and both are
-skipped outright under reduced motion — the provisional style stays either way.
-
-It is also **the only motion "live" is allowed to have.** A working corner's
-row and a working agent's gold ring both breathe on it — a calm heartbeat, on
-the one clock. Live state must never be reported by something that _travels_: a
-sweeping band, a moving crest, a progress bar, or a row of dashes all read as
-"something is filling up towards a finish", which is a claim the product cannot
-make about an agent's turn, and at rest they read as broken chrome. Breathing
-says "still going" and claims nothing else.
-
-A closed poll's fill is a still magnitude, not live progress. The ban on
-travelling fills stands for turns, corners, checks, and any claim that work is
-filling toward a finish. A closed poll is a recorded tally. Each option plate
-may carry a still brass wash whose width is that option's votes over the
-leading option's votes (the leader fills the track). The fill does not animate,
-pulse, or sweep. Counts stay inscribed. Reduced motion changes nothing because
-nothing moves. This is not a license for progress bars elsewhere.
-
-The foreground-notification banner is the one timed-progress exception. Its
-two-pixel brass bar counts down the banner's fixed four-second lifetime so a
-person can see when this temporary overlay will leave; it never represents the
-progress of an agent, check, or task. The bar disappears with the banner and
-does not pulse or loop.
-
-The one drawn exception is the self-painting glyph: splash (`BootPaint`) paints
-once and holds because that load ends; in-app load gates (`SurfaceGlyphLoader`)
-and the thinking line (`BeelineMarkSpinner`) use the release loop — a brass
-stroke draws the Beeline mark, immediately unwinds, and rests empty before
-redrawing. It is allowed because the loop returns to nothing every cycle — it
-never fills up towards a finish — and because the mark sits in a fixed cell so
-nothing around it moves. Reduced motion, a backgrounded app, and a settled mark
-all show the same completed static glyph. `PixelLoader`'s four dots stay only
-on labeled-control busy (`MonoButton` / `BrassButton` / the Settings version
-check), never as a page or Room/Corner load gate.
-
-## Color exceptions, stated so no one re-litigates them
-
-1. **Brass (`#b08a4a` in Obsidian)** marks the viewer's byline name,
-   a tagged `@handle` in prose (`MonoMarkdown`'s mention gloss — the Speakeasy
-   chat effect), and
-   the moment you act on agent work: the ring around a working agent's identity
-   mark (working means a live turn or corner, never presence alone), live work
-   elsewhere (the Corner's LIVE wave, the Room header's corners sigil, and a
-   Room on the index with a live corner), owner role,
-   and the merge-approval action. It is never the _only_ signal for any of
-   these — each is redundantly encoded by shape, glyph, or copy. Note what brass
-   is _not_: identity itself. An agent's plate carries its own signature colour,
-   and brass only rings it — a brass-filled plate would spend the one accent on
-   something that is true of every agent all the time, which is how an accent
-   stops meaning anything. Do not add a second hue; do not let a further meaning
-   attach to gold without checking whether it still needs to be redundant with
-   something else first.
-   A poll tally uses brass as the pigment of that still wash because it is the one
-   accent, not because brass now means "winner." Magnitude is the width; a unique
-   leader is also the longest bar and `bodyStrong` on its label. Do not fill a
-   whole plate in brass to mark the winner, and do not introduce a second hue for
-   the graph. An open selected choice takes a brass border (the existing "moment
-   you act" meaning), redundant with the letter square lighting. A costly option
-   keeps `diffRemoved` on the letter only, redundant with the consequence naming
-   the cost.
-2. **Diff green/red** (`#3FB950`/`#F85149`, `groknight.diffAdded`/
-   `diffRemoved`) exist only inside diff/change-review views, redundant with
-   `+`/`−` prefixes and `A`/`M`/`D` status letters. Red is also the failed
-   tool call and its error line in an expanded machine run (C88) — redundant
-   with the word `failed` and with the row opening itself. This was a deliberate
-   captain override of the zero-chroma rule for one universally-understood
-   convention — it is not an opening to add more domain-convention colors
-   elsewhere without the same explicit sign-off.
-3. **Speaker rails stay retired.** No transcript rail carries human blue or
-   agent green: the ledger reads by proximity and byline alone
-   (`components/buzz/Ledger.tsx`), and no rail vocabulary exists to
-   re-litigate.
-4. **Two Inks** (captain 2026-09-19, C composed with B) is the fenced-block
-   palette: three roles — structure, name, value — in two theme-tuned hues
-   drawn from the canvas family (aubergine lifted, and its cool complement),
-   laddered by luminance so the block still parses in greyscale. The theme's
-   `syntaxStructure`, `syntaxName`, and `syntaxValue` in
-   `apps/mobile/sources/buzz/groknight.ts` own the palette values for each canvas;
-   `groknight.test.ts` pins their contrast and luminance order. Hue is the redundant
-   channel. It lives only inside a fenced block and the sheet that opens one;
-   it does not authorize a fifth exception.
-
-## Agent and human profiles
-
-Profiles inherit Settings typography, spacing and the shared `SettingsRow` primitive. Agent and human bylines open profiles; mentions and Message retain DM navigation. A phone pushes a page, while a desktop transcript opens an adjacent pane. Human profiles show identity and Workspace role, with explicit Edit, Save and Cancel for authorized role changes; self profiles link to identity Settings. Agent profiles retain the assigned mark or generated portrait, model, effort, owner, expandable soul and paginated merged work. Avatar generation requires confirmation and serializes requests. Bans are persistent Workspace actions, separate from agent retirement; the phone ships no ban or lift control. See [agent profiles](docs/agent-profiles.md) for authorization and verification scope.
+---
+name: Beeline
+description: Obsidian Refined — agent work logged across one dark slab, with Bone as its light counterpart.
+colors:
+  brass: "#b08a4a"
+  brand-mark: "#E5A645"
+  obsidian-canvas: "#14091A"
+  obsidian-raised: "#190e21"
+  obsidian-unread: "#1a1220"
+  obsidian-highlight: "#1e1326"
+  obsidian-hover: "#21162a"
+  obsidian-pressed: "#271c31"
+  obsidian-border: "#291e33"
+  obsidian-border-strong: "#3b3048"
+  obsidian-text-primary: "#f0f0f3"
+  obsidian-text-secondary: "#c9c9d1"
+  obsidian-ledger-quiet: "#90909B"
+  obsidian-text-muted: "#83838d"
+  obsidian-ledger-ghost: "#6c6c76"
+  bone-brass: "#8a6323"
+  bone-canvas: "#F3EEE4"
+  bone-raised: "#ECE4D5"
+  bone-unread: "#EFE8DA"
+  bone-highlight: "#E4D9C4"
+  bone-border: "#DED2BC"
+  bone-border-strong: "#C9BBA0"
+  bone-text-primary: "#171310"
+  bone-text-secondary: "#4A4038"
+  bone-ledger-quiet: "#6F6455"
+  bone-text-muted: "#8B7F6E"
+  bone-ledger-ghost: "#A79C89"
+  diff-added-obsidian: "#3FB950"
+  diff-removed-obsidian: "#F85149"
+  diff-added-bone: "#1a7f37"
+  diff-removed-bone: "#cf222e"
+  syntax-name-obsidian: "#a58ec6"
+  syntax-value-obsidian: "#a8cde8"
+  syntax-name-bone: "#6b5a83"
+  syntax-value-bone: "#1e4460"
+  dialog-danger: "#c4544d"
+typography:
+  hero:
+    fontFamily: "SpaceGrotesk-Medium"
+    fontSize: "22px"
+    lineHeight: "32px"
+    letterSpacing: "-0.3px"
+  body:
+    fontFamily: "SpaceGrotesk-Regular"
+    fontSize: "16px"
+    lineHeight: "23px"
+    letterSpacing: "0"
+  bodyStrong:
+    fontFamily: "SpaceGrotesk-SemiBold"
+    fontSize: "16px"
+    lineHeight: "23px"
+    letterSpacing: "0"
+  meta:
+    fontFamily: "SpaceGrotesk-Regular"
+    fontSize: "13px"
+    lineHeight: "19px"
+    letterSpacing: "0"
+  sectionHead:
+    fontFamily: "SpaceGrotesk-Medium"
+    fontSize: "10px"
+    lineHeight: "15px"
+    letterSpacing: "2px"
+  machine:
+    fontFamily: "IBMPlexMono-Regular"
+    fontSize: "13px"
+    lineHeight: "19px"
+    letterSpacing: "0"
+  prose:
+    fontFamily: "SpaceGrotesk-Regular"
+    fontSize: "16px"
+    lineHeight: "25px"
+rounded:
+  house: "3px"
+  code: "8px"
+  transcript-card: "10px"
+  room-card: "14px"
+spacing:
+  xs: "4px"
+  sm: "8px"
+  md: "16px"
+  lg: "24px"
+  xl: "32px"
+  xxl: "48px"
+components:
+  button-mono:
+    rounded: "{rounded.house}"
+    height: "46px"
+    typography: "{typography.meta}"
+  button-brass:
+    backgroundColor: "{colors.brass}"
+    rounded: "{rounded.house}"
+    height: "44px"
+    typography: "{typography.body}"
+  transcript-card:
+    backgroundColor: "{colors.obsidian-raised}"
+    rounded: "{rounded.transcript-card}"
+  room-card:
+    rounded: "{rounded.room-card}"
+  poll-option:
+    rounded: "{rounded.house}"
+  conversation-row-selected:
+    backgroundColor: "{colors.obsidian-highlight}"
+---
+
+# Design System: Beeline
+
+Source of truth for tokens: `apps/mobile/sources/buzz/groknight.ts` (`beelineThemes.obsidian`, `beelineThemes.bone`, `typeRoles`, `space`, `layout`), exposed to components as `theme.buzz`. Motion constants: `motionTokens` in `apps/mobile/sources/components/buzz/MonoHull.tsx`. The frontmatter mirrors those files; when they disagree, the code wins and this file is stale. Known drift from these rules is listed under [Design inconsistencies](#design-inconsistencies).
+
+## Overview
+
+**Creative North Star: "Obsidian Refined — the slab"**
+
+The phone is a single slab of obsidian, and Beeline's output is logged across it. The interface recedes so the agents' work *is* the screen. There are no chat bubbles or per-message frames. Structured records and asks use the one `TranscriptCard` anatomy; everything else sits directly on the slab.
+
+It reads like a focused technical conversation, not a chat app. The governing readability rule: **content near-white, chrome dim, never the reverse.** Prose hierarchy comes from weight and brightness at one size. Chrome (Room-list header, transcript header, Workspace rail) has no plate of its own; it is the same canvas as the content, held apart by one hairline and by type weight.
+
+Bone is the same language run in reverse for light mode: content near-black, chrome mid, on a warm bone canvas. Settings → Appearance picks the theme; it follows the system until chosen.
+
+**Key Characteristics:**
+- One canvas, edge to edge; press and hover are the only luminance steps above it.
+- One accent (brass), always redundant with shape, glyph, or copy.
+- Four type sizes plus one mono role, held by a lint.
+- Boxes only around what you act on, or around a single non-repeating region.
+- Live state breathes; it never travels or fills.
+
+## Colors
+
+A near-monochrome aubergine-black (or warm bone) ladder with one brass accent and four named exceptions.
+
+### Primary
+- **Brass** (`accent`, Obsidian `#b08a4a`, Bone `#8a6323`): the viewer's own byline name, `@handle` mentions in prose, live work (a working agent's ring, the corners door, a Room with a live corner), owner role, unread dots, attention rings, and the action you take on agent work. Bone darkens it because the Obsidian brass is too light on bone. `brassWash` / `brassWashStrong` (18% / 28% alpha) are its only tints.
+- **Brand mark gold** (`brandMark`, `#E5A645`, from `buzz/brand.json`): the Beeline mark and a live workflow glyph only.
+
+### Neutral
+- **Canvas** (`bgBase` / `bgVoid` / `appCanvas`): Obsidian `#14091A` (Speakeasy's aubergine), Bone `#F3EEE4`.
+- **Elevation ladder**: `bgRaised`/`bgCode` → `bgUnread` → `bgHighlight` (selection) → `bgHover` → `bgPressed` → `bgTexturePeak`. Each stop keeps the same relative offset in both themes.
+- **Content inks**: `textPrimary` (narration, human messages, names), `textSecondary` (body under a lead line, previews).
+- **Ledger quiet** (`ledgerQuiet`, Obsidian `#90909B`, Bone `#6F6455`): the ledger's own reading matter — previews, stamps, system lines, quoted excerpts. It holds WCAG AA (≥4.5:1) on every resting ground, pinned in `groknight.test.ts`. Never re-dim it.
+- **Chrome / muted** (`textMuted`, `chrome`): labels and chrome only, never narration.
+- **Ghost** (`ledgerGhost`, `textDisabled`): idle glyphs, skipped steps, the gutter's lowest tier.
+- **Borders**: `border` (hairlines), `borderStrong` (rules, connectors, pending rings).
+
+### Appearance
+Obsidian Refined is the default. Bone is its only counterpart (the older Editorial Ink and Ledger sets are retired). Both share `radius`, type roles, and spacing; only colour values differ. `unistyles.ts` registers each at three text sizes.
+
+### Color exceptions
+Stated so no one re-litigates them. Each is redundant with a non-colour signal, and none licenses a fifth.
+
+1. **Brass** is the one accent (see Primary). It never fills an identity plate: an agent's plate carries its own hue and brass only rings it. A closed poll's still brass wash is pigment for magnitude, not "winner"; the leader is also the longest bar and `bodyStrong`.
+2. **Diff green/red** (`diffAdded`/`diffRemoved`) appear only in diff and change-review views and on a failed tool call, redundant with `+`/`−`, status letters, or the word `failed`. Tuned per canvas because they ship as text colour.
+3. **No speaker rails.** No transcript rail carries a human or agent colour; the ledger reads by proximity and byline.
+4. **Two Inks** (`syntaxStructure`, `syntaxName`, `syntaxValue`) is the fenced-code palette: three roles in two hues from the canvas family, laddered by luminance so a block still parses in greyscale. It lives only inside a fenced block and the reader that opens one.
+
+`dialogDanger` (`#c4544d`) marks destructive dialog actions only.
+
+## Typography
+
+**Reading face:** Space Grotesk (Regular, Medium, SemiBold)
+**Machine face:** IBM Plex Mono (Regular, Italic, SemiBold)
+**Italic prose:** IBM Plex Sans Italic (`proseItalic`)
+
+**Character:** a technical grotesk for everything a person reads, and a plex mono reserved for strings a machine produced.
+
+### Type
+Four sizes, one mono role, held by a lint. The roles live in `typeRoles` (on every theme as `theme.buzz.type`). Each carries family, size, line height (1.45×, rounded) and tracking. A screen spreads a role; it never sets a raw size.
+
+| role          | face                   | size | line | use                                                              |
+| ------------- | ---------------------- | ---- | ---- | ---------------------------------------------------------------- |
+| `hero`        | Space Grotesk Medium   | 22   | 32   | a screen's one big line (tracking −0.3)                          |
+| `body`        | Space Grotesk Regular  | 16   | 23   | body text, row titles and names, buttons (sentence case)         |
+| `bodyStrong`  | Space Grotesk SemiBold | 16   | 23   | emphasised `body`; page titles                                   |
+| `meta`        | Space Grotesk Regular  | 13   | 19   | previews, captions, stamps, counts, eyebrows                     |
+| `sectionHead` | Space Grotesk Medium   | 10   | 15   | section heads only (tracking 2, uppercase)                       |
+| `machine`     | IBM Plex Mono          | 13   | 19   | commands, paths, hashes, code, tool rows, byline tags and stamps |
+
+Transcript prose uses `proseSize` 16 on `proseLineHeight` 25 (≈1.56) so long turns breathe. Transcript cards use their own 15/23 body (`transcriptCard`).
+
+The transcript's day caption is the one caption exception: `sectionHead` in the `machine` face at `ledgerQuiet` (`THU 17 SEP`). The date also rides that day's first byline stamp when the day is not today.
+
+**The Calm Lint.** `calm-lint.design.test.ts` scans every `sources/**/*.tsx` for raw `fontSize:` outside {22, 16, 13, 10} and `letterSpacing:` outside {−0.3, 0, 2}, and holds each file to its count in `apps/mobile/design/calm-baseline.json`. Counts only shrink; regenerate with `CALM_BASELINE_WRITE=1 npx vitest run sources/buzz/calm-lint`. `Typography.mono()` marks deliberate machine identifiers (allowlist in `components/buzz/Typography.test.ts`).
+
+**The Mono Is For Machines Rule.** Space Grotesk carries names, rows, buttons, labels and bylines. Mono is for strings a machine produced, plus the byline's model tag and stamp.
+
+## Layout
+
+- **Spacing scale** (`space`): 4 · 8 · 16 · 24 · 32 · 48 (`xs`…`xxl`). `layout`: rows 64, sections 24 apart, screens start 24 below the header.
+- **Transcript rhythm:** 12 between entries in a same-speaker run, 24 at a speaker change, by proximity alone; no turn dividers. Prose shares one left content edge; stamps hang in a right gutter.
+- **Phone Room list:** each section is one card (`roomCard`: radius 14, inset 12, 10 between sections) with hairlines between rows inside it. Rows have a 68 minimum height on phone, 62 on desktop, and a one-line `meta` preview.
+- **Desktop:** a 76 px Workspace rail beside a 380 px Room sidebar at windows ≥1360 px wide; narrower windows use the Workspace switcher overlay. A second pane (corners, artifacts) defaults dismissed and opens only with a reason.
+- **Touch targets:** 44 pt for every control (corners door, overflow, compose, reference chips, opened-corner links).
+
+## Elevation & Depth
+
+Flat by default. Depth is tonal: the elevation ladder in Colors, one hairline, and type weight. Chrome carries no plate, texture, or shadow.
+
+- **Lifted surfaces** (`HullSurface`, a faint scratch texture) are reserved for something that genuinely floats over the slab and does not repeat: modal sheets, the merge-approval panel, and the textured `MonoButton`.
+- **Floating surfaces** (`HullDialog`, `HullActionSheet`) carry the one product-wide shadow (`#000`, opacity 0.55, radius 48, y-offset 18).
+- Transcript asks use `TranscriptCard`'s raised fill without texture; transcript records have no fill.
+
+**The Flat Chrome Rule.** Headers, rails and lists never gain a fill or shadow to separate themselves; a hairline and weight do that work.
+
+## Shapes
+
+### Shape
+- **House radius** `radius = 3`: inputs, buttons, poll plates, reference chips, identity plates.
+- **Transcript card family:** radius 10 on a 1 px border, matching the composer. Code blocks inside a card use 8.
+- **Phone Room-list cards:** radius 14 (`roomCard.cornerRadius`).
+- Circles for state (`StateCircle`), dots and counts.
+
+A **box** (border + fill + radius) appears only around something the user must find and act on (an input, a button, a poll option), or a small number of distinct, non-repeating regions (the merge-approval panel, a safety notice, a grant card). A box never wraps an ordinary message, attachment, or avatar.
+
+A **rule** is one edge, no fill, no radius. Hairlines divide an index (Room list, members, settings). In the transcript, code fences and ghost lines take a quiet 2 px left rule; tool runs use a hairline top edge.
+
+**Choice options are plates, not ledger rows.** A poll or question option is its own house-radius plate with a 1 px border, `space.sm` apart, a letter on a 26 px square, label in `body`, consequence in `meta` at `ledgerQuiet`.
+
+## Components
+
+### The ledger
+Rooms and corners render one transcript primitive, `components/buzz/Ledger.tsx`, fed by one branch in `app/(app)/beeline/chat/_chat-surface.tsx`. A shape only one surface needs is a design fork, not a quiet second implementation.
+
+- **One size.** Every message is Space Grotesk 16/25. A long agent turn's first line takes Medium at `textPrimary`; following paragraphs take Regular one step down. A human message is plain body text, never bolded or enlarged.
+- **Byline.** Each run opens with a 26 px face tile, the name in the speaker's signature hue (Medium, body size), a mono `machine` tag (the model name, or `AGENT`), and the mono HH:MM stamp pinned right. The written parts share one baseline; the tile is centred. Brass on the name marks the viewer (and agents with a generated portrait). A human run's first entry carries the byline; every agent message carries its own (`buzz/ledger-attribution.ts`).
+- **Machine runs.** Agent tool work folds to one mono line: `N steps · F failed · duration`. Expanded, each call is one line: family glyph (`>_` shell, `≡` file, `⋯` thought, `·` other) at `ledgerGhost`, the object at content tone, duration only past one second, and a verdict pinned right (dim `✓`, brass `✗` with the reason inline, or the one spinner). Long commands truncate in the middle. Opening a call shows its output in `ToolOutputSheet`, never inline (`buzz/tool-call-row.ts`, `buzz/tool-ledger.ts`, `components/buzz/ActivityTimeline.tsx`).
+- **Machine noise.** A wall of git/CLI output an agent pastes into its narration is projected as a separate ghost line (`buzz/ledger-text.ts` `splitLedgerText`) with a 2 px `agentRail` left rule. The unit is a run of consecutive machine lines, not a blank-line block.
+- **Fenced code.** A fence of up to four lines stays inline with Copy. A longer fence is one inscribed line (language · lines · bytes) plus a four-line peek, and opens the full-page `ArtifactViewer` route; Back re-centres the originating message. Copy copies the whole block. Plain labels (`text`, `md`, …) stay monochrome; others use Two Inks; very large bodies use the monochrome fallback (`CodeBlock.tsx`, `syntax-highlight.ts`, `CodeHighlighter.tsx`).
+- **Provisional text.** A streaming draft renders as plain text in `proseItalic` at `ledgerQuiet`, at the same size, leading and column as a settled turn, under the same byline. When the durable reply lands it cross-fades in over 220 ms; reduced motion settles instantly. A failed turn keeps the draft with the failure line beneath (`components/buzz/StreamingProse.tsx`, `Ledger.tsx`).
+- **System lines.** One sentence, `<subject> <verb>[ <object>][ · <consequence>]`, rendered by `LedgerSystemLine` in `meta` at `ledgerQuiet`: no avatar, no rule, names in brass and tappable, stamp in the right gutter. Same-verb runs fold ("@a, @b and @c joined", `buzz/system-lines.ts`). A card is only for what a tap must settle.
+- **No corner status in the transcript.** A Room's one active-corner affordance is the corners door in its header; nothing pins a corner above the composer.
+- **Turn line.** A question being answered shows one line above the composer: activity verb + elapsed seconds, `· received` when a steer lands, `· stopping` then `stopped` after a stop. The stop control (`■ STOP`, brass `sectionHead`) is offered to the requester and Room owners/admins (`viewerMayStopTurn`); a stop keeps what was written.
+- **Replies and quotes.** The `↳ author · preview` reference and the `FORWARDED FROM #room` caption read at `ledgerQuiet`. A reply to the message directly above shows no echo.
+- **Header.** A corner shows its name; a Room shows its linked repository as the subtitle. A corner's subtitle names its opener and canonical state: `waiting` in brass, `working`/`review` at `ledgerQuiet`, `archived` at `ledgerGhost`. The Room header's trailing slot holds the corners door (brass `CornerGlyph` alone in a 44 pt box) beside the overflow dots; the overflow sheet carries Members with a live count.
+- **Corner objective.** Under a corner's header, `CornerObjectiveLine` shows the objective in `textSecondary` behind a 2 px `humanRail`, a brief preview (≤3 lines) with a brass "Read brief" link, and the live workflow step when one runs. No box, no label; it wraps rather than truncates.
+
+### Transcript cards
+`TranscriptCard` is the one structured-card anatomy (grant, permission, merge summary, choice, notification): head with identity, title, subline and stamp; rows; code block; footer verbs. Record tier for facts and settled asks, ask tier (raised fill) only while a response is needed. Radius 10, 1 px border, 16 side padding, 26 px identity.
+
+### Buttons
+- **`MonoButton`**: house radius, 1 px border, 46 tall, textured, `meta` SemiBold label; primary, secondary and dashed-destructive variants.
+- **`BrassButton` / `OnboardingButton`**: house radius, borderless, 44 tall, `body` / `bodyStrong` label.
+- **Busy:** `PixelLoader` (four frames, ~7.5 fps) appears only inside a labelled control.
+
+### Index rows
+- **`ConversationRow.tsx`** is shared by phone and desktop. Names use `body` (SemiBold when unread); previews are one `meta` line in `textSecondary` (`textPrimary` when unread) with `@author · ` inline. Room names carry a brass `#`. A trailing brass dot means new messages; it gains a ring only while the Room needs the viewer (an approval waiting or an unread mention, `roomRowAttentionReason`). Long press toggles a device-local pin.
+- **Desktop selection** is `bgHighlight` plus a 1 px brass left rule. The phone has no selected state.
+- **Corner toggle.** A Room row shows the brass `CornerGlyph` toggle only when the viewer has at least one open corner there (`Expand N corners`); long-pressing the toggle opens a new corner (humans only).
+- **Standalone corners list** (`corners/[roomId]`): `PageHeader` with the Room name as eyebrow; each row leads with the opener's 26 px tile, prints the corner's full name (`fullCornerTitle`, never truncated), one quiet line, and the state word beside its `StateCircle`.
+- **Tray** (`TrayGlyph`, brass count compacting to `9+`): two sections, Needs you then Saved, each under a `sectionHead` with a brass count. Cells are the asking sentence over one `meta` line; swipe right (phone) or hover (desktop) to dismiss.
+- **Settings and profiles** use only `SettingsRow` rows under `sectionHead` headings, one hairline apart, with a reserved trailing column. `PageHeader` is the page title: a `meta` eyebrow naming the parent over a `bodyStrong` (or `hero`) title.
+- **Compose** is a 44 pt brass `+` in the Room-list header that turns 45° into a close mark while the sheet is open.
+- **Workspace rail.** The drawer marks selection with an edge bar, the mark's heavier frame, and receding tone for the others. The desktop strip uses framed avatars, an icon-only Add, and the account avatar at the bottom.
+
+### Workflows
+- **`WorkflowGlyph`** is one filled polygon in the corner's 24 viewBox: the corner mark turned 135° with a stem rising from the elbow. Brand-mark gold while a run is live, ghost when idle; inline at `CORNER_META_SIZE` (13).
+- **Run page** (`app/(app)/beeline/workflow-run.tsx`, `WorkflowRunLine`, data from `buzz/workflow-graph.ts` `workflowRunLine`): a `hero` status line, a `meta` line of who/when/how long, an optional ≤140-char `summary` in `body`/`textSecondary`, then a `Steps` section head and one vertical line read like a GitHub Actions run. No forks or back edges; a repeated state shows `×N` in brass `machine`.
+- **Steps** are 20 pt circles, never colour alone: done (brass disc + check), current (brass ring + dot under a 32 pt breathing halo), pending (hollow `textMuted` ring), skipped (dashed ghost ring with a slash), failed (`textSecondary` ring with an x). Connectors are 2 pt: brass where the run went, dashed ghost beside a skip, `borderStrong` ahead. Tapping a step opens its readout on a 2 pt `borderStrong` rule. Gates are records, never controls; answering stays in the corner.
+
+### Identity
+`components/buzz/IdentityMark.tsx` is the one identity component (a test bans any other `*Avatar*`). Faces come from `buzz/faces/`, hues from `buzz/identity-mark.ts`.
+
+1. **Species is the face.** People and agents are one of Speakeasy's twelve creatures (fox, owl, pigeon, hare, stag, whale, moth, octopus, heron, bear, cat, bat). People choose at onboarding; the server assigns an agent's, together with its name. Without either, `defaultFaceForSeed` (FNV-1a) picks the same animal on every device.
+2. **Plate polarity is the type.** A person is a coloured creature on an ink plate; an agent is the same creature in bone on a plate of its own hue.
+3. **Colour is the memory.** Each identity has one deterministic hue from a curated, scrambled 16-hue palette (≥20° apart), used on the creature, the plate, and the byline name.
+4. **The edge layer** (`recolorEdge`, `EDGE_GROW = 3`) draws a contrast copy behind shapes that would vanish on their plate.
+5. **A gold ring means working**: a live turn or corner (`selectWorkingAgents`), breathing on `HullLivePulse`, never presence alone. It never touches the identity colour.
+
+**Workspace plate.** Every Workspace mark is a 3×3 block/slot/cut/void plate in tones of one brass hue (`WORKSPACE_BRASS_HUE` ≈ 40°); it goes solid below `CYPHER_MIN_SIZE` (24). Owners may set a Workspace picture, seated concentric inside its bezel (`buzz/workspace-tile.ts`).
+
+**Pictures.** Relay photos for people and agents stay off (`PHOTO_OVERRIDES_ENABLED`, `photoIdentityMarksEnabled`). The image exceptions are Workspace pictures, server-generated agent portraits (`/v1/agent-avatars/`), and connector logos.
+
+**Names and vocabulary.** An agent's name comes from its registered `displayName` via `resolveAgentDisplayIdentity`; the soul shapes personality and art, never the name. "Room," never "Channel." `Members` names the surface (`MEMBERS_LABEL`); its sections are `People N` and `Agents N`. Room and corner names carry the `#` mark wherever they are exposed (`displayRoomIndexTitle`, `displayCornerTitle`), added at render only. Room and corner state is the drawn `StateCircle`, never a typed diamond.
+
+### Motion
+Primitives live in `components/buzz/MonoHull.tsx` with `motionTokens`: press in 70 ms / out 110 ms (`BrittlePress`), reveal 176 ms (`PixelGateReveal`), confirm 240 ms, loader frame 133 ms, new-message 140 ms fade+rise (`NewMessageMaterialize`), demote dip 90 ms, and one live clock `liveCycle` 1120 ms. All respect `ReduceMotion.System`; continuous ones stop when the app backgrounds. Nothing but the continuous loops exceeds ~240 ms.
+
+- **Live breathes, never travels.** `HullLivePulse` (one opacity breath) is the only motion "live" may have. It is mounted only where something is genuinely live, so mount it conditionally, never `active={false}`. No sweeping bands, progress bars, or marching dashes for turns, corners or checks.
+- At most two of `PixelLoader` / `HullWaveSignal` run on screen at once.
+- **The self-painting glyph** is the one drawn loop: `BootPaint` paints once on splash; `SurfaceGlyphLoader` (page and Room load gates) and `BeelineMarkSpinner` (thinking line) draw the Beeline mark, unwind, and rest empty. Reduced motion shows the static mark.
+- **Exceptions:** the provisional settle cross-fade (220 ms); a closed poll's still brass wash (magnitude, not progress); the foreground-notification banner's 2 px brass bar counting down its fixed four-second life.
+
+### Agent and human profiles
+Profiles reuse Settings typography, spacing and `SettingsRow`. Bylines open profiles; mentions and Message open DMs. Phone pushes a page; desktop opens an adjacent pane. Human profiles show identity, Workspace role (with explicit Edit/Save/Cancel when authorized) and the read-only grant ledger. Agent profiles show the mark or generated portrait, model, effort, owner, expandable soul and merged work. See [agent profiles](docs/agent-profiles.md).
+
+## Do's and Don'ts
+
+### Do:
+- **Do** read colours, type, radius and spacing from `theme.buzz` so Obsidian and Bone both work.
+- **Do** spread a type role (`...theme.buzz.type.meta`); never set a raw `fontSize`.
+- **Do** encode every state redundantly: glyph, word, or shape alongside colour.
+- **Do** keep content brighter than chrome, and `ledgerQuiet` at or above AA.
+- **Do** give every control a 44 pt target and an accessible name.
+- **Do** mount live motion only where something is live.
+
+### Don't:
+- **Don't** add a second accent hue or let brass fill an identity plate.
+- **Don't** box ordinary messages, attachments or avatars, or add speaker rails.
+- **Don't** style a human message differently from body text.
+- **Don't** show live work with anything that travels or fills.
+- **Don't** add another avatar component, button family, or card frame; extend `IdentityMark`, `MonoButton`/`BrassButton`, or `TranscriptCard`.
+- **Don't** use Bricolage Grotesque or IBM Plex Sans as a reading face.
+
+## Design inconsistencies
+
+Observed in the app source on 2026-10-03; recorded here, not fixed. Paths are relative to `apps/mobile/sources/`.
+
+**Theme bypasses (wrong in Bone)**
+- Obsidian brass is hard-coded in transcript motion: `components/buzz/TranscriptCard.tsx:99-100` and `:707-740` (`rgba(176,138,74,…)`), and `buzz/transcript-motion.ts:1` `TRANSCRIPT_BRASS = '#b08a4a'` (used at `TranscriptCard.tsx:141`, `app/(app)/beeline/chat/RoomMessageVariants.tsx:1083`). `card.brassWash` exists for this.
+- `components/buzz/WorkflowGlyph.tsx:20` fixes the idle colour at Obsidian's `#6c6c76`; Bone's `ledgerGhost` is `#A79C89`.
+- `theme.ts` `createBeelineAppTheme` spreads the legacy `darkTheme` into every theme, so Bone inherits dark `glass.*` (`components/RoundButton.tsx:49-50`, `components/MobileGlass.tsx`), `textDestructive` `#FF453A` and `surfaceRipple` (`components/Item.tsx:77,298`).
+- `components/SidebarNavigator.tsx:170` sets the desktop drawer background to `'white'`; `components/buzz/YouStep.tsx:169` falls back to `'#111111'`.
+- `components/buzz/WelcomeCards.tsx` hard-codes 23 colours, 16 of them copies of Bone `app*` tokens, plus its own radii (22/12) and type table.
+- Bone has two brasses: `accent` `#8a6323` and `appBrass` `#7A5A1E` (`buzz/groknight.ts`).
+
+**Unused or half-used tokens**
+- `bgUnread` is defined but never read; unread rows stay transparent (`components/buzz/ConversationRow.tsx:178-181`).
+- `roomCard.padding`, `previewCardTop`, `nameSize` 19, `previewSize` 15 and their line heights are unreferenced; only `cornerRadius`, `inset` and `gap` are used (`app/(app)/beeline/channels.tsx:1263,1311-1332`).
+- `typeRoles` line heights (16 → 23) differ from `proseLineHeight` 25, and `transcriptCard` uses off-scale 15/12 sizes, so the four-size rule has three token-level exceptions.
+
+**Type and fonts**
+- `proseItalic` is IBM Plex Sans Italic, so italic prose switches family (`buzz/groknight.ts:233`).
+- `Typography.default()` (`constants/Typography.ts`) renders IBM Plex Sans wherever a role does not override it: `components/RoundButton.tsx:42`, `components/buzz/NewRoomDialog.tsx:390`, `components/buzz/YouStep.tsx:166`, the error text in `app/(app)/beeline/settings/workbench/connect-app.tsx:120` / `connect-signin.tsx:91` (same folder) / `workbench/app.tsx:111`.
+- `buzz/app-board-style.ts:26-29` defines 17/14/15/11 sizes and 1 px tracking; the calm lint scans only `.tsx`, so it is not counted. Arithmetic sizes also escape it (`app/(app)/beeline/channels.tsx:1302,1308`).
+- Bricolage Grotesque is loaded (`app/_layout.tsx`) but has no runtime reference; `SpaceGrotesk-Bold.ttf` ships but is never loaded.
+- `components/buzz/ForegroundNotificationBanner.tsx:200-214` sets a section head in mono SemiBold.
+
+**Spacing and radius**
+- About 64% of literal padding/margin/gap values are off the 4/8/16/24/32/48 scale (most often 12, 10, 6, 2, 14). Heaviest: `app/(app)/beeline/chat/_chat-surface.tsx`, `RoomMessageVariants.tsx`, `app/(app)/beeline/onboarding.tsx`, `components/buzz/CornerAppScreen.tsx`, `components/buzz/WorkflowRunLine.tsx`. The `transcriptCard` and `roomCard` tokens are themselves off-scale (12, 14, 10, 22).
+- Radius 10, meant for transcript cards, is reused on buttons and banners (`connect-signin.tsx:96`, `workbench/app.tsx:107`, `channels.tsx:1296`, `components/buzz/ForegroundNotificationBanner.tsx:178`). Off-scale radii: `components/UpdateReadyPrompt.tsx:72` (16), `components/buzz/ConversationComposer.tsx:503` (13), `components/ShortcutHints.tsx` (14/9/6), `components/SidebarView.tsx:121` (7).
+
+**Competing components**
+- Buttons: `MonoButton` (46, `meta` SemiBold), `BrassButton`/`OnboardingButton` (44, `body`), and the pill `RoundButton` with glass blur (`app/(app)/index.tsx`), plus roughly a dozen hand-rolled Pressables with radius 3, 9 or 10 and heights 32–48.
+- Card frames outside `TranscriptCard`: `components/buzz/ArtifactCard.tsx` (radius 10, own frame), the connector board card (`RoomMessageVariants.tsx:491`, radius 14), and the notification frame (`RoomMessageVariants.tsx:2613`).
+- `components/navigation/Header.tsx` is still the stack header for `settings/workflows`, `settings/language` and `text-selection` (`app/(app)/_layout.tsx`), instead of `PageHeader`.
+
+**Elevation**
+- Shadows outside the dialog: `components/UpdateReadyPrompt.tsx:61,76-79` and `components/ShortcutHints.tsx:45`. The 0.55-opacity dialog shadow (`components/buzz/HullDialog.tsx:434-438`) reads as a dark smudge on Bone. `MobileGlass` blur goes against the flat language.
+
+**Behaviour that drifted from earlier design notes**
+- `buzz/streaming-prose.ts` still carries per-character arrival-fade maths, but `StreamingProse.tsx` renders plain text; only the settle cross-fade runs.
+- `decodePercentEncoding` (`buzz/ledger-text.ts:30`) has no production caller, so percent escapes are not decoded at a projection funnel.
+- The stop control's hit area is 42 pt (24 + 9 slop each side, `components/buzz/TurnProgressLine.tsx`), below the 44 pt floor.
+- `WritePermissionOutcome`'s `VIEW →` sits inline in uppercase `ledgerQuiet` with no pressed state (`components/buzz/WritePermissionOutcome.tsx:53-60`).
+- The corner overflow sheet has no Members row, though `_chat-surface.tsx:5755` says it does.
+- The Room-list corner dropdown (`components/buzz/DesktopRoomCorners.tsx`) uses `displayGroupedCornerTitle` with no `#` mark.
+- Comments still cite the old 10 px mono byline tag (`components/buzz/Ledger.tsx:380`) and `src/theme/tokens.ts` (`buzz/groknight.ts`), which no longer exist.
+- Dead or parallel palettes remain: `utils/userMessageBubbleColor.ts`, `components/navigation/MobileHeaderScrim.tsx` (unused), `theme.light.json`, `theme.dark.json`, `theme.figma.json`, and the legacy `lightTheme`/`darkTheme` in `theme.ts`.

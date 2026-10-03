@@ -9,6 +9,7 @@ import type { DaemonApiClient } from './daemon-api-client.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SessionScheduler } from './session-scheduler.js';
+import type { DeliveredAttachment } from './attachment-delivery.js';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -53,7 +54,11 @@ function endpointsPayload(inputModalities: string[]) {
 }
 
 /** One Room turn for a human message carrying a photo and a PDF; returns what the harness was prompted with. */
-async function runTurn(acceptsImages: boolean, modelInputModalities?: string[]) {
+async function runTurn(
+  acceptsImages: boolean,
+  modelInputModalities?: string[],
+  temporaryFailures = 0,
+) {
   const root = await mkdtemp(join(tmpdir(), 'beeline-room-attachments-'));
   roots.push(root);
   const identity = identityFromKey(AGENT_HEX, 'Bee');
@@ -168,14 +173,17 @@ async function runTurn(acceptsImages: boolean, modelInputModalities?: string[]) 
     const url = String(input);
     if (url === ENDPOINTS_URL)
       return new Response(JSON.stringify(endpointsPayload(modelInputModalities ?? ['text'])));
-    if (url === PHOTO.url) return new Response(JPEG, { headers: { 'content-type': 'image/jpeg' } });
+    if (url === PHOTO.url) {
+      if (temporaryFailures-- > 0) return new Response('', { status: 503 });
+      return new Response(JPEG, { headers: { 'content-type': 'image/jpeg' } });
+    }
     if (url === PDF.url)
       return new Response('%PDF', { headers: { 'content-type': 'application/pdf' } });
     throw new Error('unexpected fetch');
   }) as unknown as typeof fetch;
   const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
   const abort = new AbortController();
-  const loop = new MonolithRoomTurnLoop({
+  const roomLoop = new MonolithRoomTurnLoop({
     roomId: 'room-id',
     workspaceId: 'workspace',
     cwd: config.workspaceRoot,
@@ -188,13 +196,23 @@ async function runTurn(acceptsImages: boolean, modelInputModalities?: string[]) 
     pollMs: 10,
     createAcpClient: () => acp,
     fetchImpl,
-  }).run();
+  });
+  const loop = roomLoop.run();
   await vi.waitFor(() => expect(sessionPrompt).toHaveBeenCalled(), { timeout: 5_000 });
   abort.abort();
   await loop;
   await scheduler.dispose();
   const scratch = join(agentHomeRoot, 'tmp', 'beeline-attachments', 'msg-photo');
-  return { prompt: sessionPrompt.mock.calls[0]![1], scratch, execute };
+  const redeliver = () =>
+    (
+      roomLoop as unknown as {
+        deliver(item: {
+          id: string;
+          attachments: (typeof PHOTO)[];
+        }): Promise<DeliveredAttachment[]>;
+      }
+    ).deliver({ id: 'msg-photo', attachments: [PHOTO, PDF] });
+  return { prompt: sessionPrompt.mock.calls[0]![1], scratch, execute, fetchImpl, redeliver };
 }
 
 describe('Room turn voice', () => {
@@ -213,6 +231,19 @@ describe('Room turn voice', () => {
 });
 
 describe('Room turn attachment delivery', () => {
+  it('retains only successes and retries the failed file on the next delivery of the same message', async () => {
+    const { prompt, scratch, fetchImpl, redeliver } = await runTurn(false, undefined, 3);
+    expect(String(prompt)).toContain('download failed: HTTP 503');
+    expect(String(prompt)).toContain(`local file ${join(scratch, 'spec.pdf')}`);
+    const delivered = await redeliver();
+    expect(await readFile(delivered[0]!.path!)).toEqual(JPEG);
+    expect(delivered.every((entry) => entry.path && !entry.reason)).toBe(true);
+    expect(vi.mocked(fetchImpl).mock.calls.filter(([url]) => String(url) === PHOTO.url)).toHaveLength(4);
+    expect(vi.mocked(fetchImpl).mock.calls.filter(([url]) => String(url) === PDF.url)).toHaveLength(1);
+    await redeliver();
+    expect(fetchImpl).toHaveBeenCalledTimes(5);
+  });
+
   it('downloads the files into the session scratch dir, names the local paths, and sends the photo inline to a multimodal harness', async () => {
     const { prompt, scratch, execute } = await runTurn(true);
     expect(Array.isArray(prompt)).toBe(true);

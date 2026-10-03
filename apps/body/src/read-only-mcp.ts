@@ -41,6 +41,7 @@ import {
   type ArtifactMimeType,
   type CornerRestoreResult,
   type RoomConversationResult,
+  type DaemonAttachment,
   FEEDBACK_AGENT_CATEGORIES,
   FEEDBACK_FIXED_ITEMS_MAX,
   FEEDBACK_FIXED_TITLE_MAX_LENGTH,
@@ -93,6 +94,8 @@ import {
   FETCH_TIMEOUT_MS,
   MAX_ATTACHMENT_BYTES,
   fetchBoundedBytes,
+  deliverAttachments,
+  withoutImageData,
 } from './attachment-delivery.js';
 import { describeTailscaleReach } from './connector-tailscale.js';
 import { sandboxDevicePath } from './bwrap-sandbox.js';
@@ -323,7 +326,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'get_room_message',
     description:
-      'Read one message by its stable transcript id from this Room or an authorized source Room. Returns at most 4000 text characters, attachment references, and a nextOffset for the next text page.',
+      'Read one message by its stable transcript id from this Room or an authorized source Room. Returns at most 4000 text characters, attachments with a local path or a failure reason (read the local file; do not fetch its URL), and a nextOffset for the next text page.',
     inputSchema: {
       type: 'object',
       required: ['messageId'],
@@ -3649,14 +3652,35 @@ async function daemonUploadArtifact(
 
 export async function callAgentTool(name: string, args: JsonObject, toolCallId: string): Promise<string> {
   switch (name) {
-    case 'get_room_message':
-      return JSON.stringify(
-        await daemonExecute('getRoomMessage', {
-          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
-          messageId: args.messageId,
-          ...(typeof args.offset === 'number' ? { offset: args.offset } : {}),
-        }),
-      );
+    case 'get_room_message': {
+      const message = await daemonExecute('getRoomMessage', {
+        roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+        messageId: args.messageId,
+        ...(typeof args.offset === 'number' ? { offset: args.offset } : {}),
+      });
+      const attachments = (message.attachments ?? []) as DaemonAttachment[];
+      if (!attachments.length) return JSON.stringify(message);
+      const scratch = process.env.BEELINE_ATTACH_SCRATCH_ROOT?.trim();
+      const delivered = scratch
+        ? withoutImageData(
+            await deliverAttachments(
+              attachments,
+              join(
+                scratch,
+                'beeline-attachments',
+                createHash('sha256').update(String(message.messageId)).digest('hex'),
+              ),
+            ),
+          )
+        : attachments.map((attachment) => ({
+            attachment,
+            reason: 'download failed: no session scratch directory',
+          }));
+      return JSON.stringify({
+        ...message,
+        attachments: delivered.map(({ attachment, ...local }) => ({ ...attachment, ...local })),
+      });
+    }
     case 'load_workspace_skill':
       return JSON.stringify(
         await daemonExecute('loadWorkspaceSkill', {

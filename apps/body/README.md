@@ -29,8 +29,7 @@ the source corner, root human requester and command linkage. A steer queues the 
 opener without completing the source turn. Membership alone never authorizes a turn;
 `ask_corner`, `get_corner_ask` and `inspect_corner` remain Room-only.
 To demonstrate sibling steering through the built helper, authenticated server and phone read,
-run `npx turbo run build --filter=@beeline/server... --filter=@beeline/body...`, then
-`node --import tsx scripts/prove-sibling-steer.ts` from the repository root. Deploy the server
+run `npm run prove:sibling-steer` from the repository root. Deploy the server
 authorization change before the helper that exposes corner steers.
 
 When an imported MCP server is added or removed from the selected harness's operator

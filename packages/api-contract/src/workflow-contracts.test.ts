@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { readWorkflowContract, workflowContentsError } from './workflow-contracts.js';
+import { readWorkflowContract, workflowContentsError, workflowReceiptError } from './workflow-contracts.js';
 
 const contract = {
   version: 1,
@@ -360,5 +360,40 @@ describe('workflow contents validation', () => {
     expect(
       workflowContentsError({ requires: [] }, { blob: 'x'.repeat(20_000) }),
     ).toBe('contents exceeds 16 KB');
+  });
+});
+
+
+describe('workflow summaries, hints and receipts', () => {
+  it('keeps legacy definitions valid and permits 140 Unicode characters', () => {
+    expect(readWorkflowContract(contract)).toEqual(contract);
+    expect(readWorkflowContract({ ...contract, summary: 'x'.repeat(140) })).not.toBeNull();
+    expect(readWorkflowContract({ ...contract, summary: '🌱'.repeat(140) })).not.toBeNull();
+    expect(readWorkflowContract({ ...contract, summary: 'x'.repeat(141) })).toBeNull();
+    expect(readWorkflowContract({ ...contract, summary: 'two\nlines' })).toBeNull();
+    expect(readWorkflowContract({ ...contract, summary: null })).toBeNull();
+  });
+
+  it('allows optional free-text hints on every state kind', () => {
+    const handoffs = Object.fromEntries(Object.entries(contract.handoffs).map(([name, state]) =>
+      [name, { ...state, hint: 'the enduring artifact' }]));
+    expect(readWorkflowContract({ ...contract, handoffs })).not.toBeNull();
+    expect(readWorkflowContract({ ...contract, handoffs: {
+      ...handoffs, implement: { ...handoffs.implement, hint: 3 },
+    } })).toBeNull();
+  });
+
+  it('accepts missing/empty receipts and 140-character lines; rejects overlong or multiline lines', () => {
+    for (const receipt of [undefined, {}, { line: '', refs: [] }, { line: 'x'.repeat(140) }, { line: '🌱'.repeat(140) }])
+      expect(workflowReceiptError(receipt)).toBeNull();
+    for (const receipt of [null, { line: 'x'.repeat(141) }, { line: 'two\nlines' }, { exit: { gate: 'fake', actorId: 'fake' } }])
+      expect(workflowReceiptError(receipt)).not.toBeNull();
+  });
+
+  it('bounds typed references and rejects unknown kinds and unsafe links', () => {
+    const ref = { kind: 'brief', label: 'Implementation brief', url: 'https://beeline.test/brief' };
+    expect(workflowReceiptError({ refs: [ref, { ...ref, kind: 'pr' }, { ...ref, kind: 'checks' }] })).toBeNull();
+    for (const refs of [[ref, ref, ref, ref], [{ ...ref, kind: 'custom' }], [{ ...ref, url: 'javascript:alert(1)' }], [{ ...ref, label: '' }]])
+      expect(workflowReceiptError({ refs })).not.toBeNull();
   });
 });

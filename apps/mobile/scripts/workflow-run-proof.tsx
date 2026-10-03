@@ -60,6 +60,12 @@ async function run() {
     await pause();
     expanded = readout(document.querySelector(`[data-testid="${prefix}${expand}-readout"]`));
   }
+  const attempt = query.get('attempt');
+  if (expand && attempt) {
+    document.querySelector<HTMLElement>(`[data-testid="${prefix}${expand}-attempt-${attempt}-toggle"]`)?.click();
+    await pause();
+    expanded = readout(document.querySelector(`[data-testid="${prefix}${expand}-readout"]`));
+  }
   const gateReadout = document.querySelector(`[data-testid="${prefix}approve-readout"]`);
   const gate = gateReadout
     ? {
@@ -75,6 +81,13 @@ async function run() {
   report(
     JSON.stringify({
       text,
+      overview: Boolean(document.querySelector('[data-testid="workflow-run-overview"]')),
+      earlier: Boolean(document.querySelector('[data-testid="workflow-run-earlier"]')),
+      summary: document.querySelector('[data-testid="workflow-run-description"]')?.textContent ?? null,
+      exits: Object.fromEntries(Array.from(document.querySelectorAll<HTMLElement>('[data-testid$="-exits"],[data-testid$="-exit"]')).map(node => [node.dataset.testid!.slice(prefix.length), node.textContent])),
+      receipts: ids(/-receipt$/),
+      refs: ids(/-ref-/),
+      overflow: document.documentElement.scrollWidth > innerWidth,
       eyebrowFont: font(query.get('eyebrow')),
       titleFont: font(query.get('title')),
       circles,

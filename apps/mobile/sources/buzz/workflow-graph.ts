@@ -5,6 +5,7 @@ import type {
   WorkflowOpenedCornerView,
   WorkflowRunStepView,
   WorkflowState,
+  WorkflowReceipt,
 } from '@beeline/api-contract/phone';
 
 /**
@@ -34,6 +35,7 @@ export type WorkflowLineVisit = {
   readonly leftBy?: WorkflowActorView;
   /** What the state handed off with. */
   readonly delivered?: Readonly<Record<string, unknown>>;
+  readonly receipt?: WorkflowReceipt;
   readonly gate?: WorkflowGateRecordView;
   readonly openedCorners?: readonly WorkflowOpenedCornerView[];
 };
@@ -111,6 +113,7 @@ export function workflowRunLine(
             nextState: left.toState,
             ...(left.actor ? { leftBy: left.actor } : {}),
             ...(left.contents ? { delivered: left.contents } : {}),
+            ...(left.receipt ? { receipt: left.receipt } : {}),
           }
         : {}),
       ...(step.gate ? { gate: step.gate } : {}),

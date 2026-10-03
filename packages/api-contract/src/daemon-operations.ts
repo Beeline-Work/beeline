@@ -10,7 +10,7 @@ import type { CornerLifecycleView, MessageReactionEmoji } from './phone-types.js
 import type { ChoiceOptionInput } from './room-choices.js';
 import type { RoomScheduleCadence } from './phone-operations.js';
 import type { CornerAppDefinition } from './corner-apps.js';
-import type { WorkflowRoleBinding } from './workflow-contracts.js';
+import type { WorkflowRoleBinding, WorkflowReceiptInput } from './workflow-contracts.js';
 import type {
   ClaimInstitutionalMemoryJobResult,
   CompleteInstitutionalMemoryJobInput,
@@ -196,6 +196,7 @@ export type DaemonOperationMap = {
         readonly runId: string;
         readonly outcome: string;
         readonly contents: unknown;
+        readonly receipt?: WorkflowReceiptInput;
       },
     { readonly runId: string; readonly state: string; readonly status?: 'done' | 'failed' }
   >;

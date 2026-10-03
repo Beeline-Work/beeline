@@ -2,6 +2,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import {
   workflowContractError,
   workflowContentsError,
+  workflowReceiptError,
+  type WorkflowReceiptInput,
   isAgentIdentityReference,
   WORKFLOW_ROLE_AGENTS_MAX,
   type WorkflowContract,
@@ -212,6 +214,7 @@ async function scheduleWorkflowTimeout(
     stateName: string;
     agentId: string;
     seconds: number;
+    hint?: string;
   },
 ): Promise<void> {
   const everyMinutes = Math.max(1, Math.ceil(input.seconds / 60));
@@ -232,7 +235,7 @@ async function scheduleWorkflowTimeout(
       input.roomId,
       input.agentId,
       JSON.stringify(cadence),
-      `workflow run ${input.runId} timed out at ${input.stateName}; call handoff with outcome "timeout"`,
+      `workflow run ${input.runId} timed out at ${input.stateName}; call handoff with outcome "timeout"${input.hint ? `; receipt hint: ${input.hint}` : ''}`,
       nextRunAt,
     ],
   );
@@ -261,7 +264,7 @@ async function postWorkflowGate(
 ): Promise<void> {
   const askerAgentId = input.roleBindings[input.state.role];
   if (!askerAgentId) throw new Error(`no agent is bound to the ${input.state.role} role`);
-  await postRoomChoice(db, {
+  const choice = await postRoomChoice(db, {
     roomId: input.roomId,
     agentId: askerAgentId,
     mode: 'question',
@@ -271,6 +274,9 @@ async function postWorkflowGate(
       consequence: `go to ${target}`.slice(0, 80),
     })),
   });
+  if (input.state.hint)
+    await db.query(`UPDATE messages SET card=card || jsonb_build_object('receiptHint',$2::text) WHERE id=$1`,
+      [choice.messageId, input.state.hint]);
 }
 
 export async function saveWorkflow(
@@ -409,6 +415,7 @@ export async function startWorkflow(
         roleBindings,
         ...(Object.keys(roleAgents).length ? { roleAgents } : {}),
         toState: contract.start,
+        ...(startState.hint ? { receiptHint: startState.hint } : {}),
       },
     });
     if (exhausted) {
@@ -435,6 +442,7 @@ export async function startWorkflow(
         stateName: contract.start,
         agentId: (resolution as { agentId: string }).agentId,
         seconds: (startState as WorkflowHandoffState).timeoutSeconds!,
+        hint: startState.hint,
       });
     }
     return { runId, state: contract.start };
@@ -444,7 +452,7 @@ export async function startWorkflow(
 export async function handoff(
   database: SqlDatabase,
   command: CommandRow,
-  input: { runId: string; outcome: string; contents: unknown },
+  input: { runId: string; outcome: string; contents: unknown; receipt?: WorkflowReceiptInput },
 ): Promise<{ runId: string; state: string; status?: 'done' | 'failed' }> {
   if (typeof input.runId !== 'string' || !input.runId) throw new Error('runId is required');
   if (typeof input.outcome !== 'string' || !input.outcome) throw new Error('outcome is required');
@@ -481,6 +489,8 @@ export async function handoff(
       input.contents,
     );
     if (contentsError) throw new Error(contentsError);
+    const receiptError = workflowReceiptError(input.receipt);
+    if (receiptError) throw new Error(receiptError);
     await cancelWorkflowTimeout(db, input.runId, stateName);
     let toState = on[input.outcome]!;
     const loop = isHandoffState(state) ? state.loop : undefined;
@@ -536,6 +546,8 @@ export async function handoff(
         outcome: input.outcome,
         toState,
         contents: input.contents,
+        receipt: { ...input.receipt, exit: { gate: input.outcome, actorId: command.agent_id } },
+        ...(nextState.hint ? { receiptHint: nextState.hint } : {}),
         ...(isTerminal ? { status: (nextState as { status: 'done' | 'failed' }).status } : {}),
       },
     });
@@ -563,6 +575,7 @@ export async function handoff(
         stateName: toState,
         agentId: (nextResolution as { agentId: string }).agentId,
         seconds: (nextState as WorkflowHandoffState).timeoutSeconds!,
+        hint: nextState.hint,
       });
     }
     return {
@@ -611,6 +624,7 @@ async function reassignRole(
       roleBindings,
       toState: input.run.toState,
       reassigned: true,
+      ...(state.hint ? { receiptHint: state.hint } : {}),
     },
   });
   if (state.kind === 'gate') {
@@ -637,6 +651,7 @@ async function reassignRole(
         stateName: input.run.toState,
         agentId: input.picked,
         seconds: state.timeoutSeconds,
+        hint: state.hint,
       });
     }
   }

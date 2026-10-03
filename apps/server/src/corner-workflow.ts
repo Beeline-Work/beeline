@@ -456,6 +456,7 @@ class Transition {
         outcome,
         toState,
         contents,
+        receipt: { exit: { gate: outcome, actorId: SYSTEM_IDENTITY_ID } },
         seq,
         ...(status ? { status } : {}),
       },

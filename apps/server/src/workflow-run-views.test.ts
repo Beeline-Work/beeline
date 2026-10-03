@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
-import { createAgentCommand, type CommandRow } from './agent-command.js';
+import { createAgentCommand, readAgentCommands, type CommandRow } from './agent-command.js';
 import { advanceCorner, ensureCornerWorkflowSeeded } from './corner-workflow.js';
 import { PhoneService } from './phone-service.js';
 import { answerRoomChoice } from './room-choice.js';
@@ -386,5 +386,49 @@ describe('readWorkflowRun', () => {
     await expect(
       phone.execute('readWorkflowRun', { roomId: CORNER, runId: 'f'.repeat(64) }, OWNER),
     ).rejects.toThrow('workflow run not found');
+  });
+});
+
+
+describe('optional workflow receipts end to end', () => {
+  it('stores a summary, sends the hint to the dispatched agent, and reads receipts through the phone', async () => {
+    const contract = { ...TRIAGE, summary: 'Gather issues, request approval, and dispatch fixes.', handoffs: {
+      ...TRIAGE.handoffs, pull: { ...TRIAGE.handoffs.pull, hint: 'the ranked issues' },
+      approve: { ...TRIAGE.handoffs.approve, hint: 'the human decision' },
+    } };
+    await saveWorkflow(database, await command(CORNER, TRIAGER), { contract });
+    const { runId } = await startWorkflow(database, await command(CORNER, TRIAGER), {
+      name: contract.name, roleBindings: { triager: TRIAGER },
+    });
+    const inbox = await readAgentCommands(database, CORNER, TRIAGER);
+    expect(inbox.commands.some((entry) => entry.source.body.includes('Receipt hint for this state: the ranked issues'))).toBe(true);
+    const receipt = { line: 'Ranked two issues.', refs: [
+      { kind: 'file' as const, label: 'Issue list', url: 'https://beeline.test/issues.txt' },
+    ] };
+    await handoff(database, await command(CORNER, TRIAGER), { runId, outcome: 'retry', contents: {}, receipt });
+    await handoff(database, await command(CORNER, TRIAGER), { runId, outcome: 'ranked', contents: {}, receipt: {} });
+    const detail = await phone.execute('readWorkflowRun', { roomId: CORNER, runId }, OWNER);
+    expect(detail.contract.summary).toBe(contract.summary);
+    expect(detail.history[1]?.receipt).toEqual({ ...receipt, exit: { gate: 'retry', actorId: TRIAGER } });
+    expect(detail.history[2]?.receipt).toEqual({ exit: { gate: 'ranked', actorId: TRIAGER } });
+    const choice = (await database.query<{ id: string; option_id: string }>(
+      `SELECT id::text id,options->0->>'optionId' option_id FROM room_choices WHERE room_id=$1`, [CORNER],
+    )).rows[0]!;
+    await answerRoomChoice(database, { choiceId: choice.id, viewerId: OWNER, optionId: choice.option_id });
+    const answered = await readAgentCommands(database, CORNER, TRIAGER);
+    expect(answered.commands.some((entry) => entry.source.body.includes('Receipt hint for this state: the human decision'))).toBe(true);
+    // Missing is equally optional: no outcome text or refs are invented.
+    await handoff(database, await command(CORNER, TRIAGER), { runId, outcome: 'skip', contents: {} });
+    const ended = await phone.execute('readWorkflowRun', { roomId: CORNER, runId }, OWNER);
+    expect(ended.history[3]?.receipt).toEqual({ exit: { gate: 'skip', actorId: TRIAGER } });
+  });
+
+  it('rejects invalid receipts without advancing the run', async () => {
+    const runId = await triageRun();
+    const worker = await command(CORNER, TRIAGER);
+    for (const receipt of [{ line: 'x'.repeat(141) }, { refs: Array(4).fill({ kind: 'url', label: 'link', url: 'https://beeline.test' }) }])
+      await expect(handoff(database, worker, { runId, outcome: 'skip', contents: {}, receipt })).rejects.toThrow(/receipt/);
+    const detail = await phone.execute('readWorkflowRun', { roomId: CORNER, runId }, OWNER);
+    expect(detail.run.state).toBe('approve');
   });
 });

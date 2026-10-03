@@ -27,12 +27,6 @@ describe('the tray: Needs you and Saved', () => {
     expect(ledger).toContain('accessibilityLabel="Bookmarked"');
   });
 
-  it('opens the exact original and pages beyond the cached tail', () => {
-    expect(bookmarks).toContain('messageJumpHref(target.roomId, target.messageId');
-    expect(chat).toMatch(/if \(transcriptHistoryStatus === 'idle'\) \{/);
-    expect(chat).toContain('loadOlderTranscriptMessages();');
-  });
-
   it('opens a selected desktop bookmark in the shared Room work pane', () => {
     expect(bookmarks).toContain('<DesktopRoomInspector');
     expect(bookmarks).toContain('focusMessageId=');

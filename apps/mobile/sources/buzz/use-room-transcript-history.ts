@@ -10,6 +10,7 @@ import {
 export type TranscriptHistoryStatus = 'idle' | 'loading' | 'error' | 'complete';
 
 type HistoryClient = {
+  historyAround?(roomId: string, messageId: string): Promise<RoomHistoryView>;
   history(
     roomId: string,
     before?: { readonly createdAt: number; readonly id: string },
@@ -30,6 +31,9 @@ export function useRoomTranscriptHistory({
   initialVisibleCount: number;
 }) {
   const [olderPages, setOlderPages] = useState<readonly (readonly RoomViewMessage[])[]>([]);
+  const [aroundPage, setAroundPage] = useState<readonly RoomViewMessage[]>([]);
+  const [aroundStatus, setAroundStatus] = useState<'idle' | 'loading' | 'error' | 'missing'>('idle');
+  const aroundRequestRef = useRef(0);
   const [visibleMessageCount, setVisibleMessageCount] = useState(initialVisibleCount);
   const [status, setStatus] = useState<TranscriptHistoryStatus>('idle');
   const cursorRef = useRef<RoomHistoryCursorState | null>(null);
@@ -59,6 +63,9 @@ export function useRoomTranscriptHistory({
 
   const reset = useCallback(() => {
     requestVersionRef.current += 1;
+    aroundRequestRef.current += 1;
+    setAroundPage([]);
+    setAroundStatus('idle');
     cursorRef.current = null;
     completedTailIdRef.current = null;
     loadingRef.current = false;
@@ -147,6 +154,25 @@ export function useRoomTranscriptHistory({
     (residentRowCount: number) => requestOlder(residentRowCount, true),
     [requestOlder],
   );
+  const loadAround = useCallback((messageId: string) => {
+    if (!roomClient?.historyAround || !enabled) return;
+    const request = ++aroundRequestRef.current;
+    const requestedRoomId = roomId;
+    setAroundStatus('loading');
+    void roomClient.historyAround(roomId, messageId).then((page) => {
+      if (request !== aroundRequestRef.current || requestedRoomId !== previousRoomIdRef.current) return;
+      if (!page.messages.some((message) => message.id === messageId)) {
+        setAroundStatus('missing');
+        return;
+      }
+      setAroundPage(page.messages);
+      setAroundStatus('idle');
+    }).catch(() => {
+      if (request === aroundRequestRef.current && requestedRoomId === previousRoomIdRef.current)
+        setAroundStatus('error');
+    });
+  }, [enabled, roomClient, roomId]);
+
   const revealThrough = useCallback((count: number) => {
     visibleCountRef.current = Math.max(visibleCountRef.current, count);
     setVisibleMessageCount(visibleCountRef.current);
@@ -154,6 +180,9 @@ export function useRoomTranscriptHistory({
 
   return {
     olderPages,
+    aroundPage,
+    aroundStatus,
+    loadAround,
     visibleMessageCount,
     status: previousRoomIdRef.current === roomId ? statusRef.current : 'idle',
     loadOlder,

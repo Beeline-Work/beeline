@@ -310,6 +310,14 @@ it('R12g: message jumps preserve the notification target and response id', () =>
   });
 });
 
+it('a distant bookmark keeps its exact target and response identity', () => {
+  const target = 'b'.repeat(64);
+  expect(messageJumpHref('room', target, `bookmark:${target}`, 'workspace').params).toEqual({
+    channelId: 'room', notificationMessageId: target,
+    notificationResponseId: `bookmark:${target}`, communityId: 'workspace',
+  });
+});
+
 it('R12g: all message-jump callers use the shared helper', () => {
   for (const file of ['../app/(app)/beeline/chat/_chat-surface.tsx', '../app/(app)/beeline/tray.tsx', './use-message-search.ts']) {
     const source = readFileSync(new URL(file, import.meta.url), 'utf8');

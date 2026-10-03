@@ -274,6 +274,7 @@ import {
   type MessageSourceLanding,
 } from '@/buzz/message-source-landing';
 import { useRoomTranscriptHistory } from '@/buzz/use-room-transcript-history';
+import { shouldCoverMessageSource, shouldReleaseMessageSourceCover } from '@/buzz/message-source-cover';
 import {
   markRoomOpen,
   useRoomSurfaceSession,
@@ -1231,6 +1232,9 @@ export function BuzzChatSurface({
   // transcript or folded into the current Room response.
   const {
     olderPages,
+    aroundPage,
+    aroundStatus,
+    loadAround: loadAroundTranscriptMessage,
     visibleMessageCount,
     status: transcriptHistoryStatus,
     loadOlder: loadOlderHistory,
@@ -1256,8 +1260,8 @@ export function BuzzChatSurface({
     [liveOverlays, roomSurface],
   );
   const olderMessages = useMemo(
-    () => (cacheViewerPubkey ? displayRoomMessages(olderPages.flat(), cacheViewerPubkey) : []),
-    [cacheViewerPubkey, olderPages],
+    () => (cacheViewerPubkey ? displayRoomMessages([...olderPages.flat(), ...aroundPage], cacheViewerPubkey) : []),
+    [cacheViewerPubkey, olderPages, aroundPage],
   );
   const durableMessages = useMemo(
     () => mergeDisplayPages(olderMessages, cachedMessages, liveMessages),
@@ -2479,6 +2483,8 @@ export function BuzzChatSurface({
   // sitting blank through the history walk and then visibly hopping through
   // onScrollToIndexFailed's corrective scrolls before it settles.
   const locatingMessageSourceIdRef = useRef<string | null>(null);
+  const requestedAroundMessageIdRef = useRef<string | null>(null);
+  const activeMessageSourceAnchorRef = useRef<string | null>(null);
   const [isLocatingMessageSource, setIsLocatingMessageSource] = useState(false);
   const visibleTranscriptMessagesRef = useRef<ChatDisplayMessage[]>([]);
   const dragEndSequenceRef = useRef(0);
@@ -2540,6 +2546,8 @@ export function BuzzChatSurface({
     desktopPrependOldestIdRef.current = null;
     desktopPrependScrollHeightRef.current = null;
     locatingMessageSourceIdRef.current = null;
+    requestedAroundMessageIdRef.current = null;
+    activeMessageSourceAnchorRef.current = null;
     setIsLocatingMessageSource(false);
   }, [decodedId]);
   const completePendingNewMessageLanding = useCallback(() => {
@@ -2983,6 +2991,11 @@ export function BuzzChatSurface({
 
     const messageId = notificationMessageId?.trim();
     if (!messageId) return;
+    if (activeMessageSourceAnchorRef.current !== anchorKey) {
+      activeMessageSourceAnchorRef.current = anchorKey;
+      requestedAroundMessageIdRef.current = null;
+      messageSourceLandingAbandonedRef.current = false;
+    }
     if (
       locatingMessageSourceIdRef.current !== null &&
       locatingMessageSourceIdRef.current !== messageId
@@ -2996,7 +3009,18 @@ export function BuzzChatSurface({
       (message) => message.id === messageId || message.relayId === messageId,
     );
     if (visibleIndex >= 0) {
+      if (shouldCoverMessageSource({
+        desktop: desktopTranscript,
+        abandoned: messageSourceLandingAbandonedRef.current,
+        targetVisible: visibleTranscriptMessagesRef.current.some(
+          (row) => row.id === messageId || row.relayId === messageId,
+        ),
+      })) {
+        locatingMessageSourceIdRef.current = messageId;
+        setIsLocatingMessageSource(true);
+      }
       scheduleAnimationFrame(() => {
+        if (messageSourceLandingAbandonedRef.current) return;
         if (desktopTranscript) {
           const row = desktopRowNodesRef.current.get(transcriptMessages[visibleIndex]?.id ?? '');
           row?.scrollIntoView({ block: 'center' });
@@ -3016,7 +3040,6 @@ export function BuzzChatSurface({
         // (below) have brought it into range, re-centering — or flashing —
         // a row that is still off-window or clipped. See
         // `buzz/message-source-landing.ts`.
-        messageSourceLandingAbandonedRef.current = false;
         messageSourceLandingRef.current = startMessageSourceLanding(messageId);
         flatListRef.current?.scrollToIndex({
           index: visibleIndex,
@@ -3031,35 +3054,35 @@ export function BuzzChatSurface({
       (message) => message.id === messageId || message.relayId === messageId,
     );
     if (residentIndex >= 0) {
+      if (shouldCoverMessageSource({
+        desktop: desktopTranscript,
+        abandoned: messageSourceLandingAbandonedRef.current,
+        targetVisible: false,
+      })) {
+        locatingMessageSourceIdRef.current = messageId;
+        setIsLocatingMessageSource(true);
+      }
       const rowsFromNewest = combinedMessages.length - residentIndex;
       revealTranscriptThrough(rowsFromNewest);
       return;
     }
-    // Bookmark links may target any durable message, not only the cached
-    // tail. Walk bounded history pages until the exact id arrives or the
-    // server reports the beginning of the Room. Native only: cover the
-    // transcript for the whole walk (see `locatingMessageSourceIdRef`) so a
-    // genuinely distant target reads as one continuous "locating" state
-    // instead of a blank screen while pages load, then a visibly hopping
-    // scroll position while onScrollToIndexFailed's retries chase it in.
-    if (transcriptHistoryStatus === 'idle') {
-      if (!desktopTranscript && locatingMessageSourceIdRef.current !== messageId) {
-        locatingMessageSourceIdRef.current = messageId;
-        setIsLocatingMessageSource(true);
+    if (requestedAroundMessageIdRef.current === messageId &&
+        (aroundStatus === 'error' || aroundStatus === 'missing')) {
+      if (locatingMessageSourceIdRef.current === messageId) {
+        locatingMessageSourceIdRef.current = null;
+        setIsLocatingMessageSource(false);
       }
-      loadOlderTranscriptMessages();
-    } else if (
-      !desktopTranscript &&
-      locatingMessageSourceIdRef.current === messageId &&
-      transcriptHistoryStatus !== 'loading'
-    ) {
-      // 'complete' (history exhausted) or 'error' (page fetch failed): stop
-      // covering so the reader regains control — the existing retry
-      // affordance (scroll up to "Couldn't load earlier messages") must
-      // stay reachable, never hidden under this cover.
-      locatingMessageSourceIdRef.current = null;
-      setIsLocatingMessageSource(false);
+      handledNotificationAnchorRef.current = anchorKey;
+      return;
     }
+    if (requestedAroundMessageIdRef.current === messageId || messageSourceLandingAbandonedRef.current ||
+        !roomClient || !cacheViewerPubkey) return;
+    requestedAroundMessageIdRef.current = messageId;
+    if (!desktopTranscript) {
+      locatingMessageSourceIdRef.current = messageId;
+      setIsLocatingMessageSource(true);
+    }
+    loadAroundTranscriptMessage(messageId);
   }, [
     combinedMessages,
     transcriptMessages,
@@ -3068,8 +3091,10 @@ export function BuzzChatSurface({
     notificationTarget,
     desktopTranscript,
     revealTranscriptThrough,
-    loadOlderTranscriptMessages,
-    transcriptHistoryStatus,
+    loadAroundTranscriptMessage,
+    aroundStatus,
+    roomClient,
+    cacheViewerPubkey,
     raiseSourceLandingFlash,
   ]);
   // A reconciled draft/final bubble keeps a stable display `id` across the
@@ -6076,6 +6101,17 @@ export function BuzzChatSurface({
                     }
                   }, 100);
                   return;
+                }
+              }
+              if (notification && shouldReleaseMessageSourceCover({
+                abandoned: messageSourceLandingAbandonedRef.current,
+                targetVisible: false,
+                retryAttempts: notification.attempts,
+              })) {
+                pendingNotificationLandingRef.current = null;
+                if (locatingMessageSourceIdRef.current === notification.messageId) {
+                  locatingMessageSourceIdRef.current = null;
+                  setIsLocatingMessageSource(false);
                 }
               }
               const pending = pendingNewMessageLandingRef.current;

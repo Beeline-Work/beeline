@@ -2076,6 +2076,42 @@ export class PhoneService {
     };
   }
 
+  async readHistoryAround(roomId: string, viewerId: string, targetId: string): Promise<RoomHistoryView | null> {
+    if (!(await this.hasRoomAccess(roomId, viewerId))) return null;
+    const rows = (await this.database.query<MessageRow>(
+      `WITH target AS (
+         SELECT created_at,id FROM messages WHERE room_id=$1 AND id=$2
+       ), window AS (
+         (SELECT m.id FROM messages m,target
+          WHERE m.room_id=$1 AND (m.created_at,m.id)>=(target.created_at,target.id)
+            AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
+            AND ${hiddenWakeCardSql('m')}
+          ORDER BY m.created_at,m.id LIMIT 15)
+         UNION ALL
+         (SELECT m.id FROM messages m,target
+          WHERE m.room_id=$1 AND (m.created_at,m.id)<(target.created_at,target.id)
+            AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
+            AND ${hiddenWakeCardSql('m')}
+          ORDER BY m.created_at DESC,m.id DESC LIMIT 15)
+       )
+       SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
+         i.avatar author_avatar,i.face_id author_face,
+         ${reactionIdentitiesSql('m')} reaction_identities,
+         '{}'::text[] tagged_ids
+       FROM window JOIN messages m ON m.id=window.id
+       JOIN identities i ON i.id=m.author_id
+       ORDER BY m.created_at,m.id`,
+      [roomId, targetId],
+    )).rows;
+    await this.enrichMessageTags(rows);
+    await this.enrichMessageBookmarks(rows, viewerId);
+    const messages = rows.map((row) => projectedMessage(row, this.publicOrigin, viewerId));
+    const [attachmentFacts, appMessages] = await Promise.all([
+      this.attachmentFacts(messages), this.decorateAppSignInCards(messages),
+    ]);
+    return { roomId, messages: decorateAttachments(appMessages, attachmentFacts) };
+  }
+
   async readHistory(
     roomId: string,
     viewerId: string,

@@ -554,14 +554,24 @@ describe('<prefix>/lib/beeline anchor contract', () => {
         'BEELINE_BUNDLE_ROOT=$(CDPATH= cd -- "$(dirname -- "$script_path")/.." && pwd -P)',
       );
       expect(source).toContain('BEELINE_LIB_DIR=$BEELINE_BUNDLE_ROOT/lib/beeline');
-      expect(source).toContain('exec node "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-cli.mjs" "$@"');
+      // The node-exec'ing wrappers never trust bare `node` on PATH (a service
+      // manager's generated unit PATH is not this shell's own PATH, and may
+      // resolve a Node older than the bundle requires -- the exact gap that left a
+      // helper restart-looping for 8+ hours with no clear error): they resolve
+      // $beeline_node first (recorded install runtime, then PATH, each
+      // version-checked) and exec that, never a bare `node`.
+      expect(source).toContain('exec "$beeline_node" "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-cli.mjs" "$@"');
       expect(source).toContain(
-        'exec node "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-readonly-mcp.mjs"',
+        'exec "$beeline_node" "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-readonly-mcp.mjs"',
       );
       expect(source).toContain(
         'exec "$BEELINE_BUNDLE_ROOT/lib/beeline/codegraph/bin/codegraph" "$@"',
       );
+      expect(source).not.toContain('exec node "$BEELINE_BUNDLE_ROOT');
       expect(source).not.toContain('exec node "$BEELINE_LIB_DIR/beeline-readonly-mcp.mjs"');
+      expect(source).toContain('$BEELINE_BUNDLE_ROOT/.node-path');
+      expect(source).toContain('beeline_node_min_major=20');
+      expect(source).toContain('beeline_node_min_minor=11');
       // The old resolution shape must not come back for the CLI wrapper.
       const wrapperBlock = source.slice(source.indexOf("resolve(staging, 'bin', 'beeline')"));
       expect(wrapperBlock).not.toContain('lib_dir=$(CDPATH= cd');

@@ -265,6 +265,38 @@ async function readBundleJson(bundleDir: string): Promise<InstalledBundleIdentit
   }
 }
 
+/** The file name a staged/installed release's recorded-good Node path is kept under (bundle root). */
+export const STAGED_NODE_PATH_FILE = '.node-path';
+
+/** The `node` engine minimum a bundle declares in its own bundle.json, if any. */
+export async function readBundleEngineMinimum(
+  bundleDir: string,
+): Promise<readonly [number, number, number] | undefined> {
+  for (const candidate of bundleJsonCandidates(bundleDir)) {
+    try {
+      const parsed = JSON.parse(await readFile(candidate, 'utf8')) as { node?: string };
+      const match = /^>=(\d+)\.(\d+)\.(\d+)$/.exec(parsed.node ?? '');
+      if (match) return [Number(match[1]), Number(match[2]), Number(match[3])];
+    } catch {
+      // try the next shape
+    }
+  }
+  return undefined;
+}
+
+export function nodeVersionAtLeast(
+  version: string,
+  minimum: readonly [number, number, number],
+): boolean {
+  const parts = version.split('.').map(Number);
+  for (let index = 0; index < 3; index++) {
+    const actual = parts[index] ?? 0;
+    const required = minimum[index] ?? 0;
+    if (actual !== required) return actual > required;
+  }
+  return true;
+}
+
 export interface UpdateStateFile {
   lastCheckAt?: number;
   lastCheckResult?: string;
@@ -523,6 +555,26 @@ export async function stageRelease(
       } catch {
         throw new Error(`staged bundle is missing ${relative}`);
       }
+    }
+
+    // Record a Node runtime that satisfies this release's own engine minimum
+    // as an absolute path, so every later invocation of this release --
+    // including through a service manager's generated unit, whose PATH is
+    // never this process's PATH -- can run it without re-resolving `node` on
+    // a possibly-older PATH (the exact gap that left a crash-on-import helper
+    // unit restart-looping for 8+ hours: the per-agent process staging the
+    // release had a good node via its own PATH drop-in; the brand new helper
+    // unit's generated PATH did not). build-beeline-bundle.mjs's wrapper is
+    // the one reader of this file.
+    const engineMinimum = await readBundleEngineMinimum(releaseDir);
+    if (engineMinimum) {
+      if (!nodeVersionAtLeast(process.versions.node, engineMinimum)) {
+        throw new Error(
+          `staged bundle requires Node.js >=${engineMinimum.join('.')}, but this process is ` +
+            `running Node.js ${process.versions.node} — install a satisfying Node runtime and retry`,
+        );
+      }
+      await writeFile(join(releaseDir, STAGED_NODE_PATH_FILE), `${process.execPath}\n`, 'utf8');
     }
 
     // Smoke-test the new cli BEFORE it can become active: a bundle that cannot

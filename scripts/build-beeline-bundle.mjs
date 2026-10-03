@@ -296,9 +296,43 @@ async function main() {
       'fi',
       'export BEELINE_LIB_DIR',
     ].join('\n');
+    // Never trust bare `node` on PATH: a service manager's generated unit PATH
+    // (apps/body/src/systemd.ts, Environment=PATH=...) is not this shell's own
+    // PATH and may resolve a Node.js older than this bundle requires (`node`
+    // in bundle.json) -- the exact incident that crashed on import that way
+    // with no clear error, 8+ hours into a restart loop, because staging
+    // happened to run under a process whose OWN PATH had a newer node.
+    // Prefer the exact Node recorded
+    // when this release was installed/staged (self-update.ts's
+    // STAGED_NODE_PATH_FILE / install.sh), which is known to satisfy the
+    // requirement then; fall back to PATH, checked the same way; fail clearly
+    // otherwise. BEELINE_NODE overrides both for an operator pointing at a
+    // specific runtime.
+    const nodeResolution = [
+      'beeline_node_min_major=20',
+      'beeline_node_min_minor=11',
+      'beeline_node_ok() {',
+      '  [ -x "$1" ] || return 1',
+      '  "$1" -e \'var v=process.versions.node.split(".").map(Number);process.exit(v[0]>\'"$beeline_node_min_major"\'||(v[0]===\'"$beeline_node_min_major"\'&&v[1]>=\'"$beeline_node_min_minor"\')?0:1)\' >/dev/null 2>&1',
+      '}',
+      'beeline_node=',
+      'if [ -n "${BEELINE_NODE:-}" ] && beeline_node_ok "$BEELINE_NODE"; then',
+      '  beeline_node=$BEELINE_NODE',
+      'elif [ -f "$BEELINE_BUNDLE_ROOT/.node-path" ] && beeline_node_ok "$(cat "$BEELINE_BUNDLE_ROOT/.node-path")"; then',
+      '  beeline_node=$(cat "$BEELINE_BUNDLE_ROOT/.node-path")',
+      'elif command -v node >/dev/null 2>&1 && beeline_node_ok "$(command -v node)"; then',
+      '  beeline_node=$(command -v node)',
+      'fi',
+      'if [ -z "$beeline_node" ]; then',
+      '  echo "beeline: no Node.js >=$beeline_node_min_major.$beeline_node_min_minor runtime found ' +
+        '(checked \\$BEELINE_NODE, the recorded install runtime, and PATH). Install Node.js ' +
+        '$beeline_node_min_major.$beeline_node_min_minor or newer and retry, or set BEELINE_NODE to its absolute path." >&2',
+      '  exit 1',
+      'fi',
+    ].join('\n');
     await writeFile(
       resolve(staging, 'bin', 'beeline-readonly-mcp'),
-      `${wrapperPrologue}\nexec node "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-readonly-mcp.mjs"\n`,
+      `${wrapperPrologue}\n${nodeResolution}\nexec "$beeline_node" "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-readonly-mcp.mjs"\n`,
       { mode: 0o755 },
     );
     await writeFile(
@@ -308,7 +342,7 @@ async function main() {
     );
     await writeFile(
       resolve(staging, 'bin', 'beeline'),
-      `${wrapperPrologue}\n: "\${BUZZ_AGENT_BIN:=$(dirname -- "$script_path")/buzz-agent}"\n: "\${BUZZ_DEV_MCP_BIN:=$(dirname -- "$script_path")/buzz-dev-mcp}"\n: "\${BEELINE_READONLY_MCP_BIN:=$(dirname -- "$script_path")/beeline-readonly-mcp}"\n: "\${BEELINE_CODEGRAPH_BIN:=$(dirname -- "$script_path")/codegraph}"\n# Self-update needs to know its own install anchor (import.meta.url is defined away inside the esbuild bundle).\nexport BUZZ_AGENT_BIN BUZZ_DEV_MCP_BIN BEELINE_READONLY_MCP_BIN BEELINE_CODEGRAPH_BIN\nexec node "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-cli.mjs" "$@"\n`,
+      `${wrapperPrologue}\n${nodeResolution}\n: "\${BUZZ_AGENT_BIN:=$(dirname -- "$script_path")/buzz-agent}"\n: "\${BUZZ_DEV_MCP_BIN:=$(dirname -- "$script_path")/buzz-dev-mcp}"\n: "\${BEELINE_READONLY_MCP_BIN:=$(dirname -- "$script_path")/beeline-readonly-mcp}"\n: "\${BEELINE_CODEGRAPH_BIN:=$(dirname -- "$script_path")/codegraph}"\n# Self-update needs to know its own install anchor (import.meta.url is defined away inside the esbuild bundle).\nexport BUZZ_AGENT_BIN BUZZ_DEV_MCP_BIN BEELINE_READONLY_MCP_BIN BEELINE_CODEGRAPH_BIN\nexec "$beeline_node" "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-cli.mjs" "$@"\n`,
       { mode: 0o755 },
     );
   }

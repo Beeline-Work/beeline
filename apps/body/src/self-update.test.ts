@@ -16,11 +16,13 @@ import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import {
   SelfUpdateManager,
+  STAGED_NODE_PATH_FILE,
   activateRelease,
   activeReleaseId,
   archiveUrlFor,
   beelineInstallLayout,
   hostPlatformKey,
+  nodeVersionAtLeast,
   readInstalledBundleIdentity,
   readUpdateAttempt,
   readUpdateState,
@@ -36,7 +38,7 @@ import {
   compareVersions,
   parseUpdateManifest,
 } from './self-update-manifest.js';
-import { forceInstallMinimum, versionAtLeast } from './managed-update.js';
+import { forceInstallMinimum, rollbackFailedSuccessor, versionAtLeast } from './managed-update.js';
 
 const tempDirs: string[] = [];
 async function tempDir(prefix: string): Promise<string> {
@@ -229,7 +231,11 @@ interface FixtureBundle {
   sha256: string;
 }
 
-async function buildFixtureBundle(commit: string, version: string): Promise<FixtureBundle> {
+async function buildFixtureBundle(
+  commit: string,
+  version: string,
+  options: { node?: string } = {},
+): Promise<FixtureBundle> {
   const staging = await tempDir(`build-${commit}`);
   await mkdir(join(staging, 'bin'), { recursive: true });
   await mkdir(join(staging, 'lib', 'beeline'), { recursive: true });
@@ -248,7 +254,18 @@ async function buildFixtureBundle(commit: string, version: string): Promise<Fixt
   );
   await writeFile(
     join(staging, 'bundle.json'),
-    `${JSON.stringify({ schemaVersion: 1, name: 'beeline', platform: hostPlatformKey(), commit, version }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        name: 'beeline',
+        platform: hostPlatformKey(),
+        commit,
+        version,
+        ...(options.node ? { node: options.node } : {}),
+      },
+      null,
+      2,
+    )}\n`,
   );
   const tarballPath = join(staging, 'bundle.tar.gz');
   const tar = spawnSync('tar', ['-czf', tarballPath, '-C', staging, 'lib', 'bundle.json']);
@@ -447,6 +464,55 @@ describe('self-update end to end against a local fixture manifest', () => {
     void v2;
   });
 
+  it('records an absolute Node runtime that satisfies the staged bundle\'s own engine minimum', async () => {
+    // A trivially-satisfied minimum keeps this independent of whatever Node
+    // actually runs the test suite.
+    const bundle = await buildFixtureBundle('d1node', '2.0.0', { node: '>=1.0.0' });
+    const { layout } = await makeLegacyInstall('c1alpha', '1.0.0');
+    const releaseId = await stageRelease(layout, serveManifest(bundle), {
+      file: bundle.tarballPath.split('/').pop()!,
+      sha256: bundle.sha256,
+      commit: bundle.commit,
+      version: bundle.version,
+    });
+    const recorded = await readFile(
+      join(layout.releasesRoot, releaseId, STAGED_NODE_PATH_FILE),
+      'utf8',
+    );
+    // This process's own interpreter is what staged (and smoke-tested) the
+    // release, so it is the one path every later invocation of this exact
+    // release -- including through a service manager's own, differently
+    // configured PATH -- can trust without re-resolving `node` itself.
+    expect(recorded.trim()).toBe(process.execPath);
+  });
+
+  it('refuses to stage a bundle whose declared Node requirement this process cannot satisfy', async () => {
+    const bundle = await buildFixtureBundle('d2toonew', '2.1.0', { node: '>=999.0.0' });
+    const { layout } = await makeLegacyInstall('c1alpha', '1.0.0');
+
+    await expect(
+      stageRelease(layout, serveManifest(bundle), {
+        file: bundle.tarballPath.split('/').pop()!,
+        sha256: bundle.sha256,
+        commit: bundle.commit,
+        version: bundle.version,
+      }),
+    ).rejects.toThrow(/requires Node\.js >=999\.0\.0/);
+
+    // Refused before activation: nothing left half-staged, installed bundle
+    // unchanged -- the same contract a checksum mismatch keeps above.
+    expect(await activeReleaseId(layout)).toBe('legacy');
+    expect(existsSync(join(layout.releasesRoot, bundle.commit))).toBe(false);
+  });
+
+  it('compares Node versions component-wise', () => {
+    expect(nodeVersionAtLeast('20.11.0', [20, 11, 0])).toBe(true);
+    expect(nodeVersionAtLeast('20.11.5', [20, 11, 0])).toBe(true);
+    expect(nodeVersionAtLeast('20.10.9', [20, 11, 0])).toBe(false);
+    expect(nodeVersionAtLeast('18.19.1', [20, 11, 0])).toBe(false);
+    expect(nodeVersionAtLeast('21.0.0', [20, 11, 0])).toBe(true);
+  });
+
   it('rolls back when an applied update never confirms healthy, and keeps a fresh one', async () => {
     const { layout } = await makeLegacyInstall('c1old', '1.0.0');
     const b = await buildFixtureBundle('c4newer', '1.5.0');
@@ -512,6 +578,54 @@ describe('self-update end to end against a local fixture manifest', () => {
     });
     expect((await settleUpdateAttemptOnStart(layout)).kind).toBe('pending');
     expect(await readUpdateAttempt(layout)).toBeDefined();
+  });
+
+  it('remembers a cutover-triggered rollback too, so the next check does not repeat it', async () => {
+    // The per-agent -> helper cutover's own failure path reverts through
+    // rollbackFailedSuccessor (apps/body/src/systemd.ts's installHelperService
+    // throwing, caught by cli.ts's migrateLegacyAgentUnit / top-level catch),
+    // never settleUpdateAttemptOnStart -- a crash-on-import helper can never
+    // reach that. Prove the SAME "do not re-apply" memory holds regardless of
+    // which path wrote the revert.
+    const { layout } = await makeLegacyInstall('e1old', '1.0.0');
+    const bad = await buildFixtureBundle('e2cutoverbad', '2.0.0');
+    const releaseBad = await stageRelease(layout, serveManifest(bad), {
+      file: bad.tarballPath.split('/').pop()!,
+      sha256: bad.sha256,
+      commit: bad.commit,
+      version: bad.version,
+    });
+    const { previousReleaseId } = await activateRelease(layout, releaseBad);
+    await writeUpdateAttemptFixture(layout, {
+      from: { commit: 'e1old', version: '1.0.0' },
+      to: { commit: bad.commit, version: bad.version },
+      releaseId: releaseBad,
+      previousReleaseId,
+      appliedAt: Date.now(),
+    });
+
+    const rolledBack = await rollbackFailedSuccessor(layout, undefined, {
+      probeId: 'migrating-agent',
+      failure: 'beeline-helper.service did not become healthy before the restart deadline',
+    });
+    expect(rolledBack).toBe(true);
+    expect(await activeReleaseId(layout)).toBe(previousReleaseId!);
+    expect(await readUpdateAttempt(layout)).toMatchObject({
+      releaseId: releaseBad,
+      status: 'reverted',
+      revertedBy: 'migrating-agent',
+    });
+
+    const logs: string[] = [];
+    const pinned = new SelfUpdateManager({
+      layout,
+      env: { BEELINE_UPDATE_MANIFEST_URL: serveManifest(bad) },
+      isIdle: () => true,
+      logger: (line) => logs.push(line),
+    });
+    await pinned.checkAndApply();
+    expect(await activeReleaseId(layout)).toBe(previousReleaseId!);
+    expect(logs.join('\n')).toContain('reverted after a failed served-turn proof');
   });
 
   it('resumes one attempt safely after a crash before proof, after proof, and after deadline', async () => {

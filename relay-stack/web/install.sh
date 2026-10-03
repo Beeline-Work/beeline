@@ -112,6 +112,14 @@ else
   mv "$staging" "$target"
 fi
 
+# Record the exact Node this installer just verified (lines 13-20 above), so
+# every later invocation of this release -- including through a service
+# manager's generated unit, whose PATH is never this installer's PATH -- runs
+# with a Node satisfying this bundle's requirement instead of re-resolving
+# `node` on PATH again. See apps/body/src/self-update.ts (STAGED_NODE_PATH_FILE)
+# and build-beeline-bundle.mjs's wrapper, the one reader of this file.
+command -v node >/dev/null 2>&1 && printf '%s\n' "$(command -v node)" > "$target/.node-path"
+
 # Converge an existing non-release install: a REAL directory at the anchor is
 # legacy (installer v1 output, flat or release-shaped). Preserve it as a
 # release so rollback language stays meaningful, normalizing flat bundles by

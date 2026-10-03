@@ -68,8 +68,8 @@ describe('Room→repo corner-open lazy prompt', () => {
     expect(handleSend).toContain('roomRepoAccessIssue');
     expect(handleSend).toContain('roomRepositoryResolved');
     // The composer must not be cleared before this guard — it sits before the
-    // optimistic-message / setInputText('') side effects.
-    expect(handleSend.indexOf("setInputText('')")).toBeGreaterThan(
+    // optimistic-message / clearSubmittedDraft() side effects.
+    expect(handleSend.indexOf('clearSubmittedDraft()')).toBeGreaterThan(
       handleSend.indexOf('setCornerOpenRepoPrompt(true)'),
     );
   });
@@ -87,19 +87,20 @@ describe('Room→repo corner-open lazy prompt', () => {
     expect(handleSend).toContain(
       'sendShortcut ? NO_SELECTED_MENTIONS : selectedMentionsRef.current',
     );
-    expect(handleSend).toMatch(/if \(!sendShortcut\) \{[\s\S]*setInputText\(''\)/);
+    expect(handleSend).toMatch(/if \(!sendShortcut\) \{[\s\S]*clearSubmittedDraft\(\)/);
     expect(chatSource).toContain("text: decision === 'open' ? 'go' : 'cancel'");
   });
 
   it('clears text, quoted replies, and attachments together after ordinary dispatch', () => {
     const handleSend = blockFrom(chatSource, 'const handleSend = useCallback(', 'handleSend');
     const clearBlock = blockFrom(handleSend, 'if (!sendShortcut) {', 'composer clear');
-    expect(clearBlock).toContain("inputTextRef.current = '';");
-    expect(clearBlock).toContain("setInputText('');");
+    expect(clearBlock).toContain('inputTextRef.current = composerDraft.value;');
+    expect(handleSend).toContain('composerDraft.capture()');
     expect(clearBlock).toContain(
       'current.filter((attachment) => !activePendingAttachments.includes(attachment))',
     );
-    expect(clearBlock).toContain('setReplyTarget(null);');
+    expect(clearBlock).toContain('setReplyTarget((current) => current === activeReplyTarget ? null : current);',
+    );
     expect(handleSend.indexOf('if (!sendShortcut) {')).toBeGreaterThan(
       handleSend.indexOf('addMessages([optimistic]);'),
     );

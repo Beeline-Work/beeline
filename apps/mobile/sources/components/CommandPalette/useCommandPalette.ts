@@ -1,9 +1,10 @@
+import { useTextDraft } from '@/buzz/use-text-draft';
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { TextInput } from 'react-native';
 import { Command, CommandCategory } from './types';
 
 export function useCommandPalette(commands: Command[], onClose: () => void) {
-    const [searchQuery, setSearchQuery] = useState('');
+    const [searchQuery, setSearchQuery] = useTextDraft('command-search', '');
     const [selectedIndex, setSelectedIndex] = useState(0);
     const inputRef = useRef<TextInput>(null);
 

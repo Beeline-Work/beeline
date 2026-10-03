@@ -9,6 +9,7 @@ vi.mock('react-native', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
+    AppState: { addEventListener: () => ({ remove: () => undefined }) },
     ScrollView: host('ScrollView'),
     StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
     Text: host('Text'),
@@ -129,7 +130,7 @@ describe('forward message picker', () => {
     expect(renderer.root.findAllByProps({ testID: 'forward-room-person-dm' })).toHaveLength(0);
   });
 
-  it('reports an empty search and clears it when the sheet closes', () => {
+  it('reports an empty search and retains it when the sheet closes', () => {
     const props = {
       busyRoomId: null,
       error: null,
@@ -150,6 +151,6 @@ describe('forward message picker', () => {
     act(() =>
       renderer.update(React.createElement(ForwardMessagePickerSheet, { ...props, visible: false })),
     );
-    expect(renderer.root.findByProps({ testID: 'forward-room-search' }).props.value).toBe('');
+    expect(renderer.root.findByProps({ testID: 'forward-room-search' }).props.value).toBe('nobody');
   });
 });

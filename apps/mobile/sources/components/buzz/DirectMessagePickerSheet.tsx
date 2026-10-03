@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useTextDraft } from '@/buzz/use-text-draft';
+import React, { useMemo } from 'react';
 import { ScrollView, Text, TextInput, TouchableOpacity } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { WorkspaceMemberDisplayItem } from '@/buzz/room-view-presentation';
@@ -12,6 +13,7 @@ type DirectMessagePickerSheetProps = {
   onClose: () => void;
   onMessage: (member: WorkspaceMemberDisplayItem) => void;
   visible: boolean;
+  draftContext?: string;
 };
 
 /** Restores the existing Workspace-roster DM start flow behind the deck menu. */
@@ -21,13 +23,10 @@ export function DirectMessagePickerSheet({
   onClose,
   onMessage,
   visible,
+  draftContext = 'global',
 }: DirectMessagePickerSheetProps) {
   const { theme } = useUnistyles();
-  const [query, setQuery] = useState('');
-  useEffect(() => {
-    if (!visible) setQuery('');
-  }, [visible]);
-
+  const [query, setQuery] = useTextDraft(`dm-search:${draftContext}`, '');
   const filteredMembers = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
     if (!normalizedQuery) return members;

@@ -1,3 +1,4 @@
+import { useTextDraft } from '@/buzz/use-text-draft';
 import { AgentProfileView } from '@/components/buzz/AgentProfileView';
 // Members is the canonical combined People + Agents surface. It lives in its
 // own route file: Expo Router routes every default-exporting file under `app/`,
@@ -250,10 +251,16 @@ export default function BuzzMembers({
   const [surface, setSurface] = useState<WorkspaceView | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<AgentDetailView | null>(null);
   const [editingAgentSoul, setEditingAgentSoul] = useState(false);
-  const [agentNameDraft, setAgentNameDraft] = useState('');
-  const [agentSoulDraft, setAgentSoulDraft] = useState('');
+  const [agentNameDraft, setAgentNameDraft, nameDraft] = useTextDraft(selectedAgent ? `agent-name:${workspaceId}:${selectedAgent.agent.identity.pubkey}` : null,
+    '',
+  );
+  const [agentSoulDraft, setAgentSoulDraft, soulDraft] = useTextDraft(selectedAgent ? `agent-soul:${workspaceId}:${selectedAgent.agent.identity.pubkey}` : null,
+    '',
+  );
   const [openModelAxis, setOpenModelAxis] = useState<ModelAxisKind | null>(null);
-  const [modelSearchQuery, setModelSearchQuery] = useState('');
+  const [modelSearchQuery, setModelSearchQuery] = useTextDraft(`model-search:${workspaceId}:${selectedAgent?.agent.identity.pubkey ?? ''}`,
+    '',
+  );
   const [modelAppliesNote, setModelAppliesNote] = useState<ModelAxisKind | null>(null);
   const [modelAxisError, setModelAxisError] = useState<ModelAxisKind | null>(null);
   const modelAppliesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -268,7 +275,7 @@ export default function BuzzMembers({
   const [profileRetryGeneration, setProfileRetryGeneration] = useState(0);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pairCommand, setPairCommand] = useState<string | null>(null);
-  const [memberQuery, setMemberQuery] = useState('');
+  const [memberQuery, setMemberQuery] = useTextDraft(`member-search:${workspaceId}`, '');
   const [rosterPeople, setRosterPeople] = useState<WorkspaceView['members'] | null>(null);
   const [rosterAgents, setRosterAgents] = useState<WorkspaceView['agents'] | null>(null);
   const [rosterPeopleTotal, setRosterPeopleTotal] = useState<number | null>(null);
@@ -438,7 +445,6 @@ export default function BuzzMembers({
       setRosterAgents(null);
       setRosterPeopleTotal(null);
       setRosterAgentTotal(null);
-      setMemberQuery('');
     };
   }, [retryGeneration, workspaceId]);
 
@@ -632,8 +638,8 @@ export default function BuzzMembers({
   const beginAgentSoulEdit = () => {
     if (!selectedAgent || !ownsSelectedAgent) return;
     allowProfileNavigationRef.current = false;
-    setAgentNameDraft(selectedAgent.soul?.name ?? selectedAgent.agent.identity.name);
-    setAgentSoulDraft(agentSoulCopy(selectedAgent));
+    nameDraft.initialize(selectedAgent.soul?.name ?? selectedAgent.agent.identity.name);
+    soulDraft.initialize(agentSoulCopy(selectedAgent));
     setEditingAgentSoul(true);
   };
 
@@ -643,13 +649,21 @@ export default function BuzzMembers({
     (agentNameDraft !== (selectedAgent.soul?.name ?? selectedAgent.agent.identity.name) ||
       agentSoulDraft !== agentSoulCopy(selectedAgent)),
   );
-  const confirmDiscardAgentEdit = async (): Promise<boolean> =>
-    !agentEditDirty ||
-    Modal.confirm('Discard agent changes?', 'Your name and soul edits have not been saved.', {
+  const confirmDiscardAgentEdit = async (): Promise<boolean> => {
+    if (!agentEditDirty) return true;
+    const clearName = nameDraft.capture();
+    const clearSoul = soulDraft.capture();
+    const confirmed = await Modal.confirm('Discard agent changes?', 'Your name and soul edits have not been saved.', {
       cancelText: 'Keep editing',
       confirmText: 'Discard',
       destructive: true,
     });
+    if (confirmed) {
+      clearName();
+      clearSoul();
+    }
+    return confirmed;
+  };
   const closeAgentProfile = async () => {
     if (!(await confirmDiscardAgentEdit())) return;
     allowProfileNavigationRef.current = true;
@@ -702,6 +716,8 @@ export default function BuzzMembers({
       setError('Agent soul instructions cannot be empty.');
       return;
     }
+    const clearName = nameDraft.capture(false);
+    const clearSoul = soulDraft.capture(false);
     setWorking('save-agent-soul');
     setError(null);
     try {
@@ -713,6 +729,8 @@ export default function BuzzMembers({
         avatarSeed: selectedAgent.soul?.avatarSeed ?? pubkey,
         ...(selectedAgent.soul?.avatar ? { avatar: selectedAgent.soul.avatar } : {}),
       });
+      clearName();
+      clearSoul();
       await Promise.all([
         waitForIndexedSurface(
           () => readAgent(pubkey),
@@ -777,7 +795,6 @@ export default function BuzzMembers({
             : value.selected?.effort === choiceId,
       );
       setOpenModelAxis(null);
-      setModelSearchQuery('');
       showModelAppliesNote(kind);
     } catch (reason) {
       setError(`Could not set ${kind}: ${String(reason)}`);
@@ -811,7 +828,6 @@ export default function BuzzMembers({
     axis: AgentModelConfigOption | undefined,
   ) => {
     setModelAxisError(null);
-    setModelSearchQuery('');
     if (open) {
       setOpenModelAxis(null);
       return;
@@ -942,7 +958,6 @@ export default function BuzzMembers({
       closeAgentSettings();
       if (profileAgentId) (onClose ?? (() => router.back()))();
       setOpenModelAxis(null);
-      setModelSearchQuery('');
     } catch (reason) {
       setError(`Could not remove agent: ${String(reason)}`);
     } finally {

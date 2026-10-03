@@ -14,8 +14,10 @@ import { desktopWorkPaneEventApplies } from '../../../../buzz/desktop-workbench-
 
 describe('desktop workbench wiring', () => {
   it('keeps drafts, send status, file drop, and desktop key semantics on the Room composer', () => {
-    expect(room).toContain('loadDesktopDraft(decodedId)');
-    expect(room).toContain("saveDesktopDraft(decodedId, '')");
+    expect(room).toMatch(/useTextDraft\(\s*`composer:\$\{decodedId\}`/);
+    expect(room).toContain('desktopExperience ? desktopDraftKey(decodedId) : undefined');
+    expect(room).not.toContain('saveDesktopDraft(');
+    expect(room).toContain('clearSubmittedDraft()');
     expect(room).toContain('desktopComposerKeyAction(');
     expect(room).toContain('onDrop: handleDesktopDrop');
     expect(room).toContain('onDesktopPaste={desktopExperience ? handleDesktopPaste : undefined}');
@@ -138,7 +140,7 @@ describe('desktop workbench wiring', () => {
     expect(room).toContain("commitDesktopWorkPane({ type: 'open-corner-in-main' })");
     expect(room).toContain('router.push(cornerHref(cornerId, desktopWorkRoomId))');
     expect(room).not.toContain(
-      "void saveDesktopWorkPanePreference(workPaneWindowClass, transition.state.preference);\n      router.push(cornerHref(cornerId, desktopWorkRoomId))",
+      'void saveDesktopWorkPanePreference(workPaneWindowClass, transition.state.preference);\n      router.push(cornerHref(cornerId, desktopWorkRoomId))',
     );
     expect(inspector).toContain('desktop-work-open-in-main');
     expect(inspector).toContain('label="Open in the main pane"');

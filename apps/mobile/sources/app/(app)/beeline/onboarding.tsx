@@ -1,3 +1,4 @@
+import { useTextDraft } from '@/buzz/use-text-draft';
 /** Native GitHub-first onboarding. OAuth proves lookup only; the Nostr key remains device-held. */
 import React, { useEffect, useRef, useState } from 'react';
 import { Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -141,7 +142,10 @@ export default function BuzzOnboarding() {
   const [nameFocused, setNameFocused] = useState(false);
   const [namingIdentity, setNamingIdentity] = useState<Identity | null>(null);
   const [namingClient, setNamingClient] = useState<BuzzClient | null>(null);
-  const [nameInput, setNameInput] = useState('');
+  const [nameInput, setNameInput, onboardingNameDraft] = useTextDraft('onboarding:name',
+    '',
+    namingIdentity?.publicKey ?? null,
+  );
   // The You step (handle + face): published once the monolith identity exists,
   // cleared by the crossfade into the app. `face` is a face already on record.
   const [faceStep, setFaceStep] = useState<OnboardingFaceStep | null>(null);
@@ -262,7 +266,6 @@ export default function BuzzOnboarding() {
         }
       }
       setNamingClient(client);
-      setNameInput('');
       setNamingIdentity(identity);
       setNotice(null);
     } catch {
@@ -275,7 +278,6 @@ export default function BuzzOnboarding() {
         }
       }
       setNamingClient(null);
-      setNameInput('');
       setNamingIdentity(identity);
       setNotice(null);
     }
@@ -696,6 +698,7 @@ export default function BuzzOnboarding() {
     }
     setLoadingAction('name');
     setNotice(null);
+    const clearOnboardingName = onboardingNameDraft.capture();
     try {
       const claim = await monolithPhoneOperation('claimManagedHandle', { handle: normalized });
       try {
@@ -712,6 +715,7 @@ export default function BuzzOnboarding() {
         // The authenticated server assignment is authoritative. Profile
         // publication is best-effort here and can reconcile on next launch.
       }
+      clearOnboardingName();
       await savePreferredPersonName(namingIdentity.publicKey, claim.name).catch(() => undefined);
       await clearPersonNameOnboardingPending().catch(() => undefined);
       router.replace('/beeline/channels');

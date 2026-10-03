@@ -8,6 +8,7 @@ vi.mock('react-native', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
+    AppState: { addEventListener: () => ({ remove: () => undefined }) },
     Pressable: host('Pressable'),
     ScrollView: host('ScrollView'),
     Text: host('Text'),
@@ -53,7 +54,7 @@ import { CreatePollSheet } from './CreatePollSheet';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('CreatePollSheet', () => {
-  it('keeps Create disabled until the question and both options are valid, then submits the draft', () => {
+  it('keeps Create disabled until the question and both options are valid, then submits the draft', async () => {
     const onCreate = vi.fn();
     let renderer: any;
     act(() => {
@@ -70,7 +71,9 @@ describe('CreatePollSheet', () => {
     expect(find('create-poll-submit').props.disabled).toBe(true);
     act(() => find('create-poll-option-1').props.onChangeText(' No '));
     expect(find('create-poll-submit').props.disabled).toBe(false);
-    act(() => find('create-poll-submit').props.onPress());
+    await act(async () => {
+      await find('create-poll-submit').props.onPress();
+    });
     expect(onCreate).toHaveBeenCalledWith({
       prompt: 'Ship?',
       options: [

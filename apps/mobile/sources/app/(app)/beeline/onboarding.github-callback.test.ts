@@ -150,6 +150,7 @@ vi.mock('react-native', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
+    AppState: { addEventListener: () => ({ remove: () => undefined }) },
     Platform: { OS: 'android', select: (choices: Record<string, unknown>) => choices.android },
     Text: host('Text'),
     TextInput: host('TextInput'),

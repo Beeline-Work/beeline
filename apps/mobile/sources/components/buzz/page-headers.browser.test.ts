@@ -33,6 +33,7 @@ function shims(mobile: string): Record<string, string> {
       async ensureClient() { return { surfaceSubscribe: async () => () => undefined }; }
     }`,
     '@/auth/buzz-identity-storage': `export const getEffectiveRelayUrl = async () => 'https://relay.test';
+    export const loadBuzzViewerPubkey = async () => 'a'.repeat(64);
     export const loadBuzzIdentity = async () => ({ publicKey: '${'a'.repeat(64)}' });`,
     '@/buzz/surface-storage': `export const surfaceAddress = () => 'address';
     export const mobileSurfaceCache = { read: async () => null, write: async () => undefined };`,

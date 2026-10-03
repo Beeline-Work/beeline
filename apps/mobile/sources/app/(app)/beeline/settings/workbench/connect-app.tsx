@@ -1,3 +1,4 @@
+import { useTextDraft } from '@/buzz/use-text-draft';
 import React, { useEffect, useMemo, useState } from 'react';
 import { ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -22,7 +23,7 @@ export default function ConnectAppScreen() {
   const workspaceId = first(params.workspaceId) ?? '';
   const viewerId = first(params.viewerId) ?? '';
   const insets = useSafeAreaInsets();
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useTextDraft(`app-search:${workspaceId}`, '', viewerId);
   const [apps, setApps] = useState<readonly WorkbenchApp[]>([]);
   const [appCatalog, setAppCatalog] = useState<readonly { appKey: string; description?: string; logo?: string }[]>([]);
   const [helpers, setHelpers] = useState<readonly WorkbenchHelper[]>([]);

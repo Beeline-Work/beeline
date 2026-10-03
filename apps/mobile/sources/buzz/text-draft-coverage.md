@@ -1,0 +1,61 @@
+# Local text drafts
+
+A person who types in a message, form, editor, or search field sees their saved draft restored when they return.
+
+`use-text-draft.ts` keeps the controlled value in React state. `text-draft-store.ts` hydrates once, debounces edits for 500ms, orders per-key reads/writes/deletes, and catches storage errors. Keys contain the signed-in public identity and a stable screen/resource/field context. Public identity changes reset the active state; they never carry text to another account. Typing during the first identity read is retained. Server defaults use `initialize`, so they cannot overwrite an edit or restored draft.
+
+Background, navigation blur, unmount/context replacement and browser pagehide flush pending edits where possible. The flush is asynchronous: a crash before the debounce or flush write finishes can still lose those edits. Once AsyncStorage has successfully written a draft, it resides in device storage independently of the React process and is available after restart/reboot. This is local storage; clearing app data, uninstalling, storage failure or device loss can remove it. No attachment bytes are stored.
+
+Submission captures the draft's revision before asynchronous work. Success cancels pending saves and removes only that revision. Per-key revision guards also protect typing in a newly mounted owner from an older submission completing. Failed validation/submission keeps the draft. Emptying a search intentionally removes it. Profile editors retain the submitted text as a default after deleting its draft, so reopening an editor still shows the saved profile.
+
+## Production input inventory
+
+The inventory searches production TS/TSX for `TextInput`, `HullDialogInput`, `onChangeText`, DOM inputs and controlled editor changes. Shared controlled inputs persist at their state owners.
+
+| Input/state owner                                             | Context and success boundary                                                                                                                                                                                                                                           |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Chat `_chat-surface.tsx`: Room/corner/DM message composer     | Identity + channel; clear after durable outbox enqueue. Later network failure retains the recoverable outbox message, rather than duplicating its draft. New typing, shortcuts, staged forwards, mentions, speech and native revisions retain their existing behavior. |
+| Chat Room/corner rename editor                                | Identity + channel + rename field; clear after rename succeeds. Server name is a default, not a draft write.                                                                                                                                                           |
+| `DesktopRoomInspector.tsx`: corner composer                   | Identity + inspector + corner; clear after publish succeeds. Distinct from the main composer so simultaneous surfaces do not compete.                                                                                                                                  |
+| `channels.tsx`: New Room name and Room/message search         | Identity + Workspace + field; name clears on acknowledged creation; search survives surface switches/dismissal.                                                                                                                                                        |
+| `SidebarView.tsx`: Room/message search                        | Identity + Workspace + search context; no submission, retain until intentionally emptied.                                                                                                                                                                              |
+| `NewRoomDialog.tsx`: repository creation name                 | Identity + parent Workspace + installation; clear after repository creation succeeds; closing the step retains edits.                                                                                                                                                  |
+| `RepoPicker.tsx`: repository search / inline creation name    | Identity + parent channel/Workspace + picker location + installation/field; clear creation after success, retain search.                                                                                                                                               |
+| `CreatePollSheet.tsx`: question and option labels             | Identity + Room/corner + field; option array is persisted together; clear only when the parent's creation operation reports success. Dismissal and validation failure retain fields.                                                                                   |
+| `DirectMessagePickerSheet.tsx`: member search                 | Identity + Workspace + picker; retains when dismissed.                                                                                                                                                                                                                 |
+| `ForwardMessagePickerSheet.tsx`: destination search           | Identity + source channel + picker; retains when dismissed.                                                                                                                                                                                                            |
+| `members.tsx`: agent name/soul edits, model and member search | Identity + Workspace + agent + field where applicable; edited profile fields clear after the profile write succeeds; searches retain until emptied.                                                                                                                    |
+| Workspace settings: rename and delete-confirmation text       | Identity + Workspace + field; clear after successful rename/delete; closing confirmation retains text.                                                                                                                                                                 |
+| `create-workspace.tsx`: Workspace name                        | Identity + creation screen + field; clear after create/required rename succeeds. The creation request's idempotent Workspace id is unchanged.                                                                                                                          |
+| `onboarding.tsx`: public handle/name                          | Naming identity + onboarding field; clear after managed handle claim succeeds; sign-in and secret handling unchanged.                                                                                                                                                  |
+| `connect-app.tsx`: app catalog search                         | Viewer identity + Workspace + app search; retain until emptied.                                                                                                                                                                                                        |
+| `wallet-send-form.tsx`: amount and recipient                  | Identity + Workspace + wallet field; clear only for `sent`; insufficient funds, expired delegation and failures retain edits. Chain selection, consent and execution remain unchanged.                                                                                 |
+| `useCommandPalette.ts`: command search                        | Identity + command palette; retain until emptied.                                                                                                                                                                                                                      |
+| `WebPromptModal.tsx`: report-issue note                       | Opt-in `PromptDraft` context includes Room + message. The prompt hands a captured clear callback to the report operation; confirmation alone never clears it, and report failure preserves it.                                                                         |
+
+`ConversationComposer`, `RoomListToolbar`, `AgentProfileView`, `CommandPaletteInput`, `HullDialogInput` and the settings confirmation input remain controlled presentation components. `RoomMessageVariants` uses input types for composer references and does not own another editable field. Corner Apps currently provide no app-owned editable text fields. File/artifact views are read-only. The identity settings profile-name state is a loaded display value, not an editable field.
+
+`NewCornerDialog` has no production caller in this tree; its title props are used only by tests/design proofs. Active human corner creation chooses a random name without a text input. A future production caller must persist its title at that state owner.
+
+## Sensitive exclusions
+
+- Onboarding private-key import, generated/revealed private keys, passwords, credentials and one-time authentication codes are never drafts.
+- `community.tsx` invite input carries an access token; it remains ephemeral.
+- `WebPromptModal` secure-text content cannot enable storage, even if a draft context is supplied. Unknown generic prompts are not implicitly persisted; the sole production plain-text caller (report issue) explicitly supplies its stable context and success callback.
+- External provider/webview authentication fields are provider-owned, not app-owned text state.
+
+## Desktop migration
+
+The main desktop composer reads its legacy per-channel `desktopDraftKey` only when the new identity-scoped record is absent. It copies the text and removes that legacy record in the ordered hydration operation. There is one active composer writer, with 500ms debounce on all platforms. A cleared draft cannot be reimported. Legacy drafts had no identity metadata; migration assigns the existing channel draft to the active desktop viewer once. Desktop pane preferences and outbox delivery are unaffected.
+
+## Evidence
+
+`text-draft-store.test.ts` covers restore/debounce, late hydration, staged text, success/failure, ordered write/delete, keys, desktop migration, malformed data and storage errors. `text-drafts.integration.test.tsx` mounts the real poll, wallet and prompt state owners against file-backed storage, exercises user input, background/remount, dismissal, validation, success/failure, newer typing, identities/contexts, secret exclusion and navigation flush. Its printed demonstration reports restored question/option values from the rendered controls. This is simulated lifecycle evidence, not native process-death/reboot evidence.
+
+Native verification observations and final gate results are recorded with the pull request; do not infer native verification from remount tests.
+
+## Native verification attempt
+
+On the resumed validation turn, `adb devices` returned no attached devices and `/home/alan/android-sdk/emulator/emulator -list-avds` returned no configured virtual devices. The original type → background → process death → reopen path therefore could not be reproduced or demonstrated on a native device in this turn. A proof-project source tree remains from the interrupted turn, but its force-stop/reboot receipts were not available to verify; no native success is claimed here.
+
+The file-backed rendered state-owner test demonstrates background flush and restored poll fields after remount. Store tests exercise restart-like restoration, ordering and submission races. These are simulated lifecycle tests, not evidence of a full signed-in Room/corner/DM process death or reboot. Instantaneous crashes before a completed write remain outside the durability claim.

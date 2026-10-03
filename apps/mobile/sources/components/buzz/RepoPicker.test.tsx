@@ -7,6 +7,7 @@ vi.mock('react-native', async () => {
   const React = await import('react');
   const host = (name: string) => (props: any) => React.createElement(name, props, props.children);
   return {
+    AppState: { addEventListener: () => ({ remove: () => undefined }) },
     SectionList: host('SectionList'),
     Text: host('Text'),
     TextInput: host('TextInput'),

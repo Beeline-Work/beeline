@@ -2116,10 +2116,13 @@ export class MonolithCornerTurnLoop {
     }
     if (!token) throw new Error('corner repository credential lookup returned no token');
     const stop = new AbortController();
-    const watchStop = setInterval(() => {
+    let watchStop: NodeJS.Timeout | undefined;
+    const checkStop = () => {
       if (this.forcedStop || (this.currentTurn && this.stoppedTurns.has(this.currentTurn.requestId)))
         stop.abort();
-    }, 25);
+      else watchStop = setTimeout(checkStop, 25);
+    };
+    checkStop();
     try {
       await syncCornerBranch({
         worktreePath: this.options.worktreePath,
@@ -2128,7 +2131,7 @@ export class MonolithCornerTurnLoop {
         signal: this.options.signal ? AbortSignal.any([this.options.signal, stop.signal]) : stop.signal,
       });
     } finally {
-      clearInterval(watchStop);
+      clearTimeout(watchStop);
     }
   }
 

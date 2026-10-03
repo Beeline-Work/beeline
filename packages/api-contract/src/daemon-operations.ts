@@ -1080,6 +1080,8 @@ export type PostTargetBranchProposalInput = RoomInput & {
 };
 export type CreateCornerInput = TurnOutputAuthority &
   RoomInput & {
+    /** Exact handle, without @, of an agent member of the parent Room; defaults to the caller. */
+    readonly implementer?: string;
     readonly hold?: boolean;
     readonly requestId: string;
     /** Stable for one tool call, distinct between separate calls in the same turn. */

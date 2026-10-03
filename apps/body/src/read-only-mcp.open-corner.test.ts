@@ -208,6 +208,20 @@ async function callTool(
 }
 
 describe('open_corner over the grok wire', () => {
+  it('forwards the exact implementer handle through the MCP opening path', async () => {
+    const door = await daemonDoor();
+    const response = await callTool(door.origin, {
+      name: 'Dispatch work', objective: 'Dispatch this work', implementer: 'beta',
+      brief: { spec: 'Dispatch this work', approval: { sourceMessageId: 'approved' } },
+    });
+    expect(response.result?.isError).not.toBe(true);
+    expect(door.calls.find((call) => call.operation === 'createCorner')).toMatchObject({
+      roomId: ROOM, implementer: 'beta', requestId: 'command-request', generationId: 'g1',
+      brief: { spec: 'Dispatch this work', approval: { sourceMessageId: 'approved' } },
+    });
+    expect(JSON.parse(response.result!.content[0]!.text)).toMatchObject({ cornerId: CORNER, status: 'starting' });
+  });
+
   it('gives separate calls in one turn independent idempotency keys', async () => {
     const door = await daemonDoor();
     await callTool(

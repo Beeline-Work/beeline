@@ -3,7 +3,7 @@ import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import type { ConnectorInstallState } from './workbench';
 
-type Snapshot<T> = { data: T | undefined; loading: boolean; error: string | null };
+type Snapshot<T> = { data: T | undefined; loading: boolean; error: string | null; successVersion: number };
 type Options<T> = {
   load(): Promise<T>;
   subscribe?: (invalidate: () => void, reconnect: () => void) => Promise<() => void>;
@@ -12,11 +12,11 @@ type Options<T> = {
   missLimit?: number;
 };
 const resources = new Map<string, Resource<any>>();
-const empty: Snapshot<never> = { data: undefined, loading: false, error: null };
+const empty: Snapshot<never> = { data: undefined, loading: false, error: null, successVersion: 0 };
 
 /** Shared by key, including when installer and sign-in are mounted together. */
 class Resource<T> {
-  snapshot: Snapshot<T> = { data: undefined, loading: true, error: null };
+  snapshot: Snapshot<T> = { data: undefined, loading: true, error: null, successVersion: 0 };
   listeners = new Set<() => void>();
   flight = false;
   dirty = false;
@@ -54,7 +54,7 @@ class Resource<T> {
       const data = await this.options.load();
       if (this.listeners.size) {
         this.misses = 0;
-        this.publish({ data, loading: false, error: null });
+        this.publish({ data, loading: false, error: null, successVersion: this.snapshot.successVersion + 1 });
       }
     } catch (cause) {
       if (this.listeners.size) {

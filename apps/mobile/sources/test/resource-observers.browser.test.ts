@@ -152,4 +152,45 @@ describe('resource observers in the desktop web renderer', () => {
       expect(JSON.parse(result.result).ownerText).toContain('Second agent');
     } finally { await rm(directory, { recursive: true, force: true }); }
   }, 90000);
+  it('Reproduction R9-OBS-06: workflow alerts stay quiet through a failure streak', async () => {
+    const mobile = process.cwd();
+    const directory = await mkdtemp(path.join(mobile, 'sources/test/observer-proof-'));
+    try {
+      const entry = path.join(directory, 'proof.jsx');
+      await writeFile(entry, `import React from 'react'; import { createRoot } from 'react-dom/client';
+        import { CornerObjectiveLine } from '@/components/buzz/CornerObjectiveLine';
+        import { useCornerWorkflowRun } from '@/buzz/use-corner-workflow-run';
+        function App() {
+          const [error, setError] = React.useState(null);
+          const run = useCornerWorkflowRun('corner', error => {
+            globalThis.__alerts = (globalThis.__alerts ?? 0) + 1; setError(error);
+          });
+          return <><CornerObjectiveLine objective="Workflow proof" workflow={run} onOpenWorkflow={() => {}} />
+            {error && <div role="alert">Workflow unavailable: {error}</div>}</>;
+        }
+        createRoot(document.getElementById('root')).render(<App />);
+        const push = () => globalThis.__listener({ monolithLive: { type: 'invalidate', roomId: 'corner', reason: 'message' } });
+        setTimeout(() => globalThis.__listener({ monolithLive: { type: 'subscribed', roomId: 'corner' } }), 150);
+        for (let i = 1; i <= 5; i++) setTimeout(push, i * 200);
+        setTimeout(() => { globalThis.__streakAlerts = globalThis.__alerts; globalThis.__recover = true; push(); }, 1200);
+        setTimeout(() => { globalThis.__recover = false; push(); }, 1500);
+        setTimeout(() => { document.getElementById('result').textContent = JSON.stringify({
+          streakAlerts: globalThis.__streakAlerts, alertsAfterSuccess: globalThis.__alerts,
+          reads: globalThis.__reads, visibleError: document.querySelector('[role="alert"]')?.textContent }); }, 1800);`);
+      const result = await runBrowserProof({ entry, mobile, width: 1000, budgetMs: 2200, shims: {
+        ...webProofShims(mobile),
+        '@/sync/transport/live-connection': `export const sharedLiveConnection = () => ({ register: async (_, listener) => { globalThis.__listener = listener; return () => {}; } });`,
+        '@/sync/transport/monolith-operation': `export const monolithPhoneOperation = async () => {
+          globalThis.__reads = (globalThis.__reads ?? 0) + 1;
+          await new Promise(resolve => setTimeout(resolve, 80));
+          if (!globalThis.__recover) throw new Error('offline'); return { workflows: [] };
+        };`,
+      } });
+      expect(result.status, result.stderr).toBe(0);
+      console.log('Reproduction R9-OBS-06 desktop web:', result.result);
+      expect(JSON.parse(result.result)).toMatchObject({ streakAlerts: 1, alertsAfterSuccess: 2, reads: 8 });
+      expect(JSON.parse(result.result).visibleError).toContain('offline');
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  }, 90000);
+
 });

@@ -1,3 +1,4 @@
+import { requireWorkflowOwner } from './workflow-ownership.js';
 import { createHash, randomBytes } from 'node:crypto';
 import {
   workflowContractError,
@@ -296,16 +297,34 @@ export async function saveWorkflow(
   if (!room) throw new Error('workflow room not found');
   const markdown = JSON.stringify(contract);
   assertSkillTextSafe(contract.description, markdown);
-  const { version } = await applySkillRevision(database, {
-    workspaceId: room.workspace_id,
-    sourceRoomId: command.room_id,
-    slug: contract.name,
-    description: contract.description,
-    markdown,
-    kind: 'workflow',
-    sourceMessageIds: [command.root_source_message_id],
-  }, afterCommit);
-  return { slug: contract.name, version };
+  return database.transaction(async (db) => {
+    const member = await db.query(
+      `SELECT 1 FROM identities identity JOIN memberships member ON member.identity_id=identity.id
+    WHERE identity.id=$1 AND identity.kind='agent' AND member.room_id=$2 AND member.removed_at IS NULL`,
+      [command.agent_id, command.room_id],
+    );
+    if (!member.rowCount)
+      throw new Error('workflow saver must be a current agent member of this Room');
+    const { skillId, version } = await applySkillRevision(
+      db,
+      {
+        workspaceId: room.workspace_id,
+        sourceRoomId: command.room_id,
+        slug: contract.name,
+        description: contract.description,
+        markdown,
+        kind: 'workflow',
+        sourceMessageIds: [command.root_source_message_id],
+      },
+      afterCommit,
+    );
+    await db.query(
+      `UPDATE workspace_skills SET creator_agent_id=$2,owner_agent_id=$2,ownership_initialized=true
+    WHERE id=$1 AND $3=1`,
+      [skillId, command.agent_id, version],
+    );
+    return { slug: contract.name, version };
+  });
 }
 
 /** One agent id, or 1-WORKFLOW_ROLE_AGENTS_MAX distinct agent ids in order; `null` for anything else. */
@@ -319,7 +338,7 @@ function roleAgentList(binding: WorkflowRoleBinding): string[] | null {
 
 export async function startWorkflow(
   database: SqlDatabase,
-  command: CommandRow,
+  command: Pick<CommandRow, 'room_id' | 'agent_id'> & { reason?: string },
   input: { name: string; roleBindings: Readonly<Record<string, WorkflowRoleBinding>> },
 ): Promise<{ runId: string; state: string }> {
   if (typeof input.name !== 'string' || !input.name) throw new Error('workflow name is required');
@@ -345,6 +364,7 @@ export async function startWorkflow(
       )
     ).rows[0];
     if (!skill) throw new Error('workflow is unavailable');
+    const ownership = await requireWorkflowOwner(db, command.room_id, input.name, command.agent_id);
     const contract = JSON.parse(skill.markdown) as WorkflowContract;
     const missingRole = contract.roles.find((role) => !input.roleBindings[role]);
     if (missingRole) throw new Error(`role binding is missing for ${missingRole}`);
@@ -356,7 +376,9 @@ export async function startWorkflow(
         typeof raw === 'string'
           ? await resolveHandleBinding(db, command.room_id, raw)
           : Array.isArray(raw)
-            ? await Promise.all(raw.map((entry) => resolveHandleBinding(db, command.room_id, entry)))
+            ? await Promise.all(
+                raw.map((entry) => resolveHandleBinding(db, command.room_id, entry)),
+              )
             : raw,
       );
       if (!agents) {
@@ -367,7 +389,9 @@ export async function startWorkflow(
       if (agents.length === 1) roleBindings[role] = agents[0]!;
       else roleAgents[role] = agents;
     }
-    const boundIds = [...new Set([...Object.values(roleBindings), ...Object.values(roleAgents).flat()])];
+    const boundIds = [
+      ...new Set([...Object.values(roleBindings), ...Object.values(roleAgents).flat()]),
+    ];
     if (boundIds.length) {
       const agents = await db.query<{ identity_id: string }>(
         `SELECT member.identity_id FROM memberships member
@@ -412,6 +436,13 @@ export async function startWorkflow(
         runId,
         workflowSlug: contract.name,
         workflowVersion: skill.current_version,
+        ownerAtStart: ownership.owner!.id,
+        startKind:
+          starter?.kind === 'human'
+            ? 'human_admin'
+            : command.reason === 'schedule'
+              ? 'schedule'
+              : 'owner',
         roleBindings,
         ...(Object.keys(roleAgents).length ? { roleAgents } : {}),
         toState: contract.start,

@@ -77,6 +77,7 @@
         "scripts/star-prompt-proof.tsx",
         "scripts/scheduled-work-proof.tsx",
         "scripts/workflow-run-proof.tsx",
+        "scripts/workflow-owner-proof.tsx",
         "scripts/member-picker-nav-inset-proof.tsx",
         "scripts/new-room-nav-gap-proof.tsx",
       ],

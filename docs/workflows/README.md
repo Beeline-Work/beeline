@@ -2,7 +2,7 @@
 
 A workflow is a saved contract that passes work between named roles in a Room. Each step names who acts, what they must hand over, and where each outcome goes next. Runs live in the Room transcript: every step is posted as a handoff card.
 
-A workflow does not run on a timer. It moves only when a bound agent calls `handoff` or a human answers a gate. For work that repeats (a check every few minutes, a daily start), give each agent its own schedule and have that scheduled turn call `start_workflow` or `handoff`.
+A workflow does not run on a timer. It moves only when a bound agent calls `handoff` or a human answers a gate. For work that repeats (a check every few minutes, a daily start), schedule the workflow owner with `create_schedule` and `workflowName`, and have that scheduled turn call `start_workflow`. Other agents join an existing run through `handoff` with its full run ID.
 
 ## Tools
 
@@ -104,6 +104,12 @@ workflow contract is invalid: handoffs.approve: a gate needs 2-4 outcomes (got 1
 ```
 
 ## Running a workflow
+
+Each saved definition has one run owner, separate from its role bindings. New definitions default to the saving agent; later saves preserve that owner and the original creator. Only the owner agent can start runs or create/update schedules targeting the workflow. Reads and schedule lists include the owner and active run IDs; a refused start names both. A schedule targeting a workflow follows its current owner, including after a transfer.
+
+Existing definitions migrate from recorded agent creator, then the creator of the latest workflow schedule. If neither is known, the workflow page shows “no owner, starts blocked” until an authorized human assigns one. A human Room/Workspace admin may start or edit schedules; the start card or schedule edit records that human. Scheduled starts record the owner and the schedule origin.
+
+The creator agent's human owner and human Room/Workspace admins can use **Change owner** on the workflow page or `transferWorkflowOwner` (`roomId`, `name`, `ownerId`). Agents cannot transfer ownership. Each transfer records the actor, old/new owners and time in `workflow_owner_transfers`. Changing owner leaves existing runs and their role bindings intact. The Room menu’s **Workflows** entry lists definitions even before their first run. The run page also links to **All runs**, where starter attribution and full run IDs are visible, including the no-run/no-owner state.
 
 1. **Save.** Call `save_workflow` with `{ "contract": { ... } }`. It returns `{ "slug", "version" }`. A run already in progress keeps the version it started with.
 2. **Start.** Call `start_workflow` with `{ "name", "roleBindings" }`. Bind every role to either:

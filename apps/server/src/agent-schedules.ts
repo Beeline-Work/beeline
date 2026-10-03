@@ -1,3 +1,4 @@
+import { readWorkflowOwnership } from './workflow-ownership.js';
 import { createAgentCommand } from './agent-command.js';
 import { randomBytes } from 'node:crypto';
 import { CronExpressionParser } from 'cron-parser';
@@ -75,6 +76,7 @@ type DueSchedule = {
   room_id: string;
   agent_id: string;
   creator_id: string;
+  workflow_slug: string | null;
   cadence: RoomScheduleCadence;
   message: string;
   max_runs: number | null;
@@ -102,12 +104,12 @@ export class AgentScheduleLoop {
 
   async runOnce(now = new Date()): Promise<number> {
     const due = await this.database.query<DueSchedule>(
-      `SELECT schedule.id,schedule.room_id,schedule.agent_id,schedule.creator_id,
+      `SELECT schedule.id,schedule.room_id,schedule.agent_id,schedule.creator_id,schedule.workflow_slug,
         schedule.cadence,schedule.message,schedule.max_runs,schedule.run_count,schedule.next_run_at
        FROM agent_schedules schedule
        JOIN rooms room ON room.id=schedule.room_id AND room.archived_at IS NULL
        JOIN identities creator ON creator.id=schedule.creator_id
-         AND (creator.kind='human' OR creator.id=schedule.agent_id)
+         AND (creator.kind='human' OR creator.id=schedule.agent_id OR schedule.workflow_slug IS NOT NULL)
        JOIN identities agent ON agent.id=schedule.agent_id AND agent.kind='agent'
        JOIN memberships creator_membership ON creator_membership.room_id=schedule.room_id
          AND creator_membership.identity_id=schedule.creator_id AND creator_membership.removed_at IS NULL
@@ -122,13 +124,13 @@ export class AgentScheduleLoop {
       const roomId = await this.database.transaction(async (database) => {
         const current = (
           await database.query<DueSchedule>(
-            `SELECT schedule.id,schedule.room_id,schedule.agent_id,schedule.creator_id,
+            `SELECT schedule.id,schedule.room_id,schedule.agent_id,schedule.creator_id,schedule.workflow_slug,
               schedule.cadence,schedule.message,schedule.max_runs,schedule.run_count,schedule.next_run_at,
               agent.name agent_name
              FROM agent_schedules schedule
              JOIN rooms room ON room.id=schedule.room_id AND room.archived_at IS NULL
              JOIN identities creator ON creator.id=schedule.creator_id
-               AND (creator.kind='human' OR creator.id=schedule.agent_id)
+               AND (creator.kind='human' OR creator.id=schedule.agent_id OR schedule.workflow_slug IS NOT NULL)
              JOIN identities agent ON agent.id=schedule.agent_id AND agent.kind='agent'
              JOIN memberships creator_membership ON creator_membership.room_id=schedule.room_id
                AND creator_membership.identity_id=schedule.creator_id
@@ -141,6 +143,14 @@ export class AgentScheduleLoop {
           )
         ).rows[0];
         if (!current) return undefined;
+        if (current.workflow_slug) {
+          const ownership = await readWorkflowOwnership(database, current.room_id, current.workflow_slug, current.agent_id);
+          if (!ownership.owner) return undefined;
+          const member = await database.query(`SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`, [current.room_id, ownership.owner.id]);
+          if (!member.rowCount) return undefined;
+          current.agent_id = ownership.owner.id;
+          current.agent_name = ownership.owner.name;
+        }
         const messageId = randomBytes(32).toString('hex');
         const claim = await database.query(
           `INSERT INTO agent_schedule_occurrences(schedule_id,scheduled_for,message_id)
@@ -152,7 +162,7 @@ export class AgentScheduleLoop {
         // that agent: its own-authored rows never reach the agent's inbox and the
         // transcript would show the agent talking to itself. A human creator
         // keeps authoring its schedule posts exactly as before.
-        const selfCreated = current.creator_id === current.agent_id;
+        const selfCreated = current.workflow_slug !== null || current.creator_id === current.agent_id;
         if (selfCreated) {
           await database.query(
             `INSERT INTO identities(id,kind,name,handle,hidden_from_roster)

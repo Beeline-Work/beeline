@@ -1477,6 +1477,44 @@ function readManagedRoom(value: unknown): WorkspaceManagedRoomView | null {
   };
 }
 
+function readCornerBrief(value: unknown): NonNullable<RoomView['cornerBrief']> | null {
+  const item = record(value);
+  if (!item || !integer(item.revision) || item.revision < 1 || typeof item.spec !== 'string')
+    return null;
+  const attachments = requireList(item.attachments, (candidate) => {
+    const file = record(candidate);
+    if (
+      !file ||
+      typeof file.title !== 'string' ||
+      typeof file.purpose !== 'string' ||
+      typeof file.required !== 'boolean' ||
+      !httpUrl(file.url)
+    )
+      return null;
+    return { title: file.title, purpose: file.purpose, required: file.required, url: file.url };
+  });
+  if (!attachments) return null;
+  const approval = record(item.approval);
+  return {
+    revision: item.revision,
+    spec: item.spec,
+    attachments,
+    ...field(
+      'approval',
+      approval &&
+        hex64(approval.sourceMessageId) &&
+        typeof approval.text === 'string' &&
+        typeof approval.approverName === 'string'
+        ? {
+            sourceMessageId: approval.sourceMessageId,
+            text: approval.text,
+            approverName: approval.approverName,
+          }
+        : undefined,
+    ),
+  };
+}
+
 export function readRoomView(value: unknown): RoomView | null {
   const item = record(value);
   const room = readHeader(item?.room);
@@ -1513,6 +1551,7 @@ export function readRoomView(value: unknown): RoomView | null {
     ...field('cornerOpenerAgentId', hex64(item.cornerOpenerAgentId) ? item.cornerOpenerAgentId : undefined),
     ...field('briefing', readList(item.briefing, readRoomViewMessage, ROOM_VIEW_BRIEFING_LIMIT)),
     ...field('cornerPlan', readPlan(item.cornerPlan)),
+    ...field('cornerBrief', readCornerBrief(item.cornerBrief)),
     ...field('repository', readRepository(item.repository)),
     ...field('cornerLifecycle', readCornerLifecycle(item.cornerLifecycle)),
     ...field('cornerOwed', typeof item.cornerOwed === 'boolean' ? item.cornerOwed : undefined),

@@ -41,6 +41,7 @@ vi.mock('react-native-unistyles', async () => {
 });
 
 import type { WorkflowRunSummaryView } from '@beeline/api-contract/phone';
+import { readRoomView } from '@beeline/api-contract/phone';
 import { workflowRunHref } from '@/buzz/workflow-run-copy';
 import { CornerObjectiveLine } from './CornerObjectiveLine';
 
@@ -122,9 +123,15 @@ describe('CornerObjectiveLine', () => {
 
   it('shows the current brief above the compact workflow and opens its full revision', () => {
     const onOpenBrief = vi.fn();
+    const view = readRoomView({
+      room: { id: '11111111-1111-4111-8111-111111111111', name: 'Saved brief' },
+      messages: [],
+      cornerBrief: { revision: 2, spec: '## Intent\n\n> Make the request readable', attachments: [] },
+    });
+    const brief = view?.cornerBrief;
     const renderer = render(
-      <CornerObjectiveLine objective="Ship it" brief={'## Intent\n\n> Make the request readable'}
-        onOpenBrief={onOpenBrief} onOpenWorkflow={() => undefined} workflow={RUN} />,
+      <CornerObjectiveLine objective="Ship it" brief={brief?.spec}
+        onOpenBrief={brief ? () => onOpenBrief(brief) : undefined} onOpenWorkflow={() => undefined} workflow={RUN} />,
     );
     expect(renderer.root.findByProps({ testID: 'corner-objective-line-brief-preview' }).props.children)
       .toBe('Make the request readable');
@@ -143,6 +150,7 @@ describe('CornerObjectiveLine', () => {
     expect(actions?.findAllByType('Pressable' as any)).toHaveLength(2);
     act(() => link.props.onPress());
     expect(onOpenBrief).toHaveBeenCalledTimes(1);
+    expect(onOpenBrief).toHaveBeenCalledWith(view?.cornerBrief);
 
     expect(
       render(<CornerObjectiveLine objective="Ship it" />).root.findAllByType('Pressable' as any),

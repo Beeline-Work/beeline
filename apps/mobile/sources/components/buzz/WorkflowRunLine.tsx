@@ -3,6 +3,7 @@ import { Linking, Pressable, Text, View } from 'react-native';
 import Svg, { Circle, Line, Path } from 'react-native-svg';
 import { StyleSheet } from 'react-native-unistyles';
 import type {
+  WorkflowActorView,
   WorkflowContract,
   WorkflowOpenedCornerView,
   WorkflowRunDetailView,
@@ -19,13 +20,16 @@ import {
   deliveredFields,
   formatRunDuration,
   outcomeLabel,
-  stateRole,
   stepSeconds,
   visitSeconds,
+  workflowStepAssignee,
   workflowStepMeta,
 } from '@/buzz/workflow-run-copy';
+import { identityPalette, isGeneratedAgentAvatarUrl } from '@/buzz/identity-mark';
+import { previewHandle } from '@/buzz/room-list-row';
 import { CORNER_META_SIZE, CornerGlyph } from './CornerGlyph';
 import { DECORATIVE_GLYPH_PROPS } from './decorative-glyph';
+import { IdentityMark } from './IdentityMark';
 import { HullLivePulse } from './MonoHull';
 
 const CIRCLE = 20;
@@ -37,6 +41,8 @@ const LINE_X = 28;
 const COPY_X = 56;
 /** The readout's line-number column; item lists hang under the key, past it. */
 const LINE_INDEX_WIDTH = 24;
+/** The assignee's mark: the step circle's size, so the row keeps one height. */
+const ASSIGNEE_MARK = CIRCLE;
 
 const CLOCK = new Intl.DateTimeFormat(undefined, {
   hour: '2-digit',
@@ -182,11 +188,14 @@ function Segment({
 export function WorkflowRunLine({
   detail,
   now,
+  liveDrafts,
   onOpenCorner,
   testID = 'workflow-run-line',
 }: {
   detail: WorkflowRunDetailView;
   now: number;
+  /** Each working agent's streaming reply in the run's Room, by agent id. */
+  liveDrafts?: ReadonlyMap<string, string>;
   onOpenCorner: (corner: WorkflowOpenedCornerView) => void;
   testID?: string;
 }) {
@@ -213,6 +222,7 @@ export function WorkflowRunLine({
           detail={detail}
           expanded={open.has(step.state)}
           key={step.state}
+          liveDrafts={liveDrafts}
           now={now}
           onOpenCorner={onOpenCorner}
           onToggle={() => toggle(step.state)}
@@ -229,10 +239,50 @@ function expandable(step: WorkflowLineStep): boolean {
   return step.status !== 'skipped' && step.kind !== 'terminal';
 }
 
+/** The step's holder at the row's right: their mark and handle, brass when it is the viewer. */
+function Assignee({
+  actor,
+  viewer,
+  testID,
+}: {
+  actor: WorkflowActorView;
+  viewer: boolean;
+  testID: string;
+}) {
+  const hue =
+    viewer || (actor.kind === 'agent' && isGeneratedAgentAvatarUrl(actor.avatar))
+      ? styles.brass
+      : { color: identityPalette(actor.id, actor.kind).mid };
+  return (
+    // The row's own label already names the assignee.
+    <View
+      accessibilityElementsHidden
+      aria-hidden
+      importantForAccessibility="no-hide-descendants"
+      style={styles.assignee}
+      testID={`${testID}-assignee${viewer ? '-viewer' : ''}`}
+    >
+      <IdentityMark
+        avatarUrl={actor.avatar}
+        face={actor.face}
+        kind={actor.kind}
+        name={actor.name}
+        seed={actor.id}
+        size={ASSIGNEE_MARK}
+        testID={`${testID}-assignee-mark`}
+      />
+      <Text numberOfLines={1} style={[styles.handle, hue]} testID={`${testID}-assignee-handle`}>
+        {`@${previewHandle(actor)}`}
+      </Text>
+    </View>
+  );
+}
+
 function StepRow({
   step,
   detail,
   now,
+  liveDrafts,
   above,
   below,
   expanded,
@@ -243,6 +293,7 @@ function StepRow({
   step: WorkflowLineStep;
   detail: WorkflowRunDetailView;
   now: number;
+  liveDrafts?: ReadonlyMap<string, string>;
   above?: SegmentTone;
   below?: SegmentTone;
   expanded: boolean;
@@ -251,16 +302,17 @@ function StepRow({
   testID: string;
 }) {
   const latest = step.visits[step.visits.length - 1];
-  const recordedMeta = workflowStepMeta(step, {
+  const meta = workflowStepMeta(step, {
     contract: detail.contract,
-    roleHolders: detail.roleHolders,
     run: detail.run,
     history: detail.history,
   });
-  const meta = step.status === 'done' && step.kind !== 'terminal'
-    ? (latest?.receipt ? latest.leftBy?.name : latest?.gate?.answeredBy?.name) ?? latest?.leftBy?.name ?? recordedMeta
-    : step.status === 'current' ? detail.run.holder?.name ?? recordedMeta : recordedMeta;
+  const assignee = workflowStepAssignee(step, detail);
+  const isViewer = assignee !== undefined && assignee.id === detail.viewer?.id;
+  const draft =
+    step.status === 'current' && assignee?.kind === 'agent' ? liveDrafts?.get(assignee.id) : undefined;
   const name = workflowStateLabel(step.state);
+  const label = [name, STATUS_WORD[step.status], assignee?.name, meta].filter(Boolean).join(', ');
   const seconds = step.kind === 'terminal' ? undefined : stepSeconds(step, now);
   const reachedAt = step.kind === 'terminal' ? step.visits[0]?.enteredAt : undefined;
   const canOpen = expandable(step);
@@ -284,6 +336,7 @@ function StepRow({
         </Text>
       </View>
       <View style={styles.right}>
+        {assignee ? <Assignee actor={assignee} testID={testID} viewer={isViewer} /> : null}
         {seconds !== undefined ? (
           <Text style={styles.duration}>{formatRunDuration(seconds)}</Text>
         ) : reachedAt !== undefined ? (
@@ -299,7 +352,7 @@ function StepRow({
       {below ? <Segment style={styles.lineBelow} testID={`${testID}-below`} tone={below} vertical /> : null}
       {canOpen ? (
         <Pressable
-          accessibilityLabel={`${name}, ${STATUS_WORD[step.status]}${meta ? `, ${meta}` : ''}`}
+          accessibilityLabel={label}
           accessibilityRole="button"
           accessibilityState={{ expanded }}
           onPress={onToggle}
@@ -310,7 +363,7 @@ function StepRow({
         </Pressable>
       ) : (
         <View
-          accessibilityLabel={`${name}, ${STATUS_WORD[step.status]}${meta ? `, ${meta}` : ''}`}
+          accessibilityLabel={label}
           accessible
           style={styles.summary}
         >
@@ -318,6 +371,16 @@ function StepRow({
         </View>
       )}
       <View style={styles.outcome}>
+        {draft ? (
+          <Text
+            ellipsizeMode="head"
+            numberOfLines={2}
+            style={styles.live}
+            testID={`${testID}-live`}
+          >
+            {draft.replace(/\s+/g, ' ').trim()}
+          </Text>
+        ) : null}
         <Receipt receipt={latest?.receipt} testID={testID} />
         {current ? (
           <Text style={styles.exits} testID={`${testID}-exits`}>
@@ -325,7 +388,7 @@ function StepRow({
           </Text>
         ) : latest?.outcome && latest.nextState ? (
           <Text style={styles.exits} testID={`${testID}-exit`}>
-            {`→ ${workflowStateLabel(latest.nextState)} via ${latest.receipt?.exit.gate ?? latest.outcome}${meta ? ` · ${meta}` : ''}`}
+            {`→ ${workflowStateLabel(latest.nextState)} via ${latest.receipt?.exit.gate ?? latest.outcome}`}
           </Text>
         ) : null}
       </View>
@@ -439,12 +502,6 @@ const Ghost = ({ children }: { children: React.ReactNode }) => (
   <Text style={styles.ghost}>{children}</Text>
 );
 
-function roleLine(contract: WorkflowContract, step: WorkflowLineStep, detail: WorkflowRunDetailView) {
-  const role = stateRole(contract, step.state);
-  if (!role) return [];
-  return [{ key: 'role', value: `${role} · ${detail.roleHolders[role]?.name ?? 'unassigned'}` }];
-}
-
 /** The outcomes a step can still leave by: `then approved → Land`, `or changes → Implement · 0 of 3`. */
 function outcomeLines(step: WorkflowLineStep, contract: WorkflowContract): ReadoutLine[] {
   const declared = contract.handoffs[step.state];
@@ -489,7 +546,7 @@ function gateLines(
       ),
     })),
   ];
-  if (gate.answer !== undefined)
+  if (gate.answer !== undefined) {
     lines.push({
       key: 'answer',
       value: (
@@ -500,7 +557,8 @@ function gateLines(
         </>
       ),
     });
-  else if (gate.status === 'open')
+    if (gate.note) lines.push({ key: 'note', value: gate.note });
+  } else if (gate.status === 'open')
     lines.push({ key: 'answer', value: <Ghost>{`waiting on ${waitingOn}`}</Ghost> });
   else lines.push({ key: 'answer', value: <Ghost>{gate.status}</Ghost> });
   return lines;
@@ -525,11 +583,9 @@ function visitLines(
   step: WorkflowLineStep,
   visit: WorkflowLineVisit,
   detail: WorkflowRunDetailView,
-  options: { withRole: boolean },
 ): ReadoutLine[] {
   const open = visit.leftAt === undefined && step.status === 'current';
   return [
-    ...(options.withRole ? roleLine(detail.contract, step, detail) : []),
     { key: 'entered', value: clock(visit.enteredAt) },
     ...(visit.leftAt !== undefined
       ? [
@@ -591,20 +647,18 @@ function VisitBody({
   step,
   visit,
   detail,
-  withRole,
   onOpenCorner,
   testID,
 }: {
   step: WorkflowLineStep;
   visit: WorkflowLineVisit;
   detail: WorkflowRunDetailView;
-  withRole: boolean;
   onOpenCorner: (corner: WorkflowOpenedCornerView) => void;
   testID: string;
 }) {
   return (
     <>
-      <Readout lines={visitLines(step, visit, detail, { withRole })} />
+      <Readout lines={visitLines(step, visit, detail)} />
       {step.visits.length > 1 ? <Receipt receipt={visit.receipt} testID={testID} /> : null}
       {visit.openedCorners?.length ? (
         <OpenedCorners corners={visit.openedCorners} onOpenCorner={onOpenCorner} testID={testID} />
@@ -632,7 +686,6 @@ function StepReadout({
     return (
       <Readout
         lines={[
-          ...roleLine(detail.contract, step, detail),
           {
             key: 'delivers',
             value: requires.length > 0 ? requires.join(', ') : <Ghost>nothing</Ghost>,
@@ -650,7 +703,6 @@ function StepReadout({
         step={step}
         testID={testID}
         visit={step.visits[0]!}
-        withRole
       />
     );
   return <Attempts detail={detail} now={now} onOpenCorner={onOpenCorner} step={step} testID={testID} />;
@@ -673,10 +725,8 @@ function Attempts({
   const count = step.visits.length;
   const [open, setOpen] = useState<number | null>(count);
   const attempts = step.visits.map((visit, index) => ({ visit, number: index + 1 })).reverse();
-  const role = roleLine(detail.contract, step, detail);
   return (
     <View>
-      {role.length > 0 ? <Readout lines={role} /> : null}
       {attempts.map(({ visit, number }) => {
         const live = visit.leftAt === undefined && step.status === 'current';
         const expanded = open === number;
@@ -710,7 +760,6 @@ function Attempts({
                   step={step}
                   testID={`${testID}-attempt-${number}`}
                   visit={visit}
-                  withRole={false}
                 />
               </View>
             ) : null}
@@ -787,6 +836,9 @@ const styles = StyleSheet.create((theme) => {
     times: { ...type.machine, color: theme.buzz.accent },
     meta: { ...type.meta, color: theme.buzz.ledgerQuiet },
     right: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingTop: CIRCLE_TOP },
+    assignee: { flexDirection: 'row', alignItems: 'center', gap: space.sm, maxWidth: 140 },
+    handle: { ...type.meta, flexShrink: 1 },
+    live: { ...type.meta, color: theme.buzz.ledgerQuiet, marginBottom: space.xs },
     duration: { ...type.machine, color: theme.buzz.ledgerGhost },
     chevronOpen: { transform: [{ rotate: '90deg' }] },
     readout: { marginLeft: COPY_X, marginRight: space.md, paddingTop: space.xs, paddingBottom: space.md },

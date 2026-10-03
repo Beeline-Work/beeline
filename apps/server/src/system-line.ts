@@ -1,4 +1,4 @@
-import { routeSystemCommand } from './agent-command.js';
+import { createAgentCommand, routeSystemCommand } from './agent-command.js';
 import { createHash, randomBytes } from 'node:crypto';
 import {
   MAX_EVENT_DEPTH,
@@ -428,7 +428,12 @@ export async function systemLine(
   ];
   // Only an event carries a cascade. A line with no kind is one nothing reacts
   // to, so it has no root to belong to and no budget to spend.
-  const write = async (db: SqlDatabase, cascade: Cascade | undefined, notBefore: Date | null) => {
+  const write = async (
+    db: SqlDatabase,
+    cascade: Cascade | undefined,
+    notBefore: Date | null,
+    watches: { watcher_room_id: string; agent_id: string }[],
+  ) => {
     const result = await db.query(
       `INSERT INTO messages(
          id,room_id,author_id,text,presentation,request_id,durable_fact,
@@ -453,11 +458,19 @@ export async function systemLine(
         cascade?.causeId ?? null,
         cascade?.rootCauseId ?? null,
         cascade?.depth ?? null,
-        cascade ? wakes.length : null,
+        cascade ? wakes.length + watches.length : null,
         notBefore,
       ],
     );
-    if (result.rowCount)
+    if (result.rowCount) {
+      for (const watch of watches)
+        await createAgentCommand(db, {
+          roomId: watch.watcher_room_id,
+          agentId: watch.agent_id,
+          sourceMessageId: id,
+          reason: 'watched_corner',
+          action: 'input',
+        });
       await routeSystemCommand(db, {
         roomId: input.roomId,
         sourceMessageId: id,
@@ -467,27 +480,36 @@ export async function systemLine(
         causeId: input.causeId,
         commandId: input.commandId,
       });
+    }
     return { id, text, event, inserted: Boolean(result.rowCount) };
   };
-  if (!input.kind) {
-    const notBefore = await orderingFloor(database, input.roomId, input.afterMessageId);
-    return database.transaction((tx) => write(tx, undefined, notBefore));
-  }
-  if (input.causeId === undefined)
-    return database.transaction((tx) =>
-      write(tx, { causeId: null, rootCauseId: id, depth: 0 }, null),
-    );
-  // One transaction holds the advisory lock through the insert. A caller that
-  // already passed its own transaction handle gets that same handle back
-  // (`PostgresDatabase.transaction` does not nest), so the lock lives exactly
-  // as long as the write it protects.
-  return database.transaction(async (tx) =>
-    write(
+  return database.transaction(async (tx) => {
+    const watches =
+      input.kind && ['merged', 'check-passed', 'check-failed'].includes(input.kind)
+        ? (
+            await tx.query<{ watcher_room_id: string; agent_id: string }>(
+              `SELECT w.watcher_room_id,w.agent_id FROM corner_watches w
+           JOIN rooms corner ON corner.id=w.corner_id AND corner.parent_id IS NOT NULL
+           JOIN rooms watcher ON watcher.id=w.watcher_room_id AND watcher.archived_at IS NULL
+           JOIN memberships m ON m.room_id=w.watcher_room_id AND m.identity_id=w.agent_id
+             AND m.removed_at IS NULL
+           WHERE w.corner_id=$1 AND w.kinds @> $2::jsonb FOR SHARE OF w,m,watcher`,
+              [input.roomId, JSON.stringify([input.kind])],
+            )
+          ).rows
+        : [];
+    const cascade = !input.kind
+      ? undefined
+      : input.causeId === undefined
+        ? { causeId: null, rootCauseId: id, depth: 0 }
+        : await resolveCascade(tx, input.causeId, wakes.length + watches.length);
+    const notBefore = await orderingFloor(
       tx,
-      await resolveCascade(tx, input.causeId as string, wakes.length),
-      await orderingFloor(tx, input.roomId, input.causeId),
-    ),
-  );
+      input.roomId,
+      input.kind ? input.causeId : input.afterMessageId,
+    );
+    return write(tx, cascade, notBefore, watches);
+  });
 }
 
 /**

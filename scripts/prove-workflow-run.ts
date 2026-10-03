@@ -759,7 +759,7 @@ async function main(): Promise<void> {
   if (!approved) throw new Error('workflow gate has no approved option');
   const answerResponse = await fetch(`${origin}/v1/phone/operations/answerChoice`, {
     method: 'POST', headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ choiceId: openGate.id, optionId: approved.optionId }),
+    body: JSON.stringify({ choiceId: openGate.id, optionId: approved.optionId, note: 'ship it, but watch the logs' }),
   });
   const answerResult = await answerResponse.json() as Record<string, unknown>;
   log.push({ label: 'human answers the workflow gate', response: { httpStatus: answerResponse.status, ...answerResult } });
@@ -768,6 +768,16 @@ async function main(): Promise<void> {
     entry.source?.body.includes(`You are in run ${wakeRunId} of wake-proof. Continue this run; do not start a new one.`));
   if (!gateWake) throw new Error('settled gate wake omitted its run context');
   log.push({ label: 'reviewer receives the settled gate wake', response: gateWake });
+  if (!gateWake.source?.body.includes('Their note with the answer: "ship it, but watch the logs"'))
+    throw new Error('settled gate wake omitted the answer note');
+  const runResponse = await fetch(`${origin}/v1/phone/operations/readWorkflowRun`, {
+    method: 'POST', headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ roomId: ROOM, runId: wakeRunId }),
+  });
+  const runDetail = await runResponse.json() as { history?: { gate?: { answer?: string; note?: string } }[] };
+  const answeredGate = runDetail.history?.find((step) => step.gate?.answer === 'approved')?.gate;
+  log.push({ label: 'the run shows the gate answer and its note', response: { httpStatus: runResponse.status, gate: answeredGate } });
+  if (answeredGate?.note !== 'ship it, but watch the logs') throw new Error('run view omitted the gate answer note');
   await complete(WRITER, writerToken, wakeTurn);
 
   const transcript = await database.query<{

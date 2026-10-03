@@ -74,6 +74,7 @@ vi.mock('react-native', async () => {
     Pressable: host('Pressable'),
     ScrollView: host('ScrollView'),
     Text: host('Text'),
+    TextInput: host('TextInput'),
     View: host('View'),
   };
 });
@@ -3210,6 +3211,59 @@ describe('Room message variant components', () => {
     expect(onAnswer).toHaveBeenCalledWith('c-1', 'A');
     act(() => renderer.root.findByProps({ testID: 'choice-c-1-skip' }).props.onPress());
     expect(onSkip).toHaveBeenCalledWith('c-1');
+  });
+
+  it('offers a note only on a workflow gate and submits it with the pick', () => {
+    const onAnswer = vi.fn();
+    const gate = (runId?: string) =>
+      message({
+        choice: {
+          choiceId: 'g-1',
+          mode: 'question',
+          status: 'open',
+          agent: { pubkey: 'agent', kind: 'agent', name: 'Candy' },
+          prompt: 'feedback-triage: approve',
+          options: [
+            { optionId: 'A', letter: 'A', label: 'dispatch', consequence: 'go to dispatch' },
+            { optionId: 'B', letter: 'B', label: 'skip', consequence: 'go to done' },
+          ],
+          electorate: ['human'],
+          votedCount: 0,
+          electorateCount: 1,
+          responses: [],
+          ...(runId ? { runId } : {}),
+        },
+      });
+    const plain = render(
+      <ChoiceCard
+        message={gate()}
+        viewerIsAgent={false}
+        viewerPubkey="human"
+        actionId={null}
+        onAnswer={onAnswer}
+        onSkip={vi.fn()}
+      />,
+    );
+    expect(plain.root.findAllByProps({ testID: 'choice-g-1-note' })).toHaveLength(0);
+
+    const renderer = render(
+      <ChoiceCard
+        message={gate('run-1')}
+        viewerIsAgent={false}
+        viewerPubkey="human"
+        actionId={null}
+        onAnswer={onAnswer}
+        onSkip={vi.fn()}
+      />,
+    );
+    const input = renderer.root.findByProps({ testID: 'choice-g-1-note' });
+    expect(input.props.placeholder).toBe('Add a note (optional)');
+    expect(input.props.maxLength).toBe(140);
+    act(() => renderer.root.findByProps({ testID: 'transcript-card-choice-B' }).props.onPress());
+    expect(onAnswer).toHaveBeenLastCalledWith('g-1', 'B');
+    act(() => input.props.onChangeText('  only the dropdown one  '));
+    act(() => renderer.root.findByProps({ testID: 'transcript-card-choice-A' }).props.onPress());
+    expect(onAnswer).toHaveBeenLastCalledWith('g-1', 'A', 'only the dropdown one');
   });
 
   it('shows a still tally wash on a closed poll and no Skip', () => {

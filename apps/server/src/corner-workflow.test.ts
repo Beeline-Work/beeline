@@ -702,20 +702,6 @@ async function fallback(cornerId: string, online = true) {
   if (online) await db.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence','{"status":"online"}')`, [R, F]);
 }
 
-describe('Reproduction S-10: lifecycle updates preserve a green landing candidate', () => {
-  it('keeps the green head in the server merge sweep', async () => {
-    const cornerId = await approved();
-    expect(await cornersReadyToLand(db)).toContain(cornerId);
-    await daemon.execute('postCornerLifecycle', { cornerId, objective: 'Ship widget', status: 'working', outcome: 'Still working' }, A);
-    const { lifecycle } = (await db.query<{ lifecycle: Record<string, unknown> }>(`SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!;
-    const ready = (await cornersReadyToLand(db)).includes(cornerId);
-    console.info(`Reproduction S-10: postCornerLifecycle → checks=${lifecycle.checks}, landing candidate=${ready}`);
-    expect(lifecycle).toMatchObject({ lifecycle: 'working', outcome: 'Still working', checks: 'passing', pr: { headSha: SHA } });
-    expect(await projected(cornerId)).toBe('land');
-    expect(ready).toBe(true);
-  });
-});
-
 describe('Reproduction S-03: revised briefs use the lifecycle reviewer resolver', () => {
   it.each(['removed', 'offline'] as const)('wakes a healthy fallback when the primary is %s', async (condition) => {
     const cornerId = await approved();

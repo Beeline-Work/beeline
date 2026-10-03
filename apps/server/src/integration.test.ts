@@ -7015,15 +7015,6 @@ describe('monolith integration', () => {
     const { cornerId } = (await created.json()) as { cornerId: string };
     expect(
       (
-        await daemonOperation('postCornerLifecycle', {
-          cornerId,
-          status: 'working',
-          objective: 'A later lifecycle write must not replace the fixed summary',
-        })
-      ).status,
-    ).toBe(200);
-    expect(
-      (
         await daemonOperation('postCornerPlan', {
           cornerId,
           objective: 'A later plan write must not replace the fixed summary',

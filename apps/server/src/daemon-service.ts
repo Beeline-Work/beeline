@@ -1002,6 +1002,11 @@ export class DaemonService {
           input as Input<'setEventSubscriptions'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'watchCorner':
+        return (await this.watchCorner(
+          input as Input<'watchCorner'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
       case 'listEventSubscriptions':
         return (await this.listEventSubscriptions(
           input as Input<'listEventSubscriptions'>,
@@ -1348,11 +1353,6 @@ export class DaemonService {
       case 'postConnectionUsage':
         return (await this.connectionUsage(
           input as Input<'postConnectionUsage'>,
-          authenticatedAgentId,
-        )) as Output<Name>;
-      case 'postCornerLifecycle':
-        return (await this.cornerLifecycle(
-          input as Input<'postCornerLifecycle'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postCornerRemoteState':
@@ -5202,20 +5202,50 @@ export class DaemonService {
     );
     return this.writeResult();
   }
-  private async cornerLifecycle(input: Input<'postCornerLifecycle'>, agentId: string) {
-    await this.access(input.cornerId, agentId);
-    await this.database.query(
-      `INSERT INTO corner_facts(corner_id,objective,lifecycle) VALUES($1,$2,$3::jsonb) ON CONFLICT(corner_id) DO UPDATE SET objective=COALESCE(NULLIF(corner_facts.objective,''),EXCLUDED.objective),lifecycle=corner_facts.lifecycle||EXCLUDED.lifecycle,updated_at=now()`,
-      [
-        input.cornerId,
-        input.objective,
-        JSON.stringify({
-          lifecycle: input.status,
-          ...(input.outcome ? { outcome: input.outcome } : {}),
-        }),
-      ],
-    );
-    return this.writeResult();
+  private async watchCorner(
+    input: Input<'watchCorner'>,
+    agentId: string,
+  ): Promise<Output<'watchCorner'>> {
+    if (
+      !Array.isArray(input.kinds) ||
+      input.kinds.some((kind) => !['merged', 'check-passed', 'check-failed'].includes(kind))
+    )
+      throw new Error('watch kinds must be merged, check-passed or check-failed');
+    const kinds = [...new Set(input.kinds)];
+    return this.database.transaction(async (db) => {
+      const member = await db.query<{ parent_id: string | null }>(
+        `SELECT r.parent_id FROM memberships m JOIN rooms r ON r.id=m.room_id
+         WHERE m.room_id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL
+           AND r.archived_at IS NULL FOR SHARE OF m,r`,
+        [input.roomId, agentId],
+      );
+      if (!member.rowCount) throw new Error('daemon room access denied');
+      if (input.cornerId === input.roomId) throw new Error('a corner cannot watch itself');
+      const corner = await db.query<Output<'watchCorner'>['snapshot']>(
+        `SELECT c.id,c.name,f.workflow_state "workflowState",
+           (f.lifecycle->'pr'->>'number')::int "pullRequestNumber",
+           f.lifecycle->'pr'->>'url' "pullRequestUrl",f.lifecycle->'pr'->>'headSha' "headSha",
+           f.lifecycle->>'checks' checks,f.lifecycle->'pr'->>'mergeCommitSha' "mergeCommitSha"
+         FROM rooms c JOIN corner_facts f ON f.corner_id=c.id
+         WHERE c.id=$1 AND c.parent_id IS NOT NULL AND c.archived_at IS NULL
+           AND (c.parent_id=$2 OR c.parent_id=$3) FOR SHARE OF c,f`,
+        [input.cornerId, input.roomId, member.rows[0]!.parent_id],
+      );
+      if (!corner.rowCount)
+        throw new Error('watched corner must be an active child or sibling of this Room');
+      if (!kinds.length)
+        await db.query(
+          `DELETE FROM corner_watches WHERE watcher_room_id=$1 AND agent_id=$2 AND corner_id=$3`,
+          [input.roomId, agentId, input.cornerId],
+        );
+      else
+        await db.query(
+          `INSERT INTO corner_watches(watcher_room_id,agent_id,corner_id,kinds) VALUES($1,$2,$3,$4::jsonb)
+         ON CONFLICT(watcher_room_id,agent_id,corner_id) DO UPDATE SET kinds=EXCLUDED.kinds,updated_at=now()`,
+          [input.roomId, agentId, input.cornerId, JSON.stringify(kinds)],
+        );
+      return { kinds, snapshot: corner.rows[0]! };
+    });
   }
   private async cornerRemote(input: Input<'postCornerRemoteState'>, agentId: string) {
     await this.access(input.cornerId, agentId);
@@ -7575,6 +7605,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   listAgentToolSchedules: true,
   createAgentSchedule: true,
   setEventSubscriptions: true,
+  watchCorner: true,
   listEventSubscriptions: true,
   postRoomEvent: true,
   listAgentSchedules: true,
@@ -7639,7 +7670,6 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getConnectionDetail: true,
   revokeConnectionGrants: true,
   postConnectionUsage: true,
-  postCornerLifecycle: true,
   postCornerRemoteState: true,
   postCornerPlan: true,
   putCornerApp: true,

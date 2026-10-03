@@ -245,3 +245,57 @@ it('enforces strict role authority and spectator writes and lists Workspace-owne
       ?.agents,
   ).toEqual([]);
 });
+
+it('Reproduction R12-1: exposes grant Room names only to authorized viewers', async () => {
+  database = new PgliteDatabase();
+  await migrate(database);
+  const plain = 'd'.repeat(64);
+  const corner = '66666666-6666-4666-8666-666666666666';
+  await database.query(
+    `INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'human','M'),
+      ($3,'agent','Agent'),($4,'human','P')`, [viewer, other, agent, plain],
+  );
+  await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Workspace')`, [workspace]);
+  await database.query(`INSERT INTO rooms(id,workspace_id,name,visibility) VALUES($1,$2,'X','invite-only')`, [parent, workspace]);
+  await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, other]);
+  await database.query(
+    `INSERT INTO memberships(workspace_id,identity_id,role)
+      VALUES($1,$2,'owner'),($1,$3,'member'),($1,$4,'member'),($1,$5,'member')`,
+    [workspace, viewer, other, agent, plain],
+  );
+  await database.query(
+    `INSERT INTO agent_grants(id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status)
+      VALUES($1,$2,$3,'repository','acme/repo','Ship it',$4,$5,'approved')`,
+    ['55555555-5555-4555-8555-555555555555', agent, workspace, other, parent],
+  );
+  const phone = new PhoneService(database, 'https://server.example');
+  const grant = async (actor: string) =>
+    (await phone.readWorkspaceMembers(workspace, actor, { memberId: other }))!.grants![0];
+  const hidden = await grant(plain);
+  console.log(`Reproduction R12-1: plain member sees roomName=${hidden.roomName}`);
+  expect(hidden).not.toHaveProperty('roomName');
+  expect(hidden.roomId).toBe(parent);
+  await database.query(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+    [workspace, parent, plain],
+  );
+  expect((await grant(plain)).roomName).toBe('X');
+  await database.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [parent, plain]);
+  expect(await grant(plain)).not.toHaveProperty('roomName');
+  expect((await grant(viewer)).roomName).toBe('X');
+  await database.query(`INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Corner')`, [corner, workspace, parent]);
+  await database.query(`UPDATE agent_grants SET room_id=$1`, [corner]);
+  expect(await grant(viewer)).not.toHaveProperty('roomName');
+  await database.query(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+    [workspace, corner, plain],
+  );
+  expect((await grant(plain)).roomName).toBe('Corner');
+  await database.query(`UPDATE agent_grants SET room_id=$1`, [parent]);
+  await database.query(`UPDATE memberships SET role='admin' WHERE room_id IS NULL AND identity_id=$1`, [viewer]);
+  expect((await grant(viewer)).roomName).toBe('X');
+  await database.query(`UPDATE rooms SET direct_participants=$2::jsonb WHERE id=$1`, [parent, JSON.stringify([viewer, other])]);
+  expect(await grant(viewer)).not.toHaveProperty('roomName');
+  await database.query(`UPDATE rooms SET direct_participants=NULL,archived_at=now() WHERE id=$1`, [parent]);
+  expect(await grant(viewer)).not.toHaveProperty('roomName');
+});

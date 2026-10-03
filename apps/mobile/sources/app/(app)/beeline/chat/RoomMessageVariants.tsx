@@ -8,7 +8,7 @@ import {
   type AttachmentReference,
   type MessageReactionEmoji,
 } from '@beeline/buzz-client';
-import { formatChoiceClock } from '@beeline/api-contract/phone';
+import { CHOICE_NOTE_MAX_LENGTH, formatChoiceClock } from '@beeline/api-contract/phone';
 
 import type { AgentPresentation, ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import type { ChannelReferenceIndex, ChannelReferenceTarget } from '@/buzz/channel-reference';
@@ -596,7 +596,7 @@ export interface ChoiceCardProps {
   viewerIsAgent: boolean;
   viewerPubkey: string;
   actionId: string | null;
-  onAnswer(choiceId: string, optionId: string): void;
+  onAnswer(choiceId: string, optionId: string, note?: string): void;
   onSkip(choiceId: string): void;
 }
 
@@ -628,6 +628,13 @@ export const ChoiceCard = React.memo(function ChoiceCard({
   const canAct =
     open && !viewerIsAgent && (card.mode === 'question' || card.electorate.includes(viewerPubkey));
   const busy = actionId === card.choiceId;
+  // Only a workflow gate takes a note; its outcome still comes from the pick.
+  const takesNote = canAct && card.mode === 'question' && !!card.runId;
+  const [note, setNote] = React.useState('');
+  const answer = (optionId: string) =>
+    takesNote && note.trim()
+      ? onAnswer(card.choiceId, optionId, note.trim())
+      : onAnswer(card.choiceId, optionId);
   const turnout = `${card.votedCount} of ${card.electorateCount} voted`;
   const clock = card.closesAt ? `closes ${formatChoiceClock(card.closesAt)}` : undefined;
   const subline =
@@ -645,9 +652,9 @@ export const ChoiceCard = React.memo(function ChoiceCard({
     leader: option.leader,
     selected: viewerVote?.optionId === option.optionId || card.selectedOptionId === option.optionId,
     ...(canAct && card.mode === 'poll'
-      ? { onPress: () => onAnswer(card.choiceId, option.optionId) }
+      ? { onPress: () => answer(option.optionId) }
       : canAct && card.mode === 'question' && !busy
-        ? { onPress: () => onAnswer(card.choiceId, option.optionId) }
+        ? { onPress: () => answer(option.optionId) }
         : {}),
   }));
   const actions: TranscriptCardAction[] =
@@ -681,6 +688,18 @@ export const ChoiceCard = React.memo(function ChoiceCard({
       sublineTestID={`choice-${card.choiceId}-subline`}
       stamp={ledgerStamp(message.timestamp)}
       choices={choices}
+      noteInput={
+        takesNote
+          ? {
+              value: note,
+              onChangeText: setNote,
+              placeholder: 'Add a note (optional)',
+              maxLength: CHOICE_NOTE_MAX_LENGTH,
+              editable: !busy,
+              testID: `choice-${card.choiceId}-note`,
+            }
+          : undefined
+      }
       footerNote={
         open
           ? undefined

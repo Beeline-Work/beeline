@@ -187,19 +187,43 @@ async function loadContracts(
   return contracts;
 }
 
+type ActorRow = {
+  id: string;
+  name: string;
+  kind: 'human' | 'agent';
+  handle: string | null;
+  avatar: string | null;
+  face_id: string | null;
+};
+
+/** An identity as the run page draws it: name, handle, and what its mark needs. */
+function actorView(row: ActorRow, publicOrigin: string): WorkflowActorView {
+  return {
+    id: row.id,
+    name: row.name,
+    kind: row.kind,
+    ...(row.handle ? { handle: row.handle } : {}),
+    ...(row.avatar
+      ? { avatar: row.avatar.startsWith('/') ? `${publicOrigin}${row.avatar}` : row.avatar }
+      : {}),
+    ...(row.face_id ? { face: row.face_id } : {}),
+  };
+}
+
 async function loadActors(
   db: SqlDatabase,
   ids: Iterable<string>,
+  publicOrigin: string,
 ): Promise<Map<string, WorkflowActorView>> {
-  const unique = [...new Set(ids)].filter(isAgentIdentityReference);
+  const unique = [...new Set(ids)];
   if (unique.length === 0) return new Map();
   const rows = (
-    await db.query<WorkflowActorView>(
-      `SELECT id,name,kind FROM identities WHERE id=ANY($1::text[])`,
+    await db.query<ActorRow>(
+      `SELECT id,name,kind,handle,avatar,face_id FROM identities WHERE id=ANY($1::text[])`,
       [unique],
     )
   ).rows;
-  return new Map(rows.map((row) => [row.id, { id: row.id, name: row.name, kind: row.kind }]));
+  return new Map(rows.map((row) => [row.id, actorView(row, publicOrigin)]));
 }
 
 /** The identity a role binding names: an agent id, or the parent Room's reviewer for the corner's live binding. */
@@ -240,7 +264,7 @@ function summarize(
   head: RunHead,
   contract: WorkflowContract,
   actors: ReadonlyMap<string, WorkflowActorView>,
-  viewer: { id: string; kind: 'human' | 'agent' },
+  viewer: Pick<WorkflowActorView, 'id' | 'kind'>,
   earlierRunCount: number,
   activeRunIds: readonly string[] = [],
 ): WorkflowRunSummaryView {
@@ -284,22 +308,28 @@ function liveRunIdsBySlug(
   return bySlug;
 }
 
+/** Every bound role holder, and the newest card's author when it is a person or agent. */
 function headBindingIds(head: RunHead): string[] {
-  return [...Object.values(head.roleBindings), head.authorId]
-    .map((binding) => boundIdentityId(head, binding))
-    .filter((id): id is string => id !== undefined);
+  return [
+    ...Object.values(head.roleBindings)
+      .map((binding) => boundIdentityId(head, binding))
+      .filter((id): id is string => id !== undefined),
+    ...(head.authorId !== SYSTEM_IDENTITY_ID ? [head.authorId] : []),
+  ];
 }
 
 async function loadViewer(
   db: SqlDatabase,
   viewerId: string,
-): Promise<{ id: string; kind: 'human' | 'agent' }> {
+  publicOrigin: string,
+): Promise<WorkflowActorView> {
   const row = (
-    await db.query<{ kind: 'human' | 'agent' }>(`SELECT kind FROM identities WHERE id=$1`, [
-      viewerId,
-    ])
+    await db.query<ActorRow>(
+      `SELECT id,name,kind,handle,avatar,face_id FROM identities WHERE id=$1`,
+      [viewerId],
+    )
   ).rows[0];
-  return { id: viewerId, kind: row?.kind ?? 'human' };
+  return row ? actorView(row, publicOrigin) : { id: viewerId, name: '', kind: 'human' };
 }
 
 function earlierThan(heads: readonly RunHead[], head: RunHead): number {
@@ -322,6 +352,7 @@ export async function listRoomWorkflowRuns(
   roomId: string,
   viewerId: string,
   workflowSlug?: string,
+  publicOrigin = '',
 ): Promise<WorkflowRunListResult> {
   const heads = await loadRunHeads(db, roomId, viewerId, workflowSlug);
   if (heads.length === 0) return { workflows: [] };
@@ -348,8 +379,8 @@ export async function listRoomWorkflowRuns(
   }
   const chosen = workflowSlug ? readable : [...newest.values()];
   const [actors, viewer] = await Promise.all([
-    loadActors(db, chosen.flatMap(headBindingIds)),
-    loadViewer(db, viewerId),
+    loadActors(db, chosen.flatMap(headBindingIds), publicOrigin),
+    loadViewer(db, viewerId, publicOrigin),
   ]);
   const liveBySlug = liveRunIdsBySlug(readable, contracts);
   const workflows = (
@@ -394,6 +425,9 @@ type RunCardRow = {
   author_id: string;
   author_name: string;
   author_kind: 'human' | 'agent';
+  author_handle: string | null;
+  author_avatar: string | null;
+  author_face_id: string | null;
   workflow_slug: string;
 };
 
@@ -422,6 +456,7 @@ async function loadGateRecords(
   roomId: string,
   contract: WorkflowContract,
   visits: readonly Visit[],
+  publicOrigin: string,
 ): Promise<Map<Visit, WorkflowGateRecordView>> {
   const records = new Map<Visit, WorkflowGateRecordView>();
   const gates = visits.filter((visit) => contract.handoffs[visit.card.to_state]?.kind === 'gate');
@@ -438,13 +473,18 @@ async function loadGateRecords(
       voter_id: string | null;
       voter_name: string | null;
       voter_kind: 'human' | 'agent' | null;
+      note: string | null;
+      voter_handle: string | null;
+      voter_avatar: string | null;
+      voter_face_id: string | null;
     }>(
       `SELECT choice.prompt,choice.options,choice.status,${MICROS('choice.created_at')} created_us,
-              vote.option_id,vote.created_at answered_at,
-              voter.id voter_id,voter.name voter_name,voter.kind voter_kind
+              vote.option_id,vote.created_at answered_at,vote.note,
+              voter.id voter_id,voter.name voter_name,voter.kind voter_kind,
+              voter.handle voter_handle,voter.avatar voter_avatar,voter.face_id voter_face_id
        FROM room_choices choice
        LEFT JOIN LATERAL (
-         SELECT option_id,voter_id,created_at FROM room_choice_votes
+         SELECT option_id,voter_id,created_at,note FROM room_choice_votes
          WHERE choice_id=choice.id ORDER BY created_at,voter_id LIMIT 1
        ) vote ON choice.mode='question'
        LEFT JOIN identities voter ON voter.id=vote.voter_id
@@ -468,9 +508,22 @@ async function loadGateRecords(
       status: choice.status,
       ...(picked ? { answer: picked.label } : {}),
       ...(picked && choice.voter_id && choice.voter_name && choice.voter_kind
-        ? { answeredBy: { id: choice.voter_id, name: choice.voter_name, kind: choice.voter_kind } }
+        ? {
+            answeredBy: actorView(
+              {
+                id: choice.voter_id,
+                name: choice.voter_name,
+                kind: choice.voter_kind,
+                handle: choice.voter_handle,
+                avatar: choice.voter_avatar,
+                face_id: choice.voter_face_id,
+              },
+              publicOrigin,
+            ),
+          }
         : {}),
       ...(picked && choice.answered_at ? { answeredAt: unix(choice.answered_at) } : {}),
+      ...(picked && choice.note ? { note: choice.note } : {}),
     });
   }
   return records;
@@ -532,6 +585,7 @@ export async function readWorkflowRun(
   db: SqlDatabase,
   input: { roomId: string; runId: string },
   viewerId: string,
+  publicOrigin = '',
 ): Promise<WorkflowRunDetailView | null> {
   const room = (
     await db.query<{ parent_id: string | null }>(`SELECT parent_id FROM rooms WHERE id=$1`, [
@@ -550,7 +604,8 @@ export async function readWorkflowRun(
               message.card->'receipt' receipt,message.card->'roleBindings' role_bindings,
               message.created_at,${MICROS('message.created_at')} created_us,
               author.id author_id,author.name author_name,
-              author.kind author_kind,message.card->>'workflowSlug' workflow_slug
+              author.kind author_kind,author.handle author_handle,author.avatar author_avatar,
+              author.face_id author_face_id,message.card->>'workflowSlug' workflow_slug
        FROM messages message
        JOIN identities author ON author.id=message.author_id
        WHERE message.room_id=$1 AND message.card_type=ANY($3::text[])
@@ -572,9 +627,9 @@ export async function readWorkflowRun(
   if (!contract) return null;
   const visits = visitsOf(cards);
   const [actors, viewer, gates, corners] = await Promise.all([
-    loadActors(db, headBindingIds(head)),
-    loadViewer(db, viewerId),
-    loadGateRecords(db, input.roomId, contract, visits),
+    loadActors(db, headBindingIds(head), publicOrigin),
+    loadViewer(db, viewerId, publicOrigin),
+    loadGateRecords(db, input.roomId, contract, visits, publicOrigin),
     loadOpenedCorners(db, topRoomId, viewerId, visits),
   ]);
   const roleHolders: Record<string, WorkflowActorView> = {};
@@ -591,7 +646,17 @@ export async function readWorkflowRun(
       ...(card.from_state && card.outcome ? { outcome: card.outcome } : {}),
       toState: card.to_state,
       ...(card.status ? { status: card.status } : {}),
-      actor: { id: card.author_id, name: card.author_name, kind: card.author_kind },
+      actor: actorView(
+        {
+          id: card.author_id,
+          name: card.author_name,
+          kind: card.author_kind,
+          handle: card.author_handle,
+          avatar: card.author_avatar,
+          face_id: card.author_face_id,
+        },
+        publicOrigin,
+      ),
       at: unix(card.created_at),
       ...(card.contents ? { contents: card.contents } : {}),
       ...(card.receipt ? { receipt: card.receipt } : {}),
@@ -611,6 +676,7 @@ export async function readWorkflowRun(
     contract,
     history,
     roleHolders,
+    viewer,
   };
 }
 

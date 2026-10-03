@@ -8,6 +8,7 @@ import { observeRoomResource, useObservedResource } from '@/buzz/use-observed-re
 import type { WorkflowRunDetailView } from '@beeline/api-contract/phone';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { cornerHref } from '@/buzz/corner-navigation';
+import { useRoomLiveDrafts } from '@/buzz/room-live-drafts';
 import { workflowDisplayName, workflowRunLine } from '@/buzz/workflow-graph';
 import { formatRunDuration, runDayLabel, workflowRunHeadline, workflowStarterLine } from '@/buzz/workflow-run-copy';
 import { HullLivePulse } from '@/components/buzz/MonoHull';
@@ -52,6 +53,7 @@ export default function WorkflowRun() {
       subscribe: roomId ? observeRoomResource(roomId) : undefined,
     },
   );
+  const liveDrafts = useRoomLiveDrafts(detail?.run.status === 'live' ? roomId : undefined);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1_000));
   useEffect(() => {
     if (detail?.run.status !== 'live') return;
@@ -148,6 +150,7 @@ export default function WorkflowRun() {
           </View>
           <WorkflowRunLine
             detail={detail}
+            liveDrafts={liveDrafts}
             now={now}
             onOpenCorner={(corner) =>
               router.push(cornerHref(corner.id, corner.parentRoomId, corner.name))

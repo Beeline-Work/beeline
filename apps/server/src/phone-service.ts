@@ -2882,7 +2882,7 @@ export class PhoneService {
       reason: string;
       status: AgentGrantStatus;
       room_id: string;
-      room_name: string;
+      room_name: string | null;
       auto: boolean;
       created_at: Date;
       decided_at: Date | null;
@@ -2893,7 +2893,13 @@ export class PhoneService {
       script: unknown;
     }>(
       `SELECT g.id,g.kind,g.target,g.reason,g.status,g.room_id,g.auto,g.created_at,g.decided_at,g.expires_at,
-              room.name room_name,g.script,to_jsonb(agent_identity) agent,to_jsonb(requester) requester,to_jsonb(decider) decider
+              CASE WHEN EXISTS(SELECT 1 FROM memberships rm
+                WHERE rm.room_id=g.room_id AND rm.identity_id=$3 AND rm.removed_at IS NULL)
+                OR (room.parent_id IS NULL AND room.direct_participants IS NULL AND room.archived_at IS NULL
+                  AND EXISTS(SELECT 1 FROM memberships wm
+                    WHERE wm.workspace_id=$1 AND wm.room_id IS NULL AND wm.identity_id=$3
+                      AND wm.removed_at IS NULL AND wm.role IN ('owner','admin')))
+                THEN room.name END room_name,g.script,to_jsonb(agent_identity) agent,to_jsonb(requester) requester,to_jsonb(decider) decider
        FROM agent_grants g
        JOIN rooms room ON room.id=g.room_id
        JOIN agents a ON a.agent_id=g.agent_id AND a.owner_id=$2
@@ -2914,7 +2920,7 @@ export class PhoneService {
       requestedBy: identity(row.requester, this.publicOrigin),
       ...(row.decider ? { decidedBy: identity(row.decider, this.publicOrigin) } : {}),
       roomId: row.room_id,
-      roomName: row.room_name,
+      ...(row.room_name !== null ? { roomName: row.room_name } : {}),
       createdAt: unix(row.created_at),
       ...(row.decided_at ? { decidedAt: unix(row.decided_at) } : {}),
       ...(row.expires_at ? { expiresAt: unix(row.expires_at) } : {}),
@@ -3573,7 +3579,7 @@ export class PhoneService {
         return {
           contract: JSON.parse(row.markdown),
           ownership: await readWorkflowOwnership(this.database, request.roomId, request.name, viewerId),
-          runs: (await listRoomWorkflowRuns(this.database, request.roomId, viewerId, request.name))
+          runs: (await listRoomWorkflowRuns(this.database, request.roomId, viewerId, request.name, this.publicOrigin))
             .workflows,
         } as Output<Name>;
       }
@@ -4323,11 +4329,11 @@ export class PhoneService {
   }
   private async listRoomWorkflowRuns(roomId: string, viewerId: string) {
     if (!(await this.hasRoomAccess(roomId, viewerId))) throw new Error('room access denied');
-    return listRoomWorkflowRuns(this.database, roomId, viewerId);
+    return listRoomWorkflowRuns(this.database, roomId, viewerId, undefined, this.publicOrigin);
   }
   private async readWorkflowRun(input: Input<'readWorkflowRun'>, viewerId: string) {
     if (!(await this.hasRoomAccess(input.roomId, viewerId))) throw new Error('room access denied');
-    const run = await readWorkflowRun(this.database, input, viewerId);
+    const run = await readWorkflowRun(this.database, input, viewerId, this.publicOrigin);
     if (!run) throw new Error('workflow run not found');
     return run;
   }
@@ -6674,6 +6680,7 @@ export class PhoneService {
         choiceId: input.choiceId,
         optionId: input.optionId,
         viewerId,
+        note: input.note,
       }),
     );
   }

@@ -1818,7 +1818,9 @@ export class GitHubOperations {
           ).rows[0]?.lifecycle;
           if (!current) return;
           // GitHub may deliver a completed run for the previous branch head after a push.
-          if (checkHeadSha !== current.pr?.headSha) return;
+          if (current.pr?.headSha && checkHeadSha !== current.pr.headSha) return;
+          // A PR removed during the fetch invalidates it; a pre-PR corner can record checks.
+          if (target.has_pr && !current.pr?.headSha) return;
           const latestFetch = current.checksSummary?.fetchStartedAt ?? current.checksSummary?.updatedAt ?? 0;
           if (fetchStartedAt < latestFetch) return;
           const summary = {

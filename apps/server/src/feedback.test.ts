@@ -416,6 +416,16 @@ describe('notify_feedback_fixed (close the loop)', () => {
     expect(await fixedDms()).toEqual([]);
   });
 
+  it('leaves items a refused sender could not report for a later run by a System sender', async () => {
+    const { taggedItem, actionItem } = await reported();
+    await expect(notify({ itemIds: [taggedItem, actionItem] }, AGENT, ROOM)).rejects.toThrow(
+      'System DM access denied',
+    );
+    expect((await items()).map((item) => item.status)).not.toContain('resolved');
+    await expect(notify({ itemIds: [taggedItem, actionItem] })).resolves.toEqual({ resolved: 2, notified: 2 });
+    expect(await fixedDms()).toHaveLength(2);
+  });
+
   it('refuses a link outside the repository pulls, a multi-line or secret title, and unknown items', async () => {
     const { actionItem } = await reported();
     for (const prUrl of [

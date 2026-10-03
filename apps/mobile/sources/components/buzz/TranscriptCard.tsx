@@ -5,7 +5,7 @@ import React, {
   type ComponentProps,
   type ReactNode,
 } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, Text, TextInput, View } from 'react-native';
 import Animated, {
   Easing,
   FadeOut,
@@ -67,6 +67,16 @@ export type TranscriptCardChoice = {
   onPress?(): void;
 };
 
+/** An optional one-line text field above the choice plates (a workflow gate's note). */
+type TranscriptCardNoteInput = {
+  value: string;
+  onChangeText(text: string): void;
+  placeholder: string;
+  maxLength: number;
+  editable?: boolean;
+  testID?: string;
+};
+
 export type TranscriptCardProps = {
   tier: TranscriptCardTier;
   title: ReactNode;
@@ -79,6 +89,7 @@ export type TranscriptCardProps = {
   quietBody?: boolean;
   rows?: readonly TranscriptCardRow[];
   choices?: readonly TranscriptCardChoice[];
+  noteInput?: TranscriptCardNoteInput;
   code?: ReactNode;
   codeTestID?: string;
   codePath?: string;
@@ -218,6 +229,7 @@ export function TranscriptCard({
   quietBody = false,
   rows = [],
   choices = [],
+  noteInput,
   code,
   codeTestID,
   codePath,
@@ -433,6 +445,19 @@ export function TranscriptCard({
           ) : null}
           {choices.length ? (
             <View style={styles.choices} testID={testID ? `${testID}-choices` : undefined}>
+              {noteInput ? (
+                <TextInput
+                  accessibilityLabel={noteInput.placeholder}
+                  editable={noteInput.editable ?? true}
+                  maxLength={noteInput.maxLength}
+                  onChangeText={noteInput.onChangeText}
+                  placeholder={noteInput.placeholder}
+                  placeholderTextColor={theme.buzz.ledgerGhost}
+                  style={styles.noteInput}
+                  testID={noteInput.testID}
+                  value={noteInput.value}
+                />
+              ) : null}
               {choices.map((choice) => (
                 <TranscriptCardChoicePlate
                   key={choice.id}
@@ -844,6 +869,16 @@ const styles = StyleSheet.create((theme) => {
       paddingTop: metric.rowVertical,
       paddingBottom: metric.rowVertical,
       paddingHorizontal: metric.side,
+    },
+    noteInput: {
+      ...card.type.body,
+      minHeight: 40,
+      borderWidth: 1,
+      borderColor: card.border,
+      borderRadius: card.radius,
+      paddingHorizontal: card.space.md,
+      paddingVertical: card.space.sm,
+      color: card.textPrimary,
     },
     choicePlate: {
       position: 'relative',

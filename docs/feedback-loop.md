@@ -54,7 +54,7 @@ reads the steps. An agent starts a run with `start_workflow`, binding
 
 | Step | Who | What happens |
 | --- | --- | --- |
-| `notify` | triager | Finds fix pull requests merged since the last run (their body has a `Feedback items:` line) and calls `notify_feedback_fixed` for each. |
+| `notify` | triager | Finds fix pull requests merged since the last `notified` run, plus any an earlier run left unnotified (their body has a `Feedback items:` line), and calls `notify_feedback_fixed` for each. Hands off `notified`, or `skipped` when it cannot send (see below). |
 | `pull` | triager | Reads new `feedback_items` through the read-only database grant, groups them by problem, and ranks the groups by report count. |
 | `approve` | a person | A card with **dispatch** or **skip**. Nothing is dispatched before someone answers. |
 | `dispatch` | triager | One fix corner per approved problem, opened with `open_corner` (from a corner it opens a sibling in the parent Room), with an agent tagged. The brief lists the item ids and requires the fix PR body to carry `Feedback items: <ids>`. |
@@ -112,12 +112,51 @@ text is fixed and System's identity stays with the server; the agent only asks.
 A repeat call sends nothing twice (one DM per person per pull request), and a
 reporter whose account is gone gets no DM.
 
+### When the triager cannot send: `skipped`
+
+If the triager's owner is not a System sender, `notify_feedback_fixed` refuses
+with `System DM access denied`. The run does not stop there. The triager hands
+off `notify` as `skipped` with `skipReason` `not_system_sender` and
+`unnotifiedPullRequests` listing the pull request numbers it could not report,
+and the run goes on to `pull` exactly as after `notified`. (The `notify` state
+requires all three fields for both outcomes; `notified` sets `skipReason` and
+`unnotifiedPullRequests` to `none`.)
+
+A skipped call resolves nothing, so those items stay unresolved. The next run
+looks back to the last run that handed off `notified` and includes every pull
+request an earlier run left in `unnotifiedPullRequests`. Once a System sender's
+agent runs `notify`, the reporters get their Fixed DMs; a repeat call never
+sends twice.
+
+The fix for `not_system_sender` is to make the triager's owner a System sender.
+
 ## Configuration
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `BEELINE_SYSTEM_SENDERS` | empty | Comma-separated identity ids of the people whose agents may have System send Fixed DMs. Empty means nobody can. |
 | `BEELINE_FEEDBACK_REPOSITORY` | `Beeline-Work/beeline` | The repository fix pull requests land in. A Fixed DM links only to a merged pull request here; the Beeline GitHub App must be installed on it. |
+
+### Make an owner a System sender
+
+`BEELINE_SYSTEM_SENDERS` is read from the server's environment at start. In
+production it is a Fly secret on the `beeline-server` app. Find the owner's
+identity id (the triage agent's `agents.owner_id`, or the person's row in
+`identities`):
+
+```sql
+SELECT owner_id FROM agents WHERE agent_id = '<triage agent identity id>';
+```
+
+Then set the full list, since setting the secret replaces it, and let Fly
+restart the server machines:
+
+```sh
+flyctl secrets set -a beeline-server BEELINE_SYSTEM_SENDERS="<identity id>[,<identity id>...]"
+```
+
+From the next run on, that owner's agents can send Fixed DMs, and `notify`
+picks up the pull requests earlier runs skipped.
 
 ## Retired
 

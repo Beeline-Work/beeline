@@ -106,11 +106,11 @@ export interface SectionReport {
 // the same words and for tests.
 // ---------------------------------------------------------------------------
 
-export const VALIDATION_STAGE_OWNERSHIP = `Validation stages (evidence only; merge effect: none for every stage):
+export const VALIDATION_STAGE_OWNERSHIP = `Validation stages (merge effect: none for every stage):
 Stage | Recorder | Server checks
 --- | --- | ---
 intent, base, tests, docs, lint_types, publication, final_authorization | implementer | current revision/head
-review | configured reviewer | current revision/head and reviewer identity
+review | configured reviewer records the review stage | current revision/head and reviewer identity
 ci | implementer | current revision/head; passed requires passing checks
 The server merge gate is the authority: pr_checks_status reports mergeAllowed true for the current head; the server then merges that head. final_authorization grants nothing; do not wait for mergeAllowed.`;
 

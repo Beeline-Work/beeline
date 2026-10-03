@@ -617,7 +617,7 @@ export class RoomRuntimeCoordinator {
       workspaceFloor: Number(
         process.env.BUZZY_BODY_MAX_SESSIONS_FLOOR ?? String(DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR),
       ),
-      activeRoomCount: () => this.running.size,
+      activeRoomCount: () => this.activeRoomCount(),
       idleMs: resolveSessionIdleMs(process.env),
       maxWarmSessions: resolveMaxWarmSessions(process.env),
       reserveInteractiveSlot: true,
@@ -652,7 +652,9 @@ export class RoomRuntimeCoordinator {
   }
 
   activeRoomCount(): number {
-    return this.running.size;
+    return new Set(
+      [...this.running.keys()].map((id) => this.monolithCornerParents.get(id) ?? id),
+    ).size;
   }
 
   surfaceHealthSnapshot(): SurfaceHealthState[] {

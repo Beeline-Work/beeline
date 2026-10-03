@@ -971,6 +971,11 @@ export type PostTurnReceiptInput = AgentRoomInput & {
    */
   readonly inputTokens?: number;
   readonly promptBytes?: number;
+  /** Sum of recorded prompt usage across every model call and attempt in this turn. */
+  readonly totalInputTokens?: number;
+  /** Calls included in the total, and calls whose usage was unavailable. */
+  readonly modelCalls?: number;
+  readonly modelCallsWithoutUsage?: number;
   /** Distinct tool calls this turn made, counted from the harness's own stream. */
   readonly toolCalls?: number;
   /** Typed Room-safe classification; detail stays in the daemon log. */

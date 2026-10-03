@@ -19,7 +19,10 @@ import { piSessionFilePath } from './pi-turn-record.js';
 
 export interface HarnessTurnUsage {
   /** Prompt tokens of the turn's final model call: input + cache reads + cache writes. */
-  readonly inputTokens: number;
+  readonly inputTokens?: number;
+  readonly totalInputTokens?: number;
+  readonly modelCalls: number;
+  readonly modelCallsWithoutUsage: number;
   /** The provider/model pi recorded for that call, for the operator's log only. */
   readonly model?: string;
 }
@@ -36,47 +39,80 @@ function promptTokens(usage: Record<string, unknown>): number | undefined {
   return input + cacheRead + cacheWrite;
 }
 
-/**
- * Usage of the latest completed model call in a pi session, or undefined when
- * this environment has no pi home, no readable session file, or no usage.
- */
-export async function readHarnessTurnUsage(input: {
-  agentEnv: Record<string, string>;
-  sessionId: string;
-}): Promise<HarnessTurnUsage | undefined> {
+type UsageInput = { agentEnv: Record<string, string>; sessionId: string };
+type UsageCall = { inputTokens?: number; model?: string };
+
+async function readUsageCalls(
+  input: UsageInput,
+  latestTurn: boolean,
+): Promise<UsageCall[] | undefined> {
   const file = await piSessionFilePath(input.agentEnv, input.sessionId);
-  if (!file) return undefined;
-  let raw: string;
-  try {
-    raw = await readFile(file, 'utf8');
-  } catch {
-    return undefined;
-  }
-  let latest: HarnessTurnUsage | undefined;
+  // A session may not create its JSONL file until its first prompt.
+  if (!file) return latestTurn ? undefined : [];
+  const raw = await readFile(file, 'utf8').catch(() => undefined);
+  if (raw === undefined) return undefined;
+  const calls: UsageCall[] = [];
   for (const line of raw.split(/\r?\n/)) {
-    if (!line.trim()) continue;
     let entry: { type?: unknown; message?: Record<string, unknown> };
     try {
-      entry = JSON.parse(line) as { type?: unknown; message?: Record<string, unknown> };
+      entry = JSON.parse(line);
     } catch {
       continue;
     }
-    if (entry.type !== 'message' || !entry.message) continue;
-    if (entry.message.role === 'user') {
-      // A new request starts a new turn: everything before it is history.
-      latest = undefined;
-      continue;
-    }
+    if (!entry || entry.type !== 'message' || !entry.message) continue;
+    if (entry.message.role === 'user' && latestTurn) calls.length = 0;
     if (entry.message.role !== 'assistant') continue;
     const usage = entry.message.usage;
-    if (!usage || typeof usage !== 'object' || Array.isArray(usage)) continue;
-    const tokens = promptTokens(usage as Record<string, unknown>);
-    if (tokens === undefined) continue;
+    const tokens =
+      usage && typeof usage === 'object' && !Array.isArray(usage)
+        ? promptTokens(usage as Record<string, unknown>)
+        : undefined;
     const model = entry.message.model;
-    latest = {
-      inputTokens: tokens,
+    calls.push({
+      ...(tokens !== undefined ? { inputTokens: tokens } : {}),
       ...(typeof model === 'string' && model ? { model } : {}),
-    };
+    });
   }
-  return latest;
+  return calls;
+}
+
+function summarize(calls: readonly UsageCall[]): HarnessTurnUsage | undefined {
+  if (!calls.length) return undefined;
+  const measured = calls.filter((call) => call.inputTokens !== undefined);
+  return {
+    ...calls[calls.length - 1],
+    ...(measured.length
+      ? { totalInputTokens: measured.reduce((sum, call) => sum + call.inputTokens!, 0) }
+      : {}),
+    modelCalls: measured.length,
+    modelCallsWithoutUsage: calls.length - measured.length,
+  };
+}
+
+/** Final-call prompt tokens and real usage totals since the last user message. */
+export async function readHarnessTurnUsage(
+  input: UsageInput,
+): Promise<HarnessTurnUsage | undefined> {
+  const calls = await readUsageCalls(input, true);
+  return calls ? summarize(calls) : undefined;
+}
+
+/** Counts newly recorded calls around each prompt, including repair and retry sessions. */
+export class TurnUsageAccumulator {
+  private readonly calls: UsageCall[] = [];
+
+  async measure<T>(input: UsageInput, run: () => Promise<T>): Promise<T> {
+    const before = await readUsageCalls(input, false);
+    try {
+      return await run();
+    } finally {
+      const after = await readUsageCalls(input, false);
+      // Without a baseline, history cannot safely be attributed to this turn.
+      if (before && after) this.calls.push(...after.slice(before.length));
+    }
+  }
+
+  get usage(): HarnessTurnUsage | undefined {
+    return summarize(this.calls);
+  }
 }

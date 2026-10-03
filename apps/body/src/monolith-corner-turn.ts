@@ -1,4 +1,5 @@
-import { readHarnessTurnUsage } from './turn-usage.js';
+import { modelContextWindowTokens } from './model-context-window.js';
+import { TurnUsageAccumulator } from './turn-usage.js';
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
 import type { InterruptedTurn } from './force-update-journal.js';
 import { SquireTaskRelay } from './squire-task-relay.js';
@@ -488,7 +489,15 @@ export class MonolithCornerTurnLoop {
    * sent it is still alive — `discardSession` clears both the client and the id,
    * and the terminal receipt is posted on a path that may run after it.
    */
-  private turnMetrics: { inputTokens?: number; promptBytes?: number } = {};
+  private turnMetrics: {
+    inputTokens?: number;
+    promptBytes?: number;
+    totalInputTokens?: number;
+    modelCalls?: number;
+    modelCallsWithoutUsage?: number;
+  } = {};
+  private turnUsage = new TurnUsageAccumulator();
+  private modelContextTokens?: number;
   /** OpenRouter providers this activation pinned, in order (C92). */
   private pinnedProviders: string[] = [];
   /** Whether the pinned model takes images; `undefined` when the pin did not say. */
@@ -655,16 +664,11 @@ export class MonolithCornerTurnLoop {
    * institutional block's share of a real prompt instead of a byte estimate.
    * Missing numbers are omitted rather than zeroed.
    */
-  private async captureTurnMetrics(): Promise<{
-    inputTokens?: number;
-    promptBytes?: number;
-  }> {
-    const usage = this.sessionId
-      ? await readHarnessTurnUsage({ agentEnv: this.agentEnv, sessionId: this.sessionId })
-      : undefined;
+  private async captureTurnMetrics() {
+    const { model: _model, ...usage } = this.turnUsage.usage ?? {};
     const promptBytes = this.client?.lastPromptBytes;
     return {
-      ...(usage ? { inputTokens: usage.inputTokens } : {}),
+      ...usage,
       ...(promptBytes ? { promptBytes } : {}),
     };
   }
@@ -910,6 +914,9 @@ export class MonolithCornerTurnLoop {
       CARGO_TARGET_DIR: cargoTargetDir,
     };
     this.agentEnv = agentEnv;
+    this.modelContextTokens = await modelContextWindowTokens(
+      selection.model, agentEnv.PI_CODING_AGENT_DIR,
+    );
     const agentArgs = agentArgsWithModelSelection(
       {
         kind: this.options.config.agentKind,
@@ -1398,6 +1405,7 @@ export class MonolithCornerTurnLoop {
               // turn's token count and prompt size on its failure receipt, and
               // the budget gate would read somebody else's prompt.
               this.turnMetrics = {};
+              this.turnUsage = new TurnUsageAccumulator();
               await this.syncBranch();
               const [
                 conversation,
@@ -1502,6 +1510,7 @@ export class MonolithCornerTurnLoop {
                 );
                 const assembled = assembleTurnPrompt({
                   surface: this.sessionSurface,
+                  modelContextTokens: this.modelContextTokens,
                   sessionPrefix: this.turnSessionPrefix,
                   objective: this.options.objective,
                   ...(restored.titleGenerated && restored.title
@@ -1539,6 +1548,7 @@ export class MonolithCornerTurnLoop {
                   },
                 });
                 trace.notePromptSections(assembled.report);
+                trace.notePromptWindow(assembled.text, this.modelContextTokens);
                 this.commandContext.notePromptSections([
                   ...this.sessionPromptSectionIds,
                   ...assembled.report.map((section) => section.id),
@@ -1711,40 +1721,44 @@ export class MonolithCornerTurnLoop {
                 narrationRunBoundary = 0;
                 currentNarrationRun = '';
                 trace.promptSent();
-                return this.client!.sessionPrompt(
-                  this.sessionId!,
-                  promptWithImages(prompt, attachmentImageBlocks(delivered, this.acceptsImages())),
-                  ROOM_PROMPT_INACTIVITY_TIMEOUT_MS,
-                  (delta, full, currentRun, runs) => {
-                    trace.firstModelOutput();
-                    if (runs) {
-                      completedNarrationRuns = runs.slice(narrationRunBoundary);
-                      currentNarrationRun = '';
-                    } else if (currentRun === undefined) currentNarrationRun += delta;
-                    else {
-                      if (
-                        currentNarrationRun &&
-                        currentNarrationRun !== currentRun &&
-                        !currentRun.startsWith(currentNarrationRun)
-                      )
-                        completedNarrationRuns.push(currentNarrationRun);
-                      currentNarrationRun = currentRun;
-                    }
-                    stream.onChunk(delta, full, currentRun);
-                  },
-                  undefined,
-                  (calls) => {
-                    trace.toolCalls(calls);
-                    // Observe (snapshot the narration that preceded each newly
-                    // seen call) THEN publish: a human watching a corner sees a
-                    // tool's row the moment it settles, not batched at the
-                    // turn's end behind a still-running sibling call. The
-                    // current tail (`lastNarratedToolCall`) is held back:
-                    // `flushToolCalls` may still need to drop its narration if
-                    // it turns out to duplicate the turn's final reply.
-                    publishToolCalls(calls, true);
-                    publishToolCalls(calls, false, lastNarratedToolCall);
-                  },
+                return this.turnUsage.measure(
+                  { agentEnv: this.agentEnv, sessionId: this.sessionId! },
+                  () =>
+                    this.client!.sessionPrompt(
+                      this.sessionId!,
+                      promptWithImages(prompt, attachmentImageBlocks(delivered, this.acceptsImages())),
+                      ROOM_PROMPT_INACTIVITY_TIMEOUT_MS,
+                      (delta, full, currentRun, runs) => {
+                        trace.firstModelOutput();
+                        if (runs) {
+                          completedNarrationRuns = runs.slice(narrationRunBoundary);
+                          currentNarrationRun = '';
+                        } else if (currentRun === undefined) currentNarrationRun += delta;
+                        else {
+                          if (
+                            currentNarrationRun &&
+                            currentNarrationRun !== currentRun &&
+                            !currentRun.startsWith(currentNarrationRun)
+                          )
+                            completedNarrationRuns.push(currentNarrationRun);
+                          currentNarrationRun = currentRun;
+                        }
+                        stream.onChunk(delta, full, currentRun);
+                      },
+                      undefined,
+                      (calls) => {
+                        trace.toolCalls(calls);
+                        // Observe (snapshot the narration that preceded each newly
+                        // seen call) THEN publish: a human watching a corner sees a
+                        // tool's row the moment it settles, not batched at the
+                        // turn's end behind a still-running sibling call. The
+                        // current tail (`lastNarratedToolCall`) is held back:
+                        // `flushToolCalls` may still need to drop its narration if
+                        // it turns out to duplicate the turn's final reply.
+                        publishToolCalls(calls, true);
+                        publishToolCalls(calls, false, lastNarratedToolCall);
+                      },
+                    ),
                 );
               };
               let loginRetryUsed = false;
@@ -2003,7 +2017,7 @@ export class MonolithCornerTurnLoop {
                 ),
               );
             },
-            { priority: 'interactive', roomKey: cornerId },
+            { priority: 'interactive', roomKey: this.options.parentRoomId },
           );
         },
         (error) => console.error(`[thin-core] corner ${cornerId} receipt heartbeat failed:`, error),

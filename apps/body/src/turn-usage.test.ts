@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { readHarnessTurnUsage } from './turn-usage.js';
+import { readHarnessTurnUsage, TurnUsageAccumulator } from './turn-usage.js';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -65,20 +65,23 @@ describe('harness turn usage', () => {
     );
     await expect(readHarnessTurnUsage({ agentEnv, sessionId: SESSION_ID })).resolves.toEqual({
       inputTokens: 2_120 + 88_832,
+      totalInputTokens: 2_120 + 88_832, modelCalls: 1, modelCallsWithoutUsage: 0,
       model: 'z-ai/glm-5.3-flash',
     });
   });
 
-  it('answers about the LATEST turn, and with nothing when pi recorded no usage', async () => {
+  it('reads only the latest turn and leaves totals absent when usage is missing', async () => {
     const agentEnv = await agentEnvFor(
       user('First question') +
         assistant({ input: 500, cacheRead: 4_000, cacheWrite: 0 }) +
         user('Second question') +
         assistant(undefined),
     );
-    await expect(
-      readHarnessTurnUsage({ agentEnv, sessionId: SESSION_ID }),
-    ).resolves.toBeUndefined();
+    await expect(readHarnessTurnUsage({ agentEnv, sessionId: SESSION_ID })).resolves.toEqual({
+      model: 'z-ai/glm-5.3-flash',
+      modelCalls: 0,
+      modelCallsWithoutUsage: 1,
+    });
 
     const partial = await agentEnvFor(
       user('Only question') + assistant({ input: 10, cacheRead: 0, cacheWrite: 5 }),
@@ -87,7 +90,52 @@ describe('harness turn usage', () => {
       readHarnessTurnUsage({ agentEnv: partial, sessionId: SESSION_ID }),
     ).resolves.toEqual({
       inputTokens: 15,
+      totalInputTokens: 15,
+      modelCalls: 1,
+      modelCallsWithoutUsage: 0,
       model: 'z-ai/glm-5.3-flash',
+    });
+  });
+
+  it('Reproduction H-11: sums three assistant calls while retaining final-call input', async () => {
+    const agentEnv = await agentEnvFor(
+      user('work') + assistant({ input: 10 }) + assistant({ input: 20 }) + assistant({ input: 30 }),
+    );
+    expect(await readHarnessTurnUsage({ agentEnv, sessionId: SESSION_ID })).toMatchObject({
+      inputTokens: 30,
+      totalInputTokens: 60,
+      modelCalls: 3,
+      modelCallsWithoutUsage: 0,
+    });
+  });
+
+  it('counts iterations, nudges and new repair sessions without history or duplicate calls', async () => {
+    const agentEnv = await agentEnvFor(user('history') + assistant({ input: 999 }));
+    const { piSessionFilePath } = await import('./pi-turn-record.js');
+    const file = (await piSessionFilePath(agentEnv, SESSION_ID))!;
+    const { appendFile } = await import('node:fs/promises');
+    const total = new TurnUsageAccumulator();
+    await total.measure({ agentEnv, sessionId: SESSION_ID }, async () => {
+      await appendFile(file, user('work') + assistant({ input: 10 }) + assistant({ input: 20 }));
+    });
+    await total.measure({ agentEnv, sessionId: SESSION_ID }, async () => {
+      await appendFile(file, user('nudge') + assistant(undefined));
+    });
+    expect(total.usage).toEqual({ model: 'z-ai/glm-5.3-flash', totalInputTokens: 30, modelCalls: 2, modelCallsWithoutUsage: 1 });
+    const repaired = await agentEnvFor(user('old') + assistant({ input: 888 }));
+    const repairFile = (await piSessionFilePath(repaired, SESSION_ID))!;
+    await expect(
+      total.measure({ agentEnv: repaired, sessionId: SESSION_ID }, async () => {
+        await appendFile(repairFile, user('retry') + assistant({ input: 30, cacheRead: 5 }));
+        throw new Error('provider failed after recording usage');
+      }),
+    ).rejects.toThrow('provider failed');
+    await total.measure({ agentEnv: repaired, sessionId: SESSION_ID }, async () => undefined);
+    expect(total.usage).toMatchObject({
+      inputTokens: 35,
+      totalInputTokens: 65,
+      modelCalls: 3,
+      modelCallsWithoutUsage: 1,
     });
   });
 

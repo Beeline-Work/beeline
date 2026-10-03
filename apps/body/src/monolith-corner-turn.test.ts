@@ -272,6 +272,7 @@ describe('corner merge instructions', () => {
     expect(execute).not.toHaveBeenCalledWith('authorizeRepositoryCall', expect.anything());
     expect(execute).not.toHaveBeenCalledWith('authorizeHostCall', expect.anything());
     expect(schedule).toHaveBeenCalledOnce();
+    expect(schedule.mock.calls[0]?.[3]).toMatchObject({ roomKey: 'room-id' });
     await scheduler.dispose();
   });
 
@@ -1154,6 +1155,7 @@ describe('corner close-request delivery', () => {
     pollMs: number,
     liveSubscribe?: DaemonApiClient['liveSubscribe'],
     closePollMs?: number,
+    configOverrides?: Partial<BodyConfig>,
   ) {
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-wake-'));
     roots.push(root);
@@ -1184,6 +1186,7 @@ describe('corner close-request delivery', () => {
       agentEnv: {},
       workspaceRoot: root,
       autoApprovePermissions: true,
+      ...configOverrides,
     };
     let loop: MonolithCornerTurnLoop;
     let inboxSent = false;
@@ -1265,6 +1268,47 @@ describe('corner close-request delivery', () => {
       scheduler,
     };
   }
+
+  it('Reproduction A06 and H-11: delivers a model-sized corner prompt and whole-turn receipt', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'corner-budget-'));
+    roots.push(root);
+    const piHome = join(root, 'pi');
+    await mkdir(piHome, { recursive: true });
+    await writeFile(join(piHome, 'models.json'), JSON.stringify({ providers: {
+      local: { models: [{ id: 'tiny', contextWindow: 4096 }] },
+    } }));
+    const execute = vi.fn(async (name: string, _input: Record<string, unknown>) => {
+      if (name === 'getWorkspaceRoster') return { members: [] };
+      if (name === 'getRoomConversation') return { items: Array.from({ length: 100 }, (_, i) => ({
+        id: `m${i}`, authorId: 'human', type: 'message', body: `old-${i} ` + 'x'.repeat(1000),
+      })), cursor: 'latest' };
+      return { id: 'write', createdAt: 1 };
+    });
+    const { acp, loop, scheduler } = await cornerHarness(execute, 60_000, undefined, undefined, {
+      agentEnv: { PI_CODING_AGENT_DIR: piHome }, modelSelection: { model: 'tiny' }, turnTraceDir: root,
+    });
+    vi.mocked(acp.sessionPrompt).mockImplementation(async () => {
+      const dir = join(piHome, 'sessions', '--corner--');
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, '2026_corner-session.jsonl'), [10, 20, 30].map((input) =>
+        JSON.stringify({ type: 'message', message: { role: 'assistant', usage: { input } } })).join('\n'));
+      return { stopReason: 'end_turn', updates: [], agentText: 'Done.', toolCalls: [] };
+    });
+    await loop.run();
+    await scheduler.dispose();
+    const prompt = String(vi.mocked(acp.sessionPrompt).mock.calls[0]?.[1]);
+    expect(prompt).not.toContain('old-99 ');
+    expect(prompt).toContain('Implement the widget');
+    const receipt = execute.mock.calls.find(([name, input]) =>
+      name === 'postAgentTurnReceipt' && (input as Record<string, unknown>).status === 'complete')?.[1];
+    expect(receipt).toMatchObject({ inputTokens: 30, totalInputTokens: 60, modelCalls: 3, modelCallsWithoutUsage: 0 });
+    const tracePath = join(root, `turns-${new Date().toISOString().slice(0, 10)}.jsonl`);
+    await vi.waitFor(async () => {
+      const trace = JSON.parse((await readFile(tracePath, 'utf8')).trim());
+      expect(trace.promptWindow).toEqual({ promptBytes: Buffer.byteLength(prompt), modelContextTokens: 4096 });
+    });
+    console.log('Reproduction A06/H-11 demonstrated: 4096-token corner omitted history; receipt final=30, total=60, calls=3.');
+  });
 
   it('loads member siblings from the parent and excludes itself from steer context', async () => {
     const execute = vi.fn(async (name: string) => {

@@ -1352,10 +1352,9 @@ export async function unfinishedCornerMergeClaims(db: SqlDatabase, cornerId?: st
        AND fact.lifecycle->'pr'->>'number' ~ '^[1-9][0-9]*$'
        AND (COALESCE((fact.lifecycle->'mergeRecovery'->>'nextAttemptAt')::double precision,
              extract(epoch FROM fact.updated_at)+$1) <= extract(epoch FROM clock_timestamp())
-         OR EXISTS (SELECT 1 FROM messages m JOIN identities i ON i.id=m.author_id AND i.kind='human'
+         OR (fact.lifecycle ? 'mergeRecovery' AND EXISTS (SELECT 1 FROM messages m JOIN identities i ON i.id=m.author_id AND i.kind='human'
            WHERE m.room_id=fact.corner_id AND m.presentation='message'
-             AND m.created_at > to_timestamp(COALESCE((fact.lifecycle->'mergeRecovery'->>'lastAttemptAt')::double precision,
-               extract(epoch FROM fact.updated_at)))))
+             AND m.created_at > to_timestamp((fact.lifecycle->'mergeRecovery'->>'lastAttemptAt')::double precision))))
        AND ($2::uuid IS NULL OR fact.corner_id=$2)
        AND NOT EXISTS (SELECT 1 FROM messages refusal WHERE refusal.id=
          encode(sha256(convert_to('beeline:'||fact.corner_id::text||':github:merge-refused:'||fact.merge_attempt_head,'UTF8')),'hex'))`,

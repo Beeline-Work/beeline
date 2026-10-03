@@ -1607,6 +1607,19 @@ describe('unfinished merge claim recovery (R6a–R6f)', () => {
     expect(visible).toMatchObject({ state: 'archived', lifecycle: { outcome: 'landed' } });
   }
 
+  it('Reproduction F2-1: human input keeps a fresh merge claim until its grace deadline', async () => {
+    const cornerId = await claimed(false);
+    githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, false));
+    await phone.execute('sendRoomMessage', {
+      roomId: cornerId, messageId: randomBytes(32).toString('hex'), text: 'Any update?',
+    }, H);
+    await recover();
+    const observed = await claimHead(cornerId);
+    console.info(`Reproduction F2-1: wrong=claim cleared after human message; right=claim kept until grace; observed=${observed}`);
+    expect(githubApp.readPullRequest).not.toHaveBeenCalled();
+    expect(observed).toBe(SHA);
+  });
+
   it.each([true, false])('Reproduction F1-3: recovery backs off and confirms merged=%s after human input', async merged => {
     const cornerId = await claimed();
     githubApp.readPullRequest.mockRejectedValue(new Error('permission denied'));

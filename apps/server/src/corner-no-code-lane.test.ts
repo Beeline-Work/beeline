@@ -10,6 +10,7 @@ import { GitHubOperations } from './github-operations.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { CORNER_BRIEF_SPEC_MAX_LENGTH, type AgentCommand } from '@beeline/api-contract/daemon';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import { readRoomView } from '@beeline/api-contract/phone';
 
 /**
  * The no-code lane is a durable corner fact, chosen once at open.
@@ -283,6 +284,8 @@ it('saves the first human-opened corner objective and brief when an agent names 
     spec: 'Show the request in the corner panel.',
     approval: { sourceMessageId: command.sourceMessageId, text: '@hoots please do this' },
   });
+  // Both clients project the response before the objective panel sees it.
+  expect(readRoomView(viewed)?.cornerBrief).toEqual(viewed?.cornerBrief);
   await daemon.execute('renameCorner', details, AGENT);
   expect((await db.query(`SELECT revision FROM corner_brief_revisions WHERE corner_id=$1`, [cornerId])).rows)
     .toEqual([{ revision: 1 }]);
@@ -298,6 +301,8 @@ it('saves the first human-opened corner objective and brief when an agent names 
     revision: 2,
     spec: 'Show the updated request in the corner panel.',
   });
+  const revised = await phone.readRoom(cornerId, HUMAN);
+  expect(readRoomView(revised)?.cornerBrief).toEqual(revised?.cornerBrief);
   await daemon.execute('renameCorner', {
     cornerId,
     requestId: command.turnRequestId,

@@ -61,6 +61,13 @@ full-screen in the in-app artifact viewer as Markdown: spec, approval quote, the
 There is no revision history in the viewer. Brief enrichment still degrades independently of the core
 Room read.
 
+Both clients pass the server response through `readRoomView` in
+`packages/api-contract/src/phone-guards.ts`. That reader preserves the latest `cornerBrief`,
+including its spec, approval quote and files, before the objective panel renders it. A corner with
+no saved revision still has no brief link. The naming regression in `corner-no-code-lane.test.ts`
+checks the saved and revised response through this reader; `CornerObjectiveLine.test.tsx` renders
+the parsed response so a missing projection cannot pass a display-only test.
+
 ## Acceptance proof
 
 Run the complete proof only with a disposable local proof database/workspace:

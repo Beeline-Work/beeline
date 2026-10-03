@@ -9,7 +9,7 @@ describe('resource observers in the desktop web renderer', () => {
     const directory = await mkdtemp(path.join(mobile, 'sources/test/observer-proof-'));
     try {
       const entry = path.join(directory, 'proof.jsx');
-      await writeFile(entry, `import React from 'react'; import { createRoot } from 'react-dom/client';
+      await writeFile(entry, `import React from 'react'; import { createRoot } from 'react-dom/client'; import { flushSync } from 'react-dom';
         import SignIn from '@/app/(app)/beeline/settings/workbench/connect-signin';
         import Installer from '@/app/(app)/beeline/settings/workbench/connect';
         import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
@@ -34,8 +34,9 @@ describe('resource observers in the desktop web renderer', () => {
         createRoot(document.getElementById('root')).render(<App />);
         const output = {};
         setTimeout(() => { globalThis.__transcript = document.querySelector('[data-testid="desktop-work-corner-transcript"]');
-          globalThis.__composer.onChangeText('a new message'); }, 300);
-        setTimeout(() => { globalThis.__composer.onSend(); }, 400);
+          // Virtual browser time can outrun React's scheduled draft commit.
+          flushSync(() => globalThis.__composer.onChangeText('a new message')); }, 300);
+        setTimeout(() => { output.draftReady = globalThis.__composer.value === 'a new message'; globalThis.__composer.onSend(); }, 400);
         setTimeout(() => { output.sameTranscript = globalThis.__transcript === document.querySelector('[data-testid="desktop-work-corner-transcript"]');
           output.loaderDuringRefresh = !!document.querySelector('[data-testid="desktop-corner-loader"]');
           output.sentBeforeRead = !globalThis.__composer.disabled; globalThis.__releaseCorner(); }, 800);
@@ -97,7 +98,7 @@ describe('resource observers in the desktop web renderer', () => {
       expect(result.status, result.stderr).toBe(0);
       console.log('Reproductions R9a–R9c desktop web:', result.result);
       const proof = JSON.parse(result.result);
-      expect(proof).toMatchObject({ pendingReads: 1, initialTranscript: true, staleTranscript: false, workflowReads: 1, recoveredTranscript: true, terminalReads: 8, stoppedReads: 8, retryReads: 9, returnedToInstaller: 1, sameTranscript: true, loaderDuringRefresh: false, sentBeforeRead: false, sentAfterRead: true, repaired: true, messageVisible: true, stoppedBeforeRead: false, stoppedAfterRead: true });
+      expect(proof).toMatchObject({ draftReady: true, pendingReads: 1, initialTranscript: true, staleTranscript: false, workflowReads: 1, recoveredTranscript: true, terminalReads: 8, stoppedReads: 8, retryReads: 9, returnedToInstaller: 1, sameTranscript: true, loaderDuringRefresh: false, sentBeforeRead: false, sentAfterRead: true, repaired: true, messageVisible: true, stoppedBeforeRead: false, stoppedAfterRead: true });
       expect(proof.signInError).toContain('Retry');
       expect(proof.installerError).toContain('Lost track');
       expect(proof.inspectorError).toContain('Selected corner unavailable');

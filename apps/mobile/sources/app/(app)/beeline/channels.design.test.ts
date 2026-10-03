@@ -41,7 +41,9 @@ describe('Approved Room list layout', () => {
   });
   it('never passes desktop selection to mobile and toggles the corner dropdown on a tap', () => {
     expect(source).not.toContain('selected={');
-    expect(source).toContain('onToggleCorners={() => cornerDropdowns.toggle(item.room.id)}');
+    expect(source).toMatch(
+      /onToggleCorners=\{\(\) => \{\s*if \(roomListGestures\.canInteract\(\)\) cornerDropdowns\.toggle\(item\.room\.id\);\s*\}\}/,
+    );
     expect(source).toContain('<DesktopRoomCorners');
   });
   it('keeps desktop corners independently selectable, waiting first, from the chat list alone', () => {

@@ -121,7 +121,7 @@ describe('CornerObjectiveLine', () => {
     expect(render(<CornerObjectiveLine objective="   " />).toJSON()).toBeNull();
   });
 
-  it('shows the current brief above the compact workflow and opens its full revision', () => {
+  it('keeps the current brief behind Read brief beside the compact workflow', () => {
     const onOpenBrief = vi.fn();
     const view = readRoomView({
       room: { id: '11111111-1111-4111-8111-111111111111', name: 'Saved brief' },
@@ -130,11 +130,10 @@ describe('CornerObjectiveLine', () => {
     });
     const brief = view?.cornerBrief;
     const renderer = render(
-      <CornerObjectiveLine objective="Ship it" brief={brief?.spec}
+      <CornerObjectiveLine objective="Ship it"
         onOpenBrief={brief ? () => onOpenBrief(brief) : undefined} onOpenWorkflow={() => undefined} workflow={RUN} />,
     );
-    expect(renderer.root.findByProps({ testID: 'corner-objective-line-brief-preview' }).props.children)
-      .toBe('Make the request readable');
+    expect(renderer.root.findAllByType('Text' as any).map(flatText)).not.toContain('Make the request readable');
     const link = renderer.root
       .findAllByType('Pressable' as any)
       .find((node: any) => node.props.testID === 'corner-objective-line-brief');
@@ -165,6 +164,22 @@ describe('CornerObjectiveLine', () => {
     act(() => renderer.root.findByProps({ testID: 'corner-objective-line-workflow-retry' }).props.onPress());
     expect(retry).toHaveBeenCalledTimes(1);
     console.log('R12k Demonstrated: objective line shows offline inline; Retry invokes the workflow read retry.');
+  });
+
+  it('shows the objective once and keeps the brief behind Read brief', () => {
+    const objective =
+      'Assess false agent stalls during long release polling and propose liveness and timeout behavior that preserves healthy turns.';
+    const onOpenBrief = vi.fn();
+    const renderer = render(<CornerObjectiveLine objective={objective} onOpenBrief={onOpenBrief} />);
+    expect(renderer.root.findAllByType('Text' as any).map(flatText)).toEqual([objective, 'Read brief']);
+
+    act(() => {
+      renderer.update(
+        <CornerObjectiveLine objective="Propose a stall timeout" onOpenBrief={onOpenBrief} />,
+      );
+    });
+    expect(renderer.root.findAllByType('Text' as any).map(flatText))
+      .toEqual(['Propose a stall timeout', 'Read brief']);
   });
 
   it('names a live workflow run under the objective and opens its run page', () => {

@@ -1878,16 +1878,30 @@ export class MonolithCornerTurnLoop {
               let reviewerSecondPass = false;
               let reviewerTargetChanged = false;
               if (!explained && checksTurn && this.reviewerInstructionInput) {
-                reviewerSecondPass = true;
                 await this.syncBranch();
                 refreshedReviewerInstruction = await this.activeReviewerInstruction();
                 reviewerTargetChanged = refreshedReviewerInstruction !== activeReviewerInstruction;
+                reviewerSecondPass =
+                  reviewerTargetChanged ||
+                  !result.toolCalls.some(
+                    (call) =>
+                      /(?:^|[._:/-])(?:approve_merge|record_validation_stage)$/i.test(call.title ?? '') &&
+                      isCompletedToolCall(call),
+                  );
               }
               let replyBeforeNudge = '';
               if (
                 !explained &&
                 (needsDeliveryNudge ||
-                  (checksTurn && (Boolean(this.reviewerInstructionInput) || this.yoloMode)))
+                  (checksTurn &&
+                    (this.reviewerInstructionInput
+                      ? reviewerSecondPass
+                      : this.yoloMode &&
+                        !result.toolCalls.some(
+                          (call) =>
+                            /(?:^|[._:/-])pr_checks_status$/i.test(call.title ?? '') &&
+                            isCompletedToolCall(call),
+                        ))))
               ) {
                 if (needsDeliveryNudge) this.lastDeliveryNudgeState = deliveryState;
                 // The flush comes first: it is what puts this run's narration

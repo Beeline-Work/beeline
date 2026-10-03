@@ -55,8 +55,8 @@ line-ending, rename/mode-only, binary, and all other head changes require review
 The existing composite `pr_checks_status` gate remains the sole merge authority; validation-stage
 records are evidence, not authorization.
 
-On the phone, the objective rail shows the brief's lead above a compact workflow link and a
-`Read brief` link. The desktop work pane also offers `Read brief`. The link opens the latest revision
+On the phone, the objective rail shows the corner objective once, above a compact workflow link
+and a `Read brief` link; the brief itself stays behind that link. The desktop work pane also offers `Read brief`. The link opens the latest revision
 full-screen in the in-app artifact viewer as Markdown: spec, approval quote, then files.
 There is no revision history in the viewer. Brief enrichment still degrades independently of the core
 Room read.

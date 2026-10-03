@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { MESSAGE_REACTION_EMOJIS, SERVER_EVENT_KINDS } from '@beeline/api-contract/phone';
+import { VALIDATION_STAGE_OWNERSHIP } from './prompt-assembly.js';
 
 export const USING_BEELINE_SKILL_NAME = 'using-beeline';
 export const BEELINE_TRIAGE_SKILL_NAME = 'beeline-triage';
@@ -132,8 +133,9 @@ Before judging the implementation, independently repeat the two judgment legs fr
 ## 3. Empirical pass second
 
 Build one visible validation record for the brief revision and code head. Assess intent, base synchronization, independent review, tests, documentation, lint and types, publication, CI, and final Beeline authorization. Each applicable stage is pending, running, passed, failed, skipped, or not applicable, with a reason for the last two. A required skipped, failed, or unverified stage blocks PASS. An empty CI rollup is not proof of passing checks. Reuse valid author evidence; run targeted independent checks where needed. A screenshot or rendered app is needed for visual claims, and server-boundary behavior for authorization claims.
-Use record_validation_stage for each assessed stage, naming the current brief revision and exact PR head. A reviewer records the review stage; the author records repairs and publication. The record informs the verdict but never replaces approve_merge or pr_checks_status.
-Only the author may report final_authorization as passed, after pr_checks_status reports checks passed and mergeAllowed true for the current head; the server then merges that head. A reviewer's approval or a passed stage row alone is not the composite gate.
+Use record_validation_stage for each assessed stage, naming the current brief revision and exact PR head.
+${VALIDATION_STAGE_OWNERSHIP}
+The record informs the verdict but never replaces approve_merge or pr_checks_status.
 
 - Run the repository typecheck and tests touched by the diff.
 - If the spec or the approval quote names a user path, exercise that path.

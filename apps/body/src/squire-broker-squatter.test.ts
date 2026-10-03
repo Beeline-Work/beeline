@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { reclaimSquireBrokerSockets } from './squire-broker-squatter.js';
 import { ensureSquireHostDir, squireBrokerSocketReady, squireHostPaths } from './squire-host.js';
 
@@ -101,7 +101,7 @@ describe.skipIf(!linux)('host broker socket preflight', () => {
     });
 
     expect(result).toEqual({ ok: true, stopped: [squatter.pid] });
-    expect(exited(squatter)).toBe(true);
+    await vi.waitFor(() => expect(exited(squatter)).toBe(true));
     expect(await squireBrokerSocketReady(paths.mcpSocket)).toBe(false);
     expect(lines.join('\n')).toContain(`pid ${squatter.pid}`);
   });
@@ -133,7 +133,7 @@ describe.skipIf(!linux)('host broker socket preflight', () => {
     });
 
     expect(result).toEqual({ ok: true, stopped: [squatter.pid] });
-    expect(squatter.signalCode).toBe('SIGKILL');
+    await vi.waitFor(() => expect(squatter.signalCode).toBe('SIGKILL'));
   });
 
   it('leaves a stale socket file with no listener to Squire', async () => {

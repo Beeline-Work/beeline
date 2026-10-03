@@ -563,7 +563,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
       wrapTitle
 
       identity={<IdentityMark kind="agent" seed={display.avatarSeed ?? offer.agent.pubkey} avatarUrl={display.avatarUrl} face={display.face} name={agentName} size={26} />}
-      title={offer.intent === 'reconnect' && offer.provider ? connectorOfferReconnectTitle(offer.provider) : connectorOfferTitle(offer.connectorName)}
+      title={offer.intent === 'reconnect' ? connectorOfferReconnectTitle(offer.provider) : connectorOfferTitle(offer.connectorName)}
       subline={offer.consequence}
       sublineTestID={`connector-offer-${offer.offerId}-line`}
       stamp={ledgerStamp(message.timestamp)}

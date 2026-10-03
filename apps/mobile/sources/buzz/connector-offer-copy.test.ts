@@ -20,6 +20,10 @@ describe('connector-offer copy (R5)', () => {
     expect(connectorOfferReconnectTitle('google')).toBe('Sign in to Google again');
   });
 
+  it('names a generic stall when the wall carries no provider (oauth_sign_in)', () => {
+    expect(connectorOfferReconnectTitle(undefined)).toBe('Sign in again');
+  });
+
   it('names the actor by handle on the settled record, and nothing while the offer is open', () => {
     expect(connectorOfferOutcomeLine({ status: 'pending' })).toBeNull();
     expect(

@@ -333,7 +333,7 @@ export function squireApprovalFromMcp(
 }
 
 export type SquireLoginWallSignal = {
-  readonly wall: 'google_session' | 'awaiting_human';
+  readonly wall: 'google_session' | 'oauth_sign_in' | 'awaiting_human';
   readonly message: string;
 };
 
@@ -342,13 +342,17 @@ export type SquireLoginWallSignal = {
  * provider session — read only from named fields, never prose:
  * `needs_user.wall === 'google_session'` (`NeedsUserLogin`, Squire's
  * Google-session gate: no live provider session at all, `resume: "connect"`;
- * `needs_user.message` is carried verbatim) or `oauth.state ===
- * 'awaiting_human'` (an OAuth mid-flow challenge Squire is already driving;
- * `oauth.reason` is carried verbatim — Squire's own `next_action:
- * "operate_observe"` on this shape is left for the agent to read as-is,
- * since there is no sign-in page in it to relay). Depth-bounded and
- * JSON-string-aware like `approvalLinkIn`, for the same reason: an MCP text
- * block wraps the tool's actual JSON result as a string.
+ * `needs_user.message` is carried verbatim), `needs_user.wall ===
+ * 'oauth_sign_in'` (Drive's own hand-back when an OAuth act is stuck
+ * awaiting a human ON the provider's page — same `resume: "connect"`
+ * remedy, `needs_user.message` carried verbatim, no provider named), or
+ * `oauth.state === 'awaiting_human'` (the OAuth mid-flow challenge
+ * underneath that, read directly off a non-Drive act; `oauth.reason` is
+ * carried verbatim — Squire's own `next_action: "operate_observe"` on this
+ * shape is left for the agent to read as-is, since there is no sign-in page
+ * in it to relay). Depth-bounded and JSON-string-aware like `approvalLinkIn`,
+ * for the same reason: an MCP text block wraps the tool's actual JSON result
+ * as a string.
  */
 function squireLoginWallIn(value: unknown, depth = 0): SquireLoginWallSignal | undefined {
   if (depth > 6) return undefined;
@@ -371,9 +375,9 @@ function squireLoginWallIn(value: unknown, depth = 0): SquireLoginWallSignal | u
   const item = record(value);
   if (!item) return undefined;
   const needsUser = record(item.needs_user);
-  if (needsUser?.wall === 'google_session') {
+  if (needsUser?.wall === 'google_session' || needsUser?.wall === 'oauth_sign_in') {
     const message = shortString(needsUser.message);
-    if (message) return { wall: 'google_session', message };
+    if (message) return { wall: needsUser.wall, message };
   }
   const oauth = record(item.oauth);
   if (oauth?.state === 'awaiting_human') {

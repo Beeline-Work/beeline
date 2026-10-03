@@ -4424,14 +4424,19 @@ export class DaemonService {
 
   /**
    * A Squire in-task result named `needs_user.wall === 'google_session'`
-   * (Squire's own gate: no live provider session in its shared browser) or
-   * an OAuth `awaiting_human` mid-flow challenge. Only `google_session`
-   * produces a card: Squire's own `resume: "connect"` on that wall IS the
-   * ceremony a reconnect offer re-arms, and it is the one shape with an
-   * actual sign-in to relay. `awaiting_human`'s own `next_action:
-   * "operate_observe"` is already the correct wait-and-retry, already in
-   * the agent's tool result, and carries no sign-in page — there is nothing
-   * to open, so this call records it and posts no card.
+   * (Squire's own gate: no live provider session in its shared browser),
+   * `'oauth_sign_in'` (a mid-task OAuth sign-in Squire is stuck on, for
+   * whichever provider's page it was driving — Squire names no provider in
+   * this one, and its own remedy is a plain `connect`, never
+   * `--force-relogin`), or an OAuth `awaiting_human` mid-flow challenge.
+   * `awaiting_human`'s own `next_action: "operate_observe"` is already the
+   * correct wait-and-retry, already in the agent's tool result, and carries
+   * no sign-in page — there is nothing to open, so this call records it and
+   * posts no card. The other two both have Squire's own `resume: "connect"`
+   * as the actual remedy, so both post the same reconnect card. A corner
+   * turn hits this exactly like its parent Room: Squire is reconnecting an
+   * EXISTING connection either way, never a new one, so this is not the
+   * "offer a tool from a corner" decision `offerConnector` blocks.
    *
    * Same chassis as `offerConnector` (a `connector_offers` row, a
    * `connector-offer` card, the hidden `connector-offer-decided` resume
@@ -4439,26 +4444,35 @@ export class DaemonService {
    * reports the reconnect connected) — but nothing here is a decision a
    * person makes: Squire is ALREADY connected, so the row is written
    * straight to `connecting` with `connectorId` set up front (what already
-   * drives the phone's in-app "Continue sign-in" ceremony screen), and the
-   * connector is re-armed with `force_relogin_provider` set — the one path
-   * allowed to pass Squire's own `--force-relogin`; the ordinary "add a
-   * connector" pairing never does.
+   * drives the phone's in-app "Continue sign-in" ceremony screen). Only a
+   * `google_session` wall re-arms the connector with `force_relogin_provider`
+   * set — the one path allowed to pass Squire's own `--force-relogin`; the
+   * ordinary "add a connector" pairing never does, and neither does an
+   * `oauth_sign_in` reconnect.
    */
   private async squireLoginWall(
     input: Input<'postSquireLoginWall'>,
     agentId: string,
   ): Promise<Output<'postSquireLoginWall'>> {
     if (typeof input.roomId !== 'string' || !input.roomId) throw new Error('roomId is required');
-    if (input.wall !== 'google_session' && input.wall !== 'awaiting_human')
+    if (
+      input.wall !== 'google_session' &&
+      input.wall !== 'oauth_sign_in' &&
+      input.wall !== 'awaiting_human'
+    )
       throw new Error('Squire login wall is invalid');
     if (typeof input.message !== 'string' || !input.message.trim())
       throw new Error('Squire login wall message is required');
     const notActioned = { id: '', createdAt: Math.floor(Date.now() / 1000), cardPosted: false };
-    if (input.wall !== 'google_session') return notActioned;
-    const provider = 'google';
+    if (input.wall !== 'google_session' && input.wall !== 'oauth_sign_in') return notActioned;
+    // `google_session` is Squire's own cross-task gate (always its Google
+    // identity), so the provider is known and force-relogin clears that one
+    // stale session. `oauth_sign_in` is a mid-task pause on WHICHEVER
+    // provider's page the task was driving (Squire names no provider in this
+    // wall) — Squire's own remedy for it is a plain `connect`, never
+    // `--force-relogin`, so no provider is forced here either.
+    const provider = input.wall === 'google_session' ? 'google' : undefined;
     const context = await this.offerContext(input.roomId, agentId);
-    if (context.isCorner)
-      throw new Error('Squire login wall is invalid: not from a corner');
     const connectorType: ConnectorKind = 'trusty-squire';
     const connectorName = connectorDisplayName(connectorType);
     const reason = input.message.trim().slice(0, CONNECTOR_OFFER_REASON_MAX_LENGTH);
@@ -4510,7 +4524,7 @@ export class DaemonService {
             connectorType,
             reason,
             connected.machine_id ?? context.machine.machineId,
-            provider,
+            provider ?? null,
             acceptedAt,
             connected.id,
           ],
@@ -4531,14 +4545,14 @@ export class DaemonService {
         acceptedAt: seconds(acceptedAt),
         connectorId: connected.id,
         intent: 'reconnect',
-        provider,
+        ...(provider ? { provider } : {}),
       };
       await systemLine(database, {
         id: messageId,
         roomId: input.roomId,
         subject: { kind: 'agent', id: agentId, name: context.agent.name },
-        verb: 'hit a signed-out',
-        object: `${provider} session`,
+        verb: provider ? 'hit a signed-out' : 'hit a stuck',
+        object: provider ? `${provider} session` : 'sign-in',
         consequence: reason,
         presentation: 'card',
         cardType: 'connector-offer',
@@ -4551,14 +4565,16 @@ export class DaemonService {
       // Force the shared browser's stale provider session through Squire's
       // own connect ceremony. Never set on the ordinary "add a connector"
       // pairing (armConnectorPairing) — only this scoped reconnect trigger
-      // may pass --force-relogin.
+      // may pass --force-relogin, and only when the provider is actually
+      // known (`google_session`); `oauth_sign_in` leaves it NULL so the
+      // helper runs a plain reconnect, exactly as Squire's own remedy says.
       await database.query(
         `UPDATE workspace_connectors
          SET status='installing', status_error=NULL, pending_ops='[]'::jsonb,
              connected_at=NULL, sign_in=NULL, force_relogin_provider=$2,
              pairing_generation=pairing_generation + 1, updated_at=now()
          WHERE id=$1::uuid`,
-        [connected.id, provider],
+        [connected.id, provider ?? null],
       );
       return { offerId, cardPosted: true };
     });

@@ -1320,17 +1320,20 @@ export type PostSquireApprovalInput = TurnOutputAuthority &
 /**
  * Squire's own structured hand-back, named field by field — never prose.
  * `google_session` is `NeedsUserLogin` (Squire's Google-session gate: no live
- * provider session at all, `resume: "connect"`). `awaiting_human` is an
- * OAuth mid-flow observation (a 2FA/consent challenge Squire is already
- * driving); it carries no sign-in page of its own — Squire's own
+ * provider session at all, `resume: "connect"`). `oauth_sign_in` is Drive's
+ * own mid-task hand-back when an OAuth act is stuck awaiting a human ON the
+ * provider's page (`resume: "connect"` too, but for whichever provider that
+ * page belongs to — Squire names none). `awaiting_human` is the OAuth
+ * mid-flow observation underneath that (a 2FA/consent challenge Squire is
+ * already driving); it carries no sign-in page of its own — Squire's own
  * `next_action: "operate_observe"` remains the remedy for it, so it is
  * detected and reported but produces no reconnect ceremony here.
  */
 export type PostSquireLoginWallInput = TurnOutputAuthority &
   RoomInput & {
-    readonly wall: 'google_session' | 'awaiting_human';
-    /** Squire's own `needs_user.message` (google_session) or `oauth.reason`
-     *  (awaiting_human), verbatim. */
+    readonly wall: 'google_session' | 'oauth_sign_in' | 'awaiting_human';
+    /** Squire's own `needs_user.message` (google_session, oauth_sign_in) or
+     *  `oauth.reason` (awaiting_human), verbatim. */
     readonly message: string;
   };
 export type PostSquireLoginWallResult = {

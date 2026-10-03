@@ -12021,6 +12021,94 @@ describe('monolith integration', () => {
     expect(resume.rows).toEqual([{ action: 'resume', state: 'pending' }]);
   });
 
+  it('posts a reconnect card from a Squire google_session wall hit inside a corner turn', async () => {
+    // Squire is reconnecting an EXISTING connection either way, never
+    // offering a new one, so a corner turn gets the same card its parent
+    // Room would — unlike offerConnector, which really does refuse a corner.
+    const cornerId = '44444444-4444-4444-8444-444444444444';
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Corner')`,
+      [cornerId, WORKSPACE, ROOM, HUMAN],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,$2,$3,'member'),($1,$2,$4,'member')`,
+      [WORKSPACE, cornerId, HUMAN, AGENT],
+    );
+    const connector = (
+      await database.query<{ id: string }>(
+        `INSERT INTO workspace_connectors(
+           id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,status
+         ) VALUES(gen_random_uuid(),$1,$2,'trusty-squire',$3,'machine-otter-corner',
+                  'connected') RETURNING id`,
+        [WORKSPACE, HUMAN, AGENT],
+      )
+    ).rows[0]!;
+
+    const posted = await daemonOperation('postSquireLoginWall', {
+      roomId: cornerId,
+      wall: 'google_session',
+      message: 'no live Google session on this profile',
+    });
+    expect(posted.status).toBe(200);
+    const result = (await posted.json()) as { cardPosted: boolean; offerId: string };
+    expect(result.cardPosted).toBe(true);
+
+    const cards = await database.query<{ room_id: string; card: Record<string, any> }>(
+      `SELECT room_id,card FROM messages WHERE card_type='connector-offer'`,
+    );
+    expect(cards.rows).toHaveLength(1);
+    expect(cards.rows[0]!.room_id).toBe(cornerId);
+    expect(cards.rows[0]!.card).toEqual(
+      expect.objectContaining({ status: 'connecting', intent: 'reconnect', provider: 'google' }),
+    );
+    const armed = await database.query<{ force_relogin_provider: string | null }>(
+      `SELECT force_relogin_provider FROM workspace_connectors WHERE id=$1::uuid`,
+      [connector.id],
+    );
+    expect(armed.rows[0]).toEqual({ force_relogin_provider: 'google' });
+  });
+
+  it('posts a reconnect card with no forced provider from a Squire oauth_sign_in wall', async () => {
+    // `oauth_sign_in` (Drive's hand-back for a mid-task OAuth pause) names no
+    // provider, and Squire's own remedy for it is a plain `connect` — never
+    // `--force-relogin` — unlike the `google_session` gate.
+    const connector = (
+      await database.query<{ id: string }>(
+        `INSERT INTO workspace_connectors(
+           id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,status
+         ) VALUES(gen_random_uuid(),$1,$2,'trusty-squire',$3,'machine-otter-oauth',
+                  'connected') RETURNING id`,
+        [WORKSPACE, HUMAN, AGENT],
+      )
+    ).rows[0]!;
+
+    const posted = await daemonOperation('postSquireLoginWall', {
+      roomId: ROOM,
+      wall: 'oauth_sign_in',
+      message:
+        'Awaiting a 2FA confirmation. Run `npx @trusty-squire/mcp connect --json` to get the ' +
+        'shared-browser sign_in_url for the person, then resume observing this session.',
+    });
+    expect(posted.status).toBe(200);
+    const result = (await posted.json()) as { cardPosted: boolean; offerId: string };
+    expect(result.cardPosted).toBe(true);
+
+    const cards = await database.query<{ card: Record<string, any> }>(
+      `SELECT card FROM messages WHERE card_type='connector-offer'`,
+    );
+    expect(cards.rows).toHaveLength(1);
+    expect(cards.rows[0]!.card).toEqual(
+      expect.objectContaining({ status: 'connecting', intent: 'reconnect' }),
+    );
+    expect(cards.rows[0]!.card.provider).toBeUndefined();
+    const armed = await database.query<{ status: string; force_relogin_provider: string | null }>(
+      `SELECT status,force_relogin_provider FROM workspace_connectors WHERE id=$1::uuid`,
+      [connector.id],
+    );
+    expect(armed.rows[0]).toEqual({ status: 'installing', force_relogin_provider: null });
+  });
+
   it('workbench_status reports the helper owner Workbench, not the addressee Workbench', async () => {
     const zekeToken = await phoneToken('zeke');
     const zekeId = createHash('sha256').update('github:zeke').digest('hex');

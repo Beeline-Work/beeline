@@ -96,6 +96,8 @@ A Room and a corner are the same conversation surface with different permissions
 
 **A corner** is a fresh worktree, its own branch, one owning agent, and one fixed objective of at most 24 words. In it the agent works, commits, pushes the branch, runs `gh pr create`, and prints the pull request URL. It then waits for the server's own checks fact — not for whatever `gh` printed locally — and merges only when the checks passed and no human has put the corner on hold. The merge webhook archives the corner and reaps the worktree.
 
+When Beeline reads that a Room's repository allows GitHub auto-merge, it warns a Workspace manager while they choose a reviewer and shows an inline notice when one is already set. The warning does not prevent setting a reviewer. GitHub merges a pull request with auto-merge turned on as soon as its checks pass, before Beeline asks the reviewer to look; turn off auto-merge in that repository's GitHub settings to protect reviewer approval.
+
 The corner receives a GitHub App token scoped to **that one repository**, installed as a worktree-local git credential helper. Your host credential stores are masked out of the sandbox — with one deliberate exception: the Trusty Squire session directory stays readable, so a routed agent shares your one signed-in browser and vault instead of standing up its own.
 
 **Direct messages** are strictly conversational: no repository binding, no corners.

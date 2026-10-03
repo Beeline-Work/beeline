@@ -4217,7 +4217,7 @@ export class PhoneService {
     const db = this.database;
     const target = await this.requireTopLevelRoom(input.roomId);
     if (target.workspace_id !== input.workspaceId) throw new Error('room is not in workspace');
-    if (!(await workflowHumanAdmin(db, input.roomId, viewerId))) throw new Error('human Room/Workspace admin required');
+    if (!(await workflowHumanAdmin(db, input.roomId, viewerId))) throw new Error('room manager required');
     if (typeof input.message !== 'string' || !input.message.trim())
       throw new Error('schedule message is required');
     if (!input.cadence || typeof input.cadence !== 'object')

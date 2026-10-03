@@ -29,11 +29,11 @@ export type RoomListSection = {
   data: ChatListItem[];
 };
 
-/** A Room row carries the corner mark only once the Room has an unarchived corner. */
+/** A Room row carries the corner mark only when the viewer's dropdown has corners. */
 export function roomRowShowsCornerMark(
-  item: Pick<ChatListItem, 'directMessage' | 'cornerCount'>,
+  item: Pick<ChatListItem, 'directMessage' | 'openCorners'>,
 ): boolean {
-  return !item.directMessage && (item.cornerCount ?? 0) > 0;
+  return !item.directMessage && Boolean(item.openCorners?.some((corner) => corner.mine));
 }
 
 /** Rooms lead the index; direct messages follow in their own newest-first section. */

@@ -1088,19 +1088,30 @@ describe('fullCornerTitle', () => {
 });
 
 describe('the corner-mark tip row', () => {
-  const row = (id: string, cornerCount?: number, direct = false) =>
+  const mine = { id: 'mine', name: 'My corner', state: 'working' as const, mine: true };
+  const other = { id: 'other', name: 'Other corner', state: 'working' as const };
+  const row = (openCorners?: ChatListItem['openCorners'], direct = false) =>
     ({
-      room: { id, name: id, updatedAt: 1 },
-      ...(cornerCount === undefined ? {} : { cornerCount }),
-      ...(direct ? { directMessage: { peer: { pubkey: id, kind: 'human', name: id } } } : {}),
+      room: { id: 'room', name: 'Room', updatedAt: 1 },
+      cornerCount: 5,
+      openCorners,
+      ...(direct
+        ? { directMessage: { peer: { pubkey: 'peer', kind: 'human', name: 'Peer' } } }
+        : {}),
     }) as unknown as ChatListItem;
 
-  it('keeps the mark to Rooms with a corner, exactly as before', () => {
-    expect(roomRowShowsCornerMark(row('a'))).toBe(false);
-    expect(roomRowShowsCornerMark(row('b', 0))).toBe(false);
-    expect(roomRowShowsCornerMark(row('c', 2))).toBe(true);
-    expect(roomRowShowsCornerMark(row('d', 2, true))).toBe(false);
+  it('hides the mark when no viewer corners are listed despite a positive total', () => {
+    expect(roomRowShowsCornerMark(row([other]))).toBe(false);
+    expect(roomRowShowsCornerMark(row([]))).toBe(false);
+    expect(roomRowShowsCornerMark(row())).toBe(false);
   });
 
+  it('shows the mark when a viewer corner is listed, including a partial list', () => {
+    expect(roomRowShowsCornerMark(row([mine]))).toBe(true);
+    expect(roomRowShowsCornerMark(row([other, mine]))).toBe(true);
+  });
 
+  it('never shows the Room mark on a direct message', () => {
+    expect(roomRowShowsCornerMark(row([mine], true))).toBe(false);
+  });
 });

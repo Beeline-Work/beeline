@@ -10,6 +10,9 @@ vi.mock('@/sync/transport/monolith-operation', () => ({
   monolithPhoneOperation: async (op: string, input: Record<string, unknown>) => {
     state.calls.push({ op, input });
     if (op === 'readWorkbench') return state.readWorkbenchOutput;
+    if (op === 'readConnectorInstall') return { connectorId: input.connectorId, status: { status: 'installing', steps: [], signIn: null } };
+    if (op === 'readConnectionDetail') return { connection: { connectionId: input.connectionId, reference: 'key', label: 'Key', allowedHosts: [], state: 'active' }, grants: [], ledger: [] };
+    if (op === 'revokeConnectionGrants') return { revoked: 1 };
     if (op === 'pairConnector') return { connectorId: 'conn-1' };
     if (op === 'beginGoogleSignIn') return { authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth?state=one' };
     if (op === 'readGoogleSignIn') return state.googleSignInOutput ??
@@ -301,5 +304,23 @@ describe('MonolithWorkbenchSource disconnectConnector', () => {
       workspaceId: 'ws1',
       connectorId: 'row-uuid',
     });
+  });
+});
+
+describe('targeted screen reads', () => {
+  afterEach(() => { state.calls.length = 0; });
+  it('R12b: polls only the Squire install row', async () => {
+    state.readWorkbenchOutput = workbenchDto([{ connectorType: 'trusty-squire', status: 'installing' }]);
+    expect(await new MonolithWorkbenchSource().readInstallState({ workspaceId: 'ws1', connectorId: 'conn-trusty-squire' })).toMatchObject({ connected: false });
+    expect(state.calls).toEqual([{ op: 'readConnectorInstall', input: { workspaceId: 'ws1', connectorId: 'conn-trusty-squire' } }]);
+  });
+  it('R12d: opens and revokes one key without reading Workbench', async () => {
+    const source = new MonolithWorkbenchSource();
+    await source.readConnectionDetail({ workspaceId: 'ws1', connectionId: 'key-id', viewerId: 'owner' });
+    await source.revokeAllGrants({ workspaceId: 'ws1', connectionId: 'key-id' });
+    expect(state.calls).toEqual([
+      { op: 'readConnectionDetail', input: { workspaceId: 'ws1', connectionId: 'key-id' } },
+      { op: 'revokeConnectionGrants', input: { workspaceId: 'ws1', connectionId: 'key-id' } },
+    ]);
   });
 });

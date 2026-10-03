@@ -161,7 +161,7 @@ function ConnectToolFlow() {
 
   const retry = useCallback(() => {
     setError(null);
-    if (observed.error && !observed.error.startsWith('Lost track of the install')) {
+    if (observed.error && !observed.installMissing) {
       void observed.retry();
       return;
     }
@@ -177,7 +177,7 @@ function ConnectToolFlow() {
     }
     const helperId = pairedHelperRef.current;
     if (helperId) void pair(helperId);
-  }, [observed.error, observed.retry, offerId, pair, startPolling, stopPolling]);
+  }, [observed.error, observed.installMissing, observed.retry, offerId, pair, startPolling, stopPolling]);
 
   const connectorName = connectorNameFor(connectorId);
   const machineName = install?.helperName ?? selectedHelperName;

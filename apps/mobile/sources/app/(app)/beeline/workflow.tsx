@@ -1,3 +1,4 @@
+import { workflowRunHref } from '@/buzz/workflow-run-copy';
 import React, { useCallback, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
@@ -103,10 +104,7 @@ export default function Workflow() {
               accessibilityRole="button"
               style={styles.run}
               onPress={() =>
-                router.push({
-                  pathname: '/beeline/workflow-run',
-                  params: { roomId: run.roomId, runId: run.runId },
-                })
+                router.push(workflowRunHref(run))
               }
             >
               <Text style={styles.title}>

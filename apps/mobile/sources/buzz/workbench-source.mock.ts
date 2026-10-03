@@ -30,6 +30,7 @@ const MEMBER_B = 'human-terra';
 
 export const VERCEL_CONNECTION: ConnectionDetailView = {
   connection: {
+    connectionId: 'cred_vercel',
     ref: 'cred_vercel',
     name: 'Vercel',
     service: 'vercel',
@@ -59,6 +60,7 @@ export const VERCEL_CONNECTION: ConnectionDetailView = {
 
 export const GOOGLE_CONNECTION: ConnectionDetailView = {
   connection: {
+    connectionId: 'cred_google',
     ref: 'cred_google',
     name: 'Google',
     service: 'google',
@@ -85,6 +87,7 @@ export const GOOGLE_CONNECTION: ConnectionDetailView = {
  */
 export const GITHUB_CONNECTION: ConnectionDetailView = {
   connection: {
+    connectionId: 'cred_github',
     ref: 'cred_github',
     name: 'Work key',
     service: 'github',
@@ -342,17 +345,17 @@ export class MockWorkbenchSource implements WorkbenchSource {
 
   async readConnectionDetail(input: {
     workspaceId: string;
-    ref: string;
+    connectionId: string;
     viewerId: string;
   }): Promise<ConnectionDetailView | null> {
     const viewer = this.viewer(input.viewerId);
-    const detail = viewer?.connections.find((candidate) => candidate.connection.ref === input.ref);
+    const detail = viewer?.connections.find((candidate) => candidate.connection.connectionId === input.connectionId);
     return detail ?? null;
   }
 
-  async revokeAllGrants(input: { workspaceId: string; ref: string }): Promise<{ revoked: number }> {
+  async revokeAllGrants(input: { workspaceId: string; connectionId: string }): Promise<{ revoked: number }> {
     const detail = MOCK_VIEWERS.flatMap((candidate) => candidate.connections).find(
-      (candidate) => candidate.connection.ref === input.ref,
+      (candidate) => candidate.connection.connectionId === input.connectionId,
     );
     if (!detail) return { revoked: 0 };
     const revoked = detail.grants.length;

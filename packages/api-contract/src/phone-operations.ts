@@ -35,6 +35,7 @@ import type {
   PairConnectorInput,
   PairConnectorResult,
   ReadConnectionDetailInput,
+  ReadConnectorInstallInput,
   ReadWorkbenchInput,
   RevokeConnectionGrantsInput,
   RevokeConnectionGrantsResult,
@@ -187,6 +188,7 @@ export type PhoneOperationMap = {
    *  call resolves without effect once the identity row is gone. */
   deleteAccount: { input: EmptyInput; output: void };
   reportRunningUpdate: { input: RunningUpdateInput; output: void };
+  readConnectorInstall: { input: ReadConnectorInstallInput; output: Pick<WorkbenchView['connectors'][number], 'connectorId' | 'status'> | null };
   readWorkbench: { input: ReadWorkbenchInput; output: WorkbenchView };
   pairConnector: { input: PairConnectorInput; output: PairConnectorResult };
   cancelGoogleSignIn: { input: CancelGoogleSignInInput; output: { cancelled: boolean } };

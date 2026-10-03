@@ -564,7 +564,7 @@ describe('Workbench settings screen', () => {
     expect(navigation.push.mock.calls[0][0].pathname).toBe(
       '/beeline/settings/workbench/connection',
     );
-    expect(navigation.push.mock.calls[0][0].params.ref).toBe('cred_vercel');
+    expect(navigation.push.mock.calls[0][0].params.connectionId).toBe('cred_vercel');
   });
 
   it('offers adapter reconnect and disconnect on a connected Squire row', async () => {

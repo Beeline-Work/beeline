@@ -149,7 +149,10 @@ describe('ConnectorSignInScreen', () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(15000); });
       expect(readInstallState).toHaveBeenCalledTimes(calls);
       await act(async () => retry.props.onPress());
-      expect(readInstallState.mock.calls.length).toBeGreaterThan(calls);
+      if (kind === 'missing') {
+        expect(router.back).toHaveBeenCalledTimes(1); // R12h
+        expect(readInstallState).toHaveBeenCalledTimes(calls);
+      } else expect(readInstallState.mock.calls.length).toBeGreaterThan(calls);
     } finally { await act(async () => renderer.unmount()); vi.useRealTimers(); }
   });
 

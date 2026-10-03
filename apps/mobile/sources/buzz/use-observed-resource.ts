@@ -3,7 +3,7 @@ import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import type { ConnectorInstallState } from './workbench';
 
-type Snapshot<T> = { data: T | undefined; loading: boolean; error: string | null; successVersion: number };
+type Snapshot<T> = { data: T | undefined; loading: boolean; error: string | null; installMissing?: boolean; successVersion: number };
 type Options<T> = {
   load(): Promise<T>;
   subscribe?: (invalidate: () => void, reconnect: () => void) => Promise<() => void>;
@@ -11,6 +11,7 @@ type Options<T> = {
   refreshAfter?: (data: T | undefined) => number | false;
   missLimit?: number;
 };
+class InstallMissingError extends Error {}
 const resources = new Map<string, Resource<any>>();
 const empty: Snapshot<never> = { data: undefined, loading: false, error: null, successVersion: 0 };
 
@@ -41,7 +42,8 @@ class Resource<T> {
   };
   retry = () => {
     this.misses = 0;
-    this.publish({ ...this.snapshot, error: null });
+    this.publish({ ...this.snapshot, error: null, installMissing: false });
+    if (!this.stop) this.attach();
     return this.invalidate();
   };
   async read() {
@@ -62,6 +64,7 @@ class Resource<T> {
         this.publish({
           ...this.snapshot,
           loading: false,
+          installMissing: cause instanceof InstallMissingError,
           error:
             this.misses >= (this.options.missLimit ?? 1)
               ? String(cause instanceof Error ? cause.message : cause)
@@ -83,25 +86,32 @@ class Resource<T> {
       this.waiters.splice(0).forEach((resolve) => resolve());
     }
   }
+  attach() {
+    if (!this.options.subscribe || !this.listeners.size || this.stop) return;
+    let active = true;
+    let subscriptionStop: (() => void) | undefined;
+    this.stop = () => {
+      active = false;
+      subscriptionStop?.();
+    };
+    void Promise.resolve()
+      .then(() => (active ? this.options.subscribe?.(this.retry, this.retry) : undefined))
+      .then((stop) => {
+        if (active) subscriptionStop = stop;
+        else stop?.();
+      })
+      .catch((cause) => {
+        if (active) {
+          this.stop = undefined;
+          this.publish({ ...this.snapshot, loading: false, error: String(cause) });
+        }
+      });
+  }
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
     if (this.listeners.size === 1) {
       resources.set(this.key, this);
-      let active = true;
-      let subscriptionStop: (() => void) | undefined;
-      this.stop = () => {
-        active = false;
-        subscriptionStop?.();
-      };
-      void Promise.resolve()
-        .then(() => (active ? this.options.subscribe?.(this.retry, this.retry) : undefined))
-        .then((stop) => {
-          if (active) subscriptionStop = stop;
-          else stop?.();
-        })
-        .catch((cause) => {
-          if (active) this.publish({ ...this.snapshot, loading: false, error: String(cause) });
-        });
+      this.attach();
       if (!this.flight) this.invalidate();
     }
     return () => {
@@ -109,6 +119,7 @@ class Resource<T> {
       if (!this.listeners.size) {
         clearTimeout(this.timer);
         this.stop?.();
+        this.stop = undefined;
         this.dirty = false;
         if (!this.flight && resources.get(this.key) === this) resources.delete(this.key);
       }
@@ -144,7 +155,7 @@ export function observeRoomResource(roomId: string) {
     return sharedLiveConnection().register([{ '#h': [roomId] }], (event) => {
       if (!('monolithLive' in event)) return;
       const live = event.monolithLive;
-      if (!('roomId' in live) || live.roomId !== roomId) return;
+      if (!('roomId' in live) || live.roomId !== roomId || ('reconcilesDelivery' in live && live.reconcilesDelivery)) return;
       if (live.type === 'subscribed') {
         if (subscribed) reconnect();
         subscribed = true;
@@ -168,7 +179,7 @@ export function useInstallObserver(workspaceId: string, connectorId: string | un
           .catch(() => {
             throw new Error('Lost contact while installing — retry to reconnect');
           });
-        if (!state) throw new Error('Lost track of the install — retry to reconnect');
+        if (!state) throw new InstallMissingError('Lost track of the install — retry to reconnect');
         return state;
       },
       missLimit: 8,

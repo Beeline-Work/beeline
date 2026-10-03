@@ -157,6 +157,16 @@ describe('CornerObjectiveLine', () => {
     ).toHaveLength(0);
   });
 
+
+  it('R12k: shows workflow errors inline and retries from the objective line', () => {
+    const retry = vi.fn();
+    const renderer = render(<CornerObjectiveLine objective="Ship it" workflowError="offline" onRetryWorkflow={retry} />);
+    expect(flatText(renderer.root.findByProps({ testID: 'corner-objective-line-workflow-error' }))).toContain('offline');
+    act(() => renderer.root.findByProps({ testID: 'corner-objective-line-workflow-retry' }).props.onPress());
+    expect(retry).toHaveBeenCalledTimes(1);
+    console.log('R12k Demonstrated: objective line shows offline inline; Retry invokes the workflow read retry.');
+  });
+
   it('names a live workflow run under the objective and opens its run page', () => {
     const onOpenWorkflow = vi.fn();
     const renderer = render(

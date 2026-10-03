@@ -52,6 +52,7 @@ export type WorkbenchConnector = {
 };
 
 export type WorkbenchConnection = {
+  connectionId: string;
   ref: string;
   name: string;
   /**

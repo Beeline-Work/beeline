@@ -382,7 +382,7 @@ export default function WorkbenchScreen() {
                   onPress={() =>
                     router.push({
                       pathname: '/beeline/settings/workbench/connection',
-                      params: { workspaceId, viewerId, ref: connection.ref },
+                      params: { workspaceId, viewerId, connectionId: connection.connectionId },
                     } as unknown as Href)
                   }
                   statusGlyph={instrument.glyph}

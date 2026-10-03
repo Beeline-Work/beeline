@@ -2,8 +2,8 @@ import React from 'react';
 // @ts-expect-error No renderer declarations in this workspace.
 import { act, create } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
-const wire = vi.hoisted(() => ({ listener: undefined as any, stop: vi.fn() }));
-vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ register: async (_: unknown, listener: unknown) => { wire.listener = listener; return wire.stop; } }) }));
+const wire = vi.hoisted(() => ({ listener: undefined as any, stop: vi.fn(), register: vi.fn() }));
+vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ register: wire.register.mockImplementation(async (_: unknown, listener: unknown) => { wire.listener = listener; return wire.stop; }) }) }));
 vi.mock('@/buzz/workbench-source', () => ({ getWorkbenchSource: vi.fn() }));
 import { useObservedResource, observeRoomResource } from './use-observed-resource';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -113,4 +113,25 @@ it('selection switches hide old values and late reads cannot overwrite the new s
   expect(current.data).toBe('new detail');
   await act(async () => release('old detail'));
   expect(current.data).toBe('new detail');
+});
+
+it('R12i: one delivery reads once, its reconciliation does not read again', async () => {
+  const load = vi.fn(async () => 'current');
+  function Reader() { useObservedResource('delivery', { load, subscribe: observeRoomResource('room') }); return null; }
+  await act(async () => { mount(<Reader />); });
+  await act(async () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'room', reason: 'message', deliveryId: 'd1' } }));
+  await act(async () => wire.listener({ monolithLive: { type: 'message-delta', roomId: 'room', reconcilesDelivery: 'd1' } }));
+  expect(load).toHaveBeenCalledTimes(2);
+});
+it('R12j: Retry attaches a subscription that failed, then receives pushes', async () => {
+  wire.register.mockRejectedValueOnce(new Error('subscription offline'));
+  const load = vi.fn(async () => 'current');
+  let current: any;
+  function Reader() { current = useObservedResource('subscription-retry', { load, subscribe: observeRoomResource('room') }); return null; }
+  await act(async () => { mount(<Reader />); });
+  await act(async () => current.retry());
+  expect(wire.register).toHaveBeenCalledTimes(2);
+  const calls = load.mock.calls.length;
+  await act(async () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'room', reason: 'message' } }));
+  expect(load).toHaveBeenCalledTimes(calls + 1);
 });

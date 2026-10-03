@@ -136,7 +136,7 @@ vi.mock('@/sync/transport/room-view-client', () => ({
     workspaces = vi.fn(async () => ({
       workspaces: [
         { id: 'workspace-a', name: 'Alpha Workspace' },
-        { id: 'workspace-empty', name: 'Empty Workspace' },
+        { id: 'workspace-empty', name: 'Empty Workspace', attention: true, roomCount: 3 },
       ],
       viewer: { pubkey: 'viewer', kind: 'human', name: 'Ada Lovelace' },
     }));
@@ -304,6 +304,20 @@ describe('desktop Workspace navigation', () => {
       tree = create(<SidebarView />);
     });
     await settle();
+  });
+
+
+  it('R12e: reads chats only for the active Workspace on mount and navigation', async () => {
+    expect(chats.mock.calls.every(([id]) => id === 'workspace-a')).toBe(true);
+    const rail = tree.root.findByType('DesktopWorkspaceRail');
+    expect(rail.props.workspaces.find((item: any) => item.id === 'workspace-empty')).toMatchObject({ needsAttention: true, roomCount: 3 });
+    chats.mockClear();
+    route.pathname = '/beeline/tray';
+    await act(async () => tree.update(<SidebarView key="pathname-change" />));
+    await settle();
+    expect(chats).toHaveBeenCalled();
+    expect(chats.mock.calls.every(([id]) => id === 'workspace-a')).toBe(true);
+    console.log('R12e Demonstrated: other Workspace marked needsAttention, 3 rooms; chats read only workspace-a.');
   });
 
   it('keeps both Mac workspace headers below the overlay title bar', async () => {

@@ -19,7 +19,7 @@ import {
   useRoomListFilter,
 } from '@/buzz/room-list-preferences';
 import { openRoomListCorner } from '@/buzz/room-list-new-corner';
-import { roomListSections, roomRowNeedsAttention } from '@/buzz/room-list-row';
+import { roomListSections } from '@/buzz/room-list-row';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
 import { ROOMS_LABEL, WORKSPACE_LABEL, WORKSPACES_LABEL } from '@/buzz/vocabulary';
@@ -207,12 +207,7 @@ export const SidebarView = React.memo(function SidebarView() {
   const [refreshNonce, setRefreshNonce] = React.useState(0);
   const refreshedForWorkspaceIds = React.useRef(new Set<string>());
   const [workspaceSwitcherOpen, setWorkspaceSwitcherOpen] = React.useState(false);
-  const [attentionWorkspaceIds, setAttentionWorkspaceIds] = React.useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
-  const [workspaceRoomCounts, setWorkspaceRoomCounts] = React.useState<ReadonlyMap<string, number>>(
-    () => new Map(),
-  );
+  const attentionWorkspaceIds = new Set(workspaces.filter((workspace) => workspace.attention).map((workspace) => workspace.id));
   const {
     expanded: expandedRoomIds,
     setExpanded: setExpandedRoomIds,
@@ -296,30 +291,6 @@ export const SidebarView = React.memo(function SidebarView() {
     setSurface(null);
     if (identityPubkey) void saveActiveCommunityId(identityPubkey, routeWorkspaceId);
   }, [identityPubkey, routeWorkspaceId, workspaces]);
-
-  React.useEffect(() => {
-    if (!client || !workspaces.length) return;
-    let cancelled = false;
-    void Promise.all(
-      workspaces.map(async (workspace) => {
-        const chats = await client.chats(workspace.id).catch(() => null);
-        return [
-          workspace.id,
-          Boolean(chats?.chats.some((item) => roomRowNeedsAttention(item))),
-          chats?.chats.length ?? 0,
-        ] as const;
-      }),
-    ).then((results) => {
-      if (cancelled) return;
-      setAttentionWorkspaceIds(
-        new Set(results.filter(([, attention]) => attention).map(([id]) => id)),
-      );
-      setWorkspaceRoomCounts(new Map(results.map(([id, , roomCount]) => [id, roomCount])));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [client, pathname, workspaces]);
 
   const { pinned, pinsLoaded, togglePin, pinError } = useRoomPins(identityPubkey, workspaceId);
   const counts = React.useMemo(
@@ -815,7 +786,7 @@ export const SidebarView = React.memo(function SidebarView() {
               id: workspace.id,
               name: workspace.name,
               avatar: workspace.avatar,
-              roomCount: workspaceRoomCounts.get(workspace.id) ?? 0,
+              roomCount: workspace.roomCount ?? 0,
               needsAttention: attentionWorkspaceIds.has(workspace.id),
             }))}
           />

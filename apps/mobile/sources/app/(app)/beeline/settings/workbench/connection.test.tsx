@@ -8,7 +8,7 @@ const searchParams = vi.hoisted(() => ({
   params: {
     workspaceId: 'workspace-1',
     viewerId: 'human-dani',
-    ref: 'cred_vercel',
+    connectionId: 'cred_vercel',
   } as Record<string, string>,
 }));
 const safeAreaInsets = vi.hoisted(() => ({ top: 0, right: 0, bottom: 34, left: 0 }));
@@ -92,7 +92,7 @@ beforeEach(() => {
   searchParams.params = {
     workspaceId: 'workspace-1',
     viewerId: 'human-dani',
-    ref: 'cred_vercel',
+    connectionId: 'cred_vercel',
   };
 });
 
@@ -152,7 +152,7 @@ describe('Connection detail screen', () => {
     searchParams.params = {
       workspaceId: 'workspace-1',
       viewerId: 'human-dani',
-      ref: 'cred_github',
+      connectionId: 'cred_github',
     };
     const renderer = await render();
     expect(renderer.root.findByProps({ testID: 'connection-key-label' }).props.children).toBe(
@@ -253,13 +253,14 @@ describe('Connection detail screen', () => {
     expect(renderer.root.findByProps({ testID: 'connection-revoked-line' }).props.children).toBe(
       'Revoked 2 grants',
     );
+    console.log('R12d Demonstrated: key detail opened by connectionId; Revoke shows Revoked 2 grants.');
   });
 
   it('refuses another member’s connection instead of showing it', async () => {
     searchParams.params = {
       workspaceId: 'workspace-1',
       viewerId: 'human-terra',
-      ref: 'cred_vercel',
+      connectionId: 'cred_vercel',
     };
     const renderer = await render();
     expect(renderer.root.findByProps({ testID: 'connection-error' }).props.children).toContain(

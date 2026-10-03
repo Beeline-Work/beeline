@@ -8,7 +8,7 @@ describe('resource observers in the desktop web renderer', () => {
     const mobile = process.cwd();
     const directory = await mkdtemp(path.join(mobile, 'sources/test/observer-proof-'));
     try {
-      const entry = path.join(directory, 'proof.tsx');
+      const entry = path.join(directory, 'proof.jsx');
       await writeFile(entry, `import React from 'react'; import { createRoot } from 'react-dom/client';
         import SignIn from '@/app/(app)/beeline/settings/workbench/connect-signin';
         import Installer from '@/app/(app)/beeline/settings/workbench/connect';
@@ -90,7 +90,7 @@ describe('resource observers in the desktop web renderer', () => {
     const mobile = process.cwd();
     const directory = await mkdtemp(path.join(mobile, 'sources/test/observer-proof-'));
     try {
-      const entry = path.join(directory, 'proof.tsx');
+      const entry = path.join(directory, 'proof.jsx');
       await writeFile(entry, `import React from 'react';
         import { createRoot } from 'react-dom/client';
         import WorkflowRun from '@/app/(app)/beeline/workflow-run';

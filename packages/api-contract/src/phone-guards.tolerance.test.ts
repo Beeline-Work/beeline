@@ -441,6 +441,11 @@ describe('phone surface readers', () => {
       continuation: 'Bee posts the notes right after.' };
     expect(readRoomViewMessage({ ...message, presentation: 'card', appSignIn })?.appSignIn)
       .toEqual(appSignIn);
+    expect(readRoomViewMessage({ ...message, appSignIn: { ...appSignIn,
+      logo: 'https://cdn.example.test/slack.png', domain: 'slack.com' } })?.appSignIn)
+      .toMatchObject({ logo: 'https://cdn.example.test/slack.png', domain: 'slack.com' });
+    expect(readRoomViewMessage({ ...message, appSignIn: { ...appSignIn,
+      logo: 'javascript:alert(1)', domain: 123 } })?.appSignIn).toEqual(appSignIn);
     expect(readRoomViewMessage({ ...message, appSignIn: { ...appSignIn, ownerId: 'other' } })
       ?.appSignIn).toBeUndefined();
     expect(readRoomViewMessage({ ...message, appSignIn: { ...appSignIn, continuation: 'x'.repeat(161) } })

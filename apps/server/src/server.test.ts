@@ -50,13 +50,40 @@ describe('server readiness', () => {
     return fetch(`http://127.0.0.1:${port}${path}`, requestInit);
   }
 
-  it('routes a verifier session to the app without activating it anonymously', async () => {
+  it('Reproduction RETURN-1: retains a visible verifier return when the app handoff is blocked', async () => {
+    const query = vi.fn(), transaction = vi.fn();
     const response = await get('/v1/apps/oauth/verify?session_uri=session-fixture',
-      { query: vi.fn(), transaction: vi.fn() }, {}, { redirect: 'manual' });
-    expect(response.status).toBe(302);
-    expect(response.headers.get('location')).toBe(
-      'beeline://beeline/settings/workbench/connect-signin?appSignInSession=session-fixture');
+      { query, transaction }, {}, { redirect: 'manual' });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('location')).toBeNull();
     expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(response.headers.get('referrer-policy')).toBe('no-referrer');
+    const html = await response.text();
+    expect(html).toContain('href="beeline://beeline/settings/workbench/connect-signin?appSignInSession=session-fixture">Open Beeline</a>');
+    expect(html).toContain("window.location.href = document.getElementById('open-beeline').href;");
+    expect(query).not.toHaveBeenCalled();
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it('keeps an untrusted verifier session encoded in the return link', async () => {
+    const session = 'https://provider.test/session?a=1&b="</script><script>alert(1)</script>\'';
+    const response = await get(`/v1/apps/oauth/verify?${new URLSearchParams({ session_uri: session })}`,
+      { query: vi.fn(), transaction: vi.fn() });
+    const html = await response.text();
+    expect(html).not.toContain(session);
+    expect(html.match(/<script\b/g)).toHaveLength(1);
+    const link = new URL(html.match(/id="open-beeline" href="([^"]+)"/)![1]);
+    expect(link.searchParams.get('appSignInSession')).toBe(session);
+    const nonce = html.match(/<script nonce="([^"]+)"/)![1];
+    expect(response.headers.get('content-security-policy')).toContain(`script-src 'nonce-${nonce}'`);
+    expect(response.headers.get('content-security-policy')).toContain("default-src 'none'");
+  });
+
+  it.each(['', 'x'.repeat(4097)])('rejects an absent or oversized verifier session', async session => {
+    const response = await get(`/v1/apps/oauth/verify?${new URLSearchParams({ session_uri: session })}`,
+      { query: vi.fn(), transaction: vi.fn() });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'Invalid app sign-in session' });
   });
 
   it('retires the first-party Google callback route', async () => {

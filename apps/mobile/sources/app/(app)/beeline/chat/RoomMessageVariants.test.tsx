@@ -2835,6 +2835,25 @@ describe('Room message variant components', () => {
       expect(instagramCard).toContain('Retry Instagram');
     });
 
+    it.each(['Instagram', 'Figma'])('Reproduction CARD-1: renders the provider logo for %s and falls back on image failure', (name) => {
+      const logo = `https://cdn.composio.dev/${name.toLowerCase()}.png`;
+      const card = render(<AppSignInCard message={message({ appSignIn: {
+        appId: 'app-proof', appKey: name.toLowerCase(), name, logo,
+        domain: `${name.toLowerCase()}.com`, ownerId: 'zeke', agentId: 'monarch', status: 'pending',
+      } })} agentName="Monarch" canConnect onConnect={vi.fn()} busy={false} />);
+      const image = () => card.root.findAllByType('Image').find((node: ReactTestInstance) =>
+        node.props.source?.uri === logo);
+      expect(image()).toBeDefined();
+      act(() => image()!.props.onError());
+      const favicon = card.root.findAllByType('Image').find((node: ReactTestInstance) =>
+        node.props.source?.uri?.includes(`${name.toLowerCase()}.com`));
+      expect(favicon).toBeDefined();
+      act(() => favicon!.props.onError());
+      expect(JSON.stringify(card.toJSON())).toContain(`"${name[0]}"`);
+      if (process.env.BEELINE_SIGN_IN_PROOF === '1')
+        console.log(`CARD-1 ${name}: card renders provider logo; failed logo uses favicon, then letter`);
+    });
+
     it('asks the question once, states consequence + boundary in one server-owned line, and offers ONE affirmative action to the addressee', () => {
       const onAccept = vi.fn();
       const card = render(

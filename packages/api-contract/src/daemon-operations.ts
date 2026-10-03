@@ -69,7 +69,6 @@ export type AgentScheduleResult = {
 export type AgentScheduleEntry = {
   readonly workflowName?: string;
   readonly owner?: import('./phone-operations.js').WorkflowOwnershipView['owner'];
-  readonly activeRunIds?: readonly string[];
   readonly scheduleId: string;
   /** The agent the schedule mentions on every run. */
   readonly agentId: string;

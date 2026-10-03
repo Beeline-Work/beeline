@@ -2595,6 +2595,12 @@ export async function migrate(
      ON messages(room_id,author_id,created_at DESC,id DESC)
      WHERE presentation='activity' AND durable_fact IS NULL`,
   ));
+  await retryMigrationStep('active workflow trigger index', () => createIndexConcurrently(
+    database, 'messages_workflow_active_trigger_idx',
+    `CREATE INDEX CONCURRENTLY messages_workflow_active_trigger_idx
+     ON messages(room_id, (card->'trigger'->>'scheduleId'), (card->>'workflowSlug'), (card->'trigger'->>'period'))
+     WHERE card_type='workflow-handoff' AND card->>'active'='true'`,
+  ));
   await retryMigrationStep('unread cursor index', () => createIndexConcurrently(
     database, 'messages_unread_cursor_idx',
     `CREATE INDEX CONCURRENTLY messages_unread_cursor_idx

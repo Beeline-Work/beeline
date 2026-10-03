@@ -599,10 +599,8 @@ describe('start_workflow schedule/trigger duplicate-run refusal', () => {
       );
       if (index < 4) {
         await database.query(
-          `INSERT INTO messages(id,room_id,author_id,text,card_type,card,created_at)
-           VALUES($1,$2,$3,'completed','workflow-handoff',$4::jsonb,now()+interval '1 second')`,
-          [`${runId}-done`, ROOM, IMPLEMENTER,
-            JSON.stringify({ runId, workflowSlug: 'corner', workflowVersion: 1, toState: 'land' })],
+          `UPDATE messages SET card=card || '{"active":false}'::jsonb WHERE id=$1`,
+          [runId],
         );
       }
     }
@@ -781,6 +779,10 @@ describe('handoff', () => {
       contents: { decision: 'approved' },
     });
     expect(landed).toEqual({ runId, state: 'land', status: 'done' });
+    const start = await database.query<{ active: string }>(
+      `SELECT card->>'active' active FROM messages WHERE id=$1`, [runId],
+    );
+    expect(start.rows[0]?.active).toBe('false');
     command = await commandFor(APPROVER);
     await expect(
       handoff(database, command, { runId, outcome: 'approved', contents: { decision: 'approved' } }),

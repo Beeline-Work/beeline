@@ -74,9 +74,6 @@ vi.mock('@/sync/storage', () => ({
   useLocalSettingMutable: () => [false, vi.fn()],
 }));
 vi.mock('./SidebarView', () => ({ SidebarView: () => null }));
-vi.mock('./buzz/ForegroundNotificationBanner', () => ({
-  ForegroundNotificationBanner: () => null,
-}));
 
 const loadDesktopPaneWidthMock = vi.hoisted(() => vi.fn(async () => 280));
 const saveDesktopPaneWidthMock = vi.hoisted(() => vi.fn(async () => undefined));

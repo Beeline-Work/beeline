@@ -279,7 +279,7 @@ Primitives live in `components/buzz/MonoHull.tsx` with `motionTokens`: press in 
 - **Live breathes, never travels.** `HullLivePulse` (one opacity breath) is the only motion "live" may have. It is mounted only where something is genuinely live, so mount it conditionally, never `active={false}`. No sweeping bands, progress bars, or marching dashes for turns, corners or checks.
 - At most two of `PixelLoader` / `HullWaveSignal` run on screen at once.
 - **The self-painting glyph** is the one drawn loop: `BootPaint` paints once on splash; `SurfaceGlyphLoader` (page and Room load gates) and `BeelineMarkSpinner` (thinking line) draw the Beeline mark, unwind, and rest empty. Reduced motion shows the static mark.
-- **Exceptions:** the provisional settle cross-fade (220 ms); a closed poll's still brass wash (magnitude, not progress); the foreground-notification banner's 2 px brass bar counting down its fixed four-second life.
+- **Exceptions:** the provisional settle cross-fade (220 ms); a closed poll's still brass wash (magnitude, not progress).
 
 ### Agent and human profiles
 Profiles reuse Settings typography, spacing and `SettingsRow`. Bylines open profiles; mentions and Message open DMs. Phone pushes a page; desktop opens an adjacent pane. Human profiles show identity, Workspace role (with explicit Edit/Save/Cancel when authorized) and the read-only grant ledger. Agent profiles show the mark or generated portrait, model, effort, owner, expandable soul and merged work. See [agent profiles](docs/agent-profiles.md).
@@ -324,11 +324,10 @@ Observed in the app source on 2026-10-03; recorded here, not fixed. Paths are re
 - `Typography.default()` (`constants/Typography.ts`) renders IBM Plex Sans wherever a role does not override it: `components/RoundButton.tsx:42`, `components/buzz/NewRoomDialog.tsx:390`, `components/buzz/YouStep.tsx:166`, the error text in `app/(app)/beeline/settings/workbench/connect-app.tsx:120` / `connect-signin.tsx:91` (same folder) / `workbench/app.tsx:111`.
 - `buzz/app-board-style.ts:26-29` defines 17/14/15/11 sizes and 1 px tracking; the calm lint scans only `.tsx`, so it is not counted. Arithmetic sizes also escape it (`app/(app)/beeline/channels.tsx:1302,1308`).
 - Bricolage Grotesque is loaded (`app/_layout.tsx`) but has no runtime reference; `SpaceGrotesk-Bold.ttf` ships but is never loaded.
-- `components/buzz/ForegroundNotificationBanner.tsx:200-214` sets a section head in mono SemiBold.
 
 **Spacing and radius**
 - About 64% of literal padding/margin/gap values are off the 4/8/16/24/32/48 scale (most often 12, 10, 6, 2, 14). Heaviest: `app/(app)/beeline/chat/_chat-surface.tsx`, `RoomMessageVariants.tsx`, `app/(app)/beeline/onboarding.tsx`, `components/buzz/CornerAppScreen.tsx`, `components/buzz/WorkflowRunLine.tsx`. The `transcriptCard` and `roomCard` tokens are themselves off-scale (12, 14, 10, 22).
-- Radius 10, meant for transcript cards, is reused on buttons and banners (`connect-signin.tsx:96`, `workbench/app.tsx:107`, `channels.tsx:1296`, `components/buzz/ForegroundNotificationBanner.tsx:178`). Off-scale radii: `components/UpdateReadyPrompt.tsx:72` (16), `components/buzz/ConversationComposer.tsx:503` (13), `components/ShortcutHints.tsx` (14/9/6), `components/SidebarView.tsx:121` (7).
+- Radius 10, meant for transcript cards, is reused on buttons and banners (`connect-signin.tsx:96`, `workbench/app.tsx:107`, `channels.tsx:1296`). Off-scale radii: `components/UpdateReadyPrompt.tsx:72` (16), `components/buzz/ConversationComposer.tsx:503` (13), `components/ShortcutHints.tsx` (14/9/6), `components/SidebarView.tsx:121` (7).
 
 **Competing components**
 - Buttons: `MonoButton` (46, `meta` SemiBold), `BrassButton`/`OnboardingButton` (44, `body`), and the pill `RoundButton` with glass blur (`app/(app)/index.tsx`), plus roughly a dozen hand-rolled Pressables with radius 3, 9 or 10 and heights 32–48.

@@ -58,7 +58,10 @@ import { monolithSession } from '@/auth/monolith-session';
 import { startPushRegistrationLifecycle } from '@/push/push-registration-lifecycle';
 import { reportRunningUpdateReceipt } from '@/push/update-receipt';
 import { getOpenBuzzChannelId } from '@/buzz/open-room-tracker';
-import { decideForegroundNotificationDisplay } from '@/push/foreground-policy';
+import {
+  decideForegroundNotificationDisplay,
+  foregroundNotificationBehavior,
+} from '@/push/foreground-policy';
 import {
   clearLegacyPresentedNotificationsOnce,
   reconcilePresentedNotificationBadge,
@@ -73,24 +76,18 @@ import { startDesktopNotifications } from '@/push/desktop-notifications';
 
 const consumedNotificationResponses = createConsumedNotificationResponseStore(AsyncStorage);
 
-// Foreground OS-banner policy: the app-active path is rendered by
-// ForegroundNotificationBanner below app chrome. Native background display
-// and response routing are untouched; see push/foreground-policy.ts.
+// Foreground OS-banner policy: while the app is active, pushes for other
+// conversations are shown and listed silently. Native background display and
+// response routing are untouched; see push/foreground-policy.ts.
 Notifications.setNotificationHandler({
-  handleNotification: async (notification) => {
-    const decision = decideForegroundNotificationDisplay({
-      appState: AppState.currentState,
-      openChannelId: getOpenBuzzChannelId(),
-      data: notification.request.content.data,
-    });
-    return {
-      shouldShowAlert: decision.shouldPresent,
-      shouldPlaySound: decision.shouldPresent,
-      shouldSetBadge: decision.shouldPresent,
-      shouldShowBanner: decision.shouldPresent,
-      shouldShowList: decision.shouldPresent,
-    };
-  },
+  handleNotification: async (notification) =>
+    foregroundNotificationBehavior(
+      decideForegroundNotificationDisplay({
+        appState: AppState.currentState,
+        openChannelId: getOpenBuzzChannelId(),
+        data: notification.request.content.data,
+      }),
+    ),
 });
 
 // Setup Android notification channels (required for Android 8.0+)

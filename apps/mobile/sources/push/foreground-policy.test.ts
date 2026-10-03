@@ -8,6 +8,7 @@ import {
 } from '@/buzz/open-room-tracker';
 import {
   decideForegroundNotificationDisplay,
+  foregroundNotificationBehavior,
   foregroundNotificationChannelIds,
 } from './foreground-policy';
 
@@ -16,13 +17,20 @@ function buzzData(overrides: Record<string, unknown> = {}): Record<string, unkno
 }
 
 describe('foreground notification display policy', () => {
-  it('suppresses a banner for an unrelated Room while the app is active', () => {
+  it('shows and lists an unrelated Room notification silently while the app is active', () => {
     const decision = decideForegroundNotificationDisplay({
       appState: 'active',
       openChannelId: 'room-2',
       data: buzzData(),
     });
-    expect(decision).toEqual({ shouldPresent: false, reason: 'app-active' });
+    expect(decision).toEqual({ shouldPresent: true, shouldPlaySound: false, reason: 'app-active' });
+    expect(foregroundNotificationBehavior(decision)).toEqual({
+      shouldShowAlert: true,
+      shouldPlaySound: false,
+      shouldSetBadge: true,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    });
   });
 
   it('suppresses a banner when the notification is for the currently open Room, regardless of app state', () => {
@@ -32,7 +40,18 @@ describe('foreground notification display policy', () => {
         openChannelId: 'room-1',
         data: buzzData(),
       });
-      expect(decision).toEqual({ shouldPresent: false, reason: 'open-room-match' });
+      expect(decision).toEqual({
+        shouldPresent: false,
+        shouldPlaySound: false,
+        reason: 'open-room-match',
+      });
+      expect(foregroundNotificationBehavior(decision)).toEqual({
+        shouldShowAlert: false,
+        shouldPlaySound: false,
+        shouldSetBadge: false,
+        shouldShowBanner: false,
+        shouldShowList: false,
+      });
     }
   });
 
@@ -61,10 +80,21 @@ describe('foreground notification display policy', () => {
       openChannelId: 'room-2',
       data: buzzData(),
     });
-    expect(decision).toEqual({ shouldPresent: true, reason: 'app-inactive' });
+    expect(decision).toEqual({
+      shouldPresent: true,
+      shouldPlaySound: true,
+      reason: 'app-inactive',
+    });
+    expect(foregroundNotificationBehavior(decision)).toEqual({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: true,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    });
   });
 
-  it('suppresses notifications with missing channel metadata only via the active-app rule', () => {
+  it('applies only the app-state rule to notifications with missing channel metadata', () => {
     const missingMetadata = { type: 'message' };
     expect(
       decideForegroundNotificationDisplay({
@@ -72,14 +102,14 @@ describe('foreground notification display policy', () => {
         openChannelId: 'room-1',
         data: missingMetadata,
       }),
-    ).toEqual({ shouldPresent: false, reason: 'app-active' });
+    ).toEqual({ shouldPresent: true, shouldPlaySound: false, reason: 'app-active' });
     expect(
       decideForegroundNotificationDisplay({
         appState: 'background',
         openChannelId: 'room-1',
         data: missingMetadata,
       }),
-    ).toEqual({ shouldPresent: true, reason: 'app-inactive' });
+    ).toEqual({ shouldPresent: true, shouldPlaySound: true, reason: 'app-inactive' });
     // And with no chat screen open at all.
     expect(
       decideForegroundNotificationDisplay({
@@ -90,15 +120,15 @@ describe('foreground notification display policy', () => {
     ).toBe(true);
   });
 
-  it('flips the decision as app state transitions between active and background', () => {
+  it('rings only once the app leaves the foreground', () => {
     const input = {
       openChannelId: 'room-2' as string | null,
       data: buzzData() as unknown,
     };
     const active = decideForegroundNotificationDisplay({ ...input, appState: 'active' });
     const background = decideForegroundNotificationDisplay({ ...input, appState: 'background' });
-    expect(active.shouldPresent).toBe(false);
-    expect(background.shouldPresent).toBe(true);
+    expect(active).toMatchObject({ shouldPresent: true, shouldPlaySound: false });
+    expect(background).toMatchObject({ shouldPresent: true, shouldPlaySound: true });
   });
 
   it('parses both string-JSON and object FCM payloads for channel ids', () => {

@@ -1788,17 +1788,17 @@ export class PhoneService {
     const briefing = collapsePermissionCards(
       briefingRows.map((row) => projectedMessage(row, this.publicOrigin)).sort(messageOrder),
     );
-    const attachmentFacts = await measured(
-      'media',
-      this.attachmentFacts(messages, toolRows, briefing),
-    );
+    const [attachmentFacts, appMessages] = await Promise.all([
+      measured('media', this.attachmentFacts(messages, toolRows, briefing)),
+      measured('app-metadata', this.decorateAppSignInCards(messages)),
+    ]);
     const projectionStartedAt = performance.now();
     const view: RoomView = {
       room:
         room.parent_id && !paintedRoom.about && facts?.objective
           ? { ...paintedRoom, about: facts.objective }
           : paintedRoom,
-      messages: decorateAttachments(messages, attachmentFacts),
+      messages: decorateAttachments(appMessages, attachmentFacts),
       ...(!room.parent_id ? { leaveDeletesRoom: room.leave_deletes_room === true } : {}),
       ...(toolRows.length ? { toolRows: decorateAttachments(toolRows, attachmentFacts) } : {}),
       members,
@@ -2039,9 +2039,12 @@ export class PhoneService {
     const messages = page
       .reverse()
       .map((row) => projectedMessage(row, this.publicOrigin, viewerId));
+    const [attachmentFacts, appMessages] = await Promise.all([
+      this.attachmentFacts(messages), this.decorateAppSignInCards(messages),
+    ]);
     return {
       roomId,
-      messages: decorateAttachments(messages, await this.attachmentFacts(messages)),
+      messages: decorateAttachments(appMessages, attachmentFacts),
       ...(rows.length > 30 && tail
         ? { nextBefore: { createdAt: unix(tail.created_at), id: tail.id } }
         : {}),
@@ -7458,6 +7461,43 @@ export class PhoneService {
     return workspaceId;
   }
 
+  private async readAppCatalog(keys: Iterable<string>): Promise<{
+    appKey: string; description?: string; logo?: string; domain?: string;
+  }[]> {
+    if (!this.composio) return [];
+    return Promise.all([...new Set(keys)].map(async (appKey) => {
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const metadata = await Promise.race([
+          this.composio!.toolkit(appKey),
+          new Promise<undefined>((resolve) => { timeout = setTimeout(() => resolve(undefined), 1500); }),
+        ]);
+        if (!metadata) return { appKey };
+        return { appKey, ...(metadata.description ? { description: metadata.description } : {}),
+          ...(metadata.logo ? { logo: metadata.logo } : {}),
+          ...(metadata.appUrl ? { domain: new URL(metadata.appUrl).hostname } : {}) };
+      } catch { return { appKey }; }
+      finally { clearTimeout(timeout); }
+    }));
+  }
+
+  private async decorateAppSignInCards(messages: RoomViewMessage[]): Promise<RoomViewMessage[]> {
+    const keys = messages.flatMap(message => message.appSignIn
+      ? [composioToolkitForApp(message.appSignIn.appKey)] : []);
+    if (!keys.length || !this.composio) return messages;
+    const catalog = await this.optionalEnrichment('app-card-metadata', this.readAppCatalog(keys));
+    const metadata = new Map(catalog?.map(item => [item.appKey, item]));
+    return messages.map(message => {
+      const card = message.appSignIn;
+      if (!card) return message;
+      const app = metadata.get(composioToolkitForApp(card.appKey));
+      if (!app) return message;
+      return { ...message, appSignIn: { ...card,
+        ...(app.logo ? { logo: app.logo } : {}),
+        ...(app.domain ? { domain: app.domain } : {}) } };
+    });
+  }
+
   /**
    * Every read here is scoped to the VIEWER and to nobody else.
    *
@@ -7604,20 +7644,7 @@ export class PhoneService {
       'googlesheets', 'notion', 'linear', 'hubspot', 'airtable', 'asana', 'jira', 'supabase',
       ...apps.filter((app) => app.transport === 'composio')
         .map((app) => composioToolkitForApp(app.appKey))]);
-    const appCatalog = this.composio ? (await Promise.all([...catalogKeys].map(async (appKey) => {
-      let timeout: ReturnType<typeof setTimeout> | undefined;
-      try {
-        const metadata = await Promise.race([
-          this.composio!.toolkit(appKey),
-          new Promise<undefined>((resolve) => { timeout = setTimeout(() => resolve(undefined), 1500); }),
-        ]);
-        if (!metadata) return { appKey };
-        return { appKey, ...(metadata.description ? { description: metadata.description } : {}),
-          ...(metadata.logo ? { logo: metadata.logo } : {}),
-          ...(metadata.appUrl ? { domain: new URL(metadata.appUrl).hostname } : {}) };
-      } catch { return { appKey }; }
-      finally { clearTimeout(timeout); }
-    }))) : [];
+    const appCatalog = await this.readAppCatalog(catalogKeys);
     const appMetadata = new Map(appCatalog.map((item) => [item.appKey, item]));
     const walletRow = (
       await this.database.query<{

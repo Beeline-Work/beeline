@@ -282,6 +282,8 @@ export type RoomViewMessage = {
     readonly appId: string;
     readonly appKey: string;
     readonly name: string;
+    readonly logo?: string;
+    readonly domain?: string;
     readonly ownerId: string;
     readonly agentId: string;
     readonly status: 'pending' | 'connected' | 'failed';

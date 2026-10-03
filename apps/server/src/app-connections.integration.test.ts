@@ -10,6 +10,7 @@ import { beginComposioAppSignIn, connectApp, readOwnerApps, resolveAppRoute, typ
 import { APP_FILE_MAXIMUM_BYTES, ComposioApps } from './composio-apps.js';
 import { ObjectService } from './object-service.js';
 import type { ObjectStorage } from './object-storage.js';
+import { readRoomViewMessage } from '@beeline/api-contract/phone';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
@@ -349,6 +350,90 @@ describe('connect_app', () => {
     expect(view.appCatalog).toContainEqual({ appKey: 'gmail',
       description: 'Use gmail tools.', logo: 'https://cdn.composio.dev/gmail.png',
       domain: 'mail.google.com' });
+  });
+
+  it.each(['Instagram', 'Figma'])('Reproduction CARD-1: %s Room cards retain the same logo as Workbench', async (app) => {
+    const provider = fakeComposio();
+    provider.supportsOAuth.mockResolvedValue(true);
+    provider.toolkit.mockImplementation(async (slug: string) => ({ slug,
+      logo: `https://cdn.composio.dev/${slug}.png`, appUrl: `https://${slug}.com` }));
+    const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const first = await daemon.execute('connectApp', { ...turn, app,
+      reason: `connect ${app}` }, HELPER);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    const expected = { logo: `https://cdn.composio.dev/${app.toLowerCase()}.png`,
+      domain: `${app.toLowerCase()}.com` };
+    const workbench = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
+    expect(workbench.apps).toContainEqual(expect.objectContaining({ appId: first.appId, ...expected }));
+    const cardMessage = (await phone.readRoom(ROOM, OWNER))?.messages.find(message =>
+      message.appSignIn?.appId === first.appId);
+    const card = readRoomViewMessage(cardMessage)?.appSignIn;
+    expect(card).toMatchObject(expected);
+    const historyCard = (await phone.readHistory(ROOM, OWNER))?.messages.find(message =>
+      message.appSignIn?.appId === first.appId)?.appSignIn;
+    expect(historyCard).toMatchObject(expected);
+    if (process.env.BEELINE_SIGN_IN_PROOF === '1')
+      console.log(`CARD-1 ${app}: Room and history cards show ${expected.logo}, matching Workbench`);
+  });
+
+  it('keeps existing Room cards usable when provider metadata fails or stalls', async () => {
+    const provider = fakeComposio();
+    provider.supportsOAuth.mockResolvedValue(true);
+    const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const first = await daemon.execute('connectApp', { ...turn, app: 'Instagram',
+      reason: 'connect Instagram' }, HELPER);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    provider.toolkit.mockRejectedValueOnce(new Error('metadata unavailable'));
+    const failed = await phone.readRoom(ROOM, OWNER);
+    expect(failed?.messages.find(message => message.appSignIn?.appId === first.appId)
+      ?.appSignIn).toMatchObject({ name: 'Instagram', status: 'pending' });
+    provider.toolkit.mockImplementationOnce(() => new Promise(() => {}));
+    const stalled = await phone.readRoom(ROOM, OWNER);
+    expect(stalled?.messages.find(message => message.appSignIn?.appId === first.appId)
+      ?.appSignIn).toMatchObject({ name: 'Instagram', status: 'pending' });
+    await expect(phone.execute('beginAppSignIn', { appId: first.appId! }, OWNER))
+      .resolves.toHaveProperty('authorizationUrl');
+  });
+
+  it.each(['card', 'workbench'])('SIGNIN-1: Instagram connects on its first attempt through %s', async (route) => {
+    const provider = fakeComposio();
+    provider.supportsOAuth.mockResolvedValue(true);
+    provider.completeAuth.mockResolvedValue({ accountId: 'ca_fixture', toolkit: 'instagram' });
+    provider.account.mockResolvedValue(true);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    let appId: string;
+    let authorizationUrl: string;
+    if (route === 'card') {
+      const daemon = daemonWith(fakeRegistry([]).client, provider);
+      const first = await daemon.execute('connectApp', { ...turn, app: 'Instagram',
+        reason: 'connect Instagram' }, HELPER);
+      appId = first.appId!;
+      expect(provider.link).not.toHaveBeenCalled();
+      authorizationUrl = (await phone.execute('beginAppSignIn', { appId }, OWNER)).authorizationUrl;
+    } else {
+      const started = await phone.execute('connectWorkbenchApp', {
+        app: 'Instagram', helperAgentId: HELPER }, OWNER);
+      appId = started.appId;
+      authorizationUrl = started.authorizationUrl!;
+    }
+    expect(authorizationUrl).toBe('https://app.composio.dev/connect/fixture');
+    expect(provider.link).toHaveBeenCalledTimes(1);
+    expect(provider.link).toHaveBeenCalledWith(OWNER, 'instagram');
+    provider.accountStatus.mockResolvedValue({ status: 'active' });
+    await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId }, OWNER);
+    expect((await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER)).apps)
+      .toContainEqual(expect.objectContaining({ appId, status: 'connected' }));
+    if (route === 'card') {
+      expect((await phone.readRoom(ROOM, OWNER))?.messages.find(message =>
+        message.appSignIn?.appId === appId)?.appSignIn?.status).toBe('connected');
+      expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1
+        AND agent_id=$2 AND reason='app_connected'`, [ROOM, HELPER])).rowCount).toBe(1);
+    }
+    if (process.env.BEELINE_SIGN_IN_PROOF === '1')
+      console.log(`SIGNIN-1 ${route}: one Instagram sign-in link; first callback connects Workbench${route === 'card' ? ', settles card and resumes request' : ''}`);
   });
 
   it('shows a failed callback on Workbench and clears it on retry', async () => {

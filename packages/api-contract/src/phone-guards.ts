@@ -522,6 +522,8 @@ function readAppSignInCard(value: unknown): NonNullable<RoomViewMessage['appSign
     (item.status !== 'pending' && item.status !== 'connected' && item.status !== 'failed')) return null;
   return { appId: item.appId, appKey: item.appKey, name: item.name,
     ownerId: item.ownerId, agentId: item.agentId, status: item.status,
+    ...field('logo', httpUrl(item.logo) ? item.logo : undefined),
+    ...field('domain', nonempty(item.domain) ? item.domain : undefined),
     ...field('errorMessage', typeof item.errorMessage === 'string' && item.errorMessage.length <= 500
       ? item.errorMessage : undefined),
     ...field('continuation', typeof item.continuation === 'string' && item.continuation.length <= 160

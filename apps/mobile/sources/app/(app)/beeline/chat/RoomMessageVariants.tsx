@@ -475,7 +475,7 @@ export function AppSignInCard({ message, agentName, canConnect, onConnect, busy 
   if (app.status === 'connected') return <Text style={appSignInStyles.settled}>{app.name.toUpperCase()} CONNECTED · {agentName.toUpperCase()} CONTINUES</Text>;
   return <View style={appSignInStyles.wrap} testID={`app-sign-in-${app.appKey}`}>
     <View style={appSignInStyles.card}>
-      <View style={appSignInStyles.heading}><AppMark name={app.name} domain={appDomain(app.name)} size={30} white /><Text style={appSignInStyles.title}>Connect {app.name}</Text></View>
+      <View style={appSignInStyles.heading}><AppMark name={app.name} domain={app.domain ?? appDomain(app.name)} logo={app.logo} size={30} white /><Text style={appSignInStyles.title}>Connect {app.name}</Text></View>
       <Text style={appSignInStyles.detail}>Sign in once. {app.continuation ?? `${agentName} continues the request right after.`}</Text>
       {app.appKey === 'instagram' ? <Text style={appSignInStyles.detail}>{INSTAGRAM_SIGN_IN_REQUIREMENT}</Text> : null}
       {app.status === 'failed' ? <Text accessibilityRole="alert" style={appSignInStyles.error}>{app.errorMessage ?? 'App sign-in failed. Try again.'}</Text> : null}

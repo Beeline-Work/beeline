@@ -425,22 +425,32 @@ export async function activeRunIdsForSchedule(
   roomId: string,
   scheduleId: string,
 ): Promise<string[]> {
-  const candidates = await db.query<{ id: string; slug: string }>(
-    `SELECT id,card->>'workflowSlug' slug FROM messages
-     WHERE room_id=$1 AND card_type=$2 AND card->>'runId'=id
-       AND card->'trigger'->>'scheduleId'=$3`,
+  const active = await db.query<{ run_id: string }>(
+    `WITH starts AS (
+       SELECT id,card->>'workflowSlug' slug,(card->>'workflowVersion')::int version
+       FROM messages
+       WHERE room_id=$1 AND card_type=$2 AND card->>'runId'=id
+         AND card->'trigger'->>'scheduleId'=$3
+     ), latest AS (
+       SELECT DISTINCT ON (message.card->>'runId')
+         message.card->>'runId' run_id,message.card->>'toState' state
+       FROM messages message JOIN starts ON starts.id=message.card->>'runId'
+       WHERE message.room_id=$1 AND message.card_type=$2
+       ORDER BY message.card->>'runId',message.created_at DESC,message.id DESC
+     )
+     SELECT starts.id run_id FROM starts
+     JOIN latest ON latest.run_id=starts.id
+     JOIN rooms room ON room.id=$1
+     JOIN workspace_skills skill ON skill.workspace_id=room.workspace_id
+       AND skill.slug=starts.slug AND skill.kind='workflow'
+     JOIN workspace_skill_versions version
+       ON version.skill_id=skill.id AND version.version=starts.version
+     WHERE version.markdown::jsonb->'handoffs'->latest.state IS NOT NULL
+       AND (version.markdown::jsonb->'handoffs'->latest.state->>'kind') IS DISTINCT FROM 'terminal'
+     ORDER BY starts.id`,
     [roomId, WORKFLOW_HANDOFF_CARD_TYPE, scheduleId],
   );
-  const active: string[] = [];
-  for (const candidate of candidates.rows) {
-    const run = await loadRun(db, roomId, candidate.id);
-    if (!run) continue;
-    const contract = await loadPinnedContract(db, roomId, run.workflowSlug, run.workflowVersion);
-    if (!contract) continue;
-    const state = contract.handoffs[run.toState];
-    if (state && state.kind !== 'terminal') active.push(run.runId);
-  }
-  return active;
+  return active.rows.map((row) => row.run_id);
 }
 
 export async function startWorkflow(

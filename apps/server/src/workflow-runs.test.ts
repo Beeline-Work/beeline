@@ -6,6 +6,7 @@ import { createAgentCommand, readAgentCommands, type CommandRow } from './agent-
 import { answerRoomChoice } from './room-choice.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import {
+  activeRunIdsForSchedule,
   archiveWorkflow,
   assignWorkflowRole,
   handoff,
@@ -580,6 +581,35 @@ async function scheduleOccurrence(
 
 describe('start_workflow schedule/trigger duplicate-run refusal', () => {
   const SCHEDULE = '30000000-0000-4000-8000-000000000001';
+
+  it('lists only active runs from a schedule with one database read', async () => {
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: CONTRACT });
+    await createSchedule(IMPLEMENTER, SCHEDULE);
+    const runs: string[] = [];
+    for (let index = 0; index < 5; index += 1) {
+      const { runId } = await startWorkflow(database, command, {
+        name: 'corner',
+        roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+      });
+      runs.push(runId);
+      await database.query(
+        `UPDATE messages SET card=card || jsonb_build_object('trigger',jsonb_build_object('scheduleId',$2::text,'period',$3::text)) WHERE id=$1`,
+        [runId, SCHEDULE, `2026-01-0${index + 1}T00:00:00.000Z`],
+      );
+      if (index < 4) {
+        await database.query(
+          `INSERT INTO messages(id,room_id,author_id,text,card_type,card,created_at)
+           VALUES($1,$2,$3,'completed','workflow-handoff',$4::jsonb,now()+interval '1 second')`,
+          [`${runId}-done`, ROOM, IMPLEMENTER,
+            JSON.stringify({ runId, workflowSlug: 'corner', workflowVersion: 1, toState: 'land' })],
+        );
+      }
+    }
+    const recorded = new RecordingDatabase(database);
+    expect(await activeRunIdsForSchedule(recorded, ROOM, SCHEDULE)).toEqual([runs[4]]);
+    expect(recorded.calls).toHaveLength(1);
+  });
 
   it('refuses a second start_workflow triggered by the same schedule occurrence, naming the active run', async () => {
     await createSchedule(IMPLEMENTER, SCHEDULE);

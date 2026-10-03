@@ -2,7 +2,6 @@ import * as React from 'react';
 import { Drawer } from 'expo-router/drawer';
 import { useIsDesktop, useIsTablet, useHeaderHeight } from '@/utils/responsive';
 import { SidebarView } from './SidebarView';
-import { ForegroundNotificationBanner } from './buzz/ForegroundNotificationBanner';
 import { useWindowDimensions, View, Pressable, Platform, PanResponder } from 'react-native';
 import { useLocalSetting, useLocalSettingMutable } from '@/sync/storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -41,8 +40,6 @@ const SETUP_SURFACES = ['/beeline/community', '/beeline/create-workspace'];
 
 export const SidebarNavigator = React.memo(() => {
   const isTablet = useIsTablet();
-  const safeArea = useSafeAreaInsets();
-  const headerHeight = useHeaderHeight();
   const inDesktopShell = isTauri();
   const desktopPlatform = isDesktopPlatform();
   const pathname = usePathname();
@@ -190,20 +187,6 @@ export const SidebarNavigator = React.memo(() => {
         screenOptions={drawerNavigationOptions}
         drawerContent={showSessionChrome ? drawerContent : undefined}
       />
-      {isAppSurface && (
-        <ForegroundNotificationBanner
-          top={
-            safeArea.top +
-            (isDesktopLayout
-              ? headerHeight + 68
-              : pathname.startsWith('/beeline/channels')
-                ? 114
-                : 70)
-          }
-          left={isDesktopLayout ? drawerWidth + 16 : 10}
-          right={isDesktopLayout ? 16 : 10}
-        />
-      )}
       {desktopPlatform && showSidebar && (
         <View
           {...resizePan.panHandlers}

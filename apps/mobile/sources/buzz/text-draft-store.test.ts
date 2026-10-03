@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TextDraft, textDraftKey, type DraftStorage } from './text-draft-store';
+import { desktopDraftKey } from './desktop-workbench-state';
 const tick = async () => {
   for (let i = 0; i < 15; i++) await Promise.resolve();
 };
@@ -65,6 +66,62 @@ describe('durable controlled drafts', () => {
     expect(clear()).toBe(false);
     await draft.flush();
     expect(values.get('newer')).toBe(JSON.stringify('first'));
+  });
+  it('consumes a sent message prefix once and orders its suffix after an in-flight save', async () => {
+    let release!: () => void;
+    storage.setItem = vi.fn(async (key, value) => {
+      if (value === JSON.stringify('sent next'))
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      values.set(key, value);
+    });
+    const draft = new TextDraft('message-prefix', storage, '');
+    draft.set('sent');
+    const accept = draft.captureMessage();
+    draft.set('sent next');
+    const save = draft.flush();
+    await tick();
+    expect(accept()).toBe(true);
+    expect(draft.value).toBe(' next');
+    release();
+    await save;
+    await tick();
+    expect(values.get('message-prefix')).toBe(JSON.stringify(' next'));
+    expect(accept()).toBe(false);
+    draft.dispose();
+  });
+  it('preserves message replacement edits, including identical retyping and edits from a new mount', async () => {
+    const draft = new TextDraft('message-replacement', storage, '');
+    draft.set('sent');
+    const accept = draft.captureMessage();
+    draft.set('revised message');
+    expect(accept()).toBe(false);
+    expect(draft.value).toBe('revised message');
+    draft.set('sent');
+    const identical = draft.captureMessage();
+    draft.set('sent');
+    expect(identical()).toBe(false);
+    const olderMount = draft.captureMessage();
+    draft.dispose();
+    const reopened = new TextDraft('message-replacement', storage, '');
+    await reopened.hydrate();
+    reopened.set('sent new mount');
+    expect(olderMount()).toBe(false);
+    await reopened.flush();
+    expect(values.get('message-replacement')).toBe(JSON.stringify('sent new mount'));
+    reopened.dispose();
+  });
+  it('a rejected message keeps its full edited draft for retry', async () => {
+    const draft = new TextDraft('message-failure', storage, '');
+    draft.set('unsent');
+    draft.captureMessage();
+    draft.set('unsent next');
+    await draft.flush();
+    const reopened = new TextDraft('message-failure', storage, '');
+    await reopened.hydrate();
+    expect(reopened.value).toBe('unsent next');
+    draft.dispose();
   });
   it('success cancels pending saves and a same-key remount stays empty', async () => {
     const draft = new TextDraft('success', storage, '');
@@ -141,14 +198,15 @@ describe('durable controlled drafts', () => {
     ).toBe(4);
   });
   it('migrates desktop text and removes the legacy record so cleared text cannot reappear', async () => {
-    values.set('legacy', 'desktop text');
-    const draft = new TextDraft('migrated', storage, '', 'legacy');
+    const legacy = desktopDraftKey('room/one');
+    values.set(legacy, 'desktop text');
+    const draft = new TextDraft('migrated', storage, '', legacy);
     await draft.hydrate();
     expect(draft.value).toBe('desktop text');
     expect(values.get('migrated')).toBe(JSON.stringify('desktop text'));
-    expect(values.has('legacy')).toBe(false);
+    expect(values.has(legacy)).toBe(false);
     draft.capture()();
-    const reopened = new TextDraft('migrated', storage, '', 'legacy');
+    const reopened = new TextDraft('migrated', storage, '', legacy);
     await reopened.hydrate();
     expect(reopened.value).toBe('');
   });

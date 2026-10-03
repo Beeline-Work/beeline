@@ -585,7 +585,7 @@ function CornerCockpit({
   const send = React.useCallback(async () => {
     const text = input.trim();
     if (!text || !detail || sending) return;
-    const clearInput = inputDraft.capture();
+    const clearInput = inputDraft.captureMessage();
     setSending(true);
     setSendError(null);
     try {

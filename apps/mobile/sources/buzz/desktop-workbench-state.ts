@@ -197,16 +197,6 @@ export function desktopDraftKey(roomId: string): string {
   return `${DRAFT_PREFIX}${encodeURIComponent(roomId)}`;
 }
 
-export async function loadDesktopDraft(roomId: string): Promise<string> {
-  return (await AsyncStorage.getItem(desktopDraftKey(roomId))) ?? '';
-}
-
-export async function saveDesktopDraft(roomId: string, text: string): Promise<void> {
-  const key = desktopDraftKey(roomId);
-  if (text) await AsyncStorage.setItem(key, text);
-  else await AsyncStorage.removeItem(key);
-}
-
 export type DesktopComposerKeyAction = 'send' | 'newline' | 'none';
 
 export const DESKTOP_WORK_PANE_COMMAND = {

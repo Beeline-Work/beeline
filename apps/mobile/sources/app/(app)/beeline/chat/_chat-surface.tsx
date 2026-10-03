@@ -3577,7 +3577,7 @@ export function BuzzChatSurface({
     // skipped the composer-clear block and the field kept its text after
     // every send). Only a real shortcut — it always carries text — qualifies.
     const sendShortcut = shortcut && typeof shortcut.text === 'string' ? shortcut : undefined;
-    const clearSubmittedDraft = composerDraft.capture();
+    const clearSubmittedDraft = composerDraft.captureMessage();
     const rawText = (sendShortcut?.text ?? inputTextRef.current).trim();
     const activeReplyTarget = sendShortcut?.replyTarget ?? replyTarget;
     const activePendingAttachments = sendShortcut ? [] : pendingAttachmentsRef.current;
@@ -3719,12 +3719,13 @@ export function BuzzChatSurface({
           if (draftCleared) {
             const nextInputRevision = composerInputRevisionRef.current + 1;
             composerInputRevisionRef.current = nextInputRevision;
-            // The native clear/revision applies only to the submitted text.
-            composerRef.current?.clear();
+            // Reconcile only the remaining draft, including typing appended during send.
+            if (!composerDraft.value) composerRef.current?.clear();
             inputTextRef.current = composerDraft.value;
             setComposerInputRevision(nextInputRevision);
-            setComposerHeight(COMPOSER_MIN_HEIGHT);
-            setInputSelection({ start: 0, end: 0 });
+            if (!composerDraft.value) setComposerHeight(COMPOSER_MIN_HEIGHT);
+            const end = composerDraft.value.length;
+            setInputSelection({ start: end, end });
           }
           replacePendingAttachments((current) =>
             current.filter((attachment) => !activePendingAttachments.includes(attachment)),

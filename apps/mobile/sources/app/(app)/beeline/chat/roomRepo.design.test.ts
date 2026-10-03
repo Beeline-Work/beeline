@@ -95,7 +95,7 @@ describe('Room→repo corner-open lazy prompt', () => {
     const handleSend = blockFrom(chatSource, 'const handleSend = useCallback(', 'handleSend');
     const clearBlock = blockFrom(handleSend, 'if (!sendShortcut) {', 'composer clear');
     expect(clearBlock).toContain('inputTextRef.current = composerDraft.value;');
-    expect(handleSend).toContain('composerDraft.capture()');
+    expect(handleSend).toContain('composerDraft.captureMessage()');
     expect(clearBlock).toContain(
       'current.filter((attachment) => !activePendingAttachments.includes(attachment))',
     );

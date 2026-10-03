@@ -139,6 +139,30 @@ export class TextDraft<T extends string | string[]> {
       return true;
     };
   };
+  /** Message composers consume sent text while retaining typing appended during a send. */
+  captureMessage = () => {
+    const submitted = this.value;
+    const clearUnchanged = this.capture();
+    let settled = false;
+    return () => {
+      if (settled) return false;
+      settled = true;
+      if (clearUnchanged()) return true;
+      if (
+        typeof submitted !== 'string' ||
+        !submitted ||
+        typeof this.value !== 'string' ||
+        this.value === submitted ||
+        !this.value.startsWith(submitted) ||
+        !this.isCurrentStorageRevision()
+      )
+        return false;
+      this.set(this.value.slice(submitted.length) as T);
+      // Order the remaining text after any pending save of the submitted prefix.
+      void this.flush();
+      return true;
+    };
+  };
   flush = async () => {
     clearTimeout(this.timer);
     this.timer = undefined;

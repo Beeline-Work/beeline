@@ -675,6 +675,41 @@ describe('institutional cascades', () => {
   });
 });
 
+describe('cascade-path foreign keys stay indexed', () => {
+  it('never lets a FK into messages, rooms, or workspaces lack a supporting index', async () => {
+    const database = new PgliteDatabase();
+    await migrate(database);
+    // A workspace delete cascades through rooms and messages; an FK column
+    // pointing at one of those three tables with no leading-column index
+    // forces Postgres to sequentially scan the whole child table for the FK
+    // check or cascade. That is exactly what stalled DELETE FROM workspaces
+    // past the app pool's statement_timeout for the Beeline Welcome
+    // Workspace (agent_commands.source_message_id/result_message_id and
+    // messages.reply_to_message_id, found by reproducing the incident).
+    const unindexed = await database.query<{ child_table: string; fk_columns: string[] }>(
+      `WITH fk AS (
+         SELECT con.conname, con.conrelid, con.confrelid::regclass::text AS parent, con.conkey
+         FROM pg_constraint con
+         WHERE con.contype = 'f'
+           AND con.confrelid::regclass::text IN ('messages', 'rooms', 'workspaces')
+       )
+       SELECT fk.conrelid::regclass::text AS child_table,
+              array_agg(att.attname ORDER BY k.ord) AS fk_columns
+       FROM fk
+       JOIN LATERAL unnest(fk.conkey) WITH ORDINALITY AS k(attnum, ord) ON true
+       JOIN pg_attribute att ON att.attrelid = fk.conrelid AND att.attnum = k.attnum
+       WHERE NOT EXISTS (
+         SELECT 1 FROM pg_index idx
+         WHERE idx.indrelid = fk.conrelid
+           AND (idx.indkey::smallint[])[0:array_length(fk.conkey,1)-1] = fk.conkey::smallint[]
+       )
+       GROUP BY fk.conrelid`,
+    );
+    expect(unindexed.rows).toEqual([]);
+    database.close();
+  });
+});
+
 describe('release-owned schema readiness', () => {
   it('waits through transient pool checkout timeouts without mistaking them for a schema mismatch', async () => {
     const query = vi.fn()

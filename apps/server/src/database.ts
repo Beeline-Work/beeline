@@ -888,6 +888,12 @@ CREATE TABLE IF NOT EXISTS needs_you_marks (
   cleared_at timestamptz,
   PRIMARY KEY(identity_id,message_id)
 );
+-- message_id/workspace_id cascade from messages/workspaces with no index
+-- (the primary key leads with identity_id), so deleting a message or a
+-- workspace made Postgres sequentially scan this table to find rows to
+-- cascade-delete.
+CREATE INDEX IF NOT EXISTS needs_you_marks_message_idx ON needs_you_marks(message_id);
+CREATE INDEX IF NOT EXISTS needs_you_marks_workspace_idx ON needs_you_marks(workspace_id);
 -- A mention to a helper that is unreachable right now stays durably queued
 -- (agent_commands); the Room is told "did not answer - its helper is offline"
 -- only after AGENT_MENTION_NOTICE_GRACE_MS, and that terminal line is
@@ -911,6 +917,11 @@ CREATE INDEX IF NOT EXISTS pending_mention_notices_due_idx
   ON pending_mention_notices(due_at) WHERE notified_at IS NULL;
 CREATE INDEX IF NOT EXISTS pending_mention_notices_notice_idx
   ON pending_mention_notices(notice_id) WHERE notice_id IS NOT NULL;
+-- source_message_id cascades from messages but is only the third column of
+-- the primary key, so deleting a message made Postgres sequentially scan
+-- this table to find rows to cascade-delete.
+CREATE INDEX IF NOT EXISTS pending_mention_notices_source_message_idx
+  ON pending_mention_notices(source_message_id);
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS agent_hop_count integer NOT NULL DEFAULT 0;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS system_event jsonb;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
@@ -1061,6 +1072,13 @@ CREATE INDEX IF NOT EXISTS institutional_memory_jobs_claim_idx
   WHERE status IN ('pending','retry','claimed');
 CREATE INDEX IF NOT EXISTS institutional_memory_jobs_workspace_created_idx
   ON institutional_memory_jobs(workspace_id,created_at,id);
+-- source_message_id/source_room_id cascade from messages/rooms with no index,
+-- so deleting a room or workspace made Postgres sequentially scan this table
+-- to find rows to cascade-delete.
+CREATE INDEX IF NOT EXISTS institutional_memory_jobs_source_message_idx
+  ON institutional_memory_jobs(source_message_id);
+CREATE INDEX IF NOT EXISTS institutional_memory_jobs_source_room_idx
+  ON institutional_memory_jobs(source_room_id);
 
 -- Meaning-based recall (search_memory, the per-turn snapshot, workspace
 -- skills) needs pgvector; Neon supports the extension directly.
@@ -1153,6 +1171,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS institutional_memory_items_current_key_idx
   ) WHERE state='active';
 CREATE INDEX IF NOT EXISTS institutional_memory_items_workspace_state_idx
   ON institutional_memory_items(workspace_id,state,updated_at DESC,id);
+-- source_room_id/source_corner_id/source_message_id cascade from rooms and
+-- messages with no index, so deleting a Room or workspace made Postgres
+-- sequentially scan this table to find rows to cascade-delete.
+CREATE INDEX IF NOT EXISTS institutional_memory_items_source_room_idx
+  ON institutional_memory_items(source_room_id);
+CREATE INDEX IF NOT EXISTS institutional_memory_items_source_corner_idx
+  ON institutional_memory_items(source_corner_id) WHERE source_corner_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS institutional_memory_items_source_message_idx
+  ON institutional_memory_items(source_message_id);
 
 CREATE TABLE IF NOT EXISTS institutional_memory_item_sources (
   item_id uuid NOT NULL REFERENCES institutional_memory_items(id) ON DELETE CASCADE,
@@ -1252,6 +1279,10 @@ ALTER TABLE institutional_memory_outcomes
   CHECK (serve_id IS NOT NULL OR job_id IS NOT NULL OR room_id IS NOT NULL);
 CREATE INDEX IF NOT EXISTS institutional_memory_outcomes_workspace_created_idx
   ON institutional_memory_outcomes(workspace_id,created_at,id);
+-- room_id cascades from rooms with no index, so deleting a Room or workspace
+-- made Postgres sequentially scan this table to find rows to cascade-delete.
+CREATE INDEX IF NOT EXISTS institutional_memory_outcomes_room_idx
+  ON institutional_memory_outcomes(room_id) WHERE room_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS institutional_memory_correction_events (
   id uuid PRIMARY KEY,
@@ -1269,6 +1300,13 @@ CREATE TABLE IF NOT EXISTS institutional_memory_correction_events (
 );
 CREATE INDEX IF NOT EXISTS institutional_memory_corrections_baseline_idx
   ON institutional_memory_correction_events(workspace_id,requester_identity_id,created_at,id);
+-- source_room_id/source_message_id cascade from rooms/messages with no index,
+-- so deleting a Room or workspace made Postgres sequentially scan this table
+-- to find rows to cascade-delete.
+CREATE INDEX IF NOT EXISTS institutional_memory_corrections_source_room_idx
+  ON institutional_memory_correction_events(source_room_id);
+CREATE INDEX IF NOT EXISTS institutional_memory_corrections_source_message_idx
+  ON institutional_memory_correction_events(source_message_id);
 
 CREATE TABLE IF NOT EXISTS institutional_memory_fact_events (
   id uuid PRIMARY KEY,
@@ -1284,6 +1322,13 @@ CREATE TABLE IF NOT EXISTS institutional_memory_fact_events (
 );
 CREATE INDEX IF NOT EXISTS institutional_memory_facts_workspace_created_idx
   ON institutional_memory_fact_events(workspace_id,created_at,id);
+-- source_room_id/source_message_id cascade from rooms/messages with no index,
+-- so deleting a Room or workspace made Postgres sequentially scan this table
+-- to find rows to cascade-delete.
+CREATE INDEX IF NOT EXISTS institutional_memory_facts_source_room_idx
+  ON institutional_memory_fact_events(source_room_id);
+CREATE INDEX IF NOT EXISTS institutional_memory_facts_source_message_idx
+  ON institutional_memory_fact_events(source_message_id);
 ALTER TABLE institutional_memory_fact_events
   DROP CONSTRAINT IF EXISTS institutional_memory_fact_events_job_id_key;
 ALTER TABLE institutional_memory_fact_events
@@ -1310,6 +1355,8 @@ ALTER TABLE institutional_history_searches
   ADD COLUMN IF NOT EXISTS matches_capped boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS institutional_history_searches_workspace_created_idx
   ON institutional_history_searches(workspace_id,created_at,id);
+CREATE INDEX IF NOT EXISTS institutional_history_searches_output_room_idx
+  ON institutional_history_searches(output_room_id);
 
 CREATE TABLE IF NOT EXISTS workspace_skills (
   id uuid PRIMARY KEY,
@@ -1356,6 +1403,7 @@ ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS embedding_version integer;
 ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS embedded_at timestamptz;
 CREATE INDEX IF NOT EXISTS workspace_skills_catalog_idx
   ON workspace_skills(workspace_id,state,updated_at DESC,id);
+CREATE INDEX IF NOT EXISTS workspace_skills_source_room_idx ON workspace_skills(source_room_id);
 -- A workflow row is a skill row: a declarative contract, saved/discovered/loaded
 -- through the exact same table, index, and load_workspace_skill path as a
 -- procedure. repository/target_commit stay populated with '' for a workflow
@@ -1412,6 +1460,8 @@ CREATE TABLE IF NOT EXISTS institutional_review_findings (
 );
 CREATE INDEX IF NOT EXISTS institutional_review_findings_repeat_idx
   ON institutional_review_findings(workspace_id,taxonomy,path,created_at,id);
+CREATE INDEX IF NOT EXISTS institutional_review_findings_source_corner_idx
+  ON institutional_review_findings(source_corner_id);
 
 CREATE TABLE IF NOT EXISTS workspace_skill_uses (
   id uuid PRIMARY KEY,
@@ -1428,6 +1478,7 @@ CREATE TABLE IF NOT EXISTS workspace_skill_uses (
 );
 CREATE INDEX IF NOT EXISTS workspace_skill_uses_workspace_created_idx
   ON workspace_skill_uses(workspace_id,created_at,id);
+CREATE INDEX IF NOT EXISTS workspace_skill_uses_room_idx ON workspace_skill_uses(room_id);
 
 CREATE TABLE IF NOT EXISTS institutional_memory_workspace_rollouts (
   workspace_id uuid PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -1547,6 +1598,7 @@ CREATE TABLE IF NOT EXISTS permission_authority (
   result text,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS permission_authority_room_idx ON permission_authority(room_id);
 
 CREATE TABLE IF NOT EXISTS mission_authority (
   mission_id text NOT NULL,
@@ -1557,6 +1609,7 @@ CREATE TABLE IF NOT EXISTS mission_authority (
   generation bigint NOT NULL DEFAULT 1,
   PRIMARY KEY (mission_id, room_id, principal_id, exercise)
 );
+CREATE INDEX IF NOT EXISTS mission_authority_room_idx ON mission_authority(room_id);
 
 CREATE TABLE IF NOT EXISTS work_schedules (
   schedule_id text NOT NULL,
@@ -1569,6 +1622,7 @@ CREATE TABLE IF NOT EXISTS work_schedules (
   PRIMARY KEY (schedule_id, revision)
 );
 CREATE INDEX IF NOT EXISTS work_schedules_agent_idx ON work_schedules(agent_id, room_id);
+CREATE INDEX IF NOT EXISTS work_schedules_room_idx ON work_schedules(room_id);
 
 CREATE TABLE IF NOT EXISTS schedule_receipts (
   schedule_id text NOT NULL,
@@ -1579,6 +1633,7 @@ CREATE TABLE IF NOT EXISTS schedule_receipts (
   created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (schedule_id, occurrence_id)
 );
+CREATE INDEX IF NOT EXISTS schedule_receipts_room_idx ON schedule_receipts(room_id);
 
 CREATE TABLE IF NOT EXISTS agent_schedules (
   id uuid PRIMARY KEY,
@@ -1608,6 +1663,7 @@ CREATE TABLE IF NOT EXISTS workflow_owner_transfers (
   new_owner_id text NOT NULL REFERENCES identities(id),
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS workflow_owner_transfers_room_idx ON workflow_owner_transfers(room_id);
 -- Older definitions have no saver column. Only an agent-authored original
 -- source records a creator; a human request does not identify the saving agent.
 UPDATE workspace_skills skill SET creator_agent_id=(
@@ -1632,6 +1688,7 @@ UPDATE workspace_skills skill SET owner_agent_id=COALESCE(skill.creator_agent_id
 )),ownership_initialized=true WHERE skill.kind='workflow' AND NOT skill.ownership_initialized;
 CREATE INDEX IF NOT EXISTS agent_schedules_due_idx ON agent_schedules(next_run_at, id);
 CREATE INDEX IF NOT EXISTS agent_schedules_room_idx ON agent_schedules(room_id, created_at, id);
+CREATE INDEX IF NOT EXISTS agent_schedules_workspace_idx ON agent_schedules(workspace_id);
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS max_runs integer;
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS run_count integer NOT NULL DEFAULT 0;
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS workflow_run jsonb;
@@ -1652,6 +1709,7 @@ CREATE TABLE IF NOT EXISTS agent_mandates (
   updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (agent_id, room_id)
 );
+CREATE INDEX IF NOT EXISTS agent_mandates_room_idx ON agent_mandates(room_id);
 
 CREATE TABLE IF NOT EXISTS corner_facts (
   corner_id uuid PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
@@ -1834,6 +1892,7 @@ CREATE TABLE IF NOT EXISTS invites (
   expires_at timestamptz NOT NULL,
   consumed_at timestamptz
 );
+CREATE INDEX IF NOT EXISTS invites_workspace_idx ON invites(workspace_id);
 
 CREATE TABLE IF NOT EXISTS agent_pairing_codes (
   code_hash text PRIMARY KEY,
@@ -1843,6 +1902,7 @@ CREATE TABLE IF NOT EXISTS agent_pairing_codes (
   claimed_by text REFERENCES identities(id),
   claimed_at timestamptz
 );
+CREATE INDEX IF NOT EXISTS agent_pairing_codes_workspace_idx ON agent_pairing_codes(workspace_id);
 
 -- Workspace-owned bytes, independent of expiring Room attachments.
 CREATE TABLE IF NOT EXISTS avatars (
@@ -2034,6 +2094,10 @@ CREATE TABLE IF NOT EXISTS workspace_join_notifications (
   text text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS workspace_join_notifications_workspace_idx
+  ON workspace_join_notifications(workspace_id);
+CREATE INDEX IF NOT EXISTS workspace_join_notifications_room_idx
+  ON workspace_join_notifications(room_id) WHERE room_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS workspace_join_notification_devices (
   notification_id text NOT NULL REFERENCES workspace_join_notifications(id) ON DELETE CASCADE,
@@ -2074,6 +2138,10 @@ CREATE TABLE IF NOT EXISTS push_release_catchups (
   identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
   message_id text NOT NULL REFERENCES messages(id) ON DELETE CASCADE
 );
+-- message_id cascades from messages with no index (the primary key is
+-- device_token), so deleting a message made Postgres sequentially scan this
+-- table to find rows to cascade-delete.
+CREATE INDEX IF NOT EXISTS push_release_catchups_message_idx ON push_release_catchups(message_id);
 
 CREATE TABLE IF NOT EXISTS device_update_receipts (
   identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
@@ -2096,6 +2164,7 @@ CREATE TABLE IF NOT EXISTS agent_pending_attachments (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE agent_pending_attachments ALTER COLUMN size TYPE integer USING size::integer;
+CREATE INDEX IF NOT EXISTS agent_pending_attachments_room_idx ON agent_pending_attachments(room_id);
 
 -- Agent Grants (slice 2): the grant store. One row per ask; a 'once' grant is
 -- spent by setting expires_at at its first run; revoke flips status.
@@ -2175,6 +2244,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS room_choices_open_agent_room
   ON room_choices(agent_id, room_id) WHERE status='open';
 CREATE INDEX IF NOT EXISTS room_choices_due_idx
   ON room_choices(closes_at) WHERE status='open' AND closes_at IS NOT NULL;
+-- room_id/workspace_id/message_id all cascade from rooms/workspaces/messages
+-- with no index, so deleting any of those made Postgres sequentially scan
+-- this table to find rows to cascade-delete.
+CREATE INDEX IF NOT EXISTS room_choices_room_idx ON room_choices(room_id);
+CREATE INDEX IF NOT EXISTS room_choices_workspace_idx ON room_choices(workspace_id);
+CREATE INDEX IF NOT EXISTS room_choices_message_idx ON room_choices(message_id);
 CREATE TABLE IF NOT EXISTS room_choice_votes (
   choice_id uuid NOT NULL REFERENCES room_choices(id) ON DELETE CASCADE,
   voter_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
@@ -2251,6 +2326,8 @@ ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS display_name text;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS website_url text;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS install_agent_id text REFERENCES identities(id) ON DELETE SET NULL;
 ALTER TABLE workspace_connectors ADD COLUMN IF NOT EXISTS install_room_id uuid REFERENCES rooms(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS workspace_connectors_install_room_idx
+  ON workspace_connectors(install_room_id) WHERE install_room_id IS NOT NULL;
 -- agent_commands is installed immediately after this base schema and its
 -- ids are text, so this provenance pointer deliberately follows the existing
 -- grant command pointer instead of introducing an early cross-schema FK.
@@ -2287,6 +2364,7 @@ CREATE TABLE IF NOT EXISTS link_spend_requests (
   test boolean NOT NULL DEFAULT false,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS link_spend_requests_room_idx ON link_spend_requests(room_id);
 CREATE TABLE IF NOT EXISTS registry_mcp_oauth_attempts (
   state text PRIMARY KEY,
   connector_id uuid NOT NULL REFERENCES workspace_connectors(id) ON DELETE CASCADE,
@@ -2378,6 +2456,12 @@ ALTER TABLE connector_offers ADD CONSTRAINT connector_offers_status_check
 DROP INDEX IF EXISTS connector_offers_open_idx;
 CREATE UNIQUE INDEX connector_offers_open_idx
   ON connector_offers(room_id, connector_type) WHERE status IN ('pending','connecting');
+-- workspace_id/message_id cascade (resp. SET NULL) from workspaces/messages
+-- with no index, so deleting a workspace or a message made Postgres
+-- sequentially scan this table to find matching rows.
+CREATE INDEX IF NOT EXISTS connector_offers_workspace_idx ON connector_offers(workspace_id);
+CREATE INDEX IF NOT EXISTS connector_offers_message_idx
+  ON connector_offers(message_id) WHERE message_id IS NOT NULL;
 
 
 
@@ -2403,6 +2487,7 @@ CREATE INDEX IF NOT EXISTS connection_receipts_connection_idx
   ON connection_receipts(connection_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS connection_receipts_turn_idx
   ON connection_receipts(connection_id, turn_key) WHERE turn_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS connection_receipts_workspace_idx ON connection_receipts(workspace_id);
 ALTER TABLE connection_receipts ADD COLUMN IF NOT EXISTS event_class text;
 
 -- Apps: the one front door (\`app-connections.ts\`). ONE row per app per
@@ -2441,6 +2526,7 @@ ALTER TABLE workspace_apps DROP CONSTRAINT IF EXISTS workspace_apps_route_check;
 ALTER TABLE workspace_apps ADD CONSTRAINT workspace_apps_route_check
   CHECK (route IN ('workbench','registry-mcp','composio','squire-api','squire-browser'));
 CREATE INDEX IF NOT EXISTS workspace_apps_connector_idx ON workspace_apps(connector_id);
+CREATE INDEX IF NOT EXISTS workspace_apps_workspace_idx ON workspace_apps(workspace_id);
 ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS app_id uuid REFERENCES workspace_apps(id) ON DELETE CASCADE;
 CREATE INDEX IF NOT EXISTS agent_grants_app_idx ON agent_grants(app_id,agent_id,status);
 CREATE TABLE IF NOT EXISTS workspace_app_routes (
@@ -2467,6 +2553,8 @@ CREATE TABLE IF NOT EXISTS workspace_app_usage (
 );
 CREATE INDEX IF NOT EXISTS workspace_app_usage_app_idx
   ON workspace_app_usage(app_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS workspace_app_usage_room_idx
+  ON workspace_app_usage(room_id) WHERE room_id IS NOT NULL;
 
 -- Wallet connector: the binding row (this account owns that wallet), never a
 -- secret. The one app-wide Coinbase credential lives in server secrets, and
@@ -2485,6 +2573,7 @@ CREATE TABLE IF NOT EXISTS wallet_bindings (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS wallet_bindings_workspace_idx ON wallet_bindings(workspace_id);
 
 -- One wallet transaction, in AND out, as the @wallet ledger wrote it. The
 -- balance_after_usd is what the line left behind; agent_id names the agent
@@ -2550,6 +2639,8 @@ CREATE INDEX IF NOT EXISTS feedback_items_reporter_idx
   ON feedback_items(reporter_identity_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS feedback_items_issue_idx
   ON feedback_items(issue_repository, issue_number) WHERE issue_number IS NOT NULL;
+CREATE INDEX IF NOT EXISTS feedback_items_workspace_idx ON feedback_items(workspace_id);
+CREATE INDEX IF NOT EXISTS feedback_items_room_idx ON feedback_items(room_id) WHERE room_id IS NOT NULL;
 -- The one server-maintained report-count comment per linked issue.
 CREATE TABLE IF NOT EXISTS feedback_issue_comments (
   repository text NOT NULL,
@@ -2673,6 +2764,15 @@ export async function migrate(
     database, 'messages_grant_request_idx',
     `CREATE INDEX CONCURRENTLY messages_grant_request_idx
      ON messages(room_id,created_at DESC) WHERE card_type='grant-request'`,
+  ));
+  // Without this, deleting a message with replies makes Postgres sequentially
+  // scan the whole messages table for the FK check on reply_to_message_id,
+  // which is what stalled DELETE FROM workspaces past the app pool's
+  // statement_timeout (reported as the delete dialog hanging forever).
+  await retryMigrationStep('reply-to index', () => createIndexConcurrently(
+    database, 'messages_reply_to_idx',
+    `CREATE INDEX CONCURRENTLY messages_reply_to_idx
+     ON messages(reply_to_message_id) WHERE reply_to_message_id IS NOT NULL`,
   ));
   await ddlScript('corner merge holds', CORNER_MERGE_HOLDS_SCHEMA);
   await ddlScript('corner owed schema', cornerOwedSchemaSql());

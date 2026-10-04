@@ -81,6 +81,7 @@ import {
   isAccountOrProviderRefusal,
   isContextOverflowTurn,
   nextPinnedProvider,
+  shouldFailOverProviderError,
   shouldRetryEmptyTurn,
   turnFailureReasonWithProvider,
   type EmptyTurnExplanation,
@@ -1285,8 +1286,8 @@ export class MonolithCornerTurnLoop {
 
   /**
    * Re-pin the session to the next provider in the OpenRouter order and open a
-   * fresh session on it, so the retry of an empty completion is served — and
-   * named — by exactly one provider (C92).
+   * fresh session on it, so the retry of an empty completion or a failing
+   * provider is served — and named — by exactly one provider (C92).
    */
   private async repinNextProvider(trace?: TurnTrace, reason?: string): Promise<string | undefined> {
     const next = nextPinnedProvider(this.pinnedProviders, this.pinnedProviderOverride);
@@ -1848,8 +1849,15 @@ export class MonolithCornerTurnLoop {
               }
               let explained = await this.explainEmpty(result);
               // A checks turn is told to say nothing when nothing changed; its
-              // silence is not a routing failure and must not buy a retry.
-              if (explained && !restates && shouldRetryEmptyTurn(explained)) {
+              // silence is not a routing failure and must not buy a retry. A
+              // stopped turn's `aborted` silence is not one either. A
+              // provider's 429/5xx moves the pin onward.
+              if (
+                explained &&
+                !this.stoppedTurns.has(requestId) &&
+                ((!restates && shouldRetryEmptyTurn(explained)) ||
+                  shouldFailOverProviderError(explained))
+              ) {
                 await flushToolCalls(result.toolCalls, '');
                 const silent = this.servingProviders();
                 const next = await this.repinNextProvider(trace, explained.reason);

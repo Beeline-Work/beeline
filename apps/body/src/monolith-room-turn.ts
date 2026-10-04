@@ -89,6 +89,7 @@ import {
   explainEmptyAgentTurn,
   isContextOverflowTurn,
   nextPinnedProvider,
+  shouldFailOverProviderError,
   shouldRetryEmptyTurn,
   turnFailureReasonWithProvider,
   type EmptyTurnExplanation,
@@ -1221,9 +1222,9 @@ export class MonolithRoomTurnLoop {
 
   /**
    * Re-pin the session to the next provider in the OpenRouter order and open a
-   * fresh session on it, so the retry of an empty completion is served — and
-   * named — by exactly one provider. Undefined when the pin has nowhere left
-   * to go.
+   * fresh session on it, so the retry of an empty completion or a failing
+   * provider is served — and named — by exactly one provider. Undefined when
+   * the pin has nowhere left to go.
    */
   private async repinNextProvider(trace?: TurnTrace, reason?: string): Promise<string | undefined> {
     const next = nextPinnedProvider(this.pinnedProviders, this.pinnedProviderOverride);
@@ -1622,7 +1623,15 @@ export class MonolithRoomTurnLoop {
               let openCornerCall = openCornerToolCall(result.toolCalls);
               let cornerOpened = openedACorner(openCornerCall);
               let explained = await this.explainEmpty(result);
-              if (!cornerOpened && explained && shouldRetryEmptyTurn(explained)) {
+              // A stopped turn ends `aborted` with no text; that is the
+              // requester's answer, not a routing failure, and must not re-pin
+              // the session. A provider's 429/5xx moves the pin onward.
+              if (
+                !cornerOpened &&
+                !active.cancelled &&
+                explained &&
+                (shouldRetryEmptyTurn(explained) || shouldFailOverProviderError(explained))
+              ) {
                 const silent = this.servingProviders();
                 const next = await this.repinNextProvider(trace, explained.reason);
                 if (next) {

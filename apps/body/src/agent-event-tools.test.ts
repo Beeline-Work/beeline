@@ -49,6 +49,17 @@ describe('beeline-agent event tools', () => {
     expect(calls).toEqual([]);
   });
 
+  it('refuses a per-item kind: it already wakes its own owner, with no subscription involved', async () => {
+    const calls: Call[] = [];
+    await expect(subscribeEvents({ kinds: ['grant-decided'] }, deps(calls))).rejects.toThrow(
+      /grant-decided wakes its own item's owner automatically/,
+    );
+    await expect(
+      subscribeEvents({ kinds: ['joined', 'choice-answered'] }, deps(calls)),
+    ).rejects.toThrow(/choice-answered wakes its own item's owner automatically/);
+    expect(calls).toEqual([]);
+  });
+
   it('an empty subscription list is a legal answer and says the agent reacts to nothing', async () => {
     const calls: Call[] = [];
     const result = await subscribeEvents(

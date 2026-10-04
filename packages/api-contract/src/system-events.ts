@@ -97,9 +97,47 @@ export const SERVER_EVENT_KIND_DETAIL: Readonly<Record<ServerEventKind, string>>
   'workflow-handoff': 'fires when a workflow run starts or hands off to its next role',
 };
 
+/**
+ * Kinds that answer ONE ask - a specific grant, choice, poll, approval, or
+ * turn - whose owner is woken directly (`wakes: [...]` at the call site that
+ * fires the event), with no subscription involved. A Room-wide subscription
+ * to one of these would wake the subscriber on every OTHER agent's item too,
+ * forever - effectively a standing hook on everyone else's turns, not a
+ * description of what wakes the subscriber's own work. So none of these may
+ * be subscribed to; only Room-level news stays subscribable.
+ */
+export const PER_ITEM_EVENT_KINDS: readonly ServerEventKind[] = [
+  'grant-decided',
+  'squire-approval-decided',
+  'connector-offer-decided',
+  'turn-cancelled',
+  'choice-answered',
+  'choice-skipped',
+  'poll-closed',
+];
+export function isPerItemEventKind(value: unknown): value is ServerEventKind {
+  return (PER_ITEM_EVENT_KINDS as readonly string[]).includes(value as string);
+}
+
+/** The kinds a Room-wide subscription may react to: Room-level news only. */
+export const SUBSCRIBABLE_EVENT_KINDS: readonly ServerEventKind[] = SERVER_EVENT_KINDS.filter(
+  (kind) => !isPerItemEventKind(kind),
+);
+export function isSubscribableEventKind(value: unknown): value is ServerEventKind {
+  return (SUBSCRIBABLE_EVENT_KINDS as readonly string[]).includes(value as string);
+}
+
+/** The one-line refusal `subscribe_events` gives for a per-item kind. */
+export function perItemSubscriptionRefusal(kind: string): string {
+  return (
+    `${kind} wakes its own item's owner automatically, with no subscription needed; ` +
+    `a Room-wide subscription to it is refused. Subscribable kinds are ${SUBSCRIBABLE_EVENT_KINDS.join(', ')}.`
+  );
+}
+
 /** "kind detail" for every subscribable kind, in catalog order. */
 export function eventKindCatalogLines(
-  kinds: readonly ServerEventKind[] = SERVER_EVENT_KINDS,
+  kinds: readonly ServerEventKind[] = SUBSCRIBABLE_EVENT_KINDS,
 ): readonly string[] {
   return kinds.map((kind) => `${kind} ${SERVER_EVENT_KIND_DETAIL[kind]}`);
 }

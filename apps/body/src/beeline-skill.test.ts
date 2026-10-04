@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SERVER_EVENT_KINDS } from '@beeline/api-contract/phone';
+import { PER_ITEM_EVENT_KINDS, SUBSCRIBABLE_EVENT_KINDS } from '@beeline/api-contract/phone';
 import {
   BEELINE_REVIEW_SKILL_NAME,
   beelineTriageSkillMarkdown,
@@ -81,13 +81,18 @@ describe('using-beeline Room guidance', () => {
     );
   });
 
-  it('derives the subscribable kinds from SERVER_EVENT_KINDS so the list cannot drift', () => {
+  it('derives the subscribable kinds from SUBSCRIBABLE_EVENT_KINDS so the list cannot drift', () => {
     const markdown = usingBeelineSkillMarkdown('test-release');
-    for (const kind of SERVER_EVENT_KINDS) {
+    for (const kind of SUBSCRIBABLE_EVENT_KINDS) {
       expect(markdown).toContain(kind);
     }
+    // A per-item kind answers one ask and wakes its owner directly; it is
+    // never offered as something to subscribe to.
+    for (const kind of PER_ITEM_EVENT_KINDS) {
+      expect(markdown).not.toContain(`${kind} `);
+    }
     expect(markdown).toContain(
-      'grant-decided carries the grant id and status and resumes the turn that asked for the grant',
+      'there is nothing to subscribe to for it, and asking is refused',
     );
     expect(markdown).toContain('ask_choice');
     expect(markdown).toContain('open_poll');

@@ -50,9 +50,12 @@ import {
 import {
   MAX_EVENT_CONSEQUENCE_LENGTH,
   MAX_MENTIONS_PER_EVENT,
-  SERVER_EVENT_KINDS,
+  SUBSCRIBABLE_EVENT_KINDS,
   isAgentKind,
+  isPerItemEventKind,
   isServerEventKind,
+  isSubscribableEventKind,
+  perItemSubscriptionRefusal,
   MESSAGE_REACTION_EMOJIS,
   type ServerEventKind,
 } from '@beeline/api-contract/phone';
@@ -4912,15 +4915,21 @@ export class DaemonService {
    * agent is not a member of, and the UPDATE touches exactly that one
    * membership. Only server kinds may be subscribed to — an `agent:` kind is a
    * sentence some agent chose to say, and reacting to it is a mention, not a
-   * subscription.
+   * subscription. A per-item kind (`PER_ITEM_EVENT_KINDS`) is refused outright:
+   * its item's owner already wakes directly, with no subscription involved,
+   * and a Room-wide subscription to it would wake the subscriber on every
+   * OTHER agent's item forever — a standing hook, not a description of this
+   * agent's own work.
    */
   private async setEventSubscriptions(input: Input<'setEventSubscriptions'>, agentId: string) {
     const requested = Array.isArray(input.kinds) ? input.kinds : [];
+    const perItem = requested.filter(isPerItemEventKind);
+    if (perItem.length) throw new Error(perItemSubscriptionRefusal(perItem[0]!));
     const unknown = requested.filter((kind) => !isServerEventKind(kind));
     if (unknown.length) {
       throw new Error(
         `not an event kind you can subscribe to: ${unknown.join(', ')}. ` +
-          `The kinds are ${SERVER_EVENT_KINDS.join(', ')}.`,
+          `The kinds are ${SUBSCRIBABLE_EVENT_KINDS.join(', ')}.`,
       );
     }
     const kinds = [...new Set(requested)] as ServerEventKind[];
@@ -4946,7 +4955,7 @@ export class DaemonService {
       [input.roomId, agentId],
     );
     const stored = rows.rows[0]?.event_subscriptions;
-    const kinds = (Array.isArray(stored) ? stored : []).filter(isServerEventKind);
+    const kinds = (Array.isArray(stored) ? stored : []).filter(isSubscribableEventKind);
     return { kinds };
   }
 
@@ -6996,9 +7005,13 @@ export class DaemonService {
       );
       await db.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
-         SELECT workspace_id,$2,identity_id,role,event_subscriptions FROM memberships
+         SELECT workspace_id,$2,identity_id,role,
+           (SELECT COALESCE(jsonb_agg(elem),'[]'::jsonb)
+            FROM jsonb_array_elements_text(event_subscriptions) elem
+            WHERE elem=ANY($3::text[]))
+         FROM memberships
          WHERE room_id=$1 AND removed_at IS NULL ON CONFLICT DO NOTHING`,
-        [roomId, cornerId],
+        [roomId, cornerId, SUBSCRIBABLE_EVENT_KINDS],
       );
       await db.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')

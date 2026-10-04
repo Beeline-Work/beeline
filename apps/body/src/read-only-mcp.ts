@@ -73,8 +73,9 @@ import {
 import {
   MAX_EVENT_CONSEQUENCE_LENGTH,
   MAX_MENTIONS_PER_EVENT,
-  SERVER_EVENT_KINDS,
+  SUBSCRIBABLE_EVENT_KINDS,
   eventKindCatalogLines,
+  perItemSubscriptionRefusal,
   CHOICE_CONSTRAINT_MAX_LENGTH,
   CHOICE_CONSEQUENCE_MAX_LENGTH,
   CHOICE_LABEL_MAX_LENGTH,
@@ -83,7 +84,9 @@ import {
   CHOICE_PROMPT_MAX_LENGTH,
   CHOICE_TTL_SECONDS,
   isAgentKind,
+  isPerItemEventKind,
   isServerEventKind,
+  isSubscribableEventKind,
   MESSAGE_REACTION_EMOJIS,
   type CornerLifecycleView,
   type MessageReactionEmoji,
@@ -978,14 +981,16 @@ const AGENT_TOOLS: ToolDefinition[] = [
       'A corner merging wakes nobody in its parent Room by default: if you still have work to do after ' +
       'a corner merges, subscribe to merged here in the parent Room before the merge, act only on the ' +
       'corner you are waiting for, post nothing for any other merge, and drop merged once nothing is ' +
-      'left to wait for. Never post just to acknowledge a merge; the merge card already announces it.',
+      'left to wait for. Never post just to acknowledge a merge; the merge card already announces it. ' +
+      'A grant, approval, choice, poll, or turn you asked for or started wakes you back automatically ' +
+      'when it settles - there is nothing to subscribe to for your own items, and a kind like that is refused.',
     inputSchema: {
       type: 'object',
       required: ['kinds'],
       properties: {
         kinds: {
           type: 'array',
-          items: { type: 'string', enum: [...SERVER_EVENT_KINDS] },
+          items: { type: 'string', enum: [...SUBSCRIBABLE_EVENT_KINDS] },
           description: 'The complete list of event kinds you want to react to in this Room.',
         },
       },
@@ -3218,12 +3223,14 @@ export async function subscribeEvents(
 ): Promise<string> {
   const requested = args.kinds;
   if (!Array.isArray(requested))
-    throw new Error(`kinds must be an array of event kinds: ${SERVER_EVENT_KINDS.join(', ')}`);
-  const unknown = requested.filter((kind) => !isServerEventKind(kind));
+    throw new Error(`kinds must be an array of event kinds: ${SUBSCRIBABLE_EVENT_KINDS.join(', ')}`);
+  const perItem = requested.filter(isPerItemEventKind);
+  if (perItem.length) throw new Error(perItemSubscriptionRefusal(String(perItem[0])));
+  const unknown = requested.filter((kind) => !isSubscribableEventKind(kind));
   if (unknown.length) {
     throw new Error(
       `not an event kind you can subscribe to: ${unknown.map(String).join(', ')}. ` +
-        `The kinds are ${SERVER_EVENT_KINDS.join(', ')}.`,
+        `The kinds are ${SUBSCRIBABLE_EVENT_KINDS.join(', ')}.`,
     );
   }
   const result = await deps.execute('setEventSubscriptions', {

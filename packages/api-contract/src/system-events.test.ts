@@ -5,17 +5,22 @@ import {
   formatSystemLine,
   isAgentKind,
   isControlKind,
+  isPerItemEventKind,
   isResumeKind,
   isServerEventKind,
+  isSubscribableEventKind,
   isSystemEvent,
   isSystemEventKind,
   joinSystemNames,
   MAX_EVENT_DEPTH,
   MAX_MENTIONS_PER_EVENT,
   MAX_TURNS_PER_ROOT,
+  perItemSubscriptionRefusal,
+  PER_ITEM_EVENT_KINDS,
   RESUME_KINDS,
   SERVER_EVENT_KIND_DETAIL,
   SERVER_EVENT_KINDS,
+  SUBSCRIBABLE_EVENT_KINDS,
 } from './system-events.js';
 
 describe('the one system-line grammar', () => {
@@ -133,20 +138,62 @@ describe('the event kinds beside the prose', () => {
     for (const kind of SERVER_EVENT_KINDS) {
       expect(SERVER_EVENT_KIND_DETAIL[kind]).toBeTruthy();
     }
+    // The default catalog is what `subscribe_events` advertises: Room-level
+    // kinds only. A per-item kind still gets a detail line (it is still a
+    // real, documented kind an agent reads about elsewhere), but it is never
+    // in the list a subscriber is offered.
     const lines = eventKindCatalogLines();
-    expect(lines).toHaveLength(SERVER_EVENT_KINDS.length);
-    for (const kind of SERVER_EVENT_KINDS) {
+    expect(lines).toHaveLength(SUBSCRIBABLE_EVENT_KINDS.length);
+    for (const kind of SUBSCRIBABLE_EVENT_KINDS) {
       expect(lines.some((line) => line.startsWith(`${kind} `))).toBe(true);
     }
-    expect(lines).toContain(
-      'grant-decided carries the grant id and status and resumes the turn that asked for the grant',
-    );
-    expect(lines).toContain(
-      'squire-approval-decided carries what was approved or denied and the Squire approval id, and resumes the turn that asked',
-    );
+    for (const kind of PER_ITEM_EVENT_KINDS) {
+      expect(lines.some((line) => line.startsWith(`${kind} `))).toBe(false);
+    }
     expect(eventKindCatalogLines(['joined'])).toEqual([
       `joined ${SERVER_EVENT_KIND_DETAIL.joined}`,
     ]);
+    expect(eventKindCatalogLines(['grant-decided'])).toEqual([
+      `grant-decided ${SERVER_EVENT_KIND_DETAIL['grant-decided']}`,
+    ]);
+  });
+
+  it('keeps per-item kinds off the subscribable list, since their owner is already woken directly', () => {
+    expect([...PER_ITEM_EVENT_KINDS]).toEqual([
+      'grant-decided',
+      'squire-approval-decided',
+      'connector-offer-decided',
+      'turn-cancelled',
+      'choice-answered',
+      'choice-skipped',
+      'poll-closed',
+    ]);
+    for (const kind of PER_ITEM_EVENT_KINDS) {
+      expect(isPerItemEventKind(kind)).toBe(true);
+      expect(isSubscribableEventKind(kind)).toBe(false);
+    }
+    expect([...SUBSCRIBABLE_EVENT_KINDS]).toEqual([
+      'joined',
+      'schedule-ran',
+      'corner-opened',
+      'check-passed',
+      'check-failed',
+      'merged',
+      'workflow-handoff',
+    ]);
+    for (const kind of SUBSCRIBABLE_EVENT_KINDS) {
+      expect(isPerItemEventKind(kind)).toBe(false);
+      expect(isSubscribableEventKind(kind)).toBe(true);
+    }
+    // Every server kind lands in exactly one of the two buckets.
+    expect(SUBSCRIBABLE_EVENT_KINDS.length + PER_ITEM_EVENT_KINDS.length).toBe(
+      SERVER_EVENT_KINDS.length,
+    );
+    expect(isPerItemEventKind('nonsense')).toBe(false);
+    expect(isSubscribableEventKind('nonsense')).toBe(false);
+    expect(perItemSubscriptionRefusal('grant-decided')).toContain(
+      "grant-decided wakes its own item's owner automatically",
+    );
   });
 
   it('keeps a stop on the control path, so it can never start the turn it ends', () => {

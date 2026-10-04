@@ -6,6 +6,7 @@ import {
   eventBudgetRefusal,
   eventDepthRefusal,
   formatSystemLine,
+  isSubscribableEventKind,
   type SystemEvent,
   type SystemEventKind,
   type SystemObject,
@@ -313,13 +314,18 @@ async function canonicalPhrase(database: SqlDatabase, phrase: SystemPhrase): Pro
  * caller that passes the pool, and every failure that is not the statement
  * itself. Keeping the query trivial — one indexed predicate over a column the
  * migration creates — is what keeps that case theoretical.
+ *
+ * A per-item kind (`isSubscribableEventKind` false) is never looked up here:
+ * its item's owner is already woken directly by the caller's own `wakes`, and
+ * a stale `event_subscriptions` row from before the migration that strips
+ * them must not resurrect a Room-wide wake on every such item.
  */
 async function subscribers(
   database: SqlDatabase,
   roomId: string,
   kind: SystemEventKind | undefined,
 ): Promise<string[]> {
-  if (!kind) return [];
+  if (!kind || !isSubscribableEventKind(kind)) return [];
   try {
     const rows = await database.query<{ identity_id: string }>(
       `SELECT member.identity_id FROM memberships member

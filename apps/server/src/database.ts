@@ -14,7 +14,7 @@ import {
 } from '@beeline/api-contract/daemon';
 import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
-import { uniqueAgentHandle } from '@beeline/api-contract/phone';
+import { PER_ITEM_EVENT_KINDS, uniqueAgentHandle } from '@beeline/api-contract/phone';
 import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
 import { backfillCornerLifecycleRuns, deleteStoredCornerWorkflows } from './corner-lifecycle.js';
 import { backfillFeedbackTriageWorkflow } from './feedback-triage-workflow.js';
@@ -2825,6 +2825,12 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     syncTopLevelSharedRoomRoles(database));
   console.log(`syncTopLevelSharedRoomRoles: updated ${syncedRoomRoles} stale Room role(s)`);
   await dataStep('system event kinds', () => backfillSystemEventKinds(database));
+  const strippedSubscriptions = await dataStep('per-item event subscriptions', () =>
+    backfillPerItemEventSubscriptions(database));
+  if (strippedSubscriptions)
+    console.log(
+      `backfillPerItemEventSubscriptions: stripped per-item kinds from ${strippedSubscriptions} membership row(s)`,
+    );
   await dataStep('system identity avatar', () => database.query(
     `UPDATE identities SET avatar='/v1/connectors/logo/system.svg',updated_at=now()
      WHERE id=$1 AND avatar IS DISTINCT FROM '/v1/connectors/logo/system.svg'`,
@@ -3181,6 +3187,30 @@ export async function backfillSystemEventKinds(database: SqlDatabase): Promise<v
      WHERE id IN (SELECT id FROM messages WHERE system_event->>'verb'=$1
        AND system_event->>'kind' IS NULL ORDER BY id LIMIT $2)`,
     [SCHEDULE_RAN_VERB],
+  );
+}
+
+/**
+ * Strips every `PER_ITEM_EVENT_KINDS` entry out of `memberships.event_subscriptions`.
+ *
+ * A per-item kind answers one ask and already wakes its owner directly
+ * (`wakes: [...]` at the call site); a Room-wide subscription to one, left
+ * over from before `subscribe_events` refused them, would wake the subscriber
+ * on every OTHER agent's item forever. `subscribers()` and the corner
+ * membership copy both ignore these kinds regardless, so this is cleanup for
+ * `list_event_subscriptions` and any future direct read of the column, not a
+ * correctness fix on its own. Idempotent: the `?|` predicate selects nothing
+ * once every row's array is clean.
+ */
+export async function backfillPerItemEventSubscriptions(database: SqlDatabase): Promise<number> {
+  return boundedMigrationUpdate(database, 'per-item event subscriptions',
+    `UPDATE memberships SET event_subscriptions=COALESCE(
+       (SELECT jsonb_agg(elem) FROM jsonb_array_elements_text(event_subscriptions) elem
+        WHERE NOT (elem=ANY($1::text[]))),
+       '[]'::jsonb
+     )
+     WHERE id IN (SELECT id FROM memberships WHERE event_subscriptions ?| $1::text[] ORDER BY id LIMIT $2)`,
+    [PER_ITEM_EVENT_KINDS],
   );
 }
 

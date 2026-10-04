@@ -1,5 +1,5 @@
 /**
- * `@agent login` on the agent's own machine: one dispatcher, four kinds.
+ * `@agent /login` on the agent's own machine: one dispatcher, four kinds.
  *
  * - paste-code (Claude Code): `claude-sign-in.ts` builds the PKCE link and
  *   exchanges the pasted code.
@@ -209,7 +209,7 @@ export class AgentSignIn {
     if (this.options.harness === 'claude') return this.#claude.complete(attemptId, value);
     const pending = this.#pending.get(attemptId);
     if (!pending || pending.kind !== 'key' || pending.expiresAt <= this.#now())
-      throw new Error("This sign-in expired or was already used. Send the agent `login` again to start a new one.");
+      throw new Error("This sign-in expired or was already used. Send the agent `/login` again to start a new one.");
     await this.#saveKey(pending.provider, value.trim());
     this.#pending.delete(attemptId);
   }
@@ -266,7 +266,7 @@ export class AgentSignIn {
         child.kill('SIGTERM');
         this.options.onResult(attemptId, {
           ok: false,
-          error: 'The sign-in expired before it was approved. Send the agent `login` again.',
+          error: 'The sign-in expired before it was approved. Send the agent `/login` again.',
         });
       }, AGENT_SIGN_IN_ATTEMPT_TTL_MS);
       expiry.unref?.();

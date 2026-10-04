@@ -1,5 +1,5 @@
 /**
- * `@agent login`: the server's relay between the agent owner's phone and the
+ * `@agent /login`: the server's relay between the agent owner's phone and the
  * agent's helper. Nothing secret is stored. Every step travels as one
  * PostgreSQL NOTIFY so it reaches whichever server instance holds the
  * helper's socket (`start`/`code`) or a waiting phone request
@@ -327,7 +327,7 @@ export async function reportAgentSignIn(
 }
 
 /**
- * After an `@agent login` message commits, ask the agent's machine to start
+ * After an `@agent /login` message commits, ask the agent's machine to start
  * its harness's login and put what it answers on the card, or settle the card
  * with why not.
  */

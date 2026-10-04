@@ -1,5 +1,5 @@
 /**
- * Contract for the harness logins `@agent login` drives. Their headless
+ * Contract for the harness logins `@agent /login` drives. Their headless
  * output is not a public API: these tests pin the exact text each CLI printed
  * (fixtures) and, where a CLI is installed on this machine, re-read its help
  * so a renamed flag fails here before it reaches an owner.

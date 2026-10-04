@@ -84,7 +84,7 @@ describe('tagged agent lifecycle commands', () => {
       ).rows.map((row) => row.text),
     ).toEqual([
       '@bee is online · no turn is running',
-      '@bee supports lifecycle commands · restart · status · stop · retry · debug · help · login',
+      '@bee supports lifecycle commands · restart · status · stop · retry · debug · help · /login',
     ]);
   });
 

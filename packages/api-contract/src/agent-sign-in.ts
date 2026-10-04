@@ -1,6 +1,6 @@
 /**
- * `@agent login`: an agent's harness login run from a Room, the way Claude
- * Code's own `/login` works. The owner sends `@agent login`; a card at that
+ * `@agent /login`: an agent's harness login run from a Room, the way Claude
+ * Code's own `/login` works. The owner sends `@agent /login`; a card at that
  * call site carries what the agent's machine produced for its harness (a
  * link, a device code, or a key field); the machine finishes the login and
  * writes it where the harness reads it.
@@ -16,7 +16,7 @@ export const AGENT_SIGN_IN_ATTEMPT_TTL_MS = 15 * 60_000;
 /** The longest pasted code or key the server relays. */
 export const AGENT_SIGN_IN_INPUT_MAX_LENGTH = 1_024;
 
-/** Harnesses `@agent login` signs in from a Room. */
+/** Harnesses `@agent /login` signs in from a Room. */
 export const AGENT_SIGN_IN_HARNESSES = [
   'claude',
   'codex',
@@ -102,7 +102,7 @@ export type ReportAgentSignInInput =
     };
 
 /**
- * The Room card `@agent login` writes. The link and device code are shown to
+ * The Room card `@agent /login` writes. The link and device code are shown to
  * the agent's owner only; other members see who it waits for.
  */
 export type AgentSignInCardView = {

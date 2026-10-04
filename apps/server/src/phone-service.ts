@@ -6623,7 +6623,7 @@ export class PhoneService {
     });
   }
   /**
-   * An exact `@agent login` message already wrote its card under routing
+   * An exact `@agent /login` message already wrote its card under routing
    * (`agent-command.ts`); once that commits, ask the agent's machine for the
    * claude.ai link without holding the send open.
    */

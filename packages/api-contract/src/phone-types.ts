@@ -293,7 +293,7 @@ export type RoomViewMessage = {
     readonly errorMessage?: string;
     readonly continuation?: string;
   };
-  /** `@agent login`: Claude's sign-in at the call site. Holds the link, never a code. */
+  /** `@agent /login`: Claude's sign-in at the call site. Holds the link, never a code. */
   readonly agentSignIn?: AgentSignInCardView;
   /** One preference card: a lettered question or a Room poll. Never authority. */
   readonly choice?: ChoiceCardView;

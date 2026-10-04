@@ -328,7 +328,7 @@ export class DaemonApiClient {
     this.configChangedListener?.();
   }
 
-  /** One `@agent login` step the agent's owner started in a Room. */
+  /** One `@agent /login` step the agent's owner started in a Room. */
   setAgentSignInListener(listener: (frame: AgentSignInFrame) => void): void {
     this.agentSignInListener = listener;
   }

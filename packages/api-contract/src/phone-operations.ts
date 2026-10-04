@@ -142,7 +142,7 @@ export type PhoneOperationMap = {
   updateAgentSoul: { input: UpdateAgentSoulInput; output: void };
   updateAgentModelSelection: { input: UpdateAgentModelInput; output: void };
   refreshAgentModelCatalog: { input: WorkspaceAgentInput; output: void };
-  /** Owner-only: relay the code pasted into an `@agent login` card to the agent's machine. */
+  /** Owner-only: relay the code pasted into an `@agent /login` card to the agent's machine. */
   completeAgentSignIn: { input: CompleteAgentSignInInput; output: CompleteAgentSignInResult };
   updateAgentYolo: { input: UpdateAgentYoloInput; output: void };
   updateAgentAccessPolicy: { input: UpdateAgentAccessPolicyInput; output: void };

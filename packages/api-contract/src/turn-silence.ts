@@ -289,7 +289,7 @@ export function phraseTurnSilence(
         agent,
         'could not answer',
         options.login
-          ? `the helper could not authenticate with ${AGENT_SIGN_IN_SERVICE_LABELS[options.login.harness]}. If its ${agentSignInUsesKey(options.login.harness) ? 'key' : 'login'} expired, its owner can send \`@${options.login.handle} login\` here, or run \`beeline connect\` on the helper's machine.`
+          ? `the helper could not authenticate with ${AGENT_SIGN_IN_SERVICE_LABELS[options.login.harness]}. If its ${agentSignInUsesKey(options.login.harness) ? 'key' : 'login'} expired, its owner can send \`@${options.login.handle} /login\` here, or run \`beeline connect\` on the helper's machine.`
           : "the helper could not authenticate with the provider. Check its log for the failed turn; if its login expired, run `beeline connect` on the helper's machine.",
       );
     case 'workspace-failure':

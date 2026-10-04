@@ -1,5 +1,5 @@
 /**
- * `@agent login`, end to end, for three of the four sign-in kinds:
+ * `@agent /login`, end to end, for three of the four sign-in kinds:
  * authenticated phone HTTP -> server -> PostgreSQL NOTIFY -> the helper's
  * live socket -> a real helper client (`AgentSignIn`) that writes the login
  * where the harness reads it. Faked: Claude's token/profile endpoints,
@@ -213,13 +213,13 @@ async function main(): Promise<void> {
       return row.rows[0]?.text ?? '';
     }
 
-    await phone(memberToken, 'sendRoomMessage', { roomId: ROOM, text: '@clara login' });
-    console.log(`Workspace admin (not the owner) sends "@clara login" -> ${await lastSystemLine()}`);
+    await phone(memberToken, 'sendRoomMessage', { roomId: ROOM, text: '@clara /login' });
+    console.log(`Workspace admin (not the owner) sends "@clara /login" -> ${await lastSystemLine()}`);
 
-    await phone(ownerToken, 'sendRoomMessage', { roomId: ROOM, text: '@clara login' });
+    await phone(ownerToken, 'sendRoomMessage', { roomId: ROOM, text: '@clara /login' });
     const card = await cardSettles('pending');
     const link = new URL(String(card.agentSignIn!.authorizeUrl));
-    console.log(`Owner sends "@clara login" -> card: ${card.text}`);
+    console.log(`Owner sends "@clara /login" -> card: ${card.text}`);
     console.log(`  card link: ${link.origin}${link.pathname}?client_id=${link.searchParams.get('client_id')}&redirect_uri=${link.searchParams.get('redirect_uri')}&code_challenge_method=${link.searchParams.get('code_challenge_method')}&…`);
     const modelCommands = await db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1`, [AGENT]);
     console.log(`  model turns started by the command: ${modelCommands.rowCount}`);
@@ -282,9 +282,9 @@ async function main(): Promise<void> {
       return child;
     }) as never;
     await useHarness('codex', { spawn: fakeCodex });
-    await phone(ownerToken, 'sendRoomMessage', { roomId: ROOM, text: '@clara login' });
+    await phone(ownerToken, 'sendRoomMessage', { roomId: ROOM, text: '@clara /login' });
     const device = await cardSettles('pending');
-    console.log(`Codex agent: owner sends "@clara login" -> card: ${device.text}`);
+    console.log(`Codex agent: owner sends "@clara /login" -> card: ${device.text}`);
     console.log(`  owner's card: ${device.agentSignIn!.kind} · ${device.agentSignIn!.authorizeUrl} · code ${device.agentSignIn!.userCode}`);
     const memberView = (await roomCard(memberToken))!.agentSignIn!;
     console.log(`  admin's view of the same card: link ${memberView.authorizeUrl ?? 'hidden'}, code ${memberView.userCode ?? 'hidden'}`);
@@ -307,9 +307,9 @@ async function main(): Promise<void> {
           status: new Headers(init?.headers).get('authorization') === `Bearer ${PI_KEY}` ? 200 : 401,
         })) as typeof fetch,
     });
-    await phone(ownerToken, 'sendRoomMessage', { roomId: ROOM, text: '@clara login' });
+    await phone(ownerToken, 'sendRoomMessage', { roomId: ROOM, text: '@clara /login' });
     const keyCard = await cardSettles('pending');
-    console.log(`Pi agent: owner sends "@clara login" -> card: ${keyCard.text} (${keyCard.agentSignIn!.kind}, ${keyCard.agentSignIn!.provider})`);
+    console.log(`Pi agent: owner sends "@clara /login" -> card: ${keyCard.text} (${keyCard.agentSignIn!.kind}, ${keyCard.agentSignIn!.provider})`);
     const badKey = await phone(ownerToken, 'completeAgentSignIn', { roomId: ROOM, messageId: keyCard.id, code: 'sk-or-v1-wrong' });
     console.log(`  owner pastes a wrong key -> ${badKey.status} ${badKey.body.error}`);
     const goodKey = await phone(ownerToken, 'completeAgentSignIn', { roomId: ROOM, messageId: keyCard.id, code: PI_KEY });

@@ -291,7 +291,7 @@ describe('@agent login: Claude sign-in at the call site', () => {
 
   it('shows a bad or expired code on the card and lets the owner paste again', async () => {
     const rejected =
-      'Claude did not accept that code. Paste the newest code from claude.ai, or send the agent `login` again.';
+      'Claude did not accept that code. Paste the newest code from claude.ai, or send the agent `/login` again.';
     let codes = 0;
     helper((event) =>
       event.step === 'start'
@@ -392,7 +392,7 @@ describe('@agent login: Claude sign-in at the call site', () => {
             attemptId: event.attemptId,
             cardId: event.cardId,
             outcome: 'failed',
-            error: 'The sign-in expired before it was approved. Send the agent `login` again.',
+            error: 'The sign-in expired before it was approved. Send the agent `/login` again.',
           },
           AGENT,
         );
@@ -401,7 +401,7 @@ describe('@agent login: Claude sign-in at the call site', () => {
     const command = await send(OWNER, '@clara login');
     const failed = await settled(command, 'failed');
     expect(failed.card.errorMessage).toBe(
-      'The sign-in expired before it was approved. Send the agent `login` again.',
+      'The sign-in expired before it was approved. Send the agent `/login` again.',
     );
   });
 

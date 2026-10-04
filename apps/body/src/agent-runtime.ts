@@ -517,7 +517,7 @@ export async function runAgentRuntime(
         });
         daemonApi.setConnectorAssignmentListener(() => connectorLoop?.wake());
         connectorLoop.start();
-        // `@agent login`: the owner's Room card relays each step over the
+        // `@agent /login`: the owner's Room card relays each step over the
         // live socket; the login lands where this harness reads it.
         const signInHarness = agentSignInHarness(agent.kind);
         if (signInHarness) {

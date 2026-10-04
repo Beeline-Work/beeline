@@ -1,7 +1,7 @@
 /**
  * Claude Code's paste-back sign-in, run on the agent's own machine.
  *
- * The owner sends `@agent login`; the server relays `start` here
+ * The owner sends `@agent /login`; the server relays `start` here
  * (`agent-sign-in.ts` dispatches by harness). This helper builds Claude
  * Code's own manual-paste OAuth link (PKCE, S256) and keeps the verifier in
  * memory. The owner approves on claude.ai,
@@ -48,9 +48,9 @@ const SUBSCRIPTION_TYPES: Readonly<Record<string, string>> = {
 };
 
 export const CLAUDE_SIGN_IN_EXPIRED_MESSAGE =
-  'This sign-in expired or was already used. Send the agent `login` again to start a new one.';
+  'This sign-in expired or was already used. Send the agent `/login` again to start a new one.';
 export const CLAUDE_SIGN_IN_REJECTED_MESSAGE =
-  'Claude did not accept that code. Paste the newest code from claude.ai, or send the agent `login` again.';
+  'Claude did not accept that code. Paste the newest code from claude.ai, or send the agent `/login` again.';
 export const CLAUDE_SIGN_IN_WRONG_ATTEMPT_MESSAGE =
   'That code belongs to a different sign-in. Paste the code from the page this sign-in opened.';
 

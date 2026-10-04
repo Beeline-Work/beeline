@@ -361,7 +361,7 @@ export type ChatDisplayMessage = {
   /** An agent offering to add a Workbench tool it needs (R5); rendered as the offer card. */
   connectorOffer?: NonNullable<RoomViewMessage['connectorOffer']>;
   appSignIn?: NonNullable<RoomViewMessage['appSignIn']>;
-  /** `@agent login`: Claude's sign-in card at the call site. Never holds a code. */
+  /** `@agent /login`: Claude's sign-in card at the call site. Never holds a code. */
   agentSignIn?: NonNullable<RoomViewMessage['agentSignIn']>;
   choice?: NonNullable<RoomViewMessage['choice']>;
   /** @wallet ledger facts, rendered as ledger cards in the @wallet thread. */

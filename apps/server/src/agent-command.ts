@@ -245,12 +245,12 @@ export function parseTaggedAgentLifecycleCommand(
   return (match[2] ?? match[3])!.toLocaleLowerCase() as TaggedAgentLifecycleCommand;
 }
 
-/** The one sign-in card an `@agent login` message writes. */
+/** The one sign-in card an `@agent /login` message writes. */
 export function agentSignInCardId(sourceMessageId: string, agentId: string): string {
   return createHash('sha256').update(`agent-sign-in:${sourceMessageId}:${agentId}`).digest('hex');
 }
 
-/** True for the exact text of an `@agent login` / `@agent /login` message. */
+/** True for the exact text of an `@agent /login` / `@agent /login` message. */
 export function isTaggedLoginText(text: string): boolean {
   return /^@[^\s]+\s+\/?login$/i.test(text.trim());
 }
@@ -420,7 +420,7 @@ async function routeTaggedLifecycleCommand(
   if (action === 'help') {
     await line(
       'supports lifecycle commands',
-      'restart · status · stop · retry · debug · help · login',
+      'restart · status · stop · retry · debug · help · /login',
     );
     return true;
   }

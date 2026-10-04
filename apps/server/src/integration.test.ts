@@ -1516,7 +1516,7 @@ describe('monolith integration', () => {
     ).toBe(204);
   });
 
-  it('lands new people nowhere and makes person invites reusable, retry-safe, and Room-complete', async () => {
+  it('lands new people nowhere and makes person invites single-use, retry-safe, and Room-complete', async () => {
     const aliceToken = await phoneToken('alice');
     const bobToken = await phoneToken('bob');
     const aliceId = createHash('sha256').update('github:alice').digest('hex');
@@ -1555,14 +1555,28 @@ describe('monolith integration', () => {
       await (await operation('redeemInvite', { token: invite.token }, aliceToken)).json(),
     ).toEqual({ joined: true, workspaceId, roomId: created.roomId });
     expect(
-      await (await operation('resolveInvite', { token: invite.token }, aliceToken)).json(),
-    ).toEqual(expect.objectContaining({ name: 'Invites', joinedWorkspaceId: workspaceId }));
+      (await operation('resolveInvite', { token: invite.token }, aliceToken)).status,
+    ).toBe(404);
     expect(
       await (await operation('redeemInvite', { token: invite.token }, aliceToken)).json(),
     ).toEqual({ joined: false, workspaceId, roomId: created.roomId });
+    // The invite is spent on first use: a different person cannot redeem the
+    // same token, whether previewing or joining with it.
     expect(
-      await (await operation('redeemInvite', { token: invite.token }, bobToken)).json(),
+      (await operation('resolveInvite', { token: invite.token }, bobToken)).status,
+    ).toBe(404);
+    expect(
+      (await operation('redeemInvite', { token: invite.token }, bobToken)).status,
+    ).toBe(404);
+    const bobInvite = (await (await operation('createInvite', { workspaceId })).json()) as {
+      token: string;
+    };
+    expect(
+      await (await operation('redeemInvite', { token: bobInvite.token }, bobToken)).json(),
     ).toEqual({ joined: true, workspaceId, roomId: created.roomId });
+    expect(
+      (await operation('resolveInvite', { token: invite.token }, bobToken)).status,
+    ).toBe(404);
 
     const aliceChats = (await (
       await request(`/v1/phone/workspaces/${workspaceId}/chats`, 'GET', undefined, aliceToken)
@@ -2009,6 +2023,32 @@ describe('monolith integration', () => {
     expect(
       (await operation('removeWorkspaceMember', { workspaceId, memberId: bobId })).status,
     ).toBe(400);
+  });
+
+  it('requires a fresh invite after removing a person who joined through a spent link', async () => {
+    const bobToken = await phoneToken('bob');
+    const bobId = createHash('sha256').update('github:bob').digest('hex');
+    const workspaceId = 'dddddddd-dddd-4ddd-8ddd-ddddddddddde';
+    await operation('createWorkspace', { workspaceId, name: 'Fresh invites' });
+    const first = (await (await operation('createInvite', { workspaceId })).json()) as {
+      token: string;
+    };
+    expect((await operation('redeemInvite', { token: first.token }, bobToken)).status).toBe(200);
+    expect((await operation('removeWorkspaceMember', { workspaceId, memberId: bobId })).status)
+      .toBe(204);
+    expect((await operation('redeemInvite', { token: first.token }, bobToken)).status).toBe(404);
+    expect((await operation('resolveInvite', { token: first.token }, bobToken)).status).toBe(404);
+    expect((await fetch(`${origin}/v1/public/invite-preview?token=${first.token}`)).status)
+      .toBe(404);
+    const fresh = (await (await operation('createInvite', { workspaceId })).json()) as {
+      token: string;
+    };
+    expect((await operation('redeemInvite', { token: fresh.token }, bobToken)).status).toBe(200);
+    const membership = await database.query<{ removed_at: Date | null }>(
+      `SELECT removed_at FROM memberships WHERE workspace_id=$1 AND identity_id=$2 AND room_id IS NULL`,
+      [workspaceId, bobId],
+    );
+    expect(membership.rows).toEqual([{ removed_at: null }]);
   });
 
   it('lets only the Workspace owner delete it, as a real cascade that leaves no orphan rows and retires bound helpers', async () => {
@@ -5016,7 +5056,7 @@ describe('monolith integration', () => {
     expect(membership.rows).toEqual([{ role: 'member', invited_by: HUMAN }]);
   });
 
-  it('collapses unknown, expired, and malformed public invites without authentication', async () => {
+  it('collapses unknown, expired, consumed, and malformed public invites without authentication', async () => {
     const created = await request('/v1/phone/operations/createInvite', 'POST', {
       workspaceId: WORKSPACE,
     });
@@ -5025,9 +5065,17 @@ describe('monolith integration', () => {
       `UPDATE invites SET expires_at=now()-interval '1 second' WHERE token_hash=$1`,
       [createHash('sha256').update(invite.token).digest('hex')],
     );
+    const consumedCreated = await request('/v1/phone/operations/createInvite', 'POST', {
+      workspaceId: WORKSPACE,
+    });
+    const consumedInvite = (await consumedCreated.json()) as { token: string };
+    await database.query(`UPDATE invites SET consumed_at=now() WHERE token_hash=$1`, [
+      createHash('sha256').update(consumedInvite.token).digest('hex'),
+    ]);
 
     const paths = [
       `/v1/public/invite-preview?token=${invite.token}`,
+      `/v1/public/invite-preview?token=${consumedInvite.token}`,
       `/v1/public/invite-preview?token=inv_${'f'.repeat(64)}`,
       '/v1/public/invite-preview?token=not-an-invite',
     ];

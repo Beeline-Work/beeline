@@ -14,7 +14,8 @@ Workspace manager's view of someone else's agent (BBC) now show one
 full-width, red-bordered **Remove from Workspace** button with centred text,
 in the place BBC's Ban button held. It calls `removeAgent`, which the server
 already allows for the agent's owner or a Workspace owner/admin. Human
-profiles keep Ban unchanged.
+profiles kept Ban at the time of these captures. For current human removal behavior, see
+[agent and human profiles](../../../agent-profiles.md).
 
 | View               | Phone                                                    | Desktop                                                      |
 | ------------------ | -------------------------------------------------------- | ------------------------------------------------------------ |

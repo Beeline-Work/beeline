@@ -1,4 +1,3 @@
-import { readWorkspaceMemberListView } from '@beeline/api-contract/phone';
 import { afterEach, describe, expect, it } from 'vitest';
 import { migrate } from './database.js';
 import { PhoneService } from './phone-service.js';
@@ -107,91 +106,33 @@ describe('agent profile recent work', () => {
   });
 });
 
-describe('persistent Workspace bans', () => {
-  it('blocks every membership restoration until lifted, without restoring access on unban', async () => {
+describe('removing a human from the Workspace', () => {
+  it('spends the invite on first use, so a removed person cannot rejoin with the old link', async () => {
     database = new PgliteDatabase();
     await migrate(database);
-    await database.query(
-      `INSERT INTO identities(id,kind,name) VALUES ($1,'human','Owner'),($2,'human','Person'),($3,'agent','Agent')`,
-      [viewer, other, agent],
-    );
-    await database.query(`INSERT INTO workspaces(id,name) VALUES ($1,'Workspace')`, [workspace]);
-    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES ($1,$2,'Room')`, [
-      parent,
-      workspace,
-    ]);
-    await database.query(
-      `INSERT INTO memberships(workspace_id,identity_id,role) VALUES ($1,$2,'owner'),($1,$3,'member'),($1,$4,'member')`,
-      [workspace, viewer, other, agent],
-    );
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES ($1,$2,$3,'member')`,
-      [workspace, parent, other],
-    );
-    const phone = new PhoneService(database, 'https://server.example');
-    await database.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)', [agent, other]);
-    await database.query(
-      `INSERT INTO agent_grants(id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status)
-       VALUES($1,$2,$3,'repository','acme/repo','Ship it',$4,$5,'approved')`,
-      ['55555555-5555-4555-8555-555555555555', agent, workspace, other, parent],
-    );
-    const invite = await phone.execute('createInvite', { workspaceId: workspace }, viewer);
-    const profile = readWorkspaceMemberListView(await phone.readWorkspaceMembers(workspace, viewer, { memberId: other }));
-    expect(profile?.viewer).toMatchObject({ role: 'owner', permissions: { manage: true } }); // R12c
-    expect(profile?.grants?.[0]).toMatchObject({ roomName: 'Room' });
-    expect(
-      (await phone.readWorkspaceMembers(workspace, viewer, { memberId: other }))?.members.map(
-        (m) => m.identity.pubkey,
-      ),
-    ).toEqual([other]);
-    await expect(
-      phone.execute('listWorkspaceBans', { workspaceId: workspace }, other),
-    ).rejects.toThrow();
-    await expect(
-      phone.execute('unbanWorkspaceMember', { workspaceId: workspace, memberId: agent }, other),
-    ).rejects.toThrow();
-
-    await expect(
-      phone.execute('banWorkspaceMember', { workspaceId: workspace, memberId: viewer }, other),
-    ).rejects.toThrow();
-    await phone.execute('banWorkspaceMember', { workspaceId: workspace, memberId: other }, viewer);
-    expect(
-      (await phone.execute('listWorkspaceBans', { workspaceId: workspace }, viewer)).members,
-    ).toEqual([{ pubkey: other, name: 'Person', kind: 'human', canLift: true }]);
-    expect(await phone.readWorkspace(workspace, other)).toBeNull();
-    await expect(phone.execute('redeemInvite', { token: invite.token }, other)).rejects.toThrow(
-      'banned',
-    );
-    await expect(
-      phone.execute(
-        'addWorkspaceMember',
-        { workspaceId: workspace, memberId: other, role: 'member' },
-        viewer,
-      ),
-    ).rejects.toThrow('banned');
-    await expect(
-      database.query(
-        `UPDATE memberships SET removed_at=NULL WHERE workspace_id=$1 AND identity_id=$2`,
-        [workspace, other],
-      ),
-    ).rejects.toThrow('banned');
-    await phone.execute(
-      'unbanWorkspaceMember',
-      { workspaceId: workspace, memberId: other },
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES ($1,'human','Owner'),($2,'human','Person')`, [
       viewer,
-    );
-    expect(await phone.readWorkspace(workspace, other)).toBeNull();
+      other,
+    ]);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES ($1,'Workspace')`, [workspace]);
+    await database.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES ($1,$2,'owner')`, [
+      workspace,
+      viewer,
+    ]);
+    const phone = new PhoneService(database, 'https://server.example');
+    const invite = await phone.execute('createInvite', { workspaceId: workspace }, viewer);
     expect((await phone.execute('redeemInvite', { token: invite.token }, other)).joined).toBe(true);
-    await phone.execute('banWorkspaceMember', { workspaceId: workspace, memberId: agent }, viewer);
-    await expect(
-      database.query(
-        `UPDATE memberships SET removed_at=NULL WHERE workspace_id=$1 AND identity_id=$2`,
-        [workspace, agent],
-      ),
-    ).rejects.toThrow('banned');
-    await expect(
-      phone.execute('banWorkspaceMember', { workspaceId: workspace, memberId: viewer }, viewer),
-    ).rejects.toThrow();
+    await phone.execute('removeWorkspaceMember', { workspaceId: workspace, memberId: other }, viewer);
+    expect(await phone.readWorkspace(workspace, other)).toBeNull();
+    // This was the bug: invites stayed reusable until expiry, so a removed
+    // person could let themself back in with the same link.
+    await expect(phone.execute('redeemInvite', { token: invite.token }, other)).rejects.toThrow(
+      'invite not found',
+    );
+    const freshInvite = await phone.execute('createInvite', { workspaceId: workspace }, viewer);
+    expect(
+      (await phone.execute('redeemInvite', { token: freshInvite.token }, other)).joined,
+    ).toBe(true);
   });
 });
 
@@ -232,9 +173,6 @@ it('enforces strict role authority and spectator writes and lists Workspace-owne
     [viewer],
   );
   await expect(change(other, viewer, 'member')).rejects.toThrow();
-  await expect(
-    phone.execute('banWorkspaceMember', { workspaceId: workspace, memberId: viewer }, other),
-  ).rejects.toThrow();
   const owned = await phone.readWorkspaceMembers(workspace, other, {
     kind: 'agent',
     ownerId: other,

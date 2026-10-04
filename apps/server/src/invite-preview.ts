@@ -31,8 +31,8 @@ export interface InvitePreviewAccessOptions {
  * The unauthenticated landing-page projection for a bearer invite URL.
  *
  * A valid token reveals only the two names the invitee sees on the landing
- * page and the token's own expiry. Unknown, expired, malformed, and creator-
- * retired tokens deliberately collapse to one result.
+ * page and the token's own expiry. Unknown, expired, consumed, malformed, and
+ * creator-retired tokens deliberately collapse to one result.
  */
 export class InvitePreviewAccess {
   private readonly attempts = new Map<string, { count: number; resetAt: number }>();
@@ -69,7 +69,7 @@ export class InvitePreviewAccess {
        JOIN identities inviter ON inviter.id=i.created_by
        JOIN memberships creator ON creator.workspace_id=i.workspace_id AND creator.room_id IS NULL
          AND creator.identity_id=i.created_by AND creator.removed_at IS NULL
-       WHERE i.token_hash=$1 AND i.expires_at>now()`,
+       WHERE i.token_hash=$1 AND i.expires_at>now() AND i.consumed_at IS NULL`,
       [createHash('sha256').update(rawToken).digest('hex')],
     );
     const row = result.rows[0];

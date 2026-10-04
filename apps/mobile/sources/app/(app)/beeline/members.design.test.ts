@@ -47,7 +47,7 @@ describe('Members page layout contract', () => {
   it('carries no banning members UI (removed)', () => {
     // The phone offered two ban surfaces — a Workspace "Banned members"
     // roster with lift controls, and a "Ban from Workspace" row on a human
-    // profile. Both are gone; server-side ban storage and operations remain.
+    // profile. Both are gone, and so is server-side banning: people are removed.
     expect(source).not.toContain('WorkspaceBans');
     expect(source).not.toContain('Banned members');
     expect(humanProfile).not.toContain('Ban from Workspace');

@@ -182,6 +182,8 @@ import {
   archiveWorkflow,
   assignWorkflowRole,
   handoff,
+  getWorkflowRun,
+  cancelWorkflowRun,
   saveWorkflow,
   startWorkflow,
 } from './workflow-runs.js';
@@ -407,6 +409,7 @@ export class DaemonService {
       'saveSkill',
       'saveWorkflow',
       'startWorkflow',
+      'cancelWorkflowRun',
       'handoff',
       'archiveWorkflow',
       'assignWorkflowRole',
@@ -882,6 +885,15 @@ export class DaemonService {
           this.authorizedCommand,
           input as Input<'startWorkflow'>,
         )) as Output<Name>;
+      case 'getWorkflowRun': {
+        const read = input as Input<'getWorkflowRun'>;
+        await this.access(read.roomId, authenticatedAgentId);
+        return (await getWorkflowRun(this.database, read.roomId, read.runId)) as Output<Name>;
+      }
+      case 'cancelWorkflowRun':
+        if (!this.commandTransaction || !this.authorizedCommand)
+          throw new Error('workflow cancellation requires an active command');
+        return (await cancelWorkflowRun(this.database, this.authorizedCommand, input as Input<'cancelWorkflowRun'>)) as Output<Name>;
       case 'handoff':
         if (!this.commandTransaction || !this.authorizedCommand) {
           throw new Error('workflow handoff requires an active command');
@@ -7618,6 +7630,8 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   saveSkill: true,
   saveWorkflow: true,
   startWorkflow: true,
+  getWorkflowRun: true,
+  cancelWorkflowRun: true,
   handoff: true,
   archiveWorkflow: true,
   assignWorkflowRole: true,

@@ -66,6 +66,7 @@ type RunHeadRow = {
   workflow_slug: string;
   workflow_version: number;
   to_state: string;
+  status: WorkflowRunStatus | null;
   from_state: string | null;
   author_id: string;
   role_bindings: Record<string, string> | null;
@@ -89,6 +90,7 @@ type RunHead = {
   /** Runs of one workflow share this: `CORNER_RUN_KEY`, or the slug. */
   family: string;
   state: string;
+  status?: WorkflowRunStatus;
   /** The state the newest card left, when it is a handoff rather than the start. */
   fromState?: string;
   /** Author of the newest card. Corner lifecycle cards are the system identity. */
@@ -127,7 +129,7 @@ async function loadRunHeads(
          SELECT message.id,message.room_id,message.created_at,message.card_type,
                 message.card->>'runId' run_id,message.card->>'workflowSlug' workflow_slug,
                 COALESCE((message.card->>'workflowVersion')::int,1) workflow_version,
-                message.card->>'toState' to_state,message.card->>'fromState' from_state,
+                message.card->>'toState' to_state,message.card->>'fromState' from_state,message.card->>'status' status,
                 message.author_id,message.card->'roleBindings' role_bindings,
                 (message.card->>'seq')::int seq
          FROM messages message
@@ -142,12 +144,12 @@ async function loadRunHeads(
        SELECT DISTINCT ON (cards.room_id,cards.run_id)
               cards.run_id,cards.room_id,cards.card_type,scope.name room_name,scope.parent_id,
               scope.reviewer_agent_id,scope.workspace_id,cards.workflow_slug,
-              cards.workflow_version,cards.to_state,cards.from_state,cards.author_id,
+              cards.workflow_version,cards.to_state,cards.from_state,cards.author_id,cards.status,
               cards.role_bindings,started.started_at,cards.created_at updated_at
        FROM cards
        JOIN scope ON scope.id=cards.room_id
        JOIN started ON started.room_id=cards.room_id AND started.run_id=cards.run_id
-       ORDER BY cards.room_id,cards.run_id,cards.created_at DESC,cards.seq DESC NULLS LAST,
+       ORDER BY cards.room_id,cards.run_id,cards.seq DESC NULLS LAST,cards.created_at DESC,
                 cards.id DESC`,
       [topRoomId, viewerId, RUN_CARD_TYPES, only?.cardType ?? null, only?.slug ?? null],
     )
@@ -167,6 +169,7 @@ async function loadRunHeads(
       key: corner ? CORNER_RUN_KEY : `${row.workflow_slug}@${row.workflow_version}`,
       family: corner ? CORNER_RUN_KEY : row.workflow_slug,
       state: row.to_state,
+      ...(row.status ? { status: row.status } : {}),
       ...(row.from_state ? { fromState: row.from_state } : {}),
       authorId: row.author_id,
       roleBindings: row.role_bindings ?? {},
@@ -278,7 +281,7 @@ function runStatus(contract: WorkflowContract, state: string): WorkflowRunStatus
 function holderIdentityId(head: RunHead, contract: WorkflowContract): string | undefined {
   const current = stateRole(contract, head.state);
   if (current) return boundIdentityId(head, head.roleBindings[current]);
-  if (runStatus(contract, head.state) === 'live') return undefined;
+  if ((head.status ?? runStatus(contract, head.state)) === 'live') return undefined;
   const left = head.fromState ? stateRole(contract, head.fromState) : undefined;
   const leftHolder = left ? boundIdentityId(head, head.roleBindings[left]) : undefined;
   if (leftHolder) return leftHolder;
@@ -293,7 +296,7 @@ function summarize(
   earlierRunCount: number,
   activeRunIds: readonly string[] = [],
 ): WorkflowRunSummaryView {
-  const status = runStatus(contract, head.state);
+  const status = (head.status ?? runStatus(contract, head.state));
   const holderId = holderIdentityId(head, contract);
   const holder = holderId ? actors.get(holderId) : undefined;
   const isGate = contract.handoffs[head.state]?.kind === 'gate';
@@ -325,7 +328,7 @@ function liveRunIdsByFamily(
   const byFamily = new Map<string, string[]>();
   for (const head of heads) {
     const contract = contracts.get(head.key);
-    if (!contract || runStatus(contract, head.state) !== 'live') continue;
+    if (!contract || (head.status ?? runStatus(contract, head.state)) !== 'live') continue;
     const list = byFamily.get(head.family) ?? [];
     list.push(head.runId);
     byFamily.set(head.family, list);
@@ -391,7 +394,7 @@ export async function listRoomWorkflowRuns(
   const workspaceId = heads[0]!.workspaceId;
   const contracts = await loadContracts(db, workspaceId, heads);
   const readable = heads.filter((head) => contracts.has(head.key));
-  const isLive = (head: RunHead) => runStatus(contracts.get(head.key)!, head.state) === 'live';
+  const isLive = (head: RunHead) => (head.status ?? runStatus(contracts.get(head.key)!, head.state)) === 'live';
   const newest = new Map<string, RunHead>();
   for (const head of readable) {
     const current = newest.get(head.family);
@@ -637,7 +640,7 @@ export async function readWorkflowRun(
        JOIN identities author ON author.id=message.author_id
        WHERE message.room_id=$1 AND message.card_type=ANY($3::text[])
          AND message.card->>'runId'=$2 AND message.card->>'toState' IS NOT NULL
-       ORDER BY message.created_at,(message.card->>'seq')::int NULLS FIRST,message.id`,
+       ORDER BY (message.card->>'seq')::int NULLS FIRST,message.created_at,message.id`,
       [input.roomId, input.runId, RUN_CARD_TYPES],
     )
   ).rows;

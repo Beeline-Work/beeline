@@ -425,6 +425,26 @@ const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: 'get_workflow_run',
+    description: 'Read any saved workflow run in this Room by its runId. Returns its pinned contract and version, current state, role and bound agent, allowed outcomes with next states, required fields, receipt hint, and handoff history. Use this before handoff; the saved workflow or repository copy may have changed since this run started.',
+    inputSchema: {
+      type: 'object',
+      properties: { runId: { type: 'string' } },
+      required: ['runId'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'cancel_workflow_run',
+    description: 'End an active saved workflow run with a recorded reason and no further wakes. Authorized only on behalf of the active turn requester when they requested the run, own a bound role agent, or administer the Room. Cancels the run timeout, pending workflow wakes and open gate. Archiving a workflow does not cancel its runs.',
+    inputSchema: {
+      type: 'object',
+      properties: { runId: { type: 'string' }, reason: { type: 'string', minLength: 1, maxLength: 4000 } },
+      required: ['runId', 'reason'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'handoff',
     description:
       'Advance a workflow run you are currently holding: validated against the run\'s pinned contract (you must be bound to the current state\'s role, the outcome must be one the state declares, and contents must satisfy its required fields). Posted as a normal message and deterministically wakes whichever agent is bound to the next state\'s role - no @mention needed. A capped loop is enforced from the transcript itself: exceeding it is redirected to the loop\'s own escape state instead of your requested outcome. A state that reaches a human decision point posts a card instead of waking anyone directly; that role\'s agent is woken once a human answers it.' +
@@ -1678,6 +1698,8 @@ export function agentToolsFor(
       tool.name === 'save_skill' ||
       tool.name === 'save_workflow' ||
       tool.name === 'start_workflow' ||
+      tool.name === 'get_workflow_run' ||
+      tool.name === 'cancel_workflow_run' ||
       tool.name === 'handoff' ||
       tool.name === 'archive_workflow' ||
       tool.name === 'assign_workflow_role'
@@ -3904,6 +3926,19 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
           roleBindings: args.roleBindings,
         }),
       );
+    case 'get_workflow_run':
+      return JSON.stringify(await daemonExecute('getWorkflowRun', {
+        agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
+        roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+        runId: args.runId,
+      }));
+    case 'cancel_workflow_run':
+      return JSON.stringify(await daemonExecute('cancelWorkflowRun', {
+        agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
+        roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+        runId: args.runId,
+        reason: args.reason,
+      }));
     case 'handoff':
       return JSON.stringify(
         await daemonExecute('handoff', {

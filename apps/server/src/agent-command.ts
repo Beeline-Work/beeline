@@ -864,10 +864,19 @@ type WorkflowWakeCard = { runId?: string; workflowSlug?: string; note?: string }
  * corner is never started through `start_workflow`. A gate answer's optional
  * note is quoted ahead of it.
  */
-function workflowWakeDetail(cardType: string | null, card: WorkflowWakeCard | null): string {
+function workflowWakeDetail(
+  cardType: string | null,
+  card: WorkflowWakeCard | null,
+  state: string | null,
+  outcomes: Record<string, string> | null,
+  status: string | null,
+): string {
   if (!card?.runId || !card.workflowSlug || cardType === CORNER_WORKFLOW_HANDOFF_CARD_TYPE) return '';
   const note = card.note ? `\nTheir note with the answer: ${JSON.stringify(card.note)}` : '';
-  return `${note}\nYou are in run ${card.runId} of ${card.workflowSlug}. Continue this run; do not start a new one.`;
+  const allowed = status ? 'none' : Object.entries(outcomes ?? {})
+    .map(([outcome, target]) => `${outcome} -> ${target}`).join(', ') || 'none';
+  return `${note}\nYou are in run ${card.runId} of ${card.workflowSlug}. Continue this run; do not start a new one.` +
+    (state ? `\nCurrent state: ${state}${status ? ` (${status})` : ''}. Allowed outcomes: ${allowed}. Read the pinned contract and requirements with get_workflow_run.` : '');
 }
 
 export async function readAgentCommands(
@@ -889,16 +898,31 @@ export async function readAgentCommands(
       merge_card: MergeCard | null;
       wake_card_type: string | null;
       wake_card: WorkflowWakeCard | null;
+      workflow_state: string | null;
+      workflow_outcomes: Record<string, string> | null;
+      workflow_status: string | null;
       watched_corner_id: string;
       watched_corner_name: string;
       created_at: Date;
     }
   >(
-    `SELECT c.*,CASE WHEN c.reason='corner_objective' THEN f.objective ELSE m.text END text,CASE WHEN m.card_type='daemon-fact' AND m.card->>'type'='corner-complete' THEN m.card END merge_card,COALESCE(m.card->>'receiptHint',choice_message.card->>'receiptHint') receipt_hint,m.author_id,m.attachments,m.system_event,m.presentation,m.card->>'askId' corner_ask_id,m.reply_to_message_id,(SELECT author_id FROM messages WHERE id=m.reply_to_message_id) reply_to_author_id,m.card_type wake_card_type,m.card wake_card,watched_corner.id watched_corner_id,watched_corner.name watched_corner_name FROM agent_commands c JOIN messages m ON m.id=c.source_message_id LEFT JOIN corner_facts f ON f.corner_id=c.room_id
+    `SELECT c.*,CASE WHEN c.reason='corner_objective' THEN f.objective ELSE m.text END text,CASE WHEN m.card_type='daemon-fact' AND m.card->>'type'='corner-complete' THEN m.card END merge_card,CASE WHEN workflow_latest.card IS NOT NULL THEN workflow_version.markdown::jsonb->'handoffs'->(workflow_latest.card->>'toState')->>'hint' ELSE COALESCE(m.card->>'receiptHint',choice_message.card->>'receiptHint') END receipt_hint,m.author_id,m.attachments,m.system_event,m.presentation,m.card->>'askId' corner_ask_id,m.reply_to_message_id,(SELECT author_id FROM messages WHERE id=m.reply_to_message_id) reply_to_author_id,m.card_type wake_card_type,m.card wake_card,workflow_latest.card->>'toState' workflow_state,workflow_latest.card->>'status' workflow_status,workflow_version.markdown::jsonb->'handoffs'->(workflow_latest.card->>'toState')->'on' workflow_outcomes,watched_corner.id watched_corner_id,watched_corner.name watched_corner_name FROM agent_commands c JOIN messages m ON m.id=c.source_message_id LEFT JOIN corner_facts f ON f.corner_id=c.room_id
  LEFT JOIN rooms watched_corner ON watched_corner.id=m.room_id AND c.reason='watched_corner'
  LEFT JOIN room_choices choice ON choice.id::text=m.card->>'choiceId' AND choice.room_id=c.room_id
  LEFT JOIN messages choice_message ON choice_message.id=choice.message_id
+ LEFT JOIN LATERAL (
+   SELECT latest.card FROM messages latest
+   WHERE latest.room_id=c.room_id AND latest.card_type='workflow-handoff'
+     AND latest.card->>'runId'=COALESCE(m.card->>'runId',choice_message.card->>'runId')
+   ORDER BY (latest.card->>'seq')::int DESC NULLS LAST,latest.created_at DESC,latest.id DESC LIMIT 1
+ ) workflow_latest ON true
+ LEFT JOIN rooms workflow_room ON workflow_room.id=c.room_id
+ LEFT JOIN workspace_skills workflow_skill ON workflow_skill.workspace_id=workflow_room.workspace_id
+   AND workflow_skill.slug=workflow_latest.card->>'workflowSlug' AND workflow_skill.kind='workflow'
+ LEFT JOIN workspace_skill_versions workflow_version ON workflow_version.skill_id=workflow_skill.id
+   AND workflow_version.version=(workflow_latest.card->>'workflowVersion')::int
  WHERE c.room_id=$1 AND c.agent_id=$2 AND (c.state='pending' OR (c.state='claimed' AND c.lease_expires_at<=now()))
+   AND workflow_latest.card->'cancellation' IS NULL
    AND NOT (
      -- A review wake waits for the corner to go quiet. The checks-passed
      -- transition queues the configured reviewer the moment CI turns green,
@@ -943,7 +967,7 @@ export async function readAgentCommands(
       source: {
         id: r.source_message_id,
         authorId: r.author_id,
-        body: (r.reason === 'watched_corner' ? `Watched corner ${r.watched_corner_name} (${r.watched_corner_id}): ${r.system_event?.kind}\n` : '') + r.text + mergeCardDetail(r.merge_card) + workflowWakeDetail(r.wake_card_type, r.wake_card) + (r.receipt_hint ? `\nReceipt hint for this state: ${r.receipt_hint}. Attach an optional receipt when you call handoff.` : ''),
+        body: (r.reason === 'watched_corner' ? `Watched corner ${r.watched_corner_name} (${r.watched_corner_id}): ${r.system_event?.kind}\n` : '') + r.text + mergeCardDetail(r.merge_card) + workflowWakeDetail(r.wake_card_type, r.wake_card, r.workflow_state, r.workflow_outcomes, r.workflow_status) + (r.receipt_hint ? `\nReceipt hint for this state: ${r.receipt_hint}. Attach an optional receipt when you call handoff.` : ''),
         attachments: r.attachments ?? [],
         createdAt: Math.floor(r.created_at.getTime() / 1000),
         type: r.presentation,

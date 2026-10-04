@@ -10,7 +10,9 @@ A workflow does not run on a timer. It moves only when a bound agent calls `hand
 | --- | --- |
 | `save_workflow` | Validates a contract and saves it Workspace-wide, versioned by `name`. Saving the same name again makes a new version. |
 | `start_workflow` | Starts a run of a saved workflow in this Room. You bind every role, and it returns a `runId`. |
+| `get_workflow_run` | Reads a run by `runId`, including its current state, requirements, history and pinned contract. |
 | `handoff` | Moves a run you hold to its next state. You give an `outcome` and the `contents` the state requires. |
+| `cancel_workflow_run` | Ends an active run with a recorded reason, subject to requester, role-owner or admin authority. |
 | `assign_workflow_role` | Binds any agent in the Room to a role when no agent on that role's list is healthy. |
 | `archive_workflow` | Retires a saved workflow so it can no longer be started. Runs in progress keep going. |
 
@@ -121,10 +123,12 @@ The creator agent's human owner and human Room/Workspace admins can use **Change
 
    **Every wake from a run states the run id and workflow name plainly**, including step handoffs, answered gates, and state timeouts: `You are in run <runId> of <name>. Continue this run; do not start a new one.` The handoff card also shows the full run id. Call `handoff` with that `runId` to continue. If the calling agent currently holds a role in an active run of the same workflow, `start_workflow` refuses it even when a human message woke the agent, with `You are already in run <runId> of <name>. Continue it or hand off within it.` It also refuses another agent starting that workflow from the same schedule occurrence while its run is active, naming the existing run id. A human Room/Workspace admin can start a separately attributed run through `startOwnedWorkflow`.
 
-3. **Hand off.** The agent holding the current state calls `handoff` with `{ "runId", "outcome", "contents" }`. The outcome must be one the state declares. `contents` must be an object, at most 16 KB, containing every `requires` field. The next state's agent is woken automatically, so no @mention is needed.
+3. **Read and hand off.** Any agent member of the run's Room can call `get_workflow_run` with `{ "runId" }`. The response includes `workflowSlug`, `workflowVersion`, `state`, `status`, the current `role` and `boundAgentId`, `allowedOutcomes` (outcome → next state), `requiredFields`, `receiptHint` when declared, the full pinned `contract`, and `history` with actors, contents and receipts. Read this contract even if the saved definition or repository copy has since changed. Every workflow wake includes its current state and allowed outcomes, including start, handoff, gate-answer and timeout wakes.
+
+   The agent holding the current state calls `handoff` with `{ "runId", "outcome", "contents" }`. The outcome must be one the state declares. `contents` must be an object, at most 16 KB, containing every `requires` field. A refusal lists all missing fields and all allowed outcomes with their next states together. The next state's agent is woken automatically, so no @mention is needed.
 4. **Gates.** When a run reaches a gate, a choice card is posted for a human. After they answer, the gate role's agent calls `handoff` with the chosen outcome. The person may add an optional one-line note (at most 140 characters) with their pick. The wake quotes it (`Their note with the answer: "..."`), and the run page shows it under the answer. The outcome still comes from the picked option.
 5. **No healthy agent.** If nobody on a list-bound role's list is healthy, the run says so in the Room and waits. A human can ask an agent to call `assign_workflow_role` with `{ "runId", "role", "agentId" }` to bind any agent in the Room.
-6. **End.** The run ends when it reaches a terminal state. `handoff` on an ended run is refused.
+6. **End or cancel.** The run ends when it reaches a terminal state. To stop an active run, call `cancel_workflow_run` with `{ "runId", "reason" }` (a nonempty reason, at most 4000 characters). The server derives the caller from the active turn's root requester; an agent cannot nominate someone else or borrow its owner's authority. Cancellation is allowed for the run's recorded requester, a human owner of any currently bound role agent, or a human Room/Workspace admin. Other callers are refused. The cancellation card records the actor and reason, leaves the run at its last declared state with status `abandoned`, removes its timeout and pending wakes, and closes an open gate without dispatching another agent. The run read returns `cancellation`, no allowed outcomes and no required fields. `handoff` and role reassignment on an ended run are refused.
 7. **Retire.** `archive_workflow` with `{ "name" }` stops new runs of that workflow.
 
 

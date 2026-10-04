@@ -1,4 +1,4 @@
-import { requireWorkflowOwner } from './workflow-ownership.js';
+import { requireWorkflowOwner, workflowHumanAdmin, WorkflowOwnershipError } from './workflow-ownership.js';
 import { createHash, randomBytes } from 'node:crypto';
 import {
   workflowContractError,
@@ -12,6 +12,8 @@ import {
   type WorkflowHandoffState,
   type WorkflowRoleBinding,
   type WorkflowState,
+  type WorkflowRunReadResult,
+  type WorkflowReceipt,
 } from '@beeline/api-contract/daemon';
 import type { CommandRow } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
@@ -50,7 +52,11 @@ type WorkflowRunCard = {
   toState: string;
   fromState?: string;
   outcome?: string;
-  status?: 'done' | 'failed';
+  status?: 'done' | 'failed' | 'abandoned';
+  requesterId?: string;
+  cancellation?: { reason: string; actorId: string };
+  contents?: unknown;
+  receipt?: WorkflowReceipt;
   /** A same-state reassignment card (list failover or `assign_workflow_role`): no outcome, same toState as before. */
   reassigned?: true;
   trigger?: { scheduleId: string; period: string };
@@ -170,6 +176,155 @@ async function loadPinnedContract(
   ).rows[0];
   if (!row) return undefined;
   return JSON.parse(row.markdown) as WorkflowContract;
+}
+
+export async function getWorkflowRun(
+  db: SqlDatabase,
+  roomId: string,
+  runId: string,
+): Promise<WorkflowRunReadResult> {
+  if (typeof runId !== 'string' || !runId) throw new Error('runId is required');
+  const rows = (await db.query<{ id: string; author_id: string; created_at: Date; card: WorkflowRunCard }>(
+    `SELECT id,author_id,created_at,card FROM messages
+     WHERE room_id=$1 AND card_type=$2 AND card->>'runId'=$3
+     ORDER BY (card->>'seq')::int ASC NULLS FIRST,created_at,id`,
+    [roomId, WORKFLOW_HANDOFF_CARD_TYPE, runId],
+  )).rows;
+  const run = rows.at(-1)?.card;
+  if (!run) throw new Error('workflow run is unavailable in this Room');
+  const contract = await loadPinnedContract(db, roomId, run.workflowSlug, run.workflowVersion);
+  if (!contract) throw new Error('workflow contract version is unavailable');
+  const state = contract.handoffs[run.toState];
+  const activeState = state && state.kind !== 'terminal' && !run.cancellation ? state : undefined;
+  const role = activeState && 'role' in activeState ? activeState.role : undefined;
+  return {
+    runId,
+    workflowSlug: run.workflowSlug,
+    workflowVersion: run.workflowVersion,
+    state: run.toState,
+    status: run.cancellation ? 'abandoned' : state?.kind === 'terminal' ? state.status : 'live',
+    ...(role ? { role, ...(run.roleBindings[role] ? { boundAgentId: run.roleBindings[role] } : {}) } : {}),
+    allowedOutcomes: activeState && 'on' in activeState ? activeState.on : {},
+    requiredFields: activeState && 'requires' in activeState ? activeState.requires : [],
+    ...(state?.hint ? { receiptHint: state.hint } : {}),
+    ...(run.cancellation ? { cancellation: run.cancellation } : {}),
+    contract,
+    history: rows.map(({ id, author_id, created_at, card }) => ({
+      messageId: id,
+      actorId: author_id,
+      at: Math.floor(new Date(created_at).getTime() / 1000),
+      toState: card.toState,
+      ...(card.fromState ? { fromState: card.fromState } : {}),
+      ...(card.outcome ? { outcome: card.outcome } : {}),
+      ...(card.contents !== undefined ? { contents: card.contents } : {}),
+      ...(card.receipt ? { receipt: card.receipt } : {}),
+      ...(card.reassigned ? { reassigned: card.reassigned } : {}),
+      ...(card.status ? { status: card.status } : {}),
+      ...(card.cancellation ? { cancellation: card.cancellation } : {}),
+    })),
+  };
+}
+
+/** The authenticated command's root requester; agents cannot supply a different actor. */
+async function workflowRequester(
+  db: SqlDatabase,
+  command: Pick<CommandRow, 'agent_id'> & { root_source_message_id?: string },
+): Promise<string> {
+  const root = command.root_source_message_id
+    ? (await db.query<{ author_id: string }>(
+        `SELECT author_id FROM messages WHERE id=$1 AND deleted_at IS NULL`,
+        [command.root_source_message_id],
+      )).rows[0]
+    : undefined;
+  return root?.author_id ?? command.agent_id;
+}
+
+export async function cancelWorkflowRun(
+  database: SqlDatabase,
+  command: CommandRow,
+  input: { runId: string; reason: string },
+): Promise<{ runId: string; state: string; status: 'abandoned'; reason: string }> {
+  if (typeof input.runId !== 'string' || !input.runId) throw new Error('runId is required');
+  if (typeof input.reason !== 'string' || !input.reason.trim() || input.reason.length > 4000)
+    throw new Error('cancellation reason must contain 1-4000 characters');
+  return database.transaction(async (db) => {
+    await lockWorkflowRun(db, input.runId);
+    const run = await loadRun(db, command.room_id, input.runId);
+    if (!run) throw new Error('workflow run is unavailable in this Room');
+    const start = (await db.query<{ author_id: string; card: WorkflowRunCard }>(
+      `SELECT author_id,card FROM messages WHERE room_id=$1 AND id=$2 AND card_type=$3`,
+      [command.room_id, input.runId, WORKFLOW_HANDOFF_CARD_TYPE],
+    )).rows[0];
+    if (!start) throw new Error('workflow start is unavailable');
+    const actorId = await workflowRequester(db, command);
+    const roleOwners = await db.query(
+      `SELECT 1 FROM agents WHERE agent_id=ANY($1::text[]) AND owner_id=$2`,
+      [[...Object.values(run.roleBindings), ...Object.values(start.card.roleAgents ?? {}).flat()], actorId],
+    );
+    // Older runs retain the start card's author as their requester.
+    if (
+      actorId !== (start.card.requesterId ?? start.author_id) && !roleOwners.rowCount &&
+      !(await workflowHumanAdmin(db, command.room_id, actorId))
+    ) {
+      throw new WorkflowOwnershipError(
+        'only the run requester, a bound role owner, or a human Room admin can cancel this run',
+        403,
+      );
+    }
+    const contract = await loadPinnedContract(db, command.room_id, run.workflowSlug, run.workflowVersion);
+    if (!contract) throw new Error('workflow contract version is unavailable');
+    if (run.cancellation || contract.handoffs[run.toState]?.kind === 'terminal')
+      throw new Error('this workflow run has already ended');
+    await cancelWorkflowTimeout(db, input.runId, run.toState);
+    const reason = input.reason.trim();
+    await systemLine(db, {
+      roomId: command.room_id,
+      authorId: actorId,
+      subject: identitySubject(await loadIdentityRow(db, actorId)),
+      verb: 'cancelled workflow',
+      object: run.workflowSlug,
+      consequence: `run ${input.runId}`,
+      afterMessageId: input.runId,
+      // No event kind: cancellation is a durable record that wakes nobody.
+      presentation: 'card',
+      cardType: WORKFLOW_HANDOFF_CARD_TYPE,
+      card: {
+        runId: input.runId,
+        seq: (run.seq ?? 0) + 1,
+        workflowSlug: run.workflowSlug,
+        workflowVersion: run.workflowVersion,
+        roleBindings: run.roleBindings,
+        fromState: run.toState,
+        toState: run.toState,
+        outcome: 'cancelled',
+        status: 'abandoned',
+        cancellation: { reason, actorId },
+        contents: { reason },
+      },
+    });
+    await db.query(
+      `UPDATE messages SET card=card || '{"active":false,"currentAgentId":null}'::jsonb
+       WHERE id=$1 AND room_id=$2`, [input.runId, command.room_id],
+    );
+    await db.query(
+      `UPDATE room_choices choice SET status='closed'
+       FROM messages message WHERE choice.message_id=message.id AND choice.room_id=$1
+         AND message.card->>'runId'=$2 AND choice.status='open'`,
+      [command.room_id, input.runId],
+    );
+    await db.query(
+      `UPDATE messages SET card=card || '{"status":"closed"}'::jsonb
+       WHERE room_id=$1 AND card->>'runId'=$2 AND card_type='choice'`,
+      [command.room_id, input.runId],
+    );
+    await db.query(
+      `UPDATE agent_commands command SET state='cancelled',completed_at=now()
+       FROM messages message WHERE command.source_message_id=message.id AND command.room_id=$1
+         AND message.card->>'runId'=$2 AND command.state='pending'`,
+      [command.room_id, input.runId],
+    );
+    return { runId: input.runId, state: run.toState, status: 'abandoned', reason };
+  });
 }
 
 /** A deterministic uuid so a state's own pending timeout can be found and cancelled. */
@@ -414,7 +569,7 @@ export async function activeRunIdsForSchedule(
 
 export async function startWorkflow(
   database: SqlDatabase,
-  command: Pick<CommandRow, 'room_id' | 'agent_id'> & { reason?: string; source_message_id?: string },
+  command: Pick<CommandRow, 'room_id' | 'agent_id'> & { reason?: string; source_message_id?: string; root_source_message_id?: string },
   input: { name: string; roleBindings: Readonly<Record<string, WorkflowRoleBinding>> },
 ): Promise<{ runId: string; state: string }> {
   if (typeof input.name !== 'string' || !input.name) throw new Error('workflow name is required');
@@ -539,6 +694,7 @@ export async function startWorkflow(
         workflowSlug: contract.name,
         workflowVersion: skill.current_version,
         ownerAtStart: ownership.owner!.id,
+        requesterId: await workflowRequester(db, command),
         startKind:
           starter?.kind === 'human'
             ? 'human_admin'
@@ -590,7 +746,6 @@ export async function handoff(
   input: { runId: string; outcome: string; contents: unknown; receipt?: WorkflowReceiptInput },
 ): Promise<{ runId: string; state: string; status?: 'done' | 'failed' }> {
   if (typeof input.runId !== 'string' || !input.runId) throw new Error('runId is required');
-  if (typeof input.outcome !== 'string' || !input.outcome) throw new Error('outcome is required');
   return database.transaction(async (db) => {
     // First statement, before any read: serializes this run's whole
     // read-validate-write critical section against every other handoff (or
@@ -609,23 +764,30 @@ export async function handoff(
     if (!contract) throw new Error('workflow contract version is unavailable');
     const stateName = run.toState;
     const state = contract.handoffs[stateName];
-    if (!state || state.kind === 'terminal') throw new Error('this workflow run has already ended');
+    if (run.cancellation || !state || state.kind === 'terminal') throw new Error('this workflow run has already ended');
     const role = (state as WorkflowHandoffState | WorkflowGateState).role;
     const boundAgentId = run.roleBindings[role];
-    if (boundAgentId !== command.agent_id) {
-      throw new Error(`this workflow state is bound to the ${role} role, not you`);
-    }
     const on = (state as WorkflowHandoffState | WorkflowGateState).on;
-    if (!Object.hasOwn(on, input.outcome)) {
-      throw new Error(`outcome must be one of: ${Object.keys(on).join(', ')}`);
-    }
     const contentsError = workflowContentsError(
       state as WorkflowHandoffState | WorkflowGateState,
       input.contents,
     );
-    if (contentsError) throw new Error(contentsError);
     const receiptError = workflowReceiptError(input.receipt);
-    if (receiptError) throw new Error(receiptError);
+    const errors = [
+      ...(boundAgentId !== command.agent_id ? [`this workflow state is bound to the ${role} role, not you`] : []),
+      ...(!Object.hasOwn(on, input.outcome) ? ['invalid outcome'] : []),
+      ...(contentsError ? [contentsError] : []),
+      ...(contentsError?.startsWith('contents')
+        ? (state as WorkflowHandoffState | WorkflowGateState).requires
+            .filter((field) => !input.contents || typeof input.contents !== 'object' || Array.isArray(input.contents) ||
+              (input.contents as Record<string, unknown>)[field] == null)
+            .map((field) => `${field} is required`) : []),
+      ...(receiptError ? [receiptError] : []),
+    ];
+    if (errors.length) {
+      const outcomes = Object.entries(on).map(([outcome, target]) => `${outcome} -> ${target}`).join(', ');
+      throw new Error(`${errors.join('; ')}; outcome must be one of: ${outcomes}`);
+    }
     await cancelWorkflowTimeout(db, input.runId, stateName);
     let toState = on[input.outcome]!;
     const loop = isHandoffState(state) ? state.loop : undefined;
@@ -849,7 +1011,7 @@ export async function reassignFailedWorkflowRole(
   const contract = await loadPinnedContract(db, input.roomId, run.workflowSlug, run.workflowVersion);
   if (!contract) return;
   const state = contract.handoffs[run.toState];
-  if (!state || state.kind === 'terminal') return;
+  if (run.cancellation || !state || state.kind === 'terminal') return;
   const role = (state as WorkflowHandoffState | WorkflowGateState).role;
   if (run.roleBindings[role] !== input.agentId) return;
   const agents = (await loadRunRoleAgents(db, input.roomId, run.runId))[role];
@@ -931,7 +1093,7 @@ export async function assignWorkflowRole(
     const contract = await loadPinnedContract(db, command.room_id, run.workflowSlug, run.workflowVersion);
     if (!contract) throw new Error('workflow contract version is unavailable');
     const state = contract.handoffs[run.toState];
-    if (!state || state.kind === 'terminal') throw new Error('this workflow run has already ended');
+    if (run.cancellation || !state || state.kind === 'terminal') throw new Error('this workflow run has already ended');
     const currentRole = (state as WorkflowHandoffState | WorkflowGateState).role;
     if (currentRole !== input.role) {
       throw new Error(`this run is currently at the ${currentRole} role, not ${input.role}`);

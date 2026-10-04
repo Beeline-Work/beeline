@@ -45,3 +45,53 @@ describe('workflow run tools', () => {
     } }]);
   });
 });
+
+/**
+ * Inside a corner, BEELINE_DAEMON_ROOM_ID still names the PARENT Room while
+ * BEELINE_DAEMON_CORNER_ID names the corner itself (`monolith-corner-turn.ts`
+ * mounts the agent MCP that way). A run started in the corner stores its
+ * `workflow-handoff` card under the corner's own room_id, so every workflow
+ * run tool must target the corner id the same way `agentScheduleRoomId()`
+ * already does for scheduling — never fall back to the parent env var, or
+ * the server answers 503 "workflow run is unavailable in this Room".
+ */
+describe('workflow run tools inside a corner', () => {
+  const calls: { name: string; input: Record<string, unknown> }[] = [];
+  let context: CommandExecutionContext;
+  beforeEach(async () => {
+    calls.length = 0;
+    context = new CommandExecutionContext(mkdtempSync(join(tmpdir(), 'workflow-tools-corner-')));
+    await context.enter({ roomId: 'corner-1', turnRequestId: 'request-1', rootCommandId: 'command-1' } as AgentCommand);
+    for (const [key, value] of Object.entries({
+      BEELINE_DAEMON_AGENT_ID: 'agent-1', BEELINE_DAEMON_ROOM_ID: 'parent-room',
+      BEELINE_DAEMON_CORNER_ID: 'corner-1',
+      BEELINE_DAEMON_BASE_URL: 'http://localhost:1234', BEELINE_DAEMON_TOKEN: 'test-token',
+      BEELINE_TURN_CONTEXT_FILE: context.path,
+    })) vi.stubEnv(key, value);
+    vi.stubGlobal('fetch', async (url: URL, init: RequestInit) => {
+      calls.push({ name: new URL(url).pathname.split('/').pop()!, input: JSON.parse(String(init.body)) });
+      return Response.json({ runId: 'run-1', state: 'draft' });
+    });
+  });
+  afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+
+  it('reads the run stored in the corner, not the parent Room', async () => {
+    await callAgentTool('get_workflow_run', { runId: 'run-1' });
+    expect(calls).toEqual([{ name: 'getWorkflowRun', input: { roomId: 'corner-1', agentId: 'agent-1', runId: 'run-1' } }]);
+  });
+
+  it('advances a run with handoff scoped to the corner', async () => {
+    await callAgentTool('handoff', { runId: 'run-1', outcome: 'done', contents: { note: 'ready' } });
+    expect(calls).toEqual([{ name: 'handoff', input: {
+      roomId: 'corner-1', agentId: 'agent-1', runId: 'run-1', outcome: 'done', contents: { note: 'ready' },
+      requestId: 'request-1', generationId: context.generationId, taskId: 'command-1',
+    } }]);
+  });
+
+  it('starts, cancels and reassigns a workflow role scoped to the corner', async () => {
+    await callAgentTool('start_workflow', { name: 'triage', roleBindings: { reviewer: 'agent-1' } });
+    await callAgentTool('cancel_workflow_run', { runId: 'run-1', reason: 'no longer needed' });
+    await callAgentTool('assign_workflow_role', { runId: 'run-1', role: 'reviewer', agentId: 'agent-2' });
+    expect(calls.map((call) => call.input.roomId)).toEqual(['corner-1', 'corner-1', 'corner-1']);
+  });
+});

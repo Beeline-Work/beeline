@@ -3972,7 +3972,7 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       return JSON.stringify(
         await daemonExecute('startWorkflow', {
           agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
-          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+          roomId: agentScheduleRoomId(),
           name: args.name,
           roleBindings: args.roleBindings,
         }),
@@ -3980,13 +3980,13 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
     case 'get_workflow_run':
       return JSON.stringify(await daemonExecute('getWorkflowRun', {
         agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
-        roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+        roomId: agentScheduleRoomId(),
         runId: args.runId,
       }));
     case 'cancel_workflow_run':
       return JSON.stringify(await daemonExecute('cancelWorkflowRun', {
         agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
-        roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+        roomId: agentScheduleRoomId(),
         runId: args.runId,
         reason: args.reason,
       }));
@@ -3994,7 +3994,7 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       return JSON.stringify(
         await daemonExecute('handoff', {
           agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
-          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+          roomId: agentScheduleRoomId(),
           runId: args.runId,
           outcome: args.outcome,
           contents: args.contents,
@@ -4013,7 +4013,7 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       return JSON.stringify(
         await daemonExecute('assignWorkflowRole', {
           agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
-          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+          roomId: agentScheduleRoomId(),
           runId: args.runId,
           role: args.role,
           targetAgentId: args.agentId,

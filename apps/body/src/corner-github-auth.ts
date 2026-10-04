@@ -268,8 +268,15 @@ function pushesOrigin(remote) {
     if (!name) name = 'origin';
   }
   let url;
-  if (looksLikeUrl(name)) url = name;
-  else {
+  if (looksLikeUrl(name)) {
+    // A raw path or URL is rewritten by url.<base>.insteadOf before git pushes
+    // to it. ls-remote --get-url applies those rewrites but not pushInsteadOf,
+    // so a raw target is proven local only when no url insteadOf rule exists.
+    const resolved = git(['ls-remote', '--get-url', name], { encoding: 'utf8' });
+    url = resolved.status === 0 ? resolved.stdout.trim() : undefined;
+    if (url && git(['config', '--get-regexp', '^url[.].*insteadof$'], { encoding: 'utf8' }).status === 0)
+      url = undefined;
+  } else {
     // '--push' is the URL git will actually use, so it follows pushurl and
     // insteadOf rewrites that a raw remote.<name>.url read would miss.
     const resolved = git(['remote', 'get-url', '--push', name], { encoding: 'utf8' });

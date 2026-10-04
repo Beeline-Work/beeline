@@ -163,31 +163,6 @@ export function runDayLabel(startedAt: number, now = Date.now()): string {
   return DAY.format(started);
 }
 
-/** One field of what a step handed off: `problems · 3` and its items, one line each. */
-export type DeliveredField = { readonly field: string; readonly count?: number; readonly items: string[] };
-
-const ITEM_TEXT_KEYS = ['title', 'description', 'summary', 'name', 'label', 'text'] as const;
-
-function itemText(value: unknown): string {
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    const record = value as Record<string, unknown>;
-    const key = ITEM_TEXT_KEYS.find((name) => typeof record[name] === 'string');
-    if (key) return record[key] as string;
-  }
-  return JSON.stringify(value) ?? '';
-}
-
-/** A handoff's contents as the readout lists them. */
-export function deliveredFields(contents: Readonly<Record<string, unknown>>): DeliveredField[] {
-  return Object.entries(contents).map(([field, value]) =>
-    Array.isArray(value)
-      ? { field, count: value.length, items: value.map(itemText) }
-      : { field, items: value === null || value === undefined ? [] : [itemText(value)] },
-  );
-}
-
 /** The starter is recorded on the start card, independent of later handoffs or transfers. */
 export function workflowStarterLine(run: import('@beeline/api-contract/phone').WorkflowRunSummaryView): string {
   const name = run.startedBy?.name;

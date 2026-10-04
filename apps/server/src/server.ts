@@ -1,4 +1,4 @@
-import { WorkflowOwnershipError } from './workflow-ownership.js';
+import { WorkflowAuthorizationError } from './workflow-admin.js';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -416,7 +416,7 @@ export function createBeelineServer(options: ServerOptions): Server {
     ).catch((error) => {
       const message = error instanceof Error ? error.message : 'request failed';
       const status =
-        error instanceof WorkflowOwnershipError
+        error instanceof WorkflowAuthorizationError
           ? error.status
           : (message.startsWith('corner brief attachment ') &&
                 message.endsWith('is missing or unavailable in this Room')) ||

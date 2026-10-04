@@ -1,11 +1,5 @@
-import {
-  readWorkflowOwnership,
-  requireWorkflowOwner,
-  scheduleWorkflowName,
-  transferWorkflowOwner,
-  workflowHumanAdmin,
-} from './workflow-ownership.js';
 import { startWorkflow } from './workflow-runs.js';
+import { humanRoomAdmin, scheduleWorkflowName } from './workflow-admin.js';
 import { setCornerHold } from './corner-holds.js';
 import {
   createAgentCommand,
@@ -3694,17 +3688,7 @@ export class PhoneService {
           [request.roomId],
         );
         return {
-          workflows: await Promise.all(
-            definitions.rows.map(async (row) => ({
-              name: row.slug,
-              ownership: await readWorkflowOwnership(
-                this.database,
-                request.roomId,
-                row.slug,
-                viewerId,
-              ),
-            })),
-          ),
+          workflows: definitions.rows.map((row) => ({ name: row.slug })),
         } as Output<Name>;
       }
       case 'readWorkflowDefinition': {
@@ -3723,12 +3707,6 @@ export class PhoneService {
         if (!row) throw new Error('workflow is unavailable');
         return {
           contract: JSON.parse(row.markdown),
-          ownership: await readWorkflowOwnership(
-            this.database,
-            request.roomId,
-            request.name,
-            viewerId,
-          ),
           runs: (
             await listRoomWorkflowRuns(
               this.database,
@@ -3740,32 +3718,9 @@ export class PhoneService {
           ).workflows,
         } as Output<Name>;
       }
-      case 'readWorkflowOwnership': {
-        const request = input as Input<'readWorkflowOwnership'>;
-        if (!(await this.hasRoomAccess(request.roomId, viewerId)))
-          throw new Error('room access denied');
-        return (await readWorkflowOwnership(
-          this.database,
-          request.roomId,
-          request.name,
-          viewerId,
-        )) as Output<Name>;
-      }
-      case 'transferWorkflowOwner': {
-        const request = input as Input<'transferWorkflowOwner'>;
-        if (!(await this.hasRoomAccess(request.roomId, viewerId)))
-          throw new Error('room access denied');
-        return (await transferWorkflowOwner(
-          this.database,
-          request.roomId,
-          request.name,
-          viewerId,
-          request.ownerId,
-        )) as Output<Name>;
-      }
       case 'startOwnedWorkflow': {
         const request = input as Input<'startOwnedWorkflow'>;
-        if (!(await workflowHumanAdmin(this.database, request.roomId, viewerId)))
+        if (!(await humanRoomAdmin(this.database, request.roomId, viewerId)))
           throw new Error('human Room/Workspace admin required');
         return (await startWorkflow(
           this.database,
@@ -3787,7 +3742,7 @@ export class PhoneService {
           ) as Promise<Output<Name>>;
         const db = this.database;
         const request = input as Input<'updateRoomSchedule'>;
-        if (!(await workflowHumanAdmin(this.database, request.roomId, viewerId)))
+        if (!(await humanRoomAdmin(this.database, request.roomId, viewerId)))
           throw new Error('human Room/Workspace admin required');
         if (request.message !== undefined && !request.message.trim())
           throw new Error('schedule message is required');
@@ -3806,7 +3761,6 @@ export class PhoneService {
             request.message ?? existing.message,
             request.workflowName,
           )) ?? existing.workflow_slug;
-        if (workflowName) await requireWorkflowOwner(db, request.roomId, workflowName, viewerId);
         const updated = await db.query<{ next_run_at: Date }>(
           `UPDATE agent_schedules SET message=COALESCE($3,message),
                   cadence=COALESCE($4::jsonb,cadence),next_run_at=COALESCE($5,next_run_at),updated_by=$6,updated_at=now(),workflow_slug=$7
@@ -4443,7 +4397,7 @@ export class PhoneService {
     const db = this.database;
     const target = await this.requireTopLevelRoom(input.roomId);
     if (target.workspace_id !== input.workspaceId) throw new Error('room is not in workspace');
-    if (!(await workflowHumanAdmin(db, input.roomId, viewerId)))
+    if (!(await humanRoomAdmin(db, input.roomId, viewerId)))
       throw new Error('room manager required');
     if (typeof input.message !== 'string' || !input.message.trim())
       throw new Error('schedule message is required');
@@ -4464,9 +4418,6 @@ export class PhoneService {
       input.message,
       input.workflowName,
     );
-    const ownership = workflowName
-      ? await requireWorkflowOwner(db, input.roomId, workflowName, viewerId)
-      : null;
     const id = randomUUID();
     const nextRunAt = nextScheduleOccurrence(input.cadence, new Date());
     const inserted = await db.query<RoomScheduleRow>(
@@ -4478,7 +4429,7 @@ export class PhoneService {
         id,
         input.workspaceId,
         input.roomId,
-        ownership?.owner?.id ?? input.agentId,
+        input.agentId,
         viewerId,
         JSON.stringify(input.cadence),
         input.message.trim(),
@@ -9556,10 +9507,8 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'deleteRoomSchedule',
   'listRoomWorkflowRuns',
   'readWorkflowRun',
-  'readWorkflowOwnership',
   'readWorkflowDefinition',
   'listWorkflowDefinitions',
-  'transferWorkflowOwner',
   'startOwnedWorkflow',
   'updateRoomSchedule',
   'cancelAgentTurn',
@@ -9656,7 +9605,6 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
 ]);
 
 const SPECTATOR_READ_OPERATIONS = new Set<keyof PhoneOperationMap>([
-  'readWorkflowOwnership',
   'readWorkflowDefinition',
   'listWorkflowDefinitions',
   'leaveWorkspace',

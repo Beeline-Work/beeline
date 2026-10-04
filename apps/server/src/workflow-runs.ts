@@ -1,4 +1,4 @@
-import { requireWorkflowOwner, workflowHumanAdmin, WorkflowOwnershipError } from './workflow-ownership.js';
+import { humanRoomAdmin, WorkflowAuthorizationError } from './workflow-admin.js';
 import { createHash, randomBytes } from 'node:crypto';
 import {
   workflowContractError,
@@ -264,9 +264,9 @@ export async function cancelWorkflowRun(
     // Older runs retain the start card's author as their requester.
     if (
       actorId !== (start.card.requesterId ?? start.author_id) && !roleOwners.rowCount &&
-      !(await workflowHumanAdmin(db, command.room_id, actorId))
+      !(await humanRoomAdmin(db, command.room_id, actorId))
     ) {
-      throw new WorkflowOwnershipError(
+      throw new WorkflowAuthorizationError(
         'only the run requester, a bound role owner, or a human Room admin can cancel this run',
         403,
       );
@@ -483,11 +483,6 @@ export async function saveWorkflow(
       },
       afterCommit,
     );
-    await db.query(
-      `UPDATE workspace_skills SET creator_agent_id=$2,owner_agent_id=$2,ownership_initialized=true
-    WHERE id=$1 AND $3=1`,
-      [skillId, command.agent_id, version],
-    );
     return { slug: contract.name, version };
   });
 }
@@ -606,7 +601,6 @@ export async function startWorkflow(
       )
     ).rows[0];
     if (!skill) throw new Error('workflow is unavailable');
-    const ownership = await requireWorkflowOwner(db, command.room_id, input.name, command.agent_id);
     const contract = JSON.parse(skill.markdown) as WorkflowContract;
     const trigger = command.source_message_id
       ? await scheduleTriggerPeriod(db, command.source_message_id)
@@ -693,14 +687,13 @@ export async function startWorkflow(
         currentAgentId: exhausted ? null : (resolution as { agentId: string }).agentId,
         workflowSlug: contract.name,
         workflowVersion: skill.current_version,
-        ownerAtStart: ownership.owner!.id,
         requesterId: await workflowRequester(db, command),
         startKind:
           starter?.kind === 'human'
             ? 'human_admin'
             : command.reason === 'schedule'
               ? 'schedule'
-              : 'owner',
+              : 'direct',
         roleBindings,
         ...(Object.keys(roleAgents).length ? { roleAgents } : {}),
         toState: contract.start,

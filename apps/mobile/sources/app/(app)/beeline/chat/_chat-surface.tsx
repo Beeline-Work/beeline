@@ -7133,7 +7133,7 @@ export function BuzzChatSurface({
         />
         {getBuzzRuntimeConfig().monolithUrl ? (
           <HullActionSheetRow
-            accessibilityLabel="View workflow owners and runs"
+            accessibilityLabel="View workflows and runs"
             chevron="right"
             label="Workflows"
             onPress={() => {

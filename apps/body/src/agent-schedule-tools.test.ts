@@ -40,7 +40,7 @@ function deps(ops: Array<{ name: string; input: Record<string, unknown> }>): Age
 }
 
 describe('beeline-agent schedule tools', () => {
-  it('carries the workflow target through create/update and exposes its owner and active IDs', async () => {
+  it('carries the workflow target through create/update and names it in list_schedules', async () => {
     const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
     await createSchedule(
       { prompt: 'Scan', workflowName: 'daily', cadence: { kind: 'interval', everyMinutes: 1 } },
@@ -59,13 +59,12 @@ describe('beeline-agent schedule tools', () => {
             prompt: 'Scan',
             cadence: { kind: 'interval', everyMinutes: 1 },
             workflowName: 'daily',
-            owner: { id: 'agent-1', name: 'Scanner' },
             activeRunIds: [activeRunId],
           },
         ],
       }),
     });
-    expect(listed).toContain('Owner Scanner');
+    expect(listed).toContain('Workflow daily');
     expect(listed).toContain(`Active run IDs: ${activeRunId}`);
   });
 

@@ -1632,8 +1632,8 @@ describe('agent workflow run reads and cancellation', () => {
     await cancelWorkflowRun(database, command, { runId, reason: 'Stop waiting' });
     expect((await database.query<{ status: string }>(`SELECT status FROM room_choices WHERE id=$1`, [choice.id])).rows[0]?.status).toBe('closed');
     await expect(answerRoomChoice(database, { choiceId: choice.id, optionId: choice.options[0]!.optionId, viewerId: OWNER })).rejects.toThrow('already decided');
-    const { readWorkflowOwnership } = await import('./workflow-ownership.js');
-    expect((await readWorkflowOwnership(database, ROOM, 'corner', OWNER)).activeRunIds).not.toContain(runId);
+    const { activeWorkflowRunIds } = await import('./workflow-admin.js');
+    expect(await activeWorkflowRunIds(database, ROOM, 'corner', OWNER)).not.toContain(runId);
   });
 
   it('deletes a state timeout so the scheduler cannot wake an ended run', async () => {

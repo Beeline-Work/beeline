@@ -71,6 +71,16 @@ const SESSION_VARIANTS: Record<string, SessionPromptContext> = {
     worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
     reviewerHandle: 'sol',
   },
+  'code-corner-android': {
+    surface: 'code-corner',
+    agentName: 'Bee',
+    soul,
+    agentCommand: 'claude-agent-acp',
+    worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
+    reviewerHandle: 'sol',
+    yoloMode: true,
+    android: { emulatorPort: '5600' },
+  },
   'code-corner-no-reviewer': {
     surface: 'code-corner',
     agentName: 'Bee',
@@ -389,6 +399,15 @@ describe('prompt assembly guards', () => {
       const text = assembleSessionPrompt(context).systemPrompt;
       expect(text, name).toContain('Never just restate the problem.');
       expect(text, name).toContain('Finish the work before you end the turn.');
+    }
+  });
+
+  it('names the agent emulator port only in a code corner on an Android host', () => {
+    for (const [name, context] of Object.entries(SESSION_VARIANTS)) {
+      const text = assembleSessionPrompt(context).systemPrompt;
+      if (context.android && context.surface === 'code-corner')
+        expect(text, name).toContain(`-port ${context.android.emulatorPort} `);
+      else expect(text, name).not.toContain('Android:');
     }
   });
 

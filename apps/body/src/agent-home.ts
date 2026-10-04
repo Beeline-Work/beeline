@@ -69,6 +69,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { DRAW_AVATAR_SKILL_NAME, drawAvatarSkillMarkdown } from './draw-avatar-skill.js';
 import type { AgentKind } from './agent-command.js';
+import { androidAgentEnv } from './android-agent-env.js';
 import {
   BEELINE_REVIEW_SKILL_NAME,
   BEELINE_SPEC_SKILL_NAME,
@@ -346,6 +347,8 @@ export interface RoomAgentHomeInput {
   squireScope?: { readonly agentId: string; readonly roomId: string; readonly relay?: { readonly url: string; readonly token: string; readonly contextFile: string } };
   /** Operator's real home directory; defaults to the daemon's. */
   operatorHome?: string;
+  /** The agent's PATH before this overlay; the Android SDK tools are prepended. */
+  inheritedPath?: string;
   failClosed?: boolean;
   /**
    * Release id stamped into the managed `using-beeline` skill. Defaults to
@@ -620,7 +623,14 @@ export async function prepareRoomAgentHome(
     if (agentHomeProvisionQueues.get(root) === provision) agentHomeProvisionQueues.delete(root);
   }
 
-  return roomAgentHomeEnv(root);
+  return {
+    ...roomAgentHomeEnv(root),
+    ...androidAgentEnv({
+      root,
+      operatorHome,
+      ...(input.inheritedPath ? { inheritedPath: input.inheritedPath } : {}),
+    }),
+  };
 }
 
 /**

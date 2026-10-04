@@ -50,8 +50,11 @@ const EVERYWHERE: readonly PromptSurface[] = PROMPT_SURFACES;
  * replace or shorten one.
  */
 export const CORE_BUDGET_BYTES = 2_300;
-/** Ceiling for one surface's own rules, on top of the core. A code corner uses ~4.1 KB. */
-export const SURFACE_BUDGET_BYTES = 4_120;
+/**
+ * Ceiling for one surface's own rules, on top of the core. A code corner uses
+ * ~4.1 KB, plus ~0.35 KB for corner.android on a host with an Android SDK.
+ */
+export const SURFACE_BUDGET_BYTES = 4_480;
 
 /**
  * Whether this session can run shell commands, and why not when it cannot.
@@ -74,6 +77,8 @@ export interface SessionPromptContext {
   readonly shell?: RoomShellState;
   /** A repository corner's feature and target branches. */
   readonly worktree?: { readonly featureBranch: string; readonly targetBranch: string };
+  /** This agent's emulator console port, when the host has an Android SDK (`android-agent-env.ts`). */
+  readonly android?: { readonly emulatorPort: string };
   readonly reviewerHandle?: string;
   readonly selfReviewer?: boolean;
   readonly yoloMode?: boolean;
@@ -450,6 +455,17 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
       ]
         .filter(Boolean)
         .join('\n'),
+  },
+  {
+    id: 'corner.android',
+    topic: 'android',
+    why: 'An agent under its isolated $HOME concluded the host had no emulator, and agents on the shared adb server drove each other\'s emulators.',
+    budgetBytes: 380,
+    layer: 'surface',
+    surfaces: ['code-corner'],
+    when: ({ android }) => Boolean(android),
+    render: ({ android }) =>
+      `Android: adb and emulator are on PATH; the SDK is $ANDROID_HOME, AVDs are in $ANDROID_AVD_HOME, and /dev/kvm works. Your adb server sees only your own emulator. Boot it with \`emulator -avd <name> -port ${android?.emulatorPort} -read-only -no-window -no-snapshot -gpu swiftshader_indirect\`; it reaches host services at 10.0.2.2.`,
   },
   {
     id: 'corner.contract',

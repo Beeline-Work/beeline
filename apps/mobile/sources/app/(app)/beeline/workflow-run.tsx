@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { WorkflowOwnership } from '@/components/buzz/WorkflowOwnership';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -101,12 +100,11 @@ export default function WorkflowRun() {
           contentContainerStyle={{ paddingBottom: 24 + insets.bottom }}
           testID="workflow-run-page"
         >
-          {detail.ownership && roomId ? <>
-            <WorkflowOwnership roomId={roomId} name={run.workflowSlug} ownership={detail.ownership} onChange={() => void retry()} />
+          {roomId ? (
             <Pressable accessibilityRole="button" style={styles.allRuns} onPress={() => router.push({ pathname: '/beeline/workflow', params: { roomId, name: run.workflowSlug } })}>
               <Text style={styles.allRunsText}>All runs</Text>
             </Pressable>
-          </> : null}
+          ) : null}
           <View style={styles.plate} testID="workflow-run-summary">
             <View style={styles.status}>
               {live ? (

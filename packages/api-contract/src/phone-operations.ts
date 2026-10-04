@@ -96,10 +96,9 @@ export type PhoneOperationMap = {
   /** The newest run of each agent workflow in a Room and its corners, live runs first. */
   listRoomWorkflowRuns: { input: RoomInput; output: WorkflowRunListResult };
   /** One run with its pinned contract and ordered handoff history, for the run page's graph. */
-  listWorkflowDefinitions: { input: RoomInput; output: { readonly workflows: readonly { readonly name: string; readonly ownership: WorkflowOwnershipView }[] } };
-  readWorkflowDefinition: { input: RoomInput & { readonly name: string }; output: { readonly contract: WorkflowContract; readonly ownership: WorkflowOwnershipView; readonly runs: readonly WorkflowRunSummaryView[] } };
-  readWorkflowOwnership: { input: RoomInput & { readonly name: string }; output: WorkflowOwnershipView };
-  transferWorkflowOwner: { input: RoomInput & { readonly name: string; readonly ownerId: string }; output: WorkflowOwnershipView };
+  listWorkflowDefinitions: { input: RoomInput; output: { readonly workflows: readonly { readonly name: string }[] } };
+  readWorkflowDefinition: { input: RoomInput & { readonly name: string }; output: { readonly contract: WorkflowContract; readonly runs: readonly WorkflowRunSummaryView[] } };
+  /** A human Room/Workspace admin starts a run directly, attributed to that human (`startKind: 'human_admin'`). */
   startOwnedWorkflow: { input: RoomInput & { readonly name: string; readonly roleBindings: Readonly<Record<string, string | readonly string[]>> }; output: { readonly runId: string; readonly state: string } };
   updateRoomSchedule: { input: RoomInput & { readonly scheduleId: string; readonly message?: string; readonly cadence?: RoomScheduleCadence; readonly workflowName?: string }; output: { readonly scheduleId: string; readonly nextRunAt: number } };
   readWorkflowRun: { input: ReadWorkflowRunInput; output: WorkflowRunDetailView };
@@ -332,12 +331,6 @@ export type WorkflowActorView = {
   readonly face?: string;
 };
 /** `live` until the run reaches a terminal state, then that terminal's status. */
-export type WorkflowOwnershipView = {
-  readonly ownerCandidates?: readonly (WorkflowActorView & { readonly avatarUrl?: string })[];
-  readonly owner: (WorkflowActorView & { readonly avatarUrl?: string }) | null;
-  readonly activeRunIds: readonly string[];
-  readonly canTransfer: boolean;
-};
 export type WorkflowRunStatus = 'live' | WorkflowTerminalState['status'];
 export type WorkflowRunSummaryView = {
   /** The `start_workflow` message id (a corner's own lifecycle run uses the corner id). */
@@ -365,8 +358,7 @@ export type WorkflowRunSummaryView = {
   /** Runs of the same workflow in the same Room and its corners that started before this one. */
   readonly earlierRunCount: number;
   readonly startedBy?: WorkflowActorView;
-  readonly startKind?: 'owner' | 'schedule' | 'human_admin';
-  readonly ownership?: WorkflowOwnershipView;
+  readonly startKind?: 'direct' | 'schedule' | 'human_admin';
   /** Every currently-live run id of this workflow in the same Room and its corners, this one included. */
   readonly activeRunIds?: readonly string[];
 };
@@ -414,7 +406,6 @@ export type WorkflowRunStepView = {
   readonly openedCorners?: readonly WorkflowOpenedCornerView[];
 };
 export type WorkflowRunDetailView = {
-  readonly ownership?: WorkflowOwnershipView;
   readonly run: WorkflowRunSummaryView;
   /** The contract version the run is pinned to. */
   readonly contract: WorkflowContract;

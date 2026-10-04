@@ -8,7 +8,6 @@ import type { PhoneOperationMap } from '@beeline/api-contract/phone';
 import { workflowDisplayName } from '@/buzz/workflow-graph';
 import { workflowStarterLine } from '@/buzz/workflow-run-copy';
 import { PageHeader } from '@/components/buzz/PageHeader';
-import { WorkflowOwnership } from '@/components/buzz/WorkflowOwnership';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 
@@ -74,11 +73,6 @@ export default function Workflow() {
               }
             >
               <Text style={styles.title}>{workflowDisplayName(workflow.name)}</Text>
-              <Text style={styles.meta}>
-                {workflow.ownership.owner
-                  ? `Owner ${workflow.ownership.owner.name}`
-                  : 'no owner, starts blocked'}
-              </Text>
             </Pressable>
           ))}
           {!definitions.workflows.length ? (
@@ -88,12 +82,6 @@ export default function Workflow() {
       ) : null}
       {detail && name ? (
         <ScrollView contentContainerStyle={{ paddingBottom: 24 + insets.bottom }}>
-          <WorkflowOwnership
-            roomId={roomId}
-            name={name}
-            ownership={detail.ownership}
-            onChange={() => void reload()}
-          />
           <Text style={styles.description}>
             {detail.contract.summary ?? detail.contract.description}
           </Text>

@@ -1664,28 +1664,12 @@ CREATE TABLE IF NOT EXISTS workflow_owner_transfers (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS workflow_owner_transfers_room_idx ON workflow_owner_transfers(room_id);
--- Older definitions have no saver column. Only an agent-authored original
--- source records a creator; a human request does not identify the saving agent.
-UPDATE workspace_skills skill SET creator_agent_id=(
-  SELECT message.author_id FROM workspace_skill_versions version
-  JOIN messages message ON message.id=ANY(version.source_message_ids)
-  JOIN identities identity ON identity.id=message.author_id AND identity.kind='agent'
-  WHERE version.skill_id=skill.id AND version.version=1
-  ORDER BY message.created_at,message.id LIMIT 1
-) WHERE skill.kind='workflow' AND NOT skill.ownership_initialized AND skill.creator_agent_id IS NULL;
 UPDATE agent_schedules schedule SET workflow_slug=skill.slug
 FROM workspace_skills skill
 WHERE skill.workspace_id=schedule.workspace_id AND skill.kind='workflow'
   AND schedule.workflow_slug IS NULL
   AND (schedule.message ~ ('(?i)(start_workflow|start workflow|workflow)[[:space:]]+["\`]?' || skill.slug || '([[:space:][:punct:]]|$)')
     OR schedule.message ~ ('(?i)\\m' || skill.slug || '["\`]?[[:space:]]+workflow\\M'));
-UPDATE workspace_skills skill SET owner_agent_id=COALESCE(skill.creator_agent_id,(
-  SELECT latest.creator_id FROM (
-    SELECT schedule.creator_id FROM agent_schedules schedule
-    WHERE schedule.workspace_id=skill.workspace_id AND schedule.workflow_slug=skill.slug
-    ORDER BY schedule.created_at DESC,schedule.id DESC LIMIT 1
-  ) latest JOIN identities identity ON identity.id=latest.creator_id AND identity.kind='agent'
-)),ownership_initialized=true WHERE skill.kind='workflow' AND NOT skill.ownership_initialized;
 CREATE INDEX IF NOT EXISTS agent_schedules_due_idx ON agent_schedules(next_run_at, id);
 CREATE INDEX IF NOT EXISTS agent_schedules_room_idx ON agent_schedules(room_id, created_at, id);
 CREATE INDEX IF NOT EXISTS agent_schedules_workspace_idx ON agent_schedules(workspace_id);

@@ -1,4 +1,3 @@
-import { scheduleWorkflowName, requireWorkflowOwner, readWorkflowOwnership } from './workflow-ownership.js';
 import { setCornerHold } from './corner-holds.js';
 import { renderAgentAvatar } from './agent-avatar.js';
 import {
@@ -187,6 +186,7 @@ import {
   saveWorkflow,
   startWorkflow,
 } from './workflow-runs.js';
+import { activeWorkflowRunIds, scheduleWorkflowName } from './workflow-admin.js';
 import { isCornerReviewer } from './agent-health.js';
 import {
   recordStarPromptReply,
@@ -4762,7 +4762,6 @@ export class DaemonService {
       input.prompt,
       input.workflowName,
     );
-    if (workflowName) await requireWorkflowOwner(db, input.roomId, workflowName, agentId);
     const scheduleId = randomUUID();
     const nextRunAt = nextScheduleOccurrence(input.cadence, new Date());
     await db.query(
@@ -4936,13 +4935,13 @@ export class DaemonService {
     );
     const schedules = await Promise.all(
       rows.rows.map(async (row) => {
-        const info = row.workflow_slug
-          ? await readWorkflowOwnership(this.database, input.roomId, row.workflow_slug, agentId)
-          : undefined;
+        const workflowRunIds = row.workflow_slug
+          ? await activeWorkflowRunIds(this.database, input.roomId, row.workflow_slug, agentId)
+          : [];
         const scheduleRunIds = await activeRunIdsForSchedule(this.database, input.roomId, row.id);
-        const activeRunIds = [...new Set([...(info?.activeRunIds ?? []), ...scheduleRunIds])];
+        const activeRunIds = [...new Set([...workflowRunIds, ...scheduleRunIds])];
         return {
-          ...(row.workflow_slug ? { workflowName: row.workflow_slug, owner: info?.owner } : {}),
+          ...(row.workflow_slug ? { workflowName: row.workflow_slug } : {}),
           scheduleId: row.id,
           agentId: row.agent_id,
           ...(row.agent_handle ? { agentHandle: row.agent_handle } : {}),
@@ -5003,8 +5002,6 @@ export class DaemonService {
       )
     ).rows[0];
     if (!existing) throw new Error('schedule not found');
-    if (existing.workflow_slug)
-      await requireWorkflowOwner(db, input.roomId, existing.workflow_slug, agentId);
     const workflowName =
       (await scheduleWorkflowName(
         db,
@@ -5012,14 +5009,13 @@ export class DaemonService {
         input.prompt ?? existing.message,
         input.workflowName,
       )) ?? existing.workflow_slug;
-    if (workflowName) await requireWorkflowOwner(db, input.roomId, workflowName, agentId);
     const nextRunAt =
       input.cadence === undefined ? null : nextScheduleOccurrence(input.cadence, new Date());
     const updated = await db.query<{ next_run_at: Date }>(
       `UPDATE agent_schedules SET message=COALESCE($3,message),
          cadence=COALESCE($4::jsonb,cadence),max_runs=COALESCE($5,max_runs),
          next_run_at=COALESCE($6,next_run_at),updated_at=now(),workflow_slug=$7,updated_by=$8
-       WHERE id=$1 AND room_id=$2 AND (creator_id=agent_id OR workflow_slug IS NOT NULL)
+       WHERE id=$1 AND room_id=$2 AND creator_id=agent_id
        RETURNING next_run_at`,
       [
         input.scheduleId,

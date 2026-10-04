@@ -1,4 +1,4 @@
-import { readWorkflowOwnership } from './workflow-ownership.js';
+import { activeWorkflowRunIds } from './workflow-admin.js';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   WORKSPACE_SKILL_DESCRIPTION_MAX_LENGTH,
@@ -513,10 +513,9 @@ export async function loadWorkspaceSkill(
     );
     await db.query(`UPDATE workspace_skills SET last_served_at=now() WHERE id=$1`, [skill.id]);
     return {
-      ...(skill.kind === 'workflow' ? await (async () => {
-        const ownership = await readWorkflowOwnership(db, command.room_id, skill.slug, command.agent_id);
-        return { owner: ownership.owner, activeRunIds: ownership.activeRunIds };
-      })() : {}),
+      ...(skill.kind === 'workflow'
+        ? { activeRunIds: await activeWorkflowRunIds(db, command.room_id, skill.slug, command.agent_id) }
+        : {}),
       skillId: skill.id,
       slug: skill.slug,
       description: skill.description,

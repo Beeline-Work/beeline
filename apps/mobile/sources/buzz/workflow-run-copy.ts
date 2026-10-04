@@ -193,5 +193,5 @@ export function deliveredFields(contents: Readonly<Record<string, unknown>>): De
 export function workflowStarterLine(run: import('@beeline/api-contract/phone').WorkflowRunSummaryView): string {
   const name = run.startedBy?.name;
   if (!name) return '';
-  return run.startKind === 'schedule' ? `Schedule (as ${name})` : run.startKind === 'human_admin' ? `${name} · human admin` : run.startKind === 'owner' ? `${name} · owner` : name;
+  return run.startKind === 'schedule' ? `Schedule (as ${name})` : run.startKind === 'human_admin' ? `${name} · human admin` : name;
 }

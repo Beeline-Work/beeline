@@ -854,7 +854,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
       type: 'object',
       required: ['prompt', 'cadence'],
       properties: {
-        workflowName: { type: 'string', description: 'Saved workflow targeted by this schedule; only its owner may schedule starts.' },
+        workflowName: { type: 'string', description: 'Saved workflow targeted by this schedule.' },
         prompt: {
           type: 'string',
           minLength: 1,
@@ -902,7 +902,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
       type: 'object',
       required: ['scheduleId'],
       properties: {
-        workflowName: { type: 'string', description: 'Saved workflow targeted by this schedule; only its owner may schedule starts.' },
+        workflowName: { type: 'string', description: 'Saved workflow targeted by this schedule.' },
         scheduleId: {
           type: 'string',
           description: 'The scheduleId from list_schedules.',
@@ -3172,7 +3172,7 @@ export async function listSchedules(
           : '';
       return [
         `${String(schedule.scheduleId)} (${typeof schedule.agentHandle === 'string' ? `@${schedule.agentHandle}` : `agent ${String(schedule.agentId)}`}): ${cadenceText}${runs}${nextRunAt} — ${String(schedule.prompt)}` +
-          (schedule.workflowName ? ` · Workflow ${String(schedule.workflowName)} · Owner ${schedule.owner ? String((schedule.owner as Record<string, unknown>).name) : 'no owner, starts blocked'}` : '') +
+          (schedule.workflowName ? ` · Workflow ${String(schedule.workflowName)}` : '') +
           (Array.isArray(schedule.activeRunIds) ? ` · Active run IDs: ${schedule.activeRunIds.join(', ') || 'none'}` : ''),
       ];
     })

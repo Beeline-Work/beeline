@@ -1,4 +1,3 @@
-import { readWorkflowOwnership } from './workflow-ownership.js';
 import type {
   WorkflowActorView,
   WorkflowContract,
@@ -423,9 +422,6 @@ export async function listRoomWorkflowRuns(
           liveByFamily.get(head.family) ?? [],
         ),
         ...(await workflowStartInfo(db, head.roomId, head.runId)),
-        ...(!head.corner
-          ? { ownership: await readWorkflowOwnership(db, head.roomId, head.slug, viewerId) }
-          : {}),
       })),
     )
   ).sort(
@@ -700,9 +696,6 @@ export async function readWorkflowRun(
   });
   const activeRunIds = liveRunIdsByFamily(heads, contracts).get(head.family) ?? [];
   return {
-    ...(!head.corner
-      ? { ownership: await readWorkflowOwnership(db, input.roomId, head.slug, viewerId) }
-      : {}),
     run: {
       ...summarize(head, contract, actors, viewer, earlierThan(heads, head), activeRunIds),
       ...(await workflowStartInfo(db, head.roomId, head.runId)),
@@ -724,7 +717,7 @@ async function workflowStartInfo(
       id: string;
       name: string;
       kind: 'human' | 'agent';
-      start_kind: 'owner' | 'schedule' | 'human_admin' | null;
+      start_kind: 'direct' | 'schedule' | 'human_admin' | null;
     }>(
       `SELECT identity.id,identity.name,identity.kind,message.card->>'startKind' start_kind FROM messages message
     JOIN identities identity ON identity.id=message.author_id WHERE message.room_id=$1 AND message.id=$2`,

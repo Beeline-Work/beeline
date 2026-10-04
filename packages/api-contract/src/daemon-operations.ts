@@ -11,7 +11,7 @@ import type { CornerLifecycleView, MessageReactionEmoji } from './phone-types.js
 import type { ChoiceOptionInput } from './room-choices.js';
 import type { RoomScheduleCadence } from './phone-operations.js';
 import type { CornerAppDefinition } from './corner-apps.js';
-import type { WorkflowRoleBinding, WorkflowReceiptInput } from './workflow-contracts.js';
+import type { WorkflowRoleBinding, WorkflowReceiptInput, WorkflowRunReadResult } from './workflow-contracts.js';
 import type {
   DeleteInstitutionalMemoryInput,
   InstitutionalContextSnapshot,
@@ -197,6 +197,13 @@ export type DaemonOperationMap = {
         readonly roleBindings: Readonly<Record<string, WorkflowRoleBinding>>;
       },
     { readonly runId: string; readonly state: string }
+  >;
+  /** Read a saved run in this Room and its exact pinned contract. */
+  getWorkflowRun: Operation<RoomInput & { readonly runId: string }, WorkflowRunReadResult>;
+  /** Cancel on behalf of the active command's requester, after checking run authority. */
+  cancelWorkflowRun: Operation<
+    RoomInput & TurnOutputAuthority & { readonly runId: string; readonly reason: string },
+    { readonly runId: string; readonly state: string; readonly status: 'abandoned'; readonly reason: string }
   >;
   /** Advance a run's current state; validated against its pinned contract. */
   handoff: Operation<

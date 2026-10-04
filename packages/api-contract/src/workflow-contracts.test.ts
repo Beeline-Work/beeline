@@ -351,6 +351,11 @@ describe('workflow contents validation', () => {
     expect(workflowContentsError(state, { summary: 'did the thing' })).toBe('prUrl is required');
   });
 
+  it('lists every missing required field in one refusal', () => {
+    expect(workflowContentsError(state, {})).toBe('summary is required; prUrl is required');
+    expect(workflowContentsError(state, { summary: null })).toBe('summary is required; prUrl is required');
+  });
+
   it('rejects contents that are not an object', () => {
     expect(workflowContentsError(state, 'nope')).toBe('contents must be an object');
     expect(workflowContentsError(state, null)).toBe('contents must be an object');

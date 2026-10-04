@@ -451,8 +451,36 @@ export function workflowContentsError(
   if (!record(contents)) return 'contents must be an object';
   if (Buffer.byteLength(JSON.stringify(contents), 'utf8') > WORKFLOW_CONTENTS_MAX_BYTES)
     return 'contents exceeds 16 KB';
-  for (const field of state.requires) {
-    if (contents[field] === undefined || contents[field] === null) return `${field} is required`;
-  }
+  const missing = state.requires.filter((field) => contents[field] === undefined || contents[field] === null);
+  if (missing.length) return missing.map((field) => `${field} is required`).join('; ');
   return null;
 }
+
+/** Agent read of a saved run, including the exact contract pinned at start. */
+export type WorkflowRunReadResult = {
+  readonly runId: string;
+  readonly workflowSlug: string;
+  readonly workflowVersion: number;
+  readonly state: string;
+  readonly status: 'live' | 'done' | 'failed' | 'abandoned';
+  readonly role?: string;
+  readonly boundAgentId?: string;
+  readonly allowedOutcomes: Readonly<Record<string, string>>;
+  readonly requiredFields: readonly string[];
+  readonly receiptHint?: string;
+  readonly cancellation?: { readonly reason: string; readonly actorId: string };
+  readonly contract: WorkflowContract;
+  readonly history: readonly {
+    readonly messageId: string;
+    readonly actorId: string;
+    readonly at: number;
+    readonly fromState?: string;
+    readonly toState: string;
+    readonly outcome?: string;
+    readonly contents?: unknown;
+    readonly receipt?: WorkflowReceipt;
+    readonly reassigned?: true;
+    readonly status?: 'done' | 'failed' | 'abandoned';
+    readonly cancellation?: { readonly reason: string; readonly actorId: string };
+  }[];
+};

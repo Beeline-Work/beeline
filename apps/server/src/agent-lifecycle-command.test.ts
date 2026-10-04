@@ -67,6 +67,9 @@ describe('tagged agent lifecycle commands', () => {
     expect(parseTaggedAgentLifecycleCommand('@bee restart please', 'bee')).toBeUndefined();
     expect(parseTaggedAgentLifecycleCommand('restart @bee', 'bee')).toBeUndefined();
     expect(parseTaggedAgentLifecycleCommand('@other restart', 'bee')).toBeUndefined();
+    expect(parseTaggedAgentLifecycleCommand('@bee login', 'bee')).toBe('login');
+    expect(parseTaggedAgentLifecycleCommand(' @Bee /LOGIN ', 'bee')).toBe('login');
+    expect(parseTaggedAgentLifecycleCommand('@bee login now', 'bee')).toBeUndefined();
   });
 
   it('answers status and help on the server without starting a model turn', async () => {
@@ -81,7 +84,7 @@ describe('tagged agent lifecycle commands', () => {
       ).rows.map((row) => row.text),
     ).toEqual([
       '@bee is online · no turn is running',
-      '@bee supports lifecycle commands · restart · status · stop · retry · debug · help',
+      '@bee supports lifecycle commands · restart · status · stop · retry · debug · help · /login',
     ]);
   });
 

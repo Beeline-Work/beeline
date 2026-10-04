@@ -116,6 +116,7 @@ import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
 import { DesktopWorkPaneHandle } from '@/components/DesktopWorkPaneHandle';
 import { openExternalUrl } from '@/utils/open-external-url';
 import { openAppSignIn } from '@/buzz/app-sign-in';
+import { AgentSignInCard } from '@/components/buzz/AgentSignInCard';
 import { openArtifactInBrowserOrExplain } from '@/buzz/artifact-link';
 import {
   subscribeDesktopArtifact,
@@ -5577,6 +5578,32 @@ export function BuzzChatSurface({
                 )
                 .finally(() => setAppSignInActionId(null));
             }}
+          />
+        );
+      }
+      if (item.agentSignIn) {
+        const card = item.agentSignIn;
+        const agentName = resolveAgentDisplayIdentity(
+          card.agentId,
+          agentByPubkey.get(card.agentId),
+        ).name;
+        return (
+          <AgentSignInCard
+            card={card}
+            agentName={agentName}
+            isOwner={!viewerIsAgent && cacheViewerPubkey === card.ownerId}
+            onSubmit={async (code) => {
+              try {
+                await monolithPhoneOperation('completeAgentSignIn', {
+                  roomId: decodedId,
+                  messageId: item.id,
+                  code,
+                });
+              } catch (error) {
+                throw new Error(phoneOperationFailureReason(error));
+              }
+            }}
+            testID={`agent-sign-in-${item.id}`}
           />
         );
       }

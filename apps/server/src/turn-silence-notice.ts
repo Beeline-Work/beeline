@@ -7,6 +7,7 @@
  * Triggered from the failed receipt and from ConnectionPresence's existing
  * 90-second demotion / stalled-working-turn timers — never a poll.
  */
+import { isAgentSignInHarness, type AgentSignInHarness } from '@beeline/api-contract/daemon';
 import {
   classifyTurnSilence,
   escalateExhaustedHiccup,
@@ -76,8 +77,10 @@ export async function noteFirstSilence(
   });
 
   const trigger = (
-    await database.query<{ agent_name: string }>(
-      `SELECT COALESCE(NULLIF(agent.name,''),'The agent') agent_name
+    await database.query<{ agent_name: string; login_handle: string | null; harness: string | null }>(
+      `SELECT COALESCE(NULLIF(agent.name,''),'The agent') agent_name,
+              agent.handle login_handle,
+              (SELECT harness FROM agents WHERE agent_id=$3) harness
        FROM messages message
        JOIN identities requester ON requester.id=message.author_id AND requester.kind='human'
        JOIN identities agent ON agent.id=$3
@@ -88,7 +91,17 @@ export async function noteFirstSilence(
   ).rows[0];
   if (!trigger) return NO_RESTART;
 
-  return database.transaction((db) => inscribeSilence(db, live, input, trigger.agent_name));
+  return database.transaction((db) =>
+    inscribeSilence(
+      db,
+      live,
+      input,
+      trigger.agent_name,
+      trigger.login_handle && isAgentSignInHarness(trigger.harness)
+        ? { handle: trigger.login_handle, harness: trigger.harness }
+        : undefined,
+    ),
+  );
 }
 
 async function inscribeSilence(
@@ -104,6 +117,7 @@ async function inscribeSilence(
     readonly stalled?: boolean;
   },
   agentName: string,
+  login: { handle: string; harness: AgentSignInHarness } | undefined,
 ): Promise<TurnSilenceOutcome> {
   await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
     turnSilenceLockKey(input.roomId, input.requestId, input.agentId),
@@ -142,6 +156,7 @@ async function inscribeSilence(
   const phrase = phraseTurnSilence(agentName, renderClassified, {
     givingUp,
     restarting: restart,
+    ...(login ? { login } : {}),
   });
   const systemPhrase: SystemPhrase = {
     subject: { kind: 'agent', id: input.agentId, name: agentName },

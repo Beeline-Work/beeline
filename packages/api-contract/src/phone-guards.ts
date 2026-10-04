@@ -1,4 +1,5 @@
 import { isSystemEvent } from './system-events.js';
+import { isAgentSignInHarness, isAgentSignInKeyProvider } from './agent-sign-in.js';
 import { isAgentAccessPolicy } from './agent-access.js';
 import {
   MESSAGE_REACTION_EMOJIS,
@@ -529,6 +530,32 @@ function readAppSignInCard(value: unknown): NonNullable<RoomViewMessage['appSign
       ? item.errorMessage : undefined),
     ...field('continuation', typeof item.continuation === 'string' && item.continuation.length <= 160
       ? item.continuation : undefined) };
+}
+
+const AGENT_SIGN_IN_STATUSES = ['starting', 'pending', 'signing-in', 'signed-in', 'failed'] as const;
+const AGENT_SIGN_IN_KINDS = ['paste-code', 'device-code', 'approve-wait', 'api-key'] as const;
+
+function readAgentSignInCard(value: unknown): NonNullable<RoomViewMessage['agentSignIn']> | null {
+  const item = record(value);
+  const status = oneOf(item?.status, AGENT_SIGN_IN_STATUSES);
+  if (!item || !hex64(item.agentId) || !hex64(item.ownerId) || !status ||
+    !isAgentSignInHarness(item.harness)) return null;
+  return {
+    agentId: item.agentId,
+    ownerId: item.ownerId,
+    harness: item.harness,
+    status,
+    ...field('kind', oneOf(item.kind, AGENT_SIGN_IN_KINDS)),
+    ...field('authorizeUrl', httpUrl(item.authorizeUrl) && item.authorizeUrl.startsWith('https://')
+      ? item.authorizeUrl : undefined),
+    ...field('userCode', typeof item.userCode === 'string' && /^[A-Z0-9-]{4,16}$/.test(item.userCode)
+      ? item.userCode : undefined),
+    ...field('expiresAt', typeof item.expiresAt === 'number' && Number.isFinite(item.expiresAt)
+      ? item.expiresAt : undefined),
+    ...field('provider', isAgentSignInKeyProvider(item.provider) ? item.provider : undefined),
+    ...field('errorMessage', typeof item.errorMessage === 'string' && item.errorMessage.length <= 500
+      ? item.errorMessage : undefined),
+  };
 }
 
 function readSquireApproval(value: unknown): NonNullable<RoomViewMessage['squireApproval']> | null {
@@ -1079,6 +1106,7 @@ export function readRoomViewMessage(value: unknown): RoomViewMessage | null {
     ...field('squireApproval', readSquireApproval(item.squireApproval)),
     ...field('connectorOffer', readConnectorOfferCardView(item.connectorOffer)),
     ...field('appSignIn', readAppSignInCard(item.appSignIn)),
+    ...field('agentSignIn', readAgentSignInCard(item.agentSignIn)),
     ...field('choice', readChoiceCard(item.choice)),
     ...field('walletTx', readWalletTx(item.walletTx)),
     ...field('walletInsufficient', readWalletInsufficient(item.walletInsufficient)),

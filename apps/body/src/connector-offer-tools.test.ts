@@ -136,6 +136,26 @@ describe('beeline-agent workbench_status + offer_connector (R5)', () => {
     expect(status).toContain('Instagram (app:instagram, id app-instagram) via composio: error — Instagram needs a Business or Creator account');
   });
 
+  it('checks local Trusty Squire reachability and names an unreachable cause', async () => {
+    const view = {
+      owner: { name: 'Owner' }, machine: { name: 'Owner laptop' },
+      catalog: [{ connectorType: 'trusty-squire', name: 'Trusty Squire',
+        purpose: 'A credential vault.', available: true, offerable: true,
+        paired: { status: 'error', helperName: 'Owner laptop', onThisMachine: true,
+          errorMessage: 'Earlier install failed' } }],
+      connections: [],
+    };
+    const reachable = await workbenchStatus(deps(view, [], {
+      squireReach: async () => ({ reachable: true }),
+    }));
+    expect(reachable).toContain('Trusty Squire): connected on Owner laptop');
+    const unreachable = await workbenchStatus(deps(view, [], {
+      squireReach: async () => ({ reachable: false, cause: 'MCP did not respond' }),
+    }));
+    expect(unreachable).toContain('Trusty Squire): error on Owner laptop');
+    expect(unreachable).toContain('MCP did not respond');
+  });
+
   it('installs Tailscale when it is enabled on this machine and the CLI is missing', async () => {
     const ensured: boolean[] = [];
     const text = await workbenchStatus(

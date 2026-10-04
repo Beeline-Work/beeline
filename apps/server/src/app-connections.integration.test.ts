@@ -369,6 +369,68 @@ describe('connect_app', () => {
       AND agent_id=$2 AND reason='app_connected'`, [CORNER, HELPER])).rowCount).toBe(1);
   });
 
+  it('uses a connected owner app from a Room and corner where only the agent is a member', async () => {
+    const provider = fakeComposio();
+    const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const started = await daemon.execute('connectApp',
+      { ...turn, app: 'Slack', reason: 'post the launch notes' }, HELPER);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    await phone.execute('beginAppSignIn', { appId: started.appId! }, OWNER);
+    await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: started.appId! }, OWNER);
+
+    const otherWorkspace = '55555555-5555-4555-8555-555555555555';
+    const otherRoom = '66666666-6666-4666-8666-666666666666';
+    const otherCorner = '77777777-7777-4777-8777-777777777777';
+    const host = 'c'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Host')`, [host]);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Other')`, [otherWorkspace]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,created_by,name)
+      VALUES($1,$3,$4,'Other room'),($2,$3,$4,'Other corner')`,
+      [otherRoom, otherCorner, otherWorkspace, host]);
+    await database.query(`UPDATE rooms SET parent_id=$1 WHERE id=$2`, [otherRoom, otherCorner]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member'),
+        ($1,$4,$3,'member'),($1,$5,$3,'member')`,
+      [otherWorkspace, host, HELPER, otherRoom, otherCorner]);
+    for (const [roomId, requestId, generationId] of [
+      [otherRoom, 'other-room-request', 'other-room-generation'],
+      [otherCorner, 'other-corner-request', 'other-corner-generation'],
+    ]) {
+      const sourceId = `${requestId}-source`;
+      const commandId = `${requestId}-command`;
+      await database.query(`INSERT INTO messages(id,room_id,author_id,text)
+        VALUES($1,$2,$3,'Use my connected app')`, [sourceId, roomId, host]);
+      await database.query(`INSERT INTO agent_commands(
+        id,room_id,agent_id,source_message_id,turn_request_id,action,reason,
+        root_command_id,root_source_message_id,agent_depth,state,generation_id,lease_expires_at
+      ) VALUES($1,$2,$3,$4,$5,'input','human_tag',$1,$4,0,'claimed',$6,
+        now()+interval '10 minutes')`, [commandId, roomId, HELPER, sourceId, requestId, generationId]);
+      const input = { roomId, requestId, generationId, appId: started.appId! };
+      expect((await daemon.execute('readAgentWorkbench', { roomId }, HELPER)).apps)
+        .toContainEqual(expect.objectContaining({ appId: started.appId, status: 'connected' }));
+      expect((await daemon.execute('listAppTools', input, HELPER)).tools).toHaveLength(1);
+      expect(await daemon.execute('executeAppTool', { ...input,
+        tool: 'SLACK_POST_MESSAGE', arguments: { text: 'Launch notes' } }, HELPER))
+        .toEqual({ status: 'executed', data: { ok: true } });
+      console.log(`${roomId === otherCorner ? 'Corner' : 'Room'}: connected app listed and executed`);
+    }
+  });
+
+  it('names the cause when a connected app has no discoverable tools', async () => {
+    const provider = fakeComposio();
+    const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const started = await daemon.execute('connectApp',
+      { ...turn, app: 'Slack', reason: 'post the launch notes' }, HELPER);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    await phone.execute('beginAppSignIn', { appId: started.appId! }, OWNER);
+    await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: started.appId! }, OWNER);
+    provider.listTools.mockResolvedValueOnce([]);
+    await expect(daemon.execute('listAppTools', { ...turn, appId: started.appId! }, HELPER))
+      .rejects.toThrow(/no tools/i);
+  });
+
   it.each(['Linear', 'Example App'])('shows a failed provider link for %s on Workbench and clears it on retry', async (app) => {
     const provider = fakeComposio();
     provider.supportsOAuth.mockResolvedValue(true);

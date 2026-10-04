@@ -2709,7 +2709,7 @@ export function BuzzChatSurface({
       scrollToIndex: (index) =>
         flatListRef.current?.scrollToIndex({
           index,
-          viewPosition: 0.5,
+          viewPosition: 1,
           animated: false,
         }),
       flash: raiseSourceLandingFlash,
@@ -3148,8 +3148,8 @@ export function BuzzChatSurface({
         if (messageSourceLandingAbandonedRef.current) return;
         if (desktopTranscript) {
           const row = desktopRowNodesRef.current.get(transcriptMessages[visibleIndex]?.id ?? '');
-          row?.scrollIntoView({ block: 'center' });
-          // The desktop row is real DOM and centers in one call, so the
+          row?.scrollIntoView({ block: 'start' });
+          // The desktop row is real DOM and aligns its beginning in one call, so the
           // brass flash can follow at once.
           if (row) raiseSourceLandingFlash(transcriptMessages[visibleIndex]!.id);
           return;
@@ -3157,18 +3157,20 @@ export function BuzzChatSurface({
         pendingNotificationLandingRef.current = { messageId, attempts: 0 };
         // A first scroll can mount a distant variable-height row with its
         // provisional frame; once native measures that row, its real height
-        // can move the same durable id. Re-center it exactly ONCE — but only
+        // can move the same durable id. Align its beginning exactly ONCE — but only
         // once the reader's OWN viewability report says the target is
         // actually on screen (`observeVisibleTranscriptMessages`), never on
         // a guessed delay. A fixed wall-clock or animation-frame delay can
         // fire before a distant target's `onScrollToIndexFailed` retries
-        // (below) have brought it into range, re-centering — or flashing —
+        // (below) have brought it into range, realigning — or flashing —
         // a row that is still off-window or clipped. See
         // `buzz/message-source-landing.ts`.
         messageSourceLandingRef.current = startMessageSourceLanding(messageId);
+        // Native is inverted: position 1 puts the row beginning at the
+        // viewport top, below the Room header and corner objective.
         flatListRef.current?.scrollToIndex({
           index: visibleIndex,
-          viewPosition: 0.5,
+          viewPosition: 1,
           animated: false,
         });
         settleMessageSourceLandingIfVisible();
@@ -6344,7 +6346,7 @@ export function BuzzChatSurface({
                           if (currentIndex >= 0 && !userDraggingRef.current) {
                             flatListRef.current?.scrollToIndex({
                               index: currentIndex,
-                              viewPosition: 0.5,
+                              viewPosition: 1,
                               animated: false,
                             });
                           }

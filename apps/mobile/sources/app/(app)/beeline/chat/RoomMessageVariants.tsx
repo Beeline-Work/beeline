@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Image, Linking, Platform, Pressable, Text, TextInput, View } from 'react-native';
+import { Animated, Image, Platform, Pressable, Text, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -502,89 +502,6 @@ const appSignInStyles = StyleSheet.create(theme => {
   error: { ...theme.buzz.type.meta, color: theme.buzz.dialogDanger },
   button: { alignSelf: 'flex-start' },
   settled: { ...theme.buzz.type.sectionHead, color: board.quiet, marginVertical: 8, marginHorizontal: 8 },
-  };
-});
-
-/**
- * `@agent login`: Claude Code's own `/login`, at the call site. The agent's
- * machine built the claude.ai link; its owner opens it, approves, and pastes
- * the code here. The code goes to the machine through `onSubmit` and is never
- * posted as a message, kept in a draft, or shown back.
- */
-export function ClaudeSignInCard({ message, agentName, isOwner, onSubmit }: {
-  message: ChatDisplayMessage;
-  agentName: string;
-  isOwner: boolean;
-  onSubmit: (code: string) => Promise<void>;
-}) {
-  const signIn = message.claudeSignIn!;
-  const [code, setCode] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  if (signIn.status === 'signed-in')
-    return <Text style={appSignInStyles.settled} testID="claude-sign-in-done">{`CLAUDE SIGNED IN · ${agentName.toUpperCase()} USES IT NEXT TURN`}</Text>;
-  const waitingForLink = signIn.status === 'starting';
-  const canPaste = isOwner && Boolean(signIn.authorizeUrl) &&
-    (signIn.status === 'pending' || signIn.status === 'failed');
-  const submit = async () => {
-    const trimmed = code.trim();
-    if (!trimmed || busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await onSubmit(trimmed);
-      setCode('');
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const shownError = error ?? (signIn.status === 'failed' ? signIn.errorMessage ?? 'Claude sign-in failed.' : null);
-  return <View style={appSignInStyles.wrap} testID="claude-sign-in">
-    <View style={appSignInStyles.card}>
-      <Text style={appSignInStyles.title}>{`Sign in ${agentName} to Claude`}</Text>
-      {waitingForLink
-        ? <Text style={appSignInStyles.detail}>{`Asking ${agentName}'s machine for a sign-in link…`}</Text>
-        : isOwner
-          ? <Text style={appSignInStyles.detail}>Open claude.ai and approve. It shows a code; paste it here.</Text>
-          : <Text style={appSignInStyles.detail}>{`Waiting for its owner to sign ${agentName} in.`}</Text>}
-      {shownError ? <Text accessibilityRole="alert" style={appSignInStyles.error} testID="claude-sign-in-error">{shownError}</Text> : null}
-      {canPaste ? <>
-        <Button label="Open claude.ai" onPress={() => void Linking.openURL(signIn.authorizeUrl!)} style={appSignInStyles.button} testID="claude-sign-in-open" />
-        <TextInput
-          accessibilityLabel="Code from claude.ai"
-          autoCapitalize="none"
-          autoCorrect={false}
-          editable={!busy}
-          onChangeText={setCode}
-          onSubmitEditing={() => void submit()}
-          placeholder="Code from claude.ai"
-          placeholderTextColor={claudeSignInStyles.placeholder.color}
-          style={claudeSignInStyles.input}
-          testID="claude-sign-in-code"
-          value={code}
-        />
-        <Button disabled={busy || !code.trim()} label={busy ? 'Signing in' : 'Sign in'} onPress={() => void submit()} style={appSignInStyles.button} testID="claude-sign-in-submit" />
-      </> : null}
-      {signIn.status === 'signing-in' && !busy ? <Text style={appSignInStyles.detail}>Signing in…</Text> : null}
-    </View>
-  </View>;
-}
-
-const claudeSignInStyles = StyleSheet.create(theme => {
-  const board = appBoardColors(theme.buzz);
-  return {
-    input: {
-      ...theme.buzz.type.body,
-      color: board.ink,
-      borderWidth: 1,
-      borderColor: theme.buzz.borderStrong,
-      borderRadius: theme.buzz.radius,
-      paddingHorizontal: theme.buzz.space.sm,
-      minHeight: 44,
-    },
-    placeholder: { color: board.quiet },
   };
 });
 

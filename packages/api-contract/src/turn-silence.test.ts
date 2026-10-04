@@ -131,12 +131,26 @@ describe('turn silence phrasing', () => {
   });
 
   it('tells a Claude agent owner to send @agent login, keeping beeline connect as the fallback', () => {
-    const line = phraseTurnSilence('Candy', { kind: 'not-signed-in' }, { claudeLoginHandle: 'candy' });
+    const line = phraseTurnSilence('Candy', { kind: 'not-signed-in' }, {
+      login: { handle: 'candy', harness: 'claude' },
+    });
     expect(`Candy ${line.verb} · ${line.consequence}`).toBe(
       "Candy could not answer · the helper could not authenticate with Claude. If its login expired, its owner can send `@candy login` here, or run `beeline connect` on the helper's machine.",
     );
     expect(`@candy ${line.verb} · ${line.consequence}`.length).toBeLessThanOrEqual(
       TURN_SILENCE_LINE_MAX,
+    );
+  });
+
+  it('names the service, or the key, for every harness that signs in from a Room', () => {
+    const consequence = (harness: 'codex' | 'grok' | 'cursor' | 'pi') =>
+      phraseTurnSilence('Candy', { kind: 'not-signed-in' }, { login: { handle: 'candy', harness } })
+        .consequence;
+    expect(consequence('codex')).toContain('could not authenticate with ChatGPT. If its login expired');
+    expect(consequence('grok')).toContain('could not authenticate with Grok.');
+    expect(consequence('cursor')).toContain('could not authenticate with Cursor.');
+    expect(consequence('pi')).toBe(
+      "the helper could not authenticate with its provider. If its key expired, its owner can send `@candy login` here, or run `beeline connect` on the helper's machine.",
     );
   });
 

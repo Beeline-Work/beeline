@@ -1,3 +1,4 @@
+import type { AgentSignInLink } from '@beeline/api-contract/daemon';
 import { EventEmitter } from 'node:events';
 import type { RoomViewMessage } from '@beeline/api-contract/phone';
 
@@ -113,13 +114,13 @@ export type LiveEvent =
   /** A server instance accepted a newer connection for this agent. Never sent
    *  to a socket; every instance drops its own older connection for the agent. */
   | { type: 'agent-connection'; roomId: ''; agentId: string; epoch: number }
-  /** One Sign in to Claude step (`claude-sign-in.ts`). Never sent to a phone
+  /** One Sign in to Claude step (`agent-sign-in.ts`). Never sent to a phone
    *  socket: a helper session forwards only `start`/`code` for its own agent,
    *  and the owner's waiting request reads `link`/`result`. */
-  | ({ type: 'claude-sign-in'; roomId: ''; agentId: string; attemptId: string } & (
-      | { step: 'start' }
+  | ({ type: 'agent-sign-in'; roomId: ''; agentId: string; attemptId: string } & (
+      | { step: 'start'; cardId: string }
       | { step: 'code'; code: string }
-      | { step: 'link'; authorizeUrl: string }
+      | { step: 'link'; link: AgentSignInLink }
       | { step: 'result'; outcome: 'signed-in' }
       | { step: 'result'; outcome: 'failed'; error: string }
     ));

@@ -2,7 +2,7 @@ import type { AgentGrantDecision, AgentGrantStatus } from './agent-grants.js';
 import type { ChoiceStatus, ChoiceOptionInput } from './room-choices.js';
 import type { AgentAccessPolicy } from './agent-access.js';
 import type { PushLevel } from './push-level.js';
-import type { CompleteClaudeSignInInput, CompleteClaudeSignInResult } from './claude-sign-in.js';
+import type { CompleteAgentSignInInput, CompleteAgentSignInResult } from './agent-sign-in.js';
 import type {
   WorkflowContract,
   WorkflowTerminalState,
@@ -143,7 +143,7 @@ export type PhoneOperationMap = {
   updateAgentModelSelection: { input: UpdateAgentModelInput; output: void };
   refreshAgentModelCatalog: { input: WorkspaceAgentInput; output: void };
   /** Owner-only: relay the code pasted into an `@agent login` card to the agent's machine. */
-  completeClaudeSignIn: { input: CompleteClaudeSignInInput; output: CompleteClaudeSignInResult };
+  completeAgentSignIn: { input: CompleteAgentSignInInput; output: CompleteAgentSignInResult };
   updateAgentYolo: { input: UpdateAgentYoloInput; output: void };
   updateAgentAccessPolicy: { input: UpdateAgentAccessPolicyInput; output: void };
   removeAgent: { input: WorkspaceAgentInput; output: void };

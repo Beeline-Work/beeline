@@ -1,5 +1,5 @@
 import { Client } from 'pg';
-import { CLAUDE_SIGN_IN_TABLE, decodeClaudeSignInNotification } from './claude-sign-in.js';
+import { AGENT_SIGN_IN_TABLE, decodeAgentSignInNotification } from './agent-sign-in.js';
 import type { SqlDatabase } from './database.js';
 import type { LiveEvent, LiveHub } from './live.js';
 
@@ -440,9 +440,9 @@ export class PostgresLiveListener {
     this.lastNotificationAt = Date.now();
     const payload = decodePayload(raw);
     if (!payload) return;
-    if (payload.table === CLAUDE_SIGN_IN_TABLE) {
+    if (payload.table === AGENT_SIGN_IN_TABLE) {
       // No database work: publish now, and never queue or log the payload.
-      const event = decodeClaudeSignInNotification(raw);
+      const event = decodeAgentSignInNotification(raw);
       if (event) this.live.publish(event);
       return;
     }

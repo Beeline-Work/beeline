@@ -1,8 +1,8 @@
 import {
-  beginClaudeSignInCards,
-  CLAUDE_SIGN_IN_NO_ANSWER_MESSAGE,
-  completeClaudeSignInCard,
-} from './claude-sign-in.js';
+  beginAgentSignInCards,
+  AGENT_SIGN_IN_NO_ANSWER_MESSAGE,
+  completeAgentSignInCard,
+} from './agent-sign-in.js';
 import { startWorkflow } from './workflow-runs.js';
 import { humanRoomAdmin, scheduleWorkflowName } from './workflow-admin.js';
 import { setCornerHold } from './corner-holds.js';
@@ -82,7 +82,7 @@ import {
   type WelcomeCardsView,
   isPushLevel,
   type ArtifactAttachment,
-  type ClaudeSignInCardView,
+  type AgentSignInCardView,
 } from '@beeline/api-contract/phone';
 import {
   isCommandGrantScript,
@@ -753,16 +753,24 @@ function projectedMessage(
         },
       };
     }
-    case 'claude-sign-in': {
-      // The attempt id and source message stay server-side; no code is ever stored.
-      const card = row.card as ClaudeSignInCardView;
+    case 'agent-sign-in': {
+      // The attempt id and source message stay server-side; no code or key is
+      // ever stored. The link and device code are the owner's alone: anyone
+      // else approving them would sign the agent in to their own account.
+      const card = row.card as AgentSignInCardView;
+      const owner = viewerId === card.ownerId;
       return {
         ...base,
-        claudeSignIn: {
+        agentSignIn: {
           agentId: card.agentId,
           ownerId: card.ownerId,
+          harness: card.harness,
           status: card.status,
-          ...(card.authorizeUrl ? { authorizeUrl: card.authorizeUrl } : {}),
+          ...(card.kind ? { kind: card.kind } : {}),
+          ...(owner && card.authorizeUrl ? { authorizeUrl: card.authorizeUrl } : {}),
+          ...(owner && card.userCode ? { userCode: card.userCode } : {}),
+          ...(card.expiresAt ? { expiresAt: card.expiresAt } : {}),
+          ...(card.provider ? { provider: card.provider } : {}),
           ...(card.errorMessage ? { errorMessage: card.errorMessage } : {}),
         },
       };
@@ -3645,12 +3653,12 @@ export class PhoneService {
         )) as Output<Name>;
       case 'sendRoomMessage': {
         const sent = await this.sendMessage(input as Input<'sendRoomMessage'>, viewerId);
-        this.beginClaudeSignIn(input as Input<'sendRoomMessage'>, sent.messageId);
+        this.beginAgentSignIn(input as Input<'sendRoomMessage'>, sent.messageId);
         return sent as Output<Name>;
       }
       case 'sendRoomReply': {
         const sent = await this.sendReply(input as Input<'sendRoomReply'>, viewerId);
-        this.beginClaudeSignIn(input as Input<'sendRoomReply'>, sent.messageId);
+        this.beginAgentSignIn(input as Input<'sendRoomReply'>, sent.messageId);
         return sent as Output<Name>;
       }
       case 'reactToMessage':
@@ -3938,9 +3946,9 @@ export class PhoneService {
       case 'refreshAgentModelCatalog':
         await this.refreshAgentModelCatalog(input as Input<'refreshAgentModelCatalog'>, viewerId);
         return undefined as Output<Name>;
-      case 'completeClaudeSignIn':
-        return (await this.completeClaudeSignIn(
-          input as Input<'completeClaudeSignIn'>,
+      case 'completeAgentSignIn':
+        return (await this.completeAgentSignIn(
+          input as Input<'completeAgentSignIn'>,
           viewerId,
         )) as Output<Name>;
       case 'updateAgentYolo':
@@ -6619,19 +6627,19 @@ export class PhoneService {
    * (`agent-command.ts`); once that commits, ask the agent's machine for the
    * claude.ai link without holding the send open.
    */
-  private beginClaudeSignIn(input: { roomId: string; text: string }, messageId: string) {
+  private beginAgentSignIn(input: { roomId: string; text: string }, messageId: string) {
     if (!this.live || !isTaggedLoginText(input.text)) return;
-    void beginClaudeSignInCards(this.database, this.live, input.roomId, messageId).catch((error) =>
+    void beginAgentSignInCards(this.database, this.live, input.roomId, messageId).catch((error) =>
       console.error(
         '[claude-sign-in] start failed',
         error instanceof Error ? error.message : String(error),
       ),
     );
   }
-  /** Owner-only; the card and relay rules live in `claude-sign-in.ts`. */
-  private async completeClaudeSignIn(input: Input<'completeClaudeSignIn'>, viewerId: string) {
-    if (!this.live) throw new Error(CLAUDE_SIGN_IN_NO_ANSWER_MESSAGE);
-    return completeClaudeSignInCard(this.database, this.live, input, viewerId);
+  /** Owner-only; the card and relay rules live in `agent-sign-in.ts`. */
+  private async completeAgentSignIn(input: Input<'completeAgentSignIn'>, viewerId: string) {
+    if (!this.live) throw new Error(AGENT_SIGN_IN_NO_ANSWER_MESSAGE);
+    return completeAgentSignInCard(this.database, this.live, input, viewerId);
   }
   private async refreshAgentModelCatalog(
     input: Input<'refreshAgentModelCatalog'>,
@@ -9565,7 +9573,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'updateAgentSoul',
   'updateAgentModelSelection',
   'refreshAgentModelCatalog',
-  'completeClaudeSignIn',
+  'completeAgentSignIn',
   'updateAgentYolo',
   'updateAgentAccessPolicy',
   'removeAgent',

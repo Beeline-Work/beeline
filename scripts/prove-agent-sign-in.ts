@@ -1,11 +1,14 @@
 /**
- * `@agent login`, end to end: authenticated phone HTTP -> server ->
- * PostgreSQL NOTIFY -> the helper's live socket -> a real helper client that
- * builds the PKCE link and writes the shared Claude login. Only Claude's own
- * token and profile endpoints are faked; nothing else is.
+ * `@agent login`, end to end, for three of the four sign-in kinds:
+ * authenticated phone HTTP -> server -> PostgreSQL NOTIFY -> the helper's
+ * live socket -> a real helper client (`AgentSignIn`) that writes the login
+ * where the harness reads it. Faked: Claude's token/profile endpoints,
+ * OpenRouter's key check, and the `codex` binary (a stand-in that prints the
+ * real Codex 0.160.0 device-code output and exits 0 when "approved").
  */
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import { lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -15,10 +18,13 @@ import type { RoomViewMessage } from '@beeline/api-contract/phone';
 import { PgliteDatabase } from '../apps/server/src/test-support.js';
 import { DaemonApiClient } from '../apps/body/src/daemon-api-client.js';
 import {
-  answerClaudeSignInFrame,
-  CLAUDE_OAUTH,
-  ClaudeSignIn,
-} from '../apps/body/src/claude-sign-in.js';
+  AgentSignIn,
+  answerAgentSignInFrame,
+  reportAgentSignInResult,
+  type AgentSignInOptions,
+} from '../apps/body/src/agent-sign-in.js';
+import { CODEX_DEVICE_OUTPUT } from '../apps/body/src/agent-sign-in.fixtures.js';
+import { CLAUDE_OAUTH } from '../apps/body/src/claude-sign-in.js';
 
 const OWNER = 'a'.repeat(64);
 const MEMBER = 'b'.repeat(64);
@@ -83,7 +89,7 @@ async function main(): Promise<void> {
     connectionPresence: presence,
     mediaMaximumBytes: 1024 * 1024,
   });
-  const home = await mkdtemp(join(tmpdir(), 'beeline-claude-sign-in-proof-'));
+  const home = await mkdtemp(join(tmpdir(), 'beeline-agent-sign-in-proof-'));
   let helper: DaemonApiClient | undefined;
   try {
     await db.query(
@@ -145,12 +151,26 @@ async function main(): Promise<void> {
       );
     }) as typeof fetch;
     helper = new DaemonApiClient(origin, daemonToken, AGENT);
-    const signIn = new ClaudeSignIn({ operatorHome: home, fetch: claude });
     const helperLog: string[] = [];
     const client = helper;
-    helper.setClaudeSignInListener((frame) => {
-      void answerClaudeSignInFrame(client, AGENT, signIn, frame, (line) => helperLog.push(line));
-    });
+    const cards = new Map<string, string>();
+    const log = (line: string) => helperLog.push(line);
+    // One helper connection; each phase runs the harness the agents row names.
+    const useHarness = async (harness: AgentSignInOptions['harness'], extra: Partial<AgentSignInOptions>) => {
+      await db.query(`UPDATE agents SET harness=$2 WHERE agent_id=$1`, [AGENT, harness]);
+      const signIn = new AgentSignIn({
+        harness,
+        operatorHome: home,
+        agentEnv: { PATH: process.env.PATH ?? '' },
+        onResult: (attemptId, result) =>
+          void reportAgentSignInResult(client, AGENT, attemptId, cards, result, log),
+        ...extra,
+      });
+      client.setAgentSignInListener((frame) => {
+        void answerAgentSignInFrame(client, AGENT, signIn, frame, cards, log);
+      });
+    };
+    await useHarness('claude', { fetch: claude });
     helper.liveSubscribe(ROOM, undefined, undefined, () => undefined);
     for (let attempt = 0; attempt < 200; attempt++) {
       const held = await db.query(
@@ -169,17 +189,17 @@ async function main(): Promise<void> {
       });
       return { status: response.status, body: (await response.json()) as Record<string, unknown> };
     }
-    async function roomCard(): Promise<RoomViewMessage | undefined> {
+    async function roomCard(token = ownerToken): Promise<RoomViewMessage | undefined> {
       const response = await fetch(`${origin}/v1/phone/rooms/${ROOM}`, {
-        headers: { authorization: `Bearer ${ownerToken}` },
+        headers: { authorization: `Bearer ${token}` },
       });
       const room = (await response.json()) as { messages: RoomViewMessage[] };
-      return room.messages.filter((message) => message.claudeSignIn).at(-1);
+      return room.messages.filter((message) => message.agentSignIn).at(-1);
     }
     async function cardSettles(status: string): Promise<RoomViewMessage> {
       for (let attempt = 0; attempt < 400; attempt++) {
         const card = await roomCard();
-        if (card?.claudeSignIn?.status === status) return card;
+        if (card?.agentSignIn?.status === status) return card;
         await new Promise((done) => setTimeout(done, 25));
       }
       throw new Error(`card never reached ${status}`);
@@ -198,7 +218,7 @@ async function main(): Promise<void> {
 
     await phone(ownerToken, 'sendRoomMessage', { roomId: ROOM, text: '@clara login' });
     const card = await cardSettles('pending');
-    const link = new URL(String(card.claudeSignIn!.authorizeUrl));
+    const link = new URL(String(card.agentSignIn!.authorizeUrl));
     console.log(`Owner sends "@clara login" -> card: ${card.text}`);
     console.log(`  card link: ${link.origin}${link.pathname}?client_id=${link.searchParams.get('client_id')}&redirect_uri=${link.searchParams.get('redirect_uri')}&code_challenge_method=${link.searchParams.get('code_challenge_method')}&…`);
     const modelCommands = await db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1`, [AGENT]);
@@ -206,22 +226,22 @@ async function main(): Promise<void> {
     assert.equal(modelCommands.rowCount, 0);
     const state = link.searchParams.get('state')!;
 
-    const stale = await phone(ownerToken, 'completeClaudeSignIn', {
+    const stale = await phone(ownerToken, 'completeAgentSignIn', {
       roomId: ROOM,
       messageId: card.id,
       code: `expired-code#${state}`,
     });
     const afterStale = await cardSettles('failed');
-    console.log(`Owner pastes an expired code into the card -> ${stale.status}; card shows: ${afterStale.claudeSignIn!.errorMessage}`);
+    console.log(`Owner pastes an expired code into the card -> ${stale.status}; card shows: ${afterStale.agentSignIn!.errorMessage}`);
     assert.notEqual(stale.status, 200);
 
-    const done = await phone(ownerToken, 'completeClaudeSignIn', {
+    const done = await phone(ownerToken, 'completeAgentSignIn', {
       roomId: ROOM,
       messageId: card.id,
       code: `${GOOD_CODE}#${state}`,
     });
     const signedIn = await cardSettles('signed-in');
-    console.log(`Owner pastes the code claude.ai showed -> ${done.status} ${JSON.stringify(done.body)}; card status ${signedIn.claudeSignIn!.status}`);
+    console.log(`Owner pastes the code claude.ai showed -> ${done.status} ${JSON.stringify(done.body)}; card status ${signedIn.agentSignIn!.status}`);
     assert.deepEqual(done, { status: 200, body: { signedIn: true } });
 
     const roomView = JSON.parse(await readFile(roomLink, 'utf8')) as {
@@ -248,6 +268,64 @@ async function main(): Promise<void> {
     console.log(`Tables holding the pasted code: ${hits.length ? hits.join(', ') : 'none'}; helper log lines naming it: ${helperLog.filter((line) => line.includes(GOOD_CODE)).length}`);
     assert.deepEqual(hits, []);
 
+    // Device code (Codex): the machine runs `codex login --device-auth`.
+    const codexRuns: Array<{ child: EventEmitter & { stdout: PassThrough }; env: NodeJS.ProcessEnv }> = [];
+    const fakeCodex = ((command: string, args: string[], options: { env: NodeJS.ProcessEnv }) => {
+      assert.equal(`${command} ${args.join(' ')}`, 'codex login --device-auth');
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+        kill: () => true,
+      });
+      codexRuns.push({ child, env: options.env });
+      setTimeout(() => child.stdout.write(CODEX_DEVICE_OUTPUT), 50);
+      return child;
+    }) as never;
+    await useHarness('codex', { spawn: fakeCodex });
+    await phone(ownerToken, 'sendRoomMessage', { roomId: ROOM, text: '@clara login' });
+    const device = await cardSettles('pending');
+    console.log(`Codex agent: owner sends "@clara login" -> card: ${device.text}`);
+    console.log(`  owner's card: ${device.agentSignIn!.kind} · ${device.agentSignIn!.authorizeUrl} · code ${device.agentSignIn!.userCode}`);
+    const memberView = (await roomCard(memberToken))!.agentSignIn!;
+    console.log(`  admin's view of the same card: link ${memberView.authorizeUrl ?? 'hidden'}, code ${memberView.userCode ?? 'hidden'}`);
+    assert.equal(device.agentSignIn!.userCode, 'EBQ9-VJCLN');
+    assert.equal(memberView.userCode, undefined);
+    assert.equal(codexRuns[0]!.env.HOME, home);
+    codexRuns[0]!.child.emit('exit', 0, null);
+    const approved = await cardSettles('signed-in');
+    console.log(`  approved on the provider page (codex exits 0) -> card status ${approved.agentSignIn!.status}, with nothing pasted`);
+
+    // API key (Pi): the key replaces the provider key `beeline connect` saved.
+    const envFile = join(home, 'connect', 'agent.env');
+    await mkdir(join(home, 'connect'), { recursive: true });
+    await writeFile(envFile, 'OPENROUTER_API_KEY="sk-or-v1-old"\n', { mode: 0o600 });
+    const PI_KEY = 'sk-or-v1-new-pasted-key';
+    await useHarness('pi', {
+      llmEnvFile: envFile,
+      fetch: (async (_url: string | URL | Request, init?: RequestInit) =>
+        new Response('{}', {
+          status: new Headers(init?.headers).get('authorization') === `Bearer ${PI_KEY}` ? 200 : 401,
+        })) as typeof fetch,
+    });
+    await phone(ownerToken, 'sendRoomMessage', { roomId: ROOM, text: '@clara login' });
+    const keyCard = await cardSettles('pending');
+    console.log(`Pi agent: owner sends "@clara login" -> card: ${keyCard.text} (${keyCard.agentSignIn!.kind}, ${keyCard.agentSignIn!.provider})`);
+    const badKey = await phone(ownerToken, 'completeAgentSignIn', { roomId: ROOM, messageId: keyCard.id, code: 'sk-or-v1-wrong' });
+    console.log(`  owner pastes a wrong key -> ${badKey.status} ${badKey.body.error}`);
+    const goodKey = await phone(ownerToken, 'completeAgentSignIn', { roomId: ROOM, messageId: keyCard.id, code: PI_KEY });
+    const savedKey = await cardSettles('signed-in');
+    const envNow = await readFile(envFile, 'utf8');
+    console.log(`  owner pastes the right key -> ${goodKey.status}; card ${savedKey.agentSignIn!.status}; env file now holds the new key: ${envNow.includes(PI_KEY)}, mode ${((await stat(envFile)).mode & 0o777).toString(8)}`);
+    assert.equal(goodKey.status, 200);
+    assert.ok(envNow.includes(PI_KEY));
+    const keyHits: string[] = [];
+    for (const { name } of persisted.rows) {
+      const found = await db.query(`SELECT 1 FROM "${name}" row WHERE row::text LIKE $1 LIMIT 1`, [`%${PI_KEY}%`]);
+      if (found.rowCount) keyHits.push(name);
+    }
+    console.log(`  tables holding the pasted key: ${keyHits.length ? keyHits.join(', ') : 'none'}; helper log lines naming it: ${helperLog.filter((line) => line.includes(PI_KEY)).length}`);
+    assert.deepEqual(keyHits, []);
+
     helper.closeLive();
     helper = undefined;
     for (let attempt = 0; attempt < 200; attempt++) {
@@ -260,8 +338,8 @@ async function main(): Promise<void> {
     }
     await phone(ownerToken, 'sendRoomMessage', { roomId: ROOM, text: '@clara /login' });
     const offline = await cardSettles('failed');
-    console.log(`Helper stopped; owner sends "@clara /login" -> card shows: ${offline.claudeSignIn!.errorMessage}`);
-    assert.match(String(offline.claudeSignIn!.errorMessage), /offline/);
+    console.log(`Helper stopped; owner sends "@clara /login" -> card shows: ${offline.agentSignIn!.errorMessage}`);
+    assert.match(String(offline.agentSignIn!.errorMessage), /offline/);
   } finally {
     helper?.closeLive();
     await listener.stop();

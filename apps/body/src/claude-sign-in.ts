@@ -1,9 +1,10 @@
 /**
- * Sign in to Claude, run on the agent's own machine.
+ * Claude Code's paste-back sign-in, run on the agent's own machine.
  *
- * The owner taps Sign in to Claude in the app; the server relays `start`
- * here, this helper builds Claude Code's own manual-paste OAuth link (PKCE,
- * S256) and keeps the verifier in memory. The owner approves on claude.ai,
+ * The owner sends `@agent login`; the server relays `start` here
+ * (`agent-sign-in.ts` dispatches by harness). This helper builds Claude
+ * Code's own manual-paste OAuth link (PKCE, S256) and keeps the verifier in
+ * memory. The owner approves on claude.ai,
  * pastes the code back, and the server relays it here once. This helper
  * exchanges it and atomically replaces the operator's shared
  * `~/.claude/.credentials.json` (mode 0600), the file every Room's isolated
@@ -15,14 +16,9 @@
  * owner as `ClaudeSignInShapeError` instead of a corrupt login.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdir, open, readFile, rename, rm } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
-import {
-  CLAUDE_SIGN_IN_ATTEMPT_TTL_MS,
-  type ClaudeSignInFrame,
-  type ReportClaudeSignInInput,
-} from '@beeline/api-contract/daemon';
-import type { DaemonApiClient } from './daemon-api-client.js';
+import { join } from 'node:path';
+import { AGENT_SIGN_IN_ATTEMPT_TTL_MS } from '@beeline/api-contract/daemon';
+import { readJsonObject, writePrivateFileAtomically } from './atomic-private-file.js';
 
 export const CLAUDE_OAUTH = {
   clientId: '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
@@ -134,10 +130,7 @@ export function parseClaudeTokenResponse(body: unknown, now: number): ClaudeOaut
   };
 }
 
-/**
- * Replace the shared login atomically: write a 0600 sibling, fsync, rename.
- * Every other top-level key in the file (other OAuth logins) is kept.
- */
+/** Replace the shared login atomically, keeping every other top-level key (other OAuth logins). */
 export async function writeClaudeCredentials(
   operatorHome: string,
   login: ClaudeOauthLogin & {
@@ -146,17 +139,8 @@ export async function writeClaudeCredentials(
   },
 ): Promise<string> {
   const path = join(operatorHome, '.claude', '.credentials.json');
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  let existing: Record<string, unknown> = {};
-  try {
-    const parsed: unknown = JSON.parse(await readFile(path, 'utf8'));
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
-      existing = parsed as Record<string, unknown>;
-  } catch {
-    // Missing or unreadable: the new login is the whole file.
-  }
   const next = {
-    ...existing,
+    ...(await readJsonObject(path)),
     claudeAiOauth: {
       accessToken: login.accessToken,
       refreshToken: login.refreshToken,
@@ -166,24 +150,7 @@ export async function writeClaudeCredentials(
       rateLimitTier: login.rateLimitTier,
     },
   };
-  const temporary = `${path}.beeline-${process.pid}-${base64Url(randomBytes(6))}`;
-  const handle = await open(temporary, 'wx', 0o600);
-  try {
-    await handle.writeFile(`${JSON.stringify(next, null, 2)}\n`, 'utf8');
-    await handle.chmod(0o600);
-    await handle.sync();
-  } catch (error) {
-    await handle.close();
-    await rm(temporary, { force: true });
-    throw error;
-  }
-  await handle.close();
-  try {
-    await rename(temporary, path);
-  } catch (error) {
-    await rm(temporary, { force: true });
-    throw error;
-  }
+  await writePrivateFileAtomically(path, `${JSON.stringify(next, null, 2)}\n`);
   return path;
 }
 
@@ -218,7 +185,7 @@ export class ClaudeSignIn {
     this.#attempts.set(attemptId, {
       verifier,
       state,
-      expiresAt: this.#now() + CLAUDE_SIGN_IN_ATTEMPT_TTL_MS,
+      expiresAt: this.#now() + AGENT_SIGN_IN_ATTEMPT_TTL_MS,
       completing: false,
     });
     return claudeAuthorizeUrl({
@@ -303,50 +270,5 @@ export class ClaudeSignIn {
     const now = this.#now();
     for (const [id, attempt] of this.#attempts)
       if (attempt.expiresAt <= now && !attempt.completing) this.#attempts.delete(id);
-  }
-}
-
-/** Validate one live frame from the server; anything else is ignored. */
-export function claudeSignInFrame(event: Record<string, unknown>): ClaudeSignInFrame | undefined {
-  if (event.type !== 'claude-sign-in' || typeof event.attemptId !== 'string' || !event.attemptId)
-    return undefined;
-  if (event.step === 'start')
-    return { type: 'claude-sign-in', step: 'start', attemptId: event.attemptId };
-  if (event.step === 'code' && typeof event.code === 'string')
-    return { type: 'claude-sign-in', step: 'code', attemptId: event.attemptId, code: event.code };
-  return undefined;
-}
-
-/**
- * Run one frame and report its answer. Logs name the attempt and the error,
- * never the code, verifier, or token.
- */
-export async function answerClaudeSignInFrame(
-  api: Pick<DaemonApiClient, 'execute'>,
-  agentId: string,
-  signIn: ClaudeSignIn,
-  frame: ClaudeSignInFrame,
-  log: (message: string) => void = () => {},
-): Promise<void> {
-  let report: ReportClaudeSignInInput;
-  try {
-    if (frame.step === 'start') {
-      report = { agentId, attemptId: frame.attemptId, authorizeUrl: signIn.start(frame.attemptId) };
-    } else {
-      await signIn.complete(frame.attemptId, frame.code);
-      report = { agentId, attemptId: frame.attemptId, outcome: 'signed-in' };
-      log(`claude sign-in ${frame.attemptId} saved the shared login`);
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    log(`claude sign-in ${frame.attemptId} ${frame.step} failed: ${message}`);
-    report = { agentId, attemptId: frame.attemptId, outcome: 'failed', error: message };
-  }
-  try {
-    await api.execute('reportClaudeSignIn', report);
-  } catch (error) {
-    log(
-      `claude sign-in ${frame.attemptId} report failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
   }
 }

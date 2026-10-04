@@ -3,9 +3,8 @@ import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CLAUDE_SIGN_IN_ATTEMPT_TTL_MS } from '@beeline/api-contract/daemon';
+import { AGENT_SIGN_IN_ATTEMPT_TTL_MS } from '@beeline/api-contract/daemon';
 import {
-  answerClaudeSignInFrame,
   CLAUDE_OAUTH,
   CLAUDE_SIGN_IN_EXPIRED_MESSAGE,
   CLAUDE_SIGN_IN_REJECTED_MESSAGE,
@@ -147,44 +146,11 @@ describe('Sign in to Claude on the agent machine', () => {
     await expect(signIn.complete(ATTEMPT, 'code#someone-elses-state')).rejects.toThrow(
       CLAUDE_SIGN_IN_WRONG_ATTEMPT_MESSAGE,
     );
-    now += CLAUDE_SIGN_IN_ATTEMPT_TTL_MS + 1;
+    now += AGENT_SIGN_IN_ATTEMPT_TTL_MS + 1;
     await expect(signIn.complete(ATTEMPT, 'code')).rejects.toThrow(CLAUDE_SIGN_IN_EXPIRED_MESSAGE);
     await expect(signIn.complete('never-started', 'code')).rejects.toThrow(
       CLAUDE_SIGN_IN_EXPIRED_MESSAGE,
     );
     expect(calls).toEqual([]);
-  });
-
-  it('reports each step to the server and never logs or reports the code', async () => {
-    const execute = vi.fn().mockResolvedValue(undefined);
-    const logs: string[] = [];
-    const signIn = new ClaudeSignIn({
-      operatorHome: home,
-      fetch: claudeFetch({ status: 401, body: {} }, []),
-      now: () => now,
-    });
-    await answerClaudeSignInFrame({ execute }, 'agent', signIn, {
-      type: 'claude-sign-in',
-      step: 'start',
-      attemptId: ATTEMPT,
-    }, (line) => logs.push(line));
-    expect(execute).toHaveBeenLastCalledWith('reportClaudeSignIn', {
-      agentId: 'agent',
-      attemptId: ATTEMPT,
-      authorizeUrl: expect.stringMatching(/^https:\/\/claude\.com\/cai\/oauth\/authorize\?/),
-    });
-    await answerClaudeSignInFrame({ execute }, 'agent', signIn, {
-      type: 'claude-sign-in',
-      step: 'code',
-      attemptId: ATTEMPT,
-      code: 'secret-pasted-code',
-    }, (line) => logs.push(line));
-    expect(execute).toHaveBeenLastCalledWith('reportClaudeSignIn', {
-      agentId: 'agent',
-      attemptId: ATTEMPT,
-      outcome: 'failed',
-      error: CLAUDE_SIGN_IN_REJECTED_MESSAGE,
-    });
-    expect(JSON.stringify([execute.mock.calls, logs])).not.toContain('secret-pasted-code');
   });
 });

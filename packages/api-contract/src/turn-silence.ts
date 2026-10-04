@@ -6,6 +6,11 @@
  * the approved remedies, the hiccup restart budget, and the 200-character cap.
  * Cost scales with messages that went unanswered, never with fleet size.
  */
+import {
+  AGENT_SIGN_IN_SERVICE_LABELS,
+  agentSignInUsesKey,
+  type AgentSignInHarness,
+} from './agent-sign-in.js';
 import { MAX_EVENT_CONSEQUENCE_LENGTH, SYSTEM_LINE_SEPARATOR } from './system-events.js';
 
 export const TURN_SILENCE_LINE_MAX = 200;
@@ -257,8 +262,8 @@ export function phraseTurnSilence(
   options: {
     readonly givingUp?: boolean;
     readonly restarting?: boolean;
-    /** The agent runs Claude and has this handle, so its owner can send `@handle login`. */
-    readonly claudeLoginHandle?: string;
+    /** The agent's harness signs in from a Room, so its owner can send `@handle login`. */
+    readonly login?: { readonly handle: string; readonly harness: AgentSignInHarness };
   } = {},
 ): TurnSilencePhrase {
   const agent = name.trim() || 'The agent';
@@ -283,8 +288,8 @@ export function phraseTurnSilence(
       return capLine(
         agent,
         'could not answer',
-        options.claudeLoginHandle
-          ? `the helper could not authenticate with Claude. If its login expired, its owner can send \`@${options.claudeLoginHandle} login\` here, or run \`beeline connect\` on the helper's machine.`
+        options.login
+          ? `the helper could not authenticate with ${AGENT_SIGN_IN_SERVICE_LABELS[options.login.harness]}. If its ${agentSignInUsesKey(options.login.harness) ? 'key' : 'login'} expired, its owner can send \`@${options.login.handle} login\` here, or run \`beeline connect\` on the helper's machine.`
           : "the helper could not authenticate with the provider. Check its log for the failed turn; if its login expired, run `beeline connect` on the helper's machine.",
       );
     case 'workspace-failure':

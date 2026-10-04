@@ -1,3 +1,8 @@
+import {
+  AGENT_SIGN_IN_SERVICE_LABELS,
+  agentSignInUsesKey,
+  isAgentSignInHarness,
+} from '@beeline/api-contract/daemon';
 import { workflowOutputBindingCtes } from './workflow-step-output.js';
 import { createHash, randomBytes } from 'node:crypto';
 import type {
@@ -241,8 +246,8 @@ export function parseTaggedAgentLifecycleCommand(
 }
 
 /** The one sign-in card an `@agent login` message writes. */
-export function claudeSignInCardId(sourceMessageId: string, agentId: string): string {
-  return createHash('sha256').update(`claude-sign-in:${sourceMessageId}:${agentId}`).digest('hex');
+export function agentSignInCardId(sourceMessageId: string, agentId: string): string {
+  return createHash('sha256').update(`agent-sign-in:${sourceMessageId}:${agentId}`).digest('hex');
 }
 
 /** True for the exact text of an `@agent login` / `@agent /login` message. */
@@ -344,31 +349,35 @@ async function routeTaggedLifecycleCommand(
     return true;
   }
   if (action === 'login') {
-    // Claude Code's own `/login`, at the call site: the card carries the
-    // machine's claude.ai link once `beginClaudeSignInCards` fetches it after
-    // this transaction commits. The code is pasted into the card, never sent
-    // as a message.
+    // Claude Code's own `/login`, at the call site, for every harness: the
+    // card carries what the machine answers (a link, a device code, or a key
+    // field) once `beginAgentSignInCards` asks after this transaction commits.
+    // A code or key is pasted into the card, never sent as a message.
     if (!ownsAgent) {
       await deny('only its owner may sign it in');
       return true;
     }
-    if (target.harness !== 'claude') {
-      await deny('sign-in from Beeline is only for Claude agents');
+    const harness = target.harness;
+    if (!isAgentSignInHarness(harness)) {
+      await deny('sign-in from Beeline is not available for its harness');
       return true;
     }
     await systemLine(db, {
-      id: claudeSignInCardId(sourceId, target.agent_id),
+      id: agentSignInCardId(sourceId, target.agent_id),
       roomId: source.room_id,
       authorId: target.agent_id,
       subject: lifecycleSubject(target),
-      verb: 'started a Claude sign-in',
-      consequence: 'its owner opens claude.ai, then pastes the code into this card',
+      verb: agentSignInUsesKey(harness)
+        ? 'asked for a new key'
+        : `started a ${AGENT_SIGN_IN_SERVICE_LABELS[harness]} sign-in`,
+      consequence: 'its owner finishes it in this card',
       afterMessageId: sourceId,
       presentation: 'card',
-      cardType: 'claude-sign-in',
+      cardType: 'agent-sign-in',
       card: {
         agentId: target.agent_id,
         ownerId: target.owner_id,
+        harness,
         status: 'starting',
         sourceMessageId: sourceId,
       },

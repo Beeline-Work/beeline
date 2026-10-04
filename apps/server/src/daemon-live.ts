@@ -133,15 +133,20 @@ export class DaemonAgentSession {
     // Deliver an agent-directed wake instead so discovery starts now.
     this.#wakeReleases.push(
       live.subscribeAll((event) => {
-        if (event.type === 'claude-sign-in') {
+        if (event.type === 'agent-sign-in') {
           // Only this agent's own helper hears its sign-in steps; the
           // link/result answers stay on the server for the waiting phone.
           if (event.agentId !== agentId || !transport.isOpen()) return;
           if (event.step === 'start')
-            transport.send({ type: 'claude-sign-in', step: 'start', attemptId: event.attemptId });
+            transport.send({
+              type: 'agent-sign-in',
+              step: 'start',
+              attemptId: event.attemptId,
+              cardId: event.cardId,
+            });
           else if (event.step === 'code')
             transport.send({
-              type: 'claude-sign-in',
+              type: 'agent-sign-in',
               step: 'code',
               attemptId: event.attemptId,
               code: event.code,

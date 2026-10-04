@@ -1,7 +1,7 @@
 import {
   isAgentCommand,
   type AgentCommand,
-  type ClaudeSignInFrame,
+  type AgentSignInFrame,
   type DaemonOperationMap,
 } from '@beeline/api-contract/daemon';
 import { resolve } from 'node:path';
@@ -16,7 +16,7 @@ import {
   type LiveSocketFactory,
 } from './live-link.js';
 import { MachineLink, type AgentChannel } from './machine-link.js';
-import { claudeSignInFrame } from './claude-sign-in.js';
+import { agentSignInFrame } from './agent-sign-in.js';
 import {
   readRuntimeRecord,
   runtimeDirectory,
@@ -183,7 +183,7 @@ export class DaemonApiClient {
   private roomsChangedListener?: (event?: RoomMembershipChange) => void;
   private configChangedListener?: () => void;
   private connectorAssignmentListener?: () => void;
-  private claudeSignInListener?: (frame: ClaudeSignInFrame) => void;
+  private agentSignInListener?: (frame: AgentSignInFrame) => void;
   private cornerCompleteListener?: (roomId: string) => void;
   private cornerRestartListener?: (roomId: string) => void;
   private helperReleaseListener?: (release: { version: string; sha: string }) => void;
@@ -323,9 +323,14 @@ export class DaemonApiClient {
     this.connectorAssignmentListener = listener;
   }
 
-  /** One Sign in to Claude step the agent's owner started in the app. */
-  setClaudeSignInListener(listener: (frame: ClaudeSignInFrame) => void): void {
-    this.claudeSignInListener = listener;
+  /** Retire idle sessions as a phone-side config change does (a new provider key was saved). */
+  emitConfigChanged(): void {
+    this.configChangedListener?.();
+  }
+
+  /** One `@agent login` step the agent's owner started in a Room. */
+  setAgentSignInListener(listener: (frame: AgentSignInFrame) => void): void {
+    this.agentSignInListener = listener;
   }
 
   /** corner-complete on the subscribed corner — close now, poll is recovery. */
@@ -459,9 +464,9 @@ export class DaemonApiClient {
       this.connectorAssignmentListener?.();
       return;
     }
-    if (event.type === 'claude-sign-in') {
-      const frame = claudeSignInFrame(event);
-      if (frame) this.claudeSignInListener?.(frame);
+    if (event.type === 'agent-sign-in') {
+      const frame = agentSignInFrame(event);
+      if (frame) this.agentSignInListener?.(frame);
       return;
     }
     if (event.type === 'config-changed') {

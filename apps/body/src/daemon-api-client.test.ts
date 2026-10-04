@@ -533,7 +533,7 @@ describe('DaemonApiClient', () => {
     release();
   });
 
-  it('hands Sign in to Claude frames to their listener and drops malformed ones', () => {
+  it('hands @agent login frames to their listener and drops malformed ones', () => {
     FakeWebSocket.instances.length = 0;
     const client = new DaemonApiClient(
       'http://127.0.0.1:43123',
@@ -543,17 +543,18 @@ describe('DaemonApiClient', () => {
       ((url, protocols) => new FakeWebSocket(url, protocols)) as DaemonWebSocketFactory,
     );
     const frames: unknown[] = [];
-    client.setClaudeSignInListener((frame) => frames.push(frame));
+    client.setAgentSignInListener((frame) => frames.push(frame));
     const release = client.liveSubscribe('room-1', undefined, () => undefined, () => undefined);
     const socket = FakeWebSocket.instances[0]!;
     socket.open();
-    socket.message({ type: 'claude-sign-in', step: 'start', attemptId: 'a1' });
-    socket.message({ type: 'claude-sign-in', step: 'code', attemptId: 'a1', code: 'c#s' });
-    socket.message({ type: 'claude-sign-in', step: 'code', attemptId: 'a1' });
-    socket.message({ type: 'claude-sign-in', step: 'link', attemptId: 'a1' });
+    socket.message({ type: 'agent-sign-in', step: 'start', attemptId: 'a1', cardId: 'card-1' });
+    socket.message({ type: 'agent-sign-in', step: 'start', attemptId: 'a1' });
+    socket.message({ type: 'agent-sign-in', step: 'code', attemptId: 'a1', code: 'c#s' });
+    socket.message({ type: 'agent-sign-in', step: 'code', attemptId: 'a1' });
+    socket.message({ type: 'agent-sign-in', step: 'link', attemptId: 'a1' });
     expect(frames).toEqual([
-      { type: 'claude-sign-in', step: 'start', attemptId: 'a1' },
-      { type: 'claude-sign-in', step: 'code', attemptId: 'a1', code: 'c#s' },
+      { type: 'agent-sign-in', step: 'start', attemptId: 'a1', cardId: 'card-1' },
+      { type: 'agent-sign-in', step: 'code', attemptId: 'a1', code: 'c#s' },
     ]);
     release();
   });

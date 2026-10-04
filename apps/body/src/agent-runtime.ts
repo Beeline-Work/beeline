@@ -14,7 +14,12 @@ import {
 } from './runtime-model-validation.js';
 import { modelUnavailableState } from './model-availability.js';
 import { syncAgentModelCatalog } from './model-catalog-sync.js';
-import { answerClaudeSignInFrame, ClaudeSignIn } from './claude-sign-in.js';
+import {
+  AgentSignIn,
+  agentSignInHarness,
+  answerAgentSignInFrame,
+  reportAgentSignInResult,
+} from './agent-sign-in.js';
 import { ConnectorAssignmentLoop } from './connector-assignments.js';
 import { RegistryMcpHostBroker } from './registry-mcp.js';
 import { ThinDaemonCore } from './thin-core.js';
@@ -290,7 +295,7 @@ export async function runAgentRuntime(
     host.established(agentId);
   };
   let connectorLoop: ConnectorAssignmentLoop | undefined;
-  let claudeSignIn: ClaudeSignIn | undefined;
+  let agentSignIn: AgentSignIn | undefined;
   let registryMcpBroker: RegistryMcpHostBroker | undefined;
   let catalogRefresh: Promise<void> | undefined;
   let leaveHost: (() => void) | undefined;
@@ -512,15 +517,27 @@ export async function runAgentRuntime(
         });
         daemonApi.setConnectorAssignmentListener(() => connectorLoop?.wake());
         connectorLoop.start();
-        // Sign in to Claude: the owner's app relays each step over the live
-        // socket; the login lands in the operator's shared Claude file.
-        claudeSignIn ??= new ClaudeSignIn({ operatorHome: config.operatorHome ?? homedir() });
-        const signIn = claudeSignIn;
-        daemonApi.setClaudeSignInListener((frame) => {
-          void answerClaudeSignInFrame(daemonApi, agentId, signIn, frame, (message) =>
-            console.log(`[body] ${message}`),
-          );
-        });
+        // `@agent login`: the owner's Room card relays each step over the
+        // live socket; the login lands where this harness reads it.
+        const signInHarness = agentSignInHarness(agent.kind);
+        if (signInHarness) {
+          const cards = new Map<string, string>();
+          const log = (message: string) => console.log(`[body] ${message}`);
+          agentSignIn ??= new AgentSignIn({
+            harness: signInHarness,
+            operatorHome: config.operatorHome ?? homedir(),
+            agentEnv: config.agentEnv,
+            ...(runtime.llmEnvFile ? { llmEnvFile: runtime.llmEnvFile } : {}),
+            model: () => config.modelSelection?.model ?? runtime.modelSelection?.model,
+            onResult: (attemptId, result) =>
+              void reportAgentSignInResult(daemonApi, agentId, attemptId, cards, result, log),
+            onKeySaved: () => daemonApi.emitConfigChanged(),
+          });
+          const signIn = agentSignIn;
+          daemonApi.setAgentSignInListener((frame) => {
+            void answerAgentSignInFrame(daemonApi, agentId, signIn, frame, cards, log);
+          });
+        }
       },
       onProgress: async (status) => {
         void drainRollbackAlert(core.activeRoomIds()[0] ?? runtime.rooms[0]?.channelId);
@@ -559,6 +576,7 @@ export async function runAgentRuntime(
     leaveHost?.();
     clearInterval(scratchSweepTimer);
     connectorLoop?.stop();
+    agentSignIn?.stop();
     await registryMcpBroker?.stop();
     daemonApi.closeLive();
     // Only clear the pid record while it still names THIS process.

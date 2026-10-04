@@ -1080,7 +1080,9 @@ export default function BuzzChannels() {
                   : styles.emptyList
               }
               renderSectionHeader={({ section }) =>
-                section.title ? <RoomListSectionHeader title={section.title} /> : null
+                section.title && !query.trim() ? (
+                  <RoomListSectionHeader title={section.title} />
+                ) : null
               }
               ListFooterComponent={
                 <MessageSearchResults

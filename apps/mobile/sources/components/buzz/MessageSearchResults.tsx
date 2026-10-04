@@ -4,9 +4,8 @@ import { StyleSheet } from 'react-native-unistyles';
 import { MESSAGE_SEARCH_MIN_CHARS, type MessageSearchResult } from '@beeline/api-contract/phone';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import type { MessageSearchFailure, MessageSearchState } from '@/buzz/use-message-search';
-import { RoomListSectionHeader } from './RoomListSectionHeader';
 
-/** The Messages section under the Room list while a search is typed. */
+/** Message matches listed under the Room list while a search is typed, with no section header. */
 export function MessageSearchResults({
   search,
   now,
@@ -19,7 +18,6 @@ export function MessageSearchResults({
   if (search.status === 'unavailable') return null;
   return (
     <View testID="message-search-results">
-      <RoomListSectionHeader title="Messages" />
       {search.status === 'short' ? (
         <Text style={styles.note} testID="message-search-short">
           Type {MESSAGE_SEARCH_MIN_CHARS} or more letters to search messages.

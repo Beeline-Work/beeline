@@ -2111,14 +2111,21 @@ export class DaemonService {
     const connectors = (
       await this.database.query<{ id: string; owner_identity_id: string }>(
         `SELECT c.id,c.owner_identity_id FROM workspace_connectors c
-         JOIN agents a ON a.agent_id=c.helper_agent_id
-         WHERE c.helper_agent_id=$1 AND c.connector_type='trusty-squire' AND c.status='connected'
+         JOIN agents a ON a.agent_id=$1
+         WHERE COALESCE(c.machine_id,c.helper_agent_id)=COALESCE(a.machine_id,a.agent_id)
+           AND c.connector_type='trusty-squire'
+           AND c.status IN ('connected','error')
            AND c.owner_identity_id=a.owner_id`,
         [agentId],
       )
     ).rows;
-    for (const connector of connectors)
+    for (const connector of connectors) {
+      await this.database.query(
+        `UPDATE workspace_connectors SET status='connected',status_error=NULL,
+           connected_at=COALESCE(connected_at,now()),updated_at=now()
+         WHERE id=$1::uuid AND status='error'`, [connector.id]);
       await applyVaultList(this.database, connector, input.connections);
+    }
     return { id: agentId, createdAt: Math.floor(Date.now() / 1000) };
   }
 
@@ -6116,6 +6123,7 @@ export class DaemonService {
         id: string;
         connector_type: string;
         status: 'installing' | 'connected' | 'error' | 'disconnected';
+        status_error: string | null;
         machine_id: string | null;
         helper_agent_id: string;
         helper_name: string;
@@ -6125,21 +6133,27 @@ export class DaemonService {
         display_name: string | null;
         website_url: string | null;
       }>(
-        `SELECT k.id,k.connector_type,k.status,k.machine_id,k.helper_agent_id,
+        `SELECT k.id,k.connector_type,k.status,k.status_error,k.machine_id,k.helper_agent_id,
                 k.registry_server_name,k.registry_version,k.display_name,k.website_url,
                 COALESCE(NULLIF(a.machine_name,''),helper.name) helper_name,k.updated_at
          FROM workspace_connectors k
          JOIN identities helper ON helper.id=k.helper_agent_id
          LEFT JOIN agents a ON a.agent_id=k.helper_agent_id
-         WHERE k.workspace_id=$1 AND k.owner_identity_id=$2
+         WHERE k.owner_identity_id=$1
          ORDER BY k.updated_at DESC`,
-        [context.workspaceId, context.owner.pubkey],
+        [context.owner.pubkey],
       )
     ).rows;
     const catalog = connectorCatalog().map((entry) => {
       // The most recently touched row wins; a live one over a disconnected one.
       const rows = paired.filter((row) => row.connector_type === entry.connectorType);
-      const row = rows.find((candidate) => candidate.status !== 'disconnected') ?? rows[0];
+      const here = rows.filter((candidate) =>
+        (candidate.machine_id ?? candidate.helper_agent_id) === context.machine.machineId);
+      const row = here.find((candidate) => candidate.status === 'connected')
+        ?? here.find((candidate) => candidate.status !== 'disconnected')
+        ?? rows.find((candidate) => candidate.status === 'connected')
+        ?? rows.find((candidate) => candidate.status !== 'disconnected')
+        ?? here[0] ?? rows[0];
       return {
         connectorType: entry.connectorType,
         name: entry.name,
@@ -6156,6 +6170,7 @@ export class DaemonService {
                 helperName: row.helper_name,
                 onThisMachine:
                   (row.machine_id ?? row.helper_agent_id) === context.machine.machineId,
+                ...(row.status === 'error' ? { errorMessage: row.status_error ?? 'Connection failed' } : {}),
               },
             }
           : {}),
@@ -6172,9 +6187,9 @@ export class DaemonService {
         `SELECT k.connector_type,NULLIF(c.service,'') service,c.label,c.reference,c.state
          FROM workspace_connections c
          JOIN workspace_connectors k ON k.id=c.connector_id
-         WHERE c.owner_identity_id=$1 AND k.workspace_id=$2
+         WHERE c.owner_identity_id=$1
          ORDER BY c.service,c.reference`,
-        [context.owner.pubkey, context.workspaceId],
+        [context.owner.pubkey],
       )
     ).rows;
     const registryServers = paired.flatMap((row) =>
@@ -6316,10 +6331,12 @@ export class DaemonService {
               agent.owner_id agent_owner_id
        FROM workspace_apps app JOIN agents agent ON agent.agent_id=$3
        JOIN rooms room ON room.id=$2
-       JOIN memberships owner_member ON owner_member.workspace_id=room.workspace_id
+       LEFT JOIN memberships owner_member ON owner_member.workspace_id=room.workspace_id
          AND owner_member.room_id IS NULL AND owner_member.identity_id=app.owner_identity_id
          AND owner_member.removed_at IS NULL
-       WHERE app.id=$1::uuid AND app.state='active' AND app.transport='composio'`,
+       WHERE app.id=$1::uuid
+         AND (app.owner_identity_id=agent.owner_id OR owner_member.identity_id IS NOT NULL)
+         AND app.state='active' AND app.transport='composio'`,
       [appId, roomId, agentId],
     )).rows[0];
     if (!row) throw new Error('Connected app is unavailable in this Room');
@@ -6329,12 +6346,18 @@ export class DaemonService {
   private async listAppTools(input: Input<'listAppTools'>, agentId: string) {
     if (!this.composio) throw new Error('App tools are unavailable');
     const row = await this.connectedAppForTool(input.appId, input.roomId, agentId);
-    if (row.composio_link_expires_at || !row.composio_account_id ||
-      !(await this.composio.account(row.composio_account_id,
+    if (row.composio_link_expires_at)
+      throw new Error('App sign-in has not completed in Beeline');
+    if (!row.composio_account_id)
+      throw new Error('App sign-in is pending');
+    if (!(await this.composio.account(row.composio_account_id,
       row.owner_identity_id, composioToolkitForApp(row.app_key))))
-      return { tools: [] };
-    return { tools: await this.composio.listTools(composioToolkitForApp(row.app_key),
-      input.query) };
+      throw new Error('App account is unavailable; reconnect it');
+    const tools = await this.composio.listTools(composioToolkitForApp(row.app_key), input.query);
+    if (!tools.length)
+      throw new Error(input.query ? 'No tools matched the app tool query'
+        : 'App provider returned no tools');
+    return { tools };
   }
 
   private async executeAppTool(input: Input<'executeAppTool'>, agentId: string) {

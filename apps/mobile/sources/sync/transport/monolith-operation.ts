@@ -27,6 +27,7 @@ export function phoneOperationFailureReason(error: unknown): string {
 export async function monolithPhoneOperation<Name extends keyof PhoneOperationMap>(
   name: Name,
   input: PhoneOperationMap[Name]['input'],
+  options?: { timeoutMs?: number },
 ): Promise<PhoneOperationMap[Name]['output']> {
   const response = await monolithSession.fetch(
     `${getBuzzRuntimeConfig().monolithUrl}/v1/phone/operations/${name}`,
@@ -35,6 +36,10 @@ export async function monolithPhoneOperation<Name extends keyof PhoneOperationMa
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(input),
     },
+    // Forwarded only when given: every other call site relies on
+    // monolithSession.fetch's own no-timeout default, and existing tests
+    // assert the exact (url, init) call shape against that default.
+    ...(options ? [options] : []),
   );
   if (!response.ok) {
     let code = 'request_failed';

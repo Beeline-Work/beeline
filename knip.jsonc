@@ -78,6 +78,7 @@
         "scripts/connect-app-nav-inset-proof.tsx",
         "scripts/workbench-nav-inset-proof.tsx",
         "scripts/star-prompt-proof.tsx",
+        "scripts/wallet-dm-proof.tsx",
         "scripts/scheduled-work-proof.tsx",
         "scripts/workflow-run-proof.tsx",
         "scripts/workflow-owner-proof.tsx",

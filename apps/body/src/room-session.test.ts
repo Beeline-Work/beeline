@@ -94,6 +94,7 @@ describe('monolith Room inspection mount', () => {
         agentBinary: 'agent',
         mcpBinary: 'unused',
         readonlyMcpCommand: '/bin/beeline-mcp',
+        operatorHome: '/operator-home',
         agentEnv: {},
         workspaceRoot: '/room',
         autoApprovePermissions: false,
@@ -113,6 +114,7 @@ describe('monolith Room inspection mount', () => {
         { name: 'BEELINE_DAEMON_ROOM_ID', value: 'room-id' },
         { name: 'BEELINE_DAEMON_CORNER_ID', value: 'corner-id' },
         { name: 'BEELINE_DAEMON_TOKEN', value: 'daemon-secret' },
+        { name: 'BEELINE_OPERATOR_HOME', value: '/operator-home' },
         { name: 'BEELINE_CORNER_CAN_UPGRADE', value: '1' },
       ]),
     );

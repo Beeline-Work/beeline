@@ -662,8 +662,39 @@ describe('Workspace Settings authority', () => {
       await renderer.root.findByProps({ testID: 'workspace-delete-confirm' }).props.onPress();
     });
 
-    expect(phoneOperation).toHaveBeenCalledWith('deleteWorkspace', { workspaceId: 'workspace-1' });
+    expect(phoneOperation).toHaveBeenCalledWith(
+      'deleteWorkspace',
+      { workspaceId: 'workspace-1' },
+      { timeoutMs: expect.any(Number) },
+    );
     expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
+  });
+
+  it('leaves the delete dialog and shows a failure when the request never answers', async () => {
+    const { MonolithRequestTimeoutError } = await import('@/auth/monolith-session');
+    phoneOperation.mockRejectedValueOnce(new MonolithRequestTimeoutError());
+    const renderer = await render();
+
+    act(() => renderer.root.findByProps({ testID: 'workspace-delete-row' }).props.onPress());
+    act(() =>
+      renderer.root
+        .findByProps({ testID: 'workspace-delete-confirm-input' })
+        .props.onChangeText('Hull'),
+    );
+    await act(async () => {
+      await renderer.root.findByProps({ testID: 'workspace-delete-confirm' }).props.onPress();
+    });
+
+    // Never stuck on "Deleting...": the dialog stays open, re-enabled, with
+    // the failure visible, instead of hanging forever.
+    expect(renderer.root.findByProps({ testID: 'workspace-delete-sheet' }).props.visible).toBe(
+      true,
+    );
+    expect(renderer.root.findByProps({ testID: 'workspace-delete-confirm' }).props.busy).toBe(
+      false,
+    );
+    expect(() => renderer.root.findByProps({ accessibilityRole: 'alert' })).not.toThrow();
+    expect(navigation.replace).not.toHaveBeenCalledWith('/beeline/channels');
   });
 
   it('cancels the delete confirmation without deleting anything', async () => {

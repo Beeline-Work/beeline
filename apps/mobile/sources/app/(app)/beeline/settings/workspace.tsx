@@ -395,7 +395,15 @@ export default function WorkspaceSettings() {
     setDeleteBusy(true);
     setError(null);
     try {
-      await monolithPhoneOperation('deleteWorkspace', { workspaceId: communityId });
+      // Above the server's own transaction deadline (APP_TRANSACTION_DEADLINE_MS,
+      // 30s), so this never races a legitimate slow delete to a false timeout;
+      // it only catches the request truly never answering, which otherwise left
+      // this dialog stuck on "Deleting..." forever.
+      await monolithPhoneOperation(
+        'deleteWorkspace',
+        { workspaceId: communityId },
+        { timeoutMs: 40_000 },
+      );
       clearDeletion();
       setDeleteSheetOpen(false);
       router.replace('/beeline/channels');

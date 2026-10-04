@@ -421,6 +421,27 @@ describe('beeline-spec planning skill', () => {
 describe('using-beeline "Tools and the Workbench" section', () => {
   const markdown = usingBeelineSkillMarkdown('test-release');
 
+  it('requires live host inspection before answering about current state', () => {
+    const tools = markdown.split('## Tools and the Workbench\n')[1]?.split('\n## ')[0];
+    expect(tools).toContain('inspect its live state with the tools you have');
+    expect(tools).toContain('processes, logs, local endpoints or service status');
+    expect(tools).toContain('Say what you checked');
+    expect(tools).toContain('Memory and Room history are not evidence of current state');
+  });
+
+  it('uses available tools before asking for a value while preserving key and grant authority', () => {
+    const tools = markdown.split('## Tools and the Workbench\n')[1]?.split('\n## ')[0];
+    expect(tools).toContain('Before asking a person for a code, a status or a file');
+    expect(tools).toContain(
+      'call workbench_status and check whether a tool or connected app you already have can get it, then use it',
+    );
+    expect(tools).toContain('an emailed verification code in an already-connected inbox');
+    expect(tools).toContain('Ask only when none can, and say why');
+    expect(tools).toContain('The key-ownership and grant rules still apply');
+    expect(tools).toContain("another person's keys need that person's private scoped approval");
+    expect(tools).toContain('does not replace a grant');
+  });
+
   it('gives the agent the tool/key vocabulary and where to learn what each tool is FOR', () => {
     expect(markdown).toContain('## Tools and the Workbench');
     expect(markdown).toContain('A **tool** is something you can use once a human adds it');

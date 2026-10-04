@@ -66,8 +66,8 @@ describe('the chat header title (C72)', () => {
     );
     expect(meta, 'missing room-header-meta subtitle').toBeTruthy();
     expect(meta![0]).toContain('{dmHeaderPresence}');
-    expect(chatSource).toContain(
-      "import { directMessageHeaderPresence } from '@/buzz/direct-message-header-presence'",
+    expect(chatSource).toMatch(
+      /import \{[^}]*\bdirectMessageHeaderPresence\b[^}]*\} from '@\/buzz\/direct-message-header-presence'/,
     );
     expect(chatSource).not.toContain("{'Direct message'}");
   });

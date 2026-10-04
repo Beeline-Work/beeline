@@ -55,6 +55,14 @@ ALTER TABLE agent_commands DROP CONSTRAINT IF EXISTS agent_commands_action_check
 ALTER TABLE agent_commands ADD CONSTRAINT agent_commands_action_check CHECK(action IN ('input','resume','stop','restart'));
 CREATE INDEX IF NOT EXISTS agent_commands_delivery ON agent_commands(agent_id,room_id,state,created_at);
 CREATE INDEX IF NOT EXISTS agent_commands_turn ON agent_commands(room_id,agent_id,turn_request_id);
+-- source_message_id/result_message_id reference messages(id) with no index,
+-- so deleting a message (e.g. a room or workspace cascade) made Postgres
+-- sequentially scan all of agent_commands for the FK check, once per deleted
+-- message -- the cause of a workspace delete hanging past the app pool's
+-- statement_timeout.
+CREATE INDEX IF NOT EXISTS agent_commands_source_message_idx ON agent_commands(source_message_id);
+CREATE INDEX IF NOT EXISTS agent_commands_result_message_idx ON agent_commands(result_message_id)
+  WHERE result_message_id IS NOT NULL;
 ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS command_id text;
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS command_check_state text;
 -- Handbacks to the corner's worker, counted per pull-request head so a push

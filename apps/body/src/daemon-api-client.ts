@@ -1,6 +1,7 @@
 import {
   isAgentCommand,
   type AgentCommand,
+  type AgentSignInFrame,
   type DaemonOperationMap,
 } from '@beeline/api-contract/daemon';
 import { resolve } from 'node:path';
@@ -15,6 +16,7 @@ import {
   type LiveSocketFactory,
 } from './live-link.js';
 import { MachineLink, type AgentChannel } from './machine-link.js';
+import { agentSignInFrame } from './agent-sign-in.js';
 import {
   readRuntimeRecord,
   runtimeDirectory,
@@ -181,6 +183,7 @@ export class DaemonApiClient {
   private roomsChangedListener?: (event?: RoomMembershipChange) => void;
   private configChangedListener?: () => void;
   private connectorAssignmentListener?: () => void;
+  private agentSignInListener?: (frame: AgentSignInFrame) => void;
   private cornerCompleteListener?: (roomId: string) => void;
   private cornerRestartListener?: (roomId: string) => void;
   private helperReleaseListener?: (release: { version: string; sha: string }) => void;
@@ -320,6 +323,16 @@ export class DaemonApiClient {
     this.connectorAssignmentListener = listener;
   }
 
+  /** Retire idle sessions as a phone-side config change does (a harness just signed in). */
+  emitConfigChanged(): void {
+    this.configChangedListener?.();
+  }
+
+  /** One `@agent /login` step the agent's owner started in a Room. */
+  setAgentSignInListener(listener: (frame: AgentSignInFrame) => void): void {
+    this.agentSignInListener = listener;
+  }
+
   /** corner-complete on the subscribed corner — close now, poll is recovery. */
   setCornerCompleteListener(listener: (roomId: string) => void): void {
     this.cornerCompleteListener = listener;
@@ -449,6 +462,11 @@ export class DaemonApiClient {
     }
     if (event.type === 'connector-assignment') {
       this.connectorAssignmentListener?.();
+      return;
+    }
+    if (event.type === 'agent-sign-in') {
+      const frame = agentSignInFrame(event);
+      if (frame) this.agentSignInListener?.(frame);
       return;
     }
     if (event.type === 'config-changed') {

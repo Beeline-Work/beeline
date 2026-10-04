@@ -1,8 +1,14 @@
+import {
+  beginAgentSignInCards,
+  AGENT_SIGN_IN_NO_ANSWER_MESSAGE,
+  completeAgentSignInCard,
+} from './agent-sign-in.js';
 import { startWorkflow } from './workflow-runs.js';
 import { humanRoomAdmin, scheduleWorkflowName } from './workflow-admin.js';
 import { setCornerHold } from './corner-holds.js';
 import {
   createAgentCommand,
+  isTaggedLoginText,
   reconcileConfiguredCornerReviewers,
   routeHumanMessage,
   turnRootMessageSql,
@@ -76,6 +82,7 @@ import {
   type WelcomeCardsView,
   isPushLevel,
   type ArtifactAttachment,
+  type AgentSignInCardView,
 } from '@beeline/api-contract/phone';
 import {
   isCommandGrantScript,
@@ -743,6 +750,28 @@ function projectedMessage(
           status: card.status,
           ...(card.errorMessage ? { errorMessage: card.errorMessage } : {}),
           ...(card.continuation ? { continuation: card.continuation } : {}),
+        },
+      };
+    }
+    case 'agent-sign-in': {
+      // The attempt id and source message stay server-side; no code or key is
+      // ever stored. The link and device code are the owner's alone: anyone
+      // else approving them would sign the agent in to their own account.
+      const card = row.card as AgentSignInCardView;
+      const owner = viewerId === card.ownerId;
+      return {
+        ...base,
+        agentSignIn: {
+          agentId: card.agentId,
+          ownerId: card.ownerId,
+          harness: card.harness,
+          status: card.status,
+          ...(card.kind ? { kind: card.kind } : {}),
+          ...(owner && card.authorizeUrl ? { authorizeUrl: card.authorizeUrl } : {}),
+          ...(owner && card.userCode ? { userCode: card.userCode } : {}),
+          ...(card.expiresAt ? { expiresAt: card.expiresAt } : {}),
+          ...(card.provider ? { provider: card.provider } : {}),
+          ...(card.errorMessage ? { errorMessage: card.errorMessage } : {}),
         },
       };
     }
@@ -3622,13 +3651,16 @@ export class PhoneService {
           input as Input<'answerStarPrompt'>,
           this.github,
         )) as Output<Name>;
-      case 'sendRoomMessage':
-        return (await this.sendMessage(
-          input as Input<'sendRoomMessage'>,
-          viewerId,
-        )) as Output<Name>;
-      case 'sendRoomReply':
-        return (await this.sendReply(input as Input<'sendRoomReply'>, viewerId)) as Output<Name>;
+      case 'sendRoomMessage': {
+        const sent = await this.sendMessage(input as Input<'sendRoomMessage'>, viewerId);
+        this.beginAgentSignIn(input as Input<'sendRoomMessage'>, sent.messageId);
+        return sent as Output<Name>;
+      }
+      case 'sendRoomReply': {
+        const sent = await this.sendReply(input as Input<'sendRoomReply'>, viewerId);
+        this.beginAgentSignIn(input as Input<'sendRoomReply'>, sent.messageId);
+        return sent as Output<Name>;
+      }
       case 'reactToMessage':
         await this.reactToMessage(input as Input<'reactToMessage'>, viewerId);
         return undefined as Output<Name>;
@@ -3914,6 +3946,11 @@ export class PhoneService {
       case 'refreshAgentModelCatalog':
         await this.refreshAgentModelCatalog(input as Input<'refreshAgentModelCatalog'>, viewerId);
         return undefined as Output<Name>;
+      case 'completeAgentSignIn':
+        return (await this.completeAgentSignIn(
+          input as Input<'completeAgentSignIn'>,
+          viewerId,
+        )) as Output<Name>;
       case 'updateAgentYolo':
         await this.updateAgentYolo(input as Input<'updateAgentYolo'>, viewerId);
         return undefined as Output<Name>;
@@ -6584,6 +6621,25 @@ export class PhoneService {
         });
       }
     });
+  }
+  /**
+   * An exact `@agent /login` message already wrote its card under routing
+   * (`agent-command.ts`); once that commits, ask the agent's machine for the
+   * claude.ai link without holding the send open.
+   */
+  private beginAgentSignIn(input: { roomId: string; text: string }, messageId: string) {
+    if (!this.live || !isTaggedLoginText(input.text)) return;
+    void beginAgentSignInCards(this.database, this.live, input.roomId, messageId).catch((error) =>
+      console.error(
+        '[agent-sign-in] start failed',
+        error instanceof Error ? error.message : String(error),
+      ),
+    );
+  }
+  /** Owner-only; the card and relay rules live in `agent-sign-in.ts`. */
+  private async completeAgentSignIn(input: Input<'completeAgentSignIn'>, viewerId: string) {
+    if (!this.live) throw new Error(AGENT_SIGN_IN_NO_ANSWER_MESSAGE);
+    return completeAgentSignInCard(this.database, this.live, input, viewerId);
   }
   private async refreshAgentModelCatalog(
     input: Input<'refreshAgentModelCatalog'>,
@@ -9517,6 +9573,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'updateAgentSoul',
   'updateAgentModelSelection',
   'refreshAgentModelCatalog',
+  'completeAgentSignIn',
   'updateAgentYolo',
   'updateAgentAccessPolicy',
   'removeAgent',

@@ -361,6 +361,8 @@ export type ChatDisplayMessage = {
   /** An agent offering to add a Workbench tool it needs (R5); rendered as the offer card. */
   connectorOffer?: NonNullable<RoomViewMessage['connectorOffer']>;
   appSignIn?: NonNullable<RoomViewMessage['appSignIn']>;
+  /** `@agent /login`: Claude's sign-in card at the call site. Never holds a code. */
+  agentSignIn?: NonNullable<RoomViewMessage['agentSignIn']>;
   choice?: NonNullable<RoomViewMessage['choice']>;
   /** @wallet ledger facts, rendered as ledger cards in the @wallet thread. */
   walletTx?: NonNullable<RoomViewMessage['walletTx']>;
@@ -495,6 +497,7 @@ export function displayRoomMessage(
     ...(message.squireApproval ? { squireApproval: { ...message.squireApproval } } : {}),
     ...(message.connectorOffer ? { connectorOffer: { ...message.connectorOffer } } : {}),
     ...(message.appSignIn ? { appSignIn: { ...message.appSignIn } } : {}),
+    ...(message.agentSignIn ? { agentSignIn: { ...message.agentSignIn } } : {}),
     ...(message.choice ? { choice: message.choice } : {}),
     ...(message.walletTx ? { walletTx: { ...message.walletTx } } : {}),
     ...(message.walletInsufficient

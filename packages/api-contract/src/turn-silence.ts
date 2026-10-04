@@ -6,6 +6,11 @@
  * the approved remedies, the hiccup restart budget, and the 200-character cap.
  * Cost scales with messages that went unanswered, never with fleet size.
  */
+import {
+  AGENT_SIGN_IN_SERVICE_LABELS,
+  agentSignInUsesKey,
+  type AgentSignInHarness,
+} from './agent-sign-in.js';
 import { MAX_EVENT_CONSEQUENCE_LENGTH, SYSTEM_LINE_SEPARATOR } from './system-events.js';
 
 export const TURN_SILENCE_LINE_MAX = 200;
@@ -250,6 +255,14 @@ export function shouldCompletePendingFailedCommand(kind: TurnSilenceKind, reason
   return true;
 }
 
+function fitsSilenceLine(name: string, verb: string, consequence: string): boolean {
+  const head = `${name} ${verb}${SYSTEM_LINE_SEPARATOR}`;
+  return (
+    head.length + consequence.length <= TURN_SILENCE_LINE_MAX &&
+    consequence.length <= MAX_EVENT_CONSEQUENCE_LENGTH
+  );
+}
+
 function capLine(name: string, verb: string, consequence: string): TurnSilencePhrase {
   const head = `${name} ${verb}${SYSTEM_LINE_SEPARATOR}`;
   const budget = Math.max(24, TURN_SILENCE_LINE_MAX - head.length);
@@ -265,7 +278,12 @@ function capLine(name: string, verb: string, consequence: string): TurnSilencePh
 export function phraseTurnSilence(
   name: string,
   classified: ClassifiedTurnSilence,
-  options: { readonly givingUp?: boolean; readonly restarting?: boolean } = {},
+  options: {
+    readonly givingUp?: boolean;
+    readonly restarting?: boolean;
+    /** The agent's harness signs in from a Room, so its owner can send `@handle login`. */
+    readonly login?: { readonly handle: string; readonly harness: AgentSignInHarness };
+  } = {},
 ): TurnSilencePhrase {
   const agent = name.trim() || 'The agent';
   switch (classified.kind) {
@@ -285,12 +303,23 @@ export function phraseTurnSilence(
           : 'the provider allowance is spent. Top up, or move the agent to another provider.',
       );
     }
-    case 'not-signed-in':
+    case 'not-signed-in': {
+      if (!options.login)
+        return capLine(
+          agent,
+          'could not answer',
+          "the helper could not authenticate with the provider. Check its log for the failed turn; if its login expired, run `beeline connect` on the helper's machine.",
+        );
+      // Both remedies must survive the cap: a long name or handle drops the
+      // explanation, never a command.
+      const remedies = `send \`@${options.login.handle} /login\` here, or run \`beeline connect\` on its machine.`;
+      const full = `the helper could not authenticate with ${AGENT_SIGN_IN_SERVICE_LABELS[options.login.harness]}. If its ${agentSignInUsesKey(options.login.harness) ? 'key' : 'login'} expired, its owner can ${remedies}`;
       return capLine(
         agent,
         'could not answer',
-        "the helper could not authenticate with the provider. Check its log for the failed turn; if its login expired, run `beeline connect` on the helper's machine.",
+        fitsSilenceLine(agent, 'could not answer', full) ? full : `Its owner can ${remedies}`,
       );
+    }
     case 'workspace-failure':
       return capLine(
         agent,

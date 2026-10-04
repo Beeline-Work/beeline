@@ -130,6 +130,44 @@ describe('turn silence phrasing', () => {
     }
   });
 
+  it('tells a Claude agent owner to send @agent login, keeping beeline connect as the fallback', () => {
+    const line = phraseTurnSilence('Candy', { kind: 'not-signed-in' }, {
+      login: { handle: 'candy', harness: 'claude' },
+    });
+    expect(`Candy ${line.verb} · ${line.consequence}`).toBe(
+      "Candy could not answer · the helper could not authenticate with Claude. If its login expired, its owner can send `@candy /login` here, or run `beeline connect` on its machine.",
+    );
+    expect(`@candy ${line.verb} · ${line.consequence}`.length).toBeLessThanOrEqual(
+      TURN_SILENCE_LINE_MAX,
+    );
+  });
+
+  it('names the service, or the key, for every harness that signs in from a Room', () => {
+    const consequence = (harness: 'codex' | 'grok' | 'cursor' | 'pi') =>
+      phraseTurnSilence('Candy', { kind: 'not-signed-in' }, { login: { handle: 'candy', harness } })
+        .consequence;
+    expect(consequence('codex')).toContain('could not authenticate with ChatGPT. If its login expired');
+    expect(consequence('grok')).toContain('could not authenticate with Grok.');
+    expect(consequence('cursor')).toContain('could not authenticate with Cursor.');
+    expect(consequence('pi')).toBe(
+      "the helper could not authenticate with its provider. If its key expired, its owner can send `@candy /login` here, or run `beeline connect` on its machine.",
+    );
+  });
+
+  it('keeps both sign-in remedies when a long name or handle leaves no room for the explanation', () => {
+    const name = 'MoonScannerAI Research Assistant Prime';
+    const handle = 'moonscannerai-research-assistant';
+    const line = phraseTurnSilence(name, { kind: 'not-signed-in' }, {
+      login: { handle, harness: 'codex' },
+    });
+    const text = `${name} ${line.verb} · ${line.consequence}`;
+    expect(text.length).toBeLessThanOrEqual(TURN_SILENCE_LINE_MAX);
+    expect(line.consequence).toBe(
+      `Its owner can send \`@${handle} /login\` here, or run \`beeline connect\` on its machine.`,
+    );
+    expect(line.consequence).not.toContain('…');
+  });
+
   it('never assigns the agent pronouns', () => {
     const kinds: ClassifiedTurnSilence[] = [
       { kind: 'hiccup', fault: 'the turn stalled' },

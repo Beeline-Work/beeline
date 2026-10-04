@@ -864,6 +864,63 @@ describe('daemon live command push', () => {
     await expect(restarted).resolves.toEqual({ type: 'corner-restart', roomId });
     expect(execute.mock.calls.filter(([name]) => name === 'getRoomInbox')).toHaveLength(1);
   });
+
+  it("forwards only this agent's @agent login start and code steps to its helper", async () => {
+    const roomId = 'room-live';
+    const agentId = 'agent-live';
+    const live = new LiveHub();
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getRoomInbox') return { items: [], cursor: undefined };
+      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
+      throw new Error(`unexpected operation ${name}`);
+    });
+    const server = createBeelineServer({
+      database: { query: vi.fn(), transaction: vi.fn() },
+      auth: { authenticateDaemon: vi.fn().mockResolvedValue(agentId) } as unknown as TokenAuth,
+      phone: {
+        canReadRoom: vi.fn().mockResolvedValue(true),
+        canReadRooms: canReadRoomsFrom(async () => true),
+      } as unknown as PhoneService,
+      daemon: { execute } as unknown as DaemonService,
+      live,
+      mediaMaximumBytes: 1,
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.bdt_test']);
+    sockets.push(socket);
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', resolve);
+      socket.once('error', reject);
+    });
+    const subscribed = nextSocketMessage(socket, 'subscribed');
+    socket.send(JSON.stringify({ type: 'subscribe', roomId }));
+    await subscribed;
+
+    const frames: Record<string, unknown>[] = [];
+    socket.on('message', (raw) => {
+      const message = JSON.parse(raw.toString()) as Record<string, unknown>;
+      if (message.type === 'agent-sign-in') frames.push(message);
+    });
+    const attemptId = '00000000-0000-4000-8000-000000000001';
+    const base = { type: 'agent-sign-in', roomId: '', attemptId } as const;
+    live.publish({ ...base, agentId: 'another-agent', step: 'start', cardId: 'c'.repeat(64) });
+    live.publish({
+      ...base,
+      agentId,
+      step: 'link',
+      link: { kind: 'paste-code', authorizeUrl: 'https://claude.com/x' },
+    });
+    live.publish({ ...base, agentId, step: 'result', outcome: 'signed-in' });
+    live.publish({ ...base, agentId, step: 'start', cardId: 'c'.repeat(64) });
+    live.publish({ ...base, agentId, step: 'code', code: 'abc#state' });
+    await vi.waitFor(() => expect(frames).toHaveLength(2));
+    expect(frames).toEqual([
+      { type: 'agent-sign-in', step: 'start', attemptId, cardId: 'c'.repeat(64) },
+      { type: 'agent-sign-in', step: 'code', attemptId, code: 'abc#state' },
+    ]);
+  });
 });
 
 describe('daemon operation presence evidence', () => {

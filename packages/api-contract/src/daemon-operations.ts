@@ -11,6 +11,7 @@ import type { CornerLifecycleView, MessageReactionEmoji } from './phone-types.js
 import type { ChoiceOptionInput } from './room-choices.js';
 import type { RoomScheduleCadence } from './phone-operations.js';
 import type { CornerAppDefinition } from './corner-apps.js';
+import type { ReportAgentSignInInput } from './agent-sign-in.js';
 import type { WorkflowRoleBinding, WorkflowReceiptInput, WorkflowRunReadResult } from './workflow-contracts.js';
 import type {
   DeleteInstitutionalMemoryInput,
@@ -482,6 +483,8 @@ export type DaemonOperationMap = {
   revokeConnectionGrants: Operation<AgentInput & ConnectionRefInput, ConnectionGrantRevokeResult>;
   postConnectionUsage: Operation<PostConnectionUsageInput, WriteResult>;
   getConnectorAssignments: Operation<AgentInput, ConnectorAssignmentsResult>;
+  /** The helper's answer to one Sign in to Claude step: the authorize link or the verdict. */
+  reportAgentSignIn: Operation<ReportAgentSignInInput, void>;
   getGoogleOAuthGrant: Operation<
     AgentInput & { readonly connectorId: string },
     {

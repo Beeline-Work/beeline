@@ -87,6 +87,8 @@ export type TranscriptCardProps = {
   identity?: ReactNode;
   body?: ReactNode;
   quietBody?: boolean;
+  /** Controls an ask needs beyond rows and choices (a field, a step list). */
+  children?: ReactNode;
   rows?: readonly TranscriptCardRow[];
   choices?: readonly TranscriptCardChoice[];
   noteInput?: TranscriptCardNoteInput;
@@ -225,6 +227,7 @@ export function TranscriptCard({
   sublineTestID,
   stamp,
   identity,
+  children,
   body,
   quietBody = false,
   rows = [],
@@ -422,6 +425,7 @@ export function TranscriptCard({
               {body}
             </SettlingText>
           ) : null}
+          {children}
           {code !== undefined ? (
             <View style={[styles.code, tier === 'ask' && styles.askCode]} testID={codeTestID}>
               {codePath ? <Text style={styles.codePath}>{codePath}</Text> : null}

@@ -53,17 +53,19 @@ describe('directMessageHeaderPresence', () => {
 });
 
 describe('directMessageAgentHeaderMeta', () => {
-  it('reads handle, model and owner like a member cell', () => {
+  it('reads model and owner like a member cell, without the handle', () => {
     expect(
       directMessageAgentHeaderMeta(
-        { handle: 'ruby', model: 'anthropic/claude-opus-5-5', ownerHandle: 'lunchboxfortwo' },
+        { model: 'anthropic/claude-opus-5-5', ownerHandle: 'lunchboxfortwo' },
         '',
       ),
-    ).toBe('@ruby · claude-opus-5-5 · @lunchboxfortwo');
+    ).toBe('claude-opus-5-5 · @lunchboxfortwo');
   });
 
   it('keeps the working word and skips what is unknown', () => {
-    expect(directMessageAgentHeaderMeta({ handle: 'ruby' }, 'working')).toBe('@ruby · working');
+    expect(directMessageAgentHeaderMeta({ ownerHandle: 'lunchboxfortwo' }, 'working')).toBe(
+      '@lunchboxfortwo · working',
+    );
     expect(directMessageAgentHeaderMeta({}, '')).toBe('');
   });
 });

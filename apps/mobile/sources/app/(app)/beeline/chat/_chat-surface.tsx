@@ -2082,7 +2082,6 @@ export function BuzzChatSurface({
     dmPeerAgent || dmPeerWorkspaceAgent
       ? directMessageAgentHeaderMeta(
           {
-            handle: dmPeerWorkspaceAgent?.identity.handle ?? dmPeerIdentity?.handle,
             model: dmPeerWorkspaceAgent?.model,
             ownerHandle: dmPeerWorkspaceAgent?.owner?.handle,
           },

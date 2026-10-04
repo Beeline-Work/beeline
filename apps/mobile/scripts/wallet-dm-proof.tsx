@@ -62,7 +62,7 @@ function Harness() {
           <Text style={{ ...theme.type.bodyStrong, color: theme.textPrimary }}>Ruby</Text>
           <HeaderMetaCaps testID="agent-dm-meta">
             {directMessageAgentHeaderMeta(
-              { handle: 'ruby', model: 'anthropic/claude-opus-5-5', ownerHandle: 'lunchboxfortwo' },
+              { model: 'anthropic/claude-opus-5-5', ownerHandle: 'lunchboxfortwo' },
               '',
             )}
           </HeaderMetaCaps>

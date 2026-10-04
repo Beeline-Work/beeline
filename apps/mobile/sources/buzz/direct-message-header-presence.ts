@@ -12,15 +12,15 @@ export function directMessageHeaderPresence(
 }
 
 /**
- * An agent DM's header line: the same handle, model and owner the member
- * cells and tag suggestions show, then the presence word when there is one.
+ * An agent DM's header line: the same model and owner the member cells and
+ * tag suggestions show, then the presence word when there is one. The name
+ * above it already identifies the agent, so the handle is left out.
  */
 export function directMessageAgentHeaderMeta(
-  agent: { handle?: string; model?: string; ownerHandle?: string },
+  agent: { model?: string; ownerHandle?: string },
   presence: string,
 ): string {
   return [
-    agent.handle ? `@${agent.handle.replace(/^@/, '')}` : undefined,
     agent.model ? displayModel(agent.model) : undefined,
     agent.ownerHandle ? `@${agent.ownerHandle.replace(/^@/, '')}` : undefined,
     presence || undefined,

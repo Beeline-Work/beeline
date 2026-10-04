@@ -30,6 +30,6 @@ describe.skipIf(!existsSync(CHROME))('the @Wallet DM in a browser', () => {
     // Header and card: Coinbase Wallet's blue ground and its white ring around a
     // rounded square (wallet-sdk's own mark), not a bar-cut "C".
     expect(result).toContain('logos #0052ff+M152 512,#0052ff+M152 512');
-    expect(result).toContain('agent meta @ruby · claude-opus-5-5 · @lunchboxfortwo');
+    expect(result).toContain('agent meta claude-opus-5-5 · @lunchboxfortwo');
   }, 90_000);
 });

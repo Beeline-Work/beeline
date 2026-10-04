@@ -5,12 +5,11 @@ import type { GitHubInstallationAccess } from '@beeline/buzz-client';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
 import { Typography } from '@/constants/Typography';
 import { Button } from './Button';
-import { HULL_SHEET_INSET } from './HullActionSheet';
+import { HULL_SHEET_INSET, HullActionSheetRow } from './HullActionSheet';
 import { RepoList } from './RepoList';
 import {
   RepositoryChoice,
   repositoryChoiceFacts,
-  RepositoryReadonlyRow,
   splitFullName,
   useSelectConnectedOwner,
   type RepoMode,
@@ -142,35 +141,48 @@ export function useRoomRepositoryChoice({
 
   const collapsedValue = current ? splitFullName(current).name : 'None';
 
-  const control = !canManage ? (
-    <RepositoryReadonlyRow testID="room-repo-readonly" value={collapsedValue} />
-  ) : (
-    <RepositoryChoice
-      activeInstallations={activeInstallations}
-      busy={busy}
-      collapsedValue={collapsedValue}
-      createName={name}
-      error={error}
-      githubConnected={githubConnected}
-      linkRepo={draft}
-      loading={loading}
-      mode={mode}
-      notice={notice}
-      onChooseMode={chooseMode}
-      onConnect={trackConnect(onConnect)}
-      onLinkInstead={linkInstead}
-      onOpenList={() => setListOpen(true)}
-      onReveal={reveal}
-      onSelectInstallation={setInstallationId}
-      ownerMenuOpen={ownerMenuOpen}
-      reserveOwnerMenuSpace
-      revealed={revealed}
-      selectedInstallation={selectedInstallation}
-      setOwnerMenuOpen={setOwnerMenuOpen}
-      takenRepo={takenRepo}
-      testIDPrefix="room"
+  // Collapsed, the Repository control is one row among its Room-sheet
+  // siblings (Reviewer, Repo notifications, Members…): the same
+  // HullActionSheetRow, no box. Revealed, it keeps its own switch widget,
+  // which legitimately boxes the controls the user is actively changing.
+  const row = !canManage ? (
+    <HullActionSheetRow label="Repository" metadata={collapsedValue} testID="room-repo-readonly" />
+  ) : !revealed ? (
+    <HullActionSheetRow
+      accessibilityLabel={`Repository ${collapsedValue}, change`}
+      chevron="right"
+      label="Repository"
+      metadata={collapsedValue}
+      onPress={reveal}
+      testID="room-repo-row"
     />
-  );
+  ) : null;
+
+  const control =
+    canManage && revealed ? (
+      <RepositoryChoice
+        activeInstallations={activeInstallations}
+        busy={busy}
+        createName={name}
+        error={error}
+        githubConnected={githubConnected}
+        linkRepo={draft}
+        loading={loading}
+        mode={mode}
+        notice={notice}
+        onChooseMode={chooseMode}
+        onConnect={trackConnect(onConnect)}
+        onLinkInstead={linkInstead}
+        onOpenList={() => setListOpen(true)}
+        onSelectInstallation={setInstallationId}
+        ownerMenuOpen={ownerMenuOpen}
+        reserveOwnerMenuSpace
+        selectedInstallation={selectedInstallation}
+        setOwnerMenuOpen={setOwnerMenuOpen}
+        takenRepo={takenRepo}
+        testIDPrefix="room"
+      />
+    ) : null;
 
   const list = (
     <View style={styles.inset}>
@@ -215,7 +227,8 @@ export function useRoomRepositoryChoice({
 
   return {
     listOpen,
-    control: <View style={styles.inset}>{control}</View>,
+    row,
+    control: control ? <View style={styles.inset}>{control}</View> : null,
     list,
     footer,
   };

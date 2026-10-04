@@ -7066,6 +7066,7 @@ export function BuzzChatSurface({
           roomRepoChoice.list
         ) : (
           <>
+            {roomRepoChoice.row}
             {!isCorner && canRenameTitle && renameEditing && (
               <View style={styles.roomRenameEditor} testID="rename-room-editor">
                 <Text style={styles.roomRenameLabel}>New {ROOM_LABEL.toLowerCase()} name</Text>

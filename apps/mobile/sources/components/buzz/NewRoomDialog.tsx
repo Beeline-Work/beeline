@@ -226,32 +226,46 @@ export function NewRoomDialog({
               </Text>
             )}
           </View>
-          <RepositoryChoice
-            activeInstallations={activeInstallations}
-            busy={busy}
-            collapsedValue="None"
-            createName={slug}
-            error={mode !== 'none' ? repoPickerError : null}
-            githubConnected={githubConnected}
-            linkRepo={pendingRepo}
-            loading={repoAccessLoading}
-            mode={mode}
-            notice={repoPickerNotice}
-            onChooseMode={chooseMode}
-            onConnect={trackConnect(handleAddGitHubAccount)}
-            onLinkInstead={linkInstead}
-            onOpenList={handleToggleRepoPicker}
-            onReveal={reveal}
-            onSelectInstallation={setInstallationId}
-            ownerMenuOpen={ownerMenuOpen}
-            revealed={revealed}
-            selectedInstallation={selectedInstallation}
-            setOwnerMenuOpen={setOwnerMenuOpen}
-            takenRepo={takenRepo}
-            testIDPrefix="create-room"
-          />
-          <View style={styles.publicRow}>
-            <Text style={styles.boxKey}>Public</Text>
+          {revealed ? (
+            <RepositoryChoice
+              activeInstallations={activeInstallations}
+              busy={busy}
+              createName={slug}
+              error={mode !== 'none' ? repoPickerError : null}
+              githubConnected={githubConnected}
+              linkRepo={pendingRepo}
+              loading={repoAccessLoading}
+              mode={mode}
+              notice={repoPickerNotice}
+              onChooseMode={chooseMode}
+              onConnect={trackConnect(handleAddGitHubAccount)}
+              onLinkInstead={linkInstead}
+              onOpenList={handleToggleRepoPicker}
+              onSelectInstallation={setInstallationId}
+              ownerMenuOpen={ownerMenuOpen}
+              selectedInstallation={selectedInstallation}
+              setOwnerMenuOpen={setOwnerMenuOpen}
+              takenRepo={takenRepo}
+              testIDPrefix="create-room"
+            />
+          ) : (
+            // Flat, matching Name's hairline rule and the Public row below —
+            // no box. Kept local (not HullActionSheetRow) so it stays inside
+            // `styles.form`'s own 24px inset instead of doubling it.
+            <TouchableOpacity
+              accessibilityLabel="Repository None, change"
+              accessibilityRole="button"
+              disabled={busy}
+              onPress={reveal}
+              style={styles.fieldRow}
+              testID="create-room-repo-row"
+            >
+              <Text style={styles.fieldLabel}>Repository</Text>
+              <Text style={styles.fieldValue}>None</Text>
+            </TouchableOpacity>
+          )}
+          <View style={styles.fieldRow} testID="create-room-public-row">
+            <Text style={styles.fieldLabel}>Public</Text>
             <Switch
               accessibilityLabel="Public Room"
               disabled={busy}
@@ -298,10 +312,27 @@ const styles = StyleSheet.create((theme) => {
       color: hull.textMuted,
       marginTop: hull.space.sm,
     },
-    boxKey: { ...Typography.default(), ...hull.type.meta, color: hull.textSecondary, flex: 1 },
-    // Public sits in the compact layout as one quiet line, with no divider.
-    publicRow: {
-      minHeight: 44,
+    // Shared by the Repository and Public rows below: same label weight and
+    // row rhythm as Name's hairline rule, so the three fields read as one
+    // list instead of Repository standing out in its own box.
+    fieldLabel: {
+      ...Typography.default(),
+      ...hull.type.body,
+      color: hull.textPrimary,
+      flex: 1,
+      fontFamily: hull.proseRegular,
+    },
+    fieldValue: {
+      ...Typography.default(),
+      ...hull.type.meta,
+      color: hull.textMuted,
+      fontFamily: hull.proseRegular,
+    },
+    fieldRow: {
+      minHeight: 52,
+      paddingVertical: hull.space.sm,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: hull.border,
       flexDirection: 'row',
       alignItems: 'center',
       gap: hull.space.sm,

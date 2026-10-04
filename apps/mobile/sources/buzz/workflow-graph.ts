@@ -8,7 +8,13 @@ import type {
   WorkflowReceipt,
 } from '@beeline/api-contract/phone';
 
-/** The run's reached visits in execution order, including repeated states. */
+/**
+ * The run's reached visits in execution order (including repeated states),
+ * followed by the contract's predicted forward path from the current state —
+ * each state's first declared outcome, stopping at the first predicted
+ * terminal — so the rail always shows every step of the workflow, not only
+ * the ones the run has reached so far.
+ */
 
 export type WorkflowLineStatus = 'done' | 'current' | 'pending' | 'skipped' | 'failed';
 
@@ -52,12 +58,55 @@ function kindOf(state: WorkflowState | undefined): WorkflowLineKind {
   return state?.kind ?? 'handoff';
 }
 
+/** The state `state`'s first declared outcome not already in `seen`, or a fresh implicit terminal. */
+function nextPredicted(
+  contract: WorkflowContract,
+  state: string,
+  seen: ReadonlySet<string>,
+): string | undefined {
+  const declared = contract.handoffs[state];
+  if (!declared || declared.kind === 'terminal' || declared.kind === 'waiting') return undefined;
+  const forward = Object.entries(declared.on).find(([, target]) => !seen.has(target));
+  return (
+    forward?.[1] ??
+    (contract.implicitEdges ?? []).find(
+      (name) => contract.handoffs[name]?.kind === 'terminal' && !seen.has(name),
+    )
+  );
+}
+
+/** The contract's predicted path onward from the run's current state, every row `pending`. */
+function predictedTail(
+  contract: WorkflowContract,
+  current: string,
+  reachedStates: ReadonlySet<string>,
+): WorkflowLineStep[] {
+  const seen = new Set(reachedStates);
+  const tail: WorkflowLineStep[] = [];
+  let state = nextPredicted(contract, current, seen);
+  while (state !== undefined) {
+    const declared = contract.handoffs[state]!;
+    seen.add(state);
+    tail.push({
+      state,
+      kind: kindOf(declared),
+      ...(declared.kind === 'terminal' ? { terminalStatus: declared.status } : {}),
+      status: 'pending',
+      onMainPath: true,
+      visits: [],
+    });
+    if (declared.kind === 'terminal') break;
+    state = nextPredicted(contract, state, seen);
+  }
+  return tail;
+}
+
 export function workflowRunLine(
   contract: WorkflowContract,
   history: readonly WorkflowRunStepView[] = [],
 ): WorkflowLineStep[] {
   const entries = history.filter((entry) => contract.handoffs[entry.toState]);
-  return entries.map<WorkflowLineStep>((entry, index, entries) => {
+  const reached = entries.map<WorkflowLineStep>((entry, index, entries) => {
     const declared = contract.handoffs[entry.toState]!;
     const next = entries[index + 1];
     const terminal = declared.kind === 'terminal';
@@ -87,6 +136,9 @@ export function workflowRunLine(
       visits: [visit],
     };
   }).filter((step, index) => !(entries[index]?.status === 'abandoned' && entries[index]?.fromState === entries[index]?.toState));
+  const last = reached[reached.length - 1];
+  if (!last || last.status !== 'current') return reached;
+  return [...reached, ...predictedTail(contract, last.state, new Set(reached.map((step) => step.state)))];
 }
 
 /** `feedback-triage` → `Feedback triage`. */

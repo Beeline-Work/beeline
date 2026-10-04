@@ -194,13 +194,49 @@ describe('CornerObjectiveLine', () => {
     expect(line.props.accessibilityRole).toBe('link');
     expect(line.props.style({ pressed: false })[0].minHeight).toBe(44);
     expect(line.findAllByType('Polygon' as any)).toHaveLength(1);
-    expect(flatText(line.findByProps({ testID: 'corner-objective-line-workflow-copy' }))).toBe('Approve');
+    expect(flatText(line.findByProps({ testID: 'corner-objective-line-workflow-copy' }))).toBe('Feedback triage · Approve');
     act(() => line.props.onPress());
-    expect(onOpenWorkflow).toHaveBeenCalledTimes(1);
+    expect(onOpenWorkflow).toHaveBeenCalledWith(RUN);
     expect(workflowRunHref(RUN)).toEqual({
       pathname: '/beeline/workflow-run',
       params: { roomId: 'corner-1', runId: RUN.runId },
     });
+  });
+
+  it('names the pinned run by its workflow name and step', () => {
+    const renderer = render(
+      <CornerObjectiveLine objective="Run the sweep" onOpenWorkflow={() => undefined} workflow={RUN} />,
+    );
+    expect(flatText(renderer.root.findByProps({ testID: 'corner-objective-line-workflow-copy' })))
+      .toBe('Feedback triage · Approve');
+  });
+
+  it('shows a static +N running badge beside the pinned run, naming another live workflow', () => {
+    const onOpenWorkflow = vi.fn();
+    const other: WorkflowRunSummaryView = { ...RUN, runId: 'o'.repeat(64), workflowSlug: 'macro-paper-desk', state: 'draft' };
+    const renderer = render(
+      <CornerObjectiveLine
+        objective="Run the sweep"
+        onOpenWorkflow={onOpenWorkflow}
+        otherLiveRuns={[other]}
+        workflow={RUN}
+      />,
+    );
+    const badge = renderer.root.findByProps({ testID: 'corner-objective-line-workflow-more' });
+    expect(flatText(badge)).toBe('+1 running');
+    // The badge is a plain indicator, not a control: tapping the panel's own
+    // link opens the pinned run's page; the other run surfaces only on that
+    // run page's own "Also running" section.
+    expect(badge.props.onPress).toBeUndefined();
+    const link = renderer.root.findByProps({ testID: 'corner-objective-line-workflow' });
+    act(() => link.props.onPress());
+    expect(onOpenWorkflow).toHaveBeenCalledWith(RUN);
+
+    expect(
+      render(
+        <CornerObjectiveLine objective="Run the sweep" onOpenWorkflow={() => undefined} workflow={RUN} />,
+      ).root.findAllByProps({ testID: 'corner-objective-line-workflow-more' }),
+    ).toHaveLength(0);
   });
 
   it('names the holder when the step is not the viewer’s, and hides the line once the run ends', () => {
@@ -212,7 +248,7 @@ describe('CornerObjectiveLine', () => {
       />,
     );
     expect(flatText(renderer.root.findByProps({ testID: 'corner-objective-line-workflow-copy' })))
-      .toBe('Dispatch');
+      .toBe('Feedback triage · Dispatch');
     const ended = render(
       <CornerObjectiveLine
         objective="Run the sweep"

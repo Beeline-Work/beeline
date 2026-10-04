@@ -47,7 +47,7 @@ it('Reproduction C1: a plain corner has no workflow glyph or link; a saved workf
         expect(proof.status, proof.stderr).toBe(0);
         expect(JSON.parse(proof.result)).toEqual({
           objective: 'Build the agreed change', plainGlyphs: 0, plainLinks: 0,
-          savedLabel: 'Open workflow, Approve',
+          savedLabel: 'Open workflow, Corner · Approve',
           opened: { pathname: '/beeline/workflow-run', params: { roomId: 'saved', runId: 'saved-run' } },
         });
         console.log(`Reproduction C1 Demonstrated ${theme} ${width}px: plain corner objective has no workflow glyph/link; saved workflow opens its run`);

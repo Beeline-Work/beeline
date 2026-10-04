@@ -146,7 +146,7 @@ export async function runBrowserProof(options: {
       jsx: 'automatic',
       mainFields: ['browser', 'module', 'main'],
       resolveExtensions: ['.web.tsx', '.web.ts', '.web.js', '.tsx', '.ts', '.js', '.json'],
-      loader: { '.js': 'jsx', '.png': 'dataurl' },
+      loader: { '.js': 'jsx', '.png': 'dataurl', '.ttf': 'dataurl' },
       // Metro defines `global` for the web bundle; react-native-web's Animated
       // stops a timing animation through `global.cancelAnimationFrame`.
       define: {

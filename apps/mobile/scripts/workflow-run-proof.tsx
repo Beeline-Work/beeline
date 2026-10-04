@@ -9,9 +9,8 @@ import WorkflowRun from '../sources/app/(app)/beeline/workflow-run';
  * header's type, each step's circle and the line beside it, what each step
  * says to a screen reader, each step's assignee (handle, whether it is the
  * viewer's own mark, and whether it sits at the row's right edge), any live
- * output, and any control inside the gate's readout. It then
- * opens the step named by `?expand=`, reports its readout, taps the corner
- * named by `?corner=`, and reports where the page navigated.
+ * output or final reply, and any gate record. It then taps the corner named
+ * by `?corner=` and reports where the page navigated.
  */
 const pause = () => new Promise((resolve) => setTimeout(resolve, 100));
 const report = (text: string) => {
@@ -21,12 +20,6 @@ const leaves = (root: Element | null) =>
   Array.from(root?.querySelectorAll<HTMLElement>('*') ?? [])
     .filter((node) => node.childElementCount === 0 && node.textContent?.trim())
     .map((node) => node.textContent!);
-/** A readout's lines as a reader sees them: index, key, then the whole value. */
-const readout = (root: Element | null) =>
-  ((root as HTMLElement | null)?.innerText ?? '')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
 const ids = (pattern: RegExp) =>
   Array.from(document.querySelectorAll<HTMLElement>('[data-testid]'))
     .map((node) => node.dataset.testid!)
@@ -63,8 +56,7 @@ async function run() {
       .map((node) => {
         const id = node.dataset.testid!;
         const state = id.slice(prefix.length).replace(/-assignee(-viewer)?$/, '');
-        const row = document.querySelector<HTMLElement>(`[data-testid="${prefix}${state}-toggle"]`) ??
-          node.closest<HTMLElement>(`[data-testid="${prefix}${state}"]`)!;
+        const row = node.closest<HTMLElement>(`[data-testid="${prefix}${state}"]`)!;
         const handle = node.querySelector<HTMLElement>(`[data-testid="${prefix}${state}-assignee-handle"]`)!;
         const name = document.querySelector<HTMLElement>(`[data-testid="${prefix}${state}"]`)!
           .querySelector<HTMLElement>('[dir="auto"]')!;
@@ -86,29 +78,18 @@ async function run() {
       document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.textContent]),
   );
   const pushedBefore = [...((globalThis as { __pushed?: unknown[] }).__pushed ?? [])];
-  const expand = query.get('expand');
-  let expanded: string[] | null = null;
-  if (expand) {
-    document.querySelector<HTMLElement>(`[data-testid="${prefix}${expand}-toggle"]`)?.click();
-    await pause();
-    expanded = readout(document.querySelector(`[data-testid="${prefix}${expand}-readout"]`));
-  }
-  const attempt = query.get('attempt');
-  if (expand && attempt) {
-    document.querySelector<HTMLElement>(`[data-testid="${prefix}${expand}-attempt-${attempt}-toggle"]`)?.click();
-    await pause();
-    expanded = readout(document.querySelector(`[data-testid="${prefix}${expand}-readout"]`));
-  }
-  const gateReadout = document.querySelector(`[data-testid="${prefix}approve-readout"]`);
-  const gate = gateReadout
-    ? {
-        text: readout(gateReadout),
-        controls: gateReadout.querySelectorAll('[role="button"],[role="link"],button,a').length,
-      }
-    : null;
+  const gate = Object.fromEntries(
+    ids(/-gate$/).map((id) => [id.slice(prefix.length, -'-gate'.length),
+      document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.textContent]),
+  );
   const corner = query.get('corner');
   if (corner) {
     document.querySelector<HTMLElement>(`[data-testid="workflow-run-corner-${corner}"]`)?.click();
+    await pause();
+  }
+  const switchTo = query.get('switchTo');
+  if (switchTo) {
+    document.querySelector<HTMLElement>(`[data-testid="workflow-run-also-running-${switchTo}"]`)?.click();
     await pause();
   }
   report(
@@ -117,9 +98,8 @@ async function run() {
       overview: Boolean(document.querySelector('[data-testid="workflow-run-overview"]')),
       earlier: Boolean(document.querySelector('[data-testid="workflow-run-earlier"]')),
       summary: document.querySelector('[data-testid="workflow-run-description"]')?.textContent ?? null,
-      exits: Object.fromEntries(Array.from(document.querySelectorAll<HTMLElement>('[data-testid$="-exits"],[data-testid$="-exit"]')).map(node => [node.dataset.testid!.slice(prefix.length), node.textContent])),
-      receipts: ids(/-receipt$/),
-      refs: ids(/-ref-/),
+      does: Object.fromEntries(ids(/-description$/).filter((id) => id.startsWith(prefix)).map((id) => [id.slice(prefix.length, -'-description'.length),
+        document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.textContent])),
       overflow: document.documentElement.scrollWidth > innerWidth,
       eyebrowFont: font(query.get('eyebrow')),
       titleFont: font(query.get('title')),
@@ -133,9 +113,10 @@ async function run() {
         document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.textContent])),
       durations: Array.from(document.querySelectorAll<HTMLElement>(`[data-testid^="${prefix}"][data-testid$="-duration"]`)).map((node) => node.textContent),
       gate,
-      expanded,
+      alsoRunning: ids(/^workflow-run-also-running-/),
       pushedBefore,
       pushed: (globalThis as { __pushed?: unknown[] }).__pushed ?? [],
+      replaced: (globalThis as { __replaced?: unknown[] }).__replaced ?? [],
     }),
   );
 }

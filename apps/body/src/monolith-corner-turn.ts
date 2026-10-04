@@ -1115,6 +1115,7 @@ export class MonolithCornerTurnLoop {
         // `monolith-room-turn.ts`'s matching comment.
         attachScratchRoot,
         turnContextPath: this.commandContext.path,
+        squireRelay: squireScope.relay,
         ...(this.options.grantRunnerEndpoint
           ? { grantRunner: this.options.grantRunnerEndpoint }
           : {}),

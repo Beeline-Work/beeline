@@ -38,6 +38,8 @@ export function beelineAgentMcpServer(
     directMessage?: boolean;
     /** The daemon's loopback grant runner, for run_granted_command. */
     grantRunner?: GrantRunnerEndpoint;
+    /** The granted Squire route used by this session's tools and status probe. */
+    squireRelay?: { url: string; token: string };
   },
 ): McpServerWire {
   if (!config.readonlyMcpCommand) {
@@ -56,6 +58,12 @@ export function beelineAgentMcpServer(
         ? [{ name: 'BEELINE_TURN_CONTEXT_FILE', value: context.turnContextPath }]
         : []),
       ...(context.directMessage ? [{ name: 'BEELINE_AGENT_DM', value: '1' }] : []),
+      ...(context.squireRelay
+        ? [
+            { name: 'BEELINE_SQUIRE_RELAY_URL', value: context.squireRelay.url },
+            { name: 'BEELINE_SQUIRE_RELAY_TOKEN', value: context.squireRelay.token },
+          ]
+        : []),
       { name: 'BEELINE_DAEMON_BASE_URL', value: connection.baseUrl },
       { name: 'BEELINE_DAEMON_TOKEN', value: connection.daemonToken },
       { name: 'BEELINE_HELPER_VERSION', value: connection.helperVersion },

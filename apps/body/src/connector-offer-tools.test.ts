@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   agentToolsFor,
+  connectorOfferDepsFromEnv,
   offerConnector,
   workbenchStatus,
   type ConnectorOfferDeps,
@@ -23,6 +24,20 @@ function deps(
 }
 
 describe('beeline-agent workbench_status + offer_connector (R5)', () => {
+  it('uses the shared Workbench state when no Squire route is granted', async () => {
+    vi.stubEnv('BEELINE_DAEMON_ROOM_ID', 'room-1');
+    vi.stubEnv('BEELINE_SQUIRE_RELAY_URL', '');
+    vi.stubEnv('BEELINE_SQUIRE_RELAY_TOKEN', '');
+    try {
+      const runtime = connectorOfferDepsFromEnv();
+      expect(runtime.squireReach).toBeUndefined();
+      const text = await workbenchStatus(deps({ catalog: [{
+        connectorType: 'trusty-squire', name: 'Trusty Squire', purpose: 'A vault.',
+        paired: { status: 'connected', helperName: 'squire', onThisMachine: true },
+      }] }, [], { squireReach: runtime.squireReach }));
+      expect(text).toContain('Trusty Squire): connected on squire');
+    } finally { vi.unstubAllEnvs(); }
+  });
   it('mounts discovery in every turn while connector offers stay in Rooms and DMs', () => {
     for (const directMessage of [false, true]) {
       const names = agentToolsFor(true, directMessage).map((tool) => tool.name);

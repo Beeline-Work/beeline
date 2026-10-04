@@ -5,6 +5,9 @@ import { act, create } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const desktop = vi.hoisted(() => ({ value: false }));
+const platform = vi.hoisted(() => ({ OS: 'android' }));
+
+vi.mock('react-native', () => ({ Platform: platform }));
 
 vi.mock('@/utils/responsive', () => ({
   useIsDesktop: () => desktop.value,
@@ -43,6 +46,7 @@ const composerSource = readFileSync(new URL('./ConversationComposer.tsx', import
 
 afterEach(() => {
   desktop.value = false;
+  platform.OS = 'android';
 });
 
 describe('AttachmentPickerSheet', () => {
@@ -177,36 +181,47 @@ describe('AttachmentPickerSheet', () => {
     expect(chatSource).toContain('pastedImageAttachment(image)');
   });
 
-  it('closes before dispatching Photo or Document and exposes scrim/Cancel dismissal', () => {
-    const calls: string[] = [];
-    const onClose = vi.fn(() => calls.push('close'));
-    const onPickDocument = vi.fn(() => calls.push('document'));
-    const onPickPhoto = vi.fn(() => calls.push('photo'));
-    let renderer: ReturnType<typeof create>;
-    act(() => {
-      renderer = create(
-        React.createElement(AttachmentPickerSheet, {
-          visible: true,
-          onClose,
-          onPickDocument,
-          onPickPhoto,
-        }),
+  it.each(['android', 'web'])(
+    'closes before dispatching Photo or Document on %s and exposes scrim/Cancel dismissal',
+    (os) => {
+      platform.OS = os;
+      desktop.value = os === 'web';
+      const calls: string[] = [];
+      const onClose = vi.fn(() => calls.push('close'));
+      const onPickDocument = vi.fn(() => calls.push('document'));
+      const onPickPhoto = vi.fn(() => calls.push('photo'));
+      let renderer: ReturnType<typeof create>;
+      act(() => {
+        renderer = create(
+          React.createElement(AttachmentPickerSheet, {
+            visible: true,
+            onClose,
+            onPickDocument,
+            onPickPhoto,
+          }),
+        );
+      });
+
+      const rows = renderer!.root.findAllByType('HullActionSheetRow' as any);
+      act(() => rows[0].props.onPress());
+      act(() => rows[1].props.onPress());
+      expect(calls).toEqual(['close', 'photo', 'close', 'document']);
+
+      const sheet = renderer!.root.findByType(
+        (os === 'web' ? 'HullDialog' : 'HullActionSheetModal') as any,
       );
-    });
-
-    const rows = renderer!.root.findAllByType('HullActionSheetRow' as any);
-    act(() => rows[0].props.onPress());
-    act(() => rows[1].props.onPress());
-    expect(calls).toEqual(['close', 'photo', 'close', 'document']);
-
-    const sheet = renderer!.root.findByType('HullActionSheetModal' as any);
-    expect(sheet.props).toMatchObject({
-      accessibilityLabel: 'Close attachment picker',
-      scrimTestID: 'attachment-picker-scrim',
-      visible: true,
-    });
-    act(() => sheet.props.onClose());
-    act(() => renderer!.root.findByType('HullActionSheetCancel' as any).props.onPress());
-    expect(onClose).toHaveBeenCalledTimes(4);
-  });
+      expect(sheet.props).toMatchObject({
+        accessibilityLabel: 'Close attachment picker',
+        scrimTestID: 'attachment-picker-scrim',
+        visible: true,
+      });
+      act(() => (os === 'web' ? sheet.props.onRequestClose() : sheet.props.onClose()));
+      act(() =>
+        os === 'web'
+          ? sheet.props.actions[0].onPress()
+          : renderer!.root.findByType('HullActionSheetCancel' as any).props.onPress(),
+      );
+      expect(onClose).toHaveBeenCalledTimes(4);
+    },
+  );
 });

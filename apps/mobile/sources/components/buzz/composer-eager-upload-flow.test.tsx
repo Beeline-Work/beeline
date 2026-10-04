@@ -145,6 +145,8 @@ describe('a person attaches a file in the composer', () => {
     expect(labels).toEqual(['Photos', 'Files', 'Paste from clipboard']);
 
     act(() => renderer!.root.findByProps({ testID: 'attachment-picker-document' }).props.onPress());
+    expect(uploadMedia).not.toHaveBeenCalled();
+    act(() => renderer!.root.findByType('HullActionSheetModal' as any).props.onDismiss());
     await vi.waitFor(() => expect(uploadMedia).toHaveBeenCalledTimes(1));
     console.log(`staged report.pdf; uploads before send: ${uploadMedia.mock.calls.length}`);
     expect(sent).toEqual([]);

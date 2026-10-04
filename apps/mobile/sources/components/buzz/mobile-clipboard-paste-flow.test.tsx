@@ -2,6 +2,7 @@ import * as React from 'react';
 // @ts-expect-error No renderer declarations in this workspace.
 import { act, create } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import * as ImagePicker from 'expo-image-picker';
 
 // Same host-element mocking convention as ConversationComposer.test.tsx and
 // AttachmentPickerSheet.test.ts: render real component logic, stub the leaf
@@ -55,6 +56,7 @@ vi.mock('react-native-svg', async () => {
 // chat-attachment.test.ts stubs them — they're not exercised by this path.
 vi.mock('expo-image-manipulator', () => ({ manipulateAsync: vi.fn(), SaveFormat: {} }));
 vi.mock('@/utils/readFileBytes', () => ({ readFileBytes: vi.fn() }));
+vi.mock('expo-image-picker', () => ({ launchImageLibraryAsync: vi.fn() }));
 
 const clipboard = vi.hoisted(() => ({
   hasImageAsync: vi.fn(),
@@ -71,7 +73,13 @@ vi.mock('expo-file-system/legacy', () => ({
 
 import { COMPOSER_SINGLE_LINE_INPUT_HEIGHT, ConversationComposer } from './ConversationComposer';
 import { AttachmentPickerSheet } from './AttachmentPickerSheet';
-import { formatAttachmentSize, pastedImageAttachment, type PickedChatAttachment } from '@/buzz/chat-attachment';
+import {
+  formatAttachmentSize,
+  MAX_MESSAGE_ATTACHMENTS,
+  pastedImageAttachment,
+  pickedPhotoAttachments,
+  type PickedChatAttachment,
+} from '@/buzz/chat-attachment';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -79,6 +87,23 @@ import { formatAttachmentSize, pastedImageAttachment, type PickedChatAttachment 
 function ComposerWithClipboardPaste() {
   const [pendingAttachments, setPendingAttachments] = React.useState<PickedChatAttachment[]>([]);
   const [attachmentPickerVisible, setAttachmentPickerVisible] = React.useState(false);
+
+  const pickPhoto = async () => {
+    const remaining = MAX_MESSAGE_ATTACHMENTS - pendingAttachments.length;
+    if (remaining <= 0) return;
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsMultipleSelection: true,
+      selectionLimit: remaining,
+      quality: 1,
+      exif: false,
+    });
+    if (result.canceled || result.assets.length === 0) return;
+    setPendingAttachments((current) => [
+      ...current,
+      ...pickedPhotoAttachments(result.assets).slice(0, MAX_MESSAGE_ATTACHMENTS - current.length),
+    ]);
+  };
 
   const pasteImage = React.useCallback(async () => {
     if (!(await clipboard.hasImageAsync())) return;
@@ -113,7 +138,7 @@ function ComposerWithClipboardPaste() {
         visible={attachmentPickerVisible}
         onClose={() => setAttachmentPickerVisible(false)}
         onPickDocument={() => {}}
-        onPickPhoto={() => {}}
+        onPickPhoto={() => void pickPhoto()}
         onPickPasted={() => void pasteImage()}
       />
     </>
@@ -121,6 +146,60 @@ function ComposerWithClipboardPaste() {
 }
 
 describe('a person on iOS/Android pastes a copied image into the composer', () => {
+  it('IOS-ATTACH-1: selects multiple photos after dismissal, sees them in the composer, preserves picker cancellation and the limit', async () => {
+    const library = vi.mocked(ImagePicker.launchImageLibraryAsync);
+    library
+      .mockResolvedValueOnce({
+        canceled: false,
+        assets: [
+          {
+            uri: 'file:///photo-one.jpg',
+            fileName: 'photo-one.jpg',
+            mimeType: 'image/jpeg',
+            width: 10,
+            height: 10,
+          },
+          {
+            uri: 'file:///photo-two.jpg',
+            fileName: 'photo-two.jpg',
+            mimeType: 'image/jpeg',
+            width: 10,
+            height: 10,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ canceled: true, assets: null });
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(React.createElement(ComposerWithClipboardPaste));
+    });
+    const choosePhotos = () => {
+      act(() => renderer!.root.findByProps({ testID: 'chat-attach-button' }).props.onPress());
+      act(() => renderer!.root.findByProps({ testID: 'attachment-picker-photo' }).props.onPress());
+    };
+    choosePhotos();
+    expect(library).not.toHaveBeenCalled();
+    await act(async () =>
+      renderer!.root.findByType('HullActionSheetModal' as any).props.onDismiss(),
+    );
+    expect(library).toHaveBeenLastCalledWith(
+      expect.objectContaining({ allowsMultipleSelection: true, selectionLimit: 10 }),
+    );
+    expect(JSON.stringify(renderer!.toJSON())).toContain('photo-one.jpg');
+    expect(JSON.stringify(renderer!.toJSON())).toContain('photo-two.jpg');
+    console.info(
+      'IOS-ATTACH-1: Attach → Photos → dismissal → native library; composer pending: photo-one.jpg, photo-two.jpg',
+    );
+    choosePhotos();
+    await act(async () =>
+      renderer!.root.findByType('HullActionSheetModal' as any).props.onDismiss(),
+    );
+    expect(library).toHaveBeenLastCalledWith(expect.objectContaining({ selectionLimit: 8 }));
+    expect(renderer!.root.findAllByProps({ testID: 'pending-chat-attachment-2' })).toHaveLength(0);
+    expect(JSON.stringify(renderer!.toJSON())).toContain('photo-two.jpg');
+    act(() => renderer!.unmount());
+  });
+
   it('taps Attach, taps Paste from clipboard, and sees the clipboard image appear as a pending attachment', async () => {
     const base64 = Buffer.from('screenshot-bytes').toString('base64');
     clipboard.hasImageAsync.mockResolvedValue(true);
@@ -147,6 +226,10 @@ describe('a person on iOS/Android pastes a copied image into the composer', () =
     // Tap it — this drives the real getImageAsync -> pastedImageAttachment pipeline.
     await act(async () => {
       pasteRow.props.onPress();
+    });
+    expect(clipboard.getImageAsync).not.toHaveBeenCalled();
+    await act(async () => {
+      renderer!.root.findByType('HullActionSheetModal' as any).props.onDismiss();
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -159,9 +242,7 @@ describe('a person on iOS/Android pastes a copied image into the composer', () =
     );
 
     // The observable Y: the pasted image now renders as a pending attachment in the composer.
-    expect(
-      renderer!.root.findAllByProps({ testID: 'pending-chat-attachment-1' }),
-    ).toHaveLength(0);
+    expect(renderer!.root.findAllByProps({ testID: 'pending-chat-attachment-1' })).toHaveLength(0);
     const rendered = JSON.stringify(renderer!.toJSON());
     expect(rendered).toContain('pending-chat-attachment-0');
     expect(rendered).toContain('pasted-');

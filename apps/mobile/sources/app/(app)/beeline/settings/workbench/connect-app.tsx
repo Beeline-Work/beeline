@@ -1,5 +1,5 @@
 import { useTextDraft } from '@/buzz/use-text-draft';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import Svg, { Circle, Path } from 'react-native-svg';
@@ -9,8 +9,8 @@ import { Typography } from '@/constants/Typography';
 import { AppMark } from '@/components/buzz/AppMark';
 import { Button } from '@/components/buzz/Button';
 import { AppPageHeader } from '@/components/buzz/AppPageHeader';
-import { POPULAR_APPS } from '@/buzz/app-catalog';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
+import type { WorkbenchAppSearchResult } from '@beeline/api-contract/workbench';
 import type { WorkbenchApp, WorkbenchHelper } from '@/buzz/workbench';
 import { openAppSignIn } from '@/buzz/app-sign-in';
 import { appBoardColors } from '@/buzz/app-board-style';
@@ -26,7 +26,8 @@ export default function ConnectAppScreen() {
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useTextDraft(`app-search:${workspaceId}`, '', viewerId);
   const [apps, setApps] = useState<readonly WorkbenchApp[]>([]);
-  const [appCatalog, setAppCatalog] = useState<readonly { appKey: string; description?: string; logo?: string }[]>([]);
+  const [searchResults, setSearchResults] = useState<WorkbenchAppSearchResult>([]);
+  const [resultsQuery, setResultsQuery] = useState<string | null>(null);
   const [helpers, setHelpers] = useState<readonly WorkbenchHelper[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -34,20 +35,29 @@ export default function ConnectAppScreen() {
   useEffect(() => {
     let live = true;
     void getWorkbenchSource().readWorkbench({ workspaceId, viewerId }).then(view => {
-      if (live) { setApps(view.apps); setAppCatalog(view.appCatalog ?? []); setHelpers(view.helpers); }
+      if (live) { setApps(view.apps); setHelpers(view.helpers); }
     }).catch(() => { if (live) setError('Apps are unavailable right now'); });
     return () => { live = false; };
   }, [viewerId, workspaceId]);
 
-  const filtered = useMemo(() => {
-    const matched = POPULAR_APPS.filter(app => app.name.toLowerCase().includes(query.trim().toLowerCase()));
-    if (!query.trim() || matched.length) return matched;
-    return [{ name: query.trim(), domain: undefined }];
-  }, [query]);
+  const searchQuery = query.trim();
+  useEffect(() => {
+    let live = true;
+    const timer = setTimeout(() => {
+      void getWorkbenchSource().searchApps({ query: searchQuery }).then(results => {
+        if (live) { setSearchResults(results); setResultsQuery(searchQuery); }
+      }).catch(() => {
+        if (live) { setSearchResults([]); setResultsQuery(searchQuery); setError('App search is unavailable right now'); }
+      });
+    }, searchQuery ? 200 : 0);
+    return () => { live = false; clearTimeout(timer); };
+  }, [searchQuery]);
+  const filtered = resultsQuery === searchQuery ? searchResults : [];
 
-  const connect = async (name: string) => {
+  const connect = async (selected: WorkbenchAppSearchResult[number]) => {
     if (busy) return;
-    const existing = apps.find(app => app.name.toLowerCase() === name.toLowerCase());
+    const name = selected.name;
+    const existing = apps.find(app => app.key === selected.appKey);
     if (existing?.status === 'connected') return;
     const helper = helpers.find(item => item.online);
     if (!helper) { setError('Connect a helper to use this app'); return; }
@@ -81,19 +91,19 @@ export default function ConnectAppScreen() {
           <TextInput accessibilityLabel="Search apps" testID="connect-app-input" autoCapitalize="none" autoCorrect={false} placeholder="Search 1,500+ apps" placeholderTextColor={styles.placeholder.color} value={query} onChangeText={setQuery} style={styles.input} />
         </View>
       </View>
-      <Text style={styles.section}>POPULAR</Text>
+      <Text style={styles.section}>{searchQuery ? 'RESULTS' : 'POPULAR'}</Text>
       <View style={styles.list}>
         {filtered.map(app => {
-          const existing = apps.find(item => item.name.toLowerCase() === app.name.toLowerCase());
-          const key = app.name.toLowerCase().replaceAll(' ', '');
-          const metadata = appCatalog.find(item => item.appKey === key);
+          const existing = apps.find(item => item.key === app.appKey);
+          const key = app.appKey;
           return <View key={app.name} style={styles.row} testID={`connect-app-${app.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`}>
-            <AppMark name={app.name} domain={app.domain} logo={metadata?.logo ?? existing?.logo} size={34} />
-            <View style={styles.name}><Text style={styles.nameText} numberOfLines={1}>{app.name}</Text>{key === 'instagram' ? <Text style={styles.description}>{INSTAGRAM_SIGN_IN_REQUIREMENT}</Text> : metadata?.description ? <Text style={styles.description} numberOfLines={2}>{metadata.description}</Text> : null}</View>
-            {existing?.status === 'connected' ? <Text style={styles.connected}>connected</Text> : <Button disabled={busy !== null} label={busy === app.name ? 'Connecting' : existing?.status === 'error' ? 'Retry' : 'Connect'} onPress={() => void connect(app.name)} />}
+            <AppMark name={app.name} domain={app.domain} logo={app.logo ?? existing?.logo} size={34} />
+            <View style={styles.name}><Text style={styles.nameText} numberOfLines={1}>{app.name}</Text>{key === 'instagram' ? <Text style={styles.description}>{INSTAGRAM_SIGN_IN_REQUIREMENT}</Text> : app.description ? <Text style={styles.description} numberOfLines={2}>{app.description}</Text> : null}</View>
+            {existing?.status === 'connected' ? <Text style={styles.connected}>connected</Text> : <Button disabled={busy !== null} label={busy === app.name ? 'Connecting' : existing?.status === 'error' ? 'Retry' : 'Connect'} onPress={() => void connect(app)} />}
             {existing ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Disconnect ${app.name}`} disabled={busy !== null} onPress={() => void disconnect(existing)} testID={`disconnect-app-${app.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`}><Text style={styles.connected}>Disconnect</Text></TouchableOpacity> : null}
           </View>;
         })}
+        {resultsQuery === searchQuery && searchQuery && filtered.length === 0 ? <Text style={styles.description}>No apps found</Text> : null}
       </View>
       {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
     </ScrollView>

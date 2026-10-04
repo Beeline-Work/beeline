@@ -11,6 +11,7 @@ import {
   type WorkbenchView,
 } from './workbench';
 import type { WorkbenchSource } from './workbench-source';
+import { POPULAR_APPS } from './app-catalog';
 
 /**
  * Test-support mock of the Workbench data source. The screens and tests
@@ -151,6 +152,18 @@ export const INSTALL_STEP_OUTPUTS = [
  * helper reason, both for the failure UI and its render tests.
  */
 export class MockWorkbenchSource implements WorkbenchSource {
+  async searchApps(input: { query: string }) {
+    const query = input.query.trim().toLowerCase();
+    return [...POPULAR_APPS, { name: 'Resend', domain: 'resend.com' },
+      { name: 'Instagram', domain: 'instagram.com' }]
+      .filter((app) => !query || app.name.toLowerCase().includes(query))
+      .map((app) => ({
+        appKey: app.name.toLowerCase().replace(/[^a-z0-9]/g, ''),
+        ...app,
+        ...this.appCatalog.find((row) =>
+          row.appKey === app.name.toLowerCase().replace(/[^a-z0-9]/g, '')),
+      }));
+  }
   private readonly installs = new Map<string, MockInstall>();
   private failedConnectors = new Set<string>();
   private signInMethod: 'streamed' | 'oauth' | undefined;

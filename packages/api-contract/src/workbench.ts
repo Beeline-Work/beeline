@@ -195,6 +195,14 @@ export type ReadWorkbenchInput = {
    * returns the cached rows as stale until that asynchronous report lands. */
   readonly refreshVault?: boolean;
 };
+export type SearchWorkbenchAppsInput = { readonly query: string };
+export type WorkbenchAppSearchResult = readonly {
+  readonly appKey: string;
+  readonly name: string;
+  readonly domain?: string;
+  readonly description?: string;
+  readonly logo?: string;
+}[];
 export type PairConnectorInput = {
   readonly workspaceId: string;
   readonly connectorType: ConnectorKind;

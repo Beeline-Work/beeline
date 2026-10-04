@@ -177,6 +177,25 @@ describe('managed app provider boundary', () => {
     ]);
   });
 
+  it('searches the provider catalog and returns only usable service rows', async () => {
+    const transport = vi.fn(async (url: URL | string) => {
+      const parsed = new URL(String(url));
+      expect(parsed.pathname).toBe('/api/v3/toolkits');
+      expect(parsed.searchParams.get('search')).toBe('resend');
+      return json({ items: [
+        { slug: 'resend', name: 'Resend', meta: { description: 'Send email',
+          app_url: 'https://resend.com', logo: 'https://cdn.example.test/resend.png' } },
+        { slug: 'local', name: 'Local', is_local_toolkit: true },
+        { slug: 'disabled', name: 'Disabled', enabled: false },
+      ] });
+    });
+    const provider = new ComposioApps('fixture-only', transport as typeof fetch);
+    await expect(provider.searchToolkits('resend')).resolves.toEqual([{
+      slug: 'resend', name: 'Resend', description: 'Send email',
+      appUrl: 'https://resend.com', logo: 'https://cdn.example.test/resend.png',
+    }]);
+  });
+
   describe('Room files for file-upload parameters', () => {
     const OBJECT = '0b1e7c3a-6d2f-4c1a-9e8b-5a4d3c2b1a00';
     const S3KEY = 'uploads/youtube/fixture-s3key.mp4';

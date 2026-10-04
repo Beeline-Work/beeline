@@ -1043,6 +1043,26 @@ describe('connect_app', () => {
     });
   });
 
+  it('searches real Workbench services and refuses arbitrary app text before a connection exists', async () => {
+    const provider = fakeComposio();
+    provider.searchToolkits = vi.fn(async (query: string) => query === 'resend'
+      ? [{ slug: 'resend', name: 'Resend', appUrl: 'https://resend.com' }] : []);
+    provider.toolkit.mockImplementation(async (slug: string) => {
+      if (slug === 'resend') return { slug };
+      throw Object.assign(new Error('missing'), { status: 404 });
+    });
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    await expect(phone.execute('searchWorkbenchApps', { query: 'fuckface' }, OWNER))
+      .resolves.toEqual([]);
+    await expect(phone.execute('searchWorkbenchApps', { query: 'resend' }, OWNER))
+      .resolves.toEqual([{ appKey: 'resend', name: 'Resend', domain: 'resend.com' }]);
+    await expect(phone.execute('connectWorkbenchApp', {
+      app: 'fuckface', helperAgentId: 'machine-one' }, OWNER))
+      .rejects.toThrow('Select an app from search results');
+    expect((await database.query('SELECT id FROM workspace_apps')).rows).toEqual([]);
+  });
+
   it('lets a person connect from Workbench by handing the sign-in to their agent', async () => {
     await connectSquire();
     const phone = new PhoneService(
@@ -1056,7 +1076,8 @@ describe('connect_app', () => {
       undefined,
       undefined,
       fakeRegistry([]).client,
-      { supportsOAuth: async () => false } as ComposioApps,
+      { supportsOAuth: async () => false,
+        toolkit: async () => ({ slug: 'resend' }) } as ComposioApps,
     );
     const result = await phone.execute(
       'connectWorkbenchApp',

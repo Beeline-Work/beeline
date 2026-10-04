@@ -5,7 +5,7 @@ const url = 'https://github.com/owner/widgets/pull/614';
 let restore: Record<string, unknown>, items: Record<string, unknown>[];
 let checks: string, approvalPending: boolean;
 let reviewer: string | null, reviewerExists: boolean, reviewerIsAuthor: boolean, gateRule: string;
-let held: boolean, isWorkerYolo: boolean, mergeAllowed: boolean;
+let held: boolean, isWorkerYolo: boolean, mergeAllowed: boolean, expressMergeOrdered: boolean;
 let reviewerWake: { status: string; detail: string } | undefined;
 let calls: { name: string; input: Record<string, unknown> }[];
 beforeEach(() => {
@@ -26,6 +26,7 @@ beforeEach(() => {
   reviewerIsAuthor = false;
   held = false;
   isWorkerYolo = true;
+  expressMergeOrdered = false;
   mergeAllowed = true;
   gateRule =
     "Only @reviewer's approve_merge clears this gate; tagging or asking any other agent to review cannot record an approval or change this verdict.";
@@ -57,6 +58,7 @@ beforeEach(() => {
                   held,
                   holds: held ? [{ id: 'hold-1', actorId: 'human', standing: 'owner', setAt: '2026-10-02' }] : [],
                   isWorkerYolo,
+                  expressMergeOrdered,
                   mergeAllowed,
                   rule: gateRule,
                 }
@@ -78,10 +80,10 @@ describe('pr_checks_status PR selection and reviewer gate', () => {
     const status = JSON.parse(await prChecksStatus());
     expect(status).toMatchObject({
       held: false,
-      didHumanSayDontMerge: false,
       mergeAllowed: false,
       approvalPending: true,
     });
+    expect(status).not.toHaveProperty('didHumanSayDontMerge');
     expect(status.next).toContain('The PR URL is not yet durable');
     expect(gateCalls()).toHaveLength(0);
   });
@@ -126,22 +128,24 @@ describe('pr_checks_status PR selection and reviewer gate', () => {
   });
   it('takes the human hold from the server, never from its own transcript scan', async () => {
     items = [{ authorId: 'human', body: 'hold, do not merge' }];
-    expect(JSON.parse(await prChecksStatus({ pullRequest: 614 }))).toMatchObject({
+    const first = JSON.parse(await prChecksStatus({ pullRequest: 614 }));
+    expect(first).toMatchObject({
       held: false,
-      didHumanSayDontMerge: false,
       mergeAllowed: true,
       approvalPending: false,
     });
+    expect(first).not.toHaveProperty('didHumanSayDontMerge');
     held = true;
     mergeAllowed = false;
     items = [{ authorId: 'human', body: 'proceed' }];
-    expect(JSON.parse(await prChecksStatus({ pullRequest: 614 }))).toMatchObject({
+    const second = JSON.parse(await prChecksStatus({ pullRequest: 614 }));
+    expect(second).toMatchObject({
       held: true,
       holds: [{ id: 'hold-1', actorId: 'human', standing: 'owner', setAt: '2026-10-02' }],
-      didHumanSayDontMerge: true,
       mergeAllowed: false,
       approvalPending: true,
     });
+    expect(second).not.toHaveProperty('didHumanSayDontMerge');
     // The hold and yolo mode are the server's facts: no local lookup remains.
     expect(calls.map((call) => call.name)).not.toContain('getWorkspaceRoster');
     expect(calls.map((call) => call.name)).not.toContain('getAgentConfiguration');
@@ -189,11 +193,25 @@ describe('pr_checks_status PR selection and reviewer gate', () => {
         held = true;
         mergeAllowed = false;
       },
-      expected: { held: true, didHumanSayDontMerge: true, approvalPending: true },
+      expected: { held: true, approvalPending: true },
+    },
+    {
+      name: 'a Workspace owner or admin expressly ordered this head merged, with no reviewer at all',
+      setup: () => {
+        reviewer = null;
+        reviewerExists = false;
+        held = true;
+        isWorkerYolo = false;
+        expressMergeOrdered = true;
+        mergeAllowed = true;
+      },
+      expected: { reviewerExists: false, held: true, isWorkerYolo: false, expressMergeOrdered: true, mergeAllowed: true },
     },
   ])('reports the server merge gate: $name', async ({ setup, expected }) => {
     setup();
-    expect(JSON.parse(await prChecksStatus({ pullRequest: 614 }))).toMatchObject(expected);
+    const status = JSON.parse(await prChecksStatus({ pullRequest: 614 }));
+    expect(status).toMatchObject(expected);
+    expect(status).not.toHaveProperty('didHumanSayDontMerge');
   });
   it('never opens the gate itself when the server says it is shut', async () => {
     // Every local fact looks green, but only the server's mergeAllowed counts.
@@ -224,8 +242,11 @@ describe('pr_checks_status PR selection and reviewer gate', () => {
     );
     expect(result.rule).toContain('the server wakes the implementer with its reason');
     expect(result.rule).toContain('missing state is never consent');
+    expect(result.rule).toContain('expressMergeOrdered is true');
+    expect(result.rule).toContain('order_corner_merge');
     expect(result.rule).not.toContain('YOU merge');
     expect(result.rule).not.toContain('The server never merges');
+    expect(result.rule).not.toContain('didHumanSayDontMerge');
   });
   it('reports self-review as no gate when the opener is also the reviewer', async () => {
     reviewerIsAuthor = true;

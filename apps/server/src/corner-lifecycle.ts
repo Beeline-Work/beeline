@@ -1196,7 +1196,9 @@ export type CornerMergeGate = {
   held: boolean;
   holds: Awaited<ReturnType<typeof activeCornerHolds>>;
   isWorkerYolo: boolean;
-  /** Everything but checks: PASS (or self-review), yolo on, no hold, reviewer present. */
+  /** A current Workspace owner or admin ordered this exact head merged (`order_corner_merge`). Authority, not autonomy: it carries on its own. */
+  expressMergeOrdered: boolean;
+  /** Everything but checks: either an owner/admin's express order, or autonomous merge (PASS/self-review, yolo on, no hold, reviewer present). */
   open: boolean;
 };
 
@@ -1230,6 +1232,7 @@ async function cornerMergeGates(
     reviewer_parent_member: boolean;
     reviewer_fallback_ids: string[];
     approved: boolean;
+    express_merge_ordered: boolean;
     holds: CornerMergeGate['holds'];
     yolo_mode: boolean | null;
   }>(
@@ -1253,6 +1256,17 @@ async function cornerMergeGates(
                   AND parent.reviewer_agent_id IS NOT NULL
                   AND (approval.approved_by=parent.reviewer_agent_id OR approval.approved_by=ANY(parent.reviewer_fallback_ids))
               ) approved,
+              -- A current Workspace owner or admin's order_corner_merge is authority,
+              -- not autonomy: it does not need a configured reviewer at all.
+              EXISTS (
+                SELECT 1 FROM corner_merge_approvals approval
+                JOIN memberships workspace_member ON workspace_member.workspace_id=corner.workspace_id
+                  AND workspace_member.room_id IS NULL AND workspace_member.identity_id=approval.approved_by
+                  AND workspace_member.removed_at IS NULL AND workspace_member.role IN ('owner','admin')
+                JOIN identities orderer ON orderer.id=approval.approved_by AND orderer.kind='human'
+                WHERE approval.corner_id=fact.corner_id AND approval.pull_request_number=head.number
+                  AND approval.head_sha=head.head_sha
+              ) express_merge_ordered,
               COALESCE((SELECT jsonb_agg(jsonb_build_object('id',hold.id::text,'actorId',hold.actor_id,
                 'standing',hold.standing,'setAt',hold.set_at::text) ORDER BY hold.set_at,hold.id)
                 FROM corner_merge_holds hold WHERE hold.corner_id=fact.corner_id AND hold.released_at IS NULL),
@@ -1272,6 +1286,7 @@ async function cornerMergeGates(
     const approvalPending = Boolean(corner.configured_reviewer_id) && !author && !corner.approved;
     const held = corner.holds.length > 0;
     const isWorkerYolo = corner.yolo_mode === true;
+    const expressMergeOrdered = corner.express_merge_ordered;
     return [corner.corner_id, {
       reviewerExists,
       reviewerIsAuthor: author,
@@ -1279,7 +1294,8 @@ async function cornerMergeGates(
       held,
       holds: corner.holds,
       isWorkerYolo,
-      open: reviewerExists && !approvalPending && !held && isWorkerYolo,
+      expressMergeOrdered,
+      open: expressMergeOrdered || (reviewerExists && !approvalPending && !held && isWorkerYolo),
     }];
   }));
 }
@@ -1321,18 +1337,21 @@ export async function claimCornerMergeAttempt(
     await lockCornerWorkflowRun(db, cornerId);
     const corner = await loadCorner(db, cornerId);
     const pr = corner?.lifecycle.pr;
-    if (!corner || corner.archived || corner.lifecycle.checks !== 'passing' ||
-        !pr?.number || pr.headSha !== headSha) return false;
+    if (!corner || corner.archived || !pr?.number || pr.headSha !== headSha) return false;
     // Recheck local authority at claim after the earlier gate read.
     // No provider request belongs in this transaction.
-    if (!(await cornerMergeGate(db, cornerId, { number: pr.number, headSha })).open) return false;
+    const gate = await cornerMergeGate(db, cornerId, { number: pr.number, headSha });
+    if (!gate.open) return false;
+    // An express order is not re-gated behind the recorded checks verdict or
+    // which workflow state the run is sitting in; autonomous merge still is.
+    if (!gate.expressMergeOrdered && corner.lifecycle.checks !== 'passing') return false;
     const claimed = await db.query(
       `UPDATE corner_facts SET merge_attempt_head=$2,lifecycle=lifecycle-'mergeRecovery',updated_at=now()
-       WHERE corner_id=$1 AND workflow_state='land'
+       WHERE corner_id=$1 AND (workflow_state='land' OR $3)
          AND lifecycle->'pr'->>'headSha'=$2
          AND merge_attempt_head IS DISTINCT FROM $2
        RETURNING 1`,
-      [cornerId, headSha],
+      [cornerId, headSha, gate.expressMergeOrdered],
     );
     return claimed.rowCount > 0;
   });

@@ -1050,6 +1050,18 @@ const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: 'order_corner_merge',
+    description:
+      'Record this turn’s original human requester’s express instruction to merge the corner’s current pull request now. Only a current Workspace owner or admin’s order is recorded; anyone else is refused. It carries on its own - pr_checks_status reports mergeAllowed true for this head regardless of checks, a hold, worker yolo mode, or whether a reviewer is configured. Chat never orders a merge directly.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        cornerId: { type: 'string', format: 'uuid' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'open_corner',
     description:
       'Set implementer to hand the corner work to another agent member; the caller then does not work the corner. Open one corner after any material unresolved choice is settled. Supply a compact brief for a precise small fix or a complete brief and Room files for complex work. The brief and available Room files are committed atomically with the first worker command. Give it a name of AT MOST THREE WORDS and a fixed objective of no more than 24 words.',
@@ -2509,20 +2521,20 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
   const reviewFailed = verdict ? verdict.approvalPending !== false : true;
   const held = verdict?.held === true;
   const isWorkerYolo = verdict?.isWorkerYolo === true;
-  const didHumanSayDontMerge = held;
+  const expressMergeOrdered = verdict?.expressMergeOrdered === true;
   const mergeAllowed = verdict?.mergeAllowed === true;
   const mergeConditionsRule =
-    'When mergeAllowed is true the server squash-merges this exact head itself; no agent runs gh pr merge. mergeAllowed is true only when checks passed, reviewFailed is false, isWorkerYolo is true, didHumanSayDontMerge is false, and reviewerExists is true; missing state is never consent. If GitHub refuses the merge (branch behind its target, conflict, moved head, permissions), the server wakes the implementer with its reason: bring the branch up to date (gh pr update-branch, or merge the target branch in) and push, and the new head needs green checks and a fresh reviewer PASS before the server merges it.';
+    'When mergeAllowed is true the server squash-merges this exact head itself; no agent runs gh pr merge. mergeAllowed is true when expressMergeOrdered is true - a current Workspace owner or admin ordered this exact head merged with order_corner_merge, which carries on its own and is never re-gated behind checks, held, isWorkerYolo, or reviewerExists - or otherwise when checks passed, reviewFailed is false, isWorkerYolo is true, held is false, and reviewerExists is true; missing state is never consent. If GitHub refuses the merge (branch behind its target, conflict, moved head, permissions), the server wakes the implementer with its reason: bring the branch up to date (gh pr update-branch, or merge the target branch in) and push, and the new head needs green checks and a fresh reviewer PASS before the server merges it.';
   return JSON.stringify({
     checks,
     reason,
     ...(headSha ? { headSha } : {}),
     held,
-    didHumanSayDontMerge,
     ...(verdict?.holds ? { holds: verdict.holds } : {}),
     reviewFailed,
     isWorkerYolo,
     reviewerExists,
+    expressMergeOrdered,
     mergeAllowed,
     approvalPending: !mergeAllowed,
     reviewer,
@@ -4150,6 +4162,14 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
           cornerId: typeof args.cornerId === 'string'
             ? args.cornerId : requiredEnv('BEELINE_DAEMON_CORNER_ID'),
           ...(args.releaseHoldId !== undefined ? { releaseHoldId: args.releaseHoldId } : {}),
+        }),
+      );
+    case 'order_corner_merge':
+      return JSON.stringify(
+        await daemonExecute('orderCornerMerge', {
+          ...await activeCommandContext(),
+          cornerId: typeof args.cornerId === 'string'
+            ? args.cornerId : requiredEnv('BEELINE_DAEMON_CORNER_ID'),
         }),
       );
     case 'open_corner':

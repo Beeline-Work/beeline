@@ -1,14 +1,14 @@
 import {
-  CLAUDE_SIGN_IN_HARNESS_MESSAGE,
+  beginClaudeSignInCards,
   CLAUDE_SIGN_IN_NO_ANSWER_MESSAGE,
-  completeClaudeSignIn,
-  startClaudeSignIn,
+  completeClaudeSignInCard,
 } from './claude-sign-in.js';
 import { startWorkflow } from './workflow-runs.js';
 import { humanRoomAdmin, scheduleWorkflowName } from './workflow-admin.js';
 import { setCornerHold } from './corner-holds.js';
 import {
   createAgentCommand,
+  isTaggedLoginText,
   reconcileConfiguredCornerReviewers,
   routeHumanMessage,
   turnRootMessageSql,
@@ -82,6 +82,7 @@ import {
   type WelcomeCardsView,
   isPushLevel,
   type ArtifactAttachment,
+  type ClaudeSignInCardView,
 } from '@beeline/api-contract/phone';
 import {
   isCommandGrantScript,
@@ -749,6 +750,20 @@ function projectedMessage(
           status: card.status,
           ...(card.errorMessage ? { errorMessage: card.errorMessage } : {}),
           ...(card.continuation ? { continuation: card.continuation } : {}),
+        },
+      };
+    }
+    case 'claude-sign-in': {
+      // The attempt id and source message stay server-side; no code is ever stored.
+      const card = row.card as ClaudeSignInCardView;
+      return {
+        ...base,
+        claudeSignIn: {
+          agentId: card.agentId,
+          ownerId: card.ownerId,
+          status: card.status,
+          ...(card.authorizeUrl ? { authorizeUrl: card.authorizeUrl } : {}),
+          ...(card.errorMessage ? { errorMessage: card.errorMessage } : {}),
         },
       };
     }
@@ -2821,7 +2836,6 @@ export class PhoneService {
         avatar_generation_pending: boolean;
         can_change_yolo: boolean;
         can_manage_grants: boolean;
-        can_sign_in_to_claude: boolean;
         access_policy: unknown;
         owner_id: string | null;
         owner_name: string | null;
@@ -2835,8 +2849,7 @@ export class PhoneService {
                 setter.name yolo_set_by_name,a.access_policy,a.owner_id,
                 owner.name owner_name,owner.handle owner_handle,
                 a.owner_id=$3 can_change_yolo,
-                (a.owner_id=$3 OR viewer_membership.role IN ('owner','admin')) can_manage_grants,
-                (a.owner_id=$3 AND a.harness='claude') can_sign_in_to_claude
+                (a.owner_id=$3 OR viewer_membership.role IN ('owner','admin')) can_manage_grants
          FROM agents a
          JOIN memberships agent_membership ON agent_membership.identity_id=a.agent_id
            AND agent_membership.workspace_id=$2 AND agent_membership.room_id IS NULL
@@ -2966,7 +2979,6 @@ export class PhoneService {
       ),
       // Grant decisions retain their separate owner-or-Workspace-manager axis.
       canManageGrants: config?.can_manage_grants ?? false,
-      canSignInToClaude: config?.can_sign_in_to_claude ?? false,
       watchFilters: [],
     };
   }
@@ -3631,13 +3643,16 @@ export class PhoneService {
           input as Input<'answerStarPrompt'>,
           this.github,
         )) as Output<Name>;
-      case 'sendRoomMessage':
-        return (await this.sendMessage(
-          input as Input<'sendRoomMessage'>,
-          viewerId,
-        )) as Output<Name>;
-      case 'sendRoomReply':
-        return (await this.sendReply(input as Input<'sendRoomReply'>, viewerId)) as Output<Name>;
+      case 'sendRoomMessage': {
+        const sent = await this.sendMessage(input as Input<'sendRoomMessage'>, viewerId);
+        this.beginClaudeSignIn(input as Input<'sendRoomMessage'>, sent.messageId);
+        return sent as Output<Name>;
+      }
+      case 'sendRoomReply': {
+        const sent = await this.sendReply(input as Input<'sendRoomReply'>, viewerId);
+        this.beginClaudeSignIn(input as Input<'sendRoomReply'>, sent.messageId);
+        return sent as Output<Name>;
+      }
       case 'reactToMessage':
         await this.reactToMessage(input as Input<'reactToMessage'>, viewerId);
         return undefined as Output<Name>;
@@ -3923,11 +3938,6 @@ export class PhoneService {
       case 'refreshAgentModelCatalog':
         await this.refreshAgentModelCatalog(input as Input<'refreshAgentModelCatalog'>, viewerId);
         return undefined as Output<Name>;
-      case 'startClaudeSignIn':
-        return (await this.startClaudeSignIn(
-          input as Input<'startClaudeSignIn'>,
-          viewerId,
-        )) as Output<Name>;
       case 'completeClaudeSignIn':
         return (await this.completeClaudeSignIn(
           input as Input<'completeClaudeSignIn'>,
@@ -6604,26 +6614,24 @@ export class PhoneService {
       }
     });
   }
-  /** Owner-only, Claude-harness only; the relay itself lives in `claude-sign-in.ts`. */
-  private async requireClaudeSignIn(input: { workspaceId: string; agentId: string }, viewerId: string) {
-    await this.requireWorkspaceAgent(input.workspaceId, input.agentId, viewerId);
-    const harness = (
-      await this.database.query<{ harness: string | null }>(
-        `SELECT harness FROM agents WHERE agent_id=$1`,
-        [input.agentId],
-      )
-    ).rows[0]?.harness;
-    if (harness !== 'claude') throw new Error(CLAUDE_SIGN_IN_HARNESS_MESSAGE);
-    if (!this.live) throw new Error(CLAUDE_SIGN_IN_NO_ANSWER_MESSAGE);
-    return this.live;
+  /**
+   * An exact `@agent login` message already wrote its card under routing
+   * (`agent-command.ts`); once that commits, ask the agent's machine for the
+   * claude.ai link without holding the send open.
+   */
+  private beginClaudeSignIn(input: { roomId: string; text: string }, messageId: string) {
+    if (!this.live || !isTaggedLoginText(input.text)) return;
+    void beginClaudeSignInCards(this.database, this.live, input.roomId, messageId).catch((error) =>
+      console.error(
+        '[claude-sign-in] start failed',
+        error instanceof Error ? error.message : String(error),
+      ),
+    );
   }
-  private async startClaudeSignIn(input: Input<'startClaudeSignIn'>, viewerId: string) {
-    const live = await this.requireClaudeSignIn(input, viewerId);
-    return startClaudeSignIn(this.database, live, input.agentId);
-  }
+  /** Owner-only; the card and relay rules live in `claude-sign-in.ts`. */
   private async completeClaudeSignIn(input: Input<'completeClaudeSignIn'>, viewerId: string) {
-    const live = await this.requireClaudeSignIn(input, viewerId);
-    return completeClaudeSignIn(this.database, live, input.agentId, input);
+    if (!this.live) throw new Error(CLAUDE_SIGN_IN_NO_ANSWER_MESSAGE);
+    return completeClaudeSignInCard(this.database, this.live, input, viewerId);
   }
   private async refreshAgentModelCatalog(
     input: Input<'refreshAgentModelCatalog'>,
@@ -9557,7 +9565,6 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'updateAgentSoul',
   'updateAgentModelSelection',
   'refreshAgentModelCatalog',
-  'startClaudeSignIn',
   'completeClaudeSignIn',
   'updateAgentYolo',
   'updateAgentAccessPolicy',

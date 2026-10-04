@@ -274,7 +274,7 @@ describe('first-silence notice', () => {
     }
   });
 
-  it('points a Claude agent at Sign in to Claude when its login fails', async () => {
+  it('tells a Claude agent owner to send @agent login when its login fails', async () => {
     await database.query(`UPDATE agents SET harness='claude' WHERE agent_id=$1`, [AGENT]);
     const requestId = '7'.repeat(64);
     await ask(database, requestId, requestId.slice(0, 8));
@@ -291,7 +291,7 @@ describe('first-silence notice', () => {
       AGENT,
     );
     expect(await failureLine(database, requestId)).toEqual({
-      text: "@candy could not answer · the helper could not authenticate with Claude. If its login expired, its owner can tap Sign in to Claude on its page, or run `beeline connect` on the helper's machine.",
+      text: "@candy could not answer · the helper could not authenticate with Claude. If its login expired, its owner can send `@candy login` here, or run `beeline connect` on the helper's machine.",
       silence: 'not-signed-in',
       state: 'failed',
     });

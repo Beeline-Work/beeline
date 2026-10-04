@@ -1,6 +1,8 @@
 /**
- * Sign in to Claude from the app: the agent's owner starts Claude's OAuth
- * login on the agent's own machine and pastes the returned code back.
+ * Sign in to Claude from a Room, the way Claude Code's own `/login` works:
+ * the agent's owner sends `@agent login`, a card at that call site carries
+ * the claude.ai link the agent's machine built, and the owner pastes the
+ * returned code into the card.
  *
  * The PKCE verifier never leaves the helper. The pasted code crosses the
  * server only as a relay (phone request -> PostgreSQL NOTIFY -> the helper's
@@ -33,13 +35,20 @@ export type ReportClaudeSignInInput =
       readonly error: string;
     };
 
-export type StartClaudeSignInInput = { readonly workspaceId: string; readonly agentId: string };
-export type StartClaudeSignInResult = {
-  readonly attemptId: string;
-  readonly authorizeUrl: string;
+/** The Room card `@agent login` writes. Holds the link, never a code or verifier. */
+export type ClaudeSignInCardView = {
+  readonly agentId: string;
+  readonly ownerId: string;
+  /** `starting` until the machine answers with a link; `failed` keeps the link for a retry. */
+  readonly status: 'starting' | 'pending' | 'signing-in' | 'signed-in' | 'failed';
+  readonly authorizeUrl?: string;
+  readonly errorMessage?: string;
 };
-export type CompleteClaudeSignInInput = StartClaudeSignInInput & {
-  readonly attemptId: string;
+
+/** The owner pastes Claude's code into the sign-in card `messageId`. */
+export type CompleteClaudeSignInInput = {
+  readonly roomId: string;
+  readonly messageId: string;
   readonly code: string;
 };
 export type CompleteClaudeSignInResult = { readonly signedIn: true };

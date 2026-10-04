@@ -3,6 +3,7 @@ import type { AgentGrantKind, AgentGrantStatus, CommandGrantScript } from './age
 import type { ChoiceMode, ChoiceOptionView, ChoiceStatus } from './room-choices.js';
 import type { AgentAccessPolicy } from './agent-access.js';
 import type { ConnectorOfferCardView } from './connector-offers.js';
+import type { ClaudeSignInCardView } from './claude-sign-in.js';
 import type {
   CornerAppBindingView,
   CornerAppInstallationView,
@@ -292,6 +293,8 @@ export type RoomViewMessage = {
     readonly errorMessage?: string;
     readonly continuation?: string;
   };
+  /** `@agent login`: Claude's sign-in at the call site. Holds the link, never a code. */
+  readonly claudeSignIn?: ClaudeSignInCardView;
   /** One preference card: a lettered question or a Room poll. Never authority. */
   readonly choice?: ChoiceCardView;
   readonly targetBranch?: {
@@ -950,8 +953,6 @@ export type AgentDetailView = {
   readonly grants?: readonly AgentGrantView[];
   /** Server verdict: this viewer may decide and revoke this agent's grants. */
   readonly canManageGrants?: boolean;
-  /** Server verdict: this viewer owns this Claude-harness agent and may sign it in to Claude. */
-  readonly canSignInToClaude?: boolean;
   readonly watchFilters: readonly SurfaceWatchFilter[];
 };
 

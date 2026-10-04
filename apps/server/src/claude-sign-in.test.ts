@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { claudeSignInCardId } from './agent-command.js';
 import {
   CLAUDE_SIGN_IN_NO_ANSWER_MESSAGE,
   CLAUDE_SIGN_IN_OFFLINE_MESSAGE,
@@ -9,16 +10,18 @@ import {
 import { DaemonService } from './daemon-service.js';
 import { migrate } from './database.js';
 import { LiveHub } from './live.js';
-import { AGENT_OWNER_AUTHORITY_MESSAGE, PhoneService } from './phone-service.js';
+import { PhoneService } from './phone-service.js';
 import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
 import { PgliteDatabase } from './test-support.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
+const ROOM = '22222222-2222-4222-8222-222222222222';
 const AGENT = 'a'.repeat(64);
 const OWNER = 'b'.repeat(64);
 const MEMBER = 'c'.repeat(64);
 const OTHER_AGENT = 'd'.repeat(64);
 const CODE = 'pasted-claude-code-7f3a#state-from-claude';
+const LINK = 'https://claude.com/cai/oauth/authorize?code=true&state=s';
 
 const SNAPSHOT = await (async () => {
   const database = new PgliteDatabase();
@@ -65,7 +68,7 @@ async function persistedAnywhere(database: PgliteDatabase, needle: string): Prom
   return hits;
 }
 
-describe('Sign in to Claude relay', () => {
+describe('@agent login: Claude sign-in at the call site', () => {
   let database: PgliteDatabase;
   let live: LiveHub;
   let listener: PostgresLiveListener;
@@ -73,6 +76,7 @@ describe('Sign in to Claude relay', () => {
   let daemon: DaemonService;
   let helperFrames: ClaudeSignInEvent[];
   let logged: string[];
+  let sent = 0;
 
   beforeEach(async () => {
     logged = [];
@@ -82,20 +86,31 @@ describe('Sign in to Claude relay', () => {
       });
     database = PgliteDatabase.fromSnapshot(SNAPSHOT);
     await database.query(
-      `INSERT INTO identities(id,kind,name) VALUES
-         ($1,'agent','Agent'),($2,'human','Owner'),($3,'human','Member'),($4,'agent','Other')`,
+      `INSERT INTO identities(id,kind,name,handle) VALUES
+         ($1,'agent','Clara','clara'),($2,'human','Owner','owner'),
+         ($3,'human','Member','member'),($4,'agent','Codie','codie')`,
       [AGENT, OWNER, MEMBER, OTHER_AGENT],
     );
     await database.query(`INSERT INTO workspaces(id,name) VALUES ($1,'Workspace')`, [WORKSPACE]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES ($1,$2,'General')`, [
+      ROOM,
+      WORKSPACE,
+    ]);
     await database.query(
       `INSERT INTO agents(agent_id,owner_id,harness) VALUES ($1,$2,'claude'),($3,$2,'codex')`,
       [AGENT, OWNER, OTHER_AGENT],
     );
-    await database.query(
-      `INSERT INTO memberships(workspace_id,identity_id,role)
-       VALUES ($1,$2,'member'),($1,$3,'owner'),($1,$4,'admin'),($1,$5,'member')`,
-      [WORKSPACE, AGENT, OWNER, MEMBER, OTHER_AGENT],
-    );
+    for (const [identity, role] of [
+      [AGENT, 'member'],
+      [OWNER, 'owner'],
+      [MEMBER, 'admin'],
+      [OTHER_AGENT, 'member'],
+    ] as const)
+      for (const room of [null, ROOM])
+        await database.query(
+          `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES ($1,$2,$3,$4)`,
+          [WORKSPACE, room, identity, role],
+        );
     await database.query(
       `INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id)
        VALUES ($1,1,'connection','instance'),($2,1,'connection-2','instance')`,
@@ -137,74 +152,122 @@ describe('Sign in to Claude relay', () => {
     });
   }
 
-  it('lets the owner start, paste the code, and hear the helper verdict', async () => {
-    const link = 'https://claude.com/cai/oauth/authorize?code=true&state=s';
-    helper((event) =>
-      event.step === 'start' ? { authorizeUrl: link } : { outcome: 'signed-in' },
-    );
+  async function send(author: string, text: string): Promise<string> {
+    const messageId = String(++sent).padStart(64, '0');
+    await phone.execute('sendRoomMessage', { roomId: ROOM, text, messageId }, author);
+    return messageId;
+  }
 
-    const started = await phone.execute(
-      'startClaudeSignIn',
-      { workspaceId: WORKSPACE, agentId: AGENT },
-      OWNER,
+  async function card(messageId: string) {
+    const row = (
+      await database.query<{ card: Record<string, unknown>; text: string }>(
+        `SELECT card,text FROM messages WHERE id=$1`,
+        [claudeSignInCardId(messageId, AGENT)],
+      )
+    ).rows[0];
+    return row;
+  }
+
+  async function settled(messageId: string, status: string) {
+    await vi.waitFor(async () => expect((await card(messageId))?.card.status).toBe(status), {
+      timeout: 5_000,
+    });
+    return (await card(messageId))!;
+  }
+
+  async function systemLines() {
+    return (
+      await database.query<{ text: string }>(
+        `SELECT text FROM messages WHERE presentation='system' ORDER BY created_at,id`,
+      )
+    ).rows.map((row) => row.text);
+  }
+
+  it('posts the machine’s claude.ai link in a card, takes the pasted code, and signs in', async () => {
+    helper((event) => (event.step === 'start' ? { authorizeUrl: LINK } : { outcome: 'signed-in' }));
+
+    const command = await send(OWNER, '@clara login');
+    const pending = await settled(command, 'pending');
+    expect(pending.text).toBe(
+      '@clara started a Claude sign-in · its owner opens claude.ai, then pastes the code into this card',
     );
-    expect(started).toEqual({ attemptId: expect.any(String), authorizeUrl: link });
+    expect(pending.card).toMatchObject({ agentId: AGENT, ownerId: OWNER, authorizeUrl: LINK });
+    // The command is server control: the agent's model is never asked.
+    expect(
+      (await database.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1`, [AGENT])).rowCount,
+    ).toBe(0);
+
+    const room = await phone.readRoom(ROOM, OWNER);
+    const projected = room?.messages.find((message) => message.claudeSignIn);
+    expect(projected?.claudeSignIn).toEqual({
+      agentId: AGENT,
+      ownerId: OWNER,
+      status: 'pending',
+      authorizeUrl: LINK,
+    });
 
     await expect(
       phone.execute(
         'completeClaudeSignIn',
-        { workspaceId: WORKSPACE, agentId: AGENT, attemptId: started.attemptId, code: CODE },
+        { roomId: ROOM, messageId: projected!.id, code: CODE },
         OWNER,
       ),
     ).resolves.toEqual({ signedIn: true });
-
+    expect((await card(command))!.card.status).toBe('signed-in');
     expect(helperFrames.map((frame) => frame.step)).toEqual(['start', 'code']);
-    expect(helperFrames[1]).toMatchObject({ attemptId: started.attemptId, code: CODE });
-    // The relay stored and logged nothing that carries the pasted code.
+    expect(helperFrames[1]).toMatchObject({ code: CODE });
+    // Nothing stored or logged carries the pasted code.
     expect(await persistedAnywhere(database, 'pasted-claude-code')).toEqual([]);
     expect(logged.filter((line) => line.includes('pasted-claude-code'))).toEqual([]);
   });
 
-  it('shows the owner a Sign in to Claude verdict on the agent page, and nobody else', async () => {
-    expect((await phone.readAgent(WORKSPACE, AGENT, OWNER))?.canSignInToClaude).toBe(true);
-    expect((await phone.readAgent(WORKSPACE, AGENT, MEMBER))?.canSignInToClaude).toBe(false);
-    expect((await phone.readAgent(WORKSPACE, OTHER_AGENT, OWNER))?.canSignInToClaude).toBe(false);
+  it('accepts /login the same way', async () => {
+    helper(() => ({ authorizeUrl: LINK }));
+    const command = await send(OWNER, '@clara /login');
+    await settled(command, 'pending');
   });
 
-  it('refuses a non-owner, even a Workspace admin, before the helper hears anything', async () => {
-    helper(() => ({ authorizeUrl: 'https://claude.com/x' }));
-    await expect(
-      phone.execute('startClaudeSignIn', { workspaceId: WORKSPACE, agentId: AGENT }, MEMBER),
-    ).rejects.toThrow(AGENT_OWNER_AUTHORITY_MESSAGE);
+  it('refuses a non-owner, even a Workspace admin, with a system line and no card', async () => {
+    helper(() => ({ authorizeUrl: LINK }));
+    const command = await send(MEMBER, '@clara login');
+    expect(await systemLines()).toContain(
+      '@clara did not sign in to Claude · only its owner may sign it in',
+    );
+    expect(await card(command)).toBeUndefined();
+    expect(helperFrames).toEqual([]);
+  });
+
+  it("refuses a non-owner's code on the owner's card", async () => {
+    helper(() => ({ authorizeUrl: LINK }));
+    const command = await send(OWNER, '@clara login');
+    await settled(command, 'pending');
     await expect(
       phone.execute(
         'completeClaudeSignIn',
-        {
-          workspaceId: WORKSPACE,
-          agentId: AGENT,
-          attemptId: '00000000-0000-4000-8000-000000000000',
-          code: CODE,
-        },
+        { roomId: ROOM, messageId: claudeSignInCardId(command, AGENT), code: CODE },
         MEMBER,
       ),
-    ).rejects.toThrow(AGENT_OWNER_AUTHORITY_MESSAGE);
-    expect(helperFrames).toEqual([]);
+    ).rejects.toThrow("Only the agent's owner can change this");
+    expect(helperFrames.map((frame) => frame.step)).toEqual(['start']);
   });
 
-  it('refuses an agent that does not run Claude', async () => {
-    await expect(
-      phone.execute('startClaudeSignIn', { workspaceId: WORKSPACE, agentId: OTHER_AGENT }, OWNER),
-    ).rejects.toThrow('only for agents that run Claude');
+  it('tells the owner sign-in from Beeline is only for Claude agents', async () => {
+    await send(OWNER, '@codie login');
+    expect(await systemLines()).toContain(
+      '@codie did not sign in to Claude · sign-in from Beeline is only for Claude agents',
+    );
     expect(helperFrames).toEqual([]);
+    expect(
+      (await database.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1`, [OTHER_AGENT]))
+        .rowCount,
+    ).toBe(0);
   });
 
-  it('says the machine is offline instead of waiting when no helper is connected', async () => {
+  it('settles the card as offline instead of waiting when no helper is connected', async () => {
     await database.query(`UPDATE agent_connections SET released_at=now() WHERE agent_id=$1`, [AGENT]);
-    const started = Date.now();
-    await expect(
-      phone.execute('startClaudeSignIn', { workspaceId: WORKSPACE, agentId: AGENT }, OWNER),
-    ).rejects.toThrow(CLAUDE_SIGN_IN_OFFLINE_MESSAGE);
-    expect(Date.now() - started).toBeLessThan(2_000);
+    const command = await send(OWNER, '@clara login');
+    const failed = await settled(command, 'failed');
+    expect(failed.card.errorMessage).toBe(CLAUDE_SIGN_IN_OFFLINE_MESSAGE);
     expect(helperFrames).toEqual([]);
   });
 
@@ -212,29 +275,31 @@ describe('Sign in to Claude relay', () => {
     await expect(startClaudeSignIn(database, live, AGENT, { timeoutMs: 100 })).rejects.toThrow(
       CLAUDE_SIGN_IN_NO_ANSWER_MESSAGE,
     );
-    expect(helperFrames.map((frame) => frame.step)).toEqual(['start']);
   });
 
-  it("surfaces the helper's bad or expired code verdict to the owner", async () => {
+  it('shows a bad or expired code on the card and lets the owner paste again', async () => {
     const rejected =
-      'Claude did not accept that code. Paste the newest code from claude.ai, or tap Sign in to Claude again.';
+      'Claude did not accept that code. Paste the newest code from claude.ai, or send the agent `login` again.';
+    let codes = 0;
     helper((event) =>
       event.step === 'start'
-        ? { authorizeUrl: 'https://claude.com/cai/oauth/authorize' }
-        : { outcome: 'failed', error: rejected },
+        ? { authorizeUrl: LINK }
+        : ++codes === 1
+          ? { outcome: 'failed', error: rejected }
+          : { outcome: 'signed-in' },
     );
-    const { attemptId } = await phone.execute(
-      'startClaudeSignIn',
-      { workspaceId: WORKSPACE, agentId: AGENT },
-      OWNER,
-    );
+    const command = await send(OWNER, '@clara login');
+    await settled(command, 'pending');
+    const messageId = claudeSignInCardId(command, AGENT);
     await expect(
-      phone.execute(
-        'completeClaudeSignIn',
-        { workspaceId: WORKSPACE, agentId: AGENT, attemptId, code: 'expired-code' },
-        OWNER,
-      ),
+      phone.execute('completeClaudeSignIn', { roomId: ROOM, messageId, code: 'old' }, OWNER),
     ).rejects.toThrow(rejected);
+    const failed = (await card(command))!;
+    expect(failed.card).toMatchObject({ status: 'failed', errorMessage: rejected, authorizeUrl: LINK });
+    await expect(
+      phone.execute('completeClaudeSignIn', { roomId: ROOM, messageId, code: CODE }, OWNER),
+    ).resolves.toEqual({ signedIn: true });
+    expect((await card(command))!.card).not.toHaveProperty('errorMessage');
   });
 
   it("never lets another agent's helper answer this agent's sign-in", async () => {
@@ -252,7 +317,6 @@ describe('Sign in to Claude relay', () => {
     await expect(startClaudeSignIn(database, live, AGENT, { timeoutMs: 300 })).rejects.toThrow(
       CLAUDE_SIGN_IN_NO_ANSWER_MESSAGE,
     );
-    expect(attemptId).not.toBe('');
     await expect(
       daemon.execute(
         'reportClaudeSignIn',

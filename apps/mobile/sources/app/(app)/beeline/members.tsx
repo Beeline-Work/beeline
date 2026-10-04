@@ -5,7 +5,6 @@ import { AgentProfileView } from '@/components/buzz/AgentProfileView';
 // so a screen beside its route is a second URL for the same screen.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Linking,
   Platform,
   ScrollView,
   Share,
@@ -83,8 +82,7 @@ type MembersAction =
   | 'model-config'
   | 'model-catalog'
   | 'agent-yolo'
-  | 'agent-access'
-  | 'claude-sign-in';
+  | 'agent-access';
 
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -273,8 +271,6 @@ export default function BuzzMembers({
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [yoloError, setYoloError] = useState<string | null>(null);
   const [accessError, setAccessError] = useState<string | null>(null);
-  const [claudeSignInError, setClaudeSignInError] = useState<string | null>(null);
-  const [claudeSignedIn, setClaudeSignedIn] = useState(false);
   const [retryGeneration, setRetryGeneration] = useState(0);
   const [profileRetryGeneration, setProfileRetryGeneration] = useState(0);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -905,47 +901,6 @@ export default function BuzzMembers({
     }
   };
 
-  /**
-   * Sign in to Claude on the agent's machine: the helper builds Claude's own
-   * login link, the owner approves on claude.ai and pastes the code back. The
-   * code goes to the server once, as a relay; nothing here stores it.
-   */
-  const signInToClaude = async () => {
-    if (!selectedAgent?.canSignInToClaude) return;
-    const workspace = selectedAgent.workspaceId;
-    const agentId = selectedAgent.agent.identity.pubkey;
-    const name = selectedAgent.agent.identity.name;
-    setWorking('claude-sign-in');
-    setClaudeSignInError(null);
-    setClaudeSignedIn(false);
-    try {
-      const { attemptId, authorizeUrl } = await monolithPhoneOperation('startClaudeSignIn', {
-        workspaceId: workspace,
-        agentId,
-      });
-      await Linking.openURL(authorizeUrl);
-      const code = (
-        await Modal.prompt(
-          'Paste the code from Claude',
-          `After you approve on claude.ai, it shows a code. Paste it here to sign in ${name}.`,
-          { placeholder: 'Code from claude.ai', confirmText: 'Sign in' },
-        )
-      )?.trim();
-      if (!code) return;
-      await monolithPhoneOperation('completeClaudeSignIn', {
-        workspaceId: workspace,
-        agentId,
-        attemptId,
-        code,
-      });
-      setClaudeSignedIn(true);
-    } catch (reason) {
-      setClaudeSignInError(operationMessage(reason));
-    } finally {
-      setWorking(null);
-    }
-  };
-
   const toggleAnswersEveryone = async (everyone: boolean) => {
     const access = selectedAgent?.access;
     if (!selectedAgent || !access?.canChange) return;
@@ -1289,38 +1244,6 @@ export default function BuzzMembers({
                   {yoloError && (
                     <Text style={styles.switchError} testID="agent-yolo-error">
                       {yoloError}
-                    </Text>
-                  )}
-                </View>
-              )}
-              {selectedAgent.canSignInToClaude && (
-                <View style={styles.switchSection} testID="agent-claude-sign-in">
-                  <Text style={styles.profileSettingLabel}>Claude login</Text>
-                  <Text style={styles.profileSettingCopy}>
-                    {`If ${selectedAgent.agent.identity.name}'s Claude login expired, sign in again here. The login is saved on its machine and shared with its Rooms.`}
-                  </Text>
-                  <TouchableOpacity
-                    accessibilityLabel="Sign in to Claude"
-                    accessibilityRole="button"
-                    disabled={busy}
-                    onPress={() => void signInToClaude()}
-                    style={styles.signInControl}
-                    testID="agent-claude-sign-in-button"
-                  >
-                    <Text style={styles.signInText}>
-                      {working === 'claude-sign-in'
-                        ? 'Waiting for its machine…'
-                        : 'Sign in to Claude'}
-                    </Text>
-                  </TouchableOpacity>
-                  {claudeSignedIn && (
-                    <Text style={styles.profileSettingCopy} testID="agent-claude-sign-in-done">
-                      Signed in. Its Rooms use the new login on their next turn.
-                    </Text>
-                  )}
-                  {claudeSignInError && (
-                    <Text style={styles.switchError} testID="agent-claude-sign-in-error">
-                      {claudeSignInError}
                     </Text>
                   )}
                 </View>
@@ -1704,20 +1627,6 @@ const styles = StyleSheet.create((theme) => {
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: hull.dialogDanger,
       borderRadius: hull.radius,
-    },
-    signInControl: {
-      minHeight: 44,
-      justifyContent: 'center',
-      paddingHorizontal: hull.space.sm,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: hull.border,
-      borderRadius: hull.radius,
-    },
-    signInText: {
-      ...Typography.default(),
-      ...hull.type.body,
-      color: hull.textPrimary,
-      textAlign: 'center',
     },
     removeAgentText: {
       ...Typography.default(),

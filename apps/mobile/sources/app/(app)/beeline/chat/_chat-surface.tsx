@@ -292,6 +292,7 @@ import {
   SquireApprovalCard,
   ConnectorOfferCard,
   AppSignInCard,
+  ClaudeSignInCard,
   ChoiceCard,
   WalletCards,
   OrdinaryLedgerMessage,
@@ -5565,6 +5566,31 @@ export function BuzzChatSurface({
                   Modal.alert('Could not connect app', phoneOperationFailureReason(error)),
                 )
                 .finally(() => setAppSignInActionId(null));
+            }}
+          />
+        );
+      }
+      if (item.claudeSignIn) {
+        const card = item.claudeSignIn;
+        const agentName = resolveAgentDisplayIdentity(
+          card.agentId,
+          agentByPubkey.get(card.agentId),
+        ).name;
+        return (
+          <ClaudeSignInCard
+            message={item}
+            agentName={agentName}
+            isOwner={!viewerIsAgent && cacheViewerPubkey === card.ownerId}
+            onSubmit={async (code) => {
+              try {
+                await monolithPhoneOperation('completeClaudeSignIn', {
+                  roomId: decodedId,
+                  messageId: item.id,
+                  code,
+                });
+              } catch (error) {
+                throw new Error(phoneOperationFailureReason(error));
+              }
             }}
           />
         );

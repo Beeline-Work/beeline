@@ -2,12 +2,7 @@ import type { AgentGrantDecision, AgentGrantStatus } from './agent-grants.js';
 import type { ChoiceStatus, ChoiceOptionInput } from './room-choices.js';
 import type { AgentAccessPolicy } from './agent-access.js';
 import type { PushLevel } from './push-level.js';
-import type {
-  CompleteClaudeSignInInput,
-  CompleteClaudeSignInResult,
-  StartClaudeSignInInput,
-  StartClaudeSignInResult,
-} from './claude-sign-in.js';
+import type { CompleteClaudeSignInInput, CompleteClaudeSignInResult } from './claude-sign-in.js';
 import type {
   WorkflowContract,
   WorkflowTerminalState,
@@ -147,9 +142,7 @@ export type PhoneOperationMap = {
   updateAgentSoul: { input: UpdateAgentSoulInput; output: void };
   updateAgentModelSelection: { input: UpdateAgentModelInput; output: void };
   refreshAgentModelCatalog: { input: WorkspaceAgentInput; output: void };
-  /** Owner-only: start Claude's login on the agent's machine; answers its authorize link. */
-  startClaudeSignIn: { input: StartClaudeSignInInput; output: StartClaudeSignInResult };
-  /** Owner-only: relay the pasted code to the agent's machine and wait for its verdict. */
+  /** Owner-only: relay the code pasted into an `@agent login` card to the agent's machine. */
   completeClaudeSignIn: { input: CompleteClaudeSignInInput; output: CompleteClaudeSignInResult };
   updateAgentYolo: { input: UpdateAgentYoloInput; output: void };
   updateAgentAccessPolicy: { input: UpdateAgentAccessPolicyInput; output: void };

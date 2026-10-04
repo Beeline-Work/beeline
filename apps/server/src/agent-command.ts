@@ -224,6 +224,7 @@ export const TAGGED_AGENT_LIFECYCLE_COMMANDS = [
   'retry',
   'debug',
   'help',
+  'login',
 ] as const;
 export type TaggedAgentLifecycleCommand = (typeof TAGGED_AGENT_LIFECYCLE_COMMANDS)[number];
 
@@ -234,14 +235,25 @@ export function parseTaggedAgentLifecycleCommand(
   if (!handle) return undefined;
   const match = text
     .trim()
-    .match(/^@([^\s]+)\s+(?:\/(restart)|(restart|status|stop|retry|debug|help))$/i);
+    .match(/^@([^\s]+)\s+(?:\/(restart|login)|(restart|status|stop|retry|debug|help|login))$/i);
   if (!match || match[1]!.toLocaleLowerCase() !== handle.toLocaleLowerCase()) return undefined;
   return (match[2] ?? match[3])!.toLocaleLowerCase() as TaggedAgentLifecycleCommand;
+}
+
+/** The one sign-in card an `@agent login` message writes. */
+export function claudeSignInCardId(sourceMessageId: string, agentId: string): string {
+  return createHash('sha256').update(`claude-sign-in:${sourceMessageId}:${agentId}`).digest('hex');
+}
+
+/** True for the exact text of an `@agent login` / `@agent /login` message. */
+export function isTaggedLoginText(text: string): boolean {
+  return /^@[^\s]+\s+\/?login$/i.test(text.trim());
 }
 
 type LifecycleTarget = {
   agent_id: string;
   owner_id: string;
+  harness: string | null;
   handle: string | null;
   name: string;
   room_role: string;
@@ -269,12 +281,14 @@ async function routeTaggedLifecycleCommand(
 ): Promise<boolean> {
   if (
     source.tagged_ids.length !== 1 ||
-    !/^@[^\s]+\s+(?:\/(?:restart)|restart|status|stop|retry|debug|help)$/i.test(source.text.trim())
+    !/^@[^\s]+\s+(?:\/(?:restart|login)|restart|status|stop|retry|debug|help|login)$/i.test(
+      source.text.trim(),
+    )
   )
     return false;
   const target = (
     await db.query<LifecycleTarget>(
-      `SELECT agent.agent_id,agent.owner_id,identity.handle,identity.name,
+      `SELECT agent.agent_id,agent.owner_id,agent.harness,identity.handle,identity.name,
          sender.role room_role,agent.access_policy,
          presence.body->>'lifecycleId' lifecycle_id,
          presence.body->>'releaseVersion' release_version,
@@ -316,7 +330,7 @@ async function routeTaggedLifecycleCommand(
       roomId: source.room_id,
       authorId: target.agent_id,
       subject: lifecycleSubject(target),
-      verb: `did not ${action}`,
+      verb: action === 'login' ? 'did not sign in to Claude' : `did not ${action}`,
       consequence,
       afterMessageId: sourceId,
     });
@@ -327,6 +341,38 @@ async function routeTaggedLifecycleCommand(
   }
   if ((action === 'restart' || action === 'debug') && !ownsAgent && !manager) {
     await deny('only its owner or a Room manager may use that command');
+    return true;
+  }
+  if (action === 'login') {
+    // Claude Code's own `/login`, at the call site: the card carries the
+    // machine's claude.ai link once `beginClaudeSignInCards` fetches it after
+    // this transaction commits. The code is pasted into the card, never sent
+    // as a message.
+    if (!ownsAgent) {
+      await deny('only its owner may sign it in');
+      return true;
+    }
+    if (target.harness !== 'claude') {
+      await deny('sign-in from Beeline is only for Claude agents');
+      return true;
+    }
+    await systemLine(db, {
+      id: claudeSignInCardId(sourceId, target.agent_id),
+      roomId: source.room_id,
+      authorId: target.agent_id,
+      subject: lifecycleSubject(target),
+      verb: 'started a Claude sign-in',
+      consequence: 'its owner opens claude.ai, then pastes the code into this card',
+      afterMessageId: sourceId,
+      presentation: 'card',
+      cardType: 'claude-sign-in',
+      card: {
+        agentId: target.agent_id,
+        ownerId: target.owner_id,
+        status: 'starting',
+        sourceMessageId: sourceId,
+      },
+    });
     return true;
   }
 
@@ -363,7 +409,10 @@ async function routeTaggedLifecycleCommand(
     });
 
   if (action === 'help') {
-    await line('supports lifecycle commands', 'restart · status · stop · retry · debug · help');
+    await line(
+      'supports lifecycle commands',
+      'restart · status · stop · retry · debug · help · login',
+    );
     return true;
   }
   const online =

@@ -176,6 +176,7 @@ import {
   SquireApprovalCard,
   ConnectorOfferCard,
   AppSignInCard,
+  ClaudeSignInCard,
   ConnectorReceiptCard,
   ChoiceCard,
   agentBylineLabel,
@@ -2837,6 +2838,43 @@ describe('Room message variant components', () => {
       expect(instagramCard).toContain('Business or Creator account linked to a Facebook Page');
       expect(instagramCard).toContain('Instagram account was rejected by Meta');
       expect(instagramCard).toContain('Retry Instagram');
+    });
+
+    it('runs Claude sign-in in the @agent login card for its owner only', async () => {
+      const { Linking } = await import('react-native');
+      const link = 'https://claude.com/cai/oauth/authorize?code=true&state=s';
+      const pending = message({ claudeSignIn: { agentId: 'monarch', ownerId: 'zeke', status: 'pending', authorizeUrl: link } });
+      const onSubmit = vi.fn(async () => undefined);
+      const owner = render(<ClaudeSignInCard message={pending} agentName="Monarch" isOwner onSubmit={onSubmit} />);
+      expect(JSON.stringify(owner.toJSON())).toContain('Sign in Monarch to Claude');
+      act(() => owner.root.findByProps({ testID: 'claude-sign-in-open' }).props.onPress());
+      expect(Linking.openURL).toHaveBeenCalledWith(link);
+      act(() => owner.root.findByProps({ testID: 'claude-sign-in-code' }).props.onChangeText('  code#state  '));
+      await act(async () => owner.root.findByProps({ testID: 'claude-sign-in-submit' }).props.onPress());
+      expect(onSubmit).toHaveBeenCalledWith('code#state');
+      // The pasted code is cleared once it was sent, never kept on screen.
+      expect(owner.root.findByProps({ testID: 'claude-sign-in-code' }).props.value).toBe('');
+
+      const rejected = 'Claude did not accept that code.';
+      const failing = render(<ClaudeSignInCard message={pending} agentName="Monarch" isOwner onSubmit={vi.fn(async () => { throw new Error(rejected); })} />);
+      act(() => failing.root.findByProps({ testID: 'claude-sign-in-code' }).props.onChangeText('old'));
+      await act(async () => failing.root.findByProps({ testID: 'claude-sign-in-submit' }).props.onPress());
+      expect(failing.root.findByProps({ testID: 'claude-sign-in-error' }).props.children).toBe(rejected);
+
+      const other = render(<ClaudeSignInCard message={pending} agentName="Monarch" isOwner={false} onSubmit={onSubmit} />);
+      expect(JSON.stringify(other.toJSON())).toContain('Waiting for its owner to sign Monarch in.');
+      expect(other.root.findAllByProps({ testID: 'claude-sign-in-code' })).toHaveLength(0);
+
+      const offline = "The agent's machine is offline. Start its helper with `beeline start`, then try again.";
+      const failed = render(<ClaudeSignInCard message={message({ claudeSignIn: { agentId: 'monarch', ownerId: 'zeke', status: 'failed', errorMessage: offline } })} agentName="Monarch" isOwner onSubmit={onSubmit} />);
+      expect(failed.root.findByProps({ testID: 'claude-sign-in-error' }).props.children).toBe(offline);
+      expect(failed.root.findAllByProps({ testID: 'claude-sign-in-code' })).toHaveLength(0);
+
+      const starting = render(<ClaudeSignInCard message={message({ claudeSignIn: { agentId: 'monarch', ownerId: 'zeke', status: 'starting' } })} agentName="Monarch" isOwner onSubmit={onSubmit} />);
+      expect(JSON.stringify(starting.toJSON())).toContain('machine for a sign-in link');
+
+      const done = render(<ClaudeSignInCard message={message({ claudeSignIn: { agentId: 'monarch', ownerId: 'zeke', status: 'signed-in' } })} agentName="Monarch" isOwner onSubmit={onSubmit} />);
+      expect(JSON.stringify(done.toJSON())).toContain('CLAUDE SIGNED IN');
     });
 
     it.each(['Instagram', 'Figma'])('Reproduction CARD-1: renders the provider logo for %s and falls back on image failure', (name) => {

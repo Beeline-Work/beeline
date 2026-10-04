@@ -52,9 +52,9 @@ const SUBSCRIPTION_TYPES: Readonly<Record<string, string>> = {
 };
 
 export const CLAUDE_SIGN_IN_EXPIRED_MESSAGE =
-  'This sign-in expired or was already used. Tap Sign in to Claude again.';
+  'This sign-in expired or was already used. Send the agent `login` again to start a new one.';
 export const CLAUDE_SIGN_IN_REJECTED_MESSAGE =
-  'Claude did not accept that code. Paste the newest code from claude.ai, or tap Sign in to Claude again.';
+  'Claude did not accept that code. Paste the newest code from claude.ai, or send the agent `login` again.';
 export const CLAUDE_SIGN_IN_WRONG_ATTEMPT_MESSAGE =
   'That code belongs to a different sign-in. Paste the code from the page this sign-in opened.';
 

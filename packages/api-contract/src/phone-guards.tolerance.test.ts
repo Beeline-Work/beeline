@@ -458,6 +458,20 @@ describe('phone surface readers', () => {
       .toBeUndefined();
   });
 
+  it('retains an @agent login card with its claude.ai link and drops anything else', () => {
+    const claudeSignIn = { agentId: agent.pubkey, ownerId: identity.pubkey, status: 'pending' as const,
+      authorizeUrl: 'https://claude.com/cai/oauth/authorize?code=true' };
+    expect(readRoomViewMessage({ ...message, presentation: 'card', claudeSignIn })?.claudeSignIn)
+      .toEqual(claudeSignIn);
+    expect(readRoomViewMessage({ ...message, claudeSignIn: { ...claudeSignIn,
+      authorizeUrl: 'javascript:alert(1)', attemptId: 'kept-server-side', code: 'never' } })?.claudeSignIn)
+      .toEqual({ agentId: agent.pubkey, ownerId: identity.pubkey, status: 'pending' });
+    expect(readRoomViewMessage({ ...message, claudeSignIn: { ...claudeSignIn, status: 'done' } })
+      ?.claudeSignIn).toBeUndefined();
+    expect(readRoomViewMessage({ ...message, claudeSignIn: { ...claudeSignIn, ownerId: 'other' } })
+      ?.claudeSignIn).toBeUndefined();
+  });
+
   it('preserves a Squire-owned approval link and drops malformed destinations', () => {
     const sourceMessageId = 'e'.repeat(64);
     const squireApproval = {

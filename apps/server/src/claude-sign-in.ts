@@ -11,7 +11,6 @@ import {
   CLAUDE_SIGN_IN_CODE_MAX_LENGTH,
   type CompleteClaudeSignInResult,
   type ReportClaudeSignInInput,
-  type StartClaudeSignInResult,
 } from '@beeline/api-contract/daemon';
 import type { SqlDatabase } from './database.js';
 import type { LiveEvent, LiveHub } from './live.js';
@@ -27,9 +26,9 @@ export const CLAUDE_SIGN_IN_OFFLINE_MESSAGE =
   "The agent's machine is offline. Start its helper with `beeline start`, then try again.";
 export const CLAUDE_SIGN_IN_NO_ANSWER_MESSAGE =
   "The agent's machine did not answer. Check its helper is running and up to date, then try again.";
-export const CLAUDE_SIGN_IN_HARNESS_MESSAGE = 'Sign in to Claude is only for agents that run Claude';
 
 export type ClaudeSignInEvent = Extract<LiveEvent, { type: 'claude-sign-in' }>;
+type StartClaudeSignInResult = { readonly attemptId: string; readonly authorizeUrl: string };
 
 type Step = ClaudeSignInEvent['step'];
 type ClaudeSignInStep = ClaudeSignInEvent extends infer Event
@@ -231,4 +230,116 @@ export async function reportClaudeSignIn(
     return;
   }
   throw new Error('sign-in report is invalid');
+}
+
+const CARD_TYPE = 'claude-sign-in';
+
+type StoredCard = {
+  agentId: string;
+  ownerId: string;
+  status: string;
+  sourceMessageId?: string;
+  attemptId?: string;
+  authorizeUrl?: string;
+};
+
+async function settleCard(
+  database: Pick<SqlDatabase, 'query'>,
+  messageId: string,
+  patch: Record<string, string>,
+  clearError: boolean,
+): Promise<void> {
+  await database.query(
+    `UPDATE messages SET card=(CASE WHEN $3 THEN card-'errorMessage' ELSE card END)||$2::jsonb
+     WHERE id=$1 AND card_type='${CARD_TYPE}'`,
+    [messageId, JSON.stringify(patch), clearError],
+  );
+}
+
+function failureText(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error)).slice(0, 500);
+}
+
+/**
+ * After an `@agent login` message commits, ask the agent's machine for its
+ * claude.ai link and put it on the card, or settle the card with why not.
+ */
+export async function beginClaudeSignInCards(
+  database: Pick<SqlDatabase, 'query'>,
+  live: LiveHub,
+  roomId: string,
+  sourceMessageId: string,
+  options: { readonly timeoutMs?: number } = {},
+): Promise<void> {
+  const cards = await database.query<{ id: string; card: StoredCard }>(
+    `SELECT id,card FROM messages WHERE room_id=$1 AND card_type='${CARD_TYPE}'
+       AND card->>'sourceMessageId'=$2 AND card->>'status'='starting'`,
+    [roomId, sourceMessageId],
+  );
+  for (const { id, card } of cards.rows) {
+    try {
+      const started = await startClaudeSignIn(database, live, card.agentId, options);
+      await settleCard(
+        database,
+        id,
+        { status: 'pending', attemptId: started.attemptId, authorizeUrl: started.authorizeUrl },
+        true,
+      );
+    } catch (error) {
+      await settleCard(database, id, { status: 'failed', errorMessage: failureText(error) }, false);
+    }
+  }
+}
+
+/**
+ * The owner pastes Claude's code into a sign-in card. Only the agent's
+ * current owner, still in the Room, may complete it; the code is relayed and
+ * never stored. A rejected code leaves the card open for another paste.
+ */
+export async function completeClaudeSignInCard(
+  database: Pick<SqlDatabase, 'query'>,
+  live: LiveHub,
+  input: { readonly roomId: unknown; readonly messageId: unknown; readonly code: unknown },
+  viewerId: string,
+  options: { readonly timeoutMs?: number } = {},
+): Promise<CompleteClaudeSignInResult> {
+  if (typeof input.roomId !== 'string' || typeof input.messageId !== 'string')
+    throw new Error('sign-in card is invalid');
+  const row = (
+    await database.query<{ card: StoredCard; owner_id: string; member: boolean }>(
+      `SELECT message.card,agent.owner_id,
+         EXISTS(SELECT 1 FROM memberships m WHERE m.room_id=message.room_id
+           AND m.identity_id=$3 AND m.removed_at IS NULL) member
+       FROM messages message
+       JOIN agents agent ON agent.agent_id=message.card->>'agentId'
+       WHERE message.id=$1 AND message.room_id::text=$2 AND message.card_type='${CARD_TYPE}'`,
+      [input.messageId, input.roomId, viewerId],
+    )
+  ).rows[0];
+  if (!row || !row.member) throw new Error('sign-in card not found');
+  if (row.owner_id !== viewerId) throw new Error("Only the agent's owner can change this");
+  const { card } = row;
+  if (card.status === 'signed-in') return { signedIn: true };
+  if (!card.attemptId || (card.status !== 'pending' && card.status !== 'failed'))
+    throw new Error('this sign-in is not waiting for a code');
+  await settleCard(database, input.messageId, { status: 'signing-in' }, true);
+  try {
+    const result = await completeClaudeSignIn(
+      database,
+      live,
+      card.agentId,
+      { attemptId: card.attemptId, code: input.code },
+      options,
+    );
+    await settleCard(database, input.messageId, { status: 'signed-in' }, true);
+    return result;
+  } catch (error) {
+    await settleCard(
+      database,
+      input.messageId,
+      { status: 'failed', errorMessage: failureText(error) },
+      false,
+    );
+    throw error;
+  }
 }

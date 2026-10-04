@@ -531,6 +531,22 @@ function readAppSignInCard(value: unknown): NonNullable<RoomViewMessage['appSign
       ? item.continuation : undefined) };
 }
 
+const CLAUDE_SIGN_IN_STATUSES = ['starting', 'pending', 'signing-in', 'signed-in', 'failed'] as const;
+
+function readClaudeSignInCard(value: unknown): NonNullable<RoomViewMessage['claudeSignIn']> | null {
+  const item = record(value);
+  const status = oneOf(item?.status, CLAUDE_SIGN_IN_STATUSES);
+  if (!item || !hex64(item.agentId) || !hex64(item.ownerId) || !status) return null;
+  return {
+    agentId: item.agentId,
+    ownerId: item.ownerId,
+    status,
+    ...field('authorizeUrl', httpUrl(item.authorizeUrl) ? item.authorizeUrl : undefined),
+    ...field('errorMessage', typeof item.errorMessage === 'string' && item.errorMessage.length <= 500
+      ? item.errorMessage : undefined),
+  };
+}
+
 function readSquireApproval(value: unknown): NonNullable<RoomViewMessage['squireApproval']> | null {
   const item = record(value);
   const agent = readIdentity(item?.agent);
@@ -1079,6 +1095,7 @@ export function readRoomViewMessage(value: unknown): RoomViewMessage | null {
     ...field('squireApproval', readSquireApproval(item.squireApproval)),
     ...field('connectorOffer', readConnectorOfferCardView(item.connectorOffer)),
     ...field('appSignIn', readAppSignInCard(item.appSignIn)),
+    ...field('claudeSignIn', readClaudeSignInCard(item.claudeSignIn)),
     ...field('choice', readChoiceCard(item.choice)),
     ...field('walletTx', readWalletTx(item.walletTx)),
     ...field('walletInsufficient', readWalletInsufficient(item.walletInsufficient)),

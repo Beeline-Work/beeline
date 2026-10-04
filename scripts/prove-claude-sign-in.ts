@@ -1,5 +1,5 @@
 /**
- * Sign in to Claude, end to end: authenticated phone HTTP -> server ->
+ * `@agent login`, end to end: authenticated phone HTTP -> server ->
  * PostgreSQL NOTIFY -> the helper's live socket -> a real helper client that
  * builds the PKCE link and writes the shared Claude login. Only Claude's own
  * token and profile endpoints are faked; nothing else is.
@@ -11,6 +11,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import type { RoomViewMessage } from '@beeline/api-contract/phone';
 import { PgliteDatabase } from '../apps/server/src/test-support.js';
 import { DaemonApiClient } from '../apps/body/src/daemon-api-client.js';
 import {
@@ -168,32 +169,59 @@ async function main(): Promise<void> {
       });
       return { status: response.status, body: (await response.json()) as Record<string, unknown> };
     }
-    const agentInput = { workspaceId: WORKSPACE, agentId: AGENT };
+    async function roomCard(): Promise<RoomViewMessage | undefined> {
+      const response = await fetch(`${origin}/v1/phone/rooms/${ROOM}`, {
+        headers: { authorization: `Bearer ${ownerToken}` },
+      });
+      const room = (await response.json()) as { messages: RoomViewMessage[] };
+      return room.messages.filter((message) => message.claudeSignIn).at(-1);
+    }
+    async function cardSettles(status: string): Promise<RoomViewMessage> {
+      for (let attempt = 0; attempt < 400; attempt++) {
+        const card = await roomCard();
+        if (card?.claudeSignIn?.status === status) return card;
+        await new Promise((done) => setTimeout(done, 25));
+      }
+      throw new Error(`card never reached ${status}`);
+    }
+    async function lastSystemLine(): Promise<string> {
+      const row = await db.query<{ text: string }>(
+        `SELECT text FROM messages WHERE room_id=$1 AND presentation IN ('system','card')
+         ORDER BY created_at DESC,id DESC LIMIT 1`,
+        [ROOM],
+      );
+      return row.rows[0]?.text ?? '';
+    }
 
-    const refused = await phone(memberToken, 'startClaudeSignIn', agentInput);
-    console.log(`Workspace admin (not the owner) taps Sign in to Claude -> ${refused.status} ${refused.body.error}`);
-    assert.equal(refused.status, 403);
+    await phone(memberToken, 'sendRoomMessage', { roomId: ROOM, text: '@clara login' });
+    console.log(`Workspace admin (not the owner) sends "@clara login" -> ${await lastSystemLine()}`);
 
-    const started = await phone(ownerToken, 'startClaudeSignIn', agentInput);
-    assert.equal(started.status, 200, JSON.stringify(started.body));
-    const link = new URL(String(started.body.authorizeUrl));
-    console.log(`Owner taps Sign in to Claude -> ${started.status}; the app opens:\n  ${link.origin}${link.pathname}?client_id=${link.searchParams.get('client_id')}&redirect_uri=${link.searchParams.get('redirect_uri')}&code_challenge_method=${link.searchParams.get('code_challenge_method')}&…`);
+    await phone(ownerToken, 'sendRoomMessage', { roomId: ROOM, text: '@clara login' });
+    const card = await cardSettles('pending');
+    const link = new URL(String(card.claudeSignIn!.authorizeUrl));
+    console.log(`Owner sends "@clara login" -> card: ${card.text}`);
+    console.log(`  card link: ${link.origin}${link.pathname}?client_id=${link.searchParams.get('client_id')}&redirect_uri=${link.searchParams.get('redirect_uri')}&code_challenge_method=${link.searchParams.get('code_challenge_method')}&…`);
+    const modelCommands = await db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1`, [AGENT]);
+    console.log(`  model turns started by the command: ${modelCommands.rowCount}`);
+    assert.equal(modelCommands.rowCount, 0);
     const state = link.searchParams.get('state')!;
 
     const stale = await phone(ownerToken, 'completeClaudeSignIn', {
-      ...agentInput,
-      attemptId: started.body.attemptId,
+      roomId: ROOM,
+      messageId: card.id,
       code: `expired-code#${state}`,
     });
-    console.log(`Owner pastes an expired code -> ${stale.status} ${stale.body.error}`);
+    const afterStale = await cardSettles('failed');
+    console.log(`Owner pastes an expired code into the card -> ${stale.status}; card shows: ${afterStale.claudeSignIn!.errorMessage}`);
     assert.notEqual(stale.status, 200);
 
     const done = await phone(ownerToken, 'completeClaudeSignIn', {
-      ...agentInput,
-      attemptId: started.body.attemptId,
+      roomId: ROOM,
+      messageId: card.id,
       code: `${GOOD_CODE}#${state}`,
     });
-    console.log(`Owner pastes the code claude.ai showed -> ${done.status} ${JSON.stringify(done.body)}`);
+    const signedIn = await cardSettles('signed-in');
+    console.log(`Owner pastes the code claude.ai showed -> ${done.status} ${JSON.stringify(done.body)}; card status ${signedIn.claudeSignIn!.status}`);
     assert.deepEqual(done, { status: 200, body: { signedIn: true } });
 
     const roomView = JSON.parse(await readFile(roomLink, 'utf8')) as {
@@ -230,10 +258,10 @@ async function main(): Promise<void> {
       if (!held.rowCount) break;
       await new Promise((resolveWait) => setTimeout(resolveWait, 25));
     }
-    const before = Date.now();
-    const offline = await phone(ownerToken, 'startClaudeSignIn', agentInput);
-    console.log(`Helper stopped; owner taps Sign in to Claude -> ${offline.status} in ${Date.now() - before} ms: ${offline.body.error}`);
-    assert.match(String(offline.body.error), /offline/);
+    await phone(ownerToken, 'sendRoomMessage', { roomId: ROOM, text: '@clara /login' });
+    const offline = await cardSettles('failed');
+    console.log(`Helper stopped; owner sends "@clara /login" -> card shows: ${offline.claudeSignIn!.errorMessage}`);
+    assert.match(String(offline.claudeSignIn!.errorMessage), /offline/);
   } finally {
     helper?.closeLive();
     await listener.stop();

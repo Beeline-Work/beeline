@@ -130,10 +130,10 @@ describe('turn silence phrasing', () => {
     }
   });
 
-  it('points a Claude agent at Sign in to Claude, keeping beeline connect as the fallback', () => {
-    const line = phraseTurnSilence('Candy', { kind: 'not-signed-in' }, { claudeSignIn: true });
+  it('tells a Claude agent owner to send @agent login, keeping beeline connect as the fallback', () => {
+    const line = phraseTurnSilence('Candy', { kind: 'not-signed-in' }, { claudeLoginHandle: 'candy' });
     expect(`Candy ${line.verb} · ${line.consequence}`).toBe(
-      "Candy could not answer · the helper could not authenticate with Claude. If its login expired, its owner can tap Sign in to Claude on its page, or run `beeline connect` on the helper's machine.",
+      "Candy could not answer · the helper could not authenticate with Claude. If its login expired, its owner can send `@candy login` here, or run `beeline connect` on the helper's machine.",
     );
     expect(`@candy ${line.verb} · ${line.consequence}`.length).toBeLessThanOrEqual(
       TURN_SILENCE_LINE_MAX,

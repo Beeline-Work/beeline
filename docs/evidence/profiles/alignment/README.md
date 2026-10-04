@@ -2,15 +2,18 @@
 
 This pass audited the agent profile, human profile, Settings, and the Members entry point as one system against `DESIGN.md`. The captures below come from this branch's running Expo web client at 390×844, backed by fresh local servers and disposable proof accounts. The owner/admin and ordinary-member states were captured in separate disposable workspaces; no production workspace or static screen mock was used.
 
+These captures record the earlier Ban control. For current human removal behavior, see
+[agent and human profiles](../../../agent-profiles.md).
+
 ## Findings and fixes
 
 1. **Headers had three competing treatments.** Agent profile used a small `‹ Profile`, human profile used boxed Back/Edit buttons, while Settings and Members each had local header markup. All four now render the shared `PageHeader` with the same plain chevron, hero title, divider, height, and spacing. The new prominent option is scoped to these profile-shaped surfaces so existing tool-page headers keep their established scale.
 2. **Identity geometry was duplicated.** Settings carried a private copy of the profile bezel, portrait seat, handle, and role styles. `ProfileIdentity` now owns that identity block for agent profile, human profile, and Settings while retaining Settings' face picker and GitHub-handle link behavior.
-3. **Primary actions looked like unrelated controls.** Agent Message/Edit and human Back/Edit were boxed buttons, avatar generation was a full-width boxed button, and management actions used rows. Message, Edit, Save, Cancel, Generate avatar, and Ban now use the existing borderless `SettingsRow` action vocabulary. Destructive tone remains reserved for Ban.
+3. **Primary actions looked like unrelated controls.** Agent Message/Edit and human Back/Edit were boxed buttons, avatar generation was a full-width boxed button, and management actions used rows. At the time of these captures, Message, Edit, Save, Cancel, Generate avatar, and Ban used the existing borderless `SettingsRow` action vocabulary. Destructive tone was reserved for Ban.
 4. **Avatar generation exposed an unrequested direction field.** The free-text direction input is removed. Generate sends the current soul only; the existing client/server single-flight guard still disables the row while active, and the exact status `generating, will DM you when the avatar is ready` appears underneath. Confirmation and error retry behavior remain intact.
 5. **Section hierarchy and spacing drifted between profiles.** SOUL and Recent work used page-specific strong labels and action spacing. Both now use the shared section-head typography and the repository spacing scale, matching the Settings list cadence.
 6. **The entry paths needed a system-level verification.** Members' human and agent rows already route to the associated profiles, transcript bylines already route to profiles, and a viewer's own byline already routes to Settings. Those behaviors remain unchanged and are covered by the existing navigation tests; Members now shares the same header component as the destinations.
-7. **Permission-specific presentation needed proof.** Owner-only agent Edit/Generate controls, higher-rank human Edit/Ban controls, read-only agent state, and ordinary-member human state are unchanged. Separate role-backed captures below verify both sides of each permission boundary.
+7. **Permission-specific presentation needed proof.** At the time, owner-only agent Edit/Generate controls, higher-rank human Edit/Ban controls, read-only agent state, and ordinary-member human state were unchanged. Separate role-backed captures below verify both sides of each permission boundary.
 
 ## Before and after
 

@@ -2025,6 +2025,32 @@ describe('monolith integration', () => {
     ).toBe(400);
   });
 
+  it('requires a fresh invite after removing a person who joined through a spent link', async () => {
+    const bobToken = await phoneToken('bob');
+    const bobId = createHash('sha256').update('github:bob').digest('hex');
+    const workspaceId = 'dddddddd-dddd-4ddd-8ddd-ddddddddddde';
+    await operation('createWorkspace', { workspaceId, name: 'Fresh invites' });
+    const first = (await (await operation('createInvite', { workspaceId })).json()) as {
+      token: string;
+    };
+    expect((await operation('redeemInvite', { token: first.token }, bobToken)).status).toBe(200);
+    expect((await operation('removeWorkspaceMember', { workspaceId, memberId: bobId })).status)
+      .toBe(204);
+    expect((await operation('redeemInvite', { token: first.token }, bobToken)).status).toBe(404);
+    expect((await operation('resolveInvite', { token: first.token }, bobToken)).status).toBe(404);
+    expect((await fetch(`${origin}/v1/public/invite-preview?token=${first.token}`)).status)
+      .toBe(404);
+    const fresh = (await (await operation('createInvite', { workspaceId })).json()) as {
+      token: string;
+    };
+    expect((await operation('redeemInvite', { token: fresh.token }, bobToken)).status).toBe(200);
+    const membership = await database.query<{ removed_at: Date | null }>(
+      `SELECT removed_at FROM memberships WHERE workspace_id=$1 AND identity_id=$2 AND room_id IS NULL`,
+      [workspaceId, bobId],
+    );
+    expect(membership.rows).toEqual([{ removed_at: null }]);
+  });
+
   it('lets only the Workspace owner delete it, as a real cascade that leaves no orphan rows and retires bound helpers', async () => {
     const aliceToken = await phoneToken('alice');
     const aliceId = createHash('sha256').update('github:alice').digest('hex');

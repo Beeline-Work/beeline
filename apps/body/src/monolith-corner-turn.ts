@@ -2065,6 +2065,13 @@ export class MonolithCornerTurnLoop {
           );
         },
         (error) => console.error(`[thin-core] corner ${cornerId} receipt heartbeat failed:`, error),
+        () => {
+          console.warn(
+            `[thin-core] corner ${cornerId} turn ${requestId} dropped: ` +
+              'the server revoked its output authority',
+          );
+          this.stopTurn(requestId);
+        },
       );
       if (laneUpgraded) {
         void finishTrace('complete').catch(() => undefined);

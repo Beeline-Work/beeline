@@ -116,7 +116,7 @@ import { WarmTranscript } from './warm-transcript.js';
 import type { RoomSupervisor } from './room-supervisor.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
 import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
-import { installCornerGitHubWrappers } from './corner-github-auth.js';
+import { installCornerGitHubWrappers, type CornerGitHubCli } from './corner-github-auth.js';
 import {
   harvestWarmNodeModules,
   mobileNodeModulesStoreDir,
@@ -521,6 +521,8 @@ export class MonolithCornerTurnLoop {
   private sessionPromptSectionIds: readonly string[] = [];
   private sessionSurface: PromptSurface = 'code-corner';
   private sessionPromptContext?: SessionPromptContext;
+  /** Whether this corner's gh launcher uses a host binary or the REST fallback. */
+  private cornerGitHubCli: CornerGitHubCli = 'host';
   private busy = false;
   private forcedStop = false;
   private activityTail = Promise.resolve();
@@ -919,7 +921,7 @@ export class MonolithCornerTurnLoop {
       ])
         .then((result) => result.stdout.trim() || undefined)
         .catch(() => undefined);
-      githubEnv = await installCornerGitHubWrappers({
+      const launchers = await installCornerGitHubWrappers({
         root: this.options.config.agentHomeRoot,
         runtimeConfigPath: this.options.config.runtimeConfigPath,
         roomId: this.options.parentRoomId,
@@ -931,6 +933,8 @@ export class MonolithCornerTurnLoop {
         ...(ghBinary ? { ghBinary } : {}),
         inheritedPath: homeOverlay.PATH ?? this.options.config.agentEnv.PATH ?? process.env.PATH,
       });
+      githubEnv = launchers.env;
+      this.cornerGitHubCli = launchers.githubCli;
     }
     // One npm cache for every corner on this host. `agent-home.ts` gives each
     // corner its own `$HOME`, so npm's default `$HOME/.npm` is per-corner and
@@ -1141,6 +1145,7 @@ export class MonolithCornerTurnLoop {
     const persona = configuration.soul ?? self?.soul;
     const session = assembleSessionPrompt({
       ...this.sessionPromptContext!,
+      githubCli: this.cornerGitHubCli,
       ...(persona?.instructions
         ? { soul: { name: persona.name, instructions: persona.instructions } }
         : {}),

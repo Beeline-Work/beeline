@@ -63,6 +63,16 @@ const SESSION_VARIANTS: Record<string, SessionPromptContext> = {
     reviewerHandle: 'sol',
     yoloMode: true,
   },
+  'code-corner-rest': {
+    surface: 'code-corner',
+    agentName: 'Bee',
+    soul,
+    agentCommand: 'claude-agent-acp',
+    worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
+    reviewerHandle: 'sol',
+    yoloMode: true,
+    githubCli: 'rest',
+  },
   'code-corner-reviewed-yolo-off': {
     surface: 'code-corner',
     agentName: 'Bee',
@@ -270,6 +280,17 @@ describe('prompt assembly guards', () => {
     expect(review).toContain('Never merge yourself');
     expect(review).not.toContain('On a checks turn');
     expect(review).not.toContain('Open the pull request');
+  });
+
+  it('names the app-token PR path when no host gh exists', () => {
+    const rest = assembleSessionPrompt(SESSION_VARIANTS['code-corner-rest']!).systemPrompt;
+    expect(rest).toContain('this host has no gh');
+    expect(rest).toContain('gh pr create');
+    expect(rest).toContain('gh pr view');
+    expect(rest).toContain('GitHub REST API');
+    expect(assembleSessionPrompt(SESSION_VARIANTS['code-corner-reviewed']!).systemPrompt).toContain(
+      'Open the pull request with gh.',
+    );
   });
 
   it('never tells an author or reviewer to run gh pr merge', () => {

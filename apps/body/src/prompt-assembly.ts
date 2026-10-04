@@ -1,5 +1,6 @@
 import type { CornerBrief, DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import type { CornerGitHubCli } from './corner-github-auth.js';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 import { boundRoomTaskBody, budgetTranscript } from './transcript-budget.js';
 
@@ -52,10 +53,11 @@ const EVERYWHERE: readonly PromptSurface[] = PROMPT_SURFACES;
 export const CORE_BUDGET_BYTES = 2_300;
 /**
  * Ceiling for one surface's own rules, on top of the core. A code corner uses
- * ~4.1 KB, plus ~0.35 KB for corner.android on a host with an Android SDK; the
- * corner setup command (`corner.contract`) added ~0.01 KB.
+ * ~4.2 KB, plus ~0.35 KB for corner.android on a host with an Android SDK and
+ * ~0.15 KB for the no-host-gh pull-request path; the corner setup command
+ * (`corner.contract`) added ~0.01 KB.
  */
-export const SURFACE_BUDGET_BYTES = 4_490;
+export const SURFACE_BUDGET_BYTES = 4_730;
 
 /**
  * Whether this session can run shell commands, and why not when it cannot.
@@ -78,6 +80,8 @@ export interface SessionPromptContext {
   readonly shell?: RoomShellState;
   /** A repository corner's feature and target branches. */
   readonly worktree?: { readonly featureBranch: string; readonly targetBranch: string };
+  /** Whether this corner's gh launcher uses a host binary or the REST fallback. */
+  readonly githubCli?: CornerGitHubCli;
   /** This agent's emulator console port, when the host has an Android SDK (`android-agent-env.ts`). */
   readonly android?: { readonly emulatorPort: string };
   readonly reviewerHandle?: string;
@@ -445,15 +449,17 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     id: 'corner.worktree',
     topic: 'place',
     why: 'The agent must know its branch and target; only a code-corner author is told to push and open the pull request.',
-    budgetBytes: 520,
+    budgetBytes: 560,
     layer: 'surface',
     surfaces: ['code-corner', 'review-corner'],
-    render: ({ worktree, surface }) =>
+    render: ({ worktree, surface, githubCli }) =>
       [
         `You are in an isolated git worktree on ${worktree?.featureBranch ?? 'the feature branch'}, targeting ${worktree?.targetBranch ?? 'the target branch'}.`,
         surface !== 'code-corner'
           ? ''
-          : `Only when the brief calls for repository changes: commit and push only ${worktree?.featureBranch}; never force-push or write to ${worktree?.targetBranch}. Before pushing, rebase on origin/${worktree?.featureBranch}; resolve conflicts autonomously, realigning to that remote branch and redoing the work if needed, then rerun affected tests. Open the pull request with gh.`,
+          : githubCli === 'rest'
+            ? `Only when the brief calls for repository changes: commit and push only ${worktree?.featureBranch}; never force-push or write to ${worktree?.targetBranch}. Before pushing, rebase on origin/${worktree?.featureBranch}; resolve conflicts autonomously, realigning to that remote branch and redoing the work if needed, then rerun affected tests. Open it with \`gh pr create\` and read it with \`gh pr view\`; this host has no gh, so the Beeline launcher answers both over the GitHub REST API with the app token.`
+            : `Only when the brief calls for repository changes: commit and push only ${worktree?.featureBranch}; never force-push or write to ${worktree?.targetBranch}. Before pushing, rebase on origin/${worktree?.featureBranch}; resolve conflicts autonomously, realigning to that remote branch and redoing the work if needed, then rerun affected tests. Open the pull request with gh.`,
       ]
         .filter(Boolean)
         .join('\n'),

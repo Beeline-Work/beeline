@@ -1,5 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createServer, type ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -50,7 +52,7 @@ appendFileSync(${JSON.stringify(calls)}, 'token\\n'); console.log('test-token');
       await writeFile(ghBinary, '#!/usr/bin/env node\n' + ghSource);
       await chmod(ghBinary, 0o700);
     }
-    const env = await installCornerGitHubWrappers({
+    const { env } = await installCornerGitHubWrappers({
       root,
       runtimeConfigPath: '/runtime.json',
       roomId: 'room',
@@ -265,7 +267,7 @@ if (!prior.includes('fresh-token')) { console.error('HTTP 401'); process.exit(1)
 console.log('ok');`,
     );
     await Promise.all([chmod(cli, 0o700), chmod(command, 0o700)]);
-    const env = await installCornerGitHubWrappers({
+    const { env } = await installCornerGitHubWrappers({
       root,
       runtimeConfigPath: '/runtime.json',
       roomId: 'room',
@@ -306,7 +308,7 @@ console.log('room-token');`,
       `#!/usr/bin/env node\nif (process.env.GH_TOKEN !== 'room-token') process.exit(1); console.log('ok');`,
     );
     await Promise.all([chmod(cli, 0o700), chmod(command, 0o700)]);
-    const env = await installCornerGitHubWrappers({
+    const { env } = await installCornerGitHubWrappers({
       root,
       runtimeConfigPath: '/runtime.json',
       roomId: 'exact-room',
@@ -383,7 +385,7 @@ appendFileSync(${JSON.stringify(calls)}, 'token\\n'); console.log('fresh-token')
     await execFileAsync('/usr/bin/git', ['-C', repo, 'remote', 'add', 'origin', remote]);
     await execFileAsync('/usr/bin/git', ['-C', repo, 'tag', 'v1.0.0']);
     const gitBinary = '/usr/bin/git';
-    const env = await installCornerGitHubWrappers({
+    const { env } = await installCornerGitHubWrappers({
       root,
       runtimeConfigPath: '/runtime.json',
       roomId: 'room',
@@ -416,6 +418,158 @@ appendFileSync(${JSON.stringify(calls)}, 'token\\n'); console.log('fresh-token')
     expect(await readFile(calls, 'utf8')).toBe('token\n');
   });
 
+  async function restServer(
+    handler: (
+      request: { method: string; url: string; body: string; authorization?: string },
+      response: ServerResponse,
+    ) => void,
+  ) {
+    const server = createServer((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on('data', (chunk: Buffer) => chunks.push(chunk));
+      request.on('end', () =>
+        handler(
+          {
+            method: request.method ?? '',
+            url: request.url ?? '',
+            body: Buffer.concat(chunks).toString('utf8'),
+            authorization: request.headers.authorization,
+          },
+          response,
+        ),
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const port = (server.address() as AddressInfo).port;
+    return {
+      url: `http://127.0.0.1:${port}`,
+      close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    };
+  }
+
+  it('opens and reads a pull request over REST when no host gh exists', async () => {
+    const requests: Array<{ method: string; url: string; authorization?: string }> = [];
+    const api = await restServer((request, response) => {
+      requests.push(request);
+      if (request.method === 'POST' && request.url === '/repos/acme/widget/pulls') {
+        response.writeHead(201, { 'content-type': 'application/json' });
+        response.end(
+          JSON.stringify({ number: 12, html_url: 'https://github.com/acme/widget/pull/12' }),
+        );
+        return;
+      }
+      if (request.url === '/repos/acme/widget/pulls/12') {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(
+          JSON.stringify({
+            number: 12,
+            html_url: 'https://github.com/acme/widget/pull/12',
+            title: 'A change',
+            state: 'open',
+            head: { ref: featureBranch, sha: 'a'.repeat(40) },
+            base: { ref: targetBranch },
+            draft: false,
+            body: 'body',
+            mergeable: true,
+            mergeable_state: 'clean',
+          }),
+        );
+        return;
+      }
+      if (request.url?.startsWith('/repos/acme/widget/pulls/12/files')) {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(
+          JSON.stringify([
+            { filename: 'apps/body/src/a.ts', additions: 3, deletions: 1, status: 'modified' },
+          ]),
+        );
+        return;
+      }
+      response.writeHead(404, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ message: 'Not Found' }));
+    });
+    try {
+      const { gh, calls } = await fixture();
+      const env = { ...process.env, GITHUB_API_URL: api.url };
+      const created = await execFileAsync(
+        gh,
+        ['pr', 'create', '--repo', 'acme/widget', '--title', 'A change', '--body', 'body'],
+        { env },
+      );
+      expect(created.stdout.trim()).toBe('https://github.com/acme/widget/pull/12');
+      const viewed = await execFileAsync(
+        gh,
+        ['pr', 'view', '12', '--repo', 'acme/widget', '--json', 'headRefOid,files'],
+        { env },
+      );
+      expect(JSON.parse(viewed.stdout)).toEqual({
+        headRefOid: 'a'.repeat(40),
+        files: [{ path: 'apps/body/src/a.ts', additions: 3, deletions: 1, changeType: 'modified' }],
+      });
+      expect(requests).toHaveLength(3);
+      expect(requests.every((request) => request.authorization === 'Bearer test-token')).toBe(true);
+      expect(await readFile(calls, 'utf8')).toBe('token\ntoken\n');
+      console.log('REST fallback: gh pr create + gh pr view served with the app token');
+    } finally {
+      await api.close();
+    }
+  });
+
+  it('falls back to REST when the host gh rejects the app token', async () => {
+    let posts = 0;
+    const api = await restServer((request, response) => {
+      if (request.method === 'POST') {
+        posts += 1;
+        response.writeHead(201, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ html_url: 'https://github.com/acme/widget/pull/9' }));
+        return;
+      }
+      response.writeHead(404, { 'content-type': 'application/json' });
+      response.end('{}');
+    });
+    try {
+      const { gh } = await fixture(
+        '/usr/bin/git',
+        "process.stderr.write('not logged into any GitHub hosts\n'); process.exit(1);",
+      );
+      const env = { ...process.env, GITHUB_API_URL: api.url };
+      const created = await execFileAsync(
+        gh,
+        ['pr', 'create', '--repo', 'acme/widget', '--title', 't', '--body', 'b'],
+        { env },
+      );
+      expect(created.stdout.trim()).toBe('https://github.com/acme/widget/pull/9');
+      expect(posts).toBe(1);
+      console.log('Unauthenticated host gh: fell back to the REST path');
+    } finally {
+      await api.close();
+    }
+  });
+
+  it('creates the feature branch remote-tracking ref after a launcher push', async () => {
+    const { root, git } = await fixture();
+    const repo = join(root, 'repo');
+    const remote = join(root, 'remote.git');
+    await execFileAsync('/usr/bin/git', ['init', '--bare', remote]);
+    await execFileAsync('/usr/bin/git', ['init', '-b', featureBranch, repo]);
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'config', 'user.name', 'Beeline Test']);
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'config', 'user.email', 'beeline@example.test']);
+    await writeFile(join(repo, 'README.md'), 'tracking test\n');
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'add', 'README.md']);
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'commit', '-m', 'test']);
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'remote', 'add', 'origin', remote]);
+    await execFileAsync(git, ['push', 'origin', featureBranch], { cwd: repo });
+    const resolved = await execFileAsync('/usr/bin/git', [
+      '-C',
+      repo,
+      'rev-parse',
+      '--verify',
+      `refs/remotes/origin/${featureBranch}`,
+    ]);
+    expect(resolved.stdout.trim()).toHaveLength(40);
+    console.log(`Push tracking ref: refs/remotes/origin/${featureBranch} = ${resolved.stdout.trim()}`);
+  });
+
   it('allows a test suite to push any branch to a local fixture remote', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-fixture-'));
     roots.push(root);
@@ -445,7 +599,7 @@ appendFileSync(${JSON.stringify(calls)}, 'token\\n'); console.log('fresh-token')
     await execFileAsync('/usr/bin/git', ['-C', repo, 'commit', '-m', 'test']);
     await execFileAsync('/usr/bin/git', ['-C', repo, 'remote', 'add', 'fixture', remote]);
     await execFileAsync('/usr/bin/git', ['-C', repo, 'tag', 'v1.0.0']);
-    const env = await installCornerGitHubWrappers({
+    const { env } = await installCornerGitHubWrappers({
       root,
       runtimeConfigPath: '/runtime.json',
       roomId: 'room',

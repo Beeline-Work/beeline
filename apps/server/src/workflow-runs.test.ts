@@ -723,8 +723,14 @@ describe('start_workflow schedule/trigger duplicate-run refusal', () => {
   });
 });
 
-async function startedRun(): Promise<{ runId: string }> {
-  const command = await commandFor(IMPLEMENTER);
+/**
+ * `rootAuthorId` defaults to the (agent) IMPLEMENTER, matching ordinary
+ * dispatch; pass a human identity (e.g. OWNER) to simulate a human-started
+ * run for tests exercising the human-facing gate choice card, which only an
+ * agent-started run's starter now bypasses.
+ */
+async function startedRun(rootAuthorId: string = IMPLEMENTER): Promise<{ runId: string }> {
+  const command = await commandFor(IMPLEMENTER, await rootMessage(rootAuthorId));
   await saveWorkflow(database, command, { contract: describedWorkflow(CONTRACT)});
   return startWorkflow(database, command, {
     name: 'corner',
@@ -785,7 +791,7 @@ describe('handoff', () => {
   });
 
   it('rejects a handoff on a run that has already ended', async () => {
-    const { runId } = await startedRun();
+    const { runId } = await startedRun(OWNER);
     let command = await commandFor(IMPLEMENTER);
     await handoff(database, command, {
       runId,
@@ -856,7 +862,7 @@ describe('handoff', () => {
   });
 
   it('posts a choice card for a gate instead of waking an agent directly', async () => {
-    const { runId } = await startedRun();
+    const { runId } = await startedRun(OWNER);
     let command = await commandFor(IMPLEMENTER);
     await handoff(database, command, {
       runId,
@@ -881,7 +887,7 @@ describe('handoff', () => {
   });
 
   it('wakes the approver with its run id and workflow name once a human answers the gate', async () => {
-    const { runId } = await startedRun();
+    const { runId } = await startedRun(OWNER);
     let command = await commandFor(IMPLEMENTER);
     await handoff(database, command, {
       runId,
@@ -938,8 +944,8 @@ describe('handoff', () => {
     ).rows[0]!.id;
   }
 
-  async function startSecondRun(): Promise<string> {
-    const start = await commandFor(IMPLEMENTER);
+  async function startSecondRun(rootAuthorId: string = IMPLEMENTER): Promise<string> {
+    const start = await commandFor(IMPLEMENTER, await rootMessage(rootAuthorId));
     return (
       await startWorkflow(database, start, {
         name: 'corner',
@@ -951,7 +957,7 @@ describe('handoff', () => {
   it('closes a gate choice left open by a handoff and lets a later run reach the gate', async () => {
     // Run 1: implement -> checks -> review -> human_approve, then leave the
     // gate by the bound agent's handoff (not the card) and land.
-    const { runId: firstRun } = await startedRun();
+    const { runId: firstRun } = await startedRun(OWNER);
     const firstGate = await driveToApprovalGate(firstRun);
     const landed = await handoff(database, await commandFor(APPROVER), {
       runId: firstRun, outcome: 'approved', contents: { decision: 'approved' },
@@ -964,7 +970,7 @@ describe('handoff', () => {
 
     // Run 2 reaches the same gate. Before the fix, run 1's stranded open
     // choice made postWorkflowGate throw 'choice conflict'.
-    const secondRun = await startSecondRun();
+    const secondRun = await startSecondRun(OWNER);
     const secondGate = await driveToApprovalGate(secondRun);
     expect(secondGate).not.toBe(firstGate);
     expect(
@@ -980,14 +986,14 @@ describe('handoff', () => {
     // Simulate the production row: a run that landed while its gate choice
     // stayed 'open'. The one-open-choice rule and the partial unique index
     // must not let it refuse a later gate.
-    const { runId: firstRun } = await startedRun();
+    const { runId: firstRun } = await startedRun(OWNER);
     const firstGate = await driveToApprovalGate(firstRun);
     await handoff(database, await commandFor(APPROVER), {
       runId: firstRun, outcome: 'approved', contents: { decision: 'approved' },
     });
     await database.query(`UPDATE room_choices SET status='open' WHERE id=$1`, [firstGate]);
 
-    const secondRun = await startSecondRun();
+    const secondRun = await startSecondRun(OWNER);
     const secondGate = await driveToApprovalGate(secondRun);
     expect(secondGate).not.toBe(firstGate);
     expect(
@@ -1092,7 +1098,7 @@ describe('a gate handing directly into another gate', () => {
         failed: { kind: 'terminal', status: 'failed' },
       },
     };
-    const command = await commandFor(APPROVER);
+    const command = await commandFor(APPROVER, await rootMessage(OWNER));
     await saveWorkflow(database, command, { contract: describedWorkflow(chain) });
     const { runId } = await startWorkflow(database, command, {
       name: 'gate-chain',
@@ -1128,7 +1134,7 @@ describe('a gate handing directly into another gate', () => {
 
 describe('closeStaleWorkflowGateChoices', () => {
   it('closes a row left open from before this fix shipped, idempotently', async () => {
-    const { runId } = await startedRun();
+    const { runId } = await startedRun(OWNER);
     await driveToApprovalGate(runId);
     const choice = (
       await database.query<{ id: string }>(
@@ -1155,7 +1161,7 @@ describe('closeStaleWorkflowGateChoices', () => {
   });
 
   it('leaves a still-live gate alone', async () => {
-    const { runId } = await startedRun();
+    const { runId } = await startedRun(OWNER);
     await driveToApprovalGate(runId);
     const choice = (
       await database.query<{ id: string }>(
@@ -1168,6 +1174,89 @@ describe('closeStaleWorkflowGateChoices', () => {
       (await database.query<{ status: string }>(`SELECT status FROM room_choices WHERE id=$1`, [choice.id]))
         .rows[0]?.status,
     ).toBe('open');
+  });
+});
+
+describe('stuck/escalation gates route to the run starter, not a human, when an agent started the run', () => {
+  it('wakes the agent starter at a gate instead of posting a human choice card', async () => {
+    const { runId } = await startedRun(); // default root author: IMPLEMENTER (agent)
+    await handoff(database, await commandFor(IMPLEMENTER), {
+      runId, outcome: 'pushed', contents: { summary: 'x', prUrl: 'y' },
+    });
+    await handoff(database, await commandFor(IMPLEMENTER), {
+      runId, outcome: 'passing', contents: { headSha: 'abc' },
+    });
+    const reviewed = await handoff(database, await commandFor(REVIEWER), {
+      runId, outcome: 'approved', contents: { verdict: 'approve', notes: 'lgtm' },
+    });
+    expect(reviewed.state).toBe('human_approve');
+    const choice = await database.query(
+      `SELECT 1 FROM room_choices WHERE room_id=$1 AND status='open'`, [ROOM],
+    );
+    expect(choice.rows).toHaveLength(0);
+    const inbox = await readAgentCommands(database, ROOM, IMPLEMENTER);
+    const woken = inbox.commands.find((c) => c.source.systemEvent?.verb === 'reached a gate at');
+    expect(woken).toBeDefined();
+    expect(woken!.source.body).toContain(runId);
+    expect(woken!.source.body).toContain('human_approve');
+    expect(woken!.source.body).toContain(APPROVER);
+  });
+
+  it('still posts the human choice card and wakes nobody else when a human started the run', async () => {
+    const { runId } = await startedRun(OWNER);
+    await handoff(database, await commandFor(IMPLEMENTER), {
+      runId, outcome: 'pushed', contents: { summary: 'x', prUrl: 'y' },
+    });
+    await handoff(database, await commandFor(IMPLEMENTER), {
+      runId, outcome: 'passing', contents: { headSha: 'abc' },
+    });
+    await handoff(database, await commandFor(REVIEWER), {
+      runId, outcome: 'approved', contents: { verdict: 'approve', notes: 'lgtm' },
+    });
+    const choice = await database.query(
+      `SELECT 1 FROM room_choices WHERE room_id=$1 AND agent_id=$2 AND status='open'`, [ROOM, APPROVER],
+    );
+    expect(choice.rows).toHaveLength(1);
+    const inbox = await readAgentCommands(database, ROOM, IMPLEMENTER);
+    expect(inbox.commands.find((c) => c.source.systemEvent?.verb === 'reached a gate at')).toBeUndefined();
+  });
+
+  it('wakes the agent starter when an agent-started list role is exhausted, not just a passive note', async () => {
+    await reportPresence(WORKER_A, 'offline');
+    await reportPresence(WORKER_B, 'offline');
+    await startedListRun(); // default starter: IMPLEMENTER (agent)
+    const inbox = await readAgentCommands(database, ROOM, IMPLEMENTER);
+    const woken = inbox.commands.find((c) => c.source.body.includes("worker role's list"));
+    expect(woken).toBeDefined();
+  });
+
+  it('wakes the agent starter, with the bound agent and reason, when a single-bound role goes silent', async () => {
+    const { runId } = await startedListRun();
+    await handoff(database, await commandFor(WORKER_A), {
+      runId, outcome: 'done', contents: { note: 'finished' },
+    });
+    const dispatchId = (
+      await database.query<{ id: string }>(
+        `SELECT id FROM messages WHERE card_type='workflow-handoff' AND card->>'runId'=$1
+         ORDER BY (card->>'seq')::int DESC LIMIT 1`,
+        [runId],
+      )
+    ).rows[0]!.id;
+    // A single-bound role has no list to fail over on; the no-op before this
+    // feature left nobody woken at all.
+    await reassignFailedWorkflowRole(database, {
+      roomId: ROOM,
+      requestId: dispatchId,
+      agentId: APPROVER,
+      reason: 'provider timeout',
+    });
+    expect((await listRunCard(runId)).roleBindings.closer).toBe(APPROVER);
+    const inbox = await readAgentCommands(database, ROOM, IMPLEMENTER);
+    const woken = inbox.commands.find((c) => c.source.body.includes(runId));
+    expect(woken).toBeDefined();
+    expect(woken!.source.body).toContain('closer');
+    expect(woken!.source.body).toContain(APPROVER);
+    expect(woken!.source.body).toContain('provider timeout');
   });
 });
 
@@ -1698,7 +1787,7 @@ describe('list roles', () => {
     ).rejects.toThrow('@nobody is not a current member of this Room');
   });
 
-  it('rejects assign_workflow_role for a role bound to one agent', async () => {
+  it('assign_workflow_role also rebinds a role bound to one agent, not only a list role', async () => {
     const { runId } = await startedListRun();
     const advanced = await handoff(database, await commandFor(WORKER_A), {
       runId,
@@ -1707,9 +1796,14 @@ describe('list roles', () => {
     });
     expect(advanced.state).toBe('close');
     const command = await commandFor(IMPLEMENTER);
-    await expect(
-      assignWorkflowRole(database, command, { runId, role: 'closer', targetAgentId: WORKER_A }),
-    ).rejects.toThrow('bound to one agent');
+    const result = await assignWorkflowRole(database, command, {
+      runId,
+      role: 'closer',
+      targetAgentId: WORKER_A,
+    });
+    expect(result.state).toBe('close');
+    expect((await listRunCard(runId)).roleBindings.closer).toBe(WORKER_A);
+    expect(await pendingCommandsFor(WORKER_A)).toBeGreaterThan(0);
   });
 });
 
@@ -1839,11 +1933,12 @@ describe('agent workflow run reads and cancellation', () => {
   });
 
   it('closes an open gate without a decision wake and removes the run from phone active reads', async () => {
-    const { runId } = await startedRun();
+    const { runId } = await startedRun(OWNER);
     const command = await commandFor(IMPLEMENTER);
     await handoff(database, command, { runId, outcome: 'blocked', contents: { summary: 'blocked', prUrl: 'none' } });
     const choice = (await database.query<{ id: string; options: { optionId: string }[] }>(`SELECT id,options FROM room_choices WHERE room_id=$1 AND status='open'`, [ROOM])).rows[0]!;
-    await cancelWorkflowRun(database, command, { runId, reason: 'Stop waiting' });
+    const cancelCommand = await commandFor(IMPLEMENTER, await rootMessage(OWNER));
+    await cancelWorkflowRun(database, cancelCommand, { runId, reason: 'Stop waiting' });
     expect((await database.query<{ status: string }>(`SELECT status FROM room_choices WHERE id=$1`, [choice.id])).rows[0]?.status).toBe('closed');
     await expect(answerRoomChoice(database, { choiceId: choice.id, optionId: choice.options[0]!.optionId, viewerId: OWNER })).rejects.toThrow('already decided');
     const { activeWorkflowRunIds } = await import('./workflow-admin.js');

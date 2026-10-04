@@ -17,7 +17,7 @@ YouTube connects only through that custom config. The server never falls back to
 | Scope | Sensitivity | User-facing reason and demo action |
 | --- | --- | --- |
 | `https://www.googleapis.com/auth/youtube.readonly` | Sensitive | List the connected channel's videos when the owner asks. Show a channel and video read. |
-| `https://www.googleapis.com/auth/yt-analytics.readonly` | Non-sensitive | Read the owner's channel metrics when the owner asks. Show an Analytics read. |
+| `https://www.googleapis.com/auth/yt-analytics.readonly` | Non-sensitive | Read the owner's channel metrics when the owner asks, through Beeline's `BEELINE_YOUTUBE_ANALYTICS_REPORT` tool (YouTube Analytics `reports.query` for `channel==MINE`, sent through Composio's authenticated proxy). Show an Analytics read. |
 | `https://www.googleapis.com/auth/youtube.upload` | Sensitive | Upload only a video the owner asks the agent to publish. Show an upload from the owner account. |
 
 No scope allows editing or deleting videos.

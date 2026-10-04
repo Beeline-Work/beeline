@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import {
-  APP_FILE_MAXIMUM_BYTES, ComposioApps, composioToolkitForApp, resolveAppFiles, type AppFile,
+  APP_FILE_MAXIMUM_BYTES, ComposioApps, composioToolkitForApp, resolveAppFiles, YOUTUBE_ANALYTICS_TOOL,
+  type AppFile,
 } from './composio-apps.js';
 
 const PERSON = 'a'.repeat(64);
@@ -413,6 +414,77 @@ describe('managed app provider boundary', () => {
     const error = await provider.account(ACCOUNT, PERSON, 'youtube').catch((e: unknown) => e);
     expect((error as Error).message).toContain('quota limit reached for this upload');
     expect((error as { status?: number }).status).toBe(429);
+  });
+
+  describe('YouTube Analytics report tool', () => {
+    const DATA_TOOL = { slug: 'YOUTUBE_LIST_CHANNEL_VIDEOS', name: 'List channel videos',
+      toolkit: { slug: 'youtube' } };
+    function fixture(proxied: { status: number; data: unknown }) {
+      const proxyBodies: Record<string, unknown>[] = [];
+      const transport = vi.fn(async (url: URL | string, init?: RequestInit) => {
+        const parsed = new URL(String(url));
+        if (parsed.pathname === '/api/v3/tools') {
+          const slug = parsed.searchParams.get('toolkit_slug');
+          return json({ items: slug === 'youtube' ? [DATA_TOOL]
+            : [{ slug: 'SLACK_POST_MESSAGE', name: 'Post', toolkit: { slug: 'slack' } }] });
+        }
+        if (parsed.pathname === `/api/v3/connected_accounts/${ACCOUNT}`) return json({
+          id: ACCOUNT, user_id: PERSON, status: 'ACTIVE', toolkit: { slug: 'youtube' } });
+        if (parsed.pathname === '/api/v3.1/tools/execute/proxy') {
+          proxyBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          return json(proxied);
+        }
+        throw new Error(`unexpected request ${parsed.pathname}`);
+      });
+      return { provider: new ComposioApps('fixture-only', transport as typeof fetch), proxyBodies };
+    }
+    const run = (provider: ComposioApps, args: Record<string, unknown>) => provider.execute({
+      accountId: ACCOUNT, userId: PERSON, toolkit: 'youtube', tool: YOUTUBE_ANALYTICS_TOOL,
+      arguments: args });
+
+    it('lists the report tool with the YouTube tools and nowhere else', async () => {
+      const { provider } = fixture({ status: 200, data: {} });
+      expect((await provider.listTools('youtube')).map((tool) => tool.slug))
+        .toEqual([YOUTUBE_ANALYTICS_TOOL, 'YOUTUBE_LIST_CHANNEL_VIDEOS']);
+      expect((await provider.listTools('slack')).map((tool) => tool.slug))
+        .toEqual(['SLACK_POST_MESSAGE']);
+    });
+
+    it('queries the connected channel through the Composio proxy and returns headers and rows', async () => {
+      const columnHeaders = [{ name: 'day', columnType: 'DIMENSION', dataType: 'STRING' },
+        { name: 'views', columnType: 'METRIC', dataType: 'INTEGER' }];
+      const { provider, proxyBodies } = fixture({ status: 200, data: { kind: 'youtubeAnalytics#resultTable',
+        columnHeaders, rows: [['2026-09-06', 120], ['2026-09-07', 98]] } });
+      await expect(run(provider, { startDate: '2026-09-06', endDate: '2026-10-03',
+        metrics: 'views', dimensions: 'day', sort: 'day', maxResults: 50 }))
+        .resolves.toEqual({ columnHeaders, rows: [['2026-09-06', 120], ['2026-09-07', 98]] });
+      expect(proxyBodies).toEqual([{ connected_account_id: ACCOUNT,
+        endpoint: 'https://youtubeanalytics.googleapis.com/v2/reports', method: 'GET',
+        parameters: [
+          { name: 'ids', value: 'channel==MINE', type: 'query' },
+          { name: 'startDate', value: '2026-09-06', type: 'query' },
+          { name: 'endDate', value: '2026-10-03', type: 'query' },
+          { name: 'metrics', value: 'views', type: 'query' },
+          { name: 'dimensions', value: 'day', type: 'query' },
+          { name: 'sort', value: 'day', type: 'query' },
+          { name: 'maxResults', value: '50', type: 'query' },
+        ] }]);
+    });
+
+    it('returns a Google API error as a readable error', async () => {
+      const { provider } = fixture({ status: 400, data: { error: { code: 400,
+        message: 'Unknown identifier (viewz) given in field parameters.metrics.' } } });
+      await expect(run(provider, { startDate: '2026-09-06', endDate: '2026-10-03', metrics: 'viewz' }))
+        .rejects.toThrow('YouTube Analytics request failed (400): Unknown identifier (viewz) ' +
+          'given in field parameters.metrics.');
+    });
+
+    it('rejects a malformed date before calling Google', async () => {
+      const { provider, proxyBodies } = fixture({ status: 200, data: {} });
+      await expect(run(provider, { startDate: 'last month', endDate: '2026-10-03', metrics: 'views' }))
+        .rejects.toThrow('YouTube Analytics startDate must be YYYY-MM-DD');
+      expect(proxyBodies).toEqual([]);
+    });
   });
 
   it('treats a missing connected account as not connected instead of throwing', async () => {

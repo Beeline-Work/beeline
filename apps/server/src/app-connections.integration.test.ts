@@ -1049,6 +1049,12 @@ describe('connect_app', () => {
           data: { id: 'yt-1', privacyStatus: 'private', source: S3KEY } });
         if (path.endsWith('/tools/execute/YOUTUBE_LIST_CHANNEL_VIDEOS'))
           return Response.json({ data: { items: [] } });
+        if (path === '/api/v3/tools') return Response.json({ items: [{
+          slug: 'YOUTUBE_LIST_CHANNEL_VIDEOS', name: 'List channel videos', toolkit: { slug: 'youtube' } }] });
+        if (path === '/api/v3.1/tools/execute/proxy') return Response.json({ status: 200, data: {
+          kind: 'youtubeAnalytics#resultTable',
+          columnHeaders: [{ name: 'views', columnType: 'METRIC', dataType: 'INTEGER' }],
+          rows: [[1234]] } });
         throw new Error(`unexpected request ${href}`);
       });
       const daemon = daemonWith(fakeRegistry([]).client,
@@ -1119,6 +1125,27 @@ describe('connect_app', () => {
       expect(calls[3]!.body).toEqual({ connected_account_id: 'ca_youtube', user_id: OWNER,
         arguments: { maxResults: 5 }, version: '20260930_00' });
       expect(getObject).not.toHaveBeenCalled();
+    });
+
+    it('lists and runs the YouTube Analytics report for the connected channel without a Google token', async () => {
+      const { daemon, calls } = await youtubeRoom();
+      const listed = await daemon.execute('listAppTools', { ...turn, appId: YOUTUBE_APP }, HELPER);
+      expect(listed.tools.map((tool: { slug: string }) => tool.slug))
+        .toEqual(['BEELINE_YOUTUBE_ANALYTICS_REPORT', 'YOUTUBE_LIST_CHANNEL_VIDEOS']);
+      calls.length = 0;
+      const result = await daemon.execute('executeAppTool', { ...turn, appId: YOUTUBE_APP,
+        tool: 'BEELINE_YOUTUBE_ANALYTICS_REPORT',
+        arguments: { startDate: '2026-09-06', endDate: '2026-10-03', metrics: 'views' } }, HELPER);
+      expect(result).toEqual({ status: 'executed', data: {
+        columnHeaders: [{ name: 'views', columnType: 'METRIC', dataType: 'INTEGER' }], rows: [[1234]] } });
+      expect(calls.map((call) => `${call.method} ${new URL(call.url).pathname}`)).toEqual([
+        'GET /api/v3/connected_accounts/ca_youtube',
+        'GET /api/v3/connected_accounts/ca_youtube',
+        'POST /api/v3.1/tools/execute/proxy',
+      ]);
+      expect(calls[2]!.body).toMatchObject({ connected_account_id: 'ca_youtube',
+        endpoint: 'https://youtubeanalytics.googleapis.com/v2/reports', method: 'GET' });
+      expect(JSON.stringify(calls[2]!.body)).not.toMatch(/authorization|bearer|access_token/i);
     });
   });
 

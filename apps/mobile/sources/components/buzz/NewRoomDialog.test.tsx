@@ -167,6 +167,8 @@ describe('New Room sheet', () => {
     const { renderer, host, text, sheet, submit, name, load } = mount();
     expect(sheet().title).toBe('New Room');
     expect(host('create-room-name')?.props.accessibilityLabel).toBe('Room name');
+    expect(host('create-room-name')?.props.placeholder).toBe('Name');
+    expect(text('create-room-content')).not.toContain('Name');
     expect(text('create-room-repo-row')).toContain('None');
     expect(host('create-room-repo-mode')).toBeUndefined();
     expect(host('create-room-public')?.props.value).toBe(true);

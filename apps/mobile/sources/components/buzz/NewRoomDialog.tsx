@@ -390,7 +390,6 @@ export function NewRoomDialog({
       {step === 'form' && (
         <View style={styles.form} testID="create-room-content">
           <View style={styles.roomNameField}>
-            <Text style={styles.fieldLabel}>Name</Text>
             <HullDialogInput
               accessibilityLabel={`${ROOM_LABEL} name`}
               ruleStyle={styles.nameRule}
@@ -399,7 +398,7 @@ export function NewRoomDialog({
               onSubmitEditing={() => {
                 if (!submitDisabled) void submit();
               }}
-              placeholder="room-name"
+              placeholder="Name"
               testID="create-room-name"
               value={roomName}
             />

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { directMessageHeaderPresence } from './direct-message-header-presence';
+import {
+  directMessageAgentHeaderMeta,
+  directMessageHeaderPresence,
+} from './direct-message-header-presence';
 
 const NOW = Date.UTC(2026, 0, 15, 14);
 const person = { pubkey: 'person', kind: 'human' as const, name: 'Ada' };
@@ -46,5 +49,21 @@ describe('directMessageHeaderPresence', () => {
   it('shows no subtitle when the peer or a person presence is unknown', () => {
     expect(directMessageHeaderPresence(null, NOW)).toBe('');
     expect(directMessageHeaderPresence(item(person), NOW)).toBe('');
+  });
+});
+
+describe('directMessageAgentHeaderMeta', () => {
+  it('reads handle, model and owner like a member cell', () => {
+    expect(
+      directMessageAgentHeaderMeta(
+        { handle: 'ruby', model: 'anthropic/claude-opus-5-5', ownerHandle: 'lunchboxfortwo' },
+        '',
+      ),
+    ).toBe('@ruby · claude-opus-5-5 · @lunchboxfortwo');
+  });
+
+  it('keeps the working word and skips what is unknown', () => {
+    expect(directMessageAgentHeaderMeta({ handle: 'ruby' }, 'working')).toBe('@ruby · working');
+    expect(directMessageAgentHeaderMeta({}, '')).toBe('');
   });
 });

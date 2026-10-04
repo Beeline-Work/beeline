@@ -95,6 +95,48 @@ it('retires old Google consent and connector rows without leaving active grants'
   }
 });
 
+it('turns every legacy Workspace ban into a plain removal before dropping the ban table', async () => {
+  const database = new PgliteDatabase();
+  const workspace = '11111111-1111-4111-8111-111111111111';
+  const room = '22222222-2222-4222-8222-222222222222';
+  const owner = 'a'.repeat(64);
+  const banned = 'b'.repeat(64);
+  const kept = 'c'.repeat(64);
+  try {
+    await migrate(database);
+    await database.query(`INSERT INTO identities(id,kind,name)
+      VALUES($1,'human','Owner'),($2,'human','Banned'),($3,'human','Kept')`, [owner, banned, kept]);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,created_by,name)
+      VALUES($1,$2,$3,'Tools')`, [room, workspace, owner]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,NULL,$4,'member'),
+        ($1,$5,$3,'member'),($1,$5,$4,'member')`, [workspace, owner, banned, kept, room]);
+    // A legacy ban whose memberships are still live: the drop must not restore
+    // (or leave live) anyone the ban table was holding out.
+    await database.query(`CREATE TABLE workspace_bans (workspace_id uuid NOT NULL,
+      identity_id text NOT NULL, banned_by text, created_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY(workspace_id, identity_id))`);
+    await database.query(`INSERT INTO workspace_bans(workspace_id,identity_id,banned_by)
+      VALUES($1,$2,$3)`, [workspace, banned, owner]);
+    await migrate(database);
+    const live = await database.query<{ identity_id: string; room_id: string | null }>(
+      `SELECT identity_id,room_id FROM memberships WHERE workspace_id=$1 AND removed_at IS NULL
+       ORDER BY identity_id,room_id NULLS FIRST`,
+      [workspace],
+    );
+    expect(live.rows).toEqual([
+      { identity_id: owner, room_id: null },
+      { identity_id: kept, room_id: null },
+      { identity_id: kept, room_id: room },
+    ]);
+    expect((await database.query(`SELECT to_regclass('workspace_bans') IS NULL gone`)).rows)
+      .toEqual([{ gone: true }]);
+  } finally {
+    await database.close();
+  }
+});
+
 it('excludes existing accounts while new identities inherit welcome eligibility', async () => {
   const database = new PgliteDatabase();
   try {

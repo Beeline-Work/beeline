@@ -741,7 +741,17 @@ CREATE TABLE IF NOT EXISTS memberships (
 );
 -- Workspace bans are retired: a human is removed instead, and a removed
 -- person simply needs a fresh invite to rejoin (the invite itself is now
--- single-use). Existing ban rows become plain removals.
+-- single-use). Existing ban rows become plain removals before the table goes,
+-- so no banned person is restored by the drop.
+DO $$
+BEGIN
+  IF to_regclass('workspace_bans') IS NOT NULL THEN
+    UPDATE memberships m SET removed_at=now()
+    FROM workspace_bans b
+    WHERE m.workspace_id=b.workspace_id AND m.identity_id=b.identity_id AND m.removed_at IS NULL;
+  END IF;
+END;
+$$;
 DROP TRIGGER IF EXISTS membership_workspace_ban ON memberships;
 DROP FUNCTION IF EXISTS enforce_workspace_ban();
 DROP TABLE IF EXISTS workspace_bans;

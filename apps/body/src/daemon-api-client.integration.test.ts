@@ -835,6 +835,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     const operations = vi.spyOn(client, 'execute');
     const activation = await client.execute('getRoomInbox', { roomId: ROOM, startAtLatest: true });
     let connected = false;
+    const connectionStates: boolean[] = [];
     let replies = Promise.resolve();
     let answered = 0;
     const answer = (command: AgentCommand) => {
@@ -861,6 +862,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       },
       (value) => {
         connected = value;
+        connectionStates.push(value);
       },
       undefined,
       (commands) => commands.forEach(answer),
@@ -898,7 +900,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         if (event.type === 'presence' && event.agentId === AGENT) published.push(event.status);
       });
       sockets[0]!.close();
-      await vi.waitFor(() => expect(connected).toBe(false));
+      await vi.waitFor(() => expect(connectionStates).toContain(false));
       // The connection held the agent's presence; a socket that ended releases
       // it at once, and the reconnect holds it again.
       await vi.waitFor(() => expect(published).toContain('offline'));

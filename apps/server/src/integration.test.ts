@@ -3711,6 +3711,44 @@ describe('monolith integration', () => {
     expect(oldestPage.nextBefore).toBeUndefined();
   });
 
+  it('reads a distant message directly and pages forward to the recent tail', async () => {
+    const ids = Array.from({ length: 227 }, (_, index) =>
+      (index + 1).toString(16).padStart(64, '0'),
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       SELECT id,$1,$2,'History row ' || ordinal,
+              '2040-01-01T00:00:00Z'::timestamptz + ordinal * interval '1 millisecond'
+       FROM unnest($3::text[]) WITH ORDINALITY AS inserted(id,ordinal)`,
+      [ROOM, HUMAN, ids],
+    );
+
+    const target = ids[26]!;
+    const aroundResponse = await request(`/v1/phone/rooms/${ROOM}/history?around=${target}`);
+    expect(aroundResponse.status).toBe(200);
+    const around = (await aroundResponse.json()) as RoomHistoryView;
+    expect(around.messages.map((message) => message.id)).toEqual(ids.slice(11, 41));
+
+    const seen = new Set(around.messages.map((message) => message.id));
+    let cursor = around.messages.at(-1)!.id;
+    for (let pageNumber = 0; pageNumber < 7; pageNumber += 1) {
+      const response = await request(`/v1/phone/rooms/${ROOM}/history?after=${cursor}`);
+      expect(response.status).toBe(200);
+      const page = (await response.json()) as RoomHistoryView;
+      for (const message of page.messages) {
+        expect(seen.has(message.id)).toBe(false);
+        seen.add(message.id);
+      }
+      if (page.messages.length === 0) break;
+      cursor = page.messages.at(-1)!.id;
+    }
+    expect([...seen]).toEqual(ids.slice(11));
+
+    const outsider = await phoneToken('outsider');
+    expect((await request(`/v1/phone/rooms/${ROOM}/history?around=${target}`, 'GET', undefined, outsider)).status).toBe(404);
+    expect((await request(`/v1/phone/rooms/${ROOM}/history?after=${target}`, 'GET', undefined, outsider)).status).toBe(404);
+  });
+
   it("outlines every local day of a corner's history in the reader's time zone", async () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,

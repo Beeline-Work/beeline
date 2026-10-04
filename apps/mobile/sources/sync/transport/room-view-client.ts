@@ -107,6 +107,18 @@ class MonolithRoomViewClient {
       readRoomHistoryView,
     );
   }
+  historyAfter(id: string, messageId: string): Promise<RoomHistoryView> {
+    return this.get(
+      `/v1/phone/rooms/${encodeURIComponent(id)}/history?after=${encodeURIComponent(messageId)}`,
+      readRoomHistoryView,
+    );
+  }
+  historyAround(id: string, messageId: string): Promise<RoomHistoryView> {
+    return this.get(
+      `/v1/phone/rooms/${encodeURIComponent(id)}/history?around=${encodeURIComponent(messageId)}`,
+      readRoomHistoryView,
+    );
+  }
   outline(id: string, timeZone: string): Promise<RoomHistoryOutline> {
     return this.get(
       `/v1/phone/rooms/${encodeURIComponent(id)}/outline?tz=${encodeURIComponent(timeZone)}`,
@@ -239,6 +251,16 @@ export class RoomViewClient {
   }
   history(id: string, before?: { createdAt: number; id: string }) {
     return this.implementation.history(id, before);
+  }
+  historyAfter(id: string, messageId: string): Promise<RoomHistoryView> {
+    return this.implementation instanceof MonolithRoomViewClient
+      ? this.implementation.historyAfter(id, messageId)
+      : Promise.reject(new Error('Forward history requires the monolith'));
+  }
+  historyAround(id: string, messageId: string): Promise<RoomHistoryView> {
+    return this.implementation instanceof MonolithRoomViewClient
+      ? this.implementation.historyAround(id, messageId)
+      : Promise.reject(new Error('Targeted history requires the monolith'));
   }
   /** The whole-history outline exists only on the monolith; null elsewhere. */
   outline(id: string, timeZone: string): Promise<RoomHistoryOutline | null> {

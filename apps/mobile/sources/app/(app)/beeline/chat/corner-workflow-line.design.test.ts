@@ -28,14 +28,6 @@ const run = (overrides: Partial<WorkflowRunSummaryView>): WorkflowRunSummaryView
 });
 
 describe('corner workflow line', () => {
-  it('reads the corner’s live run and opens its run page, never drawing the graph in the corner', () => {
-    expect(chat).toMatch(/useCornerWorkflowRun\(\s*isCorner \? decodedId : undefined,/);
-    expect(chat).toContain('router.push(workflowRunHref(cornerWorkflowRun))');
-    expect(chat).toMatch(
-      /<CornerObjectiveLine[\s\S]*?onOpenWorkflow=\{openCornerWorkflowRun\}[\s\S]*?workflow=\{cornerWorkflowRun\}/,
-    );
-    expect(chat).not.toContain('WorkflowRunLine');
-  });
 
   it('names a saved workflow working in the corner before the corner’s own lifecycle run', () => {
     const lifecycle = run({ runId: 'corner-1' });

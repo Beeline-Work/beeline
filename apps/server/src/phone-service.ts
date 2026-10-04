@@ -1,4 +1,10 @@
-import { readWorkflowOwnership, requireWorkflowOwner, scheduleWorkflowName, transferWorkflowOwner, workflowHumanAdmin } from './workflow-ownership.js';
+import {
+  readWorkflowOwnership,
+  requireWorkflowOwner,
+  scheduleWorkflowName,
+  transferWorkflowOwner,
+  workflowHumanAdmin,
+} from './workflow-ownership.js';
 import { startWorkflow } from './workflow-runs.js';
 import { setCornerHold } from './corner-holds.js';
 import {
@@ -467,7 +473,10 @@ export class MessageSearchTooBroadError extends Error {
 }
 function messageSearchSnippet(headline: string): MessageSearchSnippetPart[] {
   const parts: MessageSearchSnippetPart[] = [];
-  for (const piece of headline.replace(/\s+/g, ' ').trim().split(/(\x01[^\x02]*\x02)/)) {
+  for (const piece of headline
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(/(\x01[^\x02]*\x02)/)) {
     if (!piece) continue;
     const match = piece.startsWith('\x01');
     parts.push({ text: match ? piece.slice(1, -1) : piece, match });
@@ -728,10 +737,19 @@ function projectedMessage(
       };
     case 'app-sign-in': {
       const card = row.card as NonNullable<RoomViewMessage['appSignIn']>;
-      return { ...base, appSignIn: { appId: card.appId, appKey: card.appKey,
-        name: card.name, ownerId: card.ownerId, agentId: card.agentId,
-        status: card.status, ...(card.errorMessage ? { errorMessage: card.errorMessage } : {}),
-        ...(card.continuation ? { continuation: card.continuation } : {}) } };
+      return {
+        ...base,
+        appSignIn: {
+          appId: card.appId,
+          appKey: card.appKey,
+          name: card.name,
+          ownerId: card.ownerId,
+          agentId: card.agentId,
+          status: card.status,
+          ...(card.errorMessage ? { errorMessage: card.errorMessage } : {}),
+          ...(card.continuation ? { continuation: card.continuation } : {}),
+        },
+      };
     }
     case 'choice':
       return { ...base, choice: row.card as NonNullable<RoomViewMessage['choice']> };
@@ -1224,7 +1242,11 @@ export class PhoneService {
       ]);
       const role = access.rows[0]!.role;
       return {
-        viewer: { identity: await this.requireIdentity(viewerId), role, permissions: { send: role !== 'spectator', manage: role === 'owner' || role === 'admin' } },
+        viewer: {
+          identity: await this.requireIdentity(viewerId),
+          role,
+          permissions: { send: role !== 'spectator', manage: role === 'owner' || role === 'admin' },
+        },
         members: members.filter((m) => m.identity.kind === 'human'),
         agents: [],
         grants,
@@ -1492,102 +1514,104 @@ export class PhoneService {
         role: current.role,
         updatedAt: unix(current.updated_at),
       },
-      chats: rooms.rows.slice(0, 200).map((row) => ({
-        room: roomHeader(row, this.publicOrigin),
-        leaveDeletesRoom:
-          !row.direct_participants &&
-          (current.role === 'owner' || current.role === 'admin') &&
-          row.leave_deletes_room,
-        ...(row.agents_offline ? { agentsOffline: true } : {}),
-        ...(row.closed ? { closed: true } : {}),
-        memberCount: Number(row.member_count),
-        ...(countsByRoom
-          ? (countsByRoom.get(row.id) ?? { cornerCount: 0, waitingCornerCount: 0 })
-          : {}),
-        ...(row.latest_id &&
-        row.latest_created_at &&
-        row.latest_author_id &&
-        row.latest_author_kind &&
-        row.latest_author_name
-          ? {
-              latestMessage: {
-                id: row.latest_id,
-                text: row.latest_text ?? '',
-                createdAt: unix(row.latest_created_at),
-                ...(row.latest_attachments?.length
-                  ? {
-                      attachments: (
-                        row.latest_attachments as NonNullable<RoomViewMessage['attachments']>
-                      ).map((attachment) => ({
-                        ...attachment,
-                        url: attachment.url.startsWith('/')
-                          ? `${this.publicOrigin}${attachment.url}`
-                          : attachment.url,
-                        ...(attachment.previewUrl?.startsWith('/')
-                          ? { previewUrl: `${this.publicOrigin}${attachment.previewUrl}` }
-                          : {}),
-                        ...(attachment.thumbnailUrl?.startsWith('/')
-                          ? { thumbnailUrl: `${this.publicOrigin}${attachment.thumbnailUrl}` }
-                          : {}),
-                      })),
-                    }
-                  : {}),
-                author: identity(
-                  {
-                    id: row.latest_author_id,
-                    kind: row.latest_author_kind,
-                    name: row.latest_author_name,
-                    handle: row.latest_author_handle,
-                    avatar: row.latest_author_avatar,
-                    face_id: row.latest_author_face,
-                  },
-                  this.publicOrigin,
-                ),
-                ...(row.latest_tags_viewer ? { mentionsViewer: true as const } : {}),
-              },
-            }
-          : {}),
-        ...(row.peer_id && row.peer_kind && row.peer_name
-          ? {
-              directMessage: {
-                peer: identity(
-                  {
-                    id: row.peer_id,
-                    kind: row.peer_kind,
-                    name: row.peer_name,
-                    handle: row.peer_handle,
-                    avatar: row.peer_avatar,
-                    face_id: row.peer_face,
-                  },
-                  this.publicOrigin,
-                ),
-                ...(this.directMessagePresence(row)
-                  ? { presence: this.directMessagePresence(row)! }
-                  : {}),
-              },
-            }
-          : {}),
-        unread: row.unread,
-        ...(row.repository_key
-          ? {
-              repositoryName:
-                row.repository_name ?? row.repository_key.split('/').at(-1) ?? row.repository_key,
-            }
-          : {}),
-        ...(row.needs_you
-          ? { agentState: 'needs-you' as const }
-          : row.working
-            ? { agentState: 'working' as const }
+      chats: rooms.rows
+        .slice(0, 200)
+        .map((row) => ({
+          room: roomHeader(row, this.publicOrigin),
+          leaveDeletesRoom:
+            !row.direct_participants &&
+            (current.role === 'owner' || current.role === 'admin') &&
+            row.leave_deletes_room,
+          ...(row.agents_offline ? { agentsOffline: true } : {}),
+          ...(row.closed ? { closed: true } : {}),
+          memberCount: Number(row.member_count),
+          ...(countsByRoom
+            ? (countsByRoom.get(row.id) ?? { cornerCount: 0, waitingCornerCount: 0 })
             : {}),
-        ...(row.needs_you
-          ? {
-              attentionReason: {
-                kind: 'approval' as const,
-                ...(row.attention_actor_name ? { actor: row.attention_actor_name } : {}),
-              },
-            }
-          : {}),
-      }))
+          ...(row.latest_id &&
+          row.latest_created_at &&
+          row.latest_author_id &&
+          row.latest_author_kind &&
+          row.latest_author_name
+            ? {
+                latestMessage: {
+                  id: row.latest_id,
+                  text: row.latest_text ?? '',
+                  createdAt: unix(row.latest_created_at),
+                  ...(row.latest_attachments?.length
+                    ? {
+                        attachments: (
+                          row.latest_attachments as NonNullable<RoomViewMessage['attachments']>
+                        ).map((attachment) => ({
+                          ...attachment,
+                          url: attachment.url.startsWith('/')
+                            ? `${this.publicOrigin}${attachment.url}`
+                            : attachment.url,
+                          ...(attachment.previewUrl?.startsWith('/')
+                            ? { previewUrl: `${this.publicOrigin}${attachment.previewUrl}` }
+                            : {}),
+                          ...(attachment.thumbnailUrl?.startsWith('/')
+                            ? { thumbnailUrl: `${this.publicOrigin}${attachment.thumbnailUrl}` }
+                            : {}),
+                        })),
+                      }
+                    : {}),
+                  author: identity(
+                    {
+                      id: row.latest_author_id,
+                      kind: row.latest_author_kind,
+                      name: row.latest_author_name,
+                      handle: row.latest_author_handle,
+                      avatar: row.latest_author_avatar,
+                      face_id: row.latest_author_face,
+                    },
+                    this.publicOrigin,
+                  ),
+                  ...(row.latest_tags_viewer ? { mentionsViewer: true as const } : {}),
+                },
+              }
+            : {}),
+          ...(row.peer_id && row.peer_kind && row.peer_name
+            ? {
+                directMessage: {
+                  peer: identity(
+                    {
+                      id: row.peer_id,
+                      kind: row.peer_kind,
+                      name: row.peer_name,
+                      handle: row.peer_handle,
+                      avatar: row.peer_avatar,
+                      face_id: row.peer_face,
+                    },
+                    this.publicOrigin,
+                  ),
+                  ...(this.directMessagePresence(row)
+                    ? { presence: this.directMessagePresence(row)! }
+                    : {}),
+                },
+              }
+            : {}),
+          unread: row.unread,
+          ...(row.repository_key
+            ? {
+                repositoryName:
+                  row.repository_name ?? row.repository_key.split('/').at(-1) ?? row.repository_key,
+              }
+            : {}),
+          ...(row.needs_you
+            ? { agentState: 'needs-you' as const }
+            : row.working
+              ? { agentState: 'working' as const }
+              : {}),
+          ...(row.needs_you
+            ? {
+                attentionReason: {
+                  kind: 'approval' as const,
+                  ...(row.attention_actor_name ? { actor: row.attention_actor_name } : {}),
+                },
+              }
+            : {}),
+        }))
         // A viewer's corner going to waiting lifts its Room like a message does.
         .sort((left, right) => chatActivityAt(right) - chatActivityAt(left)),
       viewer: await this.requireIdentity(viewerId),
@@ -1614,7 +1638,9 @@ export class PhoneService {
         row.peer_presence_updated_at.getTime(),
         Date.now(),
         held,
-      ) ? 'online' : 'offline';
+      )
+        ? 'online'
+        : 'offline';
       return {
         status,
         observedAt: Math.max(
@@ -1694,10 +1720,7 @@ export class PhoneService {
             plan: RoomView['cornerPlan'] | null;
             objective: string;
             owner_agent_id: string | null;
-          }>(
-            `SELECT plan,objective,owner_agent_id FROM corner_facts WHERE corner_id=$1`,
-            [roomId],
-          )
+          }>(`SELECT plan,objective,owner_agent_id FROM corner_facts WHERE corner_id=$1`, [roomId])
         ).rows[0],
       undefined,
     );
@@ -1820,7 +1843,13 @@ export class PhoneService {
     ] = await Promise.all([
       topLevelRows
         ? this.projectTopLevelRoom(topLevelRows, roomId, viewerId)
-        : this.readCornerMessages(room.workspace_id, roomId, viewerId, measured, briefingRowsPromise),
+        : this.readCornerMessages(
+            room.workspace_id,
+            roomId,
+            viewerId,
+            measured,
+            briefingRowsPromise,
+          ),
       parentPromise,
       allowAutoMergePromise,
       factsPromise,
@@ -2034,8 +2063,9 @@ export class PhoneService {
     const rows = await this.database.transaction(async (database) => {
       await database.query(`SET LOCAL statement_timeout='${MESSAGE_SEARCH_STATEMENT_TIMEOUT}'`);
       try {
-        return (await database.query<Row>(
-          `WITH search_query AS (
+        return (
+          await database.query<Row>(
+            `WITH search_query AS (
              SELECT to_tsquery('simple',$3) query
            ), readable AS (
              SELECT room.id FROM rooms room
@@ -2066,8 +2096,9 @@ export class PhoneService {
              AND peer.id=(SELECT participant FROM jsonb_array_elements_text(room.direct_participants) participant
                           WHERE participant<>$2 LIMIT 1)
            ORDER BY matches.created_at DESC,matches.id DESC`,
-          [workspaceId, viewerId, terms, before ?? null, MESSAGE_SEARCH_HEADLINE_OPTIONS],
-        )).rows;
+            [workspaceId, viewerId, terms, before ?? null, MESSAGE_SEARCH_HEADLINE_OPTIONS],
+          )
+        ).rows;
       } catch (error) {
         // Answered here rather than thrown through the transaction, so one broad
         // query does not count as a database outage. COMMIT of the failed
@@ -2091,6 +2122,90 @@ export class PhoneService {
       })),
       ...(rows.length > MESSAGE_SEARCH_PAGE ? { nextBefore: page.at(-1)!.id } : {}),
     };
+  }
+
+  async readHistoryAround(
+    roomId: string,
+    viewerId: string,
+    targetId: string,
+  ): Promise<RoomHistoryView | null> {
+    if (!(await this.hasRoomAccess(roomId, viewerId))) return null;
+    const rows = (
+      await this.database.query<MessageRow>(
+        `WITH target AS (
+         SELECT created_at,id FROM messages WHERE room_id=$1 AND id=$2
+       ), target_rows AS (
+         (SELECT m.id FROM messages m,target
+          WHERE m.room_id=$1 AND (m.created_at,m.id)>=(target.created_at,target.id)
+            AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
+            AND ${hiddenWakeCardSql('m')}
+          ORDER BY m.created_at,m.id LIMIT 15)
+         UNION ALL
+         (SELECT m.id FROM messages m,target
+          WHERE m.room_id=$1 AND (m.created_at,m.id)<(target.created_at,target.id)
+            AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
+            AND ${hiddenWakeCardSql('m')}
+          ORDER BY m.created_at DESC,m.id DESC LIMIT 15)
+       )
+       SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
+         i.avatar author_avatar,i.face_id author_face,
+         ${reactionIdentitiesSql('m')} reaction_identities,
+         '{}'::text[] tagged_ids
+       FROM target_rows JOIN messages m ON m.id=target_rows.id
+       JOIN identities i ON i.id=m.author_id
+       ORDER BY m.created_at,m.id`,
+        [roomId, targetId],
+      )
+    ).rows;
+    await this.enrichMessageTags(rows);
+    await this.enrichMessageBookmarks(rows, viewerId);
+    const messages = rows.map((row) => projectedMessage(row, this.publicOrigin, viewerId));
+    const [attachmentFacts, appMessages] = await Promise.all([
+      this.attachmentFacts(messages),
+      this.decorateAppSignInCards(messages),
+    ]);
+    return { roomId, messages: decorateAttachments(appMessages, attachmentFacts) };
+  }
+
+  async readHistoryAfter(
+    roomId: string,
+    viewerId: string,
+    afterId: string,
+  ): Promise<RoomHistoryView | null> {
+    if (!(await this.hasRoomAccess(roomId, viewerId))) return null;
+    const rows = (
+      await this.database.query<MessageRow>(
+        `SELECT m.*,
+         i.kind author_kind,i.name author_name,i.handle author_handle,
+         i.avatar author_avatar,i.face_id author_face,
+         ${reactionIdentitiesSql('m')} reaction_identities,
+         '{}'::text[] tagged_ids
+       FROM messages m JOIN identities i ON i.id=m.author_id
+       WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
+         AND ${hiddenWakeCardSql('m')}
+         AND (m.created_at,m.id)>(
+           SELECT cursor.created_at,cursor.id FROM messages cursor
+           WHERE cursor.room_id=$1 AND cursor.id=$2
+         )
+       ORDER BY m.created_at,m.id LIMIT 30`,
+        [roomId, afterId],
+      )
+    ).rows;
+    if (rows.length === 0) {
+      const cursor = await this.database.query<{ id: string }>(
+        `SELECT id FROM messages WHERE room_id=$1 AND id=$2`,
+        [roomId, afterId],
+      );
+      if (!cursor.rowCount) return null;
+    }
+    await this.enrichMessageTags(rows);
+    await this.enrichMessageBookmarks(rows, viewerId);
+    const messages = rows.map((row) => projectedMessage(row, this.publicOrigin, viewerId));
+    const [attachmentFacts, appMessages] = await Promise.all([
+      this.attachmentFacts(messages),
+      this.decorateAppSignInCards(messages),
+    ]);
+    return { roomId, messages: decorateAttachments(appMessages, attachmentFacts) };
   }
 
   async readHistory(
@@ -2117,7 +2232,8 @@ export class PhoneService {
       .reverse()
       .map((row) => projectedMessage(row, this.publicOrigin, viewerId));
     const [attachmentFacts, appMessages] = await Promise.all([
-      this.attachmentFacts(messages), this.decorateAppSignInCards(messages),
+      this.attachmentFacts(messages),
+      this.decorateAppSignInCards(messages),
     ]);
     return {
       roomId,
@@ -2272,7 +2388,14 @@ export class PhoneService {
     return [
       this.projectMembers(rows.members, roomId),
       latestAgentTurns,
-      this.projectRoomMessages(rows.transcript, rows.activity, [], latestAgentTurns, false, viewerId),
+      this.projectRoomMessages(
+        rows.transcript,
+        rows.activity,
+        [],
+        latestAgentTurns,
+        false,
+        viewerId,
+      ),
     ];
   }
 
@@ -3574,7 +3697,12 @@ export class PhoneService {
           workflows: await Promise.all(
             definitions.rows.map(async (row) => ({
               name: row.slug,
-              ownership: await readWorkflowOwnership(this.database, request.roomId, row.slug, viewerId),
+              ownership: await readWorkflowOwnership(
+                this.database,
+                request.roomId,
+                row.slug,
+                viewerId,
+              ),
             })),
           ),
         } as Output<Name>;
@@ -3595,9 +3723,21 @@ export class PhoneService {
         if (!row) throw new Error('workflow is unavailable');
         return {
           contract: JSON.parse(row.markdown),
-          ownership: await readWorkflowOwnership(this.database, request.roomId, request.name, viewerId),
-          runs: (await listRoomWorkflowRuns(this.database, request.roomId, viewerId, request.name, this.publicOrigin))
-            .workflows,
+          ownership: await readWorkflowOwnership(
+            this.database,
+            request.roomId,
+            request.name,
+            viewerId,
+          ),
+          runs: (
+            await listRoomWorkflowRuns(
+              this.database,
+              request.roomId,
+              viewerId,
+              request.name,
+              this.publicOrigin,
+            )
+          ).workflows,
         } as Output<Name>;
       }
       case 'readWorkflowOwnership': {
@@ -3625,7 +3765,8 @@ export class PhoneService {
       }
       case 'startOwnedWorkflow': {
         const request = input as Input<'startOwnedWorkflow'>;
-        if (!(await workflowHumanAdmin(this.database, request.roomId, viewerId))) throw new Error('human Room/Workspace admin required');
+        if (!(await workflowHumanAdmin(this.database, request.roomId, viewerId)))
+          throw new Error('human Room/Workspace admin required');
         return (await startWorkflow(
           this.database,
           { room_id: request.roomId, agent_id: viewerId },
@@ -3646,7 +3787,8 @@ export class PhoneService {
           ) as Promise<Output<Name>>;
         const db = this.database;
         const request = input as Input<'updateRoomSchedule'>;
-        if (!(await workflowHumanAdmin(this.database, request.roomId, viewerId))) throw new Error('human Room/Workspace admin required');
+        if (!(await workflowHumanAdmin(this.database, request.roomId, viewerId)))
+          throw new Error('human Room/Workspace admin required');
         if (request.message !== undefined && !request.message.trim())
           throw new Error('schedule message is required');
         if (request.cadence) validateScheduleCadence(request.cadence);
@@ -4003,14 +4145,20 @@ export class PhoneService {
       case 'beginAppSignIn':
         await this.viewerWorkbenchWorkspace(viewerId);
         if (!this.composio) throw new Error('App sign-in is unavailable');
-        return (await beginComposioAppSignIn(this.database, this.composio, viewerId,
-          (input as Input<'beginAppSignIn'>).appId)) as Output<Name>;
+        return (await beginComposioAppSignIn(
+          this.database,
+          this.composio,
+          viewerId,
+          (input as Input<'beginAppSignIn'>).appId,
+        )) as Output<Name>;
       case 'completeAppSignIn':
         await this.viewerWorkbenchWorkspace(viewerId);
         if (!this.composio) throw new Error('App sign-in is unavailable');
         return (await this.completeAppSignIn(
           (input as Input<'completeAppSignIn'>).sessionUri,
-          (input as Input<'completeAppSignIn'>).appId, viewerId)) as Output<Name>;
+          (input as Input<'completeAppSignIn'>).appId,
+          viewerId,
+        )) as Output<Name>;
       case 'disconnectWorkbenchApp':
         await this.disconnectWorkbenchApp(input as Input<'disconnectWorkbenchApp'>, viewerId);
         return undefined as Output<Name>;
@@ -4058,7 +4206,10 @@ export class PhoneService {
         } as Output<Name>;
       }
       case 'readConnectorInstall':
-        return (await this.readConnectorInstall(input as Input<'readConnectorInstall'>, viewerId)) as Output<Name>;
+        return (await this.readConnectorInstall(
+          input as Input<'readConnectorInstall'>,
+          viewerId,
+        )) as Output<Name>;
       case 'readConnectionDetail':
         return (await this.readConnectionDetail(
           input as Input<'readConnectionDetail'>,
@@ -4279,13 +4430,21 @@ export class PhoneService {
     viewerId: string,
   ): Promise<Output<'createRoomSchedule'>> {
     if (!this.routingTransaction)
-      return this.database.transaction(db => new PhoneService(
-        db, this.publicOrigin, this.github, this.sendPushTest, this.live, true,
-      ).createRoomSchedule(input, viewerId));
+      return this.database.transaction((db) =>
+        new PhoneService(
+          db,
+          this.publicOrigin,
+          this.github,
+          this.sendPushTest,
+          this.live,
+          true,
+        ).createRoomSchedule(input, viewerId),
+      );
     const db = this.database;
     const target = await this.requireTopLevelRoom(input.roomId);
     if (target.workspace_id !== input.workspaceId) throw new Error('room is not in workspace');
-    if (!(await workflowHumanAdmin(db, input.roomId, viewerId))) throw new Error('room manager required');
+    if (!(await workflowHumanAdmin(db, input.roomId, viewerId)))
+      throw new Error('room manager required');
     if (typeof input.message !== 'string' || !input.message.trim())
       throw new Error('schedule message is required');
     if (!input.cadence || typeof input.cadence !== 'object')
@@ -4517,10 +4676,13 @@ export class PhoneService {
       if (!row) throw new Error('message is not available for deletion');
       // The deleted row keeps its place and time and reads as a system line
       // naming who deleted it; nothing new is posted to the Room.
-      await database.query(`UPDATE messages message SET system_event=$2::jsonb WHERE message.id=$1`, [
-        input.messageId,
-        JSON.stringify(await deletedMessageEvent(database, row.deleted_by, row.author_id)),
-      ]);
+      await database.query(
+        `UPDATE messages message SET system_event=$2::jsonb WHERE message.id=$1`,
+        [
+          input.messageId,
+          JSON.stringify(await deletedMessageEvent(database, row.deleted_by, row.author_id)),
+        ],
+      );
       await tombstoneInstitutionalMemoryForMessage(database, input.messageId);
       // A deleted mention has no words left for a helper to answer, so its
       // deferred offline notice is dropped with it rather than written later.
@@ -5806,7 +5968,9 @@ export class PhoneService {
         !fallbackIds.every((id) => typeof id === 'string' && /^[0-9a-f]{64}$/.test(id)) ||
         new Set(fallbackIds).size !== fallbackIds.length)
     ) {
-      throw new Error(`reviewer fallbacks must be at most ${REVIEWER_FALLBACKS_MAX} distinct agent ids`);
+      throw new Error(
+        `reviewer fallbacks must be at most ${REVIEWER_FALLBACKS_MAX} distinct agent ids`,
+      );
     }
     const room = await this.requireTopLevelRoom(input.roomId);
     await this.requireWorkspaceManager(room.workspace_id, viewerId);
@@ -5821,7 +5985,8 @@ export class PhoneService {
           reviewer_agent_id: string | null;
         }>('SELECT visibility,reviewer_agent_id FROM rooms WHERE id=$1 FOR UPDATE', [input.roomId])
       ).rows[0];
-      const nextReviewer = reviewerAgentId !== undefined ? reviewerAgentId : (current?.reviewer_agent_id ?? null);
+      const nextReviewer =
+        reviewerAgentId !== undefined ? reviewerAgentId : (current?.reviewer_agent_id ?? null);
       // Fallbacks only exist behind a reviewer; clearing the reviewer clears them.
       const nextFallbacks = !nextReviewer
         ? []
@@ -7625,7 +7790,13 @@ export class PhoneService {
     await this.database.transaction(async (database) => {
       await database.query(
         `INSERT INTO push_devices(token,identity_id,platform,environment,web_keys,registered_at) VALUES($1,$2,$3,$4,$5::jsonb,now()) ON CONFLICT(token) DO UPDATE SET identity_id=EXCLUDED.identity_id,platform=EXCLUDED.platform,environment=EXCLUDED.environment,web_keys=EXCLUDED.web_keys,registered_at=CASE WHEN push_devices.identity_id IS DISTINCT FROM EXCLUDED.identity_id OR push_devices.web_keys IS DISTINCT FROM EXCLUDED.web_keys THEN now() ELSE push_devices.registered_at END,updated_at=now()`,
-        [input.token, viewerId, input.platform, input.environment, input.platform === 'web' ? JSON.stringify(input.keys) : null],
+        [
+          input.token,
+          viewerId,
+          input.platform,
+          input.environment,
+          input.platform === 'web' ? JSON.stringify(input.keys) : null,
+        ],
       );
       await queueLatestReleasePush(database, viewerId, input.token);
     });
@@ -7754,61 +7925,98 @@ export class PhoneService {
     return workspaceId;
   }
 
-  private async readAppCatalog(keys: Iterable<string>): Promise<{
-    appKey: string; description?: string; logo?: string; domain?: string;
-  }[]> {
+  private async readAppCatalog(keys: Iterable<string>): Promise<
+    {
+      appKey: string;
+      description?: string;
+      logo?: string;
+      domain?: string;
+    }[]
+  > {
     if (!this.composio) return [];
-    return Promise.all([...new Set(keys)].map(async (appKey) => {
-      let timeout: ReturnType<typeof setTimeout> | undefined;
-      try {
-        const metadata = await Promise.race([
-          this.composio!.toolkit(appKey),
-          new Promise<undefined>((resolve) => { timeout = setTimeout(() => resolve(undefined), 1500); }),
-        ]);
-        if (!metadata) return { appKey };
-        return { appKey, ...(metadata.description ? { description: metadata.description } : {}),
-          ...(metadata.logo ? { logo: metadata.logo } : {}),
-          ...(metadata.appUrl ? { domain: new URL(metadata.appUrl).hostname } : {}) };
-      } catch { return { appKey }; }
-      finally { clearTimeout(timeout); }
-    }));
+    return Promise.all(
+      [...new Set(keys)].map(async (appKey) => {
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        try {
+          const metadata = await Promise.race([
+            this.composio!.toolkit(appKey),
+            new Promise<undefined>((resolve) => {
+              timeout = setTimeout(() => resolve(undefined), 1500);
+            }),
+          ]);
+          if (!metadata) return { appKey };
+          return {
+            appKey,
+            ...(metadata.description ? { description: metadata.description } : {}),
+            ...(metadata.logo ? { logo: metadata.logo } : {}),
+            ...(metadata.appUrl ? { domain: new URL(metadata.appUrl).hostname } : {}),
+          };
+        } catch {
+          return { appKey };
+        } finally {
+          clearTimeout(timeout);
+        }
+      }),
+    );
   }
 
   private async decorateAppSignInCards(messages: RoomViewMessage[]): Promise<RoomViewMessage[]> {
-    const keys = messages.flatMap(message => message.appSignIn
-      ? [composioToolkitForApp(message.appSignIn.appKey)] : []);
+    const keys = messages.flatMap((message) =>
+      message.appSignIn ? [composioToolkitForApp(message.appSignIn.appKey)] : [],
+    );
     if (!keys.length || !this.composio) return messages;
     const catalog = await this.optionalEnrichment('app-card-metadata', this.readAppCatalog(keys));
-    const metadata = new Map(catalog?.map(item => [item.appKey, item]));
-    return messages.map(message => {
+    const metadata = new Map(catalog?.map((item) => [item.appKey, item]));
+    return messages.map((message) => {
       const card = message.appSignIn;
       if (!card) return message;
       const app = metadata.get(composioToolkitForApp(card.appKey));
       if (!app) return message;
-      return { ...message, appSignIn: { ...card,
-        ...(app.logo ? { logo: app.logo } : {}),
-        ...(app.domain ? { domain: app.domain } : {}) } };
+      return {
+        ...message,
+        appSignIn: {
+          ...card,
+          ...(app.logo ? { logo: app.logo } : {}),
+          ...(app.domain ? { domain: app.domain } : {}),
+        },
+      };
     });
   }
 
-  async readConnectorInstall(input: Input<'readConnectorInstall'>, viewerId: string): Promise<Output<'readConnectorInstall'>> {
-    const row = (await this.database.query<{
-      id: string; owner_identity_id: string; status: ConnectorStatus['status'];
-      status_steps: ConnectorStep[]; sign_in: ConnectorStatus['signIn']; helper_name: string | null;
-    }>(
-      `SELECT c.id,c.owner_identity_id,c.status,c.status_steps,c.sign_in,
+  async readConnectorInstall(
+    input: Input<'readConnectorInstall'>,
+    viewerId: string,
+  ): Promise<Output<'readConnectorInstall'>> {
+    const row = (
+      await this.database.query<{
+        id: string;
+        owner_identity_id: string;
+        status: ConnectorStatus['status'];
+        status_steps: ConnectorStep[];
+        sign_in: ConnectorStatus['signIn'];
+        helper_name: string | null;
+      }>(
+        `SELECT c.id,c.owner_identity_id,c.status,c.status_steps,c.sign_in,
          COALESCE((SELECT MAX(sibling.machine_name) FROM agents sibling
            WHERE sibling.machine_id=c.machine_id AND sibling.owner_id=c.owner_identity_id),i.name) helper_name
        FROM workspace_connectors c JOIN identities i ON i.id=c.helper_agent_id
        WHERE c.id::text=$1 OR (c.connector_type=$1 AND c.owner_identity_id=$2)
-       ORDER BY c.created_at DESC LIMIT 1`, [input.connectorId, viewerId],
-    )).rows[0];
+       ORDER BY c.created_at DESC LIMIT 1`,
+        [input.connectorId, viewerId],
+      )
+    ).rows[0];
     if (!row) return null;
     if (row.owner_identity_id !== viewerId) throw new Error('connector not found (access denied)');
-    return { connectorId: row.id, status: { connectorId: row.id, status: row.status,
-      steps: row.status_steps ?? [], ...(row.sign_in ? { signIn: row.sign_in } : {}),
-      ...(row.helper_name ? { helperName: row.helper_name } : {}),
-    } };
+    return {
+      connectorId: row.id,
+      status: {
+        connectorId: row.id,
+        status: row.status,
+        steps: row.status_steps ?? [],
+        ...(row.sign_in ? { signIn: row.sign_in } : {}),
+        ...(row.helper_name ? { helperName: row.helper_name } : {}),
+      },
+    };
   }
 
   /**
@@ -7953,10 +8161,23 @@ export class PhoneService {
     ).rows;
 
     const apps = await readOwnerApps(this.database, viewerId, this.composio);
-    const catalogKeys = new Set(['gmail', 'googlecalendar', 'slack', 'googledrive',
-      'googlesheets', 'notion', 'linear', 'hubspot', 'airtable', 'asana', 'jira', 'supabase',
-      ...apps.filter((app) => app.transport === 'composio')
-        .map((app) => composioToolkitForApp(app.appKey))]);
+    const catalogKeys = new Set([
+      'gmail',
+      'googlecalendar',
+      'slack',
+      'googledrive',
+      'googlesheets',
+      'notion',
+      'linear',
+      'hubspot',
+      'airtable',
+      'asana',
+      'jira',
+      'supabase',
+      ...apps
+        .filter((app) => app.transport === 'composio')
+        .map((app) => composioToolkitForApp(app.appKey)),
+    ]);
     const appCatalog = await this.readAppCatalog(catalogKeys);
     const appMetadata = new Map(appCatalog.map((item) => [item.appKey, item]));
     const walletRow = (
@@ -7994,11 +8215,14 @@ export class PhoneService {
       })),
       apps: apps.map((app) => {
         const metadata = appMetadata.get(composioToolkitForApp(app.appKey));
-        return { ...app,
+        return {
+          ...app,
           ...(app.transport === 'composio' && !app.domain && metadata?.domain
-            ? { domain: metadata.domain } : {}),
+            ? { domain: metadata.domain }
+            : {}),
           ...(metadata?.description ? { description: metadata.description } : {}),
-          ...(metadata?.logo ? { logo: metadata.logo } : {}) };
+          ...(metadata?.logo ? { logo: metadata.logo } : {}),
+        };
       }),
       appCatalog,
       connectors: connectors.map((row) => ({
@@ -8149,8 +8373,10 @@ export class PhoneService {
     });
     if (outcome.status === 'unavailable') throw new Error(outcome.next);
     if (!outcome.appId || !outcome.transport) throw new Error(outcome.next);
-    if (outcome.transport !== 'composio' &&
-      (outcome.status === 'connecting' || outcome.status === 'needs_sign_in')) {
+    if (
+      outcome.transport !== 'composio' &&
+      (outcome.status === 'connecting' || outcome.status === 'needs_sign_in')
+    ) {
       const agent = (
         await this.database.query<{ handle: string | null }>(
           `SELECT handle FROM identities WHERE id=$1`,
@@ -8178,43 +8404,61 @@ export class PhoneService {
   private async completeAppSignIn(sessionUri: string, appId: string, viewerId: string) {
     if (!this.composio) throw new Error('App sign-in is unavailable');
     let rooms: string[] = [];
-    const completed = await completeComposioSignIn(this.database, this.composio,
-      viewerId, sessionUri, appId, async (database, appId) => {
-      const cards = (await database.query<{ id: string; room_id: string;
-        card: { appId: string; name: string; agentId: string; commandId?: string } }>(
-        `SELECT id,room_id,card FROM messages WHERE card_type='app-sign-in'
+    const completed = await completeComposioSignIn(
+      this.database,
+      this.composio,
+      viewerId,
+      sessionUri,
+      appId,
+      async (database, appId) => {
+        const cards = (
+          await database.query<{
+            id: string;
+            room_id: string;
+            card: { appId: string; name: string; agentId: string; commandId?: string };
+          }>(
+            `SELECT id,room_id,card FROM messages WHERE card_type='app-sign-in'
          AND card->>'appId'=$1 AND card->>'ownerId'=$2
          AND card->>'status' IN ('pending','failed')
-         FOR UPDATE`, [appId, viewerId],
-      )).rows;
-      for (const card of cards) {
-        await database.query(
-          `UPDATE messages SET card=jsonb_set(card,'{status}','"connected"'::jsonb)
-           WHERE id=$1`, [card.id],
-        );
-        const source = await systemLine(database, {
-          roomId: card.room_id,
-          authorId: viewerId,
-          subject: { kind: 'person', id: viewerId, name: 'A member' },
-          verb: 'connected', object: card.card.name,
-          consequence: 'The request can continue.',
-        });
-        const parent = card.card.commandId
-          ? (await database.query<CommandRow>(
-              `SELECT * FROM agent_commands WHERE id=$1 AND room_id=$2 AND agent_id=$3`,
-              [card.card.commandId, card.room_id, card.card.agentId],
-            )).rows[0]
-          : undefined;
-        await createAgentCommand(database, {
-          roomId: card.room_id, agentId: card.card.agentId,
-          sourceMessageId: source.id, reason: 'app_connected',
-          ...(parent ? { parent, retainDepth: true } : {}),
-        });
-      }
-      rooms = [...new Set(cards.map((card) => card.room_id))];
-    });
-    for (const roomId of rooms) this.live?.publish({ type: 'invalidate', roomId,
-      reason: 'app-connected' });
+         FOR UPDATE`,
+            [appId, viewerId],
+          )
+        ).rows;
+        for (const card of cards) {
+          await database.query(
+            `UPDATE messages SET card=jsonb_set(card,'{status}','"connected"'::jsonb)
+           WHERE id=$1`,
+            [card.id],
+          );
+          const source = await systemLine(database, {
+            roomId: card.room_id,
+            authorId: viewerId,
+            subject: { kind: 'person', id: viewerId, name: 'A member' },
+            verb: 'connected',
+            object: card.card.name,
+            consequence: 'The request can continue.',
+          });
+          const parent = card.card.commandId
+            ? (
+                await database.query<CommandRow>(
+                  `SELECT * FROM agent_commands WHERE id=$1 AND room_id=$2 AND agent_id=$3`,
+                  [card.card.commandId, card.room_id, card.card.agentId],
+                )
+              ).rows[0]
+            : undefined;
+          await createAgentCommand(database, {
+            roomId: card.room_id,
+            agentId: card.card.agentId,
+            sourceMessageId: source.id,
+            reason: 'app_connected',
+            ...(parent ? { parent, retainDepth: true } : {}),
+          });
+        }
+        rooms = [...new Set(cards.map((card) => card.room_id))];
+      },
+    );
+    for (const roomId of rooms)
+      this.live?.publish({ type: 'invalidate', roomId, reason: 'app-connected' });
     return completed;
   }
 
@@ -8224,9 +8468,12 @@ export class PhoneService {
   ): Promise<void> {
     // `workspaceId` is accepted for wire compatibility; an app is the
     // viewer's own across Workspaces, so ownership is the whole check.
-    const result = await disconnectApp(this.database, { ownerId: viewerId, appId: input.appId,
-      ...(this.composio ? { revokeComposio: (accountId: string) =>
-        this.composio!.deleteAccount(accountId) } : {}),
+    const result = await disconnectApp(this.database, {
+      ownerId: viewerId,
+      appId: input.appId,
+      ...(this.composio
+        ? { revokeComposio: (accountId: string) => this.composio!.deleteAccount(accountId) }
+        : {}),
     });
     if (result.helperAgentId) await notifyConnectorAssignment(this.database, result.helperAgentId);
   }

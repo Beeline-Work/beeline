@@ -30,7 +30,11 @@ import type { RegistryMcpOAuth } from './registry-mcp-oauth.js';
 import { InvitePreviewAccess } from './invite-preview.js';
 import { phoneReadLimits, type PhoneReadLimits } from './phone-read-limit.js';
 import type { ConnectionPresence } from './connection-presence.js';
-import { parseDashboardPlatforms, readOperatorDashboard, recordOperatorFunctionEvent } from './operator-dashboard.js';
+import {
+  parseDashboardPlatforms,
+  readOperatorDashboard,
+  recordOperatorFunctionEvent,
+} from './operator-dashboard.js';
 import { HelperVersionGate, helperVersionBelowMinimum } from './helper-version-gate.js';
 import {
   DaemonConnectionRegistry,
@@ -219,8 +223,10 @@ function isIanaTimeZone(value: string): boolean {
 
 function isMachineSocket(request: IncomingMessage): boolean {
   const protocol = request.headers['sec-websocket-protocol'];
-  return typeof protocol === 'string' &&
-    protocol.split(',').some((item) => item.trim() === MACHINE_SOCKET_PROTOCOL);
+  return (
+    typeof protocol === 'string' &&
+    protocol.split(',').some((item) => item.trim() === MACHINE_SOCKET_PROTOCOL)
+  );
 }
 function isRetryableLiveError(error: unknown): boolean {
   const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
@@ -249,8 +255,8 @@ function bearerSecretMatches(secret: string, request: IncomingMessage): boolean 
 }
 
 export function createBeelineServer(options: ServerOptions): Server {
-  const helperVersionGate = options.helperVersionGate ??
-    new HelperVersionGate(process.env.BEELINE_MIN_HELPER_VERSION);
+  const helperVersionGate =
+    options.helperVersionGate ?? new HelperVersionGate(process.env.BEELINE_MIN_HELPER_VERSION);
   const webSockets = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
   const liveDbTaskLimit = maxLiveDbTasks(options.databaseBudget?.app);
   let liveDbTasks = 0;
@@ -260,7 +266,11 @@ export function createBeelineServer(options: ServerOptions): Server {
   const daemonSockets = new Map<string, Set<{ socket: Duplex; release: () => void }>>();
   const socketSubscriptions = new Map<WebSocket, () => number>();
   const liveErrors = { database: 0, invalid: 0, internal: 0, overload: 0 };
-  const liveCounters = { helperVersionRefusals: 0, helperForceUpdates: 0, heartbeatTerminations: 0 };
+  const liveCounters = {
+    helperVersionRefusals: 0,
+    helperForceUpdates: 0,
+    heartbeatTerminations: 0,
+  };
   const machineSocketCounts = new Map<string, number>();
   const liveHealth = () => ({
     sockets: webSockets.clients.size,
@@ -269,11 +279,15 @@ export function createBeelineServer(options: ServerOptions): Server {
     waitingDbTasks: liveDbWaiters.length,
     errors: { ...liveErrors },
     heartbeatTerminations: liveCounters.heartbeatTerminations,
-    ...(helperVersionGate.minimum ? { helperMinimum: {
-      minVersion: helperVersionGate.minimum,
-      refusals: liveCounters.helperVersionRefusals,
-      forceUpdates: liveCounters.helperForceUpdates,
-    } } : {}),
+    ...(helperVersionGate.minimum
+      ? {
+          helperMinimum: {
+            minVersion: helperVersionGate.minimum,
+            refusals: liveCounters.helperVersionRefusals,
+            forceUpdates: liveCounters.helperForceUpdates,
+          },
+        }
+      : {}),
   });
   const releaseLiveDbTask = () => {
     const next = liveDbWaiters.shift();
@@ -312,7 +326,8 @@ export function createBeelineServer(options: ServerOptions): Server {
   let releaseConnectionEpochs: (() => void) | undefined;
   const watchConnectionEpochs = () => {
     releaseConnectionEpochs ??= options.live.subscribeAll((event) => {
-      if (event.type === 'agent-connection') daemonRegistry.observeEpoch(event.agentId, event.epoch);
+      if (event.type === 'agent-connection')
+        daemonRegistry.observeEpoch(event.agentId, event.epoch);
     });
   };
   // Protocol-level heartbeat for every helper socket. A ping is a control
@@ -343,15 +358,18 @@ export function createBeelineServer(options: ServerOptions): Server {
   const server = createServer((request, response) => {
     const url = exactPath(request.url);
     const method = request.method ?? 'GET';
-    const observedFunction = method === 'POST' &&
+    const observedFunction =
+      method === 'POST' &&
       (url.pathname === '/v1/phone/media' || url.pathname === '/v1/daemon/uploads')
-      ? 'attachment_upload'
-      : method === 'POST' && /^\/v1\/phone\/operations\/(sendRoomMessage|sendRoomReply)$/.test(url.pathname)
-        ? 'message_delivery'
-        : method === 'POST' && (url.pathname === '/v1/phone/operations/createHumanCorner' ||
-            url.pathname === '/v1/daemon/operations/createCorner')
-          ? 'corner_open'
-          : null;
+        ? 'attachment_upload'
+        : method === 'POST' &&
+            /^\/v1\/phone\/operations\/(sendRoomMessage|sendRoomReply)$/.test(url.pathname)
+          ? 'message_delivery'
+          : method === 'POST' &&
+              (url.pathname === '/v1/phone/operations/createHumanCorner' ||
+                url.pathname === '/v1/daemon/operations/createCorner')
+            ? 'corner_open'
+            : null;
     if (observedFunction) {
       const started = performance.now();
       response.once('finish', () => {
@@ -362,49 +380,71 @@ export function createBeelineServer(options: ServerOptions): Server {
         // acknowledges paint below. A failed write has no paint to await.
         if (observedFunction === 'message_delivery' && response.statusCode < 400) return;
         const duration = Math.min(600_000, Math.round(performance.now() - started));
-        void recordOperatorFunctionEvent(options.database, observedFunction, duration,
-          response.statusCode >= 400).catch(() => undefined);
+        void recordOperatorFunctionEvent(
+          options.database,
+          observedFunction,
+          duration,
+          response.statusCode >= 400,
+        ).catch(() => undefined);
       });
     }
     console.log('[req]', method, url.pathname);
     const minimum = helperVersionGate.minimum;
     const reportedVersion = request.headers['x-beeline-helper-version'];
-    if (minimum && method === 'POST' && url.pathname.startsWith('/v1/daemon/') &&
-        helperVersionBelowMinimum(typeof reportedVersion === 'string' ? reportedVersion : undefined, minimum)) {
+    if (
+      minimum &&
+      method === 'POST' &&
+      url.pathname.startsWith('/v1/daemon/') &&
+      helperVersionBelowMinimum(
+        typeof reportedVersion === 'string' ? reportedVersion : undefined,
+        minimum,
+      )
+    ) {
       liveCounters.helperVersionRefusals++;
       json(response, 426, { error: 'update_required', minVersion: minimum });
       return;
     }
     if (isWebAppCorsPath(url.pathname) && applyWebAppCors(request, response, options)) return;
-    void route(request, response, options, invitePreview, readLimits, liveHealth, helperVersionGate).catch((error) => {
+    void route(
+      request,
+      response,
+      options,
+      invitePreview,
+      readLimits,
+      liveHealth,
+      helperVersionGate,
+    ).catch((error) => {
       const message = error instanceof Error ? error.message : 'request failed';
-      const status = error instanceof WorkflowOwnershipError ? error.status :
-        message.startsWith('corner brief attachment ') && message.endsWith('is missing or unavailable in this Room') ||
-        message.includes('required') ||
-        message.includes('invalid') ||
-        message.includes('too large') ||
-        message.includes('size is outside')
-          ? 400
-          : message.includes('already linked') ||
-              message.includes('already claimed') ||
-              message.includes('conflict') ||
-              message.includes('checks are failing')
-            ? 409
-            : message.includes('access denied') ||
-                message.includes('command output authority rejected') ||
-                message.includes('command turn cancelled') ||
-                message.includes('command already completed') ||
-                message.includes('manager') ||
-                message.includes(AGENT_OWNER_AUTHORITY_MESSAGE) ||
-                message.includes(TURN_REQUESTER_AUTHORITY_MESSAGE) ||
-                message.includes('yolo cannot be enabled in a public workspace') ||
-                message.includes(YOLO_AUTHORITY_MESSAGE) ||
-                message.includes(CONNECTOR_OFFER_AUTHORITY_MESSAGE) ||
-                message.includes(CONNECTOR_OFFER_WALLET_AUTHORITY_MESSAGE)
-              ? 403
-              : message.includes('not found')
-                ? 404
-                : 503;
+      const status =
+        error instanceof WorkflowOwnershipError
+          ? error.status
+          : (message.startsWith('corner brief attachment ') &&
+                message.endsWith('is missing or unavailable in this Room')) ||
+              message.includes('required') ||
+              message.includes('invalid') ||
+              message.includes('too large') ||
+              message.includes('size is outside')
+            ? 400
+            : message.includes('already linked') ||
+                message.includes('already claimed') ||
+                message.includes('conflict') ||
+                message.includes('checks are failing')
+              ? 409
+              : message.includes('access denied') ||
+                  message.includes('command output authority rejected') ||
+                  message.includes('command turn cancelled') ||
+                  message.includes('command already completed') ||
+                  message.includes('manager') ||
+                  message.includes(AGENT_OWNER_AUTHORITY_MESSAGE) ||
+                  message.includes(TURN_REQUESTER_AUTHORITY_MESSAGE) ||
+                  message.includes('yolo cannot be enabled in a public workspace') ||
+                  message.includes(YOLO_AUTHORITY_MESSAGE) ||
+                  message.includes(CONNECTOR_OFFER_AUTHORITY_MESSAGE) ||
+                  message.includes(CONNECTOR_OFFER_WALLET_AUTHORITY_MESSAGE)
+                ? 403
+                : message.includes('not found')
+                  ? 404
+                  : 503;
       console.error(
         '[req-error]',
         method,
@@ -440,11 +480,16 @@ export function createBeelineServer(options: ServerOptions): Server {
       const helperSourceSha = url.searchParams.get('sourceSha') ?? undefined;
       const minimum = helperVersionGate.minimum;
       const machine = isMachineSocket(request);
-      if ((machine || raw?.startsWith('bdt_')) && minimum &&
-          helperVersionBelowMinimum(helperVersion, minimum)) {
+      if (
+        (machine || raw?.startsWith('bdt_')) &&
+        minimum &&
+        helperVersionBelowMinimum(helperVersion, minimum)
+      ) {
         liveCounters.helperVersionRefusals++;
         const payload = JSON.stringify({ error: 'update_required', minVersion: minimum });
-        socket.write(`HTTP/1.1 426 Upgrade Required\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(payload)}\r\nConnection: close\r\n\r\n${payload}`);
+        socket.write(
+          `HTTP/1.1 426 Upgrade Required\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(payload)}\r\nConnection: close\r\n\r\n${payload}`,
+        );
         socket.destroy();
         return;
       }
@@ -567,7 +612,14 @@ export function createBeelineServer(options: ServerOptions): Server {
           socketSubscriptions.delete(client);
         });
         if (principal.kind === 'machine')
-          serveMachineSocket(daemonLive, client, principal, sendLive, trackSubscriptions, heartbeatMs);
+          serveMachineSocket(
+            daemonLive,
+            client,
+            principal,
+            sendLive,
+            trackSubscriptions,
+            heartbeatMs,
+          );
         else serveAgentSocket(daemonLive, client, principal, sendLive, trackSubscriptions);
         return;
       }
@@ -604,8 +656,10 @@ export function createBeelineServer(options: ServerOptions): Server {
         const frameBytes = Array.isArray(raw)
           ? raw.reduce((total, part) => total + part.length, 0)
           : raw.byteLength;
-        if (socketTasks >= MAX_LIVE_SOCKET_TASKS ||
-            socketQueuedBytes + frameBytes > MAX_LIVE_SOCKET_QUEUED_BYTES) {
+        if (
+          socketTasks >= MAX_LIVE_SOCKET_TASKS ||
+          socketQueuedBytes + frameBytes > MAX_LIVE_SOCKET_QUEUED_BYTES
+        ) {
           liveErrors.overload++;
           client.close(1013, 'live admission overloaded');
           return;
@@ -648,10 +702,17 @@ export function createBeelineServer(options: ServerOptions): Server {
             }
             if (typeof trace.startedAt !== 'number') return;
             const serverReceivedAt = Date.now();
-            if (trace.kind === 'message' && serverReceivedAt >= trace.startedAt &&
-                serverReceivedAt - trace.startedAt <= 600_000) {
-              void recordOperatorFunctionEvent(options.database, 'message_delivery',
-                serverReceivedAt - trace.startedAt, false).catch(() => undefined);
+            if (
+              trace.kind === 'message' &&
+              serverReceivedAt >= trace.startedAt &&
+              serverReceivedAt - trace.startedAt <= 600_000
+            ) {
+              void recordOperatorFunctionEvent(
+                options.database,
+                'message_delivery',
+                serverReceivedAt - trace.startedAt,
+                false,
+              ).catch(() => undefined);
             }
             sendLive(
               JSON.stringify({
@@ -678,9 +739,11 @@ export function createBeelineServer(options: ServerOptions): Server {
                 ? [item.roomId]
                 : [];
             if (requestedRoomIds.length === 0) return;
-            if (requestedRoomIds.length > MAX_LIVE_SUBSCRIBE_FRAME_ROOMS ||
-                releases.size + requestedRoomIds.filter((id) => !releases.has(id)).length >
-                  MAX_LIVE_ROOMS_PER_SOCKET) {
+            if (
+              requestedRoomIds.length > MAX_LIVE_SUBSCRIBE_FRAME_ROOMS ||
+              releases.size + requestedRoomIds.filter((id) => !releases.has(id)).length >
+                MAX_LIVE_ROOMS_PER_SOCKET
+            ) {
               liveErrors.invalid++;
               client.close(1008, 'live subscription limit');
               return;
@@ -691,140 +754,145 @@ export function createBeelineServer(options: ServerOptions): Server {
             );
             for (const roomId of requestedRoomIds) {
               if (!readableRooms.has(roomId) || releases.has(roomId)) continue;
-            // Agents whose draft this socket has already been handed live.
-            // The snapshot below is read asynchronously, so a delta can land
-            // first; replacing it with the older row would show the reader the
-            // answer going backwards.
-            const streamed = new Set<string>();
-            releases.set(
-              roomId,
-              options.live.subscribe(roomId, (event) => {
-                if (event.type === 'invalidate' && event.readerId && event.readerId !== principal.identityId) return;
-                if (event.type === 'draft') streamed.add(event.agentId);
-                if (event.type !== 'invalidate') {
-                  if (client.readyState === client.OPEN) sendLive(JSON.stringify(event));
-                  return;
-                }
-                // committedRow is process-local authority input. Strip it
-                // before every wire branch, including malformed/no-target
-                // invalidations, so only a projected public delta can leave.
-                const { committedRow, ...wireEvent } = event;
-                const target = event.messageId
-                  ? ({ type: 'message' as const, messageId: event.messageId } as const)
-                  : event.agentId && event.requestId
-                    ? ({
-                        type: 'turn' as const,
-                        agentId: event.agentId,
-                        requestId: event.requestId,
-                      } as const)
-                    : undefined;
-                if (!target) {
-                  if (client.readyState === client.OPEN) sendLive(JSON.stringify(wireEvent));
-                  return;
-                }
-                const trace = event.trace;
-                const wireTrace =
-                  trace && options.livePaintDiagnostics && typeof trace.startedAt !== 'number'
-                    ? ({ ...trace, paintAck: 'database-clock' as const } satisfies LiveTrace)
-                    : trace;
-                const deliveryId = wireTrace?.id ?? randomUUID();
-                const invalidationSent = !committedRow;
-                // A deleted row or a failed read has no delta to follow the
-                // invalidation. Lists that wait for that delta still need a
-                // read; a Room already reread on the invalidation's deliveryId.
-                // A row that exists but projects no delta changes no list.
-                const fallback = {
-                  ...wireEvent,
-                  ...(wireTrace ? { trace: wireTrace } : {}),
-                  reason: `delta-fallback:${event.reason}`,
-                  ...(invalidationSent ? { reconcilesDelivery: deliveryId } : {}),
-                };
-                if (invalidationSent && client.readyState === client.OPEN) {
-                  rememberPaintTrace(wireTrace, target.type);
-                  sendLive(
-                    JSON.stringify({
-                      ...wireEvent,
-                      ...(wireTrace ? { trace: wireTrace } : {}),
-                      deliveryId,
-                    }),
-                  );
-                }
-                // Cross-process notifications carry only the committed row
-                // identity. Resolve every row independently: the result stays
-                // on the direct socket-delta path even when the app pool takes
-                // longer than an arbitrary UI deadline, and one slow/bad read
-                // cannot hold later committed messages behind it. The client
-                // reconciler restores causal order from createdAt/id.
-                let projectionError: unknown;
-                let committedDelta;
-                try {
-                  committedDelta = committedRow
-                    ? options.phone.projectCommittedLiveDelta(roomId, committedRow)
-                    : undefined;
-                } catch (error) {
-                  projectionError = error;
-                }
-                // An internal row must agree with the Room-scoped bus key. A
-                // mismatch is neither serialized nor retried against attacker-
-                // controlled ids; the canonical PostgreSQL hint remains the
-                // independent recovery path for the real Room.
-                if (committedRow && !committedDelta && !projectionError) return;
-                const pendingDelta = (
-                  projectionError
-                    ? Promise.reject(projectionError)
-                    : committedDelta
-                      ? Promise.resolve(committedDelta)
-                      : options.phone.readLiveDelta(roomId, principal.identityId, target)
-                ).then(
-                  (delta) => ({ delta }) as const,
-                  (error: unknown) => ({ error }) as const,
-                );
-                void pendingDelta
-                  .then((result) => {
-                    if (client.readyState !== client.OPEN) return;
-                    if ('error' in result) throw result.error;
+              // Agents whose draft this socket has already been handed live.
+              // The snapshot below is read asynchronously, so a delta can land
+              // first; replacing it with the older row would show the reader the
+              // answer going backwards.
+              const streamed = new Set<string>();
+              releases.set(
+                roomId,
+                options.live.subscribe(roomId, (event) => {
+                  if (
+                    event.type === 'invalidate' &&
+                    event.readerId &&
+                    event.readerId !== principal.identityId
+                  )
+                    return;
+                  if (event.type === 'draft') streamed.add(event.agentId);
+                  if (event.type !== 'invalidate') {
+                    if (client.readyState === client.OPEN) sendLive(JSON.stringify(event));
+                    return;
+                  }
+                  // committedRow is process-local authority input. Strip it
+                  // before every wire branch, including malformed/no-target
+                  // invalidations, so only a projected public delta can leave.
+                  const { committedRow, ...wireEvent } = event;
+                  const target = event.messageId
+                    ? ({ type: 'message' as const, messageId: event.messageId } as const)
+                    : event.agentId && event.requestId
+                      ? ({
+                          type: 'turn' as const,
+                          agentId: event.agentId,
+                          requestId: event.requestId,
+                        } as const)
+                      : undefined;
+                  if (!target) {
+                    if (client.readyState === client.OPEN) sendLive(JSON.stringify(wireEvent));
+                    return;
+                  }
+                  const trace = event.trace;
+                  const wireTrace =
+                    trace && options.livePaintDiagnostics && typeof trace.startedAt !== 'number'
+                      ? ({ ...trace, paintAck: 'database-clock' as const } satisfies LiveTrace)
+                      : trace;
+                  const deliveryId = wireTrace?.id ?? randomUUID();
+                  const invalidationSent = !committedRow;
+                  // A deleted row or a failed read has no delta to follow the
+                  // invalidation. Lists that wait for that delta still need a
+                  // read; a Room already reread on the invalidation's deliveryId.
+                  // A row that exists but projects no delta changes no list.
+                  const fallback = {
+                    ...wireEvent,
+                    ...(wireTrace ? { trace: wireTrace } : {}),
+                    reason: `delta-fallback:${event.reason}`,
+                    ...(invalidationSent ? { reconcilesDelivery: deliveryId } : {}),
+                  };
+                  if (invalidationSent && client.readyState === client.OPEN) {
                     rememberPaintTrace(wireTrace, target.type);
-                    if (!result.delta && invalidationSent && event.operation !== 'DELETE') return;
                     sendLive(
-                      JSON.stringify(
-                        result.delta
-                          ? {
-                              ...result.delta,
-                              ...(wireTrace ? { trace: wireTrace } : {}),
-                              ...(invalidationSent ? { reconcilesDelivery: deliveryId } : {}),
-                            }
-                          : fallback,
-                      ),
+                      JSON.stringify({
+                        ...wireEvent,
+                        ...(wireTrace ? { trace: wireTrace } : {}),
+                        deliveryId,
+                      }),
                     );
-                  })
-                  .catch((error) => {
-                    console.error(
-                      '[live] committed row delivery failed',
-                      error instanceof Error ? error.message : String(error),
-                    );
-                    if (client.readyState === client.OPEN) {
+                  }
+                  // Cross-process notifications carry only the committed row
+                  // identity. Resolve every row independently: the result stays
+                  // on the direct socket-delta path even when the app pool takes
+                  // longer than an arbitrary UI deadline, and one slow/bad read
+                  // cannot hold later committed messages behind it. The client
+                  // reconciler restores causal order from createdAt/id.
+                  let projectionError: unknown;
+                  let committedDelta;
+                  try {
+                    committedDelta = committedRow
+                      ? options.phone.projectCommittedLiveDelta(roomId, committedRow)
+                      : undefined;
+                  } catch (error) {
+                    projectionError = error;
+                  }
+                  // An internal row must agree with the Room-scoped bus key. A
+                  // mismatch is neither serialized nor retried against attacker-
+                  // controlled ids; the canonical PostgreSQL hint remains the
+                  // independent recovery path for the real Room.
+                  if (committedRow && !committedDelta && !projectionError) return;
+                  const pendingDelta = (
+                    projectionError
+                      ? Promise.reject(projectionError)
+                      : committedDelta
+                        ? Promise.resolve(committedDelta)
+                        : options.phone.readLiveDelta(roomId, principal.identityId, target)
+                  ).then(
+                    (delta) => ({ delta }) as const,
+                    (error: unknown) => ({ error }) as const,
+                  );
+                  void pendingDelta
+                    .then((result) => {
+                      if (client.readyState !== client.OPEN) return;
+                      if ('error' in result) throw result.error;
                       rememberPaintTrace(wireTrace, target.type);
-                      sendLive(JSON.stringify(fallback));
-                    }
-                  });
-              }),
-            );
-            sendLive(JSON.stringify({ type: 'subscribed', roomId: roomId }));
-            // A live lane carries only what is written after this point, so a
-            // reader who joins a turn already in progress has missed the draft
-            // it is writing. Hand over the running one now; every later delta
-            // arrives through the subscription above and replaces it. A read
-            // that fails leaves the lane exactly as it was before.
-            const snapshot = await options.phone
-              .liveDraftSnapshot(roomId)
-              .catch(() => [] as LiveEvent[]);
-            for (const event of snapshot) {
-              if (event.type === 'draft' && streamed.has(event.agentId)) continue;
-              if (client.readyState === client.OPEN) sendLive(JSON.stringify(event));
-            }
-            for (const event of options.live.presenceSnapshot(roomId)) {
-              if (client.readyState === client.OPEN) sendLive(JSON.stringify(event));
-            }
+                      if (!result.delta && invalidationSent && event.operation !== 'DELETE') return;
+                      sendLive(
+                        JSON.stringify(
+                          result.delta
+                            ? {
+                                ...result.delta,
+                                ...(wireTrace ? { trace: wireTrace } : {}),
+                                ...(invalidationSent ? { reconcilesDelivery: deliveryId } : {}),
+                              }
+                            : fallback,
+                        ),
+                      );
+                    })
+                    .catch((error) => {
+                      console.error(
+                        '[live] committed row delivery failed',
+                        error instanceof Error ? error.message : String(error),
+                      );
+                      if (client.readyState === client.OPEN) {
+                        rememberPaintTrace(wireTrace, target.type);
+                        sendLive(JSON.stringify(fallback));
+                      }
+                    });
+                }),
+              );
+              sendLive(JSON.stringify({ type: 'subscribed', roomId: roomId }));
+              // A live lane carries only what is written after this point, so a
+              // reader who joins a turn already in progress has missed the draft
+              // it is writing. Hand over the running one now; every later delta
+              // arrives through the subscription above and replaces it. A read
+              // that fails leaves the lane exactly as it was before.
+              const snapshot = await options.phone
+                .liveDraftSnapshot(roomId)
+                .catch(() => [] as LiveEvent[]);
+              for (const event of snapshot) {
+                if (event.type === 'draft' && streamed.has(event.agentId)) continue;
+                if (client.readyState === client.OPEN) sendLive(JSON.stringify(event));
+              }
+              for (const event of options.live.presenceSnapshot(roomId)) {
+                if (client.readyState === client.OPEN) sendLive(JSON.stringify(event));
+              }
             }
           }
           if (item.type === 'unsubscribe' && typeof item.roomId === 'string') {
@@ -832,31 +900,36 @@ export function createBeelineServer(options: ServerOptions): Server {
             releases.delete(item.roomId);
           }
         };
-        socketTaskTail = socketTaskTail.then(async () => {
-          if (client.readyState !== client.OPEN) return;
-          const releaseDbTask = await acquireLiveDbTask();
-          try {
-            if (client.readyState === client.OPEN) await processMessage();
-          } finally {
-            releaseDbTask();
-          }
-        }).catch((error) => {
-          const retryable = isRetryableLiveError(error);
-          const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
-          const kind = retryable ? 'database' : code === '22P02' ? 'invalid' : 'internal';
-          liveErrors[kind]++;
-          console.error('[live] message failed', { kind, error });
-          if (client.readyState === client.OPEN)
-            client.close(
-              retryable ||
-                (error instanceof Error && error.message === 'live admission overloaded')
-                ? 1013 : 1011,
-              'live request failed',
-            );
-        }).finally(() => {
-          socketTasks--;
-          socketQueuedBytes -= frameBytes;
-        });
+        socketTaskTail = socketTaskTail
+          .then(async () => {
+            if (client.readyState !== client.OPEN) return;
+            const releaseDbTask = await acquireLiveDbTask();
+            try {
+              if (client.readyState === client.OPEN) await processMessage();
+            } finally {
+              releaseDbTask();
+            }
+          })
+          .catch((error) => {
+            const retryable = isRetryableLiveError(error);
+            const code =
+              error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
+            const kind = retryable ? 'database' : code === '22P02' ? 'invalid' : 'internal';
+            liveErrors[kind]++;
+            console.error('[live] message failed', { kind, error });
+            if (client.readyState === client.OPEN)
+              client.close(
+                retryable ||
+                  (error instanceof Error && error.message === 'live admission overloaded')
+                  ? 1013
+                  : 1011,
+                'live request failed',
+              );
+          })
+          .finally(() => {
+            socketTasks--;
+            socketQueuedBytes -= frameBytes;
+          });
       });
       client.on('close', () => {
         socketSubscriptions.delete(client);
@@ -913,23 +986,41 @@ async function route(
   const url = exactPath(request.url);
   const method = request.method ?? 'GET';
   if (method === 'GET' && url.pathname === '/v1/link/oauth/callback') {
-    if (!options.linkWallet) { json(response, 503, { error: 'Link is unavailable' }); return; }
+    if (!options.linkWallet) {
+      json(response, 503, { error: 'Link is unavailable' });
+      return;
+    }
     const state = url.searchParams.get('state');
-    if (!state) { json(response, 400, { error: 'Link authorization was not completed' }); return; }
-    const result = await options.linkWallet.complete(state,
-      url.searchParams.get('code') ?? undefined, url.searchParams.get('error') ?? undefined,
-      url.searchParams.get('error_description') ?? undefined);
+    if (!state) {
+      json(response, 400, { error: 'Link authorization was not completed' });
+      return;
+    }
+    const result = await options.linkWallet.complete(
+      state,
+      url.searchParams.get('code') ?? undefined,
+      url.searchParams.get('error') ?? undefined,
+      url.searchParams.get('error_description') ?? undefined,
+    );
     if (/\b(?:Android|iPhone|iPad|iPod)\b/i.test(request.headers['user-agent'] ?? '')) {
       const appReturn = new URL('beeline://beeline/settings/workbench');
       if (result.ownerId) appReturn.searchParams.set('viewerId', result.ownerId);
-      response.writeHead(302, { location: appReturn.toString(),
-        'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+      response.writeHead(302, {
+        location: appReturn.toString(),
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+      });
       response.end();
     } else {
-      response.writeHead(result.completed ? 200 : 400, { 'content-type': 'text/html; charset=utf-8',
-        'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
-      response.end(result.completed ? '<p>Link connected. Return to Beeline.</p>'
-        : '<p>Link sign-in did not complete. Return to Beeline and retry.</p>');
+      response.writeHead(result.completed ? 200 : 400, {
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+      });
+      response.end(
+        result.completed
+          ? '<p>Link connected. Return to Beeline.</p>'
+          : '<p>Link sign-in did not complete. Return to Beeline and retry.</p>',
+      );
     }
     return;
   }
@@ -945,10 +1036,13 @@ async function route(
     const nonce = randomUUID();
     // Browsers can block an automatic app handoff. Keep the same session in a
     // visible link so a deliberate tap can finish without starting sign-in again.
-    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8',
-      'cache-control': 'no-store', 'referrer-policy': 'no-referrer',
+    response.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-store',
+      'referrer-policy': 'no-referrer',
       'x-content-type-options': 'nosniff',
-      'content-security-policy': `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` });
+      'content-security-policy': `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+    });
     response.end(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Return to Beeline</title><style nonce="${nonce}">
@@ -1001,17 +1095,22 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     // so asking it would report the health check's own query rather than the
     // work that can actually be stuck.
     const oldestActiveQueryAgeMs = await options.database.oldestActiveQueryAgeMs?.();
-    const pools = options.databasePools && Object.fromEntries(
-      Object.entries(options.databasePools).map(([name, database]) => {
-        const counts = database.poolCounts?.() ?? { total: 0, idle: 0, waiting: 0 };
-        return [name, {
-          size: counts.total,
-          inUse: counts.total - counts.idle,
-          waiting: counts.waiting,
-          telemetry: database.poolTelemetry?.() ?? null,
-        }];
-      }),
-    );
+    const pools =
+      options.databasePools &&
+      Object.fromEntries(
+        Object.entries(options.databasePools).map(([name, database]) => {
+          const counts = database.poolCounts?.() ?? { total: 0, idle: 0, waiting: 0 };
+          return [
+            name,
+            {
+              size: counts.total,
+              inUse: counts.total - counts.idle,
+              waiting: counts.waiting,
+              telemetry: database.poolTelemetry?.() ?? null,
+            },
+          ];
+        }),
+      );
     json(response, 200, {
       ok: true,
       database: {
@@ -1021,28 +1120,37 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
           waiting: pool.waiting,
         },
         oldestActiveQueryAgeMs: oldestActiveQueryAgeMs ?? null,
-        ...(options.database.queryProfiles ? { queryProfiles: options.database.queryProfiles() } : {}),
-        ...(options.databaseBudget ? { budget: options.databaseBudget } : {}),
-        ...(pools ? { pools } : options.enrichmentDatabase || options.jobsDatabase || options.healthDatabase
-          ? {
-              pools: Object.fromEntries(
-                ([
-                  ['enrichment', options.enrichmentDatabase],
-                  ['diagnostics', options.healthDatabase],
-                  ['jobs', options.jobsDatabase],
-                ] as const)
-                  .filter(([, db]) => !!db)
-                  .map(([name, db]) => {
-                    const counts = db?.poolCounts?.() ?? { total: 0, idle: 0, waiting: 0 };
-                    return [name, {
-                      size: counts.total,
-                      inUse: counts.total - counts.idle,
-                      waiting: counts.waiting,
-                    }];
-                  }),
-              ),
-            }
+        ...(options.database.queryProfiles
+          ? { queryProfiles: options.database.queryProfiles() }
           : {}),
+        ...(options.databaseBudget ? { budget: options.databaseBudget } : {}),
+        ...(pools
+          ? { pools }
+          : options.enrichmentDatabase || options.jobsDatabase || options.healthDatabase
+            ? {
+                pools: Object.fromEntries(
+                  (
+                    [
+                      ['enrichment', options.enrichmentDatabase],
+                      ['diagnostics', options.healthDatabase],
+                      ['jobs', options.jobsDatabase],
+                    ] as const
+                  )
+                    .filter(([, db]) => !!db)
+                    .map(([name, db]) => {
+                      const counts = db?.poolCounts?.() ?? { total: 0, idle: 0, waiting: 0 };
+                      return [
+                        name,
+                        {
+                          size: counts.total,
+                          inUse: counts.total - counts.idle,
+                          waiting: counts.waiting,
+                        },
+                      ];
+                    }),
+                ),
+              }
+            : {}),
         ...(options.database.oldestActiveTransactionAgeMs
           ? { oldestActiveTransactionAgeMs: options.database.oldestActiveTransactionAgeMs() }
           : {}),
@@ -1081,20 +1189,35 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
       return;
     }
     const platforms = parseDashboardPlatforms(url.searchParams.get('platforms'));
-    if (!platforms || [...url.searchParams.keys()].some((key) => key !== 'platforms') || url.searchParams.getAll('platforms').length > 1) {
+    if (
+      !platforms ||
+      [...url.searchParams.keys()].some((key) => key !== 'platforms') ||
+      url.searchParams.getAll('platforms').length > 1
+    ) {
       json(response, 400, { error: 'invalid_platforms' });
       return;
     }
-    json(response, 200, await readOperatorDashboard(
-      options.database, platforms,
-      process.env.BEELINE_DASHBOARD_LATEST_MOBILE_RELEASE ?? process.env.BEELINE_RELEASE_VERSION ?? 'development',
-      {
-        ...(process.env.BEELINE_DASHBOARD_MIN_RUNTIME_IOS && /^\d+$/.test(process.env.BEELINE_DASHBOARD_MIN_RUNTIME_IOS)
-          ? { ios: Number(process.env.BEELINE_DASHBOARD_MIN_RUNTIME_IOS) } : {}),
-        ...(process.env.BEELINE_DASHBOARD_MIN_RUNTIME_ANDROID && /^\d+$/.test(process.env.BEELINE_DASHBOARD_MIN_RUNTIME_ANDROID)
-          ? { android: Number(process.env.BEELINE_DASHBOARD_MIN_RUNTIME_ANDROID) } : {}),
-      },
-    ));
+    json(
+      response,
+      200,
+      await readOperatorDashboard(
+        options.database,
+        platforms,
+        process.env.BEELINE_DASHBOARD_LATEST_MOBILE_RELEASE ??
+          process.env.BEELINE_RELEASE_VERSION ??
+          'development',
+        {
+          ...(process.env.BEELINE_DASHBOARD_MIN_RUNTIME_IOS &&
+          /^\d+$/.test(process.env.BEELINE_DASHBOARD_MIN_RUNTIME_IOS)
+            ? { ios: Number(process.env.BEELINE_DASHBOARD_MIN_RUNTIME_IOS) }
+            : {}),
+          ...(process.env.BEELINE_DASHBOARD_MIN_RUNTIME_ANDROID &&
+          /^\d+$/.test(process.env.BEELINE_DASHBOARD_MIN_RUNTIME_ANDROID)
+            ? { android: Number(process.env.BEELINE_DASHBOARD_MIN_RUNTIME_ANDROID) }
+            : {}),
+        },
+      ),
+    );
     return;
   }
   if (method === 'GET' && url.pathname === '/v1/public/invite-preview') {
@@ -1124,8 +1247,10 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     return;
   }
   if (method === 'POST' && url.pathname === '/v1/releases/helper-minimum') {
-    if (!options.releaseNotify?.secret ||
-        !bearerSecretMatches(options.releaseNotify.secret, request)) {
+    if (
+      !options.releaseNotify?.secret ||
+      !bearerSecretMatches(options.releaseNotify.secret, request)
+    ) {
       json(response, 403, { error: 'release_notify_access_denied' });
       return;
     }
@@ -1471,7 +1596,12 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     }
     let result;
     try {
-      result = await options.phone.searchMessages(match[1]!, identityId!, query, before ?? undefined);
+      result = await options.phone.searchMessages(
+        match[1]!,
+        identityId!,
+        query,
+        before ?? undefined,
+      );
     } catch (error) {
       if (!(error instanceof MessageSearchTooBroadError)) throw error;
       json(response, 422, { error: 'query_too_broad' });
@@ -1501,6 +1631,26 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
   if (method === 'GET' && match) {
     if (!readLimits.history.admit(identityId!)) {
       json(response, 429, { error: 'too_many_requests' });
+      return;
+    }
+    const after = url.searchParams.get('after');
+    if (after !== null) {
+      if (!/^[0-9a-f]{64}$/.test(after)) {
+        json(response, 400, { error: 'invalid_message_id' });
+        return;
+      }
+      const result = await options.phone.readHistoryAfter(match[1]!, identityId!, after);
+      json(response, result ? 200 : 404, result ?? { error: 'not_found' });
+      return;
+    }
+    const around = url.searchParams.get('around');
+    if (around !== null) {
+      if (!/^[0-9a-f]{64}$/.test(around)) {
+        json(response, 400, { error: 'invalid_message_id' });
+        return;
+      }
+      const result = await options.phone.readHistoryAround(match[1]!, identityId!, around);
+      json(response, result ? 200 : 404, result ?? { error: 'not_found' });
       return;
     }
     const beforeRaw = url.searchParams.get('before');
@@ -1595,12 +1745,21 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
   if (method === 'POST' && url.pathname === '/v1/phone/observations/page-load') {
     const input = await body(request);
     const duration = input.durationMs;
-    if (!Number.isInteger(duration) || (duration as number) < 0 || (duration as number) > 600_000 ||
-        typeof input.failed !== 'boolean') {
+    if (
+      !Number.isInteger(duration) ||
+      (duration as number) < 0 ||
+      (duration as number) > 600_000 ||
+      typeof input.failed !== 'boolean'
+    ) {
       json(response, 400, { error: 'invalid_observation' });
       return;
     }
-    await recordOperatorFunctionEvent(options.database, 'page_load', duration as number, input.failed);
+    await recordOperatorFunctionEvent(
+      options.database,
+      'page_load',
+      duration as number,
+      input.failed,
+    );
     response.writeHead(204, { 'cache-control': 'private, no-store' });
     response.end();
     return;
@@ -1627,9 +1786,13 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     const input = await body(request);
     const result = await options.phone.execute(name as never, input as never, identityId!);
     console.log('[phone-op]', name, `identity=${identityId}`, 'ok');
-    if ((name === 'sendRoomMessage' || name === 'sendRoomReply') && typeof input.roomId === 'string')
-      void options.github?.onWebhook?.('beeline:human-message', { cornerId: input.roomId })
-        .catch(error => console.error('[server] human-triggered merge recovery failed:', error));
+    if (
+      (name === 'sendRoomMessage' || name === 'sendRoomReply') &&
+      typeof input.roomId === 'string'
+    )
+      void options.github
+        ?.onWebhook?.('beeline:human-message', { cornerId: input.roomId })
+        .catch((error) => console.error('[server] human-triggered merge recovery failed:', error));
     const invalidatedRoom =
       typeof input.roomId === 'string'
         ? input.roomId
@@ -1646,14 +1809,16 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
         roomId: invalidatedRoom,
         reason: 'phone-write',
         ...(messageId ? { messageId } : {}),
-        ...(messageId && (name === 'sendRoomMessage' || name === 'sendRoomReply') ? {
-          trace: {
-            id: randomUUID(),
-            databaseAt: Date.now(),
-            emittedAt: Date.now(),
-            startedAt: operationStartedAt,
-          },
-        } : {}),
+        ...(messageId && (name === 'sendRoomMessage' || name === 'sendRoomReply')
+          ? {
+              trace: {
+                id: randomUUID(),
+                databaseAt: Date.now(),
+                emittedAt: Date.now(),
+                startedAt: operationStartedAt,
+              },
+            }
+          : {}),
       });
     }
     if (result === undefined) {

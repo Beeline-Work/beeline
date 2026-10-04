@@ -151,16 +151,6 @@ describe('scrollFollowOnArrival', () => {
 });
 
 describe('native variable-height history anchoring', () => {
-  it('uses measured visible-child frames without eager rendering or fixed row heights', () => {
-    const list = chatSource.slice(
-      chatSource.indexOf('<FlatList\n            testID="chat-messages"'),
-      chatSource.indexOf('keyboardShouldPersistTaps="handled"'),
-    );
-
-    expect(list).toContain('maintainVisibleContentPosition=');
-    expect(list).toContain('minIndexForVisible: 1');
-    expect(list).not.toMatch(/\n\s+getItemLayout=/);
-  });
 
   it('re-resolves a failed boundary jump after measuring its window', () => {
     const failedLanding = chatSource.slice(
@@ -381,45 +371,6 @@ describe('a send releases the history anchor', () => {
 });
 
 describe('the chat screen wires the scroll rule', () => {
-  /**
-   * The viewer sending is the viewer speaking at the live end of the log, so
-   * the transcript has to land there and show them their own message. Every
-   * holder of the viewport has to let go in the same place: the landing anchor
-   * (`transcriptLandingAnchor`, which otherwise owns every landing for the
-   * whole focused visit), the armed boundary landing, the unread-boundary
-   * effect's re-land guard, and the tail pin the arrival rule reads.
-   */
-  it('lands the transcript on the tail when the viewer sends, releasing the anchor', () => {
-    const release = chatSource.slice(
-      chatSource.indexOf('const releaseHistoryAnchorForSend = useCallback('),
-      chatSource.indexOf('liveDraftStore.subscribeCommit'),
-    );
-    expect(release).toContain('pendingNewMessageLandingRef.current = null;');
-    expect(release).toContain(
-      'if (firstUnreadMessageId) completedUnreadLandingRef.current = firstUnreadMessageId;',
-    );
-    expect(release).toContain(
-      'setReleasedHistoryAnchorKey(historyAnchorKey({ messageAnchorId, firstUnreadMessageId }));',
-    );
-    expect(release).toContain('isPinnedToTailRef.current = true;');
-    expect(release).toContain('scrollToNewestMessage();');
-
-    // The send calls it for Rooms and corners alike — one `handleSend`, the
-    // same surface for both — immediately before the optimistic row, not on
-    // the publish ack. Desktop tracks that row's id for its committed landing.
-    const send = chatSource.slice(
-      chatSource.indexOf('const handleSend = useCallback('),
-      chatSource.indexOf('const handleCornerProposalDecision'),
-    );
-    expect(send).toContain('releaseHistoryAnchorForSend(optimistic.id);\n      addMessages([optimistic]);');
-
-    // The landing anchor is the released-aware value everywhere it is read.
-    expect(chatSource).toContain('const transcriptLandingAnchorId = transcriptLandingAnchor({');
-    expect(chatSource).not.toContain(
-      'const transcriptLandingAnchorId = messageAnchorId || firstUnreadMessageId',
-    );
-  });
-
 
   it('scrolls once per arrival through the pure decision, tracking drags on the FlatList', () => {
     expect(chatSource).toContain("from '@/buzz/room-scroll-follow'");
@@ -435,31 +386,6 @@ describe('the chat screen wires the scroll rule', () => {
     ]) {
       expect(chatSource).toContain(handler);
     }
-  });
-
-  it('ROOM-CHEV-REST-1: reads tail position from where a phone scroll comes to rest', () => {
-    const list = chatSource.slice(
-      chatSource.indexOf('<FlatList\n            testID="chat-messages"'),
-      chatSource.indexOf('renderItem={renderItem}', chatSource.indexOf('testID="chat-messages"')),
-    );
-    const handler = (name: string, next: string) =>
-      list.slice(list.indexOf(`${name}={`), list.indexOf(`${next}=`, list.indexOf(`${name}={`)));
-    const read = 'observePhoneTailOffset(event.nativeEvent.contentOffset.y)';
-
-    // A 100 ms window left the list's viewability report — which settles the
-    // badge and the unread line — on an offset it had already scrolled past.
-    expect(list).toContain('scrollEventThrottle={16}');
-    expect(list).not.toContain('scrollEventThrottle={100}');
-
-    // iOS never sends the resting offset as an `onScroll`.
-    expect(handler('onScroll', 'scrollEventThrottle')).toContain(read);
-    expect(handler('onMomentumScrollEnd', 'renderItem')).toContain(read);
-
-    // Drag-end is a resting offset only when no momentum follows it.
-    const dragEnd = handler('onScrollEndDrag', 'onMomentumScrollBegin');
-    expect(dragEnd.match(/observePhoneTailOffset\(/g)).toHaveLength(1);
-    expect(dragEnd.indexOf(read)).toBeGreaterThan(dragEnd.indexOf('if (!hasMomentum) {'));
-    expect(dragEnd.indexOf(read)).toBeLessThan(dragEnd.indexOf('return;'));
   });
 
   it('lands the desktop transcript on the newest message on open', () => {

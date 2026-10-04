@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
   messageJumpHref,
@@ -61,7 +60,9 @@ describe('leaving a corner', () => {
   it('returns to the screen it was opened from, not its parent Room', () => {
     // Corner → corner, or a corner opened from the tray or schedules, goes back
     // one screen rather than skipping ahead to the parent Room.
-    expect(chatBackAction([chatRoute('room-1'), chatRoute('corner-1'), chatRoute('corner-2')], 'room-1')).toEqual({
+    expect(
+      chatBackAction([chatRoute('room-1'), chatRoute('corner-1'), chatRoute('corner-2')], 'room-1'),
+    ).toEqual({
       type: 'back',
     });
     expect(chatBackAction([{ name: 'beeline/tray' }, chatRoute('corner-1')], 'room-1')).toEqual({
@@ -120,18 +121,16 @@ describe('leaving a corner', () => {
       type: 'open-corners',
       roomId: 'room-1',
     });
-    expect(chatBackAction([{ name: 'beeline/channels' }, chatRoute('corner-1')], 'room-1', 'corners')).toEqual({
+    expect(
+      chatBackAction([{ name: 'beeline/channels' }, chatRoute('corner-1')], 'room-1', 'corners'),
+    ).toEqual({
       type: 'open-corners',
       roomId: 'room-1',
     });
   });
 
   it('ignores a corners screen for a different Room', () => {
-    const routes = [
-      { name: 'beeline/channels' },
-      cornersRoute('room-2'),
-      chatRoute('corner-1'),
-    ];
+    const routes = [{ name: 'beeline/channels' }, cornersRoute('room-2'), chatRoute('corner-1')];
     expect(chatBackAction(routes, 'room-1', 'corners')).toEqual({
       type: 'open-corners',
       roomId: 'room-1',
@@ -173,11 +172,7 @@ describe('leaving a Room', () => {
     // animation:none. A second push of the same channel (double tap, or
     // navigate that became a push) leaves channels → room → room. A single
     // back then lands in the Room the reader just tried to leave.
-    const routes = [
-      { name: 'beeline/channels' },
-      chatRoute('room-1'),
-      chatRoute('room-1'),
-    ];
+    const routes = [{ name: 'beeline/channels' }, chatRoute('room-1'), chatRoute('room-1')];
     expect(chatBackAction(routes, undefined)).toEqual({ type: 'pop', count: 2 });
   });
 
@@ -192,11 +187,7 @@ describe('leaving a Room', () => {
   });
 
   it('still pops one when the Room under the top is a different channel', () => {
-    const routes = [
-      { name: 'beeline/channels' },
-      chatRoute('room-1'),
-      chatRoute('room-2'),
-    ];
+    const routes = [{ name: 'beeline/channels' }, chatRoute('room-1'), chatRoute('room-2')];
     expect(chatBackAction(routes, undefined)).toEqual({ type: 'back' });
   });
 });
@@ -306,13 +297,20 @@ describe('opening a resolved member mention', () => {
 it('R12g: message jumps preserve the notification target and response id', () => {
   expect(messageJumpHref('room', 'message', 'response')).toEqual({
     pathname: '/beeline/chat/[channelId]',
-    params: { channelId: 'room', notificationMessageId: 'message', notificationResponseId: 'response' },
+    params: {
+      channelId: 'room',
+      notificationMessageId: 'message',
+      notificationResponseId: 'response',
+    },
   });
 });
 
-it('R12g: all message-jump callers use the shared helper', () => {
-  for (const file of ['../app/(app)/beeline/chat/_chat-surface.tsx', '../app/(app)/beeline/tray.tsx', './use-message-search.ts']) {
-    const source = readFileSync(new URL(file, import.meta.url), 'utf8');
-    expect(source).not.toMatch(/pathname: '\/beeline\/chat\/\[channelId\]'[\s\S]{0,300}notificationMessageId/);
-  }
+it('a distant bookmark keeps its exact target and response identity', () => {
+  const target = 'b'.repeat(64);
+  expect(messageJumpHref('room', target, `bookmark:${target}`, 'workspace').params).toEqual({
+    channelId: 'room',
+    notificationMessageId: target,
+    notificationResponseId: `bookmark:${target}`,
+    communityId: 'workspace',
+  });
 });

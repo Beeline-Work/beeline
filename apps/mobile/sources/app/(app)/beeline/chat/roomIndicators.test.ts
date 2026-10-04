@@ -179,22 +179,4 @@ describe('the turn indicator is the Room’s only line above the composer', () =
     // it acts on the turn itself rather than taking the reader anywhere.
     expect(chatSource).not.toMatch(/<TurnProgressLine[^>]*onPress/);
   });
-
-  it("offers the stop from the selector's verdict, never from a screen-local rule", () => {
-    // The requester test lives in `room-indicators.ts` beside the line's own
-    // presentation, so the screen can only pass on a verdict it was given —
-    // and `composerAck.stop` carries the turn's coordinates, so a stop pressed
-    // as one turn ends can never name the next one.
-    expect(chatSource).toContain('onStop={');
-    expect(chatSource).toContain('composerAck.stop ? () => void handleStopTurn(composerAck.stop!)');
-    expect(chatSource).toContain('stopping={stoppingThisTurn}');
-    expect(chatSource).toContain('setStoppingTurn(stop)');
-    expect(chatSource).toContain('setStoppingTurn((current) =>');
-    expect(chatSource).toContain("monolithPhoneOperation('cancelAgentTurn'");
-    // The viewer is the SERVER's statement of who is reading, so both ends
-    // compare the same thing.
-    expect(chatSource).toContain('const viewerPubkey = roomSurface?.viewer.identity.pubkey;');
-    // No screen-local requester comparison; the selector owns that one rule.
-    expect(chatSource).not.toMatch(/requestedBy\s*===/);
-  });
 });

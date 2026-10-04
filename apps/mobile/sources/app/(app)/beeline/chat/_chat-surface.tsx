@@ -174,10 +174,7 @@ import {
   createCommunityInviteUrl,
   resolveCommunityInvitePublicOrigin,
 } from '@/buzz/community-invite';
-import {
-  MemberPickerSheet,
-  type MemberPickerCandidate,
-} from '@/components/buzz/MemberPickerSheet';
+import { MemberPickerSheet, type MemberPickerCandidate } from '@/components/buzz/MemberPickerSheet';
 import { useVerifiedNip05Status } from '@/buzz/nip05-verification';
 import { confirmRoomRepositoryLink, normalizedRoomRole } from '@/buzz/room-management';
 import {
@@ -269,11 +266,15 @@ import { storeTempText } from '@/sync/persistence';
 import { useRoomMessageRenderItem } from '@/buzz/room-message-cell';
 import { arrivalFlashTiming, landingFlashesArrival } from '@/buzz/room-arrival-flash';
 import {
-  shouldSettleMessageSourceLanding,
+  completeMessageSourceLanding,
   startMessageSourceLanding,
   type MessageSourceLanding,
 } from '@/buzz/message-source-landing';
 import { useRoomTranscriptHistory } from '@/buzz/use-room-transcript-history';
+import {
+  shouldCoverMessageSource,
+  shouldReleaseMessageSourceCover,
+} from '@/buzz/message-source-cover';
 import {
   markRoomOpen,
   useRoomSurfaceSession,
@@ -374,15 +375,17 @@ import {
   RoomReviewerSurfaceNotice,
 } from '@/components/buzz/RoomReviewerActions';
 import { EmptyLedgerState, type EmptyLedgerVariant } from '@/components/buzz/EmptyLedgerState';
-import { CornerHeaderAgentText, HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
+import {
+  CornerHeaderAgentText,
+  HeaderIdentitySlot,
+  HeaderMetaCaps,
+  HeaderMetaRow,
+} from '@/components/buzz/HeaderLadder';
 import { ChannelHeaderTitle } from '@/components/buzz/ChannelHeaderTitle';
 import { HullDialog, HullDialogInput } from '@/components/buzz/HullDialog';
 import type { ChannelHeaderKind } from '@/buzz/channel-header-title';
 import { openRandomNamedCorner } from '@/buzz/open-random-corner';
-import {
-  forwardMessageToNewCorner,
-  takeCornerComposerDraft,
-} from '@/buzz/message-corner-forward';
+import { forwardMessageToNewCorner, takeCornerComposerDraft } from '@/buzz/message-corner-forward';
 import { roomMemberManagementState } from '@/buzz/room-member-management';
 import { connectorOfferCeremonyRoute } from '@/buzz/connector-offer-ceremony';
 import { useIsDesktop } from '@/utils/responsive';
@@ -540,12 +543,15 @@ export function BuzzChatSurface({
   const desktopExperience = isDesktop || isDesktopShell();
   const [profileKind, setProfileKind] = useState<'human' | 'agent'>('agent');
   const [profileAgentId, setProfileAgentId] = useState<string | null>(null);
-  useEffect(() => { setProfileAgentId(null); }, [decodedId]);
+  useEffect(() => {
+    setProfileAgentId(null);
+  }, [decodedId]);
   const workPaneWindowClass = desktopWorkPaneWindowClass(windowWidth);
   const routeParentChannelId = parent?.trim() || undefined;
   const routeCommunityId = communityId?.trim() || undefined;
   const routeChannelTitle = title?.trim() || undefined;
-  const cornerReturnTarget = returnTo === 'room-list' || returnTo === 'corners' ? returnTo : undefined;
+  const cornerReturnTarget =
+    returnTo === 'room-list' || returnTo === 'corners' ? returnTo : undefined;
   const insets = useSafeAreaInsets();
   const readOnlyFooterInset =
     Platform.OS === 'android'
@@ -557,6 +563,8 @@ export function BuzzChatSurface({
   // arrivals can decide whether to follow or queue against the pre-append view.
   const isPinnedToTailRef = useRef(true);
   const handledNotificationAnchorRef = useRef<string | null>(null);
+  const locatingMessageSourceIdRef = useRef<string | null>(null);
+  const [isLocatingMessageSource, setIsLocatingMessageSource] = useState(false);
   const composerRef = useRef<TextInput>(null);
   // React state can lag the final Android native text event when the user
   // immediately taps send. Keep the authoritative in-flight draft beside the
@@ -638,7 +646,9 @@ export function BuzzChatSurface({
     markRoomOpen('layout-chrome', roomSurface.messages.at(-1)?.id);
   }, [roomSurface]);
   const [inputText, setInputText, composerDraft] = useTextDraft(
-    `composer:${decodedId}`, '', userPubkey || null,
+    `composer:${decodedId}`,
+    '',
+    userPubkey || null,
     desktopExperience ? desktopDraftKey(decodedId) : undefined,
   );
   const activeComposerDraftRef = useRef(composerDraft);
@@ -684,11 +694,9 @@ export function BuzzChatSurface({
   const replacePendingAttachments = useCallback(
     (
       update:
-        | PickedChatAttachment[]
-        | ((current: PickedChatAttachment[]) => PickedChatAttachment[]),
+        PickedChatAttachment[] | ((current: PickedChatAttachment[]) => PickedChatAttachment[]),
     ) => {
-      const next =
-        typeof update === 'function' ? update(pendingAttachmentsRef.current) : update;
+      const next = typeof update === 'function' ? update(pendingAttachmentsRef.current) : update;
       pendingAttachmentsRef.current = next;
       setPendingAttachments(next);
     },
@@ -725,11 +733,10 @@ export function BuzzChatSurface({
   // Messages this viewer reported here, marked before the next read carries
   // the server's `feedbackReported`.
   const [optimisticReports, setOptimisticReports] = useState<Record<string, true>>({});
-  const { showCopied: showReportToast, toast: reportToast } = useCopiedToast('message-report-toast');
+  const { showCopied: showReportToast, toast: reportToast } =
+    useCopiedToast('message-report-toast');
   const [forwardTarget, setForwardTarget] = useState<ChatDisplayMessage | null>(null);
-  const [forwardRooms, setForwardRooms] = useState<readonly ForwardTarget[] | null>(
-    null,
-  );
+  const [forwardRooms, setForwardRooms] = useState<readonly ForwardTarget[] | null>(null);
   const [forwardBusyRoomId, setForwardBusyRoomId] = useState<string | null>(null);
   const [forwardError, setForwardError] = useState<string | null>(null);
   // What this corner inherited from the Room it was opened out of: the task
@@ -768,7 +775,11 @@ export function BuzzChatSurface({
   const [roomActionsVisible, setRoomActionsVisible] = useState(false);
   const [cornerActionsVisible, setCornerActionsVisible] = useState(false);
   const [renameEditing, setRenameEditing] = useState(false);
-  const [renameDraft, setRenameDraft, renameTextDraft] = useTextDraft(`rename:${decodedId}`, '', userPubkey || null);
+  const [renameDraft, setRenameDraft, renameTextDraft] = useTextDraft(
+    `rename:${decodedId}`,
+    '',
+    userPubkey || null,
+  );
   const [renameBusy, setRenameBusy] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
   const [openingRandomCorner, setOpeningRandomCorner] = useState(false);
@@ -814,8 +825,12 @@ export function BuzzChatSurface({
     receivedAt: number;
   } | null>(null);
 
-  useLayoutEffect(() => { inputTextRef.current = inputText; }, [inputText]);
-  useEffect(() => { setDesktopDeliveryState(null); }, [decodedId, userPubkey]);
+  useLayoutEffect(() => {
+    inputTextRef.current = inputText;
+  }, [inputText]);
+  useEffect(() => {
+    setDesktopDeliveryState(null);
+  }, [decodedId, userPubkey]);
 
   const stagedComposerFocusRef = useRef<{ start: number; end: number } | null>(null);
   useEffect(() => {
@@ -958,14 +973,9 @@ export function BuzzChatSurface({
   // Zero live corners: no handle (toggle is a no-op too). The pane still
   // mounts when already present — an artifact tap can re-present it.
   const desktopWorkPaneMounted =
-    desktopExperience && !isDirectMessage && workPaneMode === 'present'
-      ? desktopWorkRoom
-      : null;
+    desktopExperience && !isDirectMessage && workPaneMode === 'present' ? desktopWorkRoom : null;
   const desktopWorkHandleMounted =
-    desktopExperience &&
-    !isDirectMessage &&
-    workPaneMode === 'dismissed' &&
-    hasLiveDesktopCorners;
+    desktopExperience && !isDirectMessage && workPaneMode === 'dismissed' && hasLiveDesktopCorners;
   const channelKind: ChannelKind = roomSurface
     ? surfaceParentId
       ? 'corner'
@@ -1168,7 +1178,8 @@ export function BuzzChatSurface({
         // removal, or deletion. The Room read is the current authorization
         // verdict; only a successful read earns navigation.
         await roomClient.room(resolved.channelId);
-        if (resolved.kind === 'corner') openDesktopCorner(resolved.parentChannelId, resolved.channelId);
+        if (resolved.kind === 'corner')
+          openDesktopCorner(resolved.parentChannelId, resolved.channelId);
         else router.push(roomHref(resolved.channelId));
       } catch (error) {
         if (isUnavailableChannelReferenceError(error)) {
@@ -1188,13 +1199,30 @@ export function BuzzChatSurface({
     },
     [decodedId, openDesktopCorner, roomClient],
   );
-  const handleOpenProfile = useCallback((agentId: string, kind: 'human' | 'agent' = 'agent') => {
-    if (agentId === cacheViewerPubkey) { router.push('/beeline/settings' as Href); return; }
-    setProfileKind(kind);
-    if (!activeCommunityId) return;
-    if (desktopExperience) setProfileAgentId(agentId);
-    else router.push(kind === 'human' ? { pathname: '/beeline/human-profile', params: { communityId: activeCommunityId, memberId: agentId } } as Href : { pathname: '/beeline/agent-profile', params: { communityId: activeCommunityId, agentId } } as Href);
-  }, [activeCommunityId, desktopExperience, cacheViewerPubkey]);
+  const handleOpenProfile = useCallback(
+    (agentId: string, kind: 'human' | 'agent' = 'agent') => {
+      if (agentId === cacheViewerPubkey) {
+        router.push('/beeline/settings' as Href);
+        return;
+      }
+      setProfileKind(kind);
+      if (!activeCommunityId) return;
+      if (desktopExperience) setProfileAgentId(agentId);
+      else
+        router.push(
+          kind === 'human'
+            ? ({
+                pathname: '/beeline/human-profile',
+                params: { communityId: activeCommunityId, memberId: agentId },
+              } as Href)
+            : ({
+                pathname: '/beeline/agent-profile',
+                params: { communityId: activeCommunityId, agentId },
+              } as Href),
+        );
+    },
+    [activeCommunityId, desktopExperience, cacheViewerPubkey],
+  );
   const openingMentionRef = useRef<string | null>(null);
   const handleOpenMention = useCallback(
     async (participantId: string) => {
@@ -1234,7 +1262,15 @@ export function BuzzChatSurface({
   // converted to render props only below, never persisted as a derived
   // transcript or folded into the current Room response.
   const {
-    olderPages,
+    aroundStatus,
+    aroundForwardStatus,
+    anchoredSegmentActive,
+    segmentRows,
+    loadNewerAround,
+    retryNewerAround,
+    abandonAround,
+    leaveAround,
+    loadAround: loadAroundTranscriptMessage,
     visibleMessageCount,
     status: transcriptHistoryStatus,
     loadOlder: loadOlderHistory,
@@ -1260,12 +1296,15 @@ export function BuzzChatSurface({
     [liveOverlays, roomSurface],
   );
   const olderMessages = useMemo(
-    () => (cacheViewerPubkey ? displayRoomMessages(olderPages.flat(), cacheViewerPubkey) : []),
-    [cacheViewerPubkey, olderPages],
+    () => (cacheViewerPubkey ? displayRoomMessages(segmentRows, cacheViewerPubkey) : []),
+    [cacheViewerPubkey, segmentRows],
   );
   const durableMessages = useMemo(
-    () => mergeDisplayPages(olderMessages, cachedMessages, liveMessages),
-    [cachedMessages, liveMessages, olderMessages],
+    () =>
+      anchoredSegmentActive
+        ? olderMessages
+        : mergeDisplayPages(olderMessages, cachedMessages, liveMessages),
+    [anchoredSegmentActive, cachedMessages, liveMessages, olderMessages],
   );
   const {
     frame: roomSendFrame,
@@ -1295,8 +1334,11 @@ export function BuzzChatSurface({
   // outbox row may be older than the current server tail after an interrupted
   // publish, so it must never claim the inverted list's newest slot.
   const combinedMessages = useMemo(
-    () => mergeDisplayPages(durableMessages, roomSendFrame.optimistic),
-    [durableMessages, roomSendFrame.optimistic],
+    () =>
+      anchoredSegmentActive
+        ? durableMessages
+        : mergeDisplayPages(durableMessages, roomSendFrame.optimistic),
+    [anchoredSegmentActive, durableMessages, roomSendFrame.optimistic],
   );
   // Current server message authors refresh the same membership roster that
   // drives Room and corner bylines, mention suggestions, and mention glossing.
@@ -1319,6 +1361,17 @@ export function BuzzChatSurface({
       ...foldSystemLines(foldSettledActivityRuns(anchored.slice(boundary))),
     ];
   }, [combinedMessages, firstUnreadMessageId, isCorner]);
+  const arrivalMessages = useMemo(() => {
+    if (!anchoredSegmentActive) return foldedMessages;
+    const tail = mergeDisplayPages(cachedMessages, liveMessages, roomSendFrame.optimistic);
+    return foldSystemLines(foldSettledActivityRuns(anchorCornerMarkers(anchorRelayReports(tail))));
+  }, [
+    anchoredSegmentActive,
+    cachedMessages,
+    foldedMessages,
+    liveMessages,
+    roomSendFrame.optimistic,
+  ]);
   const transcriptArrivalStateRef = useRef(EMPTY_TRANSCRIPT_ARRIVAL_STATE);
   const transcriptCardMotionStore = useMemo(createTranscriptCardMotionStore, [decodedId]);
   const transcriptArrivalObservation = useMemo(() => {
@@ -1327,9 +1380,9 @@ export function BuzzChatSurface({
       hydrated: Boolean(roomSurface),
       // A fold can gain a new durable fact without changing its host row id.
       // Observe every represented id so that arrival still joins the queue.
-      ids: foldedMessages.flatMap(messageBoundaryIds),
+      ids: arrivalMessages.flatMap(messageBoundaryIds),
     });
-  }, [decodedId, foldedMessages, roomSurface]);
+  }, [arrivalMessages, decodedId, roomSurface]);
   useEffect(() => {
     // Keep the comparison anchored to the last committed transcript. Mutating
     // this ref during render makes React's development double-render consume a
@@ -1362,9 +1415,11 @@ export function BuzzChatSurface({
     [cornerBrief],
   );
   // A live workflow run in this corner: one line under the objective, → its run page.
-  const { workflow: cornerWorkflowRun, error: workflowError, retry: retryWorkflow } = useCornerWorkflowRun(
-    isCorner ? decodedId : undefined,
-  );
+  const {
+    workflow: cornerWorkflowRun,
+    error: workflowError,
+    retry: retryWorkflow,
+  } = useCornerWorkflowRun(isCorner ? decodedId : undefined);
   const openCornerWorkflowRun = useCallback(() => {
     if (cornerWorkflowRun) router.push(workflowRunHref(cornerWorkflowRun));
   }, [cornerWorkflowRun]);
@@ -1380,8 +1435,30 @@ export function BuzzChatSurface({
   const retryOlderTranscriptMessages = useCallback(() => {
     retryOlderHistory(visibleTranscriptWindow(foldedMessages, Number.MAX_SAFE_INTEGER).length);
   }, [foldedMessages, retryOlderHistory]);
+  const retryAroundTranscriptMessage = useCallback(() => {
+    if (!messageAnchorId || messageSourceLandingAbandonedRef.current) return;
+    if (!desktopExperience) {
+      locatingMessageSourceIdRef.current = messageAnchorId;
+      setIsLocatingMessageSource(true);
+    }
+    loadAroundTranscriptMessage(messageAnchorId);
+  }, [desktopExperience, loadAroundTranscriptMessage, messageAnchorId]);
+  const transcriptForwardLine =
+    aroundForwardStatus === 'error' ? (
+      <LedgerHistoryLine
+        text="Couldn't load later messages · tap to retry"
+        onPress={retryNewerAround}
+      />
+    ) : aroundForwardStatus === 'loading' ? (
+      <LedgerHistoryLine text="Loading later messages…" />
+    ) : null;
   const transcriptHistoryLine =
-    transcriptHistoryStatus === 'loading' ? (
+    aroundStatus === 'error' && messageAnchorId ? (
+      <LedgerHistoryLine
+        text="Couldn't locate message · tap to retry"
+        onPress={retryAroundTranscriptMessage}
+      />
+    ) : transcriptHistoryStatus === 'loading' ? (
       <LedgerHistoryLine text="Loading earlier messages…" />
     ) : transcriptHistoryStatus === 'error' ? (
       <LedgerHistoryLine
@@ -2151,9 +2228,10 @@ export function BuzzChatSurface({
   const dismissComposerKeyboard = useCallback(() => {
     Keyboard.dismiss();
   }, []);
-  const canonicalCornerItem = isCorner && roomSurface
-    ? cornerDisplayFromRoomView({ ...roomSurface, latestAgentTurns: activeAgentTurns })
-    : undefined;
+  const canonicalCornerItem =
+    isCorner && roomSurface
+      ? cornerDisplayFromRoomView({ ...roomSurface, latestAgentTurns: activeAgentTurns })
+      : undefined;
   const cornerHeaderDisplay = cornerDisplayState(
     canonicalCornerItem ?? {
       state: isArchived ? 'archived' : 'waiting',
@@ -2161,11 +2239,12 @@ export function BuzzChatSurface({
     },
   );
   const cornerAgentPubkey = useMemo(
-    () => resolveCornerViewAgentPubkey(
-      messages,
-      (pubkey) => agentByPubkey.has(pubkey),
-      roomSurface?.cornerOpenerAgentId,
-    ),
+    () =>
+      resolveCornerViewAgentPubkey(
+        messages,
+        (pubkey) => agentByPubkey.has(pubkey),
+        roomSurface?.cornerOpenerAgentId,
+      ),
     [agentByPubkey, messages, roomSurface?.cornerOpenerAgentId],
   );
   const rawSpeakerWorking = useMemo(
@@ -2242,14 +2321,15 @@ export function BuzzChatSurface({
   transcriptMessagesRef.current = transcriptMessages;
   const transcriptScrubber = useTranscriptScrubber();
   useEffect(() => transcriptScrubber.reset(), [decodedId, transcriptScrubber]);
-  // A folded tail shorter than the phone list never scrolls, so no drag
-  // opens the older-history gate; page in without one until it fills.
   const phoneUnderfill = usePhoneUnderfillHistory({
-    enabled: !desktopTranscript && transcriptMessages.length > 0,
-    status: transcriptHistoryStatus,
+    enabled:
+      !desktopTranscript &&
+      transcriptMessages.length > 0 &&
+      (!anchoredSegmentActive || !isLocatingMessageSource),
+    status: anchoredSegmentActive ? aroundForwardStatus : transcriptHistoryStatus,
     historyRevision: visibleMessageCount,
     threshold: TAIL_PIN_THRESHOLD,
-    loadOlder: loadOlderTranscriptMessages,
+    loadOlder: anchoredSegmentActive ? loadNewerAround : loadOlderTranscriptMessages,
   });
   // The read cursor ranks rows by index to decide which is newest, so it reads
   // the chronological order for the same reason the jump control does: on the
@@ -2260,6 +2340,9 @@ export function BuzzChatSurface({
   // The row the jump control exists to reach. Read from the chronological
   // order so the inverted phone list and the desktop list name the same row.
   const newestTranscriptMessageId = newestTranscriptRowId(visibleMessages);
+  const newestArrivalMessageId = anchoredSegmentActive
+    ? newestTranscriptRowId(arrivalMessages)
+    : newestTranscriptMessageId;
   // Rooms use the unread divider and queue; corners use only the viewport-
   // driven jump control (`buzz/use-new-message-control.ts`).
   // The divider answers one question: where the reader's unread run began when
@@ -2280,12 +2363,12 @@ export function BuzzChatSurface({
     settleQueueAtBoundary,
   } = useNewMessageControl({
     roomId: decodedId,
-    queueableMessages: foldedMessages,
+    queueableMessages: arrivalMessages,
     arrivingIds: transcriptArrivalObservation.arrivingIds,
-    newestMessageId: newestTranscriptMessageId,
+    newestMessageId: newestArrivalMessageId,
     firstUnreadMessageId: isCorner ? null : firstUnreadMessageId,
     openingUnreadCounts: isCorner ? null : openingUnreadCounts,
-    isPinnedToTail: () => isPinnedToTailRef.current,
+    isPinnedToTail: () => !anchoredSegmentActive && isPinnedToTailRef.current,
     enabled: !isCorner,
   });
   // The catch-up sheet, reached from the strip and from a long-press on the
@@ -2297,16 +2380,14 @@ export function BuzzChatSurface({
   // The server's cursor first: it is the one boundary that knows where the
   // reader fell behind BEFORE this visit. The live queue only answers for a
   // Room that opened read and gained arrivals while they sat in history.
-  const catchUpBoundaryId = isCorner
-    ? null
-    : (firstUnreadMessageId ?? newMessageQueue.boundaryId);
+  const catchUpBoundaryId = isCorner ? null : (firstUnreadMessageId ?? newMessageQueue.boundaryId);
   const catchUpReport = useMemo(
     () =>
       !isCorner && catchUpSheetVisible
         ? buildCatchUpReport({
-            messages: foldedMessages,
+            messages: arrivalMessages,
             boundaryId: catchUpBoundaryId,
-            newestId: newestTranscriptMessageId,
+            newestId: newestArrivalMessageId,
             viewerPubkey: userPubkey ?? null,
             // The roster the bylines already resolve against, so an ask whose
             // requester is not the row's author is still named correctly.
@@ -2317,9 +2398,9 @@ export function BuzzChatSurface({
       catchUpBoundaryId,
       catchUpSheetVisible,
       conversationIdentities,
-      foldedMessages,
+      arrivalMessages,
       isCorner,
-      newestTranscriptMessageId,
+      newestArrivalMessageId,
       userPubkey,
     ],
   );
@@ -2331,29 +2412,40 @@ export function BuzzChatSurface({
     () => roomParticipants.filter((participant) => participant.kind === 'agent'),
     [roomParticipants],
   );
-  const draftCatchUpRequest = useCallback((agent: Pick<RoomMemberOption, 'pubkey' | 'name' | 'handle'>) => {
-    if (
-      isCorner ||
-      !catchUpBoundaryId ||
-      pendingAttachments.length > 0 ||
-      !roomSurface?.viewer.permissions.send
-    ) return;
-    const handle = agent.handle.replace(/^@/, '');
-    const prompt = `@${handle} Please catch me up on this Room from message ${catchUpBoundaryId} through the latest message. Summarize key changes, decisions, and anything I need to answer. If part of that history is unavailable, say which part you can see.`;
-    if (fillComposer(prompt, { mention: { handle, pubkey: agent.pubkey } }))
-      setCatchUpSheetVisible(false);
-  }, [catchUpBoundaryId, fillComposer, isCorner, pendingAttachments.length, roomSurface?.viewer.permissions.send]);
-  const catchUpOfferVisible = !isCorner && catchUpEligible && catchUpAgents.length > 0 &&
-    !viewerIsAgent && Boolean(roomSurface?.viewer.permissions.send);
+  const draftCatchUpRequest = useCallback(
+    (agent: Pick<RoomMemberOption, 'pubkey' | 'name' | 'handle'>) => {
+      if (
+        isCorner ||
+        !catchUpBoundaryId ||
+        pendingAttachments.length > 0 ||
+        !roomSurface?.viewer.permissions.send
+      )
+        return;
+      const handle = agent.handle.replace(/^@/, '');
+      const prompt = `@${handle} Please catch me up on this Room from message ${catchUpBoundaryId} through the latest message. Summarize key changes, decisions, and anything I need to answer. If part of that history is unavailable, say which part you can see.`;
+      if (fillComposer(prompt, { mention: { handle, pubkey: agent.pubkey } }))
+        setCatchUpSheetVisible(false);
+    },
+    [
+      catchUpBoundaryId,
+      fillComposer,
+      isCorner,
+      pendingAttachments.length,
+      roomSurface?.viewer.permissions.send,
+    ],
+  );
+  const catchUpOfferVisible =
+    !isCorner &&
+    catchUpEligible &&
+    catchUpAgents.length > 0 &&
+    !viewerIsAgent &&
+    Boolean(roomSurface?.viewer.permissions.send);
   const slashVerbs = useMemo(
     () =>
       availableSlashVerbs(
         {
           canBuild: Boolean(
-            !isCorner &&
-              !isDirectMessage &&
-              !viewerIsAgent &&
-              roomSurface?.viewer.permissions.send,
+            !isCorner && !isDirectMessage && !viewerIsAgent && roomSurface?.viewer.permissions.send,
           ),
           canCreatePoll: Boolean(
             !isCorner && !isDirectMessage && !viewerIsAgent && roomSurface?.viewer.permissions.send,
@@ -2363,17 +2455,17 @@ export function BuzzChatSurface({
           canCatchUp: catchUpOfferVisible,
           canManageSchedules: Boolean(
             !isCorner &&
-              !isDirectMessage &&
-              !viewerIsAgent &&
-              canManageWorkspace &&
-              getBuzzRuntimeConfig().monolithEnabled,
+            !isDirectMessage &&
+            !viewerIsAgent &&
+            canManageWorkspace &&
+            getBuzzRuntimeConfig().monolithEnabled,
           ),
           canRunWorkflows: Boolean(
             !isCorner &&
-              !isDirectMessage &&
-              !viewerIsAgent &&
-              canManageWorkspace &&
-              roomSurface?.repositoryResolution === 'repository',
+            !isDirectMessage &&
+            !viewerIsAgent &&
+            canManageWorkspace &&
+            roomSurface?.repositoryResolution === 'repository',
           ),
           canOpenCorner: Boolean(!isCorner && !viewerIsAgent && pendingCornerRequest),
           canRename: Boolean(!isCorner && !isDirectMessage && !viewerIsAgent && canManageWorkspace),
@@ -2463,7 +2555,9 @@ export function BuzzChatSurface({
     boundaryId: string;
     acknowledgeQueue: boolean;
   } | null>(null);
-  const pendingNotificationLandingRef = useRef<{ messageId: string; attempts: number } | null>(null);
+  const pendingNotificationLandingRef = useRef<{ messageId: string; attempts: number } | null>(
+    null,
+  );
   // The one-shot re-center + brass flash for a message-source jump (quote
   // reference, forward source, notification target). Settles on the same
   // viewability report that clears `pendingNotificationLandingRef` above —
@@ -2475,6 +2569,8 @@ export function BuzzChatSurface({
   // which provoke momentum events on the shared `dragEndSequenceRef` just
   // like a real gesture would. Reset when a new landing starts.
   const messageSourceLandingAbandonedRef = useRef(false);
+  const requestedAroundMessageIdRef = useRef<string | null>(null);
+  const activeMessageSourceAnchorRef = useRef<string | null>(null);
   const visibleTranscriptMessagesRef = useRef<ChatDisplayMessage[]>([]);
   const dragEndSequenceRef = useRef(0);
   const completedUnreadLandingRef = useRef<string | null>(null);
@@ -2496,7 +2592,9 @@ export function BuzzChatSurface({
   const sourceJumpSequenceRef = useRef(0);
   const handleOpenMessageSource = useCallback((roomId: string, messageId: string) => {
     sourceJumpSequenceRef.current += 1;
-    router.navigate(messageJumpHref(roomId, messageId, `message-source:${sourceJumpSequenceRef.current}`));
+    router.navigate(
+      messageJumpHref(roomId, messageId, `message-source:${sourceJumpSequenceRef.current}`),
+    );
   }, []);
   const raiseArrivalFlash = useCallback((messageId: string) => {
     if (arrivalFlashTimerRef.current !== null) clearTimeout(arrivalFlashTimerRef.current);
@@ -2509,7 +2607,8 @@ export function BuzzChatSurface({
     }, arrivalFlashTiming(false).totalMs);
   }, []);
   const raiseSourceLandingFlash = useCallback((messageId: string) => {
-    if (sourceLandingFlashTimerRef.current !== null) clearTimeout(sourceLandingFlashTimerRef.current);
+    if (sourceLandingFlashTimerRef.current !== null)
+      clearTimeout(sourceLandingFlashTimerRef.current);
     setSourceLandingFlashMessageId(messageId);
     sourceLandingFlashTimerRef.current = setTimeout(() => {
       sourceLandingFlashTimerRef.current = null;
@@ -2519,7 +2618,8 @@ export function BuzzChatSurface({
   useEffect(
     () => () => {
       if (arrivalFlashTimerRef.current !== null) clearTimeout(arrivalFlashTimerRef.current);
-      if (sourceLandingFlashTimerRef.current !== null) clearTimeout(sourceLandingFlashTimerRef.current);
+      if (sourceLandingFlashTimerRef.current !== null)
+        clearTimeout(sourceLandingFlashTimerRef.current);
     },
     [],
   );
@@ -2534,6 +2634,10 @@ export function BuzzChatSurface({
     desktopIntersectingIdsRef.current.clear();
     desktopPrependOldestIdRef.current = null;
     desktopPrependScrollHeightRef.current = null;
+    locatingMessageSourceIdRef.current = null;
+    requestedAroundMessageIdRef.current = null;
+    activeMessageSourceAnchorRef.current = null;
+    setIsLocatingMessageSource(false);
   }, [decodedId]);
   const completePendingNewMessageLanding = useCallback(() => {
     const pending = pendingNewMessageLandingRef.current;
@@ -2594,26 +2698,26 @@ export function BuzzChatSurface({
           visibleMessageIds.add(message.id);
           if (message.relayId) visibleMessageIds.add(message.relayId);
         }
-        if (
-          shouldSettleMessageSourceLanding(landing, {
-            messageAnchorId: messageAnchorIdRef.current,
-            abandoned: messageSourceLandingAbandonedRef.current,
-            visibleMessageIds,
-          })
-        ) {
-          landing.settled = true;
-          const measuredIndex = transcriptMessagesRef.current.findIndex(
-            (message) => message.id === landing.messageId || message.relayId === landing.messageId,
-          );
-          if (measuredIndex >= 0) {
+        completeMessageSourceLanding({
+          landing,
+          messageAnchorId: messageAnchorIdRef.current,
+          abandoned: messageSourceLandingAbandonedRef.current,
+          visibleMessageIds,
+          rows: transcriptMessagesRef.current,
+          scrollToIndex: (index) =>
             flatListRef.current?.scrollToIndex({
-              index: measuredIndex,
+              index,
               viewPosition: 0.5,
               animated: false,
-            });
-          }
-          raiseSourceLandingFlash(landing.messageId);
-        }
+            }),
+          flash: raiseSourceLandingFlash,
+          dismissCover: (messageId) => {
+            if (locatingMessageSourceIdRef.current === messageId) {
+              locatingMessageSourceIdRef.current = null;
+              setIsLocatingMessageSource(false);
+            }
+          },
+        });
       }
       // The list recomputes viewability on scroll AND on every committed
       // update, so an arrival that lands below the fold reports itself unseen
@@ -2762,6 +2866,12 @@ export function BuzzChatSurface({
         node.scrollHeight - node.scrollTop - node.clientHeight <= TAIL_PIN_THRESHOLD;
       observeTailPinned(isPinnedToTailRef.current);
       if (
+        anchoredSegmentActive &&
+        isPinnedToTailRef.current &&
+        locatingMessageSourceIdRef.current === null
+      )
+        loadNewerAround();
+      if (
         (!isPinnedToTailRef.current ||
           node.scrollHeight <= node.clientHeight + TAIL_PIN_THRESHOLD) &&
         node.scrollTop <= TAIL_PIN_THRESHOLD
@@ -2769,7 +2879,7 @@ export function BuzzChatSurface({
         loadOlderTranscriptMessages();
       }
     },
-    [loadOlderTranscriptMessages, observeTailPinned],
+    [anchoredSegmentActive, loadNewerAround, loadOlderTranscriptMessages, observeTailPinned],
   );
   // Pinned? Native offset 0 is the visual bottom of the inverted list. iOS
   // drops `onScroll` ticks inside the throttle window and never sends the
@@ -2832,10 +2942,7 @@ export function BuzzChatSurface({
         scheduleAnimationFrame(() => {
           const pending = pendingNewMessageLandingRef.current;
           if (userDraggingRef.current || pending?.boundaryId !== boundaryId) return;
-          const currentIndex = boundaryRowIndex(
-            transcriptMessagesRef.current,
-            boundaryId,
-          );
+          const currentIndex = boundaryRowIndex(transcriptMessagesRef.current, boundaryId);
           if (currentIndex < 0) return;
           if (desktopTranscript) {
             desktopRowNodesRef.current
@@ -2911,6 +3018,10 @@ export function BuzzChatSurface({
   // here: the tap is the reader saying they are done being behind.
   const landAtNewestMessage = useCallback(() => {
     pendingNewMessageLandingRef.current = null;
+    messageSourceLandingAbandonedRef.current = true;
+    locatingMessageSourceIdRef.current = null;
+    setIsLocatingMessageSource(false);
+    leaveAround();
     scrollToNewestMessage();
     // The badge is NOT cleared here. A press is not visibility: this scroll
     // can be clamped, interrupted by a drag, or land short while the extent
@@ -2918,21 +3029,28 @@ export function BuzzChatSurface({
     // reader they had seen rows they never reached. The viewability pass
     // clears it when the newest row is actually on screen — the same rule
     // that clears it when they scroll there under their own finger.
-  }, [scrollToNewestMessage]);
+  }, [leaveAround, scrollToNewestMessage]);
   // The viewer sending is the viewer saying they are speaking at the live end
   // of the log, so the transcript lands there and shows them their own
   // message. Everything holding the viewport in history is released here: the
   // route/unread landing anchor (`transcriptLandingAnchor`), any armed
   // boundary landing, the unread-boundary effect below, and the pin itself,
   // which the arrival rule reads to decide whether the appended row follows.
-  const releaseHistoryAnchorForSend = useCallback((messageId: string) => {
-    pendingNewMessageLandingRef.current = null;
-    if (desktopTranscript) pendingOwnSendTailIdRef.current = messageId;
-    if (firstUnreadMessageId) completedUnreadLandingRef.current = firstUnreadMessageId;
-    setReleasedHistoryAnchorKey(historyAnchorKey({ messageAnchorId, firstUnreadMessageId }));
-    isPinnedToTailRef.current = true;
-    scrollToNewestMessage();
-  }, [desktopTranscript, firstUnreadMessageId, messageAnchorId, scrollToNewestMessage]);
+  const releaseHistoryAnchorForSend = useCallback(
+    (messageId: string) => {
+      pendingNewMessageLandingRef.current = null;
+      messageSourceLandingAbandonedRef.current = true;
+      locatingMessageSourceIdRef.current = null;
+      setIsLocatingMessageSource(false);
+      leaveAround();
+      if (desktopTranscript) pendingOwnSendTailIdRef.current = messageId;
+      if (firstUnreadMessageId) completedUnreadLandingRef.current = firstUnreadMessageId;
+      setReleasedHistoryAnchorKey(historyAnchorKey({ messageAnchorId, firstUnreadMessageId }));
+      isPinnedToTailRef.current = true;
+      scrollToNewestMessage();
+    },
+    [desktopTranscript, firstUnreadMessageId, leaveAround, messageAnchorId, scrollToNewestMessage],
+  );
   useEffect(
     () =>
       liveDraftStore.subscribeCommit(() => {
@@ -2972,11 +3090,39 @@ export function BuzzChatSurface({
 
     const messageId = notificationMessageId?.trim();
     if (!messageId) return;
+    if (activeMessageSourceAnchorRef.current !== anchorKey) {
+      activeMessageSourceAnchorRef.current = anchorKey;
+      requestedAroundMessageIdRef.current = null;
+      messageSourceLandingAbandonedRef.current = false;
+    }
+    if (messageSourceLandingAbandonedRef.current) return;
+    if (
+      locatingMessageSourceIdRef.current !== null &&
+      locatingMessageSourceIdRef.current !== messageId
+    ) {
+      // A different target replaced the one the cover was still walking
+      // history pages (or chasing retries) for.
+      locatingMessageSourceIdRef.current = null;
+      setIsLocatingMessageSource(false);
+    }
     const visibleIndex = transcriptMessages.findIndex(
       (message) => message.id === messageId || message.relayId === messageId,
     );
     if (visibleIndex >= 0) {
+      if (
+        !visibleTranscriptMessagesRef.current.some(
+          (row) => row.id === messageId || row.relayId === messageId,
+        ) &&
+        shouldCoverMessageSource({
+          desktop: desktopTranscript,
+          abandoned: messageSourceLandingAbandonedRef.current,
+        })
+      ) {
+        locatingMessageSourceIdRef.current = messageId;
+        setIsLocatingMessageSource(true);
+      }
       scheduleAnimationFrame(() => {
+        if (messageSourceLandingAbandonedRef.current) return;
         if (desktopTranscript) {
           const row = desktopRowNodesRef.current.get(transcriptMessages[visibleIndex]?.id ?? '');
           row?.scrollIntoView({ block: 'center' });
@@ -2996,7 +3142,6 @@ export function BuzzChatSurface({
         // (below) have brought it into range, re-centering — or flashing —
         // a row that is still off-window or clipped. See
         // `buzz/message-source-landing.ts`.
-        messageSourceLandingAbandonedRef.current = false;
         messageSourceLandingRef.current = startMessageSourceLanding(messageId);
         flatListRef.current?.scrollToIndex({
           index: visibleIndex,
@@ -3011,14 +3156,43 @@ export function BuzzChatSurface({
       (message) => message.id === messageId || message.relayId === messageId,
     );
     if (residentIndex >= 0) {
+      if (
+        shouldCoverMessageSource({
+          desktop: desktopTranscript,
+          abandoned: messageSourceLandingAbandonedRef.current,
+        })
+      ) {
+        locatingMessageSourceIdRef.current = messageId;
+        setIsLocatingMessageSource(true);
+      }
       const rowsFromNewest = combinedMessages.length - residentIndex;
       revealTranscriptThrough(rowsFromNewest);
       return;
     }
-    // Bookmark links may target any durable message, not only the cached
-    // tail. Walk bounded history pages until the exact id arrives or the
-    // server reports the beginning of the Room.
-    if (transcriptHistoryStatus === 'idle') loadOlderTranscriptMessages();
+    if (
+      requestedAroundMessageIdRef.current === messageId &&
+      (aroundStatus === 'error' || aroundStatus === 'missing')
+    ) {
+      if (locatingMessageSourceIdRef.current === messageId) {
+        locatingMessageSourceIdRef.current = null;
+        setIsLocatingMessageSource(false);
+      }
+      if (aroundStatus === 'missing') handledNotificationAnchorRef.current = anchorKey;
+      return;
+    }
+    if (
+      requestedAroundMessageIdRef.current === messageId ||
+      messageSourceLandingAbandonedRef.current ||
+      !roomClient ||
+      !cacheViewerPubkey
+    )
+      return;
+    requestedAroundMessageIdRef.current = messageId;
+    if (!desktopTranscript) {
+      locatingMessageSourceIdRef.current = messageId;
+      setIsLocatingMessageSource(true);
+    }
+    loadAroundTranscriptMessage(messageId);
   }, [
     combinedMessages,
     transcriptMessages,
@@ -3027,9 +3201,31 @@ export function BuzzChatSurface({
     notificationTarget,
     desktopTranscript,
     revealTranscriptThrough,
-    loadOlderTranscriptMessages,
-    transcriptHistoryStatus,
+    loadAroundTranscriptMessage,
+    aroundStatus,
+    roomClient,
+    cacheViewerPubkey,
     raiseSourceLandingFlash,
+  ]);
+  useEffect(() => {
+    if (
+      !desktopTranscript ||
+      !anchoredSegmentActive ||
+      isLocatingMessageSource ||
+      aroundForwardStatus !== 'idle'
+    )
+      return;
+    const node = desktopScrollNodeRef.current;
+    if (node && node.scrollHeight <= node.clientHeight + TAIL_PIN_THRESHOLD) {
+      loadNewerAround();
+    }
+  }, [
+    desktopTranscript,
+    anchoredSegmentActive,
+    isLocatingMessageSource,
+    aroundForwardStatus,
+    transcriptMessages,
+    loadNewerAround,
   ]);
   // A reconciled draft/final bubble keeps a stable display `id` across the
   // turn, so it also needs to resolve by its real relay event id — the id
@@ -3472,7 +3668,9 @@ export function BuzzChatSurface({
 
   const canDeleteMessage = useCallback(
     (message: ChatDisplayMessage) =>
-      !message.deleted && !message.isAgentActivity && !message.isAgentDraft &&
+      !message.deleted &&
+      !message.isAgentActivity &&
+      !message.isAgentDraft &&
       (message.isUser || canManageWorkspace),
     [canManageWorkspace],
   );
@@ -3493,7 +3691,10 @@ export function BuzzChatSurface({
         AccessibilityInfo.announceForAccessibility('Message deleted');
         refreshSignal.force();
       } catch (error) {
-        Modal.alert('Could not delete message', error instanceof Error ? error.message : String(error));
+        Modal.alert(
+          'Could not delete message',
+          error instanceof Error ? error.message : String(error),
+        );
       }
     },
     [canDeleteMessage, decodedId, refreshSignal],
@@ -3547,9 +3748,7 @@ export function BuzzChatSurface({
           {
             text: forwardTarget.text,
             author: forwardTarget.authorIdentity ?? {
-              name: forwardTarget.pubkey
-                ? fallbackMemberName(forwardTarget.pubkey)
-                : 'SOMEONE',
+              name: forwardTarget.pubkey ? fallbackMemberName(forwardTarget.pubkey) : 'SOMEONE',
               ...(forwardTarget.pubkey
                 ? { handle: fallbackMemberHandle(forwardTarget.pubkey) }
                 : {}),
@@ -3578,258 +3777,265 @@ export function BuzzChatSurface({
   const scheduleOutboxConfirmation = outbox.scheduleConfirmation;
   const retryOutboxMessage = outbox.retry;
   const dismissOutboxMessage = outbox.dismiss;
-  const handleSend = useCallback(async (shortcut?: MessageShortcut) => {
-    // A leaked responder event must never read as a shortcut (#1340's
-    // `onPress={onSend}` handed the PressEvent straight in; `!shortcut` then
-    // skipped the composer-clear block and the field kept its text after
-    // every send). Only a real shortcut — it always carries text — qualifies.
-    const sendShortcut = shortcut && typeof shortcut.text === 'string' ? shortcut : undefined;
-    const clearSubmittedDraft = composerDraft.captureMessage();
-    const rawText = (sendShortcut?.text ?? inputTextRef.current).trim();
-    const activeReplyTarget = sendShortcut?.replyTarget ?? replyTarget;
-    const activePendingAttachments = sendShortcut ? [] : pendingAttachmentsRef.current;
-    // State updates are committed asynchronously. A ref closes the short
-    // double-tap window before `sending` can disable the native control.
-    if (sendInFlightRef.current || (!rawText && activePendingAttachments.length === 0) || isArchived)
-      return;
-    // The daemon already refuses corner-open on a repo-less Room; this is the
-    // friendly client-side path — catch the common phrasing before the
-    // message is sent (and the composer text lost) rather than after a
-    // doomed round-trip.
-    if (
-      !isCorner &&
-      ((!roomRepository && roomRepositoryResolved) || roomRepoAccessIssue) &&
-      looksLikeCornerOpenIntent(rawText)
-    ) {
-      setCornerOpenRepoPrompt(true);
-      if (activeCommunityId && roomRepoCandidates.length === 0 && transport) {
-        void transport
-          .workspaceGitHubAccess({ refresh: true })
-          .then((access) => {
-            setRoomRepoCandidates(access.candidates);
-            setGitHubInstallations(access.installations);
-          })
-          .catch(() => undefined);
-      }
-      return;
-    }
-    const preparedReply = activeReplyTarget
-      ? prepareMessageReply(rawText, activeReplyTarget)
-      : undefined;
-    const text = preparedReply?.text ?? rawText;
-    const mentionedPubkeys = resolveComposerMentions(
-      text,
-      roomParticipants,
-      sendShortcut ? NO_SELECTED_MENTIONS : selectedMentionsRef.current,
-    ).pubkeys;
-    const selectedMentionedAgent = sendShortcut
-      ? undefined
-      : selectedMentionAgentPubkey(text, selectedAgentMentionsRef.current);
-    const mentionedAgent =
-      selectedMentionedAgent ??
-      preparedReply?.agentPubkey ??
-      mentionedPubkeys.find((pubkey) => roomAgents.some((agent) => agent.pubkey === pubkey)) ??
-      mentionedAgentPubkey(text, roomAgents);
-    // Resolve before attachment upload or cold transport creation so the ack
-    // cannot wait on either. A corner (one agent, always addressed) or a
-    // two-party Room (the sole other participant may speak naturally, per the
-    // addressing rule) counts too.
-    const addressesAgent =
-      isCorner ||
-      Boolean(mentionedAgent) ||
-      (roomAgents.length === 1 && roomParticipants.length <= 2);
-    setReceivedSteer(null);
-    setPendingAck(addressesAgent ? { sentAt: Date.now() } : null);
-
-    sendInFlightRef.current = true;
-    setSending(true);
-    if (desktopExperience) setDesktopDeliveryState('sending');
-    let preparedEvent: Awaited<ReturnType<BuzzRigTransport['composeMessage']>> | undefined;
-    let preparedTransport: BuzzRigTransport | undefined;
-    try {
-      // A warm/partial snapshot can paint before the hydration effect has
-      // published its transport state. Sending is still a valid operation:
-      // construct the monolith transport on demand rather than
-      // leaving the enabled send control as a silent no-op.
-      let sendTransport = transport;
-      if (!sendTransport) {
-        const identity = await loadBuzzIdentity();
-        if (!identity) throw new Error('Beeline identity is unavailable');
-        sendTransport = new BuzzRigTransport(identity);
-      }
-      if (!transport) setSessionTransport(sendTransport);
-      preparedTransport = sendTransport;
-      const attachments = await attachmentUploader.uploadAll(
-        await sendTransport.ensureClient(),
-        activePendingAttachments,
-      );
-      // Sign before append. The authoritative event id is the optimistic row
-      // identity and the durable outbox key from its first frame onward.
-      preparedEvent = preparedReply?.reference
-        ? await sendTransport.composeReplyMessage(
-            text,
-            preparedReply.reference,
-            mentionedAgent,
-            attachments,
-            mentionedPubkeys,
-          )
-        : await sendTransport.composeMessage(
-            { sessionId: decodedId, text, attachments },
-            mentionedAgent || mentionedPubkeys.length
-              ? {
-                  ...(mentionedAgent ? { mentionAgent: mentionedAgent } : {}),
-                  ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
-                }
-              : undefined,
-          );
-      if (addressesAgent) {
-        setPendingAck((current) =>
-          current ? { ...current, requestId: preparedEvent!.id } : current,
-        );
-      }
-      const optimistic = {
-        id: preparedEvent.id,
-        text,
-        isUser: true,
-        timestamp: preparedEvent.created_at,
-        authorIdentity: roomSurface?.viewer.identity ?? {
-          pubkey: userPubkey,
-          kind: 'human',
-            name: fallbackMemberName(userPubkey),
-        },
-        pubkey: userPubkey,
-        reference: undefined,
-        ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
-        ...(preparedReply?.reference ? { replyToId: preparedReply.reference.eventId } : {}),
-        ...(attachments.length ? { attachments } : {}),
-      } satisfies ChatDisplayMessage;
-      const activeOutbox = outbox.current();
-      if (!activeOutbox) throw new Error('Message outbox is unavailable');
-      await activeOutbox.enqueue(preparedEvent, {
-        id: preparedEvent.id,
-        text,
-        createdAt: preparedEvent.created_at,
-        author: roomSurface?.viewer.identity ?? {
-          pubkey: userPubkey,
-          kind: 'human',
-            name: fallbackMemberName(userPubkey),
-        },
-        presentation: 'message',
-        ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
-        ...(attachments.length ? { attachments } : {}),
-      });
-      releaseHistoryAnchorForSend(optimistic.id);
-      addMessages([optimistic]);
-      if (!sendShortcut) {
-        const draftCleared = clearSubmittedDraft();
-        if (activeComposerDraftRef.current === composerDraft) {
-          if (draftCleared) {
-            const nextInputRevision = composerInputRevisionRef.current + 1;
-            composerInputRevisionRef.current = nextInputRevision;
-            // Reconcile only the remaining draft, including typing appended during send.
-            if (!composerDraft.value) composerRef.current?.clear();
-            inputTextRef.current = composerDraft.value;
-            setComposerInputRevision(nextInputRevision);
-            if (!composerDraft.value) setComposerHeight(COMPOSER_MIN_HEIGHT);
-            const end = composerDraft.value.length;
-            setInputSelection({ start: end, end });
-          }
-          replacePendingAttachments((current) =>
-            current.filter((attachment) => !activePendingAttachments.includes(attachment)),
-          );
-          setReplyTarget((current) => current === activeReplyTarget ? null : current);
-        }
-      }
-      await activeOutbox.attempted(preparedEvent.id);
-      const writeResult = await sendTransport.publishPreparedMessage(preparedEvent);
+  const handleSend = useCallback(
+    async (shortcut?: MessageShortcut) => {
+      // A leaked responder event must never read as a shortcut (#1340's
+      // `onPress={onSend}` handed the PressEvent straight in; `!shortcut` then
+      // skipped the composer-clear block and the field kept its text after
+      // every send). Only a real shortcut — it always carries text — qualifies.
+      const sendShortcut = shortcut && typeof shortcut.text === 'string' ? shortcut : undefined;
+      const clearSubmittedDraft = composerDraft.captureMessage();
+      const rawText = (sendShortcut?.text ?? inputTextRef.current).trim();
+      const activeReplyTarget = sendShortcut?.replyTarget ?? replyTarget;
+      const activePendingAttachments = sendShortcut ? [] : pendingAttachmentsRef.current;
+      // State updates are committed asynchronously. A ref closes the short
+      // double-tap window before `sending` can disable the native control.
       if (
-        isCorner &&
-        activeAgentTurn &&
-        writeResult.activeSteerAgentIds?.includes(activeAgentTurn.agentPubkey)
+        sendInFlightRef.current ||
+        (!rawText && activePendingAttachments.length === 0) ||
+        isArchived
+      )
+        return;
+      // The daemon already refuses corner-open on a repo-less Room; this is the
+      // friendly client-side path — catch the common phrasing before the
+      // message is sent (and the composer text lost) rather than after a
+      // doomed round-trip.
+      if (
+        !isCorner &&
+        ((!roomRepository && roomRepositoryResolved) || roomRepoAccessIssue) &&
+        looksLikeCornerOpenIntent(rawText)
       ) {
-        setReceivedSteer({
-          agentPubkey: activeAgentTurn.agentPubkey,
-          turnRequestId: activeAgentTurn.requestId,
-          receivedAt: Date.now(),
-        });
+        setCornerOpenRepoPrompt(true);
+        if (activeCommunityId && roomRepoCandidates.length === 0 && transport) {
+          void transport
+            .workspaceGitHubAccess({ refresh: true })
+            .then((access) => {
+              setRoomRepoCandidates(access.candidates);
+              setGitHubInstallations(access.installations);
+            })
+            .catch(() => undefined);
+        }
+        return;
       }
-      if (desktopExperience) setDesktopDeliveryState('delivered');
-      // The write ack retires the local bridge: the server has STORED the
-      // message, so "sending…" has nothing left to bridge. It used to outlive
-      // the write by up to the whole first-token wait (tens of seconds) or
-      // its own 15s bound, whichever was longer. The claimed turn's WORKING
-      // receipt lights `thinking` on its own, and this ack must not sit
-      // between them.
-      const ackedRequestId = preparedEvent.id;
-      setPendingAck((current) =>
-        current && (current.requestId === undefined || current.requestId === ackedRequestId)
-          ? null
-          : current,
-      );
-      // Advance the read mark to our own message immediately: a message we
-      // wrote must never gold the Room list while the deck's working
-      // indicator carries the live turn (room-list-row.ts: a working agent never lights the attention square).
-      void roomClient?.markRead(decodedId, preparedEvent.id).catch(() => undefined);
-      refreshSignal.signal();
-      scheduleOutboxConfirmation(preparedEvent.id);
-    } catch (err) {
-      console.warn('Send failed:', err);
-      if (desktopExperience) setDesktopDeliveryState('failed');
-      // A publish failure already gets its own explicit modal below; the
-      // local ack has nothing left to guess at and must not keep buzzing.
-      setPendingAck(null);
-      if (preparedEvent) await markOutboxFailed(preparedEvent.id);
-      const failure = publishFailurePresentation(err);
-      Modal.alert(
-        'Message not sent',
-        failure.message,
-        failure.retryable
-          ? [
-              { text: 'Cancel', style: 'cancel' },
-              {
-                text: 'Retry',
-                onPress: () => {
-                  if (!preparedEvent || !preparedTransport) return;
-                  retryOutboxMessage(preparedEvent.id, preparedTransport);
+      const preparedReply = activeReplyTarget
+        ? prepareMessageReply(rawText, activeReplyTarget)
+        : undefined;
+      const text = preparedReply?.text ?? rawText;
+      const mentionedPubkeys = resolveComposerMentions(
+        text,
+        roomParticipants,
+        sendShortcut ? NO_SELECTED_MENTIONS : selectedMentionsRef.current,
+      ).pubkeys;
+      const selectedMentionedAgent = sendShortcut
+        ? undefined
+        : selectedMentionAgentPubkey(text, selectedAgentMentionsRef.current);
+      const mentionedAgent =
+        selectedMentionedAgent ??
+        preparedReply?.agentPubkey ??
+        mentionedPubkeys.find((pubkey) => roomAgents.some((agent) => agent.pubkey === pubkey)) ??
+        mentionedAgentPubkey(text, roomAgents);
+      // Resolve before attachment upload or cold transport creation so the ack
+      // cannot wait on either. A corner (one agent, always addressed) or a
+      // two-party Room (the sole other participant may speak naturally, per the
+      // addressing rule) counts too.
+      const addressesAgent =
+        isCorner ||
+        Boolean(mentionedAgent) ||
+        (roomAgents.length === 1 && roomParticipants.length <= 2);
+      setReceivedSteer(null);
+      setPendingAck(addressesAgent ? { sentAt: Date.now() } : null);
+
+      sendInFlightRef.current = true;
+      setSending(true);
+      if (desktopExperience) setDesktopDeliveryState('sending');
+      let preparedEvent: Awaited<ReturnType<BuzzRigTransport['composeMessage']>> | undefined;
+      let preparedTransport: BuzzRigTransport | undefined;
+      try {
+        // A warm/partial snapshot can paint before the hydration effect has
+        // published its transport state. Sending is still a valid operation:
+        // construct the monolith transport on demand rather than
+        // leaving the enabled send control as a silent no-op.
+        let sendTransport = transport;
+        if (!sendTransport) {
+          const identity = await loadBuzzIdentity();
+          if (!identity) throw new Error('Beeline identity is unavailable');
+          sendTransport = new BuzzRigTransport(identity);
+        }
+        if (!transport) setSessionTransport(sendTransport);
+        preparedTransport = sendTransport;
+        const attachments = await attachmentUploader.uploadAll(
+          await sendTransport.ensureClient(),
+          activePendingAttachments,
+        );
+        // Sign before append. The authoritative event id is the optimistic row
+        // identity and the durable outbox key from its first frame onward.
+        preparedEvent = preparedReply?.reference
+          ? await sendTransport.composeReplyMessage(
+              text,
+              preparedReply.reference,
+              mentionedAgent,
+              attachments,
+              mentionedPubkeys,
+            )
+          : await sendTransport.composeMessage(
+              { sessionId: decodedId, text, attachments },
+              mentionedAgent || mentionedPubkeys.length
+                ? {
+                    ...(mentionedAgent ? { mentionAgent: mentionedAgent } : {}),
+                    ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
+                  }
+                : undefined,
+            );
+        if (addressesAgent) {
+          setPendingAck((current) =>
+            current ? { ...current, requestId: preparedEvent!.id } : current,
+          );
+        }
+        const optimistic = {
+          id: preparedEvent.id,
+          text,
+          isUser: true,
+          timestamp: preparedEvent.created_at,
+          authorIdentity: roomSurface?.viewer.identity ?? {
+            pubkey: userPubkey,
+            kind: 'human',
+            name: fallbackMemberName(userPubkey),
+          },
+          pubkey: userPubkey,
+          reference: undefined,
+          ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
+          ...(preparedReply?.reference ? { replyToId: preparedReply.reference.eventId } : {}),
+          ...(attachments.length ? { attachments } : {}),
+        } satisfies ChatDisplayMessage;
+        const activeOutbox = outbox.current();
+        if (!activeOutbox) throw new Error('Message outbox is unavailable');
+        await activeOutbox.enqueue(preparedEvent, {
+          id: preparedEvent.id,
+          text,
+          createdAt: preparedEvent.created_at,
+          author: roomSurface?.viewer.identity ?? {
+            pubkey: userPubkey,
+            kind: 'human',
+            name: fallbackMemberName(userPubkey),
+          },
+          presentation: 'message',
+          ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
+          ...(attachments.length ? { attachments } : {}),
+        });
+        releaseHistoryAnchorForSend(optimistic.id);
+        addMessages([optimistic]);
+        if (!sendShortcut) {
+          const draftCleared = clearSubmittedDraft();
+          if (activeComposerDraftRef.current === composerDraft) {
+            if (draftCleared) {
+              const nextInputRevision = composerInputRevisionRef.current + 1;
+              composerInputRevisionRef.current = nextInputRevision;
+              // Reconcile only the remaining draft, including typing appended during send.
+              if (!composerDraft.value) composerRef.current?.clear();
+              inputTextRef.current = composerDraft.value;
+              setComposerInputRevision(nextInputRevision);
+              if (!composerDraft.value) setComposerHeight(COMPOSER_MIN_HEIGHT);
+              const end = composerDraft.value.length;
+              setInputSelection({ start: end, end });
+            }
+            replacePendingAttachments((current) =>
+              current.filter((attachment) => !activePendingAttachments.includes(attachment)),
+            );
+            setReplyTarget((current) => (current === activeReplyTarget ? null : current));
+          }
+        }
+        await activeOutbox.attempted(preparedEvent.id);
+        const writeResult = await sendTransport.publishPreparedMessage(preparedEvent);
+        if (
+          isCorner &&
+          activeAgentTurn &&
+          writeResult.activeSteerAgentIds?.includes(activeAgentTurn.agentPubkey)
+        ) {
+          setReceivedSteer({
+            agentPubkey: activeAgentTurn.agentPubkey,
+            turnRequestId: activeAgentTurn.requestId,
+            receivedAt: Date.now(),
+          });
+        }
+        if (desktopExperience) setDesktopDeliveryState('delivered');
+        // The write ack retires the local bridge: the server has STORED the
+        // message, so "sending…" has nothing left to bridge. It used to outlive
+        // the write by up to the whole first-token wait (tens of seconds) or
+        // its own 15s bound, whichever was longer. The claimed turn's WORKING
+        // receipt lights `thinking` on its own, and this ack must not sit
+        // between them.
+        const ackedRequestId = preparedEvent.id;
+        setPendingAck((current) =>
+          current && (current.requestId === undefined || current.requestId === ackedRequestId)
+            ? null
+            : current,
+        );
+        // Advance the read mark to our own message immediately: a message we
+        // wrote must never gold the Room list while the deck's working
+        // indicator carries the live turn (room-list-row.ts: a working agent never lights the attention square).
+        void roomClient?.markRead(decodedId, preparedEvent.id).catch(() => undefined);
+        refreshSignal.signal();
+        scheduleOutboxConfirmation(preparedEvent.id);
+      } catch (err) {
+        console.warn('Send failed:', err);
+        if (desktopExperience) setDesktopDeliveryState('failed');
+        // A publish failure already gets its own explicit modal below; the
+        // local ack has nothing left to guess at and must not keep buzzing.
+        setPendingAck(null);
+        if (preparedEvent) await markOutboxFailed(preparedEvent.id);
+        const failure = publishFailurePresentation(err);
+        Modal.alert(
+          'Message not sent',
+          failure.message,
+          failure.retryable
+            ? [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Retry',
+                  onPress: () => {
+                    if (!preparedEvent || !preparedTransport) return;
+                    retryOutboxMessage(preparedEvent.id, preparedTransport);
+                  },
                 },
-              },
-            ]
-          : [{ text: 'OK' }],
-      );
-    } finally {
-      sendInFlightRef.current = false;
-      setSending(false);
-    }
-  }, [
-    activeCommunityId,
-    attachmentUploader,
-    replacePendingAttachments,
-    transport,
-    decodedId,
-    addMessages,
-    isArchived,
-    isCorner,
-    activeAgentTurn,
-    userPubkey,
-    parentChannelId,
-    roomParticipants,
-    roomAgents,
-    cacheViewerPubkey,
-    replyTarget,
-    roomRepoCandidates.length,
-    roomRepository,
-    cornerAgentPubkey,
-    agentPresences,
-    presenceNow,
-    presenceReconnectGrace,
-    agentByPubkey,
-    roomRepositoryResolved,
-    roomRepoAccessIssue,
-    roomSurface,
-    desktopExperience,
-    composerDraft,
-    releaseHistoryAnchorForSend,
-  ]);
+              ]
+            : [{ text: 'OK' }],
+        );
+      } finally {
+        sendInFlightRef.current = false;
+        setSending(false);
+      }
+    },
+    [
+      activeCommunityId,
+      attachmentUploader,
+      replacePendingAttachments,
+      transport,
+      decodedId,
+      addMessages,
+      isArchived,
+      isCorner,
+      activeAgentTurn,
+      userPubkey,
+      parentChannelId,
+      roomParticipants,
+      roomAgents,
+      cacheViewerPubkey,
+      replyTarget,
+      roomRepoCandidates.length,
+      roomRepository,
+      cornerAgentPubkey,
+      agentPresences,
+      presenceNow,
+      presenceReconnectGrace,
+      agentByPubkey,
+      roomRepositoryResolved,
+      roomRepoAccessIssue,
+      roomSurface,
+      desktopExperience,
+      composerDraft,
+      releaseHistoryAnchorForSend,
+    ],
+  );
 
   const handleCornerProposalDecision = useCallback(
     (message: ChatDisplayMessage, decision: 'open' | 'cancel') => {
@@ -4031,7 +4237,11 @@ export function BuzzChatSurface({
       if (viewerIsAgent || choiceActionId) return;
       setChoiceActionId(choiceId);
       try {
-        await monolithPhoneOperation('answerChoice', { choiceId, optionId, ...(note ? { note } : {}) });
+        await monolithPhoneOperation('answerChoice', {
+          choiceId,
+          optionId,
+          ...(note ? { note } : {}),
+        });
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
         console.warn('Choice answer failed:', err);
@@ -4058,21 +4268,24 @@ export function BuzzChatSurface({
     [choiceActionId, viewerIsAgent],
   );
 
-  const handleCreatePoll = useCallback(async (draft: PollDraft) => {
-    if (createPollBusy) return false;
-    setCreatePollBusy(true);
-    try {
-      await monolithPhoneOperation('createRoomPoll', { roomId: decodedId, ...draft });
-      setCreatePollVisible(false);
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      return true;
-    } catch (err) {
-      Modal.alert('Could not create poll', phoneOperationFailureReason(err));
-      return false;
-    } finally {
-      setCreatePollBusy(false);
-    }
-  }, [createPollBusy, decodedId]);
+  const handleCreatePoll = useCallback(
+    async (draft: PollDraft) => {
+      if (createPollBusy) return false;
+      setCreatePollBusy(true);
+      try {
+        await monolithPhoneOperation('createRoomPoll', { roomId: decodedId, ...draft });
+        setCreatePollVisible(false);
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        return true;
+      } catch (err) {
+        Modal.alert('Could not create poll', phoneOperationFailureReason(err));
+        return false;
+      } finally {
+        setCreatePollBusy(false);
+      }
+    },
+    [createPollBusy, decodedId],
+  );
 
   const openConnectorOfferCeremony = useCallback(
     (offerId: string, connectorType: string, pairedConnectorId: string, roomId = decodedId) => {
@@ -4090,10 +4303,12 @@ export function BuzzChatSurface({
     [activeCommunityId, cacheViewerPubkey, decodedId],
   );
 
-  const continueConnectorOffer = useCallback(async (offerId: string,
-    connectorType: string, pairedConnectorId: string) => {
-    openConnectorOfferCeremony(offerId, connectorType, pairedConnectorId);
-  }, [openConnectorOfferCeremony]);
+  const continueConnectorOffer = useCallback(
+    async (offerId: string, connectorType: string, pairedConnectorId: string) => {
+      openConnectorOfferCeremony(offerId, connectorType, pairedConnectorId);
+    },
+    [openConnectorOfferCeremony],
+  );
 
   /**
    * Start a connector-offer ceremony. The server holds the authority, pairs
@@ -4286,42 +4501,55 @@ export function BuzzChatSurface({
     });
   }, [activeCommunityId]);
 
-  const handleRoomLifecycle = useCallback(async (action: 'delete' | 'leave') => {
-    if (!transport || (action === 'delete' && !canManageWorkspace) || roomLifecycleBusy) return;
-    const deleting = action === 'delete';
-    setRoomLifecycleBusy(true);
-    setMembershipError(null);
-    try {
-      if (deleting) {
-        const confirmed = await Modal.confirm(`Delete ${displayRoomName}?`,
-          `This ${ROOM_LABEL} and its workspace data will be permanently deleted.`, {
-            cancelText: 'Cancel', confirmText: `Delete ${ROOM_LABEL}`, destructive: true,
-          });
-        if (!confirmed) return;
-        await transport.deleteRoom(decodedId);
-      } else {
-        const title = displayRoomName.startsWith('#') ? displayRoomName : `#${displayRoomName}`;
-        const left = await leaveRoomWithConfirmation(title, roomSurface?.leaveDeletesRoom === true,
-          (confirmDelete) => transport.leaveRoom(decodedId, confirmDelete));
-        if (!left) return;
+  const handleRoomLifecycle = useCallback(
+    async (action: 'delete' | 'leave') => {
+      if (!transport || (action === 'delete' && !canManageWorkspace) || roomLifecycleBusy) return;
+      const deleting = action === 'delete';
+      setRoomLifecycleBusy(true);
+      setMembershipError(null);
+      try {
+        if (deleting) {
+          const confirmed = await Modal.confirm(
+            `Delete ${displayRoomName}?`,
+            `This ${ROOM_LABEL} and its workspace data will be permanently deleted.`,
+            {
+              cancelText: 'Cancel',
+              confirmText: `Delete ${ROOM_LABEL}`,
+              destructive: true,
+            },
+          );
+          if (!confirmed) return;
+          await transport.deleteRoom(decodedId);
+        } else {
+          const title = displayRoomName.startsWith('#') ? displayRoomName : `#${displayRoomName}`;
+          const left = await leaveRoomWithConfirmation(
+            title,
+            roomSurface?.leaveDeletesRoom === true,
+            (confirmDelete) => transport.leaveRoom(decodedId, confirmDelete),
+          );
+          if (!left) return;
+        }
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        returnToRoomList();
+      } catch (err) {
+        setMembershipError(
+          `Could not ${deleting ? 'delete' : 'leave'} ${ROOM_LABEL}: ${String(err)}`,
+        );
+      } finally {
+        setRoomLifecycleBusy(false);
       }
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      returnToRoomList();
-    } catch (err) {
-      setMembershipError(`Could not ${deleting ? 'delete' : 'leave'} ${ROOM_LABEL}: ${String(err)}`);
-    } finally {
-      setRoomLifecycleBusy(false);
-    }
-  }, [
-    decodedId,
-    displayRoomName,
-    canManageWorkspace,
-    roomSurface?.leaveDeletesRoom,
-    returnToRoomList,
-    roomLifecycleBusy,
-    transport,
-    userPubkey,
-  ]);
+    },
+    [
+      decodedId,
+      displayRoomName,
+      canManageWorkspace,
+      roomSurface?.leaveDeletesRoom,
+      returnToRoomList,
+      roomLifecycleBusy,
+      transport,
+      userPubkey,
+    ],
+  );
 
   /** One dismissal for the Room actions sheet: the scrim, the Cancel row and
    *  the hardware back all land here, and a rename in flight holds it open. */
@@ -4384,7 +4612,8 @@ export function BuzzChatSurface({
     setOpeningRandomCorner(true);
     try {
       await openRandomNamedCorner({
-        createCorner: (roomId, title) => transport.createHumanCorner(roomId, title, undefined, undefined, true),
+        createCorner: (roomId, title) =>
+          transport.createHumanCorner(roomId, title, undefined, undefined, true),
         roomId: decodedId,
         openCorner: (cornerId, title) => {
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -4861,10 +5090,7 @@ export function BuzzChatSurface({
   );
 
   const toggleDesktopWorkPane = useCallback(() => {
-    if (
-      desktopWorkPaneRef.current.preference !== 'present' &&
-      !hasLiveDesktopCorners
-    ) {
+    if (desktopWorkPaneRef.current.preference !== 'present' && !hasLiveDesktopCorners) {
       return;
     }
     const transition = commitDesktopWorkPane({ type: 'toggle' });
@@ -4896,7 +5122,14 @@ export function BuzzChatSurface({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [closeDesktopWorkPane, desktopExperience, focusComposer, toggleDesktopWorkPane, workPaneMode, profileAgentId]);
+  }, [
+    closeDesktopWorkPane,
+    desktopExperience,
+    focusComposer,
+    toggleDesktopWorkPane,
+    workPaneMode,
+    profileAgentId,
+  ]);
 
   const handleDesktopDrop = useCallback(
     (event: React.DragEvent<HTMLElement>) => {
@@ -5259,21 +5492,35 @@ export function BuzzChatSurface({
 
       if (item.appSignIn) {
         const card = item.appSignIn;
-        const agentName = resolveAgentDisplayIdentity(card.agentId, agentByPubkey.get(card.agentId)).name;
-        return <AppSignInCard
-          message={item}
-          agentName={agentName}
-          canConnect={!viewerIsAgent && cacheViewerPubkey === card.ownerId}
-          busy={appSignInActionId === card.appId}
-          onConnect={() => {
-            if (appSignInActionId || viewerIsAgent || cacheViewerPubkey !== card.ownerId) return;
-            setAppSignInActionId(card.appId);
-            void monolithPhoneOperation('beginAppSignIn', { appId: card.appId })
-              .then(result => openAppSignIn(result.authorizationUrl, { workspaceId: activeCommunityId ?? '', viewerId: cacheViewerPubkey, roomId: decodedId, appId: card.appId }))
-              .catch(error => Modal.alert('Could not connect app', phoneOperationFailureReason(error)))
-              .finally(() => setAppSignInActionId(null));
-          }}
-        />;
+        const agentName = resolveAgentDisplayIdentity(
+          card.agentId,
+          agentByPubkey.get(card.agentId),
+        ).name;
+        return (
+          <AppSignInCard
+            message={item}
+            agentName={agentName}
+            canConnect={!viewerIsAgent && cacheViewerPubkey === card.ownerId}
+            busy={appSignInActionId === card.appId}
+            onConnect={() => {
+              if (appSignInActionId || viewerIsAgent || cacheViewerPubkey !== card.ownerId) return;
+              setAppSignInActionId(card.appId);
+              void monolithPhoneOperation('beginAppSignIn', { appId: card.appId })
+                .then((result) =>
+                  openAppSignIn(result.authorizationUrl, {
+                    workspaceId: activeCommunityId ?? '',
+                    viewerId: cacheViewerPubkey,
+                    roomId: decodedId,
+                    appId: card.appId,
+                  }),
+                )
+                .catch((error) =>
+                  Modal.alert('Could not connect app', phoneOperationFailureReason(error)),
+                )
+                .finally(() => setAppSignInActionId(null));
+            }}
+          />
+        );
       }
       if (item.connectorOffer) {
         return (
@@ -5286,7 +5533,8 @@ export function BuzzChatSurface({
             actionId={connectorOfferActionId}
             onAccept={handleAcceptConnectorOffer}
             onContinue={(offerId, connectorType, pairedConnectorId) =>
-              void continueConnectorOffer(offerId, connectorType, pairedConnectorId)}
+              void continueConnectorOffer(offerId, connectorType, pairedConnectorId)
+            }
             onOpenWorkbench={openWorkbench}
           />
         );
@@ -5451,11 +5699,7 @@ export function BuzzChatSurface({
           onForward={beginForward}
           onBookmark={handleBookmarkMessage}
           onReportIssue={handleReportMessage}
-          {...(!isCorner &&
-          !isDirectMessage &&
-          !isArchived &&
-          !viewerIsAgent &&
-          !desktopExperience
+          {...(!isCorner && !isDirectMessage && !isArchived && !viewerIsAgent && !desktopExperience
             ? { onForwardToNewCorner: handleForwardToNewCorner }
             : {})}
           {...(!isCorner &&
@@ -5790,30 +6034,27 @@ export function BuzzChatSurface({
                 />
               </TouchableOpacity>
             )}
-            {!parentChannelId &&
-              !isDirectMessage &&
-              !viewerIsAgent &&
-              !isArchived && (
-                <TouchableOpacity
-                  accessibilityLabel={`${ROOM_LABEL} actions`}
-                  accessibilityRole="button"
-                  hitSlop={HEADER_EDGE_HIT_SLOP}
-                  onPress={() => {
-                    setMembershipError(null);
-                    setRenameEditing(false);
-                    setRenameError(null);
-                    setRoomActionsVisible(true);
-                  }}
-                  style={styles.roomClusteredActionsButton}
-                  testID="room-actions-menu"
-                >
-                  <OverflowGlyph
-                    color={styles.roomActionsGlyph.color}
-                    size={HEADER_MARK_SIZE}
-                    testID="room-actions-glyph"
-                  />
-                </TouchableOpacity>
-              )}
+            {!parentChannelId && !isDirectMessage && !viewerIsAgent && !isArchived && (
+              <TouchableOpacity
+                accessibilityLabel={`${ROOM_LABEL} actions`}
+                accessibilityRole="button"
+                hitSlop={HEADER_EDGE_HIT_SLOP}
+                onPress={() => {
+                  setMembershipError(null);
+                  setRenameEditing(false);
+                  setRenameError(null);
+                  setRoomActionsVisible(true);
+                }}
+                style={styles.roomClusteredActionsButton}
+                testID="room-actions-menu"
+              >
+                <OverflowGlyph
+                  color={styles.roomActionsGlyph.color}
+                  size={HEADER_MARK_SIZE}
+                  testID="room-actions-glyph"
+                />
+              </TouchableOpacity>
+            )}
             {isArchived && (
               <View style={styles.archivedBadge}>
                 <Text style={styles.archivedBadgeText}>archived</Text>
@@ -5832,298 +6073,339 @@ export function BuzzChatSurface({
             style={styles.keyboardBody}
             behavior={Platform.OS === 'ios' ? 'padding' : 'translate-with-padding'}
           >
-          {/* What the corner is for, held under the header for its whole life:
+            {/* What the corner is for, held under the header for its whole life:
             the human's own request, inscribed rather than framed. The header
             carries a short corner name, so without this the objective survives
             only until the first message lands. */}
-          {isCorner && (
-            <CornerObjectiveLine
-              objective={cornerObjectiveText}
-              onOpenBrief={openCurrentBrief}
-              onOpenWorkflow={openCornerWorkflowRun}
-              workflow={cornerWorkflowRun}
-              workflowError={workflowError}
-              onRetryWorkflow={retryWorkflow}
-            />
-          )}
+            {isCorner && (
+              <CornerObjectiveLine
+                objective={cornerObjectiveText}
+                onOpenBrief={openCurrentBrief}
+                onOpenWorkflow={openCornerWorkflowRun}
+                workflow={cornerWorkflowRun}
+                workflowError={workflowError}
+                onRetryWorkflow={retryWorkflow}
+              />
+            )}
 
-          {/* The corner's PR state, inscribed above the transcript: one line
+            {/* The corner's PR state, inscribed above the transcript: one line
             that links to GitHub, where review and merge happen. */}
-          {isCorner && (
-            <CornerStatusLine
-              lifecycle={roomSurface?.cornerLifecycle}
-              archived={isArchived}
-              onOpenPullRequest={(url) => {
-                void openExternalUrl(url).catch(() => {
-                  Modal.alert('Could not open pull request', 'Open the PR from GitHub instead.');
-                });
-              }}
-            />
-          )}
-
-          <View style={styles.transcriptViewport}>
-          {desktopTranscript ? (
-            // A plain scrollable View over real DOM — no FlatList/
-            // VirtualizedList. See `shouldFollowDesktopTail` in
-            // `buzz/room-scroll-follow.ts` and proof/desktop-append-overlap/
-            // NOTES.md for why RN Web's own list machinery raced the browser's
-            // real layout on this surface.
-            <View
-              testID="chat-messages"
-              ref={setDesktopScrollNode as unknown as React.Ref<View>}
-              {...{ onScroll: handleDesktopScroll }}
-              style={[styles.messageList, styles.desktopScroll]}
-            >
-              <View
-                ref={setDesktopContentNode as unknown as React.Ref<View>}
-                style={[
-                  styles.messageListContent,
-                  styles.messageListContentDesktop,
-                  transcriptMessages.length === 0 && styles.messageListContentEmpty,
-                ]}
-              >
-                {transcriptMessages.length === 0 ? (
-                  <View style={styles.emptyState}>
-                    <EmptyLedgerState
-                      variant={emptyLedgerVariant}
-                      name={isDirectMessage ? displayRoomName : isCorner ? undefined : roomName}
-                      objective={isCorner ? cornerObjectiveText : undefined}
-                      onPress={focusComposer}
-                      starterPrompts={starterPrompts}
-                      starterIntro={starterIntro}
-                    />
-                  </View>
-                ) : (
-                  <>
-                    {transcriptHistoryLine}
-                    {transcriptMessages.map((item) => (
-                      <View
-                        key={item.id}
-                        {...{ dataSet: { rowId: item.id } }}
-                        ref={getDesktopRowRefCallback(item.id) as unknown as React.Ref<View>}
-                      >
-                        {renderItem({ item })}
-                      </View>
-                    ))}
-                  </>
-                )}
-              </View>
-            </View>
-          ) : (
-          <FlatList
-            testID="chat-messages"
-            ref={flatListRef}
-            inverted={transcriptMessages.length > 0}
-            data={transcriptMessages}
-            keyExtractor={(item: ChatDisplayMessage) => item.id}
-            style={styles.messageList}
-            contentContainerStyle={[
-              styles.messageListContent,
-              transcriptMessages.length === 0 && styles.messageListContentEmpty,
-              // Inverted list: paddingTop is the visual tail. Always the
-              // ordinary speaker-change margin plus the fixed composer-top
-              // gap — the thinking line is absolute and paints over that
-              // invariant tail rather than changing it when mounted.
-              !isArchived && {
-                paddingTop: phoneTranscriptTailPadding({
-                  turnChromeVisible: Boolean(composerAck || settledTurn),
-                }),
-              },
-            ]}
-            maintainVisibleContentPosition={{
-              // Native records the first eligible visible child's real
-              // frame and compensates by its measured movement. That
-              // preserves variable-height history without getItemLayout,
-              // eager rendering, or an estimated offset. Index 0 is
-              // excluded because optimistic settlement and streams can
-              // replace it in place.
-              minIndexForVisible: 1,
-              // Native offset 0 is the visual bottom.
-              autoscrollToTopThreshold: 50,
-            }}
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode={transcriptKeyboardDismissMode(Platform.OS)}
-            // The transcript scrubber below is this list's scroll bar.
-            showsVerticalScrollIndicator={false}
-            onScroll={(event) => {
-              observePhoneTailOffset(event.nativeEvent.contentOffset.y);
-              transcriptScrubber.observeScroll(event.nativeEvent);
-            }}
-            // One frame, the list's own default. A wider window leaves the
-            // viewability report (which settles the badge and the unread
-            // line) on an offset the list has already scrolled past.
-            scrollEventThrottle={16}
-            onViewableItemsChanged={observeVisibleTranscriptMessages}
-            onScrollBeginDrag={() => {
-              dragEndSequenceRef.current += 1;
-              userDraggingRef.current = true;
-              allowOlderHistoryRef.current = true;
-              // The one signal a message-source landing can trust as a real
-              // touch: this never fires for a programmatic scrollToIndex/
-              // scrollToOffset, only an actual drag gesture.
-              messageSourceLandingAbandonedRef.current = true;
-            }}
-            onScrollEndDrag={(event) => {
-              // Drag-end precedes momentum-begin. Missing optional velocity is
-              // not proof that the gesture stopped: keep the guard armed for
-              // the event turn, so momentum-begin can claim it before a
-              // pending boundary landing resumes.
-              const sequence = ++dragEndSequenceRef.current;
-              const velocity = event.nativeEvent.velocity?.y;
-              if (velocity !== undefined) {
-                const hasMomentum = Math.abs(velocity) > 0.01;
-                userDraggingRef.current = hasMomentum;
-                if (!hasMomentum) {
-                  // No momentum follows, so this is where the list rests. With
-                  // momentum it is an in-flight offset; momentum-end rests it.
-                  observePhoneTailOffset(event.nativeEvent.contentOffset.y);
-                  resumePendingNewMessageLanding();
-                }
-                return;
-              }
-              userDraggingRef.current = true;
-              scheduleAnimationFrame(() => {
-                if (dragEndSequenceRef.current !== sequence) return;
-                userDraggingRef.current = false;
-                resumePendingNewMessageLanding();
-              });
-            }}
-            onMomentumScrollBegin={() => {
-              dragEndSequenceRef.current += 1;
-              userDraggingRef.current = true;
-              allowOlderHistoryRef.current = true;
-            }}
-            onMomentumScrollEnd={(event) => {
-              observePhoneTailOffset(event.nativeEvent.contentOffset.y);
-              dragEndSequenceRef.current += 1;
-              userDraggingRef.current = false;
-              resumePendingNewMessageLanding();
-            }}
-            onLayout={(event) => phoneUnderfill.observeListHeight(event.nativeEvent.layout.height)}
-            onContentSizeChange={(_width, height) => {
-              transcriptScrubber.observeContentSize(height);
-              phoneUnderfill.observeContentHeight(height);
-            }}
-            renderItem={renderItem}
-            onScrollToIndexFailed={({ averageItemLength, highestMeasuredFrameIndex }) => {
-              const notification = pendingNotificationLandingRef.current;
-              if (notification && !userDraggingRef.current) {
-                const index = transcriptMessagesRef.current.findIndex(
-                  (message) =>
-                    message.id === notification.messageId ||
-                    message.relayId === notification.messageId,
-                );
-                if (index >= 0 && notification.attempts < 8) {
-                  notification.attempts += 1;
-                  // Native has not measured the distant row yet. Bring its
-                  // window into range, then resolve the durable id again in
-                  // case a newer message shifted the inverted list.
-                  flatListRef.current?.scrollToOffset({
-                    offset: averageItemLength * index,
-                    animated: false,
+            {isCorner && (
+              <CornerStatusLine
+                lifecycle={roomSurface?.cornerLifecycle}
+                archived={isArchived}
+                onOpenPullRequest={(url) => {
+                  void openExternalUrl(url).catch(() => {
+                    Modal.alert('Could not open pull request', 'Open the PR from GitHub instead.');
                   });
-                  setTimeout(() => {
-                    if (pendingNotificationLandingRef.current !== notification) return;
-                    const currentIndex = transcriptMessagesRef.current.findIndex(
-                      (message) =>
-                        message.id === notification.messageId ||
-                        message.relayId === notification.messageId,
-                    );
-                    if (currentIndex >= 0 && !userDraggingRef.current) {
-                      flatListRef.current?.scrollToIndex({
-                        index: currentIndex,
-                        viewPosition: 0.5,
-                        animated: false,
-                      });
-                    }
-                  }, 100);
-                  return;
-                }
-              }
-              const pending = pendingNewMessageLandingRef.current;
-              if (!pending || userDraggingRef.current) return;
-              const currentIndex = boundaryRowIndex(
-                transcriptMessagesRef.current,
-                pending.boundaryId,
-              );
-              if (currentIndex < 0) return;
-              // Variable-height ledger rows cannot provide getItemLayout.
-              // Estimate near the CURRENT boundary, let that window measure,
-              // then resolve the durable id again before retrying.
-              flatListRef.current?.scrollToOffset({
-                offset: averageItemLength * currentIndex,
-                animated: false,
-              });
-              setTimeout(() => {
-                const current = pendingNewMessageLandingRef.current;
-                if (!current || userDraggingRef.current) return;
-                landAtNewMessageBoundary(
-                  current.boundaryId,
-                  current.acknowledgeQueue,
-                );
-              }, 50);
-            }}
-            onEndReached={loadOlderTranscriptIfReaderAsked}
-            onEndReachedThreshold={0.5}
-            ListEmptyComponent={
-              <View style={styles.emptyState}>
-                <EmptyLedgerState
-                  variant={emptyLedgerVariant}
-                  name={isDirectMessage ? displayRoomName : isCorner ? undefined : roomName}
-                  objective={isCorner ? cornerObjectiveText : undefined}
-                  onPress={focusComposer}
-                  starterPrompts={starterPrompts}
-                  starterIntro={starterIntro}
-                />
-              </View>
-            }
-            // Inverted native list: the header is the newest end of the transcript.
-            ListHeaderComponent={
-              starPrompt.prompt ? (
-                <View style={styles.starPrompt}>
-                  <StarPromptCard
-                    prompt={starPrompt.prompt}
-                    busy={starPrompt.busy}
-                    onAnswer={(action) => void starPrompt.answer(action)}
-                  />
-                </View>
-              ) : null
-            }
-            // Inverted native list: the footer is the visual top.
-            ListFooterComponent={transcriptHistoryLine}
-          />
-          )}
-          {!desktopTranscript && (
-            <TranscriptScrubber scrubber={transcriptScrubber} onScrubTo={scrubTranscriptTo} />
-          )}
-          <RoomCatchUpControls
-            corner={isCorner}
-            badgeCount={newMessageBadgeCount}
-            discVisible={newestJumpDiscShown}
-            onJumpToNewest={landAtNewestMessage}
-          />
-          {!isCorner && (
-            <RoomCatchUpSheet
-              agents={catchUpAgents}
-              canDraft={!inputText.trim() && pendingAttachments.length === 0}
-              onAskAgent={draftCatchUpRequest}
-              onClose={closeCatchUpSheet}
-              report={catchUpReport}
-              visible={catchUpSheetVisible}
-            />
-          )}
-          </View>
+                }}
+              />
+            )}
 
-          {/* P2: Archived channels are read-only */}
-          {isArchived ? (
-            <View style={[styles.archivedInputBar, readOnlyFooterInset]}>
-              <Text style={[styles.archivedInputText, isCorner && styles.cornerArchivedInputText]}>
-                {parentChannelId ? 'Corner' : ROOM_LABEL} archived (read-only)
-              </Text>
+            <View style={styles.transcriptViewport}>
+              {desktopTranscript ? (
+                // A plain scrollable View over real DOM — no FlatList/
+                // VirtualizedList. See `shouldFollowDesktopTail` in
+                // `buzz/room-scroll-follow.ts` and proof/desktop-append-overlap/
+                // NOTES.md for why RN Web's own list machinery raced the browser's
+                // real layout on this surface.
+                <View
+                  testID="chat-messages"
+                  ref={setDesktopScrollNode as unknown as React.Ref<View>}
+                  {...{ onScroll: handleDesktopScroll }}
+                  style={[styles.messageList, styles.desktopScroll]}
+                >
+                  <View
+                    ref={setDesktopContentNode as unknown as React.Ref<View>}
+                    style={[
+                      styles.messageListContent,
+                      styles.messageListContentDesktop,
+                      transcriptMessages.length === 0 && styles.messageListContentEmpty,
+                    ]}
+                  >
+                    {transcriptMessages.length === 0 ? (
+                      <View style={styles.emptyState}>
+                        <EmptyLedgerState
+                          variant={emptyLedgerVariant}
+                          name={isDirectMessage ? displayRoomName : isCorner ? undefined : roomName}
+                          objective={isCorner ? cornerObjectiveText : undefined}
+                          onPress={focusComposer}
+                          starterPrompts={starterPrompts}
+                          starterIntro={starterIntro}
+                        />
+                      </View>
+                    ) : (
+                      <>
+                        {transcriptHistoryLine}
+                        {transcriptMessages.map((item) => (
+                          <View
+                            key={item.id}
+                            {...{ dataSet: { rowId: item.id } }}
+                            ref={getDesktopRowRefCallback(item.id) as unknown as React.Ref<View>}
+                          >
+                            {renderItem({ item })}
+                          </View>
+                        ))}
+                        {transcriptForwardLine}
+                      </>
+                    )}
+                  </View>
+                </View>
+              ) : (
+                <FlatList
+                  testID="chat-messages"
+                  ref={flatListRef}
+                  inverted={transcriptMessages.length > 0}
+                  data={transcriptMessages}
+                  keyExtractor={(item: ChatDisplayMessage) => item.id}
+                  style={styles.messageList}
+                  contentContainerStyle={[
+                    styles.messageListContent,
+                    transcriptMessages.length === 0 && styles.messageListContentEmpty,
+                    // Inverted list: paddingTop is the visual tail. Always the
+                    // ordinary speaker-change margin plus the fixed composer-top
+                    // gap — the thinking line is absolute and paints over that
+                    // invariant tail rather than changing it when mounted.
+                    !isArchived && {
+                      paddingTop: phoneTranscriptTailPadding({
+                        turnChromeVisible: Boolean(composerAck || settledTurn),
+                      }),
+                    },
+                  ]}
+                  maintainVisibleContentPosition={{
+                    // Native records the first eligible visible child's real
+                    // frame and compensates by its measured movement. That
+                    // preserves variable-height history without getItemLayout,
+                    // eager rendering, or an estimated offset. Index 0 is
+                    // excluded because optimistic settlement and streams can
+                    // replace it in place.
+                    minIndexForVisible: 1,
+                    // Native offset 0 is the visual bottom.
+                    autoscrollToTopThreshold: 50,
+                  }}
+                  keyboardShouldPersistTaps="handled"
+                  keyboardDismissMode={transcriptKeyboardDismissMode(Platform.OS)}
+                  // The transcript scrubber below is this list's scroll bar.
+                  showsVerticalScrollIndicator={false}
+                  onScroll={(event) => {
+                    observePhoneTailOffset(event.nativeEvent.contentOffset.y);
+                    transcriptScrubber.observeScroll(event.nativeEvent);
+                    if (
+                      anchoredSegmentActive &&
+                      event.nativeEvent.contentOffset.y <= TAIL_PIN_THRESHOLD &&
+                      locatingMessageSourceIdRef.current === null
+                    )
+                      loadNewerAround();
+                  }}
+                  // One frame, the list's own default. A wider window leaves the
+                  // viewability report (which settles the badge and the unread
+                  // line) on an offset the list has already scrolled past.
+                  scrollEventThrottle={16}
+                  onViewableItemsChanged={observeVisibleTranscriptMessages}
+                  onScrollBeginDrag={() => {
+                    dragEndSequenceRef.current += 1;
+                    userDraggingRef.current = true;
+                    allowOlderHistoryRef.current = true;
+                    // The one signal a message-source landing can trust as a real
+                    // touch: this never fires for a programmatic scrollToIndex/
+                    // scrollToOffset, only an actual drag gesture.
+                    messageSourceLandingAbandonedRef.current = true;
+                    abandonAround();
+                    if (locatingMessageSourceIdRef.current !== null) {
+                      locatingMessageSourceIdRef.current = null;
+                      setIsLocatingMessageSource(false);
+                    }
+                  }}
+                  onScrollEndDrag={(event) => {
+                    // Drag-end precedes momentum-begin. Missing optional velocity is
+                    // not proof that the gesture stopped: keep the guard armed for
+                    // the event turn, so momentum-begin can claim it before a
+                    // pending boundary landing resumes.
+                    const sequence = ++dragEndSequenceRef.current;
+                    const velocity = event.nativeEvent.velocity?.y;
+                    if (velocity !== undefined) {
+                      const hasMomentum = Math.abs(velocity) > 0.01;
+                      userDraggingRef.current = hasMomentum;
+                      if (!hasMomentum) {
+                        // No momentum follows, so this is where the list rests. With
+                        // momentum it is an in-flight offset; momentum-end rests it.
+                        observePhoneTailOffset(event.nativeEvent.contentOffset.y);
+                        resumePendingNewMessageLanding();
+                      }
+                      return;
+                    }
+                    userDraggingRef.current = true;
+                    scheduleAnimationFrame(() => {
+                      if (dragEndSequenceRef.current !== sequence) return;
+                      userDraggingRef.current = false;
+                      resumePendingNewMessageLanding();
+                    });
+                  }}
+                  onMomentumScrollBegin={() => {
+                    dragEndSequenceRef.current += 1;
+                    userDraggingRef.current = true;
+                    allowOlderHistoryRef.current = true;
+                  }}
+                  onMomentumScrollEnd={(event) => {
+                    observePhoneTailOffset(event.nativeEvent.contentOffset.y);
+                    dragEndSequenceRef.current += 1;
+                    userDraggingRef.current = false;
+                    resumePendingNewMessageLanding();
+                  }}
+                  onLayout={(event) =>
+                    phoneUnderfill.observeListHeight(event.nativeEvent.layout.height)
+                  }
+                  onContentSizeChange={(_width, height) => {
+                    transcriptScrubber.observeContentSize(height);
+                    phoneUnderfill.observeContentHeight(height);
+                  }}
+                  renderItem={renderItem}
+                  onScrollToIndexFailed={({ averageItemLength, highestMeasuredFrameIndex }) => {
+                    const notification = pendingNotificationLandingRef.current;
+                    if (notification && !userDraggingRef.current) {
+                      const index = transcriptMessagesRef.current.findIndex(
+                        (message) =>
+                          message.id === notification.messageId ||
+                          message.relayId === notification.messageId,
+                      );
+                      if (index >= 0 && notification.attempts < 8) {
+                        notification.attempts += 1;
+                        // Native has not measured the distant row yet. Bring its
+                        // window into range, then resolve the durable id again in
+                        // case a newer message shifted the inverted list.
+                        flatListRef.current?.scrollToOffset({
+                          offset: averageItemLength * index,
+                          animated: false,
+                        });
+                        setTimeout(() => {
+                          if (pendingNotificationLandingRef.current !== notification) return;
+                          const currentIndex = transcriptMessagesRef.current.findIndex(
+                            (message) =>
+                              message.id === notification.messageId ||
+                              message.relayId === notification.messageId,
+                          );
+                          if (currentIndex >= 0 && !userDraggingRef.current) {
+                            flatListRef.current?.scrollToIndex({
+                              index: currentIndex,
+                              viewPosition: 0.5,
+                              animated: false,
+                            });
+                          }
+                        }, 100);
+                        return;
+                      }
+                    }
+                    if (
+                      notification &&
+                      shouldReleaseMessageSourceCover({
+                        abandoned: messageSourceLandingAbandonedRef.current,
+                        retryAttempts: notification.attempts,
+                      })
+                    ) {
+                      pendingNotificationLandingRef.current = null;
+                      if (locatingMessageSourceIdRef.current === notification.messageId) {
+                        locatingMessageSourceIdRef.current = null;
+                        setIsLocatingMessageSource(false);
+                      }
+                    }
+                    const pending = pendingNewMessageLandingRef.current;
+                    if (!pending || userDraggingRef.current) return;
+                    const currentIndex = boundaryRowIndex(
+                      transcriptMessagesRef.current,
+                      pending.boundaryId,
+                    );
+                    if (currentIndex < 0) return;
+                    // Variable-height ledger rows cannot provide getItemLayout.
+                    // Estimate near the CURRENT boundary, let that window measure,
+                    // then resolve the durable id again before retrying.
+                    flatListRef.current?.scrollToOffset({
+                      offset: averageItemLength * currentIndex,
+                      animated: false,
+                    });
+                    setTimeout(() => {
+                      const current = pendingNewMessageLandingRef.current;
+                      if (!current || userDraggingRef.current) return;
+                      landAtNewMessageBoundary(current.boundaryId, current.acknowledgeQueue);
+                    }, 50);
+                  }}
+                  onEndReached={loadOlderTranscriptIfReaderAsked}
+                  onEndReachedThreshold={0.5}
+                  ListEmptyComponent={
+                    <View style={styles.emptyState}>
+                      <EmptyLedgerState
+                        variant={emptyLedgerVariant}
+                        name={isDirectMessage ? displayRoomName : isCorner ? undefined : roomName}
+                        objective={isCorner ? cornerObjectiveText : undefined}
+                        onPress={focusComposer}
+                        starterPrompts={starterPrompts}
+                        starterIntro={starterIntro}
+                      />
+                    </View>
+                  }
+                  // Inverted native list: the header is the newest end of the transcript.
+                  ListHeaderComponent={
+                    starPrompt.prompt || transcriptForwardLine ? (
+                      <View>
+                        {transcriptForwardLine}
+                        {starPrompt.prompt ? (
+                          <View style={styles.starPrompt}>
+                            <StarPromptCard
+                              prompt={starPrompt.prompt}
+                              busy={starPrompt.busy}
+                              onAnswer={(action) => void starPrompt.answer(action)}
+                            />
+                          </View>
+                        ) : null}
+                      </View>
+                    ) : null
+                  }
+                  // Inverted native list: the footer is the visual top.
+                  ListFooterComponent={transcriptHistoryLine}
+                />
+              )}
+              {!desktopTranscript && (
+                <TranscriptScrubber scrubber={transcriptScrubber} onScrubTo={scrubTranscriptTo} />
+              )}
+              {!desktopTranscript && isLocatingMessageSource && (
+                <View
+                  pointerEvents="none"
+                  style={styles.messageSourceLocating}
+                  testID="message-source-locating"
+                >
+                  <SurfaceGlyphLoader compact testID="message-source-locating-glyph" />
+                  <Text style={styles.messageSourceLocatingText}>Locating message…</Text>
+                </View>
+              )}
+              <RoomCatchUpControls
+                corner={isCorner}
+                badgeCount={newMessageBadgeCount}
+                discVisible={newestJumpDiscShown}
+                onJumpToNewest={landAtNewestMessage}
+              />
+              {!isCorner && (
+                <RoomCatchUpSheet
+                  agents={catchUpAgents}
+                  canDraft={!inputText.trim() && pendingAttachments.length === 0}
+                  onAskAgent={draftCatchUpRequest}
+                  onClose={closeCatchUpSheet}
+                  report={catchUpReport}
+                  visible={catchUpSheetVisible}
+                />
+              )}
             </View>
-          ) : (
-            <View style={styles.bottomChromeStack} testID="room-bottom-chrome">
-              {/* Phone turn chrome paints over the transcript's own bottom
+
+            {/* P2: Archived channels are read-only */}
+            {isArchived ? (
+              <View style={[styles.archivedInputBar, readOnlyFooterInset]}>
+                <Text
+                  style={[styles.archivedInputText, isCorner && styles.cornerArchivedInputText]}
+                >
+                  {parentChannelId ? 'Corner' : ROOM_LABEL} archived (read-only)
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.bottomChromeStack} testID="room-bottom-chrome">
+                {/* Phone turn chrome paints over the transcript's own bottom
                 margin: `TurnBandSlot` is absolute (`room-bottom-chrome`),
                 anchored to this stack's top edge, so it takes no height from
                 the list whether or not an agent is working and cannot cover
@@ -6133,315 +6415,347 @@ export function BuzzChatSurface({
                 whether or not a line is showing; `pointerEvents="box-none"`
                 lets the transcript keep every touch the line is not using.
                 Desktop keeps the slot inside inputBar. */}
-              {!desktopExperience && (
-                <TurnBandSlot testID="hanging-turn-chrome">
-                  {composerAck ? (
-                    <TurnProgressLine
-                      label={composerAck.label}
-                      startedAt={composerAck.startedAt}
-                      received={composerAck.received}
-                      stopping={stoppingThisTurn}
-                      onStop={
-                        composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined
-                      }
-                      testID="turn-progress-line"
-                    />
-                  ) : settledTurn ? (
-                    <TurnSettledLine line={settledTurn.line} testID="turn-settled-line" />
-                  ) : null}
-                </TurnBandSlot>
-              )}
-              {/* No pinned corner line lives here. A Room holds many corners at
+                {!desktopExperience && (
+                  <TurnBandSlot testID="hanging-turn-chrome">
+                    {composerAck ? (
+                      <TurnProgressLine
+                        label={composerAck.label}
+                        startedAt={composerAck.startedAt}
+                        received={composerAck.received}
+                        stopping={stoppingThisTurn}
+                        onStop={
+                          composerAck.stop
+                            ? () => void handleStopTurn(composerAck.stop!)
+                            : undefined
+                        }
+                        testID="turn-progress-line"
+                      />
+                    ) : settledTurn ? (
+                      <TurnSettledLine line={settledTurn.line} testID="turn-settled-line" />
+                    ) : null}
+                  </TurnBandSlot>
+                )}
+                {/* No pinned corner line lives here. A Room holds many corners at
                 once, so one line above the composer could only ever name one of
                 them, and it sat between the reader and the field they were
                 typing in. The Room's corners door in the header is the one way
                 in; the corner's own state is read there, in the corners list,
                 and on the Room-list row. */}
-              {isReadOnlyDirectMessage ? (
-                <View style={[styles.archivedInputBar, readOnlyFooterInset]}>
-                  <Text style={styles.archivedInputText}>
-                    Announcements only · you can't reply here
-                  </Text>
-                </View>
-              ) : (
-            <Animated.View style={[styles.inputBar, composerBottomInsetStyle]}>
-              {slashMenuVisible &&
-                (() => {
-                  const mentionAgent = mentionSlashAgentPubkey
-                    ? agentByPubkey.get(mentionSlashAgentPubkey)
-                    : undefined;
-                  const mentionAgentName = mentionSlashAgentPubkey
-                    ? resolveAgentDisplayIdentity(mentionSlashAgentPubkey, mentionAgent).name
-                    : undefined;
-                  return (
-                    <SlashVerbPicker
-                      verbs={slashVerbs}
-                      query={currentSlashQuery ?? mentionSlash?.query ?? ''}
-                      highlightedIndex={highlightedSlashVerbIndex}
-                      onDismiss={dismissSlashMenu}
-                      onSelect={runSlashVerb}
-                      commands={mentionAgentCommands}
-                      apps={cornerAppCommands}
-                      agentName={mentionAgentName}
-                      agentLacksCommands={mentionAgentLacksCommands}
-                      onSelectCommand={selectAgentCommand}
-                      onSelectApp={openCornerApp}
-                    />
-                  );
-                })()}
-              {mentionMenuVisible && (
-                <MentionSuggestionMenu
-                  highlightedIndex={highlightedMentionIndex}
-                  keyboardOpen={keyboardHeight > 0}
-                  matches={mentionSuggestions.matches}
-                  onSelect={selectMention}
-                  overflow={mentionSuggestions.overflow}
-                  personAvatar={(pubkey) => personProfileByPubkey.get(pubkey)?.avatar}
-                />
-              )}
-              {cornerOpenRepoPrompt && (
-                <View style={styles.repoPromptBanner} testID="corner-open-repo-prompt">
-                  <Text style={styles.repoPromptTitle}>
-                    {roomRepoAccessIssue
-                      ? roomRepoAccessIssue.reason === 'revoked'
-                        ? 'ACCESS TO THIS REPO WAS REVOKED'
-                        : 'THIS REPO ISN’T IN THE BEELINE INSTALLATION'
-                      : `THIS ${ROOM_LABEL.toUpperCase()} ISN’T LINKED TO A REPO`}
-                  </Text>
-                  <Text style={styles.repoPromptHint}>
-                    {roomRepoAccessIssue
-                      ? `${roomRepoAccessIssue.fullName} must be reconnected before a ${CORNER_LABEL} can open.`
-                      : `Pick one to open a ${CORNER_LABEL}.`}
-                  </Text>
-                  {roomRepoAccessIssue && (
-                    <TouchableOpacity
-                      accessibilityRole="button"
-                      onPress={() => void handleReconnectRoomRepository()}
-                      style={styles.repoPromptConnect}
-                      testID="corner-open-repo-connect"
-                    >
-                      <Text style={styles.repoPromptConnectText}>
-                        {roomRepoAccessIssue.reason === 'not_granted'
-                          ? 'Add this repo to the Beeline installation →'
-                          : `Connect ${roomRepoAccessIssue.fullName.split('/')[0]} →`}
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-                  {canManageWorkspace ? (
-                    <RepoPicker
-                      draftContext={decodedId}
-                      busy={roomRepoBusy}
-                      candidates={roomRepoCandidates}
-                      installations={githubInstallations}
-                      currentKey={null}
-                      error={roomRepoError}
-                      notice={roomRepoNotice}
-                      ownerGrant={ownerGrant}
-                      onAddAccount={() => void handleAddGitHubAccount()}
-                      onAskOwnerGrant={(fullName) => void handleAskOwnerGrant(fullName)}
-                      onCreateRepository={handleCreateGitHubRepository}
-                      onManageInstallation={(installation) =>
-                        void handleManageGitHubInstallation(installation)
-                      }
-                      onSelect={handleSelectRoomRepoCandidate}
-                      testIDPrefix="corner-open-repo-picker"
-                    />
-                  ) : (
-                    <Text style={styles.repoPromptHint}>Ask a {ROOM_LABEL} admin to link one.</Text>
-                  )}
-                  <TouchableOpacity
-                    accessibilityLabel="Dismiss"
-                    accessibilityRole="button"
-                    onPress={() => setCornerOpenRepoPrompt(false)}
-                    style={styles.repoPromptDismiss}
-                    testID="corner-open-repo-prompt-dismiss"
-                  >
-                    <Text style={styles.repoPromptDismissText}>DISMISS</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-              {desktopExperience ? (
-                <View
-                  style={styles.desktopStatusSlot}
-                  accessibilityLiveRegion="polite"
-                  testID="desktop-message-status"
-                >
-                  {desktopDeliveryState === 'sending' ? (
-                    <Text style={styles.desktopStatusText}>SENDING…</Text>
-                  ) : composerAck ? (
-                    <TurnProgressLine
-                      label={composerAck.label}
-                      startedAt={composerAck.startedAt}
-                      received={composerAck.received}
-                      stopping={stoppingThisTurn}
-                      onStop={
-                        composerAck.stop ? () => void handleStopTurn(composerAck.stop!) : undefined
-                      }
-                      testID="turn-progress-line"
-                    />
-                  ) : desktopDeliveryState ? (
-                    <Text
-                      style={[
-                        styles.desktopStatusText,
-                        desktopDeliveryState === 'failed' && styles.desktopStatusFailed,
-                      ]}
-                    >
-                      {desktopDeliveryState === 'delivered'
-                        ? 'DELIVERED'
-                        : 'MESSAGE FAILED · RETRY FROM THE MESSAGE'}
+                {isReadOnlyDirectMessage ? (
+                  <View style={[styles.archivedInputBar, readOnlyFooterInset]}>
+                    <Text style={styles.archivedInputText}>
+                      Announcements only · you can't reply here
                     </Text>
-                  ) : settledTurn ? (
-                    <TurnSettledLine line={settledTurn.line} testID="turn-settled-line" />
-                  ) : null}
-                </View>
-              ) : null}
-              <ConversationComposer
-                onStop={composerAck?.stop ? () => handleStopTurn(composerAck.stop!) : undefined}
-                inputRef={composerRef}
-                reply={
-                  replyTarget
-                    ? {
-                        handle: replyTarget.authorHandle ?? replyTarget.authorName,
-                        preview: replyTarget.preview,
+                  </View>
+                ) : (
+                  <Animated.View style={[styles.inputBar, composerBottomInsetStyle]}>
+                    {slashMenuVisible &&
+                      (() => {
+                        const mentionAgent = mentionSlashAgentPubkey
+                          ? agentByPubkey.get(mentionSlashAgentPubkey)
+                          : undefined;
+                        const mentionAgentName = mentionSlashAgentPubkey
+                          ? resolveAgentDisplayIdentity(mentionSlashAgentPubkey, mentionAgent).name
+                          : undefined;
+                        return (
+                          <SlashVerbPicker
+                            verbs={slashVerbs}
+                            query={currentSlashQuery ?? mentionSlash?.query ?? ''}
+                            highlightedIndex={highlightedSlashVerbIndex}
+                            onDismiss={dismissSlashMenu}
+                            onSelect={runSlashVerb}
+                            commands={mentionAgentCommands}
+                            apps={cornerAppCommands}
+                            agentName={mentionAgentName}
+                            agentLacksCommands={mentionAgentLacksCommands}
+                            onSelectCommand={selectAgentCommand}
+                            onSelectApp={openCornerApp}
+                          />
+                        );
+                      })()}
+                    {mentionMenuVisible && (
+                      <MentionSuggestionMenu
+                        highlightedIndex={highlightedMentionIndex}
+                        keyboardOpen={keyboardHeight > 0}
+                        matches={mentionSuggestions.matches}
+                        onSelect={selectMention}
+                        overflow={mentionSuggestions.overflow}
+                        personAvatar={(pubkey) => personProfileByPubkey.get(pubkey)?.avatar}
+                      />
+                    )}
+                    {cornerOpenRepoPrompt && (
+                      <View style={styles.repoPromptBanner} testID="corner-open-repo-prompt">
+                        <Text style={styles.repoPromptTitle}>
+                          {roomRepoAccessIssue
+                            ? roomRepoAccessIssue.reason === 'revoked'
+                              ? 'ACCESS TO THIS REPO WAS REVOKED'
+                              : 'THIS REPO ISN’T IN THE BEELINE INSTALLATION'
+                            : `THIS ${ROOM_LABEL.toUpperCase()} ISN’T LINKED TO A REPO`}
+                        </Text>
+                        <Text style={styles.repoPromptHint}>
+                          {roomRepoAccessIssue
+                            ? `${roomRepoAccessIssue.fullName} must be reconnected before a ${CORNER_LABEL} can open.`
+                            : `Pick one to open a ${CORNER_LABEL}.`}
+                        </Text>
+                        {roomRepoAccessIssue && (
+                          <TouchableOpacity
+                            accessibilityRole="button"
+                            onPress={() => void handleReconnectRoomRepository()}
+                            style={styles.repoPromptConnect}
+                            testID="corner-open-repo-connect"
+                          >
+                            <Text style={styles.repoPromptConnectText}>
+                              {roomRepoAccessIssue.reason === 'not_granted'
+                                ? 'Add this repo to the Beeline installation →'
+                                : `Connect ${roomRepoAccessIssue.fullName.split('/')[0]} →`}
+                            </Text>
+                          </TouchableOpacity>
+                        )}
+                        {canManageWorkspace ? (
+                          <RepoPicker
+                            draftContext={decodedId}
+                            busy={roomRepoBusy}
+                            candidates={roomRepoCandidates}
+                            installations={githubInstallations}
+                            currentKey={null}
+                            error={roomRepoError}
+                            notice={roomRepoNotice}
+                            ownerGrant={ownerGrant}
+                            onAddAccount={() => void handleAddGitHubAccount()}
+                            onAskOwnerGrant={(fullName) => void handleAskOwnerGrant(fullName)}
+                            onCreateRepository={handleCreateGitHubRepository}
+                            onManageInstallation={(installation) =>
+                              void handleManageGitHubInstallation(installation)
+                            }
+                            onSelect={handleSelectRoomRepoCandidate}
+                            testIDPrefix="corner-open-repo-picker"
+                          />
+                        ) : (
+                          <Text style={styles.repoPromptHint}>
+                            Ask a {ROOM_LABEL} admin to link one.
+                          </Text>
+                        )}
+                        <TouchableOpacity
+                          accessibilityLabel="Dismiss"
+                          accessibilityRole="button"
+                          onPress={() => setCornerOpenRepoPrompt(false)}
+                          style={styles.repoPromptDismiss}
+                          testID="corner-open-repo-prompt-dismiss"
+                        >
+                          <Text style={styles.repoPromptDismissText}>DISMISS</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                    {desktopExperience ? (
+                      <View
+                        style={styles.desktopStatusSlot}
+                        accessibilityLiveRegion="polite"
+                        testID="desktop-message-status"
+                      >
+                        {desktopDeliveryState === 'sending' ? (
+                          <Text style={styles.desktopStatusText}>SENDING…</Text>
+                        ) : composerAck ? (
+                          <TurnProgressLine
+                            label={composerAck.label}
+                            startedAt={composerAck.startedAt}
+                            received={composerAck.received}
+                            stopping={stoppingThisTurn}
+                            onStop={
+                              composerAck.stop
+                                ? () => void handleStopTurn(composerAck.stop!)
+                                : undefined
+                            }
+                            testID="turn-progress-line"
+                          />
+                        ) : desktopDeliveryState ? (
+                          <Text
+                            style={[
+                              styles.desktopStatusText,
+                              desktopDeliveryState === 'failed' && styles.desktopStatusFailed,
+                            ]}
+                          >
+                            {desktopDeliveryState === 'delivered'
+                              ? 'DELIVERED'
+                              : 'MESSAGE FAILED · RETRY FROM THE MESSAGE'}
+                          </Text>
+                        ) : settledTurn ? (
+                          <TurnSettledLine line={settledTurn.line} testID="turn-settled-line" />
+                        ) : null}
+                      </View>
+                    ) : null}
+                    <ConversationComposer
+                      onStop={
+                        composerAck?.stop ? () => handleStopTurn(composerAck.stop!) : undefined
                       }
-                    : undefined
-                }
-                onCancelReply={() => setReplyTarget(null)}
-                attachments={pendingAttachments.map((attachment) => ({
-                  uri: attachment.uri,
-                  name: attachment.name,
-                  mimeType: attachment.mimeType,
-                  sizeLabel: formatAttachmentSize(attachment.size),
-                  uploadState: attachmentUploader.state(attachment),
-                }))}
-                attachmentsUploading={sending}
-                onRemoveAttachment={(index) =>
-                  replacePendingAttachments((current) =>
-                    current.filter((_, attachmentIndex) => attachmentIndex !== index),
-                  )
-                }
-                onRetryAttachment={(index) => {
-                  const attachment = pendingAttachments[index];
-                  if (!transport || !attachment) return;
-                  void transport
-                    .ensureClient()
-                    .then((client) => attachmentUploader.start(client, [attachment]))
-                    .catch(() => undefined);
-                }}
-                speechHints={speechHints}
-                value={inputText}
-                inputRevision={composerInputRevision}
-                isInputRevisionCurrent={(inputRevision) =>
-                  inputRevision === composerInputRevisionRef.current
-                }
-                height={composerHeight}
-                maxHeight={COMPOSER_MAX_HEIGHT}
-                focused={composerFocused}
-                disabled={sending}
-                canSend={
-                  slashMenuVisible
-                    ? Boolean(inputText.trim())
-                    : Boolean(inputText.trim() || pendingAttachments.length)
-                }
-                onAttach={chooseAttachment}
-                attachDisabled={sending}
-                containerProps={
-                  desktopExperience
-                    ? ({
-                        onDragOver: (event: React.DragEvent<HTMLElement>) => event.preventDefault(),
-                        onDrop: handleDesktopDrop,
-                      } as any)
-                    : undefined
-                }
-                onDesktopPaste={desktopExperience ? handleDesktopPaste : undefined}
-                onChangeText={(value) => {
-                  inputTextRef.current = value;
-                  setInputText(value);
-                }}
-                onContentSizeChange={(event) => {
-                  const contentHeight = Math.ceil(event.nativeEvent.contentSize.height);
-                  setComposerHeight(
-                    Math.min(COMPOSER_MAX_HEIGHT, Math.max(COMPOSER_MIN_HEIGHT, contentHeight)),
-                  );
-                }}
-                onFocus={() => setComposerFocused(true)}
-                onBlur={() => setComposerFocused(false)}
-                onKeyPress={(event) => {
-                  const action = mentionKeyboardAction(event.nativeEvent.key);
-                  // Printable keys must never be prevented by the mention
-                  // picker. In particular, `>` is ordinary composer text.
-                  if (slashMenuVisible) {
-                    if (!action) return;
-                    if (action === 'select') {
-                      event.preventDefault();
-                      selectHighlightedPaletteItem();
-                    } else if ((action === 'next' || action === 'previous') && paletteItemCount) {
-                      event.preventDefault();
-                      const direction = action === 'next' ? 1 : -1;
-                      setHighlightedSlashVerbIndex(
-                        (current) => (current + direction + paletteItemCount) % paletteItemCount,
-                      );
-                    } else {
-                      event.preventDefault();
-                      dismissSlashMenu();
-                    }
-                    return;
-                  }
-                  if (!mentionMenuVisible) {
-                    const desktopAction = desktopComposerKeyAction(
-                      Platform.OS,
-                      event.nativeEvent.key,
-                      Boolean((event.nativeEvent as unknown as { shiftKey?: boolean }).shiftKey),
-                    );
-                    if (desktopAction === 'send') {
-                      event.preventDefault();
-                      void handleSend();
-                    }
-                    return;
-                  }
-                  if (!mentionMenuVisible || !action) return;
-                  if (action === 'select') {
-                    event.preventDefault();
-                    const selected = mentionSuggestions.matches[highlightedMentionIndex];
-                    if (selected) selectMention(selected);
-                  } else if (action === 'next' || action === 'previous') {
-                    event.preventDefault();
-                    const direction = action === 'next' ? 1 : -1;
-                    setHighlightedMentionIndex((current) => {
-                      const count = mentionSuggestions.matches.length;
-                      return (current + direction + count) % count;
-                    });
-                  } else {
-                    event.preventDefault();
-                    setDismissedMentionKey(mentionMenuKey);
-                  }
-                }}
-                onSelectionChange={(event) => {
-                  const nextSelection = event.nativeEvent.selection;
-                  setInputSelection((current) =>
-                    current.start === nextSelection.start && current.end === nextSelection.end
-                      ? current
-                      : nextSelection,
-                  );
-                }}
-                onSend={
-                  slashMenuVisible
-                    ? () => {
-                        selectHighlightedPaletteItem();
+                      inputRef={composerRef}
+                      reply={
+                        replyTarget
+                          ? {
+                              handle: replyTarget.authorHandle ?? replyTarget.authorName,
+                              preview: replyTarget.preview,
+                            }
+                          : undefined
                       }
-                    : handleSend
-                }
-              />
-            </Animated.View>
-              )}
-            </View>
-          )}
+                      onCancelReply={() => setReplyTarget(null)}
+                      attachments={pendingAttachments.map((attachment) => ({
+                        uri: attachment.uri,
+                        name: attachment.name,
+                        mimeType: attachment.mimeType,
+                        sizeLabel: formatAttachmentSize(attachment.size),
+                        uploadState: attachmentUploader.state(attachment),
+                      }))}
+                      attachmentsUploading={sending}
+                      onRemoveAttachment={(index) =>
+                        replacePendingAttachments((current) =>
+                          current.filter((_, attachmentIndex) => attachmentIndex !== index),
+                        )
+                      }
+                      onRetryAttachment={(index) => {
+                        const attachment = pendingAttachments[index];
+                        if (!transport || !attachment) return;
+                        void transport
+                          .ensureClient()
+                          .then((client) => attachmentUploader.start(client, [attachment]))
+                          .catch(() => undefined);
+                      }}
+                      speechHints={speechHints}
+                      value={inputText}
+                      inputRevision={composerInputRevision}
+                      isInputRevisionCurrent={(inputRevision) =>
+                        inputRevision === composerInputRevisionRef.current
+                      }
+                      height={composerHeight}
+                      maxHeight={COMPOSER_MAX_HEIGHT}
+                      focused={composerFocused}
+                      disabled={sending}
+                      canSend={
+                        slashMenuVisible
+                          ? Boolean(inputText.trim())
+                          : Boolean(inputText.trim() || pendingAttachments.length)
+                      }
+                      onAttach={chooseAttachment}
+                      attachDisabled={sending}
+                      containerProps={
+                        desktopExperience
+                          ? ({
+                              onDragOver: (event: React.DragEvent<HTMLElement>) =>
+                                event.preventDefault(),
+                              onDrop: handleDesktopDrop,
+                            } as any)
+                          : undefined
+                      }
+                      onDesktopPaste={desktopExperience ? handleDesktopPaste : undefined}
+                      onChangeText={(value) => {
+                        inputTextRef.current = value;
+                        setInputText(value);
+                      }}
+                      onContentSizeChange={(event) => {
+                        const contentHeight = Math.ceil(event.nativeEvent.contentSize.height);
+                        setComposerHeight(
+                          Math.min(
+                            COMPOSER_MAX_HEIGHT,
+                            Math.max(COMPOSER_MIN_HEIGHT, contentHeight),
+                          ),
+                        );
+                      }}
+                      onFocus={() => setComposerFocused(true)}
+                      onBlur={() => setComposerFocused(false)}
+                      onKeyPress={(event) => {
+                        const action = mentionKeyboardAction(event.nativeEvent.key);
+                        // Printable keys must never be prevented by the mention
+                        // picker. In particular, `>` is ordinary composer text.
+                        if (slashMenuVisible) {
+                          if (!action) return;
+                          if (action === 'select') {
+                            event.preventDefault();
+                            selectHighlightedPaletteItem();
+                          } else if (
+                            (action === 'next' || action === 'previous') &&
+                            paletteItemCount
+                          ) {
+                            event.preventDefault();
+                            const direction = action === 'next' ? 1 : -1;
+                            setHighlightedSlashVerbIndex(
+                              (current) =>
+                                (current + direction + paletteItemCount) % paletteItemCount,
+                            );
+                          } else {
+                            event.preventDefault();
+                            dismissSlashMenu();
+                          }
+                          return;
+                        }
+                        if (!mentionMenuVisible) {
+                          const desktopAction = desktopComposerKeyAction(
+                            Platform.OS,
+                            event.nativeEvent.key,
+                            Boolean(
+                              (event.nativeEvent as unknown as { shiftKey?: boolean }).shiftKey,
+                            ),
+                          );
+                          if (desktopAction === 'send') {
+                            event.preventDefault();
+                            void handleSend();
+                          }
+                          return;
+                        }
+                        if (!mentionMenuVisible || !action) return;
+                        if (action === 'select') {
+                          event.preventDefault();
+                          const selected = mentionSuggestions.matches[highlightedMentionIndex];
+                          if (selected) selectMention(selected);
+                        } else if (action === 'next' || action === 'previous') {
+                          event.preventDefault();
+                          const direction = action === 'next' ? 1 : -1;
+                          setHighlightedMentionIndex((current) => {
+                            const count = mentionSuggestions.matches.length;
+                            return (current + direction + count) % count;
+                          });
+                        } else {
+                          event.preventDefault();
+                          setDismissedMentionKey(mentionMenuKey);
+                        }
+                      }}
+                      onSelectionChange={(event) => {
+                        const nextSelection = event.nativeEvent.selection;
+                        setInputSelection((current) =>
+                          current.start === nextSelection.start && current.end === nextSelection.end
+                            ? current
+                            : nextSelection,
+                        );
+                      }}
+                      onSend={
+                        slashMenuVisible
+                          ? () => {
+                              selectHighlightedPaletteItem();
+                            }
+                          : handleSend
+                      }
+                    />
+                  </Animated.View>
+                )}
+              </View>
+            )}
           </KeyboardAvoidingView>
           {reportToast}
         </View>
         {profileAgentId && desktopExperience && activeCommunityId && (
           <View style={styles.agentProfilePane} testID="desktop-agent-profile-pane">
-            {profileKind === 'human' ? <HumanProfile key={profileAgentId} memberId={profileAgentId} workspaceId={activeCommunityId} onClose={() => setProfileAgentId(null)} /> : <BuzzMembers key={profileAgentId} profileAgentId={profileAgentId} workspaceIdOverride={activeCommunityId} onClose={() => setProfileAgentId(null)} />}
+            {profileKind === 'human' ? (
+              <HumanProfile
+                key={profileAgentId}
+                memberId={profileAgentId}
+                workspaceId={activeCommunityId}
+                onClose={() => setProfileAgentId(null)}
+              />
+            ) : (
+              <BuzzMembers
+                key={profileAgentId}
+                profileAgentId={profileAgentId}
+                workspaceIdOverride={activeCommunityId}
+                onClose={() => setProfileAgentId(null)}
+              />
+            )}
           </View>
         )}
         {!profileAgentId && desktopWorkPaneMounted && (
@@ -6637,7 +6951,9 @@ export function BuzzChatSurface({
         }}
         onClose={closeRoster}
         onRemove={handleRemoveRoomMember}
-        onOpenProfile={(participant) => handleOpenProfile(participant.pubkey, participant.kind === 'agent' ? 'agent' : 'human')}
+        onOpenProfile={(participant) =>
+          handleOpenProfile(participant.pubkey, participant.kind === 'agent' ? 'agent' : 'human')
+        }
         workingByPubkey={speakerWorking}
         parentChannelId={parentChannelId ?? null}
         personProfileByPubkey={personProfileByPubkey}
@@ -6995,7 +7311,12 @@ const styles = StyleSheet.create((theme) => {
       flex: 1,
     },
     starPrompt: { paddingTop: groknight.space.md },
-    agentProfilePane: { width: 380, maxWidth: '50%', borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: groknight.border },
+    agentProfilePane: {
+      width: 380,
+      maxWidth: '50%',
+      borderLeftWidth: StyleSheet.hairlineWidth,
+      borderLeftColor: groknight.border,
+    },
     desktopConversationFrame: {
       flex: 1,
       minWidth: 0,
@@ -7214,6 +7535,25 @@ const styles = StyleSheet.create((theme) => {
     },
     messageList: {
       flex: 1,
+    },
+    // Covers the transcript while a message-source jump walks server
+    // history pages and then chases onScrollToIndexFailed's retries — see
+    // `locatingMessageSourceIdRef`.
+    messageSourceLocating: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: groknight.space.sm,
+      backgroundColor: groknight.bgTerminal,
+    },
+    messageSourceLocatingText: {
+      ...theme.buzz.type.meta,
+      fontFamily: groknight.proseRegular,
+      color: groknight.ledgerQuiet,
     },
     // Desktop transcript only: a plain scrollable View over real DOM (no
     // FlatList/VirtualizedList) — see `shouldFollowDesktopTail` in

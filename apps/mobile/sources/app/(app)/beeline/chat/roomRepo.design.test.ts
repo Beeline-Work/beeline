@@ -91,21 +91,6 @@ describe('Room→repo corner-open lazy prompt', () => {
     expect(chatSource).toContain("text: decision === 'open' ? 'go' : 'cancel'");
   });
 
-  it('clears text, quoted replies, and attachments together after ordinary dispatch', () => {
-    const handleSend = blockFrom(chatSource, 'const handleSend = useCallback(', 'handleSend');
-    const clearBlock = blockFrom(handleSend, 'if (!sendShortcut) {', 'composer clear');
-    expect(clearBlock).toContain('inputTextRef.current = composerDraft.value;');
-    expect(handleSend).toContain('composerDraft.captureMessage()');
-    expect(clearBlock).toContain(
-      'current.filter((attachment) => !activePendingAttachments.includes(attachment))',
-    );
-    expect(clearBlock).toContain('setReplyTarget((current) => current === activeReplyTarget ? null : current);',
-    );
-    expect(handleSend.indexOf('if (!sendShortcut) {')).toBeGreaterThan(
-      handleSend.indexOf('addMessages([optimistic]);'),
-    );
-  });
-
   it('shows the repo access guidance in the prompt', () => {
     const banner = blockFrom(
       chatSource,

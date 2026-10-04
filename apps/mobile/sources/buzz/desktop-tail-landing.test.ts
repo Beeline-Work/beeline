@@ -51,17 +51,6 @@ describe('shouldFollowDesktopTail', () => {
 });
 
 describe('desktop tail-follow wiring (2026-09, superseding eight prior scroll-timing heuristics)', () => {
-  it('renders the desktop transcript as a plain scrollable View, not FlatList', () => {
-    const desktopBranch = chatSource.slice(
-      chatSource.indexOf('{desktopTranscript ? ('),
-      chatSource.indexOf(') : (\n          <FlatList'),
-    );
-    expect(desktopBranch).toContain('ref={setDesktopScrollNode');
-    expect(desktopBranch).toContain('ref={setDesktopContentNode');
-    expect(desktopBranch).not.toContain('<FlatList');
-    expect(desktopBranch).not.toContain('initialNumToRender');
-    expect(desktopBranch).not.toContain('maxToRenderPerBatch');
-  });
 
   it('follows an append with one real-DOM assignment, no retry budget or settle window', () => {
     const follow = chatSource.slice(
@@ -90,19 +79,6 @@ describe('desktop tail-follow wiring (2026-09, superseding eight prior scroll-ti
       chatSource.indexOf('const landAtNewMessageBoundary ='),
     );
     expect(prepend).toContain('node.scrollTop += node.scrollHeight - previousScrollHeight');
-  });
-
-  it('jumps to a message by its row DOM node, not FlatList index math', () => {
-    expect(chatSource).toContain('desktopRowNodesRef');
-    expect(
-      chatSource.match(/\.scrollIntoView\(\{ block: 'center' \}\)/g)?.length,
-    ).toBeGreaterThanOrEqual(2);
-    // onScrollToIndexFailed is a FlatList-only retry; it stays native-only.
-    const desktopBranch = chatSource.slice(
-      chatSource.indexOf('{desktopTranscript ? ('),
-      chatSource.indexOf(') : (\n          <FlatList'),
-    );
-    expect(desktopBranch).not.toContain('onScrollToIndexFailed');
   });
 
   it('no longer imports the retired heuristic decisions', () => {

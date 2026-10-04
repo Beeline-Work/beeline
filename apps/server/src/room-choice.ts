@@ -4,7 +4,6 @@ import {
   CHOICE_CARD_TYPE,
   CHOICE_POLL_ELECTORATE_MAX,
   CHOICE_POLL_ELECTORATE_MIN,
-  CHOICE_WAKE_CARD_TYPES,
   choiceClosedFooter,
   decorateChoiceOptions,
   normalizeChoiceConstraint,
@@ -35,20 +34,24 @@ export const CORNER_LIFECYCLE_CARD_TYPE = 'corner-workflow-handoff';
 
 /**
  * Decision and wake rows kept only for a daemon and never shown (C101): a
- * grant decision, an accepted connector offer, and a choice/poll settlement
- * all settle their card in place, so the hidden line would read the same
- * answer twice. The corner lifecycle's bookkeeping card joins this list for
- * the same reason a different one: it duplicates the corner's own real
- * conversation rather than a settled card, but a human must never see it
- * either.
+ * grant decision and an accepted connector offer settle their card in place,
+ * so the hidden line would read the same answer twice. The corner
+ * lifecycle's bookkeeping card joins this list for a different reason: it
+ * duplicates the corner's own real conversation rather than a settled card,
+ * but a human must never see it either.
+ *
+ * A choice/poll settlement (`CHOICE_WAKE_CARD_TYPES`) is NOT hidden: a person
+ * answering a card still needs to see `@person picked A · <label>` land in
+ * the Room, even though the card they tapped already shows the same pick in
+ * its own footer. Only `wakeChoice`'s explicit `wakes` targets the asking
+ * agent, so this line stays visible to humans without waking anyone new.
  */
 export function hiddenWakeCardSql(alias?: string): string {
   const column = alias ? `${alias}.card_type` : 'card_type';
   return (
     `${column} IS DISTINCT FROM 'grant-decision' ` +
     `AND ${column} IS DISTINCT FROM 'connector-offer-decision' ` +
-    `AND ${column} IS DISTINCT FROM '${CORNER_LIFECYCLE_CARD_TYPE}' ` +
-    CHOICE_WAKE_CARD_TYPES.map((kind) => ` AND ${column} IS DISTINCT FROM '${kind}'`).join('')
+    `AND ${column} IS DISTINCT FROM '${CORNER_LIFECYCLE_CARD_TYPE}'`
   );
 }
 

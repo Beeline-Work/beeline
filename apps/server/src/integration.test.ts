@@ -13367,7 +13367,7 @@ describe('monolith integration', () => {
     );
   });
 
-  it('posts a choice card, settles it in place, hides the wake, and refuses an undersized poll', async () => {
+  it('posts a choice card, settles it in place, shows the pick as a line, and refuses an undersized poll', async () => {
     const posted = await daemonOperation('askRoomChoice', {
       roomId: ROOM,
       prompt: 'How do you want to push the desk past this?',
@@ -13405,15 +13405,16 @@ describe('monolith integration', () => {
     expect(settled.messages.some((message) => message.choice?.footer?.includes('picked A'))).toBe(
       true,
     );
-    const hidden = await database.query<{ id: string }>(
+    const answeredLine = await database.query<{ id: string }>(
       `SELECT id FROM messages WHERE room_id=$1 AND card_type='choice-answered'`,
       [ROOM],
     );
-    expect(hidden.rows).toHaveLength(1);
-    expect(await wokenBy(database, hidden.rows[0]!.id)).toEqual([AGENT]);
-    expect(
-      settled.messages.some((message) => message.systemEvent?.kind === 'choice-answered'),
-    ).toBe(false);
+    expect(answeredLine.rows).toHaveLength(1);
+    expect(await wokenBy(database, answeredLine.rows[0]!.id)).toEqual([AGENT]);
+    const pickedLine = settled.messages.find(
+      (message) => message.systemEvent?.kind === 'choice-answered',
+    );
+    expect(pickedLine?.text).toBe('@owner picked A · Kraken paper');
 
     const again = await operation('answerChoice', { choiceId: body.choiceId, optionId: 'B' });
     expect(again.status).toBe(409);
@@ -13507,7 +13508,7 @@ describe('monolith integration', () => {
     );
   });
 
-  it('expires an unanswered question as skipped and hides the wake', async () => {
+  it('expires an unanswered question as skipped and shows the skip as a line', async () => {
     const posted = await daemonOperation('askRoomChoice', {
       roomId: ROOM,
       prompt: 'Which paper API?',
@@ -13529,15 +13530,16 @@ describe('monolith integration', () => {
     expect(room.messages.find((message) => message.choice)?.choice).toEqual(
       expect.objectContaining({ status: 'skipped', footer: 'expired · no answer' }),
     );
-    expect(room.messages.some((message) => message.systemEvent?.kind === 'choice-skipped')).toBe(
-      false,
+    const skippedLine = room.messages.find(
+      (message) => message.systemEvent?.kind === 'choice-skipped',
     );
-    const hidden = await database.query<{ id: string }>(
+    expect(skippedLine?.text).toBe('@bee asked · expired · no answer');
+    const skippedRow = await database.query<{ id: string }>(
       `SELECT id FROM messages WHERE room_id=$1 AND card_type='choice-skipped'`,
       [ROOM],
     );
-    expect(hidden.rows).toHaveLength(1);
-    expect(await wokenBy(database, hidden.rows[0]!.id)).toEqual([AGENT]);
+    expect(skippedRow.rows).toHaveLength(1);
+    expect(await wokenBy(database, skippedRow.rows[0]!.id)).toEqual([AGENT]);
   });
 });
 

@@ -411,6 +411,17 @@ describe('message search vectors', () => {
         `SELECT search_document @@ websearch_to_tsquery('simple','historical phrase') matched
          FROM messages WHERE id='legacy-search'`,
       )).rows[0]?.matched).toBe(true);
+      // Upgrade a database whose exact documents are already fully populated.
+      await database.query(`ALTER TABLE messages DROP COLUMN search_stem_document`);
+      await migrate(database, { deferData: true });
+      expect((await database.query(`SELECT search_stem_document FROM messages WHERE id='legacy-search'`)).rows[0])
+        .toEqual({ search_stem_document: null });
+      await migrateData(database);
+      expect((await database.query<{ matched: boolean }>(
+        `SELECT search_stem_document @@ plainto_tsquery('english','historical phrases') matched
+         FROM messages WHERE id='legacy-search'`,
+      )).rows[0]?.matched).toBe(true);
+      expect(await backfillMessageSearchDocuments(database, 10)).toBe(0);
     } finally {
       await database.close();
     }
@@ -501,6 +512,20 @@ describe('message search vectors', () => {
     );
     expect(probePlan).toContain('messages_search_document_backfill_idx');
     expect(probePlan).not.toContain('"Node Type":"Seq Scan"');
+    const stemProbePlan = JSON.stringify((await database.query(
+      `EXPLAIN (FORMAT JSON) SELECT id FROM messages
+       WHERE search_stem_document IS NULL AND presentation='message'
+         AND created_at>=now()-${INSTITUTIONAL_HISTORY_MAX_AGE_DAYS}*interval '1 day'
+       ORDER BY created_at DESC LIMIT 2000`,
+    )).rows[0]?.['QUERY PLAN']);
+    expect(stemProbePlan).toContain('messages_search_stem_document_backfill_idx');
+    expect(stemProbePlan).not.toContain('"Node Type":"Seq Scan"');
+    const stemSearchPlan = JSON.stringify((await database.query(
+      `EXPLAIN (FORMAT JSON) SELECT id FROM messages
+       WHERE search_stem_document @@ plainto_tsquery('english','releases markers')
+         AND deleted_at IS NULL AND presentation='message'`,
+    )).rows[0]?.['QUERY PLAN']);
+    expect(stemSearchPlan).toContain('messages_search_stem_document_idx');
 
     // A filled table costs one query, not a window walk on every release.
     let queries = 0;
@@ -528,6 +553,15 @@ describe('message search vectors', () => {
 
     await database.query(`UPDATE messages SET text='unrelated wording' WHERE id='search-001'`);
     expect(await searchable()).toBe(24);
+    expect((await database.query<{ matched: boolean }>(
+      `SELECT search_stem_document @@ plainto_tsquery('english','releases markers') matched
+       FROM messages WHERE id='search-001'`,
+    )).rows[0]?.matched).toBe(false);
+    await database.query(`UPDATE messages SET presentation='system' WHERE id='search-002'`);
+    expect((await database.query(
+      `SELECT search_document::text exact,search_stem_document::text stem
+       FROM messages WHERE id='search-002'`,
+    )).rows[0]).toEqual({ exact: '', stem: '' });
     database.close();
   });
 
@@ -580,6 +614,12 @@ describe('message search vectors', () => {
     expect(vectors.get('oversized')).toBe('');
     expect(vectors.get('a-system-line')).toBe('');
     expect(vectors.get('ordinary')).not.toBe('');
+    const stems = new Map((await database.query<{ id: string; document: string }>(
+      `SELECT id,search_stem_document::text document FROM messages`,
+    )).rows.map((row) => [row.id, row.document]));
+    expect(stems.get('oversized')).toBe('');
+    expect(stems.get('a-system-line')).toBe('');
+    expect(stems.get('ordinary')).not.toBe('');
 
     // Empty is not NULL, so the drained backfill still converges over them.
     expect(await backfillMessageSearchDocuments(database, 10)).toBe(0);

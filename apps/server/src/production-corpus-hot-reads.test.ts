@@ -267,22 +267,27 @@ describe('PRODUCTION-CORPUS REPLAY hot-read gate', () => {
     console.info(`\nPRODUCTION-CORPUS REPLAY timings\n${timingTable(results)}`);
   }, 120_000);
 
-  it('bounds a Workspace-wide history search instead of ranking every match', async () => {
+  it('ranks a Workspace-wide history search within the hot-read budget', async () => {
     const startedAt = performance.now();
-    const broad = await searchInstitutionalHistory(database, searchCommand, {
+    const input = {
       agentId: AGENT,
       roomId: ROOM,
       query: 'production corpus message',
       limit: 10,
-    });
+    };
+    const broad = await searchInstitutionalHistory(database, searchCommand, input);
     const wallMs = performance.now() - startedAt;
 
     expect(broad.results).toHaveLength(10);
     expect(broad.capped).toBe(true);
     expect(broad.omitted).toBe(INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX - broad.results.length);
     expect(wallMs).toBeLessThan(HOT_READ_BUDGETS_MS['history-search']);
-    // Across 35,100 rows the bound must keep the NEWEST matches, not whatever
-    // the bitmap scan emitted first.
+    // HotReadDatabase measures and checks the search statement's plan and p95.
+    const measured = new HotReadDatabase(database);
+    await searchInstitutionalHistory(measured, searchCommand, input);
+    console.info(`Workspace-wide history search: ${wallMs.toFixed(1)}ms`);
+    console.info(timingTable([...measured.results.values()]));
+    // With equal word coverage, keep the newest matches across 35,100 rows.
     const oldestKeptAt = (
       await database.query<{ created_at: Date }>(
         `SELECT min(created_at) created_at FROM (

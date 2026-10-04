@@ -562,12 +562,18 @@ export class PostgresDatabase implements ClosableDatabase {
  */
 export const MESSAGE_SEARCH_DOCUMENT_MAX_BYTES = 256 * 1024;
 
-function messageSearchDocumentSql(prefix: string): string {
+function messageSearchDocumentSql(
+  prefix: string,
+  configuration: 'simple' | 'english' = 'simple',
+): string {
+  const vector = `to_tsvector('${configuration}',coalesce(${prefix}text,''))`;
+  // Coverage ranking needs one occurrence per stem, not word positions.
+  const document = configuration === 'english' ? `strip(${vector})` : vector;
   return `CASE
     WHEN ${prefix}presentation='message'
       AND octet_length(convert_to(coalesce(${prefix}text,''),'UTF8'))
           <=${MESSAGE_SEARCH_DOCUMENT_MAX_BYTES}
-    THEN to_tsvector('simple',coalesce(${prefix}text,''))
+    THEN ${document}
     ELSE ''::tsvector
   END`;
 }
@@ -926,16 +932,20 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS reactions jsonb NOT NULL DEFAULT '
 -- maintains it from the moment the schema lands and
 -- backfillMessageSearchDocuments fills the history in bounded batches.
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_document tsvector;
+-- Keep exact tokens alongside English word forms without rewriting existing
+-- rows or doubling the size of an individual bounded vector.
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_stem_document tsvector;
 CREATE OR REPLACE FUNCTION messages_search_document_refresh() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
   NEW.search_document := ${messageSearchDocumentSql('NEW.')};
+  NEW.search_stem_document := ${messageSearchDocumentSql('NEW.', 'english')};
   RETURN NEW;
 END
 $$;
 DROP TRIGGER IF EXISTS messages_search_document_trg ON messages;
 CREATE TRIGGER messages_search_document_trg
-  BEFORE INSERT OR UPDATE OF text ON messages
+  BEFORE INSERT OR UPDATE OF text,presentation ON messages
   FOR EACH ROW EXECUTE FUNCTION messages_search_document_refresh();
 -- Who a message tags is read from its text against the Room's CURRENT membership
 -- (message-mentions.ts), never from a list frozen at write time. The old column
@@ -2714,6 +2724,20 @@ export async function migrate(
      ON messages USING GIN(search_document)
      WHERE deleted_at IS NULL AND presentation='message'`,
   ));
+  await retryMigrationStep('search stem backfill index', () => createIndexConcurrently(
+    database,
+    'messages_search_stem_document_backfill_idx',
+    `CREATE INDEX CONCURRENTLY messages_search_stem_document_backfill_idx
+     ON messages(created_at DESC)
+     WHERE search_stem_document IS NULL AND presentation='message'`,
+  ));
+  await retryMigrationStep('search stem document index', () => createIndexConcurrently(
+    database,
+    'messages_search_stem_document_idx',
+    `CREATE INDEX CONCURRENTLY messages_search_stem_document_idx
+     ON messages USING GIN(search_stem_document)
+     WHERE deleted_at IS NULL AND presentation='message'`,
+  ));
   // Embedding-cycle scan: cheap once the backfill converges, for the same
   // reason as the search backfill index above (a filled row never re-enters
   // this partial index).
@@ -2941,7 +2965,7 @@ export async function retireStandingPreferences(database: SqlDatabase): Promise<
 export const MESSAGE_SEARCH_BACKFILL_BATCH = 2_000;
 
 /**
- * Fill `messages.search_document` for rows written before the trigger existed.
+ * Fill exact and stemmed documents for rows written before either trigger version.
  *
  * Only rows `searchInstitutionalHistory` can ever return are filled: it matches
  * `presentation='message'` inside INSTITUTIONAL_HISTORY_MAX_AGE_DAYS, and a row
@@ -2960,11 +2984,18 @@ export async function backfillMessageSearchDocuments(
     let updated: { rowCount: number } | undefined;
     await retryMigrationStep('message search backfill batch', async () => {
       const run = (db: SqlDatabase) => db.query(
-        `UPDATE messages SET search_document=${messageSearchDocumentSql('')}
+        `UPDATE messages SET search_document=${messageSearchDocumentSql('')},
+                            search_stem_document=${messageSearchDocumentSql('', 'english')}
        WHERE id IN (
-         SELECT id FROM messages
-         WHERE search_document IS NULL AND presentation='message'
-           AND created_at>=now()-$1*interval '1 day'
+         SELECT id FROM (
+           SELECT id,created_at FROM messages
+           WHERE search_document IS NULL AND presentation='message'
+             AND created_at>=now()-$1*interval '1 day'
+           UNION
+           SELECT id,created_at FROM messages
+           WHERE search_stem_document IS NULL AND presentation='message'
+             AND created_at>=now()-$1*interval '1 day'
+         ) missing
          ORDER BY created_at DESC LIMIT $2)`,
         [INSTITUTIONAL_HISTORY_MAX_AGE_DAYS, batchSize],
       );

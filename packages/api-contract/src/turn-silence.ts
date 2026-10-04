@@ -254,7 +254,12 @@ function capLine(name: string, verb: string, consequence: string): TurnSilencePh
 export function phraseTurnSilence(
   name: string,
   classified: ClassifiedTurnSilence,
-  options: { readonly givingUp?: boolean; readonly restarting?: boolean } = {},
+  options: {
+    readonly givingUp?: boolean;
+    readonly restarting?: boolean;
+    /** The agent runs Claude, so its owner can sign it in from its page. */
+    readonly claudeSignIn?: boolean;
+  } = {},
 ): TurnSilencePhrase {
   const agent = name.trim() || 'The agent';
   switch (classified.kind) {
@@ -278,7 +283,9 @@ export function phraseTurnSilence(
       return capLine(
         agent,
         'could not answer',
-        "the helper could not authenticate with the provider. Check its log for the failed turn; if its login expired, run `beeline connect` on the helper's machine.",
+        options.claudeSignIn
+          ? "the helper could not authenticate with Claude. If its login expired, its owner can tap Sign in to Claude on its page, or run `beeline connect` on the helper's machine."
+          : "the helper could not authenticate with the provider. Check its log for the failed turn; if its login expired, run `beeline connect` on the helper's machine.",
       );
     case 'workspace-failure':
       return capLine(

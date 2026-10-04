@@ -1,4 +1,5 @@
 import { Client } from 'pg';
+import { CLAUDE_SIGN_IN_TABLE, decodeClaudeSignInNotification } from './claude-sign-in.js';
 import type { SqlDatabase } from './database.js';
 import type { LiveEvent, LiveHub } from './live.js';
 
@@ -439,6 +440,12 @@ export class PostgresLiveListener {
     this.lastNotificationAt = Date.now();
     const payload = decodePayload(raw);
     if (!payload) return;
+    if (payload.table === CLAUDE_SIGN_IN_TABLE) {
+      // No database work: publish now, and never queue or log the payload.
+      const event = decodeClaudeSignInNotification(raw);
+      if (event) this.live.publish(event);
+      return;
+    }
     // These notifications only ask a helper to refresh the latest state or
     // drain durable pending operations; the newest one supersedes earlier ones.
     const key = (payload.table === 'agent_config' || payload.table === 'connector_assignment') &&

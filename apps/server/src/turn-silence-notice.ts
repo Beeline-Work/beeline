@@ -76,8 +76,9 @@ export async function noteFirstSilence(
   });
 
   const trigger = (
-    await database.query<{ agent_name: string }>(
-      `SELECT COALESCE(NULLIF(agent.name,''),'The agent') agent_name
+    await database.query<{ agent_name: string; claude_harness: boolean }>(
+      `SELECT COALESCE(NULLIF(agent.name,''),'The agent') agent_name,
+              COALESCE((SELECT harness='claude' FROM agents WHERE agent_id=$3),false) claude_harness
        FROM messages message
        JOIN identities requester ON requester.id=message.author_id AND requester.kind='human'
        JOIN identities agent ON agent.id=$3
@@ -88,7 +89,9 @@ export async function noteFirstSilence(
   ).rows[0];
   if (!trigger) return NO_RESTART;
 
-  return database.transaction((db) => inscribeSilence(db, live, input, trigger.agent_name));
+  return database.transaction((db) =>
+    inscribeSilence(db, live, input, trigger.agent_name, trigger.claude_harness),
+  );
 }
 
 async function inscribeSilence(
@@ -104,6 +107,7 @@ async function inscribeSilence(
     readonly stalled?: boolean;
   },
   agentName: string,
+  claudeHarness: boolean,
 ): Promise<TurnSilenceOutcome> {
   await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
     turnSilenceLockKey(input.roomId, input.requestId, input.agentId),
@@ -142,6 +146,7 @@ async function inscribeSilence(
   const phrase = phraseTurnSilence(agentName, renderClassified, {
     givingUp,
     restarting: restart,
+    claudeSignIn: claudeHarness,
   });
   const systemPhrase: SystemPhrase = {
     subject: { kind: 'agent', id: input.agentId, name: agentName },

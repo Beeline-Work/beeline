@@ -1,3 +1,4 @@
+import { reportClaudeSignIn } from './claude-sign-in.js';
 import { setCornerHold } from './corner-holds.js';
 import { renderAgentAvatar } from './agent-avatar.js';
 import {
@@ -1285,6 +1286,13 @@ export class DaemonService {
         )) as Output<Name>;
       case 'getConnectorAssignments':
         return (await this.connectorAssignments(authenticatedAgentId)) as Output<Name>;
+      case 'reportClaudeSignIn':
+        await reportClaudeSignIn(
+          this.database,
+          authenticatedAgentId,
+          input as Input<'reportClaudeSignIn'>,
+        );
+        return undefined as Output<Name>;
       case 'getGoogleOAuthGrant':
       case 'getRoomGoogleGrant':
         return { status: 'pending' } as Output<Name>;
@@ -7845,6 +7853,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postAgentModelCatalog: true,
   postAgentMachineReport: true,
   getConnectorAssignments: true,
+  reportClaudeSignIn: true,
   getGoogleOAuthGrant: true,
   createLinkSpendRequest: true,
   retrieveLinkSpendRequest: true,

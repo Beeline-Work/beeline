@@ -20,3 +20,4 @@ export * from './push-actions.js';
 export * from './workbench.js';
 export * from './wallet.js';
 export * from './message-search.js';
+export * from './claude-sign-in.js';

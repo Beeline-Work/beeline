@@ -96,6 +96,7 @@ Committed home for project-intrinsic agent knowledge: rule + authoritative file 
 - **Empty turns are routing failures.** `pi-turn-record.ts`/`empty-turn.ts` turn every empty turn into recovered text or a named reason; both loops rotate the OpenRouter pin once and retry. `openrouter-routing.ts` filters providers by tools + uptime ≥98% (24 h cache) then live-probes; never set `require_parameters: true`.
 - **Turn timing is daemon-side** (`turn-trace.ts`, JSONL under `<runtimeDir>/turn-traces/`), never in a Room.
 - **Connect is the only onboarding flow** (`npx usebeeline connect`, `connect-command.ts`). It probes before prompting (`CONNECT_PROBE_TIMEOUT_MS`); a deferring CLI joins Rooms only in `finishAgentConnectPairing`. Edit only `packages/usebeeline/README.md`; root `README.md` is a copy made by `npm run readme:sync`.
+- **Sign in to Claude** (`claude-sign-in.ts`, server + body; owner-only): the helper keeps the PKCE verifier and atomically writes `~/.claude/.credentials.json` (0600); the pasted code crosses the server only as a NOTIFY relay, never a row or log. Shape drift: `claude-sign-in.contract.test.ts`.
 - **Connectors.** `connector-squire.ts` owns Squire install/vault/revoke; `ConnectorUsageRecorder` sends one `postConnectionUsage` per turn. One host `trusty-squire-broker.service` elects; every other Squire spawn is the non-electing façade (`squire-broker-link.ts`). Squire's file credential store is not masked from agents.
 
 ## Daemon self-update and CLI bundle

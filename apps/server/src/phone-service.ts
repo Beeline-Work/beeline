@@ -1,3 +1,9 @@
+import {
+  CLAUDE_SIGN_IN_HARNESS_MESSAGE,
+  CLAUDE_SIGN_IN_NO_ANSWER_MESSAGE,
+  completeClaudeSignIn,
+  startClaudeSignIn,
+} from './claude-sign-in.js';
 import { startWorkflow } from './workflow-runs.js';
 import { humanRoomAdmin, scheduleWorkflowName } from './workflow-admin.js';
 import { setCornerHold } from './corner-holds.js';
@@ -2815,6 +2821,7 @@ export class PhoneService {
         avatar_generation_pending: boolean;
         can_change_yolo: boolean;
         can_manage_grants: boolean;
+        can_sign_in_to_claude: boolean;
         access_policy: unknown;
         owner_id: string | null;
         owner_name: string | null;
@@ -2828,7 +2835,8 @@ export class PhoneService {
                 setter.name yolo_set_by_name,a.access_policy,a.owner_id,
                 owner.name owner_name,owner.handle owner_handle,
                 a.owner_id=$3 can_change_yolo,
-                (a.owner_id=$3 OR viewer_membership.role IN ('owner','admin')) can_manage_grants
+                (a.owner_id=$3 OR viewer_membership.role IN ('owner','admin')) can_manage_grants,
+                (a.owner_id=$3 AND a.harness='claude') can_sign_in_to_claude
          FROM agents a
          JOIN memberships agent_membership ON agent_membership.identity_id=a.agent_id
            AND agent_membership.workspace_id=$2 AND agent_membership.room_id IS NULL
@@ -2958,6 +2966,7 @@ export class PhoneService {
       ),
       // Grant decisions retain their separate owner-or-Workspace-manager axis.
       canManageGrants: config?.can_manage_grants ?? false,
+      canSignInToClaude: config?.can_sign_in_to_claude ?? false,
       watchFilters: [],
     };
   }
@@ -3914,6 +3923,16 @@ export class PhoneService {
       case 'refreshAgentModelCatalog':
         await this.refreshAgentModelCatalog(input as Input<'refreshAgentModelCatalog'>, viewerId);
         return undefined as Output<Name>;
+      case 'startClaudeSignIn':
+        return (await this.startClaudeSignIn(
+          input as Input<'startClaudeSignIn'>,
+          viewerId,
+        )) as Output<Name>;
+      case 'completeClaudeSignIn':
+        return (await this.completeClaudeSignIn(
+          input as Input<'completeClaudeSignIn'>,
+          viewerId,
+        )) as Output<Name>;
       case 'updateAgentYolo':
         await this.updateAgentYolo(input as Input<'updateAgentYolo'>, viewerId);
         return undefined as Output<Name>;
@@ -6584,6 +6603,27 @@ export class PhoneService {
         });
       }
     });
+  }
+  /** Owner-only, Claude-harness only; the relay itself lives in `claude-sign-in.ts`. */
+  private async requireClaudeSignIn(input: { workspaceId: string; agentId: string }, viewerId: string) {
+    await this.requireWorkspaceAgent(input.workspaceId, input.agentId, viewerId);
+    const harness = (
+      await this.database.query<{ harness: string | null }>(
+        `SELECT harness FROM agents WHERE agent_id=$1`,
+        [input.agentId],
+      )
+    ).rows[0]?.harness;
+    if (harness !== 'claude') throw new Error(CLAUDE_SIGN_IN_HARNESS_MESSAGE);
+    if (!this.live) throw new Error(CLAUDE_SIGN_IN_NO_ANSWER_MESSAGE);
+    return this.live;
+  }
+  private async startClaudeSignIn(input: Input<'startClaudeSignIn'>, viewerId: string) {
+    const live = await this.requireClaudeSignIn(input, viewerId);
+    return startClaudeSignIn(this.database, live, input.agentId);
+  }
+  private async completeClaudeSignIn(input: Input<'completeClaudeSignIn'>, viewerId: string) {
+    const live = await this.requireClaudeSignIn(input, viewerId);
+    return completeClaudeSignIn(this.database, live, input.agentId, input);
   }
   private async refreshAgentModelCatalog(
     input: Input<'refreshAgentModelCatalog'>,
@@ -9517,6 +9557,8 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'updateAgentSoul',
   'updateAgentModelSelection',
   'refreshAgentModelCatalog',
+  'startClaudeSignIn',
+  'completeClaudeSignIn',
   'updateAgentYolo',
   'updateAgentAccessPolicy',
   'removeAgent',

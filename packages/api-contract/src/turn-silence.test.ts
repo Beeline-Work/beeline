@@ -130,6 +130,16 @@ describe('turn silence phrasing', () => {
     }
   });
 
+  it('points a Claude agent at Sign in to Claude, keeping beeline connect as the fallback', () => {
+    const line = phraseTurnSilence('Candy', { kind: 'not-signed-in' }, { claudeSignIn: true });
+    expect(`Candy ${line.verb} · ${line.consequence}`).toBe(
+      "Candy could not answer · the helper could not authenticate with Claude. If its login expired, its owner can tap Sign in to Claude on its page, or run `beeline connect` on the helper's machine.",
+    );
+    expect(`@candy ${line.verb} · ${line.consequence}`.length).toBeLessThanOrEqual(
+      TURN_SILENCE_LINE_MAX,
+    );
+  });
+
   it('never assigns the agent pronouns', () => {
     const kinds: ClassifiedTurnSilence[] = [
       { kind: 'hiccup', fault: 'the turn stalled' },

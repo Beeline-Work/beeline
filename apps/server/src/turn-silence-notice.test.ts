@@ -274,6 +274,29 @@ describe('first-silence notice', () => {
     }
   });
 
+  it('points a Claude agent at Sign in to Claude when its login fails', async () => {
+    await database.query(`UPDATE agents SET harness='claude' WHERE agent_id=$1`, [AGENT]);
+    const requestId = '7'.repeat(64);
+    await ask(database, requestId, requestId.slice(0, 8));
+    await new DaemonService(database, new LiveHub()).execute(
+      'postAgentTurnReceipt',
+      {
+        roomId: ROOM,
+        requestId,
+        generationId: requestId.slice(0, 8),
+        status: 'failed',
+        reason: 'ACP error -32000: Authentication required',
+        reasonKind: 'not-signed-in',
+      },
+      AGENT,
+    );
+    expect(await failureLine(database, requestId)).toEqual({
+      text: "@candy could not answer · the helper could not authenticate with Claude. If its login expired, its owner can tap Sign in to Claude on its page, or run `beeline connect` on the helper's machine.",
+      silence: 'not-signed-in',
+      state: 'failed',
+    });
+  });
+
   /**
    * T4: a Trusty Squire answer the helper cannot act on — a busy Chrome
    * profile, or no host broker holding the socket — is a standing condition,

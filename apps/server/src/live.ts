@@ -112,7 +112,17 @@ export type LiveEvent =
     }
   /** A server instance accepted a newer connection for this agent. Never sent
    *  to a socket; every instance drops its own older connection for the agent. */
-  | { type: 'agent-connection'; roomId: ''; agentId: string; epoch: number };
+  | { type: 'agent-connection'; roomId: ''; agentId: string; epoch: number }
+  /** One Sign in to Claude step (`claude-sign-in.ts`). Never sent to a phone
+   *  socket: a helper session forwards only `start`/`code` for its own agent,
+   *  and the owner's waiting request reads `link`/`result`. */
+  | ({ type: 'claude-sign-in'; roomId: ''; agentId: string; attemptId: string } & (
+      | { step: 'start' }
+      | { step: 'code'; code: string }
+      | { step: 'link'; authorizeUrl: string }
+      | { step: 'result'; outcome: 'signed-in' }
+      | { step: 'result'; outcome: 'failed'; error: string }
+    ));
 
 export class LiveHub {
   readonly #events = new EventEmitter();

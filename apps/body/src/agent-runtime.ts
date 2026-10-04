@@ -14,6 +14,7 @@ import {
 } from './runtime-model-validation.js';
 import { modelUnavailableState } from './model-availability.js';
 import { syncAgentModelCatalog } from './model-catalog-sync.js';
+import { answerClaudeSignInFrame, ClaudeSignIn } from './claude-sign-in.js';
 import { ConnectorAssignmentLoop } from './connector-assignments.js';
 import { RegistryMcpHostBroker } from './registry-mcp.js';
 import { ThinDaemonCore } from './thin-core.js';
@@ -289,6 +290,7 @@ export async function runAgentRuntime(
     host.established(agentId);
   };
   let connectorLoop: ConnectorAssignmentLoop | undefined;
+  let claudeSignIn: ClaudeSignIn | undefined;
   let registryMcpBroker: RegistryMcpHostBroker | undefined;
   let catalogRefresh: Promise<void> | undefined;
   let leaveHost: (() => void) | undefined;
@@ -510,6 +512,15 @@ export async function runAgentRuntime(
         });
         daemonApi.setConnectorAssignmentListener(() => connectorLoop?.wake());
         connectorLoop.start();
+        // Sign in to Claude: the owner's app relays each step over the live
+        // socket; the login lands in the operator's shared Claude file.
+        claudeSignIn ??= new ClaudeSignIn({ operatorHome: config.operatorHome ?? homedir() });
+        const signIn = claudeSignIn;
+        daemonApi.setClaudeSignInListener((frame) => {
+          void answerClaudeSignInFrame(daemonApi, agentId, signIn, frame, (message) =>
+            console.log(`[body] ${message}`),
+          );
+        });
       },
       onProgress: async (status) => {
         void drainRollbackAlert(core.activeRoomIds()[0] ?? runtime.rooms[0]?.channelId);

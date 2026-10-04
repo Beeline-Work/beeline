@@ -950,6 +950,8 @@ export type AgentDetailView = {
   readonly grants?: readonly AgentGrantView[];
   /** Server verdict: this viewer may decide and revoke this agent's grants. */
   readonly canManageGrants?: boolean;
+  /** Server verdict: this viewer owns this Claude-harness agent and may sign it in to Claude. */
+  readonly canSignInToClaude?: boolean;
   readonly watchFilters: readonly SurfaceWatchFilter[];
 };
 

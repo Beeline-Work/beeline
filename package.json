@@ -34,6 +34,7 @@
     "verify:local-room-indexer": "npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && node --import tsx scripts/verify-local-room-indexer.ts",
     "prove:private-pairing": "npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && node --import tsx scripts/prove-private-pairing.ts",
     "prove:reviewer-dispatch": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-reviewer-dispatch.ts",
+    "prove:claude-sign-in": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-claude-sign-in.ts",
     "prove:sibling-steer": "npx turbo run build --filter=@beeline/server... --filter=@beeline/body... && node --import tsx scripts/prove-sibling-steer.ts",
     "prove:review-handoff": "npm run build -w @beeline/api-contract && node --import tsx scripts/prove-review-handoff.ts",
     "prove:corner-brief-acceptance": "node scripts/prove-corner-brief-acceptance.mjs",

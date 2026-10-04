@@ -1,6 +1,7 @@
 import {
   isAgentCommand,
   type AgentCommand,
+  type ClaudeSignInFrame,
   type DaemonOperationMap,
 } from '@beeline/api-contract/daemon';
 import { resolve } from 'node:path';
@@ -15,6 +16,7 @@ import {
   type LiveSocketFactory,
 } from './live-link.js';
 import { MachineLink, type AgentChannel } from './machine-link.js';
+import { claudeSignInFrame } from './claude-sign-in.js';
 import {
   readRuntimeRecord,
   runtimeDirectory,
@@ -181,6 +183,7 @@ export class DaemonApiClient {
   private roomsChangedListener?: (event?: RoomMembershipChange) => void;
   private configChangedListener?: () => void;
   private connectorAssignmentListener?: () => void;
+  private claudeSignInListener?: (frame: ClaudeSignInFrame) => void;
   private cornerCompleteListener?: (roomId: string) => void;
   private cornerRestartListener?: (roomId: string) => void;
   private helperReleaseListener?: (release: { version: string; sha: string }) => void;
@@ -320,6 +323,11 @@ export class DaemonApiClient {
     this.connectorAssignmentListener = listener;
   }
 
+  /** One Sign in to Claude step the agent's owner started in the app. */
+  setClaudeSignInListener(listener: (frame: ClaudeSignInFrame) => void): void {
+    this.claudeSignInListener = listener;
+  }
+
   /** corner-complete on the subscribed corner — close now, poll is recovery. */
   setCornerCompleteListener(listener: (roomId: string) => void): void {
     this.cornerCompleteListener = listener;
@@ -449,6 +457,11 @@ export class DaemonApiClient {
     }
     if (event.type === 'connector-assignment') {
       this.connectorAssignmentListener?.();
+      return;
+    }
+    if (event.type === 'claude-sign-in') {
+      const frame = claudeSignInFrame(event);
+      if (frame) this.claudeSignInListener?.(frame);
       return;
     }
     if (event.type === 'config-changed') {

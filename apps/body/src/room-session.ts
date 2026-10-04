@@ -1,4 +1,5 @@
 import { resolve } from 'node:path';
+import { homedir } from 'node:os';
 import { agentSkillDir } from './agent-home.js';
 import type { McpServerWire } from './acp.js';
 import type { BodyConfig } from './config.js';
@@ -59,6 +60,7 @@ export function beelineAgentMcpServer(
       { name: 'BEELINE_DAEMON_TOKEN', value: connection.daemonToken },
       { name: 'BEELINE_HELPER_VERSION', value: connection.helperVersion },
       { name: 'BEELINE_DAEMON_AGENT_ID', value: connection.agentId },
+      { name: 'BEELINE_OPERATOR_HOME', value: config.operatorHome ?? homedir() },
       { name: 'BEELINE_DAEMON_ROOM_ID', value: context.roomId },
       { name: 'BEELINE_DAEMON_WORKSPACE_ID', value: context.workspaceId },
       ...(context.cornerId ? [{ name: 'BEELINE_DAEMON_CORNER_ID', value: context.cornerId }] : []),

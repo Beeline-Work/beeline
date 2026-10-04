@@ -371,6 +371,32 @@ describe('workbench connectors', () => {
     );
   });
 
+  it('clears a stale Trusty Squire error after the helper reaches its vault', async () => {
+    const sibling = 'd'.repeat(64);
+    await database.query(`UPDATE agents SET machine_id='owner-machine' WHERE agent_id=$1`,
+      [HELPER]);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Sibling')`,
+      [sibling]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id,machine_id)
+      VALUES($1,$2,'owner-machine')`, [sibling, HUMAN]);
+    const siblingToken = (await auth.exchangeDaemonToken(
+      (await auth.createDaemonExchange(sibling)).exchangeToken,
+    ))!.daemonToken;
+    const connectorId = await pairOwnerConnector();
+    await database.query(`UPDATE workspace_connectors
+      SET status='error',status_error='Earlier install failed' WHERE id=$1::uuid`,
+      [connectorId]);
+    await daemonOperation('postConnectorVault', { connections: [] }, siblingToken);
+    const view = (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as {
+      connectors: { connectorId: string; status: { status: string; errorMessage?: string } }[];
+    };
+    expect(view.connectors.find((row) => row.connectorId === connectorId)?.status)
+      .toMatchObject({ status: 'connected' });
+    expect(view.connectors.find((row) => row.connectorId === connectorId)?.status)
+      .not.toHaveProperty('errorMessage');
+    console.log('Workbench: Trusty Squire connected after a successful vault read');
+  });
+
   it('lists keys in vault created-at order, not by service', async () => {
     const connectorId = await pairOwnerConnector();
     // The helper reports what `vaultConnectionMeta` produced from Squire's

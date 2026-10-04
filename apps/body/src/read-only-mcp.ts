@@ -101,6 +101,8 @@ import {
   withoutImageData,
 } from './attachment-delivery.js';
 import { describeTailscaleReach } from './connector-tailscale.js';
+import { readVault } from './connector-squire.js';
+import { StdioSquireMcpClient } from './squire-mcp-client.js';
 import { sandboxDevicePath } from './bwrap-sandbox.js';
 import {
   VALIDATION_STAGE_OWNERSHIP,
@@ -1501,7 +1503,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'list_app_tools',
-    description: 'List the tools of one connected app by its app ID from workbench_status or connect_app. Discovery returns no credentials. An empty list means the account is unavailable; ask the person to reconnect it.',
+    description: 'List the tools of one connected app by its app ID from workbench_status or connect_app. Discovery returns no credentials. An unavailable account or empty provider tool list reports a cause.',
     inputSchema: { type: 'object', required: ['appId'], properties: {
       appId: { type: 'string', format: 'uuid' },
       query: { type: 'string', maxLength: 120 },
@@ -3547,6 +3549,7 @@ export interface ConnectorOfferDeps {
   execute: (name: string, input: JsonObject) => Promise<JsonObject>;
   /** Live Tailscale reachability; `enabled` is true when this helper already has it. */
   tailscaleReach?: (enabled: boolean) => Promise<string>;
+  squireReach?: () => Promise<{ reachable: boolean; cause?: string }>;
 }
 
 export function connectorOfferDepsFromEnv(): ConnectorOfferDeps {
@@ -3554,6 +3557,25 @@ export function connectorOfferDepsFromEnv(): ConnectorOfferDeps {
     roomId: agentScheduleRoomId(),
     execute: daemonExecute,
     tailscaleReach: (enabled) => describeTailscaleReach({ enabled, installIfMissing: enabled }),
+    squireReach: async () => {
+      const client = new StdioSquireMcpClient({
+        home: requiredEnv('BEELINE_OPERATOR_HOME'),
+        scope: { agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'), roomId: 'connector' },
+      });
+      try {
+        const connections = await readVault(client);
+        try {
+          await daemonExecute('postConnectorVault', {
+            agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'), connections,
+          });
+        } catch { /* A failed metadata sync does not change MCP reachability. */ }
+        return { reachable: true };
+      } catch {
+        return { reachable: false, cause: 'Trusty Squire MCP could not be reached' };
+      } finally {
+        client.close();
+      }
+    },
   };
 }
 
@@ -3574,7 +3596,8 @@ export async function workbenchStatus(
       purpose: string;
       available: boolean;
       offerable: boolean;
-      paired?: { status: string; helperName: string; onThisMachine: boolean };
+      paired?: { status: string; helperName: string; onThisMachine: boolean;
+        errorMessage?: string };
     }>;
     connections?: Array<{
       connectorType: string;
@@ -3598,9 +3621,23 @@ export async function workbenchStatus(
     '',
     'Catalog:',
   ];
+  const localSquire = view.catalog?.find((entry) => entry.connectorType === 'trusty-squire'
+    && entry.paired?.onThisMachine
+    && (entry.paired.status === 'connected' || entry.paired.status === 'error'));
+  const squireReach = localSquire && deps.squireReach
+    ? await deps.squireReach()
+    : undefined;
   for (const entry of view.catalog ?? []) {
+    const localReach = entry.connectorType === 'trusty-squire' && entry === localSquire
+      ? squireReach : undefined;
+    const status = localReach
+      ? (localReach.reachable ? 'connected' : 'error')
+      : entry.paired?.status;
+    const cause = status === 'error'
+      ? localReach?.cause ?? entry.paired?.errorMessage ?? 'Connection failed'
+      : undefined;
     const state = entry.paired
-      ? `${entry.paired.status} on ${entry.paired.helperName}${entry.paired.onThisMachine ? ' (your machine)' : ''}`
+      ? `${status} on ${entry.paired.helperName}${entry.paired.onThisMachine ? ' (your machine)' : ''}${cause ? ` — ${cause}` : ''}`
       : !entry.available
         ? 'not available yet'
         : entry.offerable

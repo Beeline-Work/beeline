@@ -1392,6 +1392,7 @@ export type AgentWorkbenchView = {
       readonly helperName: string;
       /** The pairing runs on THIS agent's machine. */
       readonly onThisMachine: boolean;
+      readonly errorMessage?: string;
     };
   }[];
   /** The owner's provisioned keys, by name only. */

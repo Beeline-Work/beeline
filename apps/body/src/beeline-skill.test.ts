@@ -35,7 +35,7 @@ describe('using-beeline Room guidance', () => {
     expect(markdown).toContain('beeline-release: test-release');
     expect(markdown).toContain('beeline-agent');
     expect(markdown).toContain('beeline-agent fetch_image');
-    expect(markdown).toContain('embed as a data: URL');
+    expect(markdown).toContain('put them in the HTML as a data: URL');
     expect(markdown).not.toContain('close_corner');
     expect(markdown).not.toContain('upgrade_corner_to_code');
     expect(markdown).not.toContain('no action or corner tools');
@@ -541,5 +541,10 @@ describe('using-beeline "Showing a photograph" section', () => {
     expect(markdown).toContain('do not draw an SVG stand-in');
     expect(markdown).toContain('The validator still refuses every http(s) image reference');
     expect(markdown).toContain('The artifact is a snapshot');
+  });
+
+  it('teaches the fetch_image recipe once, and the Squire route once', () => {
+    expect(markdown.split('fetch_image').length - 1).toBe(1);
+    expect(markdown.split('Trusty Squire').length - 1).toBe(1);
   });
 });

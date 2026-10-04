@@ -16,7 +16,7 @@ import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { uniqueAgentHandle } from '@beeline/api-contract/phone';
 import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
-import { backfillCornerWorkflowRuns, deleteStoredCornerWorkflows } from './corner-lifecycle.js';
+import { backfillCornerLifecycleRuns, deleteStoredCornerWorkflows } from './corner-lifecycle.js';
 import { backfillFeedbackTriageWorkflow } from './feedback-triage-workflow.js';
 import { backfillWorkflowSkillDescriptions } from './workflow-runs.js';
 import { retireAgentClasses } from './agent-class-retirement.js';
@@ -1736,7 +1736,7 @@ ALTER TABLE corner_facts ADD CONSTRAINT corner_facts_kind_check
 -- release can drop it.
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS feedback_triage boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS corner_facts_owner_agent_idx ON corner_facts(owner_agent_id);
--- The corner workflow run's current state, projected from its newest handoff
+-- The corner lifecycle's current state, projected from its newest handoff
 -- card in the same transaction (corner-lifecycle.ts), and the one head the
 -- server has tried to merge.
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS workflow_state text;
@@ -2799,7 +2799,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   await dataStep('corner owed backfill', () => backfillCornerOwed(database));
   await dataStep('inherited corner memberships', () => backfillInheritedCornerMemberships(database));
   await dataStep('stored corner workflows', () => deleteStoredCornerWorkflows(database));
-  await dataStep('corner workflow runs', () => backfillCornerWorkflowRuns(database));
+  await dataStep('corner lifecycle runs', () => backfillCornerLifecycleRuns(database));
   await dataStep('feedback triage workflow', () => backfillFeedbackTriageWorkflow(database));
   await dataStep('workflow skill summary/does', () => backfillWorkflowSkillDescriptions(database));
   const blockers = await dataStep('corner merge blockers', () =>

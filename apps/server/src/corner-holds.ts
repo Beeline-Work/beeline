@@ -1,6 +1,6 @@
 import type { CornerHoldInput, CornerMergeHold } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
-import { lockCornerWorkflowRun } from './corner-lifecycle.js';
+import { lockCornerLifecycle } from './corner-lifecycle.js';
 
 export async function activeCornerHolds(
   db: SqlDatabase,
@@ -17,7 +17,7 @@ export async function activeCornerHolds(
 
 /** Called in the caller's transaction, including corner creation. */
 export async function setCornerHold(db: SqlDatabase, input: CornerHoldInput, actorId: string) {
-  await lockCornerWorkflowRun(db, input.cornerId);
+  await lockCornerLifecycle(db, input.cornerId);
   const actor = (
     await db.query<{ role: CornerMergeHold['standing'] }>(
       `SELECT workspace_member.role FROM rooms corner

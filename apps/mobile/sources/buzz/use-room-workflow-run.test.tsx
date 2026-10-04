@@ -9,10 +9,10 @@ vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: 
 const wire = vi.hoisted(() => ({ listener: undefined as any }));
 vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ register: async (_: unknown, listener: unknown) => { wire.listener = listener; return () => undefined; } }) }));
 afterEach(() => { read.mockReset(); read.mockResolvedValue({ workflows: [] }); });
-import { useCornerWorkflowRun } from './use-corner-workflow-run';
+import { useRoomWorkflowRun } from './use-room-workflow-run';
 it('Reproduction R9a: focused corner opens with exactly one workflow read', async () => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-  function Corner() { useCornerWorkflowRun('corner-1'); return null; }
+  function Corner() { useRoomWorkflowRun('corner-1'); return null; }
   let tree: any;
   try {
     await act(async () => { tree = create(<Corner />); });
@@ -25,7 +25,7 @@ it('R12k: exposes an inline error and Retry recovers the workflow read', async (
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   read.mockRejectedValue(new Error('offline'));
   let current: any;
-  function Corner() { current = useCornerWorkflowRun('corner-errors'); return <span>{current.error}</span>; }
+  function Corner() { current = useRoomWorkflowRun('corner-errors'); return <span>{current.error}</span>; }
   let tree: any;
   try {
     await act(async () => { tree = create(<Corner />); });

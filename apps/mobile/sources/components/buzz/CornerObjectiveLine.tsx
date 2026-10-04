@@ -51,7 +51,7 @@ export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
         {run || onOpenBrief ? (
           <View style={styles.links}>
             {run ? (
-              <CornerWorkflowLine onPress={onOpenWorkflow!} run={run} testID={`${testID}-workflow`} />
+              <WorkflowLine onPress={onOpenWorkflow!} run={run} testID={`${testID}-workflow`} />
             ) : null}
             {onOpenBrief ? (
               <CornerBriefLink onPress={onOpenBrief} testID={`${testID}-brief`} />
@@ -64,7 +64,7 @@ export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
 });
 
 /** Compact workflow link beside the brief action. */
-function CornerWorkflowLine({
+function WorkflowLine({
   run,
   onPress,
   testID,

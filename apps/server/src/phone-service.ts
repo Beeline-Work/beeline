@@ -358,7 +358,7 @@ interface MemberRow extends IdentityRow {
 }
 interface CornerRow extends RoomRow {
   lifecycle: RoomView['cornerLifecycle'] | null;
-  /** The corner workflow run's projected state and the outcome that reached it. */
+  /** The corner lifecycle's projected state and the outcome that reached it. */
   workflow_state: string | null;
   workflow_outcome: string | null;
   objective: string | null;

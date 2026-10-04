@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ register: async () => () => undefined }) }));
@@ -8,9 +7,8 @@ vi.mock('expo-router', () => ({ useFocusEffect: () => undefined }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: vi.fn() }));
 
 import type { WorkflowRunSummaryView } from '@beeline/api-contract/phone';
-import { pickCornerWorkflowRun } from '@/buzz/use-corner-workflow-run';
+import { pickRoomWorkflowRun } from '@/buzz/use-room-workflow-run';
 
-const chat = readFileSync(new URL('./_chat-surface.tsx', import.meta.url), 'utf8');
 
 const run = (overrides: Partial<WorkflowRunSummaryView>): WorkflowRunSummaryView => ({
   runId: 'run',
@@ -29,12 +27,11 @@ const run = (overrides: Partial<WorkflowRunSummaryView>): WorkflowRunSummaryView
 
 describe('corner workflow line', () => {
 
-  it('names a saved workflow working in the corner before the corner’s own lifecycle run', () => {
-    const lifecycle = run({ runId: 'corner-1' });
-    const triage = run({ runId: 'triage', workflowSlug: 'feedback-triage', state: 'approve' });
-    expect(pickCornerWorkflowRun('corner-1', [lifecycle, triage])).toBe(triage);
-    expect(pickCornerWorkflowRun('corner-1', [lifecycle])).toBe(lifecycle);
-    expect(pickCornerWorkflowRun('corner-1', [run({ status: 'done' })])).toBeUndefined();
-    expect(pickCornerWorkflowRun('corner-1', [run({ roomId: 'other' })])).toBeUndefined();
+  it('shows only live saved workflows, including one someone named corner', () => {
+    const saved = run({ runId: 'saved-corner-workflow' });
+    expect(pickRoomWorkflowRun('corner-1', [saved])).toBe(saved);
+    expect(pickRoomWorkflowRun('corner-1', [])).toBeUndefined();
+    expect(pickRoomWorkflowRun('corner-1', [run({ status: 'done' })])).toBeUndefined();
+    expect(pickRoomWorkflowRun('corner-1', [run({ roomId: 'other' })])).toBeUndefined();
   });
 });

@@ -202,7 +202,7 @@ describe('corner turn institutional authority', () => {
 
   it('serves a corner checks turn whose wake note is authored by @system (regression)', async () => {
     const daemon = liveDaemon();
-    // The corner workflow's checks transition creates the fix/review command
+    // The corner lifecycle's checks transition creates the fix/review command
     // with the checks note as its source and NO parent command, so the
     // command's root_source_message_id is the @system-authored note itself.
     await claim(CORNER, NOTE, 'checks-generation');

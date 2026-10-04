@@ -9,7 +9,7 @@ export function chatCornerCounts(
     parent_id: string;
     archived_at: Date | null;
     lifecycle: CornerLifecycleView | null;
-    /** The corner workflow run's projected state (`corner_facts.workflow_state`). */
+    /** The corner lifecycle's projected state (`corner_facts.workflow_state`). */
     workflow_state?: string | null;
     workflow_outcome?: string | null;
     latest_turn_status: string | null;

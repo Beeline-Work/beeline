@@ -14,7 +14,7 @@ describe('resource observers in the desktop web renderer', () => {
         import Installer from '@/app/(app)/beeline/settings/workbench/connect';
         import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
         import { CornerObjectiveLine } from '@/components/buzz/CornerObjectiveLine';
-        import { useCornerWorkflowRun } from '@/buzz/use-corner-workflow-run';
+        import { useRoomWorkflowRun } from '@/buzz/use-room-workflow-run';
         const room = { room: { id: 'parent', name: 'Room' }, messages: [], members: [], corners: [], latestAgentTurns: [], viewer: { identity: { pubkey: 'a', name: 'Person' }, role: 'owner', permissions: {} } };
         const client = { corners: async () => ({ corners: [] }), room: async id => {
           if (id === 'broken' && !globalThis.__recover) throw new Error('Selected corner unavailable');
@@ -27,7 +27,7 @@ describe('resource observers in the desktop web renderer', () => {
         } };
         function App() {
           const [id, select] = React.useState('original'); globalThis.__select = select;
-          const workflow = useCornerWorkflowRun('corner');
+          const workflow = useRoomWorkflowRun('corner');
           return <><CornerObjectiveLine objective="Observer proof" workflow={workflow.workflow} workflowError={workflow.error} onRetryWorkflow={workflow.retry} onOpenWorkflow={() => {}} />
             <SignIn /><Installer /><DesktopRoomInspector room={room} client={client} selectedCornerId={id} onSelectCorner={() => {}} onOpenInMain={() => {}} onNewCorner={() => {}} onClose={() => {}} /></>;
         }
@@ -156,9 +156,9 @@ describe('resource observers in the desktop web renderer', () => {
       const entry = path.join(directory, 'proof.jsx');
       await writeFile(entry, `import React from 'react'; import { createRoot } from 'react-dom/client';
         import { CornerObjectiveLine } from '@/components/buzz/CornerObjectiveLine';
-        import { useCornerWorkflowRun } from '@/buzz/use-corner-workflow-run';
+        import { useRoomWorkflowRun } from '@/buzz/use-room-workflow-run';
         function App() {
-          const run = useCornerWorkflowRun('corner');
+          const run = useRoomWorkflowRun('corner');
           return <CornerObjectiveLine objective="Workflow proof" workflow={run.workflow} workflowError={run.error} onRetryWorkflow={run.retry} onOpenWorkflow={() => {}} />;
         }
         let visible = false, notices = 0;

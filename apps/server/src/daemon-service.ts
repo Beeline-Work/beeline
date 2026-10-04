@@ -80,7 +80,7 @@ import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedul
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import { closeCornerState } from './corner-close.js';
 import { writeCornerTitle } from './corner-title.js';
-import { advanceCorner, lockCornerWorkflowRun } from './corner-lifecycle.js';
+import { advanceCorner, lockCornerLifecycle } from './corner-lifecycle.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import {
   LiveHub,
@@ -488,7 +488,7 @@ export class DaemonService {
       const committedTasks: Parameters<AfterCommit>[0][] = [];
       const output = await this.database.transaction(async (db) => {
         if (name === 'createCorner' || name === 'upgradeCornerLane' || name === 'reviseCornerBrief')
-          await lockCornerWorkflowRun(db, scopedRoom);
+          await lockCornerLifecycle(db, scopedRoom);
         const requestId = candidate.requestId ?? candidate.turnId;
         if (name === 'postAgentTurnReceipt' && candidate.status === 'failed') {
           await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
@@ -1497,7 +1497,7 @@ export class DaemonService {
         const hold = input as Input<'setCornerHold'>;
         await this.access(hold.cornerId, authenticatedAgentId);
         return (await this.database.transaction(async (db) => {
-          await lockCornerWorkflowRun(db, hold.cornerId);
+          await lockCornerLifecycle(db, hold.cornerId);
           const command = await authorizeCommandOutput(
             db, hold.roomId, authenticatedAgentId, hold.requestId, hold.generationId,
           );
@@ -1519,7 +1519,7 @@ export class DaemonService {
         const order = input as Input<'orderCornerMerge'>;
         await this.access(order.cornerId, authenticatedAgentId);
         const result = await this.database.transaction(async (db) => {
-          await lockCornerWorkflowRun(db, order.cornerId);
+          await lockCornerLifecycle(db, order.cornerId);
           const command = await authorizeCommandOutput(
             db, order.roomId, authenticatedAgentId, order.requestId, order.generationId,
           );
@@ -1699,7 +1699,7 @@ export class DaemonService {
     }
 
     await this.database.transaction(async (db) => {
-      await lockCornerWorkflowRun(db, cornerId);
+      await lockCornerLifecycle(db, cornerId);
       const current = (
         await db.query<{
           reviewer_agent_id: string | null;
@@ -3118,12 +3118,12 @@ export class DaemonService {
    * The configured reviewer's PASS, from any code-lane corner turn: nothing
    * here depends on how the reviewer's session booted. The server authorizes
    * the caller and the exact target, records the verdict, and reports it to
-   * the corner workflow in the same transaction; the server merge follows
+   * the corner lifecycle in the same transaction; the server merge follows
    * from the workflow once the whole gate is open.
    */
   private async approveCornerMerge(input: Input<'approveCornerMerge'>, agentId: string) {
     return this.database.transaction(async (db) => {
-      await lockCornerWorkflowRun(db, input.cornerId);
+      await lockCornerLifecycle(db, input.cornerId);
       const target = (
         await db.query<{
           pull_request_number: number | null;
@@ -6853,7 +6853,7 @@ export class DaemonService {
     let cornerId: string = randomUUID();
     const opener = await this.identity(agentId);
     await this.database.transaction(async (db) => {
-      await lockCornerWorkflowRun(db, cornerId);
+      await lockCornerLifecycle(db, cornerId);
       // Opening a corner is idempotent for one confirmed tool call while that
       // corner remains active. Locking the parent closes the read/insert race:
       // a concurrent retry waits, sees the winner, and returns its id without
@@ -7103,7 +7103,7 @@ export class DaemonService {
     if (!draft.change?.trim())
       throw new Error('corner brief revision requires a change description');
     const brief = await this.database.transaction(async (db) => {
-      await lockCornerWorkflowRun(db, input.cornerId);
+      await lockCornerLifecycle(db, input.cornerId);
       const corner = (
         await db.query<{ parent_id: string; owner_agent_id: string | null; kind: string; created_by: string; workflow_state: string }>(
           `SELECT room.parent_id,fact.owner_agent_id,fact.kind,room.created_by,fact.workflow_state FROM rooms room
@@ -7352,7 +7352,7 @@ export class DaemonService {
     // to an idempotent no-op below before any resume/complete bookkeeping.
     let alreadyUpgraded = false;
     await this.database.transaction(async (db) => {
-      await lockCornerWorkflowRun(db, cornerId);
+      await lockCornerLifecycle(db, cornerId);
       const target = (
         await db.query<{
           lane: string;

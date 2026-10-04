@@ -13,33 +13,13 @@ import type {
 import { isAgentIdentityReference } from '@beeline/api-contract/daemon';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
-import { CORNER_LIFECYCLE_CONTRACT } from './corner-lifecycle.js';
-import { CORNER_WORKFLOW_HANDOFF_CARD_TYPE } from './room-choice.js';
 import { WORKFLOW_HANDOFF_CARD_TYPE, workflowGatePrompt } from './workflow-runs.js';
 
-/**
- * Read-only projections of agent workflow runs for the phone: a corner's
- * workflow line and the run page. Runs have no
- * table (`workflow-runs.ts`), so everything here is derived from the
- * `workflow-handoff` cards — and a corner's own `corner-workflow-handoff`
- * lifecycle cards — citing each run id. Callers check Room read access first;
- * every query here also limits itself to rooms the viewer is a member of.
+/** Read-only projections of saved workflow runs for the phone.
+ * Lifecycle bookkeeping is not a workflow run. Callers check Room read access;
+ * every query also limits itself to rooms the viewer is a member of.
  */
-
-const RUN_CARD_TYPES = [WORKFLOW_HANDOFF_CARD_TYPE, CORNER_WORKFLOW_HANDOFF_CARD_TYPE];
-
-/**
- * A corner's own run is keyed by its card type, never by a workflow name or
- * version (older corner cards still carry `workflowSlug`/`workflowVersion`;
- * both are ignored): it always renders from the in-code
- * `CORNER_LIFECYCLE_CONTRACT`, and a Workspace workflow saved as `corner`
- * stays a separate, ordinary workflow. Neither a `slug` nor a `slug@version`
- * contains a colon.
- */
-const CORNER_RUN_KEY = `${CORNER_WORKFLOW_HANDOFF_CARD_TYPE}:lifecycle`;
-
-/** The live role binding the corner contract's reviewer uses; resolved from the parent Room. */
-const PARENT_REVIEWER_BINDING = 'live:parent.reviewer_agent_id';
+const RUN_CARD_TYPES = [WORKFLOW_HANDOFF_CARD_TYPE];
 
 /** The same membership rule as `PhoneService.hasRoomAccess`, inlined over `room`. */
 const VIEWER_CAN_READ_ROOM_SQL = `EXISTS (
@@ -59,7 +39,6 @@ type RunHeadRow = {
   room_id: string;
   room_name: string;
   parent_id: string | null;
-  reviewer_agent_id: string | null;
   workspace_id: string;
   card_type: string;
   workflow_slug: string;
@@ -78,21 +57,18 @@ type RunHead = {
   roomId: string;
   roomName: string;
   parentRoomId?: string;
-  reviewerAgentId?: string;
   workspaceId: string;
   slug: string;
   version: number;
-  /** True for a corner's own lifecycle run. */
-  corner: boolean;
-  /** Its contract: `CORNER_RUN_KEY`, or the pinned `slug@version`. */
+  /** Its contract: the pinned `slug@version`. */
   key: string;
-  /** Runs of one workflow share this: `CORNER_RUN_KEY`, or the slug. */
+  /** Runs of one workflow share this: the slug. */
   family: string;
   state: string;
   status?: WorkflowRunStatus;
   /** The state the newest card left, when it is a handoff rather than the start. */
   fromState?: string;
-  /** Author of the newest card. Corner lifecycle cards are the system identity. */
+  /** Author of the newest card. */
   authorId: string;
   roleBindings: Record<string, string>;
   startedAt: number;
@@ -109,7 +85,7 @@ function unix(date: Date): number {
 /**
  * The newest card of every run in `topRoomId` and its corners the viewer can
  * read, with the run's first-card time. Cards written in one transaction share
- * `created_at`, so a corner card's `seq` breaks the tie.
+ * `created_at`, so a card's `seq` breaks the tie.
  */
 async function loadRunHeads(
   db: SqlDatabase,
@@ -120,9 +96,8 @@ async function loadRunHeads(
   const rows = (
     await db.query<RunHeadRow>(
       `WITH scope AS (
-         SELECT room.id,room.name,room.parent_id,room.workspace_id,parent.reviewer_agent_id
+         SELECT room.id,room.name,room.parent_id,room.workspace_id
          FROM rooms room
-         LEFT JOIN rooms parent ON parent.id=room.parent_id
          WHERE (room.id=$1 OR room.parent_id=$1) AND ${VIEWER_CAN_READ_ROOM_SQL}
        ), cards AS (
          SELECT message.id,message.room_id,message.created_at,message.card_type,
@@ -142,7 +117,7 @@ async function loadRunHeads(
        )
        SELECT DISTINCT ON (cards.room_id,cards.run_id)
               cards.run_id,cards.room_id,cards.card_type,scope.name room_name,scope.parent_id,
-              scope.reviewer_agent_id,scope.workspace_id,cards.workflow_slug,
+              scope.workspace_id,cards.workflow_slug,
               cards.workflow_version,cards.to_state,cards.from_state,cards.author_id,cards.status,
               cards.role_bindings,started.started_at,cards.created_at updated_at
        FROM cards
@@ -154,19 +129,16 @@ async function loadRunHeads(
     )
   ).rows;
   return rows.map((row) => {
-    const corner = row.card_type === CORNER_WORKFLOW_HANDOFF_CARD_TYPE;
     return {
       runId: row.run_id,
       roomId: row.room_id,
       roomName: row.room_name,
       ...(row.parent_id ? { parentRoomId: row.parent_id } : {}),
-      ...(row.reviewer_agent_id ? { reviewerAgentId: row.reviewer_agent_id } : {}),
       workspaceId: row.workspace_id,
-      slug: corner ? CORNER_LIFECYCLE_CONTRACT.name : row.workflow_slug,
+      slug: row.workflow_slug,
       version: row.workflow_version,
-      corner,
-      key: corner ? CORNER_RUN_KEY : `${row.workflow_slug}@${row.workflow_version}`,
-      family: corner ? CORNER_RUN_KEY : row.workflow_slug,
+      key: `${row.workflow_slug}@${row.workflow_version}`,
+      family: row.workflow_slug,
       state: row.to_state,
       ...(row.status ? { status: row.status } : {}),
       ...(row.from_state ? { fromState: row.from_state } : {}),
@@ -180,16 +152,15 @@ async function loadRunHeads(
   });
 }
 
-/** Each head's contract by its `key`: the in-code corner contract, or the pinned stored version. */
+/** Each head's contract by its pinned stored version. */
 async function loadContracts(
   db: SqlDatabase,
   workspaceId: string,
   heads: readonly RunHead[],
 ): Promise<Map<string, WorkflowContract>> {
   const contracts = new Map<string, WorkflowContract>();
-  if (heads.some((head) => head.corner)) contracts.set(CORNER_RUN_KEY, CORNER_LIFECYCLE_CONTRACT);
   const pins = [
-    ...new Map(heads.filter((head) => !head.corner).map((head) => [head.key, head])).values(),
+    ...new Map(heads.map((head) => [head.key, head])).values(),
   ];
   if (pins.length === 0) return contracts;
   const rows = (
@@ -253,10 +224,9 @@ async function loadActors(
   return new Map(rows.map((row) => [row.id, actorView(row, publicOrigin)]));
 }
 
-/** The identity a role binding names: an agent id, or the parent Room's reviewer for the corner's live binding. */
-function boundIdentityId(head: RunHead, binding: string | undefined): string | undefined {
+/** The identity a saved workflow role binding names. */
+function boundIdentityId(binding: string | undefined): string | undefined {
   if (!binding) return undefined;
-  if (binding === PARENT_REVIEWER_BINDING) return head.reviewerAgentId;
   return isAgentIdentityReference(binding) ? binding : undefined;
 }
 
@@ -274,15 +244,14 @@ function runStatus(contract: WorkflowContract, state: string): WorkflowRunStatus
 /**
  * Who the list should name. A live state uses its own role. A terminal has
  * none, so the row keeps the role that handed the run off, and otherwise the
- * person who wrote that card. The system identity writes corner lifecycle
- * cards and is not a holder.
+ * person who wrote that card. The system identity is not a holder.
  */
 function holderIdentityId(head: RunHead, contract: WorkflowContract): string | undefined {
   const current = stateRole(contract, head.state);
-  if (current) return boundIdentityId(head, head.roleBindings[current]);
+  if (current) return boundIdentityId(head.roleBindings[current]);
   if ((head.status ?? runStatus(contract, head.state)) === 'live') return undefined;
   const left = head.fromState ? stateRole(contract, head.fromState) : undefined;
-  const leftHolder = left ? boundIdentityId(head, head.roleBindings[left]) : undefined;
+  const leftHolder = left ? boundIdentityId(head.roleBindings[left]) : undefined;
   if (leftHolder) return leftHolder;
   return head.authorId !== SYSTEM_IDENTITY_ID ? head.authorId : undefined;
 }
@@ -339,7 +308,7 @@ function liveRunIdsByFamily(
 function headBindingIds(head: RunHead): string[] {
   return [
     ...Object.values(head.roleBindings)
-      .map((binding) => boundIdentityId(head, binding))
+      .map((binding) => boundIdentityId(binding))
       .filter((id): id is string => id !== undefined),
     ...(head.authorId !== SYSTEM_IDENTITY_ID ? [head.authorId] : []),
   ];
@@ -381,8 +350,6 @@ export async function listRoomWorkflowRuns(
   workflowSlug?: string,
   publicOrigin = '',
 ): Promise<WorkflowRunListResult> {
-  // A definition's runs never include a corner's lifecycle run, which no
-  // stored workflow defines.
   const heads = await loadRunHeads(
     db,
     roomId,
@@ -672,9 +639,7 @@ export async function readWorkflowRun(
     db,
     topRoomId,
     viewerId,
-    first.card_type === CORNER_WORKFLOW_HANDOFF_CARD_TYPE
-      ? { cardType: CORNER_WORKFLOW_HANDOFF_CARD_TYPE }
-      : { cardType: WORKFLOW_HANDOFF_CARD_TYPE, slug: first.workflow_slug },
+    { cardType: WORKFLOW_HANDOFF_CARD_TYPE, slug: first.workflow_slug },
   );
   const head = heads.find((entry) => entry.runId === input.runId && entry.roomId === input.roomId);
   if (!head) return null;
@@ -690,7 +655,7 @@ export async function readWorkflowRun(
   ]);
   const roleHolders: Record<string, WorkflowActorView> = {};
   for (const [role, binding] of Object.entries(head.roleBindings)) {
-    const holder = actors.get(boundIdentityId(head, binding) ?? '');
+    const holder = actors.get(boundIdentityId(binding) ?? '');
     if (holder) roleHolders[role] = holder;
   }
   const history: WorkflowRunStepView[] = visits.map((visit) => {

@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { migrate } from './database.js';
 import type { CommandRow } from './agent-command.js';
+import { claimAgentCommand, createAgentCommand } from './agent-command.js';
+import { DaemonService } from './daemon-service.js';
+import { LiveHub } from './live.js';
 import {
   INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX,
   INSTITUTIONAL_HISTORY_MAX_AGE_DAYS,
@@ -102,6 +105,53 @@ afterEach(async () => {
 });
 
 describe('authorized institutional history search', () => {
+  it('Reproduction RHS-1: finds the agreed workflow design with a natural-language query', async () => {
+    await database.query(`UPDATE rooms SET name='Workflow Page Redesign' WHERE id=$1`, [SHARED]);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES
+       ('workflow-agreement',$1,$2,'The run page design shows each step and its receipt rail.',now()-interval '1 day'),
+       ('workflow-weak',$1,$2,'A screen preview is ready.',now())`,
+      [SHARED, REQUESTER],
+    );
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, REQUESTER]);
+    const active = await createAgentCommand(database, {
+      roomId: OUTPUT,
+      agentId: AGENT,
+      sourceMessageId: ROOT,
+      reason: 'human_tag',
+      turnRequestId: 'rhs-1',
+    });
+    await claimAgentCommand(database, OUTPUT, AGENT, active!.id, 'rhs-generation');
+    const daemon = new DaemonService(
+      database,
+      new LiveHub(),
+      undefined,
+      undefined,
+      false,
+      undefined,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      { enabled: true, live: true },
+    );
+    const result = await daemon.execute(
+      'searchInstitutionalHistory',
+      {
+        agentId: AGENT,
+        roomId: OUTPUT,
+        requestId: 'rhs-1',
+        generationId: 'rhs-generation',
+        query: 'workflow run screen UI design steps timeline',
+        limit: 10,
+      },
+      AGENT,
+    );
+    console.log('Reproduction RHS-1:', JSON.stringify(result));
+    expect(result.results[0]?.messageId).toBe('workflow-agreement');
+    expect(result.results[0]?.roomName).toBe('Workflow Page Redesign');
+  });
+
   it('intersects the source with the requester, agent, and complete output audience', async () => {
     const shared = await searchInstitutionalHistory(database, command, {
       agentId: AGENT,
@@ -109,7 +159,7 @@ describe('authorized institutional history search', () => {
       query: 'release marker',
       limit: 10,
     });
-    expect(shared.results.map((result) => result.messageId)).toEqual(['shared-result']);
+    expect(shared.results.map((result) => result.messageId)).toEqual(['shared-result', ROOT]);
     expect(shared.results[0]).toMatchObject({
       roomId: SHARED,
       roomName: 'Shared source',
@@ -128,7 +178,7 @@ describe('authorized institutional history search', () => {
       limit: 10,
     });
     expect(privateVisible.results.map((result) => result.messageId).sort()).toEqual(
-      ['private-result', 'shared-result'].sort(),
+      ['private-result', 'shared-result', ROOT].sort(),
     );
   });
 
@@ -143,7 +193,7 @@ describe('authorized institutional history search', () => {
     // The corner's own human audience is the requester, so both readable
     // sources qualify; what the corner proves is that authority resolves at all.
     expect(corner.results.map((result) => result.messageId).sort()).toEqual(
-      ['private-result', 'shared-result'].sort(),
+      ['private-result', 'shared-result', ROOT].sort(),
     );
   });
 
@@ -205,7 +255,7 @@ describe('authorized institutional history search', () => {
     expect(capped.capped).toBe(true);
     expect(capped.omitted).toBe(INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX - 10);
 
-    // The bound keeps the NEWEST matches, so the oldest 25 can never be ranked.
+    // Equal word coverage keeps the newest matches; stronger coverage is tested below.
     const newestWindow = (
       await database.query<{ id: string }>(
         `SELECT id FROM messages
@@ -237,6 +287,153 @@ describe('authorized institutional history search', () => {
       matches_capped: true,
       omitted_count: INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX - 10,
     });
+  });
+
+  it('matches English word forms and preserves exact tokens without double-counting them', async () => {
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES
+       ('step-result',$1,$2,'Each step records a receipt.',now()-interval '1 hour'),
+       ('repeated-result',$1,$2,'Step step step step.',now()),
+       ('exact-result',$1,$2,'The zxq_42 identifier.',now())`,
+      [SHARED, REQUESTER],
+    );
+    const result = await searchInstitutionalHistory(database, command, {
+      agentId: AGENT,
+      roomId: OUTPUT,
+      query: 'steps receipts',
+      limit: 10,
+    });
+    expect(result.results.map((row) => row.messageId)).toEqual(['step-result', 'repeated-result']);
+    expect(result.results.map((row) => row.rank)).toEqual([2, 1]);
+    const exact = await searchInstitutionalHistory(database, command, {
+      agentId: AGENT,
+      roomId: OUTPUT,
+      query: 'zxq_42',
+      limit: 10,
+    });
+    expect(exact.results.map((row) => row.messageId)).toEqual(['exact-result']);
+  });
+
+  it('searches current Room names without exposing unreadable Rooms', async () => {
+    await database.query(`UPDATE rooms SET name='Workflow Page Redesign' WHERE id IN ($1,$2,$3)`, [
+      SHARED,
+      PRIVATE,
+      OTHER,
+    ]);
+    const named = await searchInstitutionalHistory(database, command, {
+      agentId: AGENT,
+      roomId: OUTPUT,
+      query: '"Workflow Page Redesign"',
+      limit: 10,
+    });
+    expect(named.results.map((row) => row.messageId)).toEqual(['shared-result']);
+    expect(named.results[0]?.rank).toBe(3);
+    await database.query(`UPDATE rooms SET name='Receipt rails' WHERE id=$1`, [SHARED]);
+    const renamed = await searchInstitutionalHistory(database, command, {
+      agentId: AGENT,
+      roomId: OUTPUT,
+      query: 'receipt rail',
+      limit: 10,
+    });
+    expect(renamed.results.map((row) => row.messageId)).toEqual(['shared-result']);
+    const previous = await searchInstitutionalHistory(database, command, {
+      agentId: AGENT,
+      roomId: OUTPUT,
+      query: 'Workflow Page Redesign',
+      limit: 10,
+    });
+    expect(previous.results).toEqual([]);
+  });
+
+  it('keeps older strong matches ahead of more than 200 newer weak matches', async () => {
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES
+       ('strong-result',$1,$2,'Workflow run design step timeline.',now()-interval '30 days')`,
+      [SHARED, REQUESTER],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       SELECT 'weak-'||series,$1,$2,'Workflow update.',now()-series*interval '1 second'
+       FROM generate_series(1,$3::integer) series`,
+      [SHARED, REQUESTER, INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX + 25],
+    );
+    const result = await searchInstitutionalHistory(database, command, {
+      agentId: AGENT,
+      roomId: OUTPUT,
+      query: 'workflow run screen UI design steps timeline',
+      limit: 1,
+    });
+    expect(result.results[0]).toMatchObject({ messageId: 'strong-result', rank: 5 });
+    expect(result).toMatchObject({
+      capped: true,
+      omitted: INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX - 1,
+    });
+  });
+
+  it('keeps maximum-coverage matches when Room names supply some terms', async () => {
+    await database.query(`UPDATE rooms SET name='Workflow Page Redesign' WHERE id=$1`, [SHARED]);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       SELECT 'complete-'||lpad(series::text,4,'0'),$1,$2,'The run step.',
+              now()-interval '1 day'+series*interval '1 second'
+       FROM generate_series(1,$3::integer) series`,
+      [SHARED, REQUESTER, INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX + 25],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES('newer-partial',$1,$2,'The run.')`,
+      [SHARED, REQUESTER],
+    );
+    const result = await searchInstitutionalHistory(database, command, {
+      agentId: AGENT,
+      roomId: OUTPUT,
+      query: 'workflow run steps the',
+      limit: 10,
+    });
+    expect(result.results[0]).toMatchObject({ messageId: 'complete-0225', rank: 4 });
+    expect(result.results.every((row) => row.rank === 4)).toBe(true);
+    expect(new Set(result.results.map((row) => row.messageId)).size).toBe(10);
+    expect(result).toMatchObject({
+      capped: true,
+      omitted: INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX - 10,
+    });
+  });
+
+  it('handles stopword-only and punctuation-only queries', async () => {
+    const exact = await searchInstitutionalHistory(database, command, {
+      agentId: AGENT,
+      roomId: OUTPUT,
+      query: 'the',
+      limit: 10,
+    });
+    expect(exact.results.map((row) => row.messageId)).toEqual(['shared-result']);
+    expect(exact.results[0]?.rank).toBe(1);
+    const empty = await searchInstitutionalHistory(database, command, {
+      agentId: AGENT,
+      roomId: OUTPUT,
+      query: '?!',
+      limit: 10,
+    });
+    expect(empty.results).toEqual([]);
+  });
+
+  it('applies the same age and conversational-row bounds to Room-name matches', async () => {
+    await database.query(`UPDATE rooms SET name='Workflow Page Redesign' WHERE id=$1`, [SHARED]);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,created_at) VALUES
+       ('old-named',$1,$2,'Agreed.','message',now()-interval '181 days'),
+       ('empty-named',$1,$2,'','message',now()),
+       ('system-named',$1,$2,'Agreed.','system',now()),
+       ('card-named',$1,$2,'Agreed.','card',now())`,
+      [SHARED, REQUESTER],
+    );
+    const result = await searchInstitutionalHistory(database, command, {
+      agentId: AGENT,
+      roomId: OUTPUT,
+      query: 'Workflow Page Redesign',
+      limit: 10,
+    });
+    expect(result.results.map((row) => row.messageId)).toEqual(['shared-result']);
+    expect(result.windowDays).toBe(180);
   });
 
   it('keeps a clipped snippet inside the declared byte cap', async () => {

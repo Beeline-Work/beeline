@@ -105,12 +105,11 @@ function snippet(text: string, query: string): string {
 
 /**
  * Search only messages whose source Room is visible to the requester, the
- * answering agent, and every current human member of the output Room. Two bounds
- * keep the work finite: only the last INSTITUTIONAL_HISTORY_MAX_AGE_DAYS days can
- * match, and of those only the NEWEST INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX rows
- * are ranked. The time bound is what makes the row bound cheap — a GIN index
- * cannot yield recency order, so the match set is sorted before the row bound
- * applies, and one common term would otherwise sort all of history.
+ * answering agent, and every current human member of the output Room. Indexed
+ * exact/stemmed tokens and current Room names supply candidates inside the
+ * recency window. Count distinct query words matched before the top-match cap;
+ * fetch message bodies only for the requested results. Query bytes, history
+ * age and the app pool's statement timeout bound the ranking work.
  */
 export async function searchInstitutionalHistory(
   database: SqlDatabase,
@@ -121,45 +120,118 @@ export async function searchInstitutionalHistory(
   const limit = boundedLimit(input.limit);
   const started = performance.now();
   return database.transaction(async (db) => {
-    const authority = (
-      await db.query<{ workspace_id: string; requester_identity_id: string }>(
-        `SELECT output.workspace_id,root.author_id requester_identity_id
+    const authority =
+      (
+        await db.query<{ workspace_id: string; requester_identity_id: string }>(
+          `SELECT output.workspace_id,root.author_id requester_identity_id
          FROM rooms output
          JOIN messages root ON root.id=$2 AND root.deleted_at IS NULL
          JOIN rooms root_room ON root_room.id=root.room_id
            AND root_room.workspace_id=output.workspace_id
          JOIN identities requester ON requester.id=root.author_id AND requester.kind='human'
          WHERE output.id=$1`,
-        [command.room_id, command.root_source_message_id],
-      )
-    ).rows[0] ?? (await institutionalCornerRequesterAuthority(db, command.room_id));
+          [command.room_id, command.root_source_message_id],
+        )
+      ).rows[0] ?? (await institutionalCornerRequesterAuthority(db, command.room_id));
     if (!authority) throw new Error('institutional history requester authority is unavailable');
     if (!rolloutAllowsLive(await institutionalWorkspaceRolloutStage(db, authority.workspace_id))) {
       throw new Error('institutional history is not enabled for this Workspace');
     }
 
     const rows = await db.query<SearchRow>(
-      `WITH ${AUTHORIZED_ROOMS_CTE}, search_query AS (
-         SELECT websearch_to_tsquery('simple',$5) query
-       ), matches AS (
-         SELECT message.id
-         FROM search_query
-         JOIN messages message ON message.search_document @@ search_query.query
-         JOIN authorized_rooms authorized ON authorized.id=message.room_id
-         WHERE message.deleted_at IS NULL AND message.presentation='message'
+      `WITH ${AUTHORIZED_ROOMS_CTE}, query_terms AS (
+         SELECT term,'stem' kind
+         FROM unnest(tsvector_to_array(to_tsvector('english',$5))) term
+         UNION ALL
+         SELECT term,'exact' kind
+         FROM unnest(tsvector_to_array(to_tsvector('simple',$5))) term
+         WHERE numnode(plainto_tsquery('english',term))=0
+       ), search_query AS MATERIALIZED (
+         SELECT coalesce(string_agg(quote_literal(term),' | ')
+                  FILTER (WHERE kind='exact'),'')::tsquery exact,
+                coalesce(string_agg(quote_literal(term),' | ')
+                  FILTER (WHERE kind='stem'),'')::tsquery stem,
+                count(*) FILTER (WHERE kind='exact') exact_count,
+                count(*) FILTER (WHERE kind='stem') stem_count,
+                ts_rank('{1,1,1,1}',array_to_tsvector(ARRAY['unit']),'''unit'''::tsquery) unit_rank
+         FROM query_terms
+       ), room_documents AS MATERIALIZED (
+         SELECT room.id,to_tsvector('simple',room.name) exact,
+                strip(to_tsvector('english',room.name)) stem
+         FROM authorized_rooms authorized JOIN rooms room ON room.id=authorized.id
+       ), room_queries AS (
+         SELECT room.id,
+                coalesce(string_agg(quote_literal(term.term),' & ')
+                  FILTER (WHERE term.kind='exact' AND NOT room.exact @@ quote_literal(term.term)::tsquery),'')::tsquery exact,
+                coalesce(string_agg(quote_literal(term.term),' & ')
+                  FILTER (WHERE term.kind='stem' AND NOT room.stem @@ quote_literal(term.term)::tsquery),'')::tsquery stem
+         FROM room_documents room CROSS JOIN query_terms term GROUP BY room.id
+       ), perfect_matches AS MATERIALIZED (
+         -- A full page at maximum possible coverage dominates every partial
+         -- match. This indexed route avoids scoring common words across history.
+         SELECT message.id,message.created_at,
+                (search_query.exact_count+search_query.stem_count)::double precision rank
+         FROM room_queries room JOIN messages message ON message.room_id=room.id
+         CROSS JOIN search_query
+         WHERE (numnode(room.exact)=0 OR message.search_document @@ room.exact)
+           AND (numnode(room.stem)=0 OR message.search_stem_document @@ room.stem)
+           AND message.deleted_at IS NULL AND message.presentation='message'
            AND length(trim(message.text))>0
            AND message.created_at>=now()-$8*interval '1 day'
-         ORDER BY message.created_at DESC,message.id DESC
+         ORDER BY message.created_at DESC,message.id DESC LIMIT $6
+       ), perfect_page AS MATERIALIZED (
+         SELECT count(*)=$6 complete FROM perfect_matches
+       ), candidates AS MATERIALIZED (
+         SELECT message.id,message.room_id,message.created_at,
+                CASE WHEN search_query.exact_count>0 THEN message.search_document END search_document,
+                message.search_stem_document
+         FROM search_query
+         JOIN messages message ON message.search_document @@ search_query.exact
+                               OR message.search_stem_document @@ search_query.stem
+         WHERE message.deleted_at IS NULL AND message.presentation='message'
+           AND NOT (SELECT complete FROM perfect_page)
+           AND message.room_id=ANY(ARRAY(SELECT id FROM authorized_rooms))
+           AND length(trim(message.text))>0
+           AND message.created_at>=now()-$8*interval '1 day'
+         UNION ALL
+         SELECT message.id,message.room_id,message.created_at,
+                CASE WHEN search_query.exact_count>0 THEN message.search_document END search_document,
+                message.search_stem_document
+         FROM search_query JOIN room_documents room
+           ON room.exact @@ search_query.exact OR room.stem @@ search_query.stem
+         JOIN messages message ON message.room_id=room.id
+         WHERE message.deleted_at IS NULL AND message.presentation='message'
+           AND NOT (SELECT complete FROM perfect_page)
+           AND length(trim(message.text))>0
+           AND message.created_at>=now()-$8*interval '1 day'
+           AND NOT (coalesce(message.search_document @@ search_query.exact,false)
+                 OR coalesce(message.search_stem_document @@ search_query.stem,false))
+       ), matches AS (
+         SELECT id,created_at,rank FROM perfect_matches WHERE (SELECT complete FROM perfect_page)
+         UNION ALL
+         SELECT message.id,message.created_at,
+                -- Stripped positions and uniform weights count distinct terms.
+                -- Undo ts_rank's query-size averaging and single-term scaling.
+                round((
+                  CASE WHEN search_query.exact_count=0 THEN 0 ELSE
+                    ts_rank('{1,1,1,1}',strip(coalesce(message.search_document,''::tsvector)||room.exact),
+                            search_query.exact)*search_query.exact_count END
+                  + ts_rank('{1,1,1,1}',coalesce(message.search_stem_document,''::tsvector)||room.stem,
+                            search_query.stem)*search_query.stem_count
+                )/search_query.unit_rank)::double precision rank
+         FROM candidates message
+         JOIN room_documents room ON room.id=message.room_id
+         CROSS JOIN search_query
+         ORDER BY rank DESC,created_at DESC,id DESC
          LIMIT $6
        ), ranked AS (
          SELECT message.id message_id,message.room_id,room.name room_name,
                 message.author_id,message.text,message.created_at,
-                ts_rank_cd(message.search_document,search_query.query)::double precision rank,
+                matches.rank,
                 count(*) OVER() matched_count
          FROM matches
          JOIN messages message ON message.id=matches.id
          JOIN rooms room ON room.id=message.room_id
-         CROSS JOIN search_query
          ORDER BY rank DESC,message.created_at DESC,message.id DESC
          LIMIT $7
        ), authorized_room_count AS (

@@ -3096,10 +3096,7 @@ export class PhoneService {
        JOIN memberships creator ON creator.workspace_id=i.workspace_id AND creator.room_id IS NULL
          AND creator.identity_id=i.created_by AND creator.removed_at IS NULL
        JOIN identities inviter ON inviter.id=i.created_by
-       WHERE i.token_hash=$1 AND i.expires_at>now()
-         AND (i.consumed_at IS NULL OR EXISTS(SELECT 1 FROM memberships joined
-           WHERE joined.workspace_id=i.workspace_id AND joined.room_id IS NULL
-             AND joined.identity_id=$2 AND joined.removed_at IS NULL))`,
+       WHERE i.token_hash=$1 AND i.expires_at>now() AND i.consumed_at IS NULL`,
       [hash(rawToken), viewerId],
     );
     const row = result.rows[0];

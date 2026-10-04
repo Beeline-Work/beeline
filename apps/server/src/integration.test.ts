@@ -1555,8 +1555,8 @@ describe('monolith integration', () => {
       await (await operation('redeemInvite', { token: invite.token }, aliceToken)).json(),
     ).toEqual({ joined: true, workspaceId, roomId: created.roomId });
     expect(
-      await (await operation('resolveInvite', { token: invite.token }, aliceToken)).json(),
-    ).toEqual(expect.objectContaining({ name: 'Invites', joinedWorkspaceId: workspaceId }));
+      (await operation('resolveInvite', { token: invite.token }, aliceToken)).status,
+    ).toBe(404);
     expect(
       await (await operation('redeemInvite', { token: invite.token }, aliceToken)).json(),
     ).toEqual({ joined: false, workspaceId, roomId: created.roomId });
@@ -1574,6 +1574,9 @@ describe('monolith integration', () => {
     expect(
       await (await operation('redeemInvite', { token: bobInvite.token }, bobToken)).json(),
     ).toEqual({ joined: true, workspaceId, roomId: created.roomId });
+    expect(
+      (await operation('resolveInvite', { token: invite.token }, bobToken)).status,
+    ).toBe(404);
 
     const aliceChats = (await (
       await request(`/v1/phone/workspaces/${workspaceId}/chats`, 'GET', undefined, aliceToken)

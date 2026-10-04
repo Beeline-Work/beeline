@@ -69,6 +69,20 @@ export function shouldRetryEmptyTurn(explanation: EmptyTurnExplanation): boolean
 }
 
 /**
+ * The provider that served the turn is rate limited, timed out, or down. A
+ * pin of ONE provider (`allow_fallbacks: false`, the empty-completion retry's
+ * pin, which a retained session keeps for its later turns) gives OpenRouter
+ * nowhere else to go, so the turn loop moves the pin to the next provider
+ * itself. A key, balance, or request fault is not the provider's and is not
+ * retried.
+ */
+export function shouldFailOverProviderError(explanation: EmptyTurnExplanation): boolean {
+  const record = explanation.record;
+  if (record?.kind !== 'error' || record.status === undefined) return false;
+  return record.status === 408 || record.status === 429 || record.status >= 500;
+}
+
+/**
  * The provider refused the turn because the session's history no longer fits
  * the model's context window. Retrying in the same session sends the same
  * oversized request, so the turn loops retry once in a fresh session, whose

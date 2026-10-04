@@ -29,6 +29,8 @@ async function runTurn(options: {
   advertisedModel?: string;
   /** Daemon operation the server refuses, so a test can fail one write. */
   rejectWrite?: string;
+  /** Resolves when the run is over, for a stopped turn that writes no receipt. */
+  settled?: Promise<void>;
   beforeRun?: (paths: { agentHomeRoot: string; operatorHome: string }) => Promise<void>;
   prompt: (input: {
     agentHomeRoot: string;
@@ -37,6 +39,8 @@ async function runTurn(options: {
     onChunk: (delta: string, full: string, currentRun?: string) => void;
     /** The ACP tool-call hook: every stream update's tool-call snapshot. */
     onToolCalls?: (calls: readonly ToolCallEntry[]) => void;
+    /** The requester stops this Room turn, as the Stop button does. */
+    stop: (requestId: string) => void;
   }) => Promise<Awaited<ReturnType<AcpClient['sessionPrompt']>>>;
 }): Promise<{
   receipts: Array<Record<string, unknown>>;
@@ -167,6 +171,8 @@ async function runTurn(options: {
         attempt: attempts,
         onChunk: (delta, full, currentRun) => onChunk?.(delta, full, currentRun),
         onToolCalls: (calls) => onToolCalls?.(calls),
+        stop: (requestId) =>
+          (loop as unknown as { stopTurn(id: string): void }).stopTurn(requestId),
       });
     },
   );
@@ -189,13 +195,15 @@ async function runTurn(options: {
     createAcpClient: () => acp,
   });
   const running = loop.run();
-  await vi.waitFor(
-    () =>
-      expect(
-        receipts.filter((receipt) => receipt.status === 'failed' || receipt.status === 'complete'),
-      ).toHaveLength(options.turnCount ?? 1),
-    { timeout: 5_000 },
-  );
+  if (options.settled) await options.settled;
+  else
+    await vi.waitFor(
+      () =>
+        expect(
+          receipts.filter((receipt) => receipt.status === 'failed' || receipt.status === 'complete'),
+        ).toHaveLength(options.turnCount ?? 1),
+      { timeout: 5_000 },
+    );
   abort.abort();
   await running.catch(() => undefined);
   await scheduler.dispose();
@@ -822,6 +830,144 @@ describe('Room turn failure receipt', () => {
       'the model ended its turn with no text (stop reason end_turn) · served by phala',
     );
     expect(warnings.join('\n')).toContain('routed to venice, phala; retrying on phala');
+  });
+
+  describe('Reproduction R1: a provider 429 behind a one-provider pin', () => {
+    // Candy, 2026-10-04 13:15–13:19: a stopped turn read as an empty
+    // completion re-pinned the retained session to `baseten` alone with
+    // `allow_fallbacks: false`; every later turn was then served by baseten,
+    // and its 429 ended each one ("provider error 429: Provider returned
+    // error · served by baseten").
+    const MODEL = 'deepseek/deepseek-v4.1-flash';
+    const PROVIDERS = ['wafer', 'baseten', 'modal'];
+    const pinCache = async (): Promise<string> => {
+      const cacheRoot = await mkdtemp(join(tmpdir(), 'beeline-room-routing-'));
+      roots.push(cacheRoot);
+      const file = MODEL.replace(/[^A-Za-z0-9._-]+/g, '_');
+      await writeFile(
+        join(cacheRoot, `${file}.json`),
+        JSON.stringify({
+          model: MODEL,
+          fetchedAt: Date.now(),
+          providers: PROVIDERS,
+          bar: 98,
+          input: null,
+          limits: null,
+        }),
+      );
+      await writeFile(
+        join(cacheRoot, `${file}.probe.json`),
+        JSON.stringify({
+          model: MODEL,
+          fetchedAt: Date.now(),
+          answered: PROVIDERS.map((provider, index) => ({ provider, latencyMs: 100 * (index + 1) })),
+        }),
+      );
+      return cacheRoot;
+    };
+    const record = async (agentHomeRoot: string, message: Record<string, unknown>) => {
+      const dir = join(agentHomeRoot, 'pi', 'sessions', '--room--');
+      await mkdir(dir, { recursive: true });
+      await writeFile(
+        join(dir, '2026_room-session.jsonl'),
+        [
+          JSON.stringify({ type: 'message', message: { role: 'user', content: [] } }),
+          JSON.stringify({ type: 'message', message: { role: 'assistant', ...message } }),
+        ].join('\n'),
+      );
+    };
+    const pinOf = async (agentHomeRoot: string) =>
+      (JSON.parse(await readFile(join(agentHomeRoot, 'pi', 'models.json'), 'utf8')) as any)
+        .providers.openrouter.modelOverrides[MODEL].compat.openRouterRouting;
+    const config = (cacheRoot: string) =>
+      ({
+        agentEnv: { OPENROUTER_API_KEY: 'k' },
+        openRouterRoutingCacheDir: cacheRoot,
+        modelSelection: { model: MODEL },
+      }) as Partial<BodyConfig>;
+
+    it('fails a 429 over to the next pinned provider instead of ending the turn', async () => {
+      const cacheRoot = await pinCache();
+      const warnings: string[] = [];
+      const warn = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+        warnings.push(args.map(String).join(' '));
+      });
+      const pins: unknown[] = [];
+      const { receipts, posted, attempts } = await runTurn({
+        agentCommand: '/opt/harness/pi-acp',
+        agentKind: 'pi',
+        advertisedModel: MODEL,
+        turnCount: 2,
+        configOverrides: config(cacheRoot),
+        prompt: async ({ agentHomeRoot, attempt }) => {
+          pins.push(await pinOf(agentHomeRoot));
+          if (attempt === 1) {
+            // Turn one: an empty completion; the loop re-pins to baseten.
+            await record(agentHomeRoot, { content: [], stopReason: 'end_turn' });
+            return { stopReason: 'end_turn', updates: [], agentText: '', toolCalls: [] };
+          }
+          if (attempt === 3) {
+            // Turn two, still on the retained baseten pin: baseten is rate limited.
+            await record(agentHomeRoot, {
+              content: [],
+              stopReason: 'error',
+              errorMessage: '429: {"error":{"message":"Provider returned error","code":429}}',
+            });
+            return { stopReason: 'end_turn', updates: [], agentText: '', toolCalls: [] };
+          }
+          const text = `answer ${attempt}`;
+          await record(agentHomeRoot, { content: [{ type: 'text', text }], stopReason: 'stop' });
+          return { stopReason: 'end_turn', updates: [], agentText: text, toolCalls: [] };
+        },
+      });
+      warn.mockRestore();
+
+      expect(attempts).toBe(4);
+      expect((pins[2] as { only: string[] }).only).toEqual(['baseten']);
+      expect(pins[3]).toEqual({
+        only: ['modal'],
+        order: ['modal'],
+        allow_fallbacks: false,
+        require_parameters: false,
+      });
+      expect(receipts.filter((receipt) => receipt.status === 'failed')).toEqual([]);
+      expect(JSON.stringify(posted)).toContain('answer 4');
+      expect(warnings.join('\n')).toContain(
+        'provider error 429: Provider returned error · served by baseten; retrying on modal',
+      );
+    });
+
+    it('never re-pins the session for a turn the requester stopped', async () => {
+      const cacheRoot = await pinCache();
+      const warnings: string[] = [];
+      const warn = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+        warnings.push(args.map(String).join(' '));
+      });
+      let stopped!: () => void;
+      const settled = new Promise<void>((resolve) => (stopped = resolve));
+      const log = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+        if (args.map(String).join(' ').includes('stopped by the requester')) stopped();
+      });
+      const { receipts, attempts } = await runTurn({
+        agentCommand: '/opt/harness/pi-acp',
+        agentKind: 'pi',
+        advertisedModel: MODEL,
+        configOverrides: config(cacheRoot),
+        settled,
+        prompt: async ({ agentHomeRoot, stop }) => {
+          // The Stop button: pi aborts the request and records no text.
+          stop('ask-1');
+          await record(agentHomeRoot, { content: [], stopReason: 'aborted' });
+          return { stopReason: 'cancelled', updates: [], agentText: '', toolCalls: [] };
+        },
+      });
+      warn.mockRestore();
+      log.mockRestore();
+
+      expect(attempts).toBe(1);
+      expect(warnings.join('\n')).not.toContain('retrying on');
+      expect(receipts.filter((receipt) => receipt.status === 'failed')).toEqual([]);
+    });
   });
 
   it('retracts the draft it was writing when the prompt throws', async () => {

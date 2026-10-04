@@ -9,6 +9,7 @@ import {
   isAccountOrProviderRefusal,
   isContextOverflowTurn,
   nextPinnedProvider,
+  shouldFailOverProviderError,
   shouldRetryEmptyTurn,
   turnFailureReasonWithProvider,
 } from './empty-turn.js';
@@ -190,6 +191,25 @@ describe('the empty-completion routing retry', () => {
     ).toBe(true);
     expect(shouldRetryEmptyTurn({ reason: 'x', record: { kind: 'missing' } })).toBe(true);
     expect(shouldRetryEmptyTurn({ reason: 'x' })).toBe(true);
+  });
+
+  it('fails over a rate limit, timeout, or outage, never a key, balance, or request fault', () => {
+    for (const status of [408, 429, 500, 502, 503]) {
+      expect(
+        shouldFailOverProviderError({ reason: 'x', record: { kind: 'error', reason: 'x', status } }),
+      ).toBe(true);
+    }
+    for (const status of [400, 401, 402, 403, 404]) {
+      expect(
+        shouldFailOverProviderError({ reason: 'x', record: { kind: 'error', reason: 'x', status } }),
+      ).toBe(false);
+    }
+    expect(
+      shouldFailOverProviderError({ reason: 'x', record: { kind: 'error', reason: 'fetch failed' } }),
+    ).toBe(false);
+    expect(
+      shouldFailOverProviderError({ reason: 'x', record: { kind: 'empty', stopReason: 'stop' } }),
+    ).toBe(false);
   });
 
   it('never retries a named provider refusal, nor a turn whose text was recovered', () => {

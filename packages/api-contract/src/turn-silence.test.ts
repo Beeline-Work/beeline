@@ -156,6 +156,24 @@ describe('turn silence phrasing', () => {
     expect(line.consequence).not.toMatch(/model/i);
   });
 
+  it("leads a provider outage with the way out: the agent's model picker", () => {
+    // Candy, 2026-10-04 13:17. A phone shows two lines of this row, so the
+    // pointer comes before the fault, never after it.
+    const fault = 'provider error 429: Provider returned error · served by baseten';
+    const line = phraseTurnSilence('Candy', classifyTurnSilence(fault), { givingUp: true });
+    expect(`Candy ${line.verb} · ${line.consequence}`).toBe(
+      "Candy could not answer · its provider is failing; switch its model in the agent's settings. provider error 429: Provider returned error · served by baseten. Stopped retrying after three tries.",
+    );
+    for (const outage of ['provider error 503: Service Unavailable', 'provider error 408']) {
+      expect(phraseTurnSilence('Candy', classifyTurnSilence(outage)).consequence).toMatch(
+        /^its provider is failing; switch its model in the agent's settings\. /,
+      );
+    }
+    expect(
+      phraseTurnSilence('Candy', classifyTurnSilence('provider error 400: bad request')).consequence,
+    ).toBe('provider error 400: bad request. Resending your message.');
+  });
+
   it('says so once when hiccup retries are exhausted', () => {
     expect(
       phraseTurnSilence(

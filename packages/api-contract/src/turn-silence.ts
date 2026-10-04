@@ -111,6 +111,17 @@ export function isContextOverflowFault(text: string): boolean {
 }
 
 /**
+ * A rate limit, timeout, or outage from the model's provider
+ * (`provider error 429: …`, `provider error 503: …`). Restarts may clear it,
+ * so it stays a hiccup, but its line points the person at the model picker.
+ */
+function isProviderOutageFault(text: string): boolean {
+  return /\bprovider error (?:408|429|5\d\d)\b/i.test(text);
+}
+
+const PROVIDER_OUTAGE_POINTER = "its provider is failing; switch its model in the agent's settings.";
+
+/**
  * Classify a distilled helper reason. `reasonKind` from a current helper wins;
  * text matching covers old helpers and the 90s stall path (no receipt).
  */
@@ -313,7 +324,14 @@ export function phraseTurnSilence(
         : options.restarting === false
           ? undefined
           : 'Resending your message.';
-      return capLine(agent, 'could not answer', remedy ? `${fault}. ${remedy}` : `${fault}.`);
+      const detail = remedy ? `${fault}. ${remedy}` : `${fault}.`;
+      // The helper already moved the turn across the pinned providers; what is
+      // left to the person is the model itself. The pointer leads, because a
+      // phone shows only the first two lines of this row.
+      if (isProviderOutageFault(fault)) {
+        return capLine(agent, 'could not answer', `${PROVIDER_OUTAGE_POINTER} ${detail}`);
+      }
+      return capLine(agent, 'could not answer', detail);
     }
   }
 }

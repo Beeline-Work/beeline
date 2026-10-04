@@ -605,6 +605,29 @@ describe('Room deck live path', () => {
     });
   });
 
+  it('lists search matches without section heads', async () => {
+    const renderer = await mountDeck();
+    const list = () => renderer.root.find((node: any) => node.type === 'SectionList');
+    const header = () =>
+      list().props.renderSectionHeader({ section: { kind: 'rooms', title: 'Rooms', data: [] } });
+    expect(header()).not.toBeNull();
+    await act(async () =>
+      renderer.root.findByType('RoomListToolbar' as any).props.onQuery('general'),
+    );
+    expect(header()).toBeNull();
+    expect(paintedRows(renderer).map((item) => item.room.id)).toEqual(['room-a']);
+    let footer!: ReactTestRenderer;
+    await act(async () => {
+      footer = create(list().props.ListFooterComponent);
+    });
+    expect(footer.root.findAllByProps({ testID: 'message-search-results' })).not.toHaveLength(0);
+    expect(footer.root.findAllByType('RoomListSectionHeader' as any)).toHaveLength(0);
+    act(() => {
+      footer.unmount();
+      renderer.unmount();
+    });
+  });
+
   it('paints a Room delta into the list without a chats read, and ignores drafts', async () => {
     const renderer = await mountDeck();
     const readsAtRest = deck.chatsReads;

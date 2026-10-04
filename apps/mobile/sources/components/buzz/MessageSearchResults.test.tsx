@@ -74,7 +74,7 @@ async function render(search: MessageSearchState, onOpen = vi.fn()) {
 }
 
 describe('MessageSearchResults', () => {
-  it('lists each match under Messages with its Room, author, age and highlighted words', async () => {
+  it('lists each match with its Room, author, age and highlighted words under no section header', async () => {
     const { tree, find } = await render(
       state({
         results: [
@@ -83,7 +83,7 @@ describe('MessageSearchResults', () => {
         ],
       }),
     );
-    expect(textOf(tree.root)).toContain('MESSAGES');
+    expect(textOf(tree.root)).not.toMatch(/messages/i);
     const [room, direct] = [find(`message-search-result-${'1'.repeat(64)}`)[0], find(`message-search-result-${'2'.repeat(64)}`)[0]];
     expect(textOf(room)).toBe('#mobile2dSol: Looking. The Android build failed.');
     expect(textOf(direct)).toBe('@sol2dAda: Looking. The Android build failed.');

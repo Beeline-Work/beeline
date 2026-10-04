@@ -1,7 +1,28 @@
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { delimiter, resolve } from 'node:path';
 
-/** Install session-local git/gh launchers which refresh credentials for remote commands. */
+/** What a corner's `gh` launcher actually is: a host binary or the REST fallback. */
+export type CornerGitHubCli = 'host' | 'rest';
+
+export interface CornerGitHubLaunchers {
+  /** Environment overrides for the corner harness and its tool processes. */
+  readonly env: Record<string, string>;
+  /**
+   * `host` when `gh` delegates to a real host binary, `rest` when this host has
+   * no `gh` and the launcher answers `gh pr create`/`gh pr view` itself.
+   */
+  readonly githubCli: CornerGitHubCli;
+}
+
+/**
+ * Install session-local git/gh launchers which refresh credentials for remote
+ * commands.
+ *
+ * `gh` is always installed. When a host `gh` exists the launcher delegates to
+ * it with the refreshed token; when it does not, the launcher answers
+ * `gh pr create` and `gh pr view` directly over the GitHub REST API with the
+ * same token, so a corner can always open and read its pull request.
+ */
 export async function installCornerGitHubWrappers(input: {
   root: string;
   runtimeConfigPath: string;
@@ -12,7 +33,7 @@ export async function installCornerGitHubWrappers(input: {
   featureBranch: string;
   targetBranch: string;
   inheritedPath?: string;
-}): Promise<Record<string, string>> {
+}): Promise<CornerGitHubLaunchers> {
   const bin = resolve(input.root, 'beeline-github-bin');
   await mkdir(bin, { recursive: true, mode: 0o700 });
   const common = {
@@ -22,23 +43,30 @@ export async function installCornerGitHubWrappers(input: {
     room: input.roomId,
     featureBranch: input.featureBranch,
     targetBranch: input.targetBranch,
+    gitCommand: input.gitBinary,
   };
   await writeLauncher(resolve(bin, 'git'), {
     ...common,
     command: input.gitBinary,
     launcher: 'git',
+    restFallback: false,
   });
-  if (input.ghBinary)
-    await writeLauncher(resolve(bin, 'gh'), {
-      ...common,
-      command: input.ghBinary,
-      launcher: 'gh',
-    });
+  await writeLauncher(resolve(bin, 'gh'), {
+    ...common,
+    command: input.ghBinary ?? '',
+    launcher: 'gh',
+    // A host gh can still be unauthenticated and reject the app token; the
+    // REST path is the guarantee that a PR can always be opened.
+    restFallback: true,
+  });
   return {
-    PATH: [bin, input.inheritedPath].filter(Boolean).join(delimiter),
-    // Static startup tokens take precedence over the refreshed token in gh.
-    GH_TOKEN: '',
-    GITHUB_TOKEN: '',
+    env: {
+      PATH: [bin, input.inheritedPath].filter(Boolean).join(delimiter),
+      // Static startup tokens take precedence over the refreshed token in gh.
+      GH_TOKEN: '',
+      GITHUB_TOKEN: '',
+    },
+    githubCli: input.ghBinary ? 'host' : 'rest',
   };
 }
 
@@ -158,31 +186,33 @@ export function cornerGitHubCommandRefusal(
   return undefined;
 }
 
-async function writeLauncher(path: string, config: Record<string, string>): Promise<void> {
+async function writeLauncher(path: string, config: Record<string, string | boolean>): Promise<void> {
   const source = `#!/usr/bin/env node
 import { spawn, spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 const config = ${JSON.stringify(config)};
 const cornerGitHubCommandRefusal = ${cornerGitHubCommandRefusal.toString()};
-const authFailure = /(?:authentication failed|bad credentials|could not read username|http(?:\\/\\d(?:\\.\\d)?)? 40[13]|status (?:code )?40[13])/i;
+const authFailure = /(?:authentication failed|bad credentials|could not read username|not logged into any github hosts|http(?:\\/\\d(?:\\.\\d)?)? 40[13]|status (?:code )?40[13])/i;
+const argv = process.argv.slice(2);
 function resolvePushBranch(source) {
   if (source) {
-    const tag = spawnSync(config.command, ['show-ref', '--verify', '--quiet', 'refs/tags/' + source], { stdio: 'ignore' }).status === 0;
+    const tag = spawnSync(config.gitCommand, ['show-ref', '--verify', '--quiet', 'refs/tags/' + source], { stdio: 'ignore' }).status === 0;
     return { branch: source, tag };
   }
-  const tracked = spawnSync(config.command, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{push}'], { encoding: 'utf8' });
+  const tracked = spawnSync(config.gitCommand, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{push}'], { encoding: 'utf8' });
   if (tracked.status === 0) return { branch: tracked.stdout.trim().replace(/^[^/]+\\//, '') };
-  const current = spawnSync(config.command, ['symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' });
+  const current = spawnSync(config.gitCommand, ['symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' });
   return current.status === 0 ? { branch: current.stdout.trim() } : {};
 }
-const refusal = cornerGitHubCommandRefusal(config.launcher, process.argv.slice(2), config.featureBranch, config.targetBranch, resolvePushBranch);
+const refusal = cornerGitHubCommandRefusal(config.launcher, argv, config.featureBranch, config.targetBranch, resolvePushBranch);
 if (refusal) { process.stderr.write(refusal + '\\n'); process.exitCode = 1; }
-function needsToken(argv) {
+function needsToken(args) {
   if (config.launcher === 'gh') return true;
   const optionsWithValue = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env']);
   let index = 0;
-  while (index < argv.length && argv[index].startsWith('-')) {
-    if (argv[index] === '--version' || argv[index] === '--help') return false;
-    index += optionsWithValue.has(argv[index]) ? 2 : 1;
+  while (index < args.length && args[index].startsWith('-')) {
+    if (args[index] === '--version' || args[index] === '--help') return false;
+    index += optionsWithValue.has(args[index]) ? 2 : 1;
   }
   // Unknown commands (including aliases) may contact a remote.
   const local = new Set([
@@ -195,7 +225,7 @@ function needsToken(argv) {
     'status', 'switch', 'symbolic-ref', 'tag', 'update-index', 'update-ref',
     'verify-commit', 'verify-tag', 'worktree',
   ]);
-  return !local.has(argv[index]);
+  return !local.has(args[index]);
 }
 function token() {
   let result;
@@ -208,9 +238,15 @@ function token() {
   process.exitCode = result.status || 1;
   return undefined;
 }
-async function run(value) {
+function runCommand(command, args, value, quiet) {
   const env = { ...process.env, GH_TOKEN: value, GITHUB_TOKEN: value, GIT_TERMINAL_PROMPT: '0' };
-  const child = spawn(config.command, process.argv.slice(2), { env, stdio: ['inherit', 'pipe', 'pipe'] });
+  const child = spawn(command, args, { env, stdio: ['inherit', quiet ? 'ignore' : 'pipe', quiet ? 'ignore' : 'pipe'] });
+  if (quiet) {
+    return new Promise((resolve, reject) => {
+      child.once('error', reject);
+      child.once('close', (status) => resolve({ status, authenticationFailed: false }));
+    });
+  }
   let authenticationFailed = false;
   // Keep only enough diagnostic overlap to recognize an auth failure across chunks.
   for (const [source, destination] of [[child.stdout, process.stdout], [child.stderr, process.stderr]]) {
@@ -227,15 +263,186 @@ async function run(value) {
     child.once('close', (status) => resolve({ status, authenticationFailed }));
   });
 }
+function isPushCommand(args) {
+  const optionsWithValue = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env']);
+  let index = 0;
+  while (index < args.length && args[index].startsWith('-')) {
+    if (args[index] === '--version' || args[index] === '--help') return false;
+    index += optionsWithValue.has(args[index]) ? 2 : 1;
+  }
+  return args[index] === 'push';
+}
+/** The feature branch's remote-tracking ref must exist after a launcher push. */
+async function publishTrackingRef(value) {
+  const refspec = '+refs/heads/' + config.featureBranch + ':refs/remotes/origin/' + config.featureBranch;
+  const fetched = await runCommand(config.gitCommand, ['fetch', '--no-tags', 'origin', refspec], value, true).catch(() => ({ status: 1 }));
+  if (fetched.status !== 0)
+    await runCommand(config.gitCommand, ['update-ref', 'refs/remotes/origin/' + config.featureBranch, 'HEAD'], value, true).catch(() => undefined);
+}
+function flagValue(args, names) {
+  for (let index = 0; index < args.length; index += 1) {
+    for (const name of names) {
+      if (args[index] === name) return args[index + 1];
+      if (args[index].startsWith(name + '=')) return args[index].slice(name.length + 1);
+    }
+  }
+  return undefined;
+}
+function hasFlag(args, names) {
+  return args.some((arg) => names.includes(arg));
+}
+function gitOutput(args) {
+  const result = spawnSync(config.gitCommand, args, { encoding: 'utf8' });
+  return result.status === 0 ? result.stdout.trim() : '';
+}
+function repoSlug(args) {
+  const explicit = flagValue(args, ['--repo', '-R']);
+  if (explicit) return explicit.replace(/^https?:\\/\\/[^/]+\\//, '').replace(/\\.git$/, '');
+  if (process.env.GH_REPO) return process.env.GH_REPO;
+  if (process.env.GITHUB_REPOSITORY) return process.env.GITHUB_REPOSITORY;
+  const remote = gitOutput(['remote', 'get-url', 'origin']) || gitOutput(['config', '--get', 'remote.origin.url']);
+  const match = remote.match(/github\\.com[:/]([^/]+)\\/(.+?)(?:\\.git)?$/);
+  return match ? match[1] + '/' + match[2] : '';
+}
+async function github(pathname, options, value) {
+  const base = (process.env.GITHUB_API_URL || 'https://api.github.com').replace(/\\/$/, '');
+  const response = await fetch(base + pathname, {
+    ...options,
+    headers: {
+      accept: 'application/vnd.github+json',
+      authorization: 'Bearer ' + value,
+      'user-agent': 'beeline-corner-gh',
+      'x-github-api-version': '2022-11-28',
+      ...(options && options.headers ? options.headers : {}),
+    },
+  });
+  const text = await response.text();
+  let data;
+  try { data = text ? JSON.parse(text) : {}; } catch { data = {}; }
+  if (!response.ok) {
+    const message = (data && data.message) || response.statusText;
+    process.stderr.write('gh: ' + response.status + ' ' + message + '\\n');
+    return { ok: false, status: response.status, data };
+  }
+  return { ok: true, status: response.status, data };
+}
+async function runRest(args, value) {
+  const slug = repoSlug(args);
+  const action = args[0] === 'pr' ? args[1] : undefined;
+  if (!slug) {
+    process.stderr.write('Beeline: no GitHub repository resolved for gh ' + args.slice(0, 2).join(' ') + '; pass --repo owner/repo.\\n');
+    return { status: 1, authenticationFailed: false };
+  }
+  if (action === 'create') {
+    let title = flagValue(args, ['--title', '-t']);
+    let body = flagValue(args, ['--body', '-b']);
+    const bodyFile = flagValue(args, ['--body-file', '-F']);
+    if (bodyFile !== undefined && body === undefined) {
+      try { body = readFileSync(bodyFile, 'utf8'); } catch {
+        process.stderr.write('gh: could not read body file ' + bodyFile + '\\n');
+        return { status: 1, authenticationFailed: false };
+      }
+    }
+    if (hasFlag(args, ['--fill', '-f'])) {
+      if (title === undefined) title = gitOutput(['log', '-1', '--pretty=%s']);
+      if (body === undefined) body = gitOutput(['log', '-1', '--pretty=%b']);
+    }
+    if (title === undefined || title === '') {
+      process.stderr.write('gh: a title is required (--title or --fill)\\n');
+      return { status: 1, authenticationFailed: false };
+    }
+    const head = flagValue(args, ['--head', '-H']) || config.featureBranch;
+    const base = flagValue(args, ['--base', '-B']) || config.targetBranch;
+    const draft = hasFlag(args, ['--draft', '-d']);
+    const created = await github('/repos/' + slug + '/pulls', {
+      method: 'POST',
+      body: JSON.stringify({ title, body: body || '', head, base, draft }),
+    }, value);
+    if (!created.ok) return { status: 1, authenticationFailed: created.status === 401 || created.status === 403 };
+    process.stdout.write((created.data.html_url || '') + '\\n');
+    return { status: 0, authenticationFailed: false };
+  }
+  if (action === 'view') {
+    const fields = (flagValue(args, ['--json']) || '').split(',').map((field) => field.trim()).filter(Boolean);
+    let number = args.slice(2).map((arg) => arg.match(/^([0-9]+)$/)).find(Boolean);
+    number = number ? Number(number[1]) : undefined;
+    if (number === undefined) {
+      const owner = slug.split('/')[0];
+      const listed = await github('/repos/' + slug + '/pulls?state=all&head=' + encodeURIComponent(owner + ':' + config.featureBranch), {}, value);
+      if (!listed.ok) return { status: 1, authenticationFailed: listed.status === 401 || listed.status === 403 };
+      const first = Array.isArray(listed.data) ? listed.data[0] : undefined;
+      if (!first) {
+        process.stderr.write('gh: no pull request found for branch ' + config.featureBranch + '\\n');
+        return { status: 1, authenticationFailed: false };
+      }
+      number = first.number;
+    }
+    const viewed = await github('/repos/' + slug + '/pulls/' + number, {}, value);
+    if (!viewed.ok) return { status: 1, authenticationFailed: viewed.status === 401 || viewed.status === 403 };
+    const pr = viewed.data;
+    if (fields.length) {
+      let files = [];
+      if (fields.includes('files')) {
+        const listed = await github('/repos/' + slug + '/pulls/' + number + '/files?per_page=100', {}, value);
+        if (listed.ok && Array.isArray(listed.data))
+          files = listed.data.map((file) => ({ path: file.filename, additions: file.additions, deletions: file.deletions, changeType: file.status }));
+      }
+      const all = {
+        number: pr.number,
+        url: pr.html_url,
+        title: pr.title,
+        state: pr.state,
+        headRefName: pr.head && pr.head.ref,
+        headRefOid: pr.head && pr.head.sha,
+        baseRefName: pr.base && pr.base.ref,
+        isDraft: pr.draft,
+        body: pr.body,
+        mergeable: pr.mergeable,
+        mergeStateStatus: pr.mergeable_state,
+        additions: pr.additions,
+        deletions: pr.deletions,
+        changedFiles: pr.changed_files,
+        labels: (pr.labels || []).map((label) => label.name),
+        author: pr.user ? { login: pr.user.login } : undefined,
+        files,
+      };
+      const output = {};
+      for (const field of fields) if (Object.hasOwn(all, field)) output[field] = all[field];
+      process.stdout.write(JSON.stringify(output) + '\\n');
+      return { status: 0, authenticationFailed: false };
+    }
+    process.stdout.write((pr.html_url || '') + '\\n');
+    return { status: 0, authenticationFailed: false };
+  }
+  process.stderr.write('Beeline: this host has no gh binary; only gh pr create and gh pr view are provided through the app token. Use git for push and the Beeline pr_checks_status tool for checks.\\n');
+  return { status: 1, authenticationFailed: false };
+}
+function isRestCommand(args) {
+  return config.launcher === 'gh' && args[0] === 'pr' && (args[1] === 'create' || args[1] === 'view');
+}
+async function execute(args, value) {
+  if (isRestCommand(args)) {
+    if (config.command) {
+      const result = await runCommand(config.command, args, value).catch(() => ({ status: 1, authenticationFailed: true }));
+      // Only a missing or auth-refusing host gh earns the REST fallback; a real gh error stands.
+      if (result.status === 0 || !result.authenticationFailed) return result;
+    }
+    return runRest(args, value);
+  }
+  if (!config.command) return runRest(args, value);
+  return runCommand(config.command, args, value);
+}
 if (!refusal) {
-  const authenticated = needsToken(process.argv.slice(2));
+  const authenticated = needsToken(argv);
   const value = authenticated ? token() : '';
   if (value !== undefined) {
-    let result = await run(value);
+    let result = await execute(argv, value);
     if (authenticated && result.status !== 0 && result.authenticationFailed) {
       const refreshed = token();
-      if (refreshed !== undefined) result = await run(refreshed);
+      if (refreshed !== undefined) result = await execute(argv, refreshed);
     }
+    if (config.launcher === 'git' && result.status === 0 && isPushCommand(argv))
+      await publishTrackingRef(value);
     process.exitCode ??= result.status ?? 1;
   }
 }

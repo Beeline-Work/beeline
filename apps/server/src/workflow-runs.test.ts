@@ -1,5 +1,5 @@
 import { describedWorkflow } from './test-support.js';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QueryResultRow } from 'pg';
 import { migrate, type QueryResult, type SqlDatabase } from './database.js';
@@ -11,6 +11,8 @@ import {
   activeRunIdsForSchedule,
   archiveWorkflow,
   assignWorkflowRole,
+  backfillWorkflowSkillDescriptions,
+  describedLegacyWorkflowContract,
   handoff,
   getWorkflowRun,
   cancelWorkflowRun,
@@ -1654,5 +1656,120 @@ describe('agent workflow run reads and cancellation', () => {
     await cancelWorkflowRun(database, command, { runId, reason: 'Stop' });
     expect((await database.query(`SELECT 1 FROM agent_schedules WHERE workflow_run->>'runId'=$1`, [runId])).rowCount).toBe(0);
     expect(await new AgentScheduleLoop(database).runOnce(new Date(Date.now() + 120000))).toBe(0);
+  });
+});
+
+describe('backfillWorkflowSkillDescriptions', () => {
+  /** Simulates a workflow skill version saved before PR #2083 added `summary`/`does`. */
+  async function seedLegacySkillVersion(slug: string, markdown: string): Promise<string> {
+    const skillId = randomUUID();
+    await database.query(
+      `INSERT INTO workspace_skills
+         (id,workspace_id,slug,description,state,current_version,revision,source_room_id,
+          repository,target_commit,path,kind)
+       VALUES($1,$2,$3,'legacy workflow','active',1,1,$4,'','',NULL,'workflow')`,
+      [skillId, WORKSPACE, slug, ROOM],
+    );
+    await database.query(
+      `INSERT INTO workspace_skill_versions
+         (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,
+          repository,target_commit,path,extractor_version,model)
+       VALUES($1,1,$2,$3,NULL,$4,'','',NULL,'legacy-test','n/a')`,
+      [skillId, markdown, createHash('sha256').update(markdown).digest('hex'), ['legacy-seed']],
+    );
+    return skillId;
+  }
+
+  async function markdownFor(skillId: string): Promise<string> {
+    return (
+      await database.query<{ markdown: string }>(
+        `SELECT markdown FROM workspace_skill_versions WHERE skill_id=$1 AND version=1`,
+        [skillId],
+      )
+    ).rows[0]!.markdown;
+  }
+
+  it('fills summary from the description and a does placeholder on every missing state, matches the pure helper, and is idempotent', async () => {
+    const markdown = JSON.stringify(CONTRACT);
+    const skillId = await seedLegacySkillVersion('legacy-corner', markdown);
+
+    await expect(backfillWorkflowSkillDescriptions(database)).resolves.toBe(1);
+
+    const described = JSON.parse(await markdownFor(skillId));
+    expect(described.summary).toBe(CONTRACT.description);
+    expect(described.handoffs.implement.does).toBe(
+      'Step implement (implementer): describe what this step does',
+    );
+    expect(described.handoffs.human_approve.does).toBe(
+      'Step human_approve (approver): describe what this step does',
+    );
+    // Terminal states get a does too: workflowSaveError requires one on
+    // every state, with no exception, so the backfill cannot skip them.
+    expect(described.handoffs.land.does).toBe('Step land: describe what this step does');
+    expect(described.handoffs.failed.does).toBe('Step failed: describe what this step does');
+    // Every edge, role binding and loop rule survived untouched.
+    expect(described.handoffs.checks.loop).toEqual(CONTRACT.handoffs.checks.loop);
+    expect(described.start).toBe(CONTRACT.start);
+    expect(described.roles).toEqual(CONTRACT.roles);
+
+    // Exactly what a caller describing this same legacy contract before a
+    // normal save would get from the pure half of this migration.
+    expect(described).toEqual(describedLegacyWorkflowContract(CONTRACT as never));
+
+    // Idempotent: a second run has nothing left to fill.
+    await expect(backfillWorkflowSkillDescriptions(database)).resolves.toBe(0);
+    expect(await markdownFor(skillId)).toBe(JSON.stringify(described));
+  });
+
+  it('falls back to a plain placeholder when the description is itself empty', async () => {
+    const blank = { ...CONTRACT, description: '   ' };
+    const skillId = await seedLegacySkillVersion('legacy-blank', JSON.stringify(blank));
+    await expect(backfillWorkflowSkillDescriptions(database)).resolves.toBe(1);
+    expect(JSON.parse(await markdownFor(skillId)).summary).toBe('Summary not written yet');
+  });
+
+  it('leaves an already-described contract untouched, including its content hash', async () => {
+    const markdown = JSON.stringify(describedWorkflow(CONTRACT));
+    const skillId = await seedLegacySkillVersion('already-described', markdown);
+    const before = (
+      await database.query<{ content_hash: string }>(
+        `SELECT content_hash FROM workspace_skill_versions WHERE skill_id=$1 AND version=1`,
+        [skillId],
+      )
+    ).rows[0]!.content_hash;
+
+    await expect(backfillWorkflowSkillDescriptions(database)).resolves.toBe(0);
+
+    const after = await database.query<{ markdown: string; content_hash: string }>(
+      `SELECT markdown,content_hash FROM workspace_skill_versions WHERE skill_id=$1 AND version=1`,
+      [skillId],
+    );
+    expect(after.rows[0]).toEqual({ markdown, content_hash: before });
+  });
+
+  it('is unaffected by a non-workflow skill and a deleted workflow version', async () => {
+    await database.query(
+      `INSERT INTO workspace_skills
+         (id,workspace_id,slug,description,state,current_version,revision,source_room_id,
+          repository,target_commit,path,kind)
+       VALUES($1,$2,'a-procedure','A procedure','active',1,1,$3,'','',NULL,'procedure')`,
+      [randomUUID(), WORKSPACE, ROOM],
+    );
+    const deletedSkillId = randomUUID();
+    await database.query(
+      `INSERT INTO workspace_skills
+         (id,workspace_id,slug,description,state,current_version,revision,source_room_id,
+          repository,target_commit,path,kind)
+       VALUES($1,$2,'deleted-workflow','Deleted','active',1,1,$3,'','',NULL,'workflow')`,
+      [deletedSkillId, WORKSPACE, ROOM],
+    );
+    await database.query(
+      `INSERT INTO workspace_skill_versions
+         (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,
+          repository,target_commit,path,extractor_version,model,source_deleted_at)
+       VALUES($1,1,'',$2,NULL,$3,'','',NULL,'legacy-test','n/a',now())`,
+      [deletedSkillId, createHash('sha256').update('').digest('hex'), ['legacy-seed']],
+    );
+    await expect(backfillWorkflowSkillDescriptions(database)).resolves.toBe(0);
   });
 });

@@ -389,7 +389,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'save_workflow',
     description:
-      `Save a Workspace-wide, versioned declarative workflow. Pass the whole JSON contract under "contract"; active runs keep their starting version. A rejected contract returns the rule that failed and where. Procedure: ${WORKFLOW_GUIDE_URL}`,
+      `Save a versioned Workspace workflow from the whole JSON "contract"; runs keep their pinned version. Require a nonempty summary and a does sentence for every state, each one line and at most 140 characters; hint is agent-facing. A rejection returns the rule that failed and where. Procedure: ${WORKFLOW_GUIDE_URL}`,
     inputSchema: {
       type: 'object',
       required: ['contract'],
@@ -451,7 +451,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
     name: 'handoff',
     description:
       'Advance a workflow run you are currently holding: validated against the run\'s pinned contract (you must be bound to the current state\'s role, the outcome must be one the state declares, and contents must satisfy its required fields). Posted as a normal message and deterministically wakes whichever agent is bound to the next state\'s role - no @mention needed. A capped loop is enforced from the transcript itself: exceeding it is redirected to the loop\'s own escape state instead of your requested outcome. A state that reaches a human decision point posts a card instead of waking anyone directly; that role\'s agent is woken once a human answers it.' +
-      ' You may attach an optional receipt: line is one line of plaintext up to 140 characters; refs is 0-3 links with kind (brief, file, message, pr, checks, memory, url), label and an http(s) url. Omit either or both to leave them empty; never generate a fallback. The engine records the exit and actor. Follow the current state’s receipt hint when supplied.' +
+      ' You may attach an optional receipt: line is one line of plaintext up to 140 characters; refs is 0-3 links with kind (brief, file, message, pr, checks, memory, url), label and an http(s) url. Omit either or both to leave them empty; never generate a fallback. The engine records the exit and actor. The run keeps the committed final reply from the turn that worked each step, including a reply posted after handoff; do not copy it into an optional receipt. Live output shows only the newest chunk. Follow the current state’s receipt hint when supplied.' +
       ` How to write and run workflows: ${WORKFLOW_GUIDE_URL}`,
     inputSchema: {
       type: 'object',

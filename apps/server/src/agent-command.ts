@@ -1,3 +1,4 @@
+import { workflowOutputBindingCtes } from './workflow-step-output.js';
 import { createHash, randomBytes } from 'node:crypto';
 import type {
   AgentCommand,
@@ -728,7 +729,7 @@ export async function claimAgentCommand(
            WHERE command.id=eligible.id AND
              (eligible.action='stop' OR eligible.action='restart' OR EXISTS(SELECT 1 FROM working))
            RETURNING command.*
-         )
+         ), ${workflowOutputBindingCtes('claimed')}
          SELECT claimed.*,true turn_claimed FROM claimed
          UNION ALL
          SELECT eligible.*,false turn_claimed FROM eligible

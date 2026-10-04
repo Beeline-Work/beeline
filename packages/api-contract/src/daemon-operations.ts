@@ -965,6 +965,7 @@ export type PostLiveOutputInput = TurnOutputAuthority &
   AgentRoomInput & {
     readonly turnId: string;
     readonly text: string;
+    readonly latestChunk?: string;
   };
 export type RetractLiveOutputInput = TurnOutputAuthority &
   AgentRoomInput & {

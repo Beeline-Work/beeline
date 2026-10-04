@@ -4043,11 +4043,16 @@ export class DaemonService {
     const written = await this.database.query(
       `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
        SELECT room.id,$2,$3,$4,$5::jsonb FROM rooms room
-       WHERE room.id=$1 AND ($4<>'draft' OR room.parent_id IS NOT NULL)
+       WHERE room.id=$1 AND ($4<>'draft' OR room.parent_id IS NOT NULL OR EXISTS (
+         SELECT 1 FROM messages visit JOIN agent_commands command ON command.room_id=visit.room_id
+           AND visit.card->'outputCommandIds' ? command.id
+         WHERE visit.room_id=$1 AND visit.card_type='workflow-handoff'
+           AND command.agent_id=$2 AND command.turn_request_id=$3 AND command.state='claimed'
+       ))
        ON CONFLICT(room_id,agent_id,turn_id,kind)
        DO UPDATE SET body=EXCLUDED.body,updated_at=now()
        RETURNING 1`,
-      [input.roomId, agentId, input.turnId, kind, JSON.stringify({ text: input.text })],
+      [input.roomId, agentId, input.turnId, kind, JSON.stringify({ text: input.text, latestChunk: input.latestChunk })],
     );
     // Room turns keep their durable working receipt and final reply, but their
     // provisional prose stays off the transcript. Corners retain the full
@@ -4059,6 +4064,7 @@ export class DaemonService {
       agentId,
       turnId: input.turnId,
       text: input.text,
+      ...(input.latestChunk !== undefined ? { latestChunk: input.latestChunk } : {}),
     });
     return this.writeResult();
   }

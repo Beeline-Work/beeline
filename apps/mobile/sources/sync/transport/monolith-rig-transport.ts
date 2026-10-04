@@ -64,7 +64,7 @@ export type LiveWireEvent =
       databaseClockAt?: number;
       upperBoundMs: number;
     }
-  | { type: 'draft' | 'thought'; roomId: string; agentId: string; turnId: string; text: string }
+  | { type: 'draft' | 'thought'; roomId: string; agentId: string; turnId: string; text: string; latestChunk?: string }
   | { type: 'retract'; roomId: string; agentId: string; turnId: string; kind: 'draft' | 'thought' }
   | {
       type: 'presence';

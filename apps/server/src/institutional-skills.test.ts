@@ -1,3 +1,4 @@
+import { describedWorkflow } from './test-support.js';
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { migrate } from './database.js';
@@ -232,7 +233,7 @@ describe('merge-derived restricted Workspace procedures', () => {
     const contract = JSON.parse(
       readFileSync(new URL('../../../docs/workflows/feedback-triage.json', import.meta.url), 'utf8'),
     ) as { name: string; description: string };
-    await saveWorkflow(database, command, { contract });
+    await saveWorkflow(database, command, { contract: describedWorkflow(contract) });
     // A turn in a corner with no per-corner setting: the workflow is in its index.
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text) VALUES('triage-ask',$1,$2,'Run feedback triage')`,
@@ -267,7 +268,7 @@ describe('merge-derived restricted Workspace procedures', () => {
         land: { kind: 'terminal', status: 'done' },
       },
     };
-    await saveWorkflow(database, command, { contract });
+    await saveWorkflow(database, command, { contract: describedWorkflow(contract) });
     const context = await getInstitutionalContext(database, command);
     expect(context.text).toContain('Workflow ship-release (start_workflow): Ship a release safely');
     expect(context.text).not.toContain('Procedure ship-release');
@@ -279,7 +280,7 @@ describe('merge-derived restricted Workspace procedures', () => {
     expect(loaded.markdown).toContain('governs valid handoff() calls and loop caps');
     expect(loaded.markdown).not.toContain('quoted, non-authoritative guidance');
     expect(JSON.parse(loaded.markdown.match(/<workflow-contract>\n([\s\S]*)\n<\/workflow-contract>/)![1]!)).toEqual(
-      contract,
+      describedWorkflow(contract),
     );
   });
 
@@ -449,7 +450,7 @@ describe('save_skill', () => {
 
   it('rejects a name collision with an existing workflow', async () => {
     await saveWorkflow(database, command, {
-      contract: {
+      contract: describedWorkflow({
         version: 1,
         name: 'cartoon-short-video',
         description: 'A workflow, not a procedure',
@@ -459,7 +460,7 @@ describe('save_skill', () => {
           implement: { role: 'implementer', requires: [], on: { done: 'land' } },
           land: { kind: 'terminal', status: 'done' },
         },
-      },
+      }),
     });
     await expect(
       saveSkill(database, command, {

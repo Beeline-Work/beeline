@@ -4,7 +4,6 @@ import { describe, expect, it } from 'vitest';
 import type { WorkflowContract, WorkflowRunStepView } from '@beeline/api-contract/phone';
 import {
   workflowDisplayName,
-  workflowMainPath,
   workflowRunLine,
   workflowStateLabel,
   type WorkflowLineStep,
@@ -12,10 +11,10 @@ import {
 import { SYSTEM_IDENTITY_PUBKEY } from './system-identity';
 import {
   formatRunDuration,
-  loopRoundLabel,
   workflowRunHeadline,
   workflowStepAssignee,
   workflowStepMeta,
+  stepSeconds,
 } from './workflow-run-copy';
 
 const repo = path.resolve(__dirname, '../../../..');
@@ -106,123 +105,49 @@ function assigneesOf(
   );
 }
 
-describe('workflowMainPath', () => {
-  it("follows each state's first outcome from start to a terminal", () => {
-    expect(workflowMainPath(feedbackTriage)).toEqual(['notify', 'pull', 'approve', 'dispatch', 'done']);
+describe('workflowRunLine execution history', () => {
+  it('shows only reached states in order, without future terminal rows', () => {
+    const history = [{ toState: 'notify', at: 100 },
+      { fromState: 'notify', outcome: 'notified', toState: 'pull', at: 112 },
+      { fromState: 'pull', outcome: 'nothing_new', toState: 'done', at: 212 }];
+    expect(rowsOf(workflowRunLine(feedbackTriage, history))).toEqual([
+      ['notify', 'done'], ['pull', 'done'], ['done', 'done']]);
+    expect(workflowRunLine(feedbackTriage)).toEqual([]);
   });
-
-  it('steps past an outcome that loops back, and ends on the first implicit terminal', () => {
-    // land's outcomes all return up the line, so the line ends on `landed`.
-    expect(workflowMainPath(corner)).toEqual([
-      'opened',
-      'no_code_work',
-      'upgrade_to_code',
-      'implement',
-      'checks',
-      'review',
-      'land',
-      'landed',
-    ]);
+  it('preserves separate repeated visits, output, actors, and stable finished durations', () => {
+    const history = [{ visitId: 'one', toState: 'implement', at: 100,
+      finalReply: { messageId: 'final-one', text: 'First result' } },
+      { visitId: 'two', fromState: 'implement', outcome: 'pushed', toState: 'checks', actor: candy, at: 112 },
+      { visitId: 'three', fromState: 'checks', outcome: 'failing', toState: 'implement', at: 212,
+        outputTurns: ['turn-three'], liveOutput: 'Newest chunk' }];
+    const line = workflowRunLine(corner, history);
+    expect(rowsOf(line)).toEqual([['implement', 'done'], ['checks', 'done'], ['implement', 'current']]);
+    expect(line.map((step) => step.visitId)).toEqual(['one', 'two', 'three']);
+    expect(line[0]!.visits[0]).toMatchObject({ enteredAt: 100, leftAt: 112,
+      leftBy: candy, finalReply: { text: 'First result' } });
+    expect(line[2]!.visits[0]).toMatchObject({ liveOutput: 'Newest chunk', outputTurns: ['turn-three'] });
+    expect(stepSeconds(line[0]!, 400)).toBe(12);
+    expect(stepSeconds(line[0]!, 500)).toBe(12);
+    expect(stepSeconds(line[2]!, 400)).toBe(188);
+    expect(stepSeconds(line[2]!, 500)).toBe(288);
   });
-});
-
-describe('workflowRunLine · feedback-triage', () => {
-  it('reads a live run waiting at its gate as done, current, then not yet reached', () => {
-    const history = [
-      { toState: 'notify', at: 100, actor: candy },
-      { fromState: 'notify', outcome: 'notified', toState: 'pull', at: 112, actor: candy, contents: { fixedPullRequests: [] } },
-      { fromState: 'pull', outcome: 'ranked', toState: 'approve', at: 212, actor: candy, contents: { problems: ['a'] } },
-    ];
-    const line = workflowRunLine(feedbackTriage, history);
-    expect(rowsOf(line)).toEqual([
-      ['notify', 'done'],
-      ['pull', 'done'],
-      ['approve', 'current'],
-      ['dispatch', 'pending'],
-      ['done', 'pending'],
-    ]);
-    expect(line.every((step) => step.onMainPath)).toBe(true);
-    expect(metaOf(line, feedbackTriage, history, true)).toEqual([
-      '',
-      '',
-      'Your call · gate',
-      '',
-      'Ends the run',
-    ]);
-    // Who held each step is its mark: the gate waiting on the viewer is theirs.
-    expect(assigneesOf(line, feedbackTriage, true)).toEqual([
-      'Candy',
-      'Candy',
-      'Owner',
-      'Candy',
-      undefined,
-    ]);
-    // A visit carries what the state handed off when it left, and how.
-    expect(line[1]!.visits).toEqual([
-      {
-        enteredAt: 112,
-        leftAt: 212,
-        outcome: 'ranked',
-        nextState: 'approve',
-        leftBy: candy,
-        delivered: { problems: ['a'] },
-      },
-    ]);
-    expect(line[2]!.visits[0]!.leftAt).toBeUndefined();
+  it('keeps gate records and opened corners on their own visit', () => {
+    const gate = { question: 'Proceed?', options: [], status: 'answered' as const, answer: 'dispatch', answeredBy: owner };
+    const openedCorners = [{ id: 'fix', name: 'Fix', parentRoomId: 'room' }];
+    const line = workflowRunLine(feedbackTriage, [
+      { toState: 'approve', at: 100, gate },
+      { fromState: 'approve', outcome: 'dispatch', toState: 'dispatch', at: 120, openedCorners },
+      { fromState: 'dispatch', outcome: 'dispatched', toState: 'done', at: 200 }]);
+    expect(line[0]!.visits[0]!.gate).toBe(gate);
+    expect(line[1]!.visits[0]!.openedCorners).toBe(openedCorners);
+    expect(line[2]!.visits[0]!.gate).toBeUndefined();
+    expect(assigneesOf(line, feedbackTriage)).toEqual(['Owner', 'Candy', undefined]);
   });
-
-  it('skips the states a fork went around, and says why', () => {
-    const history = [
-      { toState: 'notify', at: 100 },
-      { fromState: 'notify', outcome: 'notified', toState: 'pull', at: 109 },
-      { fromState: 'pull', outcome: 'nothing_new', toState: 'done', status: 'done' as const, at: 158 },
-    ];
-    const line = workflowRunLine(feedbackTriage, history);
-    expect(rowsOf(line)).toEqual([
-      ['notify', 'done'],
-      ['pull', 'done'],
-      ['approve', 'skipped'],
-      ['dispatch', 'skipped'],
-      ['done', 'done'],
-    ]);
-    expect(line[2]!.skippedBy).toEqual({ state: 'pull', outcome: 'nothing_new' });
-    expect(metaOf(line, feedbackTriage, history).slice(2)).toEqual([
-      'Skipped · Pull: nothing new',
-      'Skipped · Pull: nothing new',
-      'Ended by Pull',
-    ]);
-    expect(workflowRunHeadline({ status: 'done', viewerHolds: false, state: 'done' }, 'nothing_new')).toBe(
-      'Done · nothing new',
-    );
-  });
-
-  it("keeps the gate's record and the corners a step opened on the visit they belong to", () => {
-    const gate = {
-      question: 'feedback-triage: approve',
-      options: [{ letter: 'A', label: 'dispatch', consequence: 'go to dispatch' }],
-      status: 'answered' as const,
-      answer: 'dispatch',
-      answeredBy: { id: 'a'.repeat(64), name: 'Owner', kind: 'human' as const },
-    };
-    const opened = [{ id: 'corner-9', name: 'Fix it', parentRoomId: 'room-1' }];
-    const history = [
-      { toState: 'pull', at: 1 },
-      { fromState: 'pull', outcome: 'ranked', toState: 'approve', at: 2, gate },
-      { fromState: 'approve', outcome: 'dispatch', toState: 'dispatch', at: 3, openedCorners: opened },
-      { fromState: 'dispatch', outcome: 'dispatched', toState: 'done', at: 4, contents: { corners: ['Fix it'] } },
-    ];
-    const line = workflowRunLine(feedbackTriage, history);
-    // The settled gate names who answered it.
-    expect(metaOf(line, feedbackTriage, history)[2]).toBe('');
-    // A settled gate is the person who answered it, not the agent that asked.
-    expect(assigneesOf(line, feedbackTriage)[2]).toBe('Owner');
-    const byState = Object.fromEntries(line.map((step) => [step.state, step]));
-    expect(byState.approve!.visits[0]).toMatchObject({ gate, outcome: 'dispatch' });
-    expect(byState.dispatch!.visits[0]).toMatchObject({
-      openedCorners: opened,
-      delivered: { corners: ['Fix it'] },
-    });
-    expect(byState.notify!.status).toBe('skipped');
+  it('keeps a cancellation exit stable without adding a second visit', () => {
+    const line = workflowRunLine(feedbackTriage, [{ toState: 'pull', at: 100 },
+      { fromState: 'pull', toState: 'pull', status: 'abandoned', at: 120 }]);
+    expect(rowsOf(line)).toEqual([['pull', 'done']]);
+    expect(stepSeconds(line[0]!, 300)).toBe(20);
   });
 });
 
@@ -238,93 +163,6 @@ describe('workflowStepAssignee', () => {
     const byState = Object.fromEntries(line.map((step) => [step.state, step]));
     expect(byState.implement!.status).toBe('done');
     expect(assigneesOf([byState.implement!, byState.checks!], corner)).toEqual(['Candy', undefined]);
-  });
-});
-
-describe('workflowRunLine · corner', () => {
-  it('matches the server contract it copies', () => {
-    for (const state of Object.keys(corner.handoffs))
-      expect(serverCornerSource).toContain(`    ${state}: {`);
-    expect(serverCornerSource).toContain("implicitEdges: ['landed', 'closed']");
-  });
-
-  const looped = [
-    { toState: 'opened', at: 0 },
-    { fromState: 'opened', outcome: 'code', toState: 'implement', at: 10 },
-    { fromState: 'implement', outcome: 'pushed', toState: 'checks', at: 1_870 },
-    { fromState: 'checks', outcome: 'failing', toState: 'implement', at: 2_410 },
-    { fromState: 'implement', outcome: 'pushed', toState: 'checks', at: 3_430 },
-    { fromState: 'checks', outcome: 'passing', toState: 'review', at: 4_150 },
-    { fromState: 'review', outcome: 'changes_requested', toState: 'implement', at: 4_330 },
-  ];
-
-  it('folds loops into one row per state, ×N visits, never drawing back up the line', () => {
-    const line = workflowRunLine(corner, looped);
-    expect(rowsOf(line)).toEqual([
-      ['opened', 'done'],
-      ['no_code_work', 'skipped'],
-      ['upgrade_to_code', 'skipped'],
-      ['implement', 'current'],
-      ['checks', 'done'],
-      ['review', 'done'],
-      ['land', 'pending'],
-      ['landed', 'pending'],
-    ]);
-    const byState = Object.fromEntries(line.map((step) => [step.state, step]));
-    expect(byState.implement!.visits.map((visit) => visit.outcome)).toEqual(['pushed', 'pushed', undefined]);
-    expect(byState.checks!.visits.map((visit) => [visit.outcome, visit.leftAt! - visit.enteredAt])).toEqual([
-      ['failing', 540],
-      ['passing', 720],
-    ]);
-    expect(byState.checks!.loop).toEqual({ taken: 1, cap: 100 });
-    expect(byState.review!.loop).toEqual({ taken: 1, cap: 3 });
-    expect(loopRoundLabel(byState.review!.loop)).toBe('round 2 of 3');
-    expect(loopRoundLabel({ taken: 3, cap: 3 })).toBe('round 3 of 3');
-    expect(loopRoundLabel({ taken: 0, cap: 3 })).toBeUndefined();
-    expect(byState.no_code_work!.skippedBy).toEqual({ state: 'opened', outcome: 'code' });
-  });
-
-  it('splices an off-path state in where the run entered it', () => {
-    const line = workflowRunLine(corner, [
-      ...looped.slice(0, 3),
-      { fromState: 'checks', outcome: 'failing', toState: 'ask_human', at: 2_000 },
-    ]);
-    expect(rowsOf(line)).toEqual([
-      ['opened', 'done'],
-      ['no_code_work', 'skipped'],
-      ['upgrade_to_code', 'skipped'],
-      ['implement', 'done'],
-      ['checks', 'done'],
-      ['ask_human', 'current'],
-      ['review', 'pending'],
-      ['land', 'pending'],
-      ['landed', 'pending'],
-    ]);
-    expect(line.find((step) => step.state === 'ask_human')!.onMainPath).toBe(false);
-    // `closed` is never on the line unless the run went there.
-    expect(line.some((step) => step.state === 'closed')).toBe(false);
-  });
-
-  it('ends a closed corner at Closed, failed, and skips what it never reached', () => {
-    const history = [
-      ...looped.slice(0, 6),
-      { fromState: 'review', outcome: 'closed', toState: 'closed', status: 'abandoned' as const, at: 4_200 },
-    ];
-    const line = workflowRunLine(corner, history);
-    expect(rowsOf(line)).toEqual([
-      ['opened', 'done'],
-      ['no_code_work', 'skipped'],
-      ['upgrade_to_code', 'skipped'],
-      ['implement', 'done'],
-      ['checks', 'done'],
-      ['review', 'done'],
-      ['closed', 'failed'],
-      ['land', 'skipped'],
-      ['landed', 'skipped'],
-    ]);
-    const meta = metaOf(line, corner, history);
-    expect(meta[6]).toBe('Abandoned · ended by Review');
-    expect(meta[7]).toBe('Skipped · run ended at Closed');
   });
 });
 

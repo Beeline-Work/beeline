@@ -130,3 +130,19 @@ export class MemoryObjectStorage {
     this.blobs.delete(key);
   }
 }
+
+/** Supply required human metadata when a test saves an older execution fixture anew. */
+export function describedWorkflow(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const contract = value as Record<string, unknown>;
+  const states = contract.handoffs;
+  return {
+    ...contract,
+    summary: contract.summary ?? contract.description,
+    ...(states && typeof states === 'object' && !Array.isArray(states) ? {
+      handoffs: Object.fromEntries(Object.entries(states).map(([name, state]) => [name,
+        state && typeof state === 'object' && !Array.isArray(state)
+          ? { does: `Perform ${name.replace(/[_-]/g, ' ')}.`, ...state } : state])),
+    } : {}),
+  };
+}

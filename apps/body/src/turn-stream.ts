@@ -72,6 +72,7 @@ export class AgentTurnStream {
    * one bounds the lane at ONE write in flight plus ONE waiting.
    */
   private pending: string | undefined;
+  private latestChunk = '';
   /**
    * The stream as it stood when a corner handed everything up to that point to
    * its durable work ledger — this turn's persisted stream offset. Held as the
@@ -102,7 +103,8 @@ export class AgentTurnStream {
    * an answer, and an ending that reads one must settle through whatever else
    * it has.
    */
-  readonly onChunk = (_delta: string, full: string, currentRun?: string): void => {
+  readonly onChunk = (delta: string, full: string, currentRun?: string): void => {
+    this.latestChunk = sanitizeAgentReply(delta);
     this.latest = full;
     this.latestRun = currentRun ?? '';
     const text = sanitizeAgentReply(this.tailOf(full));
@@ -190,10 +192,11 @@ export class AgentTurnStream {
   private publishPending(): void {
     if (this.inFlight || this.pending === undefined) return;
     const text = this.pending;
+    const latestChunk = this.latestChunk;
     this.pending = undefined;
     const { api, agentId, roomId, requestId, label } = this.options;
     this.inFlight = api
-      .execute('postAgentDraft', { agentId, roomId, turnId: requestId, text })
+      .execute('postAgentDraft', { agentId, roomId, turnId: requestId, text, latestChunk })
       .then(() => undefined)
       .catch((error) => console.error(`[thin-core] ${label} draft publish failed:`, error))
       .then(() => {

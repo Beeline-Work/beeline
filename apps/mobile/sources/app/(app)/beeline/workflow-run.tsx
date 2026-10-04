@@ -70,7 +70,6 @@ export default function WorkflowRun() {
   const last = detail?.history[detail.history.length - 1];
   const starter = detail ? workflowStarterLine(detail.run) || detail.history[0]?.actor?.name : undefined;
   const ran = line.filter((step) => step.visits.length > 0).length;
-  const skipped = line.filter((step) => step.status === 'skipped').length;
   const done = line.filter((step) => step.status === 'done').length;
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
@@ -143,7 +142,7 @@ export default function WorkflowRun() {
           <View style={styles.section}>
             <Text style={styles.sectionHead}>Steps</Text>
             <Text style={styles.sectionCount} testID="workflow-run-step-count">
-              {live ? `${done} of ${line.length}` : `${ran} ran · ${skipped} skipped`}
+              {live ? `${done} of ${line.length}` : `${ran} reached`}
             </Text>
           </View>
           <WorkflowRunLine

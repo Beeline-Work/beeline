@@ -524,3 +524,16 @@ describe('Room and corner live/final streaming parity (C100)', () => {
     expect(source('turn-stream.ts')).toContain('postAgentDraft');
   });
 });
+
+it('sends only the newest actual delta separately from the cumulative draft', async () => {
+  const recorder = gatedRecorder();
+  const stream = streamFor(recorder.api);
+  stream.onChunk('First chunk.', 'First chunk.', 'First chunk.');
+  stream.onChunk('Older chunk.', 'First chunk.Older chunk.', 'First chunk.Older chunk.');
+  stream.onChunk('Newest chunk.', 'First chunk.Older chunk.Newest chunk.', 'First chunk.Older chunk.Newest chunk.');
+  await recorder.release();
+  expect(recorder.writes.filter((write) => write.name === 'postAgentDraft').map((write) => write.input.latestChunk))
+    .toEqual(['First chunk.', 'Newest chunk.']);
+  expect(recorder.texts()[1]).toBe('First chunk.Older chunk.Newest chunk.');
+  await recorder.release();
+});

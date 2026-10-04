@@ -69,6 +69,8 @@ export type WorkflowLoop = {
 
 /** An ordinary agent-to-agent handoff: whoever holds `role` acts and reports an outcome. */
 export type WorkflowHandoffState = {
+  /** A short sentence for people reading the run. Optional on legacy revisions. */
+  readonly does?: string;
   readonly hint?: string;
   readonly kind?: undefined;
   readonly role: string;
@@ -93,6 +95,8 @@ export type WorkflowHandoffState = {
 
 /** Posts an `ask_choice` card; `role`'s agent is woken once a human answers. */
 export type WorkflowGateState = {
+  /** A short sentence for people reading the run. Optional on legacy revisions. */
+  readonly does?: string;
   readonly hint?: string;
   readonly kind: 'gate';
   readonly role: string;
@@ -110,6 +114,8 @@ export type WorkflowGateState = {
  * only the server's own write path can move one.
  */
 export type WorkflowServerState = {
+  /** A short sentence for people reading the run. Optional on legacy revisions. */
+  readonly does?: string;
   readonly hint?: string;
   readonly kind: 'server';
   readonly role?: string;
@@ -119,6 +125,8 @@ export type WorkflowServerState = {
 };
 
 export type WorkflowTerminalState = {
+  /** A short sentence for people reading the run. Optional on legacy revisions. */
+  readonly does?: string;
   readonly hint?: string;
   readonly kind: 'terminal';
   /** `abandoned` is a human-closed run, distinct from a `failed` escalation. */
@@ -134,6 +142,8 @@ export type WorkflowTerminalState = {
  * an ordinary `on` edge or by `handoff()`/`start_workflow`.
  */
 export type WorkflowWaitingState = {
+  /** A short sentence for people reading the run. Optional on legacy revisions. */
+  readonly does?: string;
   readonly hint?: string;
   readonly kind: 'waiting';
   /** Advisory only, exactly like `WorkflowServerState.role` — who is conceptually active here. */
@@ -280,10 +290,12 @@ export function workflowContractError(value: unknown): string | null {
       return `handoffs: state name "${name}" must be lowercase letters, digits, _ or -`;
     const at = `handoffs.${name}`;
     if (!record(raw)) return `${at} must be an object`;
+    if (raw.does !== undefined && (!oneLine(raw.does) || !raw.does.trim()))
+      return `${at}: does must be nonempty plaintext on one line, at most ${WORKFLOW_TEXT_MAX_LENGTH} characters`;
     if (raw.hint !== undefined && typeof raw.hint !== 'string') return `${at}: hint must be a string`;
     if (raw.kind === 'terminal') {
-      const key = unknownKey(raw, ['kind', 'status', 'hint']);
-      if (key !== undefined) return `${at}: unknown key "${key}" (a terminal allows kind, status, hint)`;
+      const key = unknownKey(raw, ['kind', 'status', 'hint', 'does']);
+      if (key !== undefined) return `${at}: unknown key "${key}" (a terminal allows kind, status, hint, does)`;
       if (raw.status !== 'done' && raw.status !== 'failed' && raw.status !== 'abandoned')
         return `${at}: terminal status must be done, failed or abandoned`;
       terminalCount += 1;
@@ -292,8 +304,8 @@ export function workflowContractError(value: unknown): string | null {
       continue;
     }
     if (raw.kind === 'waiting') {
-      const key = unknownKey(raw, ['kind', 'role', 'hint']);
-      if (key !== undefined) return `${at}: unknown key "${key}" (a waiting state allows kind, role, hint)`;
+      const key = unknownKey(raw, ['kind', 'role', 'hint', 'does']);
+      if (key !== undefined) return `${at}: unknown key "${key}" (a waiting state allows kind, role, hint, does)`;
       if (raw.role !== undefined && (typeof raw.role !== 'string' || !roles.has(raw.role)))
         return `${at}: role ${JSON.stringify(raw.role)} is not in roles`;
       edges.set(name, []);
@@ -309,7 +321,7 @@ export function workflowContractError(value: unknown): string | null {
       : isServer
         ? ['kind', 'role', 'requires', 'on', 'loop']
         : ['role', 'roleBinding', 'requires', 'on', 'loop', 'timeoutSeconds'];
-    allowedKeys.push('hint');
+    allowedKeys.push('hint', 'does');
     const key = unknownKey(raw, allowedKeys);
     if (key !== undefined)
       return `${at}: unknown key "${key}" (a ${isGate ? 'gate' : isServer ? 'server state' : 'handoff'} allows ${allowedKeys.join(', ')})`;
@@ -484,3 +496,14 @@ export type WorkflowRunReadResult = {
     readonly cancellation?: { readonly reason: string; readonly actorId: string };
   }[];
 };
+
+/** New saves require human descriptions; pinned legacy reads keep their original contract. */
+export function workflowSaveError(value: unknown): string | null {
+  const error = workflowContractError(value);
+  if (error) return error;
+  const contract = value as WorkflowContract;
+  if (!contract.summary?.trim()) return 'summary is required and must be nonempty';
+  for (const [name, state] of Object.entries(contract.handoffs))
+    if (!state.does?.trim()) return `handoffs.${name}: does is required and must be nonempty`;
+  return null;
+}

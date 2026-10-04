@@ -1,7 +1,7 @@
 import { humanRoomAdmin, WorkflowAuthorizationError } from './workflow-admin.js';
 import { createHash, randomBytes } from 'node:crypto';
 import {
-  workflowContractError,
+  workflowSaveError,
   workflowContentsError,
   workflowReceiptError,
   type WorkflowReceiptInput,
@@ -15,6 +15,7 @@ import {
   type WorkflowRunReadResult,
   type WorkflowReceipt,
 } from '@beeline/api-contract/daemon';
+import { bindWorkflowStepOutput } from './workflow-step-output.js';
 import type { CommandRow } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
 import { applySkillRevision, assertSkillTextSafe } from './institutional-skills.js';
@@ -451,7 +452,7 @@ export async function saveWorkflow(
   input: { contract: unknown },
   afterCommit?: AfterCommit,
 ): Promise<{ slug: string; version: number }> {
-  const reason = workflowContractError(input.contract);
+  const reason = workflowSaveError(input.contract);
   if (reason !== null) throw new Error(`workflow contract is invalid: ${reason}`);
   const contract = input.contract as WorkflowContract;
   const room = (
@@ -781,6 +782,7 @@ export async function handoff(
       const outcomes = Object.entries(on).map(([outcome, target]) => `${outcome} -> ${target}`).join(', ');
       throw new Error(`${errors.join('; ')}; outcome must be one of: ${outcomes}`);
     }
+    await bindWorkflowStepOutput(db, command, input.runId);
     await cancelWorkflowTimeout(db, input.runId, stateName);
     let toState = on[input.outcome]!;
     const loop = isHandoffState(state) ? state.loop : undefined;

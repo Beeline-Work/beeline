@@ -1,3 +1,4 @@
+import { describedWorkflow } from './test-support.js';
 import { randomBytes } from 'node:crypto';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
@@ -84,7 +85,7 @@ async function command(agentId = SCANNER, roomId = ROOM) {
   }))!;
 }
 async function save() {
-  await saveWorkflow(db, await command(), { contract });
+  await saveWorkflow(db, await command(), { contract: describedWorkflow(contract) });
 }
 async function surface(roomId: string, parentId: string | null, members = [SCANNER, OTHER]) {
   await db.query(

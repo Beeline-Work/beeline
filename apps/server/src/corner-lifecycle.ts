@@ -78,22 +78,23 @@ export const CORNER_LIFECYCLE_CONTRACT: WorkflowContract = {
   version: 1,
   name: CORNER_LIFECYCLE_SLUG,
   description: 'Corner lifecycle: implement, check, review, merge, or close',
+  summary: 'Build the agreed change, check it, review it, and land it.',
   roles: ['implementer', 'reviewer'],
   start: 'opened',
   handoffs: {
     // The lane is decided by `createCorner` in the same transaction that
     // opens the Room.
-    opened: {
+    opened: { does: 'Set up the corner for the agreed work.',
       kind: 'server',
       requires: [],
       on: { no_code: 'no_code_work', code: 'implement' },
     },
     // The opener's own turn. The only programmatic exit is a human asking for
     // the code upgrade.
-    no_code_work: { role: 'implementer', requires: [], on: { upgrade_requested: 'upgrade_to_code' } },
+    no_code_work: { does: 'Prepare the requested result.', role: 'implementer', requires: [], on: { upgrade_requested: 'upgrade_to_code' } },
     // `upgradeCornerLane`: lane flip + feature-branch write (which IS the CI
     // callback registration — GitHub webhook matching joins on it).
-    upgrade_to_code: {
+    upgrade_to_code: { does: 'Prepare a branch for repository changes.',
       kind: 'server',
       requires: ['branch', 'repositoryRoute', 'ciCallbackRegistered', 'mergeTarget'],
       on: { upgraded: 'implement' },
@@ -103,7 +104,7 @@ export const CORNER_LIFECYCLE_CONTRACT: WorkflowContract = {
     // after the one that sent the corner here (a re-run, or a reviewer
     // configured later); `rereview` is the reviewer's next verdict on the
     // same head after a changes-requested handback.
-    implement: {
+    implement: { does: 'Build and prove the agreed change.',
       role: 'implementer',
       requires: [],
       on: { pushed: 'checks', rechecked: 'checks', rereview: 'review', brief_revised: 'review' },
@@ -112,7 +113,7 @@ export const CORNER_LIFECYCLE_CONTRACT: WorkflowContract = {
     // `reviewer_agent_id`/`reviewer_fallback_ids`), or skips review when the
     // reviewer is the author; no configured reviewer or red wakes the
     // implementer. At the loop cap the corner names the commissioning human.
-    checks: {
+    checks: { does: 'Check the proposed change.',
       kind: 'server',
       requires: [],
       on: { passing: 'review', failing: 'implement', no_reviewer: 'implement', brief_revised: 'review' },
@@ -122,7 +123,7 @@ export const CORNER_LIFECYCLE_CONTRACT: WorkflowContract = {
     // of a review turn with no PASS for the current head hands back to the
     // implementer. The handback cap is counted per head and reset by a push
     // (`corner_facts.review_handback_head/count`).
-    review: {
+    review: { does: 'Review the change against the agreed brief.',
       role: 'reviewer',
       roleBinding: 'live:parent.reviewer_agent_id',
       requires: [],
@@ -138,16 +139,16 @@ export const CORNER_LIFECYCLE_CONTRACT: WorkflowContract = {
     // The server squash-merges the exact head once the complete gate is open
     // (`GitHubOperations.landCorner`). The merge webhook takes the implicit
     // edge to `landed`; GitHub refusing the merge returns to the implementer.
-    land: {
+    land: { does: 'Land the reviewed change.',
       kind: 'server',
       requires: [],
       on: { merge_unconfirmed: 'ask_human', merge_refused: 'implement', pushed: 'checks', rechecked: 'checks', brief_revised: 'review' },
     },
     // A loop cap was reached. The corner names the commissioning human and
     // waits; a new push starts the next round.
-    ask_human: { kind: 'server', requires: [], on: { pushed: 'checks', brief_revised: 'review', revision_work: 'implement', merge_refused: 'implement' } },
-    landed: { kind: 'terminal', status: 'done' },
-    closed: { kind: 'terminal', status: 'abandoned' },
+    ask_human: { does: 'Wait for a person to decide the next step.', kind: 'server', requires: [], on: { pushed: 'checks', brief_revised: 'review', revision_work: 'implement', merge_refused: 'implement' } },
+    landed: { does: 'The change has landed.', kind: 'terminal', status: 'done' },
+    closed: { does: 'The corner has closed.', kind: 'terminal', status: 'abandoned' },
   },
   // The merge webhook and a close request end a corner from wherever it sits.
   implicitEdges: ['landed', 'closed'],

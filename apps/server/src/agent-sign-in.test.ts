@@ -266,7 +266,7 @@ describe('@agent login: Claude sign-in at the call site', () => {
   it('tells the owner when its harness cannot sign in from Beeline', async () => {
     await send(OWNER, '@codie login');
     expect(await systemLines()).toContain(
-      '@codie did not sign in to Claude · sign-in from Beeline is not available for its harness',
+      '@codie did not sign in · sign-in from Beeline is not available for its harness',
     );
     expect(helperFrames).toEqual([]);
     expect(
@@ -423,6 +423,110 @@ describe('@agent login: Claude sign-in at the call site', () => {
     ).resolves.toEqual({ signedIn: true });
     expect(helperFrames.at(-1)).toMatchObject({ step: 'code', code: 'sk-or-pasted-secret' });
     expect(await persistedAnywhere(database, 'sk-or-pasted-secret')).toEqual([]);
+  });
+
+  const KINDS = [
+    {
+      kind: 'paste-code',
+      harness: 'claude',
+      denied: 'did not sign in to Claude',
+      link: { kind: 'paste-code', authorizeUrl: LINK },
+    },
+    {
+      kind: 'device-code',
+      harness: 'codex',
+      denied: 'did not sign in to ChatGPT',
+      link: {
+        kind: 'device-code',
+        authorizeUrl: 'https://auth.openai.com/codex/device',
+        userCode: 'EBQ9-VJCLN',
+        expiresAt: 1_800_000_000_000,
+      },
+    },
+    {
+      kind: 'approve-wait',
+      harness: 'cursor',
+      denied: 'did not sign in to Cursor',
+      link: { kind: 'approve-wait', authorizeUrl: 'https://cursor.com/loginDeepControl?challenge=x&uuid=y' },
+    },
+    {
+      kind: 'api-key',
+      harness: 'pi',
+      denied: 'did not take a new key',
+      link: { kind: 'api-key', provider: 'openrouter' },
+    },
+  ] as const;
+
+  async function modelCommands() {
+    return (await database.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1`, [AGENT])).rowCount;
+  }
+
+  describe.each(KINDS)('$kind sign-in ($harness)', ({ harness, denied, link }) => {
+    beforeEach(async () => {
+      await database.query(`UPDATE agents SET harness=$2 WHERE agent_id=$1`, [AGENT, harness]);
+    });
+
+    it('starts for the owner with the machine’s answer on the card, never asking the model', async () => {
+      helper((event) => (event.step === 'start' ? { ...link } : undefined));
+      const command = await send(OWNER, '@clara /login');
+      const pending = await settled(command, 'pending');
+      expect(pending.card).toMatchObject({ harness, ...link });
+      expect(await modelCommands()).toBe(0);
+    });
+
+    it('refuses a non-owner with a system line naming the right service, and no card', async () => {
+      helper(() => ({ ...link }));
+      const command = await send(MEMBER, '@clara /login');
+      expect(await systemLines()).toContain(`@clara ${denied} · only its owner may sign it in`);
+      expect(await card(command)).toBeUndefined();
+      expect(helperFrames).toEqual([]);
+      expect(await modelCommands()).toBe(0);
+    });
+
+    it('settles the card as offline when no helper is connected', async () => {
+      await database.query(`UPDATE agent_connections SET released_at=now() WHERE agent_id=$1`, [AGENT]);
+      const command = await send(OWNER, '@clara /login');
+      expect((await settled(command, 'failed')).card.errorMessage).toBe(AGENT_SIGN_IN_OFFLINE_MESSAGE);
+      expect(helperFrames).toEqual([]);
+      expect(await modelCommands()).toBe(0);
+    });
+  });
+
+  it('settles a Cursor approve-and-wait card from the machine when the owner approves', async () => {
+    await database.query(`UPDATE agents SET harness='cursor' WHERE agent_id=$1`, [AGENT]);
+    let finish: (() => Promise<unknown>) | undefined;
+    live.subscribeAll((event) => {
+      if (event.type !== 'agent-sign-in' || event.step !== 'start' || event.agentId !== AGENT) return;
+      void daemon.execute(
+        'reportAgentSignIn',
+        {
+          agentId: AGENT,
+          attemptId: event.attemptId,
+          kind: 'approve-wait',
+          authorizeUrl: 'https://cursor.com/loginDeepControl?challenge=x&uuid=y',
+        },
+        AGENT,
+      );
+      finish = () =>
+        daemon.execute(
+          'reportAgentSignIn',
+          { agentId: AGENT, attemptId: event.attemptId, cardId: event.cardId, outcome: 'signed-in' },
+          AGENT,
+        );
+    });
+    const command = await send(OWNER, '@clara /login');
+    const pending = await settled(command, 'pending');
+    expect(pending.text).toBe('@clara started a Cursor sign-in · its owner finishes it in this card');
+    expect(pending.card).toMatchObject({ harness: 'cursor', kind: 'approve-wait' });
+    await expect(
+      phone.execute(
+        'completeAgentSignIn',
+        { roomId: ROOM, messageId: agentSignInCardId(command, AGENT), code: 'x' },
+        OWNER,
+      ),
+    ).rejects.toThrow('finishes on the provider');
+    await finish!();
+    expect((await card(command))!.card.status).toBe('signed-in');
   });
 
   it("never lets another agent's helper answer this agent's sign-in", async () => {

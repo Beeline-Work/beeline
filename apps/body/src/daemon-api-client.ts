@@ -323,7 +323,7 @@ export class DaemonApiClient {
     this.connectorAssignmentListener = listener;
   }
 
-  /** Retire idle sessions as a phone-side config change does (a new provider key was saved). */
+  /** Retire idle sessions as a phone-side config change does (a harness just signed in). */
   emitConfigChanged(): void {
     this.configChangedListener?.();
   }

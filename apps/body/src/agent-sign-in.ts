@@ -55,7 +55,11 @@ export function parseCodexDeviceLogin(output: string, now: number): AgentSignInL
   return { kind: 'device-code', authorizeUrl: url, userCode: code, expiresAt: now + minutes * 60_000 };
 }
 
-/** `grok login --device-auth` (Grok 1.0.46). */
+/**
+ * `grok login --device-auth` (Grok 1.0.46). Grok prints no expiry, so the
+ * card shows this helper's own limit: it stops the login after
+ * `AGENT_SIGN_IN_ATTEMPT_TTL_MS` and settles the card as expired.
+ */
 export function parseGrokDeviceLogin(output: string, now: number): AgentSignInLink | undefined {
   const url = /open this URL in your browser:\s*\n\s*(https:\/\/\S+)/.exec(output)?.[1];
   const code = /Confirm this code in your browser:\s*\n\s*([A-Z0-9]{4}-[A-Z0-9]{4,6})\s*$/m.exec(output)?.[1];
@@ -165,8 +169,12 @@ export type AgentSignInOptions = {
   readonly model?: () => string | undefined;
   /** A result that arrives on its own, after `start` answered. */
   readonly onResult: (attemptId: string, result: { ok: true } | { ok: false; error: string }) => void;
-  /** After a key is saved: retire idle sessions so the next turn uses it. */
-  readonly onKeySaved?: () => void;
+  /**
+   * After any sign-in succeeds: retire idle sessions so the next turn starts
+   * cold, relinks the shared login file (a first login may have just created
+   * it) and reads the new login.
+   */
+  readonly onSignedIn?: () => void;
   readonly spawn?: typeof spawn;
   readonly fetch?: typeof fetch;
   readonly now?: () => number;
@@ -206,12 +214,17 @@ export class AgentSignIn {
 
   /** A pasted code (Claude) or key (Pi, Goose, OpenCode). */
   async submit(attemptId: string, value: string): Promise<void> {
-    if (this.options.harness === 'claude') return this.#claude.complete(attemptId, value);
+    if (this.options.harness === 'claude') {
+      await this.#claude.complete(attemptId, value);
+      this.options.onSignedIn?.();
+      return;
+    }
     const pending = this.#pending.get(attemptId);
     if (!pending || pending.kind !== 'key' || pending.expiresAt <= this.#now())
       throw new Error("This sign-in expired or was already used. Send the agent `/login` again to start a new one.");
     await this.#saveKey(pending.provider, value.trim());
     this.#pending.delete(attemptId);
+    this.options.onSignedIn?.();
   }
 
   /** Stop every CLI login this runtime started (runtime shutdown). */
@@ -307,6 +320,7 @@ export class AgentSignIn {
           reject(new Error(failure));
           return;
         }
+        if (code === 0) this.options.onSignedIn?.();
         this.options.onResult(attemptId, code === 0 ? { ok: true } : { ok: false, error: failure });
       });
     });
@@ -348,7 +362,6 @@ export class AgentSignIn {
       await writeEnvFileKey(this.options.llmEnvFile, PROVIDER_KEY_ENV[provider], key);
       this.options.agentEnv[PROVIDER_KEY_ENV[provider]] = key;
     }
-    this.options.onKeySaved?.();
   }
 }
 

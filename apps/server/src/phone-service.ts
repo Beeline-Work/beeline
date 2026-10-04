@@ -6631,7 +6631,7 @@ export class PhoneService {
     if (!this.live || !isTaggedLoginText(input.text)) return;
     void beginAgentSignInCards(this.database, this.live, input.roomId, messageId).catch((error) =>
       console.error(
-        '[claude-sign-in] start failed',
+        '[agent-sign-in] start failed',
         error instanceof Error ? error.message : String(error),
       ),
     );

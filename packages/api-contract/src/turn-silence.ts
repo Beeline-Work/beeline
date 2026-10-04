@@ -244,6 +244,14 @@ export function shouldCompletePendingFailedCommand(kind: TurnSilenceKind, reason
   return true;
 }
 
+function fitsSilenceLine(name: string, verb: string, consequence: string): boolean {
+  const head = `${name} ${verb}${SYSTEM_LINE_SEPARATOR}`;
+  return (
+    head.length + consequence.length <= TURN_SILENCE_LINE_MAX &&
+    consequence.length <= MAX_EVENT_CONSEQUENCE_LENGTH
+  );
+}
+
 function capLine(name: string, verb: string, consequence: string): TurnSilencePhrase {
   const head = `${name} ${verb}${SYSTEM_LINE_SEPARATOR}`;
   const budget = Math.max(24, TURN_SILENCE_LINE_MAX - head.length);
@@ -284,14 +292,23 @@ export function phraseTurnSilence(
           : 'the provider allowance is spent. Top up, or move the agent to another provider.',
       );
     }
-    case 'not-signed-in':
+    case 'not-signed-in': {
+      if (!options.login)
+        return capLine(
+          agent,
+          'could not answer',
+          "the helper could not authenticate with the provider. Check its log for the failed turn; if its login expired, run `beeline connect` on the helper's machine.",
+        );
+      // Both remedies must survive the cap: a long name or handle drops the
+      // explanation, never a command.
+      const remedies = `send \`@${options.login.handle} /login\` here, or run \`beeline connect\` on its machine.`;
+      const full = `the helper could not authenticate with ${AGENT_SIGN_IN_SERVICE_LABELS[options.login.harness]}. If its ${agentSignInUsesKey(options.login.harness) ? 'key' : 'login'} expired, its owner can ${remedies}`;
       return capLine(
         agent,
         'could not answer',
-        options.login
-          ? `the helper could not authenticate with ${AGENT_SIGN_IN_SERVICE_LABELS[options.login.harness]}. If its ${agentSignInUsesKey(options.login.harness) ? 'key' : 'login'} expired, its owner can send \`@${options.login.handle} /login\` here, or run \`beeline connect\` on the helper's machine.`
-          : "the helper could not authenticate with the provider. Check its log for the failed turn; if its login expired, run `beeline connect` on the helper's machine.",
+        fitsSilenceLine(agent, 'could not answer', full) ? full : `Its owner can ${remedies}`,
       );
+    }
     case 'workspace-failure':
       return capLine(
         agent,

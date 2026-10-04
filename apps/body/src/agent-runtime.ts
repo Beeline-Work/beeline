@@ -531,7 +531,7 @@ export async function runAgentRuntime(
             model: () => config.modelSelection?.model ?? runtime.modelSelection?.model,
             onResult: (attemptId, result) =>
               void reportAgentSignInResult(daemonApi, agentId, attemptId, cards, result, log),
-            onKeySaved: () => daemonApi.emitConfigChanged(),
+            onSignedIn: () => daemonApi.emitConfigChanged(),
           });
           const signIn = agentSignIn;
           daemonApi.setAgentSignInListener((frame) => {

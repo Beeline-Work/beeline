@@ -67,7 +67,8 @@ describe('@agent login on the agent machine', () => {
   }
 
   it('runs Codex device-code login in the operator home and reports when it finishes', async () => {
-    const codex = signIn({ harness: 'codex' });
+    const signedIn = vi.fn();
+    const codex = signIn({ harness: 'codex', onSignedIn: signedIn });
     const started = codex.start(ATTEMPT);
     children[0]!.print(CODEX_DEVICE_OUTPUT);
     await expect(started).resolves.toEqual({
@@ -82,6 +83,7 @@ describe('@agent login on the agent machine', () => {
     expect(spawnCalls[0]!.env).not.toHaveProperty('CODEX_HOME');
     children[0]!.finish(0);
     expect(results).toEqual([{ attemptId: ATTEMPT, result: { ok: true } }]);
+    expect(signedIn).toHaveBeenCalledTimes(1);
   });
 
   it('reports a device-code login the CLI refused with its own last line', async () => {
@@ -154,7 +156,7 @@ describe('@agent login on the agent machine', () => {
       harness: 'pi',
       agentEnv,
       llmEnvFile: envFile,
-      onKeySaved: saved,
+      onSignedIn: saved,
       fetch: fetchMock as never,
     });
     await expect(pi.start(ATTEMPT)).resolves.toEqual({ kind: 'api-key', provider: 'openrouter' });

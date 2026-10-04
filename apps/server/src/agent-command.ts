@@ -327,6 +327,15 @@ async function routeTaggedLifecycleCommand(
     source.author_id,
     target.owner_id,
   );
+  const loginHarness = isAgentSignInHarness(target.harness) ? target.harness : undefined;
+  const deniedVerb =
+    action !== 'login'
+      ? `did not ${action}`
+      : !loginHarness
+        ? 'did not sign in'
+        : agentSignInUsesKey(loginHarness)
+          ? 'did not take a new key'
+          : `did not sign in to ${AGENT_SIGN_IN_SERVICE_LABELS[loginHarness]}`;
   const deny = async (consequence: string) => {
     await systemLine(db, {
       id: createHash('sha256')
@@ -335,7 +344,7 @@ async function routeTaggedLifecycleCommand(
       roomId: source.room_id,
       authorId: target.agent_id,
       subject: lifecycleSubject(target),
-      verb: action === 'login' ? 'did not sign in to Claude' : `did not ${action}`,
+      verb: deniedVerb,
       consequence,
       afterMessageId: sourceId,
     });
@@ -357,8 +366,8 @@ async function routeTaggedLifecycleCommand(
       await deny('only its owner may sign it in');
       return true;
     }
-    const harness = target.harness;
-    if (!isAgentSignInHarness(harness)) {
+    const harness = loginHarness;
+    if (!harness) {
       await deny('sign-in from Beeline is not available for its harness');
       return true;
     }

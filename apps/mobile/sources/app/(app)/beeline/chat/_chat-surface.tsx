@@ -2687,6 +2687,39 @@ export function BuzzChatSurface({
     }
     return true;
   }, [raiseArrivalFlash, settleQueueAtBoundary]);
+  // Settle the message-source landing against the latest viewability report.
+  // Called from each report and once when a landing starts: a target already
+  // on screen at that moment (a fresh push's newest row) can produce no later
+  // report, because scrolling to it leaves the visible set unchanged.
+  const settleMessageSourceLandingIfVisible = useCallback(() => {
+    const landing = messageSourceLandingRef.current;
+    if (!landing || landing.settled) return;
+    const visibleMessageIds = new Set<string>();
+    for (const message of visibleTranscriptMessagesRef.current) {
+      visibleMessageIds.add(message.id);
+      if (message.relayId) visibleMessageIds.add(message.relayId);
+    }
+    completeMessageSourceLanding({
+      landing,
+      messageAnchorId: messageAnchorIdRef.current,
+      abandoned: messageSourceLandingAbandonedRef.current,
+      visibleMessageIds,
+      rows: transcriptMessagesRef.current,
+      scrollToIndex: (index) =>
+        flatListRef.current?.scrollToIndex({
+          index,
+          viewPosition: 0.5,
+          animated: false,
+        }),
+      flash: raiseSourceLandingFlash,
+      dismissCover: (messageId) => {
+        if (locatingMessageSourceIdRef.current === messageId) {
+          locatingMessageSourceIdRef.current = null;
+          setIsLocatingMessageSource(false);
+        }
+      },
+    });
+  }, [raiseSourceLandingFlash]);
   const observeVisibleTranscriptMessages = useCallback(
     ({ viewableItems }: { viewableItems: ViewToken<ChatDisplayMessage>[] }) => {
       visibleTranscriptMessagesRef.current = viewableItems
@@ -2707,34 +2740,7 @@ export function BuzzChatSurface({
       // actually contains the target — never before, so a distant target
       // still being brought into range by onScrollToIndexFailed's retries
       // (above) cannot be re-centered or flashed while still off-window.
-      const landing = messageSourceLandingRef.current;
-      if (landing && !landing.settled) {
-        const visibleMessageIds = new Set<string>();
-        for (const message of visibleTranscriptMessagesRef.current) {
-          visibleMessageIds.add(message.id);
-          if (message.relayId) visibleMessageIds.add(message.relayId);
-        }
-        completeMessageSourceLanding({
-          landing,
-          messageAnchorId: messageAnchorIdRef.current,
-          abandoned: messageSourceLandingAbandonedRef.current,
-          visibleMessageIds,
-          rows: transcriptMessagesRef.current,
-          scrollToIndex: (index) =>
-            flatListRef.current?.scrollToIndex({
-              index,
-              viewPosition: 0.5,
-              animated: false,
-            }),
-          flash: raiseSourceLandingFlash,
-          dismissCover: (messageId) => {
-            if (locatingMessageSourceIdRef.current === messageId) {
-              locatingMessageSourceIdRef.current = null;
-              setIsLocatingMessageSource(false);
-            }
-          },
-        });
-      }
+      settleMessageSourceLandingIfVisible();
       // The list recomputes viewability on scroll AND on every committed
       // update, so an arrival that lands below the fold reports itself unseen
       // without the reader touching anything.
@@ -2750,7 +2756,7 @@ export function BuzzChatSurface({
       advanceReadCursor,
       completePendingNewMessageLanding,
       observeVisibleMessages,
-      raiseSourceLandingFlash,
+      settleMessageSourceLandingIfVisible,
       transcriptScrubber,
     ],
   );
@@ -3164,6 +3170,7 @@ export function BuzzChatSurface({
           viewPosition: 0.5,
           animated: false,
         });
+        settleMessageSourceLandingIfVisible();
       });
       handledNotificationAnchorRef.current = anchorKey;
       return;
@@ -3222,6 +3229,7 @@ export function BuzzChatSurface({
     roomClient,
     cacheViewerPubkey,
     raiseSourceLandingFlash,
+    settleMessageSourceLandingIfVisible,
   ]);
   useEffect(() => {
     if (

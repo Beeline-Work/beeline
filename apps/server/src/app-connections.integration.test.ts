@@ -1125,6 +1125,37 @@ describe('connect_app', () => {
     expect((await database.query('SELECT id FROM workspace_apps')).rows).toEqual([]);
   });
 
+  it('Reproduction R1: retries an existing Squire app absent from the Composio catalog', async () => {
+    await connectSquire();
+    const provider = fakeComposio();
+    provider.toolkit.mockImplementation(async (slug: string) => {
+      if (slug === 'hetzner' || slug === 'fuckface')
+        throw Object.assign(new Error('missing'), { status: 404 });
+      return { slug };
+    });
+    const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const started = await daemon.execute('connectApp',
+      { ...turn, app: 'Hetzner', reason: 'manage my server' }, HELPER);
+    expect(started.transport).toBe('squire-api');
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+
+    await expect(phone.execute('connectWorkbenchApp', {
+      app: 'Hetzner', helperAgentId: 'machine-one', reconnect: true,
+    }, OWNER)).resolves.toMatchObject({ appId: started.appId, transport: 'squire-api' });
+    expect((await database.query('SELECT id FROM workspace_apps')).rows)
+      .toEqual([{ id: started.appId }]);
+    const requests = await database.query<{ text: string }>(
+      `SELECT text FROM messages WHERE author_id=$1 AND text LIKE '%Hetzner to my Workbench.'`,
+      [OWNER],
+    );
+    expect(requests.rows.map((row) => row.text))
+      .toEqual(['@bee Reconnect Hetzner to my Workbench.']);
+    await expect(phone.execute('connectWorkbenchApp', {
+      app: 'fuckface', helperAgentId: 'machine-one', reconnect: true,
+    }, OWNER)).rejects.toThrow('Select an app from search results');
+  });
+
   it('Reproduction RUNWAY-1: Workbench retries Runway through its helper instead of browser sign-in', async () => {
     await connectSquire();
     const provider = fakeComposio();

@@ -8380,16 +8380,23 @@ export class PhoneService {
     if (!app || app.length > APP_INPUT_MAX_LENGTH) throw new Error('app name is required');
     await this.viewerWorkbenchWorkspace(viewerId);
     const identity = appIdentity(app);
-    if (!identity || !this.composio) throw new Error('Select an app from search results');
-    let catalogEntry;
-    try { catalogEntry = await this.composio.toolkit(composioToolkitForApp(identity.key)); }
-    catch (error) {
-      if ((error as { status?: number }).status === 404)
+    if (!identity) throw new Error('Select an app from search results');
+    const existing = await this.database.query(
+      `SELECT 1 FROM workspace_apps WHERE owner_identity_id=$1 AND app_key=$2`,
+      [viewerId, identity.key],
+    );
+    if (existing.rows.length === 0) {
+      if (!this.composio) throw new Error('Select an app from search results');
+      let catalogEntry;
+      try { catalogEntry = await this.composio.toolkit(composioToolkitForApp(identity.key)); }
+      catch (error) {
+        if ((error as { status?: number }).status === 404)
+          throw new Error('Select an app from search results');
+        throw error;
+      }
+      if (catalogEntry.slug !== composioToolkitForApp(identity.key) || catalogEntry.enabled === false)
         throw new Error('Select an app from search results');
-      throw error;
     }
-    if (catalogEntry.slug !== composioToolkitForApp(identity.key) || catalogEntry.enabled === false)
-      throw new Error('Select an app from search results');
     const { matched, machineId, ws } = await this.resolveViewerHelper(
       input.helperAgentId,
       viewerId,

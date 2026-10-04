@@ -38,6 +38,7 @@ import {
   normalizeCornerText,
   ARTIFACT_MIME_BY_EXTENSION,
   ARTIFACT_MIME_TYPES,
+  encodeArtifactTitleHeader,
   type ArtifactMimeType,
   type CornerRestoreResult,
   type RoomConversationResult,
@@ -311,8 +312,16 @@ export const CORNER_BRIEF_PROPERTIES = {
 
 const MEMORY_KEYWORDS_SCHEMA = {
   type: 'array',
+  minItems: 1,
   maxItems: 6,
-  items: { type: 'string', minLength: 3, maxLength: 32 },
+  items: {
+    type: 'string',
+    minLength: 3,
+    maxLength: 32,
+    pattern: '^[a-z0-9][a-z0-9_./-]{2,31}$',
+    description:
+      'One distinctive single lower-case word of 3 to 32 characters (letters, digits, or _./-). A multi-word phrase, an upper-case or stopword keyword is refused.',
+  },
 } as const;
 
 const MEMORY_SOURCES_SCHEMA = {
@@ -3882,7 +3891,7 @@ async function daemonUploadArtifact(
     headers: {
       authorization: `Bearer ${requiredEnv('BEELINE_DAEMON_TOKEN')}`,
       'content-type': mime,
-      'x-artifact-title': title,
+      'x-artifact-title': encodeArtifactTitleHeader(title),
       'x-beeline-helper-version': process.env.BEELINE_HELPER_VERSION || 'v0.0.0',
     },
     body: bytes,

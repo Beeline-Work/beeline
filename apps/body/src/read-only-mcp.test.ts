@@ -95,6 +95,20 @@ describe('direct message helper surface', () => {
     expect(MEMORY_UPKEEP_RULE).toContain('report_memory_used');
   });
 
+  it('states the single-word keyword rule and pattern on save_memory', () => {
+    const save = agentToolsFor(true, false).find((tool) => tool.name === 'save_memory');
+    const keywords = (
+      save?.inputSchema as {
+        properties: {
+          keywords: { minItems?: number; items?: { pattern?: string; description?: string } };
+        };
+      }
+    ).properties.keywords;
+    expect(keywords.minItems).toBe(1);
+    expect(keywords.items?.pattern).toBe('^[a-z0-9][a-z0-9_./-]{2,31}$');
+    expect(keywords.items?.description).toContain('single lower-case word');
+  });
+
   it('tells the agent to call search_memory before ever saying a fact was never saved', () => {
     const searchMemory = agentToolsFor(true, false).find((tool) => tool.name === 'search_memory');
     expect(searchMemory?.description).toContain(SEARCH_MEMORY_FIRST_RULE);

@@ -1,10 +1,13 @@
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { mkdtempSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
+import { decodeArtifactTitleHeader } from '@beeline/api-contract/daemon';
 import { agentToolsFor } from './read-only-mcp.js';
-import { postArtifact, type PostArtifactDeps } from './read-only-mcp.js';
+import { postArtifact, postArtifactDepsFromEnv, type PostArtifactDeps } from './read-only-mcp.js';
 
 const VALID_HTML =
   '<!doctype html><html><head><style>b{color:#111}</style></head><body>hi</body></html>';
@@ -184,5 +187,52 @@ describe('beeline-agent post_artifact', () => {
       ),
     ).rejects.toThrow(/no url/);
     expect(queued).toHaveLength(0);
+  });
+
+  it('posts an em-dash and non-Latin title through the percent-encoded header', async () => {
+    const titles = ['Café — 設計', '設計メモ — リリース'];
+    const received: string[] = [];
+    const server = createServer((request, response) => {
+      received.push(String(request.headers['x-artifact-title'] ?? ''));
+      request.resume();
+      response.writeHead(201, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ url: '/v1/media/obj-1', mimeType: 'text/html', size: 1 }));
+    });
+    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+    const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const previous = {
+      base: process.env.BEELINE_DAEMON_BASE_URL,
+      token: process.env.BEELINE_DAEMON_TOKEN,
+      room: process.env.BEELINE_DAEMON_ROOM_ID,
+      root: process.env.BEELINE_ATTACH_ROOT,
+    };
+    const restore = (name: string, value: string | undefined) => {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    };
+    process.env.BEELINE_DAEMON_BASE_URL = origin;
+    process.env.BEELINE_DAEMON_TOKEN = 'tok';
+    process.env.BEELINE_DAEMON_ROOM_ID = 'room-1';
+    process.env.BEELINE_ATTACH_ROOT = mkdtempSync(join(tmpdir(), 'post-artifact-root-'));
+    try {
+      const queued: { name?: string }[] = [];
+      const base = postArtifactDepsFromEnv();
+      for (const title of titles) {
+        await postArtifact(
+          { title, mime: 'text/html', html: VALID_HTML },
+          { ...base, queue: async (attachment) => void queued.push(attachment) },
+        );
+      }
+      expect(received).toHaveLength(2);
+      for (const raw of received) expect(raw).toMatch(/^[\x20-\x7e]*$/);
+      expect(received.map(decodeArtifactTitleHeader)).toEqual(titles);
+      expect(queued.map((attachment) => attachment.name)).toEqual(titles);
+    } finally {
+      await new Promise<void>((done) => server.close(() => done()));
+      restore('BEELINE_DAEMON_BASE_URL', previous.base);
+      restore('BEELINE_DAEMON_TOKEN', previous.token);
+      restore('BEELINE_DAEMON_ROOM_ID', previous.room);
+      restore('BEELINE_ATTACH_ROOT', previous.root);
+    }
   });
 });

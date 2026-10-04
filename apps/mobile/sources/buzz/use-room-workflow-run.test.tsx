@@ -40,6 +40,25 @@ it('R12k: exposes an inline error and Retry recovers the workflow read', async (
   } finally { await act(async () => tree.unmount()); }
 });
 
+it('lists the corner\'s other live saved-workflow runs beside the one it names, any workflow', async () => {
+  (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+  read.mockResolvedValue({
+    workflows: [
+      { runId: 'a', workflowSlug: 'mm-desk', roomId: 'corner-multi', status: 'live', updatedAt: 10, state: 's', description: '', roomName: '', startedAt: 0, viewerHolds: false, earlierRunCount: 0 },
+      { runId: 'b', workflowSlug: 'macro-paper-desk', roomId: 'corner-multi', status: 'live', updatedAt: 20, state: 's', description: '', roomName: '', startedAt: 0, viewerHolds: false, earlierRunCount: 0 },
+    ],
+  } as any);
+  let current: any;
+  function Corner() { current = useRoomWorkflowRun('corner-multi'); return null; }
+  let tree: any;
+  try {
+    await act(async () => { tree = create(<Corner />); });
+    // The most-recent-activity run is named; the other workflow's live run is listed beside it.
+    expect(current.workflow.runId).toBe('b');
+    expect(current.otherLiveRuns.map((run: any) => run.runId)).toEqual(['a']);
+  } finally { await act(async () => tree.unmount()); }
+});
+
 it('R12k: the chat surface carries the error and Retry inline without a modal', () => {
   const source = readFileSync(new URL('../app/(app)/beeline/chat/_chat-surface.tsx', import.meta.url), 'utf8');
   expect(source).not.toContain("Modal.alert('Workflow unavailable'");

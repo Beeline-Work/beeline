@@ -2,9 +2,14 @@ import React from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { WorkflowRunSummaryView } from '@beeline/api-contract/phone';
-import { workflowStateLabel } from '@/buzz/workflow-graph';
+import { workflowDisplayName, workflowStateLabel } from '@/buzz/workflow-graph';
 import { CORNER_META_SIZE } from './CornerGlyph';
 import { WorkflowGlyph } from './WorkflowGlyph';
+
+/** `Related market arbitrage paper · Verify`: which run, and where it stands. */
+function runLabel(run: WorkflowRunSummaryView): string {
+  return `${workflowDisplayName(run.workflowSlug)} · ${workflowStateLabel(run.state)}`;
+}
 
 /** The corner objective sits above the compact workflow and brief actions. */
 export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
@@ -12,6 +17,7 @@ export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
   onOpenBrief,
   workflow,
   onOpenWorkflow,
+  otherLiveRuns = [],
   workflowError,
   onRetryWorkflow,
   testID = 'corner-objective-line',
@@ -21,7 +27,9 @@ export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
   onOpenBrief?: () => void;
   /** The corner's live workflow run, if any. */
   workflow?: WorkflowRunSummaryView;
-  onOpenWorkflow?: () => void;
+  onOpenWorkflow?: (run: WorkflowRunSummaryView) => void;
+  /** Every other live saved-workflow run in the corner, any workflow, beside the one named above. */
+  otherLiveRuns?: readonly WorkflowRunSummaryView[];
   workflowError?: string | null;
   onRetryWorkflow?: () => void;
   testID?: string;
@@ -51,7 +59,12 @@ export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
         {run || onOpenBrief ? (
           <View style={styles.links}>
             {run ? (
-              <WorkflowLine onPress={onOpenWorkflow!} run={run} testID={`${testID}-workflow`} />
+              <WorkflowLine onPress={() => onOpenWorkflow!(run)} run={run} testID={`${testID}-workflow`} />
+            ) : null}
+            {run && otherLiveRuns.length > 0 ? (
+              <Text style={styles.briefLinkText} testID={`${testID}-workflow-more`}>
+                {`+${otherLiveRuns.length} running`}
+              </Text>
             ) : null}
             {onOpenBrief ? (
               <CornerBriefLink onPress={onOpenBrief} testID={`${testID}-brief`} />
@@ -73,10 +86,10 @@ function WorkflowLine({
   onPress: () => void;
   testID: string;
 }) {
-  const step = workflowStateLabel(run.state);
+  const label = runLabel(run);
   return (
     <Pressable
-      accessibilityLabel={`Open workflow, ${step}`}
+      accessibilityLabel={`Open workflow, ${label}`}
       accessibilityRole="link"
       onPress={onPress}
       style={({ pressed }) => [styles.workflow, pressed && styles.briefLinkPressed]}
@@ -84,7 +97,7 @@ function WorkflowLine({
     >
       <WorkflowGlyph size={CORNER_META_SIZE} />
       <Text numberOfLines={1} style={styles.workflowCopy} testID={`${testID}-copy`}>
-        {step}
+        {label}
       </Text>
     </Pressable>
   );

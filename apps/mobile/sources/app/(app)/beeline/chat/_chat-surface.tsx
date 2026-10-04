@@ -66,7 +66,7 @@ import {
   AGENT_PRESENCE_STALE_MS,
   isChatListView,
 } from '@beeline/buzz-client';
-import type { AgentComposerCommand } from '@beeline/api-contract/phone';
+import type { AgentComposerCommand, WorkflowRunSummaryView } from '@beeline/api-contract/phone';
 import {
   createRoomMessageProjector,
   conversationIdentityByPubkey,
@@ -1420,12 +1420,13 @@ export function BuzzChatSurface({
   // A live workflow run in this corner: one line under the objective, → its run page.
   const {
     workflow: roomWorkflowRun,
+    otherLiveRuns: roomOtherLiveRuns,
     error: workflowError,
     retry: retryWorkflow,
   } = useRoomWorkflowRun(isCorner ? decodedId : undefined);
-  const openRoomWorkflowRun = useCallback(() => {
-    if (roomWorkflowRun) router.push(workflowRunHref(roomWorkflowRun));
-  }, [roomWorkflowRun]);
+  const openRoomWorkflowRun = useCallback((run: WorkflowRunSummaryView) => {
+    router.push(workflowRunHref(run));
+  }, []);
 
   const loadOlderTranscriptMessages = useCallback(() => {
     const visibleRowCount = visibleTranscriptWindow(foldedMessages, Number.MAX_SAFE_INTEGER).length;
@@ -6130,6 +6131,7 @@ export function BuzzChatSurface({
                 onOpenBrief={openCurrentBrief}
                 onOpenWorkflow={openRoomWorkflowRun}
                 workflow={roomWorkflowRun}
+                otherLiveRuns={roomOtherLiveRuns}
                 workflowError={workflowError}
                 onRetryWorkflow={retryWorkflow}
               />

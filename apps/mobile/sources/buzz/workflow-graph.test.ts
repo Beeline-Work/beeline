@@ -59,15 +59,29 @@ describe('workflowRunLine execution history', () => {
       { visitId: 'three', fromState: 'approve', outcome: 'dispatch', toState: 'dispatch', at: 212,
         outputTurns: ['turn-three'], liveOutput: 'Newest chunk' }];
     const line = workflowRunLine(feedbackTriage, history);
-    expect(rowsOf(line)).toEqual([['pull', 'done'], ['approve', 'done'], ['dispatch', 'current']]);
-    expect(line.map((step) => step.visitId)).toEqual(['one', 'two', 'three']);
-    expect(line[0]!.visits[0]).toMatchObject({ enteredAt: 100, leftAt: 112,
+    const reached = line.slice(0, 3);
+    expect(rowsOf(reached)).toEqual([['pull', 'done'], ['approve', 'done'], ['dispatch', 'current']]);
+    expect(reached.map((step) => step.visitId)).toEqual(['one', 'two', 'three']);
+    expect(reached[0]!.visits[0]).toMatchObject({ enteredAt: 100, leftAt: 112,
       leftBy: candy, finalReply: { text: 'First result' } });
-    expect(line[2]!.visits[0]).toMatchObject({ liveOutput: 'Newest chunk', outputTurns: ['turn-three'] });
-    expect(stepSeconds(line[0]!, 400)).toBe(12);
-    expect(stepSeconds(line[0]!, 500)).toBe(12);
-    expect(stepSeconds(line[2]!, 400)).toBe(188);
-    expect(stepSeconds(line[2]!, 500)).toBe(288);
+    expect(reached[2]!.visits[0]).toMatchObject({ liveOutput: 'Newest chunk', outputTurns: ['turn-three'] });
+    expect(stepSeconds(reached[0]!, 400)).toBe(12);
+    expect(stepSeconds(reached[0]!, 500)).toBe(12);
+    expect(stepSeconds(reached[2]!, 400)).toBe(188);
+    expect(stepSeconds(reached[2]!, 500)).toBe(288);
+  });
+  it('predicts the rest of the path from the current state, stopping at the first predicted terminal', () => {
+    const line = workflowRunLine(feedbackTriage, [{ toState: 'notify', at: 100 }]);
+    expect(rowsOf(line)).toEqual([
+      ['notify', 'current'], ['pull', 'pending'], ['approve', 'pending'],
+      ['dispatch', 'pending'], ['done', 'pending'],
+    ]);
+    expect(line.slice(1).every((step) => step.visits.length === 0 && step.onMainPath)).toBe(true);
+    // A terminal run has nothing left to predict.
+    const ended = workflowRunLine(feedbackTriage, [{ toState: 'notify', at: 100 },
+      { fromState: 'notify', outcome: 'notified', toState: 'pull', at: 110 },
+      { fromState: 'pull', outcome: 'nothing_new', toState: 'done', at: 120 }]);
+    expect(rowsOf(ended)).toEqual([['notify', 'done'], ['pull', 'done'], ['done', 'done']]);
   });
   it('keeps gate records and opened corners on their own visit', () => {
     const gate = { question: 'Proceed?', options: [], status: 'answered' as const, answer: 'dispatch', answeredBy: owner };
@@ -104,7 +118,7 @@ describe('workflow copy', () => {
   });
 
   it('heads a live run by whose move it is', () => {
-    expect(workflowRunHeadline({ status: 'live', viewerHolds: true, state: 'approve' })).toBe('Waiting on you');
-    expect(workflowRunHeadline({ status: 'live', viewerHolds: false, state: 'review' })).toBe('In review');
+    expect(workflowRunHeadline({ status: 'live', viewerHolds: true })).toBe('Waiting on you');
+    expect(workflowRunHeadline({ status: 'live', viewerHolds: false })).toBe('Running');
   });
 });

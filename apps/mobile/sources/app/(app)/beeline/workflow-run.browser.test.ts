@@ -51,7 +51,12 @@ function feedbackTriageDetail(
 }
 
 /** `drafts` are live draft events the shared socket delivers to every registration. */
-function workflowRunShims(mobile: string, detail: unknown, drafts: unknown[] = []): Record<string, string> {
+function workflowRunShims(
+  mobile: string,
+  detail: unknown,
+  drafts: unknown[] = [],
+  siblingRuns: unknown[] = [],
+): Record<string, string> {
   return {
     ...webProofShims(mobile),
     '@/sync/transport/live-connection': `export const sharedLiveConnection = () => ({
@@ -64,9 +69,10 @@ function workflowRunShims(mobile: string, detail: unknown, drafts: unknown[] = [
     export const useFocusEffect = (effect) => React.useEffect(effect, [effect]);
     export const useLocalSearchParams = () => ({ roomId: 'corner-2', runId: 'run-1' });
     export const router = { push: (href) => { (globalThis.__pushed ??= []).push(href); },
-      replace: () => undefined, back: () => undefined };`,
+      replace: (href) => { (globalThis.__replaced ??= []).push(href); }, back: () => undefined };`,
     '@/sync/transport/monolith-operation': `export class MonolithPhoneOperationError extends Error {}
-    export const monolithPhoneOperation = async () => (${JSON.stringify(detail)});`,
+    export const monolithPhoneOperation = async (name) =>
+      name === 'listRoomWorkflowRuns' ? { workflows: ${JSON.stringify(siblingRuns)} } : (${JSON.stringify(detail)});`,
     '@/auth/buzz-identity-storage': `export const getEffectiveRelayUrl = async () => 'https://relay.test';
     export const loadBuzzIdentity = async () => ({ publicKey: '${'a'.repeat(64)}' });`,
   };
@@ -77,9 +83,7 @@ type Proof = {
   overview: boolean;
   earlier: boolean;
   summary: string | null;
-  exits: Record<string, string>;
-  receipts: string[];
-  refs: string[];
+  does: Record<string, string>;
   overflow: boolean;
   eyebrowFont: string | null;
   titleFont: string | null;
@@ -94,18 +98,25 @@ type Proof = {
   live: Record<string, string>;
   finals: Record<string, string>;
   durations: string[];
-  gate: { text: string[]; controls: number } | null;
-  expanded: string[] | null;
+  gate: Record<string, string>;
+  alsoRunning: string[];
   pushedBefore: unknown[];
   pushed: unknown[];
+  replaced: unknown[];
 };
 
-async function proof(detail: unknown, query: string, width = 390, drafts: unknown[] = []): Promise<Proof> {
+async function proof(
+  detail: unknown,
+  query: string,
+  width = 390,
+  drafts: unknown[] = [],
+  siblingRuns: unknown[] = [],
+): Promise<Proof> {
   const mobile = process.cwd();
   const { result, status, stderr } = await runBrowserProof({
     entry: path.join(mobile, 'scripts/workflow-run-proof.tsx'),
     mobile,
-    shims: workflowRunShims(mobile, detail, drafts),
+    shims: workflowRunShims(mobile, detail, drafts, siblingRuns),
     width,
     query,
   });
@@ -150,19 +161,19 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
         },
       ],
     );
-    const page = await proof(detail, '?eyebrow=Issues%20triage&title=Feedback%20triage&expand=pull');
+    const page = await proof(detail, '?eyebrow=Issues%20triage&title=Feedback%20triage');
     // The same title role as the corner, with no previous-run count.
     expect(page.text.slice(0, 2)).toEqual(['Issues triage', 'Feedback triage']);
-    expect(page).toMatchObject({ overview: false, earlier: false, summary: null, receipts: [] });
+    expect(page).toMatchObject({ overview: false, earlier: false, summary: null });
     expect(page.text).not.toContain('#14');
-    expect(page.exits).toEqual({});
     expect(page).toMatchObject({
       eyebrowFont: '13px SpaceGrotesk-Regular',
       titleFont: '16px SpaceGrotesk-SemiBold',
     });
     expect(page.text).toContain('Waiting on you');
     // Each step's holder sits at the row's right as a mark and handle; the gate
-    // waiting on the viewer carries the viewer's own mark, in brass.
+    // waiting on the viewer carries the viewer's own mark, in brass. The
+    // predicted (unreached) dispatch step already shows its bound role holder.
     expect(
       Object.fromEntries(
         Object.entries(page.assignees).map(([state, entry]) => [
@@ -174,16 +185,20 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
       notify: ['@candy', false, true, true],
       pull: ['@candy', false, true, true],
       approve: ['@lunchboxfortwo', true, true, true],
+      dispatch: ['@candy', false, true, true],
     });
     expect(page.assignees.approve!.color).toBe(BRASS);
     expect(page.assignees.pull!.color).not.toBe(BRASS);
     expect(page.labels).toContain('Approve, current step, Owner, Your call · gate');
     for (const role of ROLE_NAMES) expect(page.text.join(' ')).not.toContain(role);
-    // One row per state on the main path, in order, each with its own circle.
+    // Every step of the contract draws, in order: done, current, and the
+    // predicted path onward (pending, dimmed) to its first guessed terminal.
     expect(page.circles).toEqual({
       notify: 'done',
       pull: 'done',
       approve: 'current',
+      dispatch: 'pending',
+      done: 'pending',
     });
     expect(page.halo).toBe(1);
     expect(page.lines).toEqual([
@@ -191,50 +206,19 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
       'pull-above-brass',
       'pull-below-brass',
       'approve-above-brass',
+      'approve-below-quiet',
+      'dispatch-above-quiet',
+      'dispatch-below-quiet',
+      'done-above-quiet',
     ]);
-    // The gate opens on its own as a record: the question, the options, whose move it is.
-    expect(page.gate).toEqual({
-      text: [
-        '1',
-        'entered',
-        expect.stringMatching(/\d\d:\d\d:\d\d/),
-        '2',
-        'asked',
-        'feedback-triage: approve',
-        '3',
-        'option A',
-        'dispatch · go to dispatch',
-        '4',
-        'option B',
-        'skip · go to done',
-        '5',
-        'answer',
-        'waiting on you',
-      ],
-      controls: 0,
-    });
-    // Tapping a step opens its readout in place: times, outcome, what it delivered.
-    expect(page.expanded).toEqual([
-      '1',
-      'entered',
-      expect.stringMatching(/\d\d:\d\d:\d\d/),
-      '2',
-      'left',
-      expect.stringMatching(/\d\d:\d\d:\d\d.* · ranked → Approve$/),
-      '3',
-      'delivered',
-      'problems · 2',
-      '1',
-      'Corner dropdown vanishes from the mobile Room list',
-      '2',
-      'Shared mock opens as a binary file',
-    ]);
+    // The gate is a read-only record: whose move it is, never a control.
+    expect(page.gate).toEqual({ approve: 'Waiting on you' });
     // No Open → to the run's own corner, and nothing navigates on its own.
     expect(page.text.join(' ')).not.toContain('Open →');
     expect(page.pushedBefore).toEqual([]);
   }, 120_000);
 
-  it('shows only the steps the branch reached', async () => {
+  it('shows only the steps the branch reached, with nothing left to predict once the run ends', async () => {
     const detail = feedbackTriageDetail(
       repo(),
       { state: 'done', status: 'done', viewerHolds: false, updatedAt: STARTED + 58 },
@@ -254,7 +238,6 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     );
     const page = await proof(detail, '');
     expect(page.text).toContain('Done · nothing new');
-    expect(page.text).toContain('3 reached');
     expect(page.circles).toEqual({
       notify: 'done',
       pull: 'done',
@@ -265,7 +248,7 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     expect(page.halo).toBe(0);
   }, 120_000);
 
-  it("records who answered the gate, their note, and links each corner the dispatch opened", async () => {
+  it("records who answered the gate and links each corner the dispatch opened", async () => {
     const detail = feedbackTriageDetail(
       repo(),
       { state: 'done', status: 'done', viewerHolds: false, updatedAt: STARTED + 400 },
@@ -309,7 +292,7 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
         },
       ],
     );
-    const gate = await proof(detail, '?expand=approve');
+    const gate = await proof(detail, '');
     // The viewer answered the gate, so the row carries their own mark and handle.
     expect(gate.assignees.approve).toMatchObject({
       handle: '@lunchboxfortwo',
@@ -319,29 +302,12 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
       color: BRASS,
     });
     expect(gate.labels).toContain('Approve, done, Owner');
-    expect(gate.expanded).toEqual([
-      '1',
-      'entered',
-      expect.stringMatching(/\d\d:\d\d:\d\d/),
-      '2',
-      'left',
-      expect.stringMatching(/ · dispatch → Dispatch$/),
-      '3',
-      'asked',
-      'feedback-triage: approve',
-      '4',
-      'answer',
-      expect.stringMatching(/^dispatch · Owner · \d\d:\d\d:\d\d/),
-      '5',
-      'note',
-      'only the dropdown one, skip the rest',
-    ]);
-    // The record is all there is: no answer plates, no control of any kind.
-    expect(gate.gate!.controls).toBe(0);
-    const dispatch = await proof(detail, '?expand=dispatch&corner=fix-2');
-    expect(dispatch.expanded).toEqual(
-      expect.arrayContaining(['corners · 2', 'OPENED', 'Corner dropdown fix', 'Mock file type fix']),
-    );
+    // The gate's record is read-only: the chosen answer and who chose it,
+    // never the question, options, or a note.
+    expect(gate.gate).toEqual({ approve: 'dispatch · Owner' });
+    // The corner(s) the dispatch step opened are plain links, right under its row.
+    expect(gate.text).toEqual(expect.arrayContaining(['Corner dropdown fix', 'Mock file type fix']));
+    const dispatch = await proof(detail, '?corner=fix-2');
     // The corner link goes to that corner, under the Room it was opened in.
     expect(dispatch.pushedBefore).toEqual([]);
     expect(dispatch.pushed).toEqual([
@@ -375,21 +341,13 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
       ], roleHolders: { analyst: candy },
     };
     for (const width of [390, 1440]) {
-      const page = await proof(detail, '?expand=collect', width);
+      const page = await proof(detail, '', width);
       expect(page).toMatchObject({ overview: false, earlier: false, overflow: false,
         summary: detail.contract.summary });
-      expect(Object.keys(page.circles)).toEqual(['collect', 'review']);
-      expect(page.exits).toEqual({});
-      expect(page.text).toContain('Collect the evidence.');
-      expect(page.text).toContain('Review the evidence.');
-      expect(page.text).toContain('Collected the indicators.');
-      expect(page.refs).toHaveLength(3);
-      expect(page.refs).toEqual(expect.arrayContaining([
-        'workflow-run-line-step-collect-ref-brief-0',
-        'workflow-run-line-step-collect-ref-file-1',
-        'workflow-run-line-step-collect-ref-memory-2',
-      ]));
-      expect(page.expanded).toEqual(expect.arrayContaining(['entered', 'left']));
+      // review is current, so the predicted path adds its first guessed terminal.
+      expect(Object.keys(page.circles)).toEqual(['collect', 'review', 'done']);
+      expect(page.circles.done).toBe('pending');
+      expect(page.does).toEqual({ collect: 'Collect the evidence.', review: 'Review the evidence.' });
     }
   }, 120_000);
 
@@ -484,7 +442,6 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
       expect(page.finals).toEqual({ collect: 'First evidence result.', review: 'Review requests another visit.' });
       expect(page.live).toEqual({ 'collect-visit-2': 'Latest saved chunk.' });
       expect(page.durations.slice(0, 2)).toEqual(['10s', '10s']);
-      expect(page.exits).toEqual({});
       expect(page.overflow).toBe(false);
     }
     const complete = { ...detail, run: { ...detail.run, state: 'done', status: 'done', updatedAt: STARTED + 30 },
@@ -493,7 +450,48 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     const refreshed = await proof(complete, '');
     expect(refreshed.finals['collect-visit-2']).toBe('Second evidence result.');
     expect(refreshed.live).toEqual({});
-    expect(refreshed.durations).toEqual(['10s', '10s', '10s', '0s']);
+    // The terminal that ends the run reads by the clock it was reached, not a duration.
+    expect(refreshed.durations.slice(0, 3)).toEqual(['10s', '10s', '10s']);
+    expect(refreshed.durations[3]).toMatch(/\d\d?:\d\d/);
   }, 120_000);
 
+  it('shows every other live run in the corner, any workflow, and replaces the page when switching', async () => {
+    const detail = {
+      run: { runId: 'run-1', workflowSlug: 'mm-desk', description: 'MM desk', roomId: 'corner-2',
+        roomName: 'MM desk', state: 'verify', status: 'live', viewerHolds: false,
+        holder: candy, startedAt: STARTED, updatedAt: STARTED + 10, earlierRunCount: 0 },
+      contract: { version: 1, name: 'mm-desk', description: 'MM desk', roles: ['scout', 'verify'],
+        start: 'scout', handoffs: {
+          scout: { does: 'Scans markets.', role: 'scout', requires: [], on: { done: 'verify' } },
+          verify: { does: 'Verifies pairs.', role: 'verify', requires: [], on: { done: 'done' } },
+          done: { kind: 'terminal', status: 'done' },
+        } },
+      history: [
+        { toState: 'scout', actor: candy, at: STARTED },
+        { fromState: 'scout', outcome: 'done', toState: 'verify', actor: candy, at: STARTED + 10 },
+      ],
+      roleHolders: { scout: candy, verify: candy },
+    };
+    const siblingRuns = [
+      { runId: 'run-1', workflowSlug: 'mm-desk', description: 'MM desk', roomId: 'corner-2',
+        roomName: 'MM desk', state: 'verify', status: 'live', viewerHolds: false, holder: candy,
+        startedAt: STARTED, updatedAt: STARTED + 10, earlierRunCount: 0 },
+      // A different workflow entirely, concurrently live in the same corner.
+      { runId: 'run-2', workflowSlug: 'macro-paper-desk', description: 'Macro desk', roomId: 'corner-2',
+        roomName: 'MM desk', state: 'draft', status: 'live', viewerHolds: false, holder: owner,
+        startedAt: STARTED + 50, updatedAt: STARTED + 60, earlierRunCount: 0 },
+    ];
+    const page = await proof(detail, '', 390, [], siblingRuns);
+    expect(page.text).toContain('Also running in this corner');
+    // The section excludes this page's own run, listing only the other one.
+    expect(page.alsoRunning).toEqual(['workflow-run-also-running-run-2']);
+    expect(page.text).toEqual(expect.arrayContaining(['Macro paper desk · Draft', '@lunchboxfortwo']));
+    const switched = await proof(detail, '?switchTo=run-2', 390, [], siblingRuns);
+    // A tap REPLACES this page in the stack, not a push, so Back from the
+    // next run always lands on the corner, never back on this one.
+    expect(switched.pushed).toEqual([]);
+    expect(switched.replaced).toEqual([
+      { pathname: '/beeline/workflow-run', params: { roomId: 'corner-2', runId: 'run-2' } },
+    ]);
+  }, 120_000);
 });

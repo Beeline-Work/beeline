@@ -139,15 +139,14 @@ export function stepSeconds(step: WorkflowLineStep, now: number): number | undef
 }
 
 /**
- * The run's status line, as GitHub Actions heads a run: whose move it is, the
- * step it is in, or how it ended.
+ * The run's status line, as GitHub Actions heads a run: whose move it is, or
+ * how it ended. The rail below names which step is current.
  */
 export function workflowRunHeadline(
-  run: Pick<WorkflowRunSummaryView, 'status' | 'viewerHolds' | 'state'>,
+  run: Pick<WorkflowRunSummaryView, 'status' | 'viewerHolds'>,
   lastOutcome?: string,
 ): string {
-  if (run.status === 'live')
-    return run.viewerHolds ? 'Waiting on you' : `In ${workflowStateLabel(run.state).toLowerCase()}`;
+  if (run.status === 'live') return run.viewerHolds ? 'Waiting on you' : 'Running';
   const status = TERMINAL_LABEL[run.status];
   return lastOutcome !== undefined ? `${status} · ${outcomeLabel(lastOutcome)}` : status;
 }

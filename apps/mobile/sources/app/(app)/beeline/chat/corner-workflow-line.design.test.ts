@@ -34,4 +34,11 @@ describe('corner workflow line', () => {
     expect(pickRoomWorkflowRun('corner-1', [run({ status: 'done' })])).toBeUndefined();
     expect(pickRoomWorkflowRun('corner-1', [run({ roomId: 'other' })])).toBeUndefined();
   });
+
+  it('pins the live saved run with the most recent activity, not list order', () => {
+    const older = run({ runId: 'older', workflowSlug: 'feedback-triage', state: 'pull', updatedAt: 10 });
+    const newer = run({ runId: 'newer', workflowSlug: 'mm-desk', state: 'verify', updatedAt: 20 });
+    expect(pickRoomWorkflowRun('corner-1', [older, newer])).toBe(newer);
+    expect(pickRoomWorkflowRun('corner-1', [newer, older])).toBe(newer);
+  });
 });

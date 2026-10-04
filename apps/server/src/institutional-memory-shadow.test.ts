@@ -1290,3 +1290,60 @@ describe('institutional memory phase-0 shadow capture', () => {
     ]);
   });
 });
+
+describe('institutional memory authority for agent-started turns', () => {
+  it('serves the per-turn snapshot for a turn started by a schedule or event wake, whose root message is agent-authored', async () => {
+    await enrollLive();
+    const humanTurn = await openTurn('human-write-turn');
+    await liveDaemon().execute(
+      'saveInstitutionalMemory',
+      {
+        ...humanTurn,
+        agentId: AGENT,
+        memoryKind: 'workspace_fact',
+        canonicalKey: 'deploy.release-marker-last',
+        body: 'The release migration writes its schema marker last.',
+        keywords: ['release', 'migration', 'marker'],
+        sourceMessageIds: [MESSAGE],
+        personAsked: false,
+        confidence: 0.95,
+      },
+      AGENT,
+    );
+
+    // A schedule, event, or workflow-handoff wake is authored by an agent,
+    // not a human; the snapshot must still serve for that turn.
+    const scheduleRoot = 'schedule-wake-root';
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'daily triage sweep: check the release migration marker')`,
+      [scheduleRoot, ROOM, AGENT],
+    );
+    const scheduleTurn = await openTurn('schedule-turn', scheduleRoot);
+    const context = await liveDaemon().execute('getInstitutionalContext', scheduleTurn, AGENT);
+    expect(context.text).toContain('schema marker last');
+  });
+
+  it('refuses the per-turn snapshot when the root message\'s Room is in another Workspace than the calling Room', async () => {
+    await enrollLive();
+    const crossRoot = 'cross-workspace-root';
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'unrelated other-workspace message')`,
+      [crossRoot, OTHER_ROOM, OTHER_HUMAN],
+    );
+    const command = await createAgentCommand(database, {
+      roomId: ROOM,
+      agentId: AGENT,
+      sourceMessageId: crossRoot,
+      reason: 'test',
+      turnRequestId: 'cross-workspace-turn',
+    });
+    await claimAgentCommand(database, ROOM, AGENT, command!.id, 'cross-workspace-generation');
+    await expect(
+      liveDaemon().execute(
+        'getInstitutionalContext',
+        { roomId: ROOM, requestId: 'cross-workspace-turn', generationId: 'cross-workspace-generation' },
+        AGENT,
+      ),
+    ).rejects.toThrow(/requester authority is unavailable/);
+  });
+});

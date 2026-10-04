@@ -540,4 +540,31 @@ describe('save_skill', () => {
     expect(loaded.markdown).toContain('Keep every shot under four seconds.');
     expect(loaded.sourceRoomId).toBe(ROOM);
   });
+
+  it('loads a workspace skill for a turn started by a schedule or event wake, whose root message is agent-authored', async () => {
+    await saveSkill(database, command, {
+      slug: 'cartoon-short-video',
+      description: 'Storyboard render cartoon clip',
+      markdown: '# Cartoon short video\n\nKeep every shot under four seconds.',
+    });
+    // A schedule, event, or workflow-handoff wake is authored by an agent,
+    // not a human; load_workspace_skill must still serve it.
+    const scheduleRoot = 'schedule-wake-root';
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'daily triage sweep')`,
+      [scheduleRoot, ROOM, OTHER_AGENT],
+    );
+    const scheduleCommand: CommandRow = {
+      ...command,
+      id: 'schedule-root-command',
+      source_message_id: scheduleRoot,
+      root_source_message_id: scheduleRoot,
+    };
+    const loaded = await loadWorkspaceSkill(database, scheduleCommand, {
+      agentId: OTHER_AGENT,
+      roomId: ROOM,
+      slug: 'cartoon-short-video',
+    });
+    expect(loaded.markdown).toContain('Keep every shot under four seconds.');
+  });
 });

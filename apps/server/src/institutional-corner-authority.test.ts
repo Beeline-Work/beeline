@@ -11,13 +11,13 @@ import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 // fb_5c241d071a4117526e45f34c, fb_70b33d53ed1be7eb36f75e09,
 // fb_981f2a78501a06ecb8105687, fb_52faddfbdd9900efb4117c81,
 // fb_079ce16ab69664cb55704b2a). The per-turn snapshot, search_memory and
-// search_history all derive "requester authority" from the turn command's
-// root_source_message_id; a corner lifecycle turn (checks verdict, review
-// wake, merge refusal/conflict) has no parent command, so its root is the
-// @system/GitHub note that woke it, and the authority query's
-// `requester.kind='human'` join drops it -> 503 requester authority is
-// unavailable. The corner's own durable requester is
-// corner_facts.commissioned_by; this test locks the fix to that.
+// search_history used to derive "requester authority" from the turn
+// command's root_source_message_id's author, so a corner lifecycle turn
+// (checks verdict, review wake, merge refusal/conflict) — whose root is the
+// @system/GitHub note that woke it, with no parent command — fell through a
+// `requester.kind='human'` join and refused. These now resolve authority
+// from the calling Room's own Workspace, independent of who or what
+// authored the root message; this test locks that in for the corner shape.
 
 const WORKSPACE = '10000000-0000-4000-8000-00000000ca11';
 const ROOM = '20000000-0000-4000-8000-00000000ca11';

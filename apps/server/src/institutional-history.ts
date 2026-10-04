@@ -10,7 +10,6 @@ import {
 } from '@beeline/api-contract/daemon';
 import type { CommandRow } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
-import { institutionalCornerRequesterAuthority } from './institutional-memory-shadow.js';
 import { institutionalWorkspaceRolloutStage, rolloutAllowsLive } from './institutional-rollout.js';
 
 type SearchRow = {
@@ -120,19 +119,20 @@ export async function searchInstitutionalHistory(
   const limit = boundedLimit(input.limit);
   const started = performance.now();
   return database.transaction(async (db) => {
-    const authority =
-      (
-        await db.query<{ workspace_id: string; requester_identity_id: string }>(
-          `SELECT output.workspace_id,root.author_id requester_identity_id
+    // The root message's author is this turn's requester whether human or
+    // agent (a schedule, event, or agent-to-agent wake); only its Room needs
+    // to share the output Room's Workspace.
+    const authority = (
+      await db.query<{ workspace_id: string; requester_identity_id: string }>(
+        `SELECT output.workspace_id,root.author_id requester_identity_id
          FROM rooms output
          JOIN messages root ON root.id=$2 AND root.deleted_at IS NULL
          JOIN rooms root_room ON root_room.id=root.room_id
            AND root_room.workspace_id=output.workspace_id
-         JOIN identities requester ON requester.id=root.author_id AND requester.kind='human'
          WHERE output.id=$1`,
-          [command.room_id, command.root_source_message_id],
-        )
-      ).rows[0] ?? (await institutionalCornerRequesterAuthority(db, command.room_id));
+        [command.room_id, command.root_source_message_id],
+      )
+    ).rows[0];
     if (!authority) throw new Error('institutional history requester authority is unavailable');
     if (!rolloutAllowsLive(await institutionalWorkspaceRolloutStage(db, authority.workspace_id))) {
       throw new Error('institutional history is not enabled for this Workspace');

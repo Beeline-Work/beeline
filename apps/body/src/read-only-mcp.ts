@@ -285,7 +285,7 @@ export const CORNER_BRIEF_PROPERTIES = {
     minLength: 1,
     maxLength: CORNER_BRIEF_SPEC_MAX_LENGTH,
     description:
-      'Markdown: what to build, a checklist of what done means, what is out of scope, and references, as headings in one doc.',
+      'Markdown: the human intent quoted, the user stories it enables, what you are not doing, the risks, and references (an HTML mock for any frontend change), as headings in one doc.',
   },
   approval: {
     type: 'object',
@@ -1368,7 +1368,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'approve_merge',
     description:
-      'Record the configured reviewer’s PASS for the exact pull-request head and brief revision you reviewed. The server then squash-merges that head itself once the whole gate is open (checks green, worker yolo on, no human hold); no agent runs gh pr merge. The server rejects a caller who is not the parent Room’s configured reviewer, a head that is not the pull request’s current head, and a stale brief revision. Call it only after a complete beeline-review PASS, using that review’s full head SHA and assigned brief revision; then reply that you approved that SHA without tagging the author. Do not tell the author to merge.',
+      'Record the configured reviewer’s PASS for the exact pull-request head and brief revision you reviewed. The server then squash-merges that head itself once the whole gate is open (checks green, worker yolo on, no human hold); no agent runs gh pr merge. The server rejects a caller who is not the parent Room’s configured reviewer, a head that is not the pull request’s current head, and a stale brief revision. Call it only after a complete beeline-review PASS whose outline ledger has no missing or unverified user story - otherwise send the brief back; use that review’s full head SHA and assigned brief revision, then reply that you approved that SHA without tagging the author. Do not tell the author to merge.',
     inputSchema: {
       type: 'object',
       required: ['headSha'],
@@ -1590,7 +1590,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'ask_choice',
     description:
-      'Post an optional lettered question (A–D) for a human in this Room. This is a preference, not a grant: it does not pause your turn and Skip or timeout means continue without that input. Never use this for sandbox reach, spend, merge, or branch-target authority.',
+      'Post an optional lettered question (A–D) for a human in this Room - it stands alone, so put your reasoning in it, not a later message. This is a preference, not a grant: it does not pause your turn and Skip or timeout means continue without that input. Never use this for sandbox reach, spend, merge, or branch-target authority.',
     inputSchema: {
       type: 'object',
       required: ['prompt', 'options'],

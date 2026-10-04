@@ -338,6 +338,14 @@ describe('prompt assembly guards', () => {
     expect(CORNER_YOLO_MERGE_NUDGE).toContain('Never merge it yourself.');
   });
 
+  it('tells a code-corner author that a human opening the corner and prompting inside it is not the outline', () => {
+    const author = assembleSessionPrompt(SESSION_VARIANTS['code-corner-reviewed']!).systemPrompt;
+    expect(author).toContain('the brief must hold this ask\'s outline');
+    expect(author).toContain('opening and prompting inside it is not that outline');
+    expect(author).toContain('When it has none or the ask changed, read the revision and write it with revise_corner_brief first');
+    expect(promptRules.CORNER_AUTHOR_CONTRACT).toContain('opening and prompting inside it is not that outline');
+  });
+
   it('R8a makes publication conditional on the brief, including dirty-work nudges', () => {
     const author = assembleSessionPrompt(SESSION_VARIANTS['code-corner-reviewed']!).systemPrompt;
     expect(author).not.toMatch(/^Commit and push/m);

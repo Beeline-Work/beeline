@@ -220,7 +220,11 @@ describe('beeline-triage request skill', () => {
   it('clarifies first and warns without blocking on warranted work or desirability', () => {
     expect(markdown).toContain('beeline-release: test-release');
     expect(markdown).toContain('## 1. Is it clear?');
-    expect(markdown).toContain('ask one focused question before opening the corner');
+    expect(markdown).toContain('resolve it with the human before doing anything else');
+    expect(markdown).toContain('never resolve it by adopting a teammate\'s plan, a prior document, or your own assumption');
+    expect(markdown).toContain('you are expected to disagree, not just permitted to');
+    expect(markdown).toContain('tag a Room colleague for an adversarial second opinion');
+    expect(markdown).toContain('skip this only when you are the only agent in the Room');
     expect(markdown).toContain('## 2. Is work warranted?');
     expect(markdown).toContain('try to reproduce the exact user-visible behavior');
     expect(markdown).toContain('open or recently merged pull requests');
@@ -365,21 +369,25 @@ describe('beeline-review reviewer skill', () => {
     expect(markdown).toContain('proof of that reproduction (or none obtained + regression):');
   });
 
-  it('treats the spec checklist as scope and lets the approval quote win', () => {
+  it('treats the spec outline as scope and lets the approval quote win', () => {
     expect(markdown).toContain('Quote the approval with its message ID and approver');
-    expect(markdown).toContain("The spec's checklist is the scope");
+    expect(markdown).toContain("The spec's outline (user stories, non-goals, risks) is the scope");
     expect(markdown).toContain('it wins any conflict with the spec');
     expect(markdown).toContain('short objective is navigation-only text');
-    expect(markdown).toContain('List every checklist line exactly once');
+    expect(markdown).toContain('list every `## User stories` line exactly once');
     expect(markdown).toContain(
-      'checklist ledger (every checklist line + status + evidence):',
+      'outline ledger (every user story, non-goal and risk + status + evidence; mock-vs-screen notes for frontend work):',
     );
-    expect(markdown).toContain('the affected checklist line or `engineering`');
+    expect(markdown).toContain('the affected outline line or `engineering`');
     expect(markdown).not.toMatch(/criteri|AC-\d|revision and hash/);
     expect(markdown).toContain('product-completeness findings (block):');
     expect(markdown).toContain('engineering findings (block):');
     expect(markdown).toContain('stable ID that survives rereview');
     expect(markdown).toContain('only through a new human-authorized brief revision');
+  });
+
+  it('sends a brief with no user stories to grade back to the author instead of approving', () => {
+    expect(markdown).toContain('no stories to list is a FAIL, sent back to the author to write the outline');
   });
 });
 
@@ -403,8 +411,9 @@ describe('beeline-spec planning skill', () => {
     for (const part of [
       '`spec`',
       '`## Intent`',
-      '`## Checklist`',
+      '`## User stories`',
       '`## Non-goals`',
+      '`## Risks`',
       '`## References`',
       '`attachments`',
       '`approval`: one human Room message ID',
@@ -412,7 +421,8 @@ describe('beeline-spec planning skill', () => {
       expect(markdown).toContain(part);
     expect(markdown).not.toMatch(/intentVerbatim|buildSpec|approvalBasis|criteria\[\]/);
     expect(markdown).toContain('Do not infer approval from silence');
-    expect(markdown).toContain('Dispatch without a proposal/go ceremony');
+    expect(markdown).not.toContain('Dispatch without a proposal/go ceremony');
+    expect(markdown).toContain('Always compose the full outline and post it to the Room before calling open_corner');
     expect(markdown).toContain("ask the corner's opener to approve it");
     expect(markdown).toContain('added automatically to the brief attachment manifest');
   });
@@ -448,6 +458,10 @@ describe('using-beeline "Tools and the Workbench" section', () => {
     expect(markdown).toContain('a **key** is the credential that tool holds for that human');
     expect(markdown).toContain('beeline-agent workbench_status');
     expect(markdown).toContain('Trusty Squire is vaulted credentials plus a browser');
+    expect(markdown).toContain(
+      'Fetch a multi-field credential (e.g. email and password) with one fetch_credential call, omitting field',
+    );
+    expect(markdown).toContain('pass field only to target one specific field');
     expect(markdown).toContain('Connected apps are listed once per app with a stable ID');
     expect(markdown).toContain('Tailscale installs its CLI on the selected helper');
     expect(markdown).toContain('tailscale file cp');

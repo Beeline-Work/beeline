@@ -189,6 +189,21 @@ describe('approve_merge surface', () => {
     expect(tool.description).toContain('Do not tell the author to merge.');
     expect(tool.description).not.toContain('clearance to merge');
   });
+
+  it('refuses a brief whose outline ledger has no verified user story', () => {
+    const tool = agentToolsFor(true, false, true, true).find(
+      (entry) => entry.name === 'approve_merge',
+    )!;
+    expect(tool.description).toContain('whose outline ledger has no missing or unverified user story');
+    expect(tool.description).toContain('otherwise send the brief back');
+  });
+});
+
+describe('ask_choice surface', () => {
+  it('tells the agent the card stands alone, with no follow-up message for its reasoning', () => {
+    const tool = agentToolsFor(true, true).find((entry) => entry.name === 'ask_choice')!;
+    expect(tool.description).toContain('it stands alone, so put your reasoning in it, not a later message');
+  });
 });
 
 describe('corner lifecycle tool surfaces', () => {

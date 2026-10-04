@@ -385,6 +385,10 @@ describe('beeline-review reviewer skill', () => {
     expect(markdown).toContain('stable ID that survives rereview');
     expect(markdown).toContain('only through a new human-authorized brief revision');
   });
+
+  it('sends a brief with no user stories to grade back to the author instead of approving', () => {
+    expect(markdown).toContain('no stories to list is a FAIL, sent back to the author to write the outline');
+  });
 });
 
 describe('beeline-spec planning skill', () => {

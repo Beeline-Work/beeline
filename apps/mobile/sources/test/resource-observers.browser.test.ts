@@ -102,7 +102,7 @@ describe('resource observers in the desktop web renderer', () => {
       expect(proof.signInError).toContain('Retry');
       expect(proof.installerError).toContain('Lost track');
       expect(proof.inspectorError).toContain('Selected corner unavailable');
-      expect(proof.workflowText).toBe('Implement');
+      expect(proof.workflowText).toBe('Corner · Implement');
     } finally { await rm(directory, { recursive: true, force: true }); }
   }, 90000);
 
@@ -146,7 +146,10 @@ describe('resource observers in the desktop web renderer', () => {
       console.log('Reproductions R9d and R9-OBS-01 desktop web:', result.result);
       expect(JSON.parse(result.result).status).toBe('Done');
       expect(JSON.parse(result.result).failureText).toContain('offline');
-      expect(JSON.parse(result.result).reads).toBe(3);
+      // The run page's "Also running in this corner" section reads the room's
+      // other live runs alongside the run itself, so each cycle (initial load,
+      // the postgres invalidate, and the reconnect) now fires two reads.
+      expect(JSON.parse(result.result).reads).toBe(6);
     } finally { await rm(directory, { recursive: true, force: true }); }
   }, 90000);
   it('Reproductions R9-OBS-06 and R12k: one inline workflow notice per failure streak, with Retry', async () => {

@@ -6,6 +6,7 @@ import type { PhoneService } from './phone-service.js';
 import type { DaemonService } from './daemon-service.js';
 import type { LiveHub } from './live.js';
 import type { ObjectService } from './object-service.js';
+import { encodeArtifactTitleHeader } from '@beeline/api-contract/daemon';
 import { createBeelineServer } from './server.js';
 
 const UUID = '44444444-4444-4444-8444-444444444444';
@@ -176,6 +177,28 @@ describe('media object routes', () => {
       expect.any(Uint8Array),
       'text/html',
       'Mock Page',
+    );
+  });
+
+  it('decodes a percent-encoded em dash and non-Latin title from the artifact header', async () => {
+    const objects = objectService();
+    const origin = await start({ objectService: objects });
+    const title = '設計メモ — リリース';
+    const response = await fetch(`${origin}/v1/daemon/artifacts`, {
+      method: 'POST',
+      body: '<p>hi</p>',
+      headers: {
+        authorization: AGENT_TOKEN,
+        'content-type': 'text/html',
+        'x-artifact-title': encodeArtifactTitleHeader(title),
+      },
+    });
+    expect(response.status).toBe(201);
+    expect(objects.uploadArtifact).toHaveBeenCalledWith(
+      'agent-1',
+      expect.any(Uint8Array),
+      'text/html',
+      title,
     );
   });
 

@@ -104,6 +104,31 @@ export function artifactSignatureMismatch(mime: string, bytes: Uint8Array): stri
  *  ceiling, so anything the helper can write it can post. */
 export const ARTIFACT_MAXIMUM_BYTES = 25 * 1024 * 1024;
 
+/**
+ * `post_artifact` carries the title in the `x-artifact-title` header, and a
+ * header value must be a ByteString: any character above U+00FF makes the
+ * helper's `fetch` throw before the request leaves, with no hint. Percent-
+ * encode the title on the way out and decode it on the way in so every
+ * Unicode title survives.
+ */
+export function encodeArtifactTitleHeader(title: string): string {
+  return encodeURIComponent(title);
+}
+
+/**
+ * Decode a title the helper percent-encoded. A value with no `%` is a plain
+ * ASCII title from an un-upgraded helper and passes through unchanged; a
+ * malformed sequence also passes through rather than failing the upload.
+ */
+export function decodeArtifactTitleHeader(raw: string): string {
+  if (!raw.includes('%')) return raw;
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
 /** How a presigned-POST upload object is created. `kind` is part of the storage key. */
 export type UploadObjectKind = 'media' | 'artifact';
 

@@ -5,6 +5,8 @@ import {
   ARTIFACT_MIME_BY_EXTENSION,
   ARTIFACT_MIME_TYPES,
   artifactSignatureMismatch,
+  decodeArtifactTitleHeader,
+  encodeArtifactTitleHeader,
 } from './artifacts.js';
 
 describe('artifact contract constants', () => {
@@ -71,5 +73,18 @@ describe('artifact contract constants', () => {
     );
     expect(artifactSignatureMismatch('audio/wav', new Uint8Array([1]))).toMatch(/RIFF\/WAVE/);
     expect(artifactSignatureMismatch('text/plain', new Uint8Array([1]))).toBeUndefined();
+  });
+
+  it('round-trips an em dash and a non-Latin title through the header codec', () => {
+    for (const title of ['Release notes — v2', '設計メモ — リリース', 'Café ☕ 100%']) {
+      const encoded = encodeArtifactTitleHeader(title);
+      expect(encoded).toMatch(/^[\x20-\x7e]*$/);
+      expect(decodeArtifactTitleHeader(encoded)).toBe(title);
+    }
+  });
+
+  it('passes a plain ASCII title and a malformed escape through unchanged', () => {
+    expect(decodeArtifactTitleHeader('Mock Page')).toBe('Mock Page');
+    expect(decodeArtifactTitleHeader('100% done')).toBe('100% done');
   });
 });

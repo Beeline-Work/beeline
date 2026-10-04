@@ -17,7 +17,7 @@ import {
   type PhoneService,
 } from './phone-service.js';
 import { DAEMON_OPERATION_NAMES, type DaemonService } from './daemon-service.js';
-import { ARTIFACT_MAXIMUM_BYTES } from '@beeline/api-contract/daemon';
+import { ARTIFACT_MAXIMUM_BYTES, decodeArtifactTitleHeader } from '@beeline/api-contract/daemon';
 import { MESSAGE_SEARCH_QUERY_MAX_BYTES, messageSearchTerms } from '@beeline/api-contract/phone';
 import type { LiveEvent, LiveHub, LiveTrace } from './live.js';
 import type { ReviewAccess } from './review-access.js';
@@ -1852,7 +1852,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
         : 'application/octet-stream';
     const title =
       typeof request.headers['x-artifact-title'] === 'string'
-        ? request.headers['x-artifact-title']
+        ? decodeArtifactTitleHeader(request.headers['x-artifact-title'])
         : '';
     try {
       json(response, 201, await options.objectService.uploadArtifact(agentId, raw, mime, title));

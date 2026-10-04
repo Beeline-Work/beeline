@@ -98,6 +98,7 @@ export function HumanProfile({
     ((viewer?.role === 'owner' && member?.role !== 'owner') ||
       (viewer?.role === 'admin' &&
         (member?.role === 'member' || member?.role === 'spectator')));
+  const canRemove = canEditRole;
   const perform = async (action: () => Promise<void>) => {
     if (mutation.current) return;
     mutation.current = true;
@@ -149,6 +150,19 @@ export function HumanProfile({
     window.addEventListener('keydown', escape, true);
     return () => window.removeEventListener('keydown', escape, true);
   }, [dirty, busy, onClose]);
+  const removeMember = async () => {
+    if (!canRemove || !member) return;
+    const confirmed = await Modal.confirm(
+      `Remove ${member.identity.name}?`,
+      'This removes them from every Room and the Workspace. They can rejoin only with a new invite.',
+      { cancelText: 'Cancel', confirmText: 'Remove', destructive: true },
+    );
+    if (confirmed)
+      await perform(async () => {
+        await monolithPhoneOperation('removeWorkspaceMember', { workspaceId, memberId });
+        onClose();
+      });
+  };
   return (
     <View style={[styles.container, { paddingTop: insets.top }]} testID="human-profile">
       <PageHeader
@@ -270,6 +284,20 @@ export function HumanProfile({
                     );
                   })}
                 </View>
+                {canRemove && (
+                  <TouchableOpacity
+                    accessibilityLabel="Remove from Workspace"
+                    accessibilityRole="button"
+                    disabled={busy}
+                    onPress={() => void removeMember()}
+                    style={styles.removeMemberControl}
+                    testID="remove-person"
+                  >
+                    <Text style={styles.removeMemberText}>
+                      {busy ? 'Removing…' : 'Remove from Workspace'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
               </View>
             )}
             <Text style={styles.section}>Connected agents</Text>
@@ -401,4 +429,22 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.buzz.textSecondary,
   },
   roleLabelSelected: { color: theme.buzz.buttonPrimaryText },
+  // Same compact full-width control as the agent profile's removeAgentControl
+  // (members.tsx): the red border carries the destructive meaning at the 3:1
+  // non-text floor, the label stays primary ink to hold the 4.5:1 text floor.
+  removeMemberControl: {
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: theme.buzz.space.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.buzz.dialogDanger,
+    borderRadius: theme.buzz.radius,
+    marginTop: theme.buzz.space.md,
+  },
+  removeMemberText: {
+    ...Typography.default(),
+    ...theme.buzz.type.body,
+    color: theme.buzz.textPrimary,
+    textAlign: 'center',
+  },
 }));

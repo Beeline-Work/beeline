@@ -1516,7 +1516,7 @@ describe('monolith integration', () => {
     ).toBe(204);
   });
 
-  it('lands new people nowhere and makes person invites reusable, retry-safe, and Room-complete', async () => {
+  it('lands new people nowhere and makes person invites single-use, retry-safe, and Room-complete', async () => {
     const aliceToken = await phoneToken('alice');
     const bobToken = await phoneToken('bob');
     const aliceId = createHash('sha256').update('github:alice').digest('hex');
@@ -1560,8 +1560,19 @@ describe('monolith integration', () => {
     expect(
       await (await operation('redeemInvite', { token: invite.token }, aliceToken)).json(),
     ).toEqual({ joined: false, workspaceId, roomId: created.roomId });
+    // The invite is spent on first use: a different person cannot redeem the
+    // same token, whether previewing or joining with it.
     expect(
-      await (await operation('redeemInvite', { token: invite.token }, bobToken)).json(),
+      (await operation('resolveInvite', { token: invite.token }, bobToken)).status,
+    ).toBe(404);
+    expect(
+      (await operation('redeemInvite', { token: invite.token }, bobToken)).status,
+    ).toBe(404);
+    const bobInvite = (await (await operation('createInvite', { workspaceId })).json()) as {
+      token: string;
+    };
+    expect(
+      await (await operation('redeemInvite', { token: bobInvite.token }, bobToken)).json(),
     ).toEqual({ joined: true, workspaceId, roomId: created.roomId });
 
     const aliceChats = (await (
@@ -5016,7 +5027,7 @@ describe('monolith integration', () => {
     expect(membership.rows).toEqual([{ role: 'member', invited_by: HUMAN }]);
   });
 
-  it('collapses unknown, expired, and malformed public invites without authentication', async () => {
+  it('collapses unknown, expired, consumed, and malformed public invites without authentication', async () => {
     const created = await request('/v1/phone/operations/createInvite', 'POST', {
       workspaceId: WORKSPACE,
     });
@@ -5025,9 +5036,17 @@ describe('monolith integration', () => {
       `UPDATE invites SET expires_at=now()-interval '1 second' WHERE token_hash=$1`,
       [createHash('sha256').update(invite.token).digest('hex')],
     );
+    const consumedCreated = await request('/v1/phone/operations/createInvite', 'POST', {
+      workspaceId: WORKSPACE,
+    });
+    const consumedInvite = (await consumedCreated.json()) as { token: string };
+    await database.query(`UPDATE invites SET consumed_at=now() WHERE token_hash=$1`, [
+      createHash('sha256').update(consumedInvite.token).digest('hex'),
+    ]);
 
     const paths = [
       `/v1/public/invite-preview?token=${invite.token}`,
+      `/v1/public/invite-preview?token=${consumedInvite.token}`,
       `/v1/public/invite-preview?token=inv_${'f'.repeat(64)}`,
       '/v1/public/invite-preview?token=not-an-invite',
     ];

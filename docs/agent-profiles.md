@@ -8,11 +8,11 @@ The owner uses Edit, Save, and Cancel in the profile to change the name and soul
 
 The Pinned empty state, unread rows and Workspace rail changes shipped alongside this are specified in [DESIGN.md](../DESIGN.md#index-rows).
 
-## Human profiles and bans
+## Human profiles and removal
 
 Human profiles show identity, handle, Workspace role, connected agents, and a read-only ledger of those agents' settled grants. Repository grants are visible to Workspace members; personal-resource grants remain visible only to the agent owner. Message opens a DM; a viewer's own profile links to identity Settings. Owners may edit other members' roles; admins may edit ordinary members, without assigning owner. Edit mode alone reveals the Member/Admin selector. Role changes require Save and mutation errors remain visible.
 
-Ban is separate from removal. It records a persistent Workspace-scoped ban and removes all memberships in that Workspace in one transaction. Owners are protected; admins cannot ban peers or owners; nobody can ban themselves. A database trigger serializes restoration against ban decisions and refuses active membership writes from every path, including invites, pairing and background imports. Workspace deletion cascades bans. The phone carries no banning UI — there is no Banned members roster and no Ban action on a human profile — but the Workspace-scoped ban operations remain server-side; lifting permits a new invitation without automatically restoring membership. Agent retirement keeps its existing global teardown semantics.
+A person is removed, never banned. In edit mode a manager who may change that person's role also sees one centre-aligned `Remove from Workspace` control with a red hairline border, the same control agents use; it confirms, then calls `removeWorkspaceMember`, which ends every membership in that Workspace. Invites are single-use: the first redemption sets `invites.consumed_at` in the joining transaction, and a consumed invite no longer previews or redeems for anyone else, so a removed person needs a fresh invite to rejoin. The person who spent it can still re-redeem while they remain a member, keeping redemption retry-safe. The former Workspace ban table, trigger and operations are dropped; banned people were already removed and stay plain removals. Agent retirement keeps its existing global teardown semantics.
 
 ## Current validation limitations
 

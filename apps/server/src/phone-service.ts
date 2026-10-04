@@ -3096,7 +3096,10 @@ export class PhoneService {
        JOIN memberships creator ON creator.workspace_id=i.workspace_id AND creator.room_id IS NULL
          AND creator.identity_id=i.created_by AND creator.removed_at IS NULL
        JOIN identities inviter ON inviter.id=i.created_by
-       WHERE i.token_hash=$1 AND i.expires_at>now()`,
+       WHERE i.token_hash=$1 AND i.expires_at>now()
+         AND (i.consumed_at IS NULL OR EXISTS(SELECT 1 FROM memberships joined
+           WHERE joined.workspace_id=i.workspace_id AND joined.room_id IS NULL
+             AND joined.identity_id=$2 AND joined.removed_at IS NULL))`,
       [hash(rawToken), viewerId],
     );
     const row = result.rows[0];
@@ -3848,38 +3851,6 @@ export class PhoneService {
           input as Input<'addWorkspaceMember'>,
           viewerId,
         )) as Output<Name>;
-      case 'banWorkspaceMember':
-      case 'unbanWorkspaceMember':
-        await this.setWorkspaceBan(
-          input as Input<'banWorkspaceMember'>,
-          viewerId,
-          name === 'banWorkspaceMember',
-        );
-        return undefined as Output<Name>;
-      case 'listWorkspaceBans': {
-        const request = input as Input<'listWorkspaceBans'>;
-        await this.requireWorkspaceManager(request.workspaceId, viewerId);
-        const offset =
-          Number.isSafeInteger(request.offset) && (request.offset ?? 0) >= 0 ? request.offset! : 0;
-        const result = await this.database.query<{
-          pubkey: string;
-          name: string;
-          kind: 'human' | 'agent';
-          canLift: boolean;
-        }>(
-          `SELECT i.id pubkey,i.name,i.kind,
-             (actor.role='owner' OR target.role IN ('member','spectator')) "canLift"
-           FROM workspace_bans b JOIN identities i ON i.id=b.identity_id
-           JOIN memberships target ON target.workspace_id=b.workspace_id AND target.identity_id=b.identity_id AND target.room_id IS NULL
-           JOIN memberships actor ON actor.workspace_id=b.workspace_id AND actor.identity_id=$3 AND actor.room_id IS NULL AND actor.removed_at IS NULL
-           WHERE b.workspace_id=$1 ORDER BY b.created_at DESC,i.id LIMIT 51 OFFSET $2`,
-          [request.workspaceId, offset, viewerId],
-        );
-        return {
-          members: result.rows.slice(0, 50),
-          hasMore: result.rows.length > 50,
-        } as Output<Name>;
-      }
       case 'removeWorkspaceMember':
         await this.removeWorkspaceMember(input as Input<'removeWorkspaceMember'>, viewerId);
         return undefined as Output<Name>;
@@ -6266,54 +6237,6 @@ export class PhoneService {
       return { joined: inserted.rowCount > 0 };
     });
   }
-  private async setWorkspaceBan(
-    input: Input<'banWorkspaceMember'>,
-    viewerId: string,
-    banned: boolean,
-  ) {
-    if (input.memberId === viewerId) throw new Error('workspace managers cannot ban themselves');
-    await this.database.transaction(async (database) => {
-      await database.query(`SELECT id FROM workspaces WHERE id=$1 FOR UPDATE`, [input.workspaceId]);
-      await database.query(
-        `SELECT pg_advisory_xact_lock(hashtextextended($1::text || $2::text, 0))`,
-        [input.workspaceId, input.memberId],
-      );
-      const roles = await database.query<{
-        identity_id: string;
-        role: string;
-        removed_at: Date | null;
-      }>(
-        `SELECT identity_id,role,removed_at FROM memberships
-         WHERE workspace_id=$1 AND room_id IS NULL AND identity_id IN ($2,$3) FOR UPDATE`,
-        [input.workspaceId, viewerId, input.memberId],
-      );
-      const actor = roles.rows.find((row) => row.identity_id === viewerId);
-      const target = roles.rows.find((row) => row.identity_id === input.memberId);
-      if (!actor || actor.removed_at || !['owner', 'admin'].includes(actor.role))
-        throw new Error('workspace manager required');
-      if (!target) throw new Error('workspace membership required');
-      if (target.role === 'owner' || (actor.role === 'admin' && target.role === 'admin'))
-        throw new Error('workspace manager cannot ban a member with equal or greater authority');
-      if (banned) {
-        await database.query(
-          `INSERT INTO workspace_bans(workspace_id,identity_id,banned_by)
-          VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,
-          [input.workspaceId, input.memberId, viewerId],
-        );
-        await database.query(
-          `UPDATE memberships SET removed_at=COALESCE(removed_at,now())
-          WHERE workspace_id=$1 AND identity_id=$2`,
-          [input.workspaceId, input.memberId],
-        );
-      } else {
-        await database.query(
-          `DELETE FROM workspace_bans WHERE workspace_id=$1 AND identity_id=$2`,
-          [input.workspaceId, input.memberId],
-        );
-      }
-    });
-  }
-
   /**
    * A manager removes a person from the Workspace. Admins may remove peers;
    * owners remain protected. Every live Room membership goes with the
@@ -6438,6 +6361,11 @@ export class PhoneService {
       return { joined: false, workspaceId: row.workspace_id, ...(roomId ? { roomId } : {}) };
     }
     return this.database.transaction(async (database) => {
+      const consumed = await database.query(
+        `UPDATE invites SET consumed_at=now() WHERE token_hash=$1 AND consumed_at IS NULL`,
+        [hash(input.token)],
+      );
+      if (!consumed.rowCount) throw new Error('invite not found');
       const workspaceIds = await lockIdentityHandleWorkspaces(database, viewerId, [
         row.workspace_id,
       ]);
@@ -9528,9 +9456,6 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'deleteWorkspace',
   'addWorkspaceMember',
   'removeWorkspaceMember',
-  'banWorkspaceMember',
-  'unbanWorkspaceMember',
-  'listWorkspaceBans',
   'createRoom',
   'updateRoom',
   'deleteRoom',

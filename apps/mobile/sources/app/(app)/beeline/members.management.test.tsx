@@ -125,7 +125,7 @@ const client = vi.hoisted(() => ({
 
 const phoneOperation = vi.hoisted(() =>
   vi.fn(async (name: string, input: any): Promise<any> => {
-    if (['addWorkspaceMember'].includes(name)) return;
+    if (['addWorkspaceMember', 'removeWorkspaceMember'].includes(name)) return;
     if (name === 'updateAgentAccessPolicy') {
       state.agent = { ...state.agent, access: { ...state.agent.access, policy: input.policy } };
       return;
@@ -844,6 +844,38 @@ describe('Members workspace management', () => {
     expect(renderer.root.findByProps({ testID: 'save-person-role' })).toBeDefined();
     expect(renderer.root.findAllByProps({ testID: 'ban-person' })).toHaveLength(0);
     expect(phoneOperation).not.toHaveBeenCalledWith('banWorkspaceMember', expect.anything());
+  });
+
+  it('removes a person from the Workspace through the same compact control as agents', async () => {
+    const onClose = vi.fn();
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <HumanProfile workspaceId={WORKSPACE} memberId={MEMBER} onClose={onClose} />,
+      );
+    });
+    await press(renderer, 'edit-person-role');
+    const control = renderer.root.findByProps({ testID: 'remove-person' });
+    expect(control.props.accessibilityLabel).toBe('Remove from Workspace');
+    await press(renderer, 'remove-person');
+    expect(modal.confirm).toHaveBeenCalledWith(
+      'Remove Builder?',
+      expect.any(String),
+      expect.objectContaining({ destructive: true }),
+    );
+    expect(phoneOperation).toHaveBeenCalledWith('removeWorkspaceMember', {
+      workspaceId: WORKSPACE,
+      memberId: MEMBER,
+    });
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('skips the remove control when the viewer declines the confirm dialog', async () => {
+    modal.confirm.mockResolvedValueOnce(false);
+    const renderer = await personProfile();
+    await press(renderer, 'edit-person-role');
+    await press(renderer, 'remove-person');
+    expect(phoneOperation).not.toHaveBeenCalledWith('removeWorkspaceMember', expect.anything());
   });
 
   it('lets members view a human profile and message without management powers', async () => {

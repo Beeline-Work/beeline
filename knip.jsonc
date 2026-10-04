@@ -72,6 +72,7 @@
         "scripts/corner-sections-proof.tsx",
         "scripts/corner-dropdown-proof.tsx",
         "scripts/new-corner-dialog-proof.tsx",
+        "scripts/room-repo-choice-proof.tsx",
         "scripts/composer-dictation-proof.tsx",
         "scripts/page-headers-proof.tsx",
         "scripts/design-proof.tsx",

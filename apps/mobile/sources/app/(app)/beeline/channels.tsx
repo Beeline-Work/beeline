@@ -737,7 +737,7 @@ export default function BuzzChannels() {
     setShowCreateRoom(true);
     setShowRepoPicker(true);
   }, []);
-  const { handleAddGitHubAccount, handleManageGitHubInstallation } = useGitHubInstallationSession({
+  const { handleAddGitHubAccount } = useGitHubInstallationSession({
     ready: Boolean(transport && activeCommunityId),
     returnPath: '/beeline/channels',
     startInstallation: startGitHubInstallation,
@@ -1006,9 +1006,6 @@ export default function BuzzChannels() {
           repoPickerError={repoPickerError}
           repoPickerNotice={repoPickerNotice}
           handleAddGitHubAccount={() => void handleAddGitHubAccount()}
-          handleManageGitHubInstallation={(installation) =>
-            void handleManageGitHubInstallation(installation)
-          }
           handleCreateRepository={handleCreateRepository}
         />
         <MemberPickerSheet

@@ -140,7 +140,7 @@ export default function WorkflowRun() {
               </Text>
             </View>
           ) : null}
-          <View style={styles.section}>
+          <View style={styles.section} testID="workflow-run-steps-header">
             <Text style={styles.sectionHead}>Steps</Text>
           </View>
           <WorkflowRunLine

@@ -30,12 +30,6 @@ async function run() {
   createRoot(document.getElementById('root')!).render(<WorkflowRun />);
   for (let i = 0; i < 6; i += 1) await pause();
   const root = document.getElementById('root');
-  const text = leaves(root);
-  const nodes = Array.from(root?.querySelectorAll<HTMLElement>('*') ?? []);
-  const font = (value: string | null) => {
-    const node = nodes.find((entry) => entry.childElementCount === 0 && entry.textContent === value);
-    return node ? `${getComputedStyle(node).fontSize} ${getComputedStyle(node).fontFamily}` : null;
-  };
   const prefix = 'workflow-run-line-step-';
   const circles = Object.fromEntries(
     ids(/-circle-/).map((id) => {
@@ -73,15 +67,24 @@ async function run() {
         }];
       }),
   );
-  const live = Object.fromEntries(
-    ids(/-live$/).map((id) => [id.slice(prefix.length, -'-live'.length),
-      document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.textContent]),
-  );
   const pushedBefore = [...((globalThis as { __pushed?: unknown[] }).__pushed ?? [])];
-  const gate = Object.fromEntries(
-    ids(/-gate$/).map((id) => [id.slice(prefix.length, -'-gate'.length),
-      document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.textContent]),
-  );
+  // Opens every step still collapsed, leaving an already-open one (the
+  // current step starts open) alone — a second tap would only close it.
+  // Runs before a `?corner=` tap below: a collapsed step's corner links
+  // are off the page until its header opens it.
+  if (query.get('expandAll')) {
+    for (const header of Array.from(
+      document.querySelectorAll<HTMLElement>(`[data-testid^="${prefix}"][data-testid$="-header"]`),
+    )) {
+      if (header.getAttribute('aria-expanded') === 'false') header.click();
+    }
+    await pause();
+  }
+  const toggle = query.get('toggle');
+  if (toggle) {
+    document.querySelector<HTMLElement>(`[data-testid="${prefix}${toggle}-header"]`)?.click();
+    await pause();
+  }
   const corner = query.get('corner');
   if (corner) {
     document.querySelector<HTMLElement>(`[data-testid="workflow-run-corner-${corner}"]`)?.click();
@@ -92,6 +95,31 @@ async function run() {
     document.querySelector<HTMLElement>(`[data-testid="workflow-run-also-running-${switchTo}"]`)?.click();
     await pause();
   }
+  // Read fresh, after any expandAll/toggle/corner/switchTo click above: a
+  // collapsed step's live/final/gate text is off the page until its header
+  // opens it, so these must reflect the DOM as it now stands, not as it
+  // first painted.
+  const text = leaves(root);
+  const nodes = Array.from(root?.querySelectorAll<HTMLElement>('*') ?? []);
+  const font = (value: string | null) => {
+    const node = nodes.find((entry) => entry.childElementCount === 0 && entry.textContent === value);
+    return node ? `${getComputedStyle(node).fontSize} ${getComputedStyle(node).fontFamily}` : null;
+  };
+  const live = Object.fromEntries(
+    ids(/-live$/).map((id) => [id.slice(prefix.length, -'-live'.length),
+      document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.textContent]),
+  );
+  const gate = Object.fromEntries(
+    ids(/-gate$/).map((id) => [id.slice(prefix.length, -'-gate'.length),
+      document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.textContent]),
+  );
+  // The vertical gap between the Steps divider and a halo above it — most
+  // exposed when the first step is the one running.
+  const divider = document.querySelector<HTMLElement>('[data-testid="workflow-run-steps-header"]');
+  const halo = document.querySelector<HTMLElement>(`[data-testid^="${prefix}"][data-testid$="-halo"]`);
+  const haloGapFromDivider = divider && halo
+    ? halo.getBoundingClientRect().top - divider.getBoundingClientRect().bottom
+    : null;
   report(
     JSON.stringify({
       text,
@@ -103,6 +131,7 @@ async function run() {
       overflow: document.documentElement.scrollWidth > innerWidth,
       eyebrowFont: font(query.get('eyebrow')),
       titleFont: font(query.get('title')),
+      fontOf: font(query.get('fontOf')),
       circles,
       lines,
       labels,
@@ -113,6 +142,8 @@ async function run() {
         document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.textContent])),
       durations: Array.from(document.querySelectorAll<HTMLElement>(`[data-testid^="${prefix}"][data-testid$="-duration"]`)).map((node) => node.textContent),
       gate,
+      haloGapFromDivider,
+      corners: ids(/^workflow-run-corner-/),
       alsoRunning: ids(/^workflow-run-also-running-/),
       pushedBefore,
       pushed: (globalThis as { __pushed?: unknown[] }).__pushed ?? [],

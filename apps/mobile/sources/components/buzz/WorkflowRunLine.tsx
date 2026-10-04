@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Linking, Pressable, Text, View } from 'react-native';
 import Svg, { Circle, Line, Path } from 'react-native-svg';
 import { StyleSheet } from 'react-native-unistyles';
@@ -312,7 +312,9 @@ function StepRow({
     ? Array.from(liveDrafts ?? []).reverse().find(([turn]) => visit?.outputTurns?.includes(turn))?.[1]
       ?? visit?.liveOutput
     : undefined;
-  const final = !current && (step.kind === 'handoff' || step.kind === 'gate') ? visit?.finalReply : undefined;
+  // A gate's own resolution line already states the result (the pick and who
+  // picked it); showing the agent's final message too would say it twice.
+  const final = !current && step.kind === 'handoff' ? visit?.finalReply : undefined;
   const does = detail.contract.handoffs[step.state]?.does;
   const gate = visit?.gate;
   const gateWaitingOn = detail.run.viewerHolds ? 'you' : `a person in ${detail.run.roomName}`;
@@ -330,11 +332,25 @@ function StepRow({
   // The terminal that ends the run reads by the clock it was reached, not an elapsed span.
   const reachedAt = step.kind === 'terminal' ? visit?.enteredAt : undefined;
   const dimmed = step.status === 'pending' || step.status === 'skipped' ? styles.dimmed : null;
+  // Anything beyond the one-line description a tap can hide: a finished
+  // step starts collapsed to it, the current step starts open.
+  const hasDetail = Boolean(draft || final || gateLine || visit?.openedCorners?.length);
+  const [expanded, setExpanded] = useState(current);
+  const open = expanded || !hasDetail;
   return (
     <View style={styles.step} testID={testID}>
       {above ? <Segment style={styles.lineAbove} testID={`${testID}-above`} tone={above} vertical /> : null}
       {below ? <Segment style={styles.lineBelow} testID={`${testID}-below`} tone={below} vertical /> : null}
-      <View accessibilityLabel={label} accessible style={styles.summary}>
+      <Pressable
+        accessibilityHint={hasDetail ? (expanded ? 'Hides this step’s output' : 'Shows this step’s output') : undefined}
+        accessibilityLabel={label}
+        accessibilityRole={hasDetail ? 'button' : undefined}
+        accessibilityState={hasDetail ? { expanded } : undefined}
+        aria-expanded={hasDetail ? expanded : undefined}
+        onPress={hasDetail ? () => setExpanded((value) => !value) : undefined}
+        style={({ pressed }) => [styles.summary, pressed && hasDetail && styles.pressed]}
+        testID={`${testID}-header`}
+      >
         {current ? (
           <HullLivePulse style={styles.halo}>
             <View style={styles.haloRing} testID={`${testID}-halo`} />
@@ -357,24 +373,24 @@ function StepRow({
             <Text style={styles.duration} testID={`${testID}-duration`}>{formatRunDuration(seconds)}</Text>
           ) : null}
         </View>
-      </View>
+      </Pressable>
       <View style={[styles.outcome, dimmed]}>
         {does ? <Text style={styles.does} testID={`${testID}-description`}>{does}</Text> : null}
-        {draft ? (
+        {open && draft ? (
           <Text
             ellipsizeMode="head"
             numberOfLines={2}
-            style={[styles.live, provisionalProseStyle()]}
+            style={[provisionalProseStyle(), styles.live]}
             testID={`${testID}-live`}
           >
             {draft.replace(/\s+/g, ' ').trim()}
           </Text>
         ) : null}
-        {final ? (
-          <Text style={[styles.final, settledAgentProseStyle()]} testID={`${testID}-final`}>{final.text}</Text>
+        {open && final ? (
+          <Text style={[settledAgentProseStyle(), styles.final]} testID={`${testID}-final`}>{final.text}</Text>
         ) : null}
-        {gateLine ? <Text style={styles.gateLine} testID={`${testID}-gate`}>{gateLine}</Text> : null}
-        {visit?.openedCorners?.length ? (
+        {open && gateLine ? <Text style={styles.gateLine} testID={`${testID}-gate`}>{gateLine}</Text> : null}
+        {open && visit?.openedCorners?.length ? (
           <OpenedCorners corners={visit.openedCorners} onOpenCorner={onOpenCorner} testID={testID} />
         ) : null}
       </View>
@@ -435,11 +451,13 @@ const styles = StyleSheet.create((theme) => {
     dimmed: { opacity: 0.45 },
     // Colour and face come from the shared provisional/settled prose styles
     // (components/buzz/Ledger.tsx) — the same tones a live draft and a
-    // finished agent reply already read in, elsewhere in the app.
+    // finished agent reply already read in, elsewhere in the app — but sized
+    // down to `type.meta` (applied after, so it wins): a step's one-line
+    // description sets the scale here, not the Room's full message size.
     // Transient while it's still being written: italic, on top of the shared
     // provisional tone — visibly distinct from a final reply's settled style.
-    live: { marginTop: space.xs, fontStyle: 'italic' },
-    final: { marginTop: space.xs },
+    live: { ...type.meta, marginTop: space.xs, fontStyle: 'italic' },
+    final: { ...type.meta, marginTop: space.xs },
     gateLine: { ...type.meta, color: theme.buzz.textSecondary, marginTop: space.xs },
     duration: { ...type.machine, color: theme.buzz.ledgerGhost },
     corners: { marginTop: space.sm },

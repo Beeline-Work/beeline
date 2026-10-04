@@ -87,6 +87,7 @@ type Proof = {
   overflow: boolean;
   eyebrowFont: string | null;
   titleFont: string | null;
+  fontOf: string | null;
   circles: Record<string, string>;
   lines: string[];
   labels: string[];
@@ -99,6 +100,7 @@ type Proof = {
   finals: Record<string, string>;
   durations: string[];
   gate: Record<string, string>;
+  corners: string[];
   alsoRunning: string[];
   pushedBefore: unknown[];
   pushed: unknown[];
@@ -292,7 +294,9 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
         },
       ],
     );
-    const gate = await proof(detail, '');
+    // A finished step starts collapsed to its one-line description, so its
+    // gate record and the corners it opened need their headers tapped open.
+    const gate = await proof(detail, '?expandAll=1');
     // The viewer answered the gate, so the row carries their own mark and handle.
     expect(gate.assignees.approve).toMatchObject({
       handle: '@lunchboxfortwo',
@@ -307,7 +311,7 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     expect(gate.gate).toEqual({ approve: 'dispatch · Owner' });
     // The corner(s) the dispatch step opened are plain links, right under its row.
     expect(gate.text).toEqual(expect.arrayContaining(['Corner dropdown fix', 'Mock file type fix']));
-    const dispatch = await proof(detail, '?corner=fix-2');
+    const dispatch = await proof(detail, '?corner=fix-2&expandAll=1');
     // The corner link goes to that corner, under the Room it was opened in.
     expect(dispatch.pushedBefore).toEqual([]);
     expect(dispatch.pushed).toEqual([
@@ -436,7 +440,9 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
       ], roleHolders: { analyst: candy }, viewer: owner,
     };
     for (const width of [390, 1440]) {
-      const page = await proof(detail, '', width, [{ type: 'draft', roomId: 'corner-2', agentId: candy.id,
+      // Each finished visit starts collapsed to its one-line description;
+      // tap every header open to read its final reply back.
+      const page = await proof(detail, '?expandAll=1', width, [{ type: 'draft', roomId: 'corner-2', agentId: candy.id,
         turnId: 'old-turn', text: 'Unrelated draft', latestChunk: 'Unrelated draft' }]);
       expect(Object.keys(page.circles)).toEqual(['collect', 'review', 'collect-visit-2']);
       expect(page.finals).toEqual({ collect: 'First evidence result.', review: 'Review requests another visit.' });
@@ -447,7 +453,7 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     const complete = { ...detail, run: { ...detail.run, state: 'done', status: 'done', updatedAt: STARTED + 30 },
       history: [...detail.history.slice(0, 2), { ...detail.history[2], finalReply: { messageId: 'm3', text: 'Second evidence result.' } },
         { visitId: 'last', fromState: 'collect', toState: 'done', outcome: 'approved', at: STARTED + 30 }] };
-    const refreshed = await proof(complete, '');
+    const refreshed = await proof(complete, '?expandAll=1');
     expect(refreshed.finals['collect-visit-2']).toBe('Second evidence result.');
     expect(refreshed.live).toEqual({});
     // The terminal that ends the run reads by the clock it was reached, not a duration.
@@ -493,5 +499,99 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     expect(switched.replaced).toEqual([
       { pathname: '/beeline/workflow-run', params: { roomId: 'corner-2', runId: 'run-2' } },
     ]);
+  }, 120_000);
+
+  it('starts a finished step collapsed to its one-line description, opening on a header tap, while the current step starts open', async () => {
+    const detail = {
+      run: { runId: 'run-1', workflowSlug: 'mm-desk', description: 'MM desk', roomId: 'corner-2',
+        roomName: 'MM desk', state: 'verify', status: 'live', viewerHolds: false,
+        holder: candy, startedAt: STARTED, updatedAt: STARTED + 10, earlierRunCount: 0 },
+      contract: { version: 1, name: 'mm-desk', description: 'MM desk', roles: ['scout', 'verify'],
+        start: 'scout', handoffs: {
+          scout: { does: 'Scans markets.', role: 'scout', requires: [], on: { done: 'verify' } },
+          verify: { does: 'Verifies pairs.', role: 'verify', requires: [], on: { done: 'done' } },
+          done: { kind: 'terminal', status: 'done' },
+        } },
+      history: [
+        { toState: 'scout', actor: candy, at: STARTED,
+          finalReply: { messageId: 'm1', text: 'Found three pairs worth checking.' } },
+        { fromState: 'scout', outcome: 'done', toState: 'verify', actor: candy, at: STARTED + 10,
+          outputTurns: [`${candy.id}:t1`] },
+      ],
+      roleHolders: { scout: candy, verify: candy },
+    };
+    const drafts = [{ type: 'draft', roomId: 'corner-2', agentId: candy.id, turnId: 't1',
+      text: 'Checking spreads.', latestChunk: 'Checking spreads.' }];
+    const collapsed = await proof(detail, '', 390, drafts);
+    // The finished step's one-line description still shows; its final reply doesn't.
+    expect(collapsed.does.scout).toBe('Scans markets.');
+    expect(collapsed.finals).toEqual({});
+    // The current step needs no tap: its live output is already on the page.
+    expect(collapsed.live).toEqual({ verify: 'Checking spreads.' });
+    const opened = await proof(detail, '?toggle=scout', 390, drafts);
+    expect(opened.finals).toEqual({ scout: 'Found three pairs worth checking.' });
+    // Tapping the open current step's own header hides its live output again.
+    const closedCurrent = await proof(detail, '?toggle=verify', 390, drafts);
+    expect(closedCurrent.live).toEqual({});
+  }, 120_000);
+
+  it("shows a done gate's own resolution only once, not again as the agent's final message", async () => {
+    const detail = feedbackTriageDetail(
+      repo(),
+      { state: 'done', status: 'done', viewerHolds: false, updatedAt: STARTED + 210 },
+      [
+        { toState: 'pull', actor: candy, at: STARTED },
+        {
+          fromState: 'pull',
+          outcome: 'ranked',
+          toState: 'approve',
+          actor: candy,
+          at: STARTED + 100,
+          // The agent's own message posting the gate's question.
+          finalReply: { messageId: 'm1', text: 'Ready to dispatch the dropdown fix?' },
+          gate: {
+            question: 'feedback-triage: approve',
+            options: GATE_OPTIONS,
+            status: 'answered',
+            answer: 'dispatch',
+            answeredBy: owner,
+            answeredAt: STARTED + 200,
+          },
+        },
+        { fromState: 'approve', outcome: 'dispatch', toState: 'done', status: 'done', actor: candy, at: STARTED + 210 },
+      ],
+    );
+    const page = await proof(detail, '?expandAll=1');
+    // Only the gate's own resolution line shows; the question that posted it does not.
+    expect(page.gate).toEqual({ approve: 'dispatch · Owner' });
+    expect(page.finals).toEqual({});
+    expect(page.text).not.toContain('Ready to dispatch the dropdown fix?');
+  }, 120_000);
+
+  it("sizes a step's live and final text to its one-line description, not the Room's larger message size", async () => {
+    const detail = {
+      run: { runId: 'run-1', workflowSlug: 'research', description: 'Research and review',
+        roomId: 'corner-2', roomName: 'Research', state: 'review', status: 'live', viewerHolds: false,
+        holder: candy, startedAt: STARTED, updatedAt: STARTED + 10, earlierRunCount: 0 },
+      contract: { version: 1, name: 'research', description: 'Research and review',
+        roles: ['analyst'], start: 'collect', handoffs: {
+          collect: { does: 'Collect the evidence.', role: 'analyst', requires: [], on: { collected: 'review' } },
+          review: { does: 'Review the evidence.', role: 'analyst', requires: [], on: { approved: 'done' } },
+          done: { kind: 'terminal', status: 'done' },
+        } },
+      history: [
+        { toState: 'collect', actor: candy, at: STARTED,
+          finalReply: { messageId: 'm1', text: 'Collected the indicators.' } },
+        { fromState: 'collect', outcome: 'collected', toState: 'review', actor: candy, at: STARTED + 10 },
+      ],
+      roleHolders: { analyst: candy },
+    };
+    const page = await proof(detail, '?toggle=collect&fontOf=Collect the evidence.');
+    // `does` (the one-line description) sets the scale: 13px, the same role
+    // as every other secondary line on the page.
+    expect(page.fontOf).toBe('13px SpaceGrotesk-Regular');
+    const finalPage = await proof(detail, '?toggle=collect&fontOf=Collected the indicators.');
+    // The agent's final reply reads at that same size, not the Room's 16px prose.
+    expect(finalPage.fontOf).toBe('13px SpaceGrotesk-Regular');
   }, 120_000);
 });

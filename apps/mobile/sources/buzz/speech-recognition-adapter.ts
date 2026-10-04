@@ -16,6 +16,7 @@ export interface SpeechRecognitionInterface {
   supportsOnDeviceRecognition?(): boolean;
   getSupportedLocales?(options: object): Promise<{ locales: string[]; installedLocales: string[] }>;
   androidTriggerOfflineModelDownload?(options: { locale: string }): Promise<{ status: string }>;
+  getSpeechRecognitionServices?(): string[];
   addListener?(event: string, handler: (...args: any[]) => void): { remove(): void };
 }
 
@@ -32,6 +33,7 @@ interface SpeechRecognitionModule {
       options: object,
     ) => Promise<{ locales: string[]; installedLocales: string[] }>;
     androidTriggerOfflineModelDownload?: (options: { locale: string }) => Promise<{ status: string }>;
+    getSpeechRecognitionServices?: () => string[];
   };
 }
 
@@ -112,6 +114,10 @@ export function getRecognitionModule(): SpeechRecognitionInterface | null {
       typeof mod.ExpoSpeechRecognitionModule.androidTriggerOfflineModelDownload === 'function'
         ? mod.ExpoSpeechRecognitionModule.androidTriggerOfflineModelDownload(options)
         : Promise.resolve({ status: 'unsupported' }),
+    getSpeechRecognitionServices: () =>
+      typeof mod.ExpoSpeechRecognitionModule.getSpeechRecognitionServices === 'function'
+        ? mod.ExpoSpeechRecognitionModule.getSpeechRecognitionServices()
+        : [],
     addListener: (event: string, handler: (...args: any[]) => void) => {
       if (typeof mod.ExpoSpeechRecognitionModule.addListener === 'function') {
         return mod.ExpoSpeechRecognitionModule.addListener(event, handler);

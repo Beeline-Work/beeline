@@ -29,4 +29,17 @@ describe.skipIf(!existsSync(CHROME))('Composer dictation in a browser', () => {
     console.log(result);
     expect(result).toContain('RESULT PASS');
   }, 90_000);
+
+  it("dictates through Google's server recognizer and spells the Room's terms", async () => {
+    const mobile = process.cwd();
+    const { result, status, stderr } = await runBrowserProof({
+      entry: path.join(mobile, 'scripts/composer-dictation-correction-proof.tsx'),
+      mobile,
+      width: 420,
+      shims: composerDictationProofShims(mobile),
+    });
+    expect(status, stderr).toBe(0);
+    console.log(result);
+    expect(result).toContain('RESULT PASS');
+  }, 90_000);
 });

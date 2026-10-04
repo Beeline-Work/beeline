@@ -107,7 +107,6 @@ import {
 } from './attachment-delivery.js';
 import { describeTailscaleReach } from './connector-tailscale.js';
 import { readVault } from './connector-squire.js';
-import { StdioSquireMcpClient } from './squire-mcp-client.js';
 import { sandboxDevicePath } from './bwrap-sandbox.js';
 import {
   VALIDATION_STAGE_OWNERSHIP,
@@ -3602,34 +3601,80 @@ export interface ConnectorOfferDeps {
   execute: (name: string, input: JsonObject) => Promise<JsonObject>;
   /** Live Tailscale reachability; `enabled` is true when this helper already has it. */
   tailscaleReach?: (enabled: boolean) => Promise<string>;
-  squireReach?: () => Promise<{ reachable: boolean; cause?: string }>;
+  squireReach?: () => Promise<{ reachable: boolean; cause?: string } | undefined>;
 }
 
 export function connectorOfferDepsFromEnv(): ConnectorOfferDeps {
+  const relayUrl = process.env.BEELINE_SQUIRE_RELAY_URL;
+  const relayToken = process.env.BEELINE_SQUIRE_RELAY_TOKEN;
   return {
     roomId: agentScheduleRoomId(),
     execute: daemonExecute,
     tailscaleReach: (enabled) => describeTailscaleReach({ enabled, installIfMissing: enabled }),
-    squireReach: async () => {
-      const client = new StdioSquireMcpClient({
-        home: requiredEnv('BEELINE_OPERATOR_HOME'),
-        scope: { agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'), roomId: 'connector' },
-      });
+    // Without a granted route, use the server's Workbench state. A sandbox
+    // cannot independently probe the host broker through its isolated home.
+    squireReach: relayUrl && relayToken ? async () => {
+      let connections: Awaited<ReturnType<typeof readVault>>;
       try {
-        const connections = await readVault(client);
-        try {
-          await daemonExecute('postConnectorVault', {
-            agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'), connections,
+        connections = await readVault({ call: async (tool, args = {}) => {
+          const context = await activeCommandContext();
+          const response = await fetch(new URL('/mcp', relayUrl), {
+            method: 'POST',
+            headers: { authorization: `Bearer ${relayToken}`, 'content-type': 'application/json' },
+            body: JSON.stringify({ ...context, method: 'tools/call',
+              params: { name: tool, arguments: args } }),
+            signal: AbortSignal.timeout(120_000),
           });
-        } catch { /* A failed metadata sync does not change MCP reachability. */ }
-        return { reachable: true };
-      } catch {
-        return { reachable: false, cause: 'Trusty Squire MCP could not be reached' };
-      } finally {
-        client.close();
+          const body = await response.json().catch((error) => {
+            if (!response.ok) throw new Error(`Squire relay HTTP ${response.status}`);
+            throw error;
+          }) as { error?: string; result?: {
+            isError?: boolean; content?: Array<{ type: string; text?: string }>;
+          } };
+          if (!response.ok) throw new Error(body.error ?? `Squire relay HTTP ${response.status}`);
+          const result = body.result;
+          const text = result?.content?.find((entry) => entry.type === 'text')?.text;
+          if (result?.isError) throw new Error(text ?? 'Squire MCP tool error');
+          if (text) return JSON.parse(text);
+          throw new Error('Squire MCP returned no vault metadata');
+        } });
+      } catch (error) {
+        // Task authorization and stale turns are not machine failures.
+        if (/not authorized|active task|active server command|Squire relay HTTP 403/i.test(
+          error instanceof Error ? error.message : '')) return undefined;
+        const cause = squireReachCause(error);
+        try {
+          await daemonExecute('postConnectorVault', { connections: [], errorMessage: cause });
+        } catch { /* The live verdict remains useful when its report fails. */ }
+        return { reachable: false, cause };
       }
-    },
+      try {
+        await daemonExecute('postConnectorVault', { connections });
+      } catch { /* A failed metadata sync does not change MCP reachability. */ }
+      return { reachable: true };
+    } : undefined,
   };
+}
+
+/** Only known causes reach chat or the Workbench; provider payloads may hold secrets. */
+function squireReachCause(error: unknown): string {
+  const message = error instanceof Error ? error.message : '';
+  if (/broker unavailable/i.test(message)) return 'Squire broker unavailable';
+  if (/ECONNREFUSED/.test(message) || (error instanceof Error &&
+      (error.cause as { code?: string } | undefined)?.code === 'ECONNREFUSED'))
+    return 'Squire relay connection refused';
+  if (/timed out|timeout/i.test(message) || (error instanceof Error && error.name === 'TimeoutError'))
+    return 'Squire MCP request timed out';
+  if (/connection died|server exited|session closed/i.test(message)) return 'Squire MCP connection closed';
+  if (/vault locked/i.test(message)) return 'Squire vault locked';
+  const code = message.match(/\b(ENOENT|EACCES|EPERM|EHOSTUNREACH|ENETUNREACH|ECONNRESET|EPIPE)\b/)
+    ?? (error instanceof Error ? String((error.cause as { code?: string } | undefined)?.code ?? '')
+      .match(/^(ENOENT|EACCES|EPERM|EHOSTUNREACH|ENETUNREACH|ECONNRESET|EPIPE)$/) : null);
+  if (code) return `Squire MCP request failed (${code[1]})`;
+  if (/no vault metadata/i.test(message) || error instanceof SyntaxError) return 'Squire returned invalid vault metadata';
+  const http = message.match(/^Squire relay HTTP (\d{3})$/);
+  if (http) return `Squire relay HTTP ${http[1]}`;
+  return error instanceof TypeError ? 'Squire relay request failed (TypeError)' : 'Squire MCP tool error';
 }
 
 /**

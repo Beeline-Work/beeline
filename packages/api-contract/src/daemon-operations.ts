@@ -1671,6 +1671,8 @@ export type PostConnectorStatusInput = AgentInput & {
 /** One helper vault report (metadata only; secrets never leave the helper). */
 export type PostConnectorVaultInput = AgentInput & {
   readonly connections: readonly VaultConnectionMeta[];
+  /** A failed live vault read updates status without replacing stored metadata. */
+  readonly errorMessage?: string;
 };
 
 export type ConnectionRefInput = { readonly ref: string };

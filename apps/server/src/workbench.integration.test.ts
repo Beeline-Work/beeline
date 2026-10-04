@@ -397,6 +397,58 @@ describe('workbench connectors', () => {
     console.log('Workbench: Trusty Squire connected after a successful vault read');
   });
 
+  it('shares live Squire failures and recovery between the agent and phone without dropping keys', async () => {
+    const roomId = randomUUID();
+    await database.query(`INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Status')`,
+      [roomId, WORKSPACE, HUMAN]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`, [WORKSPACE, roomId, HUMAN, HELPER]);
+    const connectorId = await pairOwnerConnector();
+    // A foreign owner on this machine must not inherit this account's verdict.
+    await database.query(`UPDATE agents SET machine_id='shared-machine' WHERE agent_id=ANY($1::text[])`,
+      [[HELPER, OTHER_HELPER]]);
+    await database.query(`UPDATE workspace_connectors SET machine_id='shared-machine' WHERE id=$1`,
+      [connectorId]);
+    const foreignId = randomUUID();
+    await database.query(`INSERT INTO workspace_connectors(id,workspace_id,owner_identity_id,
+      connector_type,helper_agent_id,machine_id,status)
+      VALUES($1,$2,$3,'trusty-squire',$4,'shared-machine','connected')`,
+      [foreignId, WORKSPACE, RECIPIENT, OTHER_HELPER]);
+
+    const failed = await daemonOperation('postConnectorVault', {
+      connections: [], errorMessage: 'Squire broker unavailable',
+    });
+    expect(failed.status).toBe(200);
+    const phoneFailed = (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as {
+      connectors: { connectorId: string; status: { status: string; errorMessage?: string } }[];
+      connections: { reference: string }[];
+    };
+    expect(phoneFailed.connectors.find((row) => row.connectorId === connectorId)?.status)
+      .toMatchObject({ status: 'error', errorMessage: 'Squire broker unavailable' });
+    expect(phoneFailed.connections.map((row) => row.reference)).toContain('github.com/acme/tooling');
+    const agentFailed = await daemonOperation('readAgentWorkbench', { roomId });
+    expect(agentFailed.status).toBe(200);
+    expect(agentFailed.body.catalog).toContainEqual(expect.objectContaining({
+      connectorType: 'trusty-squire',
+      paired: expect.objectContaining({ status: 'error', errorMessage: 'Squire broker unavailable', onThisMachine: true }),
+    }));
+    expect((await database.query(`SELECT status FROM workspace_connectors WHERE id=$1`, [foreignId])).rows)
+      .toEqual([{ status: 'connected' }]);
+
+    await daemonOperation('postConnectorVault', { connections: [{
+      reference: 'github.com/acme/tooling', service: 'github', label: 'Acme tooling',
+      fieldNames: ['token'], allowedHosts: ['github.com'], createdAt: 0, stale: false, state: 'active',
+    }] });
+    const agentRecovered = await daemonOperation('readAgentWorkbench', { roomId });
+    expect(agentRecovered.body.catalog).toContainEqual(expect.objectContaining({
+      connectorType: 'trusty-squire', paired: expect.objectContaining({ status: 'connected', onThisMachine: true }),
+    }));
+    const phoneRecovered = (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as typeof phoneFailed;
+    expect(phoneRecovered.connectors.find((row) => row.connectorId === connectorId)?.status)
+      .toMatchObject({ status: 'connected' });
+    console.log('Reproduction squire-status-1: phone and agent Workbench agree on failure and recovery; keys preserved');
+  });
+
   it('lists keys in vault created-at order, not by service', async () => {
     const connectorId = await pairOwnerConnector();
     // The helper reports what `vaultConnectionMeta` produced from Squire's

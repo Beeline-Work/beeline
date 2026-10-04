@@ -1022,6 +1022,7 @@ export class MonolithRoomTurnLoop {
         attachScratchRoot,
         turnContextPath: this.commandContext.path,
         directMessage,
+        squireRelay: squireScope.relay,
         ...(this.options.grantRunnerEndpoint && this.options.config.bwrapPath
           ? { grantRunner: this.options.grantRunnerEndpoint }
           : {}),

@@ -2181,6 +2181,13 @@ export class DaemonService {
       )
     ).rows;
     for (const connector of connectors) {
+      if (input.errorMessage) {
+        await this.database.query(
+          `UPDATE workspace_connectors SET status='error',status_error=$2,updated_at=now()
+           WHERE id=$1::uuid AND status IN ('connected','error')`,
+          [connector.id, input.errorMessage]);
+        continue;
+      }
       await this.database.query(
         `UPDATE workspace_connectors SET status='connected',status_error=NULL,
            connected_at=COALESCE(connected_at,now()),updated_at=now()

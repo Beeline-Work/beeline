@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CONTROL_KINDS,
+  eventKindCatalogLines,
   formatSystemLine,
   isAgentKind,
   isControlKind,
@@ -13,6 +14,7 @@ import {
   MAX_MENTIONS_PER_EVENT,
   MAX_TURNS_PER_ROOT,
   RESUME_KINDS,
+  SERVER_EVENT_KIND_DETAIL,
   SERVER_EVENT_KINDS,
 } from './system-events.js';
 
@@ -84,6 +86,7 @@ describe('the event kinds beside the prose', () => {
       'check-failed',
       'merged',
       'grant-decided',
+      'squire-approval-decided',
       'connector-offer-decided',
       'turn-cancelled',
       'choice-answered',
@@ -112,13 +115,38 @@ describe('the event kinds beside the prose', () => {
     expect(isSystemEventKind('agent:BAD')).toBe(false);
   });
 
-  it('keeps grant and connector-offer decisions on the resume path, never on the trigger path', () => {
-    expect([...RESUME_KINDS]).toEqual(['grant-decided', 'connector-offer-decided']);
+  it('keeps grant, Squire approval, and connector-offer decisions on the resume path, never on the trigger path', () => {
+    expect([...RESUME_KINDS]).toEqual([
+      'grant-decided',
+      'squire-approval-decided',
+      'connector-offer-decided',
+    ]);
     expect(isResumeKind('grant-decided')).toBe(true);
+    expect(isResumeKind('squire-approval-decided')).toBe(true);
     expect(isResumeKind('connector-offer-decided')).toBe(true);
     expect(isResumeKind('joined')).toBe(false);
     expect(isResumeKind('choice-answered')).toBe(false);
     expect(isResumeKind('poll-closed')).toBe(false);
+  });
+
+  it('gives every kind one detail line, so a model-facing catalog can never drift from the kinds the server fires', () => {
+    for (const kind of SERVER_EVENT_KINDS) {
+      expect(SERVER_EVENT_KIND_DETAIL[kind]).toBeTruthy();
+    }
+    const lines = eventKindCatalogLines();
+    expect(lines).toHaveLength(SERVER_EVENT_KINDS.length);
+    for (const kind of SERVER_EVENT_KINDS) {
+      expect(lines.some((line) => line.startsWith(`${kind} `))).toBe(true);
+    }
+    expect(lines).toContain(
+      'grant-decided carries the grant id and status and resumes the turn that asked for the grant',
+    );
+    expect(lines).toContain(
+      'squire-approval-decided carries what was approved or denied and the Squire approval id, and resumes the turn that asked',
+    );
+    expect(eventKindCatalogLines(['joined'])).toEqual([
+      `joined ${SERVER_EVENT_KIND_DETAIL.joined}`,
+    ]);
   });
 
   it('keeps a stop on the control path, so it can never start the turn it ends', () => {

@@ -1218,6 +1218,11 @@ export class DaemonService {
           input as Input<'postSquireLoginWall'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'postSquireApprovalDecision':
+        return (await this.squireApprovalDecision(
+          input as Input<'postSquireApprovalDecision'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
       case 'postPermissionRequest':
         return (await this.permissionRequest(
           input as Input<'postPermissionRequest'>,
@@ -4493,6 +4498,56 @@ export class DaemonService {
   }
 
   /**
+   * Squire's own decision on a pending approval, relayed by the helper over
+   * the task connection it kept alive for exactly this wait. Posted to the
+   * Room the turn actually ran in (never the Squire DM `postSquireApproval`
+   * used, since a task-relay approval posts no DM card) with `kind:
+   * 'squire-approval-decided'` and `wakes: [agentId]`, so the agent's paused
+   * turn resumes the same way a decided grant resumes it.
+   */
+  private async squireApprovalDecision(
+    input: Input<'postSquireApprovalDecision'>,
+    agentId: string,
+  ): Promise<Output<'postSquireApprovalDecision'>> {
+    const approvalId = input.approvalId.trim();
+    if (!approvalId || approvalId.length > 240) throw new Error('Squire approval id is invalid');
+    if (input.status !== 'approved' && input.status !== 'denied')
+      throw new Error('Squire approval status is invalid');
+    const tool = input.tool.trim();
+    if (!tool || tool.length > 80) throw new Error('Squire tool is invalid');
+    const title = input.title.trim();
+    if (!title || title.length > 120) throw new Error('Squire approval title is invalid');
+    const detail = input.detail.trim();
+    if (detail.length > 500) throw new Error('Squire approval detail is invalid');
+    if (!input.requestId?.trim())
+      throw new Error('Squire approval decision requires the paused turn id');
+    const agent = await this.identity(agentId);
+    const connectorId = await ensureConnectorIdentity(this.database, 'trusty-squire');
+    const id = createHash('sha256')
+      .update(`squire-approval-decided:v1:${input.roomId}:${agentId}:${approvalId}`)
+      .digest('hex');
+    const line = await systemLine(this.database, {
+      id,
+      roomId: input.roomId,
+      subject: { kind: 'person', id: connectorId, name: connectorDisplayName('trusty-squire') },
+      verb: input.status === 'approved' ? 'approved' : 'denied',
+      object: title,
+      ...(detail ? { consequence: detail } : {}),
+      // A resume kind: it answers the turn that asked for this approval, and
+      // must never start a second one (`RESUME_KINDS`).
+      kind: 'squire-approval-decided',
+      requestId: input.requestId,
+      wakes: [agentId],
+      presentation: 'card',
+      cardType: 'squire-approval-decision',
+      card: { approvalId, tool, title, detail, status: input.status, agentId, agentName: agent.name },
+    });
+    if (line.inserted)
+      this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'message', agentId });
+    return { id: line.id, createdAt: Math.floor(Date.now() / 1000) };
+  }
+
+  /**
    * A Squire in-task result named `needs_user.wall === 'google_session'`
    * (Squire's own gate: no live provider session in its shared browser),
    * `'oauth_sign_in'` (a mid-task OAuth sign-in Squire is stuck on, for
@@ -7758,6 +7813,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postAgentActivity: true,
   postSquireApproval: true,
   postSquireLoginWall: true,
+  postSquireApprovalDecision: true,
   postPermissionRequest: true,
   postPermissionExecution: true,
   postWorkSchedule: true,

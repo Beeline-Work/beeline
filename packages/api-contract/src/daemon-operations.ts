@@ -380,6 +380,9 @@ export type DaemonOperationMap = {
    * SAME Room carrying Squire's own hosted sign-in page, and the paused
    * turn resumes once the helper reports the reconnect ceremony connected. */
   postSquireLoginWall: Operation<PostSquireLoginWallInput, PostSquireLoginWallResult>;
+  /** Relay Squire's own decision on a pending approval; resumes the turn
+   * that asked, the same way grant-decided resumes a grant. */
+  postSquireApprovalDecision: Operation<PostSquireApprovalDecisionInput, WriteResult>;
   postPermissionRequest: Operation<PostPermissionRequestInput, WriteResult>;
   postPermissionExecution: Operation<PostPermissionExecutionInput, WriteResult>;
   postWorkSchedule: Operation<PostWorkScheduleInput, WriteResult>;
@@ -1333,6 +1336,23 @@ export type PostSquireApprovalInput = TurnOutputAuthority &
      */
     readonly signInUrl?: string;
   };
+/**
+ * A Squire approval this agent asked for (`postSquireApproval`) was decided —
+ * approved or denied. Posted by the helper, from a decision signal Squire
+ * itself relays over the already-open task connection it kept alive for
+ * exactly this wait (never polled). `requestId` is the turn that was active
+ * when the approval went pending, so the server can resume that exact turn
+ * (`squire-approval-decided` is a `RESUME_KINDS` member) the same way
+ * `grant-decided` resumes a grant.
+ */
+export type PostSquireApprovalDecisionInput = RoomInput & {
+  readonly requestId: string;
+  readonly approvalId: string;
+  readonly status: 'approved' | 'denied';
+  readonly tool: string;
+  readonly title: string;
+  readonly detail: string;
+};
 /**
  * Squire's own structured hand-back, named field by field — never prose.
  * `google_session` is `NeedsUserLogin` (Squire's Google-session gate: no live

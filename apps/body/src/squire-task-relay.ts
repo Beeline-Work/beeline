@@ -68,15 +68,33 @@ function resultStatus(value: unknown, depth = 0): string | undefined {
   return Object.values(item).map((entry) => resultStatus(entry, depth + 1)).find(Boolean);
 }
 
+type PendingApproval = {
+  requestId: string;
+  sessionIds: Set<string>;
+  tool: string;
+  title: string;
+  detail: string;
+};
+
 type TaskConnection = {
   taskId: string;
   lastRequestId: string;
   connectionId: string;
   client: StdioSquireMcpClient;
   sessions: Set<string>;
-  pendingApprovals: Map<string, { requestId: string; sessionIds: Set<string> }>;
+  pendingApprovals: Map<string, PendingApproval>;
   tools?: unknown;
   dead: boolean;
+};
+
+/** Squire's own decision on a pending approval, matched back to the turn that asked. */
+export type SquireApprovalDecision = {
+  readonly requestId: string;
+  readonly approvalId: string;
+  readonly status: 'approved' | 'denied';
+  readonly tool: string;
+  readonly title: string;
+  readonly detail: string;
 };
 
 export class SquireTaskRelay {
@@ -100,9 +118,18 @@ export class SquireTaskRelay {
       onSpawn: (pid: number | undefined) => void;
       onExit: (pid: number | undefined, code: number | null) => void;
       onDiagnostic: (message: string) => void;
+      onNotification: (message: Record<string, unknown>) => void;
     }) => StdioSquireMcpClient = (callbacks) =>
       new StdioSquireMcpClient({ scope: { agentId, roomId }, home, processGroup: true,
-        onSpawn: callbacks.onSpawn, onExit: callbacks.onExit, log: callbacks.onDiagnostic }),
+        onSpawn: callbacks.onSpawn, onExit: callbacks.onExit, log: callbacks.onDiagnostic,
+        onNotification: callbacks.onNotification }),
+    /**
+     * Squire's own decision on an approval this relay is still holding a
+     * connection open for, relayed from the task connection's stdio session —
+     * never polled. Defaults to a no-op so every existing caller (and test)
+     * that does not pass one keeps working unchanged.
+     */
+    private readonly onApprovalDecided: (decision: SquireApprovalDecision) => void = () => {},
   ) {}
 
   async listen(): Promise<{ url: string; token: string; contextFile: string }> {
@@ -219,6 +246,7 @@ export class SquireTaskRelay {
     } as TaskConnection;
     task.client = this.makeClient({
       onSpawn: (pid) => this.log('relay-spawn', task, { pid }),
+      onNotification: (message) => this.handleApprovalNotification(task, message),
       onDiagnostic: (message) => {
         if (message.startsWith('squire mcp exited')) return;
         const reason = /broker unavailable/i.test(message) ? 'broker-unavailable'
@@ -353,6 +381,7 @@ export class SquireTaskRelay {
         if (pending && ids.length) {
           task.pendingApprovals.set(approvalKey, {
             requestId: active!.requestId, sessionIds: new Set(ids),
+            tool: approval.tool, title: approval.title, detail: approval.detail,
           });
           this.log('approval-pending', task, { tool: safeToolName ?? null,
             sessionId: redactedSessionId(ids[0]) });
@@ -383,6 +412,31 @@ export class SquireTaskRelay {
       for (const sessionId of sessionIdsToRelease) approval.sessionIds.delete(sessionId);
       if (!approval.sessionIds.size) task.pendingApprovals.delete(id);
     }
+  }
+
+  /**
+   * Squire's own unsolicited decision on an approval this task is still
+   * holding a connection open for. Matched back to the pending entry by the
+   * same hash `handleSerial` keyed it under (the approval id Squire itself
+   * returned), so a notification for an approval this relay never tracked —
+   * or one already released — is silently ignored, never trusted blind.
+   */
+  private handleApprovalNotification(task: TaskConnection, message: Record<string, unknown>): void {
+    if (message.method !== 'notifications/approval_decided') return;
+    const params = message.params as Record<string, unknown> | undefined;
+    const approvalId = params?.approval_id;
+    const status = params?.status;
+    if (typeof approvalId !== 'string' || !approvalId ||
+      (status !== 'approved' && status !== 'denied')) return;
+    const approvalKey = createHash('sha256').update(approvalId).digest('hex');
+    const pending = task.pendingApprovals.get(approvalKey);
+    if (!pending) return;
+    task.pendingApprovals.delete(approvalKey);
+    this.onApprovalDecided({
+      requestId: pending.requestId, approvalId, status,
+      tool: pending.tool, title: pending.title, detail: pending.detail,
+    });
+    if (!this.active && !this.approvalRequestId && !task.pendingApprovals.size) this.scheduleIdle();
   }
 }
 

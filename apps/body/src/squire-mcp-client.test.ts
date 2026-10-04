@@ -125,6 +125,47 @@ describe('StdioSquireMcpClient', () => {
     client.close();
   });
 
+  it('surfaces an unsolicited notification over the same session', async () => {
+    const { child } = fakeChild({ initialize: {} });
+    const notifications: Record<string, unknown>[] = [];
+    const client = new StdioSquireMcpClient({
+      scope: { agentId: 'agent-a', roomId: 'room-a' },
+      spawn: () => child as never,
+      onNotification: (message) => notifications.push(message),
+    });
+    const pending = client.call('ping'); // starts the session; this ping itself stays pending
+    for (let index = 0; index < 10; index += 1) await Promise.resolve();
+    child.stdout.emit(
+      'data',
+      `${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/approval_decided', params: { approval_id: 'buy-1', status: 'approved' } })}\n`,
+    );
+    expect(notifications).toEqual([
+      { jsonrpc: '2.0', method: 'notifications/approval_decided', params: { approval_id: 'buy-1', status: 'approved' } },
+    ]);
+    child.emit('exit', 1);
+    await pending.catch(() => {});
+    client.close();
+  });
+
+  it('drops a notification silently when no callback is configured', async () => {
+    const { child } = fakeChild({ initialize: {} });
+    const client = new StdioSquireMcpClient({
+      scope: { agentId: 'agent-a', roomId: 'room-a' },
+      spawn: () => child as never,
+    });
+    const pending = client.call('ping');
+    for (let index = 0; index < 10; index += 1) await Promise.resolve();
+    expect(() =>
+      child.stdout.emit(
+        'data',
+        `${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/approval_decided', params: { approval_id: 'buy-1', status: 'approved' } })}\n`,
+      ),
+    ).not.toThrow();
+    child.emit('exit', 1);
+    await pending.catch(() => {});
+    client.close();
+  });
+
   it('rejects a pending call when the server process exits', async () => {
     const { child } = fakeChild({ initialize: {} });
     const client = new StdioSquireMcpClient({

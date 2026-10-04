@@ -73,6 +73,7 @@ import {
   MAX_EVENT_CONSEQUENCE_LENGTH,
   MAX_MENTIONS_PER_EVENT,
   SERVER_EVENT_KINDS,
+  eventKindCatalogLines,
   CHOICE_CONSTRAINT_MAX_LENGTH,
   CHOICE_CONSEQUENCE_MAX_LENGTH,
   CHOICE_LABEL_MAX_LENGTH,
@@ -959,11 +960,12 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'subscribe_events',
     description:
-      `Choose which things happening in this Room wake you for a turn: ${SERVER_EVENT_KINDS.join(', ')}. ` +
-      'Subscribe to joined and every newcomer wakes you, so you can greet them - a person arriving ' +
-      'in the Workspace wakes you too when that arrival projects into this Room. This REPLACES your ' +
+      'Choose which things happening in this Room wake you for a turn. This REPLACES your ' +
       'current list, so send every kind you want, not just the new one; call list_event_subscriptions ' +
       'first if you are not sure what you already react to, and send an empty list to react to nothing. ' +
+      `Available kinds: ${eventKindCatalogLines().join('; ')}. ` +
+      'Subscribe to joined and every newcomer wakes you, so you can greet them - a person arriving ' +
+      'in the Workspace wakes you too when that arrival projects into this Room. ' +
       'A corner merging wakes nobody in its parent Room by default: if you still have work to do after ' +
       'a corner merges, subscribe to merged here in the parent Room before the merge, act only on the ' +
       'corner you are waiting for, post nothing for any other merge, and drop merged once nothing is ' +

@@ -60,6 +60,7 @@ export const SERVER_EVENT_KINDS = [
   'check-failed',
   'merged',
   'grant-decided',
+  'squire-approval-decided',
   'connector-offer-decided',
   'turn-cancelled',
   'choice-answered',
@@ -68,6 +69,40 @@ export const SERVER_EVENT_KINDS = [
   'workflow-handoff',
 ] as const;
 export type ServerEventKind = (typeof SERVER_EVENT_KINDS)[number];
+
+/**
+ * One line each, naming when a kind fires. The single source `subscribe_events`'s
+ * tool description, the agent rulebook (`beeline-skill.ts`), and any other
+ * catalog read from (`eventKindCatalogLines`): a kind added to
+ * `SERVER_EVENT_KINDS` with no entry here is a type error, so the list a model
+ * reads can never drift from the list the server actually fires.
+ */
+export const SERVER_EVENT_KIND_DETAIL: Readonly<Record<ServerEventKind, string>> = {
+  'joined': 'fires when a person or agent joins this Room, or when a Workspace arrival projects into it',
+  'schedule-ran': 'fires when a schedule you created runs',
+  'corner-opened': 'fires when a corner opens under this Room',
+  'check-passed': "fires when a corner's pull request checks turn green",
+  'check-failed': "fires when a corner's pull request checks turn red",
+  'merged': "fires when a corner's pull request merges",
+  'grant-decided': 'carries the grant id and status and resumes the turn that asked for the grant',
+  'squire-approval-decided':
+    'carries what was approved or denied and the Squire approval id, and resumes the turn that asked',
+  'connector-offer-decided':
+    'fires when a human accepts or declines an offered connector, or a reconnect ceremony finishes, and resumes the turn that offered it',
+  'turn-cancelled': 'fires when a running turn is stopped',
+  'choice-answered': 'fires when a human answers a posted choice, starting a new turn for the asking agent',
+  'choice-skipped':
+    "fires when a posted choice's window closes unanswered, starting a new turn for the asking agent",
+  'poll-closed': 'fires when a posted poll closes, starting a new turn for the asking agent',
+  'workflow-handoff': 'fires when a workflow run starts or hands off to its next role',
+};
+
+/** "kind detail" for every subscribable kind, in catalog order. */
+export function eventKindCatalogLines(
+  kinds: readonly ServerEventKind[] = SERVER_EVENT_KINDS,
+): readonly string[] {
+  return kinds.map((kind) => `${kind} ${SERVER_EVENT_KIND_DETAIL[kind]}`);
+}
 export type AgentEventKind = `agent:${string}`;
 export type SystemEventKind = ServerEventKind | AgentEventKind;
 
@@ -94,6 +129,7 @@ export function isSystemEventKind(value: unknown): value is SystemEventKind {
  */
 export const RESUME_KINDS: readonly SystemEventKind[] = [
   'grant-decided',
+  'squire-approval-decided',
   'connector-offer-decided',
 ];
 export function isResumeKind(value: unknown): boolean {

@@ -327,6 +327,14 @@ export function deviceGrantResumePrompt(device: string, earlierReply: string): s
  * on with the work that needed the tool, not to look for a grant verdict.
  */
 export function resumePrompt(item: { body: string; systemEvent?: SystemEvent }): string {
+  if (item.systemEvent?.kind === 'squire-approval-decided') {
+    return [
+      `This is Trusty Squire's answer to the approval you were waiting on: ${item.body}.`,
+      'Your paused work resumes now.',
+      'If it was approved, continue exactly where you left off with Trusty Squire; do not ask the person to approve again, and do not restart the task.',
+      'If it was denied, stop that Trusty Squire action and say plainly what you cannot do.',
+    ].join(' ');
+  }
   if (item.systemEvent?.kind === 'connector-offer-decided') {
     return [
       `This is the answer to your connector offer: ${item.body}.`,
@@ -508,6 +516,12 @@ export class MonolithRoomTurnLoop {
           })
         ).allowed,
       options.config.operatorHome ?? homedir(),
+      undefined,
+      (decision) => {
+        options.api
+          .execute('postSquireApprovalDecision', { roomId: options.roomId, ...decision })
+          .catch(() => {});
+      },
     );
     this.options = { ...options, api: this.commandContext.bind(options.api) };
     options.grantRunner?.register(options.roomId, {

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create } from 'react-test-renderer';
@@ -229,5 +231,19 @@ describe('message-source cover', () => {
   it('releases the cover when the retry budget ends', () => {
     expect(shouldReleaseMessageSourceCover({ abandoned: false, retryAttempts: 7 })).toBe(false);
     expect(shouldReleaseMessageSourceCover({ abandoned: false, retryAttempts: 8 })).toBe(true);
+  });
+
+  it('settles a landing whose target was already reported visible before it started', () => {
+    // A fresh push's newest row is reported visible before the next-frame
+    // landing exists; scrolling to it then changes nothing, so no later
+    // viewability report arrives. The landing must check the latest report
+    // itself, or the cover stays up forever.
+    const surface = readFileSync(path.join(__dirname, '_chat-surface.tsx'), 'utf8');
+    const start = surface.indexOf(
+      'messageSourceLandingRef.current = startMessageSourceLanding(messageId);',
+    );
+    expect(start).toBeGreaterThanOrEqual(0);
+    const landing = surface.slice(start, surface.indexOf('handledNotificationAnchorRef.current = anchorKey;', start));
+    expect(landing).toMatch(/scrollToIndex\([\s\S]*\);\s*settleMessageSourceLandingIfVisible\(\);/);
   });
 });

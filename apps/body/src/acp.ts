@@ -288,9 +288,27 @@ export type AcpStreamSnapshot = {
 /** Invoked on every ACP update so a tool boundary can move progress out of message. */
 export type AcpStreamHandler = (snapshot?: AcpStreamSnapshot) => void;
 
+/**
+ * True when an `agent_message_chunk` is pi-acp's own relay of a Pi extension's
+ * `ctx.ui.notify()` call (tagged `_meta.piAcp.notify`), not model output. Pi's
+ * bundled MCP extension calls `notify()` with "MCP servers need attention:
+ * …\nRun /mcp to fix." whenever a mounted server (CodeGraph among them) is
+ * `failed` or `needs-auth` at session start, and pi-acp has no ACP vocabulary
+ * for an extension-level notice other than `agent_message_chunk` — so without
+ * this check that infrastructure text is indistinguishable from the model's
+ * own words and can stand in as the agent's entire reply when it is the only
+ * chunk the turn produced.
+ */
+function isHarnessNotifyChunk(update: Record<string, unknown>): boolean {
+  const meta = update._meta as Record<string, unknown> | undefined;
+  const piAcp = meta?.piAcp as Record<string, unknown> | undefined;
+  return Boolean(piAcp?.notify);
+}
+
 /** Extract the text delta of an `agent_message_chunk` update, harness-agnostic. */
 function agentMessageChunkText(update: Record<string, unknown>): string {
   if (update.sessionUpdate !== 'agent_message_chunk') return '';
+  if (isHarnessNotifyChunk(update)) return '';
   const content = update.content as { type?: string; text?: string } | undefined;
   if (content?.type === 'text') return content.text ?? '';
   if (typeof update.content === 'string') return update.content;

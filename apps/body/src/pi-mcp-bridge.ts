@@ -19,8 +19,20 @@ export const PI_MCP_BRIDGE_FILENAME = 'beeline-mcp-bridge.js';
 const execFileAsync = promisify(execFile);
 const nativeMcpProbes = new Map<string, Promise<boolean>>();
 
-async function piHasNativeMcp(command: string): Promise<boolean> {
-  let probe = nativeMcpProbes.get(command);
+/**
+ * Probe with the SAME `PATH` the real session's pi-acp child will resolve
+ * `pi` against (`agentEnv`, not this daemon's own `process.env`). A bare
+ * `command` like `'pi'` resolves through whatever `PATH` the probe is given;
+ * the daemon's ambient `PATH` and a session's `agentEnv.PATH` can name two
+ * different installed Pi versions (one pinned/older, one newer on the
+ * operator's PATH), so probing the wrong one answers a question about a Pi
+ * that will never actually run this session — the native/bridge choice must
+ * be measured against the exact executable pi-acp spawns.
+ */
+async function piHasNativeMcp(command: string, env?: NodeJS.ProcessEnv): Promise<boolean> {
+  const path = env?.PATH ?? process.env.PATH ?? '';
+  const cacheKey = `${command}\0${path}`;
+  let probe = nativeMcpProbes.get(cacheKey);
   if (!probe) {
     probe = (async () => {
       const home = await mkdtemp(resolve(tmpdir(), 'beeline-pi-mcp-probe-'));
@@ -28,7 +40,7 @@ async function piHasNativeMcp(command: string): Promise<boolean> {
         const { stdout } = await execFileAsync(command, ['mcp', 'list', '--json'], {
           cwd: home,
           timeout: 1_200,
-          env: { PATH: process.env.PATH, HOME: home, PI_CODING_AGENT_DIR: home, PI_OFFLINE: '1' },
+          env: { PATH: path, HOME: home, PI_CODING_AGENT_DIR: home, PI_OFFLINE: '1' },
         });
         const result = JSON.parse(stdout) as { servers?: unknown; errors?: unknown };
         return Array.isArray(result.servers) && Array.isArray(result.errors);
@@ -38,7 +50,7 @@ async function piHasNativeMcp(command: string): Promise<boolean> {
         await rm(home, { recursive: true, force: true });
       }
     })();
-    nativeMcpProbes.set(command, probe);
+    nativeMcpProbes.set(cacheKey, probe);
   }
   return probe;
 }
@@ -150,6 +162,10 @@ export async function installPiMcpBridge(input: {
   /** `PI_CODING_AGENT_DIR` for this session, from the prepared home overlay. */
   piHome?: string;
   piCommand?: string;
+  /** The session's own env (`PATH` above all): pi-acp resolves its `pi` child
+   *  against this, not the daemon's `process.env`, so the native-MCP probe
+   *  must match it or it answers for a Pi that will never run this session. */
+  agentEnv?: NodeJS.ProcessEnv;
   /** Tests pin the two installed Pi paths without changing the operator's executable. */
   nativeMcp?: boolean;
   servers: readonly McpServerWire[];
@@ -160,7 +176,8 @@ export async function installPiMcpBridge(input: {
   const path = resolve(directory, PI_MCP_BRIDGE_FILENAME);
   try {
     const config = await isolatedPiConfig(input.piHome);
-    const nativeMcp = input.nativeMcp ?? (await piHasNativeMcp(input.piCommand ?? 'pi'));
+    const nativeMcp =
+      input.nativeMcp ?? (await piHasNativeMcp(input.piCommand ?? 'pi', input.agentEnv));
     if (nativeMcp) {
       const mcpServers = { ...config.mcpServers };
       for (const server of input.servers)

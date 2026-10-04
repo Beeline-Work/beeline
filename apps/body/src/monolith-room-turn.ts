@@ -1016,6 +1016,7 @@ export class MonolithRoomTurnLoop {
       agentCommand: harnessLabel,
       piHome: agentEnv.PI_CODING_AGENT_DIR,
       piCommand: agentEnv.PI_ACP_PI_COMMAND ?? process.env.PI_ACP_PI_COMMAND,
+      agentEnv,
       servers: [...servers, ...grantedRouteServers],
     });
     // What this session actually mounted, not only the Beeline-owned servers:

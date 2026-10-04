@@ -2125,27 +2125,69 @@ describe('an express merge order from the owner or admin always carries (defect:
     const { holdId } = await phone.execute('setCornerHold', { cornerId }, H);
     expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ held: true, open: false });
     expect(await github.landCorner(cornerId)).toBe(false);
-    await phone.execute('setCornerHold', { cornerId, releaseHoldId: holdId }, H);
 
     // The owner's express instruction, relayed by the agent it was tagged
-    // to, carries on its own: no reviewer, no yolo mode, no autonomous open.
+    // to, carries on its own: no reviewer, no yolo mode, a standing hold are
+    // all reported as facts, never vetoes. It moves the run itself to `land`
+    // through the one lifecycle authority, from wherever it was sitting.
     await db.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [A]);
     await say(cornerId, '@hoots merge this now');
     const direct = (await commands(A, cornerId)).at(-1)!;
     await claim(direct);
     await daemon.execute('orderCornerMerge',
       { cornerId, roomId: cornerId, requestId: direct.turnRequestId, generationId: 'g1' }, A);
+    expect(await currentState(cornerId)).toBe('land');
 
     const gate = await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA });
-    expect(gate).toMatchObject({ reviewerExists: false, isWorkerYolo: false, expressMergeOrdered: true, open: true });
+    expect(gate).toMatchObject({
+      reviewerExists: false, isWorkerYolo: false, held: true, expressMergeOrdered: true, open: true,
+    });
 
     const status = await github.prChecksStatus({ cornerId });
-    expect(status).toMatchObject({ expressMergeOrdered: true, mergeAllowed: true });
+    expect(status).toMatchObject({ expressMergeOrdered: true, mergeAllowed: true, held: true });
     // Each fact is named once: no held/didHumanSayDontMerge duplicate survives.
     expect(Object.keys(status).filter((key) => /humansaydontmerge/i.test(key))).toEqual([]);
 
     expect(await github.landCorner(cornerId)).toBe(true);
     expect(githubApp.mergePullRequest).toHaveBeenCalledWith(77, 101, 'owner/widgets', 7, SHA);
+    await phone.execute('setCornerHold', { cornerId, releaseHoldId: holdId }, H);
+  });
+
+  it('merges even while checks have not gone green, recorded or live', async () => {
+    const cornerId = await open(undefined, 'owner/widgets');
+    await redHead(cornerId, 7, SHA);
+    expect(await currentState(cornerId)).toBe('implement');
+    githubHead = SHA;
+    githubRollupState = 'failed';
+
+    await say(cornerId, '@hoots merge this now');
+    const direct = (await commands(A, cornerId)).at(-1)!;
+    await claim(direct);
+    await daemon.execute('orderCornerMerge',
+      { cornerId, roomId: cornerId, requestId: direct.turnRequestId, generationId: 'g1' }, A);
+    expect(await currentState(cornerId)).toBe('land');
+
+    const status = await github.prChecksStatus({ cornerId });
+    expect(status).toMatchObject({ checks: 'failed', expressMergeOrdered: true, mergeAllowed: true });
+
+    expect(await github.landCorner(cornerId)).toBe(true);
+    expect(githubApp.mergePullRequest).toHaveBeenCalledWith(77, 101, 'owner/widgets', 7, SHA);
+  });
+
+  it('claimCornerMergeAttempt never merges a head off `land`, express-ordered or not', async () => {
+    const cornerId = await open(undefined, 'owner/widgets');
+    await greenHead(cornerId, 7, SHA);
+    await db.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [A]);
+    await say(cornerId, '@hoots merge this now');
+    const direct = (await commands(A, cornerId)).at(-1)!;
+    await claim(direct);
+    await daemon.execute('orderCornerMerge',
+      { cornerId, roomId: cornerId, requestId: direct.turnRequestId, generationId: 'g1' }, A);
+    expect(await currentState(cornerId)).toBe('land');
+    // Simulate the run having moved on since the order was recorded: express
+    // authority is not a second route into the merge that skips `land`.
+    await db.query(`UPDATE corner_facts SET workflow_state='implement' WHERE corner_id=$1`, [cornerId]);
+    expect(await claimCornerMergeAttempt(db, cornerId, SHA)).toBe(false);
   });
 
   it('refuses an order from someone who is not a current Workspace owner or admin', async () => {

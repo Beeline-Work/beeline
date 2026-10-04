@@ -326,6 +326,7 @@ type HullActionSheetModalProps = {
   scrollBody?: boolean;
   modalTestID?: string;
   onClose: () => void;
+  onDismiss?: () => void;
   scrimTestID?: string;
   testID?: string;
   title?: string;
@@ -346,6 +347,7 @@ export function HullActionSheetModal({
   modalTestID,
   navigation,
   onClose,
+  onDismiss,
   onTitlePress,
   scrimTestID,
   sticky,
@@ -363,6 +365,7 @@ export function HullActionSheetModal({
       accessibilityLabel={accessibilityLabel ?? 'Close action sheet'}
       contentStyle={[styles.modalContent, contentStyle]}
       dismissOnBackdrop={dismissOnBackdrop}
+      onDismiss={onDismiss}
       onRequestClose={onClose}
       placement={isDesktop ? 'center' : 'bottom'}
       scrimTestID={scrimTestID}

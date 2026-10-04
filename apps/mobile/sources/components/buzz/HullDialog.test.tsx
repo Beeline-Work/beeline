@@ -136,6 +136,106 @@ function hostByTestID(renderer: ReactTestRenderer, testID: string, type: string)
 }
 
 describe('Hull dialog family', () => {
+  it.each(['photo', 'document'])(
+    'Reproduction IOS-ATTACH-1: opens %s only after native dismissal and stages the selection once',
+    (choice) => {
+      let nativeSheetPresented = true;
+      const selected = choice === 'photo' ? ['photo-one.jpg', 'photo-two.jpg'] : ['document.pdf'];
+      const launchPicker = vi.fn(() => {
+        if (nativeSheetPresented) throw new Error('Native attachment modal is still presented');
+        return selected;
+      });
+
+      function ChatAttachmentHost() {
+        const [visible, setVisible] = React.useState(true);
+        const [pending, setPending] = React.useState<string[]>([]);
+        const pick = () => setPending(launchPicker());
+        return (
+          <>
+            <AttachmentPickerSheet
+              visible={visible}
+              onClose={() => setVisible(false)}
+              onPickPhoto={pick}
+              onPickDocument={pick}
+            />
+            {pending.map((name) => React.createElement('PendingAttachment', { key: name, name }))}
+          </>
+        );
+      }
+
+      const renderer = render(<ChatAttachmentHost />);
+      const row = hostByTestID(renderer, `attachment-picker-${choice}`, 'Pressable');
+      act(() => {
+        row.props.onPress();
+        row.props.onPress();
+      });
+      const modal = renderer.root.findByType('Modal' as any);
+      expect(modal.props.visible).toBe(false);
+      expect(launchPicker).not.toHaveBeenCalled();
+      // Changing visible requests dismissal; UIKit completes it later.
+      nativeSheetPresented = false;
+      act(() => modal.props.onDismiss());
+      act(() => modal.props.onDismiss());
+      expect(launchPicker).toHaveBeenCalledTimes(1);
+      expect(
+        renderer.root.findAllByType('PendingAttachment' as any).map((node: any) => node.props.name),
+      ).toEqual(selected);
+      console.info(
+        `IOS-ATTACH-1 ${choice}: native dismissal completed; picker opened once; pending attachments: ${selected.join(', ')}`,
+      );
+      act(() => renderer.unmount());
+    },
+  );
+
+  it.each(['cancel', 'scrim', 'native-back'])(
+    'does not launch a picker after %s dismissal',
+    (choice) => {
+      const pick = vi.fn();
+      function ChatAttachmentHost() {
+        const [visible, setVisible] = React.useState(true);
+        return (
+          <AttachmentPickerSheet
+            visible={visible}
+            onClose={() => setVisible(false)}
+            onPickPhoto={pick}
+            onPickDocument={pick}
+          />
+        );
+      }
+      const renderer = render(<ChatAttachmentHost />);
+      const close = () => {
+        if (choice === 'native-back')
+          renderer.root.findByType('Modal' as any).props.onRequestClose();
+        else
+          hostByTestID(
+            renderer,
+            choice === 'cancel' ? 'attachment-picker-close' : 'attachment-picker-scrim',
+            'Pressable',
+          ).props.onPress();
+      };
+      act(close);
+      act(() => renderer.root.findByType('Modal' as any).props.onDismiss());
+      expect(pick).not.toHaveBeenCalled();
+      act(() => renderer.unmount());
+    },
+  );
+
+  it('clears a queued selection when Cancel is pressed before native dismissal', () => {
+    const pick = vi.fn();
+    const renderer = render(
+      <AttachmentPickerSheet
+        visible
+        onClose={() => undefined}
+        onPickPhoto={pick}
+        onPickDocument={pick}
+      />,
+    );
+    act(() => hostByTestID(renderer, 'attachment-picker-photo', 'Pressable').props.onPress());
+    act(() => hostByTestID(renderer, 'attachment-picker-close', 'Pressable').props.onPress());
+    act(() => renderer.root.findByType('Modal' as any).props.onDismiss());
+    expect(pick).not.toHaveBeenCalled();
+    act(() => renderer.unmount());
+  });
   it('renders quiet, ink primary, and red destructive actions with modal dismissal semantics', () => {
     const onClose = vi.fn();
     const cancel = vi.fn();

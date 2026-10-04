@@ -74,6 +74,7 @@ type HullModalProps = {
   contentStyle?: StyleProp<ViewStyle>;
   dismissOnBackdrop?: boolean;
   keyboardAvoiding?: boolean;
+  onDismiss?: () => void;
   onRequestClose: () => void;
   placement?: 'bottom' | 'center' | 'fill';
   scrimTestID?: string;
@@ -248,6 +249,7 @@ const StableHullModal = React.memo(function StableHullModal({
   contentStyle,
   dismissOnBackdrop = true,
   keyboardAvoiding = true,
+  onDismiss,
   onRequestClose,
   placement = 'center',
   scrimTestID,
@@ -258,6 +260,7 @@ const StableHullModal = React.memo(function StableHullModal({
     <Modal
       animationType={animationType}
       navigationBarTranslucent
+      onDismiss={onDismiss}
       onRequestClose={onRequestClose}
       statusBarTranslucent
       transparent

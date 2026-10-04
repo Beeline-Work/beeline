@@ -1,4 +1,5 @@
 import React from 'react';
+import { Platform } from 'react-native';
 import { HullActionSheetCancel, HullActionSheetModal, HullActionSheetRow } from './HullActionSheet';
 import { HullDialog } from './HullDialog';
 import { useIsDesktop } from '@/utils/responsive';
@@ -20,17 +21,31 @@ export function AttachmentPickerSheet({
   onPickPasted,
 }: AttachmentPickerSheetProps) {
   const isDesktop = useIsDesktop();
-  const choose = (action: () => void) => {
+  const pendingAction = React.useRef<(() => void) | null>(null);
+  const dismiss = () => {
+    const action = pendingAction.current;
+    pendingAction.current = null;
+    action?.();
+  };
+  const cancel = () => {
+    pendingAction.current = null;
     onClose();
-    action();
+  };
+  const choose = (action: () => void) => {
+    if (pendingAction.current) return;
+    // iOS cannot present a native picker until the Modal finishes dismissing.
+    if (Platform.OS === 'ios') pendingAction.current = action;
+    onClose();
+    if (Platform.OS !== 'ios') action();
   };
 
   if (isDesktop) {
     return (
       <HullDialog
         accessibilityLabel="Close attachment picker"
-        actions={[{ label: 'Cancel', onPress: onClose }]}
-        onRequestClose={onClose}
+        actions={[{ label: 'Cancel', onPress: cancel }]}
+        onDismiss={dismiss}
+        onRequestClose={cancel}
         scrimTestID="attachment-picker-scrim"
         testID="attachment-picker-sheet"
         title="Attach"
@@ -62,7 +77,8 @@ export function AttachmentPickerSheet({
   return (
     <HullActionSheetModal
       accessibilityLabel="Close attachment picker"
-      onClose={onClose}
+      onClose={cancel}
+      onDismiss={dismiss}
       scrimTestID="attachment-picker-scrim"
       testID="attachment-picker-sheet"
       title="Attach"
@@ -87,7 +103,7 @@ export function AttachmentPickerSheet({
           testID="attachment-picker-paste"
         />
       )}
-      <HullActionSheetCancel onPress={onClose} testID="attachment-picker-close" />
+      <HullActionSheetCancel onPress={cancel} testID="attachment-picker-close" />
     </HullActionSheetModal>
   );
 }

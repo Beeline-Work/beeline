@@ -14,6 +14,7 @@ import {
   archiveWorkflow,
   assignWorkflowRole,
   backfillWorkflowSkillDescriptions,
+  closeStaleWorkflowGateChoices,
   describedLegacyWorkflowContract,
   handoff,
   getWorkflowRun,
@@ -1060,6 +1061,64 @@ describe('handoff', () => {
       name: 'corner',
       roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
     })).rejects.toThrow(`You are already in run ${runId} of corner.`);
+  });
+});
+
+async function driveToApprovalGate(runId: string): Promise<void> {
+  let command = await commandFor(IMPLEMENTER);
+  await handoff(database, command, { runId, outcome: 'pushed', contents: { summary: 'x', prUrl: 'y' } });
+  command = await commandFor(IMPLEMENTER);
+  await handoff(database, command, { runId, outcome: 'passing', contents: { headSha: 'abc' } });
+  command = await commandFor(REVIEWER);
+  await handoff(database, command, {
+    runId,
+    outcome: 'approved',
+    contents: { verdict: 'approve', notes: 'lgtm' },
+  });
+}
+
+describe('closeStaleWorkflowGateChoices', () => {
+  it('closes a row left open from before this fix shipped, idempotently', async () => {
+    const { runId } = await startedRun();
+    await driveToApprovalGate(runId);
+    const choice = (
+      await database.query<{ id: string }>(
+        `SELECT id FROM room_choices WHERE room_id=$1 AND agent_id=$2 AND status='open'`,
+        [ROOM, APPROVER],
+      )
+    ).rows[0]!;
+    await handoff(database, await commandFor(APPROVER), {
+      runId,
+      outcome: 'approved',
+      contents: { decision: 'approved' },
+    });
+    // Simulates a row left over from before this fix shipped: the fixed
+    // handoff() above already closed it, so put it back open by hand to
+    // reproduce what a pre-fix production row looked like.
+    await database.query(`UPDATE room_choices SET status='open' WHERE id=$1`, [choice.id]);
+
+    expect(await closeStaleWorkflowGateChoices(database)).toBe(1);
+    expect(
+      (await database.query<{ status: string }>(`SELECT status FROM room_choices WHERE id=$1`, [choice.id]))
+        .rows[0]?.status,
+    ).toBe('closed');
+    expect(await closeStaleWorkflowGateChoices(database)).toBe(0);
+  });
+
+  it('leaves a still-live gate alone', async () => {
+    const { runId } = await startedRun();
+    await driveToApprovalGate(runId);
+    const choice = (
+      await database.query<{ id: string }>(
+        `SELECT id FROM room_choices WHERE room_id=$1 AND agent_id=$2 AND status='open'`,
+        [ROOM, APPROVER],
+      )
+    ).rows[0]!;
+    expect(await closeStaleWorkflowGateChoices(database)).toBe(0);
+    expect(
+      (await database.query<{ status: string }>(`SELECT status FROM room_choices WHERE id=$1`, [choice.id]))
+        .rows[0]?.status,
+    ).toBe('open');
   });
 });
 

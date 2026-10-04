@@ -308,17 +308,7 @@ export async function cancelWorkflowRun(
       `UPDATE messages SET card=card || '{"active":false,"currentAgentId":null}'::jsonb
        WHERE id=$1 AND room_id=$2`, [input.runId, command.room_id],
     );
-    await db.query(
-      `UPDATE room_choices choice SET status='closed'
-       FROM messages message WHERE choice.message_id=message.id AND choice.room_id=$1
-         AND message.card->>'runId'=$2 AND choice.status='open'`,
-      [command.room_id, input.runId],
-    );
-    await db.query(
-      `UPDATE messages SET card=card || '{"status":"closed"}'::jsonb
-       WHERE room_id=$1 AND card->>'runId'=$2 AND card_type='choice'`,
-      [command.room_id, input.runId],
-    );
+    await closeRunChoices(db, command.room_id, input.runId);
     await db.query(
       `UPDATE agent_commands command SET state='cancelled',completed_at=now()
        FROM messages message WHERE command.source_message_id=message.id AND command.room_id=$1
@@ -1227,4 +1217,41 @@ export async function backfillWorkflowSkillDescriptions(database: SqlDatabase): 
   if (changed)
     console.log(`backfillWorkflowSkillDescriptions: filled summary/does on ${changed} workflow skill version(s)`);
   return changed;
+}
+
+/**
+ * `handoff()` now closes a gate's open choice itself (`closeRunChoices`,
+ * `room-choice.ts`) whenever the run leaves that gate or ends, and
+ * `postRoomChoice` lazily sweeps a stranded row for the asking agent before
+ * its next ask. Both are forward-looking: this is the immediate, one-time
+ * counterpart that closes every already-stranded row at deploy time, rather
+ * than waiting on that exact agent's next ask in that Room. A choice tied to
+ * a run is only legitimately still open while that run is live and
+ * currently sitting at a gate state; anything else — the run has ended
+ * (cancelled or terminal) or moved on to a non-gate state — means the gate
+ * was left without the choice ever closing. Idempotent: a choice closed by
+ * any of the three paths never matches `status='open'` again. Run from
+ * `migrateData()`.
+ */
+export async function closeStaleWorkflowGateChoices(database: SqlDatabase): Promise<number> {
+  const openGateChoices = await database.query<{ room_id: string; run_id: string }>(
+    `SELECT DISTINCT choice.room_id,choicemsg.card->>'runId' run_id
+     FROM room_choices choice
+     JOIN messages choicemsg ON choicemsg.id=choice.message_id
+     WHERE choice.status='open' AND choicemsg.card->>'runId' IS NOT NULL`,
+  );
+  let closed = 0;
+  for (const row of openGateChoices.rows) {
+    const run = await loadRun(database, row.room_id, row.run_id);
+    if (!run) continue;
+    const contract = await loadPinnedContract(database, row.room_id, run.workflowSlug, run.workflowVersion);
+    const state = contract?.handoffs[run.toState];
+    const stillGated = !run.cancellation && state?.kind === 'gate';
+    if (stillGated) continue;
+    await closeRunChoices(database, row.room_id, row.run_id);
+    closed++;
+  }
+  if (closed)
+    console.log(`closeStaleWorkflowGateChoices: closed ${closed} stale run(s)' open choice(s)`);
+  return closed;
 }

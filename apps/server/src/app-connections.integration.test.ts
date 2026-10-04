@@ -99,6 +99,12 @@ describe('the app route order', () => {
     })).resolves.toMatchObject({ kind: 'unavailable' });
   });
 
+  it('reports an app withheld from managed OAuth as not available, not as a Squire route', async () => {
+    await expect(resolveAppRoute({ reconnect: false, noApi: false },
+      probes({ composio: vi.fn(async () => 'withheld' as const) }))).resolves.toEqual({
+      kind: 'unavailable', reason: 'This app is not available to connect yet.' });
+  });
+
   it('uses Squire only when managed OAuth is unsupported', async () => {
     await expect(
       resolveAppRoute({ reconnect: false, noApi: false }, probes()),
@@ -367,6 +373,17 @@ describe('connect_app', () => {
       }));
     expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1
       AND agent_id=$2 AND reason='app_connected'`, [CORNER, HELPER])).rowCount).toBe(1);
+  });
+
+  it('refuses YouTube without its custom sign-in instead of issuing a link or a Squire route', async () => {
+    const provider = fakeComposio();
+    const daemon = daemonWith(fakeRegistry([]).client, provider);
+    await expect(daemon.execute('connectApp',
+      { ...turn, app: 'YouTube', reason: 'upload the launch video' }, HELPER)).resolves.toMatchObject({
+      status: 'unavailable', appKey: 'youtube', next: 'This app is not available to connect yet.' });
+    expect(provider.supportsOAuth).toHaveBeenCalledWith('youtube');
+    expect(provider.link).not.toHaveBeenCalled();
+    expect(await routes()).toEqual([]);
   });
 
   it('uses a connected owner app from a Room and corner where only the agent is a member', async () => {
@@ -1241,8 +1258,9 @@ describe('connect_app', () => {
         composio_managed_auth_schemes: ['OAUTH2'] });
       if (parsed.pathname === '/api/v3/auth_configs' && method === 'GET') {
         const slug = parsed.searchParams.get('toolkit_slug') ?? '';
+        // YouTube signs in only through the operator's custom OAuth2 config.
         return Response.json({ items: [{ id: `ac_${slug}`, toolkit: { slug },
-          auth_scheme: 'OAUTH2', is_composio_managed: true, status: 'ENABLED' }] });
+          auth_scheme: 'OAUTH2', is_composio_managed: slug !== 'youtube', status: 'ENABLED' }] });
       }
       if (parsed.pathname === '/api/v3/connected_accounts/link')
         return Response.json({ redirect_url: 'https://app.composio.dev/connect/fixture',

@@ -25,6 +25,16 @@ export function composioToolkitForApp(key: string): string {
   return known[key] ?? key;
 }
 
+/**
+ * Toolkits that sign in only through an operator-created custom OAuth2 config. Composio's
+ * shared app for these is blocked by the provider, so they never fall back to it.
+ */
+const CUSTOM_AUTH_ONLY: ReadonlySet<string> = new Set(['youtube']);
+
+export function requiresCustomAuth(toolkit: string): boolean {
+  return CUSTOM_AUTH_ONLY.has(toolkit);
+}
+
 function safeToolSlug(slug: string): boolean {
   return /^[A-Z][A-Z0-9_]{2,119}$/.test(slug);
 }
@@ -236,12 +246,18 @@ export class ComposioApps {
     if (query) params.set('search', query);
     const page = await this.request(`/toolkits?${params}`, 'GET');
     if (!Array.isArray(page.items)) throw new Error('App provider returned an invalid response');
+    const withheld = new Set<string>();
+    for (const value of page.items) {
+      const slug = value && typeof value === 'object' ? (value as Json).slug : undefined;
+      if (typeof slug === 'string' && requiresCustomAuth(slug) &&
+        !customOAuthConfig(await this.authConfigs(slug), slug)) withheld.add(slug);
+    }
     return page.items.flatMap((value: unknown) => {
       if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
       const item = value as Json;
       if (typeof item.slug !== 'string' || typeof item.name !== 'string' ||
         !item.name.trim() || item.enabled === false || item.deprecated === true ||
-        item.is_local_toolkit === true) return [];
+        item.is_local_toolkit === true || withheld.has(item.slug)) return [];
       const meta = item.meta && typeof item.meta === 'object' && !Array.isArray(item.meta)
         ? item.meta as Json : {};
       let appUrl: string | undefined;
@@ -297,7 +313,7 @@ export class ComposioApps {
     try {
       const row = await this.toolkit(toolkit);
       if (row.slug !== toolkit || row.enabled === false) return false;
-      if (Array.isArray(row.composio_managed_auth_schemes) &&
+      if (!requiresCustomAuth(toolkit) && Array.isArray(row.composio_managed_auth_schemes) &&
         row.composio_managed_auth_schemes.some((scheme) =>
           typeof scheme === 'string' && scheme.toLowerCase() === 'oauth2')) return true;
       return customOAuthConfig(await this.authConfigs(toolkit), toolkit) !== undefined;
@@ -351,6 +367,7 @@ export class ComposioApps {
     const items = await this.authConfigs(toolkit);
     const custom = customOAuthConfig(items, toolkit);
     if (custom) return requiredString(custom.id);
+    if (requiresCustomAuth(toolkit)) throw new Error('App sign-in is not available for this app yet');
     const existing = items.find((item) =>
       object(item.toolkit).slug === toolkit && item.auth_scheme === 'OAUTH2' &&
       item.is_composio_managed === true && item.status === 'ENABLED');

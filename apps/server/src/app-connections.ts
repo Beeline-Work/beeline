@@ -15,7 +15,7 @@ import {
 import type { ConnectorStatus, RegistryMcpManifest } from '@beeline/api-contract/daemon';
 import type { SqlDatabase } from './database.js';
 import type { McpRegistryClient } from './mcp-registry.js';
-import { ComposioApps, composioToolkitForApp } from './composio-apps.js';
+import { ComposioApps, composioToolkitForApp, requiresCustomAuth } from './composio-apps.js';
 
 /**
  * The one front door for apps (`@beeline/api-contract/app-connections`).
@@ -48,7 +48,8 @@ type WorkbenchBacking =
     }
   | { readonly transport: 'squire-api'; readonly reference: string };
 
-type ComposioPick = 'supported' | 'none' | 'unavailable';
+/** `withheld`: the app signs in only through a custom OAuth config that is not set up. */
+type ComposioPick = 'supported' | 'none' | 'withheld' | 'unavailable';
 
 type AppRouteDecision =
   | { readonly kind: 'keep'; readonly transport: AppTransport; readonly note?: string }
@@ -112,7 +113,9 @@ export async function resolveAppRoute(
     };
   const oauth = await probes.composio?.() ?? 'unavailable';
   if (oauth === 'unavailable')
-    return { kind: 'unavailable', reason: 'The app connection could not be checked; try again shortly.' };
+    return { kind: 'unavailable', reason: 'The app connection could not be checked. Try again shortly.' };
+  if (oauth === 'withheld')
+    return { kind: 'unavailable', reason: 'This app is not available to connect yet.' };
   if (oauth === 'supported')
     return { kind: 'route', route: 'composio', transport: 'composio',
       reason: 'managed OAuth is supported for this app' };
@@ -553,7 +556,7 @@ function nextStep(
   const target = outcome.appKey ? appResourceTarget(outcome.appKey) : 'this app';
   const where = outcome.domain ?? name;
   if (outcome.status === 'unavailable')
-    return 'The app connection could not be checked. Try again shortly.';
+    return errorNote ?? 'The app connection could not be checked. Try again shortly.';
   if (outcome.status === 'needs_squire')
     return `Trusty Squire handles every sign-in, sign-up and payment for apps, and it is not connected for this owner. Offer it with offer_connector (connectorType trusty-squire), then call connect_app again.`;
   if (outcome.status === 'needs_sign_in')
@@ -613,8 +616,9 @@ export async function connectApp(
       // Keep the route unresolved rather than silently selecting Squire.
       if (!params.composio) return 'unavailable';
       try {
-        return await params.composio.supportsOAuth(composioToolkitForApp(key))
-          ? 'supported' : 'none';
+        const toolkit = composioToolkitForApp(key);
+        if (await params.composio.supportsOAuth(toolkit)) return 'supported';
+        return requiresCustomAuth(toolkit) ? 'withheld' : 'none';
       } catch {
         return 'unavailable';
       }
@@ -668,7 +672,8 @@ export async function connectApp(
       status: 'unavailable',
       app: params.app,
       appKey: key,
-      next: nextStep({ status: 'unavailable', app: params.app, appKey: key }, { status: 'error' }),
+      next: nextStep({ status: 'unavailable', app: params.app, appKey: key }, { status: 'error' },
+        preview.reason),
     };
 
   const applied = await database.transaction(async (db) => {
@@ -745,7 +750,8 @@ export async function connectApp(
       status: 'unavailable',
       app: params.app,
       appKey: key,
-      next: nextStep({ status: 'unavailable', app: params.app, appKey: key }, { status: 'error' }),
+      next: nextStep({ status: 'unavailable', app: params.app, appKey: key }, { status: 'error' },
+        applied.decision.kind === 'unavailable' ? applied.decision.reason : undefined),
     };
   const row = applied.row;
   let authorizationUrl: string | undefined;

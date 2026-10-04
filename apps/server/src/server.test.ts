@@ -65,6 +65,49 @@ describe('server readiness', () => {
     expect(transaction).not.toHaveBeenCalled();
   });
 
+  it('Reproduction web-app-signin: returns a web-started sign-in to the web app, not the app scheme', async () => {
+    const webAppOrigins = ['https://web.beeline.test'];
+    const authorization = 'https://backend.composio.dev/link/lk_fixture';
+    const start = await get(`/v1/apps/oauth/start?${new URLSearchParams({ authorization, return: webAppOrigins[0] })}`,
+      { query: vi.fn(), transaction: vi.fn() }, { webAppOrigins }, { redirect: 'manual' });
+    expect(start.status).toBe(302);
+    expect(start.headers.get('location')).toBe(authorization);
+    const cookie = start.headers.get('set-cookie')!;
+    expect(cookie).toContain('HttpOnly');
+    expect(cookie).toContain('SameSite=Lax');
+    const session = 'https://backend.composio.dev/session/one?a=1&b=2';
+    const verify = await get(`/v1/apps/oauth/verify?${new URLSearchParams({ session_uri: session })}`,
+      { query: vi.fn(), transaction: vi.fn() }, { webAppOrigins },
+      { redirect: 'manual', headers: { cookie: cookie.split(';')[0] } });
+    expect(verify.status).toBe(302);
+    const location = new URL(verify.headers.get('location')!);
+    expect(location.origin).toBe(webAppOrigins[0]);
+    expect(location.pathname).toBe('/beeline/settings/workbench/connect-signin');
+    expect(location.searchParams.get('appSignInSession')).toBe(session);
+    expect(verify.headers.get('set-cookie')).toContain('Max-Age=0');
+  });
+
+  it('keeps the native return when the return cookie names an origin that is not configured', async () => {
+    const response = await get('/v1/apps/oauth/verify?session_uri=session-fixture',
+      { query: vi.fn(), transaction: vi.fn() }, { webAppOrigins: ['https://web.beeline.test'] },
+      { redirect: 'manual', headers: { cookie: `beeline_app_sign_in_return=${encodeURIComponent('https://evil.test')}` } });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('location')).toBeNull();
+    expect(await response.text()).toContain('href="beeline://beeline/settings/workbench/connect-signin?appSignInSession=session-fixture"');
+  });
+
+  it.each([
+    ['an unconfigured return origin', 'https://backend.composio.dev/link/x', 'https://evil.test'],
+    ['a non-provider sign-in link', 'https://evil.test/link/x', 'https://web.beeline.test'],
+    ['a plain-http sign-in link', 'http://backend.composio.dev/link/x', 'https://web.beeline.test'],
+  ])('refuses to start web sign-in with %s', async (_label, authorization, returnOrigin) => {
+    const response = await get(`/v1/apps/oauth/start?${new URLSearchParams({ authorization, return: returnOrigin })}`,
+      { query: vi.fn(), transaction: vi.fn() }, { webAppOrigins: ['https://web.beeline.test'] }, { redirect: 'manual' });
+    expect(response.status).toBe(400);
+    expect(response.headers.get('location')).toBeNull();
+    expect(response.headers.get('set-cookie')).toBeNull();
+  });
+
   it('keeps an untrusted verifier session encoded in the return link', async () => {
     const session = 'https://provider.test/session?a=1&b="</script><script>alert(1)</script>\'';
     const response = await get(`/v1/apps/oauth/verify?${new URLSearchParams({ session_uri: session })}`,

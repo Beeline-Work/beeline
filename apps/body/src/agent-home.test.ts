@@ -1115,7 +1115,8 @@ describe('operator skills + MCP passthrough', () => {
     const operatorHome = await scratch('beeline-operator-home-');
     const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');
 
-    await expect(prepareRoomAgentHome({ root: roomRoot, operatorHome })).resolves.toEqual(
+    // toMatchObject: a host with an Android SDK (CI runners) also adds its env.
+    await expect(prepareRoomAgentHome({ root: roomRoot, operatorHome })).resolves.toMatchObject(
       roomAgentHomeEnv(roomRoot),
     );
     // No operator skills to link, but the managed skill is still shipped —

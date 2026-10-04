@@ -103,8 +103,10 @@ export class AgentTurnStream {
    * an answer, and an ending that reads one must settle through whatever else
    * it has.
    */
-  readonly onChunk = (delta: string, full: string, currentRun?: string): void => {
-    this.latestChunk = sanitizeAgentReply(delta);
+  readonly onChunk = (_delta: string, full: string, currentRun?: string): void => {
+    // ACP deltas can split words; keep the current narration run readable
+    // when the bounded draft lane coalesces several token updates.
+    this.latestChunk = sanitizeAgentReply(currentRun ?? '');
     this.latest = full;
     this.latestRun = currentRun ?? '';
     const text = sanitizeAgentReply(this.tailOf(full));
@@ -230,6 +232,7 @@ export class AgentTurnStream {
   beginRun(): void {
     this.latest = '';
     this.latestRun = '';
+    this.latestChunk = '';
     // The offset measured the abandoned run. The retry rewrites the answer
     // from its first delta, so nothing of the new stream is saved yet.
     this.persisted = '';

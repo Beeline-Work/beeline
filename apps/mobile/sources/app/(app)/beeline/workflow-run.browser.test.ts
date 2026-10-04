@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
 
 const STARTED = 1_790_000_000;
@@ -413,11 +413,34 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
       roleHolders: { implementer: candy },
       viewer: owner,
     };
-    const drafts = [
-      { type: 'draft', roomId: 'corner-2', agentId: candy.id, turnId: 't1', text: 'Reading the run view.', latestChunk: 'Reading the run view.' },
-      { type: 'draft', roomId: 'corner-2', agentId: candy.id, turnId: 't1',
-        text: 'Reading the run view.\n\nAdding the handle to each row.', latestChunk: 'Adding the handle to each row.' },
-    ];
+    // Use the real helper producer, with token-sized deltas and a slow wire.
+    // Loading it at runtime keeps host-only types out of mobile typecheck.
+    const { AgentTurnStream } = await vi.importActual<any>(path.join(repo(), 'apps/body/src/turn-stream.ts'));
+    const drafts: Array<Record<string, unknown>> = [];
+    const releases: Array<() => void> = [];
+    const stream = new AgentTurnStream({ agentId: candy.id, roomId: 'corner-2', requestId: 't1', label: 'proof',
+      api: { execute: (_name: string, input: Record<string, unknown>) => {
+        drafts.push({ type: 'draft', ...input });
+        return new Promise<void>(resolve => releases.push(resolve));
+      } } });
+    let currentRun = '';
+    for (const delta of ['Read', 'ing', ' the', ' run', ' view', '.']) {
+      currentRun += delta;
+      stream.onChunk(delta, currentRun, currentRun);
+    }
+    releases.shift()!();
+    await new Promise(resolve => setImmediate(resolve));
+    const prior = currentRun;
+    currentRun = '';
+    for (const delta of ['Add', 'ing', ' the', ' handle', ' to', ' each', ' row', '.']) {
+      currentRun += delta;
+      stream.onChunk(delta, `${prior}\n\n${currentRun}`, currentRun);
+    }
+    releases.shift()!();
+    await new Promise(resolve => setImmediate(resolve));
+    releases.shift()!();
+    await new Promise(resolve => setImmediate(resolve));
+    expect(drafts.map(draft => draft.latestChunk)).toEqual(['Read', 'Reading the run view.', 'Adding the handle to each row.']);
     const page = await proof(detail, '', 390, drafts);
     expect(page.live).toEqual({ implement: 'Adding the handle to each row.' });
     expect(Object.keys(page.assignees)).toEqual(['implement']);

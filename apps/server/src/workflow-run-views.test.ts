@@ -715,10 +715,37 @@ describe('visit output through daemon completion and phone GET', () => {
     return new DaemonService(database, new LiveHub()).execute('postRoomMessage', {
       roomId: command.room_id, requestId: command.turn_request_id,
       generationId: command.generation_id!, text,
-    }, TRIAGER);
+    }, command.agent_id);
   }
   const read = (runId: string, viewer = OWNER, roomId = CORNER) =>
     phone.execute('readWorkflowRun', { roomId, runId }, viewer);
+
+  it('Reproduction wf-human-1 R2: a reviewer question does not supply Implement output', async () => {
+    await advanceCorner(database, CORNER, { kind: 'open', lane: 'code',
+      workspaceId: WORKSPACE, implementerAgentId: TRIAGER });
+    const worker = await command(CORNER, TRIAGER);
+    const held = await claimAgentCommand(database, CORNER, TRIAGER, worker.id, 'worker-generation');
+    const other = await command(CORNER, REVIEWER);
+    const reviewer = await claimAgentCommand(database, CORNER, REVIEWER, other.id, 'reviewer-generation');
+    const daemon = new DaemonService(database, new LiveHub());
+    for (const [turn, text] of [[held, 'Building the agreed change.'], [reviewer, 'Answering a separate question.']] as const)
+      await daemon.execute('postAgentDraft', { roomId: CORNER, turnId: turn.turn_request_id,
+        requestId: turn.turn_request_id, generationId: turn.generation_id!, text, latestChunk: text }, turn.agent_id);
+    for (const viewer of [OWNER, REVIEWER]) {
+      const step = (await read(CORNER, viewer)).history[1]!;
+      expect.soft(step.outputTurns).toEqual([`${TRIAGER}:${held.turn_request_id}`]);
+      expect.soft(step.liveOutput).toBe('Building the agreed change.');
+    }
+    await advanceCorner(database, CORNER, { kind: 'push', headSha: '1'.repeat(40), contents: {} });
+    const saved = await final(held, 'The implementation is ready.');
+    await final(reviewer, 'Here is the answer to your separate question.');
+    for (const viewer of [OWNER, REVIEWER]) {
+      const fresh = await read(CORNER, viewer);
+      expect(fresh.history[1]!.finalReply).toEqual({ messageId: saved.id, text: 'The implementation is ready.' });
+      expect(fresh.history[2]!.finalReply).toBeUndefined();
+      console.info(`Reproduction wf-human-1 R2: viewer ${viewer.slice(0, 1)} saw Implement final: ${fresh.history[1]!.finalReply!.text}`);
+    }
+  });
 
   it('Reproduction wf-human-1: isolates two runs and repeated visits, including late final and duplicate delivery', async () => {
     const one = await start();
@@ -751,6 +778,51 @@ describe('visit output through daemon completion and phone GET', () => {
     }
     expect((await read(two)).history[0]!.finalReply?.text).toBe('Other run final.');
     await expect(read(one, OUTSIDER)).rejects.toThrow();
+  });
+
+  it('keeps a delayed handoff wake on its original corner visit and leaves server steps empty', async () => {
+    await advanceCorner(database, CORNER, { kind: 'open', lane: 'code',
+      workspaceId: WORKSPACE, implementerAgentId: TRIAGER });
+    const visitId = (await read(CORNER)).history[1]!.visitId!;
+    const triggered = (await createAgentCommand(database, { roomId: CORNER, agentId: REVIEWER,
+      sourceMessageId: visitId, reason: 'subscribed_event' }))!;
+    await advanceCorner(database, CORNER, { kind: 'push', headSha: '1'.repeat(40), contents: {} });
+    const held = await claimAgentCommand(database, CORNER, REVIEWER, triggered.id, 'delayed-handoff');
+    const unrelated = await command(CORNER, TRIAGER);
+    const other = await claimAgentCommand(database, CORNER, TRIAGER, unrelated.id, 'server-step-question');
+    await final(other, 'A separate answer during checks.');
+    const saved = await final(held, 'The handoff-triggered result.');
+    const fresh = await read(CORNER);
+    expect(fresh.history[1]!.finalReply).toEqual({ messageId: saved.id, text: 'The handoff-triggered result.' });
+    expect(fresh.history[2]!.finalReply).toBeUndefined();
+    expect(fresh.history[2]!.outputTurns).toBeUndefined();
+  });
+
+  it('keeps the reviewer final on Review and excludes a separate implementer turn', async () => {
+    await advanceCorner(database, CORNER, { kind: 'open', lane: 'code',
+      workspaceId: WORKSPACE, implementerAgentId: TRIAGER });
+    const headSha = '1'.repeat(40);
+    await advanceCorner(database, CORNER, { kind: 'push', headSha, contents: {} });
+    await database.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+      [CORNER, JSON.stringify({ checks: 'passing', lifecycle: 'in-review', pr: { number: 1, headSha } })]);
+    const source = await command(CORNER, TRIAGER);
+    expect((await advanceCorner(database, CORNER, { kind: 'checks', result: 'passing',
+      sourceMessageId: source.source_message_id })).state).toBe('review');
+    const review = (await database.query<CommandRow>(
+      `SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND source_message_id=$3`,
+      [CORNER, REVIEWER, source.source_message_id])).rows[0]!;
+    const held = await claimAgentCommand(database, CORNER, REVIEWER, review.id, 'review-generation');
+    const worker = await command(CORNER, TRIAGER);
+    const other = await claimAgentCommand(database, CORNER, TRIAGER, worker.id, 'separate-worker-generation');
+    const saved = await final(held, 'The review is complete.');
+    await final(other, 'A separate implementer answer.');
+    await advanceCorner(database, CORNER, { kind: 'closed' });
+    for (const viewer of [OWNER, TRIAGER]) {
+      const fresh = await read(CORNER, viewer);
+      expect(fresh.history.find(step => step.toState === 'review')!.finalReply)
+        .toEqual({ messageId: saved.id, text: 'The review is complete.' });
+      expect(fresh.history[1]!.finalReply).toBeUndefined();
+    }
   });
 
   it('captures a committed reply before handoff and retains pinned metadata across revisions', async () => {

@@ -525,15 +525,29 @@ describe('Room and corner live/final streaming parity (C100)', () => {
   });
 });
 
-it('sends only the newest actual delta separately from the cumulative draft', async () => {
+it('Reproduction wf-human-1 R1: coalesces token deltas into the current narration run', async () => {
   const recorder = gatedRecorder();
   const stream = streamFor(recorder.api);
-  stream.onChunk('First chunk.', 'First chunk.', 'First chunk.');
-  stream.onChunk('Older chunk.', 'First chunk.Older chunk.', 'First chunk.Older chunk.');
-  stream.onChunk('Newest chunk.', 'First chunk.Older chunk.Newest chunk.', 'First chunk.Older chunk.Newest chunk.');
+  let currentRun = '';
+  for (const delta of ['Read', 'ing', ' the', ' run', ' view', '.']) {
+    currentRun += delta;
+    stream.onChunk(delta, currentRun, currentRun);
+  }
   await recorder.release();
   expect(recorder.writes.filter((write) => write.name === 'postAgentDraft').map((write) => write.input.latestChunk))
-    .toEqual(['First chunk.', 'Newest chunk.']);
-  expect(recorder.texts()[1]).toBe('First chunk.Older chunk.Newest chunk.');
+    .toEqual(['Read', 'Reading the run view.']);
+  const previousRun = currentRun;
+  currentRun = '';
+  for (const delta of ['Add', 'ing', ' the', ' handle', ' to', ' each', ' row', '.']) {
+    currentRun += delta;
+    stream.onChunk(delta, `${previousRun}\n\n${currentRun}`, currentRun);
+  }
+  await recorder.release();
+  expect(recorder.writes.at(-1)!.input.latestChunk).toBe('Adding the handle to each row.');
+  expect(recorder.texts().at(-1)).toBe('Reading the run view.\n\nAdding the handle to each row.');
+  await recorder.release();
+  stream.beginRun();
+  stream.onChunk('New', 'New');
+  expect(recorder.writes.at(-1)!.input.latestChunk).toBe('');
   await recorder.release();
 });

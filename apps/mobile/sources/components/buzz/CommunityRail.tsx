@@ -1,5 +1,13 @@
-import React, { createContext, useCallback, useContext, useState } from 'react';
-import { Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import { PanResponder, Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { space } from '@/buzz/groknight';
 import * as Haptics from 'expo-haptics';
@@ -25,6 +33,8 @@ import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 const DRAWER_WIDTH = 72;
 const DRAWER_DURATION_MS = 180;
+const EDGE_SWIPE_WIDTH = 20;
+const EDGE_SWIPE_SLOP = 10;
 
 /**
  * The Workspace tile, and the picture seated in its bezel like a picture in a
@@ -396,9 +406,17 @@ export function CommunitySwitcherTrigger({
 
 type BuzzCommunityShellProps = CommunityRailProps & {
   children: React.ReactNode;
+  onDrawerOpen?: () => void;
+  swipeEnabled?: boolean;
 };
 
-export function BuzzCommunityShell({
+export function BuzzCommunityShell(props: BuzzCommunityShellProps) {
+  const parent = useContext(CommunityDrawerContext);
+  // The stack owns one drawer; page shells keep their content in that scope.
+  return parent ? <>{props.children}</> : <CommunityDrawerShell {...props} />;
+}
+
+function CommunityDrawerShell({
   children,
   communities,
   activeCommunityId,
@@ -409,13 +427,22 @@ export function BuzzCommunityShell({
   viewerPubkey,
   viewerAvatarUrl,
   viewerFace,
+  onDrawerOpen,
+  swipeEnabled = true,
 }: BuzzCommunityShellProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const drawerX = useSharedValue(-DRAWER_WIDTH);
   const scrimOpacity = useSharedValue(0);
   const reducedMotion = useReducedMotion();
+  const edgeTouch = useRef(false);
+  const edgeStartX = useRef(0);
+  const drawerOpenRef = useRef(drawerOpen);
+  drawerOpenRef.current = drawerOpen;
+  const swipeEnabledRef = useRef(swipeEnabled);
+  swipeEnabledRef.current = swipeEnabled;
 
   const openDrawer = useCallback(() => {
+    onDrawerOpen?.();
     drawerX.value = -DRAWER_WIDTH;
     scrimOpacity.value = 0;
     setDrawerOpen(true);
@@ -428,7 +455,7 @@ export function BuzzCommunityShell({
       duration: 120,
       reduceMotion: ReduceMotion.System,
     });
-  }, [drawerX, scrimOpacity]);
+  }, [drawerX, onDrawerOpen, scrimOpacity]);
 
   const closeDrawer = useCallback(() => {
     scrimOpacity.value = withTiming(0, {
@@ -447,6 +474,63 @@ export function BuzzCommunityShell({
       },
     );
   }, [drawerX, reducedMotion, scrimOpacity]);
+
+  useEffect(() => {
+    if (!swipeEnabled) closeDrawer();
+  }, [closeDrawer, swipeEnabled]);
+
+  const edgeSwipe = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponderCapture: (event) => {
+          edgeStartX.current = event.nativeEvent.pageX;
+          edgeTouch.current =
+            swipeEnabledRef.current &&
+            !drawerOpenRef.current &&
+            edgeStartX.current <= EDGE_SWIPE_WIDTH;
+          return false;
+        },
+        onMoveShouldSetPanResponderCapture: (_event, gesture) => {
+          if (Math.abs(gesture.dy) > EDGE_SWIPE_SLOP || gesture.numberActiveTouches !== 1) {
+            edgeTouch.current = false;
+          }
+          return edgeTouch.current && gesture.dx > EDGE_SWIPE_SLOP;
+        },
+        onPanResponderGrant: (_event, gesture) => {
+          onDrawerOpen?.();
+          drawerX.value =
+            Math.min(DRAWER_WIDTH, Math.max(0, gesture.x0 - edgeStartX.current)) - DRAWER_WIDTH;
+          scrimOpacity.value = ((drawerX.value + DRAWER_WIDTH) / DRAWER_WIDTH) * 0.78;
+          setDrawerOpen(true);
+        },
+        onPanResponderMove: (_event, gesture) => {
+          drawerX.value =
+            Math.min(DRAWER_WIDTH, Math.max(0, gesture.moveX - edgeStartX.current)) - DRAWER_WIDTH;
+          scrimOpacity.value = ((drawerX.value + DRAWER_WIDTH) / DRAWER_WIDTH) * 0.78;
+        },
+        onPanResponderRelease: (_event, gesture) => {
+          edgeTouch.current = false;
+          if (gesture.moveX - edgeStartX.current >= DRAWER_WIDTH / 2) {
+            drawerX.value = withTiming(0, {
+              duration: DRAWER_DURATION_MS,
+              reduceMotion: ReduceMotion.System,
+            });
+            scrimOpacity.value = withTiming(0.78, {
+              duration: 120,
+              reduceMotion: ReduceMotion.System,
+            });
+          } else {
+            closeDrawer();
+          }
+        },
+        onPanResponderTerminate: () => {
+          edgeTouch.current = false;
+          closeDrawer();
+        },
+        onPanResponderTerminationRequest: () => false,
+      }),
+    [closeDrawer, drawerX, onDrawerOpen, scrimOpacity],
+  );
 
   const selectAndClose = useCallback(
     (communityId: string | null) => {
@@ -474,7 +558,7 @@ export function BuzzCommunityShell({
 
   return (
     <CommunityDrawerContext.Provider value={{ drawerOpen, openDrawer }}>
-      <View style={styles.shell}>
+      <View style={styles.shell} {...edgeSwipe.panHandlers}>
         <View style={styles.content}>{children}</View>
         {drawerOpen && (
           <View style={styles.drawerOverlay} testID="community-drawer-overlay">

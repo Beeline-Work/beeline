@@ -30,6 +30,7 @@ vi.mock('react-native', async () => {
       }),
     },
     Platform: { select: (choices: Record<string, unknown>) => choices.default },
+    PanResponder: { create: (config: unknown) => ({ panHandlers: config }) },
     Pressable: host('Pressable'),
     ScrollView: host('ScrollView'),
     StyleSheet: { absoluteFillObject: {}, create: (styles: unknown) => styles },

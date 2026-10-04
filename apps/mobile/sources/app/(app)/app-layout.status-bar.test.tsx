@@ -47,6 +47,9 @@ vi.mock('expo-router', async () => {
 });
 
 vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
+vi.mock('@/components/buzz/WorkspaceNavigationShell', () => ({
+  WorkspaceNavigationShell: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
 vi.mock('@/text', () => ({ t: (key: string) => key }));
 
 import RootLayout from './_layout';

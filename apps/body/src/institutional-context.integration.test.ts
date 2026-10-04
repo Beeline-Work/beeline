@@ -464,8 +464,11 @@ describe('institutional context prefetch, proven against the real server', () =>
 
     expect(cornerPrompts.length).toBeGreaterThan(0);
     expect(cornerPrompts[0]).toContain("Ren's birthday cake order: red velvet, no nuts.");
-    const trace = await readInstitutionalMemoryOutcome(cornerTraceDir, cornerId);
-    expect(trace.outcome).toBe('served');
+    // The local trace is written asynchronously after the server receipt.
+    await vi.waitFor(async () => {
+      const trace = await readInstitutionalMemoryOutcome(cornerTraceDir, cornerId);
+      expect(trace.outcome).toBe('served');
+    }, { timeout: 10_000, interval: 25 });
   }, 30_000);
 
   it('serves the SECOND requester\'s own fact when their turn is queued behind a still-running first turn in the same Room', async () => {

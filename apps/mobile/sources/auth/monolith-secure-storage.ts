@@ -38,10 +38,11 @@ export async function monolithSecureStorage(
 ): Promise<MonolithSecureStorage> {
   if (desktop) return desktopSecureStorage(invoke);
   // Expo SecureStore's web shim calls a native host method that does not
-  // exist in an ordinary branch-preview browser. The legacy identity path
-  // already uses this same origin-scoped browser storage contract.
-  if (typeof window !== 'undefined' && typeof sessionStorage !== 'undefined') {
-    return browserMonolithStorage(sessionStorage);
+  // exist in an ordinary branch-preview browser. localStorage, like the legacy
+  // identity path, keeps one sign-in for the origin across reloads and tabs;
+  // sign-out removes it for every tab.
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    return browserMonolithStorage(localStorage);
   }
   return import('expo-secure-store');
 }

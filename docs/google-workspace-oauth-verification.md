@@ -1,6 +1,8 @@
-# Google Workspace OAuth verification draft
+# Google OAuth verification draft (YouTube)
 
-The Cloud OAuth consent screen is in **In production**. Its branding is verified; data access is not yet verified. Keep the Cloud client ID and secret aligned with the Composio auth config without copying either secret into this document. On 2026-09-28, the unused `gmail.send`, `gmail.compose`, and `calendar.events` declarations were removed from the production project's Data Access page; Google confirmed the changes were saved. The retained declarations were Calendar read, Gmail read, Drive read, YouTube read, and YouTube Analytics read. YouTube upload (`youtube.upload`) is now also requested and must be declared on the Data Access page before submission.
+The Cloud OAuth consent screen is in **In production**. Its branding is verified; data access is not yet verified. Keep the Cloud client ID and secret aligned with the Composio auth config without copying either secret into this document.
+
+The verification submission covers YouTube scopes only. On 2026-09-28, the unused `gmail.send`, `gmail.compose`, and `calendar.events` declarations were removed from the production project's Data Access page. On 2026-10-04, `calendar.readonly`, `gmail.readonly`, and `drive.readonly` were also removed and saved; after reload the page lists only `yt-analytics.readonly` (non-sensitive), `youtube.upload` and `youtube.readonly` (sensitive), and no restricted scopes. Calendar, Gmail, and Drive connect through Composio's managed configs, not Beeline's Google client, so they are not part of this submission.
 
 ## How Google sign-in runs
 
@@ -12,29 +14,35 @@ YouTube connects only through that custom config. The server never falls back to
 
 ## Requested scopes and purpose
 
-Each tool is connected separately through its own Composio toolkit, which requests the scopes set on that toolkit's auth config.
-
-| Selected tool | Scope | User-facing reason and demo action |
+| Scope | Sensitivity | User-facing reason and demo action |
 | --- | --- | --- |
-| Calendar | `https://www.googleapis.com/auth/calendar.readonly` | Read the person's upcoming primary-calendar events to answer a Room or DM request. Show an agent listing events after the person approves the card. |
-| Gmail | `https://www.googleapis.com/auth/gmail.readonly` | Read messages that the person asks an agent to find or summarize. Show a message search and a selected message. |
-| Drive | `https://www.googleapis.com/auth/drive.readonly` | List non-trashed files the person asks about. Show a file listing after consent. |
-| YouTube | `https://www.googleapis.com/auth/youtube.readonly`, `https://www.googleapis.com/auth/yt-analytics.readonly`, and `https://www.googleapis.com/auth/youtube.upload` | Read the connected channel's videos and owner Analytics, and upload a video the person asks an agent to publish. Show channel, video, and Analytics queries and an upload from the owner account. |
+| `https://www.googleapis.com/auth/youtube.readonly` | Sensitive | List the connected channel's videos when the owner asks. Show a channel and video read. |
+| `https://www.googleapis.com/auth/yt-analytics.readonly` | Non-sensitive | Read the owner's channel metrics when the owner asks. Show an Analytics read. |
+| `https://www.googleapis.com/auth/youtube.upload` | Sensitive | Upload only a video the owner asks the agent to publish. Show an upload from the owner account. |
+
+No scope allows editing or deleting videos.
 
 ## Verification submission copy
 
-**App purpose:** Beeline lets an agent's human owner connect selected Google Workspace tools so that agent can answer the owner's explicit requests in a Beeline Room or direct message. The owner starts Google consent from Workbench or an in-conversation Connect card. The grant is held by Composio for that owner, using Beeline's Google client. Google tokens are never posted into chat. The owner can disconnect from Workbench.
+**App purpose:** Beeline lets an agent's human owner connect YouTube so that agent can act on the owner's explicit requests in a Beeline Room or direct message. The owner starts Google consent from Workbench or an in-conversation Connect card. The grant is held by Composio for that owner, using Beeline's Google client. Google tokens are never posted into chat. The owner can disconnect from Workbench.
 
-**Why these scopes:** Calendar read access supplies upcoming events; Gmail read access supplies search and message reading; Drive read access supplies file listings; YouTube read and Analytics access supply channel content and owner metrics; YouTube upload publishes a video the owner asked for. Each tool is offered separately.
+**Why these scopes:** Owners connect YouTube so their Beeline agent can act on their requests: list their videos (readonly), read channel metrics (analytics), and upload only a video the owner asks for. No edit or delete.
 
-**User control:** The owner must tap Connect and complete Google's consent. A denied, cancelled, failed, or expired attempt returns to Connect. The conversation continues only after a successful consent for the selected tool and resumes the original request. Workbench provides Disconnect for the account. A different Room member cannot accept a Google card for that agent's owner-bound grant.
+**User control:** The owner must tap Connect and complete Google's consent. A denied, cancelled, failed, or expired attempt returns to Connect. The conversation continues only after a successful consent and resumes the original request. Workbench provides Disconnect for the account. A different Room member cannot accept a Google card for that agent's owner-bound grant.
 
 ## Demo video script
 
-1. Start with Google tools disconnected in Workbench.
-2. In a Room, ask an agent to read upcoming Calendar events. Show the Calendar Connect card and tap once. Show Google's account chooser and scope list, and complete consent.
-3. Return to the same Room. Show the accepted card, the agent resuming the original Calendar request, and the event answer. Repeat the card flow in a DM.
-4. Show a cancelled attempt returning to a clean Connect action. Retry successfully.
-5. In Workbench, connect Gmail, Drive, and YouTube separately and show each consent scope list and matching tool result, including a YouTube upload. Show Disconnect.
+1. Start with YouTube disconnected in Workbench.
+2. In Workbench, tap Connect on YouTube.
+3. Show Google's consent screen for the production client, with the client ID visible in the browser URL. Google's unverified-app screen is expected here; continue past it, show the account chooser and the YouTube scope list, and complete consent.
+4. Return to Beeline and show YouTube connected in Workbench.
+5. Ask the agent to list the channel's videos. Show the channel and video read.
+6. Ask the agent for the channel's metrics. Show the Analytics read.
+7. Ask the agent to upload a specific video. Show the upload completing on the owner's channel.
+8. In Workbench, tap Disconnect on YouTube and show it disconnected.
 
-Record the video against the production OAuth client registered in Composio, and the redirect URI that will be submitted. Review Google's live verification form against this copy and attach the video and any required domain/privacy/security evidence before submission. The data-access verification is **not submitted**; Google review, and any required restricted-scope assessment, remain external gates.
+Record the video against the production OAuth client registered in Composio, and the redirect URI that will be submitted. Review Google's live verification form against this copy and attach the video and any required domain/privacy evidence before submission.
+
+## Status
+
+Data-access verification is **not submitted**. The Verification Center blocks submission with "Missing the following fields for one or more requested scopes: demo video." The demo video is the remaining blocker. No restricted-scope (CASA) security assessment applies, because no restricted scopes are requested. Google review remains an external gate.

@@ -1,10 +1,11 @@
 /**
  * useSpeechInput — free platform speech recognition.
  *
- * Wraps the platform speech recogniser with on-device preference, transparent
- * session chaining past platform limits, and a silence auto-stop. Silence is
- * a result-gap with no speech-level volume, not merely a sparse Android
- * interim; captured text never shares the page with "didn't catch that".
+ * Wraps the platform speech recogniser with its server model preferred,
+ * transparent session chaining past platform limits, and a silence auto-stop.
+ * Silence is a result-gap with no speech-level volume, not merely a sparse
+ * Android interim; captured text never shares the page with "didn't catch
+ * that". Transcripts are corrected against the Room lexicon (speech-correction).
  */
 import * as React from 'react';
 import { Platform } from 'react-native';
@@ -13,6 +14,7 @@ import {
   type SpeechRecognitionInterface,
 } from './speech-recognition-adapter';
 import { getDeviceSpeechLocale } from './speech-locale';
+import { createSpeechCorrector } from './speech-correction';
 
 export type SpeechInputState =
   'idle' | 'listening' | 'finalizing' | 'nothing-recognised' | 'permission-denied';
@@ -50,6 +52,9 @@ const SPEECH_VOLUME_FLOOR = 0;
 // Android 14 downloads a speech model in the background once the platform has
 // its consent; Android 13 hands the whole download to a platform dialog.
 const ANDROID_BACKGROUND_MODEL_DOWNLOAD_API = 34;
+// Google's server recognizer is more accurate than its on-device model and
+// honours the Room lexicon; Samsung and other defaults may not.
+export const ANDROID_GOOGLE_RECOGNITION_SERVICE = 'com.google.android.googlequicksearchbox';
 
 function sameLocale(a: string, b: string): boolean {
   return a.replace(/_/g, '-').toLowerCase() === b.replace(/_/g, '-').toLowerCase();
@@ -131,37 +136,52 @@ export function useSpeechInput(
 
   // A caller rebuilding the same names each render must not restart listeners.
   const contextualKey = contextualStrings.join('\n');
-  // Prefer the free on-device recogniser where the platform reports it; the
-  // platform default (still free) is the fallback.
-  const startOptions = React.useMemo(() => {
-    let onDevice = false;
+  const corrector = React.useMemo(
+    () => createSpeechCorrector(contextualKey ? contextualKey.split('\n') : []),
+    [contextualKey],
+  );
+  const correctorRef = React.useRef(corrector);
+  correctorRef.current = corrector;
+  // Android pins Google's server recognizer when it is installed.
+  const androidGoogleService = React.useMemo(() => {
+    if (Platform.OS !== 'android') return false;
     try {
-      onDevice = modRef.current?.supportsOnDeviceRecognition?.() ?? false;
+      return (
+        modRef.current
+          ?.getSpeechRecognitionServices?.()
+          .includes(ANDROID_GOOGLE_RECOGNITION_SERVICE) ?? false
+      );
     } catch {
-      // A capability probe is advisory; the platform recognizer still works.
+      return false;
     }
+  }, []);
+  // The platforms' server models are the most accurate free recognizers.
+  const startOptions = React.useMemo(() => {
     return {
       lang: getDeviceSpeechLocale(),
       interimResults: true,
       continuous: true,
-      // Android reports that an on-device recognizer exists even when the
-      // selected locale model is not installed, so it is chosen per start
-      // from the installed locales instead (nativeStartOptions).
-      requiresOnDeviceRecognition: Platform.OS === 'ios' && onDevice,
+      // Without Google's service, Android chooses its on-device recognizer
+      // per start from the installed locales instead (nativeStartOptions).
+      requiresOnDeviceRecognition: false,
+      ...(androidGoogleService
+        ? { androidRecognitionServicePackage: ANDROID_GOOGLE_RECOGNITION_SERVICE }
+        : {}),
       addsPunctuation: true,
       iosTaskHint: 'dictation' as const,
       volumeChangeEventOptions: { enabled: true, intervalMillis: 160 },
       // iOS biases toward these; Android does on 13+ (EXTRA_BIASING_STRINGS).
       ...(contextualKey ? { contextualStrings: contextualKey.split('\n') } : {}),
     };
-  }, [contextualKey]);
-  // Android's recognizer is chosen per start from the installed models.
+  }, [androidGoogleService, contextualKey]);
+  // Without Google's service, Android's recognizer is chosen per start from
+  // the installed models.
   const nativeStartOptions = React.useCallback(
     () =>
-      Platform.OS === 'android'
+      Platform.OS === 'android' && !androidGoogleService
         ? { ...startOptions, requiresOnDeviceRecognition: androidOnDeviceRef.current }
         : startOptions,
-    [startOptions],
+    [androidGoogleService, startOptions],
   );
 
   const finishStopWithCapture = React.useCallback((pendingPartial: string) => {
@@ -232,8 +252,10 @@ export function useSpeechInput(
     const onResult = (event: any) => {
       if (!listeningRef.current && !stopRequestedRef.current) return;
       if (!event.results?.length) return;
-      const best = event.results[0];
-      const transcript = typeof best.transcript === 'string' ? best.transcript : '';
+      const alternatives: string[] = event.results.map((result: any) =>
+        typeof result?.transcript === 'string' ? result.transcript : '',
+      );
+      const transcript = correctorRef.current.correct(alternatives);
       if (!transcript) return;
 
       // Any result — interim or final — counts as recent speech.
@@ -355,7 +377,7 @@ export function useSpeechInput(
           return;
         }
       }
-      if (Platform.OS === 'android' && !androidOnDeviceRef.current) {
+      if (Platform.OS === 'android' && !androidGoogleService && !androidOnDeviceRef.current) {
         androidOnDeviceRef.current = await androidOnDeviceModelInstalled(m, startOptions.lang);
         if (attempt !== startAttemptRef.current) return;
         // Ask once, in Beeline's own dialog, before the platform is asked for
@@ -388,7 +410,14 @@ export function useSpeechInput(
       listeningRef.current = false;
       clearSilenceTimer();
     }
-  }, [armSilenceTimer, capability, clearSilenceTimer, nativeStartOptions, startOptions.lang]);
+  }, [
+    androidGoogleService,
+    armSilenceTimer,
+    capability,
+    clearSilenceTimer,
+    nativeStartOptions,
+    startOptions.lang,
+  ]);
 
   const stop = React.useCallback((): Promise<boolean | null> => {
     if (stopSettlementRef.current) return stopSettlementRef.current.promise;

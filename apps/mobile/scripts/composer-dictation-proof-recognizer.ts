@@ -3,6 +3,7 @@
  * `./speech-recognition-adapter` to return `recognizerModule`, so the real
  * useSpeechInput runs in the page.
  * The locale model is not installed, as on a phone that has never dictated.
+ * A proof lists `services` to stand in for installed recognition services.
  */
 type Handler = (event?: unknown) => void;
 
@@ -11,15 +12,20 @@ const handlers = new Map<string, Handler>();
 export const speechProofRecognizer = {
   module: undefined as unknown,
   started: 0,
-  lastStartOptions: null as null | { contextualStrings?: string[] },
+  lastStartOptions: null as null | {
+    contextualStrings?: string[];
+    requiresOnDeviceRecognition?: boolean;
+    androidRecognitionServicePackage?: string;
+  },
   downloadRequests: [] as string[],
+  services: [] as string[],
   emit(event: string, payload?: unknown) {
     handlers.get(event)?.(payload);
   },
 };
 
 const recognizerModule = {
-  start(options: { contextualStrings?: string[] }) {
+  start(options: NonNullable<typeof speechProofRecognizer.lastStartOptions>) {
     speechProofRecognizer.started += 1;
     speechProofRecognizer.lastStartOptions = options;
   },
@@ -35,6 +41,7 @@ const recognizerModule = {
     speechProofRecognizer.downloadRequests.push(locale);
     return { status: 'download_success' };
   },
+  getSpeechRecognitionServices: () => speechProofRecognizer.services,
   addListener(event: string, handler: Handler) {
     handlers.set(event, handler);
     return { remove: () => handlers.delete(event) };

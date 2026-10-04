@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act, create } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  ANDROID_GOOGLE_RECOGNITION_SERVICE,
   SPEECH_FINALIZATION_TIMEOUT_MS,
   SPEECH_SILENCE_TIMEOUT_MS,
   useSpeechInput,
@@ -38,6 +39,7 @@ const mockMod = {
   supportsOnDeviceRecognition: vi.fn(),
   getSupportedLocales: vi.fn(),
   androidTriggerOfflineModelDownload: vi.fn(),
+  getSpeechRecognitionServices: vi.fn(),
   addListener: vi.fn(),
 };
 
@@ -92,6 +94,8 @@ beforeEach(() => {
     canAskAgain: true,
   });
   mockMod.supportsOnDeviceRecognition.mockReturnValue(true);
+  // Most Android tests cover a phone without Google's recognizer.
+  mockMod.getSpeechRecognitionServices.mockReturnValue([]);
   mockMod.getSupportedLocales.mockResolvedValue({ locales: [], installedLocales: [] });
   mockMod.androidTriggerOfflineModelDownload.mockResolvedValue({
     status: 'download_success',
@@ -144,31 +148,6 @@ describe('useSpeechInput', () => {
     expect(mockMod.stop).toHaveBeenCalled();
   });
 
-  it('falls back to the platform default when on-device is unsupported', async () => {
-    vi.useFakeTimers();
-    mockMod.supportsOnDeviceRecognition.mockReturnValue(false);
-    const { speech, probe } = renderHook();
-    await act(async () => {
-      await speech().start();
-    });
-    expect(mockMod.start).toHaveBeenCalledWith(
-      expect.objectContaining({ requiresOnDeviceRecognition: false }),
-    );
-  });
-
-  it('falls back when the optional on-device capability probe throws', async () => {
-    mockMod.supportsOnDeviceRecognition.mockImplementation(() => {
-      throw new Error('capability unavailable');
-    });
-    const { speech } = renderHook();
-    await act(async () => {
-      await speech().start();
-    });
-    expect(mockMod.start).toHaveBeenCalledWith(
-      expect.objectContaining({ requiresOnDeviceRecognition: false }),
-    );
-  });
-
   it('passes contextual names to the recogniser only when there are some', async () => {
     const { speech } = renderHook(vi.fn(), ['Niglet', 'Emberus']);
     await act(async () => {
@@ -185,16 +164,60 @@ describe('useSpeechInput', () => {
     expect(mockMod.start.mock.lastCall?.[0]).not.toHaveProperty('contextualStrings');
   });
 
-  it('uses on-device recognition on iOS when the platform supports it', async () => {
+  it("uses Apple's server recognizer on iOS even when on-device is supported", async () => {
     platformState.OS = 'ios';
     const { speech } = renderHook();
     await act(async () => {
       await speech().start();
     });
     expect(mockMod.start).toHaveBeenCalledWith(
-      expect.objectContaining({ requiresOnDeviceRecognition: true, lang: 'en-GB' }),
+      expect.objectContaining({ requiresOnDeviceRecognition: false, lang: 'en-GB' }),
     );
+    expect(mockMod.start.mock.lastCall?.[0]).not.toHaveProperty('androidRecognitionServicePackage');
     platformState.OS = 'android';
+  });
+
+  it("pins Google's server recognizer on Android when it is installed, without the model offer", async () => {
+    platformState.Version = 34;
+    mockMod.getSpeechRecognitionServices.mockReturnValue([
+      'com.samsung.android.bixby.agent',
+      ANDROID_GOOGLE_RECOGNITION_SERVICE,
+    ]);
+    mockMod.getSupportedLocales.mockResolvedValue({ locales: [], installedLocales: ['en-GB'] });
+    const { speech } = renderHook();
+    await act(async () => {
+      await speech().start();
+    });
+    expect(speech().modelDownloadOffered).toBe(false);
+    expect(mockMod.getSupportedLocales).not.toHaveBeenCalled();
+    expect(mockMod.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requiresOnDeviceRecognition: false,
+        androidRecognitionServicePackage: ANDROID_GOOGLE_RECOGNITION_SERVICE,
+        addsPunctuation: true,
+      }),
+    );
+  });
+
+  it('commits the alternative that names Room terms, snapped to the lexicon', async () => {
+    const { speech, probe, onResult } = renderHook(vi.fn(), ['Groq', 'OpenRouter']);
+    await act(async () => {
+      await speech().start();
+    });
+    await act(async () => {
+      fireEvent('result', { results: [{ transcript: 'try croc' }], isFinal: false });
+    });
+    expect(probe()['data-partial']).toBe('try Groq');
+    await act(async () => {
+      fireEvent('result', {
+        results: [
+          { transcript: 'try crack and open router' },
+          { transcript: 'try croc and open rotor' },
+        ],
+        isFinal: true,
+      });
+    });
+    expect(onResult).toHaveBeenCalledWith('try Groq and OpenRouter');
   });
 
   it('uses the Android on-device recognizer, which punctuates, when the locale is installed', async () => {

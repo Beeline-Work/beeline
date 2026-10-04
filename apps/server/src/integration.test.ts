@@ -6257,6 +6257,25 @@ describe('monolith integration', () => {
     });
   });
 
+  it('creates a human corner that inherits only Room-level subscriptions from a stale parent row', async () => {
+    await database.query(
+      `UPDATE memberships SET event_subscriptions='["joined","grant-decided"]'::jsonb
+       WHERE room_id=$1 AND identity_id=$2`,
+      [ROOM, AGENT],
+    );
+    const created = await operation('createHumanCorner', {
+      roomId: ROOM,
+      title: 'Subscription inherit check',
+    });
+    expect(created.status).toBe(200);
+    const { id: cornerId } = (await created.json()) as { id: string };
+    const inherited = await database.query<{ event_subscriptions: string[] }>(
+      `SELECT event_subscriptions FROM memberships WHERE room_id=$1 AND identity_id=$2`,
+      [cornerId, AGENT],
+    );
+    expect(inherited.rows[0]!.event_subscriptions).toEqual(['joined']);
+  });
+
   it('creates title-only human corners that only their creator or a Workspace owner or admin can close', async () => {
     const created = await operation('createHumanCorner', {
       roomId: ROOM,
@@ -13107,6 +13126,51 @@ describe('monolith integration', () => {
     });
     expect(outside.status).toBe(403);
     expect(((await outside.json()) as { error: string }).error).toBe('daemon room access denied');
+  });
+
+  it('refuses a per-item kind: its own owner already wakes directly, with no subscription involved', async () => {
+    // grant-decided, choice-answered, choice-skipped, poll-closed,
+    // turn-cancelled, squire-approval-decided and connector-offer-decided all
+    // answer ONE ask and already wake that ask's owner outright (`wakes:
+    // [...]` at the call site). A Room-wide subscription to any of them would
+    // wake the subscriber on every OTHER agent's item too, forever.
+    for (const kind of ['grant-decided', 'choice-answered', 'turn-cancelled']) {
+      const refused = await daemonOperation('setEventSubscriptions', {
+        roomId: ROOM,
+        kinds: [kind],
+      });
+      expect(refused.status).toBeGreaterThanOrEqual(400);
+      expect(((await refused.json()) as { error: string }).error).toMatch(
+        new RegExp(`${kind} wakes its own item's owner automatically`),
+      );
+    }
+    // Nothing was written by any of the refusals.
+    expect(
+      await (await daemonOperation('listEventSubscriptions', { roomId: ROOM })).json(),
+    ).toEqual({ kinds: [] });
+  });
+
+  it('opens a corner that inherits only Room-level subscriptions from a stale parent row', async () => {
+    // A legacy row (from before subscribe_events refused per-item kinds) could
+    // still carry one. Opening a corner must not resurrect it there.
+    await database.query(
+      `UPDATE memberships SET event_subscriptions='["joined","grant-decided"]'::jsonb
+       WHERE room_id=$1 AND identity_id=$2`,
+      [ROOM, AGENT],
+    );
+    const created = await daemonOperation('createCorner', {
+      roomId: ROOM,
+      requestId: 'corner-subscription-inherit-request',
+      name: 'Inherit check',
+      objective: 'Check what a new corner inherits',
+    });
+    expect(created.status).toBe(200);
+    const { cornerId } = (await created.json()) as { cornerId: string };
+    const inherited = await database.query<{ event_subscriptions: string[] }>(
+      `SELECT event_subscriptions FROM memberships WHERE room_id=$1 AND identity_id=$2`,
+      [cornerId, AGENT],
+    );
+    expect(inherited.rows[0]!.event_subscriptions).toEqual(['joined']);
   });
 
   it('emits an agent event with the cause the server read, and refuses one outside a turn', async () => {

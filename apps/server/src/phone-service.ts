@@ -29,6 +29,7 @@ import {
   HUMAN_CORNER_TITLE_MAX_LENGTH,
   isServerEventKind,
   ROOM_VIEW_AGENT_LIMIT,
+  SUBSCRIBABLE_EVENT_KINDS,
   ROOM_VIEW_BRIEFING_LIMIT,
   ROOM_VIEW_CHAT_LIMIT,
   ROOM_VIEW_MEMBER_LIMIT,
@@ -5816,9 +5817,13 @@ export class PhoneService {
       );
       await database.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
-         SELECT workspace_id,$2,identity_id,role,event_subscriptions FROM memberships
+         SELECT workspace_id,$2,identity_id,role,
+           (SELECT COALESCE(jsonb_agg(elem),'[]'::jsonb)
+            FROM jsonb_array_elements_text(event_subscriptions) elem
+            WHERE elem=ANY($3::text[]))
+         FROM memberships
          WHERE room_id=$1 AND removed_at IS NULL ON CONFLICT DO NOTHING`,
-        [input.roomId, id],
+        [input.roomId, id, SUBSCRIBABLE_EVENT_KINDS],
       );
       await database.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role)

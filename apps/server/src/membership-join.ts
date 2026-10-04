@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { SystemEventKind } from '@beeline/api-contract/phone';
+import { SUBSCRIBABLE_EVENT_KINDS, type SystemEventKind } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { systemIdentityMention, systemLine, workspaceSystemLine } from './system-line.js';
 
@@ -47,6 +47,21 @@ export async function syncTopLevelSharedRoomRoles(
   return result.rowCount;
 }
 
+/**
+ * The subset of a parent member's `event_subscriptions` a corner membership
+ * row may inherit: Room-level kinds only. A per-item kind answers one ask by
+ * waking its owner directly, never through a subscription, so copying one
+ * into a corner would only resurrect the exact standing-hook subscription
+ * this file is kept from creating.
+ */
+function inheritableEventSubscriptionsSql(subscribableKindsParam: number): string {
+  return `(
+    SELECT COALESCE(jsonb_agg(elem),'[]'::jsonb)
+    FROM jsonb_array_elements_text(parent_member.event_subscriptions) elem
+    WHERE elem=ANY($${subscribableKindsParam}::text[])
+  )`;
+}
+
 async function inheritCornerMemberships(
   database: SqlDatabase,
   workspaceId: string,
@@ -56,7 +71,7 @@ async function inheritCornerMemberships(
   if (!parentRoomIds.length) return;
   await database.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
-     SELECT corner.workspace_id,corner.id,$2,'member',parent_member.event_subscriptions
+     SELECT corner.workspace_id,corner.id,$2,'member',${inheritableEventSubscriptionsSql(4)}
      FROM rooms corner
      JOIN memberships parent_member ON parent_member.room_id=corner.parent_id
        AND parent_member.identity_id=$2 AND parent_member.removed_at IS NULL
@@ -65,7 +80,7 @@ async function inheritCornerMemberships(
      DO UPDATE SET role='member',removed_at=NULL,
        event_subscriptions=EXCLUDED.event_subscriptions
        WHERE memberships.removed_at IS NOT NULL`,
-    [workspaceId, identityId, parentRoomIds],
+    [workspaceId, identityId, parentRoomIds, SUBSCRIBABLE_EVENT_KINDS],
   );
 }
 
@@ -112,12 +127,13 @@ export async function backfillInheritedCornerMemberships(database: SqlDatabase):
   const result = await database.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
      SELECT corner.workspace_id,corner.id,parent_member.identity_id,parent_member.role,
-            parent_member.event_subscriptions
+            ${inheritableEventSubscriptionsSql(1)}
      FROM rooms corner
      JOIN memberships parent_member ON parent_member.room_id=corner.parent_id
        AND parent_member.removed_at IS NULL
      WHERE corner.parent_id IS NOT NULL
      ON CONFLICT DO NOTHING`,
+    [SUBSCRIBABLE_EVENT_KINDS],
   );
   console.log(
     `backfillInheritedCornerMemberships: added ${result.rowCount} missing corner membership row(s)`,

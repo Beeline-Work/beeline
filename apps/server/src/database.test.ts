@@ -9,6 +9,7 @@ import {
   backfillMessageSearchDocuments,
   MESSAGE_SEARCH_DOCUMENT_MAX_BYTES,
   backfillInstitutionalMemoryRollout,
+  backfillPerItemEventSubscriptions,
   backfillYoloModeDefault,
   MESSAGE_CURSOR_MS_SQL,
   migrate,
@@ -1344,7 +1345,7 @@ describe('the inherited corner membership migration', () => {
       [WORKSPACE, ROOM, OWNER, LATE_MEMBER, REMOVED_MEMBER, CORNER],
     );
     await database.query(
-      `UPDATE memberships SET event_subscriptions='["check-passed"]'::jsonb
+      `UPDATE memberships SET event_subscriptions='["check-passed","grant-decided"]'::jsonb
        WHERE room_id=$1 AND identity_id=$2`,
       [ROOM, LATE_MEMBER],
     );
@@ -1352,7 +1353,7 @@ describe('the inherited corner membership migration', () => {
 
   afterEach(() => database.close());
 
-  it('adds absent late joiners without restoring an explicitly removed corner member', async () => {
+  it('adds absent late joiners without restoring an explicitly removed corner member, inheriting only Room-level kinds', async () => {
     await expect(backfillInheritedCornerMemberships(database)).resolves.toBe(2);
     const memberships = await database.query<{
       identity_id: string;
@@ -1380,6 +1381,44 @@ describe('the inherited corner membership migration', () => {
       },
     ]);
     await expect(backfillInheritedCornerMemberships(database)).resolves.toBe(0);
+  });
+});
+
+describe('the per-item event subscription migration', () => {
+  const AGENT_A = 'a'.repeat(64);
+  const AGENT_B = 'b'.repeat(64);
+  const WORKSPACE = '11111111-1111-4111-8111-111111111111';
+  const ROOM = '22222222-2222-4222-8222-222222222222';
+
+  it('strips exactly the per-item kinds, idempotently, and leaves Room-level kinds alone', async () => {
+    const database = new PgliteDatabase();
+    await migrate(database);
+    await database.query(
+      `INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee'),($2,'agent','Owl')`,
+      [AGENT_A, AGENT_B],
+    );
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Workspace')`, [WORKSPACE]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
+      ROOM,
+      WORKSPACE,
+    ]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions) VALUES
+       ($1,$2,$3,'member','["joined","grant-decided","choice-answered"]'::jsonb),
+       ($1,$2,$4,'member','["merged"]'::jsonb)`,
+      [WORKSPACE, ROOM, AGENT_A, AGENT_B],
+    );
+    await expect(backfillPerItemEventSubscriptions(database)).resolves.toBe(1);
+    const rows = await database.query<{ identity_id: string; event_subscriptions: string[] }>(
+      `SELECT identity_id,event_subscriptions FROM memberships WHERE room_id=$1 ORDER BY identity_id`,
+      [ROOM],
+    );
+    expect(rows.rows).toEqual([
+      { identity_id: AGENT_A, event_subscriptions: ['joined'] },
+      { identity_id: AGENT_B, event_subscriptions: ['merged'] },
+    ]);
+    await expect(backfillPerItemEventSubscriptions(database)).resolves.toBe(0);
+    await database.close();
   });
 });
 

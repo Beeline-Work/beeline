@@ -186,6 +186,27 @@ describe('who an event line mentions', () => {
     expect(await wokenBy(written.id)).toEqual([]);
   });
 
+  it('ignores a per-item kind subscription, even a stale row that still has one', async () => {
+    // Defense for old rows: before the migration that strips them, a
+    // membership could still carry a per-item kind in event_subscriptions.
+    // That kind must never wake a subscriber on another agent's item - only
+    // the item's own owner wakes, via `wakes` at the call site.
+    await database.query(
+      `UPDATE memberships SET event_subscriptions='["choice-answered"]'::jsonb WHERE identity_id=$1`,
+      [GREETER],
+    );
+    const written = await systemLine(database, {
+      roomId: ROOM,
+      subject: { kind: 'person', id: HUMAN, name: 'Ada' },
+      verb: 'picked',
+      kind: 'choice-answered',
+      wakes: [QUIET_AGENT],
+    });
+    // Only the explicit owner wake fires; the subscribed-but-not-the-owner
+    // agent hears nothing.
+    expect(await wokenBy(written.id)).toEqual([QUIET_AGENT]);
+  });
+
   it('still writes the line when the subscriber lookup fails', async () => {
     // The caller is a real membership write. Losing a join to a subscription
     // lookup would be a silent partial join, so the fill is best-effort.

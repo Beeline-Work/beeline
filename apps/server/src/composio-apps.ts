@@ -96,6 +96,63 @@ function stripSecrets(value: unknown, depth = 0): unknown {
   ).map(([key, item]) => [key, stripSecrets(item, depth + 1)]));
 }
 
+/**
+ * Beeline's own YouTube tool: Composio's YouTube toolkit only wraps the Data API, so this
+ * reads YouTube Analytics reports through Composio's authenticated proxy. The Google token
+ * stays in Composio.
+ */
+export const YOUTUBE_ANALYTICS_TOOL = 'BEELINE_YOUTUBE_ANALYTICS_REPORT';
+const YOUTUBE_ANALYTICS_REPORTS = 'https://youtubeanalytics.googleapis.com/v2/reports';
+const REPORT_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+const youtubeAnalyticsTool = {
+  slug: YOUTUBE_ANALYTICS_TOOL,
+  name: 'YouTube Analytics report',
+  description: 'Query a YouTube Analytics report for the connected channel (ids=channel==MINE). ' +
+    'Returns columnHeaders and rows. Example: metrics "views,estimatedMinutesWatched", ' +
+    'dimensions "day", sort "day".',
+  inputParameters: {
+    type: 'object',
+    properties: {
+      startDate: { type: 'string', description: 'First day of the report, YYYY-MM-DD.' },
+      endDate: { type: 'string', description: 'Last day of the report, YYYY-MM-DD.' },
+      metrics: { type: 'string', description: 'Comma-separated metrics, e.g. "views,likes,subscribersGained".' },
+      dimensions: { type: 'string', description: 'Optional comma-separated dimensions, e.g. "day" or "video".' },
+      filters: { type: 'string', description: 'Optional filters, e.g. "video==VIDEO_ID" or "country==US".' },
+      sort: { type: 'string', description: 'Optional sort, e.g. "-views".' },
+      maxResults: { type: 'integer', description: 'Optional maximum number of rows.' },
+    },
+    required: ['startDate', 'endDate', 'metrics'],
+  },
+};
+
+function youtubeAnalyticsQuery(args: Json): { name: string; value: string; type: 'query' }[] {
+  const text = (key: string, required: boolean): string | undefined => {
+    const value = args[key];
+    if (value === undefined && !required) return undefined;
+    if (typeof value !== 'string' || !value.trim() || value.length > 1000)
+      throw new Error(`YouTube Analytics ${key} must be a non-empty string`);
+    return value.trim();
+  };
+  const query: { name: string; value: string; type: 'query' }[] = [
+    { name: 'ids', value: 'channel==MINE', type: 'query' }];
+  for (const key of ['startDate', 'endDate'] as const) {
+    const value = text(key, true)!;
+    if (!REPORT_DATE.test(value)) throw new Error(`YouTube Analytics ${key} must be YYYY-MM-DD`);
+    query.push({ name: key, value, type: 'query' });
+  }
+  for (const key of ['metrics', 'dimensions', 'filters', 'sort'] as const) {
+    const value = text(key, key === 'metrics');
+    if (value !== undefined) query.push({ name: key, value, type: 'query' });
+  }
+  if (args.maxResults !== undefined) {
+    if (!Number.isInteger(args.maxResults) || (args.maxResults as number) < 1)
+      throw new Error('YouTube Analytics maxResults must be a positive integer');
+    query.push({ name: 'maxResults', value: String(args.maxResults), type: 'query' });
+  }
+  return query;
+}
+
 /** The largest Room file the server stages for an app tool; it is held in memory while it uploads. */
 export const APP_FILE_MAXIMUM_BYTES = 128 * 1024 * 1024;
 /** The presigned PUT carries up to the cap, so it gets far longer than a JSON request. */
@@ -449,13 +506,14 @@ export class ComposioApps {
     if (query) params.set('query', query.slice(0, 120));
     const result = await this.request(`/tools?${params}`, 'GET');
     if (!Array.isArray(result.items)) throw new Error('App provider returned an invalid response');
-    return result.items.map(object).filter((row) =>
+    const tools = result.items.map(object).filter((row) =>
       safeToolSlug(String(row.slug ?? '')) && object(row.toolkit).slug === toolkit,
     ).map((row) => ({
       slug: requiredString(row.slug), name: requiredString(row.name),
       description: typeof row.description === 'string' ? row.description : '',
       inputParameters: stripSecrets(row.input_parameters ?? {}),
     }));
+    return toolkit === 'youtube' ? [youtubeAnalyticsTool, ...tools] : tools;
   }
 
   /** Uploads one Room file through Composio's Files API and returns the descriptor its tools take. */
@@ -500,6 +558,10 @@ export class ComposioApps {
       throw new Error('Room files are unavailable for app tools');
     if (!(await this.account(input.accountId, input.userId, input.toolkit)))
       throw new Error('App connection is unavailable');
+    if (input.tool === YOUTUBE_ANALYTICS_TOOL && input.toolkit === 'youtube') {
+      if (files.size) throw new Error('A Room file was passed for a parameter that does not take a file');
+      return this.youtubeAnalyticsReport(input.accountId, input.arguments);
+    }
     const definition = await this.request(
       `/tools/${encodeURIComponent(input.tool)}?toolkit_versions=latest`, 'GET');
     if (object(definition.toolkit).slug !== input.toolkit)
@@ -516,6 +578,22 @@ export class ComposioApps {
       throw new Error(detail ? `App tool execution failed: ${detail}` : 'App tool execution failed');
     }
     return stripSecrets(result.data);
+  }
+
+  private async youtubeAnalyticsReport(accountId: string, args: Json): Promise<unknown> {
+    const result = await this.request('/tools/execute/proxy', 'POST', {
+      connected_account_id: accountId, endpoint: YOUTUBE_ANALYTICS_REPORTS, method: 'GET',
+      parameters: youtubeAnalyticsQuery(args),
+    }, 'v3.1');
+    const status = typeof result.status === 'number' ? result.status : 0;
+    if (status < 200 || status > 299) {
+      const detail = providerErrorDetail(result.data);
+      throw new Error(detail ? `YouTube Analytics request failed (${status}): ${detail}`
+        : `YouTube Analytics request failed (${status})`);
+    }
+    const data = object(result.data);
+    return stripSecrets({ columnHeaders: Array.isArray(data.columnHeaders) ? data.columnHeaders : [],
+      rows: Array.isArray(data.rows) ? data.rows : [] });
   }
 
   /** Swaps each Room file reference at a `file_uploadable` parameter for its staged descriptor. */

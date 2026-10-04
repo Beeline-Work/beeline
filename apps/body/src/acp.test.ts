@@ -277,6 +277,43 @@ describe('ACP streaming lane classifier', () => {
       ]),
     ).toEqual(['Inspecting ', 'done.']);
   });
+
+  /** Verbatim capture: corner `Loft M0`, 2026-10-03 19:54 EDT — Saiko (Pi,
+   *  openrouter/deepseek-v4.1-flash) answered a plain @mention with only this
+   *  text. Pi's bundled `mcp` extension calls `ctx.ui.notify()` with exactly
+   *  this message (`extensions/mcp/index.js`'s `reportProblems`) when a
+   *  mounted server — CodeGraph among them — is `failed` or `needs-auth` at
+   *  session start, and pi-acp 0.0.34 relays every extension `notify()` as an
+   *  `agent_message_chunk` tagged `_meta.piAcp.notify` (its only ACP
+   *  vocabulary for an extension-level notice). Before this fix that chunk
+   *  was indistinguishable from the model's own words. */
+  const NOTIFY_TEXT =
+    'MCP servers need attention:\n  codegraph: failed: MCP connection closed.\nRun /mcp to fix.';
+  const notifyChunk = (text: string) =>
+    update('agent_message_chunk', {
+      content: { type: 'text', text },
+      _meta: { piAcp: { notify: { level: 'warning' } } },
+    });
+
+  it('never lets a harness notify chunk stand in as the agent reply', () => {
+    const updates = [notifyChunk(NOTIFY_TEXT)];
+    expect(agentMessageRuns(updates)).toEqual([]);
+    expect(finalAgentMessageText(updates)).toBe('');
+    expect(agentStreamSnapshot(updates)).toEqual({ messageText: '' });
+  });
+
+  it('keeps the model’s genuine answer when a notify chunk lands beside it', () => {
+    const updates = [
+      notifyChunk(NOTIFY_TEXT),
+      update('agent_message_chunk', {
+        content: { type: 'text', text: 'The README now documents the new flag.' },
+      }),
+    ];
+    expect(finalAgentMessageText(updates)).toBe('The README now documents the new flag.');
+    expect(agentStreamSnapshot(updates).messageText).toBe(
+      'The README now documents the new flag.',
+    );
+  });
 });
 
 describe('harness retry narration is never the final answer', () => {

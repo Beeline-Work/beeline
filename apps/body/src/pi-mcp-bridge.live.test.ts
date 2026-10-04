@@ -231,6 +231,60 @@ describe.skipIf(!pi)('repository Pi loads the generated MCP bridge', () => {
 });
 
 /**
+ * pi-acp resolves its own `pi` child against the SESSION's env, not this
+ * daemon's `process.env` — and the two can genuinely name different
+ * executables (this repository pins an older `pi` on `node_modules/.bin`,
+ * ahead of the newer host `pi` on the rest of PATH, which is exactly the
+ * "pinned/older vs. newer-on-operator-PATH" split a real deployment can hit
+ * too). `installPiMcpBridge` is given only a bare `'pi'` here — production
+ * never configures `PI_ACP_PI_COMMAND`, so this IS the real call shape — and
+ * the native/bridge choice must follow `agentEnv.PATH`, the exact PATH
+ * pi-acp's own child spawn will resolve against, not whatever `PATH` this
+ * test (or the daemon) happens to run under.
+ */
+describe.skipIf(!pi || !nativePi)('the native-MCP probe follows the session PATH, not the daemon’s', () => {
+  it('picks the bridge for an agentEnv whose PATH resolves the older pinned Pi', { timeout: 15_000 }, async () => {
+    const agentDir = resolve(root, 'path-probe-bridge');
+    mkdirSync(agentDir, { recursive: true });
+    const olderOnly = (process.env.PATH ?? '')
+      .split(delimiter)
+      .filter((entry) => entry.includes('node_modules/.bin'))
+      .join(delimiter);
+    const path = await installPiMcpBridge({
+      agentCommand: 'pi-acp',
+      piHome: agentDir,
+      piCommand: 'pi',
+      agentEnv: { ...process.env, PATH: olderOnly },
+      servers: [{ name: 'codegraph', command: process.execPath, args: ['--version'], env: [] }],
+    });
+    expect(path).toBe(resolve(agentDir, 'extensions', PI_MCP_BRIDGE_FILENAME));
+  });
+
+  it('picks native mcp.json for an agentEnv whose PATH resolves the newer host Pi — even though this process’s own PATH resolves the older one', { timeout: 15_000 }, async () => {
+    const agentDir = resolve(root, 'path-probe-native');
+    mkdirSync(agentDir, { recursive: true });
+    // Sanity check on the premise: THIS process's ambient PATH resolves the
+    // older, non-native Pi (the one vitest put first) — so a probe that
+    // ignores `agentEnv` and falls back to `process.env.PATH` would get this
+    // case wrong.
+    expect(executableOnPath('pi')).toBe(pi);
+    const newerOnly = (process.env.PATH ?? '')
+      .split(delimiter)
+      .filter((entry) => !entry.includes('node_modules/.bin'))
+      .join(delimiter);
+    const path = await installPiMcpBridge({
+      agentCommand: 'pi-acp',
+      piHome: agentDir,
+      piCommand: 'pi',
+      agentEnv: { ...process.env, PATH: newerOnly },
+      servers: [{ name: 'codegraph', command: process.execPath, args: ['--version'], env: [] }],
+    });
+    expect(path).toBe(resolve(agentDir, 'mcp.json'));
+    expect(existsSync(resolve(agentDir, 'extensions', PI_MCP_BRIDGE_FILENAME))).toBe(false);
+  });
+});
+
+/**
  * Exercise the host Pi's native MCP extension itself after a real RPC session
  * has proved the registry. No model is needed: Pi's own registered tool
  * definitions call the same MCP connection and reconnect after its child dies.

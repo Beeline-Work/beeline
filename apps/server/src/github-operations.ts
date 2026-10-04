@@ -19,7 +19,7 @@ import { reportUnansweredCornerAsks } from './corner-close.js';
 import {
   advanceCorner,
   claimCornerMergeAttempt,
-  lockCornerWorkflowRun,
+  lockCornerLifecycle,
   cornerMergeGate,
   cornersReadyToLand,
   unfinishedCornerMergeClaims,
@@ -1321,7 +1321,7 @@ export class GitHubOperations {
       } catch (error) {
         const lastError = (error instanceof Error ? error.message : String(error)).slice(0, 500);
         await this.database.transaction(async db => {
-          await lockCornerWorkflowRun(db, claim.corner_id);
+          await lockCornerLifecycle(db, claim.corner_id);
           const row = (await db.query<{ attempts: number }>(
             `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{mergeRecovery}',jsonb_build_object(
                'attempts',COALESCE((lifecycle->'mergeRecovery'->>'attempts')::int,0)+1,
@@ -1844,7 +1844,7 @@ export class GitHubOperations {
         });
         const rollup = await this.app.readCommitCheckRollup(token.token, repository, checkHeadSha);
         await database.transaction(async (database) => {
-          await lockCornerWorkflowRun(database, target.corner_id);
+          await lockCornerLifecycle(database, target.corner_id);
           // Webhooks signal a refresh. Revalidate its head and age only after
           // the provider has replied, under the run lock then the fact row lock.
           const current = (
@@ -2014,7 +2014,7 @@ export class GitHubOperations {
     const mergeKey = `github:pull-request:merged:${pullRequest.url}`;
     let archived = false;
     await database.transaction(async (database) => {
-      await lockCornerWorkflowRun(database, target.corner_id);
+      await lockCornerLifecycle(database, target.corner_id);
       if (unfinishedClaimHead) {
         const claim = (await unfinishedCornerMergeClaims(database, target.corner_id))[0];
         if (claim?.head_sha !== unfinishedClaimHead || claim.number !== expectedPrNumber) return;

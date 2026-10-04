@@ -353,7 +353,7 @@ import {
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
 import { CornerObjectiveLine } from '@/components/buzz/CornerObjectiveLine';
-import { useCornerWorkflowRun } from '@/buzz/use-corner-workflow-run';
+import { useRoomWorkflowRun } from '@/buzz/use-room-workflow-run';
 import { workflowRunHref } from '@/buzz/workflow-run-copy';
 import { openCornerBriefViewer } from '@/components/buzz/corner-brief-viewer';
 import { CornerStatusLine } from '@/components/buzz/CornerStatusLine';
@@ -1419,13 +1419,13 @@ export function BuzzChatSurface({
   );
   // A live workflow run in this corner: one line under the objective, → its run page.
   const {
-    workflow: cornerWorkflowRun,
+    workflow: roomWorkflowRun,
     error: workflowError,
     retry: retryWorkflow,
-  } = useCornerWorkflowRun(isCorner ? decodedId : undefined);
-  const openCornerWorkflowRun = useCallback(() => {
-    if (cornerWorkflowRun) router.push(workflowRunHref(cornerWorkflowRun));
-  }, [cornerWorkflowRun]);
+  } = useRoomWorkflowRun(isCorner ? decodedId : undefined);
+  const openRoomWorkflowRun = useCallback(() => {
+    if (roomWorkflowRun) router.push(workflowRunHref(roomWorkflowRun));
+  }, [roomWorkflowRun]);
 
   const loadOlderTranscriptMessages = useCallback(() => {
     const visibleRowCount = visibleTranscriptWindow(foldedMessages, Number.MAX_SAFE_INTEGER).length;
@@ -6128,8 +6128,8 @@ export function BuzzChatSurface({
               <CornerObjectiveLine
                 objective={cornerObjectiveText}
                 onOpenBrief={openCurrentBrief}
-                onOpenWorkflow={openCornerWorkflowRun}
-                workflow={cornerWorkflowRun}
+                onOpenWorkflow={openRoomWorkflowRun}
+                workflow={roomWorkflowRun}
                 workflowError={workflowError}
                 onRetryWorkflow={retryWorkflow}
               />

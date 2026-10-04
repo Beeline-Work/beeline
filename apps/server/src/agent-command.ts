@@ -9,10 +9,10 @@ import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-cont
 import { isResumeKind } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { isCornerReviewer } from './agent-health.js';
-import { advanceCorner, lockCornerWorkflowRun } from './corner-lifecycle.js';
+import { advanceCorner, lockCornerLifecycle } from './corner-lifecycle.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import { hasSystemReportMention, taggedIdentityIdsSql } from './message-mentions.js';
-import { CORNER_WORKFLOW_HANDOFF_CARD_TYPE } from './room-choice.js';
+import { CORNER_LIFECYCLE_CARD_TYPE } from './room-choice.js';
 import { ensureSystemIdentity, GITHUB_SUBJECT, systemLine } from './system-line.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
@@ -573,7 +573,7 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
 
 /**
  * A person's agent tag in a corner names that corner's current implementer, so
- * the corner workflow's lifecycle wakes follow the person's choice instead of
+ * the corner lifecycle's wakes follow the person's choice instead of
  * the corner's never-changing opener (`corner_facts.owner_agent_id`). The
  * parent Room's configured reviewer and its fallbacks hold the review post, so
  * they never take the implementer role from a tag.
@@ -645,7 +645,7 @@ export const CORNER_CHECKS_BLOCKED_CARD_TYPE = 'corner-checks-blocked';
 export const CORNER_CHECKS_BLOCKED_AFTER = '2 minutes';
 
 /**
- * Reports a review turn ending to the corner workflow (`advanceCorner`).
+ * Reports a review turn ending to the corner lifecycle (`advanceCorner`).
  *
  * "The review" is read structurally, never from the verdict's wording: this
  * agent is the configured reviewer on the corner's parent Room (the reviewer or
@@ -868,7 +868,7 @@ type WorkflowWakeCard = { runId?: string; workflowSlug?: string; note?: string }
  * choice/poll card once answered — see `postWorkflowGate`) states the run id
  * and workflow name plainly, so a woken agent treats its own wake as proof a
  * run already exists rather than reaching for `start_workflow` again. The
- * corner's own built-in lifecycle run (`corner-workflow-handoff`) is excluded:
+ * corner's lifecycle bookkeeping (`corner-workflow-handoff`) is excluded:
  * every corner turn would otherwise carry this line for no reason, since a
  * corner is never started through `start_workflow`. A gate answer's optional
  * note is quoted ahead of it.
@@ -880,7 +880,7 @@ function workflowWakeDetail(
   outcomes: Record<string, string> | null,
   status: string | null,
 ): string {
-  if (!card?.runId || !card.workflowSlug || cardType === CORNER_WORKFLOW_HANDOFF_CARD_TYPE) return '';
+  if (!card?.runId || !card.workflowSlug || cardType === CORNER_LIFECYCLE_CARD_TYPE) return '';
   const note = card.note ? `\nTheir note with the answer: ${JSON.stringify(card.note)}` : '';
   const allowed = status ? 'none' : Object.entries(outcomes ?? {})
     .map(([outcome, target]) => `${outcome} -> ${target}`).join(', ') || 'none';
@@ -1029,7 +1029,7 @@ export async function routeSystemCommand(
   },
 ): Promise<void> {
   if (!input.kind) return;
-  // A checks verdict in a corner is a corner workflow event: the transition
+  // A checks verdict in a corner is a corner lifecycle event: the transition
   // decides who wakes, exactly once.
   if (input.kind === 'check-passed' || input.kind === 'check-failed') {
     const corner = await db.query(`SELECT 1 FROM corner_facts WHERE corner_id=$1`, [input.roomId]);
@@ -1220,7 +1220,7 @@ export async function reconcileCornerMergeBlockers(
   let commands = 0;
   for (const row of stranded.rows) {
     commands += await db.transaction(async (db) => {
-      await lockCornerWorkflowRun(db, row.corner_id);
+      await lockCornerLifecycle(db, row.corner_id);
       let routedCommands = 0;
       if (row.checks === 'failing') {
         const existing = await db.query(

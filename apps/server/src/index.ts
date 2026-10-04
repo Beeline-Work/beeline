@@ -373,7 +373,7 @@ async function main() {
       if (push) await backgroundJobs.run('push', () => push.runIfDue());
       await backgroundJobs.run('schedules', () => schedules.runOnce());
       await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
-      // The corner workflow's server merge: a `land` handoff card (or a human
+      // The corner lifecycle's server merge: a `land` handoff card (or a human
       // lifting a hold) is a new message, which wakes this loop.
       if (githubJobs) await backgroundJobs.run('corner-merge-recovery', () => githubJobs.recoverUnfinishedMergeClaims());
       if (githubJobs) await backgroundJobs.run('corner-land', () => githubJobs.landReadyCorners());

@@ -13,7 +13,7 @@ import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import {
   advanceCorner,
-  backfillCornerWorkflowRuns,
+  backfillCornerLifecycleRuns,
   CHECKS_FAILING_LIMIT,
   CORNER_LIFECYCLE_CONTRACT,
   CORNER_LIFECYCLE_SLUG,
@@ -29,7 +29,7 @@ import {
   queueCornerMergeConflict,
   reconcileCornerMergeBlockers,
 } from './agent-command.js';
-import { CORNER_WORKFLOW_HANDOFF_CARD_TYPE } from './room-choice.js';
+import { CORNER_LIFECYCLE_CARD_TYPE } from './room-choice.js';
 import { workflowRunLockKey } from './workflow-runs.js';
 
 /** Records every SQL statement issued, in order — matches workflow-runs.test.ts's own. */
@@ -144,7 +144,7 @@ beforeEach(async () => {
     await db.query<{ edge: string }>(
       `SELECT concat_ws(':',card->>'fromState',card->>'outcome',card->>'toState') edge
        FROM messages WHERE card_type=$1 AND card ? 'fromState'`,
-      [CORNER_WORKFLOW_HANDOFF_CARD_TYPE],
+      [CORNER_LIFECYCLE_CARD_TYPE],
     )
   ).rows)
     recordedEdges.add(row.edge);
@@ -178,7 +178,7 @@ async function cards(
 ): Promise<{ fromState?: string; outcome?: string; toState: string; status?: string }[]> {
   const rows = await db.query<{ card: Record<string, unknown> }>(
     `SELECT card FROM messages WHERE room_id=$1 AND card_type=$2 ORDER BY (card->>'seq')::int`,
-    [cornerId, CORNER_WORKFLOW_HANDOFF_CARD_TYPE],
+    [cornerId, CORNER_LIFECYCLE_CARD_TYPE],
   );
   return rows.rows.map((row) => row.card as never);
 }
@@ -298,7 +298,7 @@ const commands = (agentId: string, roomId: string) =>
 const result = (c: AgentCommand, text: string, generationId = 'g1') =>
   daemon.execute('postRoomMessage', { roomId: c.roomId, requestId: c.turnRequestId, generationId, text }, c.agentId);
 
-describe('the corner workflow contract itself', () => {
+describe('the corner lifecycle contract itself', () => {
   it('validates against the shared workflow-contract schema', () => {
     expect(readWorkflowContract(CORNER_LIFECYCLE_CONTRACT)).toEqual(CORNER_LIFECYCLE_CONTRACT);
   });
@@ -392,7 +392,7 @@ describe.each([
     await db.query(`DELETE FROM workspace_skills WHERE id=$1`, [STORED]);
   });
 
-  it('a code corner opens, advances implement -> checks -> review -> land -> landed, and renders on the run page', async () => {
+  it('a code corner opens, advances implement -> checks -> review -> land -> landed, without appearing on the workflow run page', async () => {
     const cornerId = await open(undefined, 'owner/widgets');
     expect(await currentState(cornerId)).toBe('implement');
     expect(await projected(cornerId)).toBe('implement');
@@ -424,16 +424,9 @@ describe.each([
       expect(card).not.toHaveProperty('workflowVersion');
     }
 
-    const detail = await phone.execute('readWorkflowRun', { roomId: cornerId, runId: cornerId }, H);
-    expect(detail.contract).toEqual(CORNER_LIFECYCLE_CONTRACT);
-    expect(detail.run).toMatchObject({ workflowSlug: 'corner', state: 'landed', status: 'done' });
-    expect(detail.history.map((step) => step.toState)).toEqual([
-      'opened', 'implement', 'checks', 'review', 'land', 'landed',
-    ]);
-    const listed = await phone.execute('listRoomWorkflowRuns', { roomId: cornerId }, H);
-    expect(listed.workflows).toEqual([
-      expect.objectContaining({ runId: cornerId, workflowSlug: 'corner', state: 'landed', status: 'done' }),
-    ]);
+    await expect(phone.execute('readWorkflowRun', { roomId: cornerId, runId: cornerId }, H))
+      .rejects.toThrow('workflow run not found');
+    expect((await phone.execute('listRoomWorkflowRuns', { roomId: cornerId }, H)).workflows).toEqual([]);
   });
 
   it('a no-code corner opens on no_code_work and closes', async () => {
@@ -444,9 +437,24 @@ describe.each([
     expect(await currentState(cornerId)).toBe('closed');
     expect(await projected(cornerId)).toBe('closed');
     expect([opened, await badge(cornerId, true)]).toEqual(NO_CODE_BADGES);
-    const detail = await phone.execute('readWorkflowRun', { roomId: cornerId, runId: cornerId }, H);
-    expect(detail.contract).toEqual(CORNER_LIFECYCLE_CONTRACT);
-    expect(detail.history.map((step) => step.toState)).toEqual(['opened', 'no_code_work', 'closed']);
+    await expect(phone.execute('readWorkflowRun', { roomId: cornerId, runId: cornerId }, H))
+      .rejects.toThrow('workflow run not found');
+  });
+});
+
+describe('lifecycle wording in agent conversations', () => {
+  it.each(['code', 'no_code'] as const)('Reproduction C1 R1: opening a %s corner does not announce a workflow', async (lane) => {
+    const cornerId = await open(lane, 'owner/widgets');
+    const conversation = await daemon.execute('getRoomConversation', { roomId: cornerId }, A);
+    const start = conversation.items.find((message) => message.id === cornerId);
+    expect(start).toBeDefined();
+    expect(start!.body).toBe('@system opened corner');
+    expect(conversation.items.every((message) => message.systemEvent?.kind !== 'workflow-handoff')).toBe(true);
+    const persisted = await db.query<{ card_type: string; seq: string }>(
+      `SELECT card_type,card->>'seq' seq FROM messages WHERE id=$1`, [cornerId],
+    );
+    expect(persisted.rows).toEqual([{ card_type: 'corner-workflow-handoff', seq: '0' }]);
+    console.log(`Reproduction C1 R1 Demonstrated: open ${lane} corner → agent conversation says ${start!.body}, with no workflow event kind`);
   });
 });
 
@@ -472,7 +480,7 @@ describe('bookkeeping cards never appear in the corner conversation a human read
     }
     const raw = await db.query<{ count: string }>(
       `SELECT count(*)::text count FROM messages WHERE room_id=$1 AND card_type=$2`,
-      [cornerId, CORNER_WORKFLOW_HANDOFF_CARD_TYPE],
+      [cornerId, CORNER_LIFECYCLE_CARD_TYPE],
     );
     // The rows genuinely exist (this isn't "nothing was written") — they are
     // simply excluded from what a human reads.
@@ -482,7 +490,7 @@ describe('bookkeeping cards never appear in the corner conversation a human read
         (
           await db.query<{ id: string }>(`SELECT id FROM messages WHERE room_id=$1 AND card_type=$2`, [
             cornerId,
-            CORNER_WORKFLOW_HANDOFF_CARD_TYPE,
+            CORNER_LIFECYCLE_CARD_TYPE,
           ])
         ).rows.map((row) => row.id),
       ),
@@ -2264,10 +2272,10 @@ describe('a corner opened before the workflow run existed (AC-10)', () => {
     // Pre-#1918: no run cards, no projected state; the reviewer was already woken.
     await db.query(`DELETE FROM messages WHERE room_id=$1 AND card_type=$2`, [
       cornerId,
-      CORNER_WORKFLOW_HANDOFF_CARD_TYPE,
+      CORNER_LIFECYCLE_CARD_TYPE,
     ]);
     await db.query(`UPDATE corner_facts SET workflow_state=NULL,workflow_outcome=NULL WHERE corner_id=$1`, [cornerId]);
-    expect(await backfillCornerWorkflowRuns(db)).toBe(1);
+    expect(await backfillCornerLifecycleRuns(db)).toBe(1);
     expect(await projected(cornerId)).toBe('review');
     expect(await cards(cornerId)).toEqual([expect.objectContaining({ toState: 'review', seq: 0, backfilledFrom: 'lifecycle' })]);
     const [review] = await commands(B, cornerId);
@@ -2286,7 +2294,7 @@ describe('a corner opened before the workflow run existed (AC-10)', () => {
     const cornerId = await open(undefined, 'owner/widgets');
     await db.query(`DELETE FROM messages WHERE room_id=$1 AND card_type=$2`, [
       cornerId,
-      CORNER_WORKFLOW_HANDOFF_CARD_TYPE,
+      CORNER_LIFECYCLE_CARD_TYPE,
     ]);
     await db.query(`UPDATE corner_facts SET workflow_state=NULL WHERE corner_id=$1`, [cornerId]);
     await pushToCorner(cornerId, SHA);
@@ -2310,7 +2318,7 @@ async function asLegacyResearchCorner(cornerId: string) {
   await db.query(
     `UPDATE messages SET card=card || '{"outcome":"research","toState":"investigate"}'::jsonb
      WHERE room_id=$1 AND card_type=$2 AND card->>'fromState'='opened'`,
-    [cornerId, CORNER_WORKFLOW_HANDOFF_CARD_TYPE],
+    [cornerId, CORNER_LIFECYCLE_CARD_TYPE],
   );
 }
 

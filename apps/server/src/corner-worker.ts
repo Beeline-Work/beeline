@@ -7,7 +7,7 @@
  * worker-scoped read — a lifecycle wake, the merge gate's yolo mode — must go
  * through this expression instead of reading the opener directly. A person
  * tagging another agent in a corner is how the implementer role moves, and the
- * corner workflow's `implementer` binding follows the same fact.
+ * corner lifecycle's `implementer` binding follows the same fact.
  *
  * `factAlias` names the `corner_facts` alias and `cornerAlias` the alias of
  * the corner's own `rooms` row.

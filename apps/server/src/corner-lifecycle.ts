@@ -18,21 +18,15 @@ import {
   nextHealthyAgent,
   reviewerList,
 } from './agent-health.js';
-import { CORNER_WORKFLOW_HANDOFF_CARD_TYPE } from './room-choice.js';
+import { CORNER_LIFECYCLE_CARD_TYPE } from './room-choice.js';
 import { ensureSystemIdentity, GITHUB_SUBJECT, systemLine, type SystemLineInput } from './system-line.js';
-import { WORKFLOW_HANDOFF_CARD_TYPE, workflowRunLockKey } from './workflow-runs.js';
+import { workflowRunLockKey } from './workflow-runs.js';
 
 /**
- * Corner bookkeeping cards use their OWN `card_type`
- * (`CORNER_WORKFLOW_HANDOFF_CARD_TYPE`, defined in `room-choice.ts` to avoid
- * a circular import here), distinct from the generic engine's
- * `WORKFLOW_HANDOFF_CARD_TYPE` (`workflow-handoff`) — the `kind` stays
- * `workflow-handoff` (still a registered event kind, still zero real wakes,
- * since corner cards never set `wakes` and nothing subscribes to this kind),
- * but the card_type lets this one specific shape be excluded from a corner's
- * visible transcript (`hiddenWakeCardSql`) without touching the generic
- * engine's own `workflow-handoff` cards, which — for an ordinary Room-based
- * workflow — ARE the real, intended visible handoff notice.
+ * Lifecycle cards retain their persisted discriminator for existing history.
+ * They carry no workflow event kind: lifecycle wakes belong to advanceCorner.
+ * hiddenWakeCardSql excludes these rows from the human conversation, while
+ * actual workflows keep their visible workflow-handoff cards.
  */
 
 /**
@@ -245,7 +239,7 @@ type CornerRow = {
  * corner (a push landing with a close, a redelivered webhook, two merge sweeps)
  * cannot both read the same state and both act on it.
  */
-export async function lockCornerWorkflowRun(db: SqlDatabase, cornerId: string): Promise<void> {
+export async function lockCornerLifecycle(db: SqlDatabase, cornerId: string): Promise<void> {
   await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [workflowRunLockKey(cornerId)]);
 }
 
@@ -254,7 +248,7 @@ export async function lockCornerWorkflowRun(db: SqlDatabase, cornerId: string): 
  * in the card, never `created_at` (two cards written in one transaction can
  * share a timestamp) or the ids (a uuid start card and sha256 later cards).
  */
-async function loadCornerWorkflowRunState(
+async function loadCornerLifecycleState(
   db: SqlDatabase,
   cornerId: string,
 ): Promise<RunState | undefined> {
@@ -273,7 +267,7 @@ async function loadCornerWorkflowRunState(
        FROM messages
        WHERE room_id=$1::uuid AND card_type=$2 AND card->>'runId'=$1::text
        ORDER BY (card->>'seq')::int DESC LIMIT 1`,
-      [cornerId, CORNER_WORKFLOW_HANDOFF_CARD_TYPE],
+      [cornerId, CORNER_LIFECYCLE_CARD_TYPE],
     )
   ).rows[0];
   if (!row?.to_state) return undefined;
@@ -317,7 +311,7 @@ async function loadCorner(db: SqlDatabase, cornerId: string): Promise<CornerRow 
 }
 
 /**
- * Every corner-workflow card is authored by `@system`, never by the corner's
+ * Every corner lifecycle card is authored by `@system`, never by the corner's
  * own implementer or reviewer agent — a card "written" by that agent would
  * inflate any query counting the agent's own conversational messages.
  */
@@ -359,13 +353,12 @@ async function writeStartCard(
     roomId: input.cornerId,
     authorId: SYSTEM_IDENTITY_ID,
     subject,
-    verb: 'started workflow',
-    object: CORNER_LIFECYCLE_CONTRACT.name,
-    kind: WORKFLOW_HANDOFF_CARD_TYPE,
+    verb: 'opened',
+    object: 'corner',
     // Never a chat line: `hiddenWakeCardSql` excludes this card type from the
     // transcript a human reads.
     presentation: 'card',
-    cardType: CORNER_WORKFLOW_HANDOFF_CARD_TYPE,
+    cardType: CORNER_LIFECYCLE_CARD_TYPE,
     card: {
       runId: input.cornerId,
       roleBindings: input.roleBindings,
@@ -451,11 +444,10 @@ class Transition {
       subject,
       verb: 'handed off',
       object: toState,
-      kind: WORKFLOW_HANDOFF_CARD_TYPE,
       // The card never wakes anyone itself (no `wakes`); the one wake of the
       // next role is this transition's own side effect in `advanceCorner`.
       presentation: 'card',
-      cardType: CORNER_WORKFLOW_HANDOFF_CARD_TYPE,
+      cardType: CORNER_LIFECYCLE_CARD_TYPE,
       card: {
         runId: this.cornerId,
         roleBindings: this.run.roleBindings,
@@ -482,7 +474,7 @@ class Transition {
 
 function rejected(cornerId: string, event: CornerEvent, state: string | undefined, why: string) {
   console.info(
-    `[corner-workflow] ${cornerId}: ignored ${event.kind} in ${state ?? 'no run'}: ${why}`,
+    `[corner-lifecycle] ${cornerId}: ignored ${event.kind} in ${state ?? 'no run'}: ${why}`,
   );
 }
 
@@ -563,13 +555,13 @@ export async function advanceCorner(
   event: CornerEvent,
 ): Promise<CornerAdvance> {
   return database.transaction(async (db) => {
-    await lockCornerWorkflowRun(db, cornerId);
+    await lockCornerLifecycle(db, cornerId);
     const corner = await loadCorner(db, cornerId);
     if (!corner) {
       rejected(cornerId, event, undefined, 'corner not found');
       return { state: undefined, accepted: false };
     }
-    let run = await loadCornerWorkflowRunState(db, cornerId);
+    let run = await loadCornerLifecycleState(db, cornerId);
     if (event.kind === 'open') {
       if (run) {
         rejected(cornerId, event, run.toState, 'run already started');
@@ -897,11 +889,11 @@ export async function reassignFailedCornerReviewer(
       [input.requestId, input.roomId],
     );
     if (!dispatch.rowCount) return;
-    await lockCornerWorkflowRun(db, input.roomId);
+    await lockCornerLifecycle(db, input.roomId);
     const corner = await loadCorner(db, input.roomId);
     if (!corner?.configured_reviewer_id || !corner.reviewer_fallback_ids.length) return;
     if (corner.lifecycle.checks !== 'passing') return;
-    const run = await loadCornerWorkflowRunState(db, input.roomId);
+    const run = await loadCornerLifecycleState(db, input.roomId);
     if (run?.toState !== 'review') return;
     if (await approvedCurrentHead(db, input.roomId, corner)) return;
     if (!(await isCornerReviewer(db, input.roomId, input.agentId))) return;
@@ -1057,7 +1049,7 @@ async function countEdges(
       `SELECT count(*)::text count FROM messages
        WHERE room_id=$1 AND card_type=$2 AND card->>'runId'=$1::text
          AND card->>'fromState'=$3 AND card->>'outcome'=$4`,
-      [cornerId, CORNER_WORKFLOW_HANDOFF_CARD_TYPE, fromState, outcome],
+      [cornerId, CORNER_LIFECYCLE_CARD_TYPE, fromState, outcome],
     )
   ).rows[0];
   return Number(row?.count ?? 0);
@@ -1350,7 +1342,7 @@ export async function claimCornerMergeAttempt(
   headSha: string,
 ): Promise<boolean> {
   return database.transaction(async (db) => {
-    await lockCornerWorkflowRun(db, cornerId);
+    await lockCornerLifecycle(db, cornerId);
     const corner = await loadCorner(db, cornerId);
     const pr = corner?.lifecycle.pr;
     if (!corner || corner.archived || !pr?.number || pr.headSha !== headSha) return false;
@@ -1399,12 +1391,12 @@ export async function clearUnfinishedCornerMergeClaim(
   database: SqlDatabase, cornerId: string, headSha: string, number: number,
 ) {
   return database.transaction(async db => {
-    await lockCornerWorkflowRun(db, cornerId);
+    await lockCornerLifecycle(db, cornerId);
     const corner = await loadCorner(db, cornerId);
     const claim = (await unfinishedCornerMergeClaims(db, cornerId))[0];
     if (!corner || claim?.head_sha !== headSha || claim.number !== number) return;
     const gate = await cornerMergeGate(db, cornerId, { number: claim.number, headSha });
-    if ((await loadCornerWorkflowRunState(db, cornerId))?.toState === 'ask_human')
+    if ((await loadCornerLifecycleState(db, cornerId))?.toState === 'ask_human')
       await advanceCorner(db, cornerId, { kind: 'merge-refused', headSha, reason: 'GitHub confirmed the pull request has not merged' });
     await db.query(`UPDATE corner_facts SET merge_attempt_head=NULL,lifecycle=lifecycle-'mergeRecovery',updated_at=now() WHERE corner_id=$1`, [cornerId]);
     // Only the normal sweep can act on an open gate, with a fresh GitHub read
@@ -1418,14 +1410,14 @@ export async function clearUnfinishedCornerMergeClaim(
  * for corners opened since #1918, or one derived from the lifecycle for
  * corners opened before it. Run once from `migrateData()`.
  */
-export async function backfillCornerWorkflowRuns(database: SqlDatabase): Promise<number> {
+export async function backfillCornerLifecycleRuns(database: SqlDatabase): Promise<number> {
   const missing = await database.query<{ corner_id: string }>(
     `SELECT corner_id FROM corner_facts WHERE workflow_state IS NULL`,
   );
   for (const row of missing.rows) {
     await database.transaction(async (db) => {
-      await lockCornerWorkflowRun(db, row.corner_id);
-      const run = await loadCornerWorkflowRunState(db, row.corner_id);
+      await lockCornerLifecycle(db, row.corner_id);
+      const run = await loadCornerLifecycleState(db, row.corner_id);
       if (run) {
         await projectRunState(db, row.corner_id, run.toState, run.outcome);
         return;
@@ -1435,7 +1427,7 @@ export async function backfillCornerWorkflowRuns(database: SqlDatabase): Promise
     });
   }
   if (missing.rowCount)
-    console.log(`backfillCornerWorkflowRuns: projected ${missing.rowCount} corner run(s)`);
+    console.log(`backfillCornerLifecycleRuns: projected ${missing.rowCount} corner run(s)`);
   return missing.rowCount;
 }
 

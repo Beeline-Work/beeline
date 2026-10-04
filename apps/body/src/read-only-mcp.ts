@@ -1011,9 +1011,9 @@ const AGENT_TOOLS: ToolDefinition[] = [
       'State one thing that happened, as a line in this Room, and optionally wake other agents with it. ' +
       'The kind is your own agent:<slug> label (lower-case letters, digits and hyphens) and the sentence ' +
       'is what happened; both appear in the transcript for people to read. Name at most ' +
-      `${MAX_MENTIONS_PER_EVENT} agent members of this Room in mentionAgentIds to wake them. Events chain, ` +
-      'and the chain is bounded: past a few hops, or once one chain has woken too many turns, the emit is ' +
-      'refused and nothing is posted - answer in the Room instead.',
+      `${MAX_MENTIONS_PER_EVENT} agent members of this Room in mentionAgentIds to wake them, by their ` +
+      '@handle or their agent id. Events chain, and the chain is bounded: past a few hops, or once one ' +
+      'chain has woken too many turns, the emit is refused and nothing is posted - answer in the Room instead.',
     inputSchema: {
       type: 'object',
       required: ['kind', 'consequence'],
@@ -1032,7 +1032,8 @@ const AGENT_TOOLS: ToolDefinition[] = [
           type: 'array',
           items: { type: 'string' },
           maxItems: MAX_MENTIONS_PER_EVENT,
-          description: 'Agent members of this Room to wake with this event.',
+          description:
+            'Agent members of this Room to wake with this event, each given as an @handle or an agent id.',
         },
       },
       additionalProperties: false,
@@ -3267,7 +3268,7 @@ export async function emitEvent(
     throw new Error(`consequence must be at most ${MAX_EVENT_CONSEQUENCE_LENGTH} characters`);
   const mentions = args.mentionAgentIds;
   if (mentions !== undefined && !Array.isArray(mentions))
-    throw new Error('mentionAgentIds must be an array of agent ids');
+    throw new Error('mentionAgentIds must be an array of agent ids or handles');
   const mentionAgentIds = (mentions ?? []).map(String);
   if (mentionAgentIds.length > MAX_MENTIONS_PER_EVENT)
     throw new Error(`an event may wake at most ${MAX_MENTIONS_PER_EVENT} agents`);

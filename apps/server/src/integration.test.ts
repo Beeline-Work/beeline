@@ -13194,6 +13194,72 @@ describe('monolith integration', () => {
     expect(line.event_depth).toBe(1);
   });
 
+  it('wakes a Room agent by handle, case-insensitively and with a leading @, but refuses a non-member handle', async () => {
+    const peer = 'd'.repeat(64);
+    await database.query(
+      `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Baby','baby')`,
+      [peer],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+      [WORKSPACE, peer, ROOM],
+    );
+    const trigger = await operation('sendRoomMessage', { roomId: ROOM, text: '@Bee wake baby' });
+    const requestId = ((await trigger.json()) as { messageId: string }).messageId;
+    expect(
+      (
+        await daemonOperation('postAgentTurnReceipt', {
+          agentId: AGENT,
+          roomId: ROOM,
+          requestId,
+          status: 'working',
+        })
+      ).status,
+    ).toBe(200);
+
+    async function woke(messageId: string): Promise<string[]> {
+      return (
+        await database.query<{ agent_id: string }>(
+          `SELECT agent_id FROM agent_commands WHERE source_message_id=$1`,
+          [messageId],
+        )
+      ).rows.map((row) => row.agent_id);
+    }
+
+    const byHandle = await daemonOperation('postRoomEvent', {
+      roomId: ROOM,
+      requestId,
+      kind: 'agent:handoff',
+      consequence: 'woke by bare handle',
+      mentionAgentIds: ['BABY'],
+    });
+    expect(byHandle.status).toBe(200);
+    expect(await woke(((await byHandle.json()) as { id: string }).id)).toEqual([peer]);
+
+    const byAtHandle = await daemonOperation('postRoomEvent', {
+      roomId: ROOM,
+      requestId,
+      kind: 'agent:handoff',
+      consequence: 'woke by @handle',
+      mentionAgentIds: ['@baby'],
+    });
+    expect(byAtHandle.status).toBe(200);
+    expect(await woke(((await byAtHandle.json()) as { id: string }).id)).toEqual([peer]);
+
+    const nonMember = await daemonOperation('postRoomEvent', {
+      roomId: ROOM,
+      requestId,
+      kind: 'agent:handoff',
+      consequence: 'a handle nobody here answers to',
+      mentionAgentIds: ['ghost'],
+    });
+    expect(nonMember.status).toBeGreaterThanOrEqual(400);
+    expect(((await nonMember.json()) as { error: string }).error).toBe(
+      'not an agent member of this Room: ghost',
+    );
+  });
+
   it('refuses a server kind, a stranger mention and more than three mentions', async () => {
     const trigger = await operation('sendRoomMessage', { roomId: ROOM, text: '@Bee go' });
     const requestId = ((await trigger.json()) as { messageId: string }).messageId;

@@ -185,7 +185,8 @@ describe('New Room sheet', () => {
     expect(load).toHaveBeenCalledTimes(1);
     expect(host('create-room-repo-row')).toBeUndefined();
     expect(host('create-room-repo-mode-none')?.props.accessibilityState.selected).toBe(true);
-    expect(host('create-room-repo-none')).toBeDefined();
+    expect(host('create-room-repo-link')).toBeUndefined();
+    expect(host('create-room-repo-create')).toBeUndefined();
     press('create-room-repo-mode-link');
     press('create-room-repo-mode-none');
     expect(host('create-room-repo-mode')).toBeDefined();
@@ -197,6 +198,7 @@ describe('New Room sheet', () => {
     press('create-room-repo-row');
     press('create-room-repo-mode-link');
     expect(text('create-room-repo-link')).toContain('Choose a repo');
+    expect(text('create-room-repo-link')).not.toContain('Repository');
     expect(host('create-room-submit')?.props.disabled).toBe(true);
     name('widgets');
     expect(text('create-room-repo-link')).toContain('owner');
@@ -271,6 +273,7 @@ describe('New Room sheet', () => {
     expect(host('create-room-repo-link-instead')).toBeUndefined();
     press('create-room-repo-owner');
     press('create-room-owner-79');
+    expect(text('create-room-repo-create')).toContain('Already exists.');
     expect(text('create-room-repo-create')).toContain('Link it instead');
     expect(host('create-room-submit')?.props.disabled).toBe(true);
     press('create-room-repo-link-instead');

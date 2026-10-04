@@ -393,13 +393,13 @@ export function HullDialog({
   );
 }
 
-export const HullDialogInput = React.forwardRef<TextInput, TextInputProps>(function HullDialogInput(
-  { style, ...props },
-  ref,
-) {
+export const HullDialogInput = React.forwardRef<
+  TextInput,
+  TextInputProps & { ruleStyle?: StyleProp<ViewStyle> }
+>(function HullDialogInput({ style, ruleStyle, ...props }, ref) {
   const { theme } = useUnistyles();
   return (
-    <View style={styles.inputRule}>
+    <View style={ruleStyle ? [styles.inputRule, ruleStyle] : styles.inputRule}>
       <TextInput
         {...props}
         ref={ref}

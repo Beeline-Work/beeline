@@ -27,6 +27,7 @@ import {
   hasLocalTrustySquireState,
   harnessStateDirsFromEnv,
   hostImportedMcpServerNames,
+  roomSessionTmpDir,
   expectedMountedImportedMcpServerNames,
   mountedImportedMcpServerNames,
   prepareRoomAgentHome,
@@ -221,7 +222,6 @@ describe('per-room harness state isolation', () => {
       'XDG_DATA_HOME',
       'XDG_STATE_HOME',
       'XDG_CACHE_HOME',
-      'TMPDIR',
       'HOME',
     ]) {
       expect(envA[key]).toBeTruthy();
@@ -229,6 +229,13 @@ describe('per-room harness state isolation', () => {
       // Two Rooms of the same agent must not share a harness state directory.
       expect(envA[key]).not.toBe(envB[key]);
     }
+    // TMPDIR is deliberately OUTSIDE the long home: it is a short symlink in
+    // the OS temp dir pointing back at `<root>/tmp`, so Unix socket paths fit.
+    expect(envA.TMPDIR!.startsWith('/tmp/')).toBe(true);
+    expect(envA.TMPDIR!.length).toBeLessThan(40);
+    expect(envA.TMPDIR).not.toBe(envB.TMPDIR);
+    expect(lstatSync(envA.TMPDIR!).isSymbolicLink()).toBe(true);
+    expect(realpathSync(envA.TMPDIR!)).toBe(resolve(roomA, 'tmp'));
     expect(envA.HOME).toBe(resolve(roomA, 'user'));
     expect(envB.HOME).toBe(resolve(roomB, 'user'));
     expect(existsSync(resolve(roomA, 'claude'))).toBe(true);
@@ -698,8 +705,9 @@ describe('per-room harness state isolation', () => {
       XDG_DATA_HOME: '/rooms/room-a/agent-home/user/.local/share',
       XDG_STATE_HOME: '/rooms/room-a/agent-home/state',
       XDG_CACHE_HOME: '/rooms/room-a/agent-home/cache',
-      TMPDIR: '/rooms/room-a/agent-home/tmp',
+      TMPDIR: roomSessionTmpDir('/rooms/room-a/agent-home'),
     });
+    expect(overlay.TMPDIR.startsWith('/tmp/')).toBe(true);
     expect(existsSync('/rooms/room-a/agent-home')).toBe(false);
   });
 

@@ -329,6 +329,32 @@ console.log('room-token');`,
     expect((await readFile(calls, 'utf8')).trim().split('\n')).toHaveLength(6);
   });
 
+  it('scopes the branch rule to the real origin, allowing a fixture remote', () => {
+    const resolve = () => ({ branch: 'anything', tag: false });
+    const notOrigin = () => false;
+    // Same argv the table above refuses, but aimed at a local fixture remote.
+    for (const argv of [
+      ['push', 'fixture', 'foreign'],
+      ['push', '--force', 'fixture', featureBranch],
+      ['push', 'fixture', 'refs/tags/v1.0.0'],
+    ]) {
+      expect(
+        cornerGitHubCommandRefusal('git', argv, featureBranch, targetBranch, resolve, notOrigin),
+      ).toBeUndefined();
+    }
+    // A push to the real origin is still refused.
+    expect(
+      cornerGitHubCommandRefusal(
+        'git',
+        ['push', 'origin', 'foreign'],
+        featureBranch,
+        targetBranch,
+        resolve,
+        () => true,
+      ),
+    ).toBe(`beeline: this corner may push only ${featureBranch}`);
+  });
+
   it('refuses a foreign destination before running git in a scratch repository', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-guard-'));
     roots.push(root);
@@ -542,5 +568,222 @@ appendFileSync(${JSON.stringify(calls)}, 'token\\n'); console.log('fresh-token')
     ]);
     expect(resolved.stdout.trim()).toHaveLength(40);
     console.log(`Push tracking ref: refs/remotes/origin/${featureBranch} = ${resolved.stdout.trim()}`);
+  });
+
+  it('allows a test suite to push any branch to a local fixture remote', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-corner-fixture-'));
+    roots.push(root);
+    const repo = join(root, 'repo');
+    const remote = join(root, 'remote.git');
+    const cli = join(root, 'cli.mjs');
+    const calls = join(root, 'tokens');
+    await writeFile(
+      cli,
+      `import { appendFileSync } from 'node:fs';
+appendFileSync(${JSON.stringify(calls)}, 'token\\n'); console.log('fresh-token');`,
+    );
+    await chmod(cli, 0o700);
+    await execFileAsync('/usr/bin/git', ['init', '--bare', remote]);
+    await execFileAsync('/usr/bin/git', ['init', repo]);
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'checkout', '-b', featureBranch]);
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'config', 'user.name', 'Beeline Test']);
+    await execFileAsync('/usr/bin/git', [
+      '-C',
+      repo,
+      'config',
+      'user.email',
+      'beeline@example.test',
+    ]);
+    await writeFile(join(repo, 'README.md'), 'fixture test\n');
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'add', 'README.md']);
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'commit', '-m', 'test']);
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'remote', 'add', 'fixture', remote]);
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'tag', 'v1.0.0']);
+    const { env } = await installCornerGitHubWrappers({
+      root,
+      runtimeConfigPath: '/runtime.json',
+      roomId: 'room',
+      cliEntrypoint: cli,
+      gitBinary: '/usr/bin/git',
+      featureBranch,
+      targetBranch,
+      originUrl: 'https://github.com/beeline-test/repo.git',
+      inheritedPath: process.env.PATH,
+    });
+    const launcher = join(env.PATH!.split(':')[0]!, 'git');
+    // The guard once refused every one of these because the branch name did
+    // not match the corner's feature branch, even though the remote is a
+    // throwaway fixture the test suite owns.
+    await execFileAsync(launcher, ['-C', repo, 'push', 'fixture', 'HEAD:foreign']);
+    await execFileAsync(launcher, ['-C', repo, 'push', 'fixture', 'refs/tags/v1.0.0']);
+    // A raw path with no rewrite is still a local fixture the suite owns.
+    await execFileAsync(launcher, ['-C', repo, 'push', remote, 'HEAD:raw-target']);
+    expect(
+      (await execFileAsync('/usr/bin/git', ['--git-dir', remote, 'show-ref', 'foreign'])).stdout,
+    ).toContain('refs/heads/foreign');
+    expect(
+      (await execFileAsync('/usr/bin/git', ['--git-dir', remote, 'show-ref', 'raw-target'])).stdout,
+    ).toContain('refs/heads/raw-target');
+  });
+
+  it('refuses a configured pushurl that points away from a local fixture', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-corner-pushurl-'));
+    roots.push(root);
+    const repo = join(root, 'repo');
+    const remote = join(root, 'remote.git');
+    const cli = join(root, 'cli.mjs');
+    const calls = join(root, 'tokens');
+    await writeFile(
+      cli,
+      `import { appendFileSync } from 'node:fs';
+appendFileSync(${JSON.stringify(calls)}, 'token\\n'); console.log('fresh-token');`,
+    );
+    await chmod(cli, 0o700);
+    await execFileAsync('/usr/bin/git', ['init', '--bare', remote]);
+    await execFileAsync('/usr/bin/git', ['init', repo]);
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'checkout', '-b', featureBranch]);
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'config', 'user.name', 'Beeline Test']);
+    await execFileAsync('/usr/bin/git', [
+      '-C',
+      repo,
+      'config',
+      'user.email',
+      'beeline@example.test',
+    ]);
+    await writeFile(join(repo, 'README.md'), 'pushurl test\n');
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'add', 'README.md']);
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'commit', '-m', 'test']);
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'remote', 'add', 'origin', remote]);
+    // A remote whose fetch URL looks like a local fixture but whose push URL
+    // leaves the machine: the branch rule must follow the URL git actually
+    // pushes to, never remote.<name>.url.
+    await execFileAsync('/usr/bin/git', [
+      '-C',
+      repo,
+      'remote',
+      'add',
+      'decoy',
+      join(root, 'nonexistent.git'),
+    ]);
+    await execFileAsync('/usr/bin/git', [
+      '-C',
+      repo,
+      'config',
+      'remote.decoy.pushurl',
+      'https://127.0.0.1:1/repo.git',
+    ]);
+    const { env } = await installCornerGitHubWrappers({
+      root,
+      runtimeConfigPath: '/runtime.json',
+      roomId: 'room',
+      cliEntrypoint: cli,
+      gitBinary: '/usr/bin/git',
+      featureBranch,
+      targetBranch,
+      originUrl: 'https://github.com/beeline-test/repo.git',
+      inheritedPath: process.env.PATH,
+    });
+    const launcher = join(env.PATH!.split(':')[0]!, 'git');
+    await expect(
+      execFileAsync(launcher, ['push', 'decoy', 'HEAD:foreign'], { cwd: repo }),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: `beeline: this corner may push only ${featureBranch}\n`,
+    });
+    // The same redirection through command-line config is refused too.
+    await expect(
+      execFileAsync(
+        launcher,
+        [
+          '-c',
+          'remote.evil.url=/nonexistent',
+          '-c',
+          'remote.evil.pushurl=https://127.0.0.1:1/repo.git',
+          'push',
+          'evil',
+          'HEAD:foreign2',
+        ],
+        { cwd: repo },
+      ),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: `beeline: this corner may push only ${featureBranch}\n`,
+    });
+    expect(
+      (
+        await execFileAsync('/usr/bin/git', [
+          '--git-dir',
+          remote,
+          'for-each-ref',
+          '--format=%(refname)',
+        ])
+      ).stdout,
+    ).not.toContain('foreign');
+  });
+
+  it('refuses a raw path target that insteadOf rewrites to a non-local remote', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-corner-rawtarget-'));
+    roots.push(root);
+    const repo = join(root, 'repo');
+    const remote = join(root, 'remote.git');
+    const cli = join(root, 'cli.mjs');
+    const calls = join(root, 'tokens');
+    await writeFile(
+      cli,
+      `import { appendFileSync } from 'node:fs';
+appendFileSync(${JSON.stringify(calls)}, 'token\\n'); console.log('fresh-token');`,
+    );
+    await chmod(cli, 0o700);
+    await execFileAsync('/usr/bin/git', ['init', '--bare', remote]);
+    await execFileAsync('/usr/bin/git', ['init', repo]);
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'checkout', '-b', featureBranch]);
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'config', 'user.name', 'Beeline Test']);
+    await execFileAsync('/usr/bin/git', [
+      '-C',
+      repo,
+      'config',
+      'user.email',
+      'beeline@example.test',
+    ]);
+    await writeFile(join(repo, 'README.md'), 'raw target test\n');
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'add', 'README.md']);
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'commit', '-m', 'test']);
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'remote', 'add', 'origin', remote]);
+    const { env } = await installCornerGitHubWrappers({
+      root,
+      runtimeConfigPath: '/runtime.json',
+      roomId: 'room',
+      cliEntrypoint: cli,
+      gitBinary: '/usr/bin/git',
+      featureBranch,
+      targetBranch,
+      originUrl: 'https://github.com/beeline-test/repo.git',
+      inheritedPath: process.env.PATH,
+    });
+    const launcher = join(env.PATH!.split(':')[0]!, 'git');
+    const bareTarget = join(root, 'fake');
+    const repoTarget = join(root, 'fake3');
+    const rewrite = 'url.https://127.0.0.1:1/real.git.insteadOf';
+    // A bare path rewritten by command-line insteadOf config is not a fixture.
+    await expect(
+      execFileAsync(
+        launcher,
+        ['-C', repo, '-c', `${rewrite}=${bareTarget}`, 'push', bareTarget, 'HEAD:main'],
+        { cwd: repo },
+      ),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: `beeline: this corner may push only ${featureBranch}\n`,
+    });
+    // The --repo form with the same rewrite in repo config is refused too.
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'config', rewrite, repoTarget]);
+    await expect(
+      execFileAsync(launcher, ['-C', repo, 'push', `--repo=${repoTarget}`, 'HEAD:main'], {
+        cwd: repo,
+      }),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: `beeline: this corner may push only ${featureBranch}\n`,
+    });
   });
 });

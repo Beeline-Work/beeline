@@ -10,6 +10,7 @@ import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SessionScheduler } from './session-scheduler.js';
 import type { DeliveredAttachment } from './attachment-delivery.js';
+import { roomSessionTmpDir } from './agent-home.js';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -203,7 +204,9 @@ async function runTurn(
   abort.abort();
   await loop;
   await scheduler.dispose();
-  const scratch = join(agentHomeRoot, 'tmp', 'beeline-attachments', 'msg-photo');
+  // The session's `TMPDIR` is the short symlink `roomAgentHomeEnv` reports, so
+  // attachments are named under it, not under the long agent home.
+  const scratch = join(roomSessionTmpDir(agentHomeRoot), 'beeline-attachments', 'msg-photo');
   const redeliver = () =>
     (
       roomLoop as unknown as {

@@ -4,6 +4,7 @@ import { mkdtempSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  isMobilePackage,
   parseReviewArgs,
   reviewExactHead,
   REVIEW_BUILD_PACKAGES,
@@ -115,6 +116,45 @@ test('a failing step fails the summary with that step named', () => {
   assert.equal(result.ok, false);
   assert.equal(result.failed.name, 'npm ci');
   assert.deepEqual(calls.git[calls.git.length - 1], ['worktree', 'remove', '--force', calls.tempDir]);
+});
+
+test('recognizes the mobile app spellings that need --prefix, not -w', () => {
+  assert.equal(isMobilePackage('@beeline/mobile'), true);
+  assert.equal(isMobilePackage('mobile'), true);
+  assert.equal(isMobilePackage('apps/mobile'), true);
+  assert.equal(isMobilePackage('@beeline/server'), false);
+});
+
+test('runs mobile install, typecheck and tests with --prefix apps/mobile', () => {
+  const { calls, deps } = fakeDeps();
+  const result = reviewExactHead(
+    [
+      SHA,
+      '--typecheck',
+      '@beeline/mobile',
+      '--',
+      '@beeline/mobile:sources/buzz/calm-lint',
+    ],
+    deps,
+  );
+  assert.equal(result.ok, true);
+  const npm = calls.run.filter(([command]) => command === 'npm');
+  assert.deepEqual(npm[0], ['npm', ['ci']]);
+  assert.deepEqual(npm[1], ['npm', ['ci', '--prefix', 'apps/mobile']]);
+  assert.deepEqual(
+    npm.find(([, args]) => args[0] === 'run' && args.includes('typecheck')),
+    ['npm', ['run', 'typecheck', '--prefix', 'apps/mobile']],
+  );
+  assert.deepEqual(
+    npm.find(([, args]) => args[0] === 'test'),
+    ['npm', ['test', '--prefix', 'apps/mobile', '--', '--run', 'sources/buzz/calm-lint']],
+  );
+});
+
+test('does not install the mobile tree for non-mobile targets', () => {
+  const { calls, deps } = fakeDeps();
+  reviewExactHead([SHA, '--', '@beeline/server:src/integration.test.ts'], deps);
+  assert.ok(!calls.run.some(([, args]) => args.includes('apps/mobile')));
 });
 
 test('an unresolvable head fails prepare and attempts no cleanup', () => {

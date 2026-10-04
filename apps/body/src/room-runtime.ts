@@ -28,7 +28,11 @@ import { SurfaceHealth, type SurfaceHealthState } from './surface-health.js';
 import { RoomSupervisor } from './room-supervisor.js';
 import type { AgentRuntimeRecord, RoomRuntimeRecord } from './runtime.js';
 import { runtimeIdentity } from './runtime.js';
-import { seedWarmNodeModules, warmNodeModulesStoreDir } from './warm-node-modules.js';
+import {
+  mobileNodeModulesStoreDir,
+  seedWarmNodeModules,
+  warmNodeModulesStoreDir,
+} from './warm-node-modules.js';
 import {
   DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR,
   resolveMaxWarmSessions,
@@ -188,6 +192,23 @@ export async function materializeCornerWorktree(input: {
           seed.detail ? ` (${seed.detail})` : ''
         }`,
       );
+    }
+    // `apps/mobile` is deliberately outside the root workspaces and has its
+    // own lockfile, so its tree is warmed from a second store. Without it a
+    // fresh corner cannot run the mobile vitest suite at all.
+    const mobilePath = resolve(path, 'apps/mobile');
+    if (existsSync(resolve(mobilePath, 'package-lock.json'))) {
+      const mobileSeed = await seedWarmNodeModules({
+        worktreePath: mobilePath,
+        storeRoot: mobileNodeModulesStoreDir(input.supervisorRoot),
+      });
+      if (mobileSeed.reason !== 'no-lockfile') {
+        console.log(
+          `[thin-core] corner ${input.cornerId} warm mobile node_modules: ${mobileSeed.reason}${
+            mobileSeed.detail ? ` (${mobileSeed.detail})` : ''
+          }`,
+        );
+      }
     }
   }
   await execFileAsync('git', [

@@ -656,7 +656,7 @@ describe('connect_app', () => {
     const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
       undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
     await expect(phone.execute('beginAppSignIn', { appId: connected.appId! }, OTHER))
-      .rejects.toThrow(/unavailable for this person/);
+      .rejects.toThrow(/no longer in your Workbench/);
     await phone.execute('beginAppSignIn', { appId: connected.appId! }, OWNER);
     await expect(phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: connected.appId! }, OTHER))
       .rejects.toThrow(/no longer pending/);
@@ -1061,6 +1061,33 @@ describe('connect_app', () => {
       app: 'fuckface', helperAgentId: 'machine-one' }, OWNER))
       .rejects.toThrow('Select an app from search results');
     expect((await database.query('SELECT id FROM workspace_apps')).rows).toEqual([]);
+  });
+
+  it('Reproduction RUNWAY-1: Workbench retries Runway through its helper instead of browser sign-in', async () => {
+    await connectSquire();
+    const provider = fakeComposio();
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    const first = await phone.execute('connectWorkbenchApp', {
+      workspaceId: WORKSPACE, app: 'Runway', helperAgentId: 'machine-one',
+    }, OWNER);
+    expect(first.transport).toBe('squire-api');
+    let wrongResult = '';
+    try { await phone.execute('beginAppSignIn', { appId: first.appId }, OWNER); }
+    catch (error) { wrongResult = (error as Error).message; }
+    console.log(`Reproduction RUNWAY-1: Connect Runway → ${first.transport}; browser retry → ${wrongResult}`);
+    expect(wrongResult).toBe('This app connects through Trusty Squire. Reconnect it from Workbench.');
+    expect(provider.link).not.toHaveBeenCalled();
+    await phone.execute('connectWorkbenchApp', {
+      workspaceId: WORKSPACE, app: 'Runway', helperAgentId: 'machine-one', reconnect: true,
+    }, OWNER);
+    const requests = await database.query<{ text: string }>(
+      `SELECT text FROM messages WHERE author_id=$1 AND text LIKE '%Runway to my Workbench.' ORDER BY created_at`, [OWNER],
+    );
+    expect(requests.rows.map(row => row.text)).toEqual([
+      '@bee Connect Runway to my Workbench.', '@bee Reconnect Runway to my Workbench.',
+    ]);
+    console.log('RUNWAY-1 demonstrated: retry sent Reconnect Runway to the helper; no browser sign-in link requested');
   });
 
   it('lets a person connect from Workbench by handing the sign-in to their agent', async () => {

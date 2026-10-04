@@ -11,6 +11,8 @@ import {
   archiveWorkflow,
   assignWorkflowRole,
   handoff,
+  getWorkflowRun,
+  cancelWorkflowRun,
   reassignFailedWorkflowRole,
   saveWorkflow,
   startWorkflow,
@@ -716,6 +718,14 @@ async function startedRun(): Promise<{ runId: string }> {
 }
 
 describe('handoff', () => {
+  it('lists every missing field and outcome together, even for an invalid outcome', async () => {
+    const { runId } = await startedRun();
+    const command = await commandFor(IMPLEMENTER);
+    for (const contents of [{}, null]) {
+      await expect(handoff(database, command, { runId, outcome: 'unknown', contents }))
+        .rejects.toThrow('summary is required; prUrl is required; outcome must be one of: pushed -> checks, blocked -> ask_human');
+    }
+  });
   it('rejects a caller not bound to the current state role', async () => {
     const { runId } = await startedRun();
     const command = await commandFor(REVIEWER);
@@ -1523,5 +1533,116 @@ describe('member handles as workflow role bindings', () => {
       [ROOM],
     );
     expect(cards.rowCount).toBe(0);
+  });
+});
+
+describe('agent workflow run reads and cancellation', () => {
+  it('reads the pinned contract, current holder, requirements and complete history after an edit and archive', async () => {
+    const { runId } = await startedRun();
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: { ...CONTRACT, description: 'New definition' } });
+    await archiveWorkflow(database, command, { name: 'corner' });
+    expect(await getWorkflowRun(database, ROOM, runId)).toMatchObject({
+      runId, workflowSlug: 'corner', workflowVersion: 1, state: 'implement', status: 'live',
+      role: 'implementer', boundAgentId: IMPLEMENTER, requiredFields: ['summary', 'prUrl'],
+      allowedOutcomes: { pushed: 'checks', blocked: 'ask_human' }, contract: CONTRACT,
+      history: [{ messageId: runId, toState: 'implement', actorId: IMPLEMENTER }],
+    });
+    await handoff(database, command, { runId, outcome: 'pushed', contents: { summary: 'ready', prUrl: 'test' }, receipt: { line: 'Ready for checks' } });
+    const read = await getWorkflowRun(database, ROOM, runId);
+    expect(read).toMatchObject({ state: 'checks', requiredFields: ['headSha'] });
+    expect(read.history).toHaveLength(2);
+    expect(read.history[1]).toMatchObject({ fromState: 'implement', outcome: 'pushed', receipt: { line: 'Ready for checks', exit: { actorId: IMPLEMENTER } } });
+    await expect(getWorkflowRun(database, '30000000-0000-4000-8000-000000000001', runId)).rejects.toThrow('unavailable in this Room');
+  });
+
+  it('shows the latest state and outcomes even when the pending wake cites an earlier card', async () => {
+    const { runId } = await startedRun();
+    await handoff(database, await commandFor(IMPLEMENTER), { runId, outcome: 'pushed', contents: { summary: 'ready', prUrl: 'test' } });
+    const wake = (await readAgentCommands(database, ROOM, IMPLEMENTER)).commands.find(c => c.sourceMessageId === runId);
+    expect(wake?.source.body).toContain('Current state: checks');
+    expect(wake?.source.body).toContain('passing -> review');
+    expect(wake?.source.body).toContain('failing -> implement');
+    expect(wake?.source.body).not.toContain('pushed -> checks');
+  });
+
+  it('allows the run requester, removes pending wakes and rejects later handoffs without waking subscribers', async () => {
+    const { runId } = await startedRun();
+    await database.query(`UPDATE memberships SET event_subscriptions='["workflow-handoff"]'::jsonb WHERE room_id=$1`, [ROOM]);
+    const command = await commandFor(IMPLEMENTER);
+    const result = await cancelWorkflowRun(database, command, { runId, reason: 'Request withdrawn' });
+    expect(result.status).toBe('abandoned');
+    const read = await getWorkflowRun(database, ROOM, runId);
+    expect(read).toMatchObject({ status: 'abandoned', allowedOutcomes: {}, requiredFields: [], cancellation: { reason: 'Request withdrawn', actorId: IMPLEMENTER } });
+    expect(read.history.at(-1)?.contents).toEqual({ reason: 'Request withdrawn' });
+    expect((await database.query(`SELECT 1 FROM agent_commands command JOIN messages message ON message.id=command.source_message_id WHERE command.state='pending' AND message.card->>'runId'=$1`, [runId])).rowCount).toBe(0);
+    await expect(handoff(database, command, { runId, outcome: 'pushed', contents: {} })).rejects.toThrow('already ended');
+    await expect(cancelWorkflowRun(database, command, { runId, reason: 'Again' })).rejects.toThrow('already ended');
+  });
+
+  it('does not redeliver an expired claim or fail over a cancelled run', async () => {
+    const { runId } = await startedRun();
+    await database.query(`UPDATE agent_commands SET state='claimed',lease_expires_at=now()-interval '1 minute' WHERE source_message_id=$1`, [runId]);
+    await cancelWorkflowRun(database, await commandFor(IMPLEMENTER), { runId, reason: 'Stop' });
+    const inbox = await readAgentCommands(database, ROOM, IMPLEMENTER);
+    expect(inbox.commands.some(c => c.sourceMessageId === runId)).toBe(false);
+    const count = (await getWorkflowRun(database, ROOM, runId)).history.length;
+    await database.transaction(db => reassignFailedWorkflowRole(db, { roomId: ROOM, requestId: runId, agentId: IMPLEMENTER }));
+    expect((await getWorkflowRun(database, ROOM, runId)).history).toHaveLength(count);
+  });
+
+  it('refuses an unrelated requester even when the executing agent holds the run', async () => {
+    const { runId } = await startedRun();
+    const command = await commandFor(IMPLEMENTER, await rootMessage(OUTSIDER));
+    await expect(cancelWorkflowRun(database, command, { runId, reason: 'Stop' })).rejects.toMatchObject({ status: 403 });
+    expect((await getWorkflowRun(database, ROOM, runId)).status).toBe('live');
+  });
+
+  it('allows the recorded human requester through another agent without admin or role ownership', async () => {
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WORKSPACE, ROOM, OUTSIDER]);
+    const command = await commandFor(IMPLEMENTER, await rootMessage(OUTSIDER));
+    await saveWorkflow(database, command, { contract: CONTRACT });
+    const { runId } = await startWorkflow(database, command, {
+      name: 'corner', roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+    });
+    const delegate = await commandFor(WORKER_B, await rootMessage(OUTSIDER));
+    await cancelWorkflowRun(database, delegate, { runId, reason: 'Requester withdrew' });
+    expect((await getWorkflowRun(database, ROOM, runId)).cancellation?.actorId).toBe(OUTSIDER);
+  });
+
+  it('allows a bound role owner even when they did not start the run or administer the Room', async () => {
+    const { runId } = await startedRun();
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [REVIEWER, OUTSIDER]);
+    const command = await commandFor(IMPLEMENTER, await rootMessage(OUTSIDER));
+    expect((await cancelWorkflowRun(database, command, { runId, reason: 'Owner withdrew' })).status).toBe('abandoned');
+  });
+
+  it('allows a human Room admin and records that human as the actor', async () => {
+    const { runId } = await startedRun();
+    const command = await commandFor(IMPLEMENTER, await rootMessage(OWNER));
+    await cancelWorkflowRun(database, command, { runId, reason: 'Admin stopped' });
+    expect((await getWorkflowRun(database, ROOM, runId)).cancellation?.actorId).toBe(OWNER);
+  });
+
+  it('closes an open gate without a decision wake and removes the run from phone active reads', async () => {
+    const { runId } = await startedRun();
+    const command = await commandFor(IMPLEMENTER);
+    await handoff(database, command, { runId, outcome: 'blocked', contents: { summary: 'blocked', prUrl: 'none' } });
+    const choice = (await database.query<{ id: string; options: { optionId: string }[] }>(`SELECT id,options FROM room_choices WHERE room_id=$1 AND status='open'`, [ROOM])).rows[0]!;
+    await cancelWorkflowRun(database, command, { runId, reason: 'Stop waiting' });
+    expect((await database.query<{ status: string }>(`SELECT status FROM room_choices WHERE id=$1`, [choice.id])).rows[0]?.status).toBe('closed');
+    await expect(answerRoomChoice(database, { choiceId: choice.id, optionId: choice.options[0]!.optionId, viewerId: OWNER })).rejects.toThrow('already decided');
+    const { readWorkflowOwnership } = await import('./workflow-ownership.js');
+    expect((await readWorkflowOwnership(database, ROOM, 'corner', OWNER)).activeRunIds).not.toContain(runId);
+  });
+
+  it('deletes a state timeout so the scheduler cannot wake an ended run', async () => {
+    const command = await commandFor(IMPLEMENTER);
+    const contract = { ...CONTRACT, handoffs: { ...CONTRACT.handoffs, implement: { ...CONTRACT.handoffs.implement, timeoutSeconds: 60, on: { ...CONTRACT.handoffs.implement.on, timeout: 'ask_human' } } } };
+    await saveWorkflow(database, command, { contract });
+    const { runId } = await startWorkflow(database, command, { name: 'corner', roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER } });
+    await cancelWorkflowRun(database, command, { runId, reason: 'Stop' });
+    expect((await database.query(`SELECT 1 FROM agent_schedules WHERE workflow_run->>'runId'=$1`, [runId])).rowCount).toBe(0);
+    expect(await new AgentScheduleLoop(database).runOnce(new Date(Date.now() + 120000))).toBe(0);
   });
 });

@@ -299,6 +299,30 @@ async function main(): Promise<void> {
   if (started.state !== 'draft' || typeof runId !== 'string') {
     throw new Error(`unexpected start_workflow result: ${JSON.stringify(started)}`);
   }
+  // Reproduction workflow-tools-gap: an agent can read the returned run id,
+  // including the pinned version after the saved definition changes.
+  await call('save a newer definition while the run remains pinned', 'saveWorkflow', {
+    roomId: ROOM, agentId: WRITER, ...turn1,
+    contract: { ...CONTRACT, description: 'A newer description' },
+  }, writerToken);
+  const agentRead = await call('agent reads returned workflow run id', 'getWorkflowRun', {
+    roomId: ROOM, runId,
+  }, reviewerToken);
+  if (agentRead.workflowVersion !== 1 || agentRead.state !== 'draft' ||
+      agentRead.boundAgentId !== WRITER ||
+      JSON.stringify(agentRead.allowedOutcomes) !== JSON.stringify({ submitted: 'review' }) ||
+      JSON.stringify(agentRead.requiredFields) !== JSON.stringify(['text']) ||
+      (agentRead.contract as typeof CONTRACT).description !== CONTRACT.description)
+    throw new Error('agent run read did not expose the current state and pinned contract');
+  const badHandoff = await call('agent gets complete handoff requirements', 'handoff', {
+    roomId: ROOM, agentId: WRITER, ...turn1, runId, outcome: 'wrong', contents: {},
+  }, writerToken).catch((error: Error) => error.message);
+  if (typeof badHandoff !== 'string' || !badHandoff.includes('text is required') ||
+      !badHandoff.includes('submitted -> review')) throw new Error('handoff omitted requirements or allowed outcomes');
+  const initialWake = (await commandsFor(WRITER, writerToken)).find(c => c.sourceMessageId === runId);
+  if (!initialWake?.source?.body.includes('Current state: draft') ||
+      !initialWake.source.body.includes('submitted -> review')) throw new Error('initial wake omitted state or outcomes');
+
   // --- Turn 1 continues: the writer submits its first draft. ---
   const draft1 = await call(WRITER + ' hands off the draft', 'handoff', {
     roomId: ROOM,
@@ -313,6 +337,14 @@ async function main(): Promise<void> {
     ] },
   }, writerToken);
   if (draft1.state !== 'review') throw new Error(`expected review, got ${JSON.stringify(draft1)}`);
+  const reviewRead = await call('agent reads the review requirements, receipt hint and handoff history', 'getWorkflowRun', {
+    roomId: ROOM, runId,
+  }, reviewerToken);
+  if (reviewRead.state !== 'review' || reviewRead.boundAgentId !== REVIEWER ||
+      reviewRead.receiptHint !== 'the review decision and evidence' ||
+      JSON.stringify(reviewRead.requiredFields) !== JSON.stringify(['verdict']) ||
+      (reviewRead.history as unknown[]).length !== 2)
+    throw new Error('agent run read omitted the current requirements, hint or history');
   const previewToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
   const previewResponse = await fetch(`${origin}/v1/phone/operations/readWorkflowRun`, {
     method: 'POST', headers: { authorization: `Bearer ${previewToken}`, 'content-type': 'application/json' },
@@ -342,6 +374,8 @@ async function main(): Promise<void> {
   if (!reviewerPending1) throw new Error('reviewer was never woken for the first review');
   if (!reviewerPending1.source?.body.includes(`You are in run ${runId} of draft-review. Continue this run; do not start a new one.`))
     throw new Error('reviewer wake omitted its run id and continuation instruction');
+  if (!reviewerPending1.source?.body.includes('Current state: review') || !reviewerPending1.source.body.includes('approved -> done, changes_requested -> draft'))
+    throw new Error('handoff wake omitted state or outcomes');
   if (!reviewerPending1.source?.body.includes('the review decision and evidence'))
     throw new Error('the dispatched reviewer did not receive the state receipt hint');
   const turn2 = await claim(REVIEWER, reviewerToken, reviewerPending1);
@@ -745,7 +779,7 @@ async function main(): Promise<void> {
   const timeoutWake = (await commandsFor(WRITER, writerToken)).find((entry) =>
     entry.source?.body.includes(`You are in run ${wakeRunId} of wake-proof. Continue this run; do not start a new one.`)
     && entry.reason === 'schedule');
-  if (!timeoutWake) throw new Error('timeout wake omitted its run context');
+  if (!timeoutWake?.source?.body.includes('Current state: wait') || !timeoutWake.source.body.includes('timeout -> gate')) throw new Error('timeout wake omitted its state and outcomes');
   log.push({ label: 'writer receives the state timeout wake', response: timeoutWake });
   await call('writer advances to the gate', 'handoff', {
     roomId: ROOM, requestId: wakeTurn.requestId, generationId: wakeTurn.generationId,
@@ -766,7 +800,7 @@ async function main(): Promise<void> {
   if (!answerResponse.ok) throw new Error(`workflow gate answer failed: ${JSON.stringify(answerResult)}`);
   const gateWake = (await commandsFor(REVIEWER, reviewerToken)).find((entry) =>
     entry.source?.body.includes(`You are in run ${wakeRunId} of wake-proof. Continue this run; do not start a new one.`));
-  if (!gateWake) throw new Error('settled gate wake omitted its run context');
+  if (!gateWake?.source?.body.includes('Current state: gate') || !gateWake.source.body.includes('approved -> done, rejected -> done')) throw new Error('settled gate wake omitted state and outcomes');
   log.push({ label: 'reviewer receives the settled gate wake', response: gateWake });
   if (!gateWake.source?.body.includes('Their note with the answer: "ship it, but watch the logs"'))
     throw new Error('settled gate wake omitted the answer note');
@@ -778,6 +812,30 @@ async function main(): Promise<void> {
   const answeredGate = runDetail.history?.find((step) => step.gate?.answer === 'approved')?.gate;
   log.push({ label: 'the run shows the gate answer and its note', response: { httpStatus: runResponse.status, gate: answeredGate } });
   if (answeredGate?.note !== 'ship it, but watch the logs') throw new Error('run view omitted the gate answer note');
+  await database.query(`UPDATE memberships SET event_subscriptions='["workflow-handoff"]'::jsonb WHERE room_id=$1 AND identity_id=$2`, [ROOM, REVIEWER]);
+  const cancelled = await call('requester cancels an active workflow run', 'cancelWorkflowRun', {
+    roomId: ROOM, agentId: WRITER, ...wakeTurn, runId: wakeRunId, reason: 'The request was withdrawn',
+  }, writerToken);
+  if (cancelled.status !== 'abandoned') throw new Error('cancellation did not end the run');
+  const cancelledRead = await call('agent reads the recorded cancellation', 'getWorkflowRun', { roomId: ROOM, runId: wakeRunId }, reviewerToken);
+  if (cancelledRead.status !== 'abandoned' || (cancelledRead.cancellation as { reason: string }).reason !== 'The request was withdrawn' ||
+      Object.keys(cancelledRead.allowedOutcomes as object).length) throw new Error('cancelled read lost reason or kept allowed outcomes');
+  const pending = await database.query(`SELECT 1 FROM agent_commands command JOIN messages message ON message.id=command.source_message_id WHERE command.state='pending' AND message.card->>'runId'=$1`, [wakeRunId]);
+  if (pending.rowCount) throw new Error('cancelled run still had pending wakes');
+  const endedHandoff = await call('agent cannot hand off a cancelled run', 'handoff', {
+    roomId: ROOM, agentId: WRITER, ...wakeTurn, runId: wakeRunId, outcome: 'advance', contents: {},
+  }, writerToken).catch((error: Error) => error.message);
+  if (typeof endedHandoff !== 'string' || !endedHandoff.includes('already ended')) throw new Error('cancelled run accepted a handoff');
+  const endedPhoneResponse = await fetch(`${origin}/v1/phone/operations/readWorkflowRun`, {
+    method: 'POST', headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ roomId: ROOM, runId: wakeRunId }),
+  });
+  const endedPhone = await endedPhoneResponse.json() as { run: { status: string; activeRunIds?: string[] }; history: { contents?: { reason?: string } }[] };
+  if (!endedPhoneResponse.ok || endedPhone.run.status !== 'abandoned' || endedPhone.run.activeRunIds?.includes(wakeRunId) ||
+      endedPhone.history.at(-1)?.contents?.reason !== 'The request was withdrawn') throw new Error('phone run view did not show the cancellation');
+  log.push({ label: 'phone shows the ended run and reason', response: endedPhone });
+  console.log('Reproduction workflow-tools-gap PASSED: agent read returns pinned version/state/requirements/history; refusal lists missing fields and outcomes; start, handoff, timeout and gate wakes name current state/outcomes; cancellation records reason, clears pending wakes and ends phone run view.');
+
   await complete(WRITER, writerToken, wakeTurn);
 
   const transcript = await database.query<{

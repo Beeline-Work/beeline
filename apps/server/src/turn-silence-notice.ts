@@ -68,6 +68,7 @@ export async function noteFirstSilence(
       roomId: input.roomId,
       requestId: input.requestId,
       agentId: input.agentId,
+      reason: input.reason,
     }),
   );
   await reassignFailedCornerReviewer(database, {

@@ -73,6 +73,24 @@ async function loadIdentityRow(db: SqlDatabase, id: string): Promise<IdentityRow
   return row;
 }
 
+/**
+ * The run's starter: the start card's resolved requester, falling back to the
+ * start message's own author for runs predating that field (same fallback
+ * `cancelWorkflowRun` uses for cancel authority). Drives whether a stuck gate
+ * or an unanswered role wakes this agent directly instead of asking a human.
+ */
+async function loadRunStarter(db: SqlDatabase, roomId: string, runId: string): Promise<IdentityRow> {
+  const start = (
+    await db.query<{ author_id: string; requester_id: string | null }>(
+      `SELECT author_id,card->>'requesterId' requester_id FROM messages
+       WHERE room_id=$1 AND id=$2 AND card_type=$3`,
+      [roomId, runId, WORKFLOW_HANDOFF_CARD_TYPE],
+    )
+  ).rows[0];
+  if (!start) throw new Error('workflow start is unavailable');
+  return loadIdentityRow(db, start.requester_id ?? start.author_id);
+}
+
 async function loadRun(
   db: SqlDatabase,
   roomId: string,
@@ -135,7 +153,8 @@ async function resolveRoleBinding(
  * with nobody healthy. The run stays parked at this state: a human can
  * address any Room member and ask it to call `assign_workflow_role`, which
  * binds a specific agent and re-wakes it with no health filter (an explicit
- * human choice overrides "healthy").
+ * human choice overrides "healthy"). For an agent-started run, this also
+ * wakes the starter directly instead of leaving the note unaddressed.
  */
 async function noteWorkflowRoleExhausted(
   db: SqlDatabase,
@@ -144,6 +163,7 @@ async function noteWorkflowRoleExhausted(
   const id = createHash('sha256')
     .update(`beeline:workflow-role-exhausted:v1:${input.runId}:${input.role}:${input.afterMessageId}`)
     .digest('hex');
+  const starter = await loadRunStarter(db, input.roomId, input.runId);
   await ensureSystemIdentity(db);
   await systemLine(db, {
     id,
@@ -152,6 +172,7 @@ async function noteWorkflowRoleExhausted(
     subject: { kind: 'system', name: `No agent on the ${input.role} role's list` },
     verb: 'is healthy',
     consequence: 'ask an agent to call assign_workflow_role to bind another agent in this Room',
+    ...(starter.kind === 'agent' ? { kind: 'workflow-handoff' as const, wakes: [starter.id] } : {}),
     afterMessageId: input.afterMessageId,
   });
 }
@@ -403,7 +424,13 @@ export function workflowGatePrompt(contract: Pick<WorkflowContract, 'name'>, sta
   return `${contract.name}: ${stateName}`.slice(0, 120);
 }
 
-/** Posts the gate's ask_choice card; the bound role's agent is woken once a human answers. */
+/**
+ * Posts the gate's ask_choice card for a human-started run; the bound role's
+ * agent is woken once a human answers. An agent-started run skips the
+ * human-only card (nothing but a human can answer one) and instead wakes its
+ * starter directly, who can retry, rebind the role (`assign_workflow_role`),
+ * steer the bound agent, or cancel the run.
+ */
 async function postWorkflowGate(
   db: SqlDatabase,
   input: {
@@ -417,6 +444,23 @@ async function postWorkflowGate(
 ): Promise<void> {
   const askerAgentId = input.roleBindings[input.state.role];
   if (!askerAgentId) throw new Error(`no agent is bound to the ${input.state.role} role`);
+  const starter = await loadRunStarter(db, input.roomId, input.runId);
+  if (starter.kind === 'agent') {
+    await ensureSystemIdentity(db);
+    await systemLine(db, {
+      id: randomBytes(32).toString('hex'),
+      roomId: input.roomId,
+      authorId: SYSTEM_IDENTITY_ID,
+      subject: { kind: 'system', name: `${input.contract.name} run ${input.runId}` },
+      verb: 'reached a gate at',
+      object: input.stateName,
+      consequence:
+        `${input.state.role} is ${askerAgentId}; assign_workflow_role or cancel_workflow_run`.slice(0, 200),
+      kind: 'workflow-handoff',
+      wakes: [starter.id],
+    });
+    return;
+  }
   const choice = await postRoomChoice(db, {
     roomId: input.roomId,
     agentId: askerAgentId,
@@ -971,13 +1015,14 @@ async function reassignRole(
  * agent-authored (the previous role holder's handoff, or the run's own start
  * card), so gating this on "a human is further up the chain" would silently
  * never fire for the ordinary case. Runs in its own transaction. A no-op for
- * a single-agent role, a stale/superseded dispatch, or a turn that was never a
- * workflow dispatch at all — this must never throw into the ordinary
- * silence-notice path.
+ * a stale/superseded dispatch or a turn that was never a workflow dispatch at
+ * all. A single-agent role has no list to fail over on, so an agent-started
+ * run instead wakes its starter with the bound agent and reported reason;
+ * this must never throw into the ordinary silence-notice path.
  */
 export async function reassignFailedWorkflowRole(
   db: SqlDatabase,
-  input: { roomId: string; requestId: string; agentId: string },
+  input: { roomId: string; requestId: string; agentId: string; reason?: string | null },
 ): Promise<void> {
   const trigger = (
     await db.query<{ run_id: string }>(
@@ -1007,7 +1052,28 @@ export async function reassignFailedWorkflowRole(
   const role = (state as WorkflowHandoffState | WorkflowGateState).role;
   if (run.roleBindings[role] !== input.agentId) return;
   const agents = (await loadRunRoleAgents(db, input.roomId, run.runId))[role];
-  if (!agents) return;
+  if (!agents) {
+    const starter = await loadRunStarter(db, input.roomId, run.runId);
+    if (starter.kind === 'agent') {
+      const reason = (input.reason ?? '').replace(/\s+/g, ' ').trim().slice(0, 100);
+      await ensureSystemIdentity(db);
+      await systemLine(db, {
+        id: createHash('sha256')
+          .update(`beeline:workflow-role-silent:v1:${run.runId}:${role}:${input.requestId}`)
+          .digest('hex'),
+        roomId: input.roomId,
+        authorId: SYSTEM_IDENTITY_ID,
+        subject: { kind: 'system', name: `${run.workflowSlug} run ${run.runId}` },
+        verb: 'got no answer at',
+        object: role,
+        consequence:
+          `${input.agentId} did not answer${reason ? ` (${reason})` : ''}; assign_workflow_role or cancel_workflow_run`.slice(0, 200),
+        kind: 'workflow-handoff',
+        wakes: [starter.id],
+      });
+    }
+    return;
+  }
   const picked = await nextHealthyAgent(db, input.roomId, agents, input.agentId);
   if (!picked) {
     await noteWorkflowRoleExhausted(db, {
@@ -1058,12 +1124,13 @@ async function memberIdForHandle(db: SqlDatabase, roomId: string, raw: string): 
 }
 
 /**
- * A human's explicit override: bind a specific agent to a list-bound role
- * this run is currently on — the "ask a human" recovery path when nobody on
- * the list is healthy, or simply a human's choice at any time. Unlike
- * automatic failover, the target is not health-filtered (an explicit human
- * choice overrides "healthy") and need not be on the list, but must be a
- * current agent member of the Room — not a way to bind an outsider.
+ * An explicit override: bind a specific agent to the role this run is
+ * currently on, list-bound or not — the "ask a human" recovery path when
+ * nobody on a list is healthy, a woken run starter's way to rebind a stuck
+ * single-bound role (its binding problem, not the agent's fault), or simply
+ * an explicit choice at any time. The target is not health-filtered (an
+ * explicit choice overrides "healthy") and need not be on any list, but must
+ * be a current agent member of the Room — not a way to bind an outsider.
  */
 export async function assignWorkflowRole(
   database: SqlDatabase,
@@ -1089,10 +1156,6 @@ export async function assignWorkflowRole(
     const currentRole = (state as WorkflowHandoffState | WorkflowGateState).role;
     if (currentRole !== input.role) {
       throw new Error(`this run is currently at the ${currentRole} role, not ${input.role}`);
-    }
-    const roleAgents = await loadRunRoleAgents(db, command.room_id, run.runId);
-    if (!roleAgents[input.role]) {
-      throw new Error(`the ${input.role} role is bound to one agent; it cannot be reassigned`);
     }
     const member = await db.query(
       `SELECT 1 FROM memberships member

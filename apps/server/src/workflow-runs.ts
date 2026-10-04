@@ -278,9 +278,10 @@ export async function cancelWorkflowRun(
       throw new Error('this workflow run has already ended');
     await cancelWorkflowTimeout(db, input.runId, run.toState);
     const reason = input.reason.trim();
+    await ensureSystemIdentity(db);
     await systemLine(db, {
       roomId: command.room_id,
-      authorId: actorId,
+      authorId: SYSTEM_IDENTITY_ID,
       subject: identitySubject(await loadIdentityRow(db, actorId)),
       verb: 'cancelled workflow',
       object: run.workflowSlug,

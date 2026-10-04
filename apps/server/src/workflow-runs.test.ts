@@ -1,4 +1,5 @@
 import { describedWorkflow } from './test-support.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QueryResultRow } from 'pg';
@@ -7,6 +8,7 @@ import { PgliteDatabase } from './test-support.js';
 import { createAgentCommand, readAgentCommands, type CommandRow } from './agent-command.js';
 import { answerRoomChoice } from './room-choice.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
+import { PhoneService } from './phone-service.js';
 import {
   activeRunIdsForSchedule,
   archiveWorkflow,
@@ -1630,9 +1632,24 @@ describe('agent workflow run reads and cancellation', () => {
   });
 
   it('allows a human Room admin and records that human as the actor', async () => {
+    await database.query(`UPDATE identities SET handle='owner' WHERE id=$1`, [OWNER]);
     const { runId } = await startedRun();
     const command = await commandFor(IMPLEMENTER, await rootMessage(OWNER));
     await cancelWorkflowRun(database, command, { runId, reason: 'Admin stopped' });
+    const notice = (await database.query<{ author_id: string; text: string; actor_id: string }>(
+      `SELECT author_id,text,card->'cancellation'->>'actorId' actor_id FROM messages
+       WHERE room_id=$1 AND card->>'runId'=$2 AND card->>'outcome'='cancelled'`,
+      [ROOM, runId],
+    )).rows[0]!;
+    console.log('Cancellation notice:', JSON.stringify(notice));
+    expect(notice.author_id).toBe(SYSTEM_IDENTITY_ID);
+    expect(notice.text).toBe(`@owner cancelled workflow corner · run ${runId}`);
+    expect(notice.actor_id).toBe(OWNER);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`, [WORKSPACE, OWNER]);
+    const room = await new PhoneService(database, 'http://localhost').readRoom(ROOM, OWNER);
+    const displayedNotice = room?.messages.find(message => message.text === notice.text);
+    expect(displayedNotice?.author).toMatchObject({ pubkey: SYSTEM_IDENTITY_ID, name: 'System' });
+    console.log('Room cancellation notice:', JSON.stringify(displayedNotice));
     expect((await getWorkflowRun(database, ROOM, runId)).cancellation?.actorId).toBe(OWNER);
   });
 

@@ -187,6 +187,20 @@ describe('New Room sheet', () => {
     act(() => renderer.unmount());
   });
 
+  it('matches Name and Public: Repository is a flat hairline row, never a box', () => {
+    const { renderer, host } = mount();
+    const flatten = (style: unknown): Record<string, unknown> =>
+      Object.assign({}, ...(Array.isArray(style) ? style : [style]));
+    const repoRow = flatten(host('create-room-repo-row')?.props.style);
+    const publicRow = flatten(host('create-room-public-row')?.props.style);
+    for (const row of [repoRow, publicRow]) {
+      expect(row.borderWidth).toBeUndefined();
+      expect(row.borderRadius).toBeUndefined();
+      expect(row.borderTopWidth).toBe(1);
+    }
+    act(() => renderer.unmount());
+  });
+
   it('reveals the None / Link / Create switch in place, still on None', () => {
     const { renderer, host, press, load } = mount();
     press('create-room-repo-row');

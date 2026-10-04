@@ -22,7 +22,13 @@ vi.mock('./Button', async () => {
 });
 vi.mock('./RepoList', () => ({ RepoList: 'RepoList' }));
 vi.mock('./ChevronGlyph', () => ({ ChevronGlyph: 'ChevronGlyph', CHEVRON_ROW_SIZE: 16 }));
-vi.mock('./HullActionSheet', () => ({ HULL_SHEET_INSET: 24 }));
+vi.mock('./HullActionSheet', async () => {
+  const React = await import('react');
+  return {
+    HULL_SHEET_INSET: 24,
+    HullActionSheetRow: (props: any) => React.createElement('Row', props),
+  };
+});
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -97,7 +103,8 @@ function mount({
     return React.createElement(
       'Sheet',
       { title: choice.listOpen ? 'Choose a repo' : '#thecollector' },
-      choice.listOpen ? choice.list : choice.control,
+      choice.control,
+      choice.listOpen ? choice.list : choice.row,
       choice.footer,
     );
   }
@@ -140,7 +147,7 @@ function mount({
 describe('Room header Repository control', () => {
   it('opens as one Repository · None row with Cancel and Save off (H1)', () => {
     const { renderer, host, text, save } = mount();
-    expect(text('room-repo-row')).toBe('RepositoryNone');
+    expect(host('room-repo-row').props).toMatchObject({ label: 'Repository', metadata: 'None' });
     expect(host('room-repo-mode')).toBeUndefined();
     expect(text('room-actions-close')).toBe('Cancel');
     expect(save().label).toBe('Save');
@@ -260,7 +267,10 @@ describe('Room header Repository control', () => {
 
   it('shows a linked repo, and unlinks it with None + Save (H9)', () => {
     const { renderer, host, text, press, save, calls } = mount({ current: castellan });
-    expect(text('room-repo-row')).toBe('Repositorycastellan');
+    expect(host('room-repo-row').props).toMatchObject({
+      label: 'Repository',
+      metadata: 'castellan',
+    });
     press('room-repo-row');
     expect(host('room-repo-mode-link')?.props.accessibilityState.selected).toBe(true);
     expect(text('room-repo-link')).toBe('trusty-squirecastellan');
@@ -273,8 +283,11 @@ describe('Room header Repository control', () => {
   });
 
   it('shows a read-only row to viewers who cannot manage the Room', () => {
-    const { renderer, host, text, renderer: r } = mount({ current: castellan, canManage: false });
-    expect(text('room-repo-readonly')).toBe('Repositorycastellan');
+    const { renderer, host, renderer: r } = mount({ current: castellan, canManage: false });
+    expect(host('room-repo-readonly').props).toMatchObject({
+      label: 'Repository',
+      metadata: 'castellan',
+    });
     expect(host('room-repo-row')).toBeUndefined();
     expect(r.root.findAllByType('Button')).toHaveLength(0);
     act(() => renderer.unmount());

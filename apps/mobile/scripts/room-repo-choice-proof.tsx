@@ -66,7 +66,7 @@ function Sheet() {
       title={choice.listOpen ? 'Choose a repo' : '#thecollector'}
       visible
     >
-      {choice.listOpen ? choice.list : null}
+      {choice.listOpen ? choice.list : choice.row}
     </HullActionSheetModal>
   );
 }

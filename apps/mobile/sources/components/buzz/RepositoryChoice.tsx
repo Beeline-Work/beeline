@@ -100,13 +100,9 @@ export function useSelectConnectedOwner(
 }
 
 type Props = {
-  /** Prefix for every testID, e.g. `create-room` gives `create-room-repo-row`. */
+  /** Prefix for every testID, e.g. `create-room` gives `create-room-repo-mode`. */
   testIDPrefix: string;
   busy: boolean;
-  revealed: boolean;
-  onReveal: () => void;
-  /** The collapsed row's value: `None`, or the linked repo's name. */
-  collapsedValue: string;
   mode: RepoMode;
   onChooseMode: (mode: RepoMode) => void;
   loading: boolean;
@@ -133,16 +129,13 @@ type Props = {
 };
 
 /**
- * The Repository control from the New Room mock: one collapsed row that turns
- * into the None / Link / Create switch in place. New Room and the Room header
- * sheet both render it.
+ * The Repository control's revealed None / Link / Create switch. New Room and
+ * the Room header sheet each own their own flat, unboxed collapsed row and
+ * mount this only once the viewer taps it.
  */
 export function RepositoryChoice({
   testIDPrefix: p,
   busy,
-  revealed,
-  onReveal,
-  collapsedValue,
   mode,
   onChooseMode,
   loading,
@@ -318,24 +311,6 @@ export function RepositoryChoice({
     return mode === 'link' ? linkRow() : createRow();
   };
 
-  if (!revealed) {
-    return (
-      <TouchableOpacity
-        accessibilityRole="button"
-        disabled={busy}
-        onPress={onReveal}
-        style={[styles.boxRow, styles.collapsedRow]}
-        testID={`${p}-repo-row`}
-      >
-        <Text style={styles.boxKey}>Repository</Text>
-        <Text numberOfLines={1} style={styles.boxValue}>
-          {collapsedValue}
-        </Text>
-        <ChevronGlyph color={styles.chevron.color} direction="right" size={CHEVRON_ROW_SIZE} />
-      </TouchableOpacity>
-    );
-  }
-
   const menuShown = ownerMenuOpen && mode === 'create' && githubConnected;
   // The menu ends `xs` above the slot, which starts `sm` below the switch.
   const reserved =
@@ -389,18 +364,6 @@ export function RepositoryChoice({
   );
 }
 
-/** A read-only Repository row for viewers who cannot change the Room's repo. */
-export function RepositoryReadonlyRow({ value, testID }: { value: string; testID: string }) {
-  return (
-    <View style={[styles.boxRow, styles.collapsedRow]} testID={testID}>
-      <Text style={styles.boxKey}>Repository</Text>
-      <Text numberOfLines={1} style={styles.boxValue}>
-        {value}
-      </Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
@@ -430,9 +393,7 @@ const styles = StyleSheet.create((theme) => {
       borderColor: hull.border,
       borderRadius: hull.radius,
     },
-    collapsedRow: { marginBottom: hull.space.xs },
     boxKey: { ...Typography.default(), ...hull.type.meta, color: hull.textSecondary, flex: 1 },
-    boxValue: { ...Typography.default(), ...hull.type.meta, color: hull.textPrimary },
     connectValue: {
       ...Typography.default('semiBold'),
       ...hull.type.meta,

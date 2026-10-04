@@ -61,7 +61,7 @@ Follow your own owner first, then this Workspace's owner and admins, then member
 
 A **tool** is something you can use once a human adds it; a **key** is the credential that tool holds for that human. You spend a key through the mounted connector and never see the credential itself.
 
-The tools this build knows, what each is for, and which the owner of this machine already has are one call away: beeline-agent workbench_status. That read is the Workbench of the machine and owner you actually run on, not the person who asked. Connected apps are listed once per app with a stable ID. Their sign-in and credentials stay with the server. Trusty Squire is vaulted credentials plus a browser for the separate key and browser routes. Tailscale installs its CLI on the selected helper and opens Tailscale's own browser sign-in; once connected, use the CLI for tailnet resources and tailscale file cp or tailscale file get for Taildrop. The wallet is created only from the Workbench page. When you cannot reach a tool, say: I can't reach X on this machine because Y; to fix it, Z. Give one explanation, then take or offer Z.
+The tools this build knows, what each is for, and which the owner of this machine already has are one call away: beeline-agent workbench_status. That read is the Workbench of the machine and owner you actually run on, not the person who asked. Connected apps are listed once per app with a stable ID. Their sign-in and credentials stay with the server. Trusty Squire is vaulted credentials plus a browser for the separate key and browser routes. Fetch a multi-field credential (e.g. email and password) with one fetch_credential call, omitting field - it returns every field under that single approval; pass field only to target one specific field. Tailscale installs its CLI on the selected helper and opens Tailscale's own browser sign-in; once connected, use the CLI for tailnet resources and tailscale file cp or tailscale file get for Taildrop. The wallet is created only from the Workbench page. When you cannot reach a tool, say: I can't reach X on this machine because Y; to fix it, Z. Give one explanation, then take or offer Z.
 
 **Inspect your own host before answering.** When a question is about a system on the machine you run on, inspect its live state with the tools you have: processes, logs, local endpoints or service status. Say what you checked. Memory and Room history are not evidence of current state.
 
@@ -94,7 +94,7 @@ When the mock needs a real product photo, do not draw an SVG stand-in. Call beel
 export function beelineReviewSkillMarkdown(releaseId: string): string {
   return `---
 name: beeline-review
-description: Review a corner pull request against the brief's spec, its checklist, the approval quote, and the Beeline merge gate.
+description: Review a corner pull request against the brief's outline, the approval quote, and the Beeline merge gate.
 ---
 
 <!-- beeline-release: ${releaseId} -->
@@ -113,11 +113,11 @@ Follow these steps in order. Do not skip or reorder them.
 - For a deterministic one-shot bootstrap use \`npm run review:exact-head -- <sha> [--typecheck <pkg> …] [--] <pkg>:<glob> …\`: it checks that exact head out, runs \`npm ci\`, builds the workspace package exports, runs the given typechecks and targeted tests with non-interactive PASS/FAIL summaries, and removes the worktree itself (pass \`--keep\` to keep it and print the removal command).
 - Review and test only the recorded revision. If the head moves, clean up the scratch worktree and start over.
 
-## 2. P0 - SPEC AND CHECKLIST FULFILLED, DEMONSTRATED
+## 2. P0 - OUTLINE FULFILLED, DEMONSTRATED
 
-Read the server-assigned brief and its current revision, including every required file. Quote the approval with its message ID and approver before considering the short objective. The spec's checklist is the scope, and the approval quote is the human's own words: it wins any conflict with the spec. The short objective is navigation-only text and the PR description cannot add, remove, or narrow scope. A revision with no recorded approval is reviewed against its spec alone. If a required file is unavailable, or the revision changes during review, refuse approval and describe what is missing. A requirement may become out of scope only through a new human-authorized brief revision; reviewer discretion, implementation difficulty, and silence never remove it. A passing narrow test does not prove a broader requirement. Review a deliberate human choice as written, even if it is unusual.
+Read the server-assigned brief and its current revision, including every required file. Quote the approval with its message ID and approver before considering the short objective. The spec's outline (user stories, non-goals, risks) is the scope, and the approval quote is the human's own words: it wins any conflict with the spec. The short objective is navigation-only text and the PR description cannot add, remove, or narrow scope. A revision with no recorded approval is reviewed against its spec alone. If a required file is unavailable, or the revision changes during review, refuse approval and describe what is missing. A requirement may become out of scope only through a new human-authorized brief revision; reviewer discretion, implementation difficulty, and silence never remove it. A passing narrow test does not prove a broader requirement. Review a deliberate human choice as written, even if it is unusual.
 
-Before general correctness, produce a checklist ledger in spec order. List every checklist line exactly once as met, unmet, unverified, or out of scope, followed by concrete evidence. Any missing, unmet, or unverified line blocks PASS. Out of scope is valid only when the current revision itself records the human-authorized removal.
+Before general correctness, produce an outline ledger in spec order: list every \`## User stories\` line exactly once as met, unmet, unverified, or out of scope, followed by concrete evidence; confirm nothing under \`## Non-goals\` was done; confirm every \`## Risks\` line was addressed or explicitly accepted with a stated reason. For a frontend change, open the rendered screens and compare them against the attached mock, noting every visible deviation. Any missing, unmet, unverified story, done non-goal, unaddressed risk, or unreviewed mock mismatch blocks PASS. Out of scope is valid only when the current revision itself records the human-authorized removal.
 
 Before judging the implementation, independently repeat the two judgment legs from request triage:
 
@@ -132,7 +132,7 @@ Before judging the implementation, independently repeat the two judgment legs fr
 - A unit test of an inner function, a log line, \`the code looks right\`, or any other proxy does not count.
 - If the user-visible Y cannot be produced, FAIL now. Nothing below can rescue the review.
 - For a bug, if a \`Reproduction <id>\` was recorded, quote it, re-run that exact user path on the PR head, and record that the wrong result is gone. FAIL if that proof does not name the identifier, even when other tests pass. If none was obtained, require the proof to say so plainly and show the regression instead; do not fail the review for a missing identifier.
-- State whether the diff meets every checklist line and the approval quote without unapproved scope.
+- State whether the diff meets every user story and the approval quote without unapproved scope.
 
 ## 3. Empirical pass second
 
@@ -167,7 +167,7 @@ When the diff touches UI and the repository has a DESIGN.md, check every changed
 
 ## 6. Bloat guard
 
-- Compare net lines with the spec, its checklist and non-goals, and the approval quote.
+- Compare net lines with the spec, its user stories and non-goals, and the approval quote.
 - FAIL backwards-compatibility shims, dual paths, feature flags, or abstractions with one caller.
 - FAIL machinery the spec and the approval quote did not ask for.
 
@@ -178,7 +178,7 @@ When the diff touches UI and the repository has a DESIGN.md, check every changed
 ## 8. Gate and verdict
 
 - Review the exact green head named in your reviewer instruction. If the head moved, do not approve it.
-- Re-read the assigned brief revision before the verdict. A repair changes the head and invalidates affected evidence; a requirement correction invalidates the relevant verdict even if code did not change. Keep product-completeness findings (a missing or contradicted checklist line or approval quote) separate from engineering findings (correctness, security, maintainability, tests). Give every confirmed finding a stable ID that survives rereview, the affected checklist line or \`engineering\`, location, severity, evidence, and repair disposition. Reuse the same ID until that finding is resolved. Mechanical repairs return to the author; ask a human only for a genuinely unresolved product choice. Do not run a nested validation pipeline or push the author's branch.
+- Re-read the assigned brief revision before the verdict. A repair changes the head and invalidates affected evidence; a requirement correction invalidates the relevant verdict even if code did not change. Keep product-completeness findings (a missing or contradicted user story, done non-goal, unaddressed risk, mock mismatch, or approval quote) separate from engineering findings (correctness, security, maintainability, tests). Give every confirmed finding a stable ID that survives rereview, the affected outline line or \`engineering\`, location, severity, evidence, and repair disposition. Reuse the same ID until that finding is resolved. Mechanical repairs return to the author; ask a human only for a genuinely unresolved product choice. Do not run a nested validation pipeline or push the author's branch.
 - Always use this exact verdict shape:
 
 \`approval quoted with its message ID:\`
@@ -190,7 +190,7 @@ When the diff touches UI and the repository has a DESIGN.md, check every changed
 \`how Y was demonstrated (or FAIL):\`
 \`commands run + results:\`
 \`brief revision:\`
-\`checklist ledger (every checklist line + status + evidence):\`
+\`outline ledger (every user story, non-goal and risk + status + evidence; mock-vs-screen notes for frontend work):\`
 \`validation stages and evidence:\`
 \`product-completeness findings (block):\`
 \`engineering findings (block):\`
@@ -220,18 +220,19 @@ Create an assignment a fresh session can execute without the parent transcript. 
 
 - \`spec\`: one Markdown doc you write, with these headings:
   - \`## Intent\`: the human's own words, quoted exactly, each with its Room message ID. Never substitute a summary.
-  - \`## Checklist\`: observable done items, one per line. Keep unaffected lines as they are across revisions.
+  - \`## User stories\`: what this enables, one per line as "a person who does X sees Y". Only stories traceable to the quoted Intent; never import a plan, a teammate's suggestion, or your own idea as a story. Keep unaffected lines as they are across revisions.
   - \`## Non-goals\`: explicit exclusions.
-  - \`## References\`: each reference or mock with what it is and whose call it is. An optional or agent-generated mock is not styling authority unless a human made it so.
+  - \`## Risks\`: what could go wrong, and for whom.
+  - \`## References\`: each reference or mock with what it is and whose call it is. An optional or agent-generated mock is not styling authority unless a human made it so. A frontend change needs an attached HTML mock here before work begins.
   Add implementation guidance under further headings when it helps.
 - files (\`attachments\`): the Room files the worker needs, each with its purpose and whether it is required.
 - \`approval\`: one human Room message ID. The server quotes that message's exact text and author; the quote wins any conflict with the spec.
 
-Do not infer approval from silence, assent to different prose, or the mere existence of a plan. Keep agent recommendations labelled as recommendations. Do not promote a plausible UX detail, algorithm, failure message, or extra test into a checklist item merely because it sounds helpful.
+Do not infer approval from silence, assent to different prose, or the mere existence of a plan. Keep agent recommendations labelled as recommendations. Do not promote a plausible UX detail, algorithm, failure message, or extra test into a user story merely because it sounds helpful.
 
 ## Compact path for a settled small fix
 
-Use this when the requested behavior, touched surface, exclusions, and proof are already obvious. Inspect the narrow current behavior, write a short spec (quoted intent, observable checklist, non-goals, references), and use the initiating command as the approval. Dispatch without a proposal/go ceremony. “Change the message action label from Remove to Delete; leave confirmation and accessibility wording unchanged” needs the visible-label checklist line and both exclusions, not another confirmation question.
+Use this when the requested behavior, touched surface, exclusions, and proof are already obvious. Inspect the narrow current behavior, write a short spec (quoted intent, observable user stories, non-goals, risks, references), and use the initiating command as the approval. Always compose the full outline and post it to the Room before calling open_corner, even when the initiating command already settles scope and stands as the approval: posting is not optional merely because approval is inferred, since the human must be able to see what you are about to build. “Change the message action label from Remove to Delete; leave confirmation and accessibility wording unchanged” needs the visible-label user story and both exclusions, not another confirmation question.
 
 ## Complex-work planning loop
 
@@ -246,7 +247,7 @@ Use this default-on loop when work crosses components, changes architecture or a
 ### 2. User stories and product boundary
 
 - Write the actor/action/observable-result stories.
-- Map each story to one or more checklist lines and explicit non-goals.
+- Map each story to its own observable line and explicit non-goals.
 - If one unresolved choice would materially change behavior, scope, irreversible effects, or the intended result, present only that choice or the affected brief slice to the human. Use the answering message as the \`approval\`. Never treat no answer as approval.
 
 ### 3. Architecture and data flow
@@ -258,7 +259,7 @@ Use this default-on loop when work crosses components, changes architecture or a
 ### 4. Failure modes and test map
 
 - Enumerate missing/stale data, retries, concurrency, partial failure, authorization failure, rollback, and boundary-specific hazards that apply.
-- Map every checklist line to its proof boundary: unit, integration, device/browser, server authorization, migration, or live harness. No line may be left without planned evidence.
+- Map every user story to its proof boundary: unit, integration, device/browser, server authorization, migration, or live harness. No story may be left without planned evidence.
 
 ### 5. Mocks and references
 
@@ -267,20 +268,20 @@ Use this default-on loop when work crosses components, changes architecture or a
 
 ### 6. Implementation tasks
 
-- Synthesize ordered, independently verifiable tasks. For each task name the affected boundary, checklist lines, expected files/components, failure handling, and proof.
+- Synthesize ordered, independently verifiable tasks. For each task name the affected boundary, user stories, expected files/components, failure handling, and proof.
 - Keep the spec actionable, not a transcript summary.
 
 ### 7. Bounded adversarial second read (default on)
 
-- Spend one pass, bounded to the drafted scope, trying to disprove completeness: find a missing story, authority mismatch, unhandled failure, checklist line without proof, mock ambiguity, accidental scope expansion, or task-order hazard.
+- Spend one pass, bounded to the drafted scope, trying to disprove completeness: find a missing story, authority mismatch, unhandled failure, user story without proof, mock ambiguity, accidental scope expansion, or task-order hazard.
 - Return findings to the planning agent and repair the draft. Escalate only a genuinely material product choice to the human; engineering choices and mechanical gaps are resolved in the plan.
 - End after one adversarial pass unless its repair exposes one new material product choice. Do not recursively review the review.
 
 ## Dispatch and revision
 
-Existing authorization permits dispatch when the initiating command already settles the exact material scope; that command is the approval. Drafting a brief does not create approval. When the scope was not already explicit, post the spec and ask the corner's opener to approve it, then use their reply as the \`approval\`. Honor an explicit request to review first.
+Existing authorization permits dispatch when the initiating command already settles the exact material scope; that command is the approval, but the outline is still posted to the Room first so the human can see it before open_corner runs. Drafting a brief does not create approval. When the scope was not already explicit, post the spec and ask the corner's opener to approve it, then use their reply as the \`approval\`. Honor an explicit request to review first.
 
-Pass the brief as \`open_corner.brief\`. Read the current revision before revising and use \`revise_corner_brief\` with the complete replacement spec, the approving message, and a concise change description. Preserve unaffected intent quotes, checklist lines, and references. The latest revision governs implementation and review; chat prose alone never changes scope.
+Pass the brief as \`open_corner.brief\`. Read the current revision before revising and use \`revise_corner_brief\` with the complete replacement spec, the approving message, and a concise change description. Preserve unaffected intent quotes, user stories, and references. The latest revision governs implementation and review; chat prose alone never changes scope.
 `;
 }
 
@@ -298,10 +299,12 @@ Run these checks before opening a corner.
 
 ## 1. Is it clear?
 
-- Rewrite the request as a concrete outcome and a checklist of what done means.
-- State material exclusions needed to prevent unrequested work.
+- Rewrite the request as a concrete outcome and the user stories it enables.
+- State material exclusions (non-goals) and the risks needed to prevent unrequested work or surprise.
 - Keep the corner objective complete and within 24 words.
-- If an ambiguity could materially change the outcome, ask one focused question before opening the corner.
+- First ask whether the request has any material ambiguity - one that would change scope, behavior, or risk - and resolve it with the human before doing anything else; never resolve it by adopting a teammate's plan, a prior document, or your own assumption.
+- Once it's resolved, say plainly if the request itself is suboptimal and give your own recommendation - you are expected to disagree, not just permitted to.
+- On a judgment call you're still not sure of, tag a Room colleague for an adversarial second opinion and ask them to reply tagging you back; skip this only when you are the only agent in the Room.
 
 ## 2. Is work warranted?
 
@@ -319,7 +322,7 @@ Run these checks before opening a corner.
 
 ## Output
 
-When dispatching work, pass the complete brief to open_corner under existing authorization. Ask a focused question first only for a material unresolved choice. Add applicable warnings to the brief:
+When dispatching work, pass the complete brief to open_corner under existing authorization, after posting the outline as beeline-spec requires. Add applicable warnings to the brief:
 
 \`Triage warning — warranted: <evidence-backed reason>\`
 \`Triage warning — desirable: <evidence-backed reason>\`

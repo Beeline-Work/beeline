@@ -285,7 +285,7 @@ export const CORNER_BRIEF_PROPERTIES = {
     minLength: 1,
     maxLength: CORNER_BRIEF_SPEC_MAX_LENGTH,
     description:
-      'Markdown: what to build, a checklist of what done means, what is out of scope, and references, as headings in one doc.',
+      'Markdown: the human intent quoted, the user stories it enables, what you are not doing, the risks, and references (an HTML mock for any frontend change), as headings in one doc.',
   },
   approval: {
     type: 'object',

@@ -653,33 +653,35 @@ export const SidebarView = React.memo(function SidebarView() {
             ) : (
               filteredChatSections.map((section) => (
                 <React.Fragment key={section.kind}>
-                  <RoomListSectionHeader
-                    title={section.kind === 'rooms' ? ROOMS_LABEL : 'Direct messages'}
-                    count={section.kind === 'rooms' ? section.data.length : undefined}
-                    actionTestID={
-                      section.kind === 'rooms' ? 'desktop-new-room' : 'desktop-new-direct-message'
-                    }
-                    actionAccessibilityLabel={
-                      section.kind === 'rooms' ? 'Create a new Room' : 'Start a direct message'
-                    }
-                    onAction={
-                      !workspaceId || viewerIsAgent
-                        ? undefined
-                        : section.kind === 'rooms' && !canCreateRoom
+                  {!query.trim() && (
+                    <RoomListSectionHeader
+                      title={section.kind === 'rooms' ? ROOMS_LABEL : 'Direct messages'}
+                      count={section.kind === 'rooms' ? section.data.length : undefined}
+                      actionTestID={
+                        section.kind === 'rooms' ? 'desktop-new-room' : 'desktop-new-direct-message'
+                      }
+                      actionAccessibilityLabel={
+                        section.kind === 'rooms' ? 'Create a new Room' : 'Start a direct message'
+                      }
+                      onAction={
+                        !workspaceId || viewerIsAgent
                           ? undefined
-                          : () =>
-                              router.push({
-                                pathname: '/beeline/channels',
-                                params:
-                                  section.kind === 'rooms'
-                                    ? { communityId: workspaceId, newRoom: String(Date.now()) }
-                                    : {
-                                        communityId: workspaceId,
-                                        newDirectMessage: String(Date.now()),
-                                      },
-                              } as Href)
-                    }
-                  />
+                          : section.kind === 'rooms' && !canCreateRoom
+                            ? undefined
+                            : () =>
+                                router.push({
+                                  pathname: '/beeline/channels',
+                                  params:
+                                    section.kind === 'rooms'
+                                      ? { communityId: workspaceId, newRoom: String(Date.now()) }
+                                      : {
+                                          communityId: workspaceId,
+                                          newDirectMessage: String(Date.now()),
+                                        },
+                                } as Href)
+                      }
+                    />
+                  )}
                   {section.data.map((item) => {
                     const active = activeRoomId === item.room.id;
                     return (

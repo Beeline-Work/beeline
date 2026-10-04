@@ -580,6 +580,14 @@ describe('desktop Workspace navigation', () => {
     expect(control('workspace-menu-settings')).toBeDefined();
   });
 
+  it('lists search matches without section heads', async () => {
+    act(() => control('room-search-toggle').props.onPress());
+    await act(async () => control('desktop-room-search').props.onChangeText('a'));
+    expect(tree.root.findAllByType('RoomListSectionHeader')).toHaveLength(0);
+    expect(control('desktop-room-room-a')).toBeDefined();
+    expect(control('desktop-room-dm-a')).toBeDefined();
+  });
+
   it('carries the section creation controls in the section heads', () => {
     expect(
       tree.root

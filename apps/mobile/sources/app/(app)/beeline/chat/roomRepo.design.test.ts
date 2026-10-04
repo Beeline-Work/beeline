@@ -152,10 +152,15 @@ describe('Room→repo settings change', () => {
     expect(handler).not.toContain('roomRepositorySet');
     // Nothing room-side beyond the binding is claimed destroyed.
     expect(handler).toContain('messages and history are untouched');
-    // The affordance lives inside the expanded picker and is wired only for a
-    // manager looking at a Room with a bound repository.
-    expect(chatSource).toContain('canManageWorkspace && roomRepository');
-    expect(chatSource).toContain('onUnlink={');
-    expect(chatSource).toContain('unlinkRepositoryName={roomRepository?.binding.name}');
+    // The affordance is None + Save in the Room sheet's Repository control,
+    // which saves only for a manager looking at a Room with a bound repository.
+    expect(chatSource).toContain('onUnlink: () => void handleUnlinkRoomRepository(),');
+    expect(chatSource).toContain('canManage: canManageWorkspace,');
+    const choice = readFileSync(
+      new URL('../../../../components/buzz/RoomRepositoryChoice.tsx', import.meta.url),
+      'utf8',
+    );
+    expect(choice).toContain('? current !== null');
+    expect(choice).toContain("if (mode === 'none') return onUnlink();");
   });
 });

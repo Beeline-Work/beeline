@@ -8,6 +8,10 @@ import { describe, expect, it } from 'vitest';
  * and `no-foreground-blocking.test` already use here.
  */
 const chat = readFileSync(new URL('./_chat-surface.tsx', import.meta.url), 'utf8');
+const roomChoice = readFileSync(
+  new URL('../../../../components/buzz/RoomRepositoryChoice.tsx', import.meta.url),
+  'utf8',
+);
 
 function sheet(marker: string, label: string): string {
   const start = chat.indexOf(marker);
@@ -46,28 +50,19 @@ describe('Room and corner actions sheets', () => {
     expect(chat).not.toContain('roomActionsModal');
     expect(chat).not.toContain('roomActionsModalEyebrow');
     expect(chat).toContain('<HullActionSheetModal');
-    for (const marker of ['room-actions-close', 'corner-actions-close']) {
-      expect(chat).toContain(`<HullActionSheetCancel`);
-      expect(chat).toContain(`testID="${marker}"`);
-    }
+    expect(chat).toContain(`<HullActionSheetCancel`);
+    expect(chat).toContain('testID="corner-actions-close"');
+    // The Room sheet's footer is Cancel + Save from the Repository control.
+    expect(roomChoice).toContain('testID="room-actions-close"');
   });
 
-  it('docks the room name and Repo row, and scrolls everything beneath them', () => {
-    expect(chat).toContain('sticky={');
-    expect(chat).toContain('slot="row"');
-    expect(chat).toContain('slot="body"');
-    expect(chat).toContain(
-      'footer={<HullActionSheetCancel onPress={closeRoomActions} testID="room-actions-close" />}',
-    );
-    expect(chat).toContain('loading={roomRepoListLoading}');
-    expect(chat).toContain('busy={roomRepoBusy || roomRepoListLoading}');
-    const picker = readFileSync(
-      new URL('../../../../components/buzz/RepoPicker.tsx', import.meta.url),
-      'utf8',
-    );
-    expect(picker).toContain('REPO_CANDIDATE_LIST_MAX_HEIGHT');
-    expect(picker).toContain('REPO_CANDIDATE_VISIBLE_ROWS = 6');
-    expect(picker).not.toContain('MAX_LIST_HEIGHT_CAP = 420');
+  it('docks the room name and Repository control, and scrolls everything beneath them', () => {
+    expect(chat).toContain('sticky={roomRepoChoice.listOpen ? undefined : roomRepoChoice.control}');
+    expect(chat).toContain('footer={roomRepoChoice.footer}');
+    expect(chat).toContain('loading: roomRepoListLoading,');
+    expect(chat).toContain('busy: roomRepoBusy,');
+    // The Link list replaces the body while it is open, under its own title.
+    expect(chat).toContain("title={roomRepoChoice.listOpen ? 'Choose a repo' : displayRoomName}");
   });
 
   it('renders every row through the one shared row, so none of them wears a box', () => {
@@ -217,12 +212,12 @@ describe('Room and corner actions sheets', () => {
     expect(chat).not.toContain('rename-room-action');
     expect(roomSheet).not.toContain('label="Rename"');
     expect(chat).toMatch(
-      /onTitlePress=\{canRenameTitle \? startRenameFromTitle : undefined\}\s*testID="room-actions-sheet"/,
+      /onTitlePress=\{canRenameTitle && !roomRepoChoice\.listOpen \? startRenameFromTitle : undefined\}\s*testID="room-actions-sheet"/,
     );
-    expect(roomSheet).toContain('titleAccessibilityLabel={`Rename ${displayRoomName}`}');
+    expect(roomSheet).toContain('`Rename ${displayRoomName}`');
     // The editor opens at the top of the sheet, under the name that was tapped.
     expect(roomSheet.indexOf('testID="rename-room-editor"')).toBeLessThan(
-      roomSheet.indexOf('slot="body"'),
+      roomSheet.indexOf('<RoomReviewerActions'),
     );
   });
 

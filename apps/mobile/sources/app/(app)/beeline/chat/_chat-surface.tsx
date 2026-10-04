@@ -369,7 +369,7 @@ import {
   HullActionSheetModal,
   HullActionSheetRow,
 } from '@/components/buzz/HullActionSheet';
-import { RoomRepositoryActions } from '@/components/buzz/RoomRepositoryActions';
+import { useRoomRepositoryChoice } from '@/components/buzz/RoomRepositoryChoice';
 import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { CornerGlyph } from '@/components/buzz/CornerGlyph';
 import { OverflowGlyph } from '@/components/buzz/OverflowGlyph';
@@ -4744,16 +4744,15 @@ export function BuzzChatSurface({
     [activeCommunityId, transport],
   );
 
-  const handleToggleRoomRepoPicker = useCallback(async () => {
-    setShowRoomRepoPicker((value) => !value);
-    if (showRoomRepoPicker || !transport || !activeCommunityId) return;
+  const loadRoomRepoChoice = useCallback(async () => {
+    if (!transport || !activeCommunityId) return;
     setRoomRepoError(null);
     try {
       await loadRoomRepoPicker(true);
     } catch (err) {
       setRoomRepoError('Could not load repos. Check your connection and try again.');
     }
-  }, [activeCommunityId, loadRoomRepoPicker, showRoomRepoPicker, transport]);
+  }, [activeCommunityId, loadRoomRepoPicker, transport]);
 
   const startGitHubInstallation = useCallback(
     async (installationId?: number) => {
@@ -4945,6 +4944,28 @@ export function BuzzChatSurface({
       setRoomRepoBusy(false);
     }
   }, [decodedId, openCornerCount, roomRepoBusy, roomRepository, transport]);
+
+  const roomRepoChoice = useRoomRepositoryChoice({
+    visible: roomActionsVisible,
+    canManage: canManageWorkspace,
+    roomName: roomSurface?.room.name ?? '',
+    current: roomRepository?.binding ?? null,
+    candidates: roomRepoCandidates,
+    installations: githubInstallations,
+    loading: roomRepoListLoading,
+    busy: roomRepoBusy,
+    error: roomRepoError,
+    notice: roomRepoNotice,
+    listOpen: showRoomRepoPicker,
+    setListOpen: setShowRoomRepoPicker,
+    onLoad: () => void loadRoomRepoChoice(),
+    onConnect: () => void handleAddGitHubAccount(),
+    onLink: handleSelectRoomRepoCandidate,
+    onCreate: handleCreateGitHubRepository,
+    onUnlink: () => void handleUnlinkRoomRepository(),
+    onCancel: closeRoomActions,
+    draftContext: decodedId,
+  });
 
   const handleReconnectRoomRepository = useCallback(async () => {
     if (!roomRepoAccessIssue || !transport) return;
@@ -6980,75 +7001,79 @@ export function BuzzChatSurface({
       <HullActionSheetModal
         accessibilityLabel={`Close ${ROOM_LABEL} actions`}
         dismissOnBackdrop={!renameBusy}
-        footer={<HullActionSheetCancel onPress={closeRoomActions} testID="room-actions-close" />}
-        onClose={closeRoomActions}
-        sticky={
-          <RoomRepositoryActions
-            busy={roomRepoBusy}
-            canManage={canManageWorkspace}
-            loading={roomRepoListLoading}
-            onToggle={() => void handleToggleRoomRepoPicker()}
-            picker={null}
-            pickerVisible={showRoomRepoPicker}
-            repositoryName={roomRepository?.binding.name ?? null}
-            slot="row"
-          />
+        footer={roomRepoChoice.footer}
+        onClose={() =>
+          roomRepoChoice.listOpen ? setShowRoomRepoPicker(false) : closeRoomActions()
         }
-        onTitlePress={canRenameTitle ? startRenameFromTitle : undefined}
+        sticky={roomRepoChoice.listOpen ? undefined : roomRepoChoice.control}
+        onTitlePress={canRenameTitle && !roomRepoChoice.listOpen ? startRenameFromTitle : undefined}
         testID="room-actions-sheet"
-        title={displayRoomName}
-        titleAccessibilityLabel={`Rename ${displayRoomName}`}
+        title={roomRepoChoice.listOpen ? 'Choose a repo' : displayRoomName}
+        titleAccessibilityLabel={roomRepoChoice.listOpen ? undefined : `Rename ${displayRoomName}`}
         titleTestID="room-actions-title"
         visible={roomActionsVisible}
       >
-        {!isCorner && canRenameTitle && renameEditing && (
-          <View style={styles.roomRenameEditor} testID="rename-room-editor">
-            <Text style={styles.roomRenameLabel}>New {ROOM_LABEL.toLowerCase()} name</Text>
-            <TextInput
-              accessibilityLabel={`New ${ROOM_LABEL} name`}
-              autoCapitalize="none"
-              autoCorrect={false}
-              editable={!renameBusy}
-              onChangeText={(value) => {
-                setRenameDraft(value);
-                if (value.trim()) setRenameError(null);
-              }}
-              onSubmitEditing={() => void handleRenameRoom()}
-              returnKeyType="done"
-              selectTextOnFocus
-              style={styles.roomRenameInput}
-              testID="rename-room-input"
-              value={renameDraft}
-            />
-            {!validRoomSlug(renameDraft.trim()) && (
-              <Text style={styles.roomRenameLabel}>{ROOM_SLUG_HINT}</Text>
+        {roomRepoChoice.listOpen ? (
+          roomRepoChoice.list
+        ) : (
+          <>
+            {!isCorner && canRenameTitle && renameEditing && (
+              <View style={styles.roomRenameEditor} testID="rename-room-editor">
+                <Text style={styles.roomRenameLabel}>New {ROOM_LABEL.toLowerCase()} name</Text>
+                <TextInput
+                  accessibilityLabel={`New ${ROOM_LABEL} name`}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  editable={!renameBusy}
+                  onChangeText={(value) => {
+                    setRenameDraft(value);
+                    if (value.trim()) setRenameError(null);
+                  }}
+                  onSubmitEditing={() => void handleRenameRoom()}
+                  returnKeyType="done"
+                  selectTextOnFocus
+                  style={styles.roomRenameInput}
+                  testID="rename-room-input"
+                  value={renameDraft}
+                />
+                {!validRoomSlug(renameDraft.trim()) && (
+                  <Text style={styles.roomRenameLabel}>{ROOM_SLUG_HINT}</Text>
+                )}
+                <View style={styles.roomRenameControls}>
+                  <Button
+                    disabled={renameBusy}
+                    label="Cancel"
+                    onPress={() => {
+                      setRenameEditing(false);
+                      setRenameError(null);
+                    }}
+                    variant="secondary"
+                  />
+                  <Button
+                    disabled={renameBusy || !validRoomSlug(renameDraft.trim())}
+                    label={renameBusy ? 'Renaming…' : 'Apply'}
+                    loading={renameBusy}
+                    onPress={() => void handleRenameRoom()}
+                    testID="apply-room-rename"
+                  />
+                </View>
+              </View>
             )}
-            <View style={styles.roomRenameControls}>
-              <Button
-                disabled={renameBusy}
-                label="Cancel"
-                onPress={() => {
-                  setRenameEditing(false);
-                  setRenameError(null);
-                }}
-                variant="secondary"
-              />
-              <Button
-                disabled={renameBusy || !validRoomSlug(renameDraft.trim())}
-                label={renameBusy ? 'Renaming…' : 'Apply'}
-                loading={renameBusy}
-                onPress={() => void handleRenameRoom()}
-                testID="apply-room-rename"
-              />
-            </View>
-          </View>
-        )}
-        <RoomRepositoryActions
-          busy={roomRepoBusy}
-          canManage={canManageWorkspace}
-          loading={roomRepoListLoading}
-          notifications={
-            roomRepository ? (
+            <RoomReviewerActions
+              agents={(roomSurface?.members ?? [])
+                .filter((member) => member.identity.kind === 'agent')
+                .map((member) => member.identity)}
+              allowAutoMerge={roomRepository?.allowAutoMerge}
+              canManage={canManageWorkspace}
+              hasRepository={roomRepository !== null}
+              onSaved={() => refreshSignal.force()}
+              reviewerAgentId={roomSurface?.room.reviewerAgentId}
+              reviewerFallbackIds={roomSurface?.room.reviewerFallbackIds}
+              roomId={decodedId}
+              roomName={displayRoomName}
+              updateRoom={(input) => monolithPhoneOperation('updateRoom', input)}
+            />
+            {roomRepository ? (
               <HullActionSheetRow
                 accessibilityLabel={
                   roomRepository.githubEventsEnabled === false
@@ -7065,121 +7090,72 @@ export function BuzzChatSurface({
                   value: roomRepository.githubEventsEnabled !== false,
                 }}
               />
-            ) : null
-          }
-          onToggle={() => void handleToggleRoomRepoPicker()}
-          picker={
-            <View style={styles.roomSheetInset}>
-              <RepoPicker
-                draftContext={decodedId}
-                busy={roomRepoBusy || roomRepoListLoading}
-                candidates={roomRepoCandidates}
-                installations={githubInstallations}
-                currentKey={roomRepository?.binding.key ?? null}
-                error={roomRepoError}
-                notice={roomRepoNotice}
-                ownerGrant={ownerGrant}
-                uncoveredOwners={uncoveredOwnersRef.current}
-                onAddAccount={() => void handleAddGitHubAccount()}
-                onAskOwnerGrant={(fullName) => void handleAskOwnerGrant(fullName)}
-                onCreateRepository={handleCreateGitHubRepository}
-                onManageInstallation={(installation) =>
-                  void handleManageGitHubInstallation(installation)
-                }
-                onSelect={handleSelectRoomRepoCandidate}
-                onUnlink={
-                  canManageWorkspace && roomRepository
-                    ? () => void handleUnlinkRoomRepository()
-                    : undefined
-                }
-                testIDPrefix="room-repo-picker"
-                unlinkRepositoryName={roomRepository?.binding.name}
-              />
-            </View>
-          }
-          pickerVisible={showRoomRepoPicker}
-          reviewer={
-            <RoomReviewerActions
-              agents={(roomSurface?.members ?? [])
-                .filter((member) => member.identity.kind === 'agent')
-                .map((member) => member.identity)}
-              allowAutoMerge={roomRepository?.allowAutoMerge}
-              canManage={canManageWorkspace}
-              hasRepository={roomRepository !== null}
-              onSaved={() => refreshSignal.force()}
-              reviewerAgentId={roomSurface?.room.reviewerAgentId}
-              reviewerFallbackIds={roomSurface?.room.reviewerFallbackIds}
-              roomId={decodedId}
-              roomName={displayRoomName}
-              updateRoom={(input) => monolithPhoneOperation('updateRoom', input)}
+            ) : null}
+            <HullActionSheetRow
+              accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)}`}
+              chevron="right"
+              disabled={!memberManagement.canOpenRoster}
+              label="Members"
+              metadata={
+                participantsHydrated ? formatRoomParticipantTotal(roomParticipantTotal) : 'Loading'
+              }
+              onPress={() => {
+                setRoomActionsVisible(false);
+                setRosterVisible(true);
+              }}
+              testID="room-participant-roster-trigger"
             />
-          }
-          repositoryName={roomRepository?.binding.name ?? null}
-          slot="body"
-        />
-        <HullActionSheetRow
-          accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)}`}
-          chevron="right"
-          disabled={!memberManagement.canOpenRoster}
-          label="Members"
-          metadata={
-            participantsHydrated ? formatRoomParticipantTotal(roomParticipantTotal) : 'Loading'
-          }
-          onPress={() => {
-            setRoomActionsVisible(false);
-            setRosterVisible(true);
-          }}
-          testID="room-participant-roster-trigger"
-        />
-        {getBuzzRuntimeConfig().monolithUrl ? (
-          <HullActionSheetRow
-            accessibilityLabel="View workflows and runs"
-            chevron="right"
-            label="Workflows"
-            onPress={() => {
-              setRoomActionsVisible(false);
-              router.push({ pathname: '/beeline/workflow', params: { roomId: decodedId } });
-            }}
-            testID="room-workflows-trigger"
-          />
-        ) : null}
-        {canManageWorkspace && getBuzzRuntimeConfig().monolithEnabled && (
-          <HullActionSheetRow
-            accessibilityLabel={`View ${ROOM_LABEL} scheduled work`}
-            chevron="right"
-            label="Scheduled work"
-            onPress={() => {
-              setRoomActionsVisible(false);
-              router.push({
-                pathname: '/beeline/settings/schedules',
-                params: { roomId: decodedId, workspaceId: activeCommunityId },
-              } as unknown as Href);
-            }}
-            testID="room-schedules-action"
-          />
-        )}
-        {canManageWorkspace && (
-          <HullActionSheetRow
-            accessibilityLabel={`Delete ${ROOM_LABEL}`}
-            destructive
-            disabled={roomLifecycleBusy}
-            label={roomLifecycleBusy ? 'Deleting…' : `Delete ${ROOM_LABEL}`}
-            onPress={() => void handleRoomLifecycle('delete')}
-            testID="delete-room-action"
-          />
-        )}
-        <HullActionSheetRow
-          accessibilityLabel={`Leave ${ROOM_LABEL}`}
-          destructive
-          disabled={roomLifecycleBusy}
-          label={roomLifecycleBusy ? 'Leaving…' : `Leave ${ROOM_LABEL}`}
-          onPress={() => void handleRoomLifecycle('leave')}
-          testID="leave-room-action"
-        />
-        {(renameError || membershipError) && (
-          <View accessibilityRole="alert" style={styles.membershipError}>
-            <Text style={styles.membershipErrorText}>! {renameError ?? membershipError}</Text>
-          </View>
+            {getBuzzRuntimeConfig().monolithUrl ? (
+              <HullActionSheetRow
+                accessibilityLabel="View workflows and runs"
+                chevron="right"
+                label="Workflows"
+                onPress={() => {
+                  setRoomActionsVisible(false);
+                  router.push({ pathname: '/beeline/workflow', params: { roomId: decodedId } });
+                }}
+                testID="room-workflows-trigger"
+              />
+            ) : null}
+            {canManageWorkspace && getBuzzRuntimeConfig().monolithEnabled && (
+              <HullActionSheetRow
+                accessibilityLabel={`View ${ROOM_LABEL} scheduled work`}
+                chevron="right"
+                label="Scheduled work"
+                onPress={() => {
+                  setRoomActionsVisible(false);
+                  router.push({
+                    pathname: '/beeline/settings/schedules',
+                    params: { roomId: decodedId, workspaceId: activeCommunityId },
+                  } as unknown as Href);
+                }}
+                testID="room-schedules-action"
+              />
+            )}
+            {canManageWorkspace && (
+              <HullActionSheetRow
+                accessibilityLabel={`Delete ${ROOM_LABEL}`}
+                destructive
+                disabled={roomLifecycleBusy}
+                label={roomLifecycleBusy ? 'Deleting…' : `Delete ${ROOM_LABEL}`}
+                onPress={() => void handleRoomLifecycle('delete')}
+                testID="delete-room-action"
+              />
+            )}
+            <HullActionSheetRow
+              accessibilityLabel={`Leave ${ROOM_LABEL}`}
+              destructive
+              disabled={roomLifecycleBusy}
+              label={roomLifecycleBusy ? 'Leaving…' : `Leave ${ROOM_LABEL}`}
+              onPress={() => void handleRoomLifecycle('leave')}
+              testID="leave-room-action"
+            />
+            {(renameError || membershipError) && (
+              <View accessibilityRole="alert" style={styles.membershipError}>
+                <Text style={styles.membershipErrorText}>! {renameError ?? membershipError}</Text>
+              </View>
+            )}
+          </>
         )}
       </HullActionSheetModal>
 
@@ -7497,10 +7473,6 @@ const styles = StyleSheet.create((theme) => {
     // The sheet itself, its rows and its trailing vocabulary live in
     // `components/buzz/HullActionSheet.tsx`. What is left here is only what
     // hangs BETWEEN rows: the rename editor and the picker's inset.
-    roomSheetInset: {
-      paddingHorizontal: HULL_SHEET_INSET,
-      paddingVertical: groknight.space.sm,
-    },
     roomRenameEditor: {
       paddingHorizontal: HULL_SHEET_INSET,
       paddingVertical: groknight.space.sm,

@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,8 +11,7 @@ import { PhoneService } from '../../server/src/phone-service.js';
 import { DaemonService } from '../../server/src/daemon-service.js';
 import { LiveHub } from '../../server/src/live.js';
 import { createBeelineServer } from '../../server/src/server.js';
-import { createAgentCommand, type CommandRow } from '../../server/src/agent-command.js';
-import { saveWorkflow } from '../../server/src/workflow-runs.js';
+import { createAgentCommand } from '../../server/src/agent-command.js';
 import type { TransactionalDatabase } from '@beeline/auth/store';
 import { getPublicKey } from '@beeline/nostr';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
@@ -35,6 +34,15 @@ import { callAgentTool } from './read-only-mcp.js';
  * Every tool call below runs with the corner env exactly as production
  * mounts it: `BEELINE_DAEMON_ROOM_ID` is the PARENT Room, and
  * `BEELINE_DAEMON_CORNER_ID` is the corner — never the other way around.
+ *
+ * The contract is seeded directly as an already-saved `workspace_skills`
+ * version (the shape `applySkillRevision` itself writes), never through
+ * `saveWorkflow`/`save_workflow`: PR #2083 made NEW saves require a
+ * `summary` and a per-step `does` (`workflowSaveError`), but a pinned
+ * legacy revision — exactly what the real MM desk run was already running
+ * on — keeps validating under the older, looser `workflowContractError` on
+ * every read. Seeding it this way, with the exact legacy v4 contract
+ * unchanged, is what actually proves that pinned legacy runs still execute.
  */
 
 const HOOK_TIMEOUT_MS = 30_000;
@@ -167,30 +175,28 @@ beforeEach(async () => {
     [AUDITOR]: await daemonTokenFor(AUDITOR),
   };
 
-  // Save the workflow contract exactly as the auditor would via save_workflow,
-  // bypassing only the HTTP hop (saveWorkflow is the same function the
-  // save_workflow tool's `saveWorkflow` daemon operation calls).
-  const seedCommand: CommandRow = {
-    id: 'seed-save-workflow',
-    room_id: CORNER,
-    agent_id: AUDITOR,
-    source_message_id: 'seed-save-workflow-msg',
-    turn_request_id: 'seed-save-workflow-msg',
-    action: 'input',
-    reason: 'seed',
-    root_command_id: 'seed-save-workflow',
-    parent_command_id: null,
-    root_source_message_id: 'seed-save-workflow-msg',
-    agent_depth: 0,
-    state: 'claimed',
-    generation_id: null,
-    lease_expires_at: null,
-    result_message_id: null,
-    hiccup_attempts: 0,
-    lifecycle_before: null,
-    restart_confirmed_at: null,
-  };
-  await saveWorkflow(database, seedCommand, { contract: CONTRACT }, undefined);
+  // Seed the contract directly as an already-saved workspace_skills version
+  // — exactly the row shape `applySkillRevision` itself writes — rather than
+  // calling `saveWorkflow`. Production's real MM desk run was already
+  // executing a PINNED legacy revision of this contract, saved long before
+  // PR #2083 added the stricter `summary`/`does` requirement to NEW saves;
+  // this reproduces that pinned revision instead of writing a fresh one.
+  const skillId = randomUUID();
+  const markdown = JSON.stringify(CONTRACT);
+  await database.query(
+    `INSERT INTO workspace_skills
+       (id,workspace_id,slug,description,state,current_version,revision,source_room_id,
+        repository,target_commit,path,kind)
+     VALUES($1,$2,$3,$4,'active',1,1,$5,'','',NULL,'workflow')`,
+    [skillId, WORKSPACE, CONTRACT.name, CONTRACT.description, CORNER],
+  );
+  await database.query(
+    `INSERT INTO workspace_skill_versions
+       (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,
+        repository,target_commit,path,extractor_version,model)
+     VALUES($1,1,$2,$3,NULL,$4,'','',NULL,'legacy-pinned-v1','n/a')`,
+    [skillId, markdown, createHash('sha256').update(markdown).digest('hex'), ['legacy-seed']],
+  );
 }, HOOK_TIMEOUT_MS);
 
 afterEach(async () => {

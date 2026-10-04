@@ -804,7 +804,7 @@ describe('operator skills + MCP passthrough', () => {
     expect(reviewSkill).not.toContain('approved pending checks');
     expect(reviewSkill).not.toContain('unknown checks');
     expect(reviewSkill).not.toContain('--match-head-commit <reviewed sha>');
-    expect(reviewSkill).toContain('P0 - SPEC AND CHECKLIST FULFILLED, DEMONSTRATED');
+    expect(reviewSkill).toContain('P0 - OUTLINE FULFILLED, DEMONSTRATED');
     expect(reviewSkill).toContain('If the user-visible Y cannot be produced, FAIL now');
     const triageSkill = readFileSync(resolve(skillsDir, 'beeline-triage', 'SKILL.md'), 'utf8');
     expect(triageSkill).toContain('name: beeline-triage');
@@ -1802,12 +1802,12 @@ describe('skill provision reuse', () => {
       const review = readFileSync(resolve(skills, 'beeline-review', 'SKILL.md'), 'utf8');
       expect(spec).toContain('name: beeline-spec');
       expect(spec).toContain('If one unresolved choice would materially change behavior');
-      expect(spec).toContain('`## Checklist`');
+      expect(spec).toContain('`## User stories`');
       expect(spec).toContain('Bounded adversarial second read (default on)');
       expect(spec).toContain('Do not infer approval from silence');
       expect(review).toContain('Read the server-assigned brief and its current revision');
       expect(review).toContain('Quote the approval with its message ID and approver');
-      expect(review).toContain('List every checklist line exactly once');
+      expect(review).toContain('list every `## User stories` line exactly once');
       expect(review).toContain(
         'Build one visible validation record for the brief revision and code head.',
       );

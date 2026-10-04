@@ -1156,8 +1156,9 @@ export type CornerBriefAttachment = {
 export const CORNER_BRIEF_SPEC_MAX_LENGTH = 16_000;
 export type CornerBriefDraft = {
   /**
-   * Agent-written Markdown: what to build, a checklist of what done looks
-   * like, what is out of scope, and references, as headings inside one doc.
+   * Agent-written Markdown: the human intent quoted, the user stories it
+   * enables, what is not being done, the risks, and references (an HTML
+   * mock for any frontend change), as headings inside one doc.
    */
   readonly spec: string;
   /** The human Room message that approved this spec. The server quotes it. */

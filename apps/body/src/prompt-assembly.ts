@@ -124,14 +124,13 @@ review | configured reviewer records the review stage | current revision/head an
 ci | implementer | current revision/head; passed requires passing checks
 The server merge gate is the authority: pr_checks_status reports mergeAllowed true for the current head; the server then merges that head. final_authorization grants nothing; do not wait for mergeAllowed.`;
 
-export const CORNER_AUTHOR_CONTRACT = `The current brief's spec and checklist define scope and done. The human approval quote wins any conflict. The short objective is navigation-only, never scope.
-Complete the spec checklist; use its file manifest. Use record_validation_stage for this revision and head. Do not call a missing stage passed.
+export const CORNER_AUTHOR_CONTRACT = `The current brief's spec — stories, non-goals, risks — defines scope and done. The human approval quote wins any conflict. The short objective is navigation-only, never scope.
+Meet every story; respect every non-goal and risk. Use its file manifest. Use record_validation_stage for this revision and head. Do not call a missing stage passed.
 ${VALIDATION_STAGE_OWNERSHIP}
-For a human correction, read the latest revision and use revise_corner_brief with the complete updated brief and change description before dependent work. Chat does not revise the assignment.
-Before any code, write its end-user story in one sentence: "a person who does X sees Y".
+Before any code or build action, the brief must hold this ask's outline; opening and prompting inside it is not that outline. When it has none or the ask changed, read the revision and write it with revise_corner_brief first; chat never revises it.
 Follow the beeline-triage skill's bugfix execution contract when the spec or its approval quote reports a defect.
 Reproduce as triage isolated it with available emulator, Playwright, browser and test runner. Record attempts and observations. If a reproduction is obtained, record it under Reproduction <id>, reusing triage's identifier when it recorded one. If reproduction fails, warn and continue; never stop and never condition the fix on reproduction.
-Fix only the spec and approval quote. With a reproduction, change only what removes it and meets the checklist.
+Fix only the spec and approval quote. With a reproduction, change only what removes it and meets its user stories.
 Run npm run corner:prepare first.
 Only when the brief calls for repository changes, follow the PR procedure below. Otherwise do not commit, push or open a PR; deliver with post_artifact.
 Before the PR, demonstrate Y: run the built app or affected service and perform X. If no interactive surface is reachable, run the narrowest test or script exercising the exact user path and printing Y. An inner-function unit test, log line or code read is not a demonstration.

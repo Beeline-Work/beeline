@@ -14,6 +14,7 @@ import {
   archiveWorkflow,
   assignWorkflowRole,
   backfillWorkflowSkillDescriptions,
+  closeStaleWorkflowGateChoices,
   describedLegacyWorkflowContract,
   handoff,
   getWorkflowRun,
@@ -1060,6 +1061,113 @@ describe('handoff', () => {
       name: 'corner',
       roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
     })).rejects.toThrow(`You are already in run ${runId} of corner.`);
+  });
+});
+
+async function driveToApprovalGate(runId: string): Promise<void> {
+  let command = await commandFor(IMPLEMENTER);
+  await handoff(database, command, { runId, outcome: 'pushed', contents: { summary: 'x', prUrl: 'y' } });
+  command = await commandFor(IMPLEMENTER);
+  await handoff(database, command, { runId, outcome: 'passing', contents: { headSha: 'abc' } });
+  command = await commandFor(REVIEWER);
+  await handoff(database, command, {
+    runId,
+    outcome: 'approved',
+    contents: { verdict: 'approve', notes: 'lgtm' },
+  });
+}
+
+describe('a gate handing directly into another gate', () => {
+  it("closes the state being left but never the freshly posted next gate's choice", async () => {
+    const chain = {
+      version: 1,
+      name: 'gate-chain',
+      description: 'Two gates back to back',
+      roles: ['approver'],
+      start: 'gate_a',
+      handoffs: {
+        gate_a: { kind: 'gate', role: 'approver', requires: ['decision'], on: { go: 'gate_b', stop: 'failed' } },
+        gate_b: { kind: 'gate', role: 'approver', requires: ['decision'], on: { go: 'land', stop: 'failed' } },
+        land: { kind: 'terminal', status: 'done' },
+        failed: { kind: 'terminal', status: 'failed' },
+      },
+    };
+    const command = await commandFor(APPROVER);
+    await saveWorkflow(database, command, { contract: describedWorkflow(chain) });
+    const { runId } = await startWorkflow(database, command, {
+      name: 'gate-chain',
+      roleBindings: { approver: APPROVER },
+    });
+    const gateAChoice = (
+      await database.query<{ id: string }>(
+        `SELECT id FROM room_choices WHERE room_id=$1 AND agent_id=$2 AND status='open'`,
+        [ROOM, APPROVER],
+      )
+    ).rows[0]!;
+    // The approver reads the answer out of chat and calls handoff() directly,
+    // taking gate_a straight into gate_b within this single transaction.
+    const result = await handoff(database, await commandFor(APPROVER), {
+      runId,
+      outcome: 'go',
+      contents: { decision: 'go' },
+    });
+    expect(result.state).toBe('gate_b');
+    expect(
+      (await database.query<{ status: string }>(`SELECT status FROM room_choices WHERE id=$1`, [gateAChoice.id]))
+        .rows[0]?.status,
+    ).toBe('closed');
+    const gateBChoice = (
+      await database.query<{ status: string }>(
+        `SELECT status FROM room_choices WHERE room_id=$1 AND agent_id=$2 AND id<>$3`,
+        [ROOM, APPROVER, gateAChoice.id],
+      )
+    ).rows[0];
+    expect(gateBChoice?.status).toBe('open');
+  });
+});
+
+describe('closeStaleWorkflowGateChoices', () => {
+  it('closes a row left open from before this fix shipped, idempotently', async () => {
+    const { runId } = await startedRun();
+    await driveToApprovalGate(runId);
+    const choice = (
+      await database.query<{ id: string }>(
+        `SELECT id FROM room_choices WHERE room_id=$1 AND agent_id=$2 AND status='open'`,
+        [ROOM, APPROVER],
+      )
+    ).rows[0]!;
+    await handoff(database, await commandFor(APPROVER), {
+      runId,
+      outcome: 'approved',
+      contents: { decision: 'approved' },
+    });
+    // Simulates a row left over from before this fix shipped: the fixed
+    // handoff() above already closed it, so put it back open by hand to
+    // reproduce what a pre-fix production row looked like.
+    await database.query(`UPDATE room_choices SET status='open' WHERE id=$1`, [choice.id]);
+
+    expect(await closeStaleWorkflowGateChoices(database)).toBe(1);
+    expect(
+      (await database.query<{ status: string }>(`SELECT status FROM room_choices WHERE id=$1`, [choice.id]))
+        .rows[0]?.status,
+    ).toBe('closed');
+    expect(await closeStaleWorkflowGateChoices(database)).toBe(0);
+  });
+
+  it('leaves a still-live gate alone', async () => {
+    const { runId } = await startedRun();
+    await driveToApprovalGate(runId);
+    const choice = (
+      await database.query<{ id: string }>(
+        `SELECT id FROM room_choices WHERE room_id=$1 AND agent_id=$2 AND status='open'`,
+        [ROOM, APPROVER],
+      )
+    ).rows[0]!;
+    expect(await closeStaleWorkflowGateChoices(database)).toBe(0);
+    expect(
+      (await database.query<{ status: string }>(`SELECT status FROM room_choices WHERE id=$1`, [choice.id]))
+        .rows[0]?.status,
+    ).toBe('open');
   });
 });
 

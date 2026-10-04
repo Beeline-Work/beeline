@@ -8,7 +8,7 @@ import type {
 } from '@beeline/api-contract/phone';
 import { AppMark } from './AppMark';
 import { Button } from './Button';
-import { HullLivePulse } from './MonoHull';
+import { StateDot } from './StateDot';
 import { TranscriptCard } from './TranscriptCard';
 import { WorkflowStepCircle } from './WorkflowRunLine';
 
@@ -84,7 +84,7 @@ type Props = {
 /**
  * `@agent /login`: the harness's own login, at the call site (DESIGN.md →
  * Transcript cards). The head carries the company's logo; steps use the
- * workflow circles; waiting breathes; a code or key is sent once, never
+ * workflow circles; waiting pulses the one instrument dot (`StateDot`); a code or key is sent once, never
  * posted, drafted, or shown back.
  */
 export function AgentSignInCard({ card, agentName, isOwner, stamp, onSubmit, testID = 'agent-sign-in' }: Props) {
@@ -182,9 +182,7 @@ export function AgentSignInCard({ card, agentName, isOwner, stamp, onSubmit, tes
 
   const waitLine = (text: string) => (
     <View style={styles.wait}>
-      <HullLivePulse>
-        <View style={styles.pulse} />
-      </HullLivePulse>
+      <StateDot kind="pulse" />
       <Text style={styles.meta}>{text}</Text>
     </View>
   );
@@ -368,12 +366,6 @@ const styles = StyleSheet.create((theme) => ({
   code: { flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.sm },
   codeText: { ...theme.buzz.type.machine, flex: 1, color: theme.buzz.textPrimary },
   wait: { flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.sm },
-  pulse: {
-    width: theme.buzz.space.sm,
-    height: theme.buzz.space.sm,
-    borderRadius: theme.buzz.space.sm / 2,
-    backgroundColor: theme.buzz.accent,
-  },
   failure: { flexDirection: 'row', gap: theme.buzz.space.sm },
   failureMark: { ...theme.buzz.type.meta, color: theme.buzz.accent },
   failureText: { ...theme.buzz.type.meta, flex: 1, color: theme.buzz.textSecondary },

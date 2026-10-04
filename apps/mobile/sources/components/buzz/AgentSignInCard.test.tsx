@@ -57,11 +57,9 @@ vi.mock('./Button', async () => {
   const ReactModule = await import('react');
   return { Button: (props: any) => ReactModule.createElement('Button', props) };
 });
-vi.mock('./MonoHull', async () => {
+vi.mock('./StateDot', async () => {
   const ReactModule = await import('react');
-  return {
-    HullLivePulse: (props: any) => ReactModule.createElement('HullLivePulse', props, props.children),
-  };
+  return { StateDot: (props: any) => ReactModule.createElement('StateDot', props) };
 });
 vi.mock('./WorkflowRunLine', async () => {
   const ReactModule = await import('react');
@@ -173,7 +171,7 @@ describe('@agent login card', () => {
       byId(renderer, 'agent-sign-in-copy').props.onPress();
     });
     await vi.waitFor(() => expect(clipboard.setStringAsync).toHaveBeenCalledWith('EBQ9-VJCLN'));
-    expect(renderer.root.findAllByType('HullLivePulse' as any)).toHaveLength(1);
+    expect(renderer.root.findByType('StateDot' as any).props.kind).toBe('pulse');
     expect(texts(renderer)).toContain('Waiting for approval · expires in 15 min');
     expect(texts(renderer)).toContain('Device-code sign-in must be on in ChatGPT → Settings → Security.');
     expect(renderer.root.findAllByProps({ testID: 'agent-sign-in-input' })).toHaveLength(0);

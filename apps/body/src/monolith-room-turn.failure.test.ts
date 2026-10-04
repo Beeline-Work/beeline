@@ -308,6 +308,34 @@ describe('Room turn failure receipt', () => {
     expect(receipts).toContainEqual(expect.objectContaining({ status: 'complete' }));
   });
 
+  it('Reproduction ROOM-REFRESH-1: writes a refresh made during a turn back once the turn ends', async () => {
+    // The stub harness refreshes the way Claude Code does: it writes a temp
+    // file and renames it over the Room's credential link.
+    const spent = JSON.stringify({ claudeAiOauth: { refreshToken: 'spent', expiresAt: 1_000 } });
+    const rotated = JSON.stringify({ claudeAiOauth: { refreshToken: 'rotated', expiresAt: 2_000 } });
+    let operatorCredential = '';
+    const { agentHomeRoot } = await runTurn({
+      agentCommand: '/opt/harness/claude-agent-acp',
+      agentKind: 'claude',
+      beforeRun: async ({ operatorHome }) => {
+        operatorCredential = join(operatorHome, '.claude/.credentials.json');
+        await mkdir(join(operatorHome, '.claude'), { recursive: true });
+        await writeFile(operatorCredential, spent);
+      },
+      prompt: async ({ agentHomeRoot: activeHome }) => {
+        const isolated = join(activeHome, 'claude/.credentials.json');
+        await writeFile(`${isolated}.next`, rotated);
+        await rename(`${isolated}.next`, isolated);
+        return { stopReason: 'end_turn', updates: [], agentText: 'Answered.', toolCalls: [] };
+      },
+    });
+
+    // Every other Room and the operator CLI read the shared file; it must not
+    // keep the refresh token this Room just spent.
+    expect(await readFile(operatorCredential, 'utf8')).toBe(rotated);
+    expect(lstatSync(join(agentHomeRoot, 'claude/.credentials.json')).isSymbolicLink()).toBe(true);
+  });
+
   it('writes a Claude refresh made during one turn back before the next turn', async () => {
     const spent = JSON.stringify({ claudeAiOauth: { refreshToken: 'spent', expiresAt: 1_000 } });
     const rotated = JSON.stringify({ claudeAiOauth: { refreshToken: 'rotated', expiresAt: 2_000 } });

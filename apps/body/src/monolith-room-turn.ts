@@ -671,15 +671,6 @@ export class MonolithRoomTurnLoop {
    * A rotation is a fact about one live session, so the pin goes with it.
    */
   /**
-   * What this turn really cost and did, read at the moment its prompt settled.
-   *
-   * The token count is the harness's own (pi records it; every other harness
-   * leaves it unknown) and the byte count is the prompt this process handed over
-   * — together they are the only way the rollout budget gate can measure the
-   * institutional block's share of a real prompt instead of a byte estimate.
-   * Missing numbers are omitted rather than zeroed.
-   */
-  /**
    * Claude Code may have refreshed its login during the prompt, detaching
    * this Room's credential link. Share the rotated login now so other Rooms
    * do not spend the old refresh token before this Room's next activation.
@@ -694,6 +685,15 @@ export class MonolithRoomTurnLoop {
     });
   }
 
+  /**
+   * What this turn really cost and did, read at the moment its prompt settled.
+   *
+   * The token count is the harness's own (pi records it; every other harness
+   * leaves it unknown) and the byte count is the prompt this process handed over
+   * — together they are the only way the rollout budget gate can measure the
+   * institutional block's share of a real prompt instead of a byte estimate.
+   * Missing numbers are omitted rather than zeroed.
+   */
   private async captureTurnMetrics() {
     const { model: _model, ...usage } = this.turnUsage.usage ?? {};
     const promptBytes = this.client?.lastPromptBytes;

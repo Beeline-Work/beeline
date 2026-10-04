@@ -2,7 +2,11 @@ import { mkdir, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { AcpClient } from './acp.js';
-import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
+import {
+  harnessStateDirsFromEnv,
+  prepareRoomAgentHome,
+  writeBackRoomClaudeLogin,
+} from './agent-home.js';
 import { openRouterRoutingCacheDir, openRouterRoutingInput } from './openrouter-routing.js';
 import {
   credentialMaskPaths,
@@ -596,6 +600,17 @@ export async function runUpdateFunctionalProbe(input: {
     };
   } finally {
     await client?.stop().catch(() => undefined);
+    // The probe turn may have refreshed Claude's login, detaching the probe
+    // home's credential link. Write that login back before the probe root is
+    // removed, or the shared file is left holding a spent refresh token.
+    if (input.config.agentKind === 'claude') {
+      await writeBackRoomClaudeLogin({
+        root: homeRoot,
+        operatorHome: input.config.operatorHome ?? homedir(),
+      }).catch((error: unknown) => {
+        console.error('[body] update probe could not write back a refreshed Claude login:', error);
+      });
+    }
     await rm(root, { recursive: true, force: true }).catch(() => undefined);
   }
 }

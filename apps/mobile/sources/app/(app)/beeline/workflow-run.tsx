@@ -221,7 +221,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   alsoRunningCopy: { flex: 1, minWidth: 0 },
   alsoRunningName: { ...theme.buzz.type.body, color: theme.buzz.textPrimary },
-  alsoRunningHolder: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet, marginTop: 2 },
+  alsoRunningHolder: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet, marginTop: theme.buzz.space.xs },
   screen: { flex: 1, backgroundColor: theme.buzz.bgBase },
   loading: { padding: theme.buzz.space.xl, alignItems: 'center', justifyContent: 'center' },
   plate: { paddingTop: theme.buzz.layout.screenTop, paddingHorizontal: theme.buzz.space.md },

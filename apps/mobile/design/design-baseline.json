@@ -12,7 +12,7 @@
     "components/buzz/TranscriptScrubber.tsx": 1,
     "components/buzz/TurnProgressLine.tsx": 1,
     "components/buzz/WalletQr.tsx": 1,
-    "components/buzz/WorkflowRunLine.tsx": 3,
+    "components/buzz/WorkflowRunLine.tsx": 2,
     "components/buzz/WritePermissionOutcome.tsx": 1
   }
 }
